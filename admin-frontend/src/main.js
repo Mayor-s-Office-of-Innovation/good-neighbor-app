@@ -24,6 +24,10 @@ import { getAdminConfig } from "./config.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { debounce } from "./debounce.js";
 import {
+  defaultProgramManagerFilter,
+  matchesProgramManager,
+} from "./program-manager-filter.js";
+import {
   createDirectoryLoader,
   loadManagerDirectory,
 } from "./manager-directory.js";
@@ -65,6 +69,8 @@ import {
  * @property {any[]} assignedComplianceManagers
  * @property {any[]} availableSiteUsers
  * @property {any[]} newSiteUsers
+ * @property {boolean} letterEmailUncertain
+ * @property {any[]} letterEmailHistory
  * @property {any[]} siteTerms
  * @property {any[]} managerMemberships
  * @property {any[]} managerGrants
@@ -128,6 +134,8 @@ class AdminApp extends HTMLElement {
       availableSiteUsers: [],
       newSiteUsers: [],
       siteTerms: [],
+      letterEmailHistory: [],
+      letterEmailUncertain: false,
       managerMemberships: [],
       managerGrants: [],
       devices: [],
@@ -188,6 +196,8 @@ class AdminApp extends HTMLElement {
       availableSiteUsers: [],
       newSiteUsers: [],
       siteTerms: [],
+      letterEmailHistory: [],
+      letterEmailUncertain: false,
       managerMemberships: [],
       managerGrants: [],
       devices: [],
@@ -315,6 +325,9 @@ class AdminApp extends HTMLElement {
     ]);
     this.state.role = session.role || "";
     this.state.capabilities = session.capabilities || {};
+    if (this.state.role === "compliance-manager") {
+      this.state.profile = (await adminApi.getMyProfile()).profile;
+    }
     let programManagers = { programManagers: [] };
     if (typeof adminApi.listCityProgramManagers === "function") {
       programManagers = await adminApi
@@ -968,24 +981,32 @@ class AdminApp extends HTMLElement {
       ...this.state.oversightOptions[key],
       result.option,
     ].sort((a, b) => a.name.localeCompare(b.name));
-    this.finishOversightOptionFlow(
-      type === "department"
-        ? "managing-city-department"
-        : "managing-system-of-care",
-      result.option.name,
+    const target = form.dataset.targetSelect || (type === "department"
+      ? "managing-city-department" : "managing-system-of-care");
+    await this.finishOversightOptionFlow(
+      target,
+      target === "manager-department" ? result.option.departmentId || result.option.name : result.option.name,
       form,
+      result.option.name,
     );
   }
 
-  finishOversightOptionFlow(selectName, value, form) {
+  async finishOversightOptionFlow(selectName, value, form, label = value) {
     const select = this.querySelector(`wa-select[name='${selectName}']`);
     if (select) {
       const option = document.createElement("wa-option");
       option.value = value;
-      option.textContent = value;
+      option.textContent = label;
       select.querySelector(`[value='${CSS.escape(value)}']`)?.remove();
-      select.querySelector("[data-add-option]")?.before(option);
+      const addOption = select.querySelector("[data-add-option]");
+      if (addOption) addOption.before(option);
+      else select.append(option);
+      // wa-select caches its options until slotchange has been processed.
+      // Yield a task so the new option is recognized before assigning value.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (!select.isConnected) return;
       setSelectValue(select, value);
+      await select.updateComplete;
       select.dispatchEvent(new Event("change", { bubbles: true }));
     }
     form.closest("dialog")?.close();
@@ -1280,7 +1301,22 @@ class AdminApp extends HTMLElement {
       adminApi.listDevices(siteId),
       adminApi.listSiteTerms(siteId),
     ]);
+    this.state.letterEmailUncertain = (site.items || []).some(item => item.deliveryState === "uncertain");
+    this.state.letterEmailHistory = (site.items || []).filter(item => item.type === "complianceLetterEmail");
     this.state.site = site.items?.find((item) => item.sk === "#META") || null;
+    if (this.state.site) {
+      const current = this.state.site;
+      this.state.sites = this.state.sites.map((summary) =>
+        summary.siteId === siteId
+          ? {
+              ...summary,
+              ...current,
+              primaryContactUserId: current.primaryContactUserId,
+              primaryContact: current.primaryContact,
+            }
+          : summary,
+      );
+    }
     this.state.assignedUsers = (site.items || []).filter((item) =>
       String(item.sk || "").startsWith("ASSIGNED_USER#"),
     );
@@ -1342,9 +1378,10 @@ class AdminApp extends HTMLElement {
     );
     await this.openSite(siteId, false);
     this.state.siteSaveMessage =
-      "Perimeter check compliance period saved. The letter is being generated.";
+      t("admin.letters.pending");
     this.render();
     void this.refreshPendingComplianceLetter(siteId);
+    void this.refreshLetterEmails(siteId);
     return true;
   }
 
@@ -1356,12 +1393,13 @@ class AdminApp extends HTMLElement {
         const result = await adminApi.getSite(siteId);
         const latest = result.items?.find((item) => item.sk === "#META");
         if (!latest || latest.letterState === "draft_pending") continue;
+        this.state.letterEmailHistory = (result.items || []).filter(item => item.type === "complianceLetterEmail");
         this.state.site = { ...this.state.site, ...latest };
         this.state.sites = this.state.sites.map((site) =>
           site.siteId === siteId ? { ...site, ...latest } : site,
         );
         this.state.siteSaveMessage = latest.complianceLetters?.current
-          ? "Perimeter check compliance period saved. The letter is ready."
+          ? t("admin.letters.ready")
           : "Perimeter check compliance period saved.";
         this.render();
         return;
@@ -1369,6 +1407,28 @@ class AdminApp extends HTMLElement {
         // A transient refresh failure should not turn a successful save into an
         // error. The next polling attempt can still retrieve the generated PDF.
       }
+    }
+  }
+
+  async refreshLetterEmails(siteId) {
+    const originalCount = this.state.letterEmailHistory?.length || 0;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      if (this.state.site?.siteId !== siteId) return;
+      try {
+        const result = await adminApi.getSite(siteId);
+        if ((result.items || []).some(item => item.deliveryState === "uncertain")) {
+          this.state.letterEmailUncertain = true;
+          this.render();
+          return;
+        }
+        const history = (result.items || []).filter(item => item.type === "complianceLetterEmail");
+        if (history.length <= originalCount) continue;
+        this.state.letterEmailHistory = history;
+        this.state.siteSaveMessage = t(history.some(item => item.provider === "local-preview") ? "admin.letters.previewSent" : "admin.letters.sent");
+        this.render();
+        return;
+      } catch { /* Retry reads without repeating the send. */ }
     }
   }
 
@@ -2056,6 +2116,7 @@ class AdminApp extends HTMLElement {
           const result = await adminApi.updateMyProfile({
             firstName: formValue(data, "firstName"),
             lastName: formValue(data, "lastName"),
+            phone: formValue(data, "phone"),
           });
           this.state.profile = result.profile;
           const managerId = result.profile.directoryUserId;
@@ -2068,6 +2129,7 @@ class AdminApp extends HTMLElement {
                       ...manager,
                       firstName: result.profile.firstName,
                       lastName: result.profile.lastName,
+                      phone: result.profile.phone,
                       name,
                     }
                   : manager,
@@ -2088,7 +2150,7 @@ class AdminApp extends HTMLElement {
           }
         } catch (error) {
           if (profileForm.isConnected)
-            showFormSaveError(profileForm, t("admin.profile.saveError"));
+            showFormSaveError(profileForm, t(error instanceof Error && error.message === "valid_phone_required" ? "admin.profile.invalidPhone" : "admin.profile.saveError"));
         } finally {
           delete profileForm.dataset.saving;
           if (profileForm.isConnected) sync();
@@ -2167,7 +2229,7 @@ class AdminApp extends HTMLElement {
         const data = new FormData(asForm(event.currentTarget));
         for (const key of ["manager", "department", "system"]) {
           const value = String(data.get(key) || "");
-          if (value) params.set(key, value);
+          if (value || key === "manager") params.set(key, value);
           else params.delete(key);
         }
         const query = params.toString();
@@ -2678,15 +2740,18 @@ class AdminApp extends HTMLElement {
         }
       },
     );
-    this.querySelectorAll("#site-oversight-form wa-select").forEach(
+    this.querySelectorAll("#site-oversight-form wa-select, #new-city-program-manager-form wa-select[name=manager-department]").forEach(
       (select) => {
-        select.addEventListener("change", () => {
+        select.addEventListener("change", async () => {
           const oversightForm = select.closest("form");
           const value =
             oversightForm instanceof HTMLFormElement
               ? controlValue(oversightForm, select.name)
               : String(select.value || "");
-          if (!value.startsWith("__add_")) return;
+          if (!value.startsWith("__add_")) {
+            select.dataset.previousValue = value;
+            return;
+          }
           const dialogId = {
             __add_department__: "#new-oversight-option-dialog",
             __add_system__: "#new-oversight-option-dialog",
@@ -2698,6 +2763,7 @@ class AdminApp extends HTMLElement {
             value === "__add_department__" ? "department" : "systemOfCare";
           const label =
             type === "department" ? "City department" : "System of care";
+          form.dataset.targetSelect = select.name;
           form.querySelector("[name='option-type']").value = type;
           form.querySelector("[data-option-title]").textContent =
             `Add a new ${label.toLowerCase()}`;
@@ -2710,17 +2776,15 @@ class AdminApp extends HTMLElement {
         });
         select.addEventListener("wa-show", () => {
           const oversightForm = select.closest("form");
-          select.dataset.previousValue =
-            oversightForm instanceof HTMLFormElement
-              ? controlValue(oversightForm, select.name)
-              : String(select.value || "");
+          const current = oversightForm instanceof HTMLFormElement
+            ? controlValue(oversightForm, select.name) : String(select.value || "");
+          if (!current.startsWith("__add_")) select.dataset.previousValue = current;
         });
         select.addEventListener("focus", () => {
           const oversightForm = select.closest("form");
-          select.dataset.previousValue =
-            oversightForm instanceof HTMLFormElement
-              ? controlValue(oversightForm, select.name)
-              : String(select.value || "");
+          const current = oversightForm instanceof HTMLFormElement
+            ? controlValue(oversightForm, select.name) : String(select.value || "");
+          if (!current.startsWith("__add_")) select.dataset.previousValue = current;
         });
       },
     );
@@ -2843,6 +2907,22 @@ class AdminApp extends HTMLElement {
         }
       }
     });
+    this.querySelector("[data-resend-letter]")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      const siteId = this.state.site.siteId;
+      const requestId = button.dataset.requestId || crypto.randomUUID();
+      button.dataset.requestId = requestId;
+      try {
+        await adminApi.resendSiteLetter(siteId, requestId);
+        this.state.siteSaveMessage = t("admin.letters.resendQueued");
+        this.render();
+        void this.refreshLetterEmails(siteId);
+      } catch {
+        button.disabled = false;
+        showFormSaveError(button.closest("section"), t("admin.letters.resendError"));
+      }
+    });
     let compliancePeriodSaved = false;
     this.querySelectorAll("#site-terms-form, #site-compliance-form").forEach(
       (form) =>
@@ -2863,10 +2943,17 @@ class AdminApp extends HTMLElement {
           try {
             compliancePeriodSaved = await this.createSiteTerms(currentForm);
           } catch (err) {
-            showFormSaveError(currentForm, compliancePeriodErrorMessage(err));
+            const errorMessage = showFormSaveError(currentForm, compliancePeriodErrorMessage(err));
+            if (err instanceof Error && err.message === "generator_contact_required") {
+              const [before, after] = t("admin.compliance.generatorContactRequired", { profile: "{profile}" }).split("{profile}");
+              const profileLink = document.createElement("a");
+              profileLink.href = "/profile";
+              profileLink.textContent = t("admin.profile.title");
+              errorMessage.replaceChildren(before, profileLink, after || "");
+            }
             if (saveButton) {
               saveButton.disabled = false;
-              saveButton.textContent = "Save and generate letter";
+              saveButton.textContent = t("admin.letters.saveSend");
             }
           }
         }),
@@ -3098,25 +3185,33 @@ class AdminApp extends HTMLElement {
         this.openSite(dataAttr(button, "data-site")),
       );
     });
-    this.querySelectorAll("[data-deactivate-site]").forEach((button) => {
-      button.addEventListener("click", () => {
-        this.querySelector("#deactivate-site-dialog")?.showModal();
-      });
-    });
-    const deactivateSiteDialog = this.querySelector("#deactivate-site-dialog");
-    deactivateSiteDialog?.addEventListener("close", () => {
-      if (deactivateSiteDialog.returnValue !== "confirm") return;
-      const button = this.querySelector("[data-deactivate-site]");
-      if (!button) return;
-      this.deactivateSite(dataAttr(button, "data-deactivate-site")).catch(
-        (error) => {
-          this.state.error =
-            error instanceof Error
-              ? error.message
-              : "The site could not be deactivated.";
-          this.render();
-        },
-      );
+    const deactivateForm = this.querySelector("#deactivate-site-form");
+    const deactivateConfirmation = deactivateForm?.querySelector("[name='confirmation']");
+    const deactivateSubmit = deactivateForm?.querySelector("button[type='submit']");
+    const confirmedSiteName = () => Boolean(this.state.site?.name) &&
+      String(deactivateConfirmation?.value || "") === this.state.site.name;
+    const syncDeactivateSubmit = () => {
+      if (deactivateSubmit) deactivateSubmit.disabled =
+        deactivateForm.dataset.saving === "true" || !confirmedSiteName();
+    };
+    deactivateConfirmation?.addEventListener("input", syncDeactivateSubmit);
+    deactivateConfirmation?.addEventListener("change", syncDeactivateSubmit);
+    syncDeactivateSubmit();
+    deactivateForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!this.state.capabilities.createEntities || !confirmedSiteName() ||
+        deactivateForm.dataset.saving === "true") return;
+      deactivateForm.dataset.saving = "true";
+      syncDeactivateSubmit();
+      try {
+        await this.deactivateSite(this.state.site.siteId);
+      } catch {
+        if (deactivateForm.isConnected)
+          showFormSaveError(deactivateForm, t("admin.site.deactivateError"));
+      } finally {
+        delete deactivateForm.dataset.saving;
+        if (deactivateForm.isConnected) syncDeactivateSubmit();
+      }
     });
     this.querySelectorAll("[data-remove-manager-membership]").forEach(
       (button) => {
@@ -3600,13 +3695,9 @@ class AdminApp extends HTMLElement {
                       Last updated ${escapeHtml(formatTimestamp(site.updatedAt))}
                     </p>
                   </div>
-                  <button class="btn-danger" type="button" data-deactivate-site="${escapeHtml(site.siteId)}">
-                    Deactivate site
-                  </button>
                 </div>
                 ${siteSectionNav(site.siteId, activeSiteSection)}
                 ${siteSectionView(this.state, activeSiteSection, siteSubview)}
-                ${deactivateSiteDialog(site.name)}
                 ${discardChangesDialog()}
               </section>
             `
@@ -3648,8 +3739,11 @@ function myProfileView(state) {
     <form id="my-profile-form" class="site-details-form" data-dirty-form>
       ${formInput("firstName", t("siteAdmin.field.firstName"), profile.firstName, { required: true, maxlength: 100, autocomplete: "given-name" })}
       ${formInput("lastName", t("siteAdmin.field.lastName"), profile.lastName, { required: true, maxlength: 100, autocomplete: "family-name" })}
-      <wa-input type="email" label="${escapeHtml(t("siteAdmin.field.email"))}" value="${escapeHtml(profile.email)}" readonly></wa-input>
-      <p class="muted">${escapeHtml(t("admin.profile.emailHint"))}</p>
+      ${formInput("phone", t("siteAdmin.field.phone"), profile.phone, { required: true, type: "tel", autocomplete: "tel" })}
+      <dl class="profile-email">
+        <dt>${escapeHtml(t("siteAdmin.field.email"))}</dt>
+        <dd>${escapeHtml(profile.email)}</dd>
+      </dl>
       <button class="btn-primary" type="submit" data-save-button disabled>${escapeHtml(t("common.save"))}</button>
     </form>
     ${state.profileMessage ? `<p id="profile-message" class="success" role="status" tabindex="-1">${escapeHtml(state.profileMessage)}</p>` : ""}
@@ -3665,7 +3759,7 @@ function adminSettingsMenu(canManageUsers, canImportSites) {
     </button>
     <div class="admin-settings-menu" id="admin-settings-menu" popover role="menu" aria-label="Settings">
       <a href="/profile" data-route role="menuitem"><wa-icon name="user" aria-hidden="true"></wa-icon><span>${escapeHtml(t("admin.profile.title"))}</span></a>
-      ${canManageUsers ? '<a href="/administrators" data-route role="menuitem"><wa-icon name="user" aria-hidden="true"></wa-icon><span>User management</span></a>' : ""}
+      ${canManageUsers ? '<a href="/administrators" data-route role="menuitem"><wa-icon name="people-group" aria-hidden="true"></wa-icon><span>User management</span></a>' : ""}
       ${canImportSites ? '<a href="/sites/import" data-route role="menuitem"><wa-icon name="file-import" aria-hidden="true"></wa-icon><span>Import</span></a>' : ""}
       <button id="clear-token" type="button" role="menuitem"><wa-icon name="arrow-right-from-bracket" aria-hidden="true"></wa-icon><span>Sign out</span></button>
     </div>
@@ -3820,19 +3914,15 @@ function removeSiteManagerDialog(managerName) {
 }
 
 /** @param {string} siteName */
-function deactivateSiteDialog(siteName) {
-  return `<dialog id="deactivate-site-dialog" class="places-modal" aria-labelledby="deactivate-site-title" aria-describedby="deactivate-site-copy">
-    <form class="places-modal__card" method="dialog">
-      <div class="places-modal__copy">
-        <h2 class="places-modal__title" id="deactivate-site-title">Deactivate ${escapeHtml(siteName)}?</h2>
-        <p class="places-modal__text" id="deactivate-site-copy">This will remove the site from the Sites list and update its program and manager associations. The associated program and manager records will not be removed.</p>
-      </div>
-      <div class="places-modal__actions">
-        <button class="btn-danger" value="confirm">Deactivate site</button>
-        <button class="btn-outline" value="cancel">Cancel</button>
-      </div>
+function deactivateSiteSection(siteName) {
+  return `<section class="subsection" aria-labelledby="deactivate-site-title">
+    <h2 id="deactivate-site-title">${escapeHtml(t("admin.site.deactivate"))}</h2>
+    <p id="deactivate-site-copy" class="muted">${escapeHtml(t("admin.site.deactivateDescription"))}</p>
+    <form id="deactivate-site-form" class="inline-form destructive-confirmation" aria-describedby="deactivate-site-copy">
+      <wa-input name="confirmation" required autocomplete="off" label="${escapeHtml(t("admin.site.deactivateConfirmation", { name: siteName }))}"></wa-input>
+      <button class="btn-danger" type="submit" disabled>${escapeHtml(t("admin.site.deactivate"))}</button>
     </form>
-  </dialog>`;
+  </section>`;
 }
 
 /** @param {string} siteId @param {string} current */
@@ -3862,6 +3952,7 @@ function siteSectionView(state, section, subview = "") {
   if (section === "access") return siteAccessView(state);
   return `${siteEditor(state)}
     ${state.siteSaveMessage ? `<p id="site-save-status" class="success" role="status">${escapeHtml(state.siteSaveMessage)}</p>` : ""}
+    ${state.capabilities.createEntities ? deactivateSiteSection(site.name) : ""}
     `;
 }
 
@@ -3875,7 +3966,7 @@ function sitePerimeterView(state) {
   return `<section class="subsection" aria-labelledby="perimeter-title">
     <div>
       <h2 id="perimeter-title">Perimeter</h2>
-      <p class="muted">Plain language description of the perimeter that staff should check.</p>
+      <p class="muted">${escapeHtml(t("admin.perimeter.descriptionHint"))}</p>
     </div>
     <form id="site-perimeter-form" class="site-details-form" data-dirty-form>
       <wa-textarea class="perimeter-description" label="Perimeter description" name="perimeter" rows="8" maxlength="4000" value="${escapeHtml(site.perimeter || "")}" placeholder="e.g., &quot;16th Street between #1456 and #1756&quot;" required></wa-textarea>
@@ -3906,11 +3997,15 @@ function siteLettersView(state) {
   const site = state.site;
   const current = site?.complianceLetters?.current;
   const past = site?.complianceLetters?.past || [];
+  const emails = [...(state.letterEmailHistory || [])].sort((a, b) => a.number - b.number);
   return `<section class="subsection" aria-labelledby="letters-title">
     <h2 id="letters-title">Perimeter check letters</h2>
-    ${current ? `<div class="compliance-letter-preview">${current.previewUrl && current.url ? `<a class="compliance-letter-preview__thumbnail" href="${escapeHtml(current.url)}" target="_blank" rel="noopener" aria-label="Open ${escapeHtml(current.fileName || "the current perimeter check letter")}"><img src="${escapeHtml(current.previewUrl)}" alt="" loading="lazy" /></a>` : ""}<p>Current letter: ${current.url ? `<a href="${escapeHtml(current.url)}" target="_blank" rel="noopener">${escapeHtml(current.fileName || "Open PDF")}</a>` : escapeHtml(current.fileName || current.status || "Generating")}</p></div>` : `<p>${state.site?.letterState === "draft_pending" ? "The letter is being generated." : "No letter has been generated yet"}</p>`}
+    ${current ? `<div class="compliance-letter-preview">${current.previewUrl && current.url ? `<a class="compliance-letter-preview__thumbnail" href="${escapeHtml(current.url)}" target="_blank" rel="noopener" aria-label="Open ${escapeHtml(current.fileName || "the current perimeter check letter")}"><img src="${escapeHtml(current.previewUrl)}" alt="" loading="lazy" /></a>` : ""}<p>Current letter: ${current.url ? `<a href="${escapeHtml(current.url)}" target="_blank" rel="noopener">${escapeHtml(current.fileName || "Open PDF")}</a>` : escapeHtml(current.fileName || current.status || "Generating")}</p>${current.termsVersionId ? `<button type="button" class="btn-secondary" data-resend-letter>${escapeHtml(t("admin.letters.resend"))}</button>` : ""}</div>` : `<p>${state.site?.letterState === "draft_pending" ? "The letter is being generated." : "No letter has been generated yet"}</p>`}
     <h3>Past letters</h3>
     ${past.length ? `<ul>${past.map((letter) => `<li>${letter.url ? `<a href="${escapeHtml(letter.url)}" target="_blank" rel="noopener">${escapeHtml(letter.fileName || letter.createdAt || "Previous letter")}</a>` : escapeHtml(letter.fileName || letter.createdAt || "Previous letter")}</li>`).join("")}</ul>` : '<p class="muted">No past letters.</p>'}
+    <h3>${escapeHtml(t("admin.letters.emailHistory"))}</h3>
+    ${state.letterEmailUncertain ? `<p class="error" role="alert">${escapeHtml(t("admin.letters.deliveryUncertain"))}</p>` : ""}
+    ${emails.length ? `<div class="table-wrap"><table><thead><tr><th scope="col">#</th><th scope="col">${escapeHtml(t("admin.letters.letterLink"))}</th><th scope="col">${escapeHtml(t("admin.letters.sentTo"))}</th><th scope="col">${escapeHtml(t("admin.letters.dateSent"))}</th></tr></thead><tbody>${emails.map(email => `<tr><td>${email.number}</td><td><a href="${escapeHtml(email.letter.url)}" target="_blank" rel="noopener">${escapeHtml(email.letter.fileName)}</a></td><td>${(email.recipients || []).map(address => escapeHtml(address)).join("<br>") || "—"}</td><td>${escapeHtml(formatTimestamp(email.sentAt))}${email.provider === "local-preview" ? ` (${escapeHtml(t("admin.letters.localPreview"))})` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">${escapeHtml(t("admin.letters.noEmails"))}</p>`}
   </section>`;
 }
 
@@ -3959,7 +4054,7 @@ function siteAccessView(state) {
     }
     ${hasCurrentManager || state.availableSiteUsers.length ? "" : '<p class="muted">Assign a Lead Program and add Program staff before enrolling a Site Manager.</p>'}
     <h2>Enrollment links</h2>
-    <p class="muted">Links enroll one device for this Site only and expire after 15 minutes.</p>
+    <p class="muted">${escapeHtml(t("admin.enrollment.instructions"))}</p>
     ${managerEnrollmentActions(state.managerMemberships)}
     ${managerGrantList(state.managerGrants)}
     <h2>Devices</h2>
@@ -4093,10 +4188,11 @@ function removeManagerMembershipDialog(membership, siteName) {
 function managerGrantList(grants) {
   if (!grants.length)
     return '<p class="empty-state">No enrollment links issued.</p>';
-  return `<details class="table-disclosure"><summary>Enrollment link history (${escapeHtml(grants.length)})</summary><div class="table-wrap"><table><thead><tr><th>Recipient</th><th>Issued</th><th>Expires</th><th>Status</th><th>Link delivery</th><th>Security notice</th><th>Action</th></tr></thead><tbody>${grants
+  const hasCopyableLink = grants.some((grant) => Boolean(grant.enrollmentUrl));
+  return `<details class="table-disclosure site-enrollment-history"><summary>Enrollment link history (${escapeHtml(grants.length)})</summary><div class="table-wrap"><table><thead><tr><th>Recipient</th><th>Issued</th><th>Expires</th><th>Status</th><th>Link delivery</th><th>Security notice</th>${hasCopyableLink ? `<th>${escapeHtml(t("admin.enrollment.link"))}</th>` : ""}<th>Action</th></tr></thead><tbody>${grants
     .map(
       (grant) =>
-        `<tr><td><span class="enrollment-recipient"><span>${escapeHtml(grant.issuedTo)}</span>${grant.enrollmentUrl ? `<button class="btn-icon enrollment-copy" type="button" title="Copy enrollment link" aria-label="Copy enrollment link for ${escapeHtml(grant.issuedTo)}" data-copy-enrollment-url="${escapeHtml(grant.enrollmentUrl)}"><wa-icon name="copy" aria-hidden="true"></wa-icon></button><span class="visually-hidden" aria-live="polite" data-copy-status></span>` : ""}</span></td><td>${escapeHtml(formatTimestamp(grant.createdAt))}</td><td>${escapeHtml(formatTimestamp(grant.expiresAt))}</td><td>${escapeHtml(grant.status)}</td><td>${escapeHtml(grant.deliveryStatus || "queued")}</td><td>${escapeHtml(grant.securityNotificationStatus || (grant.status === "redeemed" ? "pending" : "Not applicable"))}</td><td>${grant.status === "pending" ? `<button class="btn-danger" type="button" data-cancel-manager-grant="${escapeHtml(grant.grantId)}">Cancel</button>` : "—"}</td></tr>`,
+        `<tr><td>${escapeHtml(grant.issuedTo)}</td><td>${escapeHtml(formatTimestamp(grant.createdAt))}</td><td>${escapeHtml(formatTimestamp(grant.expiresAt))}</td><td>${escapeHtml(grant.status)}</td><td>${escapeHtml(grant.deliveryStatus || "queued")}</td><td>${escapeHtml(grant.securityNotificationStatus || (grant.status === "redeemed" ? "pending" : "Not applicable"))}</td>${hasCopyableLink ? `<td>${grant.enrollmentUrl ? `<button class="btn-secondary enrollment-copy" type="button" data-copy-enrollment-url="${escapeHtml(grant.enrollmentUrl)}" aria-label="${escapeHtml(t("admin.enrollment.copyFor", { email: grant.issuedTo }))}">${escapeHtml(t("admin.enrollment.copy"))}</button><span class="visually-hidden" aria-live="polite" data-copy-status></span>` : "—"}</td>` : ""}<td>${grant.status === "pending" ? `<button class="btn-danger" type="button" data-cancel-manager-grant="${escapeHtml(grant.grantId)}">Cancel</button>` : "—"}</td></tr>`,
     )
     .join("")}</tbody></table></div></details>`;
 }
@@ -4123,7 +4219,11 @@ function directoryView(state, route) {
   const params = new URLSearchParams(window.location.search);
   const search = params.get("q") || "";
   const filterParams = {
-    manager: params.get("manager") || "",
+    manager: defaultProgramManagerFilter(
+      state.role,
+      state.profile,
+      params.get("manager"),
+    ),
     department: params.get("department") || "",
     system: params.get("system") || "",
   };
@@ -4162,6 +4262,46 @@ function directoryTab(kind, label, current, search) {
 /** @param {AdminState} state @param {{ manager: string, department: string, system: string }} selected */
 function siteDirectory(state, selected) {
   const sites = state.sites.filter((site) => site.status !== "inactive");
+  const managers = new Map(
+    state.programManagers.map((manager) => [
+      `id:${manager.userId}`,
+      {
+        value: `id:${manager.userId}`,
+        name:
+          manager.name ||
+          [manager.firstName, manager.lastName].filter(Boolean).join(" "),
+      },
+    ]),
+  );
+  if (state.role === "compliance-manager" && state.profile) {
+    const value = defaultProgramManagerFilter(state.role, state.profile, null);
+    managers.set(value, {
+      value,
+      name:
+        [state.profile.firstName, state.profile.lastName]
+          .filter(Boolean)
+          .join(" ") || state.profile.email,
+    });
+  }
+  // Keep legacy name-based filter links and sites without directory IDs usable.
+  for (const site of sites) {
+    const name = site.oversight?.cityProgramManager;
+    if (
+      name &&
+      ![...managers.values()].some((manager) => manager.name === name)
+    )
+      managers.set(name, { value: name, name });
+  }
+  if (
+    selected.manager &&
+    !selected.manager.startsWith("id:") &&
+    !managers.has(selected.manager)
+  ) {
+    managers.set(selected.manager, {
+      value: selected.manager,
+      name: selected.manager,
+    });
+  }
   const options = (field) =>
     [
       ...new Set(sites.map((site) => site.oversight?.[field]).filter(Boolean)),
@@ -4169,8 +4309,7 @@ function siteDirectory(state, selected) {
   const filtered = sites
     .filter(
       (site) =>
-        (!selected.manager ||
-          site.oversight?.cityProgramManager === selected.manager) &&
+        matchesProgramManager(site, selected.manager) &&
         (!selected.department ||
           site.oversight?.managingCityDepartment === selected.department) &&
         (!selected.system ||
@@ -4186,7 +4325,15 @@ function siteDirectory(state, selected) {
       <a class="btn-link" href="/sites/new" data-route>Add new site</a>
     </div>
     <form id="site-directory-filters" class="directory-filters" aria-label="Filter sites">
-      ${filterSelect("manager", "All program managers", options("cityProgramManager"), selected.manager)}
+      <wa-select name="manager" aria-label="All program managers" placeholder="All program managers" value="${escapeHtml(selected.manager)}" size="s" pill><wa-option value="">All program managers</wa-option>${[
+        ...managers.values(),
+      ]
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map(
+          (manager) =>
+            `<wa-option value="${escapeHtml(manager.value)}">${escapeHtml(manager.name)}</wa-option>`,
+        )
+        .join("")}</wa-select>
       ${filterSelect("department", "All departments", options("managingCityDepartment"), selected.department)}
       ${filterSelect("system", "All systems of care", options("managingSystemOfCare"), selected.system)}
     </form>
@@ -4252,7 +4399,7 @@ function siteManagerDirectory(state, selected, search) {
   return `<section class="site-directory" aria-labelledby="managers-title">
     <div class="panel__head">
       <div><h2 id="managers-title">Site managers</h2><p class="muted">${managers.length} ${managers.length === 1 ? "manager" : "managers"}</p></div>
-      <a class="btn-link" href="/managers/new" data-route>Add new manager</a>
+      <a class="btn-link" href="/managers/new" data-route>${escapeHtml(t("admin.managers.addSiteManager"))}</a>
     </div>
     <form id="manager-directory-filters" class="directory-filters" aria-label="Filter site managers">
       ${objectFilterSelect("program", "All programs", programs, selected.program, "programId", "name")}
@@ -4434,6 +4581,9 @@ function importFailureToast(notice) {
 function siteImportHelpDialog() {
   return `<dialog id="site-import-help-dialog" class="places-modal" aria-labelledby="site-import-help-title">
     <form class="places-modal__card import-help" method="dialog">
+      <div class="import-help__close-row">
+        <button class="btn-icon" type="submit" value="close" aria-label="${escapeHtml(t("common.close"))}"><wa-icon name="xmark" aria-hidden="true"></wa-icon></button>
+      </div>
       <div class="places-modal__copy">
         <h2 class="places-modal__title" id="site-import-help-title">CSV upload requirements</h2>
         <div class="import-help__body">
@@ -4445,7 +4595,6 @@ function siteImportHelpDialog() {
           <p>Department names must match an existing department or one of the supported DPH and HSH names. Unknown names are held for manual resolution.</p>
         </div>
       </div>
-      <div class="places-modal__actions"><button class="btn-primary" value="close">Close</button></div>
     </form>
   </dialog>`;
 }
@@ -5174,7 +5323,7 @@ function addressEditor(address, options = {}) {
       </wa-input>
       <ul class="address-suggestions" id="address-suggestions" data-address-results></ul>
       <p class="visually-hidden" aria-live="polite" data-address-status></p>
-      <button class="btn-link address-manual" type="button" aria-controls="manual-address-fields" aria-expanded="false" data-enter-address-manually>Enter address manually</button>
+      <button class="btn-neutral-filled address-manual" type="button" aria-controls="manual-address-fields" aria-expanded="false" data-enter-address-manually>Enter address manually</button>
       <p class="field-help">Address suggestions powered by <a href="https://photon.komoot.io/" target="_blank" rel="noopener noreferrer">Photon</a> and © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a>.</p>
     </div>
     <div class="form-grid form-grid--one address-fields" id="manual-address-fields" data-address-fields hidden>
@@ -5242,7 +5391,7 @@ function oversightCreationDialogs(state) {
   return `<dialog id="choose-compliance-manager-dialog" class="site-unsaved-dialog" aria-labelledby="choose-compliance-manager-title">
     <div class="site-unsaved-dialog__card compliance-manager-picker">
       <header class="compliance-manager-picker__header">
-        <h2 id="choose-compliance-manager-title">Add program manager</h2>
+        <h2 id="choose-compliance-manager-title">${escapeHtml(t("admin.oversight.addCityProgramManager"))}</h2>
         <button class="btn-icon" type="button" data-close-dialog aria-label="Close add program manager dialog"><wa-icon name="xmark" aria-hidden="true"></wa-icon></button>
       </header>
       <wa-input id="compliance-manager-search" type="search" label="Search program managers" placeholder="Search by name, email, or department" autocomplete="off" with-clear></wa-input>
@@ -5269,6 +5418,7 @@ function oversightCreationDialogs(state) {
       ${formInput("manager-extension", "Extension", "", { autocomplete: "tel-extension" })}
       <wa-select name="manager-department" label="Department" required placeholder="Choose department">
         ${departments.map((item) => `<wa-option value="${escapeHtml(item.departmentId || item.name)}">${escapeHtml(item.name)}</wa-option>`).join("")}
+        <wa-option value="__add_department__" data-add-option>${escapeHtml(t("admin.oversight.addDepartment"))}</wa-option>
       </wa-select>
       <div class="site-unsaved-dialog__actions">
         <button class="btn-secondary" type="button" data-close-dialog>Cancel</button>
@@ -5303,7 +5453,7 @@ function complianceManagerAssignmentRow(manager, canManageAssignments) {
         : "";
   return `<li class="compliance-manager-assignment" data-manager-id="${escapeHtml(managerId)}">
     <input type="hidden" name="compliance-manager-id" value="${escapeHtml(managerId)}" />
-    <span class="compliance-manager-assignment__identity"><strong>${escapeHtml(name)}</strong>${email ? `<span>${escapeHtml(email)}</span>` : ""}${accountStatus === "not-invited" ? `<span class="compliance-manager-assignment__warning"><wa-icon name="triangle-exclamation" aria-hidden="true"></wa-icon><span>${escapeHtml(name)} needs to be invited to join the app.</span></span>${canManageAssignments ? `<button class="btn-text" type="button" data-invite-compliance-manager data-manager-id="${escapeHtml(managerId)}">Send invite</button>` : ""}` : statusLabel ? `<span class="muted">${escapeHtml(statusLabel)}</span>` : ""}</span>
+    <span class="compliance-manager-assignment__identity"><strong>${escapeHtml(name)}</strong>${email ? `<span>${escapeHtml(email)}</span>` : ""}${accountStatus === "not-invited" ? `<span class="compliance-manager-assignment__warning">${escapeHtml(t("admin.oversight.invitationNeeded", { name }))}</span>${canManageAssignments ? `<button class="btn-text" type="button" data-invite-compliance-manager data-manager-id="${escapeHtml(managerId)}">Send invite</button>` : ""}` : statusLabel ? `<span class="muted">${escapeHtml(statusLabel)}</span>` : ""}</span>
     ${canManageAssignments ? `<button class="btn-icon" type="button" data-remove-compliance-manager aria-label="Remove ${escapeHtml(name)} from this site"><wa-icon name="xmark" aria-hidden="true"></wa-icon></button>` : ""}
   </li>`;
 }
@@ -5329,7 +5479,7 @@ function siteOversightView(state) {
   ]);
   return `<form id="site-oversight-form" class="site-details-form" data-dirty-form>
     <fieldset><legend>Oversight</legend><div class="form-grid form-grid--one">
-      <fieldset class="compliance-manager-assignments"><legend>Program managers</legend>
+      <fieldset class="compliance-manager-assignments"><legend>${escapeHtml(t("admin.oversight.cityProgramManagers"))}</legend>
         <ul class="compliance-manager-assignment-list" data-compliance-manager-list>
           ${managers
             .filter((manager) => assignedManagerIds.has(manager.userId))
@@ -5339,7 +5489,7 @@ function siteOversightView(state) {
             .join("")}
         </ul>
         ${assignedManagerIds.size ? "" : '<p class="muted" data-no-compliance-managers>No program managers assigned.</p>'}
-        ${canManageAssignments ? '<button class="btn-secondary" id="add-compliance-manager" type="button">Add program manager</button>' : ""}
+        ${canManageAssignments ? `<button class="btn-secondary" id="add-compliance-manager" type="button">${escapeHtml(t("admin.oversight.addCityProgramManager"))}</button>` : ""}
       </fieldset>
       <wa-select name="managing-city-department" label="Managing City department" placeholder="Choose department">
         ${departments.map((item) => `<wa-option value="${escapeHtml(item.name)}" ${department === item.name ? "selected" : ""}>${escapeHtml(item.name)}</wa-option>`).join("")}
@@ -5430,19 +5580,22 @@ function newChecksPeriodDialog(state) {
           ${reasons.map(([value, label]) => `<wa-checkbox name="terms-reason" value="${value}" ${mappedReason === value ? "checked" : ""}>${escapeHtml(label)}</wa-checkbox>`).join("")}
         </fieldset>
         <div class="form-grid form-grid--one compliance-period-fields">
-          <wa-select name="terms-site-manager-id" label="Site manager for this letter" placeholder="Choose a Site manager" required>
+          <wa-select name="terms-site-manager-id" label="Site manager for this letter" placeholder="Choose a Site manager" hint="${escapeHtml(t("admin.compliance.letterRecipientsHint"))}" required>
             ${state.assignedUsers.map((manager) => `<wa-option value="${escapeHtml(manager.userId)}" ${state.assignedUsers.length === 1 ? "selected" : ""}>${escapeHtml(`${manager.firstName || ""} ${manager.lastName || ""}`.trim())}</wa-option>`).join("")}
           </wa-select>
           <wa-input name="terms-expiry" type="date" label="Define when the check requirement will end" data-expiry-field hidden></wa-input>
           <wa-select name="terms-tier" label="New corrective-action tier" placeholder="Choose a tier" data-tier-field hidden>
             ${[1, 2, 3, 4].map((tier) => `<wa-option value="${tier}">Tier ${tier}</wa-option>`).join("")}
           </wa-select>
-          <wa-number-input name="terms-checks-per-day" label="Required checks per day" min="1" max="100" step="1" value="3" required></wa-number-input>
+          <wa-number-input name="terms-checks-per-day" label="Required checks per day" min="1" max="100" step="1" value="3" required>
+            <wa-icon slot="decrement-icon" name="minus" aria-hidden="true"></wa-icon>
+            <wa-icon slot="increment-icon" name="plus" aria-hidden="true"></wa-icon>
+          </wa-number-input>
         </div>
         <p class="error site-details-form__message compliance-period-error" role="alert" data-form-save-error hidden></p>
       </div>
       <div class="places-modal__actions">
-        <button class="btn-primary" type="submit" data-save-button>Save and generate letter</button>
+        <button class="btn-primary" type="submit" data-save-button>${escapeHtml(t("admin.letters.saveSend"))}</button>
         <button class="btn-secondary" type="button" data-cancel-checks-period>Cancel</button>
       </div>
     </form>
@@ -5667,6 +5820,7 @@ function showFormSaveError(form, message) {
   }
   error.textContent = message;
   error.hidden = false;
+  return error;
 }
 
 /**
@@ -5829,6 +5983,10 @@ function siteSaveErrorMessage(error) {
 
 function compliancePeriodErrorMessage(error) {
   const code = error instanceof Error ? error.message : "";
+  if (code === "generator_contact_required")
+    return t("admin.compliance.generatorContactRequired", { profile: t("admin.profile.title") });
+  if (code === "generator_department_required")
+    return t("admin.compliance.generatorDepartmentRequired");
   if (code === "expiry_required")
     return "Enter the last day checks are required for the selected reasons.";
   if (code === "invalid_tier")

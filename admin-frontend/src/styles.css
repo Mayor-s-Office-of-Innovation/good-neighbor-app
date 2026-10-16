@@ -71,7 +71,7 @@ body {
   height: 2.75rem;
   place-items: center;
   border: 1px solid var(--line);
-  border-radius: 0.75rem;
+  border-radius: var(--wa-border-radius-pill, 9999px);
   background: transparent;
   color: var(--text);
   cursor: pointer;
@@ -111,7 +111,7 @@ body {
   margin: 0;
   padding: 0.75rem 1rem;
   border: 0;
-  border-radius: 0.5rem;
+  border-radius: var(--wa-border-radius-pill, 9999px);
   background: transparent;
   color: var(--text);
   box-shadow: none;
@@ -552,7 +552,7 @@ h3 {
 .site-unsaved-dialog__actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 16px;
   margin-top: 20px;
 }
 
@@ -590,10 +590,6 @@ h3 {
   width: min(400px, calc(100vw - 32px));
 }
 
-.site-admin-discard-dialog .places-modal__actions {
-  gap: 8px;
-}
-
 .places-modal__copy {
   display: flex;
   flex-direction: column;
@@ -619,13 +615,13 @@ h3 {
 .places-modal__actions {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 16px;
 }
 
 .places-modal__actions > button {
   width: 100%;
   min-height: 46px;
-  border-radius: 999px;
+  border-radius: var(--wa-border-radius-pill, 9999px);
   font-weight: 700;
 }
 
@@ -671,6 +667,22 @@ h3 {
   width: min(100%, 18rem);
 }
 
+.compliance-period-fields wa-select[data-tier-field]::part(form-control-input) {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.compliance-period-fields wa-select[data-tier-field]::part(display-input) {
+  width: 12ch;
+}
+
+@supports (field-sizing: content) {
+  .compliance-period-fields wa-select[data-tier-field]::part(display-input) {
+    width: auto;
+    field-sizing: content;
+  }
+}
+
 .compliance-period-dialog .compliance-period-fields wa-number-input {
   width: 100%;
 }
@@ -687,7 +699,8 @@ h3 {
   text-align: left;
 }
 
-.compliance-period-error {
+.compliance-period-error.site-details-form__message {
+  margin-block-start: 16px;
   text-align: left;
 }
 
@@ -736,7 +749,7 @@ h3 {
   padding: 0;
   place-items: center;
   border: 0;
-  border-radius: 50%;
+  border-radius: var(--wa-border-radius-pill, 9999px);
   background: transparent;
   color: var(--muted);
   font: inherit;
@@ -752,6 +765,7 @@ h3 {
   color: var(--text);
 }
 
+.site-enrollment-history td,
 .provider-enrollment-history td {
   vertical-align: middle;
 }
@@ -850,7 +864,7 @@ h3 {
 
 .file-picker__button {
   padding: 10px 18px;
-  border-radius: var(--wa-form-control-border-radius);
+  border-radius: var(--wa-border-radius-pill, 9999px);
   background: var(--surface-subtle);
   color: var(--text);
   font-weight: 600;
@@ -878,13 +892,23 @@ h3 {
 }
 
 .import-help {
+  gap: 8px;
   max-height: min(760px, calc(100vh - 32px));
   overflow: auto;
+}
+
+#site-import-help-dialog {
+  width: min(760px, calc(100vw - 32px));
 }
 
 .import-help .places-modal__copy {
   align-items: stretch;
   text-align: left;
+}
+
+.import-help__close-row {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .import-help__body {
@@ -1036,22 +1060,15 @@ h3 {
 }
 
 .compliance-manager-assignment__warning {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
+  display: inline-block;
+  width: fit-content;
   margin-block: 8px 6px;
   padding: 8px 10px;
-  border-inline-start: 3px solid var(--wa-color-warning-border-loud);
   border-radius: var(--wa-border-radius-s);
-  background: var(--wa-color-warning-fill-quiet);
-  color: var(--wa-color-warning-on-quiet);
+  background: var(--wa-color-warning-fill-loud);
+  color: var(--wa-color-warning-on-loud);
   font-size: var(--wa-font-size-s);
   line-height: var(--wa-line-height-normal);
-}
-
-.compliance-manager-assignment__warning wa-icon {
-  flex: 0 0 auto;
-  margin-block-start: 0.15em;
 }
 
 .compliance-manager-assignment .btn-text {
@@ -1133,7 +1150,7 @@ h3 {
   gap: 12px;
   padding: 10px 12px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--wa-border-radius-pill, 9999px);
   background: var(--surface);
   color: var(--text);
   font: inherit;
@@ -1234,8 +1251,9 @@ h3 {
 
 .address-suggestions button {
   width: 100%;
+  justify-content: flex-start;
   border: 0;
-  border-radius: 0;
+  border-radius: var(--wa-border-radius-pill, 9999px);
   text-align: left;
 }
 
@@ -1313,7 +1331,7 @@ button,
 .btn-danger {
   min-height: 40px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--wa-border-radius-pill, 9999px);
   background: var(--surface);
   color: var(--text);
   font: inherit;
@@ -1417,12 +1435,28 @@ button:disabled,
   display: inline-flex;
   align-items: center;
   min-height: 40px;
-  border-radius: 6px;
+  border-radius: var(--wa-border-radius-pill, 9999px);
   background: var(--ink);
   color: var(--on-ink);
   font-weight: 650;
   padding: 8px 12px;
   text-decoration: none;
+}
+
+.btn-neutral-filled {
+  background: var(--wa-color-neutral-fill-normal);
+  color: var(--wa-color-neutral-on-normal);
+  border-color: transparent;
+}
+
+@media (hover: hover) {
+  .btn-neutral-filled:not(:disabled):hover {
+    background: color-mix(in oklab, var(--wa-color-neutral-fill-normal), var(--wa-color-mix-hover));
+  }
+}
+
+.btn-neutral-filled:not(:disabled):active {
+  background: color-mix(in oklab, var(--wa-color-neutral-fill-normal), var(--wa-color-mix-active));
 }
 
 .column-list {
@@ -1800,4 +1834,13 @@ tbody tr:last-child td {
   *::after {
     scroll-behavior: auto !important;
   }
+}
+
+.profile-email {
+  margin: 0;
+}
+
+.profile-email dd {
+  margin: 0.5rem 0 0;
+  overflow-wrap: anywhere;
 }

@@ -188,7 +188,8 @@ export async function ensureLocalInfra() {
   }
 
   await ensureLocalTableIndexes(ddb, tableName);
-  await seedLocalSiteCodes(docDdb, tableName);
+  if (process.env.LOCAL_SITE_ADMIN_SEED !== "true")
+    await seedLocalSiteCodes(docDdb, tableName);
 
   // SQS: derive the queue name from the configured URL's last path segment.
   const queueName = queueUrl.split("/").filter(Boolean).pop();

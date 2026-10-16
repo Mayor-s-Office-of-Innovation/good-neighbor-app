@@ -1,3 +1,5 @@
+import { complianceLetterEmail } from "../domain/compliance-letter-email.js";
+import { ownProfile } from "./admin-users.js";
 import {
   GetCommand,
   QueryCommand,
@@ -281,7 +283,8 @@ export const createSiteTerms = (event) =>
       !siteManager ||
       siteManager.status === "inactive" ||
       !siteManager.firstName ||
-      !siteManager.lastName
+      !siteManager.lastName ||
+      !siteManager.email
     ) {
       return jsonResponse(409, { error: "site_manager_required" });
     }
@@ -365,6 +368,12 @@ export const createSiteTerms = (event) =>
       status: termsStatus(effectiveStart, expiresOnExclusive),
       createdAt: now,
       createdBy: actor,
+      email: await complianceLetterEmail(
+        site,
+        siteManager,
+        generator,
+        String(generatorDepartment),
+      ),
       letterInputs: {
         confirmedOn: effectiveStart,
         siteName: String(site.name),
@@ -534,11 +543,27 @@ export const endSiteTerms = (event) =>
                 TableName: tableName,
                 Key: { pk: `SITE#${siteId}`, sk: "#META" },
                 UpdateExpression:
-                  "SET compliance = :compliance, complianceTermsUpdatedAt = :now, updatedAt = :now",
+                  "SET compliance = :compliance, complianceTermsUpdatedAt = :now, updatedAt = :now, complianceLetters = :letters, letterState = :archived REMOVE latestComplianceTermsVersionId",
                 ConditionExpression:
-                  "latestComplianceTermsVersionId = :version",
+                  "latestComplianceTermsVersionId = :version AND " +
+                  (siteResult.Item.complianceLetters
+                    ? "complianceLetters = :observedLetters"
+                    : "attribute_not_exists(complianceLetters)"),
                 ExpressionAttributeValues: {
                   ":compliance": { perimeterChecksRequired: false },
+                  ":letters": {
+                    current: null,
+                    past: [
+                      ...(siteResult.Item.complianceLetters?.current
+                        ? [siteResult.Item.complianceLetters.current]
+                        : []),
+                      ...(siteResult.Item.complianceLetters?.past || []),
+                    ],
+                  },
+                  ":archived": "archived",
+                  ...(siteResult.Item.complianceLetters
+                    ? { ":observedLetters": siteResult.Item.complianceLetters }
+                    : {}),
                   ":now": now,
                   ":version": active.termsVersionId,
                 },
@@ -888,7 +913,17 @@ function primaryContactUpdate(tableName, siteId, user, now) {
  */
 async function resolveLetterGenerator(event, siteId, tableName) {
   const principal = adminPrincipal(event);
-  const email = (principal.email || principal.username)
+  const current = await ownProfile(event);
+  if (current.error) {
+    return {
+      status: current.error.statusCode,
+      error: "compliance_manager_profile_required",
+    };
+  }
+  principal.firstName = current.profile.firstName;
+  principal.lastName = current.profile.lastName;
+  principal.phone = current.profile.phone;
+  const email = (current.profile.email || principal.username)
     .trim()
     .toLocaleLowerCase("en-US");
   if (
@@ -1017,3 +1052,95 @@ function termsStatus(start, expiry) {
   if (expiry && expiry <= today) return "expired";
   return "active";
 }
+
+/** Queue an explicit resend of the saved message and PDF; request IDs make retries safe.
+ * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
+ */
+export const resendSiteLetter = (event) =>
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
+    const siteId = event.pathParameters?.siteId ?? "";
+    const requestId = String(body.requestId || "");
+    if (!/^[a-f0-9-]{36}$/.test(requestId))
+      return jsonResponse(400, { error: "invalid_request_id" });
+    const TableName = getDynamoTableName();
+    const site = (
+      await ddb.send(
+        new GetCommand({
+          TableName,
+          Key: { pk: `SITE#${siteId}`, sk: "#META" },
+          ConsistentRead: true,
+        }),
+      )
+    ).Item;
+    const letter = site?.complianceLetters?.current;
+    if (!letter?.termsVersionId || site?.status === "inactive")
+      return jsonResponse(409, { error: "current_letter_required" });
+    const term = (
+      await ddb.send(
+        new GetCommand({
+          TableName,
+          Key: {
+            pk: `SITE#${siteId}`,
+            sk: `COMPLIANCE_TERMS#${letter.effectiveStart}#${letter.termsVersionId}`,
+          },
+          ConsistentRead: true,
+        }),
+      )
+    ).Item;
+    if (!term?.email)
+      return jsonResponse(409, { error: "letter_email_unavailable" });
+    const job = {
+      pk: `SITE#${siteId}`,
+      sk: `LETTER_JOB#RESEND#${requestId}`,
+      type: "complianceLetterGenerationJob",
+      entityType: "COMPLIANCE_LETTER_OUTBOX",
+      siteId,
+      letterJobId: requestId,
+      status: "pending",
+      createdAt: new Date().toISOString(),
+      createdBy: adminPrincipal(event).subject,
+      resend: true,
+      email: term.email,
+      letter,
+    };
+    try {
+      await ddb.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            {
+              ConditionCheck: {
+                TableName,
+                Key: { pk: job.pk, sk: "#META" },
+                ConditionExpression: "complianceLetters.#current.s3Key = :key",
+                ExpressionAttributeNames: { "#current": "current" },
+                ExpressionAttributeValues: { ":key": letter.s3Key },
+              },
+            },
+            {
+              Put: {
+                TableName,
+                Item: job,
+                ConditionExpression: "attribute_not_exists(pk)",
+              },
+            },
+          ],
+        }),
+      );
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        error.name !== "TransactionCanceledException"
+      )
+        throw error;
+      const existing = await ddb.send(
+        new GetCommand({
+          TableName,
+          Key: { pk: job.pk, sk: job.sk },
+          ConsistentRead: true,
+        }),
+      );
+      if (!existing.Item)
+        return jsonResponse(409, { error: "current_letter_changed" });
+    }
+    return jsonResponse(202, { queued: true, jobId: requestId });
+  });

@@ -1,3 +1,4 @@
+import { seedLocalSiteAdmin } from "./lib/site-admin-seed.mjs";
 import {
   listCareWork,
   createCareWork,
@@ -158,6 +159,7 @@ import {
   assignSiteUser,
   createSiteTerms,
   endSiteTerms,
+  resendSiteLetter,
   getSitePerimeter,
   listSiteTerms,
   putSitePerimeter,
@@ -428,6 +430,7 @@ const routes = [
   route("GET", "/admin/v1/sites/{siteId}/terms", listSiteTerms),
   route("POST", "/admin/v1/sites/{siteId}/terms", createSiteTerms),
   route("POST", "/admin/v1/sites/{siteId}/terms:close", endSiteTerms),
+  route("POST", "/admin/v1/sites/{siteId}/letter:resend", resendSiteLetter),
   route("GET", "/admin/v1/sites/{siteId}/perimeter", getSitePerimeter),
   route("PUT", "/admin/v1/sites/{siteId}/perimeter", putSitePerimeter),
   route(
@@ -703,6 +706,7 @@ const server = createServer(async (req, res) => {
 
 async function main() {
   await ensureLocalInfra();
+  if (process.env.LOCAL_SITE_ADMIN_SEED === "true") await seedLocalSiteAdmin();
   server.listen(PORT, "127.0.0.1", () => {
     console.log(`[api] listening on http://localhost:${PORT}`);
     console.log(

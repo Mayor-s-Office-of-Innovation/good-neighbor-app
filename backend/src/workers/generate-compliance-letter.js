@@ -1,3 +1,4 @@
+import { deliverComplianceLetter } from "./deliver-compliance-letter.js";
 import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { getComplianceLetterBucket, getConfig } from "../config.js";
 import {
@@ -19,6 +20,10 @@ export const handler = async (event) => {
       }),
     );
     if (!job.Item || job.Item.status === "completed") continue;
+    if (job.Item.resend) {
+      await deliverComplianceLetter(job.Item, job.Item.email, job.Item.letter);
+      continue;
+    }
     const termResult = await ddb.send(
       new GetCommand({
         TableName: getConfig().dynamoTable,
@@ -35,6 +40,14 @@ export const handler = async (event) => {
         ConsistentRead: true,
       }),
     );
+    if (job.Item.receipt && term.email) {
+      await deliverComplianceLetter(job.Item, term.email, {
+        s3Key: `compliance-letters/${message.siteId}/${term.termsVersionId}.pdf`,
+        fileName: `perimeter-check-requirement-${term.effectiveStart}.pdf`,
+        termsVersionId: term.termsVersionId,
+      });
+      continue;
+    }
     if (
       siteResult.Item?.latestComplianceTermsVersionId !== term.termsVersionId
     ) {
@@ -84,6 +97,10 @@ export const handler = async (event) => {
     const saved = await saveCurrentLetter(message.siteId, term, letter);
     if (!saved) {
       await markJobSuperseded(message.jobPk, message.jobSk);
+      continue;
+    }
+    if (term.email) {
+      await deliverComplianceLetter(job.Item, term.email, letter);
       continue;
     }
     await ddb.send(

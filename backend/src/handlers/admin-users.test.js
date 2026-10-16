@@ -78,6 +78,7 @@ describe("My profile", () => {
     expect(JSON.parse(String(response.body)).profile).toEqual({
       firstName: "Current",
       lastName: "Name",
+      phone: "",
       email: "caller@example.org",
       role: "compliance-supervisor",
       directoryUserId: "manager-1",
@@ -168,6 +169,62 @@ describe("My profile", () => {
       const response = await call(
         updateMyProfile,
         event({ firstName: "A", lastName: "B", [field]: "other" }),
+      );
+      expect(response.statusCode).toBe(400);
+      expect(cognitoSend).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["compliance-manager", "compliance-supervisor"])(
+    "updates the contact phone for %s",
+    async (role) => {
+      cognitoSend
+        .mockResolvedValueOnce(user("caller@example.org", "caller-sub"))
+        .mockResolvedValue({});
+      ddbSend.mockImplementation(async (command) =>
+        command instanceof GetCommand && role === "compliance-manager"
+          ? {
+              Item: {
+                pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+                sk: "MANAGER#caller@example.org",
+                cognitoSubject: "caller-sub",
+                userId: "manager-1",
+                status: "active",
+              },
+            }
+          : {},
+      );
+      const request = event({
+        firstName: "A",
+        lastName: "B",
+        phone: "(415) 555-1234",
+      });
+      request.requestContext.authorizer.jwt.claims["cognito:groups"] = role;
+      const response = await call(updateMyProfile, request);
+      expect(response.statusCode).toBe(200);
+      expect(JSON.parse(String(response.body)).profile.phone).toBe(
+        "+14155551234",
+      );
+      expect(cognitoSend.mock.calls[1][0].input.UserAttributes).toContainEqual({
+        Name: "phone_number",
+        Value: "+14155551234",
+      });
+      expect(
+        ddbSend.mock.calls.some(
+          ([command]) =>
+            command.input.ExpressionAttributeValues?.[":phone"] ===
+            "+14155551234",
+        ),
+      ).toBe(role === "compliance-manager");
+    },
+  );
+
+  it.each(["", "123", "not a phone"])(
+    "rejects invalid phone %s before writing",
+    async (phone) => {
+      const response = await call(
+        updateMyProfile,
+        event({ firstName: "A", lastName: "B", phone }),
       );
       expect(response.statusCode).toBe(400);
       expect(cognitoSend).not.toHaveBeenCalled();

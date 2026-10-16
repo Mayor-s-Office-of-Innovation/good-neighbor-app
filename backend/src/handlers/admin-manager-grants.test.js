@@ -57,7 +57,7 @@ describe("City-issued Manager enrollment grants", () => {
     expect(String(response.body)).not.toContain("secret-verifier");
   });
 
-  it("creates a 15-minute single-Site grant and emails its one-time link", async () => {
+  it("creates a 24-hour single-Site grant and emails its one-time link", async () => {
     send
       .mockResolvedValueOnce({ Item: { siteId: "site-1", name: "Site One" } })
       .mockResolvedValueOnce({
@@ -90,12 +90,13 @@ describe("City-issued Manager enrollment grants", () => {
     });
     expect(
       new Date(grant.expiresAt).getTime() - new Date(grant.createdAt).getTime(),
-    ).toBe(15 * 60 * 1000);
+    ).toBe(24 * 60 * 60 * 1000);
     expect(transaction.input.TransactItems[1].Put.Item.pk).toMatch(
       /^ENROLLMENT_TOKEN#[a-f0-9]{64}$/,
     );
     expect(sendManagerEnrollmentEmail).toHaveBeenCalledOnce();
     const email = sendManagerEnrollmentEmail.mock.calls[0][0];
+    expect(email.expiresAt).toBe(grant.expiresAt);
     expect(email.enrollmentUrl).toContain("#enrollment_grant=");
     expect(email.enrollmentUrl).toContain("enrollment_token=");
     expect(transaction.input.TransactItems[3].Put.Item.sk).toBe(

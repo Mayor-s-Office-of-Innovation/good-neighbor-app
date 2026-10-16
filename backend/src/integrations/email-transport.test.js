@@ -72,6 +72,54 @@ describe("sendEmail", () => {
     expect(createTransport).not.toHaveBeenCalled();
   });
 
+  it.each(["ses", "smtp"])(
+    "includes CC recipients and PDF attachments through %s",
+    async (provider) => {
+      vi.stubEnv("EMAIL_TRANSPORT", provider);
+      vi.stubEnv("MAIL_MANAGER_SMTP_HOST", "mail-manager.example");
+      vi.stubEnv("MAIL_MANAGER_SMTP_USERNAME", "inp-example");
+      vi.stubEnv(
+        "MAIL_MANAGER_SMTP_SECRET_ARN",
+        "arn:aws:secretsmanager:secret",
+      );
+      secretSend.mockResolvedValue({
+        SecretString: JSON.stringify({ password: "test" }),
+      });
+      const content = Buffer.from("PDF");
+      await sendEmail({
+        ...email,
+        cc: ["copy@example.org"],
+        attachments: [
+          { filename: "letter.pdf", content, contentType: "application/pdf" },
+        ],
+      });
+      if (provider === "smtp") {
+        expect(sendMail).toHaveBeenCalledWith(
+          expect.objectContaining({
+            cc: ["copy@example.org"],
+            envelope: { from: email.from, to: [email.to, "copy@example.org"] },
+            attachments: [
+              {
+                filename: "letter.pdf",
+                content,
+                contentType: "application/pdf",
+              },
+            ],
+          }),
+        );
+      } else {
+        expect(sesSend.mock.calls[0][0].input).toMatchObject({
+          Destination: { CcAddresses: ["copy@example.org"] },
+          Content: {
+            Simple: {
+              Attachments: [{ FileName: "letter.pdf", RawContent: content }],
+            },
+          },
+        });
+      }
+    },
+  );
+
   it("uses authenticated STARTTLS and caches the ingress credential", async () => {
     vi.stubEnv("EMAIL_TRANSPORT", "smtp");
     vi.stubEnv("MAIL_MANAGER_SMTP_HOST", "mail-manager.example");

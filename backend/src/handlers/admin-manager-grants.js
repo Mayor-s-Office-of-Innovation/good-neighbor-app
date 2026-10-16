@@ -12,7 +12,7 @@ import { jsonResponse } from "../http.js";
 import { sendManagerEnrollmentEmail } from "../integrations/email.js";
 import { adminOnly } from "../lib/admin-auth.js";
 
-const MANAGER_GRANT_TTL_MS = 15 * 60 * 1000;
+const MANAGER_GRANT_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const listManagerGrants = (event) =>
