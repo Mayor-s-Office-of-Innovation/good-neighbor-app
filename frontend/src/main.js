@@ -20,13 +20,19 @@
   Web Awesome Figma kit.
 
   (No service worker ships in the MVP — real offline/precaching is a later pass; see
-  vite.config.js and memory step2-gnp-port-scope.)
+  vite.config.js and memory step2-gnp-port-scope. The manifest + icons in /public do
+  ship, so the app is installable where the browser allows it without one.)
 */
 // Error capture installs FIRST — this is the first import in the module graph,
 // and the module self-installs its `error` + `unhandledrejection` listeners at
 // evaluation time, so exceptions while loading Web Awesome or any later import
 // are still captured. No-ops under tests and when `gnp:errors=off`.
 import "./services/error-report.js";
+
+// Hold the browser's install prompt (beforeinstallprompt fires once, early)
+// so <install-prompt> can offer it later — see services/install-prompt.js.
+import { captureInstallPrompt } from "./services/install-prompt.js";
+captureInstallPrompt();
 
 import { registerIconLibrary } from "@awesome.me/webawesome/dist/components/icon/library.js";
 
