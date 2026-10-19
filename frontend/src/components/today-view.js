@@ -1637,7 +1637,13 @@ class TodayView extends HTMLElement {
     } else if (action === "delete") {
       this._openDeleteProblem(problem);
     } else if (action === "edit") {
-      this._openEditProblem(problem);
+      if (task && btn instanceof HTMLElement) {
+        void import("./task-details-dialog.js").then(({ openTaskDetails }) =>
+          openTaskDetails(task, problem, btn, () => this.connectedCallback()),
+        );
+      } else {
+        this._openEditProblem(problem);
+      }
     } else if (action === "resolve") {
       if (
         btn.getAttribute("role") === "checkbox" ||
