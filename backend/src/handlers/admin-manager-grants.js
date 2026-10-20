@@ -91,6 +91,31 @@ export const createManagerGrant = (event) =>
     if (!membership || membership.status !== "active") {
       return jsonResponse(404, { error: "manager_membership_not_found" });
     }
+    // Staff records are authoritative for recipients; membership snapshots may predate an email edit.
+    let recipientEmail = membership.email;
+    let recipientName = membership.name;
+    if (membership.userId && membership.programId) {
+      const staff = await ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: {
+            pk: `PROGRAM#${membership.programId}`,
+            sk: `USER#${membership.userId}`,
+          },
+          ConsistentRead: true,
+        }),
+      );
+      if (
+        !staff.Item ||
+        staff.Item.status === "inactive" ||
+        !staff.Item.email ||
+        membership.programId !== siteResult.Item?.leadProgramId
+      )
+        return jsonResponse(409, { error: "program_user_not_found" });
+      recipientEmail = staff.Item.email;
+      recipientName =
+        `${staff.Item.firstName || ""} ${staff.Item.lastName || ""}`.trim();
+    }
     const now = new Date();
     const nowIso = now.toISOString();
     const expiresAt = new Date(
@@ -117,7 +142,7 @@ export const createManagerGrant = (event) =>
       tokenHash,
       status: "pending",
       deliveryStatus: "queued",
-      issuedTo: membership.email,
+      issuedTo: recipientEmail,
       issuedBy: actor,
       createdAt: nowIso,
       expiresAt,
@@ -237,8 +262,8 @@ export const createManagerGrant = (event) =>
     let messageId = "";
     try {
       const delivery = await sendManagerEnrollmentEmail({
-        to: String(membership.email),
-        managerName: String(membership.name),
+        to: String(recipientEmail),
+        managerName: String(recipientName),
         siteName: String(site.name),
         enrollmentUrl,
         expiresAt,

@@ -28,7 +28,9 @@ test("loads every directory record while keeping combined API concurrency at thr
       getProgram: (id) =>
         request("program", id, { program: { programId: id } }),
       listManagerMemberships: (id) =>
-        request("site", id, { memberships: [{ siteId: id }] }),
+        request("site", id, {
+          memberships: [{ siteId: id, status: "active" }],
+        }),
     },
     3,
   );

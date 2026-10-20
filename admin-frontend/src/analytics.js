@@ -464,7 +464,7 @@ function renderResult(s) {
                 .join("")}
             </tbody>
           </table></div>`
-        : '<p class="muted">No rows returned.</p>'
+        : '<p class="empty-state">No rows returned.</p>'
     }
   `;
 }

@@ -1,3 +1,4 @@
+import { deactivateManagerMembershipRecord } from "./admin-manager-memberships.js";
 import { complianceLetterEmail } from "../domain/compliance-letter-email.js";
 import { ownProfile } from "./admin-users.js";
 import {
@@ -277,9 +278,31 @@ export const createSiteTerms = (event) =>
         resolveLetterGenerator(event, siteId, tableName),
       ]);
     const siteManager = siteManagerResult.Item;
+    let assignedManager =
+      siteManagerAssignment.Item?.status !== "inactive" &&
+      Boolean(siteManagerAssignment.Item);
+    if (!assignedManager && siteManager?.status === "active") {
+      const memberships = await ddb.send(
+        new QueryCommand({
+          TableName: tableName,
+          KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+          ExpressionAttributeValues: {
+            ":pk": `SITE#${siteId}`,
+            ":prefix": "MANAGER_MEMBERSHIP#",
+          },
+        }),
+      );
+      assignedManager = (memberships.Items || []).some(
+        (member) =>
+          member.status === "active" &&
+          (member.userId === siteManagerUserId ||
+            (!member.userId &&
+              String(member.email || "").toLowerCase() ===
+                String(siteManager.email || "").toLowerCase())),
+      );
+    }
     if (
-      !siteManagerAssignment.Item ||
-      siteManagerAssignment.Item.status === "inactive" ||
+      !assignedManager ||
       !siteManager ||
       siteManager.status === "inactive" ||
       !siteManager.firstName ||
@@ -312,7 +335,10 @@ export const createSiteTerms = (event) =>
     }
     /* Preserve a strongly typed assignment check for the selected Site
      * manager independently of the letter sender. */
-    if (siteManagerAssignment.Item.programId !== site.leadProgramId) {
+    if (
+      siteManagerAssignment.Item &&
+      siteManagerAssignment.Item.programId !== site.leadProgramId
+    ) {
       return jsonResponse(409, { error: "site_manager_required" });
     }
     const existing = (termsResult.Items ?? []).filter(
@@ -642,7 +668,7 @@ export const assignSiteUser = (event) =>
     if (!user || user.status === "inactive") {
       return jsonResponse(404, { error: "program_user_not_found" });
     }
-    const primary = body.primary === true || !site.primaryContactUserId;
+    const primary = body.primary === true;
     const now = new Date().toISOString();
     if (assignmentResult.Item) {
       if (!primary) {
@@ -734,12 +760,44 @@ export const unassignSiteUser = (event) =>
     ]);
     const site = siteResult.Item;
     const assignment = assignmentResult.Item;
-    if (!site || !assignment) return jsonResponse(404, { error: "not_found" });
-    if (site.primaryContactUserId === userId) {
-      return jsonResponse(409, {
-        error: "primary_contact_replacement_required",
+    if (!site) return jsonResponse(404, { error: "not_found" });
+    const memberships = await ddb.send(
+      new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues: {
+          ":pk": `SITE#${siteId}`,
+          ":prefix": "MANAGER_MEMBERSHIP#",
+        },
+      }),
+    );
+    const linked = (memberships.Items || []).filter(
+      (member) =>
+        member.status === "active" &&
+        (member.userId === userId ||
+          (!member.userId &&
+            assignment?.email &&
+            String(member.email || "").toLowerCase() ===
+              String(assignment.email).toLowerCase())),
+    );
+    if (linked.length) {
+      let revokedBindingCount = 0;
+      for (const member of linked) {
+        const removed = await deactivateManagerMembershipRecord({
+          siteId,
+          membershipId: member.membershipId,
+          actor: adminPrincipal(event).subject,
+        });
+        if (removed?.error) return jsonResponse(409, { error: removed.error });
+        revokedBindingCount += Number(removed?.revokedBindingCount || 0);
+      }
+      return jsonResponse(200, {
+        unassigned: true,
+        userId,
+        revokedBindingCount,
       });
     }
+    if (!assignment) return jsonResponse(404, { error: "not_found" });
     const now = new Date().toISOString();
     try {
       await ddb.send(

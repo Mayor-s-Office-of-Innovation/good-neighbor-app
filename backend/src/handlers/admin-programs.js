@@ -38,6 +38,16 @@ export const createProgram = (event) =>
     const providerId = clean(body.providerId);
     if (!name) return jsonResponse(400, { error: "name_required" });
     if (!providerId) return jsonResponse(400, { error: "provider_required" });
+    const firstStaff =
+      body.firstStaff === undefined ? null : normalizeContact(body.firstStaff);
+    if (firstStaff) {
+      if (!firstStaff.firstName || !firstStaff.lastName)
+        return jsonResponse(400, { error: "name_required" });
+      if (!isEmail(firstStaff.email))
+        return jsonResponse(400, { error: "valid_email_required" });
+      if (!firstStaff.phone)
+        return jsonResponse(400, { error: "phone_required" });
+    }
     const provider = await ddb.send(
       new GetCommand({
         TableName: getDynamoTableName(),
@@ -49,7 +59,11 @@ export const createProgram = (event) =>
     }
     const programId = slug(body.programId, `${providerId}-${name}`);
     const now = new Date().toISOString();
+    const userId = firstStaff ? randomUUID() : null;
     const program = {
+      ...(userId && body.contact === undefined
+        ? { primaryContactUserId: userId }
+        : {}),
       pk: `PROGRAM#${programId}`,
       sk: "#META",
       type: "program",
@@ -58,17 +72,34 @@ export const createProgram = (event) =>
       name,
       providerId,
       providerName: provider.Item.name,
-      contact: normalizeContact(body.contact),
+      contact: normalizeContact(body.contact ?? firstStaff),
       status: "active",
       migrationPlaceholder: body.migrationPlaceholder === true,
       needsReview: body.needsReview === true,
       createdAt: now,
       updatedAt: now,
     };
+    const user = firstStaff
+      ? {
+          pk: `PROGRAM#${programId}`,
+          sk: `USER#${userId}`,
+          type: "programUser",
+          entityType: "PROGRAM_USER",
+          programId,
+          userId,
+          ...firstStaff,
+          siteManager: false,
+          status: "active",
+          siteAssignmentCount: 0,
+          createdAt: now,
+          updatedAt: now,
+        }
+      : null;
     await ddb.send(
       new TransactWriteCommand({
         TransactItems: [
           put(program),
+          ...(user ? [put(user)] : []),
           put({
             pk: `PROVIDER#${providerId}`,
             sk: `PROGRAM#${programId}`,
@@ -95,7 +126,7 @@ export const createProgram = (event) =>
         ],
       }),
     );
-    return jsonResponse(201, { program });
+    return jsonResponse(201, { program, ...(user ? { user } : {}) });
   });
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -304,6 +335,99 @@ export const updateProgramUser = (event) =>
         contact.email !== normalizeEmail(String(current.Item.email ?? "")))
     ) {
       return jsonResponse(403, { error: "supervisor_required" });
+    }
+    if (body.isPrimaryContact !== undefined) {
+      if (typeof body.isPrimaryContact !== "boolean")
+        return jsonResponse(400, { error: "invalid_primary_contact" });
+      const tableName = getDynamoTableName();
+      const { Item: program } = await ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { pk: `PROGRAM#${programId}`, sk: "#META" },
+          ConsistentRead: true,
+        }),
+      );
+      if (!program || program.status === "inactive")
+        return jsonResponse(404, { error: "program_not_found" });
+      const wasPrimary = program.primaryContactUserId
+        ? program.primaryContactUserId === userId
+        : Boolean(
+            program.contact?.email &&
+              normalizeEmail(program.contact.email) ===
+                normalizeEmail(current.Item.email),
+          );
+      const primaryId = body.isPrimaryContact
+        ? userId
+        : wasPrimary
+          ? null
+          : program.primaryContactUserId;
+      const programContact = body.isPrimaryContact
+        ? contact
+        : wasPrimary
+          ? {}
+          : program.contact || {};
+      const now = new Date().toISOString();
+      const user = {
+        ...current.Item,
+        ...contact,
+        siteManager: requestedSiteManager,
+        updatedAt: now,
+      };
+      try {
+        await ddb.send(
+          new TransactWriteCommand({
+            TransactItems: [
+              {
+                Update: {
+                  TableName: tableName,
+                  Key: { pk: `PROGRAM#${programId}`, sk: `USER#${userId}` },
+                  UpdateExpression:
+                    "SET firstName = :firstName, lastName = :lastName, phone = :phone, phoneExtension = :extension, email = :email, siteManager = :manager, updatedAt = :now",
+                  ConditionExpression:
+                    "attribute_exists(pk) AND #status = :active",
+                  ExpressionAttributeNames: { "#status": "status" },
+                  ExpressionAttributeValues: {
+                    ":firstName": contact.firstName,
+                    ":lastName": contact.lastName,
+                    ":phone": contact.phone,
+                    ":extension": contact.phoneExtension,
+                    ":email": contact.email,
+                    ":manager": requestedSiteManager,
+                    ":now": now,
+                    ":active": "active",
+                  },
+                },
+              },
+              {
+                Update: {
+                  TableName: tableName,
+                  Key: { pk: `PROGRAM#${programId}`, sk: "#META" },
+                  UpdateExpression: `SET contact = :contact, updatedAt = :now${primaryId ? ", primaryContactUserId = :primary" : " REMOVE primaryContactUserId"}`,
+                  ConditionExpression: `attribute_exists(pk) AND #status = :active AND ${program.updatedAt ? "updatedAt = :version" : "attribute_not_exists(updatedAt)"}`,
+                  ExpressionAttributeNames: { "#status": "status" },
+                  ExpressionAttributeValues: {
+                    ":contact": programContact,
+                    ":now": now,
+                    ":active": "active",
+                    ...(primaryId ? { ":primary": primaryId } : {}),
+                    ...(program.updatedAt
+                      ? { ":version": program.updatedAt }
+                      : {}),
+                  },
+                },
+              },
+            ],
+          }),
+        );
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.name === "TransactionCanceledException"
+        )
+          return jsonResponse(409, { error: "program_staff_conflict" });
+        throw error;
+      }
+      return jsonResponse(200, { user });
     }
     const now = new Date().toISOString();
     const result = await ddb.send(

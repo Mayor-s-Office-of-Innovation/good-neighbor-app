@@ -868,12 +868,12 @@ export const updateSite = (event) =>
         new GetCommand({
           TableName: tableName,
           Key: {
-            pk: `SITE#${siteId}`,
-            sk: `ASSIGNED_USER#${primaryContactUserId}`,
+            pk: `PROGRAM#${site.leadProgramId}`,
+            sk: `USER#${primaryContactUserId}`,
           },
         }),
       );
-      if (!assigned.Item || assigned.Item.programId !== site.leadProgramId) {
+      if (!assigned.Item || assigned.Item.status === "inactive") {
         return jsonResponse(400, { error: "invalid_internal_site_contact" });
       }
       selectedPrimaryContact = assigned.Item;

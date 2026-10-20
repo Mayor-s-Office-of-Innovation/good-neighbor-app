@@ -208,7 +208,7 @@ as task update events and every GSI sort key.
 | Provider config | `PROVIDER#<providerId>` | `#META` | managed by central admin: name, `status`, timestamps |
 | Program config | `PROGRAM#<programId>` | `#META` | managed by central admin: Provider relationship, name, required contact, optional Program Manager reference, migration-placeholder/review flags, status, timestamps |
 | Program contact | `PROGRAM#<programId>` | `USER#<userId>` | non-authenticating roster/contact record: name, phone and optional extension, normalized email, `siteManager` directory marker, status, Site-assignment count, timestamps. Archival is blocked while assignments remain. |
-| Site contact assignment | `SITE#<siteId>` | `ASSIGNED_USER#<userId>` | assignment to an active Site manager contact in the Site's lead Program, with a contact snapshot for display. A Site may have multiple Site managers; the manager used on a compliance letter is selected when its compliance period is created. |
+| Site manager assignment | `SITE#<siteId>` | `ASSIGNED_USER#<userId>` | assignment to an active Site manager contact in the Site's lead Program, with a contact snapshot for display. A Site may have multiple Site managers; the manager used on a compliance letter is selected when its compliance period is created. |
 | Compliance manager directory | `ADMIN_DIRECTORY#PROGRAM_MANAGERS` | `MANAGER#<normalizedEmail>` | City Compliance manager identity keyed by normalized email. It can be imported before a Cognito account exists; a later invitation links the row with `cognitoSubject` and `cognitoRole` after exact-name conflict checks. Stores contact and department details used for administration and letter snapshots. |
 | Profile mutation journal | `ADMIN_PROFILE_LOCK#<cognitoSubject>` | `#LOCK` | Serializes profile GET/PUT with an ownership token and 16-minute `leaseUntil` (milliseconds). A `recovery` record stores prior Cognito name attributes, pool/username, and directory key before dual writes. The directory is the commit point; failed repairs retain the journal for retry on the next profile request. No TTL or GSI keys; delete only after completion or recovery. |
 | Site Compliance manager assignment | `SITE#<siteId>` | `COMPLIANCE_MANAGER#<managerId>` | Active Site administration assignment for one Compliance manager directory identity. Compliance managers can read globally after Cognito authentication, but Site mutations require this active row. Supervisors bypass Site assignment. |
@@ -393,7 +393,7 @@ Every pattern is a single query. There are no scans.
 | AP20 | Public site search (bootstrap) | `Query` base `SITE_SEARCH#ACTIVE` with a `contains(searchText, :q)` filter and a bounded `Limit`. One small partition, no scan. |
 | AP21 | Resolve or replace a setup code | `GetItem` `SETUP_CODE#<verifier>` / `#META`, falling back to `GetItem` legacy `SITE_CODE#<code>`. On a repeat request, `Query` **GSI6** and revoke the contact's older pending code (`REMOVE gsi6pk, gsi6sk, gsi7pk, gsi7sk`). |
 | AP22 | Deactivate a site | `Query` **GSI7** `SETUP_CODE_PENDING_SITE#x` and revoke open codes. Delete the `SITE_SEARCH#ACTIVE` row. Set membership and `#META` status. |
-| AP23 | List a Program's contacts and Sites | `Query` base `PROGRAM#<programId>` with `USER#` or `SITE#` sort-key prefix. Program contacts are roster records only and have no authentication principal. |
+| AP23 | List a Program's contacts and Sites | `Query` base `PROGRAM#<programId>` with `USER#` or `SITE#` sort-key prefix. Program contacts are roster records only and have no authentication principal. When program creation includes `firstStaff`, its active `USER#` roster record is written in the same transaction as the program and relationship projections. Program contact details default to that staff member, with `primaryContactUserId` identifying the selected roster record. Staff edits can atomically update this pointer and its contact snapshot; selecting another staff member replaces the primary contact. Legacy snapshots without a pointer are matched to a unique active staff email for display. Site assignment happens separately through AP24. |
 | AP24 | Assign a Program contact to a Site | transactionally put `SITE#x / ASSIGNED_USER#y`, increment the Program contact's assignment count, and optionally update the Site primary-contact pointer/snapshot. |
 | AP25 | Read or add effective-dated terms | `Query` the Site `COMPLIANCE_TERMS#` prefix. Creation transactionally puts the version, conditionally closes the prior open version, marks the letter draft pending, and writes letter-job and audit rows. |
 | AP26 | Preview/apply a Site CSV import | Query active Provider/Program/Site directories, oversight departments, Compliance-manager identities, Site children, and Provider children. Each row exact-matches or creates its Site manager, Site assignment, Site-manager membership, Site Compliance-manager assignment, and Provider-manager membership in the same conditional transaction as Provider/Program/Site changes. Repeated Site rows accumulate managers. Known DPH/HSH names create missing canonical department entities; other unknown or conflicting person/department values remain manual-review conflicts. A TTL-bound ledger and terminal row outcomes make retries idempotent. |
@@ -681,3 +681,25 @@ bucket's existing 30-day retention. The photo signing route verifies both the
 Site-specific key and photo expiry, never signs arbitrary stored pointers, and
 caps the URL lifetime at the expiry boundary. These records do not affect manager
 reports or check-compliance counts.
+
+
+### Multiple Site managers and primary contact
+
+A Site may have multiple active managers. New linked `MANAGER_MEMBERSHIP#` writes
+create the corresponding `ASSIGNED_USER#` projection and update the staff assignment
+count in the same transaction. `MANAGER_USER#<userId>` enforces one new linked membership
+per person per Site. Removing a membership removes only that person's projection,
+updates their count, and invalidates only bindings belonging to that membership.
+Other managers, their pending enrollment links, and their bindings are retained.
+
+The Site's `primaryContactUserId` and contact snapshot are separate administrative
+contact details. Changing or clearing that pointer does not grant or revoke app
+access. Removing a manager does not clear the primary contact. New manager
+assignments do not implicitly set a primary contact.
+
+Admin views combine older assignment-only records with active memberships, deduplicate
+by staff identity (or legacy email), and show all managers. Enrollment of an older
+assignment creates its missing membership without replacing other managers. Letter
+creation accepts either an active assignment projection or an active membership
+for active staff in the Site's lead Program; the selected letter recipient remains
+an immutable snapshot. Linked enrollment emails use the current staff email address.

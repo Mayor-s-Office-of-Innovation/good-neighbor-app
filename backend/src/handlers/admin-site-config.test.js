@@ -53,117 +53,129 @@ describe("effective-dated Site terms", () => {
     expect(command.input.ScanIndexForward).toBe(false);
   });
 
-  it("creates terms using current contact details instead of stale token claims", async () => {
-    vi.mocked(ownProfile, { partial: true }).mockResolvedValueOnce({
-      profile: {
-        firstName: "Fresh",
-        lastName: "Contact",
-        phone: "+14155550123",
-        email: "fresh@example.org",
-        role: "compliance-supervisor",
-        directoryUserId: "",
-      },
-    });
-    send
-      .mockResolvedValueOnce({
-        Item: {
-          siteId: "site-1",
-          name: "Site One",
-          address: "1 Main St, San Francisco, CA 94102",
-          status: "active",
-          leadProgramId: "program-1",
-          latestComplianceTermsVersionId: "old",
-          primaryContactUserId: "contact-1",
-          primaryContact: { firstName: "Sam", lastName: "Lee" },
-          oversight: {
-            managingCityDepartment: "Department of Public Health",
-            cityProgramManagerId: "manager-1",
-          },
+  it.each([false, true])(
+    "creates terms from either manager representation with current contact details (%s)",
+    async (membershipOnly) => {
+      vi.mocked(ownProfile, { partial: true }).mockResolvedValueOnce({
+        profile: {
+          firstName: "Fresh",
+          lastName: "Contact",
+          phone: "+14155550123",
+          email: "fresh@example.org",
+          role: "compliance-supervisor",
+          directoryUserId: "",
         },
-      })
-      .mockResolvedValueOnce({
-        Items: [
+      });
+      send
+        .mockResolvedValueOnce({
+          Item: {
+            siteId: "site-1",
+            name: "Site One",
+            address: "1 Main St, San Francisco, CA 94102",
+            status: "active",
+            leadProgramId: "program-1",
+            latestComplianceTermsVersionId: "old",
+            primaryContactUserId: "contact-1",
+            primaryContact: { firstName: "Sam", lastName: "Lee" },
+            oversight: {
+              managingCityDepartment: "Department of Public Health",
+              cityProgramManagerId: "manager-1",
+            },
+          },
+        })
+        .mockResolvedValueOnce({
+          Items: [
+            {
+              pk: "SITE#site-1",
+              sk: "COMPLIANCE_TERMS#2026-01-01#old",
+              effectiveStart: "2026-01-01",
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          ...(membershipOnly
+            ? {}
+            : { Item: { status: "active", programId: "program-1" } }),
+        })
+        .mockResolvedValueOnce({
+          Item: {
+            userId: "contact-1",
+            firstName: "Sam",
+            lastName: "Lee",
+            email: "sam@example.org",
+            status: "active",
+          },
+        });
+      if (membershipOnly)
+        send.mockResolvedValueOnce({
+          Items: [
+            { status: "active", userId: "contact-1", membershipId: "m1" },
+          ],
+        });
+      send.mockResolvedValueOnce({});
+      const response = await call(
+        createSiteTerms,
+        event(
           {
-            pk: "SITE#site-1",
-            sk: "COMPLIANCE_TERMS#2026-01-01#old",
-            effectiveStart: "2026-01-01",
+            reasons: ["2", "6"],
+            siteManagerUserId: "contact-1",
+            correctiveActionTier: 2,
+            requiredChecksPerDay: 3,
+            effectiveStart: "2026-11-01",
+            periodEnd: "2026-12-01",
           },
-        ],
-      })
-      .mockResolvedValueOnce({
-        Item: { status: "active", programId: "program-1" },
-      })
-      .mockResolvedValueOnce({
-        Item: {
-          userId: "contact-1",
-          firstName: "Sam",
-          lastName: "Lee",
-          email: "sam@example.org",
-          status: "active",
-        },
-      })
-      .mockResolvedValueOnce({});
-    const response = await call(
-      createSiteTerms,
-      event(
-        {
-          reasons: ["2", "6"],
-          siteManagerUserId: "contact-1",
-          correctiveActionTier: 2,
-          requiredChecksPerDay: 3,
-          effectiveStart: "2026-11-01",
-          periodEnd: "2026-12-01",
-        },
-        { siteId: "site-1" },
-      ),
-    );
-    expect(response.statusCode).toBe(201);
-    expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
-    const transaction = /** @type {any} */ (
-      send.mock.calls
-        .map(([c]) => c)
-        .find((c) => c instanceof TransactWriteCommand)
-    );
-    expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    if (!transaction) throw new Error("Missing transaction");
-    expect(transaction.input.TransactItems).toHaveLength(5);
-    expect(transaction.input.TransactItems[0].Put.Item.effectiveStart).toBe(
-      new Intl.DateTimeFormat("en-CA", {
-        timeZone: "America/Los_Angeles",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      }).format(new Date()),
-    );
-    expect(
-      transaction.input.TransactItems[0].Put.Item.letterInputs,
-    ).toMatchObject({
-      siteManagerId: "contact-1",
-      siteManagerName: "Sam Lee",
-      generatedByRole: "compliance-supervisor",
-      programManagerName: "Fresh Contact",
-      programManagerPhone: "+14155550123",
-      programManagerEmail: "fresh@example.org",
-    });
-    expect(transaction.input.TransactItems[1].Update).toMatchObject({
-      ConditionExpression:
-        "attribute_exists(pk) AND latestComplianceTermsVersionId = :observedLatest",
-      ExpressionAttributeValues: expect.objectContaining({
-        ":observedLatest": "old",
-      }),
-    });
-    expect(
-      transaction.input.TransactItems.some(
-        (/** @type {any} */ item) =>
-          item.Put?.Item?.type === "complianceLetterGenerationJob",
-      ),
-    ).toBe(true);
-    expect(
-      transaction.input.TransactItems.some(
-        (/** @type {any} */ item) => item.Put?.Item?.type === "siteAuditEvent",
-      ),
-    ).toBe(true);
-  });
+          { siteId: "site-1" },
+        ),
+      );
+      expect(response.statusCode).toBe(201);
+      expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+      const transaction = /** @type {any} */ (
+        send.mock.calls
+          .map(([c]) => c)
+          .find((c) => c instanceof TransactWriteCommand)
+      );
+      expect(transaction).toBeInstanceOf(TransactWriteCommand);
+      if (!transaction) throw new Error("Missing transaction");
+      expect(transaction.input.TransactItems).toHaveLength(5);
+      expect(transaction.input.TransactItems[0].Put.Item.effectiveStart).toBe(
+        new Intl.DateTimeFormat("en-CA", {
+          timeZone: "America/Los_Angeles",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        }).format(new Date()),
+      );
+      expect(
+        transaction.input.TransactItems[0].Put.Item.letterInputs,
+      ).toMatchObject({
+        siteManagerId: "contact-1",
+        siteManagerName: "Sam Lee",
+        generatedByRole: "compliance-supervisor",
+        programManagerName: "Fresh Contact",
+        programManagerPhone: "+14155550123",
+        programManagerEmail: "fresh@example.org",
+      });
+      expect(transaction.input.TransactItems[1].Update).toMatchObject({
+        ConditionExpression:
+          "attribute_exists(pk) AND latestComplianceTermsVersionId = :observedLatest",
+        ExpressionAttributeValues: expect.objectContaining({
+          ":observedLatest": "old",
+        }),
+      });
+      expect(
+        transaction.input.TransactItems.some(
+          (/** @type {any} */ item) =>
+            item.Put?.Item?.type === "complianceLetterGenerationJob",
+        ),
+      ).toBe(true);
+      expect(
+        transaction.input.TransactItems.some(
+          (/** @type {any} */ item) =>
+            item.Put?.Item?.type === "siteAuditEvent",
+        ),
+      ).toBe(true);
+    },
+  );
 
   it("rejects overlapping future terms", async () => {
     send
@@ -567,18 +579,26 @@ describe("Site Program-contact assignments", () => {
     });
   });
 
-  it("requires a replacement before unassigning the primary contact", async () => {
+  it("unassigns a manager without clearing the separate primary contact", async () => {
     send
       .mockResolvedValueOnce({ Item: { primaryContactUserId: "user-1" } })
-      .mockResolvedValueOnce({ Item: { userId: "user-1" } });
+      .mockResolvedValueOnce({
+        Item: { userId: "user-1", programId: "program-1" },
+      })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({});
     const response = await call(
       unassignSiteUser,
       event(undefined, { siteId: "site-1", userId: "user-1" }),
     );
-    expect(response.statusCode).toBe(409);
-    expect(JSON.parse(String(response.body))).toEqual({
-      error: "primary_contact_replacement_required",
-    });
+    expect(response.statusCode).toBe(200);
+    const items = send.mock.calls[3][0].input.TransactItems;
+    expect(
+      items.every(
+        (/** @type {any} */ item) =>
+          !item.Update?.UpdateExpression.includes("primaryContact"),
+      ),
+    ).toBe(true);
   });
 });
 

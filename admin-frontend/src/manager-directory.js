@@ -1,3 +1,4 @@
+import { siteManagerRoster } from "./site-managers.js";
 import { mapWithConcurrency } from "./concurrency.js";
 
 /**
@@ -5,7 +6,7 @@ import { mapWithConcurrency } from "./concurrency.js";
  * Program and Site batches run sequentially so their limits do not add up.
  * @param {{ programId: string }[]} programs
  * @param {{ siteId: string }[]} sites
- * @param {{ getProgram: Function, listManagerMemberships: Function }} api
+ * @param {{ getProgram: Function, listManagerMemberships: Function, getSite?: Function }} api
  * @param {number} concurrency
  */
 export async function loadManagerDirectory(programs, sites, api, concurrency) {
@@ -17,10 +18,20 @@ export async function loadManagerDirectory(programs, sites, api, concurrency) {
   const siteMemberships = await mapWithConcurrency(
     sites,
     concurrency,
-    async (site) => ({
-      site,
-      memberships: (await api.listManagerMemberships(site.siteId)).memberships,
-    }),
+    async (site) => {
+      const memberships =
+        (await api.listManagerMemberships(site.siteId)).memberships || [];
+      const items = api.getSite
+        ? (await api.getSite(site.siteId)).items || []
+        : [];
+      return {
+        site,
+        memberships: siteManagerRoster(
+          items.filter((item) => item.type === "siteUserAssignment"),
+          memberships,
+        ),
+      };
+    },
   );
   return { programDetails, siteMemberships };
 }
