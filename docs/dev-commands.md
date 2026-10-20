@@ -306,6 +306,7 @@ history trays) × light/dark, under reduced-motion emulation.
 | File | Does |
 |---|---|
 | `e2e/a11y-allowlist.json` | Exceptions: rule + target + reason + **expiry date**. An expired entry fails the run by name until removed. |
+| `e2e/ramp-check.config.js` | The same states for ramp-check's CLI against a running `dev:remote` server: `npm run a11y:local -w e2e`, the designer's pass ([quickstart-design.md](./quickstart-design.md#accessibility-check-with-screenshots)). Writes `e2e/ramp-check-report/` with named screenshots. |
 
 Notes:
 

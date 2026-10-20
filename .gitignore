@@ -40,6 +40,9 @@ skills-lock.json
 e2e/test-results/
 frontend/test-results/
 e2e/playwright-report/
+# Designer's local ramp-check pass (npm run a11y:local -w e2e): report + bound session
+e2e/ramp-check-report/
+e2e/.a11y-local/
 # Root-level test-results/: Playwright writes here if invoked from the repo
 # root instead of the e2e workspace (artifacts are never source).
 /test-results/
