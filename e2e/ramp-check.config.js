@@ -31,6 +31,9 @@ export default {
   policy: "wcag22-aa",
   allowlist: "./a11y-allowlist.json",
   consistency: false,
+  // Per-action timeout. Dev data and a cold Vite server are slower than the
+  // e2e harness; ramp-check's default is 30 s.
+  timeout: 60_000,
   out: "./ramp-check-report",
   pages: [
     { path: "/today", name: "bound home", waitFor: "#start-check" },
