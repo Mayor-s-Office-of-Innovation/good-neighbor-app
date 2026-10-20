@@ -120,6 +120,17 @@ describe("dismissInstall", () => {
     expect(mod.readState(storage)).toEqual({ dismissedAt: 456, dismissals: 2 });
   });
 
+  it("tolerates a localStorage getter that throws (blocked site data)", () => {
+    vi.stubGlobal("window", {
+      get localStorage() {
+        throw new Error("SecurityError: access is denied");
+      },
+    });
+    expect(mod.readState()).toEqual({});
+    expect(() => mod.dismissInstall(1)).not.toThrow();
+    expect(mod.shouldOfferInstall({ method: "ios" })).toBe(true);
+  });
+
   it("survives a storage that throws", () => {
     const broken = /** @type {any} */ ({
       getItem: () => {
@@ -162,6 +173,37 @@ describe("captureInstallPrompt / promptInstall", () => {
     expect(event.prompt).toHaveBeenCalledOnce();
     expect(mod.readState(storage)).toEqual({ installed: true });
     expect(await mod.promptInstall()).toBe(null);
+  });
+
+  it("clears a stale installed flag when the browser offers again", () => {
+    const w = fakeWindow();
+    const storage = memoryStorage();
+    storage.setItem(mod.STORAGE_KEY, JSON.stringify({ installed: true }));
+    vi.stubGlobal("window", { localStorage: storage });
+    mod.captureInstallPrompt(/** @type {any} */ (w));
+    w.fire("beforeinstallprompt", { preventDefault() {} });
+    expect(mod.readState(storage)).toEqual({ installed: false });
+    expect(
+      mod.shouldOfferInstall({
+        state: mod.readState(storage),
+        method: "prompt",
+      }),
+    ).toBe(true);
+  });
+
+  it("notifies onAppInstalled subscribers and drops the held event", () => {
+    const w = fakeWindow();
+    vi.stubGlobal("window", { localStorage: memoryStorage() });
+    mod.captureInstallPrompt(/** @type {any} */ (w));
+    w.fire("beforeinstallprompt", { preventDefault() {} });
+    const installed = vi.fn();
+    const unsubscribe = mod.onAppInstalled(installed);
+    w.fire("appinstalled", {});
+    expect(installed).toHaveBeenCalledOnce();
+    expect(mod.hasHeldPrompt()).toBe(false);
+    unsubscribe();
+    w.fire("appinstalled", {});
+    expect(installed).toHaveBeenCalledOnce();
   });
 
   it("marks the app installed on appinstalled", () => {

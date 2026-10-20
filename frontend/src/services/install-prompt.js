@@ -32,10 +32,26 @@ export const MAX_DISMISSALS = 2;
 let deferredEvent = null;
 /** @type {Set<() => void>} */
 const availableListeners = new Set();
+/** @type {Set<() => void>} */
+const installedListeners = new Set();
 let captured = false;
 
 const win = () => (typeof window !== "undefined" ? window : undefined);
 const nav = () => (typeof navigator !== "undefined" ? navigator : undefined);
+
+/**
+ * `window.localStorage` is a getter that THROWS (SecurityError) when site
+ * data is blocked, so it must be read inside a try — never as a default
+ * parameter, where a throw escapes before the function body runs.
+ * @returns {Storage | null}
+ */
+function safeStorage() {
+  try {
+    return win()?.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Hold the browser's install prompt for later. Call once, as early as
@@ -49,12 +65,18 @@ export function captureInstallPrompt(w = win()) {
     // Chrome's own mini-infobar is suppressed; the app offers on its terms.
     event.preventDefault();
     deferredEvent = /** @type {BeforeInstallPromptEvent} */ (event);
+    // The browser never fires this while the app is installed, so a stored
+    // `installed` flag is stale (uninstalled since): clear it so the offer
+    // returns on the next launch instead of being vetoed forever.
+    const state = readState();
+    if (state.installed) writeState({ ...state, installed: false });
     for (const fn of availableListeners) fn();
   });
   w.addEventListener("appinstalled", () => {
     deferredEvent = null;
     writeState({ ...readState(), installed: true });
     void trackEvent("app_installed", {});
+    for (const fn of installedListeners) fn();
   });
 }
 
@@ -62,6 +84,7 @@ export function captureInstallPrompt(w = win()) {
 export function resetInstallPrompt() {
   deferredEvent = null;
   availableListeners.clear();
+  installedListeners.clear();
   captured = false;
 }
 
@@ -75,6 +98,17 @@ export function onInstallAvailable(fn) {
   if (deferredEvent) fn();
   availableListeners.add(fn);
   return () => availableListeners.delete(fn);
+}
+
+/**
+ * Run `fn` when the app gets installed by any route (our prompt or the
+ * browser's own menu) so a visible offer can withdraw. Returns an unsubscribe.
+ * @param {() => void} fn
+ * @returns {() => void}
+ */
+export function onAppInstalled(fn) {
+  installedListeners.add(fn);
+  return () => installedListeners.delete(fn);
 }
 
 /** @returns {boolean} the page runs as an installed app already. */
@@ -126,10 +160,13 @@ export function hasHeldPrompt() {
   return deferredEvent !== null;
 }
 
-/** @returns {InstallState} */
-export function readState(storage = win()?.localStorage) {
+/**
+ * @param {Storage | null} [storage] test seam; defaults to localStorage
+ * @returns {InstallState}
+ */
+export function readState(storage) {
   try {
-    const raw = storage?.getItem(STORAGE_KEY);
+    const raw = (storage ?? safeStorage())?.getItem(STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) : null;
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
@@ -137,10 +174,13 @@ export function readState(storage = win()?.localStorage) {
   }
 }
 
-/** @param {InstallState} state */
-export function writeState(state, storage = win()?.localStorage) {
+/**
+ * @param {InstallState} state
+ * @param {Storage | null} [storage] test seam; defaults to localStorage
+ */
+export function writeState(state, storage) {
   try {
-    storage?.setItem(STORAGE_KEY, JSON.stringify(state));
+    (storage ?? safeStorage())?.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
     // Private mode / quota: the offer simply shows again next load.
   }

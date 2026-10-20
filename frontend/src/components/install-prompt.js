@@ -12,6 +12,7 @@ import {
   dismissInstall,
   hasHeldPrompt,
   installMethod,
+  onAppInstalled,
   onInstallAvailable,
   promptInstall,
 } from "../services/install-prompt.js";
@@ -25,11 +26,22 @@ export class InstallPrompt extends HTMLElement {
   /** @type {"prompt" | "ios" | null} */
   _method = null;
   _shown = false;
+  /** an Install attempt is awaiting the browser's dialog */
+  _busy = false;
 
   connectedCallback() {
     this.hidden = true;
     this._method = installMethod();
     this._unsubRoute = onRouteChange(() => this._syncVisibility());
+    // Installed by any route (the browser's own menu included): the offer is
+    // moot, and a click on the stale button would read as a dismissal.
+    this._unsubInstalled = onAppInstalled(() => this.remove());
+    // The shell re-renders only #view on a language switch; this element
+    // sits outside it, so it re-translates itself.
+    this._onLocaleChange = () => {
+      if (this.querySelector(".install-banner")) this._render(true);
+    };
+    window.addEventListener("localechange", this._onLocaleChange);
     if (this._method === "ios") {
       this._render();
     } else if (this._method === "prompt") {
@@ -43,11 +55,16 @@ export class InstallPrompt extends HTMLElement {
   disconnectedCallback() {
     this._unsubRoute?.();
     this._unsubAvailable?.();
-    this._unsubRoute = this._unsubAvailable = undefined;
+    this._unsubInstalled?.();
+    this._unsubRoute = this._unsubAvailable = this._unsubInstalled = undefined;
+    if (this._onLocaleChange)
+      window.removeEventListener("localechange", this._onLocaleChange);
+    this._onLocaleChange = undefined;
   }
 
-  _render() {
-    if (this.querySelector(".install-banner")) return;
+  /** @param {boolean} [force] rebuild existing markup (language switch) */
+  _render(force = false) {
+    if (!force && this.querySelector(".install-banner")) return;
     const ios = this._method === "ios";
     this.innerHTML = `<div class="install-banner" role="region" aria-label="${escapeAttr(t("install.banner.aria"))}">
       <img class="install-banner__icon" src="/img/icon-192.png" alt="" width="40" height="40" />
@@ -77,18 +94,31 @@ export class InstallPrompt extends HTMLElement {
   }
 
   async _install() {
-    const outcome = await promptInstall();
+    // One attempt at a time: the held event is single-use, so a second tap
+    // mid-dialog would find nothing to prompt with.
+    if (this._busy) return;
+    this._busy = true;
+    const button = this.querySelector(".install-banner__install");
+    if (button instanceof HTMLButtonElement) button.disabled = true;
+    let outcome = null;
+    try {
+      outcome = await promptInstall();
+    } finally {
+      this._busy = false;
+      if (button instanceof HTMLButtonElement) button.disabled = false;
+    }
     void trackEvent("install_prompt_answered", {
       method: this._method,
       outcome: outcome ?? "unavailable",
     });
-    if (outcome === "accepted") {
-      this.remove();
+    if (outcome === "dismissed") {
+      // Declined in the browser's dialog: that is a "not now".
+      this._dismiss(false);
       return;
     }
-    // Declined in the browser sheet, or the prompt was already spent: treat
-    // it as "not now" rather than leaving a dead button on screen.
-    this._dismiss(false);
+    // Accepted, or nothing left to prompt with (installed meanwhile, event
+    // spent): either way the offer is over, and neither is a dismissal.
+    this.remove();
   }
 
   /** @param {boolean} [track] */
