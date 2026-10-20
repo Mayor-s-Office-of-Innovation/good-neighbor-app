@@ -46,7 +46,7 @@ vi.mock("./devices.js", () => ({
 }));
 
 import { refreshDeviceToken } from "./devices.js";
-import { completeTask, listChecks } from "./api.js";
+import { completeTask, getCaptureGuidance, listChecks } from "./api.js";
 
 /** A valid session the refresh endpoint would mint. */
 const freshSession = {
@@ -533,6 +533,42 @@ describe("pre-flight refresh on a known-expiring token", () => {
     await listChecks();
     expect(fetch).toHaveBeenCalledTimes(1);
     expectNthFetchBearer(fetch, 1, "access-1");
+  });
+
+  it("makes exactly one refresh attempt when the expired token is then rejected", async () => {
+    site.tokenExpiresAt = new Date(Date.now() - 1000).toISOString();
+    const outage = new ApiError("POST /device/refresh → 503", { status: 503 });
+    vi.mocked(refreshDeviceToken).mockRejectedValue(outage);
+    const fetch = stubFetch([{ status: 403, body: { message: "Forbidden" } }]);
+    vi.stubGlobal("fetch", fetch);
+    await expect(listChecks()).rejects.toBe(outage);
+    expect(refreshDeviceToken).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops waiting on a pending refresh when the caller aborts", async () => {
+    site.tokenExpiresAt = new Date(Date.now() - 1000).toISOString();
+    let releaseRefresh = () => {};
+    vi.mocked(refreshDeviceToken).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseRefresh = () => resolve(freshSession);
+        }),
+    );
+    const fetch = stubFetch([ok]);
+    vi.stubGlobal("fetch", fetch);
+    const controller = new AbortController();
+    const pending = getCaptureGuidance({
+      startedAt: "2026-10-20T00:00:00.000Z",
+      checkId: "chk_1",
+      signal: controller.signal,
+    });
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetch).not.toHaveBeenCalled();
+    // The shared refresh still completes and persists for other callers.
+    releaseRefresh();
+    await vi.waitFor(() => expect(site.token).toBe("access-2"));
   });
 
   it("is fatal when the refresh is rejected outright", async () => {

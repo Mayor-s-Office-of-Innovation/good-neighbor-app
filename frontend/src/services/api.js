@@ -180,6 +180,30 @@ export function isAccessTokenExpiring(tokenExpiresAt, now = Date.now()) {
 }
 
 /**
+ * Wait for `promise`, but stop waiting as soon as `signal` aborts. The
+ * promise itself keeps running (a shared refresh must still persist its
+ * result for the other requests riding it); only this caller lets go.
+ * @template T
+ * @param {Promise<T>} promise
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<T>}
+ */
+function untilAborted(promise, signal) {
+  if (!signal) return promise;
+  if (signal.aborted) {
+    return Promise.reject(new DOMException("Request aborted", "AbortError"));
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = () =>
+      reject(new DOMException("Request aborted", "AbortError"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
+  });
+}
+
+/**
  * One JSON request against the backend. Serializes an object body, parses a
  * JSON response, and throws `ApiError` on a non-2xx status or a transport
  * failure. Attaches the device token when a session exists, refreshing first
@@ -211,9 +235,14 @@ async function request(
   let token = site?.token;
   // Pre-flight refresh: a token past (or within a minute of) its stored
   // expiry is certain to be rejected, so renew before the fetch rather than
-  // after a 403. Only a fatal refresh outcome stops the request: a 5xx or
-  // transport failure sends the stored token anyway and the rejection path
-  // below gets its usual single retry.
+  // after a 403. Only a fatal refresh outcome stops the request. A 5xx or
+  // transport failure is remembered and the stored token is sent anyway —
+  // inside the margin it usually still works — but if it IS rejected the
+  // remembered failure is surfaced rather than asking the same unhealthy
+  // refresh endpoint a second time. The caller's signal is honored while
+  // waiting: an aborted request stops here without touching the network.
+  /** @type {Error | null} */
+  let preflightRefreshError = null;
   if (
     allowAuthRetry &&
     token &&
@@ -221,15 +250,17 @@ async function request(
     isAccessTokenExpiring(site.tokenExpiresAt)
   ) {
     try {
-      token = (await refreshSession(requestSiteId)).token;
+      token = (await untilAborted(refreshSession(requestSiteId), signal)).token;
     } catch (err) {
       if (
+        signal?.aborted ||
         err instanceof ReauthRequiredError ||
         err instanceof SiteBindingChangedError
       ) {
-        classifyApiFailure(err);
+        if (!signal?.aborted) classifyApiFailure(err);
         throw err;
       }
+      preflightRefreshError = err instanceof Error ? err : null;
     }
   }
   const authHeaders = token ? { authorization: `Bearer ${token}` } : {};
@@ -290,6 +321,13 @@ async function request(
     // auth rejection (or a rejected refresh) is fatal UNLESS the stored session was
     // superseded mid-flight (see the retry leg below).
     if (isAccessTokenRejection(res.status, parsed) && allowAuthRetry) {
+      // The pre-flight refresh already failed on this request: the token was
+      // rejected as predicted and the refresh endpoint is the problem.
+      // Surface that (retryable) failure instead of a second doomed refresh.
+      if (preflightRefreshError) {
+        classifyApiFailure(preflightRefreshError);
+        throw preflightRefreshError;
+      }
       // Refresh from the CURRENT stored session — `site` here may be stale
       // (read before this request's fetch); refreshSession re-reads it.
       try {
