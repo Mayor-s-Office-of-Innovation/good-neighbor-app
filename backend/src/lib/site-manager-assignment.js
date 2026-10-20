@@ -32,7 +32,7 @@ export async function managerAssignmentChanges(
   ]);
   const user = userResult.Item;
   const assignment = assignmentResult.Item;
-  if (adding && (!user || user.status === "inactive"))
+  if (adding && (!user || user.status !== "active"))
     throw new Error("program_user_not_found");
   if (adding === Boolean(assignment)) return [];
   const count = Number(user?.siteAssignmentCount || 0);
@@ -77,8 +77,12 @@ export async function managerAssignmentChanges(
         TableName: tableName,
         Key: { pk: `PROGRAM#${programId}`, sk: `USER#${userId}` },
         UpdateExpression: "SET siteAssignmentCount = :next, updatedAt = :now",
-        ConditionExpression: `attribute_exists(pk) AND ${user.siteAssignmentCount === undefined ? "attribute_not_exists(siteAssignmentCount)" : "siteAssignmentCount = :previous"}`,
+        ConditionExpression: `attribute_exists(pk)${adding ? " AND #status = :active" : ""} AND ${user.siteAssignmentCount === undefined ? "attribute_not_exists(siteAssignmentCount)" : "siteAssignmentCount = :previous"}`,
+        ...(adding
+          ? { ExpressionAttributeNames: { "#status": "status" } }
+          : {}),
         ExpressionAttributeValues: {
+          ...(adding ? { ":active": "active" } : {}),
           ":next": adding ? count + 1 : Math.max(0, count - 1),
           ":now": now,
           ...(user.siteAssignmentCount === undefined

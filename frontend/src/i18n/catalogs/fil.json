@@ -1017,5 +1017,7 @@
   "admin.oversight.searchExistingManagers": "Maghanap ng mga kasalukuyang tagapamahala ng programa",
   "admin.oversight.inviteNewManagerAlternative": "O, mag-imbita at magtalaga ng bagong tagapamahala ng programa ng Lungsod",
   "admin.oversight.assignCityProgramManager": "Magtalaga ng tagapamahala ng programa ng Lungsod",
-  "admin.directory.sections": "Mga seksyon ng pangangasiwa ng pagsunod"
+  "admin.directory.sections": "Mga seksyon ng pangangasiwa ng pagsunod",
+  "admin.programs.assignmentsUnavailable": "Hindi available ang ilang pagtatalaga ng site. I-reload upang subukang muli.",
+  "admin.programs.reassignPrimaryBeforeRemoval": "Pumili ng ibang pangunahing contact para sa programa at anumang apektadong site bago alisin ang kawani na ito."
 }

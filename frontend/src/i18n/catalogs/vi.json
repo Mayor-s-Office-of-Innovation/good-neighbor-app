@@ -1017,5 +1017,7 @@
   "admin.oversight.searchExistingManagers": "Tìm người quản lý chương trình hiện có",
   "admin.oversight.inviteNewManagerAlternative": "Hoặc mời và chỉ định một người quản lý chương trình mới của Thành phố",
   "admin.oversight.assignCityProgramManager": "Chỉ định người quản lý chương trình của Thành phố",
-  "admin.directory.sections": "Các mục quản trị tuân thủ"
+  "admin.directory.sections": "Các mục quản trị tuân thủ",
+  "admin.programs.assignmentsUnavailable": "Không thể tải một số phân công địa điểm. Hãy tải lại để thử lại.",
+  "admin.programs.reassignPrimaryBeforeRemoval": "Chọn người liên hệ chính khác cho chương trình và các địa điểm bị ảnh hưởng trước khi xóa nhân viên này."
 }

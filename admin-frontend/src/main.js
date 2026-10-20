@@ -1,3 +1,4 @@
+import { createAndAssignManager } from "./pending-manager.js";
 import { letterEmailProgress, profilePhoneUpdate } from "./admin-save-state.js";
 import "./icons.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
@@ -557,6 +558,7 @@ class AdminApp extends HTMLElement {
         ),
       );
     this.state.managerDirectoryLoaded = true;
+    this.state.managerSearchFailed = false;
   }
 
   async openSiteManager(userId) {
@@ -1206,7 +1208,14 @@ class AdminApp extends HTMLElement {
           expectedManagerId,
         );
     }
+    this.state.managerDirectoryLoaded = false;
     await this.loadDirectory();
+    try {
+      await this.loadSiteManagers(true);
+    } catch {
+      this.state.managerDirectoryLoaded = false;
+      this.state.managerSearchFailed = true;
+    }
     navigate(`/sites/${encodeURIComponent(siteId)}`);
   }
 
@@ -1754,30 +1763,30 @@ class AdminApp extends HTMLElement {
     const siteId = this.state.site.siteId;
     const programId = this.state.site.leadProgramId;
     try {
-      let user = form.dataset.createdUser
-        ? JSON.parse(form.dataset.createdUser)
-        : null;
-      if (!user) {
-        const data = new FormData(form);
-        const response = await adminApi.createProgramUser(programId, {
-          firstName: formValue(data, "new-manager-first-name"),
-          lastName: formValue(data, "new-manager-last-name"),
-          phone: formValue(data, "new-manager-phone"),
-          email: formValue(data, "new-manager-email"),
-          siteManager: true,
-        });
-        user = response.user;
-        form.dataset.createdUser = JSON.stringify(user);
-        form.querySelectorAll("wa-input").forEach((input) => {
-          input.disabled = true;
-        });
-      }
-      await adminApi.createManagerMembership(
-        siteId,
-        `${user.firstName} ${user.lastName}`.trim(),
-        user.email,
-        programId,
-        user.userId,
+      const data = new FormData(form);
+      const values = {
+        firstName: formValue(data, "new-manager-first-name"),
+        lastName: formValue(data, "new-manager-last-name"),
+        phone: formValue(data, "new-manager-phone"),
+        email: formValue(data, "new-manager-email"),
+        siteManager: true,
+      };
+      this.pendingManagerCreations ||= new Map();
+      const pendingUser = this.pendingManagerCreations.get(
+        JSON.stringify([siteId, programId, values]),
+      );
+      if (pendingUser) form.dataset.createdUser = JSON.stringify(pendingUser);
+      await createAndAssignManager(
+        this.pendingManagerCreations,
+        { siteId, programId, values },
+        {
+          createProgramUser: async (...args) => {
+            const result = await adminApi.createProgramUser(...args);
+            form.dataset.createdUser = JSON.stringify(result.user);
+            return result;
+          },
+          createManagerMembership: adminApi.createManagerMembership,
+        },
       );
       this.state.managerDirectoryLoaded = false;
     } catch {
@@ -1969,9 +1978,16 @@ class AdminApp extends HTMLElement {
       );
     } catch (error) {
       this.state.error =
-        error instanceof Error && error.message === "manager_removal_conflict"
-          ? "The manager or one of their Site assignments changed. Reload and try again."
-          : "The manager could not be removed. Try again.";
+        error instanceof Error &&
+        [
+          "site_primary_contact_in_use",
+          "program_primary_contact_in_use",
+        ].includes(error.message)
+          ? t("admin.programs.reassignPrimaryBeforeRemoval")
+          : error instanceof Error &&
+              error.message === "manager_removal_conflict"
+            ? "The manager or one of their Site assignments changed. Reload and try again."
+            : "The manager could not be removed. Try again.";
       this.render();
     }
   }
@@ -5582,7 +5598,7 @@ function programView(program, canAddStaff = false) {
         <span><strong>${escapeHtml(`${user.firstName || ""} ${user.lastName || ""}`.trim())}</strong>${user.userId === primaryId ? ` - <em>${escapeHtml(t("admin.programs.primaryContactInline"))}</em>` : ""}</span>
         <span>${escapeHtml(user.email || "")}</span>
         <span>${escapeHtml(phoneWithExtension(user))}</span>
-        <span>${escapeHtml(t("admin.programs.assignedSites"))} ${user.assignedSites?.length ? user.assignedSites.map((site) => `<a href="/sites/${encodeURIComponent(site.siteId)}" data-route>${escapeHtml(siteLabel(site))}</a>`).join(", ") : escapeHtml(t("admin.programs.noAssignedSites"))}</span>
+        <span>${escapeHtml(t("admin.programs.assignedSites"))} ${user.assignedSites?.length ? user.assignedSites.map((site) => `<a href="/sites/${encodeURIComponent(site.siteId)}" data-route>${escapeHtml(siteLabel(site))}</a>`).join(", ") : escapeHtml(t(user.assignmentSitesUnavailable?.length ? "admin.programs.assignmentsUnavailable" : "admin.programs.noAssignedSites"))}${user.assignedSites?.length && user.assignmentSitesUnavailable?.length ? ` · ${escapeHtml(t("admin.programs.assignmentsUnavailable"))}` : ""}</span>
       </div><button class="btn-secondary" type="button" data-edit-program-staff="${escapeHtml(user.userId)}" aria-label="${escapeHtml(t("admin.programs.editStaffNamed", { name: `${user.firstName} ${user.lastName}` }))}">${escapeHtml(t("admin.programs.editStaff"))}</button></li>`,
               )
               .join("")}</ul>`

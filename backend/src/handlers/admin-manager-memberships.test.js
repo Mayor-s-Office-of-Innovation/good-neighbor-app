@@ -421,3 +421,32 @@ async function call(handler, request) {
     await handler(request, {}, () => {})
   );
 }
+
+it("rejects ambiguous email-only membership removal before revoking access, including later pages", async () => {
+  const cursor = { pk: "SITE#site-1", sk: "ASSIGNED_USER#u1" };
+  send
+    .mockResolvedValueOnce({
+      Item: {
+        membershipId: "m1",
+        status: "active",
+        email: "shared@example.org",
+      },
+    })
+    .mockResolvedValueOnce({
+      Items: [{ userId: "u1", email: "shared@example.org" }],
+      LastEvaluatedKey: cursor,
+    })
+    .mockResolvedValueOnce({
+      Items: [{ userId: "u2", email: "shared@example.org" }],
+    });
+  const response = await call(
+    deactivateManagerMembership,
+    event(undefined, { siteId: "site-1", membershipId: "m1" }),
+  );
+  expect(response.statusCode).toBe(409);
+  expect(JSON.parse(String(response.body)).error).toBe(
+    "ambiguous_manager_identity",
+  );
+  expect(send.mock.calls).toHaveLength(3);
+  expect(send.mock.calls[2][0].input.ExclusiveStartKey).toEqual(cursor);
+});

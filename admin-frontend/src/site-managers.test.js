@@ -1,3 +1,4 @@
+import { createAndAssignManager } from "./pending-manager.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { siteManagerRoster } from "./site-managers.js";
@@ -82,6 +83,7 @@ test("saving assignments to several Sites serializes the shared staff count chan
   };
   const context = vm.createContext({
     navigate: (path) => destinations.push(path),
+    createAndAssignManager,
     FormData: class {
       get(name) {
         return (
@@ -154,6 +156,7 @@ test("creating a Site manager retries assignment without duplicating staff", asy
     closest: () => ({ close() {} }),
   };
   const context = vm.createContext({
+    createAndAssignManager,
     FormData: class {
       get(name) {
         return {
@@ -204,4 +207,78 @@ test("creating a Site manager retries assignment without duplicating staff", asy
   assert.equal(staffCreates, 1);
   assert.equal(assignments, 2);
   assert.equal(subject.state.managerDirectoryLoaded, false);
+});
+
+test("new site flow forces a fresh manager directory even when a stale load is pending", async () => {
+  const { readFileSync } = await import("node:fs");
+  const vm = await import("node:vm");
+  const { createDirectoryLoader } = await import("./manager-directory.js");
+  const source = readFileSync(new URL("./main.js", import.meta.url), "utf8");
+  const start = source.indexOf("  async createSiteFromFlow(form)");
+  const end = source.indexOf("\n  /**", start);
+  let release;
+  let loads = 0;
+  const loader = createDirectoryLoader(async () => {
+    if (++loads === 1)
+      await new Promise((resolve) => {
+        release = resolve;
+      });
+  });
+  const old = loader.load();
+  await Promise.resolve();
+  const destinations = [];
+  const values = {
+    "provider-id": "p1",
+    "lead-program-id": "g1",
+    "site-manager-user-id": "u1",
+  };
+  const context = vm.createContext({
+    FormData: class {},
+    formValue: (_data, name) => values[name] || "",
+    addressPartsFromForm: () => ({ city: "SF" }),
+    formatAddressParts: () => "1 Main",
+    controlValue: () => "",
+    navigate: (path) => destinations.push(path),
+    adminApi: {
+      createSite: async () => ({
+        site: {
+          siteId: "s1",
+          addressParts: { city: "SF" },
+          publicContact: { email: "public@example.org" },
+          primaryContactUserId: "u1",
+        },
+      }),
+      listManagerMemberships: async () => ({ memberships: [] }),
+      createManagerMembership: async () => ({}),
+    },
+  });
+  const Subject = vm.runInContext(
+    `(class {${source.slice(start, end)} })`,
+    context,
+  );
+  const subject = new Subject();
+  subject.state = {
+    managerDirectoryLoaded: true,
+    newSiteUsers: [
+      {
+        userId: "u1",
+        firstName: "Sam",
+        lastName: "Lee",
+        email: "sam@example.org",
+      },
+    ],
+  };
+  subject.loadDirectory = async () =>
+    assert.equal(subject.state.managerDirectoryLoaded, false);
+  subject.loadSiteManagers = (force) => {
+    assert.equal(force, true);
+    return loader.load(force);
+  };
+  const created = subject.createSiteFromFlow({});
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(loads, 1);
+  release();
+  await Promise.all([old, created]);
+  assert.equal(loads, 2);
+  assert.deepEqual(destinations, ["/sites/s1"]);
 });

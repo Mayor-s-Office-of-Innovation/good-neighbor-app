@@ -342,7 +342,7 @@ describe("provider and site management", () => {
 
     expect(res.statusCode).toBe(201);
     const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[3][0]);
-    expect(tx.input.TransactItems).toHaveLength(6);
+    expect(tx.input.TransactItems).toHaveLength(7);
     expect(tx.input.TransactItems?.[0]?.Put?.Item).toMatchObject({
       addressParts: { city: "San Francisco", state: "CA", zip: "94102" },
       publicContact: {
@@ -1393,4 +1393,77 @@ it("returns the current directory name to the dashboard site directory", async (
   expect(JSON.parse(response.body).items[0].oversight.cityProgramManager).toBe(
     "New Name",
   );
+});
+
+it("loads every roster prefix page without querying the entire site history", async () => {
+  const cursor = { pk: "SITE#s1", sk: "ASSIGNED_USER#middle" };
+  send.mockImplementation(async (command) => {
+    if (command instanceof GetCommand)
+      return { Item: { sk: "#META", siteId: "s1" } };
+    const input = command.input;
+    if (input.ExpressionAttributeValues[":prefix"] === "MANAGER_MEMBERSHIP#")
+      return { Items: [{ type: "managerMembership", userId: "u2" }] };
+    if (!input.ExclusiveStartKey)
+      return {
+        Items: [{ type: "siteUserAssignment", userId: "u1" }],
+        LastEvaluatedKey: cursor,
+      };
+    return { Items: [{ type: "siteUserAssignment", userId: "u3" }] };
+  });
+  const request = event(undefined, "central-admin", { siteId: "s1" });
+  request.queryStringParameters = { roster: "1" };
+  const response = await call(getAdminSite, request);
+  expect(
+    JSON.parse(String(response.body))
+      .items.map((/** @type {any} */ row) => row.userId)
+      .filter(Boolean)
+      .sort(),
+  ).toEqual(["u1", "u2", "u3"]);
+  const queries = send.mock.calls
+    .map(([command]) => command)
+    .filter((command) => command instanceof QueryCommand);
+  expect(queries).toHaveLength(3);
+  expect(
+    queries.every((command) =>
+      command.input.KeyConditionExpression?.includes("begins_with"),
+    ),
+  ).toBe(true);
+  expect(
+    queries.some((command) => command.input.ExclusiveStartKey === cursor),
+  ).toBe(true);
+});
+
+it("serializes site primary assignment with removal and checks the staff is still active", async () => {
+  send
+    .mockResolvedValueOnce({
+      Item: {
+        siteId: "site-1",
+        name: "Mission",
+        leadProgramId: "p1",
+        updatedAt: "old",
+      },
+    })
+    .mockResolvedValueOnce({
+      Item: { userId: "u1", status: "active", firstName: "Sam" },
+    })
+    .mockResolvedValueOnce({
+      Item: { programId: "p1", staffContactRevision: "before" },
+    })
+    .mockResolvedValueOnce({});
+  const response = await call(
+    updateSite,
+    event({ name: "Mission", primaryContactUserId: "u1" }, "central-admin", {
+      siteId: "site-1",
+    }),
+  );
+  expect(response.statusCode).toBe(200);
+  const tx = send.mock.calls[3][0].input.TransactItems;
+  expect(
+    tx.find((/** @type {any} */ item) => item.Update?.Key.pk === "PROGRAM#p1")
+      .Update.ExpressionAttributeValues[":previous"],
+  ).toBe("before");
+  expect(
+    tx.find((/** @type {any} */ item) => item.ConditionCheck).ConditionCheck
+      .ConditionExpression,
+  ).toBe("#status = :active");
 });

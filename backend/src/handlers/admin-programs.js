@@ -1,3 +1,4 @@
+import { staffRemovalContactGuard } from "../lib/staff-contact-guard.js";
 import {
   DeleteCommand,
   GetCommand,
@@ -469,37 +470,52 @@ export const deactivateProgramUser = (event) =>
     if (!current.Item || current.Item.status === "inactive") {
       return jsonResponse(404, { error: "program_user_not_found" });
     }
-    if (current.Item.siteManager === true) {
-      return removeSiteManager(event, programId, userId, current.Item);
-    }
+    const guard = await staffRemovalContactGuard(
+      tableName,
+      programId,
+      current.Item,
+    );
+    if (!guard.change) return jsonResponse(409, { error: guard.error });
+    const removingManager = current.Item.siteManager === true;
     const now = new Date().toISOString();
     try {
-      const result = await ddb.send(
-        new UpdateCommand({
-          TableName: tableName,
-          Key: { pk: `PROGRAM#${programId}`, sk: `USER#${userId}` },
-          UpdateExpression: "SET #status = :inactive, updatedAt = :now",
-          ConditionExpression:
-            "attribute_exists(pk) AND (attribute_not_exists(siteAssignmentCount) OR siteAssignmentCount = :zero)",
-          ExpressionAttributeNames: { "#status": "status" },
-          ExpressionAttributeValues: {
-            ":inactive": "inactive",
-            ":now": now,
-            ":zero": 0,
-          },
-          ReturnValues: "ALL_NEW",
+      await ddb.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            guard.change,
+            {
+              Update: {
+                TableName: tableName,
+                Key: { pk: `PROGRAM#${programId}`, sk: `USER#${userId}` },
+                UpdateExpression: "SET #status = :next, updatedAt = :now",
+                ConditionExpression: `attribute_exists(pk) AND (#status = :active${removingManager ? " OR #status = :removing" : ""})${removingManager ? "" : " AND (attribute_not_exists(siteAssignmentCount) OR siteAssignmentCount = :zero)"}`,
+                ExpressionAttributeNames: { "#status": "status" },
+                ExpressionAttributeValues: {
+                  ":next": removingManager ? "removing" : "inactive",
+                  ":now": now,
+                  ":active": "active",
+                  ...(removingManager
+                    ? { ":removing": "removing" }
+                    : { ":zero": 0 }),
+                },
+              },
+            },
+          ],
         }),
       );
-      return jsonResponse(200, { user: result.Attributes });
     } catch (error) {
       if (
         error instanceof Error &&
-        error.name === "ConditionalCheckFailedException"
-      ) {
+        error.name === "TransactionCanceledException"
+      )
         return jsonResponse(409, { error: "program_user_in_use" });
-      }
       throw error;
     }
+    if (removingManager)
+      return removeSiteManager(event, programId, userId, current.Item);
+    return jsonResponse(200, {
+      user: { ...current.Item, status: "inactive", updatedAt: now },
+    });
   });
 
 /**

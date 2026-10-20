@@ -10,7 +10,12 @@ export async function loadProgramStaff(program, api, concurrency) {
     (program.sites || []).filter((site) => site.status !== "inactive"),
     concurrency,
     async (site) => {
-      const { items = [] } = await api.getSite(site.siteId);
+      let items;
+      try {
+        ({ items = [] } = await api.getSite(site.siteId, true));
+      } catch {
+        return { ...site, assignments: [], unavailable: true };
+      }
       const meta = items.find((item) => item.sk === "#META");
       return {
         ...site,
@@ -28,6 +33,7 @@ export async function loadProgramStaff(program, api, concurrency) {
     .filter((user) => user.status !== "inactive")
     .map((user) => ({
       ...user,
+      assignmentSitesUnavailable: sites.filter((site) => site.unavailable),
       assignedSites: sites.filter(
         (site) =>
           site.status !== "inactive" &&

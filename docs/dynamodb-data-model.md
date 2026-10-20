@@ -703,3 +703,18 @@ assignment creates its missing membership without replacing other managers. Lett
 creation accepts either an active assignment projection or an active membership
 for active staff in the Site's lead Program; the selected letter recipient remains
 an immutable snapshot. Linked enrollment emails use the current staff email address.
+
+### Staff contact removal consistency
+
+Program metadata carries an opaque `staffContactRevision`. Transactions that select a site
+primary contact advance this revision and require the selected staff record to remain active.
+Staff removal reads that revision before checking all program-linked canonical site records,
+then conditionally advances it while changing staff status. A concurrent contact assignment
+therefore conflicts with removal. Program primary contacts (including legacy email snapshots)
+and site primary contacts must be reassigned before either staff-deactivation path proceeds.
+Site manager removal marks staff `removing` before access cleanup; retries may resume cleanup,
+while new assignments and primary-contact selections require active staff.
+
+The site detail endpoint supports `?roster=1` for staff assignment enrichment. This returns
+canonical site metadata plus fully paginated `ASSIGNED_USER#` and `MANAGER_MEMBERSHIP#`
+prefixes, without reading historical reports, audits, or compliance artifacts.

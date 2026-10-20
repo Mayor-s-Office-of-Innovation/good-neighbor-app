@@ -100,3 +100,34 @@ test("primary staff uses the saved ID or a unique active legacy email match", ()
     "",
   );
 });
+
+test("one failed site keeps staff and known assignments without claiming a complete empty roster", async () => {
+  const users = await loadProgramStaff(
+    {
+      programId: "p1",
+      users: [{ userId: "u1" }],
+      sites: [{ siteId: "good" }, { siteId: "bad" }],
+    },
+    {
+      getSite: async (id, rosterOnly) => {
+        assert.equal(rosterOnly, true);
+        if (id === "bad") throw new Error("unavailable");
+        return {
+          items: [
+            { sk: "#META", leadProgramId: "p1" },
+            { type: "managerMembership", userId: "u1" },
+          ],
+        };
+      },
+    },
+    2,
+  );
+  assert.deepEqual(
+    users[0].assignedSites.map((site) => site.siteId),
+    ["good"],
+  );
+  assert.deepEqual(
+    users[0].assignmentSitesUnavailable.map((site) => site.siteId),
+    ["bad"],
+  );
+});

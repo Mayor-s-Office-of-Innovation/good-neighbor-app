@@ -1,3 +1,5 @@
+import { queryAllItems } from "../lib/query-all-items.js";
+import { contactRevisionChange } from "../lib/staff-contact-guard.js";
 import { deactivateManagerMembershipRecord } from "./admin-manager-memberships.js";
 import { complianceLetterEmail } from "../domain/compliance-letter-email.js";
 import { ownProfile } from "./admin-users.js";
@@ -665,18 +667,45 @@ export const assignSiteUser = (event) =>
       ),
     ]);
     const user = userResult.Item;
-    if (!user || user.status === "inactive") {
+    if (!user || user.status !== "active") {
       return jsonResponse(404, { error: "program_user_not_found" });
     }
     const primary = body.primary === true;
     const now = new Date().toISOString();
+    const primaryGuards = [];
+    if (primary) {
+      const { Item: program } = await ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { pk: `PROGRAM#${site.leadProgramId}`, sk: "#META" },
+          ConsistentRead: true,
+        }),
+      );
+      if (!program) return jsonResponse(404, { error: "program_not_found" });
+      primaryGuards.push(
+        contactRevisionChange(tableName, site.leadProgramId, program),
+      );
+      if (assignmentResult.Item)
+        primaryGuards.push({
+          ConditionCheck: {
+            TableName: tableName,
+            Key: { pk: `PROGRAM#${site.leadProgramId}`, sk: `USER#${userId}` },
+            ConditionExpression: "#status = :active",
+            ExpressionAttributeNames: { "#status": "status" },
+            ExpressionAttributeValues: { ":active": "active" },
+          },
+        });
+    }
     if (assignmentResult.Item) {
       if (!primary) {
         return jsonResponse(200, { assignment: assignmentResult.Item });
       }
       await ddb.send(
         new TransactWriteCommand({
-          TransactItems: [primaryContactUpdate(tableName, siteId, user, now)],
+          TransactItems: [
+            ...primaryGuards,
+            primaryContactUpdate(tableName, siteId, user, now),
+          ],
         }),
       );
       return jsonResponse(200, {
@@ -720,7 +749,11 @@ export const assignSiteUser = (event) =>
         },
       },
     ];
-    if (primary) items.push(primaryContactUpdate(tableName, siteId, user, now));
+    if (primary)
+      items.push(
+        ...primaryGuards,
+        primaryContactUpdate(tableName, siteId, user, now),
+      );
     try {
       await ddb.send(new TransactWriteCommand({ TransactItems: items }));
     } catch (error) {
@@ -761,16 +794,14 @@ export const unassignSiteUser = (event) =>
     const site = siteResult.Item;
     const assignment = assignmentResult.Item;
     if (!site) return jsonResponse(404, { error: "not_found" });
-    const memberships = await ddb.send(
-      new QueryCommand({
-        TableName: tableName,
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-        ExpressionAttributeValues: {
-          ":pk": `SITE#${siteId}`,
-          ":prefix": "MANAGER_MEMBERSHIP#",
-        },
-      }),
-    );
+    const memberships = await queryAllItems({
+      TableName: tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+      ExpressionAttributeValues: {
+        ":pk": `SITE#${siteId}`,
+        ":prefix": "MANAGER_MEMBERSHIP#",
+      },
+    });
     const linked = (memberships.Items || []).filter(
       (member) =>
         member.status === "active" &&
@@ -781,11 +812,35 @@ export const unassignSiteUser = (event) =>
               String(assignment.email).toLowerCase())),
     );
     if (linked.length) {
+      if (linked.some((member) => !member.userId)) {
+        const { Items: assignments } = await queryAllItems({
+          TableName: tableName,
+          KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+          ExpressionAttributeValues: {
+            ":pk": `SITE#${siteId}`,
+            ":prefix": "ASSIGNED_USER#",
+          },
+          ConsistentRead: true,
+        });
+        for (const member of linked.filter((member) => !member.userId)) {
+          const matches = assignments.filter(
+            (row) =>
+              row.email &&
+              String(row.email).trim().toLowerCase() ===
+                String(member.email || "")
+                  .trim()
+                  .toLowerCase(),
+          );
+          if (matches.length !== 1 || matches[0].userId !== userId)
+            return jsonResponse(409, { error: "ambiguous_manager_identity" });
+        }
+      }
       let revokedBindingCount = 0;
       for (const member of linked) {
         const removed = await deactivateManagerMembershipRecord({
           siteId,
           membershipId: member.membershipId,
+          expectedUserId: userId,
           actor: adminPrincipal(event).subject,
         });
         if (removed?.error) return jsonResponse(409, { error: removed.error });

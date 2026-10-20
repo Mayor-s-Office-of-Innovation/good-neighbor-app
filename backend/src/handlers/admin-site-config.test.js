@@ -563,15 +563,16 @@ describe("Site Program-contact assignments", () => {
         },
       })
       .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ Item: { programId: "program-1" } })
       .mockResolvedValueOnce({});
     const response = await call(
       assignSiteUser,
       event({ userId: "user-1", primary: true }, { siteId: "site-1" }),
     );
     expect(response.statusCode).toBe(201);
-    const transaction = send.mock.calls[3][0];
+    const transaction = send.mock.calls[4][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(3);
+    expect(transaction.input.TransactItems).toHaveLength(4);
     expect(transaction.input.TransactItems[0].Put.Item).toMatchObject({
       pk: "SITE#site-1",
       sk: "ASSIGNED_USER#user-1",
@@ -746,3 +747,36 @@ async function call(handler, request) {
     await handler(request, {}, () => {})
   );
 }
+
+it("rejects ambiguous legacy unassignment before deactivating any membership", async () => {
+  send
+    .mockResolvedValueOnce({ Item: { siteId: "site-1" } })
+    .mockResolvedValueOnce({
+      Item: { userId: "u1", email: "shared@example.org", programId: "p1" },
+    })
+    .mockResolvedValueOnce({
+      Items: [
+        { membershipId: "explicit", status: "active", userId: "u1" },
+        {
+          membershipId: "legacy",
+          status: "active",
+          email: "shared@example.org",
+        },
+      ],
+    })
+    .mockResolvedValueOnce({
+      Items: [
+        { userId: "u1", email: "shared@example.org" },
+        { userId: "u2", email: "shared@example.org" },
+      ],
+    });
+  const response = await call(
+    unassignSiteUser,
+    event(undefined, { siteId: "site-1", userId: "u1" }),
+  );
+  expect(response.statusCode).toBe(409);
+  expect(JSON.parse(String(response.body)).error).toBe(
+    "ambiguous_manager_identity",
+  );
+  expect(send.mock.calls).toHaveLength(4);
+});

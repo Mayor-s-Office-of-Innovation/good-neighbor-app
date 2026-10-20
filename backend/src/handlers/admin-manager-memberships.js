@@ -1,3 +1,4 @@
+import { queryAllItems } from "../lib/query-all-items.js";
 import {
   GetCommand,
   QueryCommand,
@@ -341,12 +342,13 @@ export const deactivateManagerMembership = (event) =>
 /**
  * Deactivate one manager membership and revoke its active manager bindings.
  * Returns null when the membership is already absent or inactive.
- * @param {{ siteId: string, membershipId: string, actor: string }} input
+ * @param {{ siteId: string, membershipId: string, actor: string, expectedUserId?: string }} input
  */
 export async function deactivateManagerMembershipRecord({
   siteId,
   membershipId,
   actor,
+  expectedUserId,
 }) {
   const tableName = getDynamoTableName();
   const result = await ddb.send(
@@ -365,27 +367,36 @@ export async function deactivateManagerMembershipRecord({
   // Older memberships can identify staff only by email. Resolve the matching
   // projection so removing access cannot leave a second, ghost manager row.
   if ((!membership.userId || !membership.programId) && membership.email) {
-    const assignments = await ddb.send(
-      new QueryCommand({
-        TableName: tableName,
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-        ExpressionAttributeValues: {
-          ":pk": `SITE#${siteId}`,
-          ":prefix": "ASSIGNED_USER#",
-        },
-        ConsistentRead: true,
-      }),
-    );
+    const assignments = await queryAllItems({
+      TableName: tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+      ExpressionAttributeValues: {
+        ":pk": `SITE#${siteId}`,
+        ":prefix": "ASSIGNED_USER#",
+      },
+      ConsistentRead: true,
+    });
     const matches = (assignments.Items || []).filter(
       (assignment) =>
         assignment.email &&
         normalizeEmail(assignment.email) === normalizeEmail(membership.email),
     );
+    if (
+      matches.length > 1 ||
+      (membership.userId &&
+        matches.length === 1 &&
+        matches[0].userId !== membership.userId) ||
+      (expectedUserId &&
+        (matches.length !== 1 || matches[0].userId !== expectedUserId))
+    )
+      return { error: "ambiguous_manager_identity" };
     if (matches.length === 1) {
       membership.userId = matches[0].userId;
       membership.programId = matches[0].programId;
     }
   }
+  if (expectedUserId && membership.userId !== expectedUserId)
+    return { error: "ambiguous_manager_identity" };
   const now = new Date().toISOString();
   const bindingsResult = await ddb.send(
     new QueryCommand({
