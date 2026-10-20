@@ -906,6 +906,11 @@ class TodayView extends HTMLElement {
         (entry) => homeTabForStatus(entry.homeStatus) === this._homeFilter,
       ),
     );
+    const tabCounts = { todo: 0, in_progress: 0 };
+    for (const entry of homeTasks) {
+      const tab = homeTabForStatus(entry.homeStatus);
+      if (tab in tabCounts) tabCounts[tab] += 1;
+    }
     const newTaskEntries = selectedTaskEntries.filter(
       (entry) =>
         this._homeFilter !== "history" &&
@@ -962,6 +967,7 @@ class TodayView extends HTMLElement {
         : this._activityBlock({ last, homeTasks }),
       results: this._homeResults({
         pendingSession,
+        tabCounts,
         recentCheckTime:
           newestCheck.time ||
           pendingSession?.startedAt ||
@@ -1057,6 +1063,7 @@ class TodayView extends HTMLElement {
 
   _homeResults({
     pendingSession,
+    tabCounts,
     recentCheckTime,
     checks,
     recentItems,
@@ -1070,6 +1077,7 @@ class TodayView extends HTMLElement {
     return homeResults({
       historyGrouping: this._historyGrouping || "resolved",
       homeFilter: this._homeFilter,
+      tabCounts,
       siteName: this._site?.name || "",
       siteAddress: this._site?.address || "",
       pendingSessionId: pendingSession?.id || "",
