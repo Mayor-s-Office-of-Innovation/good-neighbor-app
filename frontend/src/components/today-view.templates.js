@@ -307,7 +307,7 @@ export function heroBlock({ siteName, summary, checkLabel }) {
 export function homeActions({ checkLabel }) {
   return html`
     <div class="home-actions">
-      <button id="start-check" class="btn-ink" type="button">
+      <button id="start-check" class="btn-blue" type="button">
         ${escapeHtml(checkLabel)}
       </button>
       <div class="home-action-menu-wrap">
