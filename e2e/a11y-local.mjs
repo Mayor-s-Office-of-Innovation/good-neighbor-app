@@ -18,7 +18,7 @@
   site in dev per docs/quickstart-design.md).
 */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
@@ -45,12 +45,28 @@ async function bind() {
   const context = await browser.newContext({ baseURL });
   const page = await context.newPage();
   try {
-    await page.goto("/");
+    // A cold Vite server (first load after npm install) optimizes dependencies
+    // before the app renders, which can take over a minute on a slow machine.
+    await page.goto("/", { timeout: 120_000 });
     const otp = page.locator("wa-otp-input#code-input");
-    await otp.waitFor();
+    await otp.waitFor({ timeout: 120_000 });
     await otp.locator("#hidden-input").pressSequentially(siteCode);
     await page.locator("#continue").click();
-    await page.locator("#start-check").waitFor({ timeout: 30_000 });
+    // Home, or the code-entry screen's own error (an exhausted or unknown code).
+    const home = page.locator("#start-check");
+    const codeError = page.locator("#code-error:not([hidden])");
+    await Promise.race([
+      home.waitFor({ timeout: 30_000 }),
+      codeError.waitFor({ timeout: 30_000 }),
+    ]);
+    if (await codeError.isVisible()) {
+      throw new Error(
+        `the app rejected the code: "${(await codeError.innerText()).trim()}"`,
+      );
+    }
+    // The binding must survive a reload before it is worth saving.
+    await page.reload();
+    await home.waitFor({ timeout: 30_000 });
     mkdirSync(dirname(stateFile), { recursive: true });
     // indexedDB: true captures the device binding; cookies/localStorage alone would not.
     await context.storageState({ path: stateFile, indexedDB: true });
@@ -59,7 +75,47 @@ async function bind() {
       `[a11y:local] binding failed: ${err instanceof Error ? err.message.split("\n")[0] : err}`,
     );
     console.error(
-      "  Is the code right and unexpired? Codes allow three uses and last 72 hours; ask an engineer for a fresh one.",
+      "  Seeded dev codes such as MOICHL allow three redemptions in total and each new browser profile is one.",
+    );
+    console.error(
+      "  Fixes: a fresh code (A11Y_LOCAL_SITE_CODE=... npm run a11y:local -w e2e), or copy a working e2e/.a11y-local/state.json from another machine.",
+    );
+    process.exit(2);
+  } finally {
+    await browser.close();
+  }
+}
+
+/**
+ * Open a fresh context from the saved state, the way every ramp-check cell
+ * will, and confirm it lands on the bound home screen. Exits with a
+ * diagnosis otherwise, instead of letting every page time out.
+ */
+async function verifySavedState() {
+  const browser = await chromium.launch();
+  const context = await browser.newContext({
+    baseURL,
+    storageState: stateFile,
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto("/today", { timeout: 60_000 });
+    await page.locator("#start-check").waitFor({ timeout: 30_000 });
+    console.log(
+      "[a11y:local] saved session restores: bound home screen reached",
+    );
+  } catch {
+    const state = JSON.parse(readFileSync(stateFile, "utf8"));
+    const origin = state.origins?.find((o) => o.origin === baseURL);
+    const dbs = origin?.indexedDB?.length ?? 0;
+    console.error(
+      `[a11y:local] the saved session did not restore into a fresh browser context (landed on ${page.url()}).`,
+    );
+    console.error(
+      `  ${stateFile}: ${origin ? "has" : "has no"} entry for ${baseURL}, ${dbs} IndexedDB database${dbs === 1 ? "" : "s"} saved.`,
+    );
+    console.error(
+      "  Rerun with A11Y_LOCAL_REBIND=1 to bind again (spends one redemption of the code), or copy a working state.json from another machine.",
     );
     process.exit(2);
   } finally {
@@ -76,6 +132,7 @@ if (!(await serverUp())) {
 if (process.env.A11Y_LOCAL_REBIND && existsSync(stateFile))
   unlinkSync(stateFile);
 if (!existsSync(stateFile)) await bind();
+await verifySavedState();
 
 const run = spawnSync(
   "npx",
