@@ -211,8 +211,10 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify(values),
     }),
-  getSite: (siteId) =>
-    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}`),
+  getSite: (siteId, rosterOnly = false) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}${rosterOnly ? "?roster=1" : ""}`,
+    ),
   updateSite: (siteId, values) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}`, {
       method: "PATCH",

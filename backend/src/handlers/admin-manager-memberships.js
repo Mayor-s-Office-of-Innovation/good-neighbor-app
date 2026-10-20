@@ -1,8 +1,10 @@
+import { queryAllItems } from "../lib/query-all-items.js";
 import {
   GetCommand,
   QueryCommand,
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
+import { managerAssignmentChanges } from "../lib/site-manager-assignment.js";
 import { randomUUID } from "node:crypto";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
@@ -84,10 +86,32 @@ export const createManagerMembership = (event) =>
     if (!siteResult.Item || siteResult.Item.status === "inactive") {
       return jsonResponse(404, { error: "site_not_found" });
     }
+    if (
+      (userId && !programId) ||
+      (programId && !userId) ||
+      (programId && programId !== siteResult.Item.leadProgramId)
+    ) {
+      return jsonResponse(400, { error: "invalid_program_staff" });
+    }
     const now = new Date().toISOString();
     const membershipId = randomUUID();
     const verifier = await emailHash(email);
     const actor = actorId(event);
+    let assignmentChanges;
+    try {
+      assignmentChanges = await managerAssignmentChanges(
+        tableName,
+        siteId,
+        programId,
+        userId,
+        true,
+        now,
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message === "program_user_not_found")
+        return jsonResponse(404, { error: "program_user_not_found" });
+      throw error;
+    }
     const membership = {
       pk: `SITE#${siteId}`,
       sk: `MANAGER_MEMBERSHIP#${membershipId}`,
@@ -112,6 +136,17 @@ export const createManagerMembership = (event) =>
       await ddb.send(
         new TransactWriteCommand({
           TransactItems: [
+            ...assignmentChanges,
+            ...(userId
+              ? [
+                  put(tableName, {
+                    pk: `SITE#${siteId}`,
+                    sk: `MANAGER_USER#${userId}`,
+                    membershipId,
+                    userId,
+                  }),
+                ]
+              : []),
             put(tableName, membership),
             put(tableName, {
               pk: `SITE#${siteId}`,
@@ -307,12 +342,13 @@ export const deactivateManagerMembership = (event) =>
 /**
  * Deactivate one manager membership and revoke its active manager bindings.
  * Returns null when the membership is already absent or inactive.
- * @param {{ siteId: string, membershipId: string, actor: string }} input
+ * @param {{ siteId: string, membershipId: string, actor: string, expectedUserId?: string }} input
  */
 export async function deactivateManagerMembershipRecord({
   siteId,
   membershipId,
   actor,
+  expectedUserId,
 }) {
   const tableName = getDynamoTableName();
   const result = await ddb.send(
@@ -328,6 +364,39 @@ export async function deactivateManagerMembershipRecord({
   if (!membership || membership.status !== "active") {
     return null;
   }
+  // Older memberships can identify staff only by email. Resolve the matching
+  // projection so removing access cannot leave a second, ghost manager row.
+  if ((!membership.userId || !membership.programId) && membership.email) {
+    const assignments = await queryAllItems({
+      TableName: tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+      ExpressionAttributeValues: {
+        ":pk": `SITE#${siteId}`,
+        ":prefix": "ASSIGNED_USER#",
+      },
+      ConsistentRead: true,
+    });
+    const matches = (assignments.Items || []).filter(
+      (assignment) =>
+        assignment.email &&
+        normalizeEmail(assignment.email) === normalizeEmail(membership.email),
+    );
+    if (
+      matches.length > 1 ||
+      (membership.userId &&
+        matches.length === 1 &&
+        matches[0].userId !== membership.userId) ||
+      (expectedUserId &&
+        (matches.length !== 1 || matches[0].userId !== expectedUserId))
+    )
+      return { error: "ambiguous_manager_identity" };
+    if (matches.length === 1) {
+      membership.userId = matches[0].userId;
+      membership.programId = matches[0].programId;
+    }
+  }
+  if (expectedUserId && membership.userId !== expectedUserId)
+    return { error: "ambiguous_manager_identity" };
   const now = new Date().toISOString();
   const bindingsResult = await ddb.send(
     new QueryCommand({
@@ -348,10 +417,35 @@ export async function deactivateManagerMembershipRecord({
   if (bindings.length > 30) {
     return { error: "membership_binding_limit_exceeded" };
   }
+  const assignmentChanges = await managerAssignmentChanges(
+    tableName,
+    siteId,
+    String(membership.programId || ""),
+    String(membership.userId || ""),
+    false,
+    now,
+  );
   try {
     await ddb.send(
       new TransactWriteCommand({
         TransactItems: [
+          ...assignmentChanges,
+          ...(membership.userId
+            ? [
+                {
+                  Delete: {
+                    TableName: tableName,
+                    Key: {
+                      pk: `SITE#${siteId}`,
+                      sk: `MANAGER_USER#${membership.userId}`,
+                    },
+                    ConditionExpression:
+                      "attribute_not_exists(pk) OR membershipId = :member",
+                    ExpressionAttributeValues: { ":member": membershipId },
+                  },
+                },
+              ]
+            : []),
           {
             Update: {
               TableName: tableName,

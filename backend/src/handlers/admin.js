@@ -1,3 +1,4 @@
+import { contactRevisionChange } from "../lib/staff-contact-guard.js";
 import { currentManagerOversight } from "../lib/site-manager-name.js";
 import {
   DeleteCommand,
@@ -332,7 +333,7 @@ export const createSite = (event) =>
           }),
         );
         primaryContact = user.Item;
-        if (!primaryContact || primaryContact.status === "inactive") {
+        if (!primaryContact || primaryContact.status !== "active") {
           return jsonResponse(400, { error: "invalid_internal_site_contact" });
         }
       }
@@ -452,7 +453,7 @@ export const createSite = (event) =>
         },
       });
     }
-    if (primaryContact) {
+    if (primaryContact && program) {
       transactItems.push(
         {
           Put: {
@@ -496,6 +497,11 @@ export const createSite = (event) =>
         },
       );
     }
+    if (primaryContact && program) {
+      transactItems.push(
+        contactRevisionChange(getDynamoTableName(), leadProgramId, program),
+      );
+    }
     await ddb.send(
       new TransactWriteCommand({
         TransactItems: transactItems,
@@ -511,6 +517,30 @@ export const createSite = (event) =>
 export const getAdminSite = (event) =>
   adminOnly(event, async () => {
     const siteId = event.pathParameters?.siteId ?? "";
+    if (event.queryStringParameters?.roster === "1") {
+      const tableName = getDynamoTableName();
+      const { Item: site } = await ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { pk: `SITE#${siteId}`, sk: "#META" },
+          ConsistentRead: true,
+        }),
+      );
+      if (!site) return jsonResponse(404, { error: "not_found" });
+      const batches = await Promise.all(
+        ["ASSIGNED_USER#", "MANAGER_MEMBERSHIP#"].map((prefix) =>
+          queryAll({
+            KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+            ExpressionAttributeValues: {
+              ":pk": `SITE#${siteId}`,
+              ":prefix": prefix,
+            },
+            ConsistentRead: true,
+          }),
+        ),
+      );
+      return jsonResponse(200, { items: [site, ...batches.flat()] });
+    }
     const res = await ddb.send(
       new QueryCommand({
         TableName: getDynamoTableName(),
@@ -868,12 +898,12 @@ export const updateSite = (event) =>
         new GetCommand({
           TableName: tableName,
           Key: {
-            pk: `SITE#${siteId}`,
-            sk: `ASSIGNED_USER#${primaryContactUserId}`,
+            pk: `PROGRAM#${site.leadProgramId}`,
+            sk: `USER#${primaryContactUserId}`,
           },
         }),
       );
-      if (!assigned.Item || assigned.Item.programId !== site.leadProgramId) {
+      if (!assigned.Item || assigned.Item.status !== "active") {
         return jsonResponse(400, { error: "invalid_internal_site_contact" });
       }
       selectedPrimaryContact = assigned.Item;
@@ -1091,6 +1121,33 @@ export const updateSite = (event) =>
         },
       },
     ];
+    if (selectedPrimaryContact) {
+      const programId = String(site.leadProgramId);
+      const { Item: contactProgram } = await ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { pk: `PROGRAM#${programId}`, sk: "#META" },
+          ConsistentRead: true,
+        }),
+      );
+      if (!contactProgram)
+        return jsonResponse(400, { error: "invalid_internal_site_contact" });
+      transactItems.push(
+        contactRevisionChange(tableName, programId, contactProgram),
+        {
+          ConditionCheck: {
+            TableName: tableName,
+            Key: {
+              pk: `PROGRAM#${programId}`,
+              sk: `USER#${primaryContactUserId}`,
+            },
+            ConditionExpression: "#status = :active",
+            ExpressionAttributeNames: { "#status": "status" },
+            ExpressionAttributeValues: { ":active": "active" },
+          },
+        },
+      );
+    }
     if (selectedProgramManager && programManagerPhone !== undefined) {
       transactItems.push({
         Update: {

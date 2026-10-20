@@ -57,6 +57,51 @@ describe("City-issued Manager enrollment grants", () => {
     expect(String(response.body)).not.toContain("secret-verifier");
   });
 
+  it("emails the current program staff address while preserving other managers' grants", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: { siteId: "site-1", name: "Site One", leadProgramId: "p1" },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          membershipId: "m2",
+          programId: "p1",
+          userId: "u2",
+          status: "active",
+          email: "old@example.org",
+          name: "Old Name",
+        },
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          { membershipId: "m1", status: "pending", grantId: "other-grant" },
+        ],
+      })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Item: {
+          status: "active",
+          email: "new@example.org",
+          firstName: "Current",
+          lastName: "Name",
+        },
+      })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+    const response = await call(
+      createManagerGrant,
+      event({ membershipId: "m2" }, { siteId: "site-1" }),
+    );
+    expect(response.statusCode).toBe(201);
+    expect(sendManagerEnrollmentEmail.mock.calls[0][0]).toMatchObject({
+      to: "new@example.org",
+      managerName: "Current Name",
+    });
+    const items = send.mock.calls[5][0].input.TransactItems;
+    expect(JSON.stringify(items)).not.toContain("other-grant");
+    expect(items[0].Put.Item.issuedTo).toBe("new@example.org");
+  });
+
   it("creates a 24-hour single-Site grant and emails its one-time link", async () => {
     send
       .mockResolvedValueOnce({ Item: { siteId: "site-1", name: "Site One" } })

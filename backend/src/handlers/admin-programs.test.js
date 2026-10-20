@@ -22,6 +22,8 @@ const {
   updateProgramUser,
 } = await import("./admin-programs.js");
 
+const { assignSiteUser } = await import("./admin-site-config.js");
+
 beforeEach(() => {
   send.mockReset();
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
@@ -73,6 +75,246 @@ describe("program administration", () => {
       pk: "PROGRAM#provider-1-program-one",
       providerId: "provider-1",
     });
+  });
+
+  it("creates assignable first staff and defaults program contact in the same transaction", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: { providerId: "provider-1", name: "Provider", status: "active" },
+      })
+      .mockResolvedValueOnce({});
+    const firstStaff = {
+      firstName: " Sam ",
+      lastName: "Lee",
+      phone: "4155550100",
+      email: "SAM@example.org",
+    };
+    const response = await call(
+      createProgram,
+      event({ name: "Program One", providerId: "provider-1", firstStaff }),
+    );
+    expect(response.statusCode).toBe(201);
+    const { program, user } = JSON.parse(String(response.body));
+    expect(program.contact).toEqual({
+      firstName: "Sam",
+      lastName: "Lee",
+      phone: "4155550100",
+      phoneExtension: "",
+      email: "sam@example.org",
+    });
+    expect(user).toMatchObject({
+      pk: `PROGRAM#${program.programId}`,
+      sk: `USER#${user.userId}`,
+      type: "programUser",
+      entityType: "PROGRAM_USER",
+      programId: program.programId,
+      ...program.contact,
+      status: "active",
+      siteAssignmentCount: 0,
+      siteManager: false,
+    });
+    expect(user.userId).toBeTruthy();
+    /** @type {any[]} */
+    const items = send.mock.calls[1][0].input.TransactItems;
+    expect(items).toHaveLength(4);
+    expect(items.map((item) => item.Put.Item)).toEqual(
+      expect.arrayContaining([program, user]),
+    );
+    expect(
+      items.every((item) =>
+        item.Put.ConditionExpression.includes("attribute_not_exists"),
+      ),
+    ).toBe(true);
+    send
+      .mockResolvedValueOnce({ Item: program })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [user] });
+    const loaded = await call(
+      getProgram,
+      event(undefined, { programId: program.programId }),
+    );
+    expect(JSON.parse(String(loaded.body)).users).toEqual([user]);
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          leadProgramId: program.programId,
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({ Item: user })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+    const assigned = await call(
+      assignSiteUser,
+      event({ userId: user.userId }, { siteId: "site-1" }),
+    );
+    expect(assigned.statusCode).toBe(201);
+    expect(JSON.parse(String(assigned.body)).assignment).toMatchObject({
+      userId: user.userId,
+      programId: program.programId,
+      siteId: "site-1",
+      firstName: "Sam",
+      lastName: "Lee",
+    });
+  });
+
+  it.each([
+    [
+      { lastName: "Lee", phone: "4155550100", email: "sam@example.org" },
+      "name_required",
+    ],
+    [
+      {
+        firstName: "Sam",
+        lastName: "Lee",
+        phone: "4155550100",
+        email: "invalid",
+      },
+      "valid_email_required",
+    ],
+    [
+      { firstName: "Sam", lastName: "Lee", email: "sam@example.org" },
+      "phone_required",
+    ],
+  ])(
+    "rejects invalid first staff before writing a program",
+    async (firstStaff, error) => {
+      const response = await call(
+        createProgram,
+        event({ name: "Program", providerId: "provider-1", firstStaff }),
+      );
+      expect(response.statusCode).toBe(400);
+      expect(JSON.parse(String(response.body))).toEqual({ error });
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [true, "other", "user-1"],
+    [false, "user-1", null],
+    [false, "other", "other"],
+    [true, undefined, "user-1"],
+  ])(
+    "atomically saves staff and primary contact (%s, %s)",
+    async (isPrimaryContact, previousId, expectedId) => {
+      const user = {
+        userId: "user-1",
+        firstName: "Sam",
+        lastName: "Lee",
+        email: "sam@example.org",
+        phone: "4155550100",
+        status: "active",
+        siteManager: false,
+      };
+      const oldContact = { firstName: "Other", email: "other@example.org" };
+      send
+        .mockResolvedValueOnce({ Item: user })
+        .mockResolvedValueOnce({
+          Item: {
+            status: "active",
+            primaryContactUserId: previousId,
+            contact: oldContact,
+            updatedAt: "version-1",
+          },
+        })
+        .mockResolvedValueOnce({});
+      const response = await call(
+        updateProgramUser,
+        event(
+          { ...user, firstName: "Samuel", isPrimaryContact },
+          { programId: "program-1", userId: "user-1" },
+        ),
+      );
+      expect(response.statusCode).toBe(200);
+      const transaction = send.mock.calls[2][0];
+      expect(transaction).toBeInstanceOf(TransactWriteCommand);
+      expect(transaction.input.TransactItems).toHaveLength(2);
+      const [staff, program] = transaction.input.TransactItems;
+      expect(staff.Update.ExpressionAttributeValues[":firstName"]).toBe(
+        "Samuel",
+      );
+      expect(program.Update.ExpressionAttributeValues[":version"]).toBe(
+        "version-1",
+      );
+      if (expectedId)
+        expect(program.Update.ExpressionAttributeValues[":primary"]).toBe(
+          expectedId,
+        );
+      else
+        expect(program.Update.UpdateExpression).toContain(
+          "REMOVE primaryContactUserId",
+        );
+      expect(program.Update.ExpressionAttributeValues[":contact"]).toEqual(
+        isPrimaryContact
+          ? expect.objectContaining({ firstName: "Samuel", email: user.email })
+          : previousId === "user-1"
+            ? {}
+            : oldContact,
+      );
+    },
+  );
+
+  it("refreshes legacy primary contact details when editing the matched staff member", async () => {
+    const user = {
+      firstName: "Sam",
+      lastName: "Lee",
+      email: "sam@example.org",
+      phone: "4155550100",
+      status: "active",
+    };
+    send
+      .mockResolvedValueOnce({ Item: user })
+      .mockResolvedValueOnce({
+        Item: { status: "active", contact: { ...user }, updatedAt: "v1" },
+      })
+      .mockResolvedValueOnce({});
+    const response = await call(
+      updateProgramUser,
+      event(
+        {
+          ...user,
+          phone: "4155550101",
+          email: "updated@example.org",
+          isPrimaryContact: true,
+        },
+        { programId: "p1", userId: "u1" },
+      ),
+    );
+    expect(response.statusCode).toBe(200);
+    const values =
+      send.mock.calls[2][0].input.TransactItems[1].Update
+        .ExpressionAttributeValues;
+    expect(values[":primary"]).toBe("u1");
+    expect(values[":contact"].phone).toBe("4155550101");
+    expect(values[":contact"].email).toBe("updated@example.org");
+  });
+
+  it("returns a conflict when the primary contact changed concurrently", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: { status: "active", email: "sam@example.org" },
+      })
+      .mockResolvedValueOnce({ Item: { status: "active", updatedAt: "v1" } })
+      .mockRejectedValueOnce(
+        Object.assign(new Error("conflict"), {
+          name: "TransactionCanceledException",
+        }),
+      );
+    const response = await call(
+      updateProgramUser,
+      event(
+        {
+          firstName: "Sam",
+          lastName: "Lee",
+          email: "sam@example.org",
+          phone: "4155550100",
+          isPrimaryContact: true,
+        },
+        { programId: "p1", userId: "u1" },
+      ),
+    );
+    expect(response.statusCode).toBe(409);
   });
 
   it("loads a program with sites and users", async () => {
@@ -343,43 +585,116 @@ describe("program administration", () => {
     },
   );
 
-  it("archives an unassigned program contact without deleting history", async () => {
+  it("archives unassigned staff with an atomic contact revision guard", async () => {
     send
       .mockResolvedValueOnce({
         Item: { userId: "user-1", status: "active", siteManager: false },
       })
-      .mockResolvedValueOnce({ Attributes: { status: "inactive" } });
+      .mockResolvedValueOnce({
+        Item: {
+          programId: "program-1",
+          updatedAt: "version",
+          staffContactRevision: "revision",
+        },
+      })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({});
     const response = await call(
       deactivateProgramUser,
       event(undefined, { programId: "program-1", userId: "user-1" }),
     );
     expect(response.statusCode).toBe(200);
-    const command = send.mock.calls[1][0];
-    expect(command).toBeInstanceOf(UpdateCommand);
-    expect(command.input.ConditionExpression).toContain(
+    const tx = send.mock.calls[3][0];
+    expect(tx).toBeInstanceOf(TransactWriteCommand);
+    expect(tx.input.TransactItems[1].Update.ConditionExpression).toContain(
       "siteAssignmentCount = :zero",
     );
+    expect(
+      tx.input.TransactItems[0].Update.ExpressionAttributeValues,
+    ).toMatchObject({
+      ":previous": "revision",
+      ":version": "version",
+      ":userId": "user-1",
+    });
   });
 
-  it("does not archive a program contact that still has Site dependencies", async () => {
-    const conflict = new Error("assigned");
-    conflict.name = "ConditionalCheckFailedException";
+  it("does not archive staff when dependencies change during removal", async () => {
     send
-      .mockResolvedValueOnce({
-        Item: { userId: "user-1", status: "active", siteManager: false },
-      })
-      .mockRejectedValueOnce(conflict);
+      .mockResolvedValueOnce({ Item: { userId: "user-1", status: "active" } })
+      .mockResolvedValueOnce({ Item: { programId: "program-1" } })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockRejectedValueOnce(
+        Object.assign(new Error("conflict"), {
+          name: "TransactionCanceledException",
+        }),
+      );
     const response = await call(
       deactivateProgramUser,
       event(undefined, { programId: "program-1", userId: "user-1" }),
     );
     expect(response.statusCode).toBe(409);
-    expect(JSON.parse(String(response.body))).toEqual({
-      error: "program_user_in_use",
-    });
+    expect(JSON.parse(String(response.body)).error).toBe("program_user_in_use");
   });
 
-  it("removes a Site Manager and clears the manager from assigned Sites", async () => {
+  it.each([false, true])(
+    "requires reassignment before removing program primary staff (%s)",
+    async (siteManager) => {
+      send
+        .mockResolvedValueOnce({
+          Item: { userId: "user-1", status: "active", siteManager },
+        })
+        .mockResolvedValueOnce({ Item: { primaryContactUserId: "user-1" } });
+      const response = await call(
+        deactivateProgramUser,
+        event(undefined, { programId: "program-1", userId: "user-1" }),
+      );
+      expect(response.statusCode).toBe(409);
+      expect(JSON.parse(String(response.body)).error).toBe(
+        "program_primary_contact_in_use",
+      );
+      expect(
+        send.mock.calls.every(([command]) => command instanceof GetCommand),
+      ).toBe(true);
+    },
+  );
+
+  it.each([false, true])(
+    "protects unassigned site primary contacts, including later pages (%s)",
+    async (siteManager) => {
+      const cursor = { pk: "PROGRAM#program-1", sk: "SITE#old" };
+      send
+        .mockResolvedValueOnce({
+          Item: {
+            userId: "user-1",
+            status: "active",
+            siteManager,
+            siteAssignmentCount: 0,
+          },
+        })
+        .mockResolvedValueOnce({ Item: { programId: "program-1" } })
+        .mockResolvedValueOnce({ Items: [], LastEvaluatedKey: cursor })
+        .mockResolvedValueOnce({
+          Items: [{ siteId: "site-1", status: "inactive" }],
+        })
+        .mockResolvedValueOnce({ Item: { primaryContactUserId: "user-1" } });
+      const response = await call(
+        deactivateProgramUser,
+        event(undefined, { programId: "program-1", userId: "user-1" }),
+      );
+      expect(response.statusCode).toBe(409);
+      expect(JSON.parse(String(response.body)).error).toBe(
+        "site_primary_contact_in_use",
+      );
+      expect(send.mock.calls[3][0].input.ExclusiveStartKey).toEqual(cursor);
+      expect(
+        send.mock.calls.some(
+          ([command]) => command instanceof TransactWriteCommand,
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it("marks a non-primary manager removing before clearing assignments and deleting staff", async () => {
     send
       .mockResolvedValueOnce({
         Item: {
@@ -389,48 +704,32 @@ describe("program administration", () => {
           siteManager: true,
         },
       })
+      .mockResolvedValueOnce({ Item: { programId: "program-1" } })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({})
       .mockResolvedValueOnce({ Items: [] })
       .mockResolvedValueOnce({
         Items: [{ siteId: "site-1", status: "active" }],
       })
       .mockResolvedValueOnce({
-        Item: { siteId: "site-1", primaryContactUserId: "user-1" },
+        Item: { siteId: "site-1", primaryContactUserId: "other" },
       })
-      .mockResolvedValueOnce({
-        Item: { siteId: "site-1", userId: "user-1" },
-      })
+      .mockResolvedValueOnce({ Item: { userId: "user-1" } })
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce({});
-
     const response = await call(
       deactivateProgramUser,
       event(undefined, { programId: "program-1", userId: "user-1" }),
     );
-
     expect(response.statusCode).toBe(200);
-    expect(JSON.parse(String(response.body))).toMatchObject({
-      removed: true,
-      clearedSiteCount: 1,
-      revokedBindingCount: 0,
-    });
-    const siteTransaction = send.mock.calls[5][0];
-    expect(siteTransaction).toBeInstanceOf(TransactWriteCommand);
-    expect(siteTransaction.input.TransactItems[0].Delete.Key).toEqual({
-      pk: "SITE#site-1",
-      sk: "ASSIGNED_USER#user-1",
-    });
-    expect(siteTransaction.input.TransactItems[1].Update.UpdateExpression).toBe(
-      "REMOVE primaryContactUserId, primaryContact SET updatedAt = :now",
-    );
-    expect(siteTransaction.input.TransactItems[2].Put.Item.eventType).toBe(
-      "site_manager_removed",
-    );
-    const managerDelete = send.mock.calls[6][0];
-    expect(managerDelete).toBeInstanceOf(DeleteCommand);
-    expect(managerDelete.input.Key).toEqual({
-      pk: "PROGRAM#program-1",
-      sk: "USER#user-1",
-    });
+    expect(
+      send.mock.calls[3][0].input.TransactItems[1].Update
+        .ExpressionAttributeValues[":next"],
+    ).toBe("removing");
+    const tx = send.mock.calls[8][0].input.TransactItems;
+    expect(tx[0].Delete.Key.sk).toBe("ASSIGNED_USER#user-1");
+    expect(tx.some((/** @type {any} */ item) => item.Update)).toBe(false);
+    expect(send.mock.calls[9][0]).toBeInstanceOf(DeleteCommand);
   });
 
   it("updates program details", async () => {
