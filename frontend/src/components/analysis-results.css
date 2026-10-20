@@ -84,11 +84,11 @@
 }
 
 .analysis-tray--recent .analysis-tray__cards {
-  gap: var(--wa-space-m, 1rem);
+  gap: var(--wa-space-s, 0.75rem);
   padding: var(--wa-space-l, 1.5rem) var(--wa-space-xs, 0.5rem)
     var(--wa-space-xs, 0.5rem);
   border-radius: 2rem;
-  background: var(--wa-color-brand-fill-quiet, #e8f3ff);
+  background: var(--brand-blue-bg);
 }
 
 .analysis-tray h2.analysis-tray__check-title {
@@ -105,7 +105,7 @@
 }
 
 .analysis-tray--history .analysis-tray__cards {
-  gap: var(--wa-space-m, 1rem);
+  gap: var(--wa-space-s, 0.75rem);
   padding: var(--wa-space-l, 1.5rem) var(--wa-space-xs, 0.5rem)
     var(--wa-space-xs, 0.5rem);
   border-radius: 2rem;
@@ -145,14 +145,9 @@
   --analysis-card-outline: var(--wa-color-neutral-90, #e4e5e9);
 }
 
+html.wa-dark .analysis-tray--recent,
 html.wa-dark .analysis-tray--history {
   --analysis-card-outline: var(--wa-color-neutral-border-quiet, #545868);
-}
-
-/* Latest-check outlines blend into the tray in either theme. The separate
-   action area's neutral top border remains the content divider. */
-.analysis-tray--recent {
-  --analysis-card-outline: var(--wa-color-brand-fill-quiet, #e8f3ff);
 }
 
 .analysis-tray--recent .analysis-card__panel,
@@ -162,8 +157,8 @@ html.wa-dark .analysis-tray--history {
 
 .analysis-tray--recent .analysis-card__action-area,
 .analysis-tray--history .analysis-card__action-area {
-  border-inline: 1px solid var(--wa-color-neutral-90);
-  border-bottom: 1px solid var(--wa-color-neutral-90);
+  border-inline: 1px solid var(--analysis-card-outline);
+  border-bottom: 1px solid var(--analysis-card-outline);
 }
 
 .analysis-card__panel:has(+ .analysis-card__action-area) {
@@ -224,7 +219,7 @@ html.wa-dark .analysis-tray--history {
 }
 
 .analysis-card__clear-copy a {
-  color: #0053c0;
+  color: var(--brand-blue);
   text-decoration-line: underline;
   text-decoration-style: dotted;
   text-underline-position: from-font;
@@ -361,7 +356,7 @@ html.wa-dark .analysis-card__clear-copy a {
 .analysis-card h3 {
   margin: 0 0 0.125rem;
   color: var(--wa-color-text-normal, #1b1d26);
-  font-size: var(--wa-font-size-l, 1.25rem);
+  font-size: var(--wa-font-size-xl, 1.5625rem);
   font-weight: var(--wa-font-weight-heading, 600);
   line-height: 1.2;
 }
@@ -378,7 +373,7 @@ html.wa-dark .analysis-card__clear-copy a {
 }
 
 .analysis-card__footer {
-  background: var(--wa-color-neutral-fill-quiet, #f1f2f3);
+  background: var(--wa-color-surface-default, #fff);
   display: flex;
   justify-content: space-between;
   gap: 1rem;
@@ -489,8 +484,8 @@ html.wa-dark .analysis-card__clear-copy a {
 }
 
 .analysis-card__primary--escalation {
-  background: var(--wa-color-brand-fill-normal, #d1e8ff);
-  color: var(--wa-color-brand-on-normal, #003f9c);
+  background: var(--brand-blue);
+  color: var(--on-ink);
 }
 
 .analysis-card__primary--outline {
@@ -583,7 +578,7 @@ html.wa-dark .analysis-card__clear-copy a {
 }
 
 .analysis-dialog__text span {
-  color: #0053c0;
+  color: var(--brand-blue);
   text-decoration: underline;
   text-decoration-style: dotted;
   text-underline-position: from-font;
@@ -923,7 +918,8 @@ html.wa-dark .analysis-card__clear-copy a {
 .analysis-card__action-area {
   margin: 0;
   padding: 0.875rem 1.25rem 1.25rem;
-  border-top: 1px solid var(--wa-color-neutral-90);
+  border-top: 1px solid
+    var(--analysis-card-outline, var(--wa-color-neutral-90, #e4e5e9));
   background: var(--wa-color-surface-default);
   border-radius: 0 0 1.5rem 1.5rem;
 }
@@ -1116,7 +1112,6 @@ html.wa-dark .analysis-card__clear-copy a {
 /* Address eyebrow + title read as one lockup (see __place margin); the
    structural break sits between that lockup and the guidance text. */
 .analysis-card--done h3 {
-  font-size: 1.5625rem;
   line-height: 1.2;
   margin: 0 0 0.75rem;
 }

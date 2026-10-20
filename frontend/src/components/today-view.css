@@ -564,8 +564,8 @@
 }
 
 .home-tabs__tab--active {
-  border-bottom-color: #2f323f;
-  color: #1b1d26;
+  border-bottom-color: var(--brand-blue);
+  color: var(--brand-blue);
   font-weight: 600;
 }
 
@@ -646,7 +646,7 @@ html.wa-dark .home-tabs__tab--active {
 }
 
 .home-results__complete-note a {
-  color: var(--wa-color-text-link, #0053c0);
+  color: var(--brand-blue);
   text-decoration: underline;
 }
 
