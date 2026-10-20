@@ -27,6 +27,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const baseURL = process.env.A11Y_LOCAL_BASE_URL || "http://127.0.0.1:5173";
 const siteCode = process.env.A11Y_LOCAL_SITE_CODE || "MOICHL";
 const stateFile = resolve(here, ".a11y-local/state.json");
+/** Device access-token lifetime (backend/src/lib/device-token.js ACCESS_TTL_SECONDS). */
+const ACCESS_TOKEN_MINUTES = 15;
 
 async function serverUp() {
   try {
@@ -75,10 +77,10 @@ async function bind() {
       `[a11y:local] binding failed: ${err instanceof Error ? err.message.split("\n")[0] : err}`,
     );
     console.error(
-      "  Seeded dev codes such as MOICHL allow three redemptions in total and each new browser profile is one.",
+      "  Seeded dev codes allow three redemptions in total and each new browser profile is one.",
     );
     console.error(
-      "  Fixes: a fresh code (A11Y_LOCAL_SITE_CODE=... npm run a11y:local -w e2e), or copy a working e2e/.a11y-local/state.json from another machine.",
+      "  Ask an engineer for a fresh code and pass it: A11Y_LOCAL_SITE_CODE=... npm run a11y:local -w e2e",
     );
     process.exit(2);
   } finally {
@@ -106,14 +108,28 @@ async function prepareSession() {
   });
   const page = await context.newPage();
   try {
-    await page.goto("/today", { timeout: 60_000 });
-    await page.locator("#start-check").waitFor({ timeout: 30_000 });
+    // Same allowance as bind(): a cold Vite server optimizes dependencies first.
+    await page.goto("/today", { timeout: 120_000 });
+    await page.locator("#start-check").waitFor({ timeout: 60_000 });
   } catch {
+    // Only a visible code-entry screen means the credentials were rejected;
+    // a page that never rendered is a slow server, not a reason to rebind.
+    const atCodeEntry = await page
+      .locator("wa-otp-input#code-input")
+      .isVisible()
+      .catch(() => false);
+    if (!atCodeEntry) {
+      console.error(
+        `[a11y:local] the app did not render within the allowance (at ${page.url()}). The dev server may still be warming up; rerun. The saved session was not judged.`,
+      );
+      await browser.close();
+      process.exit(2);
+    }
     const state = JSON.parse(readFileSync(stateFile, "utf8"));
     const origin = state.origins?.find((o) => o.origin === baseURL);
     const dbs = origin?.indexedDB?.length ?? 0;
     console.error(
-      `[a11y:local] the saved session did not restore into a fresh browser context (landed on ${page.url()}).`,
+      `[a11y:local] the saved session did not restore: a fresh browser context landed on code entry.`,
     );
     console.error(
       `  ${stateFile}: ${origin ? "has" : "has no"} entry for ${baseURL}, ${dbs} IndexedDB database${dbs === 1 ? "" : "s"} saved.`,
@@ -196,6 +212,12 @@ if (process.env.A11Y_LOCAL_REBIND && existsSync(stateFile))
 if (!existsSync(stateFile)) await bind();
 await prepareSession();
 
+// Every cell starts from the snapshot renewed above, and the app refreshes
+// only when a request is refused, so nothing rotates while the access token
+// lives. A scan that outlasts it would let one cell rotate the single-use
+// refresh token behind the others' backs. The matrix takes about a minute;
+// warn when a run gets anywhere near the limit so the matrix can be split.
+const started = Date.now();
 const run = spawnSync(
   "npx",
   ["ramp-check", "--config", resolve(here, "ramp-check.config.js")],
@@ -205,6 +227,12 @@ const run = spawnSync(
     shell: process.platform === "win32",
   },
 );
+const minutes = (Date.now() - started) / 60_000;
+if (minutes > ACCESS_TOKEN_MINUTES * 0.7) {
+  console.error(
+    `[a11y:local] the scan took ${minutes.toFixed(1)} min; sessions last ${ACCESS_TOKEN_MINUTES}. Past that, later cells can lose their session. Narrow the matrix in ramp-check.config.js on this machine.`,
+  );
+}
 if (run.status === 2) {
   console.error(
     "[a11y:local] ramp-check could not run. If pages failed to load after a code change, delete .a11y-local/state.json and rerun.",
