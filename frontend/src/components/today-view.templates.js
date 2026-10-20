@@ -385,6 +385,7 @@ export function summaryBlock({ outsideRadius, label }) {
  *   newTaskCardsMarkup: string,
  *   newTaskCount: number,
  *   counts?: {newCount:number,duplicateCount:number},
+ *   tabCounts?: Record<string, number>,
  *   activeClearCheck: { submittedAt?: string, startedAt?: string } | null,
  *   hasPendingClearResult: boolean,
  *   historyGrouping?: string,
@@ -403,6 +404,7 @@ export function homeResults({
   newTaskCardsMarkup,
   newTaskCount,
   counts = { newCount: newTaskCount, duplicateCount: 0 },
+  tabCounts = {},
   activeClearCheck,
   hasPendingClearResult,
   historyGroups,
@@ -430,7 +432,7 @@ export function homeResults({
         : activeClearCheck && !recentItems.length && !newTaskCount
           ? clearCheckTray(activeClearCheck, true)
           : ""}
-      ${taskTabs({ activeId: homeFilter })}
+      ${taskTabs({ activeId: homeFilter, counts: tabCounts })}
       ${homeFilter === "history"
         ? html`<div class="history-grouping">
             <wa-select
@@ -553,8 +555,8 @@ export function historyTray({
   `;
 }
 
-/** @param {{ activeId: string, tabs?: Array<{ id: string, labelKey: string }> }} vm */
-export function taskTabs({ activeId, tabs = HOME_TABS }) {
+/** @param {{ activeId: string, tabs?: Array<{ id: string, labelKey: string }>, counts?: Record<string, number> }} vm */
+export function taskTabs({ activeId, tabs = HOME_TABS, counts = {} }) {
   return html`
     <div
       class="home-tabs"
@@ -572,7 +574,11 @@ export function taskTabs({ activeId, tabs = HOME_TABS }) {
               aria-pressed="${tab.id === activeId ? "true" : "false"}"
               data-home-filter="${escapeAttr(tab.id)}"
             >
-              ${escapeHtml(t(tab.labelKey))}
+              ${escapeHtml(t(tab.labelKey))}${counts[tab.id]
+                ? html`<span class="home-tabs__count"
+                    >${Number(counts[tab.id])}</span
+                  >`
+                : ""}
             </button>
           `,
         )
