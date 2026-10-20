@@ -323,7 +323,11 @@ Notes:
   is its box. Run `npm run a11y:report -w e2e` to run only the a11y spec and open
   the HTML report; in CI the same report is in the `playwright-report` artifact on
   every run, pass or fail. Blocking findings are red and numbered first, warnings
-  (the AAA contrast gaps) blue.
+  (the AAA contrast gaps) blue. No flag is needed: ramp-check's default
+  `screenshot` config captures any state with a blocking finding or a warning.
+  To box only blocking findings add `screenshot: { warnings: false }` to
+  `A11Y_CONFIG` in the spec; `{ mode: "off" }` disables the capture. Options are in
+  ramp-check's `docs/config.md` under Screenshots.
 - To see warnings for a state without failing it, use `a11y.scan()` instead of
   `a11y.check()` in the spec. For one-off audits of a behavior that needs an action
   (dialog open/close, focus placement, live-region announcements, form errors), use
