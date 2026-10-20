@@ -461,3 +461,88 @@ describe("request auth flow (listChecks as the vehicle)", () => {
     expect(site.token).toBe("access-3"); // latest session intact
   });
 });
+
+/** Assert the Nth fetch (1-based) carried the given bearer token. */
+function expectNthFetchBearer(fetch, n, token) {
+  expect(fetch).toHaveBeenNthCalledWith(
+    n,
+    expect.anything(),
+    expect.objectContaining({
+      headers: expect.objectContaining({ authorization: `Bearer ${token}` }),
+    }),
+  );
+}
+
+describe("pre-flight refresh on a known-expiring token", () => {
+  const ok = { status: 200, body: { checks: [] } };
+
+  it("refreshes before the first fetch when the stored token is expired", async () => {
+    site.tokenExpiresAt = new Date(Date.now() - 1000).toISOString();
+    const fetch = stubFetch([ok]);
+    vi.stubGlobal("fetch", fetch);
+    await listChecks();
+    expect(refreshDeviceToken).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expectNthFetchBearer(fetch, 1, "access-2");
+  });
+
+  it("refreshes inside the margin and accepts an epoch-millisecond expiry", async () => {
+    site.tokenExpiresAt = Date.now() + 30_000;
+    const fetch = stubFetch([ok]);
+    vi.stubGlobal("fetch", fetch);
+    await listChecks();
+    expect(refreshDeviceToken).toHaveBeenCalledTimes(1);
+    expectNthFetchBearer(fetch, 1, "access-2");
+  });
+
+  it("sends the stored token untouched when it is not near expiry", async () => {
+    site.tokenExpiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+    const fetch = stubFetch([ok]);
+    vi.stubGlobal("fetch", fetch);
+    await listChecks();
+    expect(refreshDeviceToken).not.toHaveBeenCalled();
+    expectNthFetchBearer(fetch, 1, "access-1");
+  });
+
+  it("sends the stored token when the expiry is unknown or unreadable", async () => {
+    site.tokenExpiresAt = "not a date";
+    const fetch = stubFetch([ok]);
+    vi.stubGlobal("fetch", fetch);
+    await listChecks();
+    expect(refreshDeviceToken).not.toHaveBeenCalled();
+    expectNthFetchBearer(fetch, 1, "access-1");
+  });
+
+  it("collapses parallel requests into one refresh", async () => {
+    site.tokenExpiresAt = new Date(Date.now() - 1000).toISOString();
+    const fetch = stubFetch([ok]);
+    vi.stubGlobal("fetch", fetch);
+    await Promise.all([listChecks(), listChecks(), listChecks()]);
+    expect(refreshDeviceToken).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    for (const n of [1, 2, 3]) expectNthFetchBearer(fetch, n, "access-2");
+  });
+
+  it("falls back to the stored token when the refresh endpoint is down", async () => {
+    site.tokenExpiresAt = new Date(Date.now() - 1000).toISOString();
+    vi.mocked(refreshDeviceToken).mockRejectedValueOnce(
+      new ApiError("POST /device/refresh → 503", { status: 503 }),
+    );
+    const fetch = stubFetch([ok]);
+    vi.stubGlobal("fetch", fetch);
+    await listChecks();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expectNthFetchBearer(fetch, 1, "access-1");
+  });
+
+  it("is fatal when the refresh is rejected outright", async () => {
+    site.tokenExpiresAt = new Date(Date.now() - 1000).toISOString();
+    vi.mocked(refreshDeviceToken).mockRejectedValueOnce(
+      new ApiError("POST /device/refresh → 401", { status: 401 }),
+    );
+    const fetch = stubFetch([ok]);
+    vi.stubGlobal("fetch", fetch);
+    await expect(listChecks()).rejects.toBeInstanceOf(ReauthRequiredError);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});

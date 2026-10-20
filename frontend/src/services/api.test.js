@@ -4,6 +4,7 @@ import {
   dataUrlToBlob,
   editAnalysisCondition,
   getSiteSettings,
+  get311RequestDetails,
   getCaptureGuidance,
   rejectAnalysisCondition,
   toDevUploadUrl,
@@ -354,5 +355,84 @@ describe("toDevUploadUrl (dev-server S3 upload proxy)", () => {
     expect(toDevUploadUrl("/already/relative?x=1", true)).toBe(
       "/already/relative?x=1",
     );
+  });
+});
+
+describe("get311RequestDetails", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const pair = (n) => ({ taskId: `t${n}`, srNum: `SR-${n}` });
+  const pairs = (count) => Array.from({ length: count }, (_, i) => pair(i));
+
+  /** Echo each posted pair back with a status, failing batches on request. */
+  function stubBatch({ failWhenIncludes = [] } = {}) {
+    const fetch = vi.fn((_url, init) => {
+      const { requests } = JSON.parse(init.body);
+      const fail = requests.some(({ taskId }) =>
+        failWhenIncludes.includes(taskId),
+      );
+      return Promise.resolve({
+        ok: !fail,
+        status: fail ? 500 : 200,
+        statusText: fail ? "Internal Server Error" : "OK",
+        text: () =>
+          Promise.resolve(
+            JSON.stringify(
+              fail
+                ? { error: "boom" }
+                : {
+                    requests: requests.map(({ taskId }) => ({
+                      taskId,
+                      request: { status: "Open" },
+                    })),
+                  },
+            ),
+          ),
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
+    return fetch;
+  }
+
+  it("sends one batch when the list fits the backend cap", async () => {
+    const fetch = stubBatch();
+    const res = await get311RequestDetails(pairs(50));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(res.requests).toHaveLength(50);
+  });
+
+  it("splits more than 50 pairs into capped batches and merges them", async () => {
+    const fetch = stubBatch();
+    const res = await get311RequestDetails(pairs(120));
+    expect(fetch).toHaveBeenCalledTimes(3);
+    const sizes = fetch.mock.calls.map(
+      ([, init]) => JSON.parse(init.body).requests.length,
+    );
+    expect(sizes).toEqual([50, 50, 20]);
+    expect(res.requests.map((r) => r.taskId)).toEqual(
+      pairs(120).map((p) => p.taskId),
+    );
+  });
+
+  it("keeps the batches that succeeded when one fails", async () => {
+    stubBatch({ failWhenIncludes: ["t60"] });
+    const res = await get311RequestDetails(pairs(120));
+    expect(res.requests).toHaveLength(70);
+    expect(res.requests.some((r) => r.taskId === "t60")).toBe(false);
+  });
+
+  it("rejects when every batch fails", async () => {
+    stubBatch({ failWhenIncludes: ["t0", "t50"] });
+    await expect(get311RequestDetails(pairs(60))).rejects.toBeInstanceOf(
+      ApiError,
+    );
+  });
+
+  it("does nothing for an empty list", async () => {
+    const fetch = stubBatch();
+    expect(await get311RequestDetails([])).toEqual({ requests: [] });
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
