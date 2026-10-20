@@ -39,7 +39,9 @@ export default defineConfig({
   // The HTML report carries ramp-check's highlight screenshots (every a11y
   // finding boxed and numbered), so it is written locally too; open it with
   // `npm run a11y:report -w e2e` or `npx playwright show-report`.
-  reporter: CI ? [["list"], ["github"], ["html", { open: "never" }]] : [["list"], ["html", { open: "never" }]],
+  reporter: CI
+    ? [["list"], ["github"], ["html", { open: "never" }]]
+    : [["list"], ["html", { open: "never" }]],
   outputDir: "./test-results",
   use: {
     baseURL: "http://127.0.0.1:5173",
