@@ -329,8 +329,9 @@ html.wa-dark .analysis-card__clear-copy a {
   color: var(--wa-color-warning-on-quiet, #8c4602);
 }
 
+/* Eyebrow line above the title: hugs the title it introduces. */
 .analysis-card .analysis-card__place {
-  margin: 0 0 0.5rem;
+  margin: 0 0 0.25rem;
   color: var(--wa-color-text-quiet, #545868);
   font-size: var(--wa-font-size-s, 0.875rem);
   line-height: 1.6;
@@ -1112,16 +1113,18 @@ html.wa-dark .analysis-card__clear-copy a {
 .analysis-card__dismiss {
   background: transparent;
 }
+/* Address eyebrow + title read as one lockup (see __place margin); the
+   structural break sits between that lockup and the guidance text. */
 .analysis-card--done h3 {
   font-size: 1.5625rem;
   line-height: 1.2;
-  margin: 0 0 1rem;
+  margin: 0 0 0.75rem;
 }
+/* Top-aligned with the title so the alignment holds at any title length. */
 .analysis-card--done .analysis-card__media {
   width: 6.5rem;
   height: 6.5rem;
   flex: 0 0 6.5rem;
-  margin-top: 2.875rem;
 }
 .analysis-card--done .analysis-card__route {
   margin-bottom: 1rem;

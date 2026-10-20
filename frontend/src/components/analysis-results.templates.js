@@ -973,6 +973,7 @@ function completedEvidenceCard(
         </p>
         <div class="analysis-card__layout">
           <div class="analysis-card__content">
+            <p class="analysis-card__place">${escapeHtml(cardPlace(item))}</p>
             <h3>${escapeHtml(title)}</h3>
             ${duplicateNote
               ? html`<p class="analysis-card__duplicate-note">
@@ -1003,7 +1004,6 @@ function completedEvidenceCard(
                     ${escapeHtml(t("duplicate.view"))}
                   </button>`
               : ""}
-            <p class="analysis-card__place">${escapeHtml(cardPlace(item))}</p>
             <p>${escapeHtml(description)}</p>
             ${question ? clarifyingQuestion(question, conditionId) : ""}
             ${includeEditDelete
