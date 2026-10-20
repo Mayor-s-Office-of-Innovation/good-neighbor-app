@@ -48,6 +48,31 @@ The terminal prints a `Network:` URL to open on the device. Camera and location 
 most phones, so this is for layout checks; for camera flows use the deployed dev site
 itself.
 
+### Accessibility check with screenshots
+
+After a CSS or color change, run the same accessibility checks CI runs, against your
+local build, and get a screenshot of every screen with each finding boxed and numbered:
+
+```bash
+npx playwright install chromium        # once
+npm run a11y:local -w e2e              # with npm run dev:remote still running
+```
+
+The first run binds City Hall once and saves that session under `e2e/.a11y-local/`, so
+later runs do not spend site-code uses (codes allow three, and expire after 72 hours).
+It then visits nine screens in light and dark, mobile and desktop, and writes:
+
+- `e2e/ramp-check-report/screenshots/` — one PNG per screen and theme. Red boxes are
+  WCAG 2.2 A/AA failures; blue boxes are AAA warnings, mostly the 7:1 enhanced-contrast
+  rule. The number in each badge matches the `#` column in the report.
+- `e2e/ramp-check-report/ramp-check.md` — the findings table: which rule, which element,
+  what to do, with the box number.
+
+The screens are the ones the e2e suite scans, minus code entry and the photo lightbox
+(uploading a photo would create a real check in dev). Reports screens use fixed sample
+data so the day and 311 views always have content. Set `A11Y_LOCAL_SITE_CODE` to use a
+different site; delete `e2e/.a11y-local/state.json` if the saved session stops working.
+
 ### Things to know about dev
 
 - Checks and photos you submit go through the real dev analyzer and show up for anyone

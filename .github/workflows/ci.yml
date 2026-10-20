@@ -101,8 +101,11 @@ jobs:
       - name: Run e2e tests
         run: npm run test:e2e
 
-      - name: Upload failure artifacts
-        if: failure()
+      # Always, not only on failure: the HTML report holds ramp-check's
+      # highlight screenshots for AAA findings, which warn without failing
+      # the suite and are what the design review works from.
+      - name: Upload Playwright report
+        if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
           name: playwright-report

@@ -13,16 +13,37 @@ const releaseSha =
   paths to /index.html before the S3 origin (infra/modules/app/cloudfront.tf);
   Vite's dev/preview server serves the same SPA fallback locally.
 
-  TODO(offline pass): the PWA is intentionally OFF for the MVP — no service
-  worker is generated or registered while we finalize screens. When we do the
-  dedicated offline pass, re-wire vite-plugin-pwa here (it's already in
-  devDependencies) with a workbox precache of the shell + the write-queue/sync.
-  (The CSP hash for the inline theme script is now set in infra — see the
-  script-src note in infra/modules/app/main.tf; regenerate it there if that
-  script changes.) Reference manifest:
-    name "Good Neighbor App", short_name "Good Neighbor", display "standalone",
-    theme/background "#0f172a", icons icon-192.png / icon-512.png (+ maskable),
-    workbox precache of the built js, css, html, woff2, png, and svg assets.
+  TODO(offline pass): the service worker is intentionally OFF for the MVP —
+  none is generated or registered while we finalize screens. The installable
+  half of the PWA does ship: public/manifest.webmanifest (static, linked from
+  index.html) plus the icon set that scripts/make-pwa-icons.mjs derives from
+  public/img/gn-logo.png, and the Add-to-Home-Screen offer in
+  src/services/install-prompt.js.
+
+  A service worker is NOT needed for install (researched 2026-10-20, written
+  up in ../notes/pwa-install-plan.md). Chromium's installability evaluator
+  (components/webapps/browser/installable/installable_evaluator.cc on main)
+  checks only: secure origin, not incognito, a parseable manifest with a
+  valid start_url, name or short_name, a supported display, and a suitable
+  icon. No worker, fetch-handler, or offline check. Chrome 108 (Android) /
+  112 (desktop) dropped the worker requirement for menu install; the
+  beforeinstallprompt event followed later (exact version not pinned, but
+  Google's criteria page stopped listing it by Sept 2024). iOS Safari never
+  required one. The only devices that still need a worker to install are
+  stuck on old Chrome: Android 5 (Chrome 95) and 6 (Chrome 106) cannot
+  install at all without one; Android 7 (Chrome 119) can from the menu and
+  maybe not from the prompt. Under 1% of Play devices combined as of Jan 2026.
+  Third-party pages that still say "fetch handler required" are stale.
+
+  What the missing worker DOES cost is the offline launch: an installed app
+  opened with no network gets the browser's generic offline page instead of
+  the shell. That is the offline pass. When we do it, re-wire vite-plugin-pwa
+  here (it's already in devDependencies) with `manifest: false` so the static
+  manifest stays the source of truth, and a workbox precache of the built js,
+  css, html, woff2, png, and svg assets + the write-queue/sync. Register the
+  worker from a module, not an inline script: the CSP hash for the inline
+  theme script is set in infra — see the script-src note in
+  infra/modules/app/main.tf; regenerate it there if that script changes.
 */
 export default defineConfig(({ mode, command }) => {
   const env = loadEnv(mode, process.cwd(), "");

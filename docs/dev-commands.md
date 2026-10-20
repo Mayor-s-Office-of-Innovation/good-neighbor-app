@@ -306,6 +306,7 @@ history trays) × light/dark, under reduced-motion emulation.
 | File | Does |
 |---|---|
 | `e2e/a11y-allowlist.json` | Exceptions: rule + target + reason + **expiry date**. An expired entry fails the run by name until removed. |
+| `e2e/ramp-check.config.js` | The same states for ramp-check's CLI against a running `dev:remote` server: `npm run a11y:local -w e2e`, the designer's pass ([quickstart-design.md](./quickstart-design.md#accessibility-check-with-screenshots)). Writes `e2e/ramp-check-report/` with named screenshots. |
 
 Notes:
 
@@ -317,6 +318,17 @@ Notes:
 - The suite also runs ramp-check's **keyboard audit** (full Tab traversal — reachability,
   visible focus, focus not obscured, no trap) and a **text-spacing check** (warns by
   default) on every scanned state, on top of axe/motion/reflow.
+- **Seeing what a finding means:** every scanned state with findings gets a
+  screenshot with each finding's element boxed and numbered, attached next to the
+  JSON result. The `[n]` at the start of a finding line (test failure, `warn:` line)
+  is its box. Run `npm run a11y:report -w e2e` to run only the a11y spec and open
+  the HTML report; in CI the same report is in the `playwright-report` artifact on
+  every run, pass or fail. Blocking findings are red and numbered first, warnings
+  (the AAA contrast gaps) blue. No flag is needed: ramp-check's default
+  `screenshot` config captures any state with a blocking finding or a warning.
+  To box only blocking findings add `screenshot: { warnings: false }` to
+  `A11Y_CONFIG` in the spec; `{ mode: "off" }` disables the capture. Options are in
+  ramp-check's `docs/config.md` under Screenshots.
 - To see warnings for a state without failing it, use `a11y.scan()` instead of
   `a11y.check()` in the spec. For one-off audits of a behavior that needs an action
   (dialog open/close, focus placement, live-region announcements, form errors), use

@@ -43,6 +43,7 @@ import { trackEvent } from "../services/analytics.js";
 import { setupView, appShell } from "./app-root.templates.js";
 import "./connection-status.js";
 import { isInAppBrowser } from "../services/browser-context.js";
+import { shouldOfferInstall } from "../services/install-prompt.js";
 import {
   deepActiveElement,
   isEditable,
@@ -282,6 +283,26 @@ export class AppRoot extends HTMLElement {
     this._view = this.querySelector("#view");
     this._shell = this.querySelector(".app");
     showQueuedSiteSwitchSuccessToast();
+    this._maybeOfferInstall();
+  }
+
+  /**
+   * Add-to-Home-Screen offer: a bound device on the home hub gets one card
+   * (Install on Chromium, Share-sheet steps on iOS Safari). The service
+   * decides eligibility (standalone already, webview, snoozed); the element
+   * sits above <main> so route swaps leave it alone and hides itself off
+   * /today. Lazy like the webview banner to keep it out of the main bundle.
+   */
+  _maybeOfferInstall() {
+    if (!this._shell || !shouldOfferInstall()) return;
+    void import("./install-prompt.js").then(() => {
+      if (!this._shell?.isConnected || this.querySelector("install-prompt"))
+        return;
+      this._shell.insertBefore(
+        document.createElement("install-prompt"),
+        this._view,
+      );
+    });
   }
 
   /**

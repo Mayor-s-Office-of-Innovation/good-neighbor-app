@@ -38,6 +38,9 @@ vi.mock("./connection-status.js", () => ({}));
 vi.mock("../services/browser-context.js", () => ({
   isInAppBrowser: () => false,
 }));
+vi.mock("../services/install-prompt.js", () => ({
+  shouldOfferInstall: () => false,
+}));
 vi.mock("../services/keyboard-viewport.js", () => ({
   deepActiveElement: vi.fn(),
   isEditable: vi.fn(),
