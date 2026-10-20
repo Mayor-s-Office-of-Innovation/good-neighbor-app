@@ -59,7 +59,11 @@ npm run a11y:local -w e2e              # with npm run dev:remote still running
 ```
 
 The first run binds City Hall once and saves that session under `e2e/.a11y-local/`, so
-later runs do not spend site-code uses (codes allow three, and expire after 72 hours).
+later runs do not spend site-code uses (seeded codes allow three redemptions in total).
+Every run renews that session and saves it back, because sessions expire after 15
+minutes and renewal is single-use, so the saved file is tied to this machine: do not
+copy it elsewhere, and if the tool says the session did not restore, rerun with
+`A11Y_LOCAL_REBIND=1` (one redemption) or ask an engineer for a fresh code.
 It then visits nine screens in light and dark, mobile and desktop, and writes:
 
 - `e2e/ramp-check-report/screenshots/` — one PNG per screen and theme. Red boxes are

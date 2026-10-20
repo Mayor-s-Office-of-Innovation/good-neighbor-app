@@ -88,10 +88,17 @@ async function bind() {
 
 /**
  * Open a fresh context from the saved state, the way every ramp-check cell
- * will, and confirm it lands on the bound home screen. Exits with a
- * diagnosis otherwise, instead of letting every page time out.
+ * will, confirm it lands on the bound home screen, then renew the session
+ * and save the state back.
+ *
+ * Why renew every run: access tokens last 15 minutes and the refresh token
+ * is single-use; a refresh invalidates every token issued before it. A
+ * snapshot left as saved would go stale the first time any context had to
+ * refresh. Renewing here, with the app's own modules (Vite serves them as
+ * ES modules in dev), gives every cell a token good for the whole run and
+ * leaves the file holding the only live refresh token.
  */
-async function verifySavedState() {
+async function prepareSession() {
   const browser = await chromium.launch();
   const context = await browser.newContext({
     baseURL,
@@ -101,9 +108,6 @@ async function verifySavedState() {
   try {
     await page.goto("/today", { timeout: 60_000 });
     await page.locator("#start-check").waitFor({ timeout: 30_000 });
-    console.log(
-      "[a11y:local] saved session restores: bound home screen reached",
-    );
   } catch {
     const state = JSON.parse(readFileSync(stateFile, "utf8"));
     const origin = state.origins?.find((o) => o.origin === baseURL);
@@ -115,7 +119,39 @@ async function verifySavedState() {
       `  ${stateFile}: ${origin ? "has" : "has no"} entry for ${baseURL}, ${dbs} IndexedDB database${dbs === 1 ? "" : "s"} saved.`,
     );
     console.error(
-      "  Rerun with A11Y_LOCAL_REBIND=1 to bind again (spends one redemption of the code), or copy a working state.json from another machine.",
+      "  Usually the session's refresh token was consumed by a run that did not save the renewed one (older runner), or the device was removed.",
+    );
+    console.error(
+      "  Rerun with A11Y_LOCAL_REBIND=1 to bind again (spends one redemption of the code).",
+    );
+    await browser.close();
+    process.exit(2);
+  }
+  try {
+    const renewed = await page.evaluate(async () => {
+      const db = await import("/src/db.js");
+      const devices = await import("/src/services/devices.js");
+      const site = await db.getSite();
+      if (!site?.refreshToken)
+        throw new Error("no refresh token in the stored site");
+      const session = await devices.refreshDeviceToken(site.refreshToken);
+      const stored = await db.updateSiteSession(session, site.siteId);
+      if (!stored) throw new Error("site binding changed during refresh");
+      return {
+        generation: session.tokenGeneration,
+        expiresIn: session.expiresIn,
+      };
+    });
+    await context.storageState({ path: stateFile, indexedDB: true });
+    console.log(
+      `[a11y:local] saved session restores; renewed (generation ${renewed.generation}, good for ${Math.round(renewed.expiresIn / 60)} min) and saved`,
+    );
+  } catch (err) {
+    console.error(
+      `[a11y:local] could not renew the saved session: ${err instanceof Error ? err.message.split("\n")[0] : err}`,
+    );
+    console.error(
+      "  Rerun with A11Y_LOCAL_REBIND=1 to bind again (spends one redemption of the code).",
     );
     process.exit(2);
   } finally {
@@ -123,6 +159,32 @@ async function verifySavedState() {
   }
 }
 
+/**
+ * The saved session only reaches ramp-check's browser contexts through its
+ * `storageState` config option, which needs the ramp-check build pinned in
+ * package.json. A stale install silently runs every page unbound, so check
+ * the installed commit against the pin before anything else.
+ */
+function checkInstalledRampCheck() {
+  const wanted = /ramp-check#([0-9a-f]{40})/.exec(
+    JSON.parse(readFileSync(resolve(here, "package.json"), "utf8"))
+      .devDependencies["ramp-check"],
+  )?.[1];
+  const hiddenLock = resolve(here, "../node_modules/.package-lock.json");
+  if (!wanted || !existsSync(hiddenLock)) return;
+  const installed = /#([0-9a-f]{40})/.exec(
+    JSON.parse(readFileSync(hiddenLock, "utf8")).packages?.[
+      "node_modules/ramp-check"
+    ]?.resolved ?? "",
+  )?.[1];
+  if (installed === wanted) return;
+  console.error(
+    `[a11y:local] installed ramp-check is ${installed?.slice(0, 7) ?? "unknown"}, e2e/package.json pins ${wanted.slice(0, 7)}. Run \`npm install\` at the repo root, then rerun.`,
+  );
+  process.exit(2);
+}
+
+checkInstalledRampCheck();
 if (!(await serverUp())) {
   console.error(
     `[a11y:local] nothing answering at ${baseURL}. Start the app first: npm run dev:remote`,
@@ -132,7 +194,7 @@ if (!(await serverUp())) {
 if (process.env.A11Y_LOCAL_REBIND && existsSync(stateFile))
   unlinkSync(stateFile);
 if (!existsSync(stateFile)) await bind();
-await verifySavedState();
+await prepareSession();
 
 const run = spawnSync(
   "npx",
