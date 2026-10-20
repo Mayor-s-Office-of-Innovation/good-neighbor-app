@@ -163,11 +163,17 @@ export class AppRoot extends HTMLElement {
       this._renderSetup();
       return;
     }
-    if (!(await this._refreshSiteSettings())) return;
     await this._restoreInterruptedCapture();
     this._renderApp();
     this._unsub = onRouteChange(() => this._renderView());
     this._renderView();
+    // Off the critical path: the shell and the first screen render from the
+    // stored binding, and the settings refresh (site name, flags, and the
+    // revocation check) lands behind them instead of costing a serial round
+    // trip before anything paints. A revoked session still ends on the setup
+    // screen (see _refreshSiteSettings), and every request the first screen
+    // makes is re-authorized by the backend anyway.
+    void this._refreshSiteSettings();
   }
 
   disconnectedCallback() {
@@ -473,8 +479,10 @@ export class AppRoot extends HTMLElement {
    * Pull the site's settings (name etc.) from the backend and merge them onto
    * the local binding record. Best-effort: the app runs on the stored record
    * when a transient request fails. A rejected or revoked session is fatal:
-   * clear the current binding and return to setup before rendering app data.
-   * @returns {Promise<boolean>} whether the app shell may be rendered
+   * clear the current binding and return to setup. On first launch this runs
+   * behind the already-rendered shell, so a changed site name is written into
+   * the header here and a dead session tears the shell down.
+   * @returns {Promise<boolean>} whether the app shell may stay rendered
    */
   async _refreshSiteSettings() {
     setDuplicateUiSite(null);
@@ -488,6 +496,10 @@ export class AppRoot extends HTMLElement {
         setDuplicateUiSite(
           site.siteId && site.siteId !== this._site.siteId ? null : site,
         );
+        const title = this.querySelector?.(".app__title");
+        if (title && title.textContent !== this._site.name) {
+          title.textContent = this._site.name;
+        }
       }
       return true;
     } catch (err) {
@@ -495,6 +507,8 @@ export class AppRoot extends HTMLElement {
         await clearSite();
         this._site = null;
         clearAuthState();
+        if (this._unsub) this._unsub();
+        this._unsub = null;
         this._renderSetup();
         return false;
       }

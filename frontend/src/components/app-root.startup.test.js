@@ -86,6 +86,7 @@ function component() {
   root._renderSetup = vi.fn();
   root._renderApp = vi.fn();
   root._renderView = vi.fn();
+  root._restoreInterruptedCapture = vi.fn().mockResolvedValue(undefined);
   return root;
 }
 
@@ -107,7 +108,22 @@ describe("app startup authentication", () => {
     expect(root._renderApp).not.toHaveBeenCalled();
   });
 
-  it("blocks the app shell when the cached binding is revoked", async () => {
+  it("renders the app shell from the cached binding without waiting for the settings refresh", async () => {
+    vi.stubGlobal("location", new URL("http://localhost:5173/"));
+    setup.getSite.mockResolvedValue({ siteId: "cached-site", name: "Cached" });
+    // A refresh that never answers must not hold the first paint hostage.
+    setup.getSiteSettings.mockReturnValue(new Promise(() => {}));
+    const root = component();
+
+    await root.connectedCallback();
+
+    expect(setup.getSiteSettings).toHaveBeenCalledOnce();
+    expect(root._renderApp).toHaveBeenCalledOnce();
+    expect(root._renderView).toHaveBeenCalledOnce();
+    expect(root._renderSetup).not.toHaveBeenCalled();
+  });
+
+  it("tears the app shell down when the cached binding turns out to be revoked", async () => {
     vi.stubGlobal("location", new URL("http://localhost:5173/"));
     setup.getSite.mockResolvedValue({ siteId: "revoked-site" });
     setup.getSiteSettings.mockRejectedValue(
@@ -116,10 +132,13 @@ describe("app startup authentication", () => {
     const root = component();
 
     await root.connectedCallback();
+    // The shell paints first; the revocation lands behind it.
+    expect(root._renderApp).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(root._renderSetup).toHaveBeenCalledOnce());
 
     expect(setup.clearSite).toHaveBeenCalledOnce();
     expect(setup.clearAuthState).toHaveBeenCalledOnce();
-    expect(root._renderSetup).toHaveBeenCalledOnce();
-    expect(root._renderApp).not.toHaveBeenCalled();
+    expect(root._site).toBeNull();
+    expect(root._unsub).toBeNull();
   });
 });

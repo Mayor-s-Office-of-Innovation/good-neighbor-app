@@ -282,33 +282,39 @@ function tokenClaims(token) {
  *   GET /v1/site response); binding/session keys are ignored, see above
  */
 export async function saveSiteSettings(settings = {}) {
-  const current = (await getSite()) || { id: "current", name: "Your site" };
-  const incoming = { ...settings };
-  for (const key of SITE_BINDING_FIELDS) {
-    const bound = /** @type {Record<string, unknown>} */ (current)[key];
-    if (bound !== undefined && bound !== null && bound !== "") {
-      delete incoming[key];
-    }
-  }
-  // Self-heal: the access token's `custom:siteId` claim is the binding the
-  // server actually enforces. A server-reported siteId that matches it may
-  // replace a stale local value (devices whose record was rewritten to the
-  // demo partition before the backend failed closed recover on next load).
-  const claimed = siteIdFromToken(current.token);
-  if (claimed && settings.siteId === claimed) {
-    incoming.siteId = claimed;
-  }
-  const record = {
-    ...current,
-    ...incoming,
-    id: "current",
-    name: String(settings.name || current.name || "Your site").trim(),
-  };
-  await tx("site", "readwrite", (os) => {
-    os.put(record);
-    if (record.siteId) os.put({ ...record, id: bindingKey(record.siteId) });
-  });
-  return record;
+  // Read and write in one transaction: the settings refresh now runs behind
+  // the first screen, concurrently with that screen's requests, and a token
+  // rotation (updateSiteSession) landing between a separate read and this
+  // write would be overwritten with the stale credentials.
+  return tx("site", "readwrite", (os) =>
+    reqToPromise(os.get("current")).then((stored) => {
+      const current = stored || { id: "current", name: "Your site" };
+      const incoming = { ...settings };
+      for (const key of SITE_BINDING_FIELDS) {
+        const bound = /** @type {Record<string, unknown>} */ (current)[key];
+        if (bound !== undefined && bound !== null && bound !== "") {
+          delete incoming[key];
+        }
+      }
+      // Self-heal: the access token's `custom:siteId` claim is the binding the
+      // server actually enforces. A server-reported siteId that matches it may
+      // replace a stale local value (devices whose record was rewritten to the
+      // demo partition before the backend failed closed recover on next load).
+      const claimed = siteIdFromToken(current.token);
+      if (claimed && settings.siteId === claimed) {
+        incoming.siteId = claimed;
+      }
+      const record = {
+        ...current,
+        ...incoming,
+        id: "current",
+        name: String(settings.name || current.name || "Your site").trim(),
+      };
+      os.put(record);
+      if (record.siteId) os.put({ ...record, id: bindingKey(record.siteId) });
+      return record;
+    }),
+  );
 }
 export async function clearSite() {
   return tx("site", "readwrite", (os) => os.delete("current"));
