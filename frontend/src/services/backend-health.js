@@ -9,8 +9,11 @@
     - OUTAGE — the API is unreachable (network failure or a non-JSON/HTML
       response, e.g. a CDN error page served as 200). Surface: dismissible
       banner; clears on the first successful probe.
-    - AUTH   — the device session is dead (ReauthRequiredError, or an API 403
-      while the probe is healthy). Surface: sign-out dialog; recovery is site
+    - ACCESS — a manager_access_required 403 needs manager enrollment.
+      Dismissing the dialog preserves the session and saved work. Other
+      application permission denials stay with the action's error UI.
+    - AUTH   — the device session is dead (ReauthRequiredError, or a bare API
+      gateway 403). Surface: sign-out dialog; recovery is site
       re-entry (clearSite → site-setup).
 
   Detection hooks: boot probe, visibilitychange re-probe, and a classify()
@@ -22,7 +25,7 @@
 import { reportClientEvent } from "./error-report.js";
 import { mark } from "./instrument.js";
 
-/** @typedef {"healthy" | "outage" | "auth"} HealthState */
+/** @typedef {"healthy" | "outage" | "auth" | "access"} HealthState */
 
 const PROBE_PATH = "/health";
 const BACKOFF_MS = [30_000, 60_000, 120_000, 300_000];
@@ -84,9 +87,14 @@ export function classifyApiFailure(err) {
     return state;
   }
   if (status === 403) {
-    // 401s already route to the refresh flow; a bare JSON 403 means the
-    // authorizer denied a well-formed token (revoked device / inactive site).
-    setState("auth");
+    // Only missing manager access needs the global enrollment guidance.
+    // Other structured denials belong to the action's own error UI; bare
+    // gateway denials still represent a rejected device session.
+    const code = /** @type {any} */ (err).body?.error;
+    if (state !== "auth") {
+      if (code === "manager_access_required") setState("access");
+      else if (typeof code !== "string") setState("auth");
+    }
     return state;
   }
   if (status === 0) {
@@ -168,6 +176,11 @@ export function clearAuthState() {
   resetBackoff();
   setState("healthy");
 }
+/** Dismiss a permission denial without changing an expired-session verdict. */
+export function clearAccessState() {
+  if (state === "access") setState("healthy");
+}
+
 /* ---- internals ---- */
 
 /** @param {HealthState} next */
