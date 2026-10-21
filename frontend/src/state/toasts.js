@@ -88,7 +88,6 @@ export function onToastsChange(listener) {
   };
 }
 
-/** @param {string} [serviceRequestNumber] */
 /**
  * @param {string} [serviceRequestNumber]
  * @param {string} [title] the card's title, so a toast that lands after the

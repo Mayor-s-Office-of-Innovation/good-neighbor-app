@@ -14,19 +14,6 @@ export function isCompletingAnalysisCard(host) {
 }
 
 /**
- * Hold the host's re-renders while a card action other than the checklist
- * (the 311 button) is in flight, so the card keeps its busy state.
- * @returns {() => void} release
- */
-export function markCardCompleting(host, card) {
-  const state = { host };
-  pending.set(card, state);
-  return () => {
-    if (pending.get(card) === state) pending.delete(card);
-  };
-}
-
-/**
  * Record the checklist action the moment it is tapped, then animate a
  * confirmed save. `task` is the card's backend record when known; it lets
  * the results prompt open at tap time instead of after the response.
@@ -93,8 +80,13 @@ export function toggleCardCompletion(
   };
   void save();
   // The receipt is already persisting; a suspended request is recovered on
-  // return/reload without delaying the call.
-  if (isPhone) window.location.href = `tel:${phoneNumber.replace(/-/g, "")}`;
+  // return/reload without delaying the call. Only a plain digit string may
+  // reach the dialer: the number is read from a DOM attribute, so it is
+  // reduced to digits and checked against a fixed shape before navigation.
+  if (isPhone) {
+    const digits = phoneNumber.replace(/\D/g, "");
+    if (/^\d{3,15}$/.test(digits)) window.location.href = `tel:${digits}`;
+  }
 }
 
 /** CSS controls simultaneous height/gap collapse and slide, without opacity changes. */
@@ -157,11 +149,6 @@ export async function completeCardAction(taskId, body, { task = null } = {}) {
   const result = await request;
   if (result.resultsPending) await showResultsDialog(result.task, null);
   return result;
-}
-
-/** Warm the results prompt's chunk so the first tap does not wait on a fetch. */
-export function preloadResultsDialog() {
-  void import("./task-update-dialog.js").catch(() => {});
 }
 
 function showResultsDialog(task, completion) {

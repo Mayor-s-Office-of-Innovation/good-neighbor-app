@@ -77,9 +77,12 @@ const TYPE_BY_FORMAT = {
  * @returns {Promise<DownscaleResult>}
  */
 export async function downscaleImage(bytes, contentType) {
+  // Outside the try: a sharp load failure (missing platform binary in the
+  // zip) is an infrastructure fault that must surface as an error, never as
+  // a permanent "undecodable image" rejection of the upload.
+  const sharp = await loadSharp();
   let result;
   try {
-    const sharp = await loadSharp();
     const input = sharp(bytes, {
       failOn: "error",
       limitInputPixels: MAX_INPUT_PIXELS,

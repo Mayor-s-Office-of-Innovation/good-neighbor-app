@@ -183,6 +183,14 @@ it("starts saving a phone action immediately and opens the dialer once", async (
   expect(callbacks.onSaved).toHaveBeenCalledWith({ status: "in_progress" });
 });
 
+it("dials only a plain digit string from the phone attribute", () => {
+  const location = { href: "" };
+  vi.stubGlobal("window", { matchMedia: () => ({ matches: true }), location });
+  button.setAttribute("data-phone-number", "javascript:alert(1)");
+  toggleCardCompletion(host, card, button, callbacks);
+  expect(location.href).toBe("");
+});
+
 it("does not launch a phone CTA outside the mobile viewport", () => {
   const location = { href: "" };
   vi.stubGlobal("window", { matchMedia: () => ({ matches: false }), location });

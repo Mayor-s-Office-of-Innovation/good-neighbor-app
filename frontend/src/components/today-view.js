@@ -9,8 +9,6 @@ import {
   toggleCardCompletion,
   completeCardAction,
   isCompletingAnalysisCard,
-  markCardCompleting,
-  preloadResultsDialog,
   slideCompletedCard,
 } from "./analysis-card-completion.js";
 import { taskCardTitle } from "../domain/task-title.js";
@@ -235,6 +233,13 @@ class TodayView extends HTMLElement {
     };
     this._focusAfterRender = null;
     this._homeModel = null;
+    /**
+     * Cards with a non-checklist action in flight (the 311 filing, 5–20 s),
+     * by task id: `_applyBusyCards` restores their busy state after any
+     * repaint during the request, so renders are never held for them.
+     * @type {Map<string, { action?: string, label?: string }>}
+     */
+    this._busyCards = new Map();
     this._hydrationGeneration = 0;
     this._answeringConditionIds = new Set();
     this._settingsMenuOpen = false;
@@ -507,7 +512,6 @@ class TodayView extends HTMLElement {
       tasks,
       pendingSession: effectivePendingSession,
     });
-    this._preloadResultsDialog();
     // Evidence hydration is for the cards on screen now. The duplicate watcher
     // (a poll) and the 311 status batch wait for the complete list, so each
     // starts once per load: here when the remaining lists were reused, else
@@ -985,6 +989,7 @@ class TodayView extends HTMLElement {
       },
     );
     this._wireCards();
+    this._applyBusyCards();
     this._restoreFocusAfterRender();
     const requestedIssue = new URLSearchParams(window.location.search).get(
       "issue",
@@ -2124,7 +2129,7 @@ class TodayView extends HTMLElement {
       if (card.isConnected) await slideCompletedCard(card);
       this._markAnalysisProblemResolved(problem, { taskStatus: null });
       this._applyTaskResult(problem.taskId, result.task);
-      this._refreshAfterAction();
+      void this._refreshAfterAction();
       return;
     }
 
@@ -2137,12 +2142,20 @@ class TodayView extends HTMLElement {
         taskStatus:
           result?.task?.status === "in_progress" ? "in_progress" : "resolved",
       });
-      openOverlayDialog(
-        /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),
-        "analysis-success",
-      );
       this._applyTaskResult(problem.taskId, result?.task);
-      this._refreshAfterAction();
+      const dialog = /** @type {HTMLDialogElement} */ (
+        this._analysisSuccessDialog
+      );
+      openOverlayDialog(dialog, "analysis-success");
+      // The dialog lives inside the home subtree, so a repaint now would
+      // remove it unseen (and leave its overlay history entry behind).
+      if (dialog?.open) {
+        dialog.addEventListener(
+          "close",
+          () => void this._refreshAfterAction(),
+          { once: true },
+        );
+      } else void this._refreshAfterAction();
     } catch (err) {
       console.error("resolve task failed", err);
       showActionSaveErrorToast();
@@ -2279,7 +2292,7 @@ class TodayView extends HTMLElement {
         if (!result) return;
         this._applyTaskResult(task.taskId, result.task);
         this._expireRemainingLists(); // filed → In-progress on the server
-        this._refreshAfterAction();
+        void this._refreshAfterAction();
       });
     }
   }
@@ -2304,24 +2317,40 @@ class TodayView extends HTMLElement {
 
   /**
    * Paint the updated model now; the full reload (every list, 311 statuses,
-   * duplicates) runs behind it rather than gating the UI.
+   * duplicates) runs behind it rather than gating the UI. Returns the reload
+   * so a caller that places focus afterwards (the checklist) waits for the
+   * final paint, which replaces the home subtree again.
    */
   _refreshAfterAction() {
     if (this._homeModel) this._renderHome(this._homeModel);
-    void this.connectedCallback();
+    return this.connectedCallback();
   }
 
   /**
-   * Warm the results prompt's chunk once the first paint is done, so the
-   * first checkbox tap opens it without a network fetch.
+   * @param {Element} card
+   * @param {{ action?: string, label?: string }} busy the in-flight action's
+   *   button kind and pending label
    */
-  _preloadResultsDialog() {
-    if (this._resultsDialogPreloaded) return;
-    this._resultsDialogPreloaded = true;
-    const idle =
-      globalThis.requestIdleCallback ||
-      ((callback) => setTimeout(callback, 1000));
-    idle(() => preloadResultsDialog());
+  _setCardBusy(card, { action, label }) {
+    card.querySelectorAll("button").forEach((b) => (b.disabled = true));
+    const button = action
+      ? card.querySelector(`[data-action="${action}"]`)
+      : null;
+    if (button && label) button.textContent = label;
+    // Busy goes on the triggering button, not the card: the card-level hook
+    // styles the checklist box as a spinner, which is wrong for a filing.
+    (button || card).setAttribute("aria-busy", "true");
+  }
+
+  /** Re-apply in-flight action state to freshly rendered cards. */
+  _applyBusyCards() {
+    if (!this._busyCards.size) return;
+    this.querySelectorAll(
+      ":scope > .home > .home-region--results [data-task-id]",
+    ).forEach((card) => {
+      const busy = this._busyCards.get(card.getAttribute("data-task-id"));
+      if (busy) this._setCardBusy(card, busy);
+    });
   }
 
   _setTaskOverride(taskId, status) {
@@ -2349,20 +2378,34 @@ class TodayView extends HTMLElement {
       onSuccess = null,
     } = {},
   ) {
-    const buttons = card.querySelectorAll("button");
     const err = card.querySelector(".actioncard__error");
-    buttons.forEach((b) => (b.disabled = true));
-    // The card shows it is busy from the first frame: the triggering button
-    // takes the pending label and the card's re-renders are held (as for a
-    // checklist save) so that state survives until the response.
+    // The card shows it is busy from the first frame. Renders are not held
+    // during the request: `_busyCards` lets `_applyBusyCards` re-apply the
+    // state to a repainted card, so tabs, remaining lists and hydration keep
+    // painting while a 5–20 s filing runs.
+    const taskId = card.getAttribute("data-task-id");
+    const busy = {
+      action: pending?.button?.dataset.action,
+      label: pending?.label,
+    };
     const pendingLabel = pending?.button?.textContent;
-    if (pending?.button) pending.button.textContent = pending.label;
-    card.setAttribute?.("aria-busy", "true");
-    const release = markCardCompleting(this, card);
+    if (taskId) this._busyCards.set(taskId, busy);
+    this._setCardBusy(card, busy);
+    const release = () => {
+      if (taskId) this._busyCards.delete(taskId);
+    };
     const restore = () => {
-      buttons.forEach((b) => (b.disabled = false));
-      if (pending?.button) pending.button.textContent = pendingLabel;
-      card.removeAttribute?.("aria-busy");
+      release();
+      if (!card.isConnected && this._homeModel) {
+        // A repaint during the request replaced the card: paint it idle.
+        this._renderHome(this._homeModel);
+        return;
+      }
+      card.querySelectorAll("button").forEach((b) => (b.disabled = false));
+      if (pending?.button) {
+        pending.button.textContent = pendingLabel;
+        pending.button.removeAttribute("aria-busy");
+      } else card.removeAttribute("aria-busy");
     };
     if (err) {
       err.hidden = true;

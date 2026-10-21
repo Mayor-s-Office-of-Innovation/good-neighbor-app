@@ -37,7 +37,8 @@ JWT dependency), signed with a server-side key:
   - *refresh* — 180 days, **single-use**, carries a `jti` (`typ: "refresh"`)
 - **Rotation:** refresh tokens rotate on use. A refresh must match the
   `DEVICE#` item's current `refreshJti`; each successful refresh bumps
-  `tokenGeneration`, which also kills the previous access token immediately.
+  `tokenGeneration`, which also kills the previous access token — at the next
+  uncached authorizer run, so within the 60 s verdict cache described below.
 - **Revocation:** bump `tokenGeneration` (or delete the device). The
   authorizer's live `GetItem` check makes a still-cryptographically-valid token
   dead on the next uncached protected request. API Gateway caches the verdict

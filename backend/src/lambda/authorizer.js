@@ -72,27 +72,23 @@ export const handler = async (event) => {
 
   // Live check against the DEVICE# item: revocation (generation bumped or
   // device deleted) kills a still-cryptographically-valid token. The SITE#META
-  // read needed below is keyed by the claims alone, so it goes out in the same
-  // round trip; a device-level deny returns before it is read. The no-op catch
-  // only keeps a rejection from surfacing as unhandled on that early-return
-  // path — the allow path awaits the original promise and still propagates.
-  const devicePromise = ddb.send(
-    new GetCommand({
-      TableName: process.env.DYNAMO_TABLE,
-      Key: { pk: `SITE#${claims.siteId}`, sk: `DEVICE#${claims.sub}` },
-    }),
-  );
-  const sitePromise = Promise.resolve(
+  // read needed below is keyed by the claims alone, so both go out in one
+  // round trip (a device-level deny discards the site read).
+  const [res, siteRes] = await Promise.all([
+    ddb.send(
+      new GetCommand({
+        TableName: process.env.DYNAMO_TABLE,
+        Key: { pk: `SITE#${claims.siteId}`, sk: `DEVICE#${claims.sub}` },
+      }),
+    ),
     ddb.send(
       new GetCommand({
         TableName: process.env.DYNAMO_TABLE,
         Key: { pk: `SITE#${claims.siteId}`, sk: "#META" },
       }),
     ),
-  );
-  sitePromise.catch(() => {});
-  const res = await devicePromise;
-  const device = /** @type {Record<string, any> | undefined} */ (res?.Item);
+  ]);
+  const device = /** @type {Record<string, any> | undefined} */ (res.Item);
   const now = new Date();
   const inactiveAfter = device?.lastSeenAt
     ? new Date(device.lastSeenAt).getTime() +
@@ -111,8 +107,7 @@ export const handler = async (event) => {
     return DENY({ reason: "revoked" });
   }
 
-  const siteRes = await sitePromise;
-  const site = /** @type {Record<string, any> | undefined} */ (siteRes?.Item);
+  const site = /** @type {Record<string, any> | undefined} */ (siteRes.Item);
   if (!site || site.status === "inactive") {
     return DENY({ reason: "site_inactive" });
   }

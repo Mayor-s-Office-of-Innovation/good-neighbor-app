@@ -570,6 +570,9 @@ describe("in-progress card actions", () => {
       const card = {
         querySelectorAll: () => [button],
         querySelector: () => null,
+        getAttribute: () => "task-1",
+        setAttribute: vi.fn(),
+        removeAttribute: vi.fn(),
       };
       const response = {
         task: {

@@ -348,11 +348,10 @@ function captureTaskIdentity(task) {
         />`
       : ""}
     <span class="task-update__capture-task-text"
-      ><strong>${escapeHtml(taskCardTitle(task))}</strong>${reference
-        ? html` <span class="task-update__capture-ref"
-            >#${escapeHtml(reference)}</span
-          >`
-        : ""}</span
+      ><strong>${escapeHtml(taskCardTitle(task))}</strong>
+      <span class="task-update__capture-ref"
+        >#${escapeHtml(reference)}</span
+      ></span
     >
   </p>`;
 }
