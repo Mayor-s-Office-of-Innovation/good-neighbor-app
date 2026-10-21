@@ -714,11 +714,18 @@ h3 {
   align-items: end;
 }
 
-.manager-membership-form:has(button[hidden]) {
+.manager-membership-form:has(.manager-membership-actions[hidden]) {
   grid-template-columns: 1fr;
 }
 
-.manager-membership-form button[hidden] {
+.manager-membership-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.manager-membership-actions[hidden] {
   display: none;
 }
 

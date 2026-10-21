@@ -1,4 +1,8 @@
 {
+  "admin.programs.createStaff": "建立新員工",
+  "admin.programs.chooseStaff": "選擇員工",
+  "admin.programs.staffLoadError": "無法載入員工。請重新選擇服務提供者。",
+  "admin.managers.deleteRecord": "刪除記錄",
   "admin.directory.results": "「{query}」的搜尋結果",
   "admin.directory.managers": "地點管理員",
   "admin.directory.managerLoading": "正在載入地點管理員結果…",
@@ -1011,6 +1015,7 @@
   "admin.siteManagers.none": "尚未指派地點管理員。",
   "admin.siteManagers.manage": "管理地點管理員",
   "admin.siteManagers.addAnother": "新增地點管理員",
+  "admin.siteManagers.assignToSite": "指派至場所",
   "admin.siteManagers.choose": "選擇地點管理員",
   "admin.siteManagers.createNew": "建立新地點管理員",
   "admin.siteManagers.newTitle": "新增地點管理員",

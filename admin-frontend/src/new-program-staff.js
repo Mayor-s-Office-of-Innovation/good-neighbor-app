@@ -1,0 +1,106 @@
+import { t } from "../../frontend/src/i18n/i18n.js";
+import { loadProviderStaff } from "./provider-staff.js";
+
+/** Bind the new-program staff picker without rerendering the program draft. */
+export function bindNewProgramStaff(root, programs, api) {
+  const form = root.querySelector("#program-form");
+  if (!form) return;
+  const provider = form.querySelector('[name="program-provider"]');
+  const select = form.querySelector('[name="program-staff"]');
+  const save = form.querySelector('[type="submit"]');
+  const error = form.querySelector("[data-staff-error]");
+  const dialog = root.querySelector("#new-program-staff-dialog");
+  const draftForm = dialog.querySelector("form");
+  let generation = 0;
+  let previous = "";
+  let loadedProvider;
+  const sync = () => {
+    save.disabled =
+      select.disabled || !select.value || select.value === "__create__";
+  };
+  const option = (value, label) => {
+    const item = document.createElement("wa-option");
+    item.value = value;
+    item.textContent = label;
+    return item;
+  };
+  const load = async () => {
+    const providerId = String(
+      provider.value || provider.dataset.initialValue || "",
+    );
+    if (loadedProvider === providerId) return;
+    loadedProvider = providerId;
+    const current = ++generation;
+    select.value = "";
+    previous = "";
+    select.replaceChildren();
+    select.disabled = true;
+    error.textContent = "";
+    sync();
+    if (!providerId) return;
+    try {
+      const people = await loadProviderStaff(providerId, programs, api);
+      if (current !== generation || !form.isConnected) return;
+      for (const { person, reference } of people) {
+        select.append(
+          option(
+            encodeURIComponent(JSON.stringify({ existingStaff: reference })),
+            `${person.firstName} ${person.lastName} (${person.email})`,
+          ),
+        );
+      }
+      select.append(option("__create__", t("admin.programs.createStaff")));
+      select.disabled = false;
+      sync();
+    } catch {
+      if (current === generation) {
+        loadedProvider = undefined;
+        error.textContent = t("admin.programs.staffLoadError");
+      }
+    }
+  };
+  provider.addEventListener("change", () => {
+    delete provider.dataset.initialValue;
+    void load();
+  });
+  void load();
+  select.addEventListener("change", () => {
+    if (select.value === "__create__") {
+      select.value = previous;
+      draftForm.reset();
+      dialog.showModal();
+    } else previous = select.value;
+    sync();
+  });
+  dialog
+    .querySelector("[data-cancel-staff]")
+    .addEventListener("click", () => dialog.close());
+  dialog.addEventListener("close", () => {
+    select.focus();
+    sync();
+  });
+  draftForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!draftForm.reportValidity()) return;
+    const values = new FormData(draftForm);
+    const firstStaff = Object.fromEntries(
+      ["firstName", "lastName", "email", "phone"].map((key) => [
+        key,
+        String(values.get(key) || "").trim(),
+      ]),
+    );
+    const value = encodeURIComponent(JSON.stringify({ firstStaff }));
+    select.querySelector("[data-staff-draft]")?.remove();
+    const item = option(
+      value,
+      `${firstStaff.firstName} ${firstStaff.lastName} (${firstStaff.email})`,
+    );
+    item.dataset.staffDraft = "true";
+    select.insertBefore(item, select.lastElementChild);
+    await select.updateComplete;
+    select.value = value;
+    previous = value;
+    dialog.close();
+    sync();
+  });
+}

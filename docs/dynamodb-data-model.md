@@ -207,7 +207,7 @@ as task update events and every GSI sort key.
 | Task display ID counter | `SITE#<siteId>` | `COUNTER#task-display-id` | `nextTaskDisplayNumber`, a counter that only goes up. Used to mint task `shortId` values. |
 | Provider config | `PROVIDER#<providerId>` | `#META` | managed by central admin: name, `status`, timestamps |
 | Program config | `PROGRAM#<programId>` | `#META` | managed by central admin: Provider relationship, name, required contact, optional Program Manager reference, migration-placeholder/review flags, status, timestamps |
-| Program contact | `PROGRAM#<programId>` | `USER#<userId>` | non-authenticating roster/contact record: name, phone and optional extension, normalized email, `siteManager` directory marker, status, Site-assignment count, timestamps. Archival is blocked while assignments remain. |
+| Program contact | `PROGRAM#<programId>` | `USER#<userId>` | non-authenticating roster/contact record: name, optional phone and extension, normalized email, `siteManager` directory marker, status, Site-assignment count, timestamps. Archival is blocked while assignments remain. |
 | Site manager assignment | `SITE#<siteId>` | `ASSIGNED_USER#<userId>` | assignment to an active Site manager contact in the Site's lead Program, with a contact snapshot for display. A Site may have multiple Site managers; the manager used on a compliance letter is selected when its compliance period is created. |
 | Compliance manager directory | `ADMIN_DIRECTORY#PROGRAM_MANAGERS` | `MANAGER#<normalizedEmail>` | City Compliance manager identity keyed by normalized email. It can be imported before a Cognito account exists; a later invitation links the row with `cognitoSubject` and `cognitoRole` after exact-name conflict checks. Stores contact and department details used for administration and letter snapshots. |
 | Profile mutation journal | `ADMIN_PROFILE_LOCK#<cognitoSubject>` | `#LOCK` | Serializes profile GET/PUT with an ownership token and 16-minute `leaseUntil` (milliseconds). A `recovery` record stores prior Cognito name attributes, pool/username, and directory key before dual writes. The directory is the commit point; failed repairs retain the journal for retry on the next profile request. No TTL or GSI keys; delete only after completion or recovery. |
@@ -718,3 +718,17 @@ while new assignments and primary-contact selections require active staff.
 The site detail endpoint supports `?roster=1` for staff assignment enrichment. This returns
 canonical site metadata plus fully paginated `ASSIGNED_USER#` and `MANAGER_MEMBERSHIP#`
 prefixes, without reading historical reports, audits, or compliance artifacts.
+
+### Reusing staff when creating a program
+
+Program creation accepts either `firstStaff` (first name, last name, email, and
+optional phone) or `existingStaff`: `{programId, userId}` for another program
+under the same provider, or `{providerManagerId}` for that provider’s staff.
+The server reads the active source and verifies provider ownership; transaction
+conditions protect against source deactivation, edits, or program reassignment.
+
+Selection creates an additional `PROGRAM#… / USER#…` contact with its own
+program-scoped identifier and a `staffSource` reference to the original record.
+Contact details are copied at creation; later edits are local to each membership.
+The original program/provider affiliation and its device access are unchanged.
+This operation does not move a staff record or grant new device access.

@@ -1,4 +1,8 @@
 {
+  "admin.programs.createStaff": "Tạo nhân viên mới",
+  "admin.programs.chooseStaff": "Chọn nhân viên",
+  "admin.programs.staffLoadError": "Không thể tải nhân viên. Vui lòng chọn lại nhà cung cấp.",
+  "admin.managers.deleteRecord": "Xóa hồ sơ",
   "admin.directory.results": "Kết quả tìm kiếm cho “{query}”",
   "admin.directory.managers": "Người quản lý địa điểm",
   "admin.directory.managerLoading": "Đang tải kết quả người quản lý…",
@@ -1011,6 +1015,7 @@
   "admin.siteManagers.none": "Chưa phân công người quản lý.",
   "admin.siteManagers.manage": "Quản lý người quản lý địa điểm",
   "admin.siteManagers.addAnother": "Thêm người quản lý địa điểm",
+  "admin.siteManagers.assignToSite": "Chỉ định cho cơ sở",
   "admin.siteManagers.choose": "Chọn người quản lý địa điểm",
   "admin.siteManagers.createNew": "Tạo người quản lý địa điểm mới",
   "admin.siteManagers.newTitle": "Thêm người quản lý địa điểm mới",

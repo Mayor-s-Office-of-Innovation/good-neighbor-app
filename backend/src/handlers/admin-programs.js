@@ -39,15 +39,13 @@ export const createProgram = (event) =>
     const providerId = clean(body.providerId);
     if (!name) return jsonResponse(400, { error: "name_required" });
     if (!providerId) return jsonResponse(400, { error: "provider_required" });
-    const firstStaff =
+    let firstStaff =
       body.firstStaff === undefined ? null : normalizeContact(body.firstStaff);
     if (firstStaff) {
       if (!firstStaff.firstName || !firstStaff.lastName)
         return jsonResponse(400, { error: "name_required" });
       if (!isEmail(firstStaff.email))
         return jsonResponse(400, { error: "valid_email_required" });
-      if (!firstStaff.phone)
-        return jsonResponse(400, { error: "phone_required" });
     }
     const provider = await ddb.send(
       new GetCommand({
@@ -57,6 +55,105 @@ export const createProgram = (event) =>
     );
     if (!provider.Item || provider.Item.status === "inactive") {
       return jsonResponse(404, { error: "provider_not_found" });
+    }
+    // Staff memberships are additive: selecting a source never moves or edits it.
+    const sourceInput = body.existingStaff;
+    const sourceChecks = [];
+    let staffSource;
+    if (sourceInput !== undefined) {
+      if (firstStaff || !sourceInput || typeof sourceInput !== "object")
+        return jsonResponse(400, { error: "invalid_staff_source" });
+      const sourceRef = /** @type {Record<string, unknown>} */ (sourceInput);
+      let sourceKey;
+      if (
+        sourceRef.providerManagerId &&
+        !sourceRef.programId &&
+        !sourceRef.userId
+      ) {
+        sourceKey = {
+          pk: `PROVIDER#${providerId}`,
+          sk: `PROVIDER_MANAGER#${clean(sourceRef.providerManagerId)}`,
+        };
+        staffSource = {
+          providerId,
+          providerManagerId: clean(sourceRef.providerManagerId),
+        };
+      } else if (
+        sourceRef.programId &&
+        sourceRef.userId &&
+        !sourceRef.providerManagerId
+      ) {
+        const sourceProgramKey = {
+          pk: `PROGRAM#${clean(sourceRef.programId)}`,
+          sk: "#META",
+        };
+        const sourceProgram = await ddb.send(
+          new GetCommand({
+            TableName: getDynamoTableName(),
+            Key: sourceProgramKey,
+            ConsistentRead: true,
+          }),
+        );
+        if (
+          sourceProgram.Item?.providerId !== providerId ||
+          sourceProgram.Item?.status !== "active"
+        )
+          return jsonResponse(400, { error: "invalid_staff_source" });
+        sourceChecks.push({
+          ConditionCheck: {
+            TableName: getDynamoTableName(),
+            Key: sourceProgramKey,
+            ConditionExpression: "providerId = :provider AND #status = :active",
+            ExpressionAttributeNames: { "#status": "status" },
+            ExpressionAttributeValues: {
+              ":provider": providerId,
+              ":active": "active",
+            },
+          },
+        });
+        sourceKey = {
+          pk: sourceProgramKey.pk,
+          sk: `USER#${clean(sourceRef.userId)}`,
+        };
+        staffSource = {
+          programId: clean(sourceRef.programId),
+          userId: clean(sourceRef.userId),
+        };
+      } else return jsonResponse(400, { error: "invalid_staff_source" });
+      const source = await ddb.send(
+        new GetCommand({
+          TableName: getDynamoTableName(),
+          Key: sourceKey,
+          ConsistentRead: true,
+        }),
+      );
+      if (source.Item?.status !== "active")
+        return jsonResponse(400, { error: "invalid_staff_source" });
+      firstStaff = normalizeContact(source.Item);
+      if (
+        !firstStaff.firstName ||
+        !firstStaff.lastName ||
+        !isEmail(firstStaff.email)
+      )
+        return jsonResponse(400, { error: "invalid_staff_source" });
+      sourceChecks.push({
+        ConditionCheck: {
+          TableName: getDynamoTableName(),
+          Key: sourceKey,
+          ConditionExpression:
+            "#status = :active" +
+            (source.Item.updatedAt
+              ? " AND updatedAt = :version"
+              : " AND attribute_not_exists(updatedAt)"),
+          ExpressionAttributeNames: { "#status": "status" },
+          ExpressionAttributeValues: {
+            ":active": "active",
+            ...(source.Item.updatedAt
+              ? { ":version": source.Item.updatedAt }
+              : {}),
+          },
+        },
+      });
     }
     const programId = slug(body.programId, `${providerId}-${name}`);
     const now = new Date().toISOString();
@@ -89,6 +186,7 @@ export const createProgram = (event) =>
           programId,
           userId,
           ...firstStaff,
+          ...(staffSource ? { staffSource } : {}),
           siteManager: false,
           status: "active",
           siteAssignmentCount: 0,
@@ -99,6 +197,7 @@ export const createProgram = (event) =>
     await ddb.send(
       new TransactWriteCommand({
         TransactItems: [
+          ...sourceChecks,
           put(program),
           ...(user ? [put(user)] : []),
           put({
@@ -537,7 +636,7 @@ async function removeSiteManager(event, programId, userId, user) {
         ExpressionAttributeValues: { ":pk": `MANAGER_EMAIL#${verifier}` },
       }),
     ),
-    queryChildren(programId, "SITE#"),
+    queryChildren(programId, "SITE#", true),
   ]);
   const actor = String(
     /** @type {any} */ (event.requestContext)?.authorizer?.jwt?.claims?.sub ??
@@ -545,7 +644,6 @@ async function removeSiteManager(event, programId, userId, user) {
   );
   const siteIds = new Set(
     (programSitesResult.Items ?? [])
-      .filter((site) => site.status !== "inactive")
       .map((site) => String(site.siteId || ""))
       .filter(Boolean),
   );
@@ -588,6 +686,7 @@ async function removeSiteManager(event, programId, userId, user) {
         new GetCommand({
           TableName: tableName,
           Key: { pk: `SITE#${siteId}`, sk: "#META" },
+          ConsistentRead: true,
         }),
       ),
       ddb.send(
@@ -818,10 +917,11 @@ export const deactivateProgram = (event) =>
     return jsonResponse(200, { program: result.Attributes });
   });
 
-/** @param {string} programId @param {string} prefix */
-async function queryChildren(programId, prefix) {
+/** @param {string} programId @param {string} prefix @param {boolean} [consistentRead] */
+async function queryChildren(programId, prefix, consistentRead = false) {
   const Items = await queryAll({
     TableName: getDynamoTableName(),
+    ConsistentRead: consistentRead,
     KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
     ExpressionAttributeValues: {
       ":pk": `PROGRAM#${programId}`,

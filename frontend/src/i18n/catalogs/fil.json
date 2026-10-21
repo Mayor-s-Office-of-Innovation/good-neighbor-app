@@ -1,4 +1,8 @@
 {
+  "admin.programs.createStaff": "Gumawa ng bagong kawani",
+  "admin.programs.chooseStaff": "Pumili ng kawani",
+  "admin.programs.staffLoadError": "Hindi ma-load ang mga kawani. Piliin muli ang provider.",
+  "admin.managers.deleteRecord": "Burahin ang rekord",
   "admin.directory.results": "Mga resulta ng paghahanap para sa “{query}”",
   "admin.directory.managers": "Mga tagapamahala ng site",
   "admin.directory.managerLoading": "Nilo-load ang mga resulta ng tagapamahala…",
@@ -1011,6 +1015,7 @@
   "admin.siteManagers.none": "Walang nakatalagang tagapamahala.",
   "admin.siteManagers.manage": "Pamahalaan ang mga tagapamahala",
   "admin.siteManagers.addAnother": "Magdagdag ng tagapamahala ng site",
+  "admin.siteManagers.assignToSite": "Italaga sa site",
   "admin.siteManagers.choose": "Pumili ng tagapamahala ng site",
   "admin.siteManagers.createNew": "Gumawa ng bagong tagapamahala ng site",
   "admin.siteManagers.newTitle": "Magdagdag ng bagong tagapamahala ng site",

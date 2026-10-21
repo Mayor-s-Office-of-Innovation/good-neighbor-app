@@ -1,3 +1,4 @@
+import { bindNewProgramStaff } from "./new-program-staff.js";
 import { createAndAssignManager } from "./pending-manager.js";
 import { letterEmailProgress, profilePhoneUpdate } from "./admin-save-state.js";
 import "./icons.js";
@@ -934,12 +935,7 @@ class AdminApp extends HTMLElement {
     const result = await adminApi.createProgram({
       name: String(data.get("program-name") || ""),
       providerId: String(data.get("program-provider") || ""),
-      firstStaff: {
-        firstName: String(data.get("contact-first-name") || ""),
-        lastName: String(data.get("contact-last-name") || ""),
-        phone: String(data.get("contact-phone") || ""),
-        email: String(data.get("contact-email") || ""),
-      },
+      ...JSON.parse(decodeURIComponent(String(data.get("program-staff")))),
     });
     await this.loadDirectory();
     const returnTo = new URLSearchParams(window.location.search).get(
@@ -2714,6 +2710,7 @@ class AdminApp extends HTMLElement {
       programSelect?.addEventListener("change", syncAddProgramButton);
       programSelect?.addEventListener("input", syncAddProgramButton);
     }
+    bindNewProgramStaff(this, this.state.programs, adminApi);
     this.querySelector("#program-form")?.addEventListener("submit", (e) => {
       e.preventDefault();
       this.createProgram(asForm(e.currentTarget)).catch((err) => {
@@ -3460,8 +3457,8 @@ class AdminApp extends HTMLElement {
     const managerMembershipSelect = managerMembershipForm?.querySelector(
       "wa-select[name='manager-user-id']",
     );
-    const managerMembershipSubmit = managerMembershipForm?.querySelector(
-      "button[type='submit']",
+    const managerMembershipActions = managerMembershipForm?.querySelector(
+      "[data-manager-membership-actions]",
     );
     const syncManagerMembershipSubmit = () => {
       const selectedUserId = String(managerMembershipSelect?.value || "");
@@ -3475,9 +3472,9 @@ class AdminApp extends HTMLElement {
             String(membership.email || "").toLowerCase() ===
               String(selectedUser?.email || "").toLowerCase()),
       );
-      managerMembershipSubmit?.toggleAttribute(
+      managerMembershipActions?.toggleAttribute(
         "hidden",
-        !selectedUserId || isCurrentManager,
+        !selectedUser || isCurrentManager,
       );
     };
     managerMembershipSelect?.addEventListener("change", () => {
@@ -3514,6 +3511,13 @@ class AdminApp extends HTMLElement {
       form?.querySelector("[data-form-save-error]")?.remove();
       managerMembershipSelect?.focus();
     });
+    managerMembershipForm
+      ?.querySelector("[data-cancel-manager-assignment]")
+      ?.addEventListener("click", () => {
+        managerMembershipSelect.value = "";
+        syncManagerMembershipSubmit();
+        managerMembershipSelect.focus();
+      });
     syncManagerMembershipSubmit();
     managerMembershipSelect?.addEventListener(
       "change",
@@ -4287,7 +4291,7 @@ function removeSiteManagerDialog(managerName) {
         <p class="places-modal__text" id="remove-site-manager-copy">This will permanently remove the manager, remove them from every assigned Site, and immediately revoke their Good Neighbor app access.</p>
       </div>
       <div class="places-modal__actions">
-        <button class="btn-danger" value="confirm">Remove manager</button>
+        <button class="btn-danger" value="confirm">${escapeHtml(t("admin.managers.deleteRecord"))}</button>
         <button class="btn-outline" value="cancel">Cancel</button>
       </div>
     </form>
@@ -4453,7 +4457,10 @@ function siteAccessView(state) {
           .join("")}
         <wa-option value="__create_site_manager__">${escapeHtml(t("admin.siteManagers.createNew"))}</wa-option>
       </wa-select>
-      <button class="btn-primary" type="submit" hidden>${escapeHtml(t("admin.siteManagers.add"))}</button>
+      <div class="manager-membership-actions" data-manager-membership-actions hidden>
+        <button class="btn-primary" type="submit">${escapeHtml(t("admin.siteManagers.assignToSite"))}</button>
+        <button class="btn-outline" type="button" data-cancel-manager-assignment>${escapeHtml(t("common.cancel"))}</button>
+      </div>
     </form>`
         : ""
     }
@@ -5148,18 +5155,31 @@ function newProgramView(state) {
     <form id="program-form" class="site-details-form">
       <fieldset><legend>Program</legend><div class="form-grid form-grid--one">
         ${formInput("program-name", "Program name", "", { required: true, autocomplete: "organization" })}
-        <wa-select name="program-provider" label="Provider" required placeholder="Choose a provider">
+        <wa-select name="program-provider" label="Provider" required data-initial-value="${escapeHtml(providerId)}" placeholder="Choose a provider">
           ${state.providers.map((provider) => `<wa-option value="${escapeHtml(provider.providerId)}" ${provider.providerId === providerId ? "selected" : ""}>${escapeHtml(provider.name)}</wa-option>`).join("")}
         </wa-select>
       </div></fieldset>
-      <fieldset><legend>${escapeHtml(t("admin.programs.addStaffMember"))}</legend><div class="form-grid form-grid--two">
-        ${formInput("contact-first-name", "First name", "", { required: true, autocomplete: "given-name" })}
-        ${formInput("contact-last-name", "Last name", "", { required: true, autocomplete: "family-name" })}
-        ${formInput("contact-phone", "Phone", "", { required: true, type: "tel", autocomplete: "tel" })}
-        ${formInput("contact-email", "Email", "", { required: true, type: "email", autocomplete: "email" })}
-      </div></fieldset>
-      <button class="btn-primary" type="submit">Add program</button>
+      <fieldset><legend>${escapeHtml(t("admin.programs.addStaffMember"))}</legend>
+        <wa-select name="program-staff" required disabled aria-label="${escapeHtml(t("admin.programs.addStaffMember"))}" placeholder="${escapeHtml(t("admin.programs.chooseStaff"))}"></wa-select>
+        <p class="error" data-staff-error role="alert"></p>
+      </fieldset>
+      <button class="btn-primary" type="submit" disabled>Add program</button>
     </form>
+    <dialog id="new-program-staff-dialog" class="places-modal" aria-labelledby="new-program-staff-title">
+      <form class="places-modal__card site-details-form">
+        <h2 id="new-program-staff-title">${escapeHtml(t("admin.programs.createStaff"))}</h2>
+        <div class="form-grid form-grid--two">
+          ${formInput("firstName", t("siteAdmin.field.firstName"), "", { required: true, autocomplete: "given-name" })}
+          ${formInput("lastName", t("siteAdmin.field.lastName"), "", { required: true, autocomplete: "family-name" })}
+          ${formInput("email", t("siteAdmin.field.email"), "", { required: true, type: "email", autocomplete: "email" })}
+          ${formInput("phone", t("siteAdmin.field.phone"), "", { type: "tel", autocomplete: "tel" })}
+        </div>
+        <div class="places-modal__actions">
+          <button class="btn-primary" type="submit">${escapeHtml(t("admin.programs.createStaff"))}</button>
+          <button class="btn-outline" type="button" data-cancel-staff>${escapeHtml(t("common.cancel"))}</button>
+        </div>
+      </form>
+    </dialog>
   </section>`;
 }
 
@@ -5317,7 +5337,7 @@ function siteManagerEditorView(state, manager) {
     ${entityBreadcrumb("manager", manager || {}, state.programs, state.providers)}
     <div class="panel__head">
       <h1 id="manager-record-title" tabindex="-1">${escapeHtml(title)}</h1>
-      ${isNew ? "" : '<button class="btn-danger" type="button" data-remove-site-manager>Remove manager</button>'}
+      ${isNew ? "" : `<button class="btn-danger" type="button" data-remove-site-manager>${escapeHtml(t("admin.managers.deleteRecord"))}</button>`}
     </div>
     <form id="site-manager-record-form" class="site-details-form" data-dirty-form data-return-site="${escapeHtml(returnSite)}">
       <fieldset>

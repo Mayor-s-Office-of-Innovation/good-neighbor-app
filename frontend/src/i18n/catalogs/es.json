@@ -1,4 +1,8 @@
 {
+  "admin.programs.createStaff": "Crear nuevo miembro del personal",
+  "admin.programs.chooseStaff": "Elegir un miembro del personal",
+  "admin.programs.staffLoadError": "No se pudo cargar el personal. Vuelva a elegir el proveedor.",
+  "admin.managers.deleteRecord": "Eliminar registro",
   "admin.directory.results": "Resultados de búsqueda de «{query}»",
   "admin.directory.managers": "Administradores del sitio",
   "admin.directory.managerLoading": "Cargando resultados de administradores…",
@@ -1011,6 +1015,7 @@
   "admin.siteManagers.none": "No hay administradores asignados.",
   "admin.siteManagers.manage": "Gestionar administradores del sitio",
   "admin.siteManagers.addAnother": "Agregar un administrador del sitio",
+  "admin.siteManagers.assignToSite": "Asignar al sitio",
   "admin.siteManagers.choose": "Elegir administrador del sitio",
   "admin.siteManagers.createNew": "Crear nuevo administrador del sitio",
   "admin.siteManagers.newTitle": "Agregar nuevo administrador del sitio",
