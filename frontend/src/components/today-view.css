@@ -527,10 +527,13 @@
   gap: 1.5rem;
 }
 
-/* Pinned while the task list scrolls. The gap compresses on narrow screens so
-   three tabs + count badges fit a 320px viewport with no horizontal scroll
-   (WCAG 1.4.10) — reclaim the width first, then pin. Full width (not 30rem)
-   so no card content peeks past the pinned bar's background. */
+/* Pinned while the task list scrolls (top: 0 against the document, which is
+   the scroll container; no overflow ancestors in between). The gap compresses
+   on narrow screens so three tabs + count badges fit a 320px viewport with no
+   horizontal scroll (WCAG 1.4.10). Full-bleed width so the rule spans edge to
+   edge and the opaque background covers the blue tray scrolling underneath —
+   a translucent bar would break the status colors' verified contrast.
+   z-index sits above the cards (z-auto) and below the menus (5+). */
 .home-tabs {
   position: sticky;
   top: 0;
@@ -539,10 +542,24 @@
   align-items: center;
   justify-content: center;
   gap: clamp(0.75rem, 6vw, 2rem);
-  width: 100%;
-  margin-inline: auto;
+  width: 100vw;
+  margin-inline: calc(50% - 50vw);
   background: var(--bg);
   border-bottom: 1px solid #e4e5e9;
+}
+
+/* Short viewports (landscape phones, 200% zoom): release the pin so the bar
+   does not eat the viewport. The full-bleed rule stays. */
+@media (max-height: 500px) {
+  .home-tabs {
+    position: static;
+  }
+}
+
+/* 2.4.11 Focus Not Obscured: when the browser scrolls a focused control into
+   view, keep it clear of the 45px pinned bar. */
+.home-results :is(a, button, input, select, textarea, wa-select, [tabindex]) {
+  scroll-margin-top: 3.5rem;
 }
 
 .home-tabs__tab {
