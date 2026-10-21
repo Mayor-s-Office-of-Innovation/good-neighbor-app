@@ -26,6 +26,29 @@ export const setupView = ({
   <theme-toggle></theme-toggle>
 `;
 
+/* Home Screen handoff in progress (services/session-handoff.js): the launch
+   URL carried a grant and app-root is redeeming it. The setup panel's chrome
+   with a spinner and no code form; <site-setup> takes no part in this flow. */
+export const handoffView = () => html`
+  <main class="app__main">
+    <div class="login" aria-labelledby="login-title">
+      <section class="login__panel" aria-busy="true">
+        <div class="login__mark" aria-hidden="true"></div>
+        <div class="login__copy">
+          <h1 id="login-title">${escapeHtml(t("setup.welcome"))}</h1>
+          <p>${escapeHtml(t("setup.handoff.signingIn"))}</p>
+        </div>
+        <div class="login__handoff">
+          <wa-spinner
+            aria-label="${escapeAttr(t("setup.handoff.aria"))}"
+          ></wa-spinner>
+        </div>
+      </section>
+    </div>
+  </main>
+  <theme-toggle></theme-toggle>
+`;
+
 /* bound-device app shell: header + main view slot. No bottom nav — the Take-5 IA is
    a home hub (today-view) plus a linear check flow, navigated by in-screen CTAs. */
 export const appShell = ({ siteName }) => html`

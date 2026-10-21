@@ -107,11 +107,18 @@ export async function redeemEnrollmentGrant(grantId, token, opts = {}) {
  * @throws {InvalidHandoffGrantError} on 401, else a network/5xx failure
  */
 export async function redeemHandoffGrant(grantId, token) {
-  const res = await fetch(`${BASE}/app/v1/session-handoff/redeem`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ grantId, token }),
-  });
+  /** @type {Response} */
+  let res;
+  try {
+    res = await fetch(`${BASE}/app/v1/session-handoff/redeem`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ grantId, token }),
+    });
+  } catch (err) {
+    // fetch only rejects on a transport failure (offline, DNS, CORS, abort).
+    throw new ApiError(`handoff transport failure: ${err}`, { status: 0 });
+  }
   if (res.status === 401) throw new InvalidHandoffGrantError();
   if (!res.ok) {
     throw new ApiError(`handoff redemption failed (${res.status})`, {

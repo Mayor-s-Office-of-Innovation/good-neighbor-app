@@ -854,7 +854,6 @@
   "setup.handoff.aria": "Signing in",
   "setup.handoff.signingIn": "Signing in to your site…",
   "setup.needNewCode": "Need a new code?",
-  "setup.notice.handedOff": "If you added Good Neighbor to your Home Screen, open it from there. Otherwise, enter a site code.",
   "setup.notice.handoffFailed": "This Home Screen app couldn't pick up your sign-in. Enter the site code, or open your invitation link again.",
   "setup.requestIntro": "Request a new site code",
   "setup.requesting.aria": "Requesting setup code",

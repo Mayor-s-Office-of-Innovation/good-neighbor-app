@@ -6,7 +6,7 @@ import { t } from "../i18n/i18n.js";
 import { html, escapeAttr, escapeHtml } from "../lib/html.js";
 
 /**
- * @param {{value?: string, error?: string, checking?: boolean, mode?: "code"|"request"|"handoff", targetSiteName?: string, canCancel?: boolean, cancelDisabled?: boolean, notice?: string, request?: { query?: string, email?: string, searching?: boolean, requesting?: boolean, sites?: Array<{siteId:string, name:string, providerName?:string, label?:string}>, selectedSiteId?: string, message?: string, error?: string }}} state
+ * @param {{value?: string, error?: string, checking?: boolean, mode?: "code"|"request", targetSiteName?: string, canCancel?: boolean, cancelDisabled?: boolean, notice?: string, request?: { query?: string, email?: string, searching?: boolean, requesting?: boolean, sites?: Array<{siteId:string, name:string, providerName?:string, label?:string}>, selectedSiteId?: string, message?: string, error?: string }}} state
  * @returns {string}
  */
 export const codeEntryView = ({
@@ -21,23 +21,18 @@ export const codeEntryView = ({
   request = {},
 } = {}) => html`
   <div class="login" aria-labelledby="login-title">
-    <section
-      class="login__panel"
-      aria-busy="${checking || mode === "handoff" ? "true" : "false"}"
-    >
+    <section class="login__panel" aria-busy="${checking ? "true" : "false"}">
       <div class="login__mark" aria-hidden="true"></div>
 
       <div class="login__copy">
         <h1 id="login-title">${escapeHtml(t("setup.welcome"))}</h1>
         <p>
           ${escapeHtml(
-            mode === "handoff"
-              ? t("setup.handoff.signingIn")
-              : mode === "request"
-                ? t("setup.requestIntro")
-                : targetSiteName
-                  ? t("setup.enterCodeFor", { site: targetSiteName })
-                  : t("setup.enterCode"),
+            mode === "request"
+              ? t("setup.requestIntro")
+              : targetSiteName
+                ? t("setup.enterCodeFor", { site: targetSiteName })
+                : t("setup.enterCode"),
           )}
         </p>
         ${notice
@@ -47,11 +42,9 @@ export const codeEntryView = ({
           : ""}
       </div>
 
-      ${mode === "handoff"
-        ? handoffView()
-        : mode === "request"
-          ? requestCodeView(request)
-          : enterCodeView({ value, error, checking })}
+      ${mode === "request"
+        ? requestCodeView(request)
+        : enterCodeView({ value, error, checking })}
       ${canCancel
         ? html`<button
             id="cancel-site-switch"
@@ -65,21 +58,6 @@ export const codeEntryView = ({
     </section>
   </div>
 `;
-
-/**
- * Home Screen handoff in progress (services/session-handoff.js): the grant
- * from the launch URL is being redeemed; no code to type.
- * @returns {string}
- */
-function handoffView() {
-  return html`
-    <div class="login__handoff">
-      <wa-spinner
-        aria-label="${escapeAttr(t("setup.handoff.aria"))}"
-      ></wa-spinner>
-    </div>
-  `;
-}
 
 /**
  * @param {{ value: string, error: string, checking: boolean }} state

@@ -153,6 +153,35 @@ export async function activateSiteBinding(siteId) {
   });
 }
 
+/**
+ * The site-record fields a minted device session contributes. Registration,
+ * enrollment, binding select, and the Home Screen handoff all store this one
+ * shape; callers add their own provenance (code, providerSiteId) on top.
+ * @param {{ deviceId: string, token: string, refreshToken: string, expiresIn: number, tokenGeneration: number, accessLevel?: string, bindingId?: string, physicalDeviceId?: string, absoluteExpiresAt?: string, site?: { siteId: string } }} session
+ * @returns {Record<string, any>}
+ */
+export function bindingFromSession(session) {
+  /** @type {Record<string, any>} */
+  const fields = {
+    siteId: session.site?.siteId,
+    deviceId: session.deviceId,
+    bindingId: session.bindingId,
+    physicalDeviceId: session.physicalDeviceId,
+    token: session.token,
+    refreshToken: session.refreshToken,
+    tokenExpiresAt: new Date(
+      Date.now() + session.expiresIn * 1000,
+    ).toISOString(),
+    tokenGeneration: session.tokenGeneration,
+    accessLevel: session.accessLevel,
+    absoluteExpiresAt: session.absoluteExpiresAt,
+  };
+  for (const key of Object.keys(fields)) {
+    if (fields[key] === undefined) delete fields[key];
+  }
+  return fields;
+}
+
 export async function setSite(name, meta = {}) {
   // meta may carry the onboarding code (identity provenance) and, once device
   // auth lands (services/devices.js), the device session (deviceId, token,

@@ -703,7 +703,6 @@
   "setup.handoff.aria": "Đang đăng nhập",
   "setup.handoff.signingIn": "Đang đăng nhập vào địa điểm của bạn…",
   "setup.needNewCode": "Cần mã mới?",
-  "setup.notice.handedOff": "Nếu bạn đã thêm Good Neighbor vào màn hình chính, hãy mở từ đó. Nếu không, hãy nhập mã địa điểm.",
   "setup.notice.handoffFailed": "Ứng dụng trên màn hình chính này không lấy được phiên đăng nhập của bạn. Hãy nhập mã địa điểm, hoặc mở lại liên kết mời của bạn.",
   "setup.requestIntro": "Yêu cầu mã địa điểm mới",
   "setup.requesting.aria": "Đang yêu cầu mã thiết lập",

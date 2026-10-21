@@ -5,6 +5,9 @@ const mocks = vi.hoisted(() => ({
   saveSiteSettings: vi.fn(),
   issueSessionHandoff: vi.fn(),
   trackEvent: vi.fn(),
+  installMethod: vi.fn(() => "ios"),
+  isStandalone: vi.fn(() => false),
+  isInAppBrowser: vi.fn(() => false),
 }));
 vi.mock("../db.js", () => ({
   getSite: mocks.getSite,
@@ -12,19 +15,24 @@ vi.mock("../db.js", () => ({
 }));
 vi.mock("./api.js", () => ({ issueSessionHandoff: mocks.issueSessionHandoff }));
 vi.mock("./analytics.js", () => ({ trackEvent: mocks.trackEvent }));
-vi.mock("./browser-context.js", () => ({ isInAppBrowser: () => false }));
+vi.mock("./browser-context.js", () => ({
+  isInAppBrowser: mocks.isInAppBrowser,
+}));
 vi.mock("./install-prompt.js", () => ({
-  installMethod: () => "ios",
-  isStandalone: () => false,
+  installMethod: mocks.installMethod,
+  isStandalone: mocks.isStandalone,
 }));
 
 const {
   buildHandoffManifest,
+  consumedGrantIds,
   ensureHandoffManifest,
   grantIsFresh,
-  hasHandoffCredentials,
   installManifest,
+  isHandoffPrepared,
+  onHandoffPrepared,
   readHandoffCredentials,
+  rememberConsumedGrant,
   resetHandoffManifest,
   shouldPrepareHandoff,
   stripHandoffCredentials,
@@ -32,24 +40,77 @@ const {
 
 const LAUNCH = "https://app.example.org/#handoff_grant=g-1&handoff_token=t-1";
 
+/** @returns {Storage} an in-memory localStorage stand-in */
+function memoryStorage() {
+  /** @type {Map<string, string>} */
+  const map = new Map();
+  return /** @type {any} */ ({
+    getItem: (k) => map.get(k) ?? null,
+    setItem: (k, v) => map.set(k, String(v)),
+    removeItem: (k) => map.delete(k),
+  });
+}
+
 describe("handoff credentials in the launch URL", () => {
   it("parses both parameters from the fragment and nothing else", () => {
-    expect(readHandoffCredentials(LAUNCH)).toEqual({
+    const storage = memoryStorage();
+    expect(readHandoffCredentials(LAUNCH, storage)).toEqual({
       grantId: "g-1",
       token: "t-1",
     });
-    expect(hasHandoffCredentials(LAUNCH)).toBe(true);
-    expect(readHandoffCredentials("https://app.example.org/")).toBeNull();
     expect(
-      readHandoffCredentials("https://app.example.org/#handoff_grant=g-1"),
+      readHandoffCredentials("https://app.example.org/", storage),
+    ).toBeNull();
+    expect(
+      readHandoffCredentials(
+        "https://app.example.org/#handoff_grant=g-1",
+        storage,
+      ),
     ).toBeNull();
     expect(
       readHandoffCredentials(
         "https://app.example.org/?handoff_grant=g-1&handoff_token=t-1",
+        storage,
       ),
     ).toBeNull();
-    expect(readHandoffCredentials("")).toBeNull();
-    expect(readHandoffCredentials("not a url")).toBeNull();
+    expect(readHandoffCredentials("", storage)).toBeNull();
+    expect(readHandoffCredentials("not a url", storage)).toBeNull();
+  });
+
+  it("never yields a grant this install already presented", () => {
+    const storage = memoryStorage();
+    rememberConsumedGrant("g-1", storage);
+    expect(consumedGrantIds(storage)).toEqual(["g-1"]);
+    expect(readHandoffCredentials(LAUNCH, storage)).toBeNull();
+    // Other grants are unaffected, and the memory is bounded.
+    for (let i = 0; i < 20; i += 1)
+      rememberConsumedGrant(`g-${i + 10}`, storage);
+    expect(consumedGrantIds(storage).length).toBeLessThanOrEqual(8);
+    expect(
+      readHandoffCredentials(
+        "https://app.example.org/#handoff_grant=g-2&handoff_token=t-2",
+        storage,
+      ),
+    ).toEqual({ grantId: "g-2", token: "t-2" });
+  });
+
+  it("survives blocked or corrupt storage", () => {
+    const broken = /** @type {any} */ ({
+      getItem: () => "{not json",
+      setItem: () => {
+        throw new Error("quota");
+      },
+    });
+    expect(consumedGrantIds(broken)).toEqual([]);
+    expect(() => rememberConsumedGrant("g-1", broken)).not.toThrow();
+    expect(readHandoffCredentials(LAUNCH, broken)).toEqual({
+      grantId: "g-1",
+      token: "t-1",
+    });
+    expect(readHandoffCredentials(LAUNCH, null)).toEqual({
+      grantId: "g-1",
+      token: "t-1",
+    });
   });
 
   it("strips the credentials from the address bar and keeps the rest of the fragment", () => {
@@ -109,7 +170,6 @@ describe("grantIsFresh", () => {
   const now = Date.parse("2026-10-21T12:00:00Z");
   const grant = {
     grantId: "g",
-    token: "t",
     startUrl: "/#x",
     expiresAt: "2026-10-28T12:00:00Z",
   };
@@ -126,7 +186,7 @@ describe("grantIsFresh", () => {
 
   it("rejects incomplete or malformed grants", () => {
     expect(grantIsFresh(undefined, now)).toBe(false);
-    expect(grantIsFresh({ ...grant, token: "" }, now)).toBe(false);
+    expect(grantIsFresh({ ...grant, startUrl: "" }, now)).toBe(false);
     expect(grantIsFresh({ ...grant, expiresAt: "soon" }, now)).toBe(false);
   });
 });
@@ -211,23 +271,32 @@ describe("installManifest", () => {
 });
 
 describe("ensureHandoffManifest", () => {
-  const now = Date.parse("2026-10-21T12:00:00Z");
   const fresh = {
     grantId: "g-cached",
-    token: "t-cached",
     expiresAt: "2026-10-28T12:00:00Z",
     startUrl: "/#handoff_grant=g-cached&handoff_token=t-cached",
   };
   const staticManifest = { id: "/", start_url: "/", scope: "/", icons: [] };
   const link = { setAttribute: vi.fn() };
+  const fetch = vi.fn();
 
   beforeEach(() => {
     resetHandoffManifest();
+    vi.useFakeTimers({ now: Date.parse("2026-10-21T12:00:00Z") });
     mocks.getSite.mockReset();
     mocks.saveSiteSettings.mockReset();
     mocks.issueSessionHandoff.mockReset();
     mocks.trackEvent.mockReset();
+    mocks.installMethod.mockReturnValue("ios");
+    mocks.isStandalone.mockReturnValue(false);
+    mocks.isInAppBrowser.mockReturnValue(false);
     link.setAttribute.mockReset();
+    fetch.mockReset().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(staticManifest),
+    });
+    vi.stubGlobal("fetch", fetch);
+    vi.stubGlobal("location", { origin: "https://app.example.org" });
     vi.stubGlobal(
       "URL",
       Object.assign(URL, {
@@ -249,47 +318,53 @@ describe("ensureHandoffManifest", () => {
       head: { append: vi.fn() },
     });
   });
-  afterEach(() => vi.unstubAllGlobals());
-
-  const opts = () => ({
-    method: /** @type {"ios"} */ ("ios"),
-    standalone: false,
-    webview: false,
-    now,
-    origin: "https://app.example.org",
-    fetchManifest: () => Promise.resolve(staticManifest),
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
+
+  const installedStartUrl = () =>
+    JSON.parse(
+      /** @type {any} */ (URL.createObjectURL).mock.calls[0][0].parts[0],
+    ).start_url;
 
   it("does nothing off iOS Safari, when standalone, or when unbound", async () => {
-    expect(await ensureHandoffManifest({ ...opts(), method: "prompt" })).toBe(
-      false,
-    );
-    expect(await ensureHandoffManifest({ ...opts(), standalone: true })).toBe(
-      false,
-    );
+    mocks.installMethod.mockReturnValue("prompt");
+    expect(await ensureHandoffManifest()).toBe(false);
+    mocks.installMethod.mockReturnValue("ios");
+    mocks.isStandalone.mockReturnValue(true);
+    expect(await ensureHandoffManifest()).toBe(false);
+    mocks.isStandalone.mockReturnValue(false);
     mocks.getSite.mockResolvedValue(null);
-    expect(await ensureHandoffManifest(opts())).toBe(false);
-    mocks.getSite.mockResolvedValue({ siteId: "s1" });
-    expect(await ensureHandoffManifest(opts())).toBe(false);
+    expect(await ensureHandoffManifest()).toBe(false);
+    expect(await ensureHandoffManifest({ site: { siteId: "s1" } })).toBe(false);
     expect(mocks.issueSessionHandoff).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(isHandoffPrepared()).toBe(false);
   });
 
-  it("reuses a fresh cached grant without a request", async () => {
-    mocks.getSite.mockResolvedValue({
-      siteId: "s1",
-      token: "a",
-      handoff: fresh,
-    });
+  it("reuses a fresh cached grant without a request and reports prepared", async () => {
+    const prepared = vi.fn();
+    onHandoffPrepared(prepared);
+    const site = { siteId: "s1", token: "a", handoff: fresh };
 
-    expect(await ensureHandoffManifest(opts())).toBe(true);
+    expect(await ensureHandoffManifest({ site })).toBe(true);
 
+    expect(mocks.getSite).not.toHaveBeenCalled();
     expect(mocks.issueSessionHandoff).not.toHaveBeenCalled();
     expect(mocks.saveSiteSettings).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledWith("/manifest.webmanifest");
     expect(link.setAttribute).toHaveBeenCalledWith("href", "blob:m");
-    const blob = /** @type {any} */ (URL.createObjectURL).mock.calls[0][0];
-    expect(JSON.parse(blob.parts[0]).start_url).toBe(
+    expect(installedStartUrl()).toBe(
       "https://app.example.org/#handoff_grant=g-cached&handoff_token=t-cached",
     );
+    expect(prepared).toHaveBeenCalledOnce();
+    expect(isHandoffPrepared()).toBe(true);
+
+    // Same grant again (a shell re-render): nothing refetched or reinstalled.
+    expect(await ensureHandoffManifest({ site })).toBe(true);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(link.setAttribute).toHaveBeenCalledOnce();
   });
 
   it("mints and caches a grant when none is fresh, then installs the manifest", async () => {
@@ -306,13 +381,13 @@ describe("ensureHandoffManifest", () => {
     });
     mocks.saveSiteSettings.mockResolvedValue({ siteId: "s1" });
 
-    expect(await ensureHandoffManifest(opts())).toBe(true);
+    expect(await ensureHandoffManifest()).toBe(true);
 
+    // Only what the next load needs: the token lives inside startUrl.
     expect(mocks.saveSiteSettings).toHaveBeenCalledWith(
       {
         handoff: {
           grantId: "g-new",
-          token: "t-new",
           expiresAt: "2026-10-28T12:00:00Z",
           startUrl: "/#handoff_grant=g-new&handoff_token=t-new",
         },
@@ -320,8 +395,7 @@ describe("ensureHandoffManifest", () => {
       "s1",
     );
     expect(mocks.trackEvent).toHaveBeenCalledWith("handoff_grant_issued", {});
-    const blob = /** @type {any} */ (URL.createObjectURL).mock.calls[0][0];
-    expect(JSON.parse(blob.parts[0]).start_url).toContain("g-new");
+    expect(installedStartUrl()).toContain("g-new");
   });
 
   it("stops when the binding changed before the grant could be stored", async () => {
@@ -334,15 +408,17 @@ describe("ensureHandoffManifest", () => {
     });
     mocks.saveSiteSettings.mockResolvedValue(null);
 
-    expect(await ensureHandoffManifest(opts())).toBe(false);
+    expect(await ensureHandoffManifest()).toBe(false);
     expect(link.setAttribute).not.toHaveBeenCalled();
+    expect(isHandoffPrepared()).toBe(false);
   });
 
-  it("surfaces a failed mint to the caller", async () => {
+  it("surfaces a failed mint to the caller and stays unprepared", async () => {
     mocks.getSite.mockResolvedValue({ siteId: "s1", token: "a" });
     mocks.issueSessionHandoff.mockRejectedValue(new Error("503"));
 
-    await expect(ensureHandoffManifest(opts())).rejects.toThrow("503");
+    await expect(ensureHandoffManifest()).rejects.toThrow("503");
     expect(link.setAttribute).not.toHaveBeenCalled();
+    expect(isHandoffPrepared()).toBe(false);
   });
 });

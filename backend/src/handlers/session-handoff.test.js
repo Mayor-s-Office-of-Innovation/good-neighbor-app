@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
@@ -39,7 +39,9 @@ describe("issueSessionHandoff", () => {
 
   it("mints a pending grant for the calling device and pins it on the record", async () => {
     send
-      .mockResolvedValueOnce({ Item: legacyDevice() })
+      .mockResolvedValueOnce({
+        Item: legacyDevice({ handoffGrantId: undefined }),
+      })
       .mockResolvedValueOnce({});
 
     const response = await call(issueSessionHandoff, authorizedEvent());
@@ -72,39 +74,52 @@ describe("issueSessionHandoff", () => {
       pk: "SITE#site-1",
       sk: "DEVICE#device-1",
     });
+    // First grant for this device: the pointer must not exist yet.
     expect(updateDevice.Update.ConditionExpression).toContain(
       "attribute_not_exists(#status)",
+    );
+    expect(updateDevice.Update.ConditionExpression).toContain(
+      "attribute_not_exists(handoffGrantId)",
     );
     expect(audit.Put.Item.eventType).toBe("session_handoff_issued");
   });
 
-  it("supersedes the previous pending grant before issuing a new one", async () => {
+  it("replaces the previous pointer only from the value it read", async () => {
     send
       .mockResolvedValueOnce({
         Item: legacyDevice({ handoffGrantId: "old-grant" }),
       })
-      .mockRejectedValueOnce(
-        Object.assign(new Error("gone"), {
-          name: "ConditionalCheckFailedException",
-        }),
-      )
       .mockResolvedValueOnce({});
 
     const response = await call(issueSessionHandoff, authorizedEvent());
 
     expect(response.statusCode).toBe(200);
-    const supersede = send.mock.calls[1][0];
-    expect(supersede).toBeInstanceOf(UpdateCommand);
-    expect(supersede.input.Key).toEqual({
-      pk: "SESSION_HANDOFF#old-grant",
-      sk: "#META",
-    });
-    expect(supersede.input.ConditionExpression).toContain("#status = :pending");
-    expect(send.mock.calls[2][0]).toBeInstanceOf(TransactWriteCommand);
+    expect(send).toHaveBeenCalledTimes(2);
+    const [, updateDevice, audit] = send.mock.calls[1][0].input.TransactItems;
+    expect(updateDevice.Update.ConditionExpression).toContain(
+      "handoffGrantId = :previous",
+    );
+    expect(updateDevice.Update.ExpressionAttributeValues[":previous"]).toBe(
+      "old-grant",
+    );
+    expect(audit.Put.Item.supersededGrantId).toBe("old-grant");
+  });
+
+  it("fails closed when a concurrent issue moved the pointer first", async () => {
+    send.mockResolvedValueOnce({ Item: legacyDevice() }).mockRejectedValueOnce(
+      Object.assign(new Error("cancelled"), {
+        name: "TransactionCanceledException",
+      }),
+    );
+    const response = await call(issueSessionHandoff, authorizedEvent());
+    expect(response.statusCode).toBe(401);
   });
 });
 
 describe("redeemSessionHandoff", () => {
+  const redeem = () =>
+    call(redeemSessionHandoff, openEvent({ grantId: "grant-1", token: TOKEN }));
+
   it("rejects a malformed body or missing fields without touching the table", async () => {
     const malformed = await call(redeemSessionHandoff, {
       body: "{not json",
@@ -126,10 +141,7 @@ describe("redeemSessionHandoff", () => {
     for (const grantRead of cases) {
       send.mockReset();
       send.mockResolvedValueOnce(grantRead);
-      const response = await call(
-        redeemSessionHandoff,
-        openEvent({ grantId: "grant-1", token: TOKEN }),
-      );
+      const response = await redeem();
       expect(response.statusCode).toBe(401);
       expect(JSON.parse(String(response.body))).toEqual({
         error: "invalid_handoff_grant",
@@ -146,10 +158,7 @@ describe("redeemSessionHandoff", () => {
       .mockResolvedValueOnce({ Item: activeSite() })
       .mockResolvedValueOnce({});
 
-    const response = await call(
-      redeemSessionHandoff,
-      openEvent({ grantId: "grant-1", token: TOKEN }),
-    );
+    const response = await redeem();
 
     expect(response.statusCode).toBe(200);
     const body = JSON.parse(String(response.body));
@@ -170,6 +179,8 @@ describe("redeemSessionHandoff", () => {
     const refresh = await verifyDeviceToken(body.refreshToken);
     expect(refresh.typ).toBe("refresh");
 
+    // Grant, device + site (one batch), then the transaction: no extra hop.
+    expect(send).toHaveBeenCalledTimes(4);
     const transact = send.mock.calls[3][0];
     expect(transact).toBeInstanceOf(TransactWriteCommand);
     const items = transact.input.TransactItems;
@@ -182,9 +193,15 @@ describe("redeemSessionHandoff", () => {
     expect(rotate.Update.ConditionExpression).toContain(
       "attribute_not_exists(#status)",
     );
-    expect(rotate.Update.ExpressionAttributeValues[":current"]).toBe(4);
-    expect(rotate.Update.ExpressionAttributeValues[":next"]).toBe(5);
-    expect(rotate.Update.ExpressionAttributeValues[":jti"]).toBe(refresh.jti);
+    expect(rotate.Update.ConditionExpression).toContain(
+      "handoffGrantId = :grant",
+    );
+    expect(rotate.Update.ExpressionAttributeValues).toMatchObject({
+      ":current": 4,
+      ":next": 5,
+      ":jti": refresh.jti,
+      ":grant": "grant-1",
+    });
     expect(rotate.Update.UpdateExpression).toContain("REMOVE handoffGrantId");
     expect(consume.Update.Key).toEqual({
       pk: "SESSION_HANDOFF#grant-1",
@@ -204,15 +221,16 @@ describe("redeemSessionHandoff", () => {
     send
       .mockResolvedValueOnce({ Item: pendingGrant({ bindingId: "binding-1" }) })
       .mockResolvedValueOnce({ Item: boundDevice() })
-      .mockResolvedValueOnce({ Item: binding() })
+      // The binding's own lastSeenAt is stale by design (refresh never
+      // touches it): only its status counts.
+      .mockResolvedValueOnce({
+        Item: binding({ lastSeenAt: "2026-01-01T00:00:00.000Z" }),
+      })
       .mockResolvedValueOnce({ Item: activeSite() })
       .mockResolvedValueOnce({ Item: { status: "active", generation: 1 } })
       .mockResolvedValueOnce({});
 
-    const response = await call(
-      redeemSessionHandoff,
-      openEvent({ grantId: "grant-1", token: TOKEN }),
-    );
+    const response = await redeem();
 
     expect(response.statusCode).toBe(200);
     expect(JSON.parse(String(response.body))).toMatchObject({
@@ -226,6 +244,20 @@ describe("redeemSessionHandoff", () => {
     expect(items).toHaveLength(4);
     expect(items[0].Update.Key.sk).toBe("DEVICE#binding-1");
     expect(items[1].Update.Key.sk).toBe("DEVICE_BINDING#binding-1");
+    expect(items[1].Update.ConditionExpression).not.toContain("handoffGrantId");
+  });
+
+  it("refuses a grant the device no longer points at", async () => {
+    send
+      .mockResolvedValueOnce({ Item: pendingGrant() })
+      .mockResolvedValueOnce({
+        Item: legacyDevice({ handoffGrantId: "newer-grant" }),
+      })
+      .mockResolvedValueOnce({ Item: activeSite() });
+    expect((await redeem()).statusCode).toBe(401);
+    expect(
+      send.mock.calls.some((c) => c[0] instanceof TransactWriteCommand),
+    ).toBe(false);
   });
 
   it("refuses when the device, its binding, or its site is no longer live", async () => {
@@ -234,14 +266,7 @@ describe("redeemSessionHandoff", () => {
       .mockResolvedValueOnce({ Item: pendingGrant() })
       .mockResolvedValueOnce({ Item: legacyDevice({ status: "revoked" }) })
       .mockResolvedValueOnce({ Item: activeSite() });
-    expect(
-      (
-        await call(
-          redeemSessionHandoff,
-          openEvent({ grantId: "grant-1", token: TOKEN }),
-        )
-      ).statusCode,
-    ).toBe(401);
+    expect((await redeem()).statusCode).toBe(401);
     expect(
       send.mock.calls.some((c) => c[0] instanceof TransactWriteCommand),
     ).toBe(false);
@@ -252,14 +277,7 @@ describe("redeemSessionHandoff", () => {
       .mockResolvedValueOnce({ Item: pendingGrant() })
       .mockResolvedValueOnce({ Item: legacyDevice() })
       .mockResolvedValueOnce({ Item: activeSite({ status: "inactive" }) });
-    expect(
-      (
-        await call(
-          redeemSessionHandoff,
-          openEvent({ grantId: "grant-1", token: TOKEN }),
-        )
-      ).statusCode,
-    ).toBe(401);
+    expect((await redeem()).statusCode).toBe(401);
 
     // Site credential generation moved on.
     send.mockReset();
@@ -269,29 +287,16 @@ describe("redeemSessionHandoff", () => {
       .mockResolvedValueOnce({
         Item: activeSite({ siteCredentialGeneration: 1 }),
       });
-    expect(
-      (
-        await call(
-          redeemSessionHandoff,
-          openEvent({ grantId: "grant-1", token: TOKEN }),
-        )
-      ).statusCode,
-    ).toBe(401);
+    expect((await redeem()).statusCode).toBe(401);
 
     // Binding revoked while the compatibility row still looks fine.
     send.mockReset();
     send
       .mockResolvedValueOnce({ Item: pendingGrant({ bindingId: "binding-1" }) })
       .mockResolvedValueOnce({ Item: boundDevice() })
-      .mockResolvedValueOnce({ Item: binding({ status: "revoked" }) });
-    expect(
-      (
-        await call(
-          redeemSessionHandoff,
-          openEvent({ grantId: "grant-1", token: TOKEN }),
-        )
-      ).statusCode,
-    ).toBe(401);
+      .mockResolvedValueOnce({ Item: binding({ status: "revoked" }) })
+      .mockResolvedValueOnce({ Item: activeSite() });
+    expect((await redeem()).statusCode).toBe(401);
   });
 
   it("fails closed when the transaction loses a race", async () => {
@@ -305,10 +310,7 @@ describe("redeemSessionHandoff", () => {
         }),
       );
 
-    const response = await call(
-      redeemSessionHandoff,
-      openEvent({ grantId: "grant-1", token: TOKEN }),
-    );
+    const response = await redeem();
 
     expect(response.statusCode).toBe(401);
     expect(JSON.parse(String(response.body))).toEqual({
@@ -346,6 +348,7 @@ function legacyDevice(overrides = {}) {
     tokenGeneration: 1,
     refreshJti: "jti-1",
     lastSeenAt: new Date().toISOString(),
+    handoffGrantId: "grant-1",
     ...overrides,
   };
 }
@@ -370,6 +373,7 @@ function boundDevice(overrides = {}) {
     refreshJti: "jti-1",
     lastSeenAt: new Date().toISOString(),
     inactivityLimitDays: 60,
+    handoffGrantId: "grant-1",
     ...overrides,
   };
 }

@@ -5,7 +5,12 @@
   site this shared device should operate as.
 */
 import "./site-setup.css";
-import { getSite, saveDiscoveredBindings, setSite } from "../db.js";
+import {
+  bindingFromSession,
+  getSite,
+  saveDiscoveredBindings,
+  setSite,
+} from "../db.js";
 import { t } from "../i18n/i18n.js";
 import {
   formatSiteCode,
@@ -44,10 +49,9 @@ export class SiteSetup extends HTMLElement {
     // is being asked for: a Home Screen handoff that didn't carry over, or a
     // Safari copy whose session moved to the installed app.
     this._notice = this.getAttribute("data-notice") || "";
-    const requestedMode = this.getAttribute("data-mode");
     this._mode =
-      requestedMode === "request" || requestedMode === "handoff"
-        ? requestedMode
+      this.getAttribute("data-mode") === "request"
+        ? this.getAttribute("data-mode")
         : "code";
     this._request = {
       query: "",
@@ -105,8 +109,6 @@ export class SiteSetup extends HTMLElement {
       this._cancelSwitch();
     });
 
-    // Handoff mode has no form: app-root redeems the grant and re-renders.
-    if (this._mode === "handoff") return;
     if (this._mode === "request") {
       this._bindRequestForm();
       return;
@@ -436,15 +438,8 @@ export class SiteSetup extends HTMLElement {
       site = await setSite(providerSite.name, {
         code: result.code,
         providerSiteId: providerSite.id,
+        ...bindingFromSession(session),
         siteId: providerSite.siteId,
-        deviceId: session.deviceId,
-        token: session.token,
-        refreshToken: session.refreshToken,
-        tokenExpiresAt: new Date(
-          Date.now() + session.expiresIn * 1000,
-        ).toISOString(),
-        tokenGeneration: session.tokenGeneration,
-        accessLevel: session.accessLevel,
       });
     } catch {
       this._committingSite = false;
@@ -467,19 +462,10 @@ export class SiteSetup extends HTMLElement {
       if (this._cancelled) return;
       this._committingSite = true;
       this._render();
-      const site = await setSite(session.site.name, {
-        siteId: session.site.siteId,
-        deviceId: session.deviceId,
-        bindingId: session.bindingId,
-        physicalDeviceId: session.physicalDeviceId,
-        token: session.token,
-        refreshToken: session.refreshToken,
-        tokenExpiresAt: new Date(
-          Date.now() + session.expiresIn * 1000,
-        ).toISOString(),
-        tokenGeneration: session.tokenGeneration,
-        accessLevel: session.accessLevel,
-      });
+      const site = await setSite(
+        session.site.name,
+        bindingFromSession(session),
+      );
       await saveDiscoveredBindings(
         session.bindings || [],
         session.physicalDeviceId,

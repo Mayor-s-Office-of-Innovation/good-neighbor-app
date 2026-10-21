@@ -295,20 +295,25 @@ export const refreshDeviceToken = async (event) => {
  * device is generation zero: it remains compatible with an unadvanced Site,
  * but fails closed immediately after any Site-wide generation bump.
  * Shared with handlers/session-handoff.js, which re-mints a session for an
- * existing device and must apply the same answer.
+ * existing device and must apply the same answer; it passes the SITE#META
+ * row it already read so the check costs no extra round trip.
  * @param {DeviceItem & Record<string, any>} device
  * @param {"general"|"manager"} role
+ * @param {Record<string, any> | undefined} [prefetchedSite] the SITE#META row, when the caller has it
  * @returns {Promise<boolean>}
  */
-export async function bindingLifecycleValid(device, role) {
+export async function bindingLifecycleValid(device, role, prefetchedSite) {
   const tableName = getDynamoTableName();
-  const siteResult = await ddb.send(
-    new GetCommand({
-      TableName: tableName,
-      Key: { pk: `SITE#${device.siteId}`, sk: "#META" },
-    }),
-  );
-  const site = siteResult.Item;
+  const site =
+    prefetchedSite ??
+    (
+      await ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { pk: `SITE#${device.siteId}`, sk: "#META" },
+        }),
+      )
+    ).Item;
   if (
     !site ||
     site.status === "inactive" ||

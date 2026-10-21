@@ -703,7 +703,6 @@
   "setup.handoff.aria": "Iniciando sesión",
   "setup.handoff.signingIn": "Iniciando sesión en su sitio…",
   "setup.needNewCode": "¿Necesita un código nuevo?",
-  "setup.notice.handedOff": "Si añadió Good Neighbor a su pantalla de inicio, ábralo desde allí. Si no, ingrese un código de sitio.",
   "setup.notice.handoffFailed": "Esta app de la pantalla de inicio no pudo recuperar su sesión. Ingrese el código del sitio o vuelva a abrir su enlace de invitación.",
   "setup.requestIntro": "Solicitar un nuevo código de sitio",
   "setup.requesting.aria": "Solicitando el código de configuración",

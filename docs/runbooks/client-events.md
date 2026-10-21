@@ -24,6 +24,10 @@ bracket the hand-off.
 | `camera_opened` | `perimeter-check` / `problem-report` `_openCamera` | `flow` |
 | `photo_picked` | the file input's `change` | `flow`, `photo_bytes`, `photo_type` |
 | `capture_resumed` | `app-root` boot when a check is auto-resumed after a relaunch | `route`, `flow`, `marker_age_s`, `navigation_type`, `landing_path`, `$referring_domain` |
+| `handoff_grant_issued` | `services/session-handoff.js` when iOS Safari mints a Home Screen handoff grant | — |
+| `handoff_redeemed` | `app-root` on the installed app's first launch, after the grant bought a session | — |
+| `handoff_failed` | `app-root` when that redemption failed | `reason` (`rejected` / `network` / `error` / `storage`) |
+| `handoff_stale_ignored` | `app-root` when the launch URL still carried a grant but a session already existed | — |
 
 A `camera_opened` with no `photo_picked` after it, followed by a `$pageview` with
 `navigation_type=navigate` on `/today` and then a `capture_resumed`, is the Android relaunch

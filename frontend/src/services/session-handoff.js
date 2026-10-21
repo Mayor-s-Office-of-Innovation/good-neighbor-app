@@ -12,6 +12,12 @@
   (services/devices.js redeemHandoffGrant) for a fresh token pair on the SAME
   device record. Plan: notes/pwa-session-handoff-plan.md.
 
+  The installed app's start_url carries the grant for the life of the
+  install, so a grant that was redeemed (or rejected for good) is remembered
+  in the installed app's own localStorage and never presented again: a later
+  cold launch after a sign-out lands on the plain setup screen, not on a
+  doomed redeem.
+
   Chromium shares storage with the installed app and keeps the static
   manifest; the installed app itself (standalone) never mints. The fragment,
   not the query, carries the secret so it never reaches a server or a log.
@@ -27,35 +33,89 @@ export const HANDOFF_TOKEN_PARAM = "handoff_token";
 export const MANIFEST_PATH = "/manifest.webmanifest";
 /** Re-mint when the cached grant has less than this left before it expires. */
 export const RENEW_MARGIN_MS = 24 * 60 * 60 * 1000;
-
-/** @typedef {{ grantId: string, token: string, expiresAt: string, startUrl: string }} HandoffGrant */
-
-/** The blob: manifest currently installed on the page, for revocation. */
-let installedBlobUrl = "";
+/** localStorage key: grant ids this install has already presented. */
+export const CONSUMED_KEY = "handoff-consumed";
+const CONSUMED_LIMIT = 8;
 
 /**
- * Handoff credentials from a launch URL's fragment, or null.
- * @param {string} [href]
- * @returns {{ grantId: string, token: string } | null}
+ * What the site record caches. The token is inside `startUrl` and nowhere
+ * else, so a sign-out (which drops the record) drops the secret with it.
+ * @typedef {{ grantId: string, expiresAt: string, startUrl: string }} HandoffGrant
  */
-export function readHandoffCredentials(href = globalThis.location?.href) {
-  if (!href) return null;
+
+/** The grant whose manifest is installed on this page, and its blob URL. */
+let installedGrantId = "";
+let installedBlobUrl = "";
+/** @type {Set<() => void>} */
+const preparedListeners = new Set();
+
+/**
+ * `window.localStorage` is a getter that THROWS when site data is blocked.
+ * @returns {Storage | null}
+ */
+function safeStorage() {
   try {
-    const fragment = new URLSearchParams(new URL(href).hash.slice(1));
-    const grantId = fragment.get(HANDOFF_GRANT_PARAM)?.trim() || "";
-    const token = fragment.get(HANDOFF_TOKEN_PARAM)?.trim() || "";
-    return grantId && token ? { grantId, token } : null;
+    return globalThis.localStorage ?? null;
   } catch {
     return null;
   }
 }
 
 /**
- * @param {string} [href]
- * @returns {boolean}
+ * Grant ids this install has already presented for redemption.
+ * @param {Storage | null} [storage] test seam
+ * @returns {string[]}
  */
-export function hasHandoffCredentials(href) {
-  return readHandoffCredentials(href) !== null;
+export function consumedGrantIds(storage = safeStorage()) {
+  try {
+    const parsed = JSON.parse(storage?.getItem(CONSUMED_KEY) || "[]");
+    return Array.isArray(parsed)
+      ? parsed.filter((v) => typeof v === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Remember that `grantId` has been presented, so the launch URL never yields
+ * it again. Call after a redeem that succeeded or was rejected for good.
+ * @param {string} grantId
+ * @param {Storage | null} [storage] test seam
+ */
+export function rememberConsumedGrant(grantId, storage = safeStorage()) {
+  try {
+    const ids = consumedGrantIds(storage).filter((id) => id !== grantId);
+    ids.push(grantId);
+    storage?.setItem(CONSUMED_KEY, JSON.stringify(ids.slice(-CONSUMED_LIMIT)));
+  } catch {
+    // Private mode / quota: the next launch retries the redeem, which fails
+    // the same way and lands on setup. Nothing worse.
+  }
+}
+
+/**
+ * Handoff credentials from a launch URL's fragment, or null — also null for
+ * a grant this install has already presented.
+ * @param {string} [href]
+ * @param {Storage | null} [storage] test seam
+ * @returns {{ grantId: string, token: string } | null}
+ */
+export function readHandoffCredentials(
+  href = globalThis.location?.href,
+  storage = safeStorage(),
+) {
+  if (!href) return null;
+  try {
+    const fragment = new URLSearchParams(new URL(href).hash.slice(1));
+    const grantId = fragment.get(HANDOFF_GRANT_PARAM)?.trim() || "";
+    const token = fragment.get(HANDOFF_TOKEN_PARAM)?.trim() || "";
+    if (!grantId || !token) return null;
+    if (consumedGrantIds(storage).includes(grantId)) return null;
+    return { grantId, token };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -87,7 +147,7 @@ export function stripHandoffCredentials(
 }
 
 /**
- * Only an iOS Safari page that is bound, not yet standalone, and not inside an
+ * Only an iOS Safari page that is not yet standalone and not inside an
  * in-app webview prepares a handoff. Pure given its inputs.
  * @param {{ method?: "prompt" | "ios" | null, standalone?: boolean, webview?: boolean }} [opts]
  * @returns {boolean}
@@ -107,9 +167,7 @@ export function shouldPrepareHandoff({
  * @returns {grant is HandoffGrant}
  */
 export function grantIsFresh(grant, now = Date.now()) {
-  if (!grant?.grantId || !grant.token || !grant.startUrl || !grant.expiresAt) {
-    return false;
-  }
+  if (!grant?.grantId || !grant.startUrl || !grant.expiresAt) return false;
   const expiresAt = Date.parse(grant.expiresAt);
   return Number.isFinite(expiresAt) && expiresAt - now > RENEW_MARGIN_MS;
 }
@@ -163,51 +221,81 @@ export function installManifest(manifest, doc = globalThis.document) {
   return url;
 }
 
+/** @returns {boolean} a handoff manifest is installed on this page. */
+export function isHandoffPrepared() {
+  return installedGrantId !== "";
+}
+
+/**
+ * Run `fn` once the handoff manifest is installed (immediately if it already
+ * is). Lets the install card promise the carry-over only when it is true.
+ * @param {() => void} fn
+ * @returns {() => void} unsubscribe
+ */
+export function onHandoffPrepared(fn) {
+  if (isHandoffPrepared()) fn();
+  preparedListeners.add(fn);
+  return () => preparedListeners.delete(fn);
+}
+
 /**
  * Mint (or reuse) the handoff grant for the bound device and install the
  * manifest that carries it. Resolves false when nothing was done: wrong
  * browser, already standalone, not bound, or the binding changed meanwhile.
  * Throws on request failure; the caller decides how loudly to log.
- * @param {{ method?: "prompt" | "ios" | null, standalone?: boolean, webview?: boolean, now?: number, fetchManifest?: () => Promise<Record<string, any>>, origin?: string }} [opts]
+ * @param {{ site?: Record<string, any> | null }} [opts] the site record the
+ *   caller already holds; read from IndexedDB when absent
  * @returns {Promise<boolean>}
  */
-export async function ensureHandoffManifest(opts = {}) {
-  if (!shouldPrepareHandoff(opts)) return false;
-  const site = await getSite().catch(() => null);
-  if (!site?.siteId || !site.token) return false;
+export async function ensureHandoffManifest({ site } = {}) {
+  if (!shouldPrepareHandoff()) return false;
+  const bound = site ?? (await getSite().catch(() => null));
+  if (!bound?.siteId || !bound.token) return false;
 
   /** @type {HandoffGrant | null} */
-  let grant = grantIsFresh(site.handoff, opts.now) ? site.handoff : null;
-  if (!grant) {
-    const issued = await issueSessionHandoff();
-    grant = {
-      grantId: issued.grantId,
-      token: issued.token,
-      expiresAt: issued.expiresAt,
-      startUrl: issued.startUrl,
-    };
-    // Stored next to the refresh token it is equivalent to; clearing the
-    // session clears it. Skipped when the binding changed mid-flight.
-    const saved = await saveSiteSettings({ handoff: grant }, site.siteId);
-    if (!saved) return false;
-    void trackEvent("handoff_grant_issued", {});
-  }
+  let grant = grantIsFresh(bound.handoff) ? bound.handoff : null;
+  if (grant && grant.grantId === installedGrantId) return true;
 
-  const fetchManifest = opts.fetchManifest ?? defaultFetchManifest;
-  const base = await fetchManifest();
-  const origin = opts.origin ?? globalThis.location.origin;
-  installManifest(buildHandoffManifest(base, grant.startUrl, origin));
+  // The static manifest does not depend on the grant: fetch it while the
+  // mint (when needed) is in flight.
+  const manifestPromise = fetchStaticManifest();
+  try {
+    if (!grant) {
+      const issued = await issueSessionHandoff();
+      grant = {
+        grantId: issued.grantId,
+        expiresAt: issued.expiresAt,
+        startUrl: issued.startUrl,
+      };
+      // Stored next to the refresh token it is equivalent to; clearing the
+      // session clears it. Skipped when the binding changed mid-flight.
+      const saved = await saveSiteSettings({ handoff: grant }, bound.siteId);
+      if (!saved) return false;
+      void trackEvent("handoff_grant_issued", {});
+    }
+    const base = await manifestPromise;
+    installManifest(
+      buildHandoffManifest(base, grant.startUrl, globalThis.location.origin),
+    );
+  } finally {
+    // An early return or a thrown mint must not leave the fetch unobserved.
+    manifestPromise.catch(() => {});
+  }
+  installedGrantId = grant.grantId;
+  for (const fn of preparedListeners) fn();
   return true;
 }
 
 /** @returns {Promise<Record<string, any>>} */
-async function defaultFetchManifest() {
-  const res = await fetch(MANIFEST_PATH, { cache: "no-store" });
+async function fetchStaticManifest() {
+  const res = await fetch(MANIFEST_PATH);
   if (!res.ok) throw new Error(`manifest fetch failed (${res.status})`);
   return res.json();
 }
 
-/** Test seam: forget the installed blob URL. */
+/** Test seam: forget the installed manifest and listeners. */
 export function resetHandoffManifest() {
+  installedGrantId = "";
   installedBlobUrl = "";
+  preparedListeners.clear();
 }

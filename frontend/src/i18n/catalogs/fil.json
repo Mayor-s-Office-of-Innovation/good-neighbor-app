@@ -703,7 +703,6 @@
   "setup.handoff.aria": "Nagsa-sign in",
   "setup.handoff.signingIn": "Nagsa-sign in sa inyong site…",
   "setup.needNewCode": "Kailangan ng bagong code?",
-  "setup.notice.handedOff": "Kung idinagdag ninyo ang Good Neighbor sa inyong home screen, buksan ito doon. Kung hindi, maglagay ng code ng site.",
   "setup.notice.handoffFailed": "Hindi nakuha ng home screen app na ito ang inyong pag-sign in. Ilagay ang code ng site, o buksan ulit ang inyong invitation link.",
   "setup.requestIntro": "Humiling ng bagong code ng site",
   "setup.requesting.aria": "Hinihiling ang setup code",

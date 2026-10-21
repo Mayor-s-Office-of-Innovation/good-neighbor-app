@@ -11,10 +11,18 @@ const setup = vi.hoisted(() => ({
   listDeviceBindings: vi.fn(),
   redeemHandoffGrant: vi.fn(),
   stripHandoffCredentials: vi.fn(),
+  rememberConsumedGrant: vi.fn(),
   ensureHandoffManifest: vi.fn(),
 }));
 
 vi.mock("../db.js", () => ({
+  bindingFromSession: (session) => ({
+    siteId: session.site?.siteId,
+    deviceId: session.deviceId,
+    token: session.token,
+    refreshToken: session.refreshToken,
+    tokenGeneration: session.tokenGeneration,
+  }),
   clearSite: setup.clearSite,
   getSite: setup.getSite,
   hasAdminAccess: vi.fn(),
@@ -42,6 +50,7 @@ vi.mock("../services/session-handoff.js", () => ({
     return grantId && token ? { grantId, token } : null;
   },
   stripHandoffCredentials: setup.stripHandoffCredentials,
+  rememberConsumedGrant: setup.rememberConsumedGrant,
   ensureHandoffManifest: setup.ensureHandoffManifest,
 }));
 vi.mock("../services/backend-health.js", () => ({
@@ -59,6 +68,7 @@ vi.mock("../router.js", () => ({
 }));
 vi.mock("./app-root.templates.js", () => ({
   appShell: vi.fn(),
+  handoffView: vi.fn(),
   setupView: vi.fn(),
 }));
 vi.mock("./connection-status.js", () => ({}));
@@ -112,6 +122,7 @@ beforeEach(() => {
   setup.listDeviceBindings.mockReset();
   setup.redeemHandoffGrant.mockReset();
   setup.stripHandoffCredentials.mockReset();
+  setup.rememberConsumedGrant.mockReset();
   setup.ensureHandoffManifest.mockReset().mockResolvedValue(false);
 });
 
@@ -136,6 +147,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 function component() {
   const root = new AppRoot();
   root._renderSetup = vi.fn();
+  root._renderHandoff = vi.fn();
   root._renderApp = vi.fn();
   root._renderView = vi.fn();
   root._restoreInterruptedCapture = vi.fn().mockResolvedValue(undefined);
@@ -345,11 +357,49 @@ describe("Home Screen session handoff at startup", () => {
     );
     // Legacy device: no physical identity, so no bindings refetch.
     expect(setup.listDeviceBindings).not.toHaveBeenCalled();
-    expect(root._renderSetup).toHaveBeenCalledWith({ mode: "handoff" });
+    expect(root._renderHandoff).toHaveBeenCalledOnce();
+    expect(root._renderSetup).not.toHaveBeenCalled();
+    expect(setup.rememberConsumedGrant).toHaveBeenCalledWith("g-1");
     expect(root._renderApp).toHaveBeenCalledOnce();
     expect(root._site).toEqual({
       siteId: "site-1",
       name: "Mission Street Center",
+    });
+  });
+
+  it("ends on the setup screen when the redeemed session is rejected by the settings refresh", async () => {
+    vi.stubGlobal("location", new URL(LAUNCH));
+    setup.getSite
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ siteId: "site-1", token: "access-1" });
+    setup.redeemHandoffGrant.mockResolvedValue(session);
+    setup.getSiteSettings.mockRejectedValue(
+      Object.assign(new Error("reauth"), { name: "ReauthRequiredError" }),
+    );
+    const root = component();
+
+    await root.connectedCallback();
+
+    // No <site-setup> is mounted during a handoff, so the rejection is final.
+    expect(setup.clearSite).toHaveBeenCalledOnce();
+    expect(root._renderSetup).toHaveBeenCalledWith();
+    expect(root._renderApp).not.toHaveBeenCalled();
+  });
+
+  it("does not remember a grant after a network failure, so the next launch retries", async () => {
+    vi.stubGlobal("location", new URL(LAUNCH));
+    setup.getSite.mockResolvedValue(null);
+    const { ApiError } = await import("../services/api-error.js");
+    setup.redeemHandoffGrant.mockRejectedValue(
+      new ApiError("offline", { status: 0 }),
+    );
+    const root = component();
+
+    await root.connectedCallback();
+
+    expect(setup.rememberConsumedGrant).not.toHaveBeenCalled();
+    expect(root._renderSetup).toHaveBeenLastCalledWith({
+      notice: "handoffFailed",
     });
   });
 
@@ -382,18 +432,18 @@ describe("Home Screen session handoff at startup", () => {
   it("lands on the setup screen with a notice when the grant is rejected", async () => {
     vi.stubGlobal("location", new URL(LAUNCH));
     setup.getSite.mockResolvedValue(null);
-    setup.redeemHandoffGrant.mockRejectedValue(
-      Object.assign(new Error("invalid handoff grant"), {
-        name: "InvalidHandoffGrantError",
-        status: 401,
-      }),
+    const { InvalidHandoffGrantError } = await import(
+      "../services/api-error.js"
     );
+    setup.redeemHandoffGrant.mockRejectedValue(new InvalidHandoffGrantError());
     const root = component();
 
     await root.connectedCallback();
 
     expect(setup.stripHandoffCredentials).toHaveBeenCalledOnce();
     expect(setup.setSite).not.toHaveBeenCalled();
+    // Rejected for good: the install never presents this grant again.
+    expect(setup.rememberConsumedGrant).toHaveBeenCalledWith("g-1");
     expect(root._renderSetup).toHaveBeenLastCalledWith({
       notice: "handoffFailed",
     });
