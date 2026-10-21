@@ -1,3 +1,4 @@
+import { createActionFeedback } from "./action-feedback-core.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -20,7 +21,15 @@ for (const kind of ["Manager", "ProviderManager"]) {
               return { grant: { deliveryStatus: delivery } };
             },
           },
-          showToast: (toast) => toasts.push(toast),
+          actionFeedback: (key) =>
+            createActionFeedback(
+              key,
+              (toast) => {
+                toasts.push(toast);
+                return { close() {} };
+              },
+              (key) => key,
+            ),
           t: (key) => key,
           attachCreatedEnrollmentUrl: (grants) => grants,
         },
@@ -32,16 +41,26 @@ for (const kind of ["Manager", "ProviderManager"]) {
         managerMemberships: [],
       };
       app.openSite = app.openProvider = async () => {
-        assert.equal(toasts.length, delivery === "accepted" ? 1 : 0);
+        assert.equal(toasts.length, 1);
       };
       app.render = () => {};
       if (delivery === "rejected")
         await assert.rejects(app[method]("manager"), /offline/);
       else await app[method]("manager");
-      assert.equal(toasts.length, delivery === "accepted" ? 1 : 0);
+      assert.equal(toasts.length, 1);
       if (toasts.length) {
-        assert.equal(toasts[0].title, "admin.enrollment.emailed");
-        assert.equal(toasts[0].tone, "success");
+        assert.equal(
+          toasts[0].title,
+          delivery === "accepted"
+            ? "admin.enrollment.emailed"
+            : delivery === "failed"
+              ? "admin.toast.enrollmentEmailFailed"
+              : "admin.toast.failed",
+        );
+        assert.equal(
+          toasts[0].tone,
+          delivery === "accepted" ? "success" : "error",
+        );
       }
     });
   }

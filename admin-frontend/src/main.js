@@ -1,5 +1,5 @@
+import { actionFeedback, notifyAdmin } from "./action-feedback.js";
 import "../../frontend/src/components/app-toasts.js";
-import { showToast } from "../../frontend/src/state/toasts.js";
 import {
   siteProviderPrograms,
   bindSiteProgramCreation,
@@ -674,144 +674,195 @@ class AdminApp extends HTMLElement {
    * @returns {Promise<void>}
    */
   async createProvider(form) {
-    const origin = location.pathname + location.search;
-    const name = new FormData(form).get("provider-name");
-    if (!name) return;
-    const result = await adminApi.createProvider(String(name));
-    this.state.providers = upsertRecord(
-      this.state.providers,
-      result.provider,
-      "providerId",
-    );
-    if (location.pathname + location.search !== origin) return;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("returnTo") === "site-new") {
-      navigate(
-        `/sites/new?providerId=${encodeURIComponent(result.provider.providerId)}`,
+    const feedback = actionFeedback("admin.toast.providerCreated");
+    try {
+      const origin = location.pathname + location.search;
+      const name = new FormData(form).get("provider-name");
+      if (!name) return;
+      const result = await adminApi.createProvider(String(name));
+      feedback.success();
+      this.state.providers = upsertRecord(
+        this.state.providers,
+        result.provider,
+        "providerId",
       );
-      return;
+      if (location.pathname + location.search !== origin) return;
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("returnTo") === "site-new") {
+        navigate(
+          `/sites/new?providerId=${encodeURIComponent(result.provider.providerId)}`,
+        );
+        return;
+      }
+      navigate(`/providers/${encodeURIComponent(result.provider.providerId)}`);
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
     }
-    navigate(`/providers/${encodeURIComponent(result.provider.providerId)}`);
   }
 
   async updateProvider(form) {
-    if (!this.state.provider) return;
-    const name = formValue(new FormData(form), "provider-name");
-    const result = await adminApi.updateProvider(
-      this.state.provider.providerId,
-      { name },
-    );
-    this.state.provider = {
-      ...this.state.provider,
-      ...result.provider,
-    };
-    this.state.providers = this.state.providers.map((provider) =>
-      provider.providerId === result.provider.providerId
-        ? { ...provider, ...result.provider }
-        : provider,
-    );
-    this.state.siteSaveMessage = "Provider saved successfully.";
-    this.render();
+    const feedback = actionFeedback("admin.toast.providerSaved");
+    try {
+      if (!this.state.provider) return;
+      const name = formValue(new FormData(form), "provider-name");
+      const result = await adminApi.updateProvider(
+        this.state.provider.providerId,
+        { name },
+      );
+      feedback.success();
+      this.state.provider = {
+        ...this.state.provider,
+        ...result.provider,
+      };
+      this.state.providers = this.state.providers.map((provider) =>
+        provider.providerId === result.provider.providerId
+          ? { ...provider, ...result.provider }
+          : provider,
+      );
+      this.state.siteSaveMessage = "";
+      this.render();
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
+    }
   }
 
   async saveProviderManager(form) {
-    if (!this.state.provider) return;
-    const data = new FormData(form);
-    const values = {
-      firstName: formValue(data, "provider-manager-first-name"),
-      lastName: formValue(data, "provider-manager-last-name"),
-      email: formValue(data, "provider-manager-email"),
-      phone: formValue(data, "provider-manager-phone"),
-      phoneExtension: formValue(data, "provider-manager-extension"),
-    };
-    const membershipId = formValue(data, "provider-manager-membership-id");
-    const providerId = this.state.provider.providerId;
-    const result = membershipId
-      ? await adminApi.updateProviderManager(providerId, membershipId, values)
-      : await adminApi.createProviderManager(providerId, values);
-    if (this.state.provider?.providerId !== providerId) return;
-    this.state.providerManagers = upsertRecord(
-      this.state.providerManagers,
-      result.manager,
-      "membershipId",
-    );
-    this.state.siteSaveMessage = membershipId
-      ? "Provider manager saved."
-      : "Provider manager added.";
-    this.render();
-    if (membershipId) {
-      [...this.querySelectorAll("[data-edit-provider-manager]")]
-        .find(
-          (button) =>
-            dataAttr(button, "data-edit-provider-manager") === membershipId,
-        )
-        ?.focus();
+    const feedback = actionFeedback("admin.toast.providerManagerSaved");
+    try {
+      if (!this.state.provider) return;
+      const data = new FormData(form);
+      const values = {
+        firstName: formValue(data, "provider-manager-first-name"),
+        lastName: formValue(data, "provider-manager-last-name"),
+        email: formValue(data, "provider-manager-email"),
+        phone: formValue(data, "provider-manager-phone"),
+        phoneExtension: formValue(data, "provider-manager-extension"),
+      };
+      const membershipId = formValue(data, "provider-manager-membership-id");
+      const providerId = this.state.provider.providerId;
+      const result = membershipId
+        ? await adminApi.updateProviderManager(providerId, membershipId, values)
+        : await adminApi.createProviderManager(providerId, values);
+      feedback.success();
+      if (this.state.provider?.providerId !== providerId) return;
+      this.state.providerManagers = upsertRecord(
+        this.state.providerManagers,
+        result.manager,
+        "membershipId",
+      );
+      this.state.siteSaveMessage = "";
+      this.render();
+      if (membershipId) {
+        [...this.querySelectorAll("[data-edit-provider-manager]")]
+          .find(
+            (button) =>
+              dataAttr(button, "data-edit-provider-manager") === membershipId,
+          )
+          ?.focus();
+      }
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
     }
   }
 
   async setProviderManagerActive(membershipId, active) {
-    if (!this.state.provider) return;
-    if (active) {
-      await adminApi.reinstateProviderManager(
-        this.state.provider.providerId,
-        membershipId,
-      );
-    } else {
-      await adminApi.deactivateProviderManager(
-        this.state.provider.providerId,
-        membershipId,
-      );
+    const feedback = actionFeedback("admin.toast.accessUpdated");
+    try {
+      if (!this.state.provider) return;
+      if (active) {
+        await adminApi.reinstateProviderManager(
+          this.state.provider.providerId,
+          membershipId,
+        );
+      } else {
+        await adminApi.deactivateProviderManager(
+          this.state.provider.providerId,
+          membershipId,
+        );
+      }
+      feedback.success();
+      await this.openProvider(this.state.provider.providerId, false);
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
     }
-    await this.openProvider(this.state.provider.providerId, false);
   }
 
   async issueProviderManagerGrant(membershipId) {
-    if (!this.state.provider) return;
-    const created = await adminApi.createProviderManagerGrant(
-      this.state.provider.providerId,
-      membershipId,
-    );
-    if (created.grant?.deliveryStatus === "accepted") {
-      showToast({
-        title: t("admin.enrollment.emailed"),
-        message: "",
-        icon: "circle-check",
-        tone: "success",
-      });
+    const feedback = actionFeedback("admin.enrollment.emailed");
+    try {
+      if (!this.state.provider) return;
+      const created = await adminApi.createProviderManagerGrant(
+        this.state.provider.providerId,
+        membershipId,
+      );
+      feedback.success(
+        created.grant?.deliveryStatus === "accepted"
+          ? "admin.enrollment.emailed"
+          : "admin.toast.enrollmentEmailFailed",
+        created.grant?.deliveryStatus === "accepted" ? "success" : "error",
+      );
+      await this.openProvider(this.state.provider.providerId, false);
+      this.state.providerManagerGrants = attachCreatedEnrollmentUrl(
+        this.state.providerManagerGrants,
+        created,
+      );
+      this.render();
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
     }
-    await this.openProvider(this.state.provider.providerId, false);
-    this.state.providerManagerGrants = attachCreatedEnrollmentUrl(
-      this.state.providerManagerGrants,
-      created,
-    );
-    this.render();
   }
 
   async cancelProviderManagerGrant(grantId) {
-    if (!this.state.provider) return;
-    await adminApi.cancelProviderManagerGrant(
-      this.state.provider.providerId,
-      grantId,
-    );
-    await this.openProvider(this.state.provider.providerId, false);
+    const feedback = actionFeedback("admin.toast.linkCancelled");
+    try {
+      if (!this.state.provider) return;
+      await adminApi.cancelProviderManagerGrant(
+        this.state.provider.providerId,
+        grantId,
+      );
+      feedback.success();
+      await this.openProvider(this.state.provider.providerId, false);
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
+    }
   }
 
   async revokeProviderManagerEnrollment(enrollmentId) {
-    if (!this.state.provider) return;
-    await adminApi.revokeProviderManagerEnrollment(
-      this.state.provider.providerId,
-      enrollmentId,
-    );
-    await this.openProvider(this.state.provider.providerId, false);
+    const feedback = actionFeedback("admin.toast.accessRemoved");
+    try {
+      if (!this.state.provider) return;
+      await adminApi.revokeProviderManagerEnrollment(
+        this.state.provider.providerId,
+        enrollmentId,
+      );
+      feedback.success();
+      await this.openProvider(this.state.provider.providerId, false);
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
+    }
   }
 
   async addProgramToProvider(form) {
-    if (!this.state.provider) return;
-    const providerId = this.state.provider.providerId;
-    const programId = formValue(new FormData(form), "program-id");
-    if (!programId) return;
-    await adminApi.assignProgramToProvider(providerId, programId);
-    await this.loadDirectory();
+    const feedback = actionFeedback("admin.toast.programAssigned");
+    try {
+      if (!this.state.provider) return;
+      const providerId = this.state.provider.providerId;
+      const programId = formValue(new FormData(form), "program-id");
+      if (!programId) return;
+      await adminApi.assignProgramToProvider(providerId, programId);
+      feedback.success();
+      await this.loadDirectory();
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
+    }
   }
 
   /**
@@ -881,148 +932,183 @@ class AdminApp extends HTMLElement {
   }
 
   async saveProgramStaff(form) {
-    if (form.dataset.saving) return;
-    const userId = form.dataset.programStaffEditForm;
-    const user = this.state.program.users.find(
-      (item) => item.userId === userId,
-    );
-    if (!user) return;
-    form.dataset.saving = "true";
-    const button = form.querySelector('button[type="submit"]');
-    button.disabled = true;
-    const data = new FormData(form);
+    const feedback = actionFeedback("admin.toast.staffSaved");
     try {
-      await adminApi.updateProgramUser(this.state.program.programId, userId, {
-        firstName: formValue(data, "staff-first-name"),
-        lastName: formValue(data, "staff-last-name"),
-        phone: formValue(data, "staff-phone"),
-        phoneExtension: formValue(data, "staff-extension"),
-        email:
-          this.state.capabilities.createEntities === true
-            ? formValue(data, "staff-email")
-            : user.email,
-        siteManager: user.siteManager === true,
-        isPrimaryContact: data.has("staff-primary-contact"),
-      });
-    } catch {
-      showFormSaveError(form, t("admin.programs.staffEditError"));
-      delete form.dataset.saving;
-      button.disabled = false;
-      return;
-    }
-    form.closest("dialog")?.close();
-    this.state.managerDirectoryLoaded = false;
-    try {
-      await this.openProgram(this.state.program.programId, false);
-      this.querySelector(
-        `[data-edit-program-staff="${CSS.escape(userId)}"]`,
-      )?.focus();
+      if (form.dataset.saving) return;
+      const userId = form.dataset.programStaffEditForm;
+      const user = this.state.program.users.find(
+        (item) => item.userId === userId,
+      );
+      if (!user) return;
+      form.dataset.saving = "true";
+      const button = form.querySelector('button[type="submit"]');
+      button.disabled = true;
+      const data = new FormData(form);
+      try {
+        await adminApi.updateProgramUser(this.state.program.programId, userId, {
+          firstName: formValue(data, "staff-first-name"),
+          lastName: formValue(data, "staff-last-name"),
+          phone: formValue(data, "staff-phone"),
+          phoneExtension: formValue(data, "staff-extension"),
+          email:
+            this.state.capabilities.createEntities === true
+              ? formValue(data, "staff-email")
+              : user.email,
+          siteManager: user.siteManager === true,
+          isPrimaryContact: data.has("staff-primary-contact"),
+        });
+      } catch (error) {
+        feedback.failure(error);
+        showFormSaveError(form, t("admin.programs.staffEditError"));
+        delete form.dataset.saving;
+        button.disabled = false;
+        return;
+      }
+      feedback.success();
+      form.closest("dialog")?.close();
+      this.state.managerDirectoryLoaded = false;
+      try {
+        await this.openProgram(this.state.program.programId, false);
+        this.querySelector(
+          `[data-edit-program-staff="${CSS.escape(userId)}"]`,
+        )?.focus();
+      } catch (error) {
+        feedback.failure(error);
+        this.state.error = error.message;
+        this.render();
+      }
     } catch (error) {
-      this.state.error = error.message;
-      this.render();
+      feedback.failure(error);
+      throw error;
     }
   }
 
   async addProgramStaff(form) {
-    if (form.dataset.saving) return;
-    form.dataset.saving = "true";
-    const submit = form.querySelector('button[type="submit"]');
-    if (submit) submit.disabled = true;
-    const data = new FormData(form);
-    const programId = this.state.program.programId;
+    const feedback = actionFeedback("admin.toast.staffAdded");
     try {
-      await adminApi.createProgramUser(programId, {
-        firstName: formValue(data, "staff-first-name"),
-        lastName: formValue(data, "staff-last-name"),
-        phone: formValue(data, "staff-phone"),
-        phoneExtension: formValue(data, "staff-extension"),
-        email: formValue(data, "staff-email"),
-        siteManager: false,
-      });
-      this.state.managerDirectoryLoaded = false;
-    } catch {
-      showFormSaveError(form, t("admin.programs.staffSaveError"));
-      delete form.dataset.saving;
-      if (submit) submit.disabled = false;
-      return;
+      if (form.dataset.saving) return;
+      form.dataset.saving = "true";
+      const submit = form.querySelector('button[type="submit"]');
+      if (submit) submit.disabled = true;
+      const data = new FormData(form);
+      const programId = this.state.program.programId;
+      try {
+        await adminApi.createProgramUser(programId, {
+          firstName: formValue(data, "staff-first-name"),
+          lastName: formValue(data, "staff-last-name"),
+          phone: formValue(data, "staff-phone"),
+          phoneExtension: formValue(data, "staff-extension"),
+          email: formValue(data, "staff-email"),
+          siteManager: false,
+        });
+        feedback.success();
+        this.state.managerDirectoryLoaded = false;
+      } catch (error) {
+        feedback.failure(error);
+        showFormSaveError(form, t("admin.programs.staffSaveError"));
+        delete form.dataset.saving;
+        if (submit) submit.disabled = false;
+        return;
+      }
+      this.querySelector("#add-program-staff-dialog")?.close();
+      await this.openProgram(programId, false);
+      this.querySelector("#add-program-staff")?.focus();
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
     }
-    this.querySelector("#add-program-staff-dialog")?.close();
-    await this.openProgram(programId, false);
-    this.querySelector("#add-program-staff")?.focus();
   }
 
   async createProgram(form) {
-    const origin = location.pathname + location.search;
-    const data = new FormData(form);
-    const selection = form.querySelector('[name="program-staff"]');
-    const rawStaff = String(data.get("program-staff") || "");
-    if (selection?.disabled || !rawStaff || rawStaff === "__create__")
-      throw new Error(t("admin.programs.chooseStaff"));
-    const staff = JSON.parse(decodeURIComponent(rawStaff));
-    if (!staff || (!staff.existingStaff && !staff.firstStaff))
-      throw new Error(t("admin.programs.chooseStaff"));
-    const result = await adminApi.createProgram({
-      name: String(data.get("program-name") || ""),
-      providerId: String(data.get("program-provider") || ""),
-      ...staff,
-    });
-    this.state.programs = upsertRecord(
-      this.state.programs,
-      result.program,
-      "programId",
-    );
-    this.state.managerDirectoryLoaded = false;
-    if (location.pathname + location.search !== origin) return;
-    const returnTo = new URLSearchParams(window.location.search).get(
-      "returnTo",
-    );
-    if (returnTo === "site-new") {
-      navigate(
-        `/sites/new?providerId=${encodeURIComponent(result.program.providerId)}&programId=${encodeURIComponent(result.program.programId)}`,
+    const feedback = actionFeedback("admin.toast.programCreated");
+    try {
+      const origin = location.pathname + location.search;
+      const data = new FormData(form);
+      const selection = form.querySelector('[name="program-staff"]');
+      const rawStaff = String(data.get("program-staff") || "");
+      if (selection?.disabled || !rawStaff || rawStaff === "__create__")
+        throw new Error(t("admin.programs.chooseStaff"));
+      const staff = JSON.parse(decodeURIComponent(rawStaff));
+      if (!staff || (!staff.existingStaff && !staff.firstStaff))
+        throw new Error(t("admin.programs.chooseStaff"));
+      const result = await adminApi.createProgram({
+        name: String(data.get("program-name") || ""),
+        providerId: String(data.get("program-provider") || ""),
+        ...staff,
+      });
+      feedback.success();
+      this.state.programs = upsertRecord(
+        this.state.programs,
+        result.program,
+        "programId",
       );
-      return;
+      this.state.managerDirectoryLoaded = false;
+      if (location.pathname + location.search !== origin) return;
+      const returnTo = new URLSearchParams(window.location.search).get(
+        "returnTo",
+      );
+      if (returnTo === "site-new") {
+        navigate(
+          `/sites/new?providerId=${encodeURIComponent(result.program.providerId)}&programId=${encodeURIComponent(result.program.programId)}`,
+        );
+        return;
+      }
+      if (returnTo === "provider") {
+        navigate(`/providers/${encodeURIComponent(result.program.providerId)}`);
+        return;
+      }
+      navigate(`/programs/${encodeURIComponent(result.program.programId)}`);
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
     }
-    if (returnTo === "provider") {
-      navigate(`/providers/${encodeURIComponent(result.program.providerId)}`);
-      return;
-    }
-    navigate(`/programs/${encodeURIComponent(result.program.programId)}`);
   }
 
   /** @param {HTMLFormElement} form */
 
   async createCityProgramManager(form) {
-    const data = new FormData(form);
-    const email = formValue(data, "manager-email").toLowerCase();
-    const departmentId = controlValue(form, "manager-department");
-    const department = this.state.oversightOptions.departments.find(
-      (item) => (item.departmentId || item.name) === departmentId,
-    );
-    const invitation = await adminApi.inviteAdminUser({
-      firstName: formValue(data, "manager-first-name"),
-      lastName: formValue(data, "manager-last-name"),
-      email,
-      phone: formValue(data, "manager-phone"),
-      phoneExtension: formValue(data, "manager-extension"),
-      departmentId,
-      departmentName: department?.name || "",
-      role: "compliance-manager",
-    });
-    const result = await adminApi.listCityProgramManagers();
-    this.state.programManagers = result.programManagers || [];
-    const manager = this.state.programManagers.find(
-      (item) => String(item.email || "").toLowerCase() === email,
-    );
-    if (!manager) throw new Error("program_manager_directory_sync_failed");
-    this.addComplianceManagerAssignment(manager);
-    this.state.siteSaveMessage =
-      invitation.invitationStatus === "active"
-        ? "Existing account selected. Save changes to assign this manager."
-        : invitation.invitationStatus === "resent"
-          ? "Invitation re-sent. Save changes to assign this manager."
-          : "Invitation sent. Save changes to assign this manager.";
-    form.closest("dialog")?.close();
-    form.reset();
+    const feedback = actionFeedback("admin.toast.invitationSent");
+    try {
+      const data = new FormData(form);
+      const email = formValue(data, "manager-email").toLowerCase();
+      const departmentId = controlValue(form, "manager-department");
+      const department = this.state.oversightOptions.departments.find(
+        (item) => (item.departmentId || item.name) === departmentId,
+      );
+      const invitation = await adminApi.inviteAdminUser({
+        firstName: formValue(data, "manager-first-name"),
+        lastName: formValue(data, "manager-last-name"),
+        email,
+        phone: formValue(data, "manager-phone"),
+        phoneExtension: formValue(data, "manager-extension"),
+        departmentId,
+        departmentName: department?.name || "",
+        role: "compliance-manager",
+      });
+      feedback.success(
+        invitation.invitationStatus === "active"
+          ? "admin.toast.accountActive"
+          : "admin.toast.invitationSent",
+      );
+      const result = await adminApi.listCityProgramManagers();
+      this.state.programManagers = result.programManagers || [];
+      const manager = this.state.programManagers.find(
+        (item) => String(item.email || "").toLowerCase() === email,
+      );
+      if (!manager) throw new Error("program_manager_directory_sync_failed");
+      this.addComplianceManagerAssignment(manager);
+      this.state.siteSaveMessage =
+        invitation.invitationStatus === "active"
+          ? "Existing account selected. Save changes to assign this manager."
+          : invitation.invitationStatus === "resent"
+            ? "Invitation re-sent. Save changes to assign this manager."
+            : "Invitation sent. Save changes to assign this manager.";
+      form.closest("dialog")?.close();
+      form.reset();
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
+    }
   }
 
   /** @param {any} manager */
@@ -1074,47 +1160,59 @@ class AdminApp extends HTMLElement {
 
   /** @param {HTMLButtonElement} button */
   async inviteExistingComplianceManager(button) {
-    const manager = this.state.programManagers.find(
-      (item) => item.userId === button.dataset.managerId,
-    );
-    if (!manager) return;
-    const originalLabel = button.textContent;
-    button.disabled = true;
-    button.textContent = "Sending…";
-    const row = button.closest("[data-manager-id]");
-    row?.querySelector("[data-invite-status]")?.remove();
+    const feedback = actionFeedback("admin.toast.invitationSent");
     try {
-      const invitation = await adminApi.inviteAdminUser({
-        firstName: manager.firstName,
-        lastName: manager.lastName,
-        email: manager.email,
-        phone: manager.phone,
-        phoneExtension: manager.phoneExtension,
-        departmentId: manager.departmentId,
-        departmentName: manager.departmentName,
-        role: "compliance-manager",
-      });
-      manager.accountStatus = "linked";
-      const status = document.createElement("span");
-      status.className = "muted";
-      status.dataset.inviteStatus = "";
-      status.setAttribute("role", "status");
-      status.textContent =
-        invitation.invitationStatus === "active"
-          ? "Account already active"
-          : invitation.invitationStatus === "resent"
-            ? "Invite re-sent"
-            : "Invite sent";
-      button.replaceWith(status);
+      const manager = this.state.programManagers.find(
+        (item) => item.userId === button.dataset.managerId,
+      );
+      if (!manager) return;
+      const originalLabel = button.textContent;
+      button.disabled = true;
+      button.textContent = "Sending…";
+      const row = button.closest("[data-manager-id]");
+      row?.querySelector("[data-invite-status]")?.remove();
+      try {
+        const invitation = await adminApi.inviteAdminUser({
+          firstName: manager.firstName,
+          lastName: manager.lastName,
+          email: manager.email,
+          phone: manager.phone,
+          phoneExtension: manager.phoneExtension,
+          departmentId: manager.departmentId,
+          departmentName: manager.departmentName,
+          role: "compliance-manager",
+        });
+        feedback.success(
+          invitation.invitationStatus === "active"
+            ? "admin.toast.accountActive"
+            : "admin.toast.invitationSent",
+        );
+        manager.accountStatus = "linked";
+        const status = document.createElement("span");
+        status.className = "muted";
+        status.dataset.inviteStatus = "";
+        status.setAttribute("role", "status");
+        status.textContent =
+          invitation.invitationStatus === "active"
+            ? "Account already active"
+            : invitation.invitationStatus === "resent"
+              ? "Invite re-sent"
+              : "Invite sent";
+        button.replaceWith(status);
+      } catch (error) {
+        feedback.failure(error);
+        button.disabled = false;
+        button.textContent = originalLabel;
+        const status = document.createElement("span");
+        status.className = "error";
+        status.dataset.inviteStatus = "";
+        status.setAttribute("role", "alert");
+        status.textContent = siteSaveErrorMessage(error);
+        button.after(status);
+      }
     } catch (error) {
-      button.disabled = false;
-      button.textContent = originalLabel;
-      const status = document.createElement("span");
-      status.className = "error";
-      status.dataset.inviteStatus = "";
-      status.setAttribute("role", "alert");
-      status.textContent = siteSaveErrorMessage(error);
-      button.after(status);
+      feedback.failure(error);
+      throw error;
     }
   }
 
@@ -1129,30 +1227,37 @@ class AdminApp extends HTMLElement {
   }
 
   async createOversightOption(form) {
-    const data = new FormData(form);
-    const type = formValue(data, "option-type");
-    const result = await adminApi.createOversightOption({
-      type,
-      name: formValue(data, "option-name"),
-    });
-    const key = type === "department" ? "departments" : "systemsOfCare";
-    this.state.oversightOptions[key] = [
-      ...this.state.oversightOptions[key],
-      result.option,
-    ].sort((a, b) => a.name.localeCompare(b.name));
-    const target =
-      form.dataset.targetSelect ||
-      (type === "department"
-        ? "managing-city-department"
-        : "managing-system-of-care");
-    await this.finishOversightOptionFlow(
-      target,
-      target === "manager-department"
-        ? result.option.departmentId || result.option.name
-        : result.option.name,
-      form,
-      result.option.name,
-    );
+    const feedback = actionFeedback("admin.toast.optionCreated");
+    try {
+      const data = new FormData(form);
+      const type = formValue(data, "option-type");
+      const result = await adminApi.createOversightOption({
+        type,
+        name: formValue(data, "option-name"),
+      });
+      feedback.success();
+      const key = type === "department" ? "departments" : "systemsOfCare";
+      this.state.oversightOptions[key] = [
+        ...this.state.oversightOptions[key],
+        result.option,
+      ].sort((a, b) => a.name.localeCompare(b.name));
+      const target =
+        form.dataset.targetSelect ||
+        (type === "department"
+          ? "managing-city-department"
+          : "managing-system-of-care");
+      await this.finishOversightOptionFlow(
+        target,
+        target === "manager-department"
+          ? result.option.departmentId || result.option.name
+          : result.option.name,
+        form,
+        result.option.name,
+      );
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
+    }
   }
 
   async finishOversightOptionFlow(selectName, value, form, label = value) {
@@ -1178,78 +1283,87 @@ class AdminApp extends HTMLElement {
   }
 
   async createSiteFromFlow(form) {
-    const data = new FormData(form);
-    const providerId = formValue(data, "provider-id");
-    const programId = formValue(data, "lead-program-id");
-    const addressParts = addressPartsFromForm(data);
-    const address = formatAddressParts(addressParts);
-    const result = await adminApi.createSite(providerId, {
-      name: formValue(data, "site-name"),
-      address,
-      addressParts,
-      leadProgramId: programId,
-      publicContact: {
-        email: formValue(data, "public-contact-email"),
-        phone: formValue(data, "public-contact-phone"),
-        phoneExtension: formValue(data, "public-contact-extension"),
-      },
-      primaryContactUserId: formValue(data, "site-manager-user-id"),
-      siteType: controlValue(form, "site-type"),
-    });
-    const siteId = result.site.siteId;
-    const expectedManagerId = formValue(data, "site-manager-user-id");
-    if (
-      !result.site.addressParts ||
-      !result.site.publicContact ||
-      result.site.primaryContactUserId !== expectedManagerId
-    ) {
-      await adminApi.assignSiteUser(siteId, expectedManagerId, true);
-      const repaired = await adminApi.updateSite(siteId, {
-        name: result.site.name,
+    const feedback = actionFeedback("admin.toast.siteCreated");
+    try {
+      const data = new FormData(form);
+      const providerId = formValue(data, "provider-id");
+      const programId = formValue(data, "lead-program-id");
+      const addressParts = addressPartsFromForm(data);
+      const address = formatAddressParts(addressParts);
+      const result = await adminApi.createSite(providerId, {
+        name: formValue(data, "site-name"),
+        address,
         addressParts,
+        leadProgramId: programId,
         publicContact: {
           email: formValue(data, "public-contact-email"),
           phone: formValue(data, "public-contact-phone"),
           phoneExtension: formValue(data, "public-contact-extension"),
         },
-        primaryContactUserId: expectedManagerId,
+        primaryContactUserId: formValue(data, "site-manager-user-id"),
         siteType: controlValue(form, "site-type"),
       });
+      feedback.changed();
+      const siteId = result.site.siteId;
+      const expectedManagerId = formValue(data, "site-manager-user-id");
       if (
-        !repaired.site?.addressParts ||
-        !repaired.site?.publicContact ||
-        repaired.site?.primaryContactUserId !== expectedManagerId
+        !result.site.addressParts ||
+        !result.site.publicContact ||
+        result.site.primaryContactUserId !== expectedManagerId
       ) {
-        throw new Error("site_creation_incomplete");
+        await adminApi.assignSiteUser(siteId, expectedManagerId, true);
+        const repaired = await adminApi.updateSite(siteId, {
+          name: result.site.name,
+          addressParts,
+          publicContact: {
+            email: formValue(data, "public-contact-email"),
+            phone: formValue(data, "public-contact-phone"),
+            phoneExtension: formValue(data, "public-contact-extension"),
+          },
+          primaryContactUserId: expectedManagerId,
+          siteType: controlValue(form, "site-type"),
+        });
+        if (
+          !repaired.site?.addressParts ||
+          !repaired.site?.publicContact ||
+          repaired.site?.primaryContactUserId !== expectedManagerId
+        ) {
+          throw new Error("site_creation_incomplete");
+        }
       }
-    }
-    const staff = this.state.newSiteUsers.find(
-      (user) => user.userId === expectedManagerId,
-    );
-    if (staff) {
-      const existing = await adminApi.listManagerMemberships(siteId);
-      if (
-        !(existing.memberships || []).some(
-          (member) => member.userId === expectedManagerId,
+      const staff = this.state.newSiteUsers.find(
+        (user) => user.userId === expectedManagerId,
+      );
+      if (staff) {
+        const existing = await adminApi.listManagerMemberships(siteId);
+        if (
+          !(existing.memberships || []).some(
+            (member) => member.userId === expectedManagerId,
+          )
         )
-      )
-        await adminApi.createManagerMembership(
-          siteId,
-          `${staff.firstName} ${staff.lastName}`.trim(),
-          staff.email,
-          programId,
-          expectedManagerId,
-        );
-    }
-    this.state.managerDirectoryLoaded = false;
-    await this.loadDirectory();
-    try {
-      await this.loadSiteManagers(true);
-    } catch {
+          await adminApi.createManagerMembership(
+            siteId,
+            `${staff.firstName} ${staff.lastName}`.trim(),
+            staff.email,
+            programId,
+            expectedManagerId,
+          );
+      }
+      feedback.success();
       this.state.managerDirectoryLoaded = false;
-      this.state.managerSearchFailed = true;
+      await this.loadDirectory();
+      try {
+        await this.loadSiteManagers(true);
+      } catch (error) {
+        feedback.failure(error);
+        this.state.managerDirectoryLoaded = false;
+        this.state.managerSearchFailed = true;
+      }
+      navigate(`/sites/${encodeURIComponent(siteId)}`);
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
     }
-    navigate(`/sites/${encodeURIComponent(siteId)}`);
   }
 
   /**
@@ -1258,10 +1372,17 @@ class AdminApp extends HTMLElement {
    * @returns {Promise<void>}
    */
   async deactivateProvider(providerId) {
-    await adminApi.deactivateProvider(providerId);
-    this.state.provider = null;
-    this.state.site = null;
-    await this.loadProviders();
+    const feedback = actionFeedback("admin.toast.providerDeactivated");
+    try {
+      await adminApi.deactivateProvider(providerId);
+      feedback.success();
+      this.state.provider = null;
+      this.state.site = null;
+      await this.loadProviders();
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
+    }
   }
 
   /**
@@ -1269,197 +1390,229 @@ class AdminApp extends HTMLElement {
    * @param {"all" | "details" | "address" | "lead-program" | "site-manager"} [section]
    */
   async updateSite(form, section = "all") {
-    if (!this.state.site) return;
-    const data = new FormData(form);
-    const name = formValue(data, "site-name");
-    const leadProgramId = formValue(data, "lead-program-id");
-    const addressParts = data.has("street-address")
-      ? addressPartsFromForm(data)
-      : null;
-    const publicContact = {
-      email: formValue(data, "public-contact-email"),
-      phone: formValue(data, "public-contact-phone"),
-      phoneExtension: formValue(data, "public-contact-extension"),
-    };
-    /** @type {Record<string, unknown>} */
-    const values = {
-      name:
-        section === "all" || section === "details"
-          ? name
-          : this.state.site.name,
-    };
-    if (section === "all" || section === "details")
-      values.publicContact = publicContact;
-    if (section === "all" || section === "details")
-      values.siteType = controlValue(form, "site-type");
-    if (
-      (section === "all" || section === "address") &&
-      addressParts &&
-      hasEnteredValues(addressParts)
-    )
-      values.addressParts = addressParts;
-    this.state.siteSaving = true;
-    this.state.siteSaveMessage = "";
-    this.state.siteSaveError = "";
+    const feedback = actionFeedback("admin.toast.siteSaved");
     try {
+      if (!this.state.site) return;
+      const data = new FormData(form);
+      const name = formValue(data, "site-name");
+      const leadProgramId = formValue(data, "lead-program-id");
+      const addressParts = data.has("street-address")
+        ? addressPartsFromForm(data)
+        : null;
+      const publicContact = {
+        email: formValue(data, "public-contact-email"),
+        phone: formValue(data, "public-contact-phone"),
+        phoneExtension: formValue(data, "public-contact-extension"),
+      };
+      /** @type {Record<string, unknown>} */
+      const values = {
+        name:
+          section === "all" || section === "details"
+            ? name
+            : this.state.site.name,
+      };
+      if (section === "all" || section === "details")
+        values.publicContact = publicContact;
+      if (section === "all" || section === "details")
+        values.siteType = controlValue(form, "site-type");
       if (
-        (section === "all" || section === "lead-program") &&
-        leadProgramId !== String(this.state.site.leadProgramId || "")
-      ) {
-        const leadProgram = selectedLeadProgram(
-          this.state.programs,
-          leadProgramId,
-        );
-        if (!leadProgramId || !leadProgram?.providerId) {
-          throw new Error("lead_program_required");
+        (section === "all" || section === "address") &&
+        addressParts &&
+        hasEnteredValues(addressParts)
+      )
+        values.addressParts = addressParts;
+      this.state.siteSaving = true;
+      this.state.siteSaveMessage = "";
+      this.state.siteSaveError = "";
+      try {
+        if (
+          (section === "all" || section === "lead-program") &&
+          leadProgramId !== String(this.state.site.leadProgramId || "")
+        ) {
+          const leadProgram = selectedLeadProgram(
+            this.state.programs,
+            leadProgramId,
+          );
+          if (!leadProgramId || !leadProgram?.providerId) {
+            throw new Error("lead_program_required");
+          }
+          const reassignment = await adminApi.reassignSite(
+            this.state.site.siteId,
+            leadProgram.providerId,
+            leadProgramId,
+          );
+          feedback.changed();
+          this.state.site = { ...this.state.site, ...reassignment.site };
         }
-        const reassignment = await adminApi.reassignSite(
+        if (section === "lead-program") {
+          feedback.success("admin.toast.leadProgramSaved");
+          this.state.siteSaveMessage = "";
+          return true;
+        }
+        const result = await adminApi.updateSite(
           this.state.site.siteId,
-          leadProgram.providerId,
-          leadProgramId,
+          values,
         );
-        this.state.site = { ...this.state.site, ...reassignment.site };
-      }
-      if (section === "lead-program") {
-        this.state.siteSaveMessage = "Lead program saved successfully.";
+        feedback.changed();
+        this.state.site = { ...this.state.site, ...result.site };
+        this.state.sites = this.state.sites.map((site) =>
+          site.siteId === this.state.site?.siteId
+            ? { ...site, ...this.state.site }
+            : site,
+        );
+        if (values.addressParts && !hasSiteCoordinates(result.site?.location)) {
+          this.state.siteSaveError =
+            "The address was saved, but geocoding did not return coordinates. Try saving it again.";
+          feedback.success("admin.toast.addressCoordinatesMissing", "info");
+          return false;
+        }
+        feedback.success(
+          section === "address"
+            ? "admin.toast.addressSaved"
+            : "admin.toast.siteSaved",
+        );
+        this.state.siteSaveMessage = "";
         return true;
-      }
-      const result = await adminApi.updateSite(this.state.site.siteId, values);
-      this.state.site = { ...this.state.site, ...result.site };
-      this.state.sites = this.state.sites.map((site) =>
-        site.siteId === this.state.site?.siteId
-          ? { ...site, ...this.state.site }
-          : site,
-      );
-      if (values.addressParts && !hasSiteCoordinates(result.site?.location)) {
-        this.state.siteSaveError =
-          "The address was saved, but geocoding did not return coordinates. Try saving it again.";
+      } catch (error) {
+        feedback.failure(error);
+        this.state.siteSaveError = siteSaveErrorMessage(error);
         return false;
+      } finally {
+        this.state.siteSaving = false;
+        if (this.state.siteSaveError) {
+          showFormSaveError(form, this.state.siteSaveError);
+        } else {
+          this.render();
+        }
       }
-      this.state.siteSaveMessage =
-        section === "site-manager"
-          ? "Site manager saved successfully."
-          : section === "address"
-            ? "Address saved successfully."
-            : "Site details saved successfully.";
-      return true;
     } catch (error) {
-      this.state.siteSaveError = siteSaveErrorMessage(error);
-      return false;
-    } finally {
-      this.state.siteSaving = false;
-      if (this.state.siteSaveError) {
-        showFormSaveError(form, this.state.siteSaveError);
-      } else {
-        this.render();
-      }
+      feedback.failure(error);
+      throw error;
     }
   }
 
   async updateOversight(form) {
-    if (!this.state.site) return false;
-    const managerIds = [
-      ...form.querySelectorAll("input[name='compliance-manager-id']"),
-    ].map((input) => input.value);
-    const oversight = {
-      managingCityDepartment: controlValue(form, "managing-city-department"),
-      managingSystemOfCare: controlValue(form, "managing-system-of-care"),
-    };
-    const currentManagerIds = this.state.assignedComplianceManagers
-      .map((manager) => String(manager.managerId || manager.userId || ""))
-      .filter(Boolean)
-      .sort();
-    const nextManagerIds = [...managerIds].sort();
-    const assignmentsChanged =
-      currentManagerIds.length !== nextManagerIds.length ||
-      currentManagerIds.some(
-        (managerId, index) => managerId !== nextManagerIds[index],
-      );
-    this.state.siteSaving = true;
-    this.state.siteSaveMessage = "";
-    this.state.siteSaveError = "";
-    this.state.error = "";
-    if (managerIds.length > 2) {
-      this.state.siteSaveError =
-        "A site can have no more than two Program managers.";
-      showFormSaveError(form, this.state.siteSaveError);
-      return false;
-    }
+    const feedback = actionFeedback("admin.toast.oversightSaved");
     try {
-      const result = await adminApi.updateSite(this.state.site.siteId, {
-        name: this.state.site.name,
-        oversight,
-      });
-      if (
-        this.state.capabilities.createEntities === true &&
-        assignmentsChanged
-      ) {
-        const assignmentResult = await adminApi.replaceSiteComplianceManagers(
-          this.state.site.siteId,
-          managerIds,
+      if (!this.state.site) return false;
+      const managerIds = [
+        ...form.querySelectorAll("input[name='compliance-manager-id']"),
+      ].map((input) => input.value);
+      const oversight = {
+        managingCityDepartment: controlValue(form, "managing-city-department"),
+        managingSystemOfCare: controlValue(form, "managing-system-of-care"),
+      };
+      const currentManagerIds = this.state.assignedComplianceManagers
+        .map((manager) => String(manager.managerId || manager.userId || ""))
+        .filter(Boolean)
+        .sort();
+      const nextManagerIds = [...managerIds].sort();
+      const assignmentsChanged =
+        currentManagerIds.length !== nextManagerIds.length ||
+        currentManagerIds.some(
+          (managerId, index) => managerId !== nextManagerIds[index],
         );
-        this.state.assignedComplianceManagers =
-          assignmentResult.assignments || [];
-      }
-      this.state.site = { ...this.state.site, ...result.site };
-      this.state.sites = this.state.sites.map((site) =>
-        site.siteId === this.state.site?.siteId
-          ? { ...site, ...this.state.site }
-          : site,
-      );
-      this.state.siteSaveMessage = "Oversight saved successfully.";
-      return true;
-    } catch (error) {
-      this.state.siteSaveError = siteSaveErrorMessage(error);
-      return false;
-    } finally {
-      this.state.siteSaving = false;
-      if (this.state.siteSaveError) {
+      this.state.siteSaving = true;
+      this.state.siteSaveMessage = "";
+      this.state.siteSaveError = "";
+      this.state.error = "";
+      if (managerIds.length > 2) {
+        this.state.siteSaveError =
+          "A site can have no more than two Program managers.";
         showFormSaveError(form, this.state.siteSaveError);
-      } else {
-        this.render();
+        return false;
       }
+      try {
+        const result = await adminApi.updateSite(this.state.site.siteId, {
+          name: this.state.site.name,
+          oversight,
+        });
+        feedback.changed();
+        if (
+          this.state.capabilities.createEntities === true &&
+          assignmentsChanged
+        ) {
+          const assignmentResult = await adminApi.replaceSiteComplianceManagers(
+            this.state.site.siteId,
+            managerIds,
+          );
+          this.state.assignedComplianceManagers =
+            assignmentResult.assignments || [];
+        }
+        this.state.site = { ...this.state.site, ...result.site };
+        this.state.sites = this.state.sites.map((site) =>
+          site.siteId === this.state.site?.siteId
+            ? { ...site, ...this.state.site }
+            : site,
+        );
+        feedback.success();
+        this.state.siteSaveMessage = "";
+        return true;
+      } catch (error) {
+        feedback.failure(error);
+        this.state.siteSaveError = siteSaveErrorMessage(error);
+        return false;
+      } finally {
+        this.state.siteSaving = false;
+        if (this.state.siteSaveError) {
+          showFormSaveError(form, this.state.siteSaveError);
+        } else {
+          this.render();
+        }
+      }
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
     }
   }
 
   async updatePerimeter(form) {
-    if (!this.state.site) return false;
-    const perimeter = formValue(new FormData(form), "perimeter");
-    if (!perimeter) {
-      showFormSaveError(form, "Enter a perimeter description before saving.");
-      return false;
-    }
-    this.state.perimeterSaving = true;
-    this.state.perimeterMessage = "";
-    this.state.perimeterError = "";
-    this.state.physicalDeviceRevocationPreview = null;
-    this.state.emergencyRevocationSites = [];
-    this.state.emergencyRevocationPreview = null;
-    this.state.suspensionTarget = null;
-    this.state.revocationMessage = "";
-    this.render();
+    const feedback = actionFeedback("admin.toast.perimeterSaved");
     try {
-      const result = await adminApi.updateSitePerimeter(
-        this.state.site.siteId,
-        perimeter,
-        String(this.state.site.updatedAt || ""),
-      );
-      this.state.site = { ...this.state.site, ...result };
-      this.state.perimeterMessage = "Perimeter saved.";
-      return true;
-    } catch (error) {
-      this.state.perimeterError =
-        error instanceof Error && error.message === "perimeter_update_conflict"
-          ? "This Site changed after you opened it. Reload the latest version before saving."
-          : "The perimeter could not be saved. Check the text and try again.";
-      return false;
-    } finally {
-      this.state.perimeterSaving = false;
-      if (this.state.perimeterError) {
-        showFormSaveError(form, this.state.perimeterError);
-      } else {
-        this.render();
+      if (!this.state.site) return false;
+      const perimeter = formValue(new FormData(form), "perimeter");
+      if (!perimeter) {
+        showFormSaveError(form, "Enter a perimeter description before saving.");
+        return false;
       }
+      this.state.perimeterSaving = true;
+      this.state.perimeterMessage = "";
+      this.state.perimeterError = "";
+      this.state.physicalDeviceRevocationPreview = null;
+      this.state.emergencyRevocationSites = [];
+      this.state.emergencyRevocationPreview = null;
+      this.state.suspensionTarget = null;
+      this.state.revocationMessage = "";
+      this.render();
+      try {
+        const result = await adminApi.updateSitePerimeter(
+          this.state.site.siteId,
+          perimeter,
+          String(this.state.site.updatedAt || ""),
+        );
+        this.state.site = { ...this.state.site, ...result };
+        feedback.success();
+        this.state.perimeterMessage = "";
+        return true;
+      } catch (error) {
+        feedback.failure(error);
+        this.state.perimeterError =
+          error instanceof Error &&
+          error.message === "perimeter_update_conflict"
+            ? "This Site changed after you opened it. Reload the latest version before saving."
+            : "The perimeter could not be saved. Check the text and try again.";
+        return false;
+      } finally {
+        this.state.perimeterSaving = false;
+        if (this.state.perimeterError) {
+          showFormSaveError(form, this.state.perimeterError);
+        } else {
+          this.render();
+        }
+      }
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
     }
   }
 
@@ -1563,29 +1716,38 @@ class AdminApp extends HTMLElement {
   }
 
   async createSiteTerms(form) {
-    if (!this.state.site) return false;
-    const reasons = selectedComplianceReasons(form);
-    const siteId = this.state.site.siteId;
-    const queued = await adminApi.createSiteTerms(this.state.site.siteId, {
-      reasons,
-      siteManagerUserId: controlValue(form, "terms-site-manager-id"),
-      ...(reasons.includes("6")
-        ? { correctiveActionTier: Number(controlValue(form, "terms-tier")) }
-        : {}),
-      requiredChecksPerDay: Number(controlValue(form, "terms-checks-per-day")),
-      periodEnd: controlValue(form, "terms-expiry"),
-    });
-    window.history.replaceState(
-      {},
-      "",
-      `/sites/${encodeURIComponent(siteId)}?section=compliance`,
-    );
-    await this.openSite(siteId, false);
-    this.state.siteSaveMessage = t("admin.letters.pending");
-    this.render();
-    void this.refreshPendingComplianceLetter(siteId);
-    void this.refreshLetterEmails(siteId, queued.jobId);
-    return true;
+    const feedback = actionFeedback("admin.toast.letterQueued");
+    try {
+      if (!this.state.site) return false;
+      const reasons = selectedComplianceReasons(form);
+      const siteId = this.state.site.siteId;
+      const queued = await adminApi.createSiteTerms(this.state.site.siteId, {
+        reasons,
+        siteManagerUserId: controlValue(form, "terms-site-manager-id"),
+        ...(reasons.includes("6")
+          ? { correctiveActionTier: Number(controlValue(form, "terms-tier")) }
+          : {}),
+        requiredChecksPerDay: Number(
+          controlValue(form, "terms-checks-per-day"),
+        ),
+        periodEnd: controlValue(form, "terms-expiry"),
+      });
+      feedback.success("admin.toast.letterQueued", "info");
+      window.history.replaceState(
+        {},
+        "",
+        `/sites/${encodeURIComponent(siteId)}?section=compliance`,
+      );
+      await this.openSite(siteId, false);
+      this.state.siteSaveMessage = t("admin.letters.pending");
+      this.render();
+      void this.refreshPendingComplianceLetter(siteId);
+      void this.refreshLetterEmails(siteId, queued.jobId);
+      return true;
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
+    }
   }
 
   async refreshPendingComplianceLetter(siteId) {
@@ -1618,7 +1780,6 @@ class AdminApp extends HTMLElement {
   async refreshLetterEmails(siteId, jobId) {
     for (let attempt = 0; attempt < 60; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
-      if (this.state.site?.siteId !== siteId) return;
       try {
         const result = await adminApi.getSite(siteId);
         const progress = letterEmailProgress(result.items || [], jobId);
@@ -1626,31 +1787,55 @@ class AdminApp extends HTMLElement {
           progress.history.length !==
             (this.state.letterEmailHistory?.length || 0) ||
           progress.uncertain !== Boolean(this.state.letterEmailUncertain);
-        this.state.letterEmailHistory = progress.history;
-        this.state.letterEmailUncertain = progress.uncertain;
-        if (progress.sent) {
-          this.state.siteSaveMessage = t(
-            progress.sent.provider === "local-preview"
-              ? "admin.letters.previewSent"
-              : "admin.letters.sent",
-          );
+        const isCurrentSite = this.state.site?.siteId === siteId;
+        if (isCurrentSite) {
+          this.state.letterEmailHistory = progress.history;
+          this.state.letterEmailUncertain = progress.uncertain;
+          if (progress.sent) {
+            this.state.siteSaveMessage = t(
+              progress.sent.provider === "local-preview"
+                ? "admin.letters.previewSent"
+                : "admin.letters.sent",
+            );
+          }
         }
-        if (changed || progress.sent) this.render();
+        if (progress.sent || progress.currentUncertain) {
+          this.notifiedLetterJobs ||= new Set();
+          if (!this.notifiedLetterJobs.has(jobId)) {
+            this.notifiedLetterJobs.add(jobId);
+            notifyAdmin(
+              progress.sent
+                ? progress.sent.provider === "local-preview"
+                  ? "admin.letters.previewSent"
+                  : "admin.letters.sent"
+                : "admin.toast.deliveryUncertain",
+              progress.sent ? "success" : "info",
+            );
+          }
+        }
+        if (isCurrentSite && (changed || progress.sent)) this.render();
         if (progress.sent || progress.currentUncertain) return;
       } catch {
         /* Retry reads without repeating the send. */
       }
     }
+    notifyAdmin("admin.toast.letterStillPending", "info");
   }
 
   async endSiteTerms() {
-    if (!this.state.site) return;
-    const siteId = this.state.site.siteId;
-    await adminApi.endSiteTerms(siteId);
-    await this.openSite(siteId, false);
-    this.state.siteSaveMessage =
-      "The site is no longer required to complete perimeter checks.";
-    this.render();
+    const feedback = actionFeedback("admin.toast.requirementEnded");
+    try {
+      if (!this.state.site) return;
+      const siteId = this.state.site.siteId;
+      await adminApi.endSiteTerms(siteId);
+      feedback.success();
+      await this.openSite(siteId, false);
+      this.state.siteSaveMessage = "";
+      this.render();
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
+    }
   }
 
   async previewSiteImport(form) {
@@ -1686,53 +1871,72 @@ class AdminApp extends HTMLElement {
   }
 
   async applySiteImport() {
-    const preview = this.state.importPreview;
-    if (!preview) return;
-    this.state.importBusy = true;
-    this.render();
+    const feedback = actionFeedback("admin.toast.importComplete");
     try {
-      let result;
-      do {
-        result = await adminApi.applySiteImport(
-          preview.importId,
-          preview.previewVersion,
-          this.state.importApplyKey,
-        );
-        this.state.importResult = result;
-        if (result.rows) this.state.importPreview.rows = result.rows;
-        this.render();
-      } while (result.status === "applying");
-      if (result.status === "complete") {
-        const failed =
-          Number(result.outcomes?.failed || 0) +
-          Number(result.outcomes?.skipped_conflict || 0);
-        const applied = Number(result.outcomes?.applied || 0);
-        if (result.resultStatus === "failed" || (failed > 0 && applied === 0)) {
-          this.state.importNotice = {
-            title: "Import failed",
-            message: `No records were imported. ${failed} ${failed === 1 ? "record needs" : "records need"} attention. See Past imports for details.`,
-          };
-        } else if (result.resultStatus === "partial" || failed > 0) {
-          this.state.importNotice = {
-            title: "Import partially completed",
-            message: `${applied} ${applied === 1 ? "record was" : "records were"} imported and ${failed} ${failed === 1 ? "record was" : "records were"} not imported. See Past imports for details.`,
-          };
-        } else {
-          this.state.importNotice = null;
-        }
-        sessionStorage.removeItem(`site-import-key:${preview.importId}`);
-        this.state.importPreview = null;
-        this.state.importResult = null;
-        this.state.importApplyKey = "";
-        const history = await adminApi
-          .listSiteImports()
-          .catch(() => ({ imports: [] }));
-        this.state.importHistory = history.imports || [];
-        window.history.replaceState({}, "", "/sites/import");
-      }
-    } finally {
-      this.state.importBusy = false;
+      const preview = this.state.importPreview;
+      if (!preview) return;
+      this.state.importBusy = true;
       this.render();
+      try {
+        let result;
+        do {
+          result = await adminApi.applySiteImport(
+            preview.importId,
+            preview.previewVersion,
+            this.state.importApplyKey,
+          );
+          if (Number(result.outcomes?.applied || 0) > 0) feedback.changed();
+          this.state.importResult = result;
+          if (result.rows) this.state.importPreview.rows = result.rows;
+          this.render();
+        } while (result.status === "applying");
+        if (result.status === "complete") {
+          const failed =
+            Number(result.outcomes?.failed || 0) +
+            Number(result.outcomes?.skipped_conflict || 0);
+          const applied = Number(result.outcomes?.applied || 0);
+          if (
+            result.resultStatus === "failed" ||
+            (failed > 0 && applied === 0)
+          ) {
+            feedback.success(
+              result.outcomes?.applied
+                ? "admin.toast.importPartial"
+                : "admin.toast.importFailed",
+              applied > 0 ? "info" : "error",
+            );
+          } else if (result.resultStatus === "partial" || failed > 0) {
+            feedback.success(
+              result.outcomes?.applied
+                ? "admin.toast.importPartial"
+                : "admin.toast.importFailed",
+              applied > 0 ? "info" : "error",
+            );
+          } else {
+            feedback.success("admin.toast.importComplete", "success", {
+              count: applied,
+            });
+            this.state.importNotice = null;
+          }
+          this.state.importNotice = null;
+          sessionStorage.removeItem(`site-import-key:${preview.importId}`);
+          this.state.importPreview = null;
+          this.state.importResult = null;
+          this.state.importApplyKey = "";
+          const history = await adminApi.listSiteImports().catch((error) => {
+            feedback.failure(error);
+            return { imports: [] };
+          });
+          this.state.importHistory = history.imports || [];
+          window.history.replaceState({}, "", "/sites/import");
+        }
+      } finally {
+        this.state.importBusy = false;
+        this.render();
+      }
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
     }
   }
 
@@ -1752,15 +1956,21 @@ class AdminApp extends HTMLElement {
   }
 
   async downloadImportConflicts() {
-    const importId = this.state.importPreview?.importId;
-    if (!importId) return;
-    const blob = await adminApi.downloadSiteImportConflicts(importId);
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `site-import-${importId}-conflicts.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+    const feedback = actionFeedback("admin.toast.failed");
+    try {
+      const importId = this.state.importPreview?.importId;
+      if (!importId) return;
+      const blob = await adminApi.downloadSiteImportConflicts(importId);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `site-import-${importId}-conflicts.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
+    }
   }
 
   /**
@@ -1769,102 +1979,129 @@ class AdminApp extends HTMLElement {
    * @returns {Promise<void>}
    */
   async deactivateSite(siteId) {
-    await adminApi.deactivateSite(siteId);
-    this.state.sites = this.state.sites.filter(
-      (site) => site.siteId !== siteId,
-    );
-    this.state.managerDirectoryLoaded = false;
-    this.state.site = null;
-    this.querySelector("[data-dirty-form]")?.setAttribute(
-      "data-is-dirty",
-      "false",
-    );
-    this.lastRenderedPath = "";
-    navigate("/sites");
+    const feedback = actionFeedback("admin.toast.siteDeactivated");
+    try {
+      await adminApi.deactivateSite(siteId);
+      feedback.success();
+      this.state.sites = this.state.sites.filter(
+        (site) => site.siteId !== siteId,
+      );
+      this.state.managerDirectoryLoaded = false;
+      this.state.site = null;
+      this.querySelector("[data-dirty-form]")?.setAttribute(
+        "data-is-dirty",
+        "false",
+      );
+      this.lastRenderedPath = "";
+      navigate("/sites");
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
+    }
   }
 
   /** @param {HTMLFormElement} form */
   async createSiteManagerFromAccess(form) {
-    if (form.dataset.saving) return;
-    form.dataset.saving = "true";
-    const save = form.querySelector('button[type="submit"]');
-    const cancel = form.querySelector("[data-cancel-new-site-manager]");
-    save.disabled = true;
-    cancel.disabled = true;
-    const siteId = this.state.site.siteId;
-    const programId = this.state.site.leadProgramId;
+    const feedback = actionFeedback("admin.toast.managerAssigned");
     try {
-      const data = new FormData(form);
-      const values = {
-        firstName: formValue(data, "new-manager-first-name"),
-        lastName: formValue(data, "new-manager-last-name"),
-        phone: formValue(data, "new-manager-phone"),
-        phoneExtension: formValue(data, "new-manager-extension"),
-        email: formValue(data, "new-manager-email"),
-        siteManager: true,
-      };
-      this.pendingManagerCreations ||= new Map();
-      const pendingUser = this.pendingManagerCreations.get(
-        JSON.stringify([siteId, programId, values]),
-      );
-      if (pendingUser) form.dataset.createdUser = JSON.stringify(pendingUser);
-      await createAndAssignManager(
-        this.pendingManagerCreations,
-        { siteId, programId, values },
-        {
-          createProgramUser: async (...args) => {
-            const result = await adminApi.createProgramUser(...args);
-            form.dataset.createdUser = JSON.stringify(result.user);
-            return result;
+      if (form.dataset.saving) return;
+      form.dataset.saving = "true";
+      const save = form.querySelector('button[type="submit"]');
+      const cancel = form.querySelector("[data-cancel-new-site-manager]");
+      save.disabled = true;
+      cancel.disabled = true;
+      const siteId = this.state.site.siteId;
+      const programId = this.state.site.leadProgramId;
+      try {
+        const data = new FormData(form);
+        const values = {
+          firstName: formValue(data, "new-manager-first-name"),
+          lastName: formValue(data, "new-manager-last-name"),
+          phone: formValue(data, "new-manager-phone"),
+          phoneExtension: formValue(data, "new-manager-extension"),
+          email: formValue(data, "new-manager-email"),
+          siteManager: true,
+        };
+        this.pendingManagerCreations ||= new Map();
+        const pendingUser = this.pendingManagerCreations.get(
+          JSON.stringify([siteId, programId, values]),
+        );
+        if (pendingUser) {
+          feedback.changed();
+          form.dataset.createdUser = JSON.stringify(pendingUser);
+        }
+        await createAndAssignManager(
+          this.pendingManagerCreations,
+          { siteId, programId, values },
+          {
+            createProgramUser: async (...args) => {
+              const result = await adminApi.createProgramUser(...args);
+              feedback.changed();
+              form.dataset.createdUser = JSON.stringify(result.user);
+              return result;
+            },
+            createManagerMembership: adminApi.createManagerMembership,
           },
-          createManagerMembership: adminApi.createManagerMembership,
-        },
-      );
-      this.state.managerDirectoryLoaded = false;
-    } catch {
-      showFormSaveError(
-        form,
-        t(
-          form.dataset.createdUser
-            ? "admin.siteManagers.assignmentError"
-            : "admin.programs.staffSaveError",
-        ),
-      );
-      delete form.dataset.saving;
-      save.disabled = false;
-      cancel.disabled = false;
-      return;
-    }
-    form.closest("dialog")?.close();
-    try {
-      await this.openSite(siteId, false);
-      this.querySelector("#manager-membership-form wa-select")?.focus();
+        );
+        feedback.success();
+        this.state.managerDirectoryLoaded = false;
+      } catch (error) {
+        feedback.failure(error);
+        showFormSaveError(
+          form,
+          t(
+            form.dataset.createdUser
+              ? "admin.siteManagers.assignmentError"
+              : "admin.programs.staffSaveError",
+          ),
+        );
+        delete form.dataset.saving;
+        save.disabled = false;
+        cancel.disabled = false;
+        return;
+      }
+      form.closest("dialog")?.close();
+      try {
+        await this.openSite(siteId, false);
+        this.querySelector("#manager-membership-form wa-select")?.focus();
+      } catch (error) {
+        feedback.failure(error);
+        this.state.error = error.message;
+        this.render();
+      }
     } catch (error) {
-      this.state.error = error.message;
-      this.render();
+      feedback.failure(error);
+      throw error;
     }
   }
 
   async addManagerMembership(form) {
-    if (!this.state.site) return;
-    const data = new FormData(form);
-    const user = this.state.availableSiteUsers.find(
-      (item) => item.userId === formValue(data, "manager-user-id"),
-    );
-    if (!user?.email)
-      throw new Error(
-        "Choose a Lead Program staff member with an email address.",
+    const feedback = actionFeedback("admin.toast.managerAssigned");
+    try {
+      if (!this.state.site) return;
+      const data = new FormData(form);
+      const user = this.state.availableSiteUsers.find(
+        (item) => item.userId === formValue(data, "manager-user-id"),
       );
-    await adminApi.createManagerMembership(
-      this.state.site.siteId,
-      `${user.firstName} ${user.lastName}`.trim(),
-      user.email,
-      this.state.site.leadProgramId,
-      user.userId,
-    );
-    this.state.managerDirectoryLoaded = false;
-    form.reset();
-    await this.openSite(this.state.site.siteId, false);
+      if (!user?.email)
+        throw new Error(
+          "Choose a Lead Program staff member with an email address.",
+        );
+      await adminApi.createManagerMembership(
+        this.state.site.siteId,
+        `${user.firstName} ${user.lastName}`.trim(),
+        user.email,
+        this.state.site.leadProgramId,
+        user.userId,
+      );
+      feedback.success();
+      this.state.managerDirectoryLoaded = false;
+      form.reset();
+      await this.openSite(this.state.site.siteId, false);
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
+    }
   }
 
   /** @param {HTMLFormElement} form */
@@ -1886,208 +2123,238 @@ class AdminApp extends HTMLElement {
   }
 
   async persistSiteManager(form) {
-    const origin = location.pathname + location.search;
-    const data = new FormData(form);
-    const current = this.state.siteManager;
-    const canManageAssignments =
-      this.state.capabilities.createEntities === true;
-    const programId = canManageAssignments
-      ? formValue(data, "manager-program-id")
-      : current?.programId || "";
-    const programChanged = Boolean(current && current.programId !== programId);
-    const values = {
-      firstName: formValue(data, "manager-first-name"),
-      lastName: formValue(data, "manager-last-name"),
-      phone: formValue(data, "manager-phone"),
-      phoneExtension: formValue(data, "manager-phone-extension"),
-      email: canManageAssignments
-        ? formValue(data, "manager-email")
-        : current?.email || "",
-      siteManager: true,
-    };
-    const siteIds = canManageAssignments
-      ? data.getAll("manager-site-id").map(String)
-      : (current?.assignedSites || []).map((site) => site.siteId);
-    const fullName = `${values.firstName} ${values.lastName}`.trim();
+    const feedback = actionFeedback("admin.toast.managerSaved");
     try {
-      let response;
-      if (programChanged) {
-        const targetProgram = await adminApi.getProgram(programId);
-        const targetUser = (targetProgram.users || []).find(
-          (user) =>
-            user.status !== "inactive" &&
-            String(user.email || "").toLowerCase() ===
-              values.email.toLowerCase(),
-        );
-        response = targetUser
-          ? await adminApi.updateProgramUser(
-              programId,
-              targetUser.userId,
-              values,
-            )
-          : await adminApi.createProgramUser(programId, values);
-      } else {
-        response = current
-          ? await adminApi.updateProgramUser(programId, current.userId, values)
-          : await adminApi.createProgramUser(programId, values);
-      }
-      const user = response.user;
-      const existing = new Map(
-        (current?.assignedSites || []).map((site) => [site.siteId, site]),
+      const origin = location.pathname + location.search;
+      const data = new FormData(form);
+      const current = this.state.siteManager;
+      const canManageAssignments =
+        this.state.capabilities.createEntities === true;
+      const programId = canManageAssignments
+        ? formValue(data, "manager-program-id")
+        : current?.programId || "";
+      const programChanged = Boolean(
+        current && current.programId !== programId,
       );
-      const selected = new Set(siteIds);
-      const savedAssignments = new Map(existing);
-      // Assignment counts belong to this one staff record. Apply Site changes
-      // serially so each transaction observes the count written by the last.
-      for (const siteId of siteIds) {
-        const membership = existing.get(siteId);
-        if (membership?.legacyAssignment && !canManageAssignments) continue;
-        if (membership && !membership.legacyAssignment) {
-          const result = await adminApi.updateManagerMembership(
-            siteId,
-            membership.membershipId,
-            fullName,
-            values.email,
-          );
-          savedAssignments.set(siteId, { ...membership, ...result.membership });
-        } else {
-          const result = await adminApi.createManagerMembership(
-            siteId,
-            fullName,
-            values.email,
-            programId,
-            user.userId,
-          );
-          savedAssignments.set(siteId, { ...result.membership, siteId });
-        }
-      }
-      for (const [siteId, membership] of existing) {
-        if (selected.has(siteId)) continue;
-        if (membership.legacyAssignment)
-          await adminApi.unassignSiteUser(siteId, membership.userId);
-        else
-          await adminApi.deactivateManagerMembership(
-            siteId,
-            membership.membershipId,
-          );
-      }
-      if (programChanged) {
-        await adminApi.updateProgramUser(current.programId, current.userId, {
-          ...values,
-          siteManager: false,
-        });
-      }
-      const program = this.state.programs.find(
-        (item) => item.programId === programId,
-      );
-      const savedManager = {
-        ...user,
-        programId,
-        programName: program?.name || "",
-        providerId: program?.providerId || "",
-        assignedSites: siteIds.map((siteId) => ({
-          ...savedAssignments.get(siteId),
-          siteId,
-          siteName:
-            this.state.sites.find((site) => site.siteId === siteId)?.name || "",
-        })),
+      const values = {
+        firstName: formValue(data, "manager-first-name"),
+        lastName: formValue(data, "manager-last-name"),
+        phone: formValue(data, "manager-phone"),
+        phoneExtension: formValue(data, "manager-phone-extension"),
+        email: canManageAssignments
+          ? formValue(data, "manager-email")
+          : current?.email || "",
+        siteManager: true,
       };
-      this.state.siteManagers = upsertRecord(
-        this.state.siteManagers.filter(
-          (manager) => !programChanged || manager.userId !== current.userId,
-        ),
-        savedManager,
-        "userId",
-      );
-      this.managerDirectoryVersion = (this.managerDirectoryVersion || 0) + 1;
-      this.state.managerDirectoryLoaded = false;
-      if (location.pathname + location.search !== origin) return true;
-      this.state.siteManager = savedManager;
-      this.state.siteSaveMessage = programChanged
-        ? "Site manager moved to the selected Program."
-        : current
-          ? "Site manager saved."
-          : "Site manager added.";
-      this.state.siteSaveError = "";
-      if (form.dataset?.returnSite) {
-        form.dataset.isDirty = "false";
-        navigate(
-          `/sites/${encodeURIComponent(form.dataset.returnSite)}?section=access`,
+      const siteIds = canManageAssignments
+        ? data.getAll("manager-site-id").map(String)
+        : (current?.assignedSites || []).map((site) => site.siteId);
+      const fullName = `${values.firstName} ${values.lastName}`.trim();
+      try {
+        let response;
+        if (programChanged) {
+          const targetProgram = await adminApi.getProgram(programId);
+          const targetUser = (targetProgram.users || []).find(
+            (user) =>
+              user.status !== "inactive" &&
+              String(user.email || "").toLowerCase() ===
+                values.email.toLowerCase(),
+          );
+          response = targetUser
+            ? await adminApi.updateProgramUser(
+                programId,
+                targetUser.userId,
+                values,
+              )
+            : await adminApi.createProgramUser(programId, values);
+        } else {
+          response = current
+            ? await adminApi.updateProgramUser(
+                programId,
+                current.userId,
+                values,
+              )
+            : await adminApi.createProgramUser(programId, values);
+        }
+        feedback.changed();
+        const user = response.user;
+        const existing = new Map(
+          (current?.assignedSites || []).map((site) => [site.siteId, site]),
         );
+        const selected = new Set(siteIds);
+        const savedAssignments = new Map(existing);
+        // Assignment counts belong to this one staff record. Apply Site changes
+        // serially so each transaction observes the count written by the last.
+        for (const siteId of siteIds) {
+          const membership = existing.get(siteId);
+          if (membership?.legacyAssignment && !canManageAssignments) continue;
+          if (membership && !membership.legacyAssignment) {
+            const result = await adminApi.updateManagerMembership(
+              siteId,
+              membership.membershipId,
+              fullName,
+              values.email,
+            );
+            savedAssignments.set(siteId, {
+              ...membership,
+              ...result.membership,
+            });
+          } else {
+            const result = await adminApi.createManagerMembership(
+              siteId,
+              fullName,
+              values.email,
+              programId,
+              user.userId,
+            );
+            savedAssignments.set(siteId, { ...result.membership, siteId });
+          }
+        }
+        for (const [siteId, membership] of existing) {
+          if (selected.has(siteId)) continue;
+          if (membership.legacyAssignment)
+            await adminApi.unassignSiteUser(siteId, membership.userId);
+          else
+            await adminApi.deactivateManagerMembership(
+              siteId,
+              membership.membershipId,
+            );
+        }
+        if (programChanged) {
+          await adminApi.updateProgramUser(current.programId, current.userId, {
+            ...values,
+            siteManager: false,
+          });
+        }
+        const program = this.state.programs.find(
+          (item) => item.programId === programId,
+        );
+        const savedManager = {
+          ...user,
+          programId,
+          programName: program?.name || "",
+          providerId: program?.providerId || "",
+          assignedSites: siteIds.map((siteId) => ({
+            ...savedAssignments.get(siteId),
+            siteId,
+            siteName:
+              this.state.sites.find((site) => site.siteId === siteId)?.name ||
+              "",
+          })),
+        };
+        this.state.siteManagers = upsertRecord(
+          this.state.siteManagers.filter(
+            (manager) => !programChanged || manager.userId !== current.userId,
+          ),
+          savedManager,
+          "userId",
+        );
+        feedback.success();
+        this.managerDirectoryVersion = (this.managerDirectoryVersion || 0) + 1;
+        this.state.managerDirectoryLoaded = false;
+        if (location.pathname + location.search !== origin) return true;
+        this.state.siteManager = savedManager;
+        this.state.siteSaveMessage = "";
+        this.state.siteSaveError = "";
+        if (form.dataset?.returnSite) {
+          form.dataset.isDirty = "false";
+          navigate(
+            `/sites/${encodeURIComponent(form.dataset.returnSite)}?section=access`,
+          );
+          return true;
+        }
+        if (!current || user.userId !== current.userId) {
+          window.history.replaceState(
+            {},
+            "",
+            `/managers/${encodeURIComponent(user.userId)}`,
+          );
+        }
+        this.render();
         return true;
+      } catch (error) {
+        feedback.failure(error);
+        showFormSaveError(form, managerSaveErrorMessage(error));
+        return false;
       }
-      if (!current || user.userId !== current.userId) {
-        window.history.replaceState(
-          {},
-          "",
-          `/managers/${encodeURIComponent(user.userId)}`,
-        );
-      }
-      this.render();
-      return true;
     } catch (error) {
-      showFormSaveError(form, managerSaveErrorMessage(error));
-      return false;
+      feedback.failure(error);
+      throw error;
     }
   }
 
   async removeSiteManager() {
-    const manager = this.state.siteManager;
-    const returnSite = new URLSearchParams(window.location.search).get(
-      "returnSite",
-    );
-    if (!manager) return;
+    const feedback = actionFeedback("admin.toast.managerDeleted");
     try {
-      await adminApi.removeSiteManager(manager.programId, manager.userId);
-      this.state.managerDirectoryLoaded = false;
-      this.state.siteManager = null;
-      const form = this.querySelector("#site-manager-record-form");
-      if (form) form.dataset.isDirty = "false";
-      await this.loadSiteManagers(true);
-      navigate(
-        returnSite
-          ? `/sites/${encodeURIComponent(returnSite)}?section=access`
-          : "/managers",
+      const manager = this.state.siteManager;
+      const returnSite = new URLSearchParams(window.location.search).get(
+        "returnSite",
       );
+      if (!manager) return;
+      try {
+        await adminApi.removeSiteManager(manager.programId, manager.userId);
+        feedback.success();
+        this.state.managerDirectoryLoaded = false;
+        this.state.siteManager = null;
+        const form = this.querySelector("#site-manager-record-form");
+        if (form) form.dataset.isDirty = "false";
+        await this.loadSiteManagers(true);
+        navigate(
+          returnSite
+            ? `/sites/${encodeURIComponent(returnSite)}?section=access`
+            : "/managers",
+        );
+      } catch (error) {
+        feedback.failure(error);
+        this.state.error =
+          error instanceof Error &&
+          [
+            "site_primary_contact_in_use",
+            "program_primary_contact_in_use",
+          ].includes(error.message)
+            ? t("admin.programs.reassignPrimaryBeforeRemoval")
+            : error instanceof Error &&
+                error.message === "manager_removal_conflict"
+              ? "The manager or one of their Site assignments changed. Reload and try again."
+              : "The manager could not be removed. Try again.";
+        this.render();
+      }
     } catch (error) {
-      this.state.error =
-        error instanceof Error &&
-        [
-          "site_primary_contact_in_use",
-          "program_primary_contact_in_use",
-        ].includes(error.message)
-          ? t("admin.programs.reassignPrimaryBeforeRemoval")
-          : error instanceof Error &&
-              error.message === "manager_removal_conflict"
-            ? "The manager or one of their Site assignments changed. Reload and try again."
-            : "The manager could not be removed. Try again.";
-      this.render();
+      feedback.failure(error);
+      throw error;
     }
   }
 
   /** @param {string} membershipId */
   async deactivateManagerMembership(membershipId) {
-    if (!this.state.site) return;
-    const membership = this.state.managerMemberships.find(
-      (item) => item.membershipId === membershipId,
-    );
-    const result = membership?.legacyAssignment
-      ? {
-          ...(await adminApi.unassignSiteUser(
+    const feedback = actionFeedback("admin.toast.managerRemoved");
+    try {
+      if (!this.state.site) return;
+      const membership = this.state.managerMemberships.find(
+        (item) => item.membershipId === membershipId,
+      );
+      const result = membership?.legacyAssignment
+        ? {
+            ...(await adminApi.unassignSiteUser(
+              this.state.site.siteId,
+              membership.userId,
+            )),
+            revokedBindingCount: 0,
+          }
+        : await adminApi.deactivateManagerMembership(
             this.state.site.siteId,
-            membership.userId,
-          )),
-          revokedBindingCount: 0,
-        }
-      : await adminApi.deactivateManagerMembership(
-          this.state.site.siteId,
-          membershipId,
-        );
-    this.state.managerDirectoryLoaded = false;
-    const siteId = this.state.site.siteId;
-    await this.openSite(siteId, false);
-    this.state.revocationMessage = `${membership?.name || "Site Manager"} removed; ${result.revokedBindingCount} Manager binding${result.revokedBindingCount === 1 ? "" : "s"} revoked at this Site.`;
-    this.render();
+            membershipId,
+          );
+      feedback.success();
+      this.state.managerDirectoryLoaded = false;
+      const siteId = this.state.site.siteId;
+      await this.openSite(siteId, false);
+      this.state.revocationMessage = `${membership?.name || "Site Manager"} removed; ${result.revokedBindingCount} Manager binding${result.revokedBindingCount === 1 ? "" : "s"} revoked at this Site.`;
+      this.render();
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
+    }
   }
 
   /** @param {string} membershipId */
@@ -2103,38 +2370,42 @@ class AdminApp extends HTMLElement {
 
   /** @param {string} membershipId */
   async issueManagerGrant(membershipId) {
-    if (!this.state.site) return;
-    const membership = this.state.managerMemberships.find(
-      (item) => item.membershipId === membershipId,
-    );
-    if (membership?.legacyAssignment) {
-      const linked = await adminApi.createManagerMembership(
-        this.state.site.siteId,
-        membership.name,
-        membership.email,
-        this.state.site.leadProgramId,
-        membership.userId,
+    const feedback = actionFeedback("admin.enrollment.emailed");
+    try {
+      if (!this.state.site) return;
+      const membership = this.state.managerMemberships.find(
+        (item) => item.membershipId === membershipId,
       );
-      membershipId = linked.membership.membershipId;
+      if (membership?.legacyAssignment) {
+        const linked = await adminApi.createManagerMembership(
+          this.state.site.siteId,
+          membership.name,
+          membership.email,
+          this.state.site.leadProgramId,
+          membership.userId,
+        );
+        membershipId = linked.membership.membershipId;
+      }
+      const created = await adminApi.createManagerGrant(
+        this.state.site.siteId,
+        membershipId,
+      );
+      feedback.success(
+        created.grant?.deliveryStatus === "accepted"
+          ? "admin.enrollment.emailed"
+          : "admin.toast.enrollmentEmailFailed",
+        created.grant?.deliveryStatus === "accepted" ? "success" : "error",
+      );
+      await this.openSite(this.state.site.siteId, false);
+      this.state.managerGrants = attachCreatedEnrollmentUrl(
+        this.state.managerGrants,
+        created,
+      );
+      this.render();
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
     }
-    const created = await adminApi.createManagerGrant(
-      this.state.site.siteId,
-      membershipId,
-    );
-    if (created.grant?.deliveryStatus === "accepted") {
-      showToast({
-        title: t("admin.enrollment.emailed"),
-        message: "",
-        icon: "circle-check",
-        tone: "success",
-      });
-    }
-    await this.openSite(this.state.site.siteId, false);
-    this.state.managerGrants = attachCreatedEnrollmentUrl(
-      this.state.managerGrants,
-      created,
-    );
-    this.render();
   }
 
   /** @param {HTMLButtonElement} button */
@@ -2149,6 +2420,7 @@ class AdminApp extends HTMLElement {
       icon?.setAttribute("name", "check");
       if (status) status.textContent = "Enrollment link copied.";
     } catch {
+      notifyAdmin("admin.toast.copyFailed", "error");
       button.setAttribute("aria-label", "Copy enrollment link failed");
       if (status)
         status.textContent = "The enrollment link could not be copied.";
@@ -2159,9 +2431,16 @@ class AdminApp extends HTMLElement {
 
   /** @param {string} grantId */
   async cancelManagerGrant(grantId) {
-    if (!this.state.site) return;
-    await adminApi.cancelManagerGrant(this.state.site.siteId, grantId);
-    await this.openSite(this.state.site.siteId, false);
+    const feedback = actionFeedback("admin.toast.linkCancelled");
+    try {
+      if (!this.state.site) return;
+      await adminApi.cancelManagerGrant(this.state.site.siteId, grantId);
+      feedback.success();
+      await this.openSite(this.state.site.siteId, false);
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
+    }
   }
 
   /**
@@ -2203,39 +2482,58 @@ class AdminApp extends HTMLElement {
    * @returns {Promise<void>}
    */
   async revokeDevice(deviceId) {
-    if (!this.state.site) return;
-    const device = this.state.devices.find(
-      (item) => (item.bindingId || item.deviceId) === deviceId,
-    );
-    const label = device?.label || "this device";
-    if (
-      !globalThis.confirm(
-        `Remove access for ${label} from ${this.state.site.name}? This ends this Site binding immediately. Other Site bindings on the same physical device are not affected.`,
-      )
-    ) {
-      return;
+    const feedback = actionFeedback("admin.toast.accessRemoved");
+    try {
+      if (!this.state.site) return;
+      const device = this.state.devices.find(
+        (item) => (item.bindingId || item.deviceId) === deviceId,
+      );
+      const label = device?.label || "this device";
+      if (
+        !globalThis.confirm(
+          `Remove access for ${label} from ${this.state.site.name}? This ends this Site binding immediately. Other Site bindings on the same physical device are not affected.`,
+        )
+      ) {
+        return;
+      }
+      const siteId = this.state.site.siteId;
+      await adminApi.revokeDevice(siteId, deviceId);
+      feedback.success();
+      await this.openSite(siteId, false);
+      this.state.revocationMessage = `Access for ${label} was removed from this Site.`;
+      this.render();
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
     }
-    const siteId = this.state.site.siteId;
-    await adminApi.revokeDevice(siteId, deviceId);
-    await this.openSite(siteId, false);
-    this.state.revocationMessage = `Access for ${label} was removed from this Site.`;
-    this.render();
   }
 
   async revokeAllSiteDevices(form) {
-    if (!this.state.site) return;
-    const confirmation = formValue(new FormData(form), "confirmation");
-    const result = await adminApi.revokeAllSiteDeviceBindings(
-      this.state.site.siteId,
-      confirmation,
-    );
-    const siteId = this.state.site.siteId;
-    await this.openSite(siteId, false);
-    this.state.revocationMessage =
-      result.status === "complete"
-        ? `Operation ${result.operationId}: all Site credentials invalidated and ${result.affectedCount} device record${result.affectedCount === 1 ? "" : "s"} reconciled.`
-        : `Operation ${result.operationId}: canonical Site credentials were invalidated, but ${result.failedCount} device record${result.failedCount === 1 ? "" : "s"} could not be reconciled. Follow the revocation runbook.`;
-    this.render();
+    const feedback = actionFeedback("admin.toast.accessRemoved");
+    try {
+      if (!this.state.site) return;
+      const confirmation = formValue(new FormData(form), "confirmation");
+      const result = await adminApi.revokeAllSiteDeviceBindings(
+        this.state.site.siteId,
+        confirmation,
+      );
+      feedback.success(
+        result.status === "complete"
+          ? "admin.toast.accessRemoved"
+          : "admin.toast.revocationPartial",
+        result.status === "complete" ? "success" : "info",
+      );
+      const siteId = this.state.site.siteId;
+      await this.openSite(siteId, false);
+      this.state.revocationMessage =
+        result.status === "complete"
+          ? `Operation ${result.operationId}: all Site credentials invalidated and ${result.affectedCount} device record${result.affectedCount === 1 ? "" : "s"} reconciled.`
+          : `Operation ${result.operationId}: canonical Site credentials were invalidated, but ${result.failedCount} device record${result.failedCount === 1 ? "" : "s"} could not be reconciled. Follow the revocation runbook.`;
+      this.render();
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
+    }
   }
 
   async beginPhysicalDeviceRevocation(physicalDeviceId) {
@@ -2277,19 +2575,27 @@ class AdminApp extends HTMLElement {
   }
 
   async revokePhysicalDeviceEverywhere(form) {
-    if (!this.state.site || !this.state.physicalDeviceRevocationPreview) return;
-    const preview = this.state.physicalDeviceRevocationPreview;
-    const confirmation = formValue(new FormData(form), "confirmation");
-    const result = await adminApi.revokePhysicalDeviceEverywhere(
-      preview.physicalDeviceId,
-      confirmation,
-    );
-    const siteId = this.state.site.siteId;
-    await this.openSite(siteId, false);
-    this.state.revocationMessage = result.alreadyRevoked
-      ? "This physical device was already revoked."
-      : `Operation ${result.operationId}: physical device revoked across ${result.affectedCount} Site binding${result.affectedCount === 1 ? "" : "s"}.`;
-    this.render();
+    const feedback = actionFeedback("admin.toast.accessRemoved");
+    try {
+      if (!this.state.site || !this.state.physicalDeviceRevocationPreview)
+        return;
+      const preview = this.state.physicalDeviceRevocationPreview;
+      const confirmation = formValue(new FormData(form), "confirmation");
+      const result = await adminApi.revokePhysicalDeviceEverywhere(
+        preview.physicalDeviceId,
+        confirmation,
+      );
+      feedback.success();
+      const siteId = this.state.site.siteId;
+      await this.openSite(siteId, false);
+      this.state.revocationMessage = result.alreadyRevoked
+        ? "This physical device was already revoked."
+        : `Operation ${result.operationId}: physical device revoked across ${result.affectedCount} Site binding${result.affectedCount === 1 ? "" : "s"}.`;
+      this.render();
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
+    }
   }
 
   async beginEmergencySiteRevocation() {
@@ -2321,17 +2627,29 @@ class AdminApp extends HTMLElement {
   }
 
   async startEmergencySiteRevocation(form) {
-    const preview = this.state.emergencyRevocationPreview;
-    if (!preview) return;
-    const confirmation = formValue(new FormData(form), "confirmation");
-    const result = await adminApi.startEmergencySiteRevocation(
-      preview.sites.map((site) => site.siteId),
-      confirmation,
-    );
-    this.state.emergencyRevocationSites = [];
-    this.state.emergencyRevocationPreview = null;
-    this.state.revocationMessage = `Operation ${result.operationId}: credentials invalidated across ${result.affectedSiteCount} Sites; ${result.queuedSiteCount} Site reconciliation job${result.queuedSiteCount === 1 ? "" : "s"} queued${result.enqueueFailedCount ? ` and ${result.enqueueFailedCount} require runbook follow-up` : ""}.`;
-    this.render();
+    const feedback = actionFeedback("admin.toast.revocationStarted");
+    try {
+      const preview = this.state.emergencyRevocationPreview;
+      if (!preview) return;
+      const confirmation = formValue(new FormData(form), "confirmation");
+      const result = await adminApi.startEmergencySiteRevocation(
+        preview.sites.map((site) => site.siteId),
+        confirmation,
+      );
+      feedback.success(
+        result.enqueueFailedCount
+          ? "admin.toast.revocationPartial"
+          : "admin.toast.revocationStarted",
+        "info",
+      );
+      this.state.emergencyRevocationSites = [];
+      this.state.emergencyRevocationPreview = null;
+      this.state.revocationMessage = `Operation ${result.operationId}: credentials invalidated across ${result.affectedSiteCount} Sites; ${result.queuedSiteCount} Site reconciliation job${result.queuedSiteCount === 1 ? "" : "s"} queued${result.enqueueFailedCount ? ` and ${result.enqueueFailedCount} require runbook follow-up` : ""}.`;
+      this.render();
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
+    }
   }
 
   beginDeviceSuspension(bindingId) {
@@ -2346,22 +2664,29 @@ class AdminApp extends HTMLElement {
   }
 
   async suspendDeviceBinding(form) {
-    if (!this.state.site || !this.state.suspensionTarget) return;
-    const reason = formValue(new FormData(form), "reason");
-    const bindingId =
-      this.state.suspensionTarget.bindingId ||
-      this.state.suspensionTarget.deviceId;
-    const result = await adminApi.suspendDeviceBinding(
-      this.state.site.siteId,
-      bindingId,
-      reason,
-    );
-    const siteId = this.state.site.siteId;
-    await this.openSite(siteId, false);
-    this.state.revocationMessage = result.alreadySuspended
-      ? "This binding was already suspended."
-      : `${result.binding.label || "Device binding"} suspended. Existing credentials are invalid; re-enrollment requires a new single-Site grant.`;
-    this.render();
+    const feedback = actionFeedback("admin.toast.deviceSuspended");
+    try {
+      if (!this.state.site || !this.state.suspensionTarget) return;
+      const reason = formValue(new FormData(form), "reason");
+      const bindingId =
+        this.state.suspensionTarget.bindingId ||
+        this.state.suspensionTarget.deviceId;
+      const result = await adminApi.suspendDeviceBinding(
+        this.state.site.siteId,
+        bindingId,
+        reason,
+      );
+      feedback.success();
+      const siteId = this.state.site.siteId;
+      await this.openSite(siteId, false);
+      this.state.revocationMessage = result.alreadySuspended
+        ? "This binding was already suspended."
+        : `${result.binding.label || "Device binding"} suspended. Existing credentials are invalid; re-enrollment requires a new single-Site grant.`;
+      this.render();
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
+    }
   }
 
   /**
@@ -2377,6 +2702,7 @@ class AdminApp extends HTMLElement {
         const form = asForm(event.currentTarget);
         if (!form.reportValidity()) return;
         const data = new FormData(form);
+        const feedback = actionFeedback("admin.toast.invitationSent");
         adminApi
           .inviteAdminUser({
             firstName: String(data.get("firstName") || ""),
@@ -2388,10 +2714,12 @@ class AdminApp extends HTMLElement {
             role: String(data.get("role") || ""),
           })
           .then(() => {
-            this.state.adminUserMessage = "Invitation sent.";
+            feedback.success();
+            this.state.adminUserMessage = "";
             return this.openRoute();
           })
           .catch((error) => {
+            feedback.failure(error);
             this.state.error = error.message;
             this.render();
           });
@@ -2422,6 +2750,14 @@ class AdminApp extends HTMLElement {
           reinvite: () => adminApi.reinviteAdminUser(username),
           reset: () => adminApi.resetAdminUserPassword(username),
         };
+        const feedback = actionFeedback(
+          {
+            suspend: "admin.toast.adminSuspended",
+            reinstate: "admin.toast.adminReinstated",
+            reinvite: "admin.toast.invitationSent",
+            reset: "admin.toast.passwordReset",
+          }[action],
+        );
         const request = requests[action]?.();
         if (!request) return;
         button.disabled = true;
@@ -2429,15 +2765,12 @@ class AdminApp extends HTMLElement {
         button.textContent = "Working…";
         request
           .then(() => {
-            this.state.adminUserMessage = {
-              suspend: "Administrator suspended.",
-              reinstate: "Administrator reinstated.",
-              reinvite: "Invitation sent again.",
-              reset: "Password reset instructions sent.",
-            }[action];
+            feedback.success();
+            this.state.adminUserMessage = "";
             return this.openRoute();
           })
           .catch((error) => {
+            feedback.failure(error);
             this.state.error = error.message;
             this.render();
           });
@@ -2445,13 +2778,18 @@ class AdminApp extends HTMLElement {
     });
     this.querySelectorAll("[data-admin-role]").forEach((select) => {
       select.addEventListener("change", () => {
+        const feedback = actionFeedback("admin.toast.roleUpdated");
         adminApi
           .updateAdminUserRole(
             dataAttr(select, "data-username"),
             String(select.value),
           )
-          .then(() => this.openRoute())
+          .then(() => {
+            feedback.success();
+            return this.openRoute();
+          })
           .catch((error) => {
+            feedback.failure(error);
             this.state.error = error.message;
             this.render();
           });
@@ -2466,6 +2804,7 @@ class AdminApp extends HTMLElement {
       profileForm.addEventListener("submit", async (event) => {
         event.preventDefault();
         if (profileForm.dataset.saving === "true") return;
+        const feedback = actionFeedback("admin.profile.saved");
         profileForm.dataset.saving = "true";
         const save = profileForm.querySelector("[data-save-button]");
         save.disabled = true;
@@ -2480,6 +2819,7 @@ class AdminApp extends HTMLElement {
               this.state.profile.phone,
             ),
           });
+          feedback.success();
           this.state.profile = result.profile;
           const managerId = result.profile.directoryUserId;
           if (managerId) {
@@ -2506,12 +2846,13 @@ class AdminApp extends HTMLElement {
                 : site,
             );
           }
-          this.state.profileMessage = t("admin.profile.saved");
+          this.state.profileMessage = "";
           if (profileForm.isConnected) {
             this.render();
-            this.querySelector("#profile-message")?.focus();
+            this.querySelector("h1")?.focus();
           }
         } catch (error) {
+          feedback.failure(error);
           if (profileForm.isConnected)
             showFormSaveError(
               profileForm,
@@ -3205,6 +3546,7 @@ class AdminApp extends HTMLElement {
         if (siteDetailsForm instanceof HTMLFormElement)
           syncSiteDetailsForm(siteDetailsForm);
       },
+      actionFeedback,
     );
     this.querySelector(
       "wa-select[name='site-manager-user-id']",
@@ -3235,12 +3577,15 @@ class AdminApp extends HTMLElement {
         const siteId = this.state.site.siteId;
         const requestId = button.dataset.requestId || crypto.randomUUID();
         button.dataset.requestId = requestId;
+        const feedback = actionFeedback("admin.toast.letterResendQueued");
         try {
           const queued = await adminApi.resendSiteLetter(siteId, requestId);
+          feedback.success("admin.toast.letterResendQueued", "info");
           this.state.siteSaveMessage = t("admin.letters.resendQueued");
           this.render();
           void this.refreshLetterEmails(siteId, queued.jobId);
-        } catch {
+        } catch (error) {
+          feedback.failure(error);
           button.disabled = false;
           showFormSaveError(
             button.closest("section"),
@@ -3407,10 +3752,7 @@ class AdminApp extends HTMLElement {
     this.querySelector("#apply-site-import")?.addEventListener("click", () => {
       this.applySiteImport().catch((err) => {
         this.state.importBusy = false;
-        this.state.importNotice = {
-          title: "Import failed",
-          message: "The import could not be completed. Please try again.",
-        };
+        this.state.importNotice = null;
         this.state.error = err.message;
         this.render();
       });
@@ -4026,7 +4368,6 @@ class AdminApp extends HTMLElement {
               : ""
           }
         </header>
-        ${importFailureToast(this.state.importNotice)}
         ${
           this.state.hasToken
             ? ""
@@ -5006,14 +5347,6 @@ function importHistoryStatus(item) {
 }
 
 /** @param {{ title: string, message: string } | null} notice */
-function importFailureToast(notice) {
-  if (!notice) return "";
-  return `<section class="admin-toast admin-toast--error" role="alert" aria-atomic="true">
-    <wa-icon name="triangle-exclamation" aria-hidden="true"></wa-icon>
-    <div><p class="admin-toast__title">${escapeHtml(notice.title)}</p><p class="admin-toast__message">${escapeHtml(notice.message)}</p></div>
-    <button class="btn-icon admin-toast__close" id="dismiss-import-notice" type="button" aria-label="Dismiss import failure notification"><wa-icon name="xmark" aria-hidden="true"></wa-icon></button>
-  </section>`;
-}
 
 function siteImportHelpDialog() {
   return `<dialog id="site-import-help-dialog" class="places-modal" aria-labelledby="site-import-help-title">
