@@ -54,6 +54,9 @@ export function toggleCardCompletion(
       )
         throw new Error("Task completion was not confirmed");
       saved = true;
+      // Confirmed: the busy spinner (an infinite animation) must stop before
+      // the slide, which waits for every animation under the card to finish.
+      card.removeAttribute("aria-busy");
       if (card.isConnected) await slideCompletedCard(card);
       onSaved(result.task);
     } catch (error) {
@@ -99,9 +102,14 @@ export async function slideCompletedCard(card) {
   shell.append(clip);
   clip.append(card);
   card.inert = true;
+  // Only finite animations can finish: a looping one (a busy spinner left on
+  // a descendant) would hold the card on screen forever.
   await Promise.allSettled(
     shell
       .getAnimations({ subtree: true })
+      .filter((animation) =>
+        Number.isFinite(animation.effect?.getTiming().iterations ?? 1),
+      )
       .map((animation) => animation.finished),
   );
   shell.remove();

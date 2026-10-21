@@ -183,6 +183,21 @@ it("starts saving a phone action immediately and opens the dialer once", async (
   expect(callbacks.onSaved).toHaveBeenCalledWith({ status: "in_progress" });
 });
 
+it("clears busy before the slide and ignores a looping animation", async () => {
+  shell.getAnimations = () => [
+    {
+      finished: new Promise(() => {}),
+      effect: { getTiming: () => ({ iterations: Infinity }) },
+    },
+    { finished: animation, effect: { getTiming: () => ({ iterations: 1 }) } },
+  ];
+  toggleCardCompletion(host, card, button, callbacks);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(card.removeAttribute).toHaveBeenCalledWith("aria-busy");
+  expect(callbacks.onSaved).toHaveBeenCalledWith({ status: "completed" });
+  expect(callbacks.render).toHaveBeenCalled();
+});
+
 it("dials only a plain digit string from the phone attribute", () => {
   const location = { href: "" };
   vi.stubGlobal("window", { matchMedia: () => ({ matches: true }), location });
