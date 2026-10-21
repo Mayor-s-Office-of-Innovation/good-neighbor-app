@@ -154,6 +154,7 @@ locals {
     "POST /admin/v1/emergency-site-revocations:preview",
     "POST /admin/v1/emergency-site-revocations",
     "GET /health",
+    "GET /v1/311-media",
   ]
 
   # Admin analytics (ADR 0013): served by aws_lambda_function.analytics_query,
@@ -185,6 +186,7 @@ locals {
     "POST /app/v1/enrollment/redeem"      = true
     "POST /app/v1/manager-access/request" = true
     "GET /v1/sites:search"                = true
+    "GET /v1/311-media"                    = true
     "GET /health"                         = true
     "POST /submissions"                   = true
   }

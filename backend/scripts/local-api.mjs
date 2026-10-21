@@ -211,6 +211,8 @@ import {
   runAnalyticsQuery,
 } from "../src/handlers/admin-analytics.js";
 
+import { get311Media } from "../src/integrations/sf311-media.js";
+
 const PORT = Number(process.env.LOCAL_API_PORT ?? 3001);
 const DEFAULT_SUB = process.env.DEBUG_SUB ?? "local-dev-user";
 // Stub-only requests (no Bearer token) always carry a site claim: the
@@ -259,6 +261,7 @@ function route(method, pattern, handler) {
 
 /** method+path → handler. Extend alongside Terraform's API Gateway routes. */
 const routes = [
+  route("GET", "/v1/311-media", get311Media),
   route("POST", "/site-code", siteCodeHandler),
   // Device bootstrap (Option 4 device auth): open routes, no authorizer.
   route("POST", "/v1/devices", registerDevice),

@@ -6,7 +6,7 @@ const {
   downscaleImage,
   getAnalyzerApiKey,
   getObjectBytes,
-  presignGet,
+  create311MediaLink,
   send,
 } = vi.hoisted(() => ({
   createAnalyzerClient: vi.fn(),
@@ -16,11 +16,12 @@ const {
   })),
   getAnalyzerApiKey: vi.fn(),
   getObjectBytes: vi.fn(),
-  presignGet: vi.fn(),
+  create311MediaLink: vi.fn(),
   send: vi.fn(),
 }));
 vi.mock("../../db.js", () => ({ ddb: { send } }));
-vi.mock("../../s3.js", () => ({ getObjectBytes, presignGet }));
+vi.mock("../../s3.js", () => ({ getObjectBytes }));
+vi.mock("../../integrations/sf311-media.js", () => ({ create311MediaLink }));
 vi.mock("../../media/downscale.js", () => ({ downscaleImage }));
 vi.mock("../api-key.js", () => ({ getAnalyzerApiKey }));
 vi.mock("../analyzer-client.js", () => ({ createAnalyzerClient }));
@@ -299,7 +300,7 @@ describe("app action execution", () => {
     } finally {
       send.mockReset();
       getObjectBytes.mockReset();
-      presignGet.mockReset();
+      create311MediaLink.mockReset();
       vi.unstubAllGlobals();
     }
   });
@@ -625,7 +626,7 @@ describe("app action execution", () => {
       createAnalyzerClient.mockReset();
       getAnalyzerApiKey.mockReset();
       getObjectBytes.mockReset();
-      presignGet.mockReset();
+      create311MediaLink.mockReset();
       send.mockReset();
       vi.unstubAllGlobals();
     }
@@ -650,7 +651,7 @@ describe("app action execution", () => {
           },
         ],
       });
-    presignGet.mockResolvedValueOnce(
+    create311MediaLink.mockResolvedValueOnce(
       "https://uploads.example.test/image.jpg?X-Amz-Signature=secret",
     );
     const fetchImpl = vi
@@ -741,10 +742,9 @@ describe("app action execution", () => {
           recordedAt: "2026-08-18T12:00:00.000Z",
         },
       ]);
-      expect(presignGet).toHaveBeenCalledWith({
-        bucket: "bucket",
+      expect(create311MediaLink).toHaveBeenCalledWith({
+        config: expect.objectContaining({ uploadBucket: "bucket" }),
         key: "checks/site-1/check-1/North/artifact-1",
-        expiresIn: 300,
       });
       expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toEqual({
         SRnum: "2000008106",
@@ -761,7 +761,7 @@ describe("app action execution", () => {
     } finally {
       send.mockReset();
       getObjectBytes.mockReset();
-      presignGet.mockReset();
+      create311MediaLink.mockReset();
       vi.unstubAllGlobals();
     }
   });
@@ -785,7 +785,7 @@ describe("app action execution", () => {
           },
         ],
       });
-    presignGet.mockResolvedValueOnce(
+    create311MediaLink.mockResolvedValueOnce(
       "https://uploads.example.test/image.jpg?X-Amz-Signature=secret",
     );
     const fetchImpl = vi
@@ -879,7 +879,7 @@ describe("app action execution", () => {
     } finally {
       send.mockReset();
       getObjectBytes.mockReset();
-      presignGet.mockReset();
+      create311MediaLink.mockReset();
       vi.unstubAllGlobals();
     }
   });
@@ -903,7 +903,7 @@ describe("app action execution", () => {
           },
         ],
       });
-    presignGet.mockResolvedValueOnce(
+    create311MediaLink.mockResolvedValueOnce(
       "https://uploads.example.test/image.jpg?X-Amz-Signature=secret",
     );
     const fetchImpl = vi.fn().mockResolvedValueOnce(
@@ -1011,7 +1011,7 @@ describe("app action execution", () => {
     } finally {
       send.mockReset();
       getObjectBytes.mockReset();
-      presignGet.mockReset();
+      create311MediaLink.mockReset();
       vi.unstubAllGlobals();
     }
   });

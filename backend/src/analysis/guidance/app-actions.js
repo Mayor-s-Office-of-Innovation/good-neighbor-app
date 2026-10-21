@@ -1,6 +1,7 @@
 import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../../db.js";
-import { getObjectBytes, presignGet } from "../../s3.js";
+import { getObjectBytes } from "../../s3.js";
+import { create311MediaLink } from "../../integrations/sf311-media.js";
 import { downscaleImage } from "../../media/downscale.js";
 import { getAnalyzerApiKey } from "../api-key.js";
 import { createAnalyzerClient } from "../analyzer-client.js";
@@ -490,10 +491,9 @@ async function attachImagesToServiceRequest({
       continue;
     }
     try {
-      const imageUrl = await presignGet({
-        bucket: config.uploadBucket,
+      const imageUrl = await create311MediaLink({
+        config,
         key: artifact.s3Key,
-        expiresIn: 300,
       });
       const payload = buildAttachmentUpdatePayload({
         srNum,

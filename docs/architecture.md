@@ -361,3 +361,21 @@ photo so the client can re-reserve and upload its retained file; uncertain log
 submissions replay their original payload before any recovery. Per-log quotas
 count live reservations using conditional revision updates, independent of
 DynamoDB TTL cleanup. Daily device/Site/global quotas are not refunded.
+
+### 311 attachment image leases
+
+Silent and manually triggered 311 filings share the same attachment path. Each
+attachment receives an opaque bearer URL at `GET /v1/311-media?token=…` valid for
+48 hours from issuance. This anonymous route requires a random 256-bit token;
+it grants access to one image only. DynamoDB stores the SHA-256 token hash under
+`PK=SF311_MEDIA#<hash>`, `SK=LEASE`, with `entityType=SF311_MEDIA_LEASE`, `s3Key`,
+and epoch-seconds `expiresAt`. The handler enforces expiry even before DynamoDB
+TTL removes the record, then redirects valid requests to a fresh S3 GET URL
+capped to five minutes or the remaining lease, whichever is shorter. Responses
+are not cached. Deleting the source object also removes access to its bytes.
+
+This indirection avoids S3 URLs expiring early with Lambda's temporary AWS
+credentials. Both the API and worker receive `SF311_MEDIA_BASE_URL` from
+Terraform (the API Gateway origin); local development sets a reachable API or
+tunnel origin. Existing URLs already sent to 311 retain their original expiry.
+Do not log bearer tokens, full lease URLs, or redirect URLs.

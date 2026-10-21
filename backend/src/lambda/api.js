@@ -2,6 +2,7 @@ import {
   getDuplicateLinks,
   separateDuplicate,
 } from "../handlers/duplicate-links.js";
+import { get311Media } from "../integrations/sf311-media.js";
 import { getDuplicateResult } from "../handlers/duplicate-results.js";
 import {
   listCareWork,
@@ -202,6 +203,7 @@ import {
 // The individual handlers carry richer (event, context, callback) signatures; we
 // only ever call them with the event, so the map is typed to that call shape.
 const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
+  "GET /v1/311-media": get311Media,
   "POST /site-code": siteCodeHandler,
   // Device bootstrap (Option 4 device auth — see docs/adr/0010): open routes,
   // no authorizer. Everything under /v1/* except these + the intakes is gated.

@@ -7,6 +7,7 @@
 # cannot drift apart.
 locals {
   sf311_lambda_environment = {
+    SF311_MEDIA_BASE_URL             = aws_apigatewayv2_api.http.api_endpoint
     GNP_311_SUBMISSION_ENABLED        = tostring(var.enable_311_submission)
     SF311_CREATESR_URL                = var.sf311_createsr_url
     SF311_UPDATESR_URL                = var.sf311_updatesr_url

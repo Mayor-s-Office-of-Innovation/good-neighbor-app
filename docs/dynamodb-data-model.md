@@ -746,3 +746,13 @@ directory record use `ADMIN_PROFILE#<cognitoSubject>` / `#META`; this profile me
 is not a manager assignment. Profile writes use the existing profile mutation lock and
 recovery journal. Site public contacts and derived primary contacts also retain the
 extension separately from the phone number.
+
+## 311 media bearer leases
+
+`SF311_MEDIA_LEASE` items use `PK=SF311_MEDIA#<SHA-256 token hash>` and
+`SK=LEASE`. Attributes are `s3Key` (one upload image) and `expiresAt` (epoch
+seconds, issuance plus 172800 seconds). There are no GSI keys or raw tokens.
+The 311 attachment writer conditionally puts each lease; the anonymous media
+handler performs a strongly consistent Get by token hash and rejects expired
+leases independently of asynchronous TTL cleanup. This access path is shared by
+silent and manual filings. See [311 attachment image leases](architecture.md#311-attachment-image-leases).
