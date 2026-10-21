@@ -561,7 +561,8 @@ describe("results prompt opened before the completion response", () => {
   });
 
   it.each([
-    ["failed", { task: null, failed: true }, false, false],
+    ["failed, no draft", { task: null, failed: true }, false, false],
+    ["failed, draft kept", { task: null, failed: true }, true, true],
     ["no results, no draft", { task: null }, false, false],
     ["no results, draft kept", { task: null }, true, true],
   ])(
@@ -573,6 +574,8 @@ describe("results prompt opened before the completion response", () => {
       await dialog._completion;
       expect(dialog._open).toBe(staysOpen);
       expect(dialog._pendingEvent).toBeNull();
+      // A kept draft is explained as unattached, not as a window conflict.
+      expect(dialog._unattached).toBe(true);
       if (staysOpen) expect(dialog._render).toHaveBeenCalled();
     },
   );

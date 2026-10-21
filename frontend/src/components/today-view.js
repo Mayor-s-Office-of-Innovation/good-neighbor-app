@@ -2291,7 +2291,10 @@ class TodayView extends HTMLElement {
       ).then((result) => {
         if (!result) return;
         this._applyTaskResult(task.taskId, result.task);
-        this._expireRemainingLists(); // filed → In-progress on the server
+        // Filed → In-progress on the server. The override (which also expires
+        // the remaining lists) keeps the card there if a reload's open-list
+        // read lands before the worklist index has caught up.
+        this._setTaskOverride(task.taskId, "in_progress");
         void this._refreshAfterAction();
       });
     }

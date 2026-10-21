@@ -95,6 +95,9 @@ export class TaskUpdateDialog extends HTMLElement {
     this._results = true;
     this._editorOnly = false;
     this._resetDraft();
+    // Results mode: set when the response leaves nothing to attach a kept
+    // draft to, so the prompt explains that instead of a window conflict.
+    this._unattached = false;
     this._completion = completion
       ? completion.then((completed) => this._adoptCompletion(completed))
       : null;
@@ -118,10 +121,12 @@ export class TaskUpdateDialog extends HTMLElement {
     if (!task) {
       if (showing) {
         this._pendingEvent = null;
-        // A failed action is reported on the card; a draft typed meanwhile
-        // cannot be attached to anything, so the prompt simply goes away.
-        if (completed.failed || !this._hasUnsavedDraft()) this._dismiss();
-        else this._render();
+        // The action failed (reported on the card) or opened no documentation
+        // window: an empty prompt just goes away, but a draft typed meanwhile
+        // stays on screen with an accurate note so it can be copied first.
+        this._unattached = true;
+        if (this._hasUnsavedDraft()) this._render();
+        else this._dismiss();
       }
       return null;
     }
@@ -198,6 +203,7 @@ export class TaskUpdateDialog extends HTMLElement {
       return taskUpdateCapture({
         pendingEvent: this._pendingEvent,
         results: this._results,
+        unattached: this._unattached,
         task: this._results ? this._task : null,
         photosAllowed: this._photosAllowed(),
         files: this._files,
@@ -529,17 +535,15 @@ export class TaskUpdateDialog extends HTMLElement {
       // Skip while the completion is in flight (Done awaits it in _saveNotes
       // before getting here): close now and seal the documentation window
       // in the background once the response lands.
-      const task = this._task;
+      // A results prompt is a single-use element (openResultsDialog creates
+      // one per prompt and removes it on close), so its fields are free to
+      // carry the late seal.
       const completion = this._completion;
       this._dismiss();
-      void completion.then((pendingEvent) =>
-        pendingEvent
-          ? documentTaskUpdate(task.taskId, pendingEvent.updateId, {
-              notes: [],
-              photoKeys: [],
-            }).catch(() => {})
-          : undefined,
-      );
+      void completion.then((pendingEvent) => {
+        this._pendingEvent = pendingEvent;
+        return this._sealPendingEvent();
+      });
       return;
     }
     if (!this._pendingEvent && this._results) {

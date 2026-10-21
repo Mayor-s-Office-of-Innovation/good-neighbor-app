@@ -357,6 +357,43 @@ it("shows results prompts one at a time, in tap order", async () => {
     tasks[1],
     expect.any(Promise),
   );
+  // Drain the module-level queue so later tests start with no open prompt.
+  dialogs[1].close();
+  await vi.advanceTimersByTimeAsync(0);
+});
+
+it("reports a queued card's failure without waiting for the open prompt", async () => {
+  const dialogs = [resultsDialogStub(), resultsDialogStub()];
+  let created = 0;
+  vi.stubGlobal("document", {
+    createElement: () => dialogs[created++],
+    activeElement: button,
+    body: { append: vi.fn() },
+  });
+  const tasks = [
+    { taskId: "first", canBeInProgress: false },
+    { taskId: "second", canBeInProgress: false },
+  ];
+  vi.mocked(completeTask).mockReturnValueOnce(new Promise(() => {}));
+  void completeCardAction(
+    "first",
+    { completionMethod: "manual" },
+    { task: tasks[0] },
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  expect(created).toBe(1);
+  vi.mocked(completeTask).mockRejectedValueOnce(new Error("offline"));
+  const failing = completeCardAction(
+    "second",
+    { completionMethod: "manual" },
+    { task: tasks[1] },
+  );
+  // The first prompt is still open; the second card hears back anyway.
+  await expect(failing).rejects.toThrow("offline");
+  dialogs[0].close();
+  await vi.advanceTimersByTimeAsync(0);
+  // Its turn in the queue is skipped: no second prompt is ever created.
+  expect(created).toBe(1);
 });
 
 it("skips the prompt for actions the backend never documents", async () => {

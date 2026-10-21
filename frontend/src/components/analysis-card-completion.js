@@ -151,7 +151,18 @@ export async function completeCardAction(taskId, body, { task = null } = {}) {
       (result) => ({ task: result?.resultsPending ? result.task : null }),
       () => ({ task: null, failed: true }),
     );
-    await showResultsDialog(task, completion);
+    // The prompt opens at its turn in the queue. When the response has
+    // already said there is nothing to document (a failure, or no results
+    // pending) before that turn comes, the card gets its outcome now rather
+    // than after the prompts ahead of it close.
+    let state = "queued";
+    const turn = showResultsDialog(task, completion, () => {
+      if (state === "queued") state = "opened";
+      return state === "opened";
+    });
+    const early = await Promise.race([turn.then(() => null), completion]);
+    if (early && !early.task && state === "queued") state = "skipped";
+    else await turn;
     return request;
   }
   const result = await request;
@@ -159,8 +170,11 @@ export async function completeCardAction(taskId, body, { task = null } = {}) {
   return result;
 }
 
-function showResultsDialog(task, completion) {
-  const turn = dialogQueue.then(() => openResultsDialog(task, completion));
+/** @param {() => boolean} [open] asked at the turn; false skips the prompt */
+function showResultsDialog(task, completion, open = () => true) {
+  const turn = dialogQueue.then(() =>
+    open() ? openResultsDialog(task, completion) : undefined,
+  );
   dialogQueue = turn.catch(() => {});
   return turn;
 }

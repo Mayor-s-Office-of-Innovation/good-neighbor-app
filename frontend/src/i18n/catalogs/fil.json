@@ -793,6 +793,7 @@
   "taskUpdate.capture.saving": "Sine-save…",
   "taskUpdate.capture.successTitle": "Idokumento ang inyong tagumpay",
   "taskUpdate.capture.title": "Magdagdag ng larawan o tala sa problemang ito",
+  "taskUpdate.capture.unattached": "Hindi mai-attach ang mga resultang ito sa problema. Hindi na-save ang iyong draft. Kopyahin ang mga talang gusto mong itago bago isara.",
   "taskUpdate.cityHelp.no": "Hindi",
   "taskUpdate.cityHelp.notice": "Magpapadala kami ng update sa Lungsod para sa iyo",
   "taskUpdate.cityHelp.title": "Kailangan mo pa ba ng tulong mula sa Lungsod?",
