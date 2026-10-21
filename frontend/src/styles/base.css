@@ -653,8 +653,8 @@ button[data-loading] [data-loading-label] {
   background: var(--brand-blue);
   color: var(--on-ink);
   font: inherit;
-  font-weight: 700;
-  font-size: 1rem;
+  font-weight: var(--wa-font-weight-bold, 600);
+  font-size: var(--wa-font-size-m, 1rem);
   padding: 0.7rem 2.3rem;
   border-radius: var(--radius-pill);
   height: auto;
