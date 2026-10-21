@@ -31,7 +31,10 @@ import { analysisDialogs } from "./analysis-results.templates.js";
  *   showAnalysisDialogs: boolean,
  *   logoutError: string,
  *   logoutPending: boolean,
- * }} vm
+ *   busy?: boolean,
+ *   settingsDisabled?: boolean,
+ * }} vm `busy` marks the results region aria-busy; `settingsDisabled`
+ *   renders the settings button inert (both: the pre-data skeleton)
  * @returns {string}
  */
 export function homeShell({
@@ -42,12 +45,18 @@ export function homeShell({
   showAnalysisDialogs,
   logoutError,
   logoutPending,
+  busy = false,
+  settingsDisabled = false,
 }) {
   return html`
     <div class="home">
       <section class="home-region home-region--header">
         <div class="home-top-actions">
-          ${settingsMenu({ open: settingsMenuOpen, adminAccess })}
+          ${settingsMenu({
+            open: settingsMenuOpen,
+            adminAccess,
+            disabled: settingsDisabled,
+          })}
           <feedback-dialog
             class="feedback-dialog"
             hide-trigger
@@ -65,6 +74,7 @@ export function homeShell({
       <section
         class="home-region home-region--results"
         aria-label="${escapeAttr(t("today.results.aria"))}"
+        ${busy ? 'aria-busy="true"' : ""}
       >
         ${results}
       </section>
@@ -76,8 +86,81 @@ export function homeShell({
   `;
 }
 
-/** @param {{ open: boolean, adminAccess?: boolean }} state */
-export function settingsMenu({ open, adminAccess = false }) {
+/**
+ * The home painted before the worklist responds: the real chrome from the
+ * stored site record (identity, settings, tabs) plus placeholder cards, so
+ * the first paint does not wait on the network. No `#start-check` here on
+ * purpose — the real button arrives with the data, and the e2e suite treats
+ * its presence as "home loaded". Replaced wholesale by the live render.
+ * @param {{ siteName: string, adminAccess: boolean, homeFilter: string, checkLabel: string }} vm
+ */
+export function homeSkeleton({
+  siteName,
+  adminAccess,
+  homeFilter,
+  checkLabel,
+}) {
+  return homeShell({
+    settingsMenuOpen: false,
+    adminAccess,
+    hero: html`
+      <div class="screen__sec home-lead">
+        <div class="home-identity home-identity--with-summary">
+          <h1 class="home-identity__site" tabindex="-1">
+            ${escapeHtml(siteName)}
+          </h1>
+          <div class="lastlog" aria-hidden="true">
+            <span class="skeleton-line skeleton-line--eyebrow"></span>
+          </div>
+        </div>
+        <div class="home-actions">
+          <button
+            id="start-check-pending"
+            class="btn-blue"
+            type="button"
+            disabled
+          >
+            ${escapeHtml(checkLabel)}
+          </button>
+        </div>
+      </div>
+    `,
+    results: html`${taskTabs({ activeId: homeFilter })}${pendingCards()}`,
+    showAnalysisDialogs: false,
+    logoutError: "",
+    logoutPending: false,
+    busy: true,
+    settingsDisabled: true,
+  });
+}
+
+/**
+ * Placeholder card rail shown while a list is still loading: the pre-data
+ * skeleton, and the In-progress / History tabs before their lists arrive.
+ * @param {number} [count]
+ */
+export function pendingCards(count = 3) {
+  const card = html`
+    <div class="analysis-card analysis-card--pending">
+      <div class="analysis-card__panel">
+        <span class="skeleton-line skeleton-line--title"></span>
+        <span class="skeleton-line"></span>
+        <span class="skeleton-line skeleton-line--short"></span>
+      </div>
+    </div>
+  `;
+  return html`
+    <div
+      class="home-results__cards home-results__cards--pending"
+      aria-hidden="true"
+    >
+      ${card.repeat(count)}
+    </div>
+  `;
+}
+
+/** @param {{ open: boolean, adminAccess?: boolean, disabled?: boolean }} state */
+export function settingsMenu({ open, adminAccess = false, disabled = false }) {
   return html`
     <div class="home-settings-wrap">
       <button
@@ -87,6 +170,7 @@ export function settingsMenu({ open, adminAccess = false }) {
         aria-label="${escapeAttr(t("today.settings.aria"))}"
         aria-haspopup="menu"
         aria-expanded="${open ? "true" : "false"}"
+        ${disabled ? "disabled" : ""}
       >
         <span class="home-settings__icon" aria-hidden="true"></span>
       </button>
@@ -390,6 +474,7 @@ export function summaryBlock({ outsideRadius, label }) {
  *   hasPendingClearResult: boolean,
  *   showActiveClearTray?: boolean,
  *   historyGrouping?: string,
+ *   remainingStatus?: "pending" | "loaded" | "error",
  *   historyGroups: Array<{ checkTime: string | Date, cards: string, title?: string, compact?: boolean, counts?: any }>,
  * }} vm
  */
@@ -411,12 +496,19 @@ export function homeResults({
   showActiveClearTray = false,
   historyGroups,
   historyGrouping = "resolved",
+  remainingStatus = "loaded",
 }) {
   const hasVisibleCards =
     recentItems.length ||
     newTaskCount ||
     Boolean(activeClearCheck) ||
     historyGroups.length;
+  // The In-progress and History lists load after the first paint (the open
+  // list is all the To-do tab needs). Until they land those tabs show one
+  // placeholder card instead of an empty state — never a previous load's
+  // cards; a failed load says so and offers a retry.
+  const awaitingRemaining =
+    homeFilter !== "todo" && remainingStatus !== "loaded";
   const trayOptions = {
     id: "home-analysis-results",
     title: "",
@@ -471,11 +563,24 @@ export function homeResults({
             </div>
           `
         : ""}
-      ${!hasVisibleCards
-        ? homeFilter === "todo" && !hasPendingSession
-          ? homeAllDonePanel()
-          : emptyResults({ homeFilter })
-        : ""}
+      ${awaitingRemaining
+        ? remainingStatus === "error"
+          ? html`<p class="home-results__empty" role="status">
+              ${escapeHtml(t("today.remaining.error"))}
+              <button
+                id="retry-remaining"
+                class="btn-outline home-results__retry"
+                type="button"
+              >
+                ${escapeHtml(t("common.retry"))}
+              </button>
+            </p>`
+          : pendingCards(1)
+        : !hasVisibleCards
+          ? homeFilter === "todo" && !hasPendingSession
+            ? homeAllDonePanel()
+            : emptyResults({ homeFilter })
+          : ""}
     </div>
   `;
 }

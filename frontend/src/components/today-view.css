@@ -460,29 +460,6 @@
   z-index: 100;
 }
 
-/* "Start over" — a faint secondary link under the Resume button (draft present). */
-.home-cta__link {
-  display: block;
-  width: 100%;
-  margin-top: 0.7rem;
-  appearance: none;
-  background: none;
-  border: 0;
-  cursor: pointer;
-  font: inherit;
-  font-weight: 600;
-  color: var(--text-secondary);
-  padding: 0.3rem;
-  box-shadow: none;
-  height: auto;
-}
-
-.home-cta__link:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 2px;
-  border-radius: 6px;
-}
-
 /* Last submitted check metadata shown under the site title. */
 .lastlog {
   display: flex;
@@ -525,6 +502,67 @@
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+}
+
+/* Pre-data skeleton (today-view.templates.js homeSkeleton): the card rail
+   holds its shape while the worklist loads so the swap to real cards moves
+   as little as possible. Heights approximate a typical task card. The
+   shimmer is killed by the global reduced-motion rule in base.css. */
+.analysis-card--pending .analysis-card__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-height: 8rem;
+}
+
+.skeleton-line {
+  display: block;
+  height: 0.9rem;
+  width: 100%;
+  border-radius: 999px;
+  background: var(--wa-color-surface-lowered, #f1f2f3);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--wa-color-surface-default, #fff) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+.skeleton-line--title {
+  height: 1.3rem;
+  width: 55%;
+}
+
+.skeleton-line--short {
+  width: 40%;
+}
+
+.skeleton-line--eyebrow {
+  height: 0.8rem;
+  width: 9rem;
+  margin: 0.35rem auto 0;
+}
+
+html.wa-dark .skeleton-line {
+  background-color: var(--wa-color-neutral-fill-quiet, #2a2d35);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--wa-color-neutral-fill-normal, #3a3e48) 50%,
+    transparent 100%
+  );
+}
+
+@keyframes skeleton-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
 }
 
 /* Pinned while the task list scrolls (top: 0 against the document, which is

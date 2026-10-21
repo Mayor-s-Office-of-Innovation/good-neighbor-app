@@ -1076,6 +1076,7 @@
   "today.logout.text": "This will log you out and unlink this device: you'll need to request a new code to access the app",
   "today.logout.title": "Confirm you'd like to logout",
   "today.newResults.aria": "New analysis results",
+  "today.remaining.error": "Some tasks could not be loaded.",
   "today.results.aria": "Task results",
   "today.settings.aria": "Settings",
   "today.settings.attributions": "Attributions",

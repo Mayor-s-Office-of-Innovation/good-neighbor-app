@@ -930,6 +930,7 @@
   "today.logout.text": "Esto cerrará su sesión y desvinculará este dispositivo: tendrá que solicitar un código nuevo para acceder a la aplicación",
   "today.logout.title": "Confirme que desea cerrar sesión",
   "today.newResults.aria": "Nuevos resultados del análisis",
+  "today.remaining.error": "No se pudieron cargar algunas tareas.",
   "today.results.aria": "Resultados de tareas",
   "today.settings.aria": "Configuración",
   "today.settings.attributions": "Atribuciones",

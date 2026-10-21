@@ -138,6 +138,7 @@ import {
   heroBlock,
   homeResults,
   homeShell,
+  homeSkeleton,
   summaryBlock,
 } from "./today-view.templates.js";
 import { TaskSheets } from "./task-sheets.js";
@@ -193,9 +194,16 @@ function stashHomeState(view) {
         boundSites: view._boundSites,
         task311Statuses: view._311StatusByTaskId,
         duplicateLinks: new Map(view._duplicateLinks),
+        remainingStatus: view._remainingStatus,
+        remainingLoadedAt: view._remainingLoadedAt,
       }
     : null;
 }
+
+// How long the In-progress / History lists stay fresh enough to reuse on a
+// reload (route return, or an action on this screen) without re-fetching.
+// Cross-list actions expire them early — see _expireRemainingLists.
+const REMAINING_LISTS_FRESH_MS = 60_000;
 
 // The stash belongs to one site session and must never paint for the next
 // one: sign-out and re-binding replace the device's binding in the same
@@ -271,6 +279,10 @@ class TodayView extends HTMLElement {
 
   disconnectedCallback() {
     this._stopDuplicates?.();
+    if (this._skeletonTabClick) {
+      this.removeEventListener("click", this._skeletonTabClick);
+      this._skeletonTabClick = null;
+    }
     document.removeEventListener("close", this._duplicateCloseHandler, true);
     window.removeEventListener("phonecompletionsaved", this._phoneSaved);
     this._deletionUnsub?.();
@@ -303,8 +315,10 @@ class TodayView extends HTMLElement {
     if (!this._deletionUnsub) {
       this._deletionUnsub = onDeletionsChange((status) => {
         if (!this.isConnected) return;
-        if (status === "saved") void this.connectedCallback();
-        else if (this._homeModel) this._renderHome(this._homeModel);
+        if (status === "saved") {
+          this._expireRemainingLists();
+          void this.connectedCallback();
+        } else if (this._homeModel) this._renderHome(this._homeModel);
       });
     }
     if (!this._locationUnsub) {
@@ -362,6 +376,11 @@ class TodayView extends HTMLElement {
       this._stopDuplicates?.();
       this._duplicateLinks = new Map();
     }
+    // First arrival with nothing to show yet: paint the chrome and placeholder
+    // cards from the stored site record now, so first contentful paint does
+    // not wait on the worklist round trip below. A refresh (model present)
+    // or a restored snapshot already has real content on screen.
+    if (!this._homeModel && !restoring) this._renderSkeleton(requestedFilter);
     this._providerSitesStatus = "loading";
     // The provider catalog only feeds the site switcher and the location
     // prompt, so it rides in the same round trip as the worklist below
@@ -385,10 +404,15 @@ class TodayView extends HTMLElement {
     const active = getCurrentCheck();
     // An in-progress draft no longer re-enters capture from home: capture
     // lives on its own route (/check, /problem) and home stays the worklist.
+    // A failed local read must not strand the skeleton: no pending session
+    // is the safe reading, and the worklist load below carries on.
     let pendingSession =
       active && active.status === "capture-complete"
         ? active
-        : await loadSubmitted();
+        : await loadSubmitted().catch((err) => {
+            console.error("loadSubmitted failed", err);
+            return null;
+          });
     // Legacy-stage records (uploading/analyzing/submitted) are unreachable now —
     // clear them instead of letting them linger in the review store forever.
     if (pendingSession && pendingSession.status !== "capture-complete") {
@@ -399,37 +423,46 @@ class TodayView extends HTMLElement {
     // Checks + the open worklist are read from the backend on load (AP6/AP10) —
     // newest first, adapted to the UI record shape. Online-only: on failure show
     // an error, not a crash.
+    // Only the open list gates the first paint: it is all the default To-do
+    // tab shows. The In-progress and History lists (the slowest call is the
+    // ever-growing completed list) load right after the first render — see
+    // _loadRemainingTasks.
     let submitted, tasks;
+    let reuseRemaining = false;
     try {
-      const [
-        [catalog, bindings],
-        { checks },
-        openTasksResult,
-        completingTasksResult,
-        completedTasksResult,
-        cannotDoTasksResult,
-        inProgressTasksResult,
-      ] = await Promise.all([
-        catalogLoad,
-        listChecks({ limit: 30 }),
-        listTasks({ status: "open", limit: 50 }),
-        listTasks({ status: "completing", limit: 50 }),
-        listTasks({ status: "completed", limit: 50 }),
-        listTasks({ status: "cannot_do", limit: 50 }),
-        listTasks({ status: "in_progress", limit: 50 }),
-      ]);
+      const [[catalog, bindings], { checks }, openTasksResult] =
+        await Promise.all([
+          catalogLoad,
+          listChecks({ limit: 30 }),
+          listTasks({ status: "open", limit: 50 }),
+        ]);
       this._providerSitesStatus = catalog ? "loaded" : "error";
       this._providerSites = catalog?.sites || [];
       this._providerName =
         catalog?.providerName || this._site.providerName || "";
       this._boundSites = bindings;
-      tasks = uniqueTasks([
-        ...(openTasksResult.tasks || []),
-        ...(completingTasksResult.tasks || []),
-        ...(completedTasksResult.tasks || []),
-        ...(cannotDoTasksResult.tasks || []),
-        ...(inProgressTasksResult.tasks || []),
-      ]);
+      // The remaining lists are reused only on a route return (restored
+      // snapshot) for this site, loaded within REMAINING_LISTS_FRESH_MS and
+      // not expired by a cross-list action since; then only the open list is
+      // re-fetched. Every reload triggered from this screen follows an action
+      // (a task update, 311 filing, deletion, phone save, check finished)
+      // and re-fetches everything, so a status change made on the server is
+      // never masked by a cached list. When not reused they are dropped:
+      // In-progress and History show a placeholder and the tab counts stay
+      // hidden until the fresh lists land. Old cards are never shown.
+      const sameSite = !previousSiteId || previousSiteId === this._siteId;
+      reuseRemaining =
+        restoring &&
+        sameSite &&
+        this._remainingStatus === "loaded" &&
+        Date.now() - (this._remainingLoadedAt || 0) < REMAINING_LISTS_FRESH_MS;
+      const reused = reuseRemaining
+        ? (this._homeModel?.tasks || []).filter(
+            (task) => task.status && task.status !== "open",
+          )
+        : [];
+      tasks = uniqueTasks([...(openTasksResult.tasks || []), ...reused]);
+      if (!reuseRemaining) this._remainingStatus = "pending";
       submitted = (checks || [])
         .map((h) => adaptCheckHeader(h))
         .filter((c) => c.status === "submitted")
@@ -471,6 +504,55 @@ class TodayView extends HTMLElement {
       tasks,
       pendingSession: effectivePendingSession,
     });
+    // Evidence hydration is for the cards on screen now. The duplicate watcher
+    // (a poll) and the 311 status batch wait for the complete list, so each
+    // starts once per load: here when the remaining lists were reused, else
+    // in _loadRemainingTasks.
+    void this._hydrateVisibleHomeTasks();
+    if (reuseRemaining) {
+      this._remainingLoad = Promise.resolve();
+      this._watchDuplicates(tasks);
+      void this._hydrate311CardStatuses(tasks);
+    } else {
+      this._startRemainingLoad();
+    }
+    if (announceArrival) announceScreenHeading(this, ".home-identity__site");
+  }
+
+  /**
+   * A cross-list action (a task completed, filed to 311, moved to in
+   * progress, or a card deleted) changes the In-progress / History lists:
+   * forget their freshness so the next reload re-fetches them.
+   */
+  _expireRemainingLists() {
+    this._remainingLoadedAt = 0;
+    // A request already in flight predates the change: its answer must not
+    // land and re-stamp the lists as fresh.
+    this._remainingGeneration = (this._remainingGeneration || 0) + 1;
+  }
+
+  _startRemainingLoad() {
+    this._remainingLoad = this._loadRemainingTasks().catch((err) =>
+      console.error("remaining worklist failed", err),
+    );
+  }
+
+  /** The retry button on a failed In-progress / History load. */
+  _retryRemaining() {
+    this._remainingStatus = "pending";
+    // The re-render replaces the focused button with the placeholder: keep
+    // keyboard users on the tab they are looking at.
+    this._focusAfterRender = "home-tab-current";
+    if (this._homeModel) this._renderHome(this._homeModel);
+    this._startRemainingLoad();
+  }
+
+  _taskWith311CardStatus(task) {
+    return taskWith311Status(task, this._311StatusByTaskId);
+  }
+
+  /** @param {Record<string, any>[]} tasks */
+  _watchDuplicates(tasks) {
     this._stopDuplicates?.();
     const siteId = this._siteId;
     this._stopDuplicates = watchDuplicateIssues(
@@ -490,13 +572,55 @@ class TodayView extends HTMLElement {
           this._renderHome(this._homeModel);
       },
     );
-    void this._hydrate311CardStatuses(tasks);
-    void this._hydrateVisibleHomeTasks();
-    if (announceArrival) announceScreenHeading(this, ".home-identity__site");
   }
 
-  _taskWith311CardStatus(task) {
-    return taskWith311Status(task, this._311StatusByTaskId);
+  /**
+   * Second data tier: the lists behind the In-progress and History tabs,
+   * fetched after the first paint (connectedCallback loads only `open`).
+   * Merges into the current model and re-renders; the tab counts stay
+   * hidden until this lands. A failure leaves those tabs on a retry state
+   * (`#retry-remaining`) — the To-do tab is unaffected.
+   */
+  async _loadRemainingTasks() {
+    const generation = (this._remainingGeneration =
+      (this._remainingGeneration || 0) + 1);
+    const siteId = this._siteId;
+    const stillCurrent = () =>
+      generation === this._remainingGeneration &&
+      this._siteId === siteId &&
+      this.isConnected &&
+      Boolean(this._homeModel);
+    let results;
+    try {
+      results = await Promise.all(
+        ["in_progress", "completing", "completed", "cannot_do"].map((status) =>
+          listTasks({ status, limit: 50 }),
+        ),
+      );
+    } catch (err) {
+      console.error("listTasks (remaining) failed", err);
+      if (!stillCurrent()) return;
+      this._remainingStatus = "error";
+      this._renderHome(this._homeModel);
+      // The open list is all we have; watch and hydrate that much.
+      this._watchDuplicates(this._homeModel.tasks);
+      void this._hydrate311CardStatuses(this._homeModel.tasks);
+      return;
+    }
+    if (!stillCurrent()) return;
+    const model = this._homeModel;
+    // The model holds only the open list (possibly hydrated); the fresh
+    // lists are the other statuses, so there is nothing to reconcile.
+    const tasks = uniqueTasks([
+      ...results.flatMap((result) => result.tasks || []),
+      ...model.tasks,
+    ]);
+    this._remainingStatus = "loaded";
+    this._remainingLoadedAt = Date.now();
+    this._renderHome({ ...model, tasks });
+    this._watchDuplicates(tasks);
+    void this._hydrate311CardStatuses(tasks);
+    void this._hydrateVisibleHomeTasks();
   }
 
   async _hydrate311CardStatuses(tasks) {
@@ -548,6 +672,8 @@ class TodayView extends HTMLElement {
     this._providerSitesStatus = snapshot.providerSitesStatus;
     this._boundSites = snapshot.boundSites;
     this._311StatusByTaskId = snapshot.task311Statuses;
+    this._remainingStatus = snapshot.remainingStatus;
+    this._remainingLoadedAt = snapshot.remainingLoadedAt;
     this._duplicateLinks = duplicateUiEnabled()
       ? new Map(snapshot.duplicateLinks ?? [])
       : new Map();
@@ -795,6 +921,9 @@ class TodayView extends HTMLElement {
         void this._startCapture("single-problem", control);
       });
     });
+    this.querySelector("#retry-remaining")?.addEventListener("click", () =>
+      this._retryRemaining(),
+    );
     this.querySelectorAll("[data-home-filter]").forEach((button) => {
       button.addEventListener("click", () => {
         this._activateHomeTab(
@@ -989,6 +1118,11 @@ class TodayView extends HTMLElement {
     return homeShell({
       settingsMenuOpen: this._settingsMenuOpen,
       adminAccess: hasAdminAccess(this._site),
+      // The visible tab's list is still loading (In-progress / History
+      // before the second data tier lands).
+      busy:
+        this._homeFilter !== "todo" &&
+        (this._remainingStatus || "loaded") === "pending",
       hero: showFirstRun
         ? this._firstRunBlock()
         : this._activityBlock({ last, homeTasks }),
@@ -1103,10 +1237,15 @@ class TodayView extends HTMLElement {
     historicalClearChecks,
   }) {
     const newTaskCards = this._newTaskCardEntries(newTaskEntries);
+    const remainingStatus = /** @type {"pending" | "loaded" | "error"} */ (
+      this._remainingStatus || "loaded"
+    );
     return homeResults({
       historyGrouping: this._historyGrouping || "resolved",
       homeFilter: this._homeFilter,
-      tabCounts,
+      // Counts only once every list is in — a partial count would be wrong.
+      tabCounts: remainingStatus === "loaded" ? tabCounts : {},
+      remainingStatus,
       siteName: this._site?.name || "",
       siteAddress: this._site?.address || "",
       pendingSessionId: pendingSession?.id || "",
@@ -1279,6 +1418,39 @@ class TodayView extends HTMLElement {
 
   _firstRunBlock() {
     return this._activityBlock({ last: null, homeTasks: [] });
+  }
+
+  /**
+   * Pre-data paint (see connectedCallback). Markup only — no handlers are
+   * wired, nothing here is interactive, and the live render replaces it.
+   * @param {string | null} requestedFilter the ?filter= query value
+   */
+  _renderSkeleton(requestedFilter) {
+    this._homeFilter =
+      this._homeFilter || normalizedHomeTab(requestedFilter || "");
+    this.innerHTML = homeSkeleton({
+      siteName: this._siteIdentity().site,
+      adminAccess: hasAdminAccess(this._site),
+      homeFilter: this._homeFilter,
+      checkLabel: t("today.actions.startCheck"),
+    });
+    // The skeleton's tabs are live: a tap selects the tab the worklist will
+    // open on. Delegated on the host (the markup has no handlers of its
+    // own) and inert once the live render has wired the real tabs.
+    if (!this._skeletonTabClick) {
+      this._skeletonTabClick = (event) => {
+        if (this._homeModel) return;
+        const tab = /** @type {Element | null} */ (
+          /** @type {any} */ (event.target)?.closest?.("[data-home-filter]")
+        );
+        if (!tab) return;
+        this._homeFilter = normalizedHomeTab(
+          tab.getAttribute("data-home-filter") || "todo",
+        );
+        this._renderSkeleton(null);
+      };
+      this.addEventListener("click", this._skeletonTabClick);
+    }
   }
 
   _activityBlock({ last, homeTasks }) {
@@ -1941,6 +2113,7 @@ class TodayView extends HTMLElement {
         return;
       }
       show311SuccessToast(submitted311ServiceRequestNumber(result.task));
+      this._expireRemainingLists(); // filed → In-progress on the server
       if (card.isConnected) await slideCompletedCard(card);
       this._markAnalysisProblemResolved(problem, { taskStatus: null });
       await this.connectedCallback();
@@ -2080,6 +2253,7 @@ class TodayView extends HTMLElement {
       ).then((result) => {
         if (result) {
           show311SuccessToast(submitted311ServiceRequestNumber(result.task));
+          this._expireRemainingLists(); // filed → In-progress on the server
           this.connectedCallback();
         }
       });
@@ -2093,6 +2267,7 @@ class TodayView extends HTMLElement {
     };
     writeTaskStatusOverrides(overrides);
     this._taskOverrides = overrides;
+    this._expireRemainingLists();
   }
 
   // Run a task mutation: disable the card's buttons, and on success re-render the

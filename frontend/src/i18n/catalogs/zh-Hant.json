@@ -930,6 +930,7 @@
   "today.logout.text": "系統會將您登出並解除此裝置的連結：您需要申請新代碼才能再次使用應用程式",
   "today.logout.title": "請確認您要登出",
   "today.newResults.aria": "新的分析結果",
+  "today.remaining.error": "無法載入部分任務。",
   "today.results.aria": "任務結果",
   "today.settings.aria": "設定",
   "today.settings.attributions": "資料出處",
