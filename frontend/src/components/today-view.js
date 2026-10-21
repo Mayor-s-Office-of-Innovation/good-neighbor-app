@@ -265,6 +265,8 @@ class TodayView extends HTMLElement {
     /** @type {{ flowType: string, launcher: EventTarget | null } | null} capture waiting on the prompt */
     this._locationPrompt = null;
     this._pendingLocationRender = false;
+    /** A home paint held while a native dialog in the subtree was open. */
+    this._pendingDialogRender = false;
     this._startingCapture = false;
     /** @type {TaskSheets | null} the 311 and updates sheets, created on first use */
     this._sheets = null;
@@ -697,6 +699,14 @@ class TodayView extends HTMLElement {
       this._pendingLocationRender = true;
       return;
     }
+    // Same for a native dialog open in the home subtree (success, delete,
+    // edit): the innerHTML swap would remove it unseen, orphaning its overlay
+    // history entry and any close handler. The paint resumes on its `close`
+    // (wired below) with whatever model arrived meanwhile.
+    if (this.querySelector(":scope > .home > dialog[open]")) {
+      this._pendingDialogRender = true;
+      return;
+    }
     if (isDeletingAnalysisCard(this) || isCompletingAnalysisCard(this)) {
       this._deferredDeletionRender = true;
       return;
@@ -986,6 +996,7 @@ class TodayView extends HTMLElement {
             /** @type {HTMLDialogElement} */ (dialog).close();
           }
         });
+        dialog.addEventListener("close", () => this._flushDialogRender());
       },
     );
     this._wireCards();
@@ -1572,6 +1583,13 @@ class TodayView extends HTMLElement {
    * to replace the page anyway.
    * @param {{ changingSite: boolean }} detail
    */
+  /** A home dialog closed: paint whatever `_renderHome` held while it was open. */
+  _flushDialogRender() {
+    if (!this._pendingDialogRender) return;
+    this._pendingDialogRender = false;
+    if (this._homeModel) this._renderHome(this._homeModel);
+  }
+
   _onLocationDialogClosed({ changingSite }) {
     this._locationPrompt = null;
     if (this._pendingLocationRender) {
@@ -2143,19 +2161,13 @@ class TodayView extends HTMLElement {
           result?.task?.status === "in_progress" ? "in_progress" : "resolved",
       });
       this._applyTaskResult(problem.taskId, result?.task);
-      const dialog = /** @type {HTMLDialogElement} */ (
-        this._analysisSuccessDialog
+      openOverlayDialog(
+        /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),
+        "analysis-success",
       );
-      openOverlayDialog(dialog, "analysis-success");
-      // The dialog lives inside the home subtree, so a repaint now would
-      // remove it unseen (and leave its overlay history entry behind).
-      if (dialog?.open) {
-        dialog.addEventListener(
-          "close",
-          () => void this._refreshAfterAction(),
-          { once: true },
-        );
-      } else void this._refreshAfterAction();
+      // The reload starts now; every paint it (or anything else) requests is
+      // held by _renderHome while the dialog is open and lands on its close.
+      void this._refreshAfterAction();
     } catch (err) {
       console.error("resolve task failed", err);
       showActionSaveErrorToast();

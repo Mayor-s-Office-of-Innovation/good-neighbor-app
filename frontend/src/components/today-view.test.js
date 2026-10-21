@@ -628,6 +628,30 @@ describe("in-progress card actions", () => {
     expect(view._homeModel.tasks).toHaveLength(3);
   });
 
+  it("holds a home paint while a native dialog is open and flushes on close", async () => {
+    await import("./today-view.js");
+    const registration = vi
+      .mocked(customElements.define)
+      .mock.calls.find(([name]) => name === "today-view");
+    const View = /** @type {any} */ (registration[1]);
+    const view = new View();
+    const model = { tasks: [] };
+    view.querySelector = () => ({ open: true });
+    view._renderHome(model);
+    expect(view._pendingDialogRender).toBe(true);
+    expect(view._homeModel).toBe(model);
+    const later = { tasks: [{ taskId: "a", status: "open" }] };
+    view._renderHome(later);
+    expect(view._homeModel).toBe(later);
+    view.querySelector = () => null;
+    view._renderHome = vi.fn();
+    view._flushDialogRender();
+    expect(view._renderHome).toHaveBeenCalledWith(later);
+    expect(view._pendingDialogRender).toBe(false);
+    view._flushDialogRender();
+    expect(view._renderHome).toHaveBeenCalledTimes(1);
+  });
+
   it("labels in-progress cards as View or add updates", async () => {
     await import("./today-view.js");
     const registration = vi
