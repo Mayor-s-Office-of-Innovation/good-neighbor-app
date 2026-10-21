@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   AnalyzerError,
   buildAnalyzeRequest,
@@ -352,6 +352,46 @@ describe("createAnalyzerClient", () => {
     });
     expect(calls).toHaveLength(1);
   });
+
+  it.each([429, 502, 503, 400])(
+    "bounds stalled %i error bodies and preserves status retry policy",
+    async (status) => {
+      vi.useFakeTimers();
+      try {
+        /** @type {{aborted: boolean}[]} */
+        const signals = [];
+        const fetchImpl = vi.fn(async (_url, init) => {
+          signals.push(init.signal);
+          return {
+            ok: false,
+            status,
+            // Deliberately ignore abort: the deadline must still settle the call.
+            json: () => new Promise(() => {}),
+          };
+        });
+        const client = createAnalyzerClient({
+          baseUrl: "https://analysis.example.org/",
+          apiKey: "k",
+          fetchImpl: /** @type {typeof fetch} */ (
+            /** @type {unknown} */ (fetchImpl)
+          ),
+          sleep: noSleep,
+        });
+        const result = client.analyze({ metadata, media }).catch((e) => e);
+        await vi.runAllTimersAsync();
+        expect(await result).toMatchObject({
+          name: "AnalyzerError",
+          status,
+          retryable: status !== 400,
+        });
+        expect(fetchImpl).toHaveBeenCalledTimes(status === 400 ? 1 : 3);
+        expect(signals.every((signal) => signal.aborted)).toBe(true);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("gives up after maxRetries on persistent 503", async () => {
     const { fetchImpl, calls } = stubFetch([

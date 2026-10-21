@@ -33,6 +33,7 @@ import { RUBRIC_ID, RUBRIC_VERSION } from "./contract.js";
 
 /** HTTP statuses worth a retry: throttling, gateway/model transients, 5xx. */
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const ERROR_BODY_TIMEOUT_MS = 5000;
 
 /**
  * @param {number} ms
@@ -178,14 +179,27 @@ export function createAnalyzerClient({
   /**
    * Try to read the service's `{ error: { code, message, details } }` body.
    * @param {Response} res
+   * @param {{abort: () => void}} controller
    * @returns {Promise<{ code?: string, message?: string, details?: string[], retryable?: boolean }>}
    */
-  const readError = async (res) => {
+  const readError = async (res, controller) => {
+    let timer;
     try {
-      const body = await res.json();
+      const body = await Promise.race([
+        res.json(),
+        new Promise((resolve) => {
+          timer = setTimeout(() => {
+            // Abort the underlying fetch body, then use HTTP-status fallback.
+            controller.abort();
+            resolve(undefined);
+          }, ERROR_BODY_TIMEOUT_MS);
+        }),
+      ]);
       return body && typeof body === "object" && body.error ? body.error : {};
     } catch {
       return {};
+    } finally {
+      clearTimeout(timer);
     }
   };
 
@@ -199,8 +213,10 @@ export function createAnalyzerClient({
 
     for (let attempt = 0; ; attempt++) {
       let res;
+      const controller = new globalThis.AbortController();
       try {
         res = await fetchImpl(url, {
+          signal: controller.signal,
           method,
           headers: {
             accept: "application/json",
@@ -231,7 +247,7 @@ export function createAnalyzerClient({
 
       if (res.ok) return res.json();
 
-      const err = await readError(res);
+      const err = await readError(res, controller);
       // Read the contract before deciding: a retired model is a permanent 502.
       const permanentModelError = [
         "model_unavailable",
