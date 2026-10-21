@@ -68,6 +68,9 @@ describe("effective-dated Site terms", () => {
       ),
     );
     expect(response.statusCode).toBe(400);
+    if (typeof response.body !== "string") {
+      throw new Error("Expected a JSON response body");
+    }
     expect(JSON.parse(response.body).error).toBe("reasons_required");
   });
   it("lists terms newest first", async () => {
