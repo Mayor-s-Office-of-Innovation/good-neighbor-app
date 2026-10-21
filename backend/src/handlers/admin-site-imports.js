@@ -1,3 +1,4 @@
+import { sitePrimaryContactChange } from "../lib/site-primary-contact.js";
 import {
   BatchGetCommand,
   BatchWriteCommand,
@@ -401,15 +402,9 @@ async function applyOneRow(importId, row) {
         TableName: tableName,
         Key: { pk: `SITE#${plan.site.id}`, sk: "#META" },
         UpdateExpression:
-          "SET updatedAt = :now, siteType = if_not_exists(siteType, :siteType), oversight = :oversight" +
-          (plan.site.assignPrimary
-            ? ", primaryContactUserId = :primaryUserId, primaryContact = :primaryContact"
-            : ""),
+          "SET updatedAt = :now, siteType = if_not_exists(siteType, :siteType), oversight = :oversight",
         ConditionExpression:
-          "attribute_exists(pk) AND #status = :active AND providerId = :providerId AND leadProgramId = :programId AND #name = :name AND address = :address AND (attribute_not_exists(siteType) OR siteType = :siteType) AND (attribute_not_exists(oversight) OR oversight = :expectedOversight)" +
-          (plan.site.assignPrimary
-            ? " AND attribute_not_exists(primaryContactUserId)"
-            : ""),
+          "attribute_exists(pk) AND #status = :active AND providerId = :providerId AND leadProgramId = :programId AND #name = :name AND address = :address AND (attribute_not_exists(siteType) OR siteType = :siteType) AND (attribute_not_exists(oversight) OR oversight = :expectedOversight)",
         ExpressionAttributeNames: {
           "#status": "status",
           "#name": "name",
@@ -424,12 +419,6 @@ async function applyOneRow(importId, row) {
           ":siteType": plan.site.siteType,
           ":oversight": plan.site.oversight,
           ":expectedOversight": plan.site.expectedOversight,
-          ...(plan.site.assignPrimary
-            ? {
-                ":primaryUserId": plan.contact.id,
-                ":primaryContact": primaryContact,
-              }
-            : {}),
         },
       },
     });
@@ -832,6 +821,45 @@ async function applyOneRow(importId, row) {
     );
   }
   try {
+    if (plan.site.action === "reuse") {
+      const primary = await sitePrimaryContactChange(
+        tableName,
+        plan.site.id,
+        now,
+        {
+          ...(plan.assignment.action === "create"
+            ? {
+                add: {
+                  ...primaryContact,
+                  userId: plan.contact.id,
+                  programId: plan.program.id,
+                  sk: `ASSIGNED_USER#${plan.contact.id}`,
+                  createdAt: now,
+                  status: "active",
+                },
+              }
+            : {}),
+        },
+      );
+      const update = items.find(
+        (item) =>
+          item.Update?.Key?.pk === `SITE#${plan.site.id}` &&
+          item.Update.Key.sk === "#META",
+      )?.Update;
+      if (update && primary.Update) {
+        update.UpdateExpression +=
+          ", " +
+          primary.Update.UpdateExpression.replace("SET ", "")
+            .replace("updatedAt = :now, ", "")
+            .replace(", updatedAt = :now", "");
+        update.ConditionExpression +=
+          " AND (" + primary.Update.ConditionExpression + ")";
+        update.ExpressionAttributeValues = {
+          ...update.ExpressionAttributeValues,
+          ...primary.Update.ExpressionAttributeValues,
+        };
+      }
+    }
     if (items.length) {
       await ddb.send(new TransactWriteCommand({ TransactItems: items }));
     }

@@ -14,7 +14,7 @@ import {
   deriveSiteId,
 } from "../lib/principal.js";
 
-const GRANT_TTL_MS = 10 * 60 * 1000;
+const GRANT_TTL_MS = 8 * 60 * 60 * 1000;
 const MANAGER_HOURLY_LIMIT = 25;
 const SITE_HOURLY_LIMIT = 40;
 

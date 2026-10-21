@@ -1,5 +1,12 @@
 import "../../frontend/src/components/app-toasts.js";
 import { showToast } from "../../frontend/src/state/toasts.js";
+import {
+  siteProviderPrograms,
+  bindSiteProgramCreation,
+} from "./site-program.js";
+import { phoneExtensionField, bindPhoneExtensions } from "./phone-extension.js";
+import { withSaveFeedback, upsertRecord } from "./save-feedback.js";
+import { bindNewProgramStaff } from "./new-program-staff.js";
 import { createAndAssignManager } from "./pending-manager.js";
 import { letterEmailProgress, profilePhoneUpdate } from "./admin-save-state.js";
 import "./icons.js";
@@ -510,6 +517,7 @@ class AdminApp extends HTMLElement {
   }
 
   async fetchSiteManagers() {
+    const version = this.managerDirectoryVersion || 0;
     const activePrograms = this.state.programs.filter(
       (program) => program.status !== "inactive",
     );
@@ -522,6 +530,7 @@ class AdminApp extends HTMLElement {
       adminApi,
       DIRECTORY_REQUEST_CONCURRENCY,
     );
+    if (version !== (this.managerDirectoryVersion || 0)) return;
     const memberships = siteMemberships.flatMap(({ site, memberships }) =>
       (memberships || []).map((membership) => ({
         ...membership,
@@ -665,11 +674,16 @@ class AdminApp extends HTMLElement {
    * @returns {Promise<void>}
    */
   async createProvider(form) {
+    const origin = location.pathname + location.search;
     const name = new FormData(form).get("provider-name");
     if (!name) return;
     const result = await adminApi.createProvider(String(name));
-    form.reset();
-    await this.loadDirectory();
+    this.state.providers = upsertRecord(
+      this.state.providers,
+      result.provider,
+      "providerId",
+    );
+    if (location.pathname + location.search !== origin) return;
     const params = new URLSearchParams(window.location.search);
     if (params.get("returnTo") === "site-new") {
       navigate(
@@ -711,19 +725,16 @@ class AdminApp extends HTMLElement {
       phoneExtension: formValue(data, "provider-manager-extension"),
     };
     const membershipId = formValue(data, "provider-manager-membership-id");
-    if (membershipId) {
-      await adminApi.updateProviderManager(
-        this.state.provider.providerId,
-        membershipId,
-        values,
-      );
-    } else {
-      await adminApi.createProviderManager(
-        this.state.provider.providerId,
-        values,
-      );
-    }
-    await this.openProvider(this.state.provider.providerId, false);
+    const providerId = this.state.provider.providerId;
+    const result = membershipId
+      ? await adminApi.updateProviderManager(providerId, membershipId, values)
+      : await adminApi.createProviderManager(providerId, values);
+    if (this.state.provider?.providerId !== providerId) return;
+    this.state.providerManagers = upsertRecord(
+      this.state.providerManagers,
+      result.manager,
+      "membershipId",
+    );
     this.state.siteSaveMessage = membershipId
       ? "Provider manager saved."
       : "Provider manager added.";
@@ -885,7 +896,7 @@ class AdminApp extends HTMLElement {
         firstName: formValue(data, "staff-first-name"),
         lastName: formValue(data, "staff-last-name"),
         phone: formValue(data, "staff-phone"),
-        phoneExtension: user.phoneExtension || "",
+        phoneExtension: formValue(data, "staff-extension"),
         email:
           this.state.capabilities.createEntities === true
             ? formValue(data, "staff-email")
@@ -924,6 +935,7 @@ class AdminApp extends HTMLElement {
         firstName: formValue(data, "staff-first-name"),
         lastName: formValue(data, "staff-last-name"),
         phone: formValue(data, "staff-phone"),
+        phoneExtension: formValue(data, "staff-extension"),
         email: formValue(data, "staff-email"),
         siteManager: false,
       });
@@ -940,18 +952,27 @@ class AdminApp extends HTMLElement {
   }
 
   async createProgram(form) {
+    const origin = location.pathname + location.search;
     const data = new FormData(form);
+    const selection = form.querySelector('[name="program-staff"]');
+    const rawStaff = String(data.get("program-staff") || "");
+    if (selection?.disabled || !rawStaff || rawStaff === "__create__")
+      throw new Error(t("admin.programs.chooseStaff"));
+    const staff = JSON.parse(decodeURIComponent(rawStaff));
+    if (!staff || (!staff.existingStaff && !staff.firstStaff))
+      throw new Error(t("admin.programs.chooseStaff"));
     const result = await adminApi.createProgram({
       name: String(data.get("program-name") || ""),
       providerId: String(data.get("program-provider") || ""),
-      firstStaff: {
-        firstName: String(data.get("contact-first-name") || ""),
-        lastName: String(data.get("contact-last-name") || ""),
-        phone: String(data.get("contact-phone") || ""),
-        email: String(data.get("contact-email") || ""),
-      },
+      ...staff,
     });
-    await this.loadDirectory();
+    this.state.programs = upsertRecord(
+      this.state.programs,
+      result.program,
+      "programId",
+    );
+    this.state.managerDirectoryLoaded = false;
+    if (location.pathname + location.search !== origin) return;
     const returnTo = new URLSearchParams(window.location.search).get(
       "returnTo",
     );
@@ -1170,6 +1191,7 @@ class AdminApp extends HTMLElement {
       publicContact: {
         email: formValue(data, "public-contact-email"),
         phone: formValue(data, "public-contact-phone"),
+        phoneExtension: formValue(data, "public-contact-extension"),
       },
       primaryContactUserId: formValue(data, "site-manager-user-id"),
       siteType: controlValue(form, "site-type"),
@@ -1188,6 +1210,7 @@ class AdminApp extends HTMLElement {
         publicContact: {
           email: formValue(data, "public-contact-email"),
           phone: formValue(data, "public-contact-phone"),
+          phoneExtension: formValue(data, "public-contact-extension"),
         },
         primaryContactUserId: expectedManagerId,
         siteType: controlValue(form, "site-type"),
@@ -1250,13 +1273,13 @@ class AdminApp extends HTMLElement {
     const data = new FormData(form);
     const name = formValue(data, "site-name");
     const leadProgramId = formValue(data, "lead-program-id");
-    const internalContactUserId = formValue(data, "site-manager-user-id");
     const addressParts = data.has("street-address")
       ? addressPartsFromForm(data)
       : null;
     const publicContact = {
       email: formValue(data, "public-contact-email"),
       phone: formValue(data, "public-contact-phone"),
+      phoneExtension: formValue(data, "public-contact-extension"),
     };
     /** @type {Record<string, unknown>} */
     const values = {
@@ -1269,8 +1292,6 @@ class AdminApp extends HTMLElement {
       values.publicContact = publicContact;
     if (section === "all" || section === "details")
       values.siteType = controlValue(form, "site-type");
-    if (section === "all" || section === "site-manager")
-      values.primaryContactUserId = internalContactUserId;
     if (
       (section === "all" || section === "address") &&
       addressParts &&
@@ -1778,6 +1799,7 @@ class AdminApp extends HTMLElement {
         firstName: formValue(data, "new-manager-first-name"),
         lastName: formValue(data, "new-manager-last-name"),
         phone: formValue(data, "new-manager-phone"),
+        phoneExtension: formValue(data, "new-manager-extension"),
         email: formValue(data, "new-manager-email"),
         siteManager: true,
       };
@@ -1846,7 +1868,25 @@ class AdminApp extends HTMLElement {
   }
 
   /** @param {HTMLFormElement} form */
+  async saveWithFeedback(form, save) {
+    return withSaveFeedback(form, save, {
+      savingLabel: t("siteAdmin.edit.saving"),
+      onError: (error) =>
+        showFormSaveError(
+          form,
+          error.message === "staff_source_changed"
+            ? t("admin.programs.staffSourceChanged")
+            : error.message,
+        ),
+    });
+  }
+
   async saveSiteManager(form) {
+    return this.saveWithFeedback(form, () => this.persistSiteManager(form));
+  }
+
+  async persistSiteManager(form) {
+    const origin = location.pathname + location.search;
     const data = new FormData(form);
     const current = this.state.siteManager;
     const canManageAssignments =
@@ -1896,26 +1936,29 @@ class AdminApp extends HTMLElement {
         (current?.assignedSites || []).map((site) => [site.siteId, site]),
       );
       const selected = new Set(siteIds);
+      const savedAssignments = new Map(existing);
       // Assignment counts belong to this one staff record. Apply Site changes
       // serially so each transaction observes the count written by the last.
       for (const siteId of siteIds) {
         const membership = existing.get(siteId);
         if (membership?.legacyAssignment && !canManageAssignments) continue;
         if (membership && !membership.legacyAssignment) {
-          await adminApi.updateManagerMembership(
+          const result = await adminApi.updateManagerMembership(
             siteId,
             membership.membershipId,
             fullName,
             values.email,
           );
+          savedAssignments.set(siteId, { ...membership, ...result.membership });
         } else {
-          await adminApi.createManagerMembership(
+          const result = await adminApi.createManagerMembership(
             siteId,
             fullName,
             values.email,
             programId,
             user.userId,
           );
+          savedAssignments.set(siteId, { ...result.membership, siteId });
         }
       }
       for (const [siteId, membership] of existing) {
@@ -1934,12 +1977,32 @@ class AdminApp extends HTMLElement {
           siteManager: false,
         });
       }
+      const program = this.state.programs.find(
+        (item) => item.programId === programId,
+      );
+      const savedManager = {
+        ...user,
+        programId,
+        programName: program?.name || "",
+        providerId: program?.providerId || "",
+        assignedSites: siteIds.map((siteId) => ({
+          ...savedAssignments.get(siteId),
+          siteId,
+          siteName:
+            this.state.sites.find((site) => site.siteId === siteId)?.name || "",
+        })),
+      };
+      this.state.siteManagers = upsertRecord(
+        this.state.siteManagers.filter(
+          (manager) => !programChanged || manager.userId !== current.userId,
+        ),
+        savedManager,
+        "userId",
+      );
+      this.managerDirectoryVersion = (this.managerDirectoryVersion || 0) + 1;
       this.state.managerDirectoryLoaded = false;
-      await this.loadSiteManagers(true);
-      this.state.siteManager =
-        this.state.siteManagers.find(
-          (manager) => manager.userId === user.userId,
-        ) || null;
+      if (location.pathname + location.search !== origin) return true;
+      this.state.siteManager = savedManager;
       this.state.siteSaveMessage = programChanged
         ? "Site manager moved to the selected Program."
         : current
@@ -2306,6 +2369,7 @@ class AdminApp extends HTMLElement {
    * @returns {void}
    */
   bind() {
+    bindPhoneExtensions(this);
     this.querySelector("#admin-user-form")?.addEventListener(
       "submit",
       (event) => {
@@ -2410,6 +2474,7 @@ class AdminApp extends HTMLElement {
           const result = await adminApi.updateMyProfile({
             firstName: formValue(data, "firstName"),
             lastName: formValue(data, "lastName"),
+            phoneExtension: formValue(data, "phoneExtension"),
             ...profilePhoneUpdate(
               formValue(data, "phone"),
               this.state.profile.phone,
@@ -2427,6 +2492,7 @@ class AdminApp extends HTMLElement {
                       firstName: result.profile.firstName,
                       lastName: result.profile.lastName,
                       phone: result.profile.phone,
+                      phoneExtension: result.profile.phoneExtension,
                       name,
                     }
                   : manager,
@@ -2578,10 +2644,8 @@ class AdminApp extends HTMLElement {
     });
     this.querySelector("#provider-form")?.addEventListener("submit", (e) => {
       e.preventDefault();
-      this.createProvider(asForm(e.currentTarget)).catch((error) => {
-        this.state.error = error.message;
-        this.render();
-      });
+      const form = asForm(e.currentTarget);
+      void this.saveWithFeedback(form, () => this.createProvider(form));
     });
     this.querySelector("#provider-details-form")?.addEventListener(
       "submit",
@@ -2625,28 +2689,9 @@ class AdminApp extends HTMLElement {
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         const submittedForm = asForm(event.currentTarget);
-        if (submittedForm.dataset.saving === "true") return;
-        submittedForm.dataset.saving = "true";
-        const submitButton = submittedForm.querySelector(
-          "button[type='submit']",
+        await this.saveWithFeedback(submittedForm, () =>
+          this.saveProviderManager(submittedForm),
         );
-        const cancelButton = submittedForm.querySelector("[data-close-dialog]");
-        if (submitButton) submitButton.disabled = true;
-        if (cancelButton) cancelButton.disabled = true;
-        try {
-          await this.saveProviderManager(submittedForm);
-        } catch (error) {
-          showFormSaveError(
-            submittedForm,
-            error instanceof Error
-              ? error.message
-              : "The Provider Manager could not be saved.",
-          );
-        } finally {
-          delete submittedForm.dataset.saving;
-          if (submitButton) submitButton.disabled = false;
-          if (cancelButton) cancelButton.disabled = false;
-        }
       });
     });
     this.querySelectorAll("[data-provider-manager-status]").forEach(
@@ -2732,12 +2777,11 @@ class AdminApp extends HTMLElement {
       programSelect?.addEventListener("change", syncAddProgramButton);
       programSelect?.addEventListener("input", syncAddProgramButton);
     }
+    bindNewProgramStaff(this, this.state.programs, adminApi);
     this.querySelector("#program-form")?.addEventListener("submit", (e) => {
       e.preventDefault();
-      this.createProgram(asForm(e.currentTarget)).catch((err) => {
-        this.state.error = err.message;
-        this.render();
-      });
+      const form = asForm(e.currentTarget);
+      void this.saveWithFeedback(form, () => this.createProgram(form));
     });
     this.querySelector("#add-program-staff")?.addEventListener("click", () =>
       this.querySelector("#add-program-staff-dialog")?.showModal(),
@@ -2917,6 +2961,7 @@ class AdminApp extends HTMLElement {
           "site-name",
           "public-contact-email",
           "public-contact-phone",
+          "public-contact-extension",
         ])
       )
         return;
@@ -2946,11 +2991,6 @@ class AdminApp extends HTMLElement {
       () =>
         this.querySelector("#lead-program-confirmation-dialog")?.showModal(),
     );
-    this.querySelector("[data-save-site-manager]")?.addEventListener(
-      "click",
-      () =>
-        this.querySelector("#site-manager-confirmation-dialog")?.showModal(),
-    );
     const leadProgramDialog = this.querySelector(
       "#lead-program-confirmation-dialog",
     );
@@ -2962,21 +3002,6 @@ class AdminApp extends HTMLElement {
       )
         return;
       this.updateSite(siteDetailsForm, "lead-program").catch((error) => {
-        this.state.error = error.message;
-        this.render();
-      });
-    });
-    const siteManagerDialog = this.querySelector(
-      "#site-manager-confirmation-dialog",
-    );
-    siteManagerDialog?.addEventListener("close", () => {
-      if (
-        siteManagerDialog.returnValue !== "confirm" ||
-        !(siteDetailsForm instanceof HTMLFormElement) ||
-        !reportNamedControlsValidity(siteDetailsForm, ["site-manager-user-id"])
-      )
-        return;
-      this.updateSite(siteDetailsForm, "site-manager").catch((error) => {
         this.state.error = error.message;
         this.render();
       });
@@ -3171,56 +3196,12 @@ class AdminApp extends HTMLElement {
       siteDetailsForm.addEventListener("change", sync);
       siteDetailsForm.addEventListener("reset", () => queueMicrotask(sync));
     }
-    this.querySelector("wa-select[name='lead-program-id']")?.addEventListener(
-      "change",
-      async (event) => {
-        const programId = String(event.currentTarget.value || "");
-        const contact = this.querySelector(
-          "wa-select[name='site-manager-user-id']",
-        );
-        const staffHelp = this.querySelector("[data-site-manager-add-staff]");
-        const staffLink = this.querySelector("[data-add-staff-link]");
-        if (staffHelp) staffHelp.hidden = true;
-        if (staffLink)
-          staffLink.setAttribute(
-            "href",
-            `/programs/${encodeURIComponent(programId)}?addStaff=1`,
-          );
-        const contactDetails = this.querySelector(
-          "#site-manager-contact-details",
-        );
-        if (!contact) return;
-        contact.innerHTML = "";
-        contact.value = "";
-        contact.disabled = true;
-        if (contactDetails) contactDetails.innerHTML = "";
-        if (!programId) {
-          contact.insertAdjacentHTML(
-            "afterbegin",
-            '<span slot="label" data-site-manager-label>Assign a lead program first</span>',
-          );
-          return;
-        }
-        try {
-          const program = await adminApi.getProgram(programId);
-          const users = (program.users || []).filter(
-            (user) => user.status !== "inactive",
-          );
-          this.state.availableSiteUsers = users;
-          contact.innerHTML = users
-            .map(
-              (user) =>
-                `<wa-option value="${escapeHtml(user.userId)}">${escapeHtml(`${user.firstName} ${user.lastName}`)}</wa-option>`,
-            )
-            .join("");
-          contact.disabled = !users.length;
-          if (staffHelp) staffHelp.hidden = Boolean(users.length);
-          const label = `<span slot="label" data-site-manager-label>${users.length ? "Lead Program staff member" : ""}</span>`;
-          contact.insertAdjacentHTML("afterbegin", label);
-        } catch (error) {
-          this.state.siteSaveError = error.message;
-          this.render();
-        }
+    bindSiteProgramCreation(
+      this,
+      this.state,
+      adminApi,
+      (form, save) => this.saveWithFeedback(form, save),
+      () => {
         if (siteDetailsForm instanceof HTMLFormElement)
           syncSiteDetailsForm(siteDetailsForm);
       },
@@ -3478,8 +3459,8 @@ class AdminApp extends HTMLElement {
     const managerMembershipSelect = managerMembershipForm?.querySelector(
       "wa-select[name='manager-user-id']",
     );
-    const managerMembershipSubmit = managerMembershipForm?.querySelector(
-      "button[type='submit']",
+    const managerMembershipActions = managerMembershipForm?.querySelector(
+      "[data-manager-membership-actions]",
     );
     const syncManagerMembershipSubmit = () => {
       const selectedUserId = String(managerMembershipSelect?.value || "");
@@ -3493,9 +3474,9 @@ class AdminApp extends HTMLElement {
             String(membership.email || "").toLowerCase() ===
               String(selectedUser?.email || "").toLowerCase()),
       );
-      managerMembershipSubmit?.toggleAttribute(
+      managerMembershipActions?.toggleAttribute(
         "hidden",
-        !selectedUserId || isCurrentManager,
+        !selectedUser || isCurrentManager,
       );
     };
     managerMembershipSelect?.addEventListener("change", () => {
@@ -3532,6 +3513,13 @@ class AdminApp extends HTMLElement {
       form?.querySelector("[data-form-save-error]")?.remove();
       managerMembershipSelect?.focus();
     });
+    managerMembershipForm
+      ?.querySelector("[data-cancel-manager-assignment]")
+      ?.addEventListener("click", () => {
+        managerMembershipSelect.value = "";
+        syncManagerMembershipSubmit();
+        managerMembershipSelect.focus();
+      });
     syncManagerMembershipSubmit();
     managerMembershipSelect?.addEventListener(
       "change",
@@ -4138,7 +4126,7 @@ function myProfileView(state) {
     <form id="my-profile-form" class="site-details-form" data-dirty-form>
       ${formInput("firstName", t("siteAdmin.field.firstName"), profile.firstName, { required: true, maxlength: 100, autocomplete: "given-name" })}
       ${formInput("lastName", t("siteAdmin.field.lastName"), profile.lastName, { required: true, maxlength: 100, autocomplete: "family-name" })}
-      ${formInput("phone", t("siteAdmin.field.phone"), profile.phone, { required: Boolean(profile.phone), type: "tel", autocomplete: "tel" })}
+      ${phoneInput("phone", t("siteAdmin.field.phone"), profile.phone, { extension: profile.phoneExtension, required: Boolean(profile.phone), type: "tel", autocomplete: "tel" })}
       <dl class="profile-email">
         <dt>${escapeHtml(t("siteAdmin.field.email"))}</dt>
         <dd>${escapeHtml(profile.email)}</dd>
@@ -4185,8 +4173,7 @@ function administratorView(users, state) {
           <wa-input name="firstName" label="First name" required></wa-input>
           <wa-input name="lastName" label="Last name" required></wa-input>
           <wa-input name="email" type="email" label="Work email" autocomplete="email" required></wa-input>
-          <wa-input name="phone" type="tel" label="Phone" required></wa-input>
-          <wa-input name="phoneExtension" label="Extension"></wa-input>
+          ${phoneInput("phone", t("siteAdmin.field.phone"), "", { required: true, type: "tel", autocomplete: "tel" })}
           <wa-select name="departmentId" label="Department" placeholder="Choose a department">
             ${departments.map((item) => `<wa-option value="${escapeHtml(item.departmentId || item.name)}">${escapeHtml(item.name)}</wa-option>`).join("")}
           </wa-select>
@@ -4305,7 +4292,7 @@ function removeSiteManagerDialog(managerName) {
         <p class="places-modal__text" id="remove-site-manager-copy">This will permanently remove the manager, remove them from every assigned Site, and immediately revoke their Good Neighbor app access.</p>
       </div>
       <div class="places-modal__actions">
-        <button class="btn-danger" value="confirm">Remove manager</button>
+        <button class="btn-danger" value="confirm">${escapeHtml(t("admin.managers.deleteRecord"))}</button>
         <button class="btn-outline" value="cancel">Cancel</button>
       </div>
     </form>
@@ -4471,7 +4458,10 @@ function siteAccessView(state) {
           .join("")}
         <wa-option value="__create_site_manager__">${escapeHtml(t("admin.siteManagers.createNew"))}</wa-option>
       </wa-select>
-      <button class="btn-primary" type="submit" hidden>${escapeHtml(t("admin.siteManagers.add"))}</button>
+      <div class="manager-membership-actions" data-manager-membership-actions hidden>
+        <button class="btn-primary" type="submit">${escapeHtml(t("admin.siteManagers.assignToSite"))}</button>
+        <button class="btn-outline" type="button" data-cancel-manager-assignment>${escapeHtml(t("common.cancel"))}</button>
+      </div>
     </form>`
         : ""
     }
@@ -4496,7 +4486,7 @@ function newSiteManagerDialog() {
       <h2 id="new-site-manager-title">${escapeHtml(t("admin.siteManagers.newTitle"))}</h2>
       ${formInput("new-manager-first-name", t("admin.programs.firstName"), "", { required: true, autocomplete: "given-name" })}
       ${formInput("new-manager-last-name", t("admin.programs.lastName"), "", { required: true, autocomplete: "family-name" })}
-      ${formInput("new-manager-phone", t("admin.programs.phone"), "", { required: true, type: "tel", autocomplete: "tel" })}
+      ${phoneInput("new-manager-phone", t("admin.programs.phone"), "", { required: true, type: "tel", autocomplete: "tel" })}
       ${formInput("new-manager-email", t("admin.programs.email"), "", { required: true, type: "email", autocomplete: "email" })}
       <div class="places-modal__actions">
         <button class="btn-primary" type="submit">${escapeHtml(t("common.save"))}</button>
@@ -5166,18 +5156,32 @@ function newProgramView(state) {
     <form id="program-form" class="site-details-form">
       <fieldset><legend>Program</legend><div class="form-grid form-grid--one">
         ${formInput("program-name", "Program name", "", { required: true, autocomplete: "organization" })}
-        <wa-select name="program-provider" label="Provider" required placeholder="Choose a provider">
+        <wa-select name="program-provider" label="Provider" required data-initial-value="${escapeHtml(providerId)}" placeholder="Choose a provider">
           ${state.providers.map((provider) => `<wa-option value="${escapeHtml(provider.providerId)}" ${provider.providerId === providerId ? "selected" : ""}>${escapeHtml(provider.name)}</wa-option>`).join("")}
         </wa-select>
       </div></fieldset>
-      <fieldset><legend>${escapeHtml(t("admin.programs.addStaffMember"))}</legend><div class="form-grid form-grid--two">
-        ${formInput("contact-first-name", "First name", "", { required: true, autocomplete: "given-name" })}
-        ${formInput("contact-last-name", "Last name", "", { required: true, autocomplete: "family-name" })}
-        ${formInput("contact-phone", "Phone", "", { required: true, type: "tel", autocomplete: "tel" })}
-        ${formInput("contact-email", "Email", "", { required: true, type: "email", autocomplete: "email" })}
-      </div></fieldset>
-      <button class="btn-primary" type="submit">Add program</button>
+      <fieldset><legend>${escapeHtml(t("admin.programs.addStaffMember"))}</legend>
+        <wa-select name="program-staff" required disabled aria-label="${escapeHtml(t("admin.programs.addStaffMember"))}" placeholder="${escapeHtml(t("admin.programs.chooseStaff"))}"></wa-select>
+        <p class="error" data-staff-error role="alert"></p>
+        <button class="btn-outline" type="button" data-retry-staff hidden>${escapeHtml(t("admin.programs.retryStaff"))}</button>
+      </fieldset>
+      <button class="btn-primary" type="submit" disabled>Add program</button>
     </form>
+    <dialog id="new-program-staff-dialog" class="places-modal" aria-labelledby="new-program-staff-title">
+      <form class="places-modal__card site-details-form">
+        <h2 id="new-program-staff-title">${escapeHtml(t("admin.programs.createStaff"))}</h2>
+        <div class="form-grid form-grid--two">
+          ${formInput("firstName", t("siteAdmin.field.firstName"), "", { required: true, autocomplete: "given-name" })}
+          ${formInput("lastName", t("siteAdmin.field.lastName"), "", { required: true, autocomplete: "family-name" })}
+          ${formInput("email", t("siteAdmin.field.email"), "", { required: true, type: "email", autocomplete: "email" })}
+          ${phoneInput("phone", t("siteAdmin.field.phone"), "", { type: "tel", autocomplete: "tel" })}
+        </div>
+        <div class="places-modal__actions">
+          <button class="btn-primary" type="submit">${escapeHtml(t("admin.programs.createStaff"))}</button>
+          <button class="btn-outline" type="button" data-cancel-staff>${escapeHtml(t("common.cancel"))}</button>
+        </div>
+      </form>
+    </dialog>
   </section>`;
 }
 
@@ -5263,7 +5267,7 @@ function newSiteRecordStep(provider, program, users) {
       </fieldset>
       <fieldset><legend>Public site contact</legend><div class="form-grid form-grid--two">
         ${requiredFlowInput("public-contact-email", "Email", { type: "email", autocomplete: "email" })}
-        ${requiredFlowInput("public-contact-phone", "Phone", { type: "tel", autocomplete: "tel", pattern: "[0-9()+ .-]{10,20}" })}
+        ${phoneExtensionField(requiredFlowInput("public-contact-phone", "Phone", { type: "tel", autocomplete: "tel", pattern: "[0-9()+ .-]{10,20}" }), formInput("public-contact-extension", t("admin.phone.extension"), "", { autocomplete: "tel-extension", maxlength: 20 }), escapeHtml(t("admin.phone.addExtension")), false)}
       </div></fieldset>
       <button class="btn-primary" type="submit" data-address-dependent ${users.length ? "disabled" : "disabled data-address-blocked"}>Create Site</button>
     </form>
@@ -5335,7 +5339,7 @@ function siteManagerEditorView(state, manager) {
     ${entityBreadcrumb("manager", manager || {}, state.programs, state.providers)}
     <div class="panel__head">
       <h1 id="manager-record-title" tabindex="-1">${escapeHtml(title)}</h1>
-      ${isNew ? "" : '<button class="btn-danger" type="button" data-remove-site-manager>Remove manager</button>'}
+      ${isNew ? "" : `<button class="btn-danger" type="button" data-remove-site-manager>${escapeHtml(t("admin.managers.deleteRecord"))}</button>`}
     </div>
     <form id="site-manager-record-form" class="site-details-form" data-dirty-form data-return-site="${escapeHtml(returnSite)}">
       <fieldset>
@@ -5345,8 +5349,7 @@ function siteManagerEditorView(state, manager) {
         <div class="form-grid form-grid--one">
           ${formInput("manager-first-name", "First name", manager?.firstName || "", { required: true, autocomplete: "given-name" })}
           ${formInput("manager-last-name", "Last name", manager?.lastName || "", { required: true, autocomplete: "family-name" })}
-          ${formInput("manager-phone", "Contact phone", manager?.phone || "", { required: true, type: "tel", autocomplete: "tel" })}
-          ${formInput("manager-phone-extension", "Contact phone extension", manager?.phoneExtension || "", { autocomplete: "tel-extension" })}
+          ${phoneInput("manager-phone", "Contact phone", manager?.phone || "", { extension: manager?.phoneExtension, extensionName: "manager-phone-extension", required: !manager || Boolean(manager.phone), type: "tel", autocomplete: "tel" })}
           ${formInput("manager-email", "Contact email", manager?.email || "", { required: true, type: "email", autocomplete: "email", disabled: !canManageAssignments })}
         </div>
       </fieldset>
@@ -5477,7 +5480,7 @@ function providerView(state) {
 function providerManagerPanel(state) {
   return `<section class="subsection" aria-labelledby="provider-managers-title">
     <div class="panel__head"><h2 id="provider-managers-title">Provider managers</h2><button class="btn-primary" id="add-provider-manager" type="button" aria-haspopup="dialog">${escapeHtml(t("admin.providers.addManager"))}</button></div>
-    <p class="muted">Provider Manager devices receive access to every active Site associated with this Provider when the enrollment link is redeemed. Links expire after 15 minutes and enroll one physical device for all active Sites. Providers with more than 21 active Sites cannot issue a link.</p>
+    <p class="muted">${escapeHtml(t("admin.enrollment.providerInstructions"))}</p>
     ${state.providerManagers.map(providerManagerRow).join("")}
     <dialog id="add-provider-manager-dialog" class="places-modal" data-provider-manager-dialog aria-labelledby="add-provider-manager-title">
       <form class="places-modal__card site-details-form" data-provider-manager-form>
@@ -5486,8 +5489,7 @@ function providerManagerPanel(state) {
           ${formInput("provider-manager-first-name", "First name", "", { required: true, autocomplete: "given-name" })}
           ${formInput("provider-manager-last-name", "Last name", "", { required: true, autocomplete: "family-name" })}
           ${formInput("provider-manager-email", "Email", "", { required: true, type: "email", autocomplete: "email" })}
-          ${formInput("provider-manager-phone", "Phone", "", { required: true, type: "tel", autocomplete: "tel" })}
-          ${formInput("provider-manager-extension", "Extension", "")}
+          ${phoneInput("provider-manager-phone", "Phone", "", { required: true, type: "tel", autocomplete: "tel" })}
         </div>
         <div class="places-modal__actions">
           <button class="btn-primary" type="submit">${escapeHtml(t("admin.providers.addManager"))}</button>
@@ -5518,8 +5520,7 @@ function providerManagerRow(manager) {
       ${formInput("provider-manager-first-name", "First name", manager.firstName, { required: true, autocomplete: "given-name" })}
       ${formInput("provider-manager-last-name", "Last name", manager.lastName, { required: true, autocomplete: "family-name" })}
       ${formInput("provider-manager-email", "Email", manager.email, { required: true, type: "email", autocomplete: "email" })}
-      ${formInput("provider-manager-phone", "Phone", manager.phone, { required: true, type: "tel", autocomplete: "tel" })}
-      ${formInput("provider-manager-extension", "Extension", manager.phoneExtension || "")}
+      ${phoneInput("provider-manager-phone", "Phone", manager.phone, { extension: manager.phoneExtension, required: true, type: "tel", autocomplete: "tel" })}
     </div>
     <div class="places-modal__actions">
       <button class="btn-primary" type="submit" data-save-button>${escapeHtml(t("common.save"))}</button>
@@ -5634,7 +5635,7 @@ function programStaffEditDialog(user, primary, canEditEmail = false) {
       <h2 id="edit-staff-title-${escapeHtml(user.userId)}">${escapeHtml(t("admin.programs.editStaff"))}</h2>
       ${formInput("staff-first-name", t("admin.programs.firstName"), user.firstName, { required: true, autocomplete: "given-name" })}
       ${formInput("staff-last-name", t("admin.programs.lastName"), user.lastName, { required: true, autocomplete: "family-name" })}
-      ${formInput("staff-phone", t("admin.programs.phone"), user.phone, { required: true, type: "tel", autocomplete: "tel" })}
+      ${phoneInput("staff-phone", t("admin.programs.phone"), user.phone, { extension: user.phoneExtension, required: Boolean(user.phone), type: "tel", autocomplete: "tel" })}
       ${formInput("staff-email", t("admin.programs.email"), user.email, { required: true, type: "email", autocomplete: "email", disabled: !canEditEmail })}
       <wa-checkbox name="staff-primary-contact" ${primary ? "checked" : ""}>${escapeHtml(t("admin.programs.primaryContact"))}</wa-checkbox>
       <p class="muted">${escapeHtml(t("admin.programs.primaryHelp"))}</p>
@@ -5652,7 +5653,7 @@ function programStaffDialog() {
       <h2 id="add-program-staff-title">${escapeHtml(t("admin.programs.addStaffMember"))}</h2>
       ${formInput("staff-first-name", t("admin.programs.firstName"), "", { required: true, autocomplete: "given-name" })}
       ${formInput("staff-last-name", t("admin.programs.lastName"), "", { required: true, autocomplete: "family-name" })}
-      ${formInput("staff-phone", t("admin.programs.phone"), "", { required: true, type: "tel", autocomplete: "tel" })}
+      ${phoneInput("staff-phone", t("admin.programs.phone"), "", { required: true, type: "tel", autocomplete: "tel" })}
       ${formInput("staff-email", t("admin.programs.email"), "", { required: true, type: "email", autocomplete: "email" })}
       <div class="places-modal__actions">
         <button class="btn-primary" type="submit">${escapeHtml(t("admin.programs.addStaffMember"))}</button>
@@ -5683,17 +5684,7 @@ function siteEditor(state) {
   const site = /** @type {AdminSite} */ (state.site);
   const address = site.addressParts || parseLegacyAddress(site.address) || {};
   const publicContact = site.publicContact || site.contactPerson || {};
-  const programs = state.programs.filter(
-    (program) => program.status !== "inactive",
-  );
-  const staff = state.availableSiteUsers.filter(
-    (user) => user.status !== "inactive",
-  );
-  const siteManagerUnavailableMessage = !site.leadProgramId
-    ? "Assign a lead program first"
-    : !staff.length
-      ? "Add staff to the program first"
-      : "";
+  const programs = siteProviderPrograms(state.programs, site.providerId);
   const hasAddress = Boolean(site.address || streetLineFromParts(address));
   return `<form id="site-details-form" class="site-details-form" data-dirty-form>
     <fieldset>
@@ -5703,7 +5694,7 @@ function siteEditor(state) {
         ${siteTypeSelect(site.siteType || "")}
         <div class="form-grid form-grid--two">
           ${formInput("public-contact-email", "Public contact email", publicContact.email, { type: "email", autocomplete: "email" })}
-          ${formInput("public-contact-phone", "Public contact phone", publicContact.phone, { type: "tel", autocomplete: "tel", pattern: "(?:\\+?1[ .-]?)?\\(?[0-9]{3}\\)?[ .-]?[0-9]{3}[ .-]?[0-9]{4}" })}
+          ${phoneInput("public-contact-phone", "Public contact phone", publicContact.phone, { extension: publicContact.phoneExtension, type: "tel", autocomplete: "tel", pattern: "(?:\\+?1[ .-]?)?\\(?[0-9]{3}\\)?[ .-]?[0-9]{3}[ .-]?[0-9]{4}" })}
         </div>
         <button class="btn-primary" type="submit" data-save-site-details disabled>${state.siteSaving ? "Saving…" : "Save changes"}</button>
       </div>
@@ -5734,6 +5725,7 @@ function siteEditor(state) {
         <wa-select name="lead-program-id" aria-label="Lead program" placeholder="No lead program assigned" data-initial-value="${escapeHtml(site.leadProgramId || "")}">
           <wa-option value="" ${site.leadProgramId ? "" : "selected"}>No lead program assigned</wa-option>
           ${programs.map((program) => `<wa-option value="${escapeHtml(program.programId)}" ${program.programId === site.leadProgramId ? "selected" : ""}>${escapeHtml(program.name)}</wa-option>`).join("")}
+          ${state.capabilities.createEntities && site.providerId ? `<wa-option value="__create_program__" data-create-program>${escapeHtml(t("admin.programs.createNew"))}</wa-option>` : ""}
         </wa-select>
         <button class="btn-primary" type="button" data-save-lead-program disabled>Save lead program</button>
       </div>
@@ -5743,25 +5735,24 @@ function siteEditor(state) {
       <p>${state.managerMemberships.length ? state.managerMemberships.map((member) => escapeHtml(member.name)).join(", ") : escapeHtml(t("admin.siteManagers.none"))}</p>
       <a href="/sites/${encodeURIComponent(site.siteId)}?section=access" data-route>${escapeHtml(t("admin.siteManagers.manage"))}</a>
     </fieldset>
-    <fieldset>
-      <legend>${escapeHtml(t("admin.siteManagers.primaryContact"))}</legend>
-      <p class="muted">${escapeHtml(t("admin.siteManagers.primaryHelp"))}</p>
-      <div class="form-grid form-grid--one">
-        <div>
-          <p data-site-manager-add-staff ${site.leadProgramId && !staff.length ? "" : "hidden"}>${state.capabilities.createEntities === true ? `<a href="/programs/${encodeURIComponent(site.leadProgramId || "")}?addStaff=1" data-route data-add-staff-link>${escapeHtml(t("admin.programs.addStaff"))}</a>` : escapeHtml(t("admin.programs.addStaff"))} ${escapeHtml(t("admin.programs.toProgramFirst"))}</p>
-          <wa-select name="site-manager-user-id" aria-label="${escapeHtml(t("admin.siteManagers.primaryContact"))}" placeholder="Choose program staff" data-initial-value="${escapeHtml(site.primaryContactUserId || "")}" ${siteManagerUnavailableMessage ? "disabled" : ""}><span slot="label" data-site-manager-label>${site.leadProgramId && !staff.length ? "" : siteManagerUnavailableMessage || "Lead Program staff member"}</span>
-            <wa-option value="">${escapeHtml(t("admin.siteManagers.noPrimary"))}</wa-option>
-            ${staff.map((user) => `<wa-option value="${escapeHtml(user.userId)}" ${user.userId === site.primaryContactUserId ? "selected" : ""}>${escapeHtml(`${user.firstName} ${user.lastName}`)}</wa-option>`).join("")}
-          </wa-select>
-          <div id="site-manager-contact-details">${siteManagerContactDetails(staff.find((user) => user.userId === site.primaryContactUserId))}</div>
-        </div>
-        <button class="btn-primary" type="button" data-save-site-manager disabled>${escapeHtml(t("admin.siteManagers.savePrimary"))}</button>
-      </div>
-    </fieldset>
     ${state.siteSaveError ? `<p id="site-save-error" class="error site-details-form__message" role="alert">${escapeHtml(state.siteSaveError)}</p>` : ""}
   </form>
   ${leadProgramConfirmationDialog()}
-  ${siteManagerConfirmationDialog()}`;
+  ${state.capabilities.createEntities && site.providerId ? createSiteProgramDialog() : ""}
+  `;
+}
+
+function createSiteProgramDialog() {
+  return `<dialog id="create-site-program-dialog" class="places-modal" aria-labelledby="create-site-program-title">
+    <form class="places-modal__card site-details-form">
+      <h2 id="create-site-program-title">${escapeHtml(t("admin.programs.createNew"))}</h2>
+      ${formInput("program-name", t("admin.programs.name"), "", { required: true, autocomplete: "organization" })}
+      <div class="places-modal__actions">
+        <button class="btn-primary" type="submit">${escapeHtml(t("admin.programs.createNew"))}</button>
+        <button class="btn-outline" type="button" data-close-dialog>${escapeHtml(t("common.cancel"))}</button>
+      </div>
+    </form>
+  </dialog>`;
 }
 
 function leadProgramConfirmationDialog() {
@@ -5773,21 +5764,6 @@ function leadProgramConfirmationDialog() {
       </div>
       <div class="places-modal__actions">
         <button class="btn-primary" value="confirm">Save lead program</button>
-        <button class="btn-outline" value="cancel">Cancel</button>
-      </div>
-    </form>
-  </dialog>`;
-}
-
-function siteManagerConfirmationDialog() {
-  return `<dialog id="site-manager-confirmation-dialog" class="places-modal" aria-labelledby="site-manager-confirmation-title" aria-describedby="site-manager-confirmation-copy">
-    <form class="places-modal__card" method="dialog">
-      <div class="places-modal__copy">
-        <h2 class="places-modal__title" id="site-manager-confirmation-title">${escapeHtml(t("admin.siteManagers.primaryConfirm"))}</h2>
-        <p class="places-modal__text" id="site-manager-confirmation-copy">${escapeHtml(t("admin.siteManagers.primaryHelp"))}</p>
-      </div>
-      <div class="places-modal__actions">
-        <button class="btn-primary" value="confirm">${escapeHtml(t("admin.siteManagers.savePrimary"))}</button>
         <button class="btn-outline" value="cancel">Cancel</button>
       </div>
     </form>
@@ -5926,8 +5902,7 @@ function oversightCreationDialogs(state) {
         ${formInput("manager-last-name", "Last name", "", { required: true, autocomplete: "family-name" })}
       </div>
       ${formInput("manager-email", "CCSF email", "", { required: true, type: "email", autocomplete: "email" })}
-      ${formInput("manager-phone", "Phone", "", { required: true, type: "tel", autocomplete: "tel", pattern: "(?:\\+?1[ .-]?)?\\(?[0-9]{3}\\)?[ .-]?[0-9]{3}[ .-]?[0-9]{4}" })}
-      ${formInput("manager-extension", "Extension", "", { autocomplete: "tel-extension" })}
+      ${phoneInput("manager-phone", "Phone", "", { required: true, type: "tel", autocomplete: "tel", pattern: "(?:\\+?1[ .-]?)?\\(?[0-9]{3}\\)?[ .-]?[0-9]{3}[ .-]?[0-9]{4}" })}
       <wa-select name="manager-department" label="Department" required placeholder="Choose department">
         ${departments.map((item) => `<wa-option value="${escapeHtml(item.departmentId || item.name)}">${escapeHtml(item.name)}</wa-option>`).join("")}
         <wa-option value="__add_department__" data-add-option>${escapeHtml(t("admin.oversight.addDepartment"))}</wa-option>
@@ -6139,6 +6114,32 @@ function todayPacific() {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
+/** @param {string} name @param {string} label @param {unknown} value
+ * @param {Parameters<typeof formInput>[3] & { extension?: string, extensionName?: string }} [options]
+ */
+function phoneInput(name, label, value, options = {}) {
+  const extensionName =
+    options.extensionName ||
+    (name === "phone"
+      ? "phoneExtension"
+      : name.replace(/-phone$/, "-extension"));
+  return phoneExtensionField(
+    formInput(name, label, value, options),
+    formInput(
+      extensionName,
+      t("admin.phone.extension"),
+      options.extension || "",
+      {
+        autocomplete: "tel-extension",
+        maxlength: 20,
+        disabled: options.disabled,
+      },
+    ),
+    escapeHtml(t("admin.phone.addExtension")),
+    Boolean(options.extension),
+  );
+}
+
 /**
  * @param {string} name
  * @param {string} label
@@ -6182,7 +6183,8 @@ function syncDirtyForm(form, initialize = false) {
   form.dataset.isDirty = String(snapshot !== form.dataset.initialValues);
   const saveButton = form.querySelector("[data-save-button]");
   if (saveButton instanceof HTMLButtonElement) {
-    saveButton.disabled = snapshot === form.dataset.initialValues;
+    saveButton.disabled =
+      form.dataset.saving === "true" || snapshot === form.dataset.initialValues;
   }
 }
 
@@ -6211,6 +6213,7 @@ function syncSiteDetailsForm(form, initialize = false) {
       "site-type",
       "public-contact-email",
       "public-contact-phone",
+      "public-contact-extension",
     ],
     address: ["street-address", "city", "state", "zip"],
     leadProgram: ["lead-program-id"],
@@ -6288,6 +6291,7 @@ function markSiteDetailsSectionEdited(form, event) {
     "site-type": "details",
     "public-contact-email": "details",
     "public-contact-phone": "details",
+    "public-contact-extension": "details",
     "address-query": "address",
     "street-address": "address",
     city: "address",

@@ -90,16 +90,29 @@ export async function ownProfile(event) {
   ) {
     return { error: jsonResponse(409, { error: "profile_identity_mismatch" }) };
   }
+  const profileContact =
+    directory ||
+    (
+      await ddb.send(
+        new GetCommand({
+          TableName: getDynamoTableName(),
+          Key: { pk: `ADMIN_PROFILE#${principal.subject}`, sk: "#META" },
+          ConsistentRead: true,
+        }),
+      )
+    ).Item;
   return {
     pool,
     principal,
     directory,
+    profileContact,
     attributes: attrs,
     profile: {
       firstName: attrs.given_name || "",
       lastName: attrs.family_name || "",
       email,
       phone: attrs.phone_number || directory?.phone || "",
+      phoneExtension: profileContact?.phoneExtension || "",
       role: principal.role,
       directoryUserId:
         directory?.status === "active" ? directory.userId || "" : "",
@@ -121,7 +134,8 @@ export const updateMyProfile = (event) =>
   adminOnly(event, async (body) => {
     if (
       Object.keys(body).some(
-        (key) => !["firstName", "lastName", "phone"].includes(key),
+        (key) =>
+          !["firstName", "lastName", "phone", "phoneExtension"].includes(key),
       )
     ) {
       return jsonResponse(400, { error: "unsupported_profile_field" });
@@ -130,6 +144,10 @@ export const updateMyProfile = (event) =>
       body.phone === undefined ? undefined : toCognitoPhoneNumber(body.phone);
     if (phone === "")
       return jsonResponse(400, { error: "valid_phone_required" });
+    const phoneExtension =
+      body.phoneExtension === undefined
+        ? undefined
+        : clean(body.phoneExtension).slice(0, 20);
     const firstName = clean(body.firstName);
     const lastName = clean(body.lastName);
     if (
@@ -146,7 +164,10 @@ export const updateMyProfile = (event) =>
       async (prepare) => {
         const current = await ownProfile(event);
         if (current.error) return current.error;
-        if (current.directory)
+        const contactKey = current.directory
+          ? { pk: current.directory.pk, sk: current.directory.sk }
+          : { pk: `ADMIN_PROFILE#${current.principal.subject}`, sk: "#META" };
+        if (current.profileContact || phoneExtension !== undefined)
           await prepare({
             pool: current.pool,
             username: current.principal.username,
@@ -166,10 +187,7 @@ export const updateMyProfile = (event) =>
                 .filter((key) => current.attributes[key] !== undefined)
                 .map((key) => [key, current.attributes[key]]),
             ),
-            directoryKey: {
-              pk: current.directory.pk,
-              sk: current.directory.sk,
-            },
+            directoryKey: contactKey,
           });
         await cognito.send(
           new AdminUpdateUserAttributesCommand({
@@ -185,19 +203,26 @@ export const updateMyProfile = (event) =>
             ],
           }),
         );
-        if (current.directory) {
+        if (current.profileContact || phoneExtension !== undefined) {
           await ddb.send(
             new UpdateCommand({
               TableName: getDynamoTableName(),
-              Key: { pk: current.directory.pk, sk: current.directory.sk },
+              Key: contactKey,
               UpdateExpression:
                 "SET firstName = :first, lastName = :last, #name = :name, updatedAt = :now" +
-                (phone === undefined ? "" : ", phone = :phone"),
+                (phone === undefined ? "" : ", phone = :phone") +
+                (phoneExtension === undefined
+                  ? ""
+                  : ", phoneExtension = :extension"),
               ConditionExpression:
-                "attribute_exists(pk) AND (attribute_not_exists(cognitoSubject) OR cognitoSubject = :subject)",
+                (current.directory ? "attribute_exists(pk) AND " : "") +
+                "(attribute_not_exists(cognitoSubject) OR cognitoSubject = :subject)",
               ExpressionAttributeNames: { "#name": "name" },
               ExpressionAttributeValues: {
                 ...(phone === undefined ? {} : { ":phone": phone }),
+                ...(phoneExtension === undefined
+                  ? {}
+                  : { ":extension": phoneExtension }),
                 ":first": firstName,
                 ":last": lastName,
                 ":name": `${firstName} ${lastName}`,
@@ -213,6 +238,7 @@ export const updateMyProfile = (event) =>
             firstName,
             lastName,
             ...(phone === undefined ? {} : { phone }),
+            ...(phoneExtension === undefined ? {} : { phoneExtension }),
           },
         });
       },
@@ -388,6 +414,17 @@ export const inviteAdminUser = (event) =>
     }
     const user = existingUser ?? (await getUser(pool, email));
     const cognitoSubject = attributes(user).sub || "";
+    let inheritedExtension = "";
+    if (!directory && existingUser && !phoneExtension && cognitoSubject) {
+      const savedProfile = await ddb.send(
+        new GetCommand({
+          TableName: getDynamoTableName(),
+          Key: { pk: `ADMIN_PROFILE#${cognitoSubject}`, sk: "#META" },
+          ConsistentRead: true,
+        }),
+      );
+      inheritedExtension = clean(savedProfile.Item?.phoneExtension);
+    }
     const now = new Date().toISOString();
     if (directory) {
       await ddb.send(
@@ -425,7 +462,7 @@ export const inviteAdminUser = (event) =>
             name: `${firstName} ${lastName}`,
             email,
             phone,
-            phoneExtension,
+            phoneExtension: phoneExtension || inheritedExtension,
             departmentId,
             cognitoSubject,
             departmentName,

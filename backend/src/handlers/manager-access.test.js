@@ -23,7 +23,7 @@ beforeEach(() => {
 });
 
 describe("manager staff enrollment", () => {
-  it("issues one ten-minute general grant without storing its secret", async () => {
+  it("issues one eight-hour general grant without storing its secret", async () => {
     send
       .mockResolvedValueOnce({ Item: { siteId: "site-1", name: "Site One" } })
       .mockResolvedValueOnce({
@@ -51,6 +51,9 @@ describe("manager staff enrollment", () => {
       accessLevel: "general",
       status: "pending",
     });
+    expect(
+      Date.parse(body.grant.expiresAt) - Date.parse(body.grant.createdAt),
+    ).toBe(8 * 60 * 60 * 1000);
     expect(body.enrollmentUrl).toContain("#enrollment_grant=");
     const transaction = send.mock.calls[3][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);

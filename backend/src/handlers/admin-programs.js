@@ -1,3 +1,6 @@
+import { assignmentsMatchingEmail } from "../lib/manager-identity.js";
+import { queryAllItems } from "../lib/query-all-items.js";
+import { sitePrimaryContactChange } from "../lib/site-primary-contact.js";
 import { staffRemovalContactGuard } from "../lib/staff-contact-guard.js";
 import {
   DeleteCommand,
@@ -39,15 +42,13 @@ export const createProgram = (event) =>
     const providerId = clean(body.providerId);
     if (!name) return jsonResponse(400, { error: "name_required" });
     if (!providerId) return jsonResponse(400, { error: "provider_required" });
-    const firstStaff =
+    let firstStaff =
       body.firstStaff === undefined ? null : normalizeContact(body.firstStaff);
     if (firstStaff) {
       if (!firstStaff.firstName || !firstStaff.lastName)
         return jsonResponse(400, { error: "name_required" });
       if (!isEmail(firstStaff.email))
         return jsonResponse(400, { error: "valid_email_required" });
-      if (!firstStaff.phone)
-        return jsonResponse(400, { error: "phone_required" });
     }
     const provider = await ddb.send(
       new GetCommand({
@@ -57,6 +58,105 @@ export const createProgram = (event) =>
     );
     if (!provider.Item || provider.Item.status === "inactive") {
       return jsonResponse(404, { error: "provider_not_found" });
+    }
+    // Staff memberships are additive: selecting a source never moves or edits it.
+    const sourceInput = body.existingStaff;
+    const sourceChecks = [];
+    let staffSource;
+    if (sourceInput !== undefined) {
+      if (firstStaff || !sourceInput || typeof sourceInput !== "object")
+        return jsonResponse(400, { error: "invalid_staff_source" });
+      const sourceRef = /** @type {Record<string, unknown>} */ (sourceInput);
+      let sourceKey;
+      if (
+        sourceRef.providerManagerId &&
+        !sourceRef.programId &&
+        !sourceRef.userId
+      ) {
+        sourceKey = {
+          pk: `PROVIDER#${providerId}`,
+          sk: `PROVIDER_MANAGER#${clean(sourceRef.providerManagerId)}`,
+        };
+        staffSource = {
+          providerId,
+          providerManagerId: clean(sourceRef.providerManagerId),
+        };
+      } else if (
+        sourceRef.programId &&
+        sourceRef.userId &&
+        !sourceRef.providerManagerId
+      ) {
+        const sourceProgramKey = {
+          pk: `PROGRAM#${clean(sourceRef.programId)}`,
+          sk: "#META",
+        };
+        const sourceProgram = await ddb.send(
+          new GetCommand({
+            TableName: getDynamoTableName(),
+            Key: sourceProgramKey,
+            ConsistentRead: true,
+          }),
+        );
+        if (
+          sourceProgram.Item?.providerId !== providerId ||
+          sourceProgram.Item?.status !== "active"
+        )
+          return jsonResponse(400, { error: "invalid_staff_source" });
+        sourceChecks.push({
+          ConditionCheck: {
+            TableName: getDynamoTableName(),
+            Key: sourceProgramKey,
+            ConditionExpression: "providerId = :provider AND #status = :active",
+            ExpressionAttributeNames: { "#status": "status" },
+            ExpressionAttributeValues: {
+              ":provider": providerId,
+              ":active": "active",
+            },
+          },
+        });
+        sourceKey = {
+          pk: sourceProgramKey.pk,
+          sk: `USER#${clean(sourceRef.userId)}`,
+        };
+        staffSource = {
+          programId: clean(sourceRef.programId),
+          userId: clean(sourceRef.userId),
+        };
+      } else return jsonResponse(400, { error: "invalid_staff_source" });
+      const source = await ddb.send(
+        new GetCommand({
+          TableName: getDynamoTableName(),
+          Key: sourceKey,
+          ConsistentRead: true,
+        }),
+      );
+      if (source.Item?.status !== "active")
+        return jsonResponse(400, { error: "invalid_staff_source" });
+      firstStaff = normalizeContact(source.Item);
+      if (
+        !firstStaff.firstName ||
+        !firstStaff.lastName ||
+        !isEmail(firstStaff.email)
+      )
+        return jsonResponse(400, { error: "invalid_staff_source" });
+      sourceChecks.push({
+        ConditionCheck: {
+          TableName: getDynamoTableName(),
+          Key: sourceKey,
+          ConditionExpression:
+            "#status = :active" +
+            (source.Item.updatedAt
+              ? " AND updatedAt = :version"
+              : " AND attribute_not_exists(updatedAt)"),
+          ExpressionAttributeNames: { "#status": "status" },
+          ExpressionAttributeValues: {
+            ":active": "active",
+            ...(source.Item.updatedAt
+              ? { ":version": source.Item.updatedAt }
+              : {}),
+          },
+        },
+      });
     }
     const programId = slug(body.programId, `${providerId}-${name}`);
     const now = new Date().toISOString();
@@ -89,6 +189,7 @@ export const createProgram = (event) =>
           programId,
           userId,
           ...firstStaff,
+          ...(staffSource ? { staffSource } : {}),
           siteManager: false,
           status: "active",
           siteAssignmentCount: 0,
@@ -96,37 +197,56 @@ export const createProgram = (event) =>
           updatedAt: now,
         }
       : null;
-    await ddb.send(
-      new TransactWriteCommand({
-        TransactItems: [
-          put(program),
-          ...(user ? [put(user)] : []),
-          put({
-            pk: `PROVIDER#${providerId}`,
-            sk: `PROGRAM#${programId}`,
-            type: "providerProgramMembership",
-            providerId,
-            programId,
-            programName: name,
-            status: "active",
-            createdAt: now,
-            updatedAt: now,
-          }),
-          put({
-            pk: SEARCH_PK,
-            sk: `${name.toLocaleLowerCase("en-US")}#${programId}`,
-            type: "programSearch",
-            programId,
-            name,
-            providerId,
-            providerName: provider.Item.name,
-            migrationPlaceholder: program.migrationPlaceholder,
-            needsReview: program.needsReview,
-            updatedAt: now,
-          }),
-        ],
-      }),
-    );
+    try {
+      await ddb.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            ...sourceChecks,
+            put(program),
+            ...(user ? [put(user)] : []),
+            put({
+              pk: `PROVIDER#${providerId}`,
+              sk: `PROGRAM#${programId}`,
+              type: "providerProgramMembership",
+              providerId,
+              programId,
+              programName: name,
+              status: "active",
+              createdAt: now,
+              updatedAt: now,
+            }),
+            put({
+              pk: SEARCH_PK,
+              sk: `${name.toLocaleLowerCase("en-US")}#${programId}`,
+              type: "programSearch",
+              programId,
+              name,
+              providerId,
+              providerName: provider.Item.name,
+              migrationPlaceholder: program.migrationPlaceholder,
+              needsReview: program.needsReview,
+              updatedAt: now,
+            }),
+          ],
+        }),
+      );
+    } catch (error) {
+      const cancellation =
+        /** @type {{ name?: string, CancellationReasons?: { Code?: string }[] }} */ (
+          error
+        );
+      if (
+        cancellation.name === "TransactionCanceledException" &&
+        sourceChecks.some(
+          (_, index) =>
+            cancellation.CancellationReasons?.[index]?.Code ===
+            "ConditionalCheckFailed",
+        )
+      ) {
+        return jsonResponse(409, { error: "staff_source_changed" });
+      }
+      throw error;
+    }
     return jsonResponse(201, { program, ...(user ? { user } : {}) });
   });
 
@@ -316,9 +436,6 @@ export const updateProgramUser = (event) =>
     if (!isEmail(contact.email)) {
       return jsonResponse(400, { error: "valid_email_required" });
     }
-    if (!contact.phone) {
-      return jsonResponse(400, { error: "phone_required" });
-    }
     const current = await ddb.send(
       new GetCommand({
         TableName: getDynamoTableName(),
@@ -327,6 +444,9 @@ export const updateProgramUser = (event) =>
     );
     if (!current.Item || current.Item.status !== "active") {
       return jsonResponse(404, { error: "program_user_not_found" });
+    }
+    if (current.Item.phone && !contact.phone) {
+      return jsonResponse(400, { error: "phone_required" });
     }
     const principal = adminPrincipal(event);
     const requestedSiteManager = body.siteManager === true;
@@ -537,7 +657,7 @@ async function removeSiteManager(event, programId, userId, user) {
         ExpressionAttributeValues: { ":pk": `MANAGER_EMAIL#${verifier}` },
       }),
     ),
-    queryChildren(programId, "SITE#"),
+    queryChildren(programId, "SITE#", true),
   ]);
   const actor = String(
     /** @type {any} */ (event.requestContext)?.authorizer?.jwt?.claims?.sub ??
@@ -545,7 +665,6 @@ async function removeSiteManager(event, programId, userId, user) {
   );
   const siteIds = new Set(
     (programSitesResult.Items ?? [])
-      .filter((site) => site.status !== "inactive")
       .map((site) => String(site.siteId || ""))
       .filter(Boolean),
   );
@@ -564,18 +683,43 @@ async function removeSiteManager(event, programId, userId, user) {
       }),
     );
     const membership = membershipResult.Item;
-    const belongsToManager =
-      membership?.userId === userId ||
-      (!membership?.userId &&
-        membership?.programId === programId &&
-        String(membership?.email || "").toLocaleLowerCase("en-US") ===
-          String(user.email || "").toLocaleLowerCase("en-US"));
+    let belongsToManager = membership?.userId === userId;
+    if (
+      !membership?.userId &&
+      String(membership?.email || "")
+        .trim()
+        .toLowerCase() ===
+        String(user.email || "")
+          .trim()
+          .toLowerCase()
+    ) {
+      const assignments = await queryAllItems({
+        TableName: tableName,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues: {
+          ":pk": `SITE#${siteId}`,
+          ":prefix": "ASSIGNED_USER#",
+        },
+        ConsistentRead: true,
+      });
+      const matches = await assignmentsMatchingEmail(
+        tableName,
+        assignments.Items,
+        String(user.email || ""),
+      );
+      belongsToManager = matches.some(
+        (row) => row.userId === userId && row.programId === programId,
+      );
+      if (belongsToManager && matches.length !== 1)
+        return jsonResponse(409, { error: "ambiguous_manager_identity" });
+    }
     if (!belongsToManager) continue;
     siteIds.add(siteId);
     const result = await deactivateManagerMembershipRecord({
       siteId,
       membershipId,
       actor,
+      expectedUserId: userId,
     });
     if (result?.error) return jsonResponse(409, { error: result.error });
     revokedBindingCount += Number(result?.revokedBindingCount || 0);
@@ -588,6 +732,7 @@ async function removeSiteManager(event, programId, userId, user) {
         new GetCommand({
           TableName: tableName,
           Key: { pk: `SITE#${siteId}`, sk: "#META" },
+          ConsistentRead: true,
         }),
       ),
       ddb.send(
@@ -613,18 +758,11 @@ async function removeSiteManager(event, programId, userId, user) {
         },
       });
     }
-    if (isPrimary) {
-      items.push({
-        Update: {
-          TableName: tableName,
-          Key: { pk: `SITE#${siteId}`, sk: "#META" },
-          UpdateExpression:
-            "REMOVE primaryContactUserId, primaryContact SET updatedAt = :now",
-          ConditionExpression: "primaryContactUserId = :userId",
-          ExpressionAttributeValues: { ":userId": userId, ":now": now },
-        },
-      });
-    }
+    items.push(
+      await sitePrimaryContactChange(tableName, siteId, now, {
+        removeUserId: userId,
+      }),
+    );
     items.push(
       put({
         pk: `SITE#${siteId}`,
@@ -818,10 +956,11 @@ export const deactivateProgram = (event) =>
     return jsonResponse(200, { program: result.Attributes });
   });
 
-/** @param {string} programId @param {string} prefix */
-async function queryChildren(programId, prefix) {
+/** @param {string} programId @param {string} prefix @param {boolean} [consistentRead] */
+async function queryChildren(programId, prefix, consistentRead = false) {
   const Items = await queryAll({
     TableName: getDynamoTableName(),
+    ConsistentRead: consistentRead,
     KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
     ExpressionAttributeValues: {
       ":pk": `PROGRAM#${programId}`,

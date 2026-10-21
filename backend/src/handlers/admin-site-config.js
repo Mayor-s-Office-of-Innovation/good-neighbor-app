@@ -1,5 +1,5 @@
+import { sitePrimaryContactChange } from "../lib/site-primary-contact.js";
 import { queryAllItems } from "../lib/query-all-items.js";
-import { contactRevisionChange } from "../lib/staff-contact-guard.js";
 import { deactivateManagerMembershipRecord } from "./admin-manager-memberships.js";
 import { complianceLetterEmail } from "../domain/compliance-letter-email.js";
 import { ownProfile } from "./admin-users.js";
@@ -670,49 +670,9 @@ export const assignSiteUser = (event) =>
     if (!user || user.status !== "active") {
       return jsonResponse(404, { error: "program_user_not_found" });
     }
-    const primary = body.primary === true;
     const now = new Date().toISOString();
-    const primaryGuards = [];
-    if (primary) {
-      const { Item: program } = await ddb.send(
-        new GetCommand({
-          TableName: tableName,
-          Key: { pk: `PROGRAM#${site.leadProgramId}`, sk: "#META" },
-          ConsistentRead: true,
-        }),
-      );
-      if (!program) return jsonResponse(404, { error: "program_not_found" });
-      primaryGuards.push(
-        contactRevisionChange(tableName, site.leadProgramId, program),
-      );
-      if (assignmentResult.Item)
-        primaryGuards.push({
-          ConditionCheck: {
-            TableName: tableName,
-            Key: { pk: `PROGRAM#${site.leadProgramId}`, sk: `USER#${userId}` },
-            ConditionExpression: "#status = :active",
-            ExpressionAttributeNames: { "#status": "status" },
-            ExpressionAttributeValues: { ":active": "active" },
-          },
-        });
-    }
-    if (assignmentResult.Item) {
-      if (!primary) {
-        return jsonResponse(200, { assignment: assignmentResult.Item });
-      }
-      await ddb.send(
-        new TransactWriteCommand({
-          TransactItems: [
-            ...primaryGuards,
-            primaryContactUpdate(tableName, siteId, user, now),
-          ],
-        }),
-      );
-      return jsonResponse(200, {
-        assignment: assignmentResult.Item,
-        primaryContactUserId: userId,
-      });
-    }
+    if (assignmentResult.Item)
+      return jsonResponse(200, { assignment: assignmentResult.Item });
     const assignment = {
       pk: `SITE#${siteId}`,
       sk: `ASSIGNED_USER#${userId}`,
@@ -749,11 +709,11 @@ export const assignSiteUser = (event) =>
         },
       },
     ];
-    if (primary)
-      items.push(
-        ...primaryGuards,
-        primaryContactUpdate(tableName, siteId, user, now),
-      );
+    items.push(
+      await sitePrimaryContactChange(tableName, siteId, now, {
+        add: assignment,
+      }),
+    );
     try {
       await ddb.send(new TransactWriteCommand({ TransactItems: items }));
     } catch (error) {
@@ -767,7 +727,6 @@ export const assignSiteUser = (event) =>
     }
     return jsonResponse(201, {
       assignment,
-      ...(primary ? { primaryContactUserId: userId } : {}),
     });
   });
 
@@ -858,6 +817,9 @@ export const unassignSiteUser = (event) =>
       await ddb.send(
         new TransactWriteCommand({
           TransactItems: [
+            await sitePrimaryContactChange(tableName, siteId, now, {
+              removeUserId: userId,
+            }),
             {
               Delete: {
                 TableName: tableName,
@@ -993,35 +955,6 @@ export const putSitePerimeter = (event) =>
   });
 
 /**
- * @param {string} tableName
- * @param {string} siteId
- * @param {Record<string, unknown>} user
- * @param {string} now
- * @returns {Record<string, unknown>}
- */
-function primaryContactUpdate(tableName, siteId, user, now) {
-  return {
-    Update: {
-      TableName: tableName,
-      Key: { pk: `SITE#${siteId}`, sk: "#META" },
-      UpdateExpression:
-        "SET primaryContactUserId = :userId, primaryContact = :contact, updatedAt = :now",
-      ConditionExpression: "attribute_exists(pk)",
-      ExpressionAttributeValues: {
-        ":userId": user.userId,
-        ":contact": {
-          firstName: user.firstName,
-          lastName: user.lastName,
-          phone: user.phone,
-          email: user.email,
-        },
-        ":now": now,
-      },
-    },
-  };
-}
-
-/**
  * Resolve the authenticated letter sender and enforce Site assignment for
  * Compliance managers. Supervisors intentionally bypass Site assignment.
  * @param {import("aws-lambda").APIGatewayProxyEventV2} event
@@ -1057,7 +990,7 @@ async function resolveLetterGenerator(event, siteId, tableName) {
         lastName: principal.lastName,
         email,
         phone: principal.phone,
-        phoneExtension: "",
+        phoneExtension: current.profile.phoneExtension || "",
         departmentName: principal.department,
         userId: principal.subject,
       },
@@ -1080,7 +1013,8 @@ async function resolveLetterGenerator(event, siteId, tableName) {
     lastName: directory?.lastName || principal.lastName,
     email: directory?.email || email,
     phone: directory?.phone || principal.phone,
-    phoneExtension: directory?.phoneExtension || "",
+    phoneExtension:
+      directory?.phoneExtension || current.profile.phoneExtension || "",
     departmentName: directory?.departmentName || principal.department,
     userId: directory?.userId || "",
   };

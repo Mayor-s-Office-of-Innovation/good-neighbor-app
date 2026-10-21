@@ -36,15 +36,16 @@ export async function staffRemovalContactGuard(tableName, programId, user) {
     }),
   );
   if (!program) return { error: "program_not_found" };
-  if (
+  const isProgramPrimary =
     program.primaryContactUserId === user.userId ||
     (!program.primaryContactUserId &&
       program.contact?.email &&
       String(program.contact.email).trim().toLowerCase() ===
         String(user.email || "")
           .trim()
-          .toLowerCase())
-  )
+          .toLowerCase());
+  const deletingManager = user.siteManager === true;
+  if (isProgramPrimary && !deletingManager)
     return { error: "program_primary_contact_in_use" };
   let cursor;
   do {
@@ -69,15 +70,19 @@ export async function staffRemovalContactGuard(tableName, programId, user) {
           ConsistentRead: true,
         }),
       );
-      if (site?.primaryContactUserId === user.userId)
+      if (!deletingManager && site?.primaryContactUserId === user.userId)
         return { error: "site_primary_contact_in_use" };
     }
     cursor = page.LastEvaluatedKey;
   } while (cursor);
   const change = contactRevisionChange(tableName, programId, program);
-  change.Update.ConditionExpression +=
-    " AND (attribute_not_exists(primaryContactUserId) OR primaryContactUserId <> :userId)";
-  change.Update.ExpressionAttributeValues[":userId"] = user.userId;
+  if (deletingManager && isProgramPrimary) {
+    change.Update.UpdateExpression += " REMOVE primaryContactUserId, contact";
+  } else if (!deletingManager) {
+    change.Update.ConditionExpression +=
+      " AND (attribute_not_exists(primaryContactUserId) OR primaryContactUserId <> :userId)";
+    change.Update.ExpressionAttributeValues[":userId"] = user.userId;
+  }
   // Legacy snapshot changes are covered by the same metadata version used by program edits.
   change.Update.ConditionExpression += program.updatedAt
     ? " AND updatedAt = :version"
