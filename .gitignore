@@ -47,6 +47,6 @@ e2e/.a11y-local/
 # root instead of the e2e workspace (artifacts are never source).
 /test-results/
 
-# Lighthouse CI local artifacts (lhci writes to ./<cwd>/.lighthouseci; CI and
-# local runs land it at the repo root)
-.lighthouseci/
+# speed-check (Lighthouse) reports written by `npm run perf` in frontend/;
+# CI uploads them as a workflow artifact.
+speed-check-report/
