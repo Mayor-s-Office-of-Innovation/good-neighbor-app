@@ -901,6 +901,122 @@ describe("deferred In-progress / History lists", () => {
     errorLog.mockRestore();
   });
 
+  /** First load with one open and one completed task, fully settled. */
+  async function loadedView() {
+    catalog.listTasks.mockImplementation(async ({ status }) => ({
+      tasks:
+        status === "open"
+          ? [openTask]
+          : status === "completed"
+            ? [doneTask]
+            : [],
+    }));
+    const view = liveView("?filter=todo");
+    await view.connectedCallback();
+    await view._remainingLoad;
+    expect(view._remainingStatus).toBe("loaded");
+    expect(view._homeModel.tasks.map((t) => t.taskId).sort()).toEqual([
+      "done-1",
+      "open-1",
+    ]);
+    return view;
+  }
+
+  it("reuses fresh In-progress / History lists on a reload and re-fetches only the open list", async () => {
+    freezeClock();
+    const view = await loadedView();
+    catalog.listTasks.mockClear();
+    vi.setSystemTime(FROZEN_NOW.getTime() + 30_000);
+
+    await view.connectedCallback();
+    await view._remainingLoad;
+
+    expect(catalog.listTasks.mock.calls.map(([{ status }]) => status)).toEqual([
+      "open",
+    ]);
+    expect(view._remainingStatus).toBe("loaded");
+    expect(view._homeModel.tasks.map((t) => t.taskId).sort()).toEqual([
+      "done-1",
+      "open-1",
+    ]);
+    expect(view._render(view._homeModel)).toContain("home-tabs__count");
+  });
+
+  it("drops the lists and shows a placeholder once they are older than a minute", async () => {
+    freezeClock();
+    const view = await loadedView();
+    vi.setSystemTime(FROZEN_NOW.getTime() + 61_000);
+    let release = () => {};
+    const held = new Promise((resolve) => {
+      release = () => resolve({ tasks: [doneTask] });
+    });
+    catalog.listTasks.mockImplementation(async ({ status }) =>
+      status === "open" ? { tasks: [openTask] } : held,
+    );
+
+    await view.connectedCallback();
+    // The previous completed task is gone, counts hidden, one placeholder.
+    expect(view._remainingStatus).toBe("pending");
+    expect(view._homeModel.tasks.map((t) => t.taskId)).toEqual(["open-1"]);
+    expect(view._render(view._homeModel)).not.toContain("home-tabs__count");
+    view._homeFilter = "history";
+    const pendingMarkup = view._render(view._homeModel);
+    expect(pendingMarkup.match(/analysis-card--pending/g)).toHaveLength(1);
+    expect(pendingMarkup).toContain('aria-busy="true"');
+
+    release();
+    await view._remainingLoad;
+    expect(view._remainingStatus).toBe("loaded");
+    expect(view._homeModel.tasks.map((t) => t.taskId).sort()).toEqual([
+      "done-1",
+      "open-1",
+    ]);
+  });
+
+  it("re-fetches the lists on the next reload after a cross-list action", async () => {
+    freezeClock();
+    const view = await loadedView();
+    catalog.listTasks.mockClear();
+    // Completing a task writes a status override: the lists are now expired
+    // even though they are seconds old.
+    view._setTaskOverride("open-1", "resolved");
+
+    await view.connectedCallback();
+    expect(view._remainingStatus).toBe("pending");
+    await view._remainingLoad;
+    expect(
+      catalog.listTasks.mock.calls.map(([{ status }]) => status).sort(),
+    ).toEqual(
+      ["cannot_do", "completed", "completing", "in_progress", "open"].sort(),
+    );
+    expect(view._remainingStatus).toBe("loaded");
+  });
+
+  it("does not carry tasks over when the view re-enters for another site", async () => {
+    catalog.listTasks.mockImplementation(async ({ status }) => ({
+      tasks: status === "completed" ? [doneTask] : [],
+    }));
+    const view = liveView("?filter=todo");
+    await view.connectedCallback();
+    await view._remainingLoad;
+    expect(view._homeModel.tasks.map((t) => t.taskId)).toEqual(["done-1"]);
+
+    siteRead.mockResolvedValue({ siteId: "site-2" });
+    let release = () => {};
+    const held = new Promise((resolve) => {
+      release = () => resolve({ tasks: [] });
+    });
+    catalog.listTasks.mockImplementation(async ({ status }) =>
+      status === "open" ? { tasks: [] } : held,
+    );
+    await view.connectedCallback();
+    expect(view._siteId).toBe("site-2");
+    expect(view._homeModel.tasks).toEqual([]);
+    expect(view._remainingStatus).toBe("pending");
+    release();
+    await view._remainingLoad;
+  });
+
   it("ignores a late remaining-lists answer after the site changed", async () => {
     let release = () => {};
     const held = new Promise((resolve) => {
@@ -943,10 +1059,11 @@ describe("worklist refresh focus", () => {
     scrollTop = 850;
 
     // Checklist completion refreshes via this same callback after collapsing.
-    // Each load renders twice: the open list, then the remaining lists.
+    // The first load renders twice (open list, then the remaining lists);
+    // the reload reuses the still-fresh remaining lists and renders once.
     await view.connectedCallback();
     await view._remainingLoad;
-    expect(view._renderHome).toHaveBeenCalledTimes(4);
+    expect(view._renderHome).toHaveBeenCalledTimes(3);
     expect(heading.focus).toHaveBeenCalledOnce();
     expect(scrollTop).toBe(850);
     view.disconnectedCallback();

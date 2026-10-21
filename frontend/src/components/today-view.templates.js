@@ -495,9 +495,9 @@ export function homeResults({
     Boolean(activeClearCheck) ||
     historyGroups.length;
   // The In-progress and History lists load after the first paint (the open
-  // list is all the To-do tab needs). Until they land those tabs show a
-  // placeholder rail instead of an empty state; a failed load says so and
-  // offers a retry.
+  // list is all the To-do tab needs). Until they land those tabs show one
+  // placeholder card instead of an empty state — never a previous load's
+  // cards; a failed load says so and offers a retry.
   const awaitingRemaining =
     homeFilter !== "todo" && remainingStatus !== "loaded";
   const trayOptions = {
@@ -566,7 +566,7 @@ export function homeResults({
                 ${escapeHtml(t("common.retry"))}
               </button>
             </p>`
-          : pendingCards()
+          : pendingCards(1)
         : !hasVisibleCards
           ? homeFilter === "todo" && !hasPendingSession
             ? homeAllDonePanel()

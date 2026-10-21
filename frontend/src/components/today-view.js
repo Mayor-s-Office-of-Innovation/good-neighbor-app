@@ -194,9 +194,16 @@ function stashHomeState(view) {
         boundSites: view._boundSites,
         task311Statuses: view._311StatusByTaskId,
         duplicateLinks: new Map(view._duplicateLinks),
+        remainingStatus: view._remainingStatus,
+        remainingLoadedAt: view._remainingLoadedAt,
       }
     : null;
 }
+
+// How long the In-progress / History lists stay fresh enough to reuse on a
+// reload (route return, or an action on this screen) without re-fetching.
+// Cross-list actions expire them early — see _expireRemainingLists.
+const REMAINING_LISTS_FRESH_MS = 60_000;
 
 // The stash belongs to one site session and must never paint for the next
 // one: sign-out and re-binding replace the device's binding in the same
@@ -304,8 +311,10 @@ class TodayView extends HTMLElement {
     if (!this._deletionUnsub) {
       this._deletionUnsub = onDeletionsChange((status) => {
         if (!this.isConnected) return;
-        if (status === "saved") void this.connectedCallback();
-        else if (this._homeModel) this._renderHome(this._homeModel);
+        if (status === "saved") {
+          this._expireRemainingLists();
+          void this.connectedCallback();
+        } else if (this._homeModel) this._renderHome(this._homeModel);
       });
     }
     if (!this._locationUnsub) {
@@ -408,9 +417,9 @@ class TodayView extends HTMLElement {
     // Only the open list gates the first paint: it is all the default To-do
     // tab shows. The In-progress and History lists (the slowest call is the
     // ever-growing completed list) load right after the first render — see
-    // _loadRemainingTasks. On a refresh the previously known non-open tasks
-    // are carried over so those tabs don't flash empty in between.
+    // _loadRemainingTasks.
     let submitted, tasks;
+    let reuseRemaining = false;
     try {
       const [[catalog, bindings], { checks }, openTasksResult] =
         await Promise.all([
@@ -423,11 +432,24 @@ class TodayView extends HTMLElement {
       this._providerName =
         catalog?.providerName || this._site.providerName || "";
       this._boundSites = bindings;
-      const carriedOver = (this._homeModel?.tasks || []).filter(
-        (task) => task.status && task.status !== "open",
-      );
-      tasks = uniqueTasks([...(openTasksResult.tasks || []), ...carriedOver]);
-      this._remainingStatus = "pending";
+      // The remaining lists are reused when they are this site's own, were
+      // loaded within REMAINING_LISTS_FRESH_MS, and no cross-list action has
+      // expired them since; then only the open list is re-fetched. Otherwise
+      // (first arrival, stale, expired, another site) they are dropped:
+      // In-progress and History show a placeholder and the tab counts stay
+      // hidden until the fresh lists land. Old cards are never shown.
+      const sameSite = !previousSiteId || previousSiteId === this._siteId;
+      reuseRemaining =
+        sameSite &&
+        this._remainingStatus === "loaded" &&
+        Date.now() - (this._remainingLoadedAt || 0) < REMAINING_LISTS_FRESH_MS;
+      const reused = reuseRemaining
+        ? (this._homeModel?.tasks || []).filter(
+            (task) => task.status && task.status !== "open",
+          )
+        : [];
+      tasks = uniqueTasks([...(openTasksResult.tasks || []), ...reused]);
+      if (!reuseRemaining) this._remainingStatus = "pending";
       submitted = (checks || [])
         .map((h) => adaptCheckHeader(h))
         .filter((c) => c.status === "submitted")
@@ -469,11 +491,34 @@ class TodayView extends HTMLElement {
       tasks,
       pendingSession: effectivePendingSession,
     });
-    this._watchDuplicates(tasks);
-    void this._hydrate311CardStatuses(tasks);
+    // Evidence hydration is for the cards on screen now. The duplicate watcher
+    // (a poll) and the 311 status batch wait for the complete list, so each
+    // starts once per load: here when the remaining lists were reused, else
+    // in _loadRemainingTasks.
     void this._hydrateVisibleHomeTasks();
-    this._remainingLoad = this._loadRemainingTasks();
+    if (reuseRemaining) {
+      this._remainingLoad = Promise.resolve();
+      this._watchDuplicates(tasks);
+      void this._hydrate311CardStatuses(tasks);
+    } else {
+      this._startRemainingLoad();
+    }
     if (announceArrival) announceScreenHeading(this, ".home-identity__site");
+  }
+
+  /**
+   * A cross-list action (a task completed, filed to 311, moved to in
+   * progress, or a card deleted) changes the In-progress / History lists:
+   * forget their freshness so the next reload re-fetches them.
+   */
+  _expireRemainingLists() {
+    this._remainingLoadedAt = 0;
+  }
+
+  _startRemainingLoad() {
+    this._remainingLoad = this._loadRemainingTasks().catch((err) =>
+      console.error("remaining worklist failed", err),
+    );
   }
 
   _taskWith311CardStatus(task) {
@@ -531,16 +576,21 @@ class TodayView extends HTMLElement {
       if (!stillCurrent()) return;
       this._remainingStatus = "error";
       this._renderHome(this._homeModel);
+      // The open list is all we have; watch and hydrate that much.
+      this._watchDuplicates(this._homeModel.tasks);
+      void this._hydrate311CardStatuses(this._homeModel.tasks);
       return;
     }
     if (!stillCurrent()) return;
     const model = this._homeModel;
-    // Fresh lists win over anything carried over from a previous model.
+    // The model holds only the open list (possibly hydrated); the fresh
+    // lists are the other statuses, so there is nothing to reconcile.
     const tasks = uniqueTasks([
       ...results.flatMap((result) => result.tasks || []),
       ...model.tasks,
     ]);
     this._remainingStatus = "loaded";
+    this._remainingLoadedAt = Date.now();
     this._renderHome({ ...model, tasks });
     this._watchDuplicates(tasks);
     void this._hydrate311CardStatuses(tasks);
@@ -596,6 +646,8 @@ class TodayView extends HTMLElement {
     this._providerSitesStatus = snapshot.providerSitesStatus;
     this._boundSites = snapshot.boundSites;
     this._311StatusByTaskId = snapshot.task311Statuses;
+    this._remainingStatus = snapshot.remainingStatus;
+    this._remainingLoadedAt = snapshot.remainingLoadedAt;
     this._duplicateLinks = duplicateUiEnabled()
       ? new Map(snapshot.duplicateLinks ?? [])
       : new Map();
@@ -846,7 +898,7 @@ class TodayView extends HTMLElement {
     this.querySelector("#retry-remaining")?.addEventListener("click", () => {
       this._remainingStatus = "pending";
       if (this._homeModel) this._renderHome(this._homeModel);
-      this._remainingLoad = this._loadRemainingTasks();
+      this._startRemainingLoad();
     });
     this.querySelectorAll("[data-home-filter]").forEach((button) => {
       button.addEventListener("click", () => {
@@ -1042,6 +1094,11 @@ class TodayView extends HTMLElement {
     return homeShell({
       settingsMenuOpen: this._settingsMenuOpen,
       adminAccess: hasAdminAccess(this._site),
+      // The visible tab's list is still loading (In-progress / History
+      // before the second data tier lands).
+      busy:
+        this._homeFilter !== "todo" &&
+        (this._remainingStatus || "loaded") === "pending",
       hero: showFirstRun
         ? this._firstRunBlock()
         : this._activityBlock({ last, homeTasks }),
@@ -2013,6 +2070,7 @@ class TodayView extends HTMLElement {
         return;
       }
       show311SuccessToast(submitted311ServiceRequestNumber(result.task));
+      this._expireRemainingLists(); // filed → In-progress on the server
       if (card.isConnected) await slideCompletedCard(card);
       this._markAnalysisProblemResolved(problem, { taskStatus: null });
       await this.connectedCallback();
@@ -2152,6 +2210,7 @@ class TodayView extends HTMLElement {
       ).then((result) => {
         if (result) {
           show311SuccessToast(submitted311ServiceRequestNumber(result.task));
+          this._expireRemainingLists(); // filed → In-progress on the server
           this.connectedCallback();
         }
       });
@@ -2165,6 +2224,7 @@ class TodayView extends HTMLElement {
     };
     writeTaskStatusOverrides(overrides);
     this._taskOverrides = overrides;
+    this._expireRemainingLists();
   }
 
   // Run a task mutation: disable the card's buttons, and on success re-render the
