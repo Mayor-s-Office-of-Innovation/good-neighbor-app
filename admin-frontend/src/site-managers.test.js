@@ -1,3 +1,4 @@
+import { upsertRecord } from "./save-feedback.js";
 import { createAndAssignManager } from "./pending-manager.js";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -66,7 +67,7 @@ test("saving assignments to several Sites serializes the shared staff count chan
   const { readFileSync } = await import("node:fs");
   const vm = await import("node:vm");
   const source = readFileSync(new URL("./main.js", import.meta.url), "utf8");
-  const start = source.indexOf("  async saveSiteManager(form)");
+  const start = source.indexOf("  async persistSiteManager(form)");
   const end = source.indexOf("\n  async removeSiteManager", start);
   let active = 0;
   let peak = 0;
@@ -82,6 +83,8 @@ test("saving assignments to several Sites serializes the shared staff count chan
     assignedSites: [],
   };
   const context = vm.createContext({
+    upsertRecord,
+    location: { pathname: "/managers/u1", search: "" },
     navigate: (path) => destinations.push(path),
     createAndAssignManager,
     FormData: class {
@@ -108,6 +111,9 @@ test("saving assignments to several Sites serializes the shared staff count chan
         calls.push(siteId);
         await new Promise((resolve) => setTimeout(resolve, 1));
         active--;
+        return {
+          membership: { membershipId: `m-${siteId}`, siteId, userId: "u1" },
+        };
       },
     },
     showFormSaveError: (_form, error) => {
@@ -119,7 +125,7 @@ test("saving assignments to several Sites serializes the shared staff count chan
     `(class {
     ${source.slice(start, end)}
     state = {};
-    async loadSiteManagers() {}
+    async loadSiteManagers() { throw new Error("Unexpected directory reload"); }
     render() {}
   })`,
     context,
@@ -128,10 +134,17 @@ test("saving assignments to several Sites serializes the shared staff count chan
   subject.state = {
     siteManager: user,
     siteManagers: [user],
+    programs: [{ programId: "p1", name: "Program", providerId: "provider" }],
+    sites: [
+      { siteId: "s1", name: "First" },
+      { siteId: "s2", name: "Second" },
+    ],
     capabilities: { createEntities: true },
   };
   const form = { dataset: { returnSite: "origin/site" } };
-  await subject.saveSiteManager(form);
+  await subject.persistSiteManager(form);
+  assert.equal(subject.state.siteManager.assignedSites.length, 2);
+  assert.equal(subject.state.siteManager.assignedSites[0].membershipId, "m-s1");
   assert.equal(peak, 1);
   assert.deepEqual(calls, ["s1", "s2"]);
   assert.deepEqual(destinations, ["/sites/origin%2Fsite?section=access"]);

@@ -1,4 +1,8 @@
 {
+  "admin.programs.createStaff": "建立新員工",
+  "admin.programs.chooseStaff": "選擇員工",
+  "admin.programs.staffLoadError": "無法載入員工。請重新選擇服務提供者。",
+  "admin.managers.deleteRecord": "刪除記錄",
   "admin.directory.results": "「{query}」的搜尋結果",
   "admin.directory.managers": "地點管理員",
   "admin.directory.managerLoading": "正在載入地點管理員結果…",
@@ -1011,6 +1015,7 @@
   "admin.siteManagers.none": "尚未指派地點管理員。",
   "admin.siteManagers.manage": "管理地點管理員",
   "admin.siteManagers.addAnother": "新增地點管理員",
+  "admin.siteManagers.assignToSite": "指派至場所",
   "admin.siteManagers.choose": "選擇地點管理員",
   "admin.siteManagers.createNew": "建立新地點管理員",
   "admin.siteManagers.newTitle": "新增地點管理員",
@@ -1025,5 +1030,12 @@
   "admin.oversight.assignCityProgramManager": "指派市府計畫經理",
   "admin.directory.sections": "合規管理區段",
   "admin.programs.assignmentsUnavailable": "部分地點指派資料無法載入。請重新載入以重試。",
-  "admin.programs.reassignPrimaryBeforeRemoval": "移除此工作人員之前，請先為計畫及受影響地點選擇其他主要聯絡人。"
+  "admin.programs.reassignPrimaryBeforeRemoval": "移除此工作人員之前，請先為計畫及受影響地點選擇其他主要聯絡人。",
+  "admin.phone.addExtension": "新增分機",
+  "admin.phone.extension": "分機",
+  "admin.programs.createNew": "建立新計畫",
+  "admin.programs.name": "計畫名稱",
+  "admin.programs.staffSourceChanged": "此員工資料已變更。請重新整理清單並再次選擇員工。",
+  "admin.programs.retryStaff": "重試載入現有人員",
+  "admin.enrollment.providerInstructions": "供應商管理員的裝置使用註冊連結後，可存取此供應商的所有使用中地點。連結於 24 小時後失效，可為所有使用中地點註冊一部實體裝置。擁有超過 21 個使用中地點的供應商無法發出連結。"
 }

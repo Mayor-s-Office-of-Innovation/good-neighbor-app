@@ -1,4 +1,8 @@
 {
+  "admin.programs.createStaff": "Tạo nhân viên mới",
+  "admin.programs.chooseStaff": "Chọn nhân viên",
+  "admin.programs.staffLoadError": "Không thể tải nhân viên. Vui lòng chọn lại nhà cung cấp.",
+  "admin.managers.deleteRecord": "Xóa hồ sơ",
   "admin.directory.results": "Kết quả tìm kiếm cho “{query}”",
   "admin.directory.managers": "Người quản lý địa điểm",
   "admin.directory.managerLoading": "Đang tải kết quả người quản lý…",
@@ -1011,6 +1015,7 @@
   "admin.siteManagers.none": "Chưa phân công người quản lý.",
   "admin.siteManagers.manage": "Quản lý người quản lý địa điểm",
   "admin.siteManagers.addAnother": "Thêm người quản lý địa điểm",
+  "admin.siteManagers.assignToSite": "Chỉ định cho cơ sở",
   "admin.siteManagers.choose": "Chọn người quản lý địa điểm",
   "admin.siteManagers.createNew": "Tạo người quản lý địa điểm mới",
   "admin.siteManagers.newTitle": "Thêm người quản lý địa điểm mới",
@@ -1025,5 +1030,12 @@
   "admin.oversight.assignCityProgramManager": "Chỉ định người quản lý chương trình của Thành phố",
   "admin.directory.sections": "Các mục quản trị tuân thủ",
   "admin.programs.assignmentsUnavailable": "Không thể tải một số phân công địa điểm. Hãy tải lại để thử lại.",
-  "admin.programs.reassignPrimaryBeforeRemoval": "Chọn người liên hệ chính khác cho chương trình và các địa điểm bị ảnh hưởng trước khi xóa nhân viên này."
+  "admin.programs.reassignPrimaryBeforeRemoval": "Chọn người liên hệ chính khác cho chương trình và các địa điểm bị ảnh hưởng trước khi xóa nhân viên này.",
+  "admin.phone.addExtension": "Thêm số máy lẻ",
+  "admin.phone.extension": "Số máy lẻ",
+  "admin.programs.createNew": "Tạo chương trình mới",
+  "admin.programs.name": "Tên chương trình",
+  "admin.programs.staffSourceChanged": "Hồ sơ nhân viên đã thay đổi. Hãy làm mới danh sách và chọn lại nhân viên.",
+  "admin.programs.retryStaff": "Thử tải lại nhân viên hiện có",
+  "admin.enrollment.providerInstructions": "Thiết bị của người quản lý nhà cung cấp được truy cập tất cả địa điểm đang hoạt động của nhà cung cấp khi sử dụng liên kết đăng ký. Liên kết hết hạn sau 24 giờ và đăng ký một thiết bị vật lý cho tất cả địa điểm đang hoạt động. Nhà cung cấp có hơn 21 địa điểm đang hoạt động không thể cấp liên kết."
 }

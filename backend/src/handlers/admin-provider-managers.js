@@ -14,7 +14,7 @@ import { sendProviderManagerEnrollmentEmail } from "../integrations/email.js";
 import { supervisorOnly } from "../lib/admin-auth.js";
 
 export const MAX_PROVIDER_ENROLLMENT_SITES = 21;
-const GRANT_TTL_MS = 15 * 60 * 1000;
+const GRANT_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const listProviderManagers = (event) =>

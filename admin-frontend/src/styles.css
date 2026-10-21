@@ -714,11 +714,18 @@ h3 {
   align-items: end;
 }
 
-.manager-membership-form:has(button[hidden]) {
+.manager-membership-form:has(.manager-membership-actions[hidden]) {
   grid-template-columns: 1fr;
 }
 
-.manager-membership-form button[hidden] {
+.manager-membership-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.manager-membership-actions[hidden] {
   display: none;
 }
 
@@ -1901,4 +1908,18 @@ tbody tr:last-child td {
 
 .manager-record a.btn-secondary {
   text-decoration: none;
+}
+
+.phone-field {
+  display: grid;
+  align-content: start;
+  gap: var(--wa-space-s);
+}
+.phone-field__add {
+  justify-self: start;
+  font-size: var(--wa-font-size-s);
+  padding: var(--wa-space-xs) var(--wa-space-s);
+}
+.phone-field [hidden] {
+  display: none;
 }

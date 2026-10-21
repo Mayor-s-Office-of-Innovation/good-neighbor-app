@@ -420,6 +420,39 @@ describe("Site CSV import", () => {
       row.plan.assignment = { action: "reuse" };
       let rowQueryCount = 0;
       send.mockImplementation(async (command) => {
+        if (
+          command instanceof GetCommand &&
+          command.input.Key?.sk?.startsWith("USER#")
+        )
+          return {
+            Item: {
+              status: "active",
+              firstName: "First",
+              lastName: "Manager",
+              email: "first@example.org",
+            },
+          };
+        if (
+          command instanceof QueryCommand &&
+          ["ASSIGNED_USER#", "MANAGER_MEMBERSHIP#"].includes(
+            command.input.ExpressionAttributeValues?.[":prefix"],
+          )
+        )
+          return {
+            Items:
+              command.input.ExpressionAttributeValues?.[":prefix"] ===
+              "ASSIGNED_USER#"
+                ? [
+                    {
+                      sk: `ASSIGNED_USER#${row.plan.contact.id}`,
+                      userId: row.plan.contact.id,
+                      programId: row.plan.program.id,
+                      createdAt: "2020-01-01",
+                      status: "active",
+                    },
+                  ]
+                : [],
+          };
         if (command instanceof GetCommand)
           return {
             Item: {
@@ -456,14 +489,14 @@ describe("Site CSV import", () => {
       expect(siteUpdates).toHaveLength(1);
       expect(
         siteUpdates[0].Update?.UpdateExpression?.includes(
-          "primaryContactUserId = :primaryUserId",
+          "primaryContactUserId = :userId",
         ),
-      ).toBe(assignPrimary);
+      ).toBe(true);
       expect(
         siteUpdates[0].Update?.ConditionExpression?.includes(
-          "attribute_not_exists(primaryContactUserId)",
+          "attribute_not_exists(managerRosterRevision)",
         ),
-      ).toBe(assignPrimary);
+      ).toBe(true);
       expect(siteUpdates[0].Update).toMatchObject({
         ExpressionAttributeValues: expect.objectContaining({
           ":siteType": "shelter",
@@ -598,3 +631,57 @@ async function call(handler, request) {
     await handler(request, {}, () => {})
   );
 }
+
+it("records failed contact reads and continues applying subsequent import rows", async () => {
+  const first = /** @type {any} */ (importRow());
+  first.plan.site.action = "reuse";
+  first.plan.assignment.action = "reuse";
+  const second = { ...importRow(), rowNumber: 3, sk: "ROW#000003" };
+  geocodeAddress.mockResolvedValue({
+    latitude: 37.78,
+    longitude: -122.42,
+    matchedAddress: "1 MAIN ST",
+  });
+  let queries = 0;
+  send.mockImplementation(async (command) => {
+    if (command instanceof GetCommand) {
+      if (String(command.input.Key?.pk).startsWith("SITE#"))
+        throw Object.assign(new Error("temporary read failure"), {
+          name: "InternalServerError",
+        });
+      return {
+        Item: {
+          previewVersion: "preview-1",
+          previewExpiresAt: "2099-01-01T00:00:00.000Z",
+          counts: {},
+          fileName: "sites.csv",
+        },
+      };
+    }
+    if (command instanceof QueryCommand) {
+      queries++;
+      return {
+        Items:
+          queries === 1
+            ? [first, second]
+            : [
+                { ...first, outcome: "retryable_failed" },
+                { ...second, outcome: "applied" },
+              ],
+      };
+    }
+    return {};
+  });
+  const response = await call(
+    applySiteImport,
+    event(
+      { previewVersion: "preview-1", idempotencyKey: "apply-1" },
+      { importId: "import-1" },
+    ),
+  );
+  expect(response.statusCode).toBe(202);
+  const outcomes = send.mock.calls
+    .map(([command]) => command.input.ExpressionAttributeValues?.[":outcome"])
+    .filter(Boolean);
+  expect(outcomes).toEqual(["retryable_failed", "applied"]);
+});

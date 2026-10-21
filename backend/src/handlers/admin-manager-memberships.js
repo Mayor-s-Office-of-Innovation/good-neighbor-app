@@ -1,3 +1,5 @@
+import { assignmentsMatchingEmail } from "../lib/manager-identity.js";
+import { sitePrimaryContactChange } from "../lib/site-primary-contact.js";
 import { queryAllItems } from "../lib/query-all-items.js";
 import {
   GetCommand,
@@ -132,6 +134,12 @@ export const createManagerMembership = (event) =>
       updatedAt: now,
       updatedBy: actor,
     };
+    const primaryChange = await sitePrimaryContactChange(
+      tableName,
+      siteId,
+      now,
+      { add: membership },
+    );
     try {
       await ddb.send(
         new TransactWriteCommand({
@@ -175,6 +183,7 @@ export const createManagerMembership = (event) =>
               actor,
               createdAt: now,
             }),
+            primaryChange,
           ],
         }),
       );
@@ -301,6 +310,12 @@ export const updateManagerMembership = (event) =>
       }),
     );
     try {
+      items.push(
+        await sitePrimaryContactChange(tableName, siteId, now, {
+          removeMembershipId: membershipId,
+          add: { ...current, name, email, emailHash: nextHash, updatedAt: now },
+        }),
+      );
       await ddb.send(new TransactWriteCommand({ TransactItems: items }));
     } catch (error) {
       if (isTransactionConflict(error)) {
@@ -376,10 +391,10 @@ export async function deactivateManagerMembershipRecord({
       },
       ConsistentRead: true,
     });
-    const matches = (assignments.Items || []).filter(
-      (assignment) =>
-        assignment.email &&
-        normalizeEmail(assignment.email) === normalizeEmail(membership.email),
+    const matches = await assignmentsMatchingEmail(
+      tableName,
+      assignments.Items || [],
+      String(membership.email),
     );
     if (
       matches.length > 1 ||
@@ -425,6 +440,11 @@ export async function deactivateManagerMembershipRecord({
     false,
     now,
   );
+  const primaryChange = await sitePrimaryContactChange(tableName, siteId, now, {
+    removeUserId: membership.userId,
+    removeMembershipId: membershipId,
+    removeEmail: membership.email,
+  });
   try {
     await ddb.send(
       new TransactWriteCommand({
@@ -499,6 +519,7 @@ export async function deactivateManagerMembershipRecord({
             actor,
             createdAt: now,
           }),
+          primaryChange,
         ],
       }),
     );

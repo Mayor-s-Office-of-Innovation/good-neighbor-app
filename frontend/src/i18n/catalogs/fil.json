@@ -1,4 +1,8 @@
 {
+  "admin.programs.createStaff": "Gumawa ng bagong kawani",
+  "admin.programs.chooseStaff": "Pumili ng kawani",
+  "admin.programs.staffLoadError": "Hindi ma-load ang mga kawani. Piliin muli ang provider.",
+  "admin.managers.deleteRecord": "Burahin ang rekord",
   "admin.directory.results": "Mga resulta ng paghahanap para sa “{query}”",
   "admin.directory.managers": "Mga tagapamahala ng site",
   "admin.directory.managerLoading": "Nilo-load ang mga resulta ng tagapamahala…",
@@ -1011,6 +1015,7 @@
   "admin.siteManagers.none": "Walang nakatalagang tagapamahala.",
   "admin.siteManagers.manage": "Pamahalaan ang mga tagapamahala",
   "admin.siteManagers.addAnother": "Magdagdag ng tagapamahala ng site",
+  "admin.siteManagers.assignToSite": "Italaga sa site",
   "admin.siteManagers.choose": "Pumili ng tagapamahala ng site",
   "admin.siteManagers.createNew": "Gumawa ng bagong tagapamahala ng site",
   "admin.siteManagers.newTitle": "Magdagdag ng bagong tagapamahala ng site",
@@ -1025,5 +1030,12 @@
   "admin.oversight.assignCityProgramManager": "Magtalaga ng tagapamahala ng programa ng Lungsod",
   "admin.directory.sections": "Mga seksyon ng pangangasiwa ng pagsunod",
   "admin.programs.assignmentsUnavailable": "Hindi available ang ilang pagtatalaga ng site. I-reload upang subukang muli.",
-  "admin.programs.reassignPrimaryBeforeRemoval": "Pumili ng ibang pangunahing contact para sa programa at anumang apektadong site bago alisin ang kawani na ito."
+  "admin.programs.reassignPrimaryBeforeRemoval": "Pumili ng ibang pangunahing contact para sa programa at anumang apektadong site bago alisin ang kawani na ito.",
+  "admin.phone.addExtension": "Magdagdag ng extension",
+  "admin.phone.extension": "Extension",
+  "admin.programs.createNew": "Gumawa ng bagong programa",
+  "admin.programs.name": "Pangalan ng programa",
+  "admin.programs.staffSourceChanged": "Nagbago ang rekord na ito. I-refresh ang listahan at pumili muli ng kawani.",
+  "admin.programs.retryStaff": "Subukang i-load muli ang kasalukuyang kawani",
+  "admin.enrollment.providerInstructions": "Nagkakaroon ng access ang mga device ng provider manager sa lahat ng aktibong site ng provider kapag ginamit ang link. Mag-e-expire ang mga link pagkalipas ng 24 na oras at mag-e-enroll ng isang pisikal na device para sa lahat ng aktibong site. Hindi maaaring mag-isyu ng link ang mga provider na may higit sa 21 aktibong site."
 }

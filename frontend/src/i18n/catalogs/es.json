@@ -1,4 +1,8 @@
 {
+  "admin.programs.createStaff": "Crear nuevo miembro del personal",
+  "admin.programs.chooseStaff": "Elegir un miembro del personal",
+  "admin.programs.staffLoadError": "No se pudo cargar el personal. Vuelva a elegir el proveedor.",
+  "admin.managers.deleteRecord": "Eliminar registro",
   "admin.directory.results": "Resultados de búsqueda de «{query}»",
   "admin.directory.managers": "Administradores del sitio",
   "admin.directory.managerLoading": "Cargando resultados de administradores…",
@@ -1011,6 +1015,7 @@
   "admin.siteManagers.none": "No hay administradores asignados.",
   "admin.siteManagers.manage": "Gestionar administradores del sitio",
   "admin.siteManagers.addAnother": "Agregar un administrador del sitio",
+  "admin.siteManagers.assignToSite": "Asignar al sitio",
   "admin.siteManagers.choose": "Elegir administrador del sitio",
   "admin.siteManagers.createNew": "Crear nuevo administrador del sitio",
   "admin.siteManagers.newTitle": "Agregar nuevo administrador del sitio",
@@ -1025,5 +1030,12 @@
   "admin.oversight.assignCityProgramManager": "Asignar administrador de programas de la Ciudad",
   "admin.directory.sections": "Secciones de administración de cumplimiento",
   "admin.programs.assignmentsUnavailable": "Algunas asignaciones de sitios no están disponibles. Vuelva a cargar para intentarlo de nuevo.",
-  "admin.programs.reassignPrimaryBeforeRemoval": "Seleccione otro contacto principal para el programa y los sitios afectados antes de quitar a este miembro del personal."
+  "admin.programs.reassignPrimaryBeforeRemoval": "Seleccione otro contacto principal para el programa y los sitios afectados antes de quitar a este miembro del personal.",
+  "admin.phone.addExtension": "Agregar extensión",
+  "admin.phone.extension": "Extensión",
+  "admin.programs.createNew": "Crear nuevo programa",
+  "admin.programs.name": "Nombre del programa",
+  "admin.programs.staffSourceChanged": "Este registro de personal cambió. Actualice la lista y vuelva a seleccionar a una persona.",
+  "admin.programs.retryStaff": "Volver a cargar el personal existente",
+  "admin.enrollment.providerInstructions": "Los dispositivos de los responsables del proveedor reciben acceso a todos los sitios activos de este proveedor al canjear el enlace. Los enlaces caducan a las 24 horas y registran un dispositivo físico para todos los sitios activos. Los proveedores con más de 21 sitios activos no pueden emitir enlaces."
 }
