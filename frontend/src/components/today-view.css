@@ -720,3 +720,11 @@ html.wa-dark .home-results__complete-content img {
   outline: 2px solid var(--brand-blue);
   outline-offset: 2px;
 }
+
+/* Responsive display type: the place header steps down from Heading 2XL to
+   Heading XL on phones (discrete breakpoint, not clamp — WCAG 1.4.4). */
+@media (max-width: 520px) {
+  .home-identity__site {
+    font-size: var(--wa-font-size-xl, 1.5625rem);
+  }
+}

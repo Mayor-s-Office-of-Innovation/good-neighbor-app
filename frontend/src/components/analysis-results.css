@@ -282,13 +282,17 @@ html.wa-dark .analysis-card__clear-copy a {
   min-width: 0;
 }
 
-.analysis-card__route {
+/* Two classes so this outranks `.analysis-card p`, which silently bumped the
+   status line to 16px. Pinned to Strong/S (14/600) to match the statusTicker
+   variants in Figma. */
+.analysis-card .analysis-card__route {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   margin: 0 0 1rem;
   color: var(--wa-color-text-normal, #1b1d26);
   font-size: var(--wa-font-size-s, 0.875rem);
+  font-weight: var(--wa-font-weight-bold, 600);
   line-height: 1.2;
 }
 
@@ -478,7 +482,7 @@ html.wa-dark .analysis-card__clear-copy a {
   color: var(--wa-color-neutral-on-loud, var(--on-ink));
   font-family: var(--wa-font-family-body, var(--font-sans));
   font-size: var(--wa-font-size-m, 1rem);
-  font-weight: 500;
+  font-weight: var(--wa-font-weight-bold, 600);
   line-height: 1.2;
   white-space: nowrap;
 }
@@ -908,7 +912,7 @@ html.wa-dark .analysis-card__clear-copy a {
   margin-top: 0.5rem;
   padding: 0;
   color: var(--text-secondary);
-  font-size: 0.875rem;
+  font-size: var(--wa-font-size-s, 0.875rem);
 }
 .analysis-card__edit span {
   text-decoration: underline dotted;
@@ -1194,5 +1198,15 @@ html.wa-dark .analysis-card__clear-copy a {
   }
   .analysis-card__phone {
     display: flex;
+  }
+}
+
+/* Responsive display type: headings step down one size on phones (discrete
+   breakpoint, not clamp, so zoom keeps working — WCAG 1.4.4). Body sizes
+   (16 and below) never move. The clear-title stays locked to card titles. */
+@media (max-width: 520px) {
+  .analysis-card h3,
+  .analysis-card__clear-title h3 {
+    font-size: var(--wa-font-size-l, 1.25rem);
   }
 }
