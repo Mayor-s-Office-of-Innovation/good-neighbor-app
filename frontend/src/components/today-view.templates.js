@@ -32,7 +32,9 @@ import { analysisDialogs } from "./analysis-results.templates.js";
  *   logoutError: string,
  *   logoutPending: boolean,
  *   busy?: boolean,
- * }} vm `busy` marks the results region aria-busy (pre-data skeleton)
+ *   settingsDisabled?: boolean,
+ * }} vm `busy` marks the results region aria-busy; `settingsDisabled`
+ *   renders the settings button inert (both: the pre-data skeleton)
  * @returns {string}
  */
 export function homeShell({
@@ -44,12 +46,17 @@ export function homeShell({
   logoutError,
   logoutPending,
   busy = false,
+  settingsDisabled = false,
 }) {
   return html`
     <div class="home">
       <section class="home-region home-region--header">
         <div class="home-top-actions">
-          ${settingsMenu({ open: settingsMenuOpen, adminAccess })}
+          ${settingsMenu({
+            open: settingsMenuOpen,
+            adminAccess,
+            disabled: settingsDisabled,
+          })}
           <feedback-dialog
             class="feedback-dialog"
             hide-trigger
@@ -123,6 +130,7 @@ export function homeSkeleton({
     logoutError: "",
     logoutPending: false,
     busy: true,
+    settingsDisabled: true,
   });
 }
 
@@ -151,8 +159,8 @@ export function pendingCards(count = 3) {
   `;
 }
 
-/** @param {{ open: boolean, adminAccess?: boolean }} state */
-export function settingsMenu({ open, adminAccess = false }) {
+/** @param {{ open: boolean, adminAccess?: boolean, disabled?: boolean }} state */
+export function settingsMenu({ open, adminAccess = false, disabled = false }) {
   return html`
     <div class="home-settings-wrap">
       <button
@@ -162,6 +170,7 @@ export function settingsMenu({ open, adminAccess = false }) {
         aria-label="${escapeAttr(t("today.settings.aria"))}"
         aria-haspopup="menu"
         aria-expanded="${open ? "true" : "false"}"
+        ${disabled ? "disabled" : ""}
       >
         <span class="home-settings__icon" aria-hidden="true"></span>
       </button>

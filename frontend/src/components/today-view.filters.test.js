@@ -770,8 +770,18 @@ describe("pre-data skeleton", () => {
     expect(view.innerHTML).toMatch(
       /home-tabs__tab--active[^>]*data-home-filter="in_progress"/,
     );
-    // The real start button only arrives with the data (e2e sentinel).
+    // The real start button only arrives with the data (e2e sentinel), and
+    // the settings button is inert until then.
     expect(view.innerHTML).not.toContain('id="start-check"');
+    expect(view.innerHTML).toMatch(/id="home-settings"[^>]*disabled/);
+    // Tapping a skeleton tab selects it for the live render.
+    view._skeletonTabClick({
+      target: { closest: () => ({ getAttribute: () => "history" }) },
+    });
+    expect(view._homeFilter).toBe("history");
+    expect(view.innerHTML).toMatch(
+      /home-tabs__tab--active[^>]*data-home-filter="history"/,
+    );
 
     release();
     await loading;
@@ -922,29 +932,51 @@ describe("deferred In-progress / History lists", () => {
     return view;
   }
 
-  it("reuses fresh In-progress / History lists on a reload and re-fetches only the open list", async () => {
+  /** Route return: the element is replaced; the next one restores the stash. */
+  function routeReturn(view) {
+    view.disconnectedCallback();
+    return liveView("?filter=todo");
+  }
+
+  it("reuses fresh In-progress / History lists on a route return and re-fetches only the open list", async () => {
     freezeClock();
     const view = await loadedView();
     catalog.listTasks.mockClear();
     vi.setSystemTime(FROZEN_NOW.getTime() + 30_000);
 
-    await view.connectedCallback();
-    await view._remainingLoad;
+    const next = routeReturn(view);
+    await next.connectedCallback();
+    await next._remainingLoad;
 
     expect(catalog.listTasks.mock.calls.map(([{ status }]) => status)).toEqual([
       "open",
     ]);
-    expect(view._remainingStatus).toBe("loaded");
-    expect(view._homeModel.tasks.map((t) => t.taskId).sort()).toEqual([
+    expect(next._remainingStatus).toBe("loaded");
+    expect(next._homeModel.tasks.map((t) => t.taskId).sort()).toEqual([
       "done-1",
       "open-1",
     ]);
-    expect(view._render(view._homeModel)).toContain("home-tabs__count");
+    expect(next._render(next._homeModel)).toContain("home-tabs__count");
+  });
+
+  it("re-fetches every list on a reload triggered from the screen itself", async () => {
+    freezeClock();
+    const view = await loadedView();
+    catalog.listTasks.mockClear();
+    // Seconds old, same instance: an action on this screen caused the reload.
+    await view.connectedCallback();
+    expect(view._remainingStatus).toBe("pending");
+    await view._remainingLoad;
+    expect(
+      catalog.listTasks.mock.calls.map(([{ status }]) => status).sort(),
+    ).toEqual(
+      ["cannot_do", "completed", "completing", "in_progress", "open"].sort(),
+    );
   });
 
   it("drops the lists and shows a placeholder once they are older than a minute", async () => {
     freezeClock();
-    const view = await loadedView();
+    const previous = await loadedView();
     vi.setSystemTime(FROZEN_NOW.getTime() + 61_000);
     let release = () => {};
     const held = new Promise((resolve) => {
@@ -954,6 +986,7 @@ describe("deferred In-progress / History lists", () => {
       status === "open" ? { tasks: [openTask] } : held,
     );
 
+    const view = routeReturn(previous);
     await view.connectedCallback();
     // The previous completed task is gone, counts hidden, one placeholder.
     expect(view._remainingStatus).toBe("pending");
@@ -975,12 +1008,13 @@ describe("deferred In-progress / History lists", () => {
 
   it("re-fetches the lists on the next reload after a cross-list action", async () => {
     freezeClock();
-    const view = await loadedView();
+    const previous = await loadedView();
     catalog.listTasks.mockClear();
     // Completing a task writes a status override: the lists are now expired
-    // even though they are seconds old.
-    view._setTaskOverride("open-1", "resolved");
+    // even though they are seconds old, so even a route return re-fetches.
+    previous._setTaskOverride("open-1", "resolved");
 
+    const view = routeReturn(previous);
     await view.connectedCallback();
     expect(view._remainingStatus).toBe("pending");
     await view._remainingLoad;
@@ -1015,6 +1049,16 @@ describe("deferred In-progress / History lists", () => {
     expect(view._remainingStatus).toBe("pending");
     release();
     await view._remainingLoad;
+  });
+
+  it("keeps keyboard focus on the current tab when retrying a failed load", async () => {
+    const view = await loadedView();
+    view._remainingStatus = "error";
+    view._retryRemaining();
+    expect(view._remainingStatus).toBe("pending");
+    expect(view._focusAfterRender).toBe("home-tab-current");
+    await view._remainingLoad;
+    expect(view._remainingStatus).toBe("loaded");
   });
 
   it("ignores a late remaining-lists answer after the site changed", async () => {
@@ -1059,11 +1103,11 @@ describe("worklist refresh focus", () => {
     scrollTop = 850;
 
     // Checklist completion refreshes via this same callback after collapsing.
-    // The first load renders twice (open list, then the remaining lists);
-    // the reload reuses the still-fresh remaining lists and renders once.
+    // Each load renders twice (open list, then the remaining lists): a reload
+    // from this screen follows an action and re-fetches every list.
     await view.connectedCallback();
     await view._remainingLoad;
-    expect(view._renderHome).toHaveBeenCalledTimes(3);
+    expect(view._renderHome).toHaveBeenCalledTimes(4);
     expect(heading.focus).toHaveBeenCalledOnce();
     expect(scrollTop).toBe(850);
     view.disconnectedCallback();

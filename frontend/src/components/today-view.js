@@ -279,6 +279,10 @@ class TodayView extends HTMLElement {
 
   disconnectedCallback() {
     this._stopDuplicates?.();
+    if (this._skeletonTabClick) {
+      this.removeEventListener("click", this._skeletonTabClick);
+      this._skeletonTabClick = null;
+    }
     document.removeEventListener("close", this._duplicateCloseHandler, true);
     window.removeEventListener("phonecompletionsaved", this._phoneSaved);
     this._deletionUnsub?.();
@@ -400,10 +404,15 @@ class TodayView extends HTMLElement {
     const active = getCurrentCheck();
     // An in-progress draft no longer re-enters capture from home: capture
     // lives on its own route (/check, /problem) and home stays the worklist.
+    // A failed local read must not strand the skeleton: no pending session
+    // is the safe reading, and the worklist load below carries on.
     let pendingSession =
       active && active.status === "capture-complete"
         ? active
-        : await loadSubmitted();
+        : await loadSubmitted().catch((err) => {
+            console.error("loadSubmitted failed", err);
+            return null;
+          });
     // Legacy-stage records (uploading/analyzing/submitted) are unreachable now —
     // clear them instead of letting them linger in the review store forever.
     if (pendingSession && pendingSession.status !== "capture-complete") {
@@ -432,14 +441,18 @@ class TodayView extends HTMLElement {
       this._providerName =
         catalog?.providerName || this._site.providerName || "";
       this._boundSites = bindings;
-      // The remaining lists are reused when they are this site's own, were
-      // loaded within REMAINING_LISTS_FRESH_MS, and no cross-list action has
-      // expired them since; then only the open list is re-fetched. Otherwise
-      // (first arrival, stale, expired, another site) they are dropped:
+      // The remaining lists are reused only on a route return (restored
+      // snapshot) for this site, loaded within REMAINING_LISTS_FRESH_MS and
+      // not expired by a cross-list action since; then only the open list is
+      // re-fetched. Every reload triggered from this screen follows an action
+      // (a task update, 311 filing, deletion, phone save, check finished)
+      // and re-fetches everything, so a status change made on the server is
+      // never masked by a cached list. When not reused they are dropped:
       // In-progress and History show a placeholder and the tab counts stay
       // hidden until the fresh lists land. Old cards are never shown.
       const sameSite = !previousSiteId || previousSiteId === this._siteId;
       reuseRemaining =
+        restoring &&
         sameSite &&
         this._remainingStatus === "loaded" &&
         Date.now() - (this._remainingLoadedAt || 0) < REMAINING_LISTS_FRESH_MS;
@@ -513,12 +526,25 @@ class TodayView extends HTMLElement {
    */
   _expireRemainingLists() {
     this._remainingLoadedAt = 0;
+    // A request already in flight predates the change: its answer must not
+    // land and re-stamp the lists as fresh.
+    this._remainingGeneration = (this._remainingGeneration || 0) + 1;
   }
 
   _startRemainingLoad() {
     this._remainingLoad = this._loadRemainingTasks().catch((err) =>
       console.error("remaining worklist failed", err),
     );
+  }
+
+  /** The retry button on a failed In-progress / History load. */
+  _retryRemaining() {
+    this._remainingStatus = "pending";
+    // The re-render replaces the focused button with the placeholder: keep
+    // keyboard users on the tab they are looking at.
+    this._focusAfterRender = "home-tab-current";
+    if (this._homeModel) this._renderHome(this._homeModel);
+    this._startRemainingLoad();
   }
 
   _taskWith311CardStatus(task) {
@@ -895,11 +921,9 @@ class TodayView extends HTMLElement {
         void this._startCapture("single-problem", control);
       });
     });
-    this.querySelector("#retry-remaining")?.addEventListener("click", () => {
-      this._remainingStatus = "pending";
-      if (this._homeModel) this._renderHome(this._homeModel);
-      this._startRemainingLoad();
-    });
+    this.querySelector("#retry-remaining")?.addEventListener("click", () =>
+      this._retryRemaining(),
+    );
     this.querySelectorAll("[data-home-filter]").forEach((button) => {
       button.addEventListener("click", () => {
         this._activateHomeTab(
@@ -1402,12 +1426,31 @@ class TodayView extends HTMLElement {
    * @param {string | null} requestedFilter the ?filter= query value
    */
   _renderSkeleton(requestedFilter) {
+    this._homeFilter =
+      this._homeFilter || normalizedHomeTab(requestedFilter || "");
     this.innerHTML = homeSkeleton({
       siteName: this._siteIdentity().site,
       adminAccess: hasAdminAccess(this._site),
-      homeFilter: this._homeFilter || normalizedHomeTab(requestedFilter || ""),
+      homeFilter: this._homeFilter,
       checkLabel: t("today.actions.startCheck"),
     });
+    // The skeleton's tabs are live: a tap selects the tab the worklist will
+    // open on. Delegated on the host (the markup has no handlers of its
+    // own) and inert once the live render has wired the real tabs.
+    if (!this._skeletonTabClick) {
+      this._skeletonTabClick = (event) => {
+        if (this._homeModel) return;
+        const tab = /** @type {Element | null} */ (
+          /** @type {any} */ (event.target)?.closest?.("[data-home-filter]")
+        );
+        if (!tab) return;
+        this._homeFilter = normalizedHomeTab(
+          tab.getAttribute("data-home-filter") || "todo",
+        );
+        this._renderSkeleton(null);
+      };
+      this.addEventListener("click", this._skeletonTabClick);
+    }
   }
 
   _activityBlock({ last, homeTasks }) {
