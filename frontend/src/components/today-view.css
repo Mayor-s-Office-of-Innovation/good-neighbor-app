@@ -427,8 +427,8 @@
 
 .home-identity__site {
   margin: 0;
-  font-size: clamp(1.9rem, 6vw, 2.45rem);
-  font-weight: 700;
+  font-size: var(--wa-font-size-2xl, 2rem);
+  font-weight: var(--wa-font-weight-heading, 600);
   line-height: 1.12;
   text-wrap: balance;
   outline: none; /* programmatic focus target (route announcement) */
@@ -554,7 +554,7 @@
   cursor: pointer;
   font: inherit;
   font-size: var(--wa-font-size-m, 1rem);
-  font-weight: 400;
+  font-weight: var(--wa-font-weight-bold, 600);
   line-height: normal;
   margin: 0;
   padding: 0 0.25rem;
@@ -566,7 +566,6 @@
 .home-tabs__tab--active {
   border-bottom-color: var(--brand-blue);
   color: var(--brand-blue);
-  font-weight: 600;
 }
 
 /* Open-item count beside the tab label; same ink-on-blue pairing as .btn-blue. */
@@ -581,9 +580,9 @@
   border-radius: var(--radius-pill);
   background: var(--brand-blue);
   color: var(--on-ink);
-  font-size: var(--wa-font-size-xs, 0.75rem);
-  font-weight: 600;
-  line-height: 1;
+  font-size: var(--wa-font-size-2xs, 0.6875rem);
+  font-weight: var(--wa-font-weight-bold, 600);
+  line-height: 1.6;
 }
 
 html.wa-dark .home-tabs {
