@@ -966,6 +966,20 @@ class TodayView extends HTMLElement {
         (item) =>
           item.analysis?.status === "analyzed" && !hasProblemResults(item),
       );
+    // The standing "check was clear" tray sits above the tabs, so its
+    // visibility must not depend on the active tab. It stays until the next
+    // check and disappears the moment a newer check records an issue (a task
+    // card from the pending session, or an analyzed item with problems).
+    const newCheckIssueRecorded =
+      pendingHasTaskCards ||
+      displayRecentItems.some(
+        (item) =>
+          item.analysis?.status === "analyzed" && hasProblemResults(item),
+      );
+    const showActiveClearTray =
+      Boolean(activeClearCheck) &&
+      !hasPendingClearResult &&
+      !newCheckIssueRecorded;
     const hasResultCards =
       recentItems.length || homeTasks.length || clearChecks.length;
     // First-run hero only for a truly empty account: no submitted check, no
@@ -992,6 +1006,7 @@ class TodayView extends HTMLElement {
         visibleTasks,
         activeClearCheck,
         hasPendingClearResult,
+        showActiveClearTray,
         historicalClearChecks,
       }),
       showAnalysisDialogs: Boolean(hasPendingAssessment || hasResultCards),
@@ -1084,6 +1099,7 @@ class TodayView extends HTMLElement {
     visibleTasks,
     activeClearCheck,
     hasPendingClearResult,
+    showActiveClearTray,
     historicalClearChecks,
   }) {
     const newTaskCards = this._newTaskCardEntries(newTaskEntries);
@@ -1105,6 +1121,7 @@ class TodayView extends HTMLElement {
       counts: duplicateCounts(newTaskEntries.map((e) => e.task)),
       activeClearCheck,
       hasPendingClearResult,
+      showActiveClearTray,
       historyGroups: this._historyGroups(
         visibleTasks,
         checks,
