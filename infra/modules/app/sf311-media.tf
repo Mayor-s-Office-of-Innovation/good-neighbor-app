@@ -36,6 +36,7 @@ resource "aws_cloudfront_response_headers_policy" "sf311_media" {
 }
 
 resource "aws_cloudfront_distribution" "sf311_media" {
+  #checkov:skip=CKV_AWS_305:API-only bearer media distribution; no index object exists and root requests intentionally return the API 404.
   #checkov:skip=CKV_AWS_86:Bearer tokens must not enter CloudFront standard access logs; API Gateway records route/status/request IDs without query strings.
   #checkov:skip=CKV_AWS_310:Single API origin; no independent failover origin exists.
   #checkov:skip=CKV_AWS_374:Public citywide 311 attachment access; no geo restriction is intentional.
