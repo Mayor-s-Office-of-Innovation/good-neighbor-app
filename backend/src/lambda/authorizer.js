@@ -7,8 +7,17 @@
 // shape lib/principal.js (deriveSiteId) reads.
 //
 // Attached to every route except the bootstrap/intake set (see api.tf). API
-// API Gateway caching is disabled in Terraform so every protected request sees
-// the current binding, Site, and Manager membership state.
+// Gateway caches the verdict per Authorization header for 60 s
+// (`authorizer_result_ttl_in_seconds` in api.tf), so a revocation — generation
+// bump, suspension, Site deactivation, membership removal — takes effect
+// within a minute rather than on the very next request. The trade was made
+// for latency: this function is a second Lambda invoke plus 2–3 serial
+// DynamoDB reads on every uncached request (~55 ms warm), and a /today load
+// makes dozens of them.
+//
+// The DEVICE# and SITE#META reads depend only on the token claims, so they are
+// issued together and awaited in order; the Manager membership read depends on
+// fields of the DEVICE# item and stays serial.
 
 import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
@@ -62,14 +71,28 @@ export const handler = async (event) => {
   }
 
   // Live check against the DEVICE# item: revocation (generation bumped or
-  // device deleted) kills a still-cryptographically-valid token instantly.
-  const res = await ddb.send(
+  // device deleted) kills a still-cryptographically-valid token. The SITE#META
+  // read needed below is keyed by the claims alone, so it goes out in the same
+  // round trip; a device-level deny returns before it is read. The no-op catch
+  // only keeps a rejection from surfacing as unhandled on that early-return
+  // path — the allow path awaits the original promise and still propagates.
+  const devicePromise = ddb.send(
     new GetCommand({
       TableName: process.env.DYNAMO_TABLE,
       Key: { pk: `SITE#${claims.siteId}`, sk: `DEVICE#${claims.sub}` },
     }),
   );
-  const device = /** @type {Record<string, any> | undefined} */ (res.Item);
+  const sitePromise = Promise.resolve(
+    ddb.send(
+      new GetCommand({
+        TableName: process.env.DYNAMO_TABLE,
+        Key: { pk: `SITE#${claims.siteId}`, sk: "#META" },
+      }),
+    ),
+  );
+  sitePromise.catch(() => {});
+  const res = await devicePromise;
+  const device = /** @type {Record<string, any> | undefined} */ (res?.Item);
   const now = new Date();
   const inactiveAfter = device?.lastSeenAt
     ? new Date(device.lastSeenAt).getTime() +
@@ -88,13 +111,8 @@ export const handler = async (event) => {
     return DENY({ reason: "revoked" });
   }
 
-  const siteRes = await ddb.send(
-    new GetCommand({
-      TableName: process.env.DYNAMO_TABLE,
-      Key: { pk: `SITE#${claims.siteId}`, sk: "#META" },
-    }),
-  );
-  const site = /** @type {Record<string, any> | undefined} */ (siteRes.Item);
+  const siteRes = await sitePromise;
+  const site = /** @type {Record<string, any> | undefined} */ (siteRes?.Item);
   if (!site || site.status === "inactive") {
     return DENY({ reason: "site_inactive" });
   }

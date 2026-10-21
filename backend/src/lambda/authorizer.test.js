@@ -135,7 +135,8 @@ describe("authorizer", () => {
       const res = await invoke(event(`Bearer ${token}`));
       expect(res.isAuthorized).toBe(false);
       expect(res.context.reason).toBe("revoked");
-      expect(send).toHaveBeenCalledTimes(1);
+      // DEVICE# and SITE#META are read concurrently; nothing past them runs.
+      expect(send).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }

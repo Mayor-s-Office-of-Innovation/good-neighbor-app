@@ -40,8 +40,12 @@ JWT dependency), signed with a server-side key:
   `tokenGeneration`, which also kills the previous access token immediately.
 - **Revocation:** bump `tokenGeneration` (or delete the device). The
   authorizer's live `GetItem` check makes a still-cryptographically-valid token
-  dead on the next protected request; REQUEST-authorizer verdict caching is
-  disabled so no stale allow decision survives a revocation.
+  dead on the next uncached protected request. API Gateway caches the verdict
+  per Authorization header for 60 s (`authorizer_result_ttl_in_seconds`, raised
+  from 0 on 2026-10-21), so a revoked, suspended or deactivated binding can
+  keep working for up to a minute. The cache was enabled for latency: the
+  uncached authorizer costs ~55 ms and 2–3 DynamoDB reads on every request,
+  and a /today load makes dozens of them.
 - **Routing:** `POST /v1/devices` (register) and
   `POST /v1/devices/token:refresh` are the only device routes reachable
   anonymously; everything else attaches a REQUEST authorizer
