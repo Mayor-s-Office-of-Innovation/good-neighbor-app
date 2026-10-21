@@ -330,6 +330,29 @@ describe("createAnalyzerClient", () => {
     expect(slept).toBe(1);
   });
 
+  it.each([
+    { code: "model_unavailable", retryable: false },
+    { code: "model_access_denied" },
+    { code: "model_unavailable", retryable: true },
+    { code: "future_permanent_error", retryable: false },
+  ])("does not retry permanent 502: %j", async (error) => {
+    const { fetchImpl, calls } = stubFetch([
+      { ok: false, status: 502, body: { error } },
+    ]);
+    const client = createAnalyzerClient({
+      baseUrl: "https://analysis.example.org/",
+      apiKey: "k",
+      fetchImpl,
+      sleep: noSleep,
+    });
+    await expect(client.analyze({ metadata, media })).rejects.toMatchObject({
+      status: 502,
+      code: error.code,
+      retryable: false,
+    });
+    expect(calls).toHaveLength(1);
+  });
+
   it("gives up after maxRetries on persistent 503", async () => {
     const { fetchImpl, calls } = stubFetch([
       { ok: false, status: 503, body: {} },

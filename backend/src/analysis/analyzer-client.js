@@ -28,7 +28,7 @@ import { RUBRIC_ID, RUBRIC_VERSION } from "./contract.js";
  * The service's documented error `code`s (error-response.schema.json). Kept as a
  * plain typedef — we don't switch on them beyond surfacing, but naming them
  * documents what a caller can expect on `.code`.
- * @typedef {"invalid_request" | "unknown_rubric" | "unsupported_input_type" | "unauthorized" | "forbidden_rubric" | "model_invoke_failed" | "invalid_model_response"} AnalyzerErrorCode
+ * @typedef {"invalid_request" | "unknown_rubric" | "unsupported_input_type" | "unauthorized" | "forbidden_rubric" | "model_invoke_failed" | "model_unavailable" | "model_access_denied" | "invalid_model_response"} AnalyzerErrorCode
  */
 
 /** HTTP statuses worth a retry: throttling, gateway/model transients, 5xx. */
@@ -178,7 +178,7 @@ export function createAnalyzerClient({
   /**
    * Try to read the service's `{ error: { code, message, details } }` body.
    * @param {Response} res
-   * @returns {Promise<{ code?: string, message?: string, details?: string[] }>}
+   * @returns {Promise<{ code?: string, message?: string, details?: string[], retryable?: boolean }>}
    */
   const readError = async (res) => {
     try {
@@ -231,19 +231,29 @@ export function createAnalyzerClient({
 
       if (res.ok) return res.json();
 
-      if (RETRYABLE_STATUS.has(res.status) && attempt < maxRetries) {
+      const err = await readError(res);
+      // Read the contract before deciding: a retired model is a permanent 502.
+      const permanentModelError = [
+        "model_unavailable",
+        "model_access_denied",
+      ].includes(err.code || "");
+      const retryable =
+        !permanentModelError &&
+        (typeof err.retryable === "boolean"
+          ? err.retryable
+          : RETRYABLE_STATUS.has(res.status));
+      if (retryable && attempt < maxRetries) {
         await sleep(baseDelayMs * 2 ** attempt);
         continue;
       }
 
-      const err = await readError(res);
       throw new AnalyzerError(
         err.message || `Analyzer returned ${res.status}`,
         {
           status: res.status,
           code: err.code,
           details: err.details,
-          retryable: RETRYABLE_STATUS.has(res.status),
+          retryable,
         },
       );
     }
