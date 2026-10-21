@@ -7,6 +7,9 @@ import {
 export { taskUpdateTimelineTone } from "./issue-updates.templates.js";
 import { localizedAnalyzerText } from "../i18n/analyzer.js";
 import { taskRoute } from "../domain/task-route.js";
+import { taskMediaUrl } from "../domain/task-media.js";
+import { taskCardTitle } from "../domain/task-title.js";
+import { displayTaskId } from "../domain/home-tasks.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
@@ -253,10 +256,11 @@ export function taskUpdateTimeline({
     <p>#${escapeHtml(task.shortId || task.taskId || "")}</p>`;
 }
 
-/** @param {{ pendingEvent: Record<string, any> | null, cityHelpNeeded?: boolean | null, results?: boolean, photosAllowed?: boolean, files: File[], notes: string[], previews: string[] }} view */
+/** @param {{ pendingEvent: Record<string, any> | null, cityHelpNeeded?: boolean | null, results?: boolean, task?: Record<string, any> | null, photosAllowed?: boolean, files: File[], notes: string[], previews: string[] }} view */
 export function taskUpdateCapture({
   pendingEvent,
   results = false,
+  task = null,
   photosAllowed = true,
   files,
   notes,
@@ -274,6 +278,7 @@ export function taskUpdateCapture({
   const hasContent = files.length || populatedNotes.length;
   return html`<section class="task-update__capture">
     <h2 id="task-update-title">${escapeHtml(title)}</h2>
+    ${results && task ? captureTaskIdentity(task) : ""}
     ${results && !pendingEvent
       ? html`<p role="alert">
           ${escapeHtml(t("taskUpdate.capture.conflict"))}
@@ -323,6 +328,33 @@ export function taskUpdateCapture({
         : ""}
     </div>
   </section>`;
+}
+
+/**
+ * Which card the results prompt belongs to: the same title and thumbnail
+ * the list shows, so a prompt that lands while the user has moved on still
+ * reads as that card's.
+ * @param {Record<string, any>} task
+ */
+function captureTaskIdentity(task) {
+  const mediaUrl = taskMediaUrl(task);
+  const reference = displayTaskId(task);
+  return html`<p class="task-update__capture-task">
+    ${mediaUrl
+      ? html`<img
+          class="task-update__capture-thumb"
+          src="${escapeAttr(mediaUrl)}"
+          alt=""
+        />`
+      : ""}
+    <span class="task-update__capture-task-text"
+      ><strong>${escapeHtml(taskCardTitle(task))}</strong>${reference
+        ? html` <span class="task-update__capture-ref"
+            >#${escapeHtml(reference)}</span
+          >`
+        : ""}</span
+    >
+  </p>`;
 }
 
 /** @param {string[]} previews @param {"update" | "action"} kind @param {File[]} [files] @param {boolean} [allowed] */

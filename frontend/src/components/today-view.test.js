@@ -590,6 +590,41 @@ describe("in-progress card actions", () => {
     },
   );
 
+  it("merges a completion response over the list record without a reload", async () => {
+    await import("./today-view.js");
+    const registration = vi
+      .mocked(customElements.define)
+      .mock.calls.find(([name]) => name === "today-view");
+    const View = /** @type {any} */ (registration[1]);
+    const view = new View();
+    view._homeModel = {
+      tasks: [
+        { taskId: "a", status: "open", thumbnailUrl: "thumb-a" },
+        { taskId: "b", status: "open" },
+      ],
+    };
+    view._applyTaskResult("a", {
+      taskId: "a",
+      status: "completed",
+      canUploadPhotos: true,
+    });
+    expect(view._homeModel.tasks[0]).toEqual({
+      taskId: "a",
+      status: "completed",
+      thumbnailUrl: "thumb-a",
+      canUploadPhotos: true,
+    });
+    expect(view._homeModel.tasks[1]).toEqual({ taskId: "b", status: "open" });
+    view._applyTaskResult("c", { taskId: "c", status: "in_progress" });
+    expect(view._homeModel.tasks.map((task) => task.taskId)).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+    view._applyTaskResult("a", null);
+    expect(view._homeModel.tasks).toHaveLength(3);
+  });
+
   it("labels in-progress cards as View or add updates", async () => {
     await import("./today-view.js");
     const registration = vi

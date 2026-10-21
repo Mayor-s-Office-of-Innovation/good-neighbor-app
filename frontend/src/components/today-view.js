@@ -9,8 +9,11 @@ import {
   toggleCardCompletion,
   completeCardAction,
   isCompletingAnalysisCard,
+  markCardCompleting,
+  preloadResultsDialog,
   slideCompletedCard,
 } from "./analysis-card-completion.js";
+import { taskCardTitle } from "../domain/task-title.js";
 import { groupHistory } from "../domain/task-history.js";
 import { pacificDateKey } from "../i18n/dates.js";
 /*
@@ -504,6 +507,7 @@ class TodayView extends HTMLElement {
       tasks,
       pendingSession: effectivePendingSession,
     });
+    this._preloadResultsDialog();
     // Evidence hydration is for the cards on screen now. The duplicate watcher
     // (a poll) and the 311 status batch wait for the complete list, so each
     // starts once per load: here when the remaining lists were reused, else
@@ -1872,12 +1876,15 @@ class TodayView extends HTMLElement {
         btn.hasAttribute("data-phone-number")
       ) {
         toggleCardCompletion(this, card, btn, {
-          onSaved: (task) =>
+          task,
+          onSaved: (saved) => {
             this._markAnalysisProblemResolved(problem, {
               taskStatus:
-                task.status === "in_progress" ? "in_progress" : "resolved",
-            }),
-          render: () => this.connectedCallback(),
+                saved.status === "in_progress" ? "in_progress" : "resolved",
+            });
+            this._applyTaskResult(problem.taskId, saved);
+          },
+          render: () => this._refreshAfterAction(),
         });
       } else this._resolveAnalysisProblem(problem, card);
     } else if (action === "answer") {
@@ -2116,7 +2123,8 @@ class TodayView extends HTMLElement {
       this._expireRemainingLists(); // filed → In-progress on the server
       if (card.isConnected) await slideCompletedCard(card);
       this._markAnalysisProblemResolved(problem, { taskStatus: null });
-      await this.connectedCallback();
+      this._applyTaskResult(problem.taskId, result.task);
+      this._refreshAfterAction();
       return;
     }
 
@@ -2133,7 +2141,8 @@ class TodayView extends HTMLElement {
         /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),
         "analysis-success",
       );
-      await this.connectedCallback();
+      this._applyTaskResult(problem.taskId, result?.task);
+      this._refreshAfterAction();
     } catch (err) {
       console.error("resolve task failed", err);
       showActionSaveErrorToast();
@@ -2235,29 +2244,84 @@ class TodayView extends HTMLElement {
       void this._open311Detail(task, btn);
     } else if (action === "done") {
       toggleCardCompletion(this, card, btn, {
-        onSaved: (taskResult) =>
+        task,
+        onSaved: (taskResult) => {
           this._setTaskOverride(
             task.taskId,
             taskResult.status === "in_progress" ? "in_progress" : "resolved",
-          ),
-        render: () => this.connectedCallback(),
+          );
+          this._applyTaskResult(task.taskId, taskResult);
+        },
+        render: () => this._refreshAfterAction(),
       });
     } else if (action === "file311") {
-      this._run(
+      // Filing runs inside the request (5–20 s): the button says so at once,
+      // and the toast names the card the moment the response lands, before
+      // the slide and the reload.
+      const title = taskCardTitle(task);
+      void this._run(
         card,
         () =>
           completeCardAction(task.taskId, {
             completionMethod: "311_filed",
           }),
-        { requireSubmitted311: true, animateOnSuccess: true },
+        {
+          requireSubmitted311: true,
+          animateOnSuccess: true,
+          pending: { button: btn, label: t("today.action.filing") },
+          onSuccess: (result) =>
+            show311SuccessToast(
+              submitted311ServiceRequestNumber(result.task),
+              title,
+            ),
+        },
       ).then((result) => {
-        if (result) {
-          show311SuccessToast(submitted311ServiceRequestNumber(result.task));
-          this._expireRemainingLists(); // filed → In-progress on the server
-          this.connectedCallback();
-        }
+        if (!result) return;
+        this._applyTaskResult(task.taskId, result.task);
+        this._expireRemainingLists(); // filed → In-progress on the server
+        this._refreshAfterAction();
       });
     }
+  }
+
+  /**
+   * Fold a completion response into the model so the card changes tabs on
+   * the next paint instead of after a full reload. The server record is
+   * authoritative; it is merged over the list record to keep hydrated
+   * fields (thumbnail, 311 status) the response does not carry.
+   */
+  _applyTaskResult(taskId, task) {
+    const model = this._homeModel;
+    if (!model || !taskId || !task) return;
+    const known = model.tasks.some((entry) => entry.taskId === taskId);
+    const tasks = known
+      ? model.tasks.map((entry) =>
+          entry.taskId === taskId ? { ...entry, ...task } : entry,
+        )
+      : [...model.tasks, task];
+    this._homeModel = { ...model, tasks };
+  }
+
+  /**
+   * Paint the updated model now; the full reload (every list, 311 statuses,
+   * duplicates) runs behind it rather than gating the UI.
+   */
+  _refreshAfterAction() {
+    if (this._homeModel) this._renderHome(this._homeModel);
+    void this.connectedCallback();
+  }
+
+  /**
+   * Warm the results prompt's chunk once the first paint is done, so the
+   * first checkbox tap opens it without a network fetch.
+   */
+  _preloadResultsDialog() {
+    if (this._resultsDialogPreloaded) return;
+    this._resultsDialogPreloaded = true;
+    const idle =
+      globalThis.requestIdleCallback ||
+      ((callback) => setTimeout(callback, 1000));
+    idle(() => preloadResultsDialog());
   }
 
   _setTaskOverride(taskId, status) {
@@ -2278,11 +2342,28 @@ class TodayView extends HTMLElement {
   async _run(
     card,
     fn,
-    { requireSubmitted311 = false, animateOnSuccess = false } = {},
+    {
+      requireSubmitted311 = false,
+      animateOnSuccess = false,
+      pending = null,
+      onSuccess = null,
+    } = {},
   ) {
     const buttons = card.querySelectorAll("button");
     const err = card.querySelector(".actioncard__error");
     buttons.forEach((b) => (b.disabled = true));
+    // The card shows it is busy from the first frame: the triggering button
+    // takes the pending label and the card's re-renders are held (as for a
+    // checklist save) so that state survives until the response.
+    const pendingLabel = pending?.button?.textContent;
+    if (pending?.button) pending.button.textContent = pending.label;
+    card.setAttribute?.("aria-busy", "true");
+    const release = markCardCompleting(this, card);
+    const restore = () => {
+      buttons.forEach((b) => (b.disabled = false));
+      if (pending?.button) pending.button.textContent = pendingLabel;
+      card.removeAttribute?.("aria-busy");
+    };
     if (err) {
       err.hidden = true;
       err.textContent = "";
@@ -2296,21 +2377,24 @@ class TodayView extends HTMLElement {
             "We couldn't file this ticket right now. Please try again."
           : appActionFailureMessage(task);
       if (failure) {
-        buttons.forEach((b) => (b.disabled = false));
+        restore();
         if (requireSubmitted311) show311ErrorToast();
         else showActionSaveErrorToast();
         return;
       }
+      onSuccess?.(result);
       if (animateOnSuccess && card.isConnected) {
         await slideCompletedCard(card);
       }
       return result || true;
     } catch (e) {
       console.error("task action failed", e);
-      buttons.forEach((b) => (b.disabled = false));
+      restore();
       if (requireSubmitted311) show311ErrorToast();
       else showActionSaveErrorToast();
       return false;
+    } finally {
+      release();
     }
   }
 

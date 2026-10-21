@@ -89,12 +89,22 @@ export function onToastsChange(listener) {
 }
 
 /** @param {string} [serviceRequestNumber] */
-export function show311SuccessToast(serviceRequestNumber = "") {
+/**
+ * @param {string} [serviceRequestNumber]
+ * @param {string} [title] the card's title, so a toast that lands after the
+ *   user has moved on to other cards still says which ticket this is
+ */
+export function show311SuccessToast(serviceRequestNumber = "", title = "") {
+  const number = serviceRequestNumber;
   return showToast({
     title: t("toast.ticketFiled.title"),
-    message: serviceRequestNumber
-      ? t("toast.ticketFiled.message", { number: serviceRequestNumber })
-      : t("toast.ticketFiled.messageNoNumber"),
+    message: title
+      ? number
+        ? t("toast.ticketFiled.messageFor", { number, title })
+        : t("toast.ticketFiled.messageNoNumberFor", { title })
+      : number
+        ? t("toast.ticketFiled.message", { number })
+        : t("toast.ticketFiled.messageNoNumber"),
     icon: "circle-check",
     tone: "success",
   });

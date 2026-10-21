@@ -976,6 +976,18 @@ html.wa-dark .analysis-card__clear-copy a {
 .analysis-card__check:disabled {
   opacity: 1;
 }
+/* The save is in flight from the first tap: the box spins until the
+   response lands and the card slides away. */
+.analysis-card[aria-busy="true"] .analysis-card__check-circle {
+  background: transparent;
+  border-color: var(--text-secondary);
+  border-top-color: var(--text);
+  border-radius: 50%;
+  animation: analysis-progress-spin 0.8s linear infinite;
+}
+.analysis-card[aria-busy="true"] .analysis-card__check-tick {
+  transform: scale(0);
+}
 .analysis-card--completing {
   display: grid;
   grid-template-rows: 1fr;
@@ -1003,6 +1015,11 @@ html.wa-dark .analysis-card__clear-copy a {
 @media (prefers-reduced-motion: reduce) {
   .analysis-card--completing .analysis-card {
     animation: none;
+  }
+  .analysis-card[aria-busy="true"] .analysis-card__check-circle {
+    animation: none;
+    border-radius: var(--radius-sm);
+    border-color: var(--text);
   }
   .analysis-card__check-tick,
   .analysis-card__check-label {

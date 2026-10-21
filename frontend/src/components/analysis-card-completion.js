@@ -3,37 +3,45 @@ import { completeTask } from "../services/api.js";
 import { showActionSaveErrorToast } from "../state/toasts.js";
 
 const pending = new Map();
+/** Results prompts open one at a time, in tap order. */
+let dialogQueue = Promise.resolve();
 
-/** Keep cards mounted while the undo window, save, or exit animation is active. */
+/** Keep cards mounted while a save or exit animation is active. */
 export function isCompletingAnalysisCard(host) {
   return [...pending.values()].some(
     (state) => state.host === host || host.contains(state.host),
   );
 }
 
-/** Record the checklist action only after its cancellable hold, then animate a confirmed save. */
-export function toggleCardCompletion(host, card, button, { onSaved, render }) {
+/**
+ * Hold the host's re-renders while a card action other than the checklist
+ * (the 311 button) is in flight, so the card keeps its busy state.
+ * @returns {() => void} release
+ */
+export function markCardCompleting(host, card) {
+  const state = { host };
+  pending.set(card, state);
+  return () => {
+    if (pending.get(card) === state) pending.delete(card);
+  };
+}
+
+/**
+ * Record the checklist action the moment it is tapped, then animate a
+ * confirmed save. `task` is the card's backend record when known; it lets
+ * the results prompt open at tap time instead of after the response.
+ */
+export function toggleCardCompletion(
+  host,
+  card,
+  button,
+  { onSaved, render, task = null },
+) {
   const phoneNumber = button.getAttribute("data-phone-number");
   const isPhone = Boolean(phoneNumber);
   if (isPhone && !window.matchMedia("(max-width: 520px)").matches) return;
-  const previous = pending.get(card);
-  if (previous) {
-    if (previous.saving || isPhone) return;
-    clearTimeout(previous.timer);
-    pending.delete(card);
-    button.setAttribute("aria-checked", "false");
-    previous.controls.forEach(([control, disabled]) => {
-      control.disabled = disabled;
-    });
-    if (!isCompletingAnalysisCard(host)) {
-      const restoreFocus = document.activeElement === button;
-      void Promise.resolve(render()).then(() => {
-        if (restoreFocus)
-          focusChecklistControl(host, card.getAttribute("data-task-id"));
-      });
-    }
-    return;
-  }
+  // The request is already out: a second tap has nothing to undo.
+  if (pending.has(card)) return;
   const controls = [...card.querySelectorAll("button")]
     .filter((control) => control !== button)
     .map((control) => [control, control.disabled]);
@@ -41,20 +49,17 @@ export function toggleCardCompletion(host, card, button, { onSaved, render }) {
     control.disabled = true;
   });
   if (!isPhone) button.setAttribute("aria-checked", "true");
-  const state = { host, saving: false, controls, timer: null };
-  pending.set(card, state);
+  button.disabled = true;
+  card.setAttribute("aria-busy", "true");
+  pending.set(card, { host });
+  const taskId = card.getAttribute("data-task-id");
   const save = async () => {
     let saved = false;
     try {
-      if (!card.isConnected) return;
-      state.saving = true;
-      button.disabled = true;
-      card.setAttribute("aria-busy", "true");
-      const taskId = card.getAttribute("data-task-id");
       if (!taskId) throw new Error("Task is not ready to complete");
       const result = await (isPhone
         ? savePhoneCompletion(taskId, host._site?.siteId)
-        : completeCardAction(taskId, { completionMethod: "manual" }));
+        : completeCardAction(taskId, { completionMethod: "manual" }, { task }));
       if (
         !["completed", "in_progress", "cannot_do"].includes(
           result?.task?.status,
@@ -66,9 +71,9 @@ export function toggleCardCompletion(host, card, button, { onSaved, render }) {
       onSaved(result.task);
     } catch (error) {
       console.error("checklist completion failed", error);
-      if (!saved) {
-        if (!isPhone) button.setAttribute("aria-checked", "false");
-        if (!isPhone) showActionSaveErrorToast();
+      if (!saved && !isPhone) {
+        button.setAttribute("aria-checked", "false");
+        showActionSaveErrorToast();
       }
     } finally {
       pending.delete(card);
@@ -82,17 +87,14 @@ export function toggleCardCompletion(host, card, button, { onSaved, render }) {
           document.activeElement === button ||
           document.activeElement === document.body;
         await render();
-        if (shouldFocus)
-          focusChecklistControl(host, card.getAttribute("data-task-id"));
+        if (shouldFocus) focusChecklistControl(host, taskId);
       }
     }
   };
-  if (isPhone) {
-    // Persist the receipt synchronously before handing off. A suspended request
-    // is recovered on return/reload without delaying the call.
-    void save();
-    window.location.href = `tel:${phoneNumber.replace(/-/g, "")}`;
-  } else state.timer = setTimeout(save, 1500);
+  void save();
+  // The receipt is already persisting; a suspended request is recovered on
+  // return/reload without delaying the call.
+  if (isPhone) window.location.href = `tel:${phoneNumber.replace(/-/g, "")}`;
 }
 
 /** CSS controls simultaneous height/gap collapse and slide, without opacity changes. */
@@ -127,28 +129,63 @@ function focusChecklistControl(host, taskId) {
   control.focus({ preventScroll: true });
 }
 
-/** Complete a card action, then collect optional results before removing the card. */
-export async function completeCardAction(taskId, body) {
-  const result = await completeTask(taskId, body);
-  const task = result?.task;
-  if (result.resultsPending) {
-    await import("./task-update-dialog.js");
-    await new Promise((resolve) => {
-      const dialog =
-        /** @type {import("./task-update-dialog.js").TaskUpdateDialog} */ (
-          document.createElement("task-update-dialog")
-        );
-      dialog.addEventListener(
-        "taskupdateclosed",
-        () => {
-          dialog.remove();
-          resolve(undefined);
-        },
-        { once: true },
-      );
-      document.body.append(dialog);
-      dialog.openResults(task);
-    });
+/**
+ * Mirrors the backend rule for `resultsPending`: a manual completion of a
+ * task that cannot go "in progress" opens a documentation window.
+ */
+export function expectsCompletionResults(task, body) {
+  return body?.completionMethod === "manual" && task?.canBeInProgress === false;
+}
+
+/**
+ * Complete a card action, then collect optional results before removing the
+ * card. With `task` (the card's record) the results prompt opens at tap time,
+ * naming the card, while the request is still in flight; its save waits for
+ * the response. Without it the prompt opens once the response says results
+ * are pending.
+ */
+export async function completeCardAction(taskId, body, { task = null } = {}) {
+  const request = completeTask(taskId, body);
+  if (task && expectsCompletionResults(task, body)) {
+    const completion = request.then(
+      (result) => ({ task: result?.resultsPending ? result.task : null }),
+      () => ({ task: null, failed: true }),
+    );
+    await showResultsDialog(task, completion);
+    return request;
   }
+  const result = await request;
+  if (result.resultsPending) await showResultsDialog(result.task, null);
   return result;
+}
+
+/** Warm the results prompt's chunk so the first tap does not wait on a fetch. */
+export function preloadResultsDialog() {
+  void import("./task-update-dialog.js").catch(() => {});
+}
+
+function showResultsDialog(task, completion) {
+  const turn = dialogQueue.then(() => openResultsDialog(task, completion));
+  dialogQueue = turn.catch(() => {});
+  return turn;
+}
+
+async function openResultsDialog(task, completion) {
+  await import("./task-update-dialog.js");
+  await new Promise((resolve) => {
+    const dialog =
+      /** @type {import("./task-update-dialog.js").TaskUpdateDialog} */ (
+        document.createElement("task-update-dialog")
+      );
+    dialog.addEventListener(
+      "taskupdateclosed",
+      () => {
+        dialog.remove();
+        resolve(undefined);
+      },
+      { once: true },
+    );
+    document.body.append(dialog);
+    dialog.openResults(task, completion);
+  });
 }

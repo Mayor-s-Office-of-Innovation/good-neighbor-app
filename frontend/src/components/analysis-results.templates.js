@@ -12,6 +12,7 @@ import { pendingDeletedConditionIds } from "../state/pending-deletions.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { formatPacificUpdated } from "../domain/task-updates.js";
 import { taskMediaUrl } from "../domain/task-media.js";
+import { taskCardTitle } from "../domain/task-title.js";
 import { t } from "../i18n/i18n.js";
 import { rulebookOptionLabel, rulebookText } from "../i18n/rulebook.js";
 import {
@@ -616,10 +617,7 @@ export function taskAnalysisCard({
     duplicateCheckState: duplicateUiEnabled()
       ? task.duplicateCheckState
       : undefined,
-    title:
-      displayCategory(task) ||
-      rulebookText(task.label) ||
-      t("card.title.fallback"),
+    title: taskCardTitle(task),
     description:
       task.status === "in_progress" || task.status === "completed"
         ? displayDescription(task) ||
