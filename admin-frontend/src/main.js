@@ -2,6 +2,7 @@ import { actionFeedback, notifyAdmin } from "./action-feedback.js";
 import "../../frontend/src/components/app-toasts.js";
 import {
   captureComplianceDraft,
+  complianceDraftAfterNavigation,
   restoreComplianceDraft,
 } from "./compliance-profile-draft.js";
 import {
@@ -296,7 +297,13 @@ class AdminApp extends HTMLElement {
       this.confirmSiteNavigation(destination);
       return;
     }
+    this.state.complianceProfileDraft = complianceDraftAfterNavigation(
+      this.state.complianceProfileDraft,
+      destination,
+    );
     this.openRoute().catch((error) => {
+      if (this.state.complianceProfileDraft?.phase === "returning")
+        this.state.complianceProfileDraft.phase = "recovery";
       this.state.error = error.message;
       this.render();
     });
@@ -2890,7 +2897,7 @@ class AdminApp extends HTMLElement {
           if (profileForm.isConnected) {
             const draft = this.state.complianceProfileDraft;
             if (
-              draft &&
+              draft?.phase === "profile" &&
               result.profile.firstName?.trim() &&
               result.profile.lastName?.trim() &&
               result.profile.phone?.trim()
@@ -3762,10 +3769,22 @@ class AdminApp extends HTMLElement {
       "change",
       syncPeriodFields,
     );
+    this.querySelector("#retry-compliance-draft")?.addEventListener(
+      "click",
+      () => {
+        const draft = this.state.complianceProfileDraft;
+        if (!draft) return;
+        draft.phase = "returning";
+        this.state.error = "";
+        navigate(
+          `/sites/${encodeURIComponent(draft.siteId)}?section=compliance`,
+        );
+      },
+    );
     syncPeriodFields();
     const draft = this.state.complianceProfileDraft;
     if (
-      draft &&
+      draft?.phase === "returning" &&
       this.state.site?.siteId === draft.siteId &&
       new URLSearchParams(window.location.search).get("section") ===
         "compliance"
@@ -3776,11 +3795,23 @@ class AdminApp extends HTMLElement {
         if (requirementToggle) requirementToggle.checked = true;
         // Web Awesome controls finish their internal render asynchronously.
         requestAnimationFrame(() => {
-          if (!newPeriodDialog.isConnected) return;
-          newPeriodDialog.showModal();
-          newPeriodDialog.querySelector("wa-checkbox")?.focus();
-          this.state.complianceProfileDraft = null;
+          if (
+            !newPeriodDialog.isConnected ||
+            this.state.complianceProfileDraft !== draft
+          )
+            return;
+          try {
+            newPeriodDialog.showModal();
+            newPeriodDialog.querySelector("wa-checkbox")?.focus();
+            this.state.complianceProfileDraft = null;
+          } catch {
+            draft.phase = "recovery";
+            this.render();
+          }
         });
+      } else {
+        draft.phase = "recovery";
+        queueMicrotask(() => this.render());
       }
     }
     this.querySelector("[data-cancel-checks-period]")?.addEventListener(
@@ -4474,6 +4505,7 @@ class AdminApp extends HTMLElement {
             `
         }
         ${this.state.error ? `<p class="error">${escapeHtml(this.state.error)}</p>` : ""}
+        ${this.state.complianceProfileDraft?.phase === "recovery" ? `<button id="retry-compliance-draft" class="btn-secondary" type="button">${escapeHtml(t("admin.compliance.resumeDraft"))}</button>` : ""}
         ${
           this.state.hasToken &&
           !["provider", "program", "site", "manager"].includes(route.name)

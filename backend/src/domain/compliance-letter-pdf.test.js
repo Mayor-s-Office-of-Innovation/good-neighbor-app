@@ -70,7 +70,9 @@ describe("compliance letter PDF", () => {
     const svg = preview.toString();
     expect(svg).toContain('<svg xmlns="http://www.w3.org/2000/svg"');
     expect(svg).toContain("Site &amp; One");
-    expect(svg).toContain("at least three (3)");
+    expect(svg.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ")).toContain(
+      "at least three (3)",
+    );
     expect(svg).toContain("perimeter checks");
     expect(svg).toContain("Dear Sam,");
     expect(svg).toContain("enhanced monitoring");

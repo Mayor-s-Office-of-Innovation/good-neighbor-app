@@ -5,6 +5,7 @@
 export function captureComplianceDraft(form, siteId) {
   return {
     siteId,
+    phase: "profile",
     reasons: [...form.querySelectorAll("wa-checkbox[name='terms-reason']")]
       .filter((control) => /** @type {any} */ (control).checked)
       .map((control) => String(/** @type {any} */ (control).value)),
@@ -36,4 +37,17 @@ export function restoreComplianceDraft(form, draft) {
     if (control) control.value = value;
   }
   form.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+/** @param {ReturnType<typeof captureComplianceDraft> | null} draft @param {string} destination */
+export function complianceDraftAfterNavigation(draft, destination) {
+  if (!draft) return null;
+  if (draft.phase === "profile" && destination === "/profile") return draft;
+  const returnPath = `/sites/${encodeURIComponent(draft.siteId)}?section=compliance`;
+  if (
+    ["profile", "returning"].includes(draft.phase) &&
+    destination === returnPath
+  )
+    return { ...draft, phase: "returning" };
+  return null;
 }

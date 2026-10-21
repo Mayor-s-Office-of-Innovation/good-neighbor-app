@@ -1,64 +1,47 @@
-// One-time conversion of legacy test data. Defaults to a dry run.
-import { ScanCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
-import { ddb } from "../src/db.js";
-import { assertLocalSeedTarget } from "./lib/site-admin-seed.mjs";
+// Explicit remote targeting is opt-in; all targets default to a dry run.
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import {
+  DynamoDBDocumentClient,
+  ScanCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
+import {
+  migrationTarget,
+  monitoringUpdates,
+} from "./lib/enhanced-monitoring-migration.mjs";
 
-assertLocalSeedTarget();
-const apply = process.argv.includes("--apply");
-const TableName = process.env.DYNAMO_TABLE;
+const target = migrationTarget(process.argv.slice(2), process.env);
+const client = DynamoDBDocumentClient.from(
+  new DynamoDBClient(
+    target.remote
+      ? { region: target.region, ignoreConfiguredEndpointUrls: true }
+      : {},
+  ),
+);
 let cursor;
-let converted = 0;
+const report = { ...target, candidates: 0, converted: 0, conflicts: 0 };
 do {
-  const page = await ddb.send(
+  const page = await client.send(
     new ScanCommand({
-      TableName,
-      ...(cursor ? { ExclusiveStartKey: cursor } : {}),
+      TableName: target.table,
       ConsistentRead: true,
+      ...(cursor ? { ExclusiveStartKey: cursor } : {}),
     }),
   );
   for (const item of page.Items || []) {
-    if (!String(item.pk).startsWith("SITE#")) continue;
-    const Key = { pk: item.pk, sk: item.sk };
-    if (item.sk === "#META" && item.compliance?.currentTier !== undefined) {
-      const { currentTier, ...compliance } = item.compliance;
-      compliance.underEnhancedMonitoring =
-        compliance.perimeterChecksRequired !== false && Boolean(currentTier);
-      if (apply)
-        await ddb.send(
-          new UpdateCommand({
-            TableName,
-            Key,
-            UpdateExpression: "SET compliance = :new",
-            ConditionExpression: "compliance = :old",
-            ExpressionAttributeValues: {
-              ":new": compliance,
-              ":old": item.compliance,
-            },
-          }),
-        );
-      converted++;
-    }
-    if (
-      String(item.sk).startsWith("COMPLIANCE_TERMS#") &&
-      item.correctiveActionTier !== undefined
-    ) {
-      if (apply)
-        await ddb.send(
-          new UpdateCommand({
-            TableName,
-            Key,
-            UpdateExpression:
-              "SET underEnhancedMonitoring = :flag REMOVE correctiveActionTier",
-            ConditionExpression: "correctiveActionTier = :old",
-            ExpressionAttributeValues: {
-              ":flag": Boolean(item.correctiveActionTier),
-              ":old": item.correctiveActionTier,
-            },
-          }),
-        );
-      converted++;
+    for (const update of monitoringUpdates(item, target.table)) {
+      report.candidates++;
+      if (!target.apply) continue;
+      try {
+        await client.send(new UpdateCommand(update));
+        report.converted++;
+      } catch (error) {
+        if (error.name !== "ConditionalCheckFailedException") throw error;
+        report.conflicts++;
+      }
     }
   }
   cursor = page.LastEvaluatedKey;
 } while (cursor);
-console.log(JSON.stringify({ apply, converted }));
+console.log(JSON.stringify(report, null, 2));
+if (report.conflicts) process.exitCode = 1;

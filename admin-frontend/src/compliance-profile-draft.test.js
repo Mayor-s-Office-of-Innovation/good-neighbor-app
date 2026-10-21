@@ -38,3 +38,16 @@ test("profile detour restores the requirement draft and refreshes validation", (
   assert.equal(fields["terms-checks-per-day"].value, "7");
   assert.equal(changed, true);
 });
+
+test("only the active profile detour can return to its saved requirement", async () => {
+  const { complianceDraftAfterNavigation: next } = await import(
+    "./compliance-profile-draft.js"
+  );
+  const draft = { siteId: "one", phase: "profile" };
+  assert.equal(next(draft, "/profile"), draft);
+  assert.equal(next(draft, "/sites"), null);
+  assert.equal(next(draft, "/sites/two?section=compliance"), null);
+  assert.equal(next(draft, "/sites/one?section=compliance").phase, "returning");
+  assert.equal(next({ ...draft, phase: "recovery" }, "/profile"), null);
+  assert.equal(next(null, "/profile"), null);
+});

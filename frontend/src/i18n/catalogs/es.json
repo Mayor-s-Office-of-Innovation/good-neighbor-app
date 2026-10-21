@@ -1095,5 +1095,6 @@
   "admin.toast.staffSaved": "Miembro del personal guardado",
   "admin.toast.letterResendQueued": "Correo de la carta en cola",
   "admin.import.historyRefreshFailed": "La importación terminó, pero no se pudo actualizar el historial. Recargue para ver el historial más reciente; no repita la importación.",
-  "admin.import.outcomeCounts": "Aplicados: {applied}. Fallidos u omitidos: {failed}."
+  "admin.import.outcomeCounts": "Aplicados: {applied}. Fallidos u omitidos: {failed}.",
+  "admin.compliance.resumeDraft": "Volver al requisito de revisión del perímetro"
 }
