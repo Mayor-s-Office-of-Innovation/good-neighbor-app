@@ -11,7 +11,7 @@ describe("compliance letter PDF", () => {
       periodEnd: "2026-12-31",
       requiredChecksPerDay: 4,
       reasons: ["2", "6"],
-      correctiveActionTier: 3,
+      underEnhancedMonitoring: true,
       letterInputs: {
         confirmedOn: "2026-10-08",
         siteName: "Site One",
@@ -70,7 +70,42 @@ describe("compliance letter PDF", () => {
     const svg = preview.toString();
     expect(svg).toContain('<svg xmlns="http://www.w3.org/2000/svg"');
     expect(svg).toContain("Site &amp; One");
-    expect(svg).toContain("complete 3 documented perimeter");
-    expect(svg).toContain("checks per day");
+    expect(svg.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ")).toContain(
+      "at least three (3)",
+    );
+    expect(svg).toContain("perimeter checks");
+    expect(svg).toContain("Dear Sam,");
+    expect(svg).toContain("enhanced monitoring");
+    expect(svg).not.toContain("un-escalated");
   });
 });
+
+it.each([
+  [["Morgan Lee"], "Paul Newman and Morgan Lee oversee", 4, "four (4)"],
+  [
+    ["Morgan Lee", "Jordan Smith"],
+    "Paul Newman, Morgan Lee, and Jordan Smith oversee",
+    21,
+    "twenty-one (21)",
+  ],
+  [[], "Paul Newman oversees", 100, "one hundred (100)"],
+])(
+  "formats manager lists and daily cadence",
+  (providerManagerNames, names, requiredChecksPerDay, cadence) => {
+    const svg = generateComplianceLetterPreviewSvg({
+      effectiveStart: "2026-10-21",
+      requiredChecksPerDay,
+      letterInputs: {
+        siteName: "Site",
+        siteAddress: "Address",
+        siteManagerName: "Paul Newman",
+        siteManagerFirstName: "Paul",
+        providerManagerNames,
+      },
+    }).toString();
+    const text = svg.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
+    expect(text).toContain(names);
+    expect(text).toContain(`${cadence} times per day`);
+    expect(text).toContain(`${cadence} perimeter checks per day`);
+  },
+);

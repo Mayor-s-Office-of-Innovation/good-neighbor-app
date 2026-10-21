@@ -15,6 +15,7 @@ export async function complianceLetterEmail(
   department,
 ) {
   const providerEmails = [];
+  const providerManagerNames = [];
   /** @type {Record<string, any> | undefined} */
   let cursor;
   do {
@@ -29,6 +30,17 @@ export async function complianceLetterEmail(
         ...(cursor ? { ExclusiveStartKey: cursor } : {}),
         ConsistentRead: true,
       }),
+    );
+    providerManagerNames.push(
+      ...(result.Items || [])
+        .filter((m) => m.status === "active")
+        .map(
+          (m) =>
+            [m.firstName, m.lastName].filter(Boolean).join(" ") ||
+            m.name ||
+            m.email,
+        )
+        .filter(Boolean),
     );
     providerEmails.push(
       ...(result.Items || [])
@@ -47,6 +59,7 @@ export async function complianceLetterEmail(
   ];
   const text = `Dear ${manager.firstName},\n\nYour site's perimeter check requirements have been updated by ${generator.firstName} ${generator.lastName} at San Francisco's ${department}, under terms of the Good Neighbor Policy. The attached letter describes the reason for the update and any new expectations for your perimeter checking.\n\nPlease reach out to your program manager directly if you have any questions.\n\nThank you for being a part of the Good Neighbor Policy and helping keep San Francisco's streets clean and safe for all.\n\n-Good Neighbor app team-`;
   return {
+    providerManagerNames: [...new Set(providerManagerNames)],
     to,
     cc,
     subject: `${process.env.SETUP_CODE_EMAIL_SUBJECT_PREFIX || ""}Good Neighbor perimeter check requirements — ${site.name}`,

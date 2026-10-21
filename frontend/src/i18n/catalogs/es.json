@@ -708,9 +708,6 @@
   "setup.sendCode": "Enviar código",
   "setup.welcome": "Bienvenido a Good Neighbor.",
   "siteAdmin.compliance.checksPerDay": "Revisiones requeridas por día",
-  "siteAdmin.compliance.currentTier": "Nivel actual",
-  "siteAdmin.compliance.tier": "Nivel {tier}",
-  "siteAdmin.compliance.tierPeriod": "Período del nivel",
   "siteAdmin.compliance.title": "Cumplimiento",
   "siteAdmin.contact.name": "Nombre",
   "siteAdmin.contact.title": "Persona de contacto",
@@ -1043,6 +1040,12 @@
   "admin.programs.staffSourceChanged": "Este registro de personal cambió. Actualice la lista y vuelva a seleccionar a una persona.",
   "admin.programs.retryStaff": "Volver a cargar el personal existente",
   "admin.enrollment.providerInstructions": "Los dispositivos de los responsables del proveedor reciben acceso a todos los sitios activos de este proveedor al canjear el enlace. Los enlaces caducan a las 24 horas y registran un dispositivo físico para todos los sitios activos. Los proveedores con más de 21 sitios activos no pueden emitir enlaces.",
+  "siteAdmin.compliance.enhancedMonitoring": "Supervisión reforzada",
+  "siteAdmin.compliance.period": "Período del requisito",
+  "admin.compliance.yes": "Sí",
+  "admin.compliance.no": "No",
+  "admin.compliance.enhancedReason": "El sitio está bajo supervisión reforzada por una inquietud relacionada con GNP",
+  "admin.compliance.checkInputs": "Revise las fechas de cumplimiento y las revisiones requeridas por día.",
   "admin.toast.accessRemoved": "Acceso retirado",
   "admin.toast.accessUpdated": "Acceso del administrador actualizado",
   "admin.toast.accountActive": "La cuenta ya está activa",
@@ -1093,5 +1096,6 @@
   "admin.toast.staffSaved": "Miembro del personal guardado",
   "admin.toast.letterResendQueued": "Correo de la carta en cola",
   "admin.import.historyRefreshFailed": "La importación terminó, pero no se pudo actualizar el historial. Recargue para ver el historial más reciente; no repita la importación.",
-  "admin.import.outcomeCounts": "Aplicados: {applied}. Fallidos u omitidos: {failed}."
+  "admin.import.outcomeCounts": "Aplicados: {applied}. Fallidos u omitidos: {failed}.",
+  "admin.compliance.resumeDraft": "Volver al requisito de revisión del perímetro"
 }

@@ -171,7 +171,7 @@ as task update events and every GSI sort key.
 
 | Entity | `pk` | `sk` | Notes |
 |---|---|---|---|
-| Site config | `SITE#<siteId>` | `#META` | `type`/`entityType`, name, optional `siteType` (`permanent_supportive_housing`, `shelter`, or `drop_in`), `address` + `addressParts`, `location` (lat/lng) + `geocodedAddress`, `providerId` / `providerName` / `providerSiteId`, `status`, `contactPerson`, admin-managed `oversight` / `compliance` / `perimeter` / `complianceLetters`, runtime presentation `featureFlags` (currently `duplicateDetection`, boolean, default false), `providerShortCode`, `siteShortCode`. New Sites have no active perimeter-check period or tier. `perimeter` is a plain-text description (not geometry or a geofence), with `perimeterUpdatedAt` and `perimeterUpdatedBy` edit metadata. Compliance letters keep a private S3 key. The site response for devices mints short-lived download URLs. |
+| Site config | `SITE#<siteId>` | `#META` | `type`/`entityType`, name, optional `siteType` (`permanent_supportive_housing`, `shelter`, or `drop_in`), `address` + `addressParts`, `location` (lat/lng) + `geocodedAddress`, `providerId` / `providerName` / `providerSiteId`, `status`, `contactPerson`, admin-managed `oversight` / `compliance` / `perimeter` / `complianceLetters`, runtime presentation `featureFlags` (currently `duplicateDetection`, boolean, default false), `providerShortCode`, `siteShortCode`. New Sites have no active perimeter-check period. Site compliance stores `underEnhancedMonitoring` as a boolean, set from the enhanced-monitoring reason when saving a requirement and cleared when that requirement is ended. Each compliance period snapshots the flag for history. `perimeter` is a plain-text description (not geometry or a geofence), with `perimeterUpdatedAt` and `perimeterUpdatedBy` edit metadata. Compliance letters keep a private S3 key. The site response for devices mints short-lived download URLs. |
 | User profile | `SITE#<siteId>` | `USER#<sub>` | admin roster; the JWT usually makes the lookup unnecessary |
 | Device | `SITE#<siteId>` | `DEVICE#<deviceId>` | Compatibility projection for authorization and refresh: label, physical-device ID, lastSeenAt, lifecycle/expiry fields, `tokenGeneration`, `refreshJti`, and canonical `accessLevel` (`general` or `manager`). |
 | Legacy code/master contact | `SITE#<siteId>` | `CODE_CONTACT#<emailHash>` / `MASTER_CONTACT#<emailHash>` | Retired. Master contacts are migrated to Site manager memberships in dev; these records no longer authorize setup-code requests. |
@@ -217,7 +217,7 @@ as task update events and every GSI sort key.
 | Provider Manager enrollment grant | `PROVIDER#<providerId>` | `PROVIDER_MANAGER_GRANT#<createdAt>#<grantId>` | Fifteen-minute, single-use provider-scoped grant issued by a Compliance Supervisor. It snapshots the membership generation but resolves active Sites at redemption. Stores only the token verifier and aggregate Site/delivery evidence. |
 | Current Provider Manager grant guard | `PROVIDER#<providerId>` | `PROVIDER_MANAGER_GRANT_CURRENT#<membershipId>` | Conditional singleton for one unexpired provider grant per membership. Redemption, cancellation, or replacement removes or changes the matching pointer atomically. |
 | Provider Manager enrollment | `PROVIDER#<providerId>` | `PROVIDER_MANAGER_ENROLLMENT#<enrollmentId>` | Directly addressable root lifecycle record for one physical device's all-or-nothing provider redemption. Stores the membership generation and up to 21 Site/binding pointers so a Supervisor can revoke every still-active projection in one transaction. List responses derive active/partial/revoked state from the authoritative physical-device and binding rows. |
-| Perimeter-check compliance period | `SITE#<siteId>` | `COMPLIANCE_TERMS#<effectiveStart>#<versionId>` | Immutable effective-dated period containing one or more reason codes, integer checks/day, an optional corrective-action tier (reason 6 only), and a snapshot of the selected Site manager plus the authenticated generator. The generator—not a client-nominated manager—appears as sender; Compliance managers must be assigned to the Site while supervisors may generate for any Site. Generator phone is required. Start is the server's current Pacific date; the user-facing end date is inclusive and is stored with an exclusive boundary. Reasons 1, 5, or 6 require an end date. Missing expiry means indefinite. |
+| Perimeter-check compliance period | `SITE#<siteId>` | `COMPLIANCE_TERMS#<effectiveStart>#<versionId>` | Immutable effective-dated period containing one or more reason codes, integer checks/day, a snapshotted `underEnhancedMonitoring` boolean (reason 6 only), and a snapshot of the selected Site manager plus the authenticated generator. The generator—not a client-nominated manager—appears as sender; Compliance managers must be assigned to the Site while supervisors may generate for any Site. Generator phone is required. Start is the server's current Pacific date; the user-facing end date is inclusive and is stored with an exclusive boundary. Reasons 1 or 6 require an end date. Missing expiry means indefinite. |
 | Compliance-letter generation job | `SITE#<siteId>` | `LETTER_JOB#<createdAt>#<jobId>` | Transactional outbox item (`COMPLIANCE_LETTER_OUTBOX`) created with a perimeter-check period. DynamoDB Streams dispatches it to SQS; the worker renders the PDF, stores it in S3, and advances the Site letter state idempotently. |
 | Site audit event | `SITE#<siteId>` | `AUDIT#<createdAt>#<eventId>` | append-only actor/event record for Site administration changes. |
 | Revocation operation | `SITE#<siteId>`, `PHYSICAL_DEVICE#<physicalDeviceId>`, or `REVOCATION_OPERATION#<operationId>` | `REVOCATION_OPERATION#<createdAt>#<operationId>`, `#META`, `SITE#<siteId>`, or `OUTBOX#<siteId>` | Durable outcome for selected-binding, Site-wide, physical-device-wide, or emergency multi-Site revocation. The multi-Site root tracks queued/completed Site counts and has one idempotent Site-result row plus one transactional outbox row per reconciliation job. DynamoDB Streams dispatches pending outbox rows to SQS; reconciliation failures are retried rather than recorded as terminal partial success. Contains IDs and aggregate outcomes, never credentials. |
@@ -757,3 +757,20 @@ The 311 attachment writer conditionally puts each lease; the anonymous media
 handler performs a strongly consistent Get by token hash and rejects expired
 leases independently of asynchronous TTL cleanup. This access path is shared by
 silent and manual filings. See [311 attachment image leases](architecture.md#311-attachment-image-leases).
+
+### Enhanced-monitoring conversion
+
+Before deploying readers of the enhanced-monitoring flag to a table with legacy
+site tiers, run backend/scripts/migrate-enhanced-monitoring.mjs in dry-run mode.
+It converts site compliance and compliance-period snapshots without changing
+issued PDFs or stored letter inputs. Explicit boolean values are preserved.
+
+Local command: node --env-file=.env.local backend/scripts/migrate-enhanced-monitoring.mjs
+(add --apply to write).
+
+Deployed table: use authorized AWS credentials and
+node backend/scripts/migrate-enhanced-monitoring.mjs --remote --table=TABLE --region=REGION.
+After reviewing the target and candidate count, add --apply --confirm-table=TABLE
+to write. Remote mode ignores configured emulator endpoints. There is no automatic
+deployment migration. Conditional checks prevent overwriting concurrent changes;
+conflicts produce a nonzero exit status and should be reviewed before rerunning.

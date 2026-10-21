@@ -1,6 +1,11 @@
 import { actionFeedback, notifyAdmin } from "./action-feedback.js";
 import "../../frontend/src/components/app-toasts.js";
 import {
+  captureComplianceDraft,
+  complianceDraftAfterNavigation,
+  restoreComplianceDraft,
+} from "./compliance-profile-draft.js";
+import {
   siteProviderPrograms,
   bindSiteProgramCreation,
 } from "./site-program.js";
@@ -98,6 +103,7 @@ import {
  * @property {boolean} hasToken
  * @property {AdminConfig} authConfig
  * @property {boolean} authBusy
+ * @property {ReturnType<typeof captureComplianceDraft> | null} complianceProfileDraft
  * @property {any | null} profile
  * @property {string} profileMessage
  * @property {string} role
@@ -163,6 +169,7 @@ class AdminApp extends HTMLElement {
       hasToken: false,
       authConfig: getAdminConfig(),
       authBusy: false,
+      complianceProfileDraft: null,
       profile: null,
       profileMessage: "",
       role: "",
@@ -226,6 +233,7 @@ class AdminApp extends HTMLElement {
       hasToken: hasAdminSession(),
       authConfig: getAdminConfig(),
       authBusy: false,
+      complianceProfileDraft: null,
       profile: null,
       profileMessage: "",
       role: "",
@@ -289,7 +297,13 @@ class AdminApp extends HTMLElement {
       this.confirmSiteNavigation(destination);
       return;
     }
+    this.state.complianceProfileDraft = complianceDraftAfterNavigation(
+      this.state.complianceProfileDraft,
+      destination,
+    );
     this.openRoute().catch((error) => {
+      if (this.state.complianceProfileDraft?.phase === "returning")
+        this.state.complianceProfileDraft.phase = "recovery";
       this.state.error = error.message;
       this.render();
     });
@@ -1724,9 +1738,6 @@ class AdminApp extends HTMLElement {
       const queued = await adminApi.createSiteTerms(this.state.site.siteId, {
         reasons,
         siteManagerUserId: controlValue(form, "terms-site-manager-id"),
-        ...(reasons.includes("6")
-          ? { correctiveActionTier: Number(controlValue(form, "terms-tier")) }
-          : {}),
         requiredChecksPerDay: Number(
           controlValue(form, "terms-checks-per-day"),
         ),
@@ -2884,8 +2895,21 @@ class AdminApp extends HTMLElement {
           }
           this.state.profileMessage = "";
           if (profileForm.isConnected) {
-            this.render();
-            this.querySelector("h1")?.focus();
+            const draft = this.state.complianceProfileDraft;
+            if (
+              draft?.phase === "profile" &&
+              result.profile.firstName?.trim() &&
+              result.profile.lastName?.trim() &&
+              result.profile.phone?.trim()
+            ) {
+              syncDirtyForm(profileForm, true);
+              navigate(
+                `/sites/${encodeURIComponent(draft.siteId)}?section=compliance`,
+              );
+            } else {
+              this.render();
+              this.querySelector("h1")?.focus();
+            }
           }
         } catch (error) {
           feedback.failure(error);
@@ -3665,6 +3689,22 @@ class AdminApp extends HTMLElement {
               const profileLink = document.createElement("a");
               profileLink.href = "/profile";
               profileLink.textContent = t("admin.profile.title");
+              profileLink.addEventListener("click", (event) => {
+                if (
+                  event.button !== 0 ||
+                  event.metaKey ||
+                  event.ctrlKey ||
+                  event.shiftKey ||
+                  event.altKey
+                )
+                  return;
+                event.preventDefault();
+                this.state.complianceProfileDraft = captureComplianceDraft(
+                  currentForm,
+                  this.state.site.siteId,
+                );
+                navigate("/profile");
+              });
               errorMessage.replaceChildren(before, profileLink, after || "");
             }
             if (saveButton) {
@@ -3697,14 +3737,11 @@ class AdminApp extends HTMLElement {
         .filter((checkbox) => checkbox.checked)
         .map((checkbox) => checkbox.value);
       const expiry = this.querySelector("[data-expiry-field]");
-      const tier = this.querySelector("[data-tier-field]");
       const needsExpiry = selected.some((reason) =>
-        ["1", "5", "6"].includes(reason),
+        ["1", "6"].includes(reason),
       );
       expiry?.toggleAttribute("hidden", !needsExpiry);
       expiry?.toggleAttribute("required", needsExpiry);
-      tier?.toggleAttribute("hidden", !selected.includes("6"));
-      tier?.toggleAttribute("required", selected.includes("6"));
       if (form instanceof HTMLFormElement) {
         const saveButton = /** @type {HTMLButtonElement | null} */ (
           form.querySelector("[data-save-button]")
@@ -3732,7 +3769,51 @@ class AdminApp extends HTMLElement {
       "change",
       syncPeriodFields,
     );
+    this.querySelector("#retry-compliance-draft")?.addEventListener(
+      "click",
+      () => {
+        const draft = this.state.complianceProfileDraft;
+        if (!draft) return;
+        draft.phase = "returning";
+        this.state.error = "";
+        navigate(
+          `/sites/${encodeURIComponent(draft.siteId)}?section=compliance`,
+        );
+      },
+    );
     syncPeriodFields();
+    const draft = this.state.complianceProfileDraft;
+    if (
+      draft?.phase === "returning" &&
+      this.state.site?.siteId === draft.siteId &&
+      new URLSearchParams(window.location.search).get("section") ===
+        "compliance"
+    ) {
+      const form = this.querySelector("#site-compliance-form");
+      if (form instanceof HTMLFormElement && newPeriodDialog) {
+        restoreComplianceDraft(form, draft);
+        if (requirementToggle) requirementToggle.checked = true;
+        // Web Awesome controls finish their internal render asynchronously.
+        requestAnimationFrame(() => {
+          if (
+            !newPeriodDialog.isConnected ||
+            this.state.complianceProfileDraft !== draft
+          )
+            return;
+          try {
+            newPeriodDialog.showModal();
+            newPeriodDialog.querySelector("wa-checkbox")?.focus();
+            this.state.complianceProfileDraft = null;
+          } catch {
+            draft.phase = "recovery";
+            this.render();
+          }
+        });
+      } else {
+        draft.phase = "recovery";
+        queueMicrotask(() => this.render());
+      }
+    }
     this.querySelector("[data-cancel-checks-period]")?.addEventListener(
       "click",
       () => {
@@ -4424,6 +4505,7 @@ class AdminApp extends HTMLElement {
             `
         }
         ${this.state.error ? `<p class="error">${escapeHtml(this.state.error)}</p>` : ""}
+        ${this.state.complianceProfileDraft?.phase === "recovery" ? `<button id="retry-compliance-draft" class="btn-secondary" type="button">${escapeHtml(t("admin.compliance.resumeDraft"))}</button>` : ""}
         ${
           this.state.hasToken &&
           !["provider", "program", "site", "manager"].includes(route.name)
@@ -4503,7 +4585,7 @@ function myProfileView(state) {
     <form id="my-profile-form" class="site-details-form" data-dirty-form>
       ${formInput("firstName", t("siteAdmin.field.firstName"), profile.firstName, { required: true, maxlength: 100, autocomplete: "given-name" })}
       ${formInput("lastName", t("siteAdmin.field.lastName"), profile.lastName, { required: true, maxlength: 100, autocomplete: "family-name" })}
-      ${phoneInput("phone", t("siteAdmin.field.phone"), profile.phone, { extension: profile.phoneExtension, required: Boolean(profile.phone), type: "tel", autocomplete: "tel" })}
+      ${phoneInput("phone", t("siteAdmin.field.phone"), profile.phone, { extension: profile.phoneExtension, required: Boolean(profile.phone) || Boolean(state.complianceProfileDraft), type: "tel", autocomplete: "tel" })}
       <dl class="profile-email">
         <dt>${escapeHtml(t("siteAdmin.field.email"))}</dt>
         <dd>${escapeHtml(profile.email)}</dd>
@@ -4781,10 +4863,10 @@ function termsHistory(
 ) {
   if (!terms.length)
     return `<p class="empty-state">${escapeHtml(emptyMessage)}</p>`;
-  return `<div class="table-wrap"><table><thead><tr><th>Starts</th><th>Ends</th><th>Reasons</th><th>Tier</th><th>Checks/day</th><th>Created</th></tr></thead><tbody>${terms
+  return `<div class="table-wrap"><table><thead><tr><th>Starts</th><th>Ends</th><th>Reasons</th><th>${escapeHtml(t("siteAdmin.compliance.enhancedMonitoring"))}</th><th>Checks/day</th><th>Created</th></tr></thead><tbody>${terms
     .map(
       (term) =>
-        `<tr><td>${escapeHtml(term.effectiveStart)}</td><td>${escapeHtml(term.endedOn || term.periodEnd || "Until further notice")}</td><td>${escapeHtml((term.reasons || []).join(", ") || "Legacy period")}</td><td>${escapeHtml(term.correctiveActionTier || "—")}</td><td>${escapeHtml(term.requiredChecksPerDay)}</td><td>${escapeHtml(formatTimestamp(term.createdAt))}</td></tr>`,
+        `<tr><td>${escapeHtml(term.effectiveStart)}</td><td>${escapeHtml(term.endedOn || term.periodEnd || "Until further notice")}</td><td>${escapeHtml((term.reasons || []).join(", ") || "Legacy period")}</td><td>${escapeHtml(t(term.underEnhancedMonitoring ? "admin.compliance.yes" : "admin.compliance.no"))}</td><td>${escapeHtml(term.requiredChecksPerDay)}</td><td>${escapeHtml(formatTimestamp(term.createdAt))}</td></tr>`,
     )
     .join("")}</tbody></table></div>`;
 }
@@ -6430,11 +6512,7 @@ function newChecksPeriodDialog(state) {
       "4",
       "Site is a drop-in center characterized by frequent, high-volume visitor traffic, where continuous public-facing conditions make more frequent documentation reasonably necessary.",
     ],
-    [
-      "5",
-      "The department has evidence of a pattern of undocumented or un-escalated conditions at the site.",
-    ],
-    ["6", "The provider is in Tiers 1–4 of corrective action."],
+    ["6", t("admin.compliance.enhancedReason")],
   ];
   return `<dialog id="new-checks-period-dialog" class="places-modal compliance-period-dialog" aria-labelledby="new-checks-period-title">
     <form id="site-compliance-form" class="places-modal__card site-details-form" novalidate>
@@ -6450,9 +6528,6 @@ function newChecksPeriodDialog(state) {
             ${state.assignedUsers.map((manager) => `<wa-option value="${escapeHtml(manager.userId)}" ${state.assignedUsers.length === 1 ? "selected" : ""}>${escapeHtml(`${manager.firstName || ""} ${manager.lastName || ""}`.trim())}</wa-option>`).join("")}
           </wa-select>
           <wa-input name="terms-expiry" type="date" label="Define when the check requirement will end" data-expiry-field hidden></wa-input>
-          <wa-select name="terms-tier" label="New corrective-action tier" placeholder="Choose a tier" data-tier-field hidden>
-            ${[1, 2, 3, 4].map((tier) => `<wa-option value="${tier}">Tier ${tier}</wa-option>`).join("")}
-          </wa-select>
           <wa-number-input name="terms-checks-per-day" label="Required checks per day" min="1" max="100" step="1" value="3" required>
             <wa-icon slot="decrement-icon" name="minus" aria-hidden="true"></wa-icon>
             <wa-icon slot="increment-icon" name="plus" aria-hidden="true"></wa-icon>
@@ -6770,13 +6845,10 @@ function compliancePeriodValidationError(form) {
   if (!reasons.length)
     return "Select at least one reason for requiring perimeter checks.";
   if (
-    reasons.some((reason) => ["1", "5", "6"].includes(reason)) &&
+    reasons.some((reason) => ["1", "6"].includes(reason)) &&
     !controlValue(form, "terms-expiry")
   ) {
     return "Enter the last day checks are required for the selected reasons.";
-  }
-  if (reasons.includes("6") && !controlValue(form, "terms-tier")) {
-    return "Choose a corrective-action tier from 1 through 4.";
   }
   const checksPerDay = Number(controlValue(form, "terms-checks-per-day"));
   if (!Number.isInteger(checksPerDay) || checksPerDay < 1) {
@@ -6858,7 +6930,7 @@ function siteSaveErrorMessage(error) {
     return "Enter a valid 10-digit City program manager phone number.";
   }
   if (code === "invalid_compliance") {
-    return "Check the compliance tier, dates, and required checks per day.";
+    return t("admin.compliance.checkInputs");
   }
   if (
     code === "invalid_compliance_letter" ||
@@ -6886,8 +6958,6 @@ function compliancePeriodErrorMessage(error) {
     return t("admin.compliance.generatorDepartmentRequired");
   if (code === "expiry_required")
     return "Enter the last day checks are required for the selected reasons.";
-  if (code === "invalid_tier")
-    return "Choose a corrective-action tier from 1 through 4.";
   if (code === "letter_details_required")
     return "Complete the Site manager, address, department, and City program manager contact details before requiring checks.";
   if (code === "terms_overlap" || code === "terms_start_conflict")

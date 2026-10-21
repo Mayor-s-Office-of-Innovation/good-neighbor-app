@@ -89,9 +89,11 @@ class SiteAdminView extends HTMLElement {
       .map(text)
       .filter(Boolean)
       .join(" ");
-    const tier = compliance.currentTier
-      ? t("siteAdmin.compliance.tier", { tier: compliance.currentTier })
-      : EMPTY;
+    const monitoring = t(
+      compliance.underEnhancedMonitoring
+        ? "admin.compliance.yes"
+        : "admin.compliance.no",
+    );
     const period = compliance.periodStart
       ? t("siteAdmin.dateRange", {
           start: formatAdminDate(compliance.periodStart),
@@ -127,8 +129,8 @@ class SiteAdminView extends HTMLElement {
             ],
           ])}
           ${readOnlySection(t("siteAdmin.compliance.title"), [
-            [t("siteAdmin.compliance.currentTier"), tier],
-            [t("siteAdmin.compliance.tierPeriod"), period],
+            [t("siteAdmin.compliance.enhancedMonitoring"), monitoring],
+            [t("siteAdmin.compliance.period"), period],
             [
               t("siteAdmin.compliance.checksPerDay"),
               compliance.requiredChecksPerDay,

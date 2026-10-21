@@ -190,10 +190,7 @@ export const createSiteTerms = (event) =>
   siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const reasons = normalizeReasons(body.reasons);
-    const tier =
-      body.correctiveActionTier === undefined
-        ? null
-        : Number(body.correctiveActionTier);
+    const underEnhancedMonitoring = reasons.includes("6");
     const requiredChecksPerDay = Number(body.requiredChecksPerDay);
     const siteManagerUserId = String(body.siteManagerUserId || "").trim();
     // Periods always begin when they are saved. Keep the effective date
@@ -206,25 +203,14 @@ export const createSiteTerms = (event) =>
     if (!siteManagerUserId) {
       return jsonResponse(400, { error: "site_manager_required" });
     }
-    if (
-      reasons.includes("6") &&
-      (!Number.isInteger(tier) || Number(tier) < 1 || Number(tier) > 4)
-    ) {
-      return jsonResponse(400, { error: "invalid_tier" });
-    }
-    if (!reasons.includes("6") && tier !== null) {
-      return jsonResponse(400, { error: "tier_requires_reason_six" });
-    }
+
     if (!Number.isInteger(requiredChecksPerDay) || requiredChecksPerDay < 1) {
       return jsonResponse(400, { error: "invalid_check_cadence" });
     }
     if (body.periodEnd && !periodEnd) {
       return jsonResponse(400, { error: "invalid_expiry" });
     }
-    if (
-      reasons.some((reason) => ["1", "5", "6"].includes(reason)) &&
-      !periodEnd
-    ) {
+    if (reasons.some((reason) => ["1", "6"].includes(reason)) && !periodEnd) {
       return jsonResponse(400, { error: "expiry_required" });
     }
     if (expiresOnExclusive && expiresOnExclusive <= effectiveStart) {
@@ -380,6 +366,22 @@ export const createSiteTerms = (event) =>
     const observedLatestVersion =
       siteResult.Item.latestComplianceTermsVersionId;
     const actor = adminPrincipal(event).subject || "central-admin";
+    const [email, leadProgramResult] = await Promise.all([
+      complianceLetterEmail(
+        site,
+        siteManager,
+        generator,
+        String(generatorDepartment),
+      ),
+      site.leadProgramId
+        ? ddb.send(
+            new GetCommand({
+              TableName: tableName,
+              Key: { pk: `PROGRAM#${site.leadProgramId}`, sk: "#META" },
+            }),
+          )
+        : Promise.resolve({ Item: undefined }),
+    ]);
     const terms = {
       pk: `SITE#${siteId}`,
       sk: `COMPLIANCE_TERMS#${effectiveStart}#${termsVersionId}`,
@@ -388,7 +390,7 @@ export const createSiteTerms = (event) =>
       siteId,
       termsVersionId,
       reasons,
-      ...(tier === null ? {} : { correctiveActionTier: tier }),
+      underEnhancedMonitoring,
       requiredChecksPerDay,
       effectiveStart,
       ...(periodEnd ? { periodEnd } : {}),
@@ -396,15 +398,14 @@ export const createSiteTerms = (event) =>
       status: termsStatus(effectiveStart, expiresOnExclusive),
       createdAt: now,
       createdBy: actor,
-      email: await complianceLetterEmail(
-        site,
-        siteManager,
-        generator,
-        String(generatorDepartment),
-      ),
+      email,
       letterInputs: {
         confirmedOn: effectiveStart,
         siteName: String(site.name),
+        leadProgramName: String(
+          leadProgramResult.Item?.name || site.leadProgramName || "",
+        ),
+        providerManagerNames: email.providerManagerNames,
         siteManagerId: siteManagerUserId,
         siteManagerFirstName: String(siteManager.firstName),
         siteManagerName:
@@ -442,7 +443,7 @@ export const createSiteTerms = (event) =>
               periodStart: effectiveStart,
               ...(periodEnd ? { periodEnd } : {}),
               requiredChecksPerDay,
-              ...(tier === null ? {} : { currentTier: tier }),
+              underEnhancedMonitoring,
             },
             ...(observedLatestVersion === undefined
               ? {}
@@ -582,7 +583,10 @@ export const endSiteTerms = (event) =>
                     ? "complianceLetters = :observedLetters"
                     : "attribute_not_exists(complianceLetters)"),
                 ExpressionAttributeValues: {
-                  ":compliance": { perimeterChecksRequired: false },
+                  ":compliance": {
+                    perimeterChecksRequired: false,
+                    underEnhancedMonitoring: false,
+                  },
                   ":letters": {
                     current: null,
                     past: [
@@ -1073,7 +1077,7 @@ function isoDate(value) {
 function normalizeReasons(value) {
   if (!Array.isArray(value)) return [];
   return [...new Set(value.map(String))]
-    .filter((reason) => ["1", "2", "3", "4", "5", "6"].includes(reason))
+    .filter((reason) => ["1", "2", "3", "4", "6"].includes(reason))
     .sort();
 }
 

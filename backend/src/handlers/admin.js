@@ -1623,14 +1623,11 @@ function normalizeOversight(value) {
 function normalizeCompliance(value) {
   if (!value || typeof value !== "object") return null;
   const input = /** @type {Record<string, unknown>} */ (value);
-  const currentTier = Number(input.currentTier);
+  const underEnhancedMonitoring = input.underEnhancedMonitoring === true;
   const periodStart = cleanText(input.periodStart);
   const periodEnd = cleanText(input.periodEnd);
   const requiredChecksPerDay = Number(input.requiredChecksPerDay);
   if (
-    !Number.isInteger(currentTier) ||
-    currentTier < 1 ||
-    currentTier > 4 ||
     !isIsoDate(periodStart) ||
     (periodEnd && (!isIsoDate(periodEnd) || periodEnd < periodStart)) ||
     !Number.isInteger(requiredChecksPerDay) ||
@@ -1640,7 +1637,7 @@ function normalizeCompliance(value) {
     return null;
   }
   return {
-    currentTier,
+    underEnhancedMonitoring,
     periodStart,
     periodEnd,
     requiredChecksPerDay,
