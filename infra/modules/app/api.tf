@@ -18,6 +18,10 @@ locals {
     "POST /app/v1/manager-access/request",
     "GET /app/v1/device-bindings",
     "POST /app/v1/device-bindings/select",
+    # Home Screen session handoff (notes/pwa-session-handoff-plan.md): issue
+    # is authorized; redeem is open (listed in route_is_open below).
+    "POST /app/v1/session-handoff",
+    "POST /app/v1/session-handoff/redeem",
     "POST /app/v1/manager/staff-grants",
     "GET /app/v1/manager/staff-grants/current",
     "DELETE /app/v1/manager/staff-grants/{grantId}",
@@ -184,6 +188,7 @@ locals {
     "POST /v1/devices"                    = true
     "POST /v1/devices/token:refresh"      = true
     "POST /app/v1/enrollment/redeem"      = true
+    "POST /app/v1/session-handoff/redeem" = true
     "POST /app/v1/manager-access/request" = true
     "GET /v1/sites:search"                = true
     "GET /v1/311-media"                   = true

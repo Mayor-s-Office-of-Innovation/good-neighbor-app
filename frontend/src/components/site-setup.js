@@ -40,9 +40,14 @@ export class SiteSetup extends HTMLElement {
     const enrollment = readEnrollmentFromUrl();
     this._checking = false;
     this._error = "";
+    // A notice key (setup.notice.<key>) app-root sets to explain why the code
+    // is being asked for: a Home Screen handoff that didn't carry over, or a
+    // Safari copy whose session moved to the installed app.
+    this._notice = this.getAttribute("data-notice") || "";
+    const requestedMode = this.getAttribute("data-mode");
     this._mode =
-      this.getAttribute("data-mode") === "request"
-        ? this.getAttribute("data-mode")
+      requestedMode === "request" || requestedMode === "handoff"
+        ? requestedMode
         : "code";
     this._request = {
       query: "",
@@ -92,6 +97,7 @@ export class SiteSetup extends HTMLElement {
       targetSiteName: this._targetSiteName,
       canCancel: this._canCancel,
       cancelDisabled: this._committingSite,
+      notice: this._notice ? t(`setup.notice.${this._notice}`) : "",
       request: this._request,
     });
 
@@ -99,6 +105,8 @@ export class SiteSetup extends HTMLElement {
       this._cancelSwitch();
     });
 
+    // Handoff mode has no form: app-root redeems the grant and re-renders.
+    if (this._mode === "handoff") return;
     if (this._mode === "request") {
       this._bindRequestForm();
       return;

@@ -12,12 +12,14 @@ export const setupView = ({
   targetSiteName = "",
   mode = "code",
   canCancel = false,
+  notice = "",
 } = {}) => html`
   <main class="app__main">
     <site-setup
       data-target-site-id="${escapeAttr(targetSiteId)}"
       data-target-site-name="${escapeAttr(targetSiteName)}"
       data-mode="${escapeAttr(mode)}"
+      data-notice="${escapeAttr(notice)}"
       ${canCancel ? "data-can-cancel" : ""}
     ></site-setup>
   </main>

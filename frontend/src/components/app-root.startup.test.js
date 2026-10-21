@@ -6,6 +6,12 @@ const setup = vi.hoisted(() => ({
   getSiteSettings: vi.fn(),
   clearAuthState: vi.fn(),
   saveSiteSettings: vi.fn(),
+  setSite: vi.fn(),
+  saveDiscoveredBindings: vi.fn(),
+  listDeviceBindings: vi.fn(),
+  redeemHandoffGrant: vi.fn(),
+  stripHandoffCredentials: vi.fn(),
+  ensureHandoffManifest: vi.fn(),
 }));
 
 vi.mock("../db.js", () => ({
@@ -13,10 +19,30 @@ vi.mock("../db.js", () => ({
   getSite: setup.getSite,
   hasAdminAccess: vi.fn(),
   resetLocalAppState: vi.fn(),
+  saveDiscoveredBindings: setup.saveDiscoveredBindings,
   saveSiteSettings: setup.saveSiteSettings,
+  setSite: setup.setSite,
 }));
 vi.mock("../services/api.js", () => ({
   getSiteSettings: setup.getSiteSettings,
+  listDeviceBindings: setup.listDeviceBindings,
+}));
+vi.mock("../services/devices.js", () => ({
+  redeemHandoffGrant: setup.redeemHandoffGrant,
+}));
+vi.mock("../services/session-handoff.js", () => ({
+  // The real parser is one URLSearchParams read; keep it so the tests drive
+  // the boot through a genuine launch URL.
+  readHandoffCredentials: () => {
+    const fragment = new URLSearchParams(
+      new URL(globalThis.location.href).hash.slice(1),
+    );
+    const grantId = fragment.get("handoff_grant") || "";
+    const token = fragment.get("handoff_token") || "";
+    return grantId && token ? { grantId, token } : null;
+  },
+  stripHandoffCredentials: setup.stripHandoffCredentials,
+  ensureHandoffManifest: setup.ensureHandoffManifest,
 }));
 vi.mock("../services/backend-health.js", () => ({
   clearAuthState: setup.clearAuthState,
@@ -81,6 +107,12 @@ beforeEach(() => {
   setup.getSiteSettings.mockReset();
   setup.clearAuthState.mockReset();
   setup.saveSiteSettings.mockReset();
+  setup.setSite.mockReset().mockResolvedValue(undefined);
+  setup.saveDiscoveredBindings.mockReset().mockResolvedValue(undefined);
+  setup.listDeviceBindings.mockReset();
+  setup.redeemHandoffGrant.mockReset();
+  setup.stripHandoffCredentials.mockReset();
+  setup.ensureHandoffManifest.mockReset().mockResolvedValue(false);
 });
 
 /**
@@ -252,5 +284,136 @@ describe("app startup authentication", () => {
     );
     expect(title.textContent).toBe("New");
     expect(root._site.name).toBe("New");
+  });
+});
+
+describe("Home Screen session handoff at startup", () => {
+  const LAUNCH = "http://localhost:5173/#handoff_grant=g-1&handoff_token=t-1";
+  const session = {
+    deviceId: "device-1",
+    site: { siteId: "site-1", name: "Mission Street Center" },
+    token: "access-1",
+    refreshToken: "refresh-1",
+    expiresIn: 900,
+    refreshExpiresIn: 2592000,
+    tokenGeneration: 2,
+    accessLevel: "general",
+  };
+
+  it("strips the credentials before anything else and ignores a stale grant when a session exists", async () => {
+    vi.stubGlobal("location", new URL(LAUNCH));
+    setup.getSite.mockResolvedValue({ siteId: "site-1", name: "Cached" });
+    setup.getSiteSettings.mockReturnValue(new Promise(() => {}));
+    const root = component();
+
+    await root.connectedCallback();
+
+    expect(setup.stripHandoffCredentials).toHaveBeenCalledOnce();
+    expect(setup.redeemHandoffGrant).not.toHaveBeenCalled();
+    expect(root._renderApp).toHaveBeenCalledOnce();
+    expect(root._renderSetup).not.toHaveBeenCalled();
+  });
+
+  it("redeems the grant on a first standalone launch and renders the hub", async () => {
+    vi.stubGlobal("location", new URL(LAUNCH));
+    setup.getSite
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ siteId: "site-1", name: "Mission Street Center" });
+    setup.redeemHandoffGrant.mockResolvedValue(session);
+    setup.getSiteSettings.mockResolvedValue({
+      site: { siteId: "site-1", name: "Mission Street Center" },
+    });
+    setup.saveSiteSettings.mockResolvedValue({
+      siteId: "site-1",
+      name: "Mission Street Center",
+    });
+    const root = component();
+
+    await root.connectedCallback();
+
+    expect(setup.stripHandoffCredentials).toHaveBeenCalledOnce();
+    expect(setup.redeemHandoffGrant).toHaveBeenCalledWith("g-1", "t-1");
+    expect(setup.setSite).toHaveBeenCalledWith(
+      "Mission Street Center",
+      expect.objectContaining({
+        siteId: "site-1",
+        deviceId: "device-1",
+        token: "access-1",
+        refreshToken: "refresh-1",
+        tokenGeneration: 2,
+      }),
+    );
+    // Legacy device: no physical identity, so no bindings refetch.
+    expect(setup.listDeviceBindings).not.toHaveBeenCalled();
+    expect(root._renderSetup).toHaveBeenCalledWith({ mode: "handoff" });
+    expect(root._renderApp).toHaveBeenCalledOnce();
+    expect(root._site).toEqual({
+      siteId: "site-1",
+      name: "Mission Street Center",
+    });
+  });
+
+  it("re-discovers sibling bindings for a binding-backed device", async () => {
+    vi.stubGlobal("location", new URL(LAUNCH));
+    setup.getSite
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ siteId: "site-1", name: "Mission Street Center" });
+    setup.redeemHandoffGrant.mockResolvedValue({
+      ...session,
+      bindingId: "binding-1",
+      physicalDeviceId: "physical-1",
+    });
+    setup.listDeviceBindings.mockResolvedValue({
+      bindings: [{ siteId: "site-2", siteName: "Other", bindingId: "b2" }],
+    });
+    setup.getSiteSettings.mockResolvedValue({ site: { siteId: "site-1" } });
+    setup.saveSiteSettings.mockResolvedValue({ siteId: "site-1" });
+    const root = component();
+
+    await root.connectedCallback();
+
+    expect(setup.saveDiscoveredBindings).toHaveBeenCalledWith(
+      [{ siteId: "site-2", siteName: "Other", bindingId: "b2" }],
+      "physical-1",
+    );
+    expect(root._renderApp).toHaveBeenCalledOnce();
+  });
+
+  it("lands on the setup screen with a notice when the grant is rejected", async () => {
+    vi.stubGlobal("location", new URL(LAUNCH));
+    setup.getSite.mockResolvedValue(null);
+    setup.redeemHandoffGrant.mockRejectedValue(
+      Object.assign(new Error("invalid handoff grant"), {
+        name: "InvalidHandoffGrantError",
+        status: 401,
+      }),
+    );
+    const root = component();
+
+    await root.connectedCallback();
+
+    expect(setup.stripHandoffCredentials).toHaveBeenCalledOnce();
+    expect(setup.setSite).not.toHaveBeenCalled();
+    expect(root._renderSetup).toHaveBeenLastCalledWith({
+      notice: "handoffFailed",
+    });
+    expect(root._renderApp).not.toHaveBeenCalled();
+  });
+
+  it("lets an enrollment link win over handoff credentials", async () => {
+    vi.stubGlobal(
+      "location",
+      new URL(
+        "http://localhost:5173/#enrollment_grant=e&enrollment_token=t&handoff_grant=g-1&handoff_token=t-1",
+      ),
+    );
+    setup.getSite.mockResolvedValue(null);
+    const root = component();
+
+    await root.connectedCallback();
+
+    expect(setup.redeemHandoffGrant).not.toHaveBeenCalled();
+    expect(root._renderSetup).toHaveBeenCalledOnce();
+    expect(root._renderSetup).toHaveBeenCalledWith();
   });
 });

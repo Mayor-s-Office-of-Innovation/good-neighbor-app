@@ -454,6 +454,15 @@ export function selectDeviceBinding(bindingId) {
   });
 }
 
+/**
+ * Mint a Home Screen handoff grant for the authenticated device
+ * (services/session-handoff.js). The secret comes back once, in this body.
+ * @returns {Promise<{ grantId: string, token: string, expiresAt: string, startUrl: string }>}
+ */
+export function issueSessionHandoff() {
+  return request("POST", "/app/v1/session-handoff");
+}
+
 /** @param {string} label */
 export function createStaffEnrollmentGrant(label) {
   return request("POST", "/app/v1/manager/staff-grants", {

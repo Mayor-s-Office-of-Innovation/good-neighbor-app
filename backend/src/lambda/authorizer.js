@@ -12,6 +12,7 @@
 
 import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
+import { deviceLivenessProblem } from "../lib/device-liveness.js";
 import {
   canonicalAccessLevel,
   DeviceTokenError,
@@ -71,19 +72,11 @@ export const handler = async (event) => {
   );
   const device = /** @type {Record<string, any> | undefined} */ (res.Item);
   const now = new Date();
-  const inactiveAfter = device?.lastSeenAt
-    ? new Date(device.lastSeenAt).getTime() +
-      Number(device.inactivityLimitDays ?? 60) * 24 * 60 * 60 * 1000
-    : Number.POSITIVE_INFINITY;
   if (
     !device ||
-    device.status === "revoked" ||
-    device.status === "suspended" ||
+    deviceLivenessProblem(device, now) ||
     device.tokenGeneration !== claims.ver ||
-    canonicalAccessLevel(device.accessLevel) !== claims.accessLevel ||
-    (device.absoluteExpiresAt &&
-      device.absoluteExpiresAt <= now.toISOString()) ||
-    inactiveAfter <= now.getTime()
+    canonicalAccessLevel(device.accessLevel) !== claims.accessLevel
   ) {
     return DENY({ reason: "revoked" });
   }

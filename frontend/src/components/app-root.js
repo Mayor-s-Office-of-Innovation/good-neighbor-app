@@ -19,9 +19,17 @@ import {
   clearSite,
   getSite,
   resetLocalAppState,
+  saveDiscoveredBindings,
   saveSiteSettings,
+  setSite,
 } from "../db.js";
-import { getSiteSettings } from "../services/api.js";
+import { getSiteSettings, listDeviceBindings } from "../services/api.js";
+import { redeemHandoffGrant } from "../services/devices.js";
+import {
+  ensureHandoffManifest,
+  readHandoffCredentials,
+  stripHandoffCredentials,
+} from "../services/session-handoff.js";
 import {
   startHealthMonitoring,
   stopHealthMonitoring,
@@ -75,12 +83,32 @@ const ROUTE_VIEW = [
   ["/today", "today-view"],
 ];
 
+/**
+ * Analytics bucket for a failed Home Screen handoff. Never the grant itself.
+ * @param {unknown} err
+ * @returns {"rejected" | "network" | "storage" | "error"}
+ */
+function handoffFailureReason(err) {
+  if (!(err instanceof Error)) return "error";
+  if (err.name === "InvalidHandoffGrantError") return "rejected";
+  const status = /** @type {{ status?: unknown }} */ (err).status;
+  if (status === 0 || err.name === "TypeError") return "network";
+  if (err.name === "ApiError") return "error";
+  return "storage";
+}
+
 export class AppRoot extends HTMLElement {
   /** @type {string | null} the route the view last swapped to */
   _swappedRoute = null;
   _routeTransitionId = 0;
 
   async connectedCallback() {
+    // Home Screen handoff credentials ride the launch URL's fragment
+    // (services/session-handoff.js). Read and strip them synchronously, before
+    // anything awaits or reads the location; they are acted on below once the
+    // stored binding is known.
+    const handoff = readHandoffCredentials();
+    if (handoff) stripHandoffCredentials();
     if (!this._onPhotoLightbox) {
       this._onPhotoLightbox = (event) => {
         const trigger = event.target?.closest?.("[data-photo-lightbox]");
@@ -132,10 +160,13 @@ export class AppRoot extends HTMLElement {
       // form and make recovery unreachable. (sitebound's clearAuthState
       // below stays as belt-and-braces for AUTH states detected later.)
       clearAuthState();
-      // The site binding is gone; re-render the first-run setup screen.
+      // The site binding is gone; re-render the first-run setup screen. A
+      // Safari copy that had prepared a Home Screen handoff may have been
+      // signed out by that handoff: say so above the code field.
+      const notice = this._site?.handoff ? "handedOff" : "";
       this._site = null;
       if (this._unsub) this._unsub();
-      this._renderSetup();
+      this._renderSetup(notice ? { notice } : {});
     };
     window.addEventListener("authsignout", this._onAuthSignout);
     this._onEnrollmentUrlChange = () => {
@@ -158,6 +189,16 @@ export class AppRoot extends HTMLElement {
     if (hasEnrollmentCredentials()) {
       this._beginEnrollmentFromUrl();
       return;
+    }
+    if (handoff) {
+      if (this._site) {
+        // A later launch of the installed app: its start URL still carries
+        // the consumed grant. A stale grant never replaces a live session.
+        void trackEvent("handoff_stale_ignored", {});
+      } else {
+        await this._beginHandoffFromUrl(handoff);
+        return;
+      }
     }
     if (!this._site) {
       this._renderSetup();
@@ -283,6 +324,57 @@ export class AppRoot extends HTMLElement {
     this._renderSetup();
   }
 
+  /**
+   * First launch of the Home Screen app (services/session-handoff.js): the
+   * launch URL carried a handoff grant and IndexedDB holds no session. Redeem
+   * it for a session on the same device record, then render the hub as a
+   * fresh bind would. Any failure lands on the setup screen with a notice
+   * saying why the code is being asked for.
+   * @param {{ grantId: string, token: string }} credentials
+   */
+  async _beginHandoffFromUrl({ grantId, token }) {
+    clearAuthState();
+    this._renderSetup({ mode: "handoff" });
+    let session;
+    try {
+      session = await redeemHandoffGrant(grantId, token);
+      await setSite(session.site.name, {
+        siteId: session.site.siteId,
+        deviceId: session.deviceId,
+        bindingId: session.bindingId,
+        physicalDeviceId: session.physicalDeviceId,
+        token: session.token,
+        refreshToken: session.refreshToken,
+        tokenExpiresAt: new Date(
+          Date.now() + session.expiresIn * 1000,
+        ).toISOString(),
+        tokenGeneration: session.tokenGeneration,
+        accessLevel: session.accessLevel,
+      });
+    } catch (err) {
+      void trackEvent("handoff_failed", { reason: handoffFailureReason(err) });
+      this._renderSetup({ notice: "handoffFailed" });
+      return;
+    }
+    // Binding-backed devices keep their site switcher: the handed-off session
+    // is for one binding, the others are re-discovered through the API.
+    if (session.physicalDeviceId) {
+      try {
+        const { bindings } = await listDeviceBindings();
+        await saveDiscoveredBindings(bindings || [], session.physicalDeviceId);
+      } catch (err) {
+        console.error("device bindings refresh failed after handoff", err);
+      }
+    }
+    this._site = await getSite();
+    void trackEvent("handoff_redeemed", {});
+    if (!(await this._refreshSiteSettings())) return;
+    this._renderApp();
+    this._unsub = onRouteChange(() => this._renderView());
+    navigate("/today");
+    this._renderView();
+  }
+
   _renderApp() {
     this.innerHTML = appShell({ siteName: this._site.name });
     this.append(document.createElement("app-toasts"));
@@ -292,6 +384,12 @@ export class AppRoot extends HTMLElement {
     this._shell = this.querySelector(".app");
     showQueuedSiteSwitchSuccessToast();
     this._maybeOfferInstall();
+    // iOS Safari only, and only while not yet standalone: keep a handoff grant
+    // in the manifest so an Add to Home Screen from any route carries the
+    // session over. Off the critical path; a failure costs nothing visible.
+    void ensureHandoffManifest().catch((err) =>
+      console.error("handoff manifest failed", err),
+    );
   }
 
   /**
@@ -531,7 +629,9 @@ export class AppRoot extends HTMLElement {
         await clearSite();
         this._site = null;
         clearAuthState();
-        this._renderSetup();
+        // A Safari copy that prepared a Home Screen handoff may have been
+        // signed out by that handoff: say so above the code field.
+        this._renderSetup(bound?.handoff ? { notice: "handedOff" } : {});
         return false;
       }
       console.error("getSiteSettings failed", err);

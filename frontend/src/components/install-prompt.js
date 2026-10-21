@@ -68,7 +68,7 @@ export class InstallPrompt extends HTMLElement {
     const ios = this._method === "ios";
     this.innerHTML = `<div class="install-banner" role="region" aria-label="${escapeAttr(t("install.banner.aria"))}">
       <img class="install-banner__icon" src="/img/icon-192.png" alt="" width="40" height="40" />
-      <p><strong>${escapeHtml(t("install.banner.title"))}</strong> ${escapeHtml(t(ios ? "install.banner.ios" : "install.banner.message"))}</p>
+      <p><strong>${escapeHtml(t("install.banner.title"))}</strong> ${escapeHtml(t(ios ? "install.banner.ios" : "install.banner.message"))}${ios ? ` ${escapeHtml(t("install.banner.iosCarryOver"))}` : ""}</p>
       ${ios ? "" : `<button class="install-banner__install" type="button">${escapeHtml(t("install.banner.install"))}</button>`}
       <button class="install-banner__close" type="button" aria-label="${escapeAttr(t("install.banner.dismiss.aria"))}">✕</button>
     </div>`;
