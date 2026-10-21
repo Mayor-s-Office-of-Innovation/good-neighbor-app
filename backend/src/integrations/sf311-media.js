@@ -11,7 +11,7 @@ import { copyObject, presignGet } from "../s3.js";
 const MEDIA_HEADERS = {
   "cache-control": "no-store",
   "referrer-policy": "no-referrer",
-  "strict-transport-security": "max-age=31536000; includeSubDomains",
+  "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
   "content-security-policy":
     "default-src 'none'; base-uri 'none'; frame-ancestors 'none'",
   "x-content-type-options": "nosniff",

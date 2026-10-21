@@ -68,7 +68,7 @@ describe("311 media lease", () => {
       location: "https://s3.example/fresh",
       "cache-control": "no-store",
       "referrer-policy": "no-referrer",
-      "strict-transport-security": "max-age=31536000; includeSubDomains",
+      "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
       "content-security-policy":
         "default-src 'none'; base-uri 'none'; frame-ancestors 'none'",
     });
@@ -153,7 +153,7 @@ describe("311 media lease", () => {
       expect(response.headers).toMatchObject({
         "cache-control": "no-store",
         "referrer-policy": "no-referrer",
-        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
         "content-security-policy":
           expect.stringContaining("default-src 'none'"),
       });
@@ -177,7 +177,7 @@ describe("311 media lease", () => {
     expect(response.statusCode).toBe(404);
     expect(response.headers).toMatchObject({
       "referrer-policy": "no-referrer",
-      "strict-transport-security": "max-age=31536000; includeSubDomains",
+      "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
       "content-security-policy": expect.stringContaining("default-src 'none'"),
     });
     expect(send).not.toHaveBeenCalled();
