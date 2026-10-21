@@ -1,3 +1,4 @@
+import { createActionFeedback } from "./action-feedback-core.js";
 import { upsertRecord } from "./save-feedback.js";
 import { createAndAssignManager } from "./pending-manager.js";
 import assert from "node:assert/strict";
@@ -104,6 +105,12 @@ test("saving assignments to several Sites serializes the shared staff count chan
       }
     },
     formValue: (data, name) => String(data.get(name)),
+    actionFeedback: (key) =>
+      createActionFeedback(
+        key,
+        () => ({ close() {} }),
+        (key) => key,
+      ),
     adminApi: {
       updateProgramUser: async () => ({ user }),
       createManagerMembership: async (siteId) => {
@@ -183,6 +190,12 @@ test("creating a Site manager retries assignment without duplicating staff", asy
     formValue: (data, name) => data.get(name),
     t: (key) => key,
     showFormSaveError: () => {},
+    actionFeedback: (key) =>
+      createActionFeedback(
+        key,
+        () => ({ close() {} }),
+        (key) => key,
+      ),
     adminApi: {
       createProgramUser: async (programId, values) => {
         staffCreates++;
@@ -252,6 +265,12 @@ test("new site flow forces a fresh manager directory even when a stale load is p
     formatAddressParts: () => "1 Main",
     controlValue: () => "",
     navigate: (path) => destinations.push(path),
+    actionFeedback: (key) =>
+      createActionFeedback(
+        key,
+        () => ({ close() {} }),
+        (key) => key,
+      ),
     adminApi: {
       createSite: async () => ({
         site: {

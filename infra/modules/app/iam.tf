@@ -431,6 +431,14 @@ data "aws_iam_policy_document" "worker" {
     resources = local.dynamo_resources
   }
 
+  # Silent 311 submissions snapshot images into the lease-specific prefix.
+  statement {
+    sid       = "Write311AttachmentCopies"
+    effect    = "Allow"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.uploads.arn}/sf311-media/*"]
+  }
+
   statement {
     sid       = "ReadAndClassifyUploads"
     effect    = "Allow"

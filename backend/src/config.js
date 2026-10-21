@@ -13,6 +13,7 @@
  * @property {string} [posthogApiKeySecretArn]
  * @property {string} [posthogFeedbackSurveyId]
  * @property {string} [posthogFeedbackQuestionId]
+ * @property {string} [sf311MediaBaseUrl]
  * @property {string} [sf311CreateSrUrl]
  * @property {string} [sf311UpdateSrUrl]
  * @property {string} [sf311AgencyLookupUrl]
@@ -86,6 +87,8 @@ export function getConfig(env = process.env) {
     config.posthogFeedbackQuestionId = env.FEEDBACK_QUESTION_ID;
   }
 
+  if (env.SF311_MEDIA_BASE_URL)
+    config.sf311MediaBaseUrl = env.SF311_MEDIA_BASE_URL;
   if (env.SF311_CREATESR_URL) config.sf311CreateSrUrl = env.SF311_CREATESR_URL;
   if (env.SF311_UPDATESR_URL) config.sf311UpdateSrUrl = env.SF311_UPDATESR_URL;
   if (env.SF311_AGENCY_LOOKUP_URL) {

@@ -4,17 +4,18 @@
 
   OUTAGE → an informational app toast, shown once per outage period.
 
-  AUTH → a non-dismissable dialog: the device session is expired/revoked and
-  the only recovery is site re-entry. "Sign out and re-enter site code"
-  clears the site binding AND site-scoped local data (drafts/review are keyed
-  per-site-only-in-memory — they must not leak into a different site's
-  binding), then app-root re-renders <site-setup> and resets the health
-  state so this dialog cannot re-open over the setup form.
+  AUTH → expired/revoked session dialog. ACCESS → missing manager enrollment.
+  Both may be cancelled without clearing local work. Explicit sign-out clears
+  the site binding and drafts before app-root returns to setup.
 
   Rendered by app-root alongside app-toasts.
 */
 
-import { getHealthState, onHealthChange } from "../services/backend-health.js";
+import {
+  clearAccessState,
+  getHealthState,
+  onHealthChange,
+} from "../services/backend-health.js";
 import { clearSiteSession } from "../db.js";
 import { discardInMemorySession } from "../state/check-session.js";
 import { html, escapeHtml } from "../lib/html.js";
@@ -28,17 +29,26 @@ class ConnectionStatus extends HTMLElement {
       class="places-modal conn-modal"
       id="conn-auth-dialog"
       aria-labelledby="conn-auth-title"
+      aria-describedby="conn-auth-message"
     >
       <form class="places-modal__card" method="dialog">
         <div class="places-modal__copy">
           <h2 class="places-modal__title" id="conn-auth-title">
             ${escapeHtml(t("connection.authExpired.title"))}
           </h2>
-          <p class="places-modal__text">
+          <p class="places-modal__text" id="conn-auth-message">
             ${escapeHtml(t("connection.authExpired.message"))}
           </p>
         </div>
         <div class="places-modal__actions">
+          <button
+            class="btn-outline"
+            id="conn-auth-cancel"
+            type="button"
+            autofocus
+          >
+            ${escapeHtml(t("common.cancel"))}
+          </button>
           <button
             class="btn-ink places-modal__primary"
             id="conn-auth-signout"
@@ -61,6 +71,16 @@ class ConnectionStatus extends HTMLElement {
         window.dispatchEvent(new CustomEvent("authsignout"));
       },
     );
+    this.querySelector("#conn-auth-cancel")?.addEventListener("click", () =>
+      this._cancel(),
+    );
+    this.querySelector("#conn-auth-dialog")?.addEventListener(
+      "cancel",
+      (event) => {
+        event.preventDefault();
+        this._cancel();
+      },
+    );
     this._sync();
   }
 
@@ -73,6 +93,17 @@ class ConnectionStatus extends HTMLElement {
   /** @type {string | undefined} */
   _lastState;
 
+  /** @type {string | undefined} */
+  _dismissedState;
+
+  _cancel() {
+    this._dismissedState = getHealthState();
+    /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("#conn-auth-dialog")
+    )?.close();
+    clearAccessState();
+  }
+
   _sync() {
     const state = getHealthState();
     const dialog = /** @type {HTMLDialogElement | null} */ (
@@ -82,10 +113,24 @@ class ConnectionStatus extends HTMLElement {
     if (state === "outage" && this._lastState !== "outage") {
       showOfflinePhotosToast();
     }
+    if (state !== this._lastState) this._dismissedState = undefined;
     this._lastState = state;
 
-    if (state === "auth") {
-      if (dialog && !dialog.open) dialog.showModal();
+    if (state === "auth" || state === "access") {
+      const prefix =
+        state === "access"
+          ? "connection.accessDenied"
+          : "connection.authExpired";
+      for (const [selector, key] of [
+        ["#conn-auth-title", "title"],
+        ["#conn-auth-message", "message"],
+        ["#conn-auth-signout", "signOut"],
+      ]) {
+        const element = this.querySelector(selector);
+        if (element) element.textContent = t(`${prefix}.${key}`);
+      }
+      if (dialog && !dialog.open && this._dismissedState !== state)
+        dialog.showModal();
       return;
     }
 

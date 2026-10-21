@@ -25,6 +25,7 @@ async function adminFetch(path, init = {}) {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const err = new Error(body.error || "admin_request_failed");
+    /** @type {any} */ (err).status = res.status;
     // Some routes (analytics) explain the failure; surface it for the UI.
     if (typeof body.message === "string") {
       /** @type {any} */ (err).detail = body.message;

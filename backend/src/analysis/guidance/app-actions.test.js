@@ -6,7 +6,7 @@ const {
   downscaleImage,
   getAnalyzerApiKey,
   getObjectBytes,
-  presignGet,
+  create311MediaLink,
   send,
 } = vi.hoisted(() => ({
   createAnalyzerClient: vi.fn(),
@@ -16,11 +16,12 @@ const {
   })),
   getAnalyzerApiKey: vi.fn(),
   getObjectBytes: vi.fn(),
-  presignGet: vi.fn(),
+  create311MediaLink: vi.fn(),
   send: vi.fn(),
 }));
 vi.mock("../../db.js", () => ({ ddb: { send } }));
-vi.mock("../../s3.js", () => ({ getObjectBytes, presignGet }));
+vi.mock("../../s3.js", () => ({ getObjectBytes }));
+vi.mock("../../integrations/sf311-media.js", () => ({ create311MediaLink }));
 vi.mock("../../media/downscale.js", () => ({ downscaleImage }));
 vi.mock("../api-key.js", () => ({ getAnalyzerApiKey }));
 vi.mock("../analyzer-client.js", () => ({ createAnalyzerClient }));
@@ -299,7 +300,7 @@ describe("app action execution", () => {
     } finally {
       send.mockReset();
       getObjectBytes.mockReset();
-      presignGet.mockReset();
+      create311MediaLink.mockReset();
       vi.unstubAllGlobals();
     }
   });
@@ -625,7 +626,7 @@ describe("app action execution", () => {
       createAnalyzerClient.mockReset();
       getAnalyzerApiKey.mockReset();
       getObjectBytes.mockReset();
-      presignGet.mockReset();
+      create311MediaLink.mockReset();
       send.mockReset();
       vi.unstubAllGlobals();
     }
@@ -650,7 +651,7 @@ describe("app action execution", () => {
           },
         ],
       });
-    presignGet.mockResolvedValueOnce(
+    create311MediaLink.mockResolvedValueOnce(
       "https://uploads.example.test/image.jpg?X-Amz-Signature=secret",
     );
     const fetchImpl = vi
@@ -741,10 +742,9 @@ describe("app action execution", () => {
           recordedAt: "2026-08-18T12:00:00.000Z",
         },
       ]);
-      expect(presignGet).toHaveBeenCalledWith({
-        bucket: "bucket",
+      expect(create311MediaLink).toHaveBeenCalledWith({
+        config: expect.objectContaining({ uploadBucket: "bucket" }),
         key: "checks/site-1/check-1/North/artifact-1",
-        expiresIn: 300,
       });
       expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toEqual({
         SRnum: "2000008106",
@@ -761,7 +761,7 @@ describe("app action execution", () => {
     } finally {
       send.mockReset();
       getObjectBytes.mockReset();
-      presignGet.mockReset();
+      create311MediaLink.mockReset();
       vi.unstubAllGlobals();
     }
   });
@@ -785,7 +785,7 @@ describe("app action execution", () => {
           },
         ],
       });
-    presignGet.mockResolvedValueOnce(
+    create311MediaLink.mockResolvedValueOnce(
       "https://uploads.example.test/image.jpg?X-Amz-Signature=secret",
     );
     const fetchImpl = vi
@@ -879,10 +879,122 @@ describe("app action execution", () => {
     } finally {
       send.mockReset();
       getObjectBytes.mockReset();
-      presignGet.mockReset();
+      create311MediaLink.mockReset();
       vi.unstubAllGlobals();
     }
   });
+
+  it.each(/** @type {const} */ (["task_created", "user_confirmed"]))(
+    "redacts bearer links from failed attachment diagnostics for %s",
+    async (trigger) => {
+      const token = "a".repeat(64);
+      const url = `https://media.example/v1/311-media?token=${token}`;
+      send
+        .mockResolvedValueOnce({
+          Item: { location: { latitude: 37.7, longitude: -122.4 } },
+        })
+        .mockResolvedValueOnce({
+          Items: [
+            {
+              artifactId: "artifact-1",
+              s3Key: "checks/site-1/check-1/image",
+              contentType: "image/jpeg",
+            },
+          ],
+        })
+        .mockResolvedValue({});
+      create311MediaLink.mockResolvedValueOnce(url);
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({ data: { return_code: "0", SRNum: "2000008106" } }),
+            { status: 200 },
+          ),
+        )
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              data: {
+                return_code: "5001",
+                echo: `Rejected ${url} please retry`,
+                [url]: "echoed as a key",
+                encoded: encodeURIComponent(url).replace("token", "%74oken"),
+                html: `https://media.example/v1/311-media?other=1&amp;token=${token}`,
+                nested: [{ message: JSON.stringify({ TextSubType: url }) }],
+                signed: `https://uploads.example/image?X-Amz-Signature=${token}&X-Amz-Credential=${token}`,
+              },
+            }),
+            { status: 500 },
+          ),
+        );
+      vi.stubGlobal("fetch", fetchImpl);
+      try {
+        const result = await executeAppActions(
+          [
+            {
+              code: "create_311_ticket",
+              payload: {
+                serviceCodeOrAction: "1.1.4.7.20.0",
+                responsibleAgencyCode: "76",
+                executionTrigger: trigger,
+              },
+            },
+          ],
+          {
+            env: {
+              GNP_311_SUBMISSION_ENABLED: "true",
+              DYNAMO_TABLE: "table",
+              S3_UPLOAD_BUCKET: "bucket",
+              SQS_QUEUE_URL: "queue",
+              SF311_CREATESR_URL: "https://hub.example/createsr",
+              SF311_UPDATESR_URL: "https://hub.example/updatesr",
+              SF311_BASIC_AUTH_USER: "user",
+              SF311_BASIC_AUTH_PASS: "pass",
+            },
+            now,
+            tableName: "table",
+            siteId: "site-1",
+            taskId: "task-1",
+            trigger,
+            task: {
+              taskId: "task-1",
+              checkId: "check-1",
+              description: "Trash",
+              sourceArtifactIds: ["artifact-1"],
+            },
+          },
+        );
+        // The actual outbound request must keep its usable bearer URL.
+        expect(JSON.parse(fetchImpl.mock.calls[1][1].body).TextSubType).toBe(
+          url,
+        );
+        const attachment = /** @type {any} */ (result[0]).payload.tickets[0]
+          .attachments[0];
+        expect(attachment.status).toBe("failed");
+        expect(attachment.diagnostics.request.TextSubType).toContain(
+          "token=[redacted]",
+        );
+        expect(JSON.stringify(result)).not.toContain(token);
+        if (trigger === "user_confirmed") {
+          const checkpoint = send.mock.calls.find(
+            ([command]) => command instanceof UpdateCommand,
+          );
+          expect(checkpoint).toBeDefined();
+          if (!checkpoint) throw new Error("Missing checkpoint");
+          expect(
+            JSON.stringify(
+              checkpoint[0].input.ExpressionAttributeValues[":results"],
+            ),
+          ).not.toContain(token);
+        }
+      } finally {
+        send.mockReset();
+        create311MediaLink.mockReset();
+        vi.unstubAllGlobals();
+      }
+    },
+  );
 
   it("retries failed image attachments without recreating the SF311 ticket", async () => {
     send
@@ -903,7 +1015,7 @@ describe("app action execution", () => {
           },
         ],
       });
-    presignGet.mockResolvedValueOnce(
+    create311MediaLink.mockResolvedValueOnce(
       "https://uploads.example.test/image.jpg?X-Amz-Signature=secret",
     );
     const fetchImpl = vi.fn().mockResolvedValueOnce(
@@ -1011,7 +1123,7 @@ describe("app action execution", () => {
     } finally {
       send.mockReset();
       getObjectBytes.mockReset();
-      presignGet.mockReset();
+      create311MediaLink.mockReset();
       vi.unstubAllGlobals();
     }
   });
