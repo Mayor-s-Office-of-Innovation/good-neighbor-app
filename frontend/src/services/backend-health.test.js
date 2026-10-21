@@ -134,14 +134,32 @@ describe("classifyApiFailure", () => {
     expect(mod.classifyApiFailure(err)).toBe("auth");
   });
 
-  it("maps ApiError 403 → AUTH (not a connectivity problem)", async () => {
+  it("maps a structured permission denial to ACCESS", async () => {
     const mod = await load();
     const err = Object.assign(new Error("403"), {
       name: "ApiError",
       status: 403,
       body: { error: "forbidden" },
     });
-    expect(mod.classifyApiFailure(err)).toBe("auth");
+    expect(mod.classifyApiFailure(err)).toBe("access");
+  });
+
+  it("dismisses missing manager enrollment without treating the session as expired", async () => {
+    const mod = await load();
+    const err = Object.assign(new Error("denied"), {
+      name: "ApiError",
+      status: 403,
+      body: { error: "manager_access_required" },
+    });
+    expect(mod.classifyApiFailure(err)).toBe("access");
+    mod.clearAccessState();
+    expect(mod.getHealthState()).toBe("healthy");
+    mod.classifyApiFailure(
+      Object.assign(new Error("expired"), { name: "ReauthRequiredError" }),
+    );
+    mod.classifyApiFailure(err);
+    mod.clearAccessState();
+    expect(mod.getHealthState()).toBe("auth");
   });
 
   it("maps transport failure (status 0) → OUTAGE", async () => {
