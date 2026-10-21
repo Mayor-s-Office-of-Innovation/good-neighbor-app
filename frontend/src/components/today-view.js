@@ -363,18 +363,24 @@ class TodayView extends HTMLElement {
       this._duplicateLinks = new Map();
     }
     this._providerSitesStatus = "loading";
-    const [catalog, bindings] = await Promise.all([
+    // The provider catalog only feeds the site switcher and the location
+    // prompt, so it rides in the same round trip as the worklist below
+    // instead of gating it: one network tier before first paint, not two.
+    // Neither read can reject — a failed catalog is a switcher state, and a
+    // failed bindings read must not take the worklist down with it. The
+    // latter stays `null` (unknown) rather than an empty list so a switch
+    // re-reads it instead of treating every bound site as unbound.
+    const catalogLoad = Promise.all([
       fetchProviderSites().catch((error) => {
         console.error("listProviderSites failed", error);
         showSiteCatalogErrorToast();
         return null;
       }),
-      listBoundSites(),
+      listBoundSites().catch((error) => {
+        console.error("listBoundSites failed", error);
+        return null;
+      }),
     ]);
-    this._providerSitesStatus = catalog ? "loaded" : "error";
-    this._providerSites = catalog?.sites || [];
-    this._providerName = catalog?.providerName || this._site.providerName || "";
-    this._boundSites = bindings;
 
     const active = getCurrentCheck();
     // An in-progress draft no longer re-enters capture from home: capture
@@ -396,6 +402,7 @@ class TodayView extends HTMLElement {
     let submitted, tasks;
     try {
       const [
+        [catalog, bindings],
         { checks },
         openTasksResult,
         completingTasksResult,
@@ -403,6 +410,7 @@ class TodayView extends HTMLElement {
         cannotDoTasksResult,
         inProgressTasksResult,
       ] = await Promise.all([
+        catalogLoad,
         listChecks({ limit: 30 }),
         listTasks({ status: "open", limit: 50 }),
         listTasks({ status: "completing", limit: 50 }),
@@ -410,6 +418,11 @@ class TodayView extends HTMLElement {
         listTasks({ status: "cannot_do", limit: 50 }),
         listTasks({ status: "in_progress", limit: 50 }),
       ]);
+      this._providerSitesStatus = catalog ? "loaded" : "error";
+      this._providerSites = catalog?.sites || [];
+      this._providerName =
+        catalog?.providerName || this._site.providerName || "";
+      this._boundSites = bindings;
       tasks = uniqueTasks([
         ...(openTasksResult.tasks || []),
         ...(completingTasksResult.tasks || []),
@@ -1403,6 +1416,18 @@ class TodayView extends HTMLElement {
   }
 
   async _switchToSite(siteId) {
+    // The bindings read failed at load (kept as null, not an empty list):
+    // retry it now rather than offer enrollment for a site that is bound.
+    if (!this._boundSites) {
+      this._boundSites = await listBoundSites().catch((error) => {
+        console.error("listBoundSites failed", error);
+        return null;
+      });
+      if (!this._boundSites) {
+        showSiteCatalogErrorToast();
+        return;
+      }
+    }
     const outcome = await switchToBoundSite({
       siteId,
       currentSiteId: this._siteId,
