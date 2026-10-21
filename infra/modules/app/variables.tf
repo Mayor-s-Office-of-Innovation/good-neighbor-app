@@ -244,3 +244,13 @@ variable "provider_app_url" {
     error_message = "Provider app URL must use HTTPS."
   }
 }
+
+variable "sf311_media_domain_name" {
+  description = "Dedicated HTTPS hostname for 311 bearer links, separate from logged SPA traffic."
+  type        = string
+}
+
+variable "sf311_media_zone_id" {
+  description = "Route53 hosted zone for the dedicated 311 media hostname and ACM validation."
+  type        = string
+}

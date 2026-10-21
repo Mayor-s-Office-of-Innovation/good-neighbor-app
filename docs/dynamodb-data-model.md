@@ -749,8 +749,9 @@ extension separately from the phone number.
 
 ## 311 media bearer leases
 
-`SF311_MEDIA_LEASE` items use `PK=SF311_MEDIA#<SHA-256 token hash>` and
-`SK=LEASE`. Attributes are `s3Key` (one upload image) and `expiresAt` (epoch
+`SF311_MEDIA_LEASE` items use `pk=SF311_MEDIA#<SHA-256 token hash>` and
+`sk=LEASE`. Attributes are `s3Key` (a fresh `sf311-media/` image snapshot),
+`sourceS3Key` (the original upload, for incident revocation), and `expiresAt` (epoch
 seconds, issuance plus 172800 seconds). There are no GSI keys or raw tokens.
 The 311 attachment writer conditionally puts each lease; the anonymous media
 handler performs a strongly consistent Get by token hash and rejects expired
