@@ -109,11 +109,11 @@
   padding: var(--wa-space-l, 1.5rem) var(--wa-space-xs, 0.5rem)
     var(--wa-space-xs, 0.5rem);
   border-radius: 2rem;
-  background: var(--wa-color-neutral-fill-normal, #e4e5e9);
+  background: var(--group-grey, #e9eaea);
 }
 
 .analysis-tray--history .analysis-card {
-  background: var(--wa-color-surface-lowered, #f1f2f3);
+  background: var(--wa-color-surface-default, #fff);
 }
 
 .analysis-tray__empty {
@@ -142,7 +142,7 @@
 
 .analysis-tray--recent,
 .analysis-tray--history {
-  --analysis-card-outline: var(--wa-color-neutral-90, #e4e5e9);
+  --analysis-card-outline: var(--card-outline, #c9caca);
 }
 
 html.wa-dark .analysis-tray--recent,
@@ -150,6 +150,9 @@ html.wa-dark .analysis-tray--history {
   --analysis-card-outline: var(--wa-color-neutral-border-quiet, #545868);
 }
 
+/* One outline around the white card body (panel + action row), closing with
+   the action row's rounded bottom edge. The footer sits below it, outside the
+   outline, on the group grey. */
 .analysis-tray--recent .analysis-card__panel,
 .analysis-tray--history .analysis-card__panel {
   border: 1px solid var(--analysis-card-outline);
@@ -165,17 +168,11 @@ html.wa-dark .analysis-tray--history {
   border-bottom: 0;
 }
 
-.analysis-tray .analysis-card--done {
-  background: var(--wa-color-neutral-fill-quiet, #f1f2f3);
-}
-
-/* Bare done cards (no tray ancestor — the reports day and issue-type views)
-   share the tray fill: the action area's rounded bottom then blends into the
-   same neutral as the footer in both themes. On surface-lowered (the base
-   card fill) dark theme resolves to a darker step than the footer, so the
-   rounded corners read as holes showing the page through. */
+/* The card shell shows only behind the footer strip; it matches the card
+   surface so the date/number row reads as part of the card (no outline). */
+.analysis-tray .analysis-card--done,
 .analysis-card--done.analysis-card--standard {
-  background: var(--wa-color-neutral-fill-quiet, #f1f2f3);
+  background: var(--wa-color-surface-default, #fff);
 }
 
 .analysis-card__layout {
@@ -376,8 +373,8 @@ html.wa-dark .analysis-card__clear-copy a {
   line-height: 1.6;
 }
 
+/* Caption row outside the card outline, on the group grey (no outline). */
 .analysis-card__footer {
-  background: var(--wa-color-surface-default, #fff);
   display: flex;
   justify-content: space-between;
   gap: 1rem;
@@ -922,8 +919,7 @@ html.wa-dark .analysis-card__clear-copy a {
 .analysis-card__action-area {
   margin: 0;
   padding: 0.875rem 1.25rem 1.25rem;
-  border-top: 1px solid
-    var(--analysis-card-outline, var(--wa-color-neutral-90, #e4e5e9));
+  border-top: 1px solid var(--analysis-card-outline, var(--card-outline));
   background: var(--wa-color-surface-default);
   border-radius: 0 0 1.5rem 1.5rem;
 }
