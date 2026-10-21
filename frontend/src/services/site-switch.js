@@ -62,7 +62,9 @@ export async function switchToBoundSite({
         physicalDeviceId: session.physicalDeviceId,
         token: session.token,
         refreshToken: session.refreshToken,
-        tokenExpiresAt: Date.now() + session.expiresIn * 1000,
+        tokenExpiresAt: new Date(
+          Date.now() + session.expiresIn * 1000,
+        ).toISOString(),
         tokenGeneration: session.tokenGeneration,
         accessLevel: session.accessLevel,
         absoluteExpiresAt: session.absoluteExpiresAt,

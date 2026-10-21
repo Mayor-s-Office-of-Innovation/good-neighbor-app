@@ -153,10 +153,63 @@ function isAccessTokenError(err) {
 }
 
 /**
+ * Refresh this close to the stored access-token expiry instead of sending a
+ * token the authorizer is about to reject. Covers a slightly fast client
+ * clock as well as the request's own travel time.
+ */
+export const ACCESS_TOKEN_REFRESH_MARGIN_MS = 60_000;
+
+/**
+ * Whether a stored access token is expired or inside the refresh margin.
+ * `tokenExpiresAt` is an ISO string (db.js) but older records may hold an
+ * epoch-millisecond number; an unreadable value means "unknown", and the
+ * token is sent as-is so the rejection path can decide.
+ * @param {unknown} tokenExpiresAt
+ * @param {number} [now]
+ * @returns {boolean}
+ */
+export function isAccessTokenExpiring(tokenExpiresAt, now = Date.now()) {
+  const expiresAt =
+    typeof tokenExpiresAt === "number"
+      ? tokenExpiresAt
+      : typeof tokenExpiresAt === "string"
+        ? Date.parse(tokenExpiresAt)
+        : NaN;
+  if (!Number.isFinite(expiresAt)) return false;
+  return expiresAt - now <= ACCESS_TOKEN_REFRESH_MARGIN_MS;
+}
+
+/**
+ * Wait for `promise`, but stop waiting as soon as `signal` aborts. The
+ * promise itself keeps running (a shared refresh must still persist its
+ * result for the other requests riding it); only this caller lets go.
+ * @template T
+ * @param {Promise<T>} promise
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<T>}
+ */
+function untilAborted(promise, signal) {
+  if (!signal) return promise;
+  if (signal.aborted) {
+    return Promise.reject(new DOMException("Request aborted", "AbortError"));
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = () =>
+      reject(new DOMException("Request aborted", "AbortError"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
+  });
+}
+
+/**
  * One JSON request against the backend. Serializes an object body, parses a
  * JSON response, and throws `ApiError` on a non-2xx status or a transport
- * failure. Attaches the device token when a session exists and retries once
- * through a silent refresh on an access-token rejection.
+ * failure. Attaches the device token when a session exists, refreshing first
+ * when the stored token is known to be expiring (so the common idle-tab case
+ * never produces a 403 round trip), and retries once through a silent
+ * refresh on an access-token rejection.
  * @param {string} method
  * @param {string} path        path beginning with `/` (joined onto BASE)
  * @param {object} [opts]
@@ -179,9 +232,38 @@ async function request(
     throw new SiteBindingChangedError();
   }
   const requestSiteId = originSiteId || site?.siteId || "";
-  const authHeaders = site?.token
-    ? { authorization: `Bearer ${site.token}` }
-    : {};
+  let token = site?.token;
+  // Pre-flight refresh: a token past (or within a minute of) its stored
+  // expiry is certain to be rejected, so renew before the fetch rather than
+  // after a 403. Only a fatal refresh outcome stops the request. A 5xx or
+  // transport failure is remembered and the stored token is sent anyway —
+  // inside the margin it usually still works — but if it IS rejected the
+  // remembered failure is surfaced rather than asking the same unhealthy
+  // refresh endpoint a second time. The caller's signal is honored while
+  // waiting: an aborted request stops here without touching the network.
+  /** @type {Error | null} */
+  let preflightRefreshError = null;
+  if (
+    allowAuthRetry &&
+    token &&
+    site?.refreshToken &&
+    isAccessTokenExpiring(site.tokenExpiresAt)
+  ) {
+    try {
+      token = (await untilAborted(refreshSession(requestSiteId), signal)).token;
+    } catch (err) {
+      if (
+        signal?.aborted ||
+        err instanceof ReauthRequiredError ||
+        err instanceof SiteBindingChangedError
+      ) {
+        if (!signal?.aborted) classifyApiFailure(err);
+        throw err;
+      }
+      preflightRefreshError = err instanceof Error ? err : null;
+    }
+  }
+  const authHeaders = token ? { authorization: `Bearer ${token}` } : {};
 
   /** @type {Response} */
   let res;
@@ -239,6 +321,13 @@ async function request(
     // auth rejection (or a rejected refresh) is fatal UNLESS the stored session was
     // superseded mid-flight (see the retry leg below).
     if (isAccessTokenRejection(res.status, parsed) && allowAuthRetry) {
+      // The pre-flight refresh already failed on this request: the token was
+      // rejected as predicted and the refresh endpoint is the problem.
+      // Surface that (retryable) failure instead of a second doomed refresh.
+      if (preflightRefreshError) {
+        classifyApiFailure(preflightRefreshError);
+        throw preflightRefreshError;
+      }
       // Refresh from the CURRENT stored session — `site` here may be stale
       // (read before this request's fetch); refreshSession re-reads it.
       try {
@@ -890,8 +979,35 @@ export function get311RequestDetail(taskId, srNum) {
   );
 }
 
-export function get311RequestDetails(requests) {
-  return request("POST", "/v1/311-requests:batch", { body: { requests } });
+/** The backend rejects a `311-requests:batch` body with more than this many items. */
+export const MAX_311_BATCH_SIZE = 50;
+
+/**
+ * POST /v1/311-requests:batch — live SF311 status for filed tickets. The
+ * backend caps a batch at 50, and the home hub can hold far more filed
+ * tickets than that, so the pairs are split into capped batches sent in
+ * parallel and merged. A batch that fails is dropped so the others still
+ * hydrate their cards; the call rejects only when every batch failed.
+ * @param {Array<{ taskId: string, srNum: string }>} requests
+ * @returns {Promise<{ requests: Array<{ taskId: string, request: Record<string, any> }> }>}
+ */
+export async function get311RequestDetails(requests) {
+  const batches = [];
+  for (let i = 0; i < requests.length; i += MAX_311_BATCH_SIZE) {
+    batches.push(requests.slice(i, i + MAX_311_BATCH_SIZE));
+  }
+  const settled = await Promise.allSettled(
+    batches.map((batch) =>
+      request("POST", "/v1/311-requests:batch", { body: { requests: batch } }),
+    ),
+  );
+  const fulfilled = settled.filter((r) => r.status === "fulfilled");
+  if (batches.length && !fulfilled.length) {
+    throw /** @type {PromiseRejectedResult} */ (settled[0]).reason;
+  }
+  return {
+    requests: fulfilled.flatMap((r) => r.value?.requests || []),
+  };
 }
 
 /**
