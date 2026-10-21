@@ -30,6 +30,7 @@ test("pending saves reject duplicate submissions and failures preserve the draft
       querySelectorAll: () => [button],
       querySelector: () => null,
       append() {},
+      dispatchEvent() {},
     };
     let reject;
     let calls = 0;
@@ -70,6 +71,41 @@ test("pending saves reject duplicate submissions and failures preserve the draft
     assert.equal(button.disabled, false);
     assert.equal(button.textContent, "Save");
     assert.equal(await withSaveFeedback(form, async () => true, options), true);
+  } finally {
+    globalThis.document = oldDocument;
+  }
+});
+
+test("save completion lets form validation override the old enabled state", async () => {
+  const oldDocument = globalThis.document;
+  globalThis.document = {
+    createElement: () => ({ setAttribute() {}, remove() {} }),
+  };
+  try {
+    const button = { textContent: "Save", disabled: false };
+    const form = new EventTarget();
+    Object.assign(form, {
+      dataset: {},
+      setAttribute() {},
+      removeAttribute() {},
+      querySelectorAll: () => [button],
+      querySelector: () => null,
+      append() {},
+    });
+    let selectedStaff = "person";
+    form.addEventListener("save-feedback-end", () => {
+      assert.equal(form.dataset.saving, undefined);
+      button.disabled = !selectedStaff;
+    });
+    await withSaveFeedback(
+      form,
+      async () => {
+        selectedStaff = "";
+        throw new Error("source changed");
+      },
+      { savingLabel: "Saving", onError() {} },
+    );
+    assert.equal(button.disabled, true);
   } finally {
     globalThis.document = oldDocument;
   }

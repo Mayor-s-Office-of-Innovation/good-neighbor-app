@@ -1034,5 +1034,6 @@
   "admin.phone.addExtension": "Agregar extensión",
   "admin.phone.extension": "Extensión",
   "admin.programs.createNew": "Crear nuevo programa",
-  "admin.programs.name": "Nombre del programa"
+  "admin.programs.name": "Nombre del programa",
+  "admin.programs.staffSourceChanged": "Este registro de personal cambió. Actualice la lista y vuelva a seleccionar a una persona."
 }

@@ -739,3 +739,69 @@ async function call(handler, request) {
     await handler(request, {}, () => {})
   );
 }
+
+it("journals name-only saves against existing non-directory profile metadata", async () => {
+  cognitoSend.mockResolvedValue(user("caller@example.org", "caller-sub"));
+  ddbSend.mockImplementation(async (command) =>
+    command instanceof GetCommand &&
+    command.input.Key?.pk === "ADMIN_PROFILE#caller-sub"
+      ? { Item: { firstName: "Old", lastName: "Name", phoneExtension: "0042" } }
+      : {},
+  );
+  const response = await call(
+    updateMyProfile,
+    event({ firstName: "New", lastName: "Name" }),
+  );
+  expect(response.statusCode).toBe(200);
+  expect(
+    ddbSend.mock.calls.some(
+      ([command]) =>
+        command.input.ExpressionAttributeValues?.[":recovery"]?.directoryKey
+          ?.pk === "ADMIN_PROFILE#caller-sub",
+    ),
+  ).toBe(true);
+  expect(
+    ddbSend.mock.calls.some(
+      ([command]) =>
+        command.input.Key?.pk === "ADMIN_PROFILE#caller-sub" &&
+        command.input.ExpressionAttributeValues?.[":first"] === "New",
+    ),
+  ).toBe(true);
+});
+
+it.each([undefined, "999"])(
+  "carries profile extension into a newly invited directory unless supplied (%s)",
+  async (extension) => {
+    cognitoSend
+      .mockRejectedValueOnce(
+        Object.assign(new Error("exists"), { name: "UsernameExistsException" }),
+      )
+      .mockResolvedValueOnce(user("new@example.org", "new-sub"))
+      .mockResolvedValueOnce({ Groups: [] })
+      .mockResolvedValue({});
+    ddbSend.mockImplementation(async (command) =>
+      command instanceof GetCommand &&
+      command.input.Key?.pk === "ADMIN_PROFILE#new-sub"
+        ? { Item: { phoneExtension: "0042" } }
+        : {},
+    );
+    const response = await call(
+      inviteAdminUser,
+      event({
+        email: "new@example.org",
+        firstName: "New",
+        lastName: "Admin",
+        phone: "415-555-0100",
+        role: "compliance-manager",
+        ...(extension ? { phoneExtension: extension } : {}),
+      }),
+    );
+    expect(response.statusCode).toBe(201);
+    const directory = ddbSend.mock.calls.find(
+      ([command]) =>
+        command instanceof PutCommand &&
+        command.input.Item?.pk === "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+    )?.[0].input.Item;
+    expect(directory.phoneExtension).toBe(extension || "0042");
+  },
+);

@@ -49,9 +49,44 @@ for (const kind of ["Provider", "Program"]) {
     );
     const app = new Subject();
     app.state = { providers: [], programs: [] };
-    await app[`create${kind}`]({});
+    await app[`create${kind}`]({ querySelector: () => ({ disabled: false }) });
     assert.equal(mutations, 1);
     assert.equal(app.state[`${kind.toLowerCase()}s`][0].name, "New");
     assert.deepEqual(destinations, [`/${kind.toLowerCase()}s/new`]);
+  });
+}
+
+for (const [staff, disabled] of [
+  ["", false],
+  ["__create__", false],
+  [encodeURIComponent("{}"), false],
+  [encodeURIComponent('{"existingStaff":{"userId":"one"}}'), true],
+]) {
+  test(`program creation rejects missing or loading staff (${staff}, ${disabled})`, async () => {
+    const source = readFileSync(new URL("./main.js", import.meta.url), "utf8");
+    const start = source.indexOf("  async createProgram(form)");
+    const end = source.indexOf("\n  }", start) + 4;
+    let calls = 0;
+    const Subject = vm.runInNewContext(`(class{${source.slice(start, end)}})`, {
+      location: { pathname: "/programs/new", search: "" },
+      window: { location: { search: "" } },
+      URLSearchParams,
+      FormData: class {
+        get(key) {
+          return key === "program-staff" ? staff : "New";
+        }
+      },
+      t: (key) => key,
+      adminApi: {
+        createProgram: () => {
+          calls++;
+        },
+      },
+    });
+    await assert.rejects(
+      new Subject().createProgram({ querySelector: () => ({ disabled }) }),
+      /admin.programs.chooseStaff/,
+    );
+    assert.equal(calls, 0);
   });
 }

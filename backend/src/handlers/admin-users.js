@@ -105,6 +105,7 @@ export async function ownProfile(event) {
     pool,
     principal,
     directory,
+    profileContact,
     attributes: attrs,
     profile: {
       firstName: attrs.given_name || "",
@@ -166,7 +167,7 @@ export const updateMyProfile = (event) =>
         const contactKey = current.directory
           ? { pk: current.directory.pk, sk: current.directory.sk }
           : { pk: `ADMIN_PROFILE#${current.principal.subject}`, sk: "#META" };
-        if (current.directory || phoneExtension !== undefined)
+        if (current.profileContact || phoneExtension !== undefined)
           await prepare({
             pool: current.pool,
             username: current.principal.username,
@@ -202,7 +203,7 @@ export const updateMyProfile = (event) =>
             ],
           }),
         );
-        if (current.directory || phoneExtension !== undefined) {
+        if (current.profileContact || phoneExtension !== undefined) {
           await ddb.send(
             new UpdateCommand({
               TableName: getDynamoTableName(),
@@ -413,6 +414,17 @@ export const inviteAdminUser = (event) =>
     }
     const user = existingUser ?? (await getUser(pool, email));
     const cognitoSubject = attributes(user).sub || "";
+    let inheritedExtension = "";
+    if (!directory && existingUser && !phoneExtension && cognitoSubject) {
+      const savedProfile = await ddb.send(
+        new GetCommand({
+          TableName: getDynamoTableName(),
+          Key: { pk: `ADMIN_PROFILE#${cognitoSubject}`, sk: "#META" },
+          ConsistentRead: true,
+        }),
+      );
+      inheritedExtension = clean(savedProfile.Item?.phoneExtension);
+    }
     const now = new Date().toISOString();
     if (directory) {
       await ddb.send(
@@ -450,7 +462,7 @@ export const inviteAdminUser = (event) =>
             name: `${firstName} ${lastName}`,
             email,
             phone,
-            phoneExtension,
+            phoneExtension: phoneExtension || inheritedExtension,
             departmentId,
             cognitoSubject,
             departmentName,

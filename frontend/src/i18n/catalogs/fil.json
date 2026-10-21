@@ -1034,5 +1034,6 @@
   "admin.phone.addExtension": "Magdagdag ng extension",
   "admin.phone.extension": "Extension",
   "admin.programs.createNew": "Gumawa ng bagong programa",
-  "admin.programs.name": "Pangalan ng programa"
+  "admin.programs.name": "Pangalan ng programa",
+  "admin.programs.staffSourceChanged": "Nagbago ang rekord na ito. I-refresh ang listahan at pumili muli ng kawani."
 }

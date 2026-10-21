@@ -986,3 +986,111 @@ async function call(handler, request) {
     await handler(request, {}, () => {})
   );
 }
+
+it.each([true, false])(
+  "handles only failed staff-source conditions (source failure: %s)",
+  async (sourceFailure) => {
+    const failure = Object.assign(new Error("canceled"), {
+      name: "TransactionCanceledException",
+      CancellationReasons: [
+        { Code: sourceFailure ? "ConditionalCheckFailed" : "None" },
+        { Code: sourceFailure ? "None" : "ConditionalCheckFailed" },
+      ],
+    });
+    send
+      .mockResolvedValueOnce({ Item: { name: "Provider", status: "active" } })
+      .mockResolvedValueOnce({
+        Item: {
+          status: "active",
+          firstName: "A",
+          lastName: "B",
+          email: "a@example.org",
+        },
+      })
+      .mockRejectedValueOnce(failure);
+    const request = call(
+      createProgram,
+      event({
+        name: "New",
+        providerId: "p",
+        existingStaff: { providerManagerId: "staff" },
+      }),
+    );
+    if (sourceFailure) {
+      const response = await request;
+      expect(response.statusCode).toBe(409);
+      expect(JSON.parse(String(response.body)).error).toBe(
+        "staff_source_changed",
+      );
+    } else await expect(request).rejects.toBe(failure);
+  },
+);
+
+it.each([false, true])(
+  "resolves unlinked legacy memberships before deleting staff (ambiguous: %s)",
+  async (ambiguous) => {
+    const staff = {
+      userId: "u",
+      email: "person@example.org",
+      firstName: "A",
+      lastName: "B",
+      status: "active",
+      siteManager: true,
+      siteAssignmentCount: 1,
+    };
+    const assignment = {
+      pk: "SITE#s",
+      sk: "ASSIGNED_USER#u",
+      programId: "p",
+      userId: "u",
+      email: staff.email,
+    };
+    const membership = {
+      pk: "SITE#s",
+      sk: "MANAGER_MEMBERSHIP#m",
+      membershipId: "m",
+      email: staff.email,
+      emailHash: "hash",
+      status: "active",
+      generation: 1,
+    };
+    send.mockImplementation(async (command) => {
+      const input = command.input;
+      if (command instanceof GetCommand) {
+        if (input.Key.sk === "USER#u") return { Item: staff };
+        if (input.Key.sk === "MANAGER_MEMBERSHIP#m")
+          return { Item: { ...membership } };
+        if (input.Key.sk === "ASSIGNED_USER#u") return { Item: assignment };
+        if (input.Key.pk === "PROGRAM#p") return { Item: { programId: "p" } };
+        return { Item: { siteId: "s" } };
+      }
+      if (command instanceof QueryCommand) {
+        const values = input.ExpressionAttributeValues;
+        if (String(values[":pk"]).startsWith("MANAGER_EMAIL#"))
+          return { Items: [{ siteId: "s", membershipId: "m" }] };
+        if (values[":prefix"] === "ASSIGNED_USER#")
+          return {
+            Items: [
+              assignment,
+              ...(ambiguous ? [{ ...assignment, userId: "other" }] : []),
+            ],
+          };
+        return { Items: [] };
+      }
+      return {};
+    });
+    const response = await call(
+      deactivateProgramUser,
+      event(undefined, { programId: "p", userId: "u" }),
+    );
+    expect(response.statusCode).toBe(ambiguous ? 409 : 200);
+    const membershipWrites = send.mock.calls.filter(
+      ([command]) =>
+        command instanceof TransactWriteCommand &&
+        command.input.TransactItems?.some(
+          (item) => item.Update?.Key?.sk === membership.sk,
+        ),
+    );
+    expect(membershipWrites.length).toBe(ambiguous ? 0 : 1);
+  },
+);

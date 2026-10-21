@@ -1,3 +1,5 @@
+import { assignmentsMatchingEmail } from "../lib/manager-identity.js";
+import { queryAllItems } from "../lib/query-all-items.js";
 import { sitePrimaryContactChange } from "../lib/site-primary-contact.js";
 import { staffRemovalContactGuard } from "../lib/staff-contact-guard.js";
 import {
@@ -195,38 +197,56 @@ export const createProgram = (event) =>
           updatedAt: now,
         }
       : null;
-    await ddb.send(
-      new TransactWriteCommand({
-        TransactItems: [
-          ...sourceChecks,
-          put(program),
-          ...(user ? [put(user)] : []),
-          put({
-            pk: `PROVIDER#${providerId}`,
-            sk: `PROGRAM#${programId}`,
-            type: "providerProgramMembership",
-            providerId,
-            programId,
-            programName: name,
-            status: "active",
-            createdAt: now,
-            updatedAt: now,
-          }),
-          put({
-            pk: SEARCH_PK,
-            sk: `${name.toLocaleLowerCase("en-US")}#${programId}`,
-            type: "programSearch",
-            programId,
-            name,
-            providerId,
-            providerName: provider.Item.name,
-            migrationPlaceholder: program.migrationPlaceholder,
-            needsReview: program.needsReview,
-            updatedAt: now,
-          }),
-        ],
-      }),
-    );
+    try {
+      await ddb.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            ...sourceChecks,
+            put(program),
+            ...(user ? [put(user)] : []),
+            put({
+              pk: `PROVIDER#${providerId}`,
+              sk: `PROGRAM#${programId}`,
+              type: "providerProgramMembership",
+              providerId,
+              programId,
+              programName: name,
+              status: "active",
+              createdAt: now,
+              updatedAt: now,
+            }),
+            put({
+              pk: SEARCH_PK,
+              sk: `${name.toLocaleLowerCase("en-US")}#${programId}`,
+              type: "programSearch",
+              programId,
+              name,
+              providerId,
+              providerName: provider.Item.name,
+              migrationPlaceholder: program.migrationPlaceholder,
+              needsReview: program.needsReview,
+              updatedAt: now,
+            }),
+          ],
+        }),
+      );
+    } catch (error) {
+      const cancellation =
+        /** @type {{ name?: string, CancellationReasons?: { Code?: string }[] }} */ (
+          error
+        );
+      if (
+        cancellation.name === "TransactionCanceledException" &&
+        sourceChecks.some(
+          (_, index) =>
+            cancellation.CancellationReasons?.[index]?.Code ===
+            "ConditionalCheckFailed",
+        )
+      ) {
+        return jsonResponse(409, { error: "staff_source_changed" });
+      }
+      throw error;
+    }
     return jsonResponse(201, { program, ...(user ? { user } : {}) });
   });
 
@@ -663,18 +683,43 @@ async function removeSiteManager(event, programId, userId, user) {
       }),
     );
     const membership = membershipResult.Item;
-    const belongsToManager =
-      membership?.userId === userId ||
-      (!membership?.userId &&
-        membership?.programId === programId &&
-        String(membership?.email || "").toLocaleLowerCase("en-US") ===
-          String(user.email || "").toLocaleLowerCase("en-US"));
+    let belongsToManager = membership?.userId === userId;
+    if (
+      !membership?.userId &&
+      String(membership?.email || "")
+        .trim()
+        .toLowerCase() ===
+        String(user.email || "")
+          .trim()
+          .toLowerCase()
+    ) {
+      const assignments = await queryAllItems({
+        TableName: tableName,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues: {
+          ":pk": `SITE#${siteId}`,
+          ":prefix": "ASSIGNED_USER#",
+        },
+        ConsistentRead: true,
+      });
+      const matches = await assignmentsMatchingEmail(
+        tableName,
+        assignments.Items,
+        String(user.email || ""),
+      );
+      belongsToManager = matches.some(
+        (row) => row.userId === userId && row.programId === programId,
+      );
+      if (belongsToManager && matches.length !== 1)
+        return jsonResponse(409, { error: "ambiguous_manager_identity" });
+    }
     if (!belongsToManager) continue;
     siteIds.add(siteId);
     const result = await deactivateManagerMembershipRecord({
       siteId,
       membershipId,
       actor,
+      expectedUserId: userId,
     });
     if (result?.error) return jsonResponse(409, { error: result.error });
     revokedBindingCount += Number(result?.revokedBindingCount || 0);

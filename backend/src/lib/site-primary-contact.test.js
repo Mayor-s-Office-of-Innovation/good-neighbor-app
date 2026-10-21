@@ -181,3 +181,48 @@ describe("automatic site primary contact", () => {
     );
   });
 });
+
+it("preserves the preferred tie after discarding an inactive oldest user", async () => {
+  site.primaryContactUserId = "z";
+  rows = [
+    assignment("inactive", "2020"),
+    assignment("a", "2021"),
+    assignment("z", "2021"),
+  ];
+  const original = send.getMockImplementation();
+  send.mockImplementation(async (command) =>
+    command.input.Key?.sk === "USER#inactive"
+      ? { Item: { status: "inactive" } }
+      : original?.(command),
+  );
+  const { Update } = await sitePrimaryContactChange("table", "site", "now");
+  expect(Update.ExpressionAttributeValues[":userId"]).toBe("z");
+});
+
+it("does not merge distinct identified managers sharing an email", async () => {
+  const { oldestSiteManager } = await import("./site-primary-contact.js");
+  const result = oldestSiteManager([
+    {
+      sk: "MANAGER_MEMBERSHIP#old",
+      userId: "old",
+      email: "shared@example.org",
+      createdAt: "2020",
+    },
+    { ...assignment("new", "2021"), email: "shared@example.org" },
+  ]);
+  expect(result?.userId).toBe("old");
+});
+
+it("does not guess an identity for ambiguous email-only membership", async () => {
+  const { oldestSiteManager } = await import("./site-primary-contact.js");
+  const result = oldestSiteManager([
+    {
+      sk: "MANAGER_MEMBERSHIP#legacy",
+      email: "shared@example.org",
+      createdAt: "2020",
+    },
+    { ...assignment("one", "2021"), email: "shared@example.org" },
+    { ...assignment("two", "2022"), email: "shared@example.org" },
+  ]);
+  expect(result?.userId).toBeUndefined();
+});

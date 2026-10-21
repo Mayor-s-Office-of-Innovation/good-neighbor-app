@@ -1,3 +1,4 @@
+import { assignmentsMatchingEmail } from "../lib/manager-identity.js";
 import { sitePrimaryContactChange } from "../lib/site-primary-contact.js";
 import { queryAllItems } from "../lib/query-all-items.js";
 import {
@@ -384,10 +385,10 @@ export async function deactivateManagerMembershipRecord({
       },
       ConsistentRead: true,
     });
-    const matches = (assignments.Items || []).filter(
-      (assignment) =>
-        assignment.email &&
-        normalizeEmail(assignment.email) === normalizeEmail(membership.email),
+    const matches = await assignmentsMatchingEmail(
+      tableName,
+      assignments.Items || [],
+      String(membership.email),
     );
     if (
       matches.length > 1 ||

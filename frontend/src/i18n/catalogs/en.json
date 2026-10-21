@@ -88,6 +88,7 @@
   "admin.programs.staffEditError": "Changes could not be saved. Refresh the page and try again.",
   "admin.programs.staffLoadError": "Staff could not be loaded. Choose the provider again to retry.",
   "admin.programs.staffSaveError": "The staff member could not be added. Please try again.",
+  "admin.programs.staffSourceChanged": "This staff record changed. Refresh the staff list and select a staff member again.",
   "admin.programs.toProgramFirst": "to the program first",
   "admin.providers.addManager": "Add new provider manager",
   "admin.providers.editManager": "Edit provider manager",

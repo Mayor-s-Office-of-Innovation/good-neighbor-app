@@ -944,10 +944,17 @@ class AdminApp extends HTMLElement {
   async createProgram(form) {
     const origin = location.pathname + location.search;
     const data = new FormData(form);
+    const selection = form.querySelector('[name="program-staff"]');
+    const rawStaff = String(data.get("program-staff") || "");
+    if (selection?.disabled || !rawStaff || rawStaff === "__create__")
+      throw new Error(t("admin.programs.chooseStaff"));
+    const staff = JSON.parse(decodeURIComponent(rawStaff));
+    if (!staff || (!staff.existingStaff && !staff.firstStaff))
+      throw new Error(t("admin.programs.chooseStaff"));
     const result = await adminApi.createProgram({
       name: String(data.get("program-name") || ""),
       providerId: String(data.get("program-provider") || ""),
-      ...JSON.parse(decodeURIComponent(String(data.get("program-staff")))),
+      ...staff,
     });
     this.state.programs = upsertRecord(
       this.state.programs,
@@ -1854,7 +1861,13 @@ class AdminApp extends HTMLElement {
   async saveWithFeedback(form, save) {
     return withSaveFeedback(form, save, {
       savingLabel: t("siteAdmin.edit.saving"),
-      onError: (error) => showFormSaveError(form, error.message),
+      onError: (error) =>
+        showFormSaveError(
+          form,
+          error.message === "staff_source_changed"
+            ? t("admin.programs.staffSourceChanged")
+            : error.message,
+        ),
     });
   }
 

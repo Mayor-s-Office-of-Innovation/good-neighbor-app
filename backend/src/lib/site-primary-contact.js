@@ -21,14 +21,30 @@ export function oldestSiteManager(rows, preferredUserId = "") {
     );
   const first = sorted[0];
   if (!first) return null;
-  const same = sorted.filter(
-    (row) =>
-      (first.userId && row.userId === first.userId) ||
-      (first.email &&
-        String(row.email || "")
-          .trim()
-          .toLowerCase() === String(first.email).trim().toLowerCase()),
+  const email = String(first.email || "")
+    .trim()
+    .toLowerCase();
+  const emailMatches = email
+    ? sorted.filter(
+        (row) =>
+          String(row.email || "")
+            .trim()
+            .toLowerCase() === email,
+      )
+    : [];
+  const emailUserIds = new Set(
+    emailMatches.map((row) => row.userId).filter(Boolean),
   );
+  const same = sorted.filter((row) => {
+    if (first.userId && row.userId) return first.userId === row.userId;
+    return (
+      email &&
+      emailUserIds.size <= 1 &&
+      String(row.email || "")
+        .trim()
+        .toLowerCase() === email
+    );
+  });
   return {
     ...first,
     ...same.find((row) => row.sk?.startsWith("ASSIGNED_USER#")),
@@ -78,6 +94,7 @@ export async function sitePrimaryContactChange(
         ) &&
         !(
           change.removeEmail &&
+          !row.userId &&
           String(row.email || "")
             .trim()
             .toLowerCase() === change.removeEmail.trim().toLowerCase()
@@ -102,7 +119,10 @@ export async function sitePrimaryContactChange(
       break;
     }
     const removedId = primary.userId;
-    primary = oldestSiteManager(rows.filter((row) => row.userId !== removedId));
+    primary = oldestSiteManager(
+      rows.filter((row) => row.userId !== removedId),
+      site?.primaryContactUserId,
+    );
     // Remove invalid staff from subsequent iterations as well.
     for (let i = rows.length - 1; i >= 0; i--)
       if (rows[i].userId === removedId) rows.splice(i, 1);

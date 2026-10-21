@@ -16,8 +16,12 @@ export function bindNewProgramStaff(root, programs, api) {
   let loadedProvider;
   const sync = () => {
     save.disabled =
-      select.disabled || !select.value || select.value === "__create__";
+      form.dataset.saving === "true" ||
+      select.disabled ||
+      !select.value ||
+      select.value === "__create__";
   };
+  form.addEventListener("save-feedback-end", sync);
   const option = (value, label) => {
     const item = document.createElement("wa-option");
     item.value = value;

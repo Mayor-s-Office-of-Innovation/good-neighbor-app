@@ -38,6 +38,7 @@ export async function withSaveFeedback(form, save, { savingLabel, onError }) {
       button.textContent = text;
       button.disabled = disabled;
     }
+    form.dispatchEvent(new Event("save-feedback-end"));
   }
 }
 
