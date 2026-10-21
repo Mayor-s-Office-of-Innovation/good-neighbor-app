@@ -9,6 +9,7 @@ export function bindNewProgramStaff(root, programs, api) {
   const select = form.querySelector('[name="program-staff"]');
   const save = form.querySelector('[type="submit"]');
   const error = form.querySelector("[data-staff-error]");
+  const retry = form.querySelector("[data-retry-staff]");
   const dialog = root.querySelector("#new-program-staff-dialog");
   const draftForm = dialog.querySelector("form");
   let generation = 0;
@@ -28,38 +29,50 @@ export function bindNewProgramStaff(root, programs, api) {
     item.textContent = label;
     return item;
   };
-  const load = async () => {
+  const load = async (retainDraft = false) => {
     const providerId = String(
       provider.value || provider.dataset.initialValue || "",
     );
     if (loadedProvider === providerId) return;
     loadedProvider = providerId;
     const current = ++generation;
+    const draft = retainDraft
+      ? select.querySelector("[data-staff-draft]")
+      : null;
+    const draftValue = draft && select.value === draft.value ? draft.value : "";
     select.value = "";
     previous = "";
     select.replaceChildren();
     select.disabled = true;
     error.textContent = "";
+    retry.hidden = true;
     sync();
     if (!providerId) return;
+    if (draft) select.append(draft);
+    select.append(option("__create__", t("admin.programs.createStaff")));
+    select.disabled = false;
+    select.value = draftValue;
+    previous = draftValue;
+    sync();
     try {
       const people = await loadProviderStaff(providerId, programs, api);
       if (current !== generation || !form.isConnected) return;
       for (const { person, reference } of people) {
-        select.append(
+        select.insertBefore(
           option(
             encodeURIComponent(JSON.stringify({ existingStaff: reference })),
             `${person.firstName} ${person.lastName} (${person.email})`,
           ),
+          select.lastElementChild,
         );
       }
-      select.append(option("__create__", t("admin.programs.createStaff")));
       select.disabled = false;
       sync();
     } catch {
       if (current === generation) {
         loadedProvider = undefined;
         error.textContent = t("admin.programs.staffLoadError");
+        retry.hidden = false;
       }
     }
   };
@@ -68,6 +81,10 @@ export function bindNewProgramStaff(root, programs, api) {
     void load();
   });
   void load();
+  retry.addEventListener("click", () => {
+    loadedProvider = undefined;
+    void load(true);
+  });
   select.addEventListener("change", () => {
     if (select.value === "__create__") {
       select.value = previous;

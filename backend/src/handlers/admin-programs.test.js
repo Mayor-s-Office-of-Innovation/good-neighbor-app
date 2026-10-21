@@ -627,6 +627,33 @@ describe("program administration", () => {
     expect(send.mock.calls[1][0]).toBeInstanceOf(UpdateCommand);
   });
 
+  it("allows editing a phone-free staff member", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          userId: "user-1",
+          status: "active",
+          email: "sam@example.org",
+          siteManager: false,
+        },
+      })
+      .mockResolvedValueOnce({ Attributes: { userId: "user-1" } });
+    const response = await call(
+      updateProgramUser,
+      event(
+        {
+          firstName: "Updated",
+          lastName: "Lee",
+          phone: "",
+          email: "sam@example.org",
+        },
+        { programId: "program-1", userId: "user-1" },
+      ),
+    );
+    expect(response.statusCode).toBe(200);
+    expect(send.mock.calls[1][0]).toBeInstanceOf(UpdateCommand);
+  });
+
   it("lets managers edit contact details while preserving identity and role", async () => {
     send
       .mockResolvedValueOnce({

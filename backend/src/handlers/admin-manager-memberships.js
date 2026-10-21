@@ -310,6 +310,12 @@ export const updateManagerMembership = (event) =>
       }),
     );
     try {
+      items.push(
+        await sitePrimaryContactChange(tableName, siteId, now, {
+          removeMembershipId: membershipId,
+          add: { ...current, name, email, emailHash: nextHash, updatedAt: now },
+        }),
+      );
       await ddb.send(new TransactWriteCommand({ TransactItems: items }));
     } catch (error) {
       if (isTransactionConflict(error)) {

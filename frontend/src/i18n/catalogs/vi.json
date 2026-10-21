@@ -1035,5 +1035,6 @@
   "admin.phone.extension": "Số máy lẻ",
   "admin.programs.createNew": "Tạo chương trình mới",
   "admin.programs.name": "Tên chương trình",
-  "admin.programs.staffSourceChanged": "Hồ sơ nhân viên đã thay đổi. Hãy làm mới danh sách và chọn lại nhân viên."
+  "admin.programs.staffSourceChanged": "Hồ sơ nhân viên đã thay đổi. Hãy làm mới danh sách và chọn lại nhân viên.",
+  "admin.programs.retryStaff": "Thử tải lại nhân viên hiện có"
 }

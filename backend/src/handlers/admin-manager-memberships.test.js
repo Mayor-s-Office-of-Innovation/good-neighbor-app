@@ -266,7 +266,12 @@ describe("Site Manager memberships", () => {
     expect(response.statusCode).toBe(200);
     const transaction = send.mock.calls[1][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(6);
+    expect(transaction.input.TransactItems).toHaveLength(7);
+    expect(
+      transaction.input.TransactItems[6].Update.ExpressionAttributeValues[
+        ":contact"
+      ],
+    ).toMatchObject({ name: "Alexis Rivera", email: "alexis@example.org" });
     expect(
       transaction.input.TransactItems[0].Update.UpdateExpression,
     ).toContain("#name = :name");
@@ -303,7 +308,7 @@ describe("Site Manager memberships", () => {
       ),
     );
     expect(response.statusCode).toBe(200);
-    expect(send.mock.calls[1][0].input.TransactItems).toHaveLength(2);
+    expect(send.mock.calls[1][0].input.TransactItems).toHaveLength(3);
   });
 
   it("does not let managers transfer a membership to another email", async () => {

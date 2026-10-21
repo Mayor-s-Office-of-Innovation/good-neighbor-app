@@ -83,6 +83,7 @@
   "admin.programs.primaryContactInline": "program primary contact",
   "admin.programs.primaryHelp": "Selecting this person replaces the current primary contact.",
   "admin.programs.reassignPrimaryBeforeRemoval": "Select a different primary contact for the program and any affected sites before removing this staff member.",
+  "admin.programs.retryStaff": "Retry loading existing staff",
   "admin.programs.saveStaff": "Save changes",
   "admin.programs.staff": "Program staff",
   "admin.programs.staffEditError": "Changes could not be saved. Refresh the page and try again.",

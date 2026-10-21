@@ -5145,6 +5145,7 @@ function newProgramView(state) {
       <fieldset><legend>${escapeHtml(t("admin.programs.addStaffMember"))}</legend>
         <wa-select name="program-staff" required disabled aria-label="${escapeHtml(t("admin.programs.addStaffMember"))}" placeholder="${escapeHtml(t("admin.programs.chooseStaff"))}"></wa-select>
         <p class="error" data-staff-error role="alert"></p>
+        <button class="btn-outline" type="button" data-retry-staff hidden>${escapeHtml(t("admin.programs.retryStaff"))}</button>
       </fieldset>
       <button class="btn-primary" type="submit" disabled>Add program</button>
     </form>
@@ -5330,7 +5331,7 @@ function siteManagerEditorView(state, manager) {
         <div class="form-grid form-grid--one">
           ${formInput("manager-first-name", "First name", manager?.firstName || "", { required: true, autocomplete: "given-name" })}
           ${formInput("manager-last-name", "Last name", manager?.lastName || "", { required: true, autocomplete: "family-name" })}
-          ${phoneInput("manager-phone", "Contact phone", manager?.phone || "", { extension: manager?.phoneExtension, extensionName: "manager-phone-extension", required: true, type: "tel", autocomplete: "tel" })}
+          ${phoneInput("manager-phone", "Contact phone", manager?.phone || "", { extension: manager?.phoneExtension, extensionName: "manager-phone-extension", required: !manager || Boolean(manager.phone), type: "tel", autocomplete: "tel" })}
           ${formInput("manager-email", "Contact email", manager?.email || "", { required: true, type: "email", autocomplete: "email", disabled: !canManageAssignments })}
         </div>
       </fieldset>
@@ -5616,7 +5617,7 @@ function programStaffEditDialog(user, primary, canEditEmail = false) {
       <h2 id="edit-staff-title-${escapeHtml(user.userId)}">${escapeHtml(t("admin.programs.editStaff"))}</h2>
       ${formInput("staff-first-name", t("admin.programs.firstName"), user.firstName, { required: true, autocomplete: "given-name" })}
       ${formInput("staff-last-name", t("admin.programs.lastName"), user.lastName, { required: true, autocomplete: "family-name" })}
-      ${phoneInput("staff-phone", t("admin.programs.phone"), user.phone, { extension: user.phoneExtension, required: true, type: "tel", autocomplete: "tel" })}
+      ${phoneInput("staff-phone", t("admin.programs.phone"), user.phone, { extension: user.phoneExtension, required: Boolean(user.phone), type: "tel", autocomplete: "tel" })}
       ${formInput("staff-email", t("admin.programs.email"), user.email, { required: true, type: "email", autocomplete: "email", disabled: !canEditEmail })}
       <wa-checkbox name="staff-primary-contact" ${primary ? "checked" : ""}>${escapeHtml(t("admin.programs.primaryContact"))}</wa-checkbox>
       <p class="muted">${escapeHtml(t("admin.programs.primaryHelp"))}</p>

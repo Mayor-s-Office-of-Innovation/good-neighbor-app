@@ -436,9 +436,6 @@ export const updateProgramUser = (event) =>
     if (!isEmail(contact.email)) {
       return jsonResponse(400, { error: "valid_email_required" });
     }
-    if (!contact.phone) {
-      return jsonResponse(400, { error: "phone_required" });
-    }
     const current = await ddb.send(
       new GetCommand({
         TableName: getDynamoTableName(),
@@ -447,6 +444,9 @@ export const updateProgramUser = (event) =>
     );
     if (!current.Item || current.Item.status !== "active") {
       return jsonResponse(404, { error: "program_user_not_found" });
+    }
+    if (current.Item.phone && !contact.phone) {
+      return jsonResponse(400, { error: "phone_required" });
     }
     const principal = adminPrincipal(event);
     const requestedSiteManager = body.siteManager === true;

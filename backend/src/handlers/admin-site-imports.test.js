@@ -631,3 +631,57 @@ async function call(handler, request) {
     await handler(request, {}, () => {})
   );
 }
+
+it("records failed contact reads and continues applying subsequent import rows", async () => {
+  const first = /** @type {any} */ (importRow());
+  first.plan.site.action = "reuse";
+  first.plan.assignment.action = "reuse";
+  const second = { ...importRow(), rowNumber: 3, sk: "ROW#000003" };
+  geocodeAddress.mockResolvedValue({
+    latitude: 37.78,
+    longitude: -122.42,
+    matchedAddress: "1 MAIN ST",
+  });
+  let queries = 0;
+  send.mockImplementation(async (command) => {
+    if (command instanceof GetCommand) {
+      if (String(command.input.Key?.pk).startsWith("SITE#"))
+        throw Object.assign(new Error("temporary read failure"), {
+          name: "InternalServerError",
+        });
+      return {
+        Item: {
+          previewVersion: "preview-1",
+          previewExpiresAt: "2099-01-01T00:00:00.000Z",
+          counts: {},
+          fileName: "sites.csv",
+        },
+      };
+    }
+    if (command instanceof QueryCommand) {
+      queries++;
+      return {
+        Items:
+          queries === 1
+            ? [first, second]
+            : [
+                { ...first, outcome: "retryable_failed" },
+                { ...second, outcome: "applied" },
+              ],
+      };
+    }
+    return {};
+  });
+  const response = await call(
+    applySiteImport,
+    event(
+      { previewVersion: "preview-1", idempotencyKey: "apply-1" },
+      { importId: "import-1" },
+    ),
+  );
+  expect(response.statusCode).toBe(202);
+  const outcomes = send.mock.calls
+    .map(([command]) => command.input.ExpressionAttributeValues?.[":outcome"])
+    .filter(Boolean);
+  expect(outcomes).toEqual(["retryable_failed", "applied"]);
+});

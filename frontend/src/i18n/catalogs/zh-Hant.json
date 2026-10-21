@@ -1035,5 +1035,6 @@
   "admin.phone.extension": "分機",
   "admin.programs.createNew": "建立新計畫",
   "admin.programs.name": "計畫名稱",
-  "admin.programs.staffSourceChanged": "此員工資料已變更。請重新整理清單並再次選擇員工。"
+  "admin.programs.staffSourceChanged": "此員工資料已變更。請重新整理清單並再次選擇員工。",
+  "admin.programs.retryStaff": "重試載入現有人員"
 }

@@ -820,46 +820,46 @@ async function applyOneRow(importId, row) {
       }),
     );
   }
-  if (plan.site.action === "reuse") {
-    const primary = await sitePrimaryContactChange(
-      tableName,
-      plan.site.id,
-      now,
-      {
-        ...(plan.assignment.action === "create"
-          ? {
-              add: {
-                ...primaryContact,
-                userId: plan.contact.id,
-                programId: plan.program.id,
-                sk: `ASSIGNED_USER#${plan.contact.id}`,
-                createdAt: now,
-                status: "active",
-              },
-            }
-          : {}),
-      },
-    );
-    const update = items.find(
-      (item) =>
-        item.Update?.Key?.pk === `SITE#${plan.site.id}` &&
-        item.Update.Key.sk === "#META",
-    )?.Update;
-    if (update && primary.Update) {
-      update.UpdateExpression +=
-        ", " +
-        primary.Update.UpdateExpression.replace("SET ", "")
-          .replace("updatedAt = :now, ", "")
-          .replace(", updatedAt = :now", "");
-      update.ConditionExpression +=
-        " AND (" + primary.Update.ConditionExpression + ")";
-      update.ExpressionAttributeValues = {
-        ...update.ExpressionAttributeValues,
-        ...primary.Update.ExpressionAttributeValues,
-      };
-    }
-  }
   try {
+    if (plan.site.action === "reuse") {
+      const primary = await sitePrimaryContactChange(
+        tableName,
+        plan.site.id,
+        now,
+        {
+          ...(plan.assignment.action === "create"
+            ? {
+                add: {
+                  ...primaryContact,
+                  userId: plan.contact.id,
+                  programId: plan.program.id,
+                  sk: `ASSIGNED_USER#${plan.contact.id}`,
+                  createdAt: now,
+                  status: "active",
+                },
+              }
+            : {}),
+        },
+      );
+      const update = items.find(
+        (item) =>
+          item.Update?.Key?.pk === `SITE#${plan.site.id}` &&
+          item.Update.Key.sk === "#META",
+      )?.Update;
+      if (update && primary.Update) {
+        update.UpdateExpression +=
+          ", " +
+          primary.Update.UpdateExpression.replace("SET ", "")
+            .replace("updatedAt = :now, ", "")
+            .replace(", updatedAt = :now", "");
+        update.ConditionExpression +=
+          " AND (" + primary.Update.ConditionExpression + ")";
+        update.ExpressionAttributeValues = {
+          ...update.ExpressionAttributeValues,
+          ...primary.Update.ExpressionAttributeValues,
+        };
+      }
+    }
     if (items.length) {
       await ddb.send(new TransactWriteCommand({ TransactItems: items }));
     }
