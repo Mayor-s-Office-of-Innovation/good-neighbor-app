@@ -101,7 +101,7 @@
 }
 
 .analysis-tray--recent .analysis-card {
-  background: var(--group-grey, #e9eaea);
+  background: var(--wa-color-surface-default, #fff);
 }
 
 .analysis-tray--history .analysis-tray__cards {
@@ -113,7 +113,7 @@
 }
 
 .analysis-tray--history .analysis-card {
-  background: var(--group-grey, #e9eaea);
+  background: var(--wa-color-surface-default, #fff);
 }
 
 .analysis-tray__empty {
@@ -168,11 +168,11 @@ html.wa-dark .analysis-tray--history {
   border-bottom: 0;
 }
 
-/* The card shell shows only behind the footer strip; it matches the group
-   grey exactly so the strip and container read as one color. */
+/* The card shell shows only behind the footer strip; it matches the card
+   surface so the date/number row reads as part of the card (no outline). */
 .analysis-tray .analysis-card--done,
 .analysis-card--done.analysis-card--standard {
-  background: var(--group-grey, #e9eaea);
+  background: var(--wa-color-surface-default, #fff);
 }
 
 .analysis-card__layout {
