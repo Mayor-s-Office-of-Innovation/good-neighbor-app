@@ -9,6 +9,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
+// Contact-selection behavior and concurrency guards are covered in site-primary-contact.test.js.
+vi.mock("../lib/site-primary-contact.js", () => ({
+  sitePrimaryContactChange: vi.fn(async (tableName, siteId, now, change) => ({
+    Update: {
+      TableName: tableName,
+      Key: { pk: `SITE#${siteId}`, sk: "#META" },
+      UpdateExpression: change.add
+        ? "SET primaryContact = :contact"
+        : "REMOVE primaryContactUserId, primaryContact",
+      ExpressionAttributeValues: change.add ? { ":contact": change.add } : {},
+    },
+  })),
+}));
 
 const {
   assignProgramToProvider,
@@ -834,7 +847,7 @@ describe("program administration", () => {
     ).toBe("removing");
     const tx = send.mock.calls[8][0].input.TransactItems;
     expect(tx[0].Delete.Key.sk).toBe("ASSIGNED_USER#user-1");
-    expect(tx.some((/** @type {any} */ item) => item.Update)).toBe(false);
+    expect(tx.some((/** @type {any} */ item) => item.Update)).toBe(true);
     expect(send.mock.calls[9][0]).toBeInstanceOf(DeleteCommand);
   });
 
@@ -889,7 +902,7 @@ describe("program administration", () => {
       expect(site.UpdateExpression).toContain(
         "REMOVE primaryContactUserId, primaryContact",
       );
-      expect(site.ConditionExpression).toBe("primaryContactUserId = :userId");
+
       expect(send.mock.calls[10][0]).toBeInstanceOf(DeleteCommand);
     },
   );

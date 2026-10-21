@@ -84,10 +84,9 @@ export function bindNewProgramStaff(root, programs, api) {
     if (!draftForm.reportValidity()) return;
     const values = new FormData(draftForm);
     const firstStaff = Object.fromEntries(
-      ["firstName", "lastName", "email", "phone"].map((key) => [
-        key,
-        String(values.get(key) || "").trim(),
-      ]),
+      ["firstName", "lastName", "email", "phone", "phoneExtension"].map(
+        (key) => [key, String(values.get(key) || "").trim()],
+      ),
     );
     const value = encodeURIComponent(JSON.stringify({ firstStaff }));
     select.querySelector("[data-staff-draft]")?.remove();

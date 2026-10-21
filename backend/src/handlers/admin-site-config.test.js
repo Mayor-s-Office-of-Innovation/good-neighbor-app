@@ -8,6 +8,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
+// Contact-selection behavior and concurrency guards are covered in site-primary-contact.test.js.
+vi.mock("../lib/site-primary-contact.js", () => ({
+  sitePrimaryContactChange: vi.fn(async (tableName, siteId, now, change) => ({
+    Update: {
+      TableName: tableName,
+      Key: { pk: `SITE#${siteId}`, sk: "#META" },
+      UpdateExpression: change.add
+        ? "SET primaryContact = :contact"
+        : "REMOVE primaryContactUserId, primaryContact",
+      ExpressionAttributeValues: change.add ? { ":contact": change.add } : {},
+    },
+  })),
+}));
 
 vi.mock("./admin-users.js", () => ({
   ownProfile: vi.fn(async (event) => {
@@ -61,6 +74,7 @@ describe("effective-dated Site terms", () => {
           firstName: "Fresh",
           lastName: "Contact",
           phone: "+14155550123",
+          phoneExtension: "",
           email: "fresh@example.org",
           role: "compliance-supervisor",
           directoryUserId: "",
@@ -563,16 +577,15 @@ describe("Site Program-contact assignments", () => {
         },
       })
       .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({ Item: { programId: "program-1" } })
       .mockResolvedValueOnce({});
     const response = await call(
       assignSiteUser,
       event({ userId: "user-1", primary: true }, { siteId: "site-1" }),
     );
     expect(response.statusCode).toBe(201);
-    const transaction = send.mock.calls[4][0];
+    const transaction = send.mock.calls[3][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(4);
+    expect(transaction.input.TransactItems).toHaveLength(3);
     expect(transaction.input.TransactItems[0].Put.Item).toMatchObject({
       pk: "SITE#site-1",
       sk: "ASSIGNED_USER#user-1",
@@ -580,7 +593,7 @@ describe("Site Program-contact assignments", () => {
     });
   });
 
-  it("unassigns a manager without clearing the separate primary contact", async () => {
+  it("unassigns the last manager and clears the primary contact atomically", async () => {
     send
       .mockResolvedValueOnce({ Item: { primaryContactUserId: "user-1" } })
       .mockResolvedValueOnce({
@@ -595,9 +608,10 @@ describe("Site Program-contact assignments", () => {
     expect(response.statusCode).toBe(200);
     const items = send.mock.calls[3][0].input.TransactItems;
     expect(
-      items.every(
-        (/** @type {any} */ item) =>
-          !item.Update?.UpdateExpression.includes("primaryContact"),
+      items.some((/** @type {any} */ item) =>
+        item.Update?.UpdateExpression.includes(
+          "REMOVE primaryContactUserId, primaryContact",
+        ),
       ),
     ).toBe(true);
   });

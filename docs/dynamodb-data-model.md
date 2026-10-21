@@ -692,10 +692,16 @@ per person per Site. Removing a membership removes only that person's projection
 updates their count, and invalidates only bindings belonging to that membership.
 Other managers, their pending enrollment links, and their bindings are retained.
 
-The Site's `primaryContactUserId` and contact snapshot are separate administrative
-contact details. Changing or clearing that pointer does not grant or revoke app
-access. Removing a manager does not clear the primary contact. New manager
-assignments do not implicitly set a primary contact.
+The Site's `primaryContactUserId` and `primaryContact` snapshot are derived from the
+oldest active site-manager assignment (by `createdAt`, preserving the current primary
+on equal timestamps and otherwise using a stable identity tie-break).
+There is no independent primary-contact selector. Assignment and membership writes
+recalculate the contact atomically; removing the primary promotes the next oldest,
+and removing the last manager clears both fields. Older imported assignments resolve
+contact details from their program staff record. Standalone memberships can supply a
+contact snapshot without a staff pointer. A `managerRosterRevision` compare-and-set
+on site metadata prevents concurrent roster writes from choosing inconsistent primaries.
+Changing the derived contact does not itself grant or revoke app access.
 
 Admin views combine older assignment-only records with active memberships, deduplicate
 by staff identity (or legacy email), and show all managers. Enrollment of an older
@@ -706,14 +712,13 @@ an immutable snapshot. Linked enrollment emails use the current staff email addr
 
 ### Staff contact removal consistency
 
-Program metadata carries an opaque `staffContactRevision`. Transactions that select a site
-primary contact advance this revision and require the selected staff record to remain active.
-Staff removal reads that revision before checking all program-linked canonical site records,
-then conditionally advances it while changing staff status. A concurrent contact assignment
-therefore conflicts with removal. Program primary contacts (including legacy email snapshots)
-and site primary contacts must be reassigned before either staff-deactivation path proceeds.
-Site manager removal marks staff `removing` before access cleanup; retries may resume cleanup,
-while new assignments and primary-contact selections require active staff.
+Program metadata carries an opaque `staffContactRevision` for program contact changes
+and staff removal. Site manager deletion marks staff `removing` before access cleanup;
+new assignments require active staff. Cleanup recalculates each affected site's primary
+contact in the same transaction that removes its assignment. The site roster revision
+prevents concurrent cleanup or assignment from overwriting a newer contact selection.
+Program primary contacts are cleared when their manager record is deleted. Ordinary
+non-manager staff deactivation still requires reassignment of dependent contacts.
 
 The site detail endpoint supports `?roster=1` for staff assignment enrichment. This returns
 canonical site metadata plus fully paginated `ASSIGNED_USER#` and `MANAGER_MEMBERSHIP#`
@@ -732,3 +737,12 @@ program-scoped identifier and a `staffSource` reference to the original record.
 Contact details are copied at creation; later edits are local to each membership.
 The original program/provider affiliation and its device access are unchanged.
 This operation does not move a staff record or grant new device access.
+
+### Phone extensions in administrator profiles
+
+Phone extensions are stored separately as `phoneExtension`, preserving leading zeroes.
+Compliance managers use their existing directory record. Supervisors without a manager
+directory record use `ADMIN_PROFILE#<cognitoSubject>` / `#META`; this profile metadata
+is not a manager assignment. Profile writes use the existing profile mutation lock and
+recovery journal. Site public contacts and derived primary contacts also retain the
+extension separately from the phone number.

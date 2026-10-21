@@ -187,6 +187,7 @@ test("new program asks to add a staff member without the redundant contact label
     t,
     escapeHtml,
     formInput: () => "",
+    phoneInput: () => "",
   });
   vm.runInContext(viewFunction("newProgramView"), context);
   const html = context.newProgramView({ providers: [] });

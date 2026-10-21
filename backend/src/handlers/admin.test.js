@@ -333,6 +333,7 @@ describe("provider and site management", () => {
           publicContact: {
             email: "public@example.org",
             phone: "415-555-0100",
+            phoneExtension: "0042",
           },
         },
         "central-admin",
@@ -348,6 +349,7 @@ describe("provider and site management", () => {
       publicContact: {
         email: "public@example.org",
         phone: "415-555-0100",
+        phoneExtension: "0042",
       },
       primaryContactUserId: "user-one",
     });
@@ -1433,23 +1435,17 @@ it("loads every roster prefix page without querying the entire site history", as
   ).toBe(true);
 });
 
-it("serializes site primary assignment with removal and checks the staff is still active", async () => {
+it("does not allow manual site primary contact changes", async () => {
   send
     .mockResolvedValueOnce({
       Item: {
         siteId: "site-1",
         name: "Mission",
-        leadProgramId: "p1",
         updatedAt: "old",
+        primaryContactUserId: "oldest",
       },
     })
-    .mockResolvedValueOnce({
-      Item: { userId: "u1", status: "active", firstName: "Sam" },
-    })
-    .mockResolvedValueOnce({
-      Item: { programId: "p1", staffContactRevision: "before" },
-    })
-    .mockResolvedValueOnce({});
+    .mockResolvedValue({});
   const response = await call(
     updateSite,
     event({ name: "Mission", primaryContactUserId: "u1" }, "central-admin", {
@@ -1457,13 +1453,8 @@ it("serializes site primary assignment with removal and checks the staff is stil
     }),
   );
   expect(response.statusCode).toBe(200);
-  const tx = send.mock.calls[3][0].input.TransactItems;
-  expect(
-    tx.find((/** @type {any} */ item) => item.Update?.Key.pk === "PROGRAM#p1")
-      .Update.ExpressionAttributeValues[":previous"],
-  ).toBe("before");
-  expect(
-    tx.find((/** @type {any} */ item) => item.ConditionCheck).ConditionCheck
-      .ConditionExpression,
-  ).toBe("#status = :active");
+  const tx = send.mock.calls.find(
+    ([command]) => command instanceof TransactWriteCommand,
+  )?.[0].input.TransactItems;
+  expect(tx[0].Update.UpdateExpression).not.toContain("primaryContact");
 });

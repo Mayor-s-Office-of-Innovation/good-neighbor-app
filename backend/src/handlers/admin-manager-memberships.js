@@ -1,3 +1,4 @@
+import { sitePrimaryContactChange } from "../lib/site-primary-contact.js";
 import { queryAllItems } from "../lib/query-all-items.js";
 import {
   GetCommand,
@@ -132,6 +133,12 @@ export const createManagerMembership = (event) =>
       updatedAt: now,
       updatedBy: actor,
     };
+    const primaryChange = await sitePrimaryContactChange(
+      tableName,
+      siteId,
+      now,
+      { add: membership },
+    );
     try {
       await ddb.send(
         new TransactWriteCommand({
@@ -175,6 +182,7 @@ export const createManagerMembership = (event) =>
               actor,
               createdAt: now,
             }),
+            primaryChange,
           ],
         }),
       );
@@ -425,6 +433,11 @@ export async function deactivateManagerMembershipRecord({
     false,
     now,
   );
+  const primaryChange = await sitePrimaryContactChange(tableName, siteId, now, {
+    removeUserId: membership.userId,
+    removeMembershipId: membershipId,
+    removeEmail: membership.email,
+  });
   try {
     await ddb.send(
       new TransactWriteCommand({
@@ -499,6 +512,7 @@ export async function deactivateManagerMembershipRecord({
             actor,
             createdAt: now,
           }),
+          primaryChange,
         ],
       }),
     );

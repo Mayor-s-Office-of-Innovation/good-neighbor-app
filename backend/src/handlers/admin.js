@@ -375,6 +375,7 @@ export const createSite = (event) =>
               firstName: primaryContact.firstName,
               lastName: primaryContact.lastName,
               phone: primaryContact.phone,
+              phoneExtension: primaryContact.phoneExtension || "",
               email: primaryContact.email,
             },
           }
@@ -468,6 +469,7 @@ export const createSite = (event) =>
               firstName: primaryContact.firstName,
               lastName: primaryContact.lastName,
               phone: primaryContact.phone,
+              phoneExtension: primaryContact.phoneExtension || "",
               email: primaryContact.email,
               status: "active",
               createdAt: now,
@@ -887,27 +889,6 @@ export const updateSite = (event) =>
     if (body.publicContact !== undefined && !publicContact) {
       return jsonResponse(400, { error: "invalid_public_contact" });
     }
-    const primaryContactUserId =
-      body.primaryContactUserId === undefined
-        ? undefined
-        : String(body.primaryContactUserId || "").trim();
-    /** @type {Record<string, unknown> | undefined} */
-    let selectedPrimaryContact;
-    if (primaryContactUserId) {
-      const assigned = await ddb.send(
-        new GetCommand({
-          TableName: tableName,
-          Key: {
-            pk: `PROGRAM#${site.leadProgramId}`,
-            sk: `USER#${primaryContactUserId}`,
-          },
-        }),
-      );
-      if (!assigned.Item || assigned.Item.status !== "active") {
-        return jsonResponse(400, { error: "invalid_internal_site_contact" });
-      }
-      selectedPrimaryContact = assigned.Item;
-    }
     const oversight =
       body.oversight === undefined ? null : normalizeOversight(body.oversight);
     if (body.oversight !== undefined && !oversight) {
@@ -1010,9 +991,6 @@ export const updateSite = (event) =>
       ...(addressParts ? { addressParts } : {}),
       ...(contactPerson ? { contactPerson } : {}),
       ...(publicContact ? { publicContact } : {}),
-      ...(primaryContactUserId !== undefined
-        ? { primaryContactUserId: primaryContactUserId || undefined }
-        : {}),
       ...(oversight ? { oversight } : {}),
       ...(compliance ? { compliance } : {}),
       ...(siteType !== undefined ? { siteType: siteType || undefined } : {}),
@@ -1061,24 +1039,6 @@ export const updateSite = (event) =>
       setExpressions.push("publicContact = :publicContact");
       expressionAttributeValues[":publicContact"] = publicContact;
     }
-    if (primaryContactUserId !== undefined) {
-      if (primaryContactUserId) {
-        setExpressions.push(
-          "primaryContactUserId = :primaryContactUserId",
-          "primaryContact = :primaryContact",
-        );
-        expressionAttributeValues[":primaryContactUserId"] =
-          primaryContactUserId;
-        expressionAttributeValues[":primaryContact"] = {
-          firstName: selectedPrimaryContact?.firstName || "",
-          lastName: selectedPrimaryContact?.lastName || "",
-          email: selectedPrimaryContact?.email || "",
-          phone: selectedPrimaryContact?.phone || "",
-        };
-      } else {
-        removeExpressions.push("primaryContactUserId", "primaryContact");
-      }
-    }
     if (oversight) {
       setExpressions.push("oversight = :oversight");
       expressionAttributeValues[":oversight"] = oversight;
@@ -1121,33 +1081,6 @@ export const updateSite = (event) =>
         },
       },
     ];
-    if (selectedPrimaryContact) {
-      const programId = String(site.leadProgramId);
-      const { Item: contactProgram } = await ddb.send(
-        new GetCommand({
-          TableName: tableName,
-          Key: { pk: `PROGRAM#${programId}`, sk: "#META" },
-          ConsistentRead: true,
-        }),
-      );
-      if (!contactProgram)
-        return jsonResponse(400, { error: "invalid_internal_site_contact" });
-      transactItems.push(
-        contactRevisionChange(tableName, programId, contactProgram),
-        {
-          ConditionCheck: {
-            TableName: tableName,
-            Key: {
-              pk: `PROGRAM#${programId}`,
-              sk: `USER#${primaryContactUserId}`,
-            },
-            ConditionExpression: "#status = :active",
-            ExpressionAttributeNames: { "#status": "status" },
-            ExpressionAttributeValues: { ":active": "active" },
-          },
-        },
-      );
-    }
     if (selectedProgramManager && programManagerPhone !== undefined) {
       transactItems.push({
         Update: {
@@ -1657,6 +1590,7 @@ function normalizePublicContact(value) {
     return null;
   return {
     email,
+    phoneExtension: cleanText(input.phoneExtension).slice(0, 20),
     phone: nationalPhone
       ? `${nationalPhone.slice(0, 3)}-${nationalPhone.slice(3, 6)}-${nationalPhone.slice(6)}`
       : "",

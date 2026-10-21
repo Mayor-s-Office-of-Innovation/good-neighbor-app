@@ -1,3 +1,4 @@
+import { sitePrimaryContactChange } from "../lib/site-primary-contact.js";
 import { staffRemovalContactGuard } from "../lib/staff-contact-guard.js";
 import {
   DeleteCommand,
@@ -712,18 +713,11 @@ async function removeSiteManager(event, programId, userId, user) {
         },
       });
     }
-    if (isPrimary) {
-      items.push({
-        Update: {
-          TableName: tableName,
-          Key: { pk: `SITE#${siteId}`, sk: "#META" },
-          UpdateExpression:
-            "REMOVE primaryContactUserId, primaryContact SET updatedAt = :now",
-          ConditionExpression: "primaryContactUserId = :userId",
-          ExpressionAttributeValues: { ":userId": userId, ":now": now },
-        },
-      });
-    }
+    items.push(
+      await sitePrimaryContactChange(tableName, siteId, now, {
+        removeUserId: userId,
+      }),
+    );
     items.push(
       put({
         pk: `SITE#${siteId}`,

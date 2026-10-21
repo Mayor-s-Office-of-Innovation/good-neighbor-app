@@ -7,6 +7,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
+// Contact-selection behavior and concurrency guards are covered in site-primary-contact.test.js.
+vi.mock("../lib/site-primary-contact.js", () => ({
+  sitePrimaryContactChange: vi.fn(async (tableName, siteId, now, change) => ({
+    Update: {
+      TableName: tableName,
+      Key: { pk: `SITE#${siteId}`, sk: "#META" },
+      UpdateExpression: change.add
+        ? "SET primaryContact = :contact"
+        : "REMOVE primaryContactUserId, primaryContact",
+      ExpressionAttributeValues: change.add ? { ":contact": change.add } : {},
+    },
+  })),
+}));
 
 const {
   createManagerMembership,
@@ -88,7 +101,7 @@ describe("Site Manager memberships", () => {
     expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
     const transaction = send.mock.calls[3][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(7);
+    expect(transaction.input.TransactItems).toHaveLength(8);
     const membership = transaction.input.TransactItems[3].Put.Item;
     expect(membership).toMatchObject({
       siteId: "site-1",
@@ -150,7 +163,7 @@ describe("Site Manager memberships", () => {
     );
     expect(response.statusCode).toBe(201);
     const items = send.mock.calls[3][0].input.TransactItems;
-    expect(JSON.stringify(items)).not.toContain("primaryContact");
+    expect(JSON.stringify(items)).toContain("primaryContact");
     expect(JSON.stringify(items)).not.toContain("ASSIGNED_USER#first");
     expect(items.some((/** @type {any} */ item) => item.Delete)).toBe(false);
     expect(items[0].Put.Item.sk).toBe("ASSIGNED_USER#second");
@@ -206,7 +219,7 @@ describe("Site Manager memberships", () => {
     expect(items[0].Delete.Key.sk).toBe("ASSIGNED_USER#user-2");
     expect(items[1].Update.ExpressionAttributeValues[":next"]).toBe(1);
     expect(JSON.stringify(items)).not.toContain("DEVICE_BINDING#one");
-    expect(JSON.stringify(items)).not.toContain("primaryContact");
+    expect(JSON.stringify(items)).toContain("primaryContact");
   });
 
   it("rejects duplicate active email membership", async () => {
@@ -351,7 +364,7 @@ describe("Site Manager memberships", () => {
     expect(response.statusCode).toBe(200);
     const transaction = send.mock.calls[2][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(7);
+    expect(transaction.input.TransactItems).toHaveLength(8);
     expect(
       transaction.input.TransactItems[0].Update.UpdateExpression,
     ).toContain("generation = generation + :one");

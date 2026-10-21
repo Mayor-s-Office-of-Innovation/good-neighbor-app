@@ -79,6 +79,7 @@ describe("My profile", () => {
       firstName: "Current",
       lastName: "Name",
       phone: "",
+      phoneExtension: "",
       email: "caller@example.org",
       role: "compliance-supervisor",
       directoryUserId: "manager-1",
@@ -198,6 +199,7 @@ describe("My profile", () => {
         firstName: "A",
         lastName: "B",
         phone: "(415) 555-1234",
+        phoneExtension: "0123",
       });
       request.requestContext.authorizer.jwt.claims["cognito:groups"] = role;
       const response = await call(updateMyProfile, request);
@@ -215,9 +217,51 @@ describe("My profile", () => {
             command.input.ExpressionAttributeValues?.[":phone"] ===
             "+14155551234",
         ),
-      ).toBe(role === "compliance-manager");
+      ).toBe(true);
+      expect(JSON.parse(String(response.body)).profile.phoneExtension).toBe(
+        "0123",
+      );
+      expect(
+        ddbSend.mock.calls.some(
+          ([command]) =>
+            command.input.ExpressionAttributeValues?.[":extension"] === "0123",
+        ),
+      ).toBe(true);
     },
   );
+
+  it("loads a supervisor extension saved without a manager directory record", async () => {
+    cognitoSend.mockResolvedValue(user("caller@example.org", "caller-sub"));
+    ddbSend.mockImplementation(async (command) =>
+      command instanceof GetCommand &&
+      command.input.Key?.pk === "ADMIN_PROFILE#caller-sub"
+        ? { Item: { phoneExtension: "0042" } }
+        : {},
+    );
+    const response = await call(getMyProfile, event());
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(String(response.body)).profile.phoneExtension).toBe(
+      "0042",
+    );
+  });
+
+  it("clears an extension while preserving an unchanged phone", async () => {
+    cognitoSend.mockResolvedValue(user("caller@example.org", "caller-sub"));
+    ddbSend.mockResolvedValue({});
+    const response = await call(
+      updateMyProfile,
+      event({ firstName: "A", lastName: "B", phoneExtension: "" }),
+    );
+    expect(response.statusCode).toBe(200);
+    const write = ddbSend.mock.calls.find(
+      ([command]) =>
+        command.input.ExpressionAttributeValues?.[":extension"] === "",
+    )?.[0];
+    expect(write.input.UpdateExpression).toContain(
+      "phoneExtension = :extension",
+    );
+    expect(write.input.UpdateExpression).not.toContain("phone = :phone");
+  });
 
   it.each(["", "123", "not a phone"])(
     "rejects invalid phone %s before writing",

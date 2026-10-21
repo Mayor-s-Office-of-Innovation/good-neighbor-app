@@ -1909,3 +1909,17 @@ tbody tr:last-child td {
 .manager-record a.btn-secondary {
   text-decoration: none;
 }
+
+.phone-field {
+  display: grid;
+  align-content: start;
+  gap: var(--wa-space-s);
+}
+.phone-field__add {
+  justify-self: start;
+  font-size: var(--wa-font-size-s);
+  padding: var(--wa-space-xs) var(--wa-space-s);
+}
+.phone-field [hidden] {
+  display: none;
+}

@@ -420,6 +420,39 @@ describe("Site CSV import", () => {
       row.plan.assignment = { action: "reuse" };
       let rowQueryCount = 0;
       send.mockImplementation(async (command) => {
+        if (
+          command instanceof GetCommand &&
+          command.input.Key?.sk?.startsWith("USER#")
+        )
+          return {
+            Item: {
+              status: "active",
+              firstName: "First",
+              lastName: "Manager",
+              email: "first@example.org",
+            },
+          };
+        if (
+          command instanceof QueryCommand &&
+          ["ASSIGNED_USER#", "MANAGER_MEMBERSHIP#"].includes(
+            command.input.ExpressionAttributeValues?.[":prefix"],
+          )
+        )
+          return {
+            Items:
+              command.input.ExpressionAttributeValues?.[":prefix"] ===
+              "ASSIGNED_USER#"
+                ? [
+                    {
+                      sk: `ASSIGNED_USER#${row.plan.contact.id}`,
+                      userId: row.plan.contact.id,
+                      programId: row.plan.program.id,
+                      createdAt: "2020-01-01",
+                      status: "active",
+                    },
+                  ]
+                : [],
+          };
         if (command instanceof GetCommand)
           return {
             Item: {
@@ -456,14 +489,14 @@ describe("Site CSV import", () => {
       expect(siteUpdates).toHaveLength(1);
       expect(
         siteUpdates[0].Update?.UpdateExpression?.includes(
-          "primaryContactUserId = :primaryUserId",
+          "primaryContactUserId = :userId",
         ),
-      ).toBe(assignPrimary);
+      ).toBe(true);
       expect(
         siteUpdates[0].Update?.ConditionExpression?.includes(
-          "attribute_not_exists(primaryContactUserId)",
+          "attribute_not_exists(managerRosterRevision)",
         ),
-      ).toBe(assignPrimary);
+      ).toBe(true);
       expect(siteUpdates[0].Update).toMatchObject({
         ExpressionAttributeValues: expect.objectContaining({
           ":siteType": "shelter",
