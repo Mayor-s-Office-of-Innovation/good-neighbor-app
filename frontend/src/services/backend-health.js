@@ -9,8 +9,9 @@
     - OUTAGE — the API is unreachable (network failure or a non-JSON/HTML
       response, e.g. a CDN error page served as 200). Surface: dismissible
       banner; clears on the first successful probe.
-    - ACCESS — a structured application 403 denies a permission. Dismissing
-      the dialog preserves the session and saved work.
+    - ACCESS — a manager_access_required 403 needs manager enrollment.
+      Dismissing the dialog preserves the session and saved work. Other
+      application permission denials stay with the action's error UI.
     - AUTH   — the device session is dead (ReauthRequiredError, or a bare API
       gateway 403). Surface: sign-out dialog; recovery is site
       re-entry (clearSite → site-setup).
@@ -86,11 +87,13 @@ export function classifyApiFailure(err) {
     return state;
   }
   if (status === 403) {
-    // Structured application denials describe permissions, not session expiry.
-    // Bare gateway denials still represent a rejected device session.
+    // Only missing manager access needs the global enrollment guidance.
+    // Other structured denials belong to the action's own error UI; bare
+    // gateway denials still represent a rejected device session.
     const code = /** @type {any} */ (err).body?.error;
     if (state !== "auth") {
-      setState(typeof code === "string" ? "access" : "auth");
+      if (code === "manager_access_required") setState("access");
+      else if (typeof code !== "string") setState("auth");
     }
     return state;
   }
