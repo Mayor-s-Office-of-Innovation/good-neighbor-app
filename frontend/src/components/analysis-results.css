@@ -95,7 +95,7 @@
   width: 100%;
   margin: 0;
   color: var(--wa-color-text-normal, #1b1d26);
-  font-size: var(--wa-font-size-l, 1.25rem);
+  font-size: var(--wa-font-size-m, 1rem);
   line-height: 1.2;
   text-align: center;
 }
@@ -206,7 +206,7 @@ html.wa-dark .analysis-tray--history {
   margin: 0;
   color: var(--wa-color-neutral-fill-loud, #2f323f);
   font-family: var(--wa-font-family-body, var(--font-sans));
-  font-size: var(--wa-font-size-l, 1.25rem);
+  font-size: var(--wa-font-size-xl, 1.5625rem);
   font-weight: var(--wa-font-weight-bold, 600);
   line-height: 1.2;
 }
