@@ -5462,7 +5462,7 @@ function providerView(state) {
 function providerManagerPanel(state) {
   return `<section class="subsection" aria-labelledby="provider-managers-title">
     <div class="panel__head"><h2 id="provider-managers-title">Provider managers</h2><button class="btn-primary" id="add-provider-manager" type="button" aria-haspopup="dialog">${escapeHtml(t("admin.providers.addManager"))}</button></div>
-    <p class="muted">Provider Manager devices receive access to every active Site associated with this Provider when the enrollment link is redeemed. Links expire after 15 minutes and enroll one physical device for all active Sites. Providers with more than 21 active Sites cannot issue a link.</p>
+    <p class="muted">${escapeHtml(t("admin.enrollment.providerInstructions"))}</p>
     ${state.providerManagers.map(providerManagerRow).join("")}
     <dialog id="add-provider-manager-dialog" class="places-modal" data-provider-manager-dialog aria-labelledby="add-provider-manager-title">
       <form class="places-modal__card site-details-form" data-provider-manager-form>

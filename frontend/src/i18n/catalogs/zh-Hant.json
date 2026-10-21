@@ -1036,5 +1036,6 @@
   "admin.programs.createNew": "建立新計畫",
   "admin.programs.name": "計畫名稱",
   "admin.programs.staffSourceChanged": "此員工資料已變更。請重新整理清單並再次選擇員工。",
-  "admin.programs.retryStaff": "重試載入現有人員"
+  "admin.programs.retryStaff": "重試載入現有人員",
+  "admin.enrollment.providerInstructions": "供應商管理員的裝置使用註冊連結後，可存取此供應商的所有使用中地點。連結於 24 小時後失效，可為所有使用中地點註冊一部實體裝置。擁有超過 21 個使用中地點的供應商無法發出連結。"
 }

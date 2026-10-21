@@ -1036,5 +1036,6 @@
   "admin.programs.createNew": "Crear nuevo programa",
   "admin.programs.name": "Nombre del programa",
   "admin.programs.staffSourceChanged": "Este registro de personal cambió. Actualice la lista y vuelva a seleccionar a una persona.",
-  "admin.programs.retryStaff": "Volver a cargar el personal existente"
+  "admin.programs.retryStaff": "Volver a cargar el personal existente",
+  "admin.enrollment.providerInstructions": "Los dispositivos de los responsables del proveedor reciben acceso a todos los sitios activos de este proveedor al canjear el enlace. Los enlaces caducan a las 24 horas y registran un dispositivo físico para todos los sitios activos. Los proveedores con más de 21 sitios activos no pueden emitir enlaces."
 }

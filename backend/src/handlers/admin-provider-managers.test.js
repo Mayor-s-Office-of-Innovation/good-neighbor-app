@@ -233,6 +233,10 @@ describe("Provider Manager administration", () => {
     );
 
     expect(response.statusCode).toBe(201);
+    const grant = JSON.parse(String(response.body)).grant;
+    expect(Date.parse(grant.expiresAt) - Date.parse(grant.createdAt)).toBe(
+      24 * 60 * 60 * 1000,
+    );
     const deliveryUpdate = send.mock.calls[5][0];
     expect(deliveryUpdate.constructor.name).toBe("UpdateCommand");
     expect(deliveryUpdate.input.ConditionExpression).toBe(

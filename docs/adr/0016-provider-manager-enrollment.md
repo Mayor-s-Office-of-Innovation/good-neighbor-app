@@ -18,7 +18,7 @@ those Site boundaries.
 - Only a Compliance Supervisor may create, update, deactivate, reinstate, or
   enroll a Provider Manager. A Compliance Manager has no provider-wide
   lifecycle or enrollment capability.
-- A provider enrollment link is valid for 15 minutes and is single use. Its
+- A provider enrollment link is valid for 24 hours and is single use. Its
   redemption resolves the Provider's active Sites at redemption time, not at
   issuance time.
 - A membership may have only one unexpired provider link. Issuing another link
