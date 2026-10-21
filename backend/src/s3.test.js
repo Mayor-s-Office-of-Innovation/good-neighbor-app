@@ -47,6 +47,22 @@ describe("putObject", () => {
     expect(command).toBeInstanceOf(PutObjectCommand);
     expect(command.input).not.toHaveProperty("Tagging");
   });
+
+  it("applies lifecycle tags in the same request when asked", async () => {
+    await putObject({
+      bucket: "uploads",
+      key: "checks/site-1/chk_01/art_1.thumb.webp",
+      body: Buffer.from("webp"),
+      contentType: "image/webp",
+      tagging: "state=active",
+    });
+
+    const command = send.mock.calls[0][0];
+    expect(command.input).toMatchObject({
+      ContentType: "image/webp",
+      Tagging: "state=active",
+    });
+  });
 });
 
 afterEach(() => {

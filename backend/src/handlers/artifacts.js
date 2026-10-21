@@ -588,7 +588,8 @@ export const presignMedia = async (event) => {
   }
   // Stored data is still treated as untrusted. Never sign a key outside the
   // caller's tenant even if a legacy/corrupt row points there.
-  if (!artifact.s3Key.startsWith(`checks/${siteId}/${checkId}/`)) {
+  const tenantPrefix = `checks/${siteId}/${checkId}/`;
+  if (!artifact.s3Key.startsWith(tenantPrefix)) {
     console.error(
       JSON.stringify({
         marker: "MediaTenantMismatch",
@@ -600,35 +601,33 @@ export const presignMedia = async (event) => {
     return jsonResponse(404, { error: "Artifact not found" });
   }
 
-  // The worker stores a small card variant beside the original (see
-  // media/thumbnail.js) and records its key on the row. Sign it under the same
-  // tenant rule; a row without one (not yet analyzed, legacy, or a failed
-  // write) just gets the original, which the client already handles.
-  const thumbS3Key =
-    typeof artifact.thumbS3Key === "string" &&
-    artifact.thumbS3Key.startsWith(`checks/${siteId}/${checkId}/`)
-      ? artifact.thumbS3Key
-      : null;
-  const [downloadUrl, thumbnailUrl] = await Promise.all([
+  /** @param {string} key */
+  const sign = (key) =>
     presignGet({
       bucket: uploadBucket,
-      key: artifact.s3Key,
+      key,
       expiresIn: PRESIGN_EXPIRY_SECONDS,
-    }),
-    thumbS3Key
-      ? presignGet({
-          bucket: uploadBucket,
-          key: thumbS3Key,
-          expiresIn: PRESIGN_EXPIRY_SECONDS,
-        })
-      : Promise.resolve(null),
+    });
+  // The worker stores a small card variant beside the original (see
+  // media/thumbnail.js) and records its key on the row. Sign it under the same
+  // tenant rule, best-effort: a row without one (not yet analyzed, a
+  // task-update photo, or a failed write) just gets the original, which the
+  // client already handles, and so does a thumbnail that fails to sign.
+  const thumbS3Key =
+    typeof artifact.thumbS3Key === "string" &&
+    artifact.thumbS3Key.startsWith(tenantPrefix)
+      ? artifact.thumbS3Key
+      : undefined;
+  const [downloadUrl, thumbnailUrl] = await Promise.all([
+    sign(artifact.s3Key),
+    thumbS3Key ? sign(thumbS3Key).catch(() => undefined) : undefined,
   ]);
 
   return jsonResponse(200, {
     artifactId,
     s3Key: artifact.s3Key,
     downloadUrl,
-    ...(thumbnailUrl ? { thumbnailUrl } : {}),
+    thumbnailUrl,
     expiresIn: PRESIGN_EXPIRY_SECONDS,
   });
 };

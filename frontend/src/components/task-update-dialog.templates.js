@@ -68,12 +68,13 @@ export function taskUpdateDialogShell({ mode, state, content }) {
     </dialog>`;
 }
 
-/** @param {{ task: Record<string, any>, updates: Record<string, any>[], issueOrigin: string, originalMediaUrl: string, mediaUrls: Map<string, string>, nextToken?: string | null, now?: Date }} view */
+/** @param {{ task: Record<string, any>, updates: Record<string, any>[], issueOrigin: string, originalMediaUrl: string, originalFullMediaUrl?: string, mediaUrls: Map<string, string>, nextToken?: string | null, now?: Date }} view */
 export function taskUpdateTimeline({
   task,
   updates,
   issueOrigin,
   originalMediaUrl,
+  originalFullMediaUrl = "",
   mediaUrls,
   nextToken,
   now = new Date(),
@@ -162,6 +163,9 @@ export function taskUpdateTimeline({
             class="task-update__photo-trigger"
             type="button"
             data-photo-lightbox
+            data-full-src="${escapeAttr(
+              originalFullMediaUrl || originalMediaUrl,
+            )}"
             data-photo-address="${escapeAttr(address)}"
             data-photo-time="${escapeAttr(
               task.createdAt || task.created_at || task.notifiedAt || "",

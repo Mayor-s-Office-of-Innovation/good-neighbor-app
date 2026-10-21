@@ -54,12 +54,13 @@ reads the photo from S3, **downscales it (sharp: EXIF-orient, fit 1568 px long
 edge, JPEG q80)** — bounding the base64 payload so the analyzer never sees raw
 camera-resolution bytes (full-size input was rejected 413 `input_too_large` before
 the downscale existed) — then calls the analyzer and writes the `ANALYSIS#` item.
-From the same normalized bytes it also encodes a ≤480 px WebP card thumbnail
-(`media/thumbnail.js`) and stores it beside the original as `<key>.thumb.webp`; that
-S3 write starts before the analyzer call and is awaited after it, so it overlaps the
-analyzer's latency rather than adding to it, and a failure only means the card shows
-the original. The key lands on the `ART#` row (`thumbS3Key`) after the analysis is
-written, and `presignMedia` signs it as `thumbnailUrl` next to the original.
+From the same normalized bytes it also makes the ≤480 px WebP card thumbnail
+(`media/thumbnail.js`: stored beside the original as `<key>.thumb.webp`, then recorded
+on the `ART#` row as `thumbS3Key`). That work starts just before the analyzer call and
+is drained before every exit, so it overlaps the analyzer's latency rather than adding
+to it; it is independent of the analyzer's outcome, and a failure only means the card
+shows the original (`ThumbnailFailed` metric). `presignMedia` signs the recorded key as
+`thumbnailUrl` next to the original.
 sharp is esbuild-`external` and copied from node_modules into the worker bundle
 only (api/authorizer never import it).
 

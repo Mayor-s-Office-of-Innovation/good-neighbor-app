@@ -44,9 +44,13 @@ The analyze worker stores a card thumbnail beside every check photo it analyzes
 (`<key>.thumb.webp`, ≤480 px WebP, tagged active; `backend/src/media/thumbnail.js`). It
 sits under the same `checks/<site>/<check>/` prefix, so the 30-day expiry and the media
 route's tenant check cover it without separate rules. A missing thumbnail is never an
-error: `presignMedia` returns only the original and cards use that. Photos analyzed
-before thumbnails existed can be filled in with `npm run backfill:thumbnails -w backend`
-(dry run by default, `--apply` to write; needs `DYNAMO_TABLE` and `S3_UPLOAD_BUCKET`).
+error: `presignMedia` returns only the original and cards use that. Task-update photos
+are never analyzed, so they have no thumbnail and always serve the original. Photos
+analyzed before thumbnails existed can be filled in with
+`npm run backfill:thumbnails -w backend` (dry run by default, `--apply` to write,
+`--site <id>` to scope; needs `DYNAMO_TABLE` and `S3_UPLOAD_BUCKET`). A backfilled
+thumbnail gets its own 30-day clock, so the script skips photos older than 25 days
+rather than create a thumbnail that would outlive its original.
 
 Proactive care photos share this bucket under the isolated `care-work/` prefix. Their
 source uploads retain the one-day pending tag; validated, EXIF-stripped JPEGs use the

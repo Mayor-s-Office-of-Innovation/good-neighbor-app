@@ -1231,6 +1231,7 @@ function imagePreview(item) {
               place: placeName || t("card.evidence.siteFallback"),
             }),
           )}"
+          decoding="async"
         />
       </button>
     </div>

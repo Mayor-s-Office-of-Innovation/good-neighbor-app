@@ -69,14 +69,10 @@ async function hydrateTaskFromArtifacts(task, artifacts) {
         task.checkId,
         artifact.artifactId,
       );
-      return {
-        ...task,
-        evidence,
-        mediaUrl: downloadUrl,
-        // Cards show the small variant when the worker has stored one; the
-        // original is the fallback (and always the lightbox source).
-        thumbnailUrl: thumbnailUrl || downloadUrl,
-      };
+      // `taskMediaUrl` picks the thumbnail for cards when the worker has
+      // stored one and falls back to the original; the original is always
+      // the lightbox source.
+      return { ...task, evidence, mediaUrl: downloadUrl, thumbnailUrl };
     } catch (err) {
       console.warn("Could not hydrate task media", {
         checkId: task.checkId,
@@ -139,9 +135,9 @@ export async function cachedMediaUrls(checkId, artifactId) {
     MEDIA_URL_CACHE.set(
       key,
       getMediaUrl(checkId, artifactId)
-        .then((media) => ({
-          downloadUrl: media.downloadUrl,
-          ...(media.thumbnailUrl ? { thumbnailUrl: media.thumbnailUrl } : {}),
+        .then(({ downloadUrl, thumbnailUrl }) => ({
+          downloadUrl,
+          thumbnailUrl,
         }))
         .catch((err) => {
           MEDIA_URL_CACHE.delete(key);

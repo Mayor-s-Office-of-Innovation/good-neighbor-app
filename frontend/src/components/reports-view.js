@@ -743,9 +743,7 @@ class ReportsDayView extends ReportsScreen {
         artifactId: a.artifactId,
         kind: "photo",
         url: urls[i]?.downloadUrl || "",
-        ...(urls[i]?.thumbnailUrl
-          ? { thumbnailUrl: urls[i].thumbnailUrl }
-          : {}),
+        thumbnailUrl: urls[i]?.thumbnailUrl,
       })),
       ...artifacts
         .filter((a) => a.text)

@@ -2,13 +2,12 @@ import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
 
-const { ddbSend, putObject, setObjectTags } = vi.hoisted(() => ({
+const { ddbSend, putObject } = vi.hoisted(() => ({
   ddbSend: vi.fn(),
   putObject: vi.fn(),
-  setObjectTags: vi.fn(),
 }));
 vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
-vi.mock("../s3.js", () => ({ putObject, setObjectTags }));
+vi.mock("../s3.js", () => ({ putObject }));
 
 const {
   makeThumbnail,
@@ -37,7 +36,6 @@ const jpeg = (width, height) =>
 beforeEach(() => {
   ddbSend.mockReset().mockResolvedValue({});
   putObject.mockReset().mockResolvedValue({});
-  setObjectTags.mockReset().mockResolvedValue({});
 });
 
 describe("makeThumbnail", () => {
@@ -72,7 +70,7 @@ describe("makeThumbnail", () => {
 });
 
 describe("storeThumbnail", () => {
-  it("writes the WebP beside the original and tags it active", async () => {
+  it("writes the WebP beside the original, tagged active in the same PUT", async () => {
     const key = await storeThumbnail({
       bucket: "bucket",
       s3Key: "checks/site-1/chk_01/art_1",
@@ -85,13 +83,9 @@ describe("storeThumbnail", () => {
       bucket: "bucket",
       key,
       contentType: "image/webp",
+      tagging: "state=active",
     });
     expect(putObject.mock.calls[0][0].body).toBeInstanceOf(Buffer);
-    expect(setObjectTags).toHaveBeenCalledWith({
-      bucket: "bucket",
-      key,
-      tags: { state: "active" },
-    });
   });
 });
 
