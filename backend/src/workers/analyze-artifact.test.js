@@ -425,51 +425,58 @@ describe("analyze-artifact worker", () => {
     expect(res).toEqual({ batchItemFailures: [{ itemIdentifier: "m2" }] });
   });
 
-  it("marks a permanent analyzer failure and consumes the message", async () => {
-    getObjectBytes.mockResolvedValueOnce({
-      bytes: Buffer.from("img"),
-      contentType: "image/jpeg",
-    });
-    analyze.mockRejectedValueOnce(
-      new AnalyzerError("bad request", {
-        status: 400,
-        code: "invalid_request",
-        retryable: false,
-      }),
-    );
-    ddbSend.mockResolvedValue({});
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  it.each([
+    [400, "invalid_request"],
+    [502, "model_unavailable"],
+    [502, "model_access_denied"],
+  ])(
+    "marks permanent analyzer failure %s %s and consumes the message",
+    async (status, code) => {
+      getObjectBytes.mockResolvedValueOnce({
+        bytes: Buffer.from("img"),
+        contentType: "image/jpeg",
+      });
+      analyze.mockRejectedValueOnce(
+        new AnalyzerError("bad request", {
+          status,
+          code,
+          retryable: false,
+        }),
+      );
+      ddbSend.mockResolvedValue({});
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await invoke(baseMsg);
+      expect(await invoke(baseMsg)).toEqual({ batchItemFailures: [] });
 
-    // Counted once as a permanent failure with the analyzer's reason code.
-    expect(metricLines(log, "AnalysisFailed")).toEqual([
-      expect.objectContaining({
-        Kind: "photo",
-        AnalysisFailed: 1,
-        reason: "invalid_request",
-        checkId: "chk_01",
-        artifactId: "art_1",
-      }),
-    ]);
-    expect(metricLines(log, "AnalyzerCall")[0]).toMatchObject({
-      outcome: "permanent",
-    });
-    expect(metricLines(log, "AnalysisRetried")).toHaveLength(0);
+      // Counted once as a permanent failure with the analyzer's reason code.
+      expect(metricLines(log, "AnalysisFailed")).toEqual([
+        expect.objectContaining({
+          Kind: "photo",
+          AnalysisFailed: 1,
+          reason: code,
+          checkId: "chk_01",
+          artifactId: "art_1",
+        }),
+      ]);
+      expect(metricLines(log, "AnalyzerCall")[0]).toMatchObject({
+        outcome: "permanent",
+      });
+      expect(metricLines(log, "AnalysisRetried")).toHaveLength(0);
 
-    // A single failure marker, conditional so a replay can't duplicate it.
-    expect(ddbSend).toHaveBeenCalledTimes(1);
-    const put = ddbSend.mock.calls[0][0];
-    expect(put).toBeInstanceOf(PutCommand);
-    expect(put.input.ConditionExpression).toBe("attribute_not_exists(sk)");
-    expect(put.input.Item).toMatchObject({
-      sk: "CHECK#chk_01#ANALYSIS#art_1",
-      status: "failed",
-      error: { code: "invalid_request", status: 400, message: "bad request" },
-    });
-    expect(put.input.Item).not.toHaveProperty("placeId");
-    expect(put.input.Item).not.toHaveProperty("placeName");
-  });
+      // A single failure marker, conditional so a replay can't duplicate it.
+      expect(ddbSend).toHaveBeenCalledTimes(1);
+      const put = ddbSend.mock.calls[0][0];
+      expect(put).toBeInstanceOf(PutCommand);
+      expect(put.input.ConditionExpression).toBe("attribute_not_exists(sk)");
+      expect(put.input.Item).toMatchObject({
+        sk: "CHECK#chk_01#ANALYSIS#art_1",
+        status: "failed",
+        error: { code, status, message: "bad request" },
+      });
+      expect(put.input.Item).not.toHaveProperty("placeId");
+      expect(put.input.Item).not.toHaveProperty("placeName");
+    },
+  );
 
   it("lets a re-driven analyze replace a failed marker but not an existing success", async () => {
     getObjectBytes.mockResolvedValueOnce({
