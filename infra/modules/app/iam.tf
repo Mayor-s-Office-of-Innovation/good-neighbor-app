@@ -446,6 +446,17 @@ data "aws_iam_policy_document" "worker" {
     resources = ["${aws_s3_bucket.uploads.arn}/*"]
   }
 
+  # The analyze worker stores a card thumbnail (`<key>.thumb.webp`) beside each
+  # check photo (backend/src/media/thumbnail.js). Scoped to the checks prefix:
+  # the worker still cannot overwrite an original (different key suffix) and
+  # never writes outside check media.
+  statement {
+    sid       = "WriteCheckThumbnails"
+    effect    = "Allow"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.uploads.arn}/checks/*"]
+  }
+
 
   statement {
     sid       = "ReadAndClassifyComplaints"

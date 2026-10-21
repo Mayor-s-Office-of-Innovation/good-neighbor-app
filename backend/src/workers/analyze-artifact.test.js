@@ -13,6 +13,8 @@ const {
   createAnalyzerClient,
   reverseGeocodePhoto,
   enqueueTranslateArtifact,
+  storeThumbnail,
+  recordThumbnail,
 } = vi.hoisted(() => ({
   ddbSend: vi.fn(),
   getObjectBytes: vi.fn(),
@@ -21,7 +23,10 @@ const {
   createAnalyzerClient: vi.fn(),
   reverseGeocodePhoto: vi.fn(),
   enqueueTranslateArtifact: vi.fn(async () => true),
+  storeThumbnail: vi.fn(),
+  recordThumbnail: vi.fn(),
 }));
+vi.mock("../media/thumbnail.js", () => ({ storeThumbnail, recordThumbnail }));
 vi.mock("../analysis/translate-enqueue.js", async (importOriginal) => ({
   .../** @type {any} */ (await importOriginal()),
   enqueueTranslateArtifact,
@@ -97,6 +102,10 @@ beforeEach(() => {
   createAnalyzerClient.mockReset();
   reverseGeocodePhoto.mockReset();
   enqueueTranslateArtifact.mockClear();
+  storeThumbnail
+    .mockReset()
+    .mockImplementation(async ({ s3Key }) => `${s3Key}.thumb.webp`);
+  recordThumbnail.mockReset().mockResolvedValue({});
   delete process.env.REVERSE_GEOCODING_ENABLED;
   createAnalyzerClient.mockReturnValue({ analyze });
   process.env.S3_UPLOAD_BUCKET = "bucket";
@@ -567,6 +576,97 @@ describe("analyze-artifact worker", () => {
       status: "failed",
       error: { code: "input_too_large" },
     });
+  });
+
+  it("stores the card thumbnail from the normalized bytes and records it once the analysis lands", async () => {
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    let analyzerCalledAfterThumbnailStarted = false;
+    analyze.mockImplementationOnce(async () => {
+      analyzerCalledAfterThumbnailStarted =
+        storeThumbnail.mock.calls.length === 1;
+      return singleLowConcernResponse;
+    });
+    ddbSend.mockResolvedValue({});
+
+    await invoke(baseMsg);
+
+    // Started before the analyzer call so it overlaps the remote latency.
+    expect(analyzerCalledAfterThumbnailStarted).toBe(true);
+    expect(storeThumbnail).toHaveBeenCalledWith({
+      bucket: "bucket",
+      s3Key: "checks/site-1/chk_01/art_1",
+      bytes: Buffer.from("img-bytes"),
+    });
+    // Recorded on the ARTIFACT row, after the ANALYSIS# put.
+    expect(recordThumbnail).toHaveBeenCalledWith({
+      tableName: "gnp-test-app",
+      key: { pk: "SITE#site-1", sk: "CHECK#chk_01#ART#art_1" },
+      thumbS3Key: "checks/site-1/chk_01/art_1.thumb.webp",
+    });
+    expect(recordThumbnail.mock.invocationCallOrder[0]).toBeGreaterThan(
+      ddbSend.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("keeps the analysis when the thumbnail write fails, and counts it", async () => {
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    storeThumbnail.mockRejectedValueOnce(new Error("s3 down"));
+    analyze.mockResolvedValueOnce(singleLowConcernResponse);
+    ddbSend.mockResolvedValue({});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await invoke(baseMsg);
+
+    expect(metricLines(log, "AnalysisCompleted")).toHaveLength(1);
+    expect(metricLines(log, "ThumbnailFailed")).toHaveLength(1);
+    expect(recordThumbnail).not.toHaveBeenCalled();
+    expect(ddbSend.mock.calls[0][0]).toBeInstanceOf(PutCommand);
+  });
+
+  it("keeps the analysis when recording the thumbnail key fails", async () => {
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    recordThumbnail.mockRejectedValueOnce(
+      Object.assign(new Error("gone"), {
+        name: "ConditionalCheckFailedException",
+      }),
+    );
+    analyze.mockResolvedValueOnce(singleLowConcernResponse);
+    ddbSend.mockResolvedValue({});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await invoke(baseMsg);
+
+    expect(metricLines(log, "AnalysisCompleted")).toHaveLength(1);
+    expect(enqueueTranslateArtifact).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not record a thumbnail for a permanently failed analysis", async () => {
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    analyze.mockRejectedValueOnce(
+      new AnalyzerError("bad", { status: 400, retryable: false }),
+    );
+    ddbSend.mockResolvedValue({});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await invoke(baseMsg);
+
+    expect(storeThumbnail).toHaveBeenCalledTimes(1);
+    expect(recordThumbnail).not.toHaveBeenCalled();
   });
 
   it("throws when ANALYZER_BASE_URL is not configured", async () => {

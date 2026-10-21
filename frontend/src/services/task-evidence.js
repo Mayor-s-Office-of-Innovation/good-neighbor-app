@@ -65,7 +65,7 @@ async function hydrateTaskFromArtifacts(task, artifacts) {
   };
   if (artifact.s3Key && artifact.contentType?.startsWith?.("image/")) {
     try {
-      const downloadUrl = await cachedMediaUrl(
+      const { downloadUrl, thumbnailUrl } = await cachedMediaUrls(
         task.checkId,
         artifact.artifactId,
       );
@@ -73,7 +73,9 @@ async function hydrateTaskFromArtifacts(task, artifacts) {
         ...task,
         evidence,
         mediaUrl: downloadUrl,
-        thumbnailUrl: downloadUrl,
+        // Cards show the small variant when the worker has stored one; the
+        // original is the fallback (and always the lightbox source).
+        thumbnailUrl: thumbnailUrl || downloadUrl,
       };
     } catch (err) {
       console.warn("Could not hydrate task media", {
@@ -121,17 +123,26 @@ async function cachedCheckArtifacts(checkId) {
 }
 
 /**
- * Presigned download URL for one artifact, memoised per page load.
- * @param {string} checkId @param {string} artifactId
- * @returns {Promise<string>}
+ * @typedef {{ downloadUrl: string, thumbnailUrl?: string }} MediaUrls
+ *   `downloadUrl` is the original; `thumbnailUrl` the small card variant when
+ *   the backend has one for this photo.
  */
-export async function cachedMediaUrl(checkId, artifactId) {
+
+/**
+ * Presigned URLs for one artifact, memoised per page load.
+ * @param {string} checkId @param {string} artifactId
+ * @returns {Promise<MediaUrls>}
+ */
+export async function cachedMediaUrls(checkId, artifactId) {
   const key = `${checkId}:${artifactId}`;
   if (!MEDIA_URL_CACHE.has(key)) {
     MEDIA_URL_CACHE.set(
       key,
       getMediaUrl(checkId, artifactId)
-        .then((media) => media.downloadUrl)
+        .then((media) => ({
+          downloadUrl: media.downloadUrl,
+          ...(media.thumbnailUrl ? { thumbnailUrl: media.thumbnailUrl } : {}),
+        }))
         .catch((err) => {
           MEDIA_URL_CACHE.delete(key);
           throw err;

@@ -40,6 +40,14 @@ rejected tags shorten this to one day; active photos retain the 30-day window. L
 noncurrent versions expire after seven days (one day for pending/rejected objects).
 Lifecycle deletion is asynchronous and is not an immediate-delete mechanism.
 
+The analyze worker stores a card thumbnail beside every check photo it analyzes
+(`<key>.thumb.webp`, ≤480 px WebP, tagged active; `backend/src/media/thumbnail.js`). It
+sits under the same `checks/<site>/<check>/` prefix, so the 30-day expiry and the media
+route's tenant check cover it without separate rules. A missing thumbnail is never an
+error: `presignMedia` returns only the original and cards use that. Photos analyzed
+before thumbnails existed can be filled in with `npm run backfill:thumbnails -w backend`
+(dry run by default, `--apply` to write; needs `DYNAMO_TABLE` and `S3_UPLOAD_BUCKET`).
+
 Proactive care photos share this bucket under the isolated `care-work/` prefix. Their
 source uploads retain the one-day pending tag; validated, EXIF-stripped JPEGs use the
 active tag. The API refuses photo access after 30 days even if lifecycle deletion has

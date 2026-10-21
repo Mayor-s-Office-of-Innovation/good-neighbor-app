@@ -18,13 +18,14 @@ import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
 import { getObjectBytes, setObjectTags } from "../s3.js";
 import { downscaleImage, DownscaleError } from "../media/downscale.js";
+import { recordThumbnail, storeThumbnail } from "../media/thumbnail.js";
 import {
   AnalyzerError,
   createAnalyzerClient,
 } from "../analysis/analyzer-client.js";
 import { adaptAssessment } from "../analysis/adapt-scorecard.js";
 import { getAnalyzerApiKey } from "../analysis/api-key.js";
-import { analysisKey, checkHeaderKey } from "../handlers/keys.js";
+import { analysisKey, artifactKey, checkHeaderKey } from "../handlers/keys.js";
 import {
   enqueueTranslateArtifact,
   translateItemsFor,
@@ -243,6 +244,11 @@ async function analyzeArtifact(
 ) {
   /** @type {import("../analysis/analyzer-client.js").AnalyzeMedia[]} */
   const media = [];
+  // Card thumbnail write, started before the analyzer call and awaited after
+  // it (like the address lookup) so it overlaps the analyzer's latency instead
+  // of adding to it. Resolves to the stored key, or null when it failed.
+  /** @type {Promise<string | null>} */
+  let thumbnailPromise = Promise.resolve(null);
   if (typeof msg.s3Key === "string" && msg.s3Key.length > 0) {
     // 1. Fetch the uploaded media (bytes only travel via the S3 key) + downscale.
     const object = await getObjectBytes({
@@ -309,6 +315,27 @@ async function analyzeArtifact(
       return;
     }
     const { bytes, contentType } = downscaled;
+
+    // Best-effort: a thumbnail failure is logged and counted, never thrown —
+    // the card falls back to the original and the backfill script can retry.
+    const s3Key = msg.s3Key;
+    thumbnailPromise = storeThumbnail({
+      bucket: uploadBucket,
+      s3Key,
+      bytes,
+    }).catch((err) => {
+      console.warn("Thumbnail write failed; card will use the original", {
+        checkId: msg.checkId,
+        artifactId: msg.artifactId,
+        error: err instanceof Error ? err.name : "UnknownError",
+      });
+      emitMetrics({
+        marker: "ThumbnailFailed",
+        metrics: [{ name: "ThumbnailFailed", value: 1 }],
+        props: metricIds(msg),
+      });
+      return null;
+    });
 
     if (!ANALYZER_IMAGE_TYPES.has(contentType)) {
       // A key that isn't one of our accepted image types can never analyze —
@@ -488,6 +515,27 @@ async function analyzeArtifact(
     ],
     props: { ...metricIds(msg), grade: adapted.grade },
   });
+
+  // 3b. Point the ARTIFACT row at its thumbnail (written during the analyzer
+  //     call). Recorded only once the analysis has landed, so a redelivery
+  //     that stops at the conditional put above never re-touches the row.
+  //     Best-effort like the write itself.
+  const thumbS3Key = await thumbnailPromise;
+  if (thumbS3Key) {
+    try {
+      await recordThumbnail({
+        tableName: dynamoTable,
+        key: artifactKey(msg.siteId, msg.checkId, msg.artifactId),
+        thumbS3Key,
+      });
+    } catch (err) {
+      console.warn("Thumbnail key not recorded; card will use the original", {
+        checkId: msg.checkId,
+        artifactId: msg.artifactId,
+        error: err instanceof Error ? err.name : "UnknownError",
+      });
+    }
+  }
 
   // 4. Hand the model-written text to the background translate worker so the
   //    locales the analyze call did not produce fill in (best-effort: a lost

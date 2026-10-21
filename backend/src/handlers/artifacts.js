@@ -537,7 +537,8 @@ export const deleteArtifact = async (event) => {
  * checkId + artifactId; pre-Phase-2 rows embed a retired place id in the sort
  * key, so we query this check's ART# items and match on `artifactId` (rather
  * than reconstruct the key). Scoped to the derived site, so one tenant can never
- * sign another's media.
+ * sign another's media. Also signs the card thumbnail (`thumbnailUrl`) when the
+ * worker has recorded one on the row.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const presignMedia = async (event) => {
@@ -599,16 +600,35 @@ export const presignMedia = async (event) => {
     return jsonResponse(404, { error: "Artifact not found" });
   }
 
-  const downloadUrl = await presignGet({
-    bucket: uploadBucket,
-    key: artifact.s3Key,
-    expiresIn: PRESIGN_EXPIRY_SECONDS,
-  });
+  // The worker stores a small card variant beside the original (see
+  // media/thumbnail.js) and records its key on the row. Sign it under the same
+  // tenant rule; a row without one (not yet analyzed, legacy, or a failed
+  // write) just gets the original, which the client already handles.
+  const thumbS3Key =
+    typeof artifact.thumbS3Key === "string" &&
+    artifact.thumbS3Key.startsWith(`checks/${siteId}/${checkId}/`)
+      ? artifact.thumbS3Key
+      : null;
+  const [downloadUrl, thumbnailUrl] = await Promise.all([
+    presignGet({
+      bucket: uploadBucket,
+      key: artifact.s3Key,
+      expiresIn: PRESIGN_EXPIRY_SECONDS,
+    }),
+    thumbS3Key
+      ? presignGet({
+          bucket: uploadBucket,
+          key: thumbS3Key,
+          expiresIn: PRESIGN_EXPIRY_SECONDS,
+        })
+      : Promise.resolve(null),
+  ]);
 
   return jsonResponse(200, {
     artifactId,
     s3Key: artifact.s3Key,
     downloadUrl,
+    ...(thumbnailUrl ? { thumbnailUrl } : {}),
     expiresIn: PRESIGN_EXPIRY_SECONDS,
   });
 };

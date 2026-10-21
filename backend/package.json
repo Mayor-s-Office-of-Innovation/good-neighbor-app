@@ -13,6 +13,7 @@
     "migrate:cognito-admin-groups": "node scripts/migrate-cognito-admin-groups.mjs",
     "backfill:transitional-programs": "node scripts/backfill-transitional-programs.mjs",
     "backfill:report-timelines": "node scripts/backfill-report-timelines.mjs",
+    "backfill:thumbnails": "node scripts/backfill-thumbnails.mjs",
     "seed:dev-site-codes": "node scripts/seed-dev-site-codes.mjs",
     "test:mail-relay": "node scripts/test-mail-manager-smtp.mjs",
     "lint": "eslint src",

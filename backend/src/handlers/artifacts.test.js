@@ -675,6 +675,66 @@ describe("presignMedia", () => {
     });
   });
 
+  it("also signs the recorded card thumbnail", async () => {
+    ddbSend.mockResolvedValueOnce({
+      Items: [
+        {
+          sk: "CHECK#chk_01#ART#art_1",
+          artifactId: "art_1",
+          s3Key: "checks/site-1/chk_01/art_1",
+          thumbS3Key: "checks/site-1/chk_01/art_1.thumb.webp",
+        },
+      ],
+    });
+    presignGet.mockImplementation(async ({ key }) => `https://signed/${key}`);
+
+    const res = await callMedia(
+      mediaEvent({
+        checkId: "chk_01",
+        artifactId: "art_1",
+        siteClaim: "site-1",
+      }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    const payload = JSON.parse(res.body);
+    expect(payload.downloadUrl).toBe(
+      "https://signed/checks/site-1/chk_01/art_1",
+    );
+    expect(payload.thumbnailUrl).toBe(
+      "https://signed/checks/site-1/chk_01/art_1.thumb.webp",
+    );
+    expect(presignGet).toHaveBeenCalledTimes(2);
+  });
+
+  it("omits thumbnailUrl when none is recorded or the key is outside this check", async () => {
+    ddbSend.mockResolvedValueOnce({
+      Items: [
+        {
+          sk: "CHECK#chk_01#ART#art_1",
+          artifactId: "art_1",
+          s3Key: "checks/site-1/chk_01/art_1",
+          thumbS3Key: "checks/site-2/chk_01/art_1.thumb.webp",
+        },
+      ],
+    });
+    presignGet.mockResolvedValueOnce("https://signed.example/get");
+
+    const res = await callMedia(
+      mediaEvent({
+        checkId: "chk_01",
+        artifactId: "art_1",
+        siteClaim: "site-1",
+      }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    const payload = JSON.parse(res.body);
+    expect(payload.downloadUrl).toBe("https://signed.example/get");
+    expect(payload).not.toHaveProperty("thumbnailUrl");
+    expect(presignGet).toHaveBeenCalledTimes(1);
+  });
+
   it("404s when no artifact matches the id (no presign)", async () => {
     ddbSend.mockResolvedValueOnce({
       Items: [
