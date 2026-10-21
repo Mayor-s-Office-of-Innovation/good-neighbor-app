@@ -705,9 +705,6 @@
   "setup.sendCode": "Gửi mã",
   "setup.welcome": "Chào mừng bạn đến với Good Neighbor.",
   "siteAdmin.compliance.checksPerDay": "Số đợt kiểm tra bắt buộc mỗi ngày",
-  "siteAdmin.compliance.currentTier": "Bậc hiện tại",
-  "siteAdmin.compliance.tier": "Bậc {tier}",
-  "siteAdmin.compliance.tierPeriod": "Thời hạn bậc",
   "siteAdmin.compliance.title": "Tuân thủ",
   "siteAdmin.contact.name": "Tên",
   "siteAdmin.contact.title": "Người liên hệ",
@@ -1037,5 +1034,11 @@
   "admin.programs.name": "Tên chương trình",
   "admin.programs.staffSourceChanged": "Hồ sơ nhân viên đã thay đổi. Hãy làm mới danh sách và chọn lại nhân viên.",
   "admin.programs.retryStaff": "Thử tải lại nhân viên hiện có",
-  "admin.enrollment.providerInstructions": "Thiết bị của người quản lý nhà cung cấp được truy cập tất cả địa điểm đang hoạt động của nhà cung cấp khi sử dụng liên kết đăng ký. Liên kết hết hạn sau 24 giờ và đăng ký một thiết bị vật lý cho tất cả địa điểm đang hoạt động. Nhà cung cấp có hơn 21 địa điểm đang hoạt động không thể cấp liên kết."
+  "admin.enrollment.providerInstructions": "Thiết bị của người quản lý nhà cung cấp được truy cập tất cả địa điểm đang hoạt động của nhà cung cấp khi sử dụng liên kết đăng ký. Liên kết hết hạn sau 24 giờ và đăng ký một thiết bị vật lý cho tất cả địa điểm đang hoạt động. Nhà cung cấp có hơn 21 địa điểm đang hoạt động không thể cấp liên kết.",
+  "siteAdmin.compliance.enhancedMonitoring": "Giám sát tăng cường",
+  "siteAdmin.compliance.period": "Thời hạn yêu cầu",
+  "admin.compliance.yes": "Có",
+  "admin.compliance.no": "Không",
+  "admin.compliance.enhancedReason": "Địa điểm đang được giám sát tăng cường do vấn đề GNP",
+  "admin.compliance.checkInputs": "Kiểm tra ngày tuân thủ và số lần kiểm tra cần thiết mỗi ngày."
 }

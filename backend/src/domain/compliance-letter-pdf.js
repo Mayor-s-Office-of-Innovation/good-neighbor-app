@@ -4,205 +4,162 @@ import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 
 const REASONS = {
-  1: "Recurring or unresolved Good Neighbor concerns have been identified at this site.",
-  2: "Site is a Permanent Supportive Housing property.",
-  3: "Site is a Shelter.",
+  1: "Recurring or unresolved Good Neighbor (GN) concerns have been identified at this site.",
+  2: "Site is a Permanent Supportive Housing property;",
+  3: "Site is a Shelter;",
   4: "Site is a drop-in center characterized by frequent, high-volume visitor traffic (e.g., walk-in access, same-day/no-appointment services, or high daily visit counts), where continuous public-facing conditions make more frequent documentation reasonably necessary.",
-  5: "The department has evidence of a pattern of undocumented or un-escalated conditions at the site.",
-  6: "The provider is in Tiers 1-4 of corrective action.",
+  6: "This site is under enhanced monitoring for GNP concerns.",
 };
 
-/**
- * Generate the one-page perimeter-check notice with embedded, subsetted Unicode
- * fonts so names are not transliterated or silently stripped.
- * @param {Record<string, any>} period
- * @returns {Promise<Buffer>}
+/** English number words for the supported daily check range (1–100).
+ * @param {number} count
  */
-export async function generateComplianceLetterPdf(period) {
+function checkCountWords(count) {
+  const small = [
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
+  ];
+  if (count < 20) return small[count];
+  if (count === 100) return "one hundred";
+  const tens = [
+    "",
+    "",
+    "twenty",
+    "thirty",
+    "forty",
+    "fifty",
+    "sixty",
+    "seventy",
+    "eighty",
+    "ninety",
+  ];
+  return (
+    tens[Math.floor(count / 10)] + (count % 10 ? `-${small[count % 10]}` : "")
+  );
+}
+
+/** Shared layout keeps the PDF and browser preview identical.
+ * @param {Record<string, any>} period
+ */
+function letterLayout(period) {
   const input = period.letterInputs || {};
-  const selected = new Set(period.reasons || []);
+  /** @type {{text: string, x: number, y: number, size: number, bold: boolean}[]} */
+  const lines = [];
+  let y = 750;
+  /** @param {string} value @param {number} [size] @param {boolean} [bold] */
+  const paragraph = (value, size = 9, bold = false) => {
+    for (const line of wrap(value, Math.floor(504 / (size * 0.52)))) {
+      lines.push({ text: line, x: 54, y, size, bold });
+      y -= size + 3;
+    }
+    y -= 6;
+  };
+  const count = Number(period.requiredChecksPerDay);
+  const cadence =
+    Number.isInteger(count) && count >= 1 && count <= 100
+      ? `${checkCountWords(count)} (${count})`
+      : String(period.requiredChecksPerDay);
+  const start = formatDate(period.effectiveStart);
+  const end = period.periodEnd ? formatDate(period.periodEnd) : "";
+  const managers = [
+    input.siteManagerName,
+    ...(input.providerManagerNames || []),
+  ].filter(Boolean);
+  paragraph(input.departmentName || "", 12, true);
+  paragraph(formatDate(input.confirmedOn));
+  paragraph(`Attn: ${managers.join(", ")}`);
+  paragraph(`Re: ${input.siteName}: ${input.siteAddress}`);
+  paragraph(
+    "Re: Required Documented Perimeter Checks — Good Neighbor Policy",
+    10,
+    true,
+  );
+  paragraph(`Dear ${input.siteManagerFirstName},`);
+  paragraph(
+    `This letter is to notify you that, in accordance with the Good Neighbor Policy (GNP), the City has determined that ${input.siteName} at ${input.siteAddress} is required to conduct and document perimeter checks at least ${cadence} ${count === 1 ? "time" : "times"} per day, effective ${start}. ${input.leadProgramName ? `Based on our records, the GNP primary operator for this address is ${input.leadProgramName}. ` : ""}City records reflect ${new Intl.ListFormat("en-US", { style: "long", type: "conjunction" }).format(managers)} ${managers.length > 1 ? "oversee" : "oversees"} GNP compliance for this address.`,
+  );
+  paragraph(
+    `The requirement for ${input.siteAddress} to conduct documented perimeter checks is based on the following threshold criteria:`,
+  );
+  for (const [reason, label] of Object.entries(REASONS)) {
+    paragraph(
+      `${(period.reasons || []).includes(reason) ? "[X]" : "[ ]"} ${label}`,
+      8.5,
+    );
+  }
+  paragraph(
+    `Beginning ${start}${end ? ` through ${end}` : ", until further notice"}, your site must:`,
+  );
+  paragraph(
+    `1. Conduct at least ${cadence} perimeter ${count === 1 ? "check" : "checks"} per day covering the immediate area surrounding the site (IASS);`,
+  );
+  paragraph("2. Document each check in the GN application; and");
+  paragraph(
+    "3. Continue to follow all other applicable GN required activities.",
+  );
+  paragraph(
+    "If you have questions about this notice or need support meeting this requirement, please contact me.",
+  );
+  paragraph("Sincerely,");
+  paragraph(input.programManagerName || "");
+  paragraph(input.departmentName || "");
+  // Long names/addresses retain all text; scale the entire layout to fit.
+  if (y < 42) {
+    const scale = (750 - 42) / (750 - y);
+    for (const line of lines) {
+      line.y = 750 - (750 - line.y) * scale;
+      line.size *= scale;
+    }
+  }
+  return lines;
+}
+
+/** @param {Record<string, any>} period @returns {Promise<Buffer>} */
+export async function generateComplianceLetterPdf(period) {
   const document = await PDFDocument.create();
   document.registerFontkit(fontkit);
   const fonts = await embedFonts(document);
   const page = document.addPage([612, 792]);
-  /** @param {unknown} value @param {number} x @param {number} y @param {number} [size] @param {boolean} [bold] */
-  const text = (value, x, y, size = 10, bold = false) => {
-    drawUnicodeText(page, String(value ?? ""), x, y, size, fonts, bold);
-  };
-  /** @param {unknown} value @param {number} x @param {number} y @param {number} width @param {number} [size] @param {number} [leading] */
-  const paragraph = (value, x, y, width, size = 9.5, leading = 12) => {
-    const lines = wrap(
-      String(value ?? ""),
-      Math.max(20, Math.floor(width / (size * 0.5))),
+  for (const line of letterLayout(period)) {
+    drawUnicodeText(
+      page,
+      line.text,
+      line.x,
+      line.y,
+      line.size,
+      fonts,
+      line.bold,
     );
-    lines.forEach((line, index) => text(line, x, y - index * leading, size));
-    return y - lines.length * leading;
-  };
-  const formattedStart = formatDate(period.effectiveStart);
-  const formattedEnd = period.periodEnd
-    ? formatDate(period.periodEnd)
-    : "until further notice";
-
-  text(input.departmentName || "", 54, 752, 12, true);
-  text(formatDate(input.confirmedOn), 54, 724, 10);
-  text(input.siteName, 54, 700, 10, true);
-  text(`Attn: ${input.siteManagerName}`, 54, 685, 10);
-  text(input.siteAddress, 54, 670, 10);
-  text(
-    "Re: Required Documented Perimeter Checks - Good Neighbor Policy",
-    54,
-    641,
-    11,
-    true,
-  );
-  text(`Dear ${input.siteManagerFirstName},`, 54, 615, 10);
-  let y = paragraph(
-    `${input.departmentName} is providing notice that ${input.siteName} is required to complete and document perimeter checks under the Good Neighbor Policy beginning ${formattedStart}.`,
-    54,
-    594,
-    504,
-  );
-  y -= 4;
-  text(
-    "This requirement is based on the following criteria (check all that apply):",
-    54,
-    y,
-    9.5,
-  );
-  y -= 18;
-  for (const [reason, label] of Object.entries(REASONS)) {
-    page.drawRectangle({
-      x: 54,
-      y: y - 2,
-      width: 9,
-      height: 9,
-      borderWidth: 0.8,
-      borderColor: rgb(0, 0, 0),
-    });
-    if (selected.has(reason)) {
-      page.drawLine({
-        start: { x: 56, y: y + 1 },
-        end: { x: 59, y: y - 2 },
-        thickness: 1.2,
-      });
-      page.drawLine({
-        start: { x: 59, y: y - 2 },
-        end: { x: 64, y: y + 5 },
-        thickness: 1.2,
-      });
-    }
-    y = paragraph(label, 70, y, 488, 8.5, 10) - 5;
   }
-  y -= 2;
-  y = paragraph(
-    `Beginning ${formattedStart} through ${formattedEnd}, the site must complete ${period.requiredChecksPerDay} documented perimeter checks per day using the Good Neighbor app and continue all other required Good Neighbor activities.`,
-    54,
-    y,
-    504,
-  );
-  y -= 5;
-  y = paragraph(
-    `Questions may be directed to ${input.programManagerName} at ${input.programManagerPhone} or ${input.programManagerEmail}.`,
-    54,
-    y,
-    504,
-  );
-  y -= 18;
-  text("Sincerely,", 54, y, 10);
-  text(input.programManagerName, 54, y - 27, 10);
-  text(input.departmentName, 54, y - 42, 10);
-
   return Buffer.from(await document.save());
 }
 
-/**
- * Generate a browser-safe first-page preview using the same inputs and layout
- * as the PDF. Keeping this as an image avoids relying on inconsistent embedded
- * PDF viewers while preserving the PDF as the authoritative download.
- * @param {Record<string, any>} period
- * @returns {Buffer}
- */
+/** @param {Record<string, any>} period @returns {Buffer} */
 export function generateComplianceLetterPreviewSvg(period) {
-  const input = period.letterInputs || {};
-  const selected = new Set(period.reasons || []);
   const elements = ['<rect width="612" height="792" fill="white"/>'];
-  /** @param {unknown} value @param {number} x @param {number} y @param {number} [size] @param {boolean} [bold] */
-  const text = (value, x, y, size = 10, bold = false) => {
+  for (const line of letterLayout(period)) {
     elements.push(
-      `<text x="${x}" y="${792 - y}" font-family="Arial, Helvetica, sans-serif" font-size="${size}"${bold ? ' font-weight="700"' : ""} fill="#111">${xmlText(value)}</text>`,
+      `<text x="${line.x}" y="${792 - line.y}" font-family="Arial, Helvetica, sans-serif" font-size="${line.size}"${line.bold ? ' font-weight="700"' : ""} fill="#111">${xmlText(line.text)}</text>`,
     );
-  };
-  /** @param {unknown} value @param {number} x @param {number} y @param {number} width @param {number} [size] @param {number} [leading] */
-  const paragraph = (value, x, y, width, size = 9.5, leading = 12) => {
-    const lines = wrap(
-      String(value ?? ""),
-      Math.max(20, Math.floor(width / (size * 0.5))),
-    );
-    lines.forEach((line, index) => text(line, x, y - index * leading, size));
-    return y - lines.length * leading;
-  };
-  const formattedStart = formatDate(period.effectiveStart);
-  const formattedEnd = period.periodEnd
-    ? formatDate(period.periodEnd)
-    : "until further notice";
-
-  text(input.departmentName || "", 54, 752, 12, true);
-  text(formatDate(input.confirmedOn), 54, 724);
-  text(input.siteName, 54, 700, 10, true);
-  text(`Attn: ${input.siteManagerName}`, 54, 685);
-  text(input.siteAddress, 54, 670);
-  text(
-    "Re: Required Documented Perimeter Checks - Good Neighbor Policy",
-    54,
-    641,
-    11,
-    true,
-  );
-  text(`Dear ${input.siteManagerFirstName},`, 54, 615);
-  let y = paragraph(
-    `${input.departmentName} is providing notice that ${input.siteName} is required to complete and document perimeter checks under the Good Neighbor Policy beginning ${formattedStart}.`,
-    54,
-    594,
-    504,
-  );
-  y -= 4;
-  text(
-    "This requirement is based on the following criteria (check all that apply):",
-    54,
-    y,
-    9.5,
-  );
-  y -= 18;
-  for (const [reason, label] of Object.entries(REASONS)) {
-    elements.push(
-      `<rect x="54" y="${785 - y}" width="9" height="9" fill="none" stroke="#111" stroke-width="0.8"/>`,
-    );
-    if (selected.has(reason)) {
-      elements.push(
-        `<path d="M56 ${791 - y} L59 ${794 - y} L64 ${787 - y}" fill="none" stroke="#111" stroke-width="1.2"/>`,
-      );
-    }
-    y = paragraph(label, 70, y, 488, 8.5, 10) - 5;
   }
-  y -= 2;
-  y = paragraph(
-    `Beginning ${formattedStart} through ${formattedEnd}, the site must complete ${period.requiredChecksPerDay} documented perimeter checks per day using the Good Neighbor app and continue all other required Good Neighbor activities.`,
-    54,
-    y,
-    504,
-  );
-  y -= 5;
-  y = paragraph(
-    `Questions may be directed to ${input.programManagerName} at ${input.programManagerPhone} or ${input.programManagerEmail}.`,
-    54,
-    y,
-    504,
-  );
-  y -= 18;
-  text("Sincerely,", 54, y);
-  text(input.programManagerName, 54, y - 27);
-  text(input.departmentName, 54, y - 42);
-
   return Buffer.from(
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 612 792" role="img">${elements.join("")}</svg>`,
   );
@@ -291,6 +248,8 @@ function fontSubset(codePoint) {
   ) {
     return "vietnamese";
   }
+  // The Latin font subset includes general punctuation, including em dashes.
+  if (codePoint >= 0x2000 && codePoint <= 0x206f) return "latin";
   if (codePoint > 0x00ff) return "latin-ext";
   return "latin";
 }

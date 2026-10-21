@@ -705,9 +705,6 @@
   "setup.sendCode": "寄送代碼",
   "setup.welcome": "歡迎使用 Good Neighbor。",
   "siteAdmin.compliance.checksPerDay": "每日所需巡檢次數",
-  "siteAdmin.compliance.currentTier": "目前等級",
-  "siteAdmin.compliance.tier": "第 {tier} 級",
-  "siteAdmin.compliance.tierPeriod": "等級期間",
   "siteAdmin.compliance.title": "合規",
   "siteAdmin.contact.name": "姓名",
   "siteAdmin.contact.title": "聯絡人",
@@ -1037,5 +1034,11 @@
   "admin.programs.name": "計畫名稱",
   "admin.programs.staffSourceChanged": "此員工資料已變更。請重新整理清單並再次選擇員工。",
   "admin.programs.retryStaff": "重試載入現有人員",
-  "admin.enrollment.providerInstructions": "供應商管理員的裝置使用註冊連結後，可存取此供應商的所有使用中地點。連結於 24 小時後失效，可為所有使用中地點註冊一部實體裝置。擁有超過 21 個使用中地點的供應商無法發出連結。"
+  "admin.enrollment.providerInstructions": "供應商管理員的裝置使用註冊連結後，可存取此供應商的所有使用中地點。連結於 24 小時後失效，可為所有使用中地點註冊一部實體裝置。擁有超過 21 個使用中地點的供應商無法發出連結。",
+  "siteAdmin.compliance.enhancedMonitoring": "加強監督",
+  "siteAdmin.compliance.period": "要求期間",
+  "admin.compliance.yes": "是",
+  "admin.compliance.no": "否",
+  "admin.compliance.enhancedReason": "該地點因 GNP 疑慮而接受加強監督",
+  "admin.compliance.checkInputs": "請檢查合規日期和每日所需檢查次數。"
 }

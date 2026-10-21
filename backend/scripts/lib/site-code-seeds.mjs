@@ -61,7 +61,7 @@ export const devSiteCodeSeeds = [
         cityProgramManager: "Rob Hoffman",
       },
       compliance: {
-        currentTier: 2,
+        underEnhancedMonitoring: true,
         periodStart: "2026-01-15",
         periodEnd: "",
         requiredChecksPerDay: 3,

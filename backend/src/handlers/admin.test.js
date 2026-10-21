@@ -1151,7 +1151,7 @@ describe("provider and site management", () => {
             cityProgramManagerLastName: "Hoffman",
           },
           compliance: {
-            currentTier: 2,
+            underEnhancedMonitoring: true,
             periodStart: "2026-01-15",
             periodEnd: "",
             requiredChecksPerDay: 3,
@@ -1195,7 +1195,7 @@ describe("provider and site management", () => {
         cityProgramManager: "Rob Hoffman",
       },
       ":compliance": {
-        currentTier: 2,
+        underEnhancedMonitoring: true,
         periodStart: "2026-01-15",
         periodEnd: "",
         requiredChecksPerDay: 3,

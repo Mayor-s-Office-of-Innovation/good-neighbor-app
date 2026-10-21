@@ -50,10 +50,26 @@ const {
 
 beforeEach(() => {
   send.mockReset();
+  send.mockResolvedValue({});
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
 });
 
 describe("effective-dated Site terms", () => {
+  it("rejects the removed undocumented-conditions reason", async () => {
+    const response = await call(
+      createSiteTerms,
+      event(
+        {
+          reasons: ["5"],
+          siteManagerUserId: "contact-1",
+          requiredChecksPerDay: 3,
+        },
+        { siteId: "site-1" },
+      ),
+    );
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.body).error).toBe("reasons_required");
+  });
   it("lists terms newest first", async () => {
     send.mockResolvedValueOnce({ Items: [{ termsVersionId: "v1" }] });
     const response = await call(
@@ -126,14 +142,25 @@ describe("effective-dated Site terms", () => {
             { status: "active", userId: "contact-1", membershipId: "m1" },
           ],
         });
-      send.mockResolvedValueOnce({});
+      send
+        .mockResolvedValueOnce({
+          Items: [
+            {
+              status: "active",
+              firstName: "Provider",
+              lastName: "Manager",
+              email: "provider@example.org",
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ Item: { name: "Lead Program" } });
       const response = await call(
         createSiteTerms,
         event(
           {
             reasons: ["2", "6"],
             siteManagerUserId: "contact-1",
-            correctiveActionTier: 2,
+            underEnhancedMonitoring: true,
             requiredChecksPerDay: 3,
             effectiveStart: "2026-11-01",
             periodEnd: "2026-12-01",
@@ -151,6 +178,22 @@ describe("effective-dated Site terms", () => {
       expect(transaction).toBeInstanceOf(TransactWriteCommand);
       if (!transaction) throw new Error("Missing transaction");
       expect(transaction.input.TransactItems).toHaveLength(5);
+      expect(
+        transaction.input.TransactItems[0].Put.Item.underEnhancedMonitoring,
+      ).toBe(true);
+      expect(
+        transaction.input.TransactItems[0].Put.Item.letterInputs
+          .leadProgramName,
+      ).toBe("Lead Program");
+      expect(
+        transaction.input.TransactItems[0].Put.Item.letterInputs
+          .providerManagerNames,
+      ).toEqual(["Provider Manager"]);
+      expect(
+        transaction.input.TransactItems[1].Update.ExpressionAttributeValues[
+          ":compliance"
+        ].underEnhancedMonitoring,
+      ).toBe(true);
       expect(transaction.input.TransactItems[0].Put.Item.effectiveStart).toBe(
         new Intl.DateTimeFormat("en-CA", {
           timeZone: "America/Los_Angeles",
@@ -373,6 +416,7 @@ describe("effective-dated Site terms", () => {
       ],
     ).toEqual({
       perimeterChecksRequired: false,
+      underEnhancedMonitoring: false,
     });
     expect(
       transaction.input.TransactItems[0].Update.UpdateExpression,

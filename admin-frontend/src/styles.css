@@ -656,22 +656,6 @@ h3 {
   width: min(100%, 18rem);
 }
 
-.compliance-period-fields wa-select[data-tier-field]::part(form-control-input) {
-  width: fit-content;
-  max-width: 100%;
-}
-
-.compliance-period-fields wa-select[data-tier-field]::part(display-input) {
-  width: 12ch;
-}
-
-@supports (field-sizing: content) {
-  .compliance-period-fields wa-select[data-tier-field]::part(display-input) {
-    width: auto;
-    field-sizing: content;
-  }
-}
-
 .compliance-period-dialog .compliance-period-fields wa-number-input {
   width: 100%;
 }
