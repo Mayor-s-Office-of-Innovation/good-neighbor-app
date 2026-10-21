@@ -1201,6 +1201,35 @@ html.wa-dark .analysis-card__clear-copy a {
   }
 }
 
+/* Mobile stacked card (per the mobile design): status line, then the 120px
+   photo, then place, title, details, edit, actions, footer. Clear cards keep
+   their own column layout. Last in the sheet so it wins over the desktop
+   side-by-side rules above at the same specificity. */
+@media (max-width: 520px) {
+  .analysis-card:not(.analysis-card--clear) .analysis-card__panel {
+    display: flex;
+    flex-direction: column;
+  }
+  .analysis-card:not(.analysis-card--clear) .analysis-card__layout,
+  .analysis-card:not(.analysis-card--clear) .analysis-card__content {
+    display: contents;
+  }
+  .analysis-card .analysis-card__route {
+    order: -2;
+  }
+  .analysis-card .analysis-card__media {
+    order: -1;
+    width: 7.5rem;
+    height: 7.5rem;
+    flex: 0 0 auto;
+    margin: 0 0 1rem;
+  }
+  /* Flex items stretch in the stacked column; keep the edit link hugging left. */
+  .analysis-card .analysis-card__edit {
+    align-self: flex-start;
+  }
+}
+
 /* Responsive display type: headings step down one size on phones (discrete
    breakpoint, not clamp, so zoom keeps working — WCAG 1.4.4). Body sizes
    (16 and below) never move. The clear-title stays locked to card titles. */
