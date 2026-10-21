@@ -527,13 +527,21 @@
   gap: 1.5rem;
 }
 
+/* Pinned while the task list scrolls. The gap compresses on narrow screens so
+   three tabs + count badges fit a 320px viewport with no horizontal scroll
+   (WCAG 1.4.10) — reclaim the width first, then pin. Full width (not 30rem)
+   so no card content peeks past the pinned bar's background. */
 .home-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 2rem;
-  width: min(100%, 30rem);
+  gap: clamp(0.75rem, 6vw, 2rem);
+  width: 100%;
   margin-inline: auto;
+  background: var(--bg);
   border-bottom: 1px solid #e4e5e9;
 }
 
