@@ -1,4 +1,5 @@
 import {
+  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
@@ -163,7 +164,7 @@ export function setObjectTags({ bucket, key, tags }) {
  */
 export function presignGet({ bucket, key, expiresIn = 300 }) {
   const command = new GetObjectCommand({ Bucket: bucket, Key: key });
-  return getSignedUrl(client, command, { expiresIn });
+  return getSignedUrl(presignClient, command, { expiresIn });
 }
 
 /**
@@ -187,4 +188,24 @@ export async function getObjectBytes({ bucket, key }) {
     contentType: out.ContentType,
     contentLength: out.ContentLength,
   };
+}
+
+/**
+ * Snapshot an accepted 311 attachment with a fresh object creation time. Reset
+ * lifecycle tags so a pending/rejected tag cannot shorten its lease. Preserve
+ * source metadata, including the image content type.
+ * @param {{ bucket: string, sourceKey: string, key: string }} params
+ * @returns {Promise<unknown>}
+ */
+export function copyObject({ bucket, sourceKey, key }) {
+  return client.send(
+    new CopyObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      CopySource: `${encodeURIComponent(bucket)}/${sourceKey.split("/").map(encodeURIComponent).join("/")}`,
+      TaggingDirective: "REPLACE",
+      Tagging: "",
+      MetadataDirective: "COPY",
+    }),
+  );
 }

@@ -361,3 +361,32 @@ photo so the client can re-reserve and upload its retained file; uncertain log
 submissions replay their original payload before any recovery. Per-log quotas
 count live reservations using conditional revision updates, independent of
 DynamoDB TTL cleanup. Daily device/Site/global quotas are not refunded.
+
+### 311 attachment image leases
+
+Silent and manually triggered 311 filings share the same attachment path. Each
+attachment receives an opaque bearer URL at `GET /v1/311-media?token=…` valid for
+48 hours from issuance. This anonymous route requires a random 256-bit token;
+it grants access to one image only. DynamoDB stores the SHA-256 token hash under
+`pk=SF311_MEDIA#<hash>`, `sk=LEASE`, with `entityType=SF311_MEDIA_LEASE`, `s3Key`,
+`sourceS3Key`, and epoch-seconds `expiresAt`. The handler enforces expiry even before DynamoDB
+TTL removes the record, then redirects valid requests to a fresh S3 GET URL
+capped to five minutes or the remaining lease, whichever is shorter. Responses
+are not cached. Each lease references a fresh `sf311-media/` snapshot in the uploads
+bucket. These copies expire after three days, independently of the source's
+30-day window, and do not inherit pending/rejected lifecycle tags. A source
+that is already missing cannot receive a lease. Revocation deletes the lease
+and its snapshot; deleting only the source does not revoke an issued snapshot.
+See the [media safeguards runbook](runbooks/media-safeguards.md#311-attachment-leases).
+
+This indirection avoids S3 URLs expiring early with Lambda's temporary AWS
+credentials. Both the API and worker receive `SF311_MEDIA_BASE_URL` from
+Terraform (the dedicated `media.<frontend-domain>` CloudFront origin). This
+separate distribution uses a DNS-validated certificate with TLS 1.2 minimum,
+WAF/rate limits, disabled caching, restrictive CSP, HSTS, and `no-referrer`.
+It omits standard access logging because query strings contain bearer tokens;
+API Gateway records request IDs, route keys, and status without queries. Media
+handlers also return security headers on direct-origin success and error
+responses. Local development sets a reachable API or tunnel origin, with
+`S3_PUBLIC_PRESIGN_ENDPOINT` pointing at the public MinIO proxy for redirects. Existing URLs already sent to 311 retain their original expiry.
+Do not log bearer tokens, full lease URLs, or redirect URLs.

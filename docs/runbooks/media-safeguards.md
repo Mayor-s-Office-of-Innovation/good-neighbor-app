@@ -46,3 +46,33 @@ active tag. The API refuses photo access after 30 days even if lifecycle deletio
 not yet run. Their underlying work logs retain text and photo-expiry metadata for one
 year. Care-work processing never enqueues analyzer jobs or retags check/task images.
 Complaint evidence remains in its separate one-year bucket.
+
+
+## 311 attachment leases
+
+Silent and manual 311 filings snapshot each image into `sf311-media/` in the
+uploads bucket before issuing a 48-hour lease. The copy has a new creation time,
+retains its image content type, and replaces all lifecycle tags. A three-day
+prefix lifecycle rule cleans up copies (including failed-submission orphans);
+the source's 30-day rule is unchanged. Expired links are refused immediately,
+independently of asynchronous S3/DynamoDB cleanup.
+
+For privacy removal or immediate revocation, locate all `SF311_MEDIA_LEASE`
+items matching the original `sourceS3Key` using authorized operational access.
+There is no index on this attribute; use a filtered scan with pagination when
+necessary. Delete each lease row by lowercase `pk`/`sk` and delete its snapshot
+object at `s3Key`; remove any noncurrent versions if present. Purge the source
+separately when required. Deleting only the source or its artifact row does not
+revoke previously issued snapshots. Deleting the lease alone stops future
+redirects, but an existing S3 redirect can remain usable for up to five minutes;
+deleting the snapshot also stops access through those redirects.
+
+Bearer links use a dedicated `media.<frontend-domain>` CloudFront distribution
+with a validated certificate, HSTS/CSP, `no-referrer`, WAF, and no caching.
+Standard CloudFront logging is intentionally disabled for this distribution
+because it includes query strings. API Gateway's access log retains request ID,
+route, status, and timing without tokens. Do not enable query/body logging on
+this route, and do not paste full links or bearer tokens into incident records.
+The application redacts bearer query parameters from failed SF311 request and
+response diagnostics before persistence. Local tunnel access also requires
+`S3_PUBLIC_PRESIGN_ENDPOINT` to reach the MinIO proxy.

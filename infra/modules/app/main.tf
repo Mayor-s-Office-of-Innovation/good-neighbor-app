@@ -461,6 +461,16 @@ resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
 
   # Every check/task photo expires after 30 days. Upload-state rules below can
   # shorten that window, but no missing/legacy tag can extend it.
+  # Fresh 311 snapshots outlive the 48-hour bearer lease, without extending
+  # retention of any source upload. The shorter matching rule wins.
+  rule {
+    id     = "expire-311-attachment-copies"
+    status = "Enabled"
+    filter { prefix = "sf311-media/" }
+    expiration { days = 3 }
+    noncurrent_version_expiration { noncurrent_days = 1 }
+  }
+
   rule {
     id     = "expire-duplicate-prepared-images"
     status = "Enabled"
