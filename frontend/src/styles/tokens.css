@@ -67,6 +67,7 @@
   --muted: var(--text-secondary);
   --c-red: var(--c-hazard);
 
+  --card-outline: #c9caca; /* 1px outline around home/task cards */
   --radius: 12px;
   --radius-sm: 8px;
   --radius-pill: 999px;
@@ -85,6 +86,8 @@
 html.wa-dark {
   --capture-category-bg: #1b1d26;
   color-scheme: dark;
+
+  --card-outline: #545868;
 
   --brand-blue: #6ba7f0; /* brightened for dark surfaces, keeps hue */
   --brand-blue-bg: #17273d;
