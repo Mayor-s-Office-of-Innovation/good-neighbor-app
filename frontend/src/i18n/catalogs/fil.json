@@ -927,6 +927,7 @@
   "today.logout.text": "Ila-log out kayo nito at aalisin ang ugnayan ng device na ito: kakailanganin ninyong humiling ng bagong code para makapasok sa app",
   "today.logout.title": "Kumpirmahing gusto ninyong mag-log out",
   "today.newResults.aria": "Mga bagong resulta ng pagsusuri",
+  "today.remaining.error": "Some tasks could not be loaded.",
   "today.results.aria": "Mga resulta ng gawain",
   "today.settings.aria": "Mga setting",
   "today.settings.attributions": "Mga pagkilala",

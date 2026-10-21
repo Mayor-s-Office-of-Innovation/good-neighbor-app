@@ -138,6 +138,7 @@ import {
   heroBlock,
   homeResults,
   homeShell,
+  homeSkeleton,
   summaryBlock,
 } from "./today-view.templates.js";
 import { TaskSheets } from "./task-sheets.js";
@@ -362,6 +363,11 @@ class TodayView extends HTMLElement {
       this._stopDuplicates?.();
       this._duplicateLinks = new Map();
     }
+    // First arrival with nothing to show yet: paint the chrome and placeholder
+    // cards from the stored site record now, so first contentful paint does
+    // not wait on the worklist round trip below. A refresh (model present)
+    // or a restored snapshot already has real content on screen.
+    if (!this._homeModel && !restoring) this._renderSkeleton(requestedFilter);
     this._providerSitesStatus = "loading";
     // The provider catalog only feeds the site switcher and the location
     // prompt, so it rides in the same round trip as the worklist below
@@ -399,37 +405,29 @@ class TodayView extends HTMLElement {
     // Checks + the open worklist are read from the backend on load (AP6/AP10) —
     // newest first, adapted to the UI record shape. Online-only: on failure show
     // an error, not a crash.
+    // Only the open list gates the first paint: it is all the default To-do
+    // tab shows. The In-progress and History lists (the slowest call is the
+    // ever-growing completed list) load right after the first render — see
+    // _loadRemainingTasks. On a refresh the previously known non-open tasks
+    // are carried over so those tabs don't flash empty in between.
     let submitted, tasks;
     try {
-      const [
-        [catalog, bindings],
-        { checks },
-        openTasksResult,
-        completingTasksResult,
-        completedTasksResult,
-        cannotDoTasksResult,
-        inProgressTasksResult,
-      ] = await Promise.all([
-        catalogLoad,
-        listChecks({ limit: 30 }),
-        listTasks({ status: "open", limit: 50 }),
-        listTasks({ status: "completing", limit: 50 }),
-        listTasks({ status: "completed", limit: 50 }),
-        listTasks({ status: "cannot_do", limit: 50 }),
-        listTasks({ status: "in_progress", limit: 50 }),
-      ]);
+      const [[catalog, bindings], { checks }, openTasksResult] =
+        await Promise.all([
+          catalogLoad,
+          listChecks({ limit: 30 }),
+          listTasks({ status: "open", limit: 50 }),
+        ]);
       this._providerSitesStatus = catalog ? "loaded" : "error";
       this._providerSites = catalog?.sites || [];
       this._providerName =
         catalog?.providerName || this._site.providerName || "";
       this._boundSites = bindings;
-      tasks = uniqueTasks([
-        ...(openTasksResult.tasks || []),
-        ...(completingTasksResult.tasks || []),
-        ...(completedTasksResult.tasks || []),
-        ...(cannotDoTasksResult.tasks || []),
-        ...(inProgressTasksResult.tasks || []),
-      ]);
+      const carriedOver = (this._homeModel?.tasks || []).filter(
+        (task) => task.status && task.status !== "open",
+      );
+      tasks = uniqueTasks([...(openTasksResult.tasks || []), ...carriedOver]);
+      this._remainingStatus = "pending";
       submitted = (checks || [])
         .map((h) => adaptCheckHeader(h))
         .filter((c) => c.status === "submitted")
@@ -471,6 +469,19 @@ class TodayView extends HTMLElement {
       tasks,
       pendingSession: effectivePendingSession,
     });
+    this._watchDuplicates(tasks);
+    void this._hydrate311CardStatuses(tasks);
+    void this._hydrateVisibleHomeTasks();
+    this._remainingLoad = this._loadRemainingTasks();
+    if (announceArrival) announceScreenHeading(this, ".home-identity__site");
+  }
+
+  _taskWith311CardStatus(task) {
+    return taskWith311Status(task, this._311StatusByTaskId);
+  }
+
+  /** @param {Record<string, any>[]} tasks */
+  _watchDuplicates(tasks) {
     this._stopDuplicates?.();
     const siteId = this._siteId;
     this._stopDuplicates = watchDuplicateIssues(
@@ -490,13 +501,50 @@ class TodayView extends HTMLElement {
           this._renderHome(this._homeModel);
       },
     );
-    void this._hydrate311CardStatuses(tasks);
-    void this._hydrateVisibleHomeTasks();
-    if (announceArrival) announceScreenHeading(this, ".home-identity__site");
   }
 
-  _taskWith311CardStatus(task) {
-    return taskWith311Status(task, this._311StatusByTaskId);
+  /**
+   * Second data tier: the lists behind the In-progress and History tabs,
+   * fetched after the first paint (connectedCallback loads only `open`).
+   * Merges into the current model and re-renders; the tab counts stay
+   * hidden until this lands. A failure leaves those tabs on a retry state
+   * (`#retry-remaining`) — the To-do tab is unaffected.
+   */
+  async _loadRemainingTasks() {
+    const generation = (this._remainingGeneration =
+      (this._remainingGeneration || 0) + 1);
+    const siteId = this._siteId;
+    const stillCurrent = () =>
+      generation === this._remainingGeneration &&
+      this._siteId === siteId &&
+      this.isConnected &&
+      Boolean(this._homeModel);
+    let results;
+    try {
+      results = await Promise.all(
+        ["in_progress", "completing", "completed", "cannot_do"].map((status) =>
+          listTasks({ status, limit: 50 }),
+        ),
+      );
+    } catch (err) {
+      console.error("listTasks (remaining) failed", err);
+      if (!stillCurrent()) return;
+      this._remainingStatus = "error";
+      this._renderHome(this._homeModel);
+      return;
+    }
+    if (!stillCurrent()) return;
+    const model = this._homeModel;
+    // Fresh lists win over anything carried over from a previous model.
+    const tasks = uniqueTasks([
+      ...results.flatMap((result) => result.tasks || []),
+      ...model.tasks,
+    ]);
+    this._remainingStatus = "loaded";
+    this._renderHome({ ...model, tasks });
+    this._watchDuplicates(tasks);
+    void this._hydrate311CardStatuses(tasks);
+    void this._hydrateVisibleHomeTasks();
   }
 
   async _hydrate311CardStatuses(tasks) {
@@ -794,6 +842,11 @@ class TodayView extends HTMLElement {
         event.preventDefault();
         void this._startCapture("single-problem", control);
       });
+    });
+    this.querySelector("#retry-remaining")?.addEventListener("click", () => {
+      this._remainingStatus = "pending";
+      if (this._homeModel) this._renderHome(this._homeModel);
+      this._remainingLoad = this._loadRemainingTasks();
     });
     this.querySelectorAll("[data-home-filter]").forEach((button) => {
       button.addEventListener("click", () => {
@@ -1103,10 +1156,15 @@ class TodayView extends HTMLElement {
     historicalClearChecks,
   }) {
     const newTaskCards = this._newTaskCardEntries(newTaskEntries);
+    const remainingStatus = /** @type {"pending" | "loaded" | "error"} */ (
+      this._remainingStatus || "loaded"
+    );
     return homeResults({
       historyGrouping: this._historyGrouping || "resolved",
       homeFilter: this._homeFilter,
-      tabCounts,
+      // Counts only once every list is in — a partial count would be wrong.
+      tabCounts: remainingStatus === "loaded" ? tabCounts : {},
+      remainingStatus,
       siteName: this._site?.name || "",
       siteAddress: this._site?.address || "",
       pendingSessionId: pendingSession?.id || "",
@@ -1279,6 +1337,20 @@ class TodayView extends HTMLElement {
 
   _firstRunBlock() {
     return this._activityBlock({ last: null, homeTasks: [] });
+  }
+
+  /**
+   * Pre-data paint (see connectedCallback). Markup only — no handlers are
+   * wired, nothing here is interactive, and the live render replaces it.
+   * @param {string | null} requestedFilter the ?filter= query value
+   */
+  _renderSkeleton(requestedFilter) {
+    this.innerHTML = homeSkeleton({
+      siteName: this._siteIdentity().site,
+      adminAccess: hasAdminAccess(this._site),
+      homeFilter: this._homeFilter || normalizedHomeTab(requestedFilter || ""),
+      checkLabel: t("today.actions.startCheck"),
+    });
   }
 
   _activityBlock({ last, homeTasks }) {
