@@ -120,7 +120,7 @@ jobs:
     # Runs for Dependabot PRs too (unlike `security`): dependency bumps are the
     # size-budget's primary target. size-limit is the hard gate — raising a
     # limit is a deliberate, reviewable package.json edit. Lighthouse runs
-    # warn-only (see frontend/lighthouse-budgets.json) until its noise floor is
+    # warn-only (see frontend/speed-check.config.js) until its noise floor is
     # measured; promotion to hard gate is a separate change.
     runs-on: ubuntu-latest
     steps:
@@ -146,29 +146,26 @@ jobs:
         run: npx size-limit
         working-directory: frontend
 
-      - name: Lighthouse (lab metrics, warn-only)
-        # scripts/run-lighthouse.mjs serves dist/ via `vite preview` and runs
-        # the lighthouse CLI 3x into .lighthouseci/; print-lighthouse.mjs then
-        # evaluates the warn-only budgets in lighthouse-budgets.json (median
-        # across runs) and prints a per-run metrics table into the step log
-        # AND the run's Summary tab. All paths are relative to THIS
-        # working-directory: frontend.
+      - name: Lighthouse via speed-check (lab metrics, warn-only)
+        # speed-check (github:Mayor-s-Office-of-Innovation/speed-check, pinned
+        # by commit in frontend/package.json) serves dist/ via `vite preview`,
+        # runs Lighthouse 3x against /, evaluates the warn-only budgets in
+        # speed-check.config.js (median across runs), and prints the table
+        # into the step log AND the run's Summary tab. Reports land in
+        # frontend/speed-check-report/ (not a dot-dir, so no hidden-files flag).
         run: npm run perf
         working-directory: frontend
 
-      # Full HTML/JSON Lighthouse reports. NOTE: .lighthouseci is a dot-dir and
-      # upload-artifact@v7 excludes hidden files by default — hence
-      # include-hidden-files: true (its absence is what produced
-      # "No files were found" on the first runs, twice).
+      # Lighthouse JSON results (drag into the Lighthouse Viewer) plus the
+      # summary table and JSON.
       - name: Upload Lighthouse reports
         if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
           name: lighthouse-reports
-          path: frontend/.lighthouseci/
+          path: frontend/speed-check-report/
           retention-days: 7
           if-no-files-found: ignore
-          include-hidden-files: true
 
   security:
     name: Security scans
