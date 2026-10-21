@@ -1902,3 +1902,11 @@ tbody tr:last-child td {
 .manager-record a.btn-secondary {
   text-decoration: none;
 }
+
+/* Shared main-app toast tokens, scoped to the persistent notification host. */
+app-toasts {
+  --toast-success: #00883c;
+  --text-secondary: var(--muted);
+  --surface-2: #f5f5f5;
+  --brand-blue: var(--focus);
+}

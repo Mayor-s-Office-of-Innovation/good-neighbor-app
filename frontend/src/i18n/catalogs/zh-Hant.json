@@ -1025,5 +1025,6 @@
   "admin.oversight.assignCityProgramManager": "指派市府計畫經理",
   "admin.directory.sections": "合規管理區段",
   "admin.programs.assignmentsUnavailable": "部分地點指派資料無法載入。請重新載入以重試。",
-  "admin.programs.reassignPrimaryBeforeRemoval": "移除此工作人員之前，請先為計畫及受影響地點選擇其他主要聯絡人。"
+  "admin.programs.reassignPrimaryBeforeRemoval": "移除此工作人員之前，請先為計畫及受影響地點選擇其他主要聯絡人。",
+  "admin.enrollment.emailed": "已透過電子郵件寄出裝置註冊連結"
 }

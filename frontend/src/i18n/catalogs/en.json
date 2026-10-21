@@ -19,6 +19,7 @@
   "admin.enrollment.copyFor": "Copy enrollment link for {email}",
   "admin.enrollment.copyUnavailable": "The link is only available to copy immediately after it is issued.",
   "admin.enrollment.emailLink": "Email link",
+  "admin.enrollment.emailed": "Emailed device enrollment link",
   "admin.enrollment.enrolledDevices": "Enrolled devices",
   "admin.enrollment.history": "Enrollment link history ({count})",
   "admin.enrollment.instructions": "Email enrollment links to site managers. Links enroll one device per recipient, tied to this site only. Links expire after 24 hours",

@@ -1,3 +1,5 @@
+import "../../frontend/src/components/app-toasts.js";
+import { showToast } from "../../frontend/src/state/toasts.js";
 import { createAndAssignManager } from "./pending-manager.js";
 import { letterEmailProgress, profilePhoneUpdate } from "./admin-save-state.js";
 import "./icons.js";
@@ -758,6 +760,14 @@ class AdminApp extends HTMLElement {
       this.state.provider.providerId,
       membershipId,
     );
+    if (created.grant?.deliveryStatus === "accepted") {
+      showToast({
+        title: t("admin.enrollment.emailed"),
+        message: "",
+        icon: "circle-check",
+        tone: "success",
+      });
+    }
     await this.openProvider(this.state.provider.providerId, false);
     this.state.providerManagerGrants = attachCreatedEnrollmentUrl(
       this.state.providerManagerGrants,
@@ -2048,6 +2058,14 @@ class AdminApp extends HTMLElement {
       this.state.site.siteId,
       membershipId,
     );
+    if (created.grant?.deliveryStatus === "accepted") {
+      showToast({
+        title: t("admin.enrollment.emailed"),
+        message: "",
+        icon: "circle-check",
+        tone: "success",
+      });
+    }
     await this.openSite(this.state.site.siteId, false);
     this.state.managerGrants = attachCreatedEnrollmentUrl(
       this.state.managerGrants,

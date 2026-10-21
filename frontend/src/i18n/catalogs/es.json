@@ -1025,5 +1025,6 @@
   "admin.oversight.assignCityProgramManager": "Asignar administrador de programas de la Ciudad",
   "admin.directory.sections": "Secciones de administración de cumplimiento",
   "admin.programs.assignmentsUnavailable": "Algunas asignaciones de sitios no están disponibles. Vuelva a cargar para intentarlo de nuevo.",
-  "admin.programs.reassignPrimaryBeforeRemoval": "Seleccione otro contacto principal para el programa y los sitios afectados antes de quitar a este miembro del personal."
+  "admin.programs.reassignPrimaryBeforeRemoval": "Seleccione otro contacto principal para el programa y los sitios afectados antes de quitar a este miembro del personal.",
+  "admin.enrollment.emailed": "Enlace de registro del dispositivo enviado por correo electrónico"
 }
