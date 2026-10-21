@@ -9,6 +9,8 @@ class AppToasts extends HTMLElement {
   _elements = new Map();
   /** @type {(() => void) | undefined} */
   _unsubscribe;
+  /** @type {HTMLElement | null} */
+  _returnFocus = null;
 
   connectedCallback() {
     // A manual popover puts the single global toast host in the browser's top
@@ -65,9 +67,21 @@ class AppToasts extends HTMLElement {
       element.remove();
       this._elements.delete(toast);
       if (hadFocus) {
-        const target = document.querySelector("#view");
-        if (target instanceof HTMLElement)
+        const dialog = document.querySelector("dialog[open]");
+        const previous = this._returnFocus;
+        const validPrevious =
+          previous?.isConnected &&
+          !previous.closest("[inert]") &&
+          !previous.matches(":disabled") &&
+          (!dialog || dialog.contains(previous));
+        const target = validPrevious
+          ? previous
+          : dialog || document.querySelector("#view, #main-content");
+        if (target instanceof HTMLElement) {
+          if (!validPrevious && !target.hasAttribute("tabindex"))
+            target.setAttribute("tabindex", "-1");
           target.focus({ preventScroll: true });
+        }
       }
     }
     for (const toast of current) {
@@ -140,7 +154,16 @@ class AppToasts extends HTMLElement {
       });
       element.addEventListener("pointerenter", () => toast.pause("pointer"));
       element.addEventListener("pointerleave", () => toast.resume("pointer"));
-      element.addEventListener("focusin", () => toast.pause("focus"));
+      element.addEventListener("focusin", (event) => {
+        const previous = event.relatedTarget;
+        if (
+          previous instanceof HTMLElement &&
+          !this.contains(previous) &&
+          previous !== document.body
+        )
+          this._returnFocus = previous;
+        toast.pause("focus");
+      });
       element.addEventListener("focusout", (event) => {
         if (
           !(event.relatedTarget instanceof Node) ||

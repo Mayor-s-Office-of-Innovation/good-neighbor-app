@@ -11,7 +11,7 @@ export function createActionFeedback(successKey, showToast, t) {
       changed = true;
     },
     success(key = successKey, tone = "success", params = {}) {
-      completed = tone !== "error";
+      completed = true;
       notification = showToast({
         title: t(key, params),
         message: "",
@@ -36,9 +36,13 @@ export function createActionFeedback(successKey, showToast, t) {
       if (
         !changed &&
         !completed &&
-        ([400, 409, 422].includes(error?.status) ||
-          error?.message === t("admin.programs.chooseStaff") ||
-          /required|invalid|Choose |chooseStaff/.test(error?.message || ""))
+        ([400, 422].includes(error?.status) ||
+          (!error?.status &&
+            [
+              t("admin.programs.chooseStaff"),
+              "lead_program_required",
+              "invalid_file_size",
+            ].includes(error?.message)))
       )
         return;
       notification?.close();

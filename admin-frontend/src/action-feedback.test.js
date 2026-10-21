@@ -40,7 +40,7 @@ test("partial multi-step mutation is not described as a complete failure", () =>
 });
 
 test("validation remains inline and server failures receive one error toast", () => {
-  for (const status of [400, 409, 422]) {
+  for (const status of [400, 422]) {
     const { feedback, notices } = setup();
     feedback.failure(Object.assign(new Error("validation"), { status }));
     assert.equal(notices.length, 0);
@@ -63,5 +63,23 @@ test("informational and failed outcomes use matching icons and longer duration",
     feedback.success("outcome", tone);
     assert.equal(notices[0].icon, icon);
     assert.equal(notices[0].duration, 8000);
+  }
+});
+
+test("unconfirmed delivery still records a completed server operation", () => {
+  const { feedback, notices } = setup();
+  feedback.success("delivery-unconfirmed", "error");
+  feedback.failure(new Error("refresh failed"));
+  assert.equal(notices[1].title, "admin.toast.refreshFailed");
+});
+test("permission, server and conflict errors are not field validation", () => {
+  for (const [status, message] of [
+    [403, "supervisor_required"],
+    [500, "invalid_state"],
+    [409, "conflict"],
+  ]) {
+    const { feedback, notices } = setup();
+    feedback.failure(Object.assign(new Error(message), { status }));
+    assert.equal(notices.length, 1);
   }
 });

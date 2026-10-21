@@ -1087,5 +1087,7 @@
   "admin.toast.siteSaved": "Đã lưu thông tin địa điểm",
   "admin.toast.staffAdded": "Đã thêm nhân viên",
   "admin.toast.staffSaved": "Đã lưu nhân viên",
-  "admin.toast.letterResendQueued": "Email thư đang chờ gửi"
+  "admin.toast.letterResendQueued": "Email thư đang chờ gửi",
+  "admin.import.historyRefreshFailed": "Đã hoàn tất nhập nhưng không thể làm mới lịch sử. Tải lại để xem lịch sử mới nhất; không nhập lại.",
+  "admin.import.outcomeCounts": "Đã áp dụng: {applied}. Thất bại hoặc bỏ qua: {failed}."
 }

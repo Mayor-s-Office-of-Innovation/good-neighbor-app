@@ -1778,48 +1778,66 @@ class AdminApp extends HTMLElement {
   }
 
   async refreshLetterEmails(siteId, jobId) {
-    for (let attempt = 0; attempt < 60; attempt++) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      try {
-        const result = await adminApi.getSite(siteId);
-        const progress = letterEmailProgress(result.items || [], jobId);
-        const changed =
-          progress.history.length !==
-            (this.state.letterEmailHistory?.length || 0) ||
-          progress.uncertain !== Boolean(this.state.letterEmailUncertain);
-        const isCurrentSite = this.state.site?.siteId === siteId;
-        if (isCurrentSite) {
-          this.state.letterEmailHistory = progress.history;
-          this.state.letterEmailUncertain = progress.uncertain;
-          if (progress.sent) {
-            this.state.siteSaveMessage = t(
-              progress.sent.provider === "local-preview"
-                ? "admin.letters.previewSent"
-                : "admin.letters.sent",
-            );
-          }
-        }
-        if (progress.sent || progress.currentUncertain) {
-          this.notifiedLetterJobs ||= new Set();
-          if (!this.notifiedLetterJobs.has(jobId)) {
-            this.notifiedLetterJobs.add(jobId);
-            notifyAdmin(
-              progress.sent
-                ? progress.sent.provider === "local-preview"
+    this.activeLetterJobs ||= new Set();
+    this.notifiedLetterJobs ||= new Set();
+    if (this.activeLetterJobs.has(jobId) || this.notifiedLetterJobs.has(jobId))
+      return;
+    this.activeLetterJobs.add(jobId);
+    let elapsed = 0;
+    const deadline = Date.now() + 60000;
+    try {
+      while (elapsed < 60000 && Date.now() < deadline) {
+        const delay = Math.min(
+          this.state.site?.siteId === siteId ? 1000 : 5000,
+          60000 - elapsed,
+          Math.max(0, deadline - Date.now()),
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        elapsed += delay;
+        try {
+          const result = await adminApi.getSite(siteId);
+          const progress = letterEmailProgress(result.items || [], jobId);
+          const changed =
+            progress.history.length !==
+              (this.state.letterEmailHistory?.length || 0) ||
+            progress.uncertain !== Boolean(this.state.letterEmailUncertain);
+          const isCurrentSite = this.state.site?.siteId === siteId;
+          if (isCurrentSite) {
+            this.state.letterEmailHistory = progress.history;
+            this.state.letterEmailUncertain = progress.uncertain;
+            if (progress.sent) {
+              this.state.siteSaveMessage = t(
+                progress.sent.provider === "local-preview"
                   ? "admin.letters.previewSent"
-                  : "admin.letters.sent"
-                : "admin.toast.deliveryUncertain",
-              progress.sent ? "success" : "info",
-            );
+                  : "admin.letters.sent",
+              );
+            }
           }
+          if (progress.sent || progress.currentUncertain) {
+            this.notifiedLetterJobs ||= new Set();
+            if (!this.notifiedLetterJobs.has(jobId)) {
+              this.notifiedLetterJobs.add(jobId);
+              notifyAdmin(
+                progress.sent
+                  ? progress.sent.provider === "local-preview"
+                    ? "admin.letters.previewSent"
+                    : "admin.letters.sent"
+                  : "admin.toast.deliveryUncertain",
+                progress.sent ? "success" : "info",
+              );
+            }
+          }
+          if (isCurrentSite && (changed || progress.sent)) this.render();
+          if (progress.sent || progress.currentUncertain) return;
+        } catch {
+          /* Retry reads without repeating the send. */
         }
-        if (isCurrentSite && (changed || progress.sent)) this.render();
-        if (progress.sent || progress.currentUncertain) return;
-      } catch {
-        /* Retry reads without repeating the send. */
       }
+      this.notifiedLetterJobs.add(jobId);
+      notifyAdmin("admin.toast.letterStillPending", "info");
+    } finally {
+      this.activeLetterJobs.delete(jobId);
     }
-    notifyAdmin("admin.toast.letterStillPending", "info");
   }
 
   async endSiteTerms() {
@@ -1918,16 +1936,29 @@ class AdminApp extends HTMLElement {
             });
             this.state.importNotice = null;
           }
-          this.state.importNotice = null;
+          this.state.importNotice =
+            failed > 0 ||
+            result.resultStatus === "failed" ||
+            result.resultStatus === "partial"
+              ? {
+                  title: t(
+                    applied > 0
+                      ? "admin.toast.importPartial"
+                      : "admin.toast.importFailed",
+                  ),
+                  message: t("admin.import.outcomeCounts", { applied, failed }),
+                }
+              : null;
           sessionStorage.removeItem(`site-import-key:${preview.importId}`);
           this.state.importPreview = null;
           this.state.importResult = null;
           this.state.importApplyKey = "";
-          const history = await adminApi.listSiteImports().catch((error) => {
-            feedback.failure(error);
-            return { imports: [] };
-          });
-          this.state.importHistory = history.imports || [];
+          try {
+            const history = await adminApi.listSiteImports();
+            this.state.importHistory = history.imports || [];
+          } catch {
+            notifyAdmin("admin.import.historyRefreshFailed", "info");
+          }
           window.history.replaceState({}, "", "/sites/import");
         }
       } finally {
@@ -2384,7 +2415,12 @@ class AdminApp extends HTMLElement {
           this.state.site.leadProgramId,
           membership.userId,
         );
+        feedback.changed();
         membershipId = linked.membership.membershipId;
+        this.state.managerMemberships = this.state.managerMemberships.map(
+          (item) => (item === membership ? linked.membership : item),
+        );
+        this.render();
       }
       const created = await adminApi.createManagerGrant(
         this.state.site.siteId,
@@ -4354,7 +4390,7 @@ class AdminApp extends HTMLElement {
         perimeter: "compliance",
       }[requestedSection] || requestedSection;
     this.innerHTML = `
-      <main class="admin" id="main-content">
+      <main class="admin" id="main-content" tabindex="-1">
         <header class="admin__header">
           <div class="site-title">
             <a class="brand" href="/sites" data-route>${escapeHtml(t("admin.brand"))}</a>
@@ -5300,6 +5336,15 @@ function siteImportView(state) {
   return `<section class="directory" aria-labelledby="import-title">
     <a class="site-back-link" href="/sites" data-route><span aria-hidden="true">‹</span> ${escapeHtml(t("admin.breadcrumb.admin"))}</a>
     <div class="page-head"><div><h1 id="import-title" tabindex="-1">Import sites</h1><p class="muted">Upload a CSV file of sites, providers, programs, and contact details.</p></div></div>
+    ${
+      state.importNotice
+        ? `<section class="panel" role="status">
+      <p><strong>${escapeHtml(state.importNotice.title)}</strong></p>
+      <p>${escapeHtml(state.importNotice.message)}</p>
+      <button class="btn-secondary" id="dismiss-import-notice" type="button">${escapeHtml(t("toastUi.dismiss.aria", { title: state.importNotice.title }))}</button>
+    </section>`
+        : ""
+    }
     ${preview ? reviewView : uploadView}
   </section>`;
 }

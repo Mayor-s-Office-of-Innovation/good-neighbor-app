@@ -1087,5 +1087,7 @@
   "admin.toast.siteSaved": "Na-save ang mga detalye ng site",
   "admin.toast.staffAdded": "Naidagdag ang kawani",
   "admin.toast.staffSaved": "Na-save ang kawani",
-  "admin.toast.letterResendQueued": "Nakapila ang email ng liham"
+  "admin.toast.letterResendQueued": "Nakapila ang email ng liham",
+  "admin.import.historyRefreshFailed": "Natapos ang pag-import, ngunit hindi ma-refresh ang kasaysayan. I-reload upang makita ang pinakabagong kasaysayan; huwag ulitin ang pag-import.",
+  "admin.import.outcomeCounts": "Nailapat: {applied}. Nabigo o nilaktawan: {failed}."
 }

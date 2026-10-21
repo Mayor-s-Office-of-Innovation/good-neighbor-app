@@ -1087,5 +1087,7 @@
   "admin.toast.siteSaved": "已儲存地點詳細資訊",
   "admin.toast.staffAdded": "已新增人員",
   "admin.toast.staffSaved": "已儲存人員",
-  "admin.toast.letterResendQueued": "信函郵件已排入佇列"
+  "admin.toast.letterResendQueued": "信函郵件已排入佇列",
+  "admin.import.historyRefreshFailed": "匯入已完成，但無法重新整理紀錄。請重新載入以查看最新紀錄；請勿重複匯入。",
+  "admin.import.outcomeCounts": "已套用：{applied}。失敗或略過：{failed}。"
 }
