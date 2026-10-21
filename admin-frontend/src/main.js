@@ -1,3 +1,4 @@
+import { withSaveFeedback, upsertRecord } from "./save-feedback.js";
 import { bindNewProgramStaff } from "./new-program-staff.js";
 import { createAndAssignManager } from "./pending-manager.js";
 import { letterEmailProgress, profilePhoneUpdate } from "./admin-save-state.js";
@@ -509,6 +510,7 @@ class AdminApp extends HTMLElement {
   }
 
   async fetchSiteManagers() {
+    const version = this.managerDirectoryVersion || 0;
     const activePrograms = this.state.programs.filter(
       (program) => program.status !== "inactive",
     );
@@ -521,6 +523,7 @@ class AdminApp extends HTMLElement {
       adminApi,
       DIRECTORY_REQUEST_CONCURRENCY,
     );
+    if (version !== (this.managerDirectoryVersion || 0)) return;
     const memberships = siteMemberships.flatMap(({ site, memberships }) =>
       (memberships || []).map((membership) => ({
         ...membership,
@@ -664,11 +667,16 @@ class AdminApp extends HTMLElement {
    * @returns {Promise<void>}
    */
   async createProvider(form) {
+    const origin = location.pathname + location.search;
     const name = new FormData(form).get("provider-name");
     if (!name) return;
     const result = await adminApi.createProvider(String(name));
-    form.reset();
-    await this.loadDirectory();
+    this.state.providers = upsertRecord(
+      this.state.providers,
+      result.provider,
+      "providerId",
+    );
+    if (location.pathname + location.search !== origin) return;
     const params = new URLSearchParams(window.location.search);
     if (params.get("returnTo") === "site-new") {
       navigate(
@@ -710,19 +718,16 @@ class AdminApp extends HTMLElement {
       phoneExtension: formValue(data, "provider-manager-extension"),
     };
     const membershipId = formValue(data, "provider-manager-membership-id");
-    if (membershipId) {
-      await adminApi.updateProviderManager(
-        this.state.provider.providerId,
-        membershipId,
-        values,
-      );
-    } else {
-      await adminApi.createProviderManager(
-        this.state.provider.providerId,
-        values,
-      );
-    }
-    await this.openProvider(this.state.provider.providerId, false);
+    const providerId = this.state.provider.providerId;
+    const result = membershipId
+      ? await adminApi.updateProviderManager(providerId, membershipId, values)
+      : await adminApi.createProviderManager(providerId, values);
+    if (this.state.provider?.providerId !== providerId) return;
+    this.state.providerManagers = upsertRecord(
+      this.state.providerManagers,
+      result.manager,
+      "membershipId",
+    );
     this.state.siteSaveMessage = membershipId
       ? "Provider manager saved."
       : "Provider manager added.";
@@ -931,13 +936,20 @@ class AdminApp extends HTMLElement {
   }
 
   async createProgram(form) {
+    const origin = location.pathname + location.search;
     const data = new FormData(form);
     const result = await adminApi.createProgram({
       name: String(data.get("program-name") || ""),
       providerId: String(data.get("program-provider") || ""),
       ...JSON.parse(decodeURIComponent(String(data.get("program-staff")))),
     });
-    await this.loadDirectory();
+    this.state.programs = upsertRecord(
+      this.state.programs,
+      result.program,
+      "programId",
+    );
+    this.state.managerDirectoryLoaded = false;
+    if (location.pathname + location.search !== origin) return;
     const returnTo = new URLSearchParams(window.location.search).get(
       "returnTo",
     );
@@ -1832,7 +1844,19 @@ class AdminApp extends HTMLElement {
   }
 
   /** @param {HTMLFormElement} form */
+  async saveWithFeedback(form, save) {
+    return withSaveFeedback(form, save, {
+      savingLabel: t("siteAdmin.edit.saving"),
+      onError: (error) => showFormSaveError(form, error.message),
+    });
+  }
+
   async saveSiteManager(form) {
+    return this.saveWithFeedback(form, () => this.persistSiteManager(form));
+  }
+
+  async persistSiteManager(form) {
+    const origin = location.pathname + location.search;
     const data = new FormData(form);
     const current = this.state.siteManager;
     const canManageAssignments =
@@ -1882,26 +1906,29 @@ class AdminApp extends HTMLElement {
         (current?.assignedSites || []).map((site) => [site.siteId, site]),
       );
       const selected = new Set(siteIds);
+      const savedAssignments = new Map(existing);
       // Assignment counts belong to this one staff record. Apply Site changes
       // serially so each transaction observes the count written by the last.
       for (const siteId of siteIds) {
         const membership = existing.get(siteId);
         if (membership?.legacyAssignment && !canManageAssignments) continue;
         if (membership && !membership.legacyAssignment) {
-          await adminApi.updateManagerMembership(
+          const result = await adminApi.updateManagerMembership(
             siteId,
             membership.membershipId,
             fullName,
             values.email,
           );
+          savedAssignments.set(siteId, { ...membership, ...result.membership });
         } else {
-          await adminApi.createManagerMembership(
+          const result = await adminApi.createManagerMembership(
             siteId,
             fullName,
             values.email,
             programId,
             user.userId,
           );
+          savedAssignments.set(siteId, { ...result.membership, siteId });
         }
       }
       for (const [siteId, membership] of existing) {
@@ -1920,12 +1947,32 @@ class AdminApp extends HTMLElement {
           siteManager: false,
         });
       }
+      const program = this.state.programs.find(
+        (item) => item.programId === programId,
+      );
+      const savedManager = {
+        ...user,
+        programId,
+        programName: program?.name || "",
+        providerId: program?.providerId || "",
+        assignedSites: siteIds.map((siteId) => ({
+          ...savedAssignments.get(siteId),
+          siteId,
+          siteName:
+            this.state.sites.find((site) => site.siteId === siteId)?.name || "",
+        })),
+      };
+      this.state.siteManagers = upsertRecord(
+        this.state.siteManagers.filter(
+          (manager) => !programChanged || manager.userId !== current.userId,
+        ),
+        savedManager,
+        "userId",
+      );
+      this.managerDirectoryVersion = (this.managerDirectoryVersion || 0) + 1;
       this.state.managerDirectoryLoaded = false;
-      await this.loadSiteManagers(true);
-      this.state.siteManager =
-        this.state.siteManagers.find(
-          (manager) => manager.userId === user.userId,
-        ) || null;
+      if (location.pathname + location.search !== origin) return true;
+      this.state.siteManager = savedManager;
       this.state.siteSaveMessage = programChanged
         ? "Site manager moved to the selected Program."
         : current
@@ -2556,10 +2603,8 @@ class AdminApp extends HTMLElement {
     });
     this.querySelector("#provider-form")?.addEventListener("submit", (e) => {
       e.preventDefault();
-      this.createProvider(asForm(e.currentTarget)).catch((error) => {
-        this.state.error = error.message;
-        this.render();
-      });
+      const form = asForm(e.currentTarget);
+      void this.saveWithFeedback(form, () => this.createProvider(form));
     });
     this.querySelector("#provider-details-form")?.addEventListener(
       "submit",
@@ -2603,28 +2648,9 @@ class AdminApp extends HTMLElement {
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         const submittedForm = asForm(event.currentTarget);
-        if (submittedForm.dataset.saving === "true") return;
-        submittedForm.dataset.saving = "true";
-        const submitButton = submittedForm.querySelector(
-          "button[type='submit']",
+        await this.saveWithFeedback(submittedForm, () =>
+          this.saveProviderManager(submittedForm),
         );
-        const cancelButton = submittedForm.querySelector("[data-close-dialog]");
-        if (submitButton) submitButton.disabled = true;
-        if (cancelButton) cancelButton.disabled = true;
-        try {
-          await this.saveProviderManager(submittedForm);
-        } catch (error) {
-          showFormSaveError(
-            submittedForm,
-            error instanceof Error
-              ? error.message
-              : "The Provider Manager could not be saved.",
-          );
-        } finally {
-          delete submittedForm.dataset.saving;
-          if (submitButton) submitButton.disabled = false;
-          if (cancelButton) cancelButton.disabled = false;
-        }
       });
     });
     this.querySelectorAll("[data-provider-manager-status]").forEach(
@@ -2713,10 +2739,8 @@ class AdminApp extends HTMLElement {
     bindNewProgramStaff(this, this.state.programs, adminApi);
     this.querySelector("#program-form")?.addEventListener("submit", (e) => {
       e.preventDefault();
-      this.createProgram(asForm(e.currentTarget)).catch((err) => {
-        this.state.error = err.message;
-        this.render();
-      });
+      const form = asForm(e.currentTarget);
+      void this.saveWithFeedback(form, () => this.createProgram(form));
     });
     this.querySelector("#add-program-staff")?.addEventListener("click", () =>
       this.querySelector("#add-program-staff-dialog")?.showModal(),
@@ -6184,7 +6208,8 @@ function syncDirtyForm(form, initialize = false) {
   form.dataset.isDirty = String(snapshot !== form.dataset.initialValues);
   const saveButton = form.querySelector("[data-save-button]");
   if (saveButton instanceof HTMLButtonElement) {
-    saveButton.disabled = snapshot === form.dataset.initialValues;
+    saveButton.disabled =
+      form.dataset.saving === "true" || snapshot === form.dataset.initialValues;
   }
 }
 
