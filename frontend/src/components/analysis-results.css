@@ -101,7 +101,7 @@
 }
 
 .analysis-tray--recent .analysis-card {
-  background: var(--wa-color-surface-default, #fff);
+  background: var(--group-grey, #e9eaea);
 }
 
 .analysis-tray--history .analysis-tray__cards {
@@ -109,11 +109,11 @@
   padding: var(--wa-space-l, 1.5rem) var(--wa-space-xs, 0.5rem)
     var(--wa-space-xs, 0.5rem);
   border-radius: 2rem;
-  background: var(--wa-color-neutral-fill-normal, #e4e5e9);
+  background: var(--group-grey, #e9eaea);
 }
 
 .analysis-tray--history .analysis-card {
-  background: var(--wa-color-surface-default, #fff);
+  background: var(--group-grey, #e9eaea);
 }
 
 .analysis-tray__empty {
@@ -150,26 +150,29 @@ html.wa-dark .analysis-tray--history {
   --analysis-card-outline: var(--wa-color-neutral-border-quiet, #545868);
 }
 
-/* One outline around the whole card — panel, action row, and footer sit
-   inside it on a single white surface. overflow: clip keeps the square inner
-   sections inside the card's rounded corners, so no grey can peek out. */
-.analysis-tray--recent .analysis-card,
-.analysis-tray--history .analysis-card {
+/* One outline around the white card body (panel + action row), closing with
+   the action row's rounded bottom edge. The footer sits below it, outside the
+   outline, on the group grey. */
+.analysis-tray--recent .analysis-card__panel,
+.analysis-tray--history .analysis-card__panel {
   border: 1px solid var(--analysis-card-outline);
-  overflow: clip;
 }
 
-.analysis-card__panel:has(+ .analysis-card__action-area),
-.analysis-card__panel:has(+ .analysis-card__footer) {
+.analysis-tray--recent .analysis-card__action-area,
+.analysis-tray--history .analysis-card__action-area {
+  border-inline: 1px solid var(--analysis-card-outline);
+  border-bottom: 1px solid var(--analysis-card-outline);
+}
+
+.analysis-card__panel:has(+ .analysis-card__action-area) {
   border-bottom: 0;
 }
 
-/* Done cards are a single white surface — panel, action row, and footer all
-   share it, so the grey shell no longer peeks between sections. Applies both
-   in trays and bare (the reports day and issue-type views). */
+/* The card shell shows only behind the footer strip; it matches the group
+   grey exactly so the strip and container read as one color. */
 .analysis-tray .analysis-card--done,
 .analysis-card--done.analysis-card--standard {
-  background: var(--wa-color-surface-default, #fff);
+  background: var(--group-grey, #e9eaea);
 }
 
 .analysis-card__layout {
@@ -366,8 +369,8 @@ html.wa-dark .analysis-card__clear-copy a {
   line-height: 1.6;
 }
 
+/* Caption row outside the card outline, on the group grey (no outline). */
 .analysis-card__footer {
-  background: var(--wa-color-surface-default, #fff);
   display: flex;
   justify-content: space-between;
   gap: 1rem;
@@ -909,18 +912,12 @@ html.wa-dark .analysis-card__clear-copy a {
   text-underline-offset: 0.2em;
   text-decoration-thickness: 1px;
 }
-/* Straight hairline above the actions; the rounded bottom edge (with its own
-   hairline) is the curved divider that separates the actions from the footer
-   below, per the card design. */
 .analysis-card__action-area {
   margin: 0;
   padding: 0.875rem 1.25rem 1.25rem;
   border-top: 1px solid var(--analysis-card-outline, var(--card-outline));
   background: var(--wa-color-surface-default);
   border-radius: 0 0 1.5rem 1.5rem;
-}
-.analysis-card__action-area:has(+ .analysis-card__footer) {
-  border-bottom: 1px solid var(--analysis-card-outline, var(--card-outline));
 }
 .analysis-card__check,
 .analysis-card__updates {
@@ -1123,13 +1120,8 @@ html.wa-dark .analysis-card__clear-copy a {
 .analysis-card--done .analysis-card__route {
   margin-bottom: 1rem;
 }
-.analysis-card__panel:not(
-    :has(+ .analysis-card__action-area, + .analysis-card__footer)
-  ) {
+.analysis-card__panel:not(:has(+ .analysis-card__action-area)) {
   border-radius: 1.5rem;
-}
-.analysis-card__panel:has(+ .analysis-card__footer:last-child) {
-  border-radius: 1.5rem 1.5rem 0 0;
 }
 @media (max-width: 360px) {
   .analysis-card--done .analysis-card__media {

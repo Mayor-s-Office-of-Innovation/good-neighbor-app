@@ -68,6 +68,7 @@
   --c-red: var(--c-hazard);
 
   --card-outline: #c9caca; /* 1px outline around home/task cards */
+  --group-grey: #e9eaea; /* grey check-group container + card footer strip */
   --radius: 12px;
   --radius-sm: 8px;
   --radius-pill: 999px;
@@ -88,6 +89,7 @@ html.wa-dark {
   color-scheme: dark;
 
   --card-outline: #545868;
+  --group-grey: #242424;
 
   --brand-blue: #6ba7f0; /* brightened for dark surfaces, keeps hue */
   --brand-blue-bg: #17273d;
