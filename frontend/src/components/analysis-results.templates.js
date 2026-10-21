@@ -202,6 +202,26 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.png";
  * @param {AnalysisTask | HomeTask} task
  * @returns {number}
  */
+/**
+ * Card titles display in sentence case whatever casing the analyzer stored:
+ * first word capitalized, the rest lowercased. Words holding two or more
+ * consecutive capitals (SFPD, 311 refs) or digits are left untouched.
+ * @param {string} value
+ * @returns {string}
+ */
+export function sentenceCaseTitle(value) {
+  return String(value || "")
+    .split(" ")
+    .map((word, index) => {
+      if (/[A-Z]{2}/.test(word) || /\d/.test(word)) return word;
+      const lower = word.toLowerCase();
+      return index === 0
+        ? lower.charAt(0).toUpperCase() + lower.slice(1)
+        : lower;
+    })
+    .join(" ");
+}
+
 export function analysisActionPriority(task) {
   switch (taskRoute(task).tone) {
     case "emergency":
@@ -974,7 +994,7 @@ function completedEvidenceCard(
         <div class="analysis-card__layout">
           <div class="analysis-card__content">
             <p class="analysis-card__place">${escapeHtml(cardPlace(item))}</p>
-            <h3>${escapeHtml(title)}</h3>
+            <h3>${escapeHtml(sentenceCaseTitle(title))}</h3>
             ${duplicateNote
               ? html`<p class="analysis-card__duplicate-note">
                     ${t("duplicate.note", { issue: "\uFFFC" })
@@ -1513,7 +1533,8 @@ function historyCard(task) {
             >${escapeHtml(rulebookText(status, route.statusScope))}</span
           ></span
         >
-        <span class="history-card__title">${escapeHtml(title)}</span
+        <span class="history-card__title"
+          >${escapeHtml(sentenceCaseTitle(title))}</span
         ><span class="history-card__time"
           >${escapeHtml(
             entered

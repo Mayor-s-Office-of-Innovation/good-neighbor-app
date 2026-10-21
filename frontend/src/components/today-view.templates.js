@@ -388,6 +388,7 @@ export function summaryBlock({ outsideRadius, label }) {
  *   tabCounts?: Record<string, number>,
  *   activeClearCheck: { submittedAt?: string, startedAt?: string } | null,
  *   hasPendingClearResult: boolean,
+ *   showActiveClearTray?: boolean,
  *   historyGrouping?: string,
  *   historyGroups: Array<{ checkTime: string | Date, cards: string, title?: string, compact?: boolean, counts?: any }>,
  * }} vm
@@ -407,6 +408,7 @@ export function homeResults({
   tabCounts = {},
   activeClearCheck,
   hasPendingClearResult,
+  showActiveClearTray = false,
   historyGroups,
   historyGrouping = "resolved",
 }) {
@@ -429,7 +431,7 @@ export function homeResults({
     <div class="home-results">
       ${hasPendingClearResult
         ? analysisResultsTray(recentItems, pendingSessionId, trayOptions)
-        : activeClearCheck && !recentItems.length && !newTaskCount
+        : showActiveClearTray && activeClearCheck
           ? clearCheckTray(activeClearCheck, true)
           : ""}
       ${taskTabs({ activeId: homeFilter, counts: tabCounts })}

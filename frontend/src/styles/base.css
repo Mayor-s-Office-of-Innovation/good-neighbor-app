@@ -94,6 +94,11 @@ body {
   color: var(--text);
   line-height: 1.5;
   -webkit-text-size-adjust: 100%;
+  /* Full-bleed elements (the pinned home tab bar) size themselves with 100vw,
+     which overshoots by the scrollbar width on classic-scrollbar platforms.
+     clip (not hidden) discards that sliver without creating a scroll
+     container, so position: sticky inside keeps working. */
+  overflow-x: clip;
 }
 
 /* Modals are native <dialog>s in the top layer. Hold the page still beneath an
@@ -648,8 +653,8 @@ button[data-loading] [data-loading-label] {
   background: var(--brand-blue);
   color: var(--on-ink);
   font: inherit;
-  font-weight: 700;
-  font-size: 1rem;
+  font-weight: var(--wa-font-weight-bold, 600);
+  font-size: var(--wa-font-size-m, 1rem);
   padding: 0.7rem 2.3rem;
   border-radius: var(--radius-pill);
   height: auto;

@@ -427,8 +427,8 @@
 
 .home-identity__site {
   margin: 0;
-  font-size: clamp(1.9rem, 6vw, 2.45rem);
-  font-weight: 700;
+  font-size: var(--wa-font-size-2xl, 2rem);
+  font-weight: var(--wa-font-weight-heading, 600);
   line-height: 1.12;
   text-wrap: balance;
   outline: none; /* programmatic focus target (route announcement) */
@@ -527,14 +527,39 @@
   gap: 1.5rem;
 }
 
+/* Pinned while the task list scrolls (top: 0 against the document, which is
+   the scroll container; no overflow ancestors in between). The gap compresses
+   on narrow screens so three tabs + count badges fit a 320px viewport with no
+   horizontal scroll (WCAG 1.4.10). Full-bleed width so the rule spans edge to
+   edge and the opaque background covers the blue tray scrolling underneath —
+   a translucent bar would break the status colors' verified contrast.
+   z-index sits above the cards (z-auto) and below the menus (5+). */
 .home-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 2rem;
-  width: min(100%, 30rem);
-  margin-inline: auto;
+  gap: clamp(0.75rem, 6vw, 2rem);
+  width: 100vw;
+  margin-inline: calc(50% - 50vw);
+  background: var(--bg);
   border-bottom: 1px solid #e4e5e9;
+}
+
+/* Short viewports (landscape phones, 200% zoom): release the pin so the bar
+   does not eat the viewport. The full-bleed rule stays. */
+@media (max-height: 500px) {
+  .home-tabs {
+    position: static;
+  }
+}
+
+/* 2.4.11 Focus Not Obscured: when the browser scrolls a focused control into
+   view, keep it clear of the 45px pinned bar. */
+.home-results :is(a, button, input, select, textarea, wa-select, [tabindex]) {
+  scroll-margin-top: 3.5rem;
 }
 
 .home-tabs__tab {
@@ -554,7 +579,7 @@
   cursor: pointer;
   font: inherit;
   font-size: var(--wa-font-size-m, 1rem);
-  font-weight: 400;
+  font-weight: var(--wa-font-weight-bold, 600);
   line-height: normal;
   margin: 0;
   padding: 0 0.25rem;
@@ -566,7 +591,6 @@
 .home-tabs__tab--active {
   border-bottom-color: var(--brand-blue);
   color: var(--brand-blue);
-  font-weight: 600;
 }
 
 /* Open-item count beside the tab label; same ink-on-blue pairing as .btn-blue. */
@@ -581,9 +605,9 @@
   border-radius: var(--radius-pill);
   background: var(--brand-blue);
   color: var(--on-ink);
-  font-size: var(--wa-font-size-xs, 0.75rem);
-  font-weight: 600;
-  line-height: 1;
+  font-size: var(--wa-font-size-2xs, 0.6875rem);
+  font-weight: var(--wa-font-weight-bold, 600);
+  line-height: 1.6;
 }
 
 html.wa-dark .home-tabs {
@@ -720,4 +744,12 @@ html.wa-dark .home-results__complete-content img {
 .language-list__option:focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 2px;
+}
+
+/* Responsive display type: the place header steps down from Heading 2XL to
+   Heading XL on phones (discrete breakpoint, not clamp — WCAG 1.4.4). */
+@media (max-width: 520px) {
+  .home-identity__site {
+    font-size: var(--wa-font-size-xl, 1.5625rem);
+  }
 }
