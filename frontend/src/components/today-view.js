@@ -367,7 +367,9 @@ class TodayView extends HTMLElement {
     // prompt, so it rides in the same round trip as the worklist below
     // instead of gating it: one network tier before first paint, not two.
     // Neither read can reject — a failed catalog is a switcher state, and a
-    // failed bindings read must not take the worklist down with it.
+    // failed bindings read must not take the worklist down with it. The
+    // latter stays `null` (unknown) rather than an empty list so a switch
+    // re-reads it instead of treating every bound site as unbound.
     const catalogLoad = Promise.all([
       fetchProviderSites().catch((error) => {
         console.error("listProviderSites failed", error);
@@ -376,7 +378,7 @@ class TodayView extends HTMLElement {
       }),
       listBoundSites().catch((error) => {
         console.error("listBoundSites failed", error);
-        return [];
+        return null;
       }),
     ]);
 
@@ -1406,6 +1408,18 @@ class TodayView extends HTMLElement {
   }
 
   async _switchToSite(siteId) {
+    // The bindings read failed at load (kept as null, not an empty list):
+    // retry it now rather than offer enrollment for a site that is bound.
+    if (!this._boundSites) {
+      this._boundSites = await listBoundSites().catch((error) => {
+        console.error("listBoundSites failed", error);
+        return null;
+      });
+      if (!this._boundSites) {
+        showSiteCatalogErrorToast();
+        return;
+      }
+    }
     const outcome = await switchToBoundSite({
       siteId,
       currentSiteId: this._siteId,

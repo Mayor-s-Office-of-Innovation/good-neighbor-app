@@ -173,7 +173,9 @@ export class AppRoot extends HTMLElement {
     // trip before anything paints. A revoked session still ends on the setup
     // screen (see _refreshSiteSettings), and every request the first screen
     // makes is re-authorized by the backend anyway.
-    void this._refreshSiteSettings();
+    void this._refreshSiteSettings().catch((err) =>
+      console.error("site settings refresh failed", err),
+    );
   }
 
   disconnectedCallback() {
@@ -482,33 +484,53 @@ export class AppRoot extends HTMLElement {
    * clear the current binding and return to setup. On first launch this runs
    * behind the already-rendered shell, so a changed site name is written into
    * the header here and a dead session tears the shell down.
+   *
+   * Because it no longer blocks the app, the user can act while it is in
+   * flight: both outcomes are dropped when the answer belongs to a binding
+   * that is no longer the current one, and a rejection only clears a session
+   * that is still the one this request rode (a plain 401 can also mean a
+   * retry superseded by a newer rotation — see services/api.js).
    * @returns {Promise<boolean>} whether the app shell may stay rendered
    */
   async _refreshSiteSettings() {
     setDuplicateUiSite(null);
+    const bound = this._site;
     try {
       const { site } = await getSiteSettings();
+      if (this._site !== bound) return true;
       if (site) {
-        this._site = await saveSiteSettings({
-          ...site,
-          providerSiteId: this._site.providerSiteId || site.providerSiteId,
-        });
-        setDuplicateUiSite(
-          site.siteId && site.siteId !== this._site.siteId ? null : site,
+        const saved = await saveSiteSettings(
+          {
+            ...site,
+            providerSiteId: bound.providerSiteId || site.providerSiteId,
+          },
+          bound.siteId,
         );
-        const title = this.querySelector?.(".app__title");
-        if (title && title.textContent !== this._site.name) {
-          title.textContent = this._site.name;
+        if (!saved) return true;
+        this._site = saved;
+        setDuplicateUiSite(
+          site.siteId && site.siteId !== saved.siteId ? null : site,
+        );
+        const title = this.querySelector(".app__title");
+        if (title && title.textContent !== saved.name) {
+          title.textContent = saved.name;
         }
       }
       return true;
     } catch (err) {
       if (isFatalSessionError(err)) {
+        // Stale verdicts are not ours to act on: the binding was replaced or
+        // cleared meanwhile, the user is already on the setup screen binding
+        // another site (tearing that down would orphan its `sitebound`), or a
+        // newer session was stored since this request started.
+        if (this._site !== bound || this.querySelector("site-setup")) {
+          return true;
+        }
+        const stored = await getSite().catch(() => null);
+        if (!stored || stored.token !== bound?.token) return true;
         await clearSite();
         this._site = null;
         clearAuthState();
-        if (this._unsub) this._unsub();
-        this._unsub = null;
         this._renderSetup();
         return false;
       }

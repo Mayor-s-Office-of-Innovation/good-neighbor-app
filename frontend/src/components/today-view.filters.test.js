@@ -55,11 +55,14 @@ const navigateMock = vi.hoisted(() => vi.fn());
 const awaitOverlayUnwindMock = vi.hoisted(() => vi.fn(async () => {}));
 const siteRead = vi.hoisted(() => vi.fn(async () => ({ siteId: "site-1" })));
 const windowListeners = new Map();
-const catalog = vi.hoisted(() => ({ listProviderSites: vi.fn() }));
+const catalog = vi.hoisted(() => ({
+  listProviderSites: vi.fn(),
+  listBoundSites: vi.fn(),
+}));
 vi.mock("../db.js", () => ({
   getSite: siteRead,
   hasAdminAccess: () => false,
-  listBoundSites: async () => [],
+  listBoundSites: catalog.listBoundSites,
   setSite: vi.fn(async (_name, meta) => ({ ...meta, id: "current" })),
   clearSiteSession: logout.clearSiteSession,
 }));
@@ -96,6 +99,7 @@ beforeEach(() => {
   setDuplicateUiSite(null);
   siteRead.mockResolvedValue({ siteId: "site-1" });
   awaitOverlayUnwindMock.mockClear();
+  catalog.listBoundSites.mockReset().mockResolvedValue([]);
   catalog.listProviderSites.mockReset();
   catalog.listProviderSites.mockResolvedValue({
     providerId: "provider-1",
@@ -701,6 +705,36 @@ describe("site switcher", () => {
     expect(view._providerSites).toEqual([
       { siteId: "site-2", name: "Second site" },
     ]);
+    errorLog.mockRestore();
+  });
+
+  it("re-reads bindings at switch time when the load-time read failed", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    catalog.listBoundSites.mockRejectedValueOnce(new Error("IndexedDB"));
+    const view = await mount("?filter=todo");
+    // The worklist still loaded; the bindings are unknown, not empty.
+    expect(view._renderHome).toHaveBeenCalled();
+    expect(view._boundSites).toBeNull();
+
+    view._siteId = "site-1";
+    view._providerSites = [{ siteId: "site-2", name: "Second site" }];
+    view._requestAnotherSite = vi.fn();
+
+    // Still failing: no enrollment offer for a site that may well be bound.
+    catalog.listBoundSites.mockRejectedValueOnce(new Error("IndexedDB"));
+    await view._switchToSite("site-2");
+    expect(view._requestAnotherSite).not.toHaveBeenCalled();
+    expect(view._boundSites).toBeNull();
+
+    // Recovered: a genuinely unbound site is offered enrollment as before.
+    catalog.listBoundSites.mockResolvedValueOnce([]);
+    await view._switchToSite("site-2");
+    expect(view._boundSites).toEqual([]);
+    expect(view._requestAnotherSite).toHaveBeenCalledWith(
+      "code",
+      "site-2",
+      "Second site",
+    );
     errorLog.mockRestore();
   });
 });

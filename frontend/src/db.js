@@ -280,14 +280,27 @@ function tokenClaims(token) {
 /**
  * @param {Record<string, any>} [settings] site settings to merge (typically the
  *   GET /v1/site response); binding/session keys are ignored, see above
+ * @param {string} [expectedSiteId] when given, write only while the current
+ *   record still belongs to this site
+ * @returns {Promise<Record<string, any> | null>} the saved record, or null
+ *   when the write was skipped
  */
-export async function saveSiteSettings(settings = {}) {
+export async function saveSiteSettings(settings = {}, expectedSiteId) {
   // Read and write in one transaction: the settings refresh now runs behind
   // the first screen, concurrently with that screen's requests, and a token
   // rotation (updateSiteSession) landing between a separate read and this
-  // write would be overwritten with the stale credentials.
+  // write would be overwritten with the stale credentials. With
+  // `expectedSiteId`, the write is also skipped (null) when the current
+  // record is gone or belongs to another site — a settings answer that
+  // outlived a sign-out or site switch must not resurrect or rename it.
   return tx("site", "readwrite", (os) =>
     reqToPromise(os.get("current")).then((stored) => {
+      if (
+        expectedSiteId &&
+        (!stored || (stored.siteId && stored.siteId !== expectedSiteId))
+      ) {
+        return null;
+      }
       const current = stored || { id: "current", name: "Your site" };
       const incoming = { ...settings };
       for (const key of SITE_BINDING_FIELDS) {
