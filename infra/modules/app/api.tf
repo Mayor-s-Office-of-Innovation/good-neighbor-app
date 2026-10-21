@@ -186,7 +186,7 @@ locals {
     "POST /app/v1/enrollment/redeem"      = true
     "POST /app/v1/manager-access/request" = true
     "GET /v1/sites:search"                = true
-    "GET /v1/311-media"                    = true
+    "GET /v1/311-media"                   = true
     "GET /health"                         = true
     "POST /submissions"                   = true
   }
