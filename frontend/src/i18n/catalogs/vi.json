@@ -927,7 +927,7 @@
   "today.logout.text": "Thao tác này sẽ đăng xuất và hủy liên kết thiết bị này: bạn sẽ cần yêu cầu mã mới để vào ứng dụng",
   "today.logout.title": "Xác nhận bạn muốn đăng xuất",
   "today.newResults.aria": "Kết quả phân tích mới",
-  "today.remaining.error": "Some tasks could not be loaded.",
+  "today.remaining.error": "Không tải được một số nhiệm vụ.",
   "today.results.aria": "Kết quả nhiệm vụ",
   "today.settings.aria": "Cài đặt",
   "today.settings.attributions": "Ghi nhận nguồn",
