@@ -1,3 +1,4 @@
+import { createActionFeedback } from "./action-feedback-core.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -35,6 +36,12 @@ for (const kind of ["Provider", "Program"]) {
             : "New";
         }
       },
+      actionFeedback: (key) =>
+        createActionFeedback(
+          key,
+          () => ({ close() {} }),
+          (key) => key,
+        ),
       adminApi: {
         [`create${kind}`]: async () => {
           mutations++;
@@ -77,6 +84,12 @@ for (const [staff, disabled] of [
         }
       },
       t: (key) => key,
+      actionFeedback: (key) =>
+        createActionFeedback(
+          key,
+          () => ({ close() {} }),
+          (key) => key,
+        ),
       adminApi: {
         createProgram: () => {
           calls++;

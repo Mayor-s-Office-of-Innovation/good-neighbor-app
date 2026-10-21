@@ -17,6 +17,7 @@ export function bindSiteProgramCreation(
   api,
   saveWithFeedback,
   sync,
+  actionFeedback,
 ) {
   const select = root.querySelector('wa-select[name="lead-program-id"]');
   const dialog = root.querySelector("#create-site-program-dialog");
@@ -44,26 +45,33 @@ export function bindSiteProgramCreation(
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     if (!form.reportValidity()) return;
+    const feedback = actionFeedback("admin.toast.programCreated");
     void saveWithFeedback(form, async () => {
-      const { program } = await api.createProgram({
-        providerId,
-        name: String(name.value || "").trim(),
-      });
-      state.programs = upsertRecord(state.programs, program, "programId");
-      if (!select.isConnected) return;
-      const option = document.createElement("wa-option");
-      option.value = program.programId;
-      option.textContent = program.name;
-      select.insertBefore(
-        option,
-        select.querySelector("[data-create-program]"),
-      );
-      await select.updateComplete;
-      select.value = program.programId;
-      previous = program.programId;
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-      sync();
-      dialog.close();
+      try {
+        const { program } = await api.createProgram({
+          providerId,
+          name: String(name.value || "").trim(),
+        });
+        feedback.success();
+        state.programs = upsertRecord(state.programs, program, "programId");
+        if (!select.isConnected) return;
+        const option = document.createElement("wa-option");
+        option.value = program.programId;
+        option.textContent = program.name;
+        select.insertBefore(
+          option,
+          select.querySelector("[data-create-program]"),
+        );
+        await select.updateComplete;
+        select.value = program.programId;
+        previous = program.programId;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+        sync();
+        dialog.close();
+      } catch (error) {
+        feedback.failure(error);
+        throw error;
+      }
     });
   });
 }
