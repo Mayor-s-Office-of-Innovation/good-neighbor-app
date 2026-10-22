@@ -5,6 +5,7 @@ import {
 } from "../analysis/duplicates/jobs.js";
 
 const state = vi.hoisted(() => ({
+  readImage: vi.fn(),
   records: new Map(),
   writes:
     /** @type {(import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput | import("@aws-sdk/lib-dynamodb").PutCommandInput)[]} */ ([]),
@@ -49,10 +50,7 @@ vi.mock("../db.js", () => ({
 }));
 vi.mock("../s3.js", () => ({
   headObject: async () => ({ lastModified: new Date() }),
-  getObjectBytes: async () => ({
-    bytes: Buffer.from("image"),
-    contentLength: 5,
-  }),
+  getObjectBytes: state.readImage,
 }));
 vi.mock("@aws-sdk/client-s3", () => ({
   S3Client: class {
@@ -96,6 +94,9 @@ vi.mock("@aws-sdk/client-sqs", () => ({
 import { handler } from "./duplicate-worker.js";
 
 beforeEach(() => {
+  state.readImage
+    .mockReset()
+    .mockResolvedValue({ bytes: Buffer.from("image"), contentLength: 5 });
   state.records.clear();
   state.writes = [];
   state.sends = [];
@@ -388,4 +389,88 @@ it("completes failed comparisons as frontend no-match with separate diagnostics"
     assessmentOutcome: "no_match_with_failures",
     failedCandidateCount: 1,
   });
+});
+
+it("builds a missing prepared image and continues matching", async () => {
+  const { event } = setup();
+  state.readImage.mockImplementation(async ({ key }) => {
+    if (key.startsWith("duplicate-prepared/"))
+      throw Object.assign(new Error("missing"), { name: "NoSuchKey" });
+    return { bytes: Buffer.from("image"), contentLength: 5 };
+  });
+  const result = await handler(
+    /** @type {import("aws-lambda").SQSEvent} */ (event),
+    /** @type {import("aws-lambda").Context} */ ({}),
+    () => {},
+  );
+  expect(result).toEqual({ batchItemFailures: [] });
+  expect(state.compare).toHaveBeenCalled();
+});
+
+it("retries actual cache permission errors and emits safe job diagnostics", async () => {
+  const { event } = setup();
+  state.readImage.mockRejectedValue(
+    Object.assign(new Error("private image location"), {
+      name: "AccessDenied",
+    }),
+  );
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const result = await handler(
+      /** @type {import("aws-lambda").SQSEvent} */ (event),
+      /** @type {import("aws-lambda").Context} */ ({}),
+      () => {},
+    );
+    expect(result).toEqual({
+      batchItemFailures: [{ itemIdentifier: "message" }],
+    });
+    expect(state.compare).not.toHaveBeenCalled();
+    const logs = log.mock.calls.map(([line]) => JSON.parse(line));
+    expect(logs).toContainEqual(
+      expect.objectContaining({
+        event: "duplicate_worker_failed",
+        errorName: "AccessDenied",
+        siteId: "site",
+        observationId: "source:photo",
+        messageId: "message",
+        jobKind: "compare",
+      }),
+    );
+    expect(JSON.stringify(logs)).not.toContain("private image location");
+  } finally {
+    log.mockRestore();
+  }
+});
+
+it("keeps lifecycle timing stable across redelivery", async () => {
+  const { projection } = setup();
+  const enqueuedAt = "2026-10-15T10:00:00.000Z";
+  const event = {
+    Records: [
+      {
+        messageId: "lifecycle",
+        body: JSON.stringify({
+          siteId: "site",
+          checkId: "target",
+          artifactId: "photo",
+          revision: projection.revision,
+          id: projection.id,
+          observedAt: projection.observedAt,
+          lifecycleChange: true,
+          enqueuedAt,
+        }),
+      },
+    ],
+  };
+  for (let i = 0; i < 2; i++) {
+    await handler(
+      /** @type {import("aws-lambda").SQSEvent} */ (event),
+      /** @type {import("aws-lambda").Context} */ ({}),
+      () => {},
+    );
+    expect(
+      state.records.get(`DUP_RESULT#target:photo#${projection.revision}`)
+        .queuedAt,
+    ).toBe(enqueuedAt);
+  }
 });

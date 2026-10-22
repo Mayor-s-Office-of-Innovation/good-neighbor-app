@@ -641,8 +641,6 @@ export async function matchImages({
         JSON.stringify({
           event: "duplicate_comparison_failed",
           errorName: error instanceof Error ? error.name : "UnknownError",
-          errorMessage:
-            error instanceof Error ? error.message : "Unknown comparison error",
           candidateCount: batch.length,
         }),
       );

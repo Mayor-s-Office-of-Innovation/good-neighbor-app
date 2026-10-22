@@ -9,6 +9,7 @@ export function hasEnrollmentCredentials(href = globalThis.location?.href) {
   if (!href) return false;
   try {
     const fragment = new URLSearchParams(new URL(href).hash.slice(1));
+    if (fragment.get("login") === "1") return true;
     return Boolean(
       fragment.get("enrollment_grant")?.trim() &&
         fragment.get("enrollment_token")?.trim(),

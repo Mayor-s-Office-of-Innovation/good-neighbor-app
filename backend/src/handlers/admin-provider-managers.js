@@ -1,3 +1,7 @@
+import {
+  generateEnrollmentCode,
+  enrollmentCodeVerifier,
+} from "./enrollment-codes.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { URLSearchParams } from "node:url";
 import {
@@ -242,8 +246,22 @@ export const createProviderManagerGrant = (event) =>
     const nowIso = now.toISOString();
     const expiresAt = new Date(now.getTime() + GRANT_TTL_MS).toISOString();
     const grantId = randomUUID();
-    const token = randomBytes(32).toString("base64url");
-    const tokenHash = createHash("sha256").update(token).digest("hex");
+    if (
+      body.deliveryMode !== undefined &&
+      body.deliveryMode !== "link" &&
+      body.deliveryMode !== "code"
+    ) {
+      return jsonResponse(400, { error: "invalid_delivery_mode" });
+    }
+    const deliveryMode = body.deliveryMode === "code" ? "code" : "link";
+    const token =
+      deliveryMode === "code"
+        ? await generateEnrollmentCode()
+        : randomBytes(32).toString("base64url");
+    const tokenHash =
+      deliveryMode === "code"
+        ? await enrollmentCodeVerifier(token)
+        : createHash("sha256").update(token).digest("hex");
     const grant = {
       pk: `PROVIDER#${providerId}`,
       sk: `PROVIDER_MANAGER_GRANT#${nowIso}#${grantId}`,
@@ -257,6 +275,7 @@ export const createProviderManagerGrant = (event) =>
       membershipGeneration: Number(manager.generation ?? 1),
       accessLevel: "manager",
       tokenHash,
+      deliveryMode,
       status: "pending",
       deliveryStatus: "queued",
       issuedTo: manager.email,
@@ -322,11 +341,17 @@ export const createProviderManagerGrant = (event) =>
       }
       throw error;
     }
-    const enrollmentUrl = enrollmentLink(
-      process.env.PROVIDER_APP_URL ?? "http://localhost:5173/",
-      grantId,
-      token,
-    );
+    const enrollmentUrl =
+      deliveryMode === "code"
+        ? new URL(
+            "#login=1",
+            process.env.PROVIDER_APP_URL ?? "http://localhost:5173/",
+          ).toString()
+        : enrollmentLink(
+            process.env.PROVIDER_APP_URL ?? "http://localhost:5173/",
+            grantId,
+            token,
+          );
     let deliveryStatus = "accepted";
     let deliveryProvider = configuredDeliveryProvider();
     let messageId = "";
@@ -337,6 +362,7 @@ export const createProviderManagerGrant = (event) =>
         providerName: String(providerResult.Item.name),
         siteCount: activeSites.length,
         enrollmentUrl,
+        ...(deliveryMode === "code" ? { enrollmentCode: token } : {}),
         expiresAt,
       });
       deliveryProvider = delivery.provider;
@@ -680,6 +706,7 @@ function publicManager(item) {
 /** @param {Record<string, any>} item @param {string} now */
 function publicGrant(item, now) {
   return {
+    deliveryMode: item.deliveryMode ?? "link",
     grantId: item.grantId,
     membershipId: item.membershipId,
     providerId: item.providerId,

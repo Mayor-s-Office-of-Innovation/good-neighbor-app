@@ -98,6 +98,25 @@ describe("task update dialog templates", () => {
       previews: [],
     });
     expect(capture).toContain(t("taskUpdate.capture.addNote"));
+    expect(capture).not.toContain("task-update__capture-task");
+    const results = taskUpdateCapture({
+      pendingEvent: { updateId: null },
+      results: true,
+      task: {
+        taskId: "task-1",
+        shortId: "AB12",
+        userFriendlyLabel: "Litter on sidewalk",
+        thumbnailUrl: "https://cdn.example/thumb.jpg",
+      },
+      files: [],
+      notes: ["", "", ""],
+      previews: [],
+    });
+    expect(results).toContain("task-update__capture-task");
+    expect(results).toContain("Litter on sidewalk");
+    expect(results).toContain("#AB12");
+    expect(results).toContain('src="https://cdn.example/thumb.jpg"');
+    expect(results).toContain("data-skip");
     expect(capture).toContain("photo-capture-tile");
     expect(capture).toContain("photo-capture-tile__icon");
     expect(capture).toContain("photo-capture-tile__label");
@@ -106,6 +125,24 @@ describe("task update dialog templates", () => {
     expect(taskUpdateActionEditor({ text: "Done" })).not.toContain(
       'data-action-outcome="additional_action_resolved" disabled',
     );
+  });
+
+  it("shows the card thumbnail as the original photo but opens the lightbox on the full file", () => {
+    const markup = taskUpdateTimeline({
+      task: {
+        taskId: "task-1",
+        status: "in_progress",
+        createdAt: "2026-09-30T16:00:00.000Z",
+      },
+      updates: [],
+      issueOrigin: "perimeter",
+      originalMediaUrl: "https://cdn.example/photo.thumb.webp",
+      originalFullMediaUrl: "https://cdn.example/photo.jpg",
+      mediaUrls: new Map(),
+      now: new Date("2026-09-30T17:00:00.000Z"),
+    });
+    expect(markup).toContain('src="https://cdn.example/photo.thumb.webp"');
+    expect(markup).toContain('data-full-src="https://cdn.example/photo.jpg"');
   });
 
   it("renders issue creation only after the oldest update page is loaded", () => {

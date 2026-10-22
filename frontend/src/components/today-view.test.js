@@ -570,6 +570,9 @@ describe("in-progress card actions", () => {
       const card = {
         querySelectorAll: () => [button],
         querySelector: () => null,
+        getAttribute: () => "task-1",
+        setAttribute: vi.fn(),
+        removeAttribute: vi.fn(),
       };
       const response = {
         task: {
@@ -589,6 +592,65 @@ describe("in-progress card actions", () => {
       }
     },
   );
+
+  it("merges a completion response over the list record without a reload", async () => {
+    await import("./today-view.js");
+    const registration = vi
+      .mocked(customElements.define)
+      .mock.calls.find(([name]) => name === "today-view");
+    const View = /** @type {any} */ (registration[1]);
+    const view = new View();
+    view._homeModel = {
+      tasks: [
+        { taskId: "a", status: "open", thumbnailUrl: "thumb-a" },
+        { taskId: "b", status: "open" },
+      ],
+    };
+    view._applyTaskResult("a", {
+      taskId: "a",
+      status: "completed",
+      canUploadPhotos: true,
+    });
+    expect(view._homeModel.tasks[0]).toEqual({
+      taskId: "a",
+      status: "completed",
+      thumbnailUrl: "thumb-a",
+      canUploadPhotos: true,
+    });
+    expect(view._homeModel.tasks[1]).toEqual({ taskId: "b", status: "open" });
+    view._applyTaskResult("c", { taskId: "c", status: "in_progress" });
+    expect(view._homeModel.tasks.map((task) => task.taskId)).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+    view._applyTaskResult("a", null);
+    expect(view._homeModel.tasks).toHaveLength(3);
+  });
+
+  it("holds a home paint while a native dialog is open and flushes on close", async () => {
+    await import("./today-view.js");
+    const registration = vi
+      .mocked(customElements.define)
+      .mock.calls.find(([name]) => name === "today-view");
+    const View = /** @type {any} */ (registration[1]);
+    const view = new View();
+    const model = { tasks: [] };
+    view.querySelector = () => ({ open: true });
+    view._renderHome(model);
+    expect(view._pendingDialogRender).toBe(true);
+    expect(view._homeModel).toBe(model);
+    const later = { tasks: [{ taskId: "a", status: "open" }] };
+    view._renderHome(later);
+    expect(view._homeModel).toBe(later);
+    view.querySelector = () => null;
+    view._renderHome = vi.fn();
+    view._flushDialogRender();
+    expect(view._renderHome).toHaveBeenCalledWith(later);
+    expect(view._pendingDialogRender).toBe(false);
+    view._flushDialogRender();
+    expect(view._renderHome).toHaveBeenCalledTimes(1);
+  });
 
   it("labels in-progress cards as View or add updates", async () => {
     await import("./today-view.js");

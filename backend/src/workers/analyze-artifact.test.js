@@ -13,6 +13,8 @@ const {
   createAnalyzerClient,
   reverseGeocodePhoto,
   enqueueTranslateArtifact,
+  storeThumbnail,
+  recordThumbnail,
 } = vi.hoisted(() => ({
   ddbSend: vi.fn(),
   getObjectBytes: vi.fn(),
@@ -21,7 +23,10 @@ const {
   createAnalyzerClient: vi.fn(),
   reverseGeocodePhoto: vi.fn(),
   enqueueTranslateArtifact: vi.fn(async () => true),
+  storeThumbnail: vi.fn(),
+  recordThumbnail: vi.fn(),
 }));
+vi.mock("../media/thumbnail.js", () => ({ storeThumbnail, recordThumbnail }));
 vi.mock("../analysis/translate-enqueue.js", async (importOriginal) => ({
   .../** @type {any} */ (await importOriginal()),
   enqueueTranslateArtifact,
@@ -97,6 +102,10 @@ beforeEach(() => {
   createAnalyzerClient.mockReset();
   reverseGeocodePhoto.mockReset();
   enqueueTranslateArtifact.mockClear();
+  storeThumbnail
+    .mockReset()
+    .mockImplementation(async ({ s3Key }) => `${s3Key}.thumb.webp`);
+  recordThumbnail.mockReset().mockResolvedValue({});
   delete process.env.REVERSE_GEOCODING_ENABLED;
   createAnalyzerClient.mockReturnValue({ analyze });
   process.env.S3_UPLOAD_BUCKET = "bucket";
@@ -425,51 +434,58 @@ describe("analyze-artifact worker", () => {
     expect(res).toEqual({ batchItemFailures: [{ itemIdentifier: "m2" }] });
   });
 
-  it("marks a permanent analyzer failure and consumes the message", async () => {
-    getObjectBytes.mockResolvedValueOnce({
-      bytes: Buffer.from("img"),
-      contentType: "image/jpeg",
-    });
-    analyze.mockRejectedValueOnce(
-      new AnalyzerError("bad request", {
-        status: 400,
-        code: "invalid_request",
-        retryable: false,
-      }),
-    );
-    ddbSend.mockResolvedValue({});
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  it.each([
+    [400, "invalid_request"],
+    [502, "model_unavailable"],
+    [502, "model_access_denied"],
+  ])(
+    "marks permanent analyzer failure %s %s and consumes the message",
+    async (status, code) => {
+      getObjectBytes.mockResolvedValueOnce({
+        bytes: Buffer.from("img"),
+        contentType: "image/jpeg",
+      });
+      analyze.mockRejectedValueOnce(
+        new AnalyzerError("bad request", {
+          status,
+          code,
+          retryable: false,
+        }),
+      );
+      ddbSend.mockResolvedValue({});
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await invoke(baseMsg);
+      expect(await invoke(baseMsg)).toEqual({ batchItemFailures: [] });
 
-    // Counted once as a permanent failure with the analyzer's reason code.
-    expect(metricLines(log, "AnalysisFailed")).toEqual([
-      expect.objectContaining({
-        Kind: "photo",
-        AnalysisFailed: 1,
-        reason: "invalid_request",
-        checkId: "chk_01",
-        artifactId: "art_1",
-      }),
-    ]);
-    expect(metricLines(log, "AnalyzerCall")[0]).toMatchObject({
-      outcome: "permanent",
-    });
-    expect(metricLines(log, "AnalysisRetried")).toHaveLength(0);
+      // Counted once as a permanent failure with the analyzer's reason code.
+      expect(metricLines(log, "AnalysisFailed")).toEqual([
+        expect.objectContaining({
+          Kind: "photo",
+          AnalysisFailed: 1,
+          reason: code,
+          checkId: "chk_01",
+          artifactId: "art_1",
+        }),
+      ]);
+      expect(metricLines(log, "AnalyzerCall")[0]).toMatchObject({
+        outcome: "permanent",
+      });
+      expect(metricLines(log, "AnalysisRetried")).toHaveLength(0);
 
-    // A single failure marker, conditional so a replay can't duplicate it.
-    expect(ddbSend).toHaveBeenCalledTimes(1);
-    const put = ddbSend.mock.calls[0][0];
-    expect(put).toBeInstanceOf(PutCommand);
-    expect(put.input.ConditionExpression).toBe("attribute_not_exists(sk)");
-    expect(put.input.Item).toMatchObject({
-      sk: "CHECK#chk_01#ANALYSIS#art_1",
-      status: "failed",
-      error: { code: "invalid_request", status: 400, message: "bad request" },
-    });
-    expect(put.input.Item).not.toHaveProperty("placeId");
-    expect(put.input.Item).not.toHaveProperty("placeName");
-  });
+      // A single failure marker, conditional so a replay can't duplicate it.
+      expect(ddbSend).toHaveBeenCalledTimes(1);
+      const put = ddbSend.mock.calls[0][0];
+      expect(put).toBeInstanceOf(PutCommand);
+      expect(put.input.ConditionExpression).toBe("attribute_not_exists(sk)");
+      expect(put.input.Item).toMatchObject({
+        sk: "CHECK#chk_01#ANALYSIS#art_1",
+        status: "failed",
+        error: { code, status, message: "bad request" },
+      });
+      expect(put.input.Item).not.toHaveProperty("placeId");
+      expect(put.input.Item).not.toHaveProperty("placeName");
+    },
+  );
 
   it("lets a re-driven analyze replace a failed marker but not an existing success", async () => {
     getObjectBytes.mockResolvedValueOnce({
@@ -567,6 +583,129 @@ describe("analyze-artifact worker", () => {
       status: "failed",
       error: { code: "input_too_large" },
     });
+  });
+
+  it("stores and records the card thumbnail, started before the analyzer call", async () => {
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    analyze.mockResolvedValueOnce(singleLowConcernResponse);
+    ddbSend.mockResolvedValue({});
+
+    await invoke(baseMsg);
+
+    // Encoded from the normalized bytes the analyzer gets, not a second read.
+    expect(storeThumbnail).toHaveBeenCalledWith({
+      bucket: "bucket",
+      s3Key: "checks/site-1/chk_01/art_1",
+      bytes: Buffer.from("img-bytes"),
+    });
+    expect(storeThumbnail.mock.invocationCallOrder[0]).toBeLessThan(
+      analyze.mock.invocationCallOrder[0],
+    );
+    expect(recordThumbnail).toHaveBeenCalledWith({
+      tableName: "gnp-test-app",
+      key: { pk: "SITE#site-1", sk: "CHECK#chk_01#ART#art_1" },
+      thumbS3Key: "checks/site-1/chk_01/art_1.thumb.webp",
+    });
+    // The ANALYSIS# put is untouched by the thumbnail bookkeeping.
+    expect(ddbSend.mock.calls[0][0]).toBeInstanceOf(PutCommand);
+  });
+
+  it("keeps the analysis when the thumbnail write fails, and counts it", async () => {
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    storeThumbnail.mockRejectedValueOnce(
+      Object.assign(new Error("s3 down"), { name: "ServiceUnavailable" }),
+    );
+    analyze.mockResolvedValueOnce(singleLowConcernResponse);
+    ddbSend.mockResolvedValue({});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await invoke(baseMsg);
+
+    expect(metricLines(log, "AnalysisCompleted")).toHaveLength(1);
+    const failed = metricLines(log, "ThumbnailFailed");
+    expect(failed).toHaveLength(1);
+    expect(failed[0]).toMatchObject({
+      Kind: "photo",
+      reason: "store",
+      error: "ServiceUnavailable",
+      checkId: "chk_01",
+      artifactId: "art_1",
+    });
+    expect(recordThumbnail).not.toHaveBeenCalled();
+  });
+
+  it("keeps the analysis when recording the thumbnail key fails, and counts it", async () => {
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    recordThumbnail.mockRejectedValueOnce(
+      Object.assign(new Error("gone"), {
+        name: "ConditionalCheckFailedException",
+      }),
+    );
+    analyze.mockResolvedValueOnce(singleLowConcernResponse);
+    ddbSend.mockResolvedValue({});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await invoke(baseMsg);
+
+    expect(metricLines(log, "AnalysisCompleted")).toHaveLength(1);
+    expect(metricLines(log, "ThumbnailFailed")[0]).toMatchObject({
+      reason: "record",
+      error: "ConditionalCheckFailedException",
+    });
+    expect(enqueueTranslateArtifact).toHaveBeenCalledTimes(1);
+  });
+
+  it("drains the thumbnail write before a retryable analyzer failure rethrows", async () => {
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    let settled = false;
+    storeThumbnail.mockImplementationOnce(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(() => {
+            settled = true;
+            resolve("checks/site-1/chk_01/art_1.thumb.webp");
+          }, 5),
+        ),
+    );
+    analyze.mockRejectedValueOnce(
+      new AnalyzerError("throttled", { status: 429, retryable: true }),
+    );
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const res = await invoke(baseMsg);
+
+    expect(res.batchItemFailures).toEqual([{ itemIdentifier: "m1" }]);
+    expect(settled).toBe(true);
+    expect(recordThumbnail).toHaveBeenCalledTimes(1);
+  });
+
+  it("still records the thumbnail when the analysis fails permanently", async () => {
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    analyze.mockRejectedValueOnce(
+      new AnalyzerError("bad", { status: 400, retryable: false }),
+    );
+    ddbSend.mockResolvedValue({});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await invoke(baseMsg);
+
+    expect(storeThumbnail).toHaveBeenCalledTimes(1);
+    expect(recordThumbnail).toHaveBeenCalledTimes(1);
   });
 
   it("throws when ANALYZER_BASE_URL is not configured", async () => {

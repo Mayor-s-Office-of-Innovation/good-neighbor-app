@@ -1,3 +1,5 @@
+import { checkCodeAttemptLimit } from "./code-attempt-limit.js";
+import { enrollmentCodeVerifier } from "./enrollment-codes.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
   GetCommand,
@@ -34,30 +36,43 @@ export const redeemEnrollmentGrant = async (event) => {
     return jsonResponse(400, { error: "invalid_json" });
   }
   const input = /** @type {Record<string, unknown>} */ (body ?? {});
-  const grantId = clean(input.grantId);
-  const token = clean(input.token);
+  let grantId = clean(input.grantId);
+  const code = clean(input.code).replace(/[\s-]/g, "").toUpperCase();
+  const token = code || clean(input.token);
   const requestedPhysicalDeviceId = clean(input.physicalDeviceId);
-  if (!grantId || !token) return jsonResponse(401, INVALID_GRANT);
+  if ((!code && !grantId) || !token || (code && !/^[A-Z0-9]{6}$/.test(code))) {
+    return rejectEnrollment(event, "invalid_credentials");
+  }
   if (requestedPhysicalDeviceId && !validDeviceId(requestedPhysicalDeviceId)) {
     return jsonResponse(400, { error: "invalid_physical_device_id" });
   }
 
+  if (code) {
+    const limited = await checkCodeAttemptLimit();
+    if (limited) return limited;
+  }
+
   const tableName = getDynamoTableName();
-  const tokenHash = createHash("sha256").update(token).digest("hex");
+  const tokenHash = code
+    ? await enrollmentCodeVerifier(code)
+    : createHash("sha256").update(token).digest("hex");
   const lookupResult = await ddb.send(
     new GetCommand({
       TableName: tableName,
       Key: { pk: `ENROLLMENT_TOKEN#${tokenHash}`, sk: "#META" },
+      ConsistentRead: true,
     }),
   );
   const lookup = lookupResult.Item;
-  if (!lookup || lookup.grantId !== grantId) {
-    return jsonResponse(401, INVALID_GRANT);
+  if (!lookup || (!code && lookup.grantId !== grantId)) {
+    return rejectEnrollment(event, "unknown_credentials");
   }
+  grantId = String(lookup.grantId);
   const grantResult = await ddb.send(
     new GetCommand({
       TableName: tableName,
       Key: { pk: lookup.grantPk, sk: lookup.grantSk },
+      ConsistentRead: true,
     }),
   );
   const grant = grantResult.Item;
@@ -65,12 +80,20 @@ export const redeemEnrollmentGrant = async (event) => {
   const nowIso = now.toISOString();
   if (
     !grant ||
-    grant.status !== "pending" ||
-    !["general", "manager"].includes(grant.accessLevel) ||
     grant.tokenHash !== tokenHash ||
-    grant.expiresAt <= nowIso
+    !["general", "manager"].includes(grant.accessLevel) ||
+    Boolean(code) !== (grant.deliveryMode === "code")
   ) {
-    return jsonResponse(401, INVALID_GRANT);
+    return rejectEnrollment(event, "invalid_credentials");
+  }
+  if (grant.status === "redeemed") {
+    return rejectEnrollment(event, "already_used", 409, grant);
+  }
+  if (grant.status !== "pending") {
+    return rejectEnrollment(event, "cancelled", 410, grant);
+  }
+  if (grant.expiresAt <= nowIso) {
+    return rejectEnrollment(event, "expired", 410, grant);
   }
 
   if (grant.scope === "provider") {
@@ -154,7 +177,7 @@ export const redeemEnrollmentGrant = async (event) => {
           Number(grant.issuerMembershipGeneration ?? -1))) ||
     physical?.status === "revoked"
   ) {
-    return jsonResponse(401, INVALID_GRANT);
+    return rejectEnrollment(event, "access_unavailable", 403, grant);
   }
 
   const bindingId = randomUUID();
@@ -283,11 +306,17 @@ export const redeemEnrollmentGrant = async (event) => {
             },
           },
           {
-            Delete: {
+            Update: {
               TableName: tableName,
               Key: { pk: lookup.pk, sk: lookup.sk },
-              ConditionExpression: "grantId = :grantId",
-              ExpressionAttributeValues: { ":grantId": grantId },
+              UpdateExpression: "SET redeemedAt = :now, expiresAt = :retention",
+              ConditionExpression:
+                "grantId = :grantId AND attribute_not_exists(redeemedAt)",
+              ExpressionAttributeValues: {
+                ":grantId": grantId,
+                ":now": nowIso,
+                ":retention": Math.floor(now.getTime() / 1000) + 30 * 86400,
+              },
             },
           },
           ...(accessLevel === "manager"
@@ -396,10 +425,11 @@ export const redeemEnrollmentGrant = async (event) => {
       error instanceof Error &&
       error.name === "TransactionCanceledException"
     ) {
-      return jsonResponse(401, INVALID_GRANT);
+      return rejectEnrollment(event, "conflict", 409, grant, error);
     }
     throw error;
   }
+  recordEnrollment(event, grant, physicalDeviceId);
   if (accessLevel === "manager") {
     await notifyManagerEnrollment({
       event,
@@ -497,7 +527,7 @@ async function redeemProviderEnrollment(context) {
     sites.length > MAX_PROVIDER_ENROLLMENT_SITES ||
     physical?.status === "revoked"
   ) {
-    return jsonResponse(401, INVALID_GRANT);
+    return rejectEnrollment(event, "access_unavailable", 403, grant);
   }
 
   const label =
@@ -679,11 +709,17 @@ async function redeemProviderEnrollment(context) {
             },
           },
           {
-            Delete: {
+            Update: {
               TableName: tableName,
               Key: { pk: lookup.pk, sk: lookup.sk },
-              ConditionExpression: "grantId = :grantId",
-              ExpressionAttributeValues: { ":grantId": grant.grantId },
+              UpdateExpression: "SET redeemedAt = :now, expiresAt = :retention",
+              ConditionExpression:
+                "grantId = :grantId AND attribute_not_exists(redeemedAt)",
+              ExpressionAttributeValues: {
+                ":grantId": grant.grantId,
+                ":now": nowIso,
+                ":retention": Math.floor(now.getTime() / 1000) + 30 * 86400,
+              },
             },
           },
           {
@@ -746,11 +782,12 @@ async function redeemProviderEnrollment(context) {
       error instanceof Error &&
       error.name === "TransactionCanceledException"
     ) {
-      return jsonResponse(401, INVALID_GRANT);
+      return rejectEnrollment(event, "conflict", 409, grant, error);
     }
     throw error;
   }
 
+  recordEnrollment(event, grant, physicalDeviceId);
   await notifyProviderManagerEnrollment({
     event,
     tableName,
@@ -1008,4 +1045,48 @@ function put(tableName, Item) {
         "attribute_not_exists(pk) AND attribute_not_exists(sk)",
     },
   };
+}
+
+/**
+ * Record only safe identifiers and reason codes, never request bodies or secrets.
+ * @param {import("aws-lambda").APIGatewayProxyEventV2} event
+ * @param {string} reason
+ * @param {number} [status]
+ * @param {Record<string, any>} [grant]
+ * @param {Error} [error]
+ */
+function rejectEnrollment(event, reason, status = 401, grant, error) {
+  const cancellationReasons =
+    /** @type {{CancellationReasons?: Array<{Code?:string}>}|undefined} */ (
+      error
+    )?.CancellationReasons;
+  console.info(
+    JSON.stringify({
+      marker: "EnrollmentRejected",
+      requestId: event.requestContext?.requestId,
+      grantId: grant?.grantId,
+      scope: grant?.scope ?? (grant ? "site" : undefined),
+      reason,
+      cancellationCodes: cancellationReasons?.map((item) => item.Code),
+    }),
+  );
+  return jsonResponse(status, {
+    error: status === 401 ? INVALID_GRANT.error : `enrollment_${reason}`,
+    requestId: event.requestContext?.requestId,
+  });
+}
+
+/** @param {import("aws-lambda").APIGatewayProxyEventV2} event @param {Record<string,any>} grant @param {string} physicalDeviceId */
+function recordEnrollment(event, grant, physicalDeviceId) {
+  console.info(
+    JSON.stringify({
+      marker: "EnrollmentRedeemed",
+      requestId: event.requestContext?.requestId,
+      grantId: grant.grantId,
+      scope: grant.scope ?? "site",
+      deliveryMode: grant.deliveryMode ?? "link",
+      physicalDeviceId,
+      client: describeClient(event.headers),
+    }),
+  );
 }

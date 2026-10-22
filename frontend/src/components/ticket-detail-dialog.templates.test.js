@@ -16,6 +16,21 @@ describe("ticketDetailDialog", () => {
     expect(error).not.toContain("ticket-detail__summary");
   });
 
+  it("shows the card thumbnail but opens the lightbox on the original", () => {
+    const markup = ticketDetailDialog({
+      state: "ready",
+      detail: {
+        status: "Open",
+        title: "Litter",
+        mediaUrl: "https://cdn.example/photo.thumb.webp",
+        fullMediaUrl: "https://cdn.example/photo.jpg",
+        events: [],
+      },
+    });
+    expect(markup).toContain('src="https://cdn.example/photo.thumb.webp"');
+    expect(markup).toContain('data-full-src="https://cdn.example/photo.jpg"');
+  });
+
   it("renders the request summary, overdue tone, and timeline", () => {
     const expectedResponseAt = "2026-09-01T00:00:00.000Z";
     const markup = ticketDetailDialog({

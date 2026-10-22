@@ -77,6 +77,9 @@ resource "aws_iam_role_policy" "duplicate_worker" {
     { Effect = "Allow", Action = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"], Resource = "*" },
     { Effect = "Allow", Action = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:ConditionCheckItem"], Resource = aws_dynamodb_table.app.arn },
     { Effect = "Allow", Action = ["sqs:SendMessage"], Resource = aws_sqs_queue.duplicates_dlq.arn },
+    # S3 requires bucket listing permission to return NoSuchKey for a cache miss.
+    # Without it, an absent prepared image returns AccessDenied and cannot be built.
+    { Effect = "Allow", Action = ["s3:ListBucket"], Resource = aws_s3_bucket.uploads.arn },
     { Effect = "Allow", Action = ["s3:GetObject"], Resource = "${aws_s3_bucket.uploads.arn}/*" },
     { Effect = "Allow", Action = ["s3:PutObject"], Resource = "${aws_s3_bucket.uploads.arn}/duplicate-prepared/*" },
     { Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = aws_secretsmanager_secret.duplicate_analyzer_key.arn },

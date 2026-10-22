@@ -642,7 +642,8 @@ function dayCard(day, today) {
 /**
  * @typedef {object} CheckDetail
  * @property {any} check CHECK# header
- * @property {Array<{ artifactId: string, url?: string, kind: "photo" | "text" }>} evidence
+ * @property {Array<{ artifactId: string, url?: string, thumbnailUrl?: string, kind: "photo" | "text" }>} evidence
+ *   `url` is the original (lightbox); `thumbnailUrl` the card variant when stored
  * @property {any[]} tasks tasks created from this check
  */
 
@@ -736,7 +737,7 @@ function checkTimelineItem({ check, evidence, tasks }, siteName) {
                         data-photo-time="${escapeAttr(when)}"
                       >
                         <img
-                          src="${escapeAttr(photo.url)}"
+                          src="${escapeAttr(photo.thumbnailUrl || photo.url)}"
                           alt="${escapeAttr(
                             t("reports.check.photoAlt", { index: i + 1 }),
                           )}"
