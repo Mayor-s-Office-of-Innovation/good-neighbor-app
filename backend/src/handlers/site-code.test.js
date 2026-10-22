@@ -22,10 +22,25 @@ describe("site-code handler", () => {
     send.mockReset();
   });
 
+  it("recognizes a six-character manager code without redeeming it", async () => {
+    vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
+    vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
+    send.mockResolvedValueOnce({ Item: { grantId: "grant-1" } });
+    const response = await callHandler({ code: "0AB123" });
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({
+      code: "0AB123",
+      enrollment: true,
+    });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+  });
+
   it("returns a provider site for an active code", async () => {
     vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
     vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
     send
+      .mockResolvedValueOnce({}) // enrollment-code lookup
       .mockResolvedValueOnce({}) // dynamic setup-code lookup
       .mockResolvedValueOnce({
         Item: {
@@ -61,6 +76,7 @@ describe("site-code handler", () => {
   it("backfills explicit task short-code metadata from an active site code", async () => {
     vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
     vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
+    send.mockResolvedValueOnce({}); // enrollment-code lookup
     send.mockResolvedValueOnce({}); // dynamic setup-code lookup
     send.mockResolvedValueOnce({
       Item: {
@@ -80,7 +96,7 @@ describe("site-code handler", () => {
 
     expect(res.statusCode).toBe(200);
     expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
-    const command = send.mock.calls[3][0];
+    const command = send.mock.calls[4][0];
     expect(command).toBeInstanceOf(UpdateCommand);
     expect(command.input).toMatchObject({
       TableName: "gnp-test-app",
@@ -96,6 +112,7 @@ describe("site-code handler", () => {
     vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
     vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
     send
+      .mockResolvedValueOnce({}) // enrollment-code lookup
       .mockResolvedValueOnce({}) // dynamic setup-code lookup
       .mockResolvedValueOnce({ Item: { active: false } });
 
@@ -109,6 +126,7 @@ describe("site-code handler", () => {
     vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
     vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
     send
+      .mockResolvedValueOnce({}) // enrollment-code lookup
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce({
         Item: {

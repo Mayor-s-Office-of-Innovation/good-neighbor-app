@@ -23,7 +23,7 @@ const BASE = /** @type {any} */ (import.meta).env?.VITE_API_BASE ?? "";
 /**
  * Validate a setup code against the backend.
  * @param {string} code
- * @returns {Promise<{ok:true, code:string, providerSite:ProviderSite} | {ok:false, reason:'empty'|'invalid'|'network'}>}
+ * @returns {Promise<{ok:true, code:string, providerSite:ProviderSite, enrollment?:false} | {ok:true, code:string, enrollment:true} | {ok:false, reason:'empty'|'invalid'|'network'}>}
  */
 export async function validateSetupCode(code) {
   const formatted = formatSiteCode(code);
@@ -50,6 +50,8 @@ export async function validateSetupCode(code) {
   }
 
   const data = await response.json().catch(() => null);
+  if (data?.enrollment === true)
+    return { ok: true, code: formatted, enrollment: true };
   if (!data?.providerSite?.siteId || !data.providerSite.name) {
     return { ok: false, reason: "network" };
   }

@@ -14,7 +14,7 @@ import {
   validateSetupCode,
 } from "../services/onboarding.js";
 import { redeemEnrollmentGrant, registerDevice } from "../services/devices.js";
-import { codeEntryView } from "./site-setup.templates.js";
+import { codeEntryView, enrollmentView } from "./site-setup.templates.js";
 
 const CODE_LENGTH = 6;
 const SITE_SEARCH_DELAY_MS = 250;
@@ -38,6 +38,7 @@ export class SiteSetup extends HTMLElement {
     this._canCancel = this.hasAttribute("data-can-cancel");
     this._code = formatSiteCode(readCodeFromUrl());
     const enrollment = readEnrollmentFromUrl();
+    this._enrollment = enrollment;
     this._checking = false;
     this._error = "";
     this._mode =
@@ -60,9 +61,7 @@ export class SiteSetup extends HTMLElement {
 
     if (enrollment) {
       stripEnrollmentFromUrl();
-      this._checking = true;
-      this._render();
-      this._redeemEnrollment(enrollment);
+      // Loading a link must never consume it: scanners execute JavaScript.
       return;
     }
 
@@ -84,8 +83,30 @@ export class SiteSetup extends HTMLElement {
 
   _render() {
     this._cancelTouchSubmit();
+    if (this._enrollment) {
+      this.innerHTML = enrollmentView({
+        checking: this._checking,
+        error: this._error,
+        reference: this._enrollmentReference,
+      });
+      this.querySelector("#enrollment-form").addEventListener(
+        "submit",
+        (event) => {
+          event.preventDefault();
+          if (this._checking) return;
+          const credentials = this._enrollment;
+          this._checking = true;
+          this._error = "";
+          this._enrollmentReference = "";
+          this._render();
+          void this._redeemEnrollment(credentials);
+        },
+      );
+      return;
+    }
     this.innerHTML = codeEntryView({
       value: this._code,
+      reference: this._enrollmentReference,
       error: this._error,
       checking: this._checking,
       mode: this._mode,
@@ -387,6 +408,12 @@ export class SiteSetup extends HTMLElement {
       return;
     }
 
+    if (result.enrollment) {
+      stripCodeFromUrl();
+      await this._redeemEnrollment({ code: result.code });
+      return;
+    }
+
     const providerSite = result.providerSite;
     if (this._targetSiteId && providerSite.siteId !== this._targetSiteId) {
       this._checking = false;
@@ -450,11 +477,12 @@ export class SiteSetup extends HTMLElement {
     );
   }
 
-  async _redeemEnrollment({ grantId, token }) {
+  async _redeemEnrollment({ grantId = "", token = "", code }) {
     try {
       const current = await getSite();
       const session = await redeemEnrollmentGrant(grantId, token, {
         physicalDeviceId: current?.physicalDeviceId,
+        ...(code ? { code } : {}),
       });
       if (this._cancelled) return;
       this._committingSite = true;
@@ -483,10 +511,16 @@ export class SiteSetup extends HTMLElement {
       if (this._cancelled) return;
       this._committingSite = false;
       this._checking = false;
-      this._error =
-        err instanceof Error && /invalid enrollment link/.test(err.message)
-          ? "This enrollment link is invalid or has expired. Ask a City administrator for a new link."
-          : "We couldn't enroll this device. Try again in a moment.";
+      const messages = {
+        invalid_enrollment_grant: "setup.enrollment.invalid",
+        enrollment_expired: "setup.enrollment.expired",
+        enrollment_already_used: "setup.enrollment.used",
+        enrollment_cancelled: "setup.enrollment.cancelled",
+        enrollment_access_unavailable: "setup.enrollment.unavailable",
+        enrollment_conflict: "setup.enrollment.conflict",
+      };
+      this._error = t(messages[err?.code] || "setup.enrollment.failed");
+      this._enrollmentReference = err?.requestId || "";
       this._render();
     }
   }

@@ -1,3 +1,7 @@
+vi.mock("./enrollment-codes.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  generateEnrollmentCode: vi.fn(async () => "0AB123"),
+}));
 import {
   BatchGetCommand,
   GetCommand,
@@ -27,6 +31,7 @@ beforeEach(() => {
     provider: "ses",
     messageId: "message-1",
   });
+  vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
   vi.stubEnv("PROVIDER_APP_URL", "https://goodneighborsf.org/");
 });
@@ -200,49 +205,68 @@ describe("Provider Manager administration", () => {
     expect(sendProviderManagerEnrollmentEmail).not.toHaveBeenCalled();
   });
 
-  it("records delivery evidence without requiring the grant to remain pending", async () => {
-    send
-      .mockResolvedValueOnce({
-        Item: { providerId: "provider-1", name: "Provider One" },
-      })
-      .mockResolvedValueOnce({
-        Items: [
-          {
-            membershipId: "membership-1",
-            status: "active",
-            generation: 1,
-            name: "Alex Rivera",
-            email: "alex@example.org",
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        Items: [{ siteId: "site-1", status: "active" }],
-      })
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({});
+  it.each(["link", "code"])(
+    "records delivery evidence without requiring the grant to remain pending (%s)",
+    async (deliveryMode) => {
+      send
+        .mockResolvedValueOnce({
+          Item: { providerId: "provider-1", name: "Provider One" },
+        })
+        .mockResolvedValueOnce({
+          Items: [
+            {
+              membershipId: "membership-1",
+              status: "active",
+              generation: 1,
+              name: "Alex Rivera",
+              email: "alex@example.org",
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          Items: [{ siteId: "site-1", status: "active" }],
+        })
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({});
 
-    const response = await call(
-      createProviderManagerGrant,
-      event(
-        { membershipId: "membership-1" },
-        { providerId: "provider-1" },
-        "compliance-supervisor",
-      ),
-    );
+      const response = await call(
+        createProviderManagerGrant,
+        event(
+          { membershipId: "membership-1", deliveryMode },
+          { providerId: "provider-1" },
+          "compliance-supervisor",
+        ),
+      );
 
-    expect(response.statusCode).toBe(201);
-    const grant = JSON.parse(String(response.body)).grant;
-    expect(Date.parse(grant.expiresAt) - Date.parse(grant.createdAt)).toBe(
-      24 * 60 * 60 * 1000,
-    );
-    const deliveryUpdate = send.mock.calls[5][0];
-    expect(deliveryUpdate.constructor.name).toBe("UpdateCommand");
-    expect(deliveryUpdate.input.ConditionExpression).toBe(
-      "attribute_exists(pk)",
-    );
-  });
+      expect(response.statusCode).toBe(201);
+      const message = sendProviderManagerEnrollmentEmail.mock.calls[0][0];
+      if (deliveryMode === "code") {
+        expect(message.enrollmentCode).toMatch(/^[A-Z0-9]{6}$/);
+        expect(new URL(message.enrollmentUrl).hash).toBe("#login=1");
+        expect(JSON.stringify(response)).not.toContain(message.enrollmentCode);
+        const writes = send.mock.calls.filter(
+          ([c]) => c instanceof TransactWriteCommand,
+        )[0][0].input.TransactItems;
+        expect(JSON.stringify(writes)).not.toContain(
+          message.enrollmentCode.replaceAll("-", ""),
+        );
+      } else {
+        expect(message.enrollmentCode).toBeUndefined();
+        expect(message.enrollmentUrl).toContain("enrollment_token=");
+      }
+
+      const grant = JSON.parse(String(response.body)).grant;
+      expect(Date.parse(grant.expiresAt) - Date.parse(grant.createdAt)).toBe(
+        24 * 60 * 60 * 1000,
+      );
+      const deliveryUpdate = send.mock.calls[5][0];
+      expect(deliveryUpdate.constructor.name).toBe("UpdateCommand");
+      expect(deliveryUpdate.input.ConditionExpression).toBe(
+        "attribute_exists(pk)",
+      );
+    },
+  );
 
   it("paginates managers and derives enrollment state from live rows", async () => {
     send.mockImplementation(async (command) => {

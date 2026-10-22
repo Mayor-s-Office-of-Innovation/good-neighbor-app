@@ -198,9 +198,7 @@ describe("sendProviderManagerEnrollmentEmail", () => {
       "You've been assigned as a manager for Community Partners under the Good Neighbor policy.",
     );
     expect(text).toContain("the Provider had 2 active Sites");
-    expect(text).toContain(
-      "enrolls one device as a manager for Community Partners only",
-    );
+    expect(text).toContain("enrolls one device for Community Partners only");
     expect(text).toContain("- The Good Neighbor app team -");
     expect(JSON.stringify(info.mock.calls)).not.toContain("provider-token");
   });
@@ -273,4 +271,53 @@ describe("sendManagerSecurityNotification", () => {
       status: "failed",
     });
   });
+});
+
+describe("manual enrollment email", () => {
+  it.each([true, false])(
+    "keeps the Site-verification sentence only for unified links (code: %s)",
+    async (codeMode) => {
+      await sendProviderManagerEnrollmentEmail({
+        to: "manager@example.org",
+        managerName: "Manager",
+        providerName: "Provider",
+        siteCount: 2,
+        expiresAt: EMAIL.expiresAt,
+        enrollmentUrl: "https://goodneighborsf.org/",
+        ...(codeMode ? { enrollmentCode: "0AB123" } : {}),
+      });
+      const body = send.mock.calls[0][0].input.Content.Simple.Body;
+      for (const content of [body.Text.Data, body.Html.Data]) {
+        expect(
+          content.includes(
+            "The active Site set will be verified when you redeem the link.",
+          ),
+        ).toBe(!codeMode);
+      }
+    },
+  );
+
+  it.each([sendManagerEnrollmentEmail, sendProviderManagerEnrollmentEmail])(
+    "keeps the code out of the link and logs",
+    async (sendEnrollment) => {
+      const enrollmentCode = "0AB123";
+      await sendEnrollment({
+        to: "manager@example.org",
+        managerName: "Manager",
+        siteName: "Site",
+        providerName: "Provider",
+        siteCount: 2,
+        expiresAt: EMAIL.expiresAt,
+        enrollmentUrl: "https://goodneighborsf.org/#login=1",
+        enrollmentCode,
+      });
+      const message = send.mock.calls[0][0].input.Content.Simple.Body;
+      expect(message.Text.Data).toContain(enrollmentCode);
+      expect(message.Html.Data).toContain(enrollmentCode);
+      expect(message.Html.Data).not.toMatch(/href="[^"]*0AB123/);
+      expect(message.Text.Data).not.toContain("enrollment_token");
+      expect(JSON.stringify(info.mock.calls)).not.toContain(enrollmentCode);
+      expect(JSON.stringify(error.mock.calls)).not.toContain(enrollmentCode);
+    },
+  );
 });

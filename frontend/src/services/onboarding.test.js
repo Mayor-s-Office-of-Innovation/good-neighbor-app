@@ -137,6 +137,23 @@ describe("validateSetupCode", () => {
     vi.unstubAllGlobals();
   });
 
+  it("routes a six-character manager code to grant redemption, preserving leading zero", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue({
+          ok: true,
+          json: async () => ({ code: "0AB123", enrollment: true }),
+        }),
+    );
+    expect(await validateSetupCode("0AB123")).toEqual({
+      ok: true,
+      code: "0AB123",
+      enrollment: true,
+    });
+  });
+
   it("accepts active provider-site codes from the backend", async () => {
     const fetch = vi.fn().mockResolvedValue({
       ok: true,

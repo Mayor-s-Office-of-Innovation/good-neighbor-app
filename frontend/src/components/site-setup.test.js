@@ -106,6 +106,23 @@ describe("Manager enrollment URLs", () => {
     );
   });
 
+  it.each(["#enrollment_grant=grant-1&enrollment_token=secret", "#login=1"])(
+    "never redeems on opening %s",
+    (hash) => {
+      vi.stubGlobal("location", new URL("https://goodneighborsf.org/" + hash));
+      vi.stubGlobal("history", { replaceState: vi.fn() });
+      vi.stubGlobal("window", { addEventListener: vi.fn() });
+      const component = new SiteSetup();
+      component.getAttribute = vi.fn(() => null);
+      component.hasAttribute = vi.fn(() => false);
+      component._render = vi.fn();
+      component._redeemEnrollment = vi.fn();
+      component.connectedCallback();
+      expect(component._redeemEnrollment).not.toHaveBeenCalled();
+      expect(setup.redeemEnrollmentGrant).not.toHaveBeenCalled();
+      expect(component._checking).toBe(false);
+    },
+  );
   it("persists a redeemed Manager binding", async () => {
     setup.getSite.mockResolvedValue({ physicalDeviceId: "physical-1" });
     setup.redeemEnrollmentGrant.mockResolvedValue({

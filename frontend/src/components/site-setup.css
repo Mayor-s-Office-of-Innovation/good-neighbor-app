@@ -45,6 +45,11 @@
   background-size: 16px 16px;
 }
 
+.login__mark--app-icon {
+  background: none;
+  object-fit: contain;
+}
+
 .login__copy h1 {
   margin: 0;
   color: var(--text);
@@ -60,6 +65,11 @@
   font-size: 2rem;
   line-height: 2.5rem;
   text-wrap: balance;
+}
+
+.login__copy p.login__enrollment-instructions {
+  font-size: var(--wa-font-size-xl, 1.5rem);
+  line-height: 1.4;
 }
 
 .login__form {

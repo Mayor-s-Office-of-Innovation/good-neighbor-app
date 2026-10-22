@@ -1,4 +1,5 @@
-import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { enrollmentCodeVerifier } from "./enrollment-codes.js";
+import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
@@ -30,6 +31,20 @@ export const handler = async (event) => {
 
   if (!code) {
     return jsonResponse(400, { error: "missing_site_code" });
+  }
+
+  // Resolve manager invitations without consuming them. The normal login submit
+  // redeems the grant, retaining its provider/site scope and single-use rules.
+  if (/^[A-Z0-9]{6}$/.test(code)) {
+    const hash = await enrollmentCodeVerifier(code);
+    const { Item } = await ddb.send(
+      new GetCommand({
+        TableName: getDynamoTableName(),
+        Key: { pk: `ENROLLMENT_TOKEN#${hash}`, sk: "#META" },
+        ConsistentRead: true,
+      }),
+    );
+    if (Item) return jsonResponse(200, { code, enrollment: true });
   }
 
   const valid = await validateSetupCode(code);

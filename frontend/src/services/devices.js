@@ -67,7 +67,7 @@ export async function registerDevice(code, opts = {}) {
  * callers should remove it from the URL before awaiting this request.
  * @param {string} grantId
  * @param {string} token
- * @param {{ physicalDeviceId?: string, label?: string }} [opts]
+ * @param {{ physicalDeviceId?: string, label?: string, code?: string }} [opts]
  * @returns {Promise<DeviceSession>}
  */
 export async function redeemEnrollmentGrant(grantId, token, opts = {}) {
@@ -75,18 +75,30 @@ export async function redeemEnrollmentGrant(grantId, token, opts = {}) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      grantId,
-      token,
+      ...(opts.code ? { code: opts.code } : { grantId, token }),
       ...(opts.physicalDeviceId
         ? { physicalDeviceId: opts.physicalDeviceId }
         : {}),
       ...(opts.label ? { label: opts.label } : {}),
     }),
   });
-  if (res.status === 401) {
-    throw new Error("invalid enrollment link");
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    const error = Object.assign(
+      new Error(
+        res.status === 401
+          ? "invalid enrollment link"
+          : `enrollment failed (${res.status})`,
+      ),
+      {
+        code:
+          detail.error ||
+          (res.status === 401 ? "invalid_enrollment_grant" : ""),
+        requestId: typeof detail.requestId === "string" ? detail.requestId : "",
+      },
+    );
+    throw error;
   }
-  if (!res.ok) throw new Error(`enrollment failed (${res.status})`);
   const body = await res.json();
   assertSession(body);
   return body;

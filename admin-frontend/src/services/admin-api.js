@@ -179,10 +179,14 @@ export const adminApi = {
     ),
   listProviderManagerGrants: (providerId) =>
     adminFetch(`/admin/v1/providers/${encodeURIComponent(providerId)}/grants`),
-  createProviderManagerGrant: (providerId, membershipId) =>
+  createProviderManagerGrant: (
+    providerId,
+    membershipId,
+    deliveryMode = "link",
+  ) =>
     adminFetch(
       `/admin/v1/providers/${encodeURIComponent(providerId)}/manager-grants`,
-      { method: "POST", body: JSON.stringify({ membershipId }) },
+      { method: "POST", body: JSON.stringify({ membershipId, deliveryMode }) },
     ),
   cancelProviderManagerGrant: (providerId, grantId) =>
     adminFetch(
@@ -294,10 +298,10 @@ export const adminApi = {
     ),
   listManagerGrants: (siteId) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/grants`),
-  createManagerGrant: (siteId, membershipId) =>
+  createManagerGrant: (siteId, membershipId, deliveryMode = "link") =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/manager-grants`, {
       method: "POST",
-      body: JSON.stringify({ membershipId }),
+      body: JSON.stringify({ membershipId, deliveryMode }),
     }),
   cancelManagerGrant: (siteId, grantId) =>
     adminFetch(

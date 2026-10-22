@@ -1,3 +1,4 @@
+import { enrollmentCodeVerifier } from "./enrollment-codes.js";
 import {
   GetCommand,
   QueryCommand,
@@ -46,270 +47,345 @@ afterEach(() => {
 });
 
 describe("Manager enrollment redemption", () => {
-  it("atomically enrolls a Provider Manager at every active Site", async () => {
-    const token = "provider-wide-secret-token";
-    const tokenHash = await sha256(token);
-    send
-      .mockResolvedValueOnce({
-        Item: {
-          pk: `ENROLLMENT_TOKEN#${tokenHash}`,
-          sk: "#META",
-          grantId: "provider-grant-1",
-          grantPk: "PROVIDER#provider-1",
-          grantSk: "PROVIDER_MANAGER_GRANT#time#provider-grant-1",
-        },
-      })
-      .mockResolvedValueOnce({
-        Item: {
-          pk: "PROVIDER#provider-1",
-          sk: "PROVIDER_MANAGER_GRANT#time#provider-grant-1",
-          scope: "provider",
-          grantId: "provider-grant-1",
-          providerId: "provider-1",
-          membershipId: "membership-1",
-          membershipGeneration: 3,
-          accessLevel: "manager",
-          status: "pending",
-          tokenHash,
-          expiresAt: "2099-01-01T00:00:00.000Z",
-        },
-      })
-      .mockResolvedValueOnce({
-        Item: {
-          pk: "PROVIDER#provider-1",
-          sk: "#META",
-          providerId: "provider-1",
-          name: "Provider One",
-          status: "active",
-        },
-      })
-      .mockResolvedValueOnce({
-        Items: [
-          {
+  it.each(["link", "code"])(
+    "atomically enrolls a Provider Manager at every active Site (%s)",
+    async (deliveryMode) => {
+      const token =
+        deliveryMode === "code" ? "A1B2C3" : "provider-wide-secret-token";
+      const tokenHash = /^[A-Z0-9]{6}$/.test(token)
+        ? await enrollmentCodeVerifier(token)
+        : await sha256(token);
+      send
+        .mockResolvedValueOnce({
+          Item: {
+            pk: `ENROLLMENT_TOKEN#${tokenHash}`,
+            sk: "#META",
+            grantId: "provider-grant-1",
+            grantPk: "PROVIDER#provider-1",
+            grantSk: "PROVIDER_MANAGER_GRANT#time#provider-grant-1",
+          },
+        })
+        .mockResolvedValueOnce({
+          Item: {
             pk: "PROVIDER#provider-1",
-            sk: "PROVIDER_MANAGER#manager-1",
+            sk: "PROVIDER_MANAGER_GRANT#time#provider-grant-1",
+            scope: "provider",
+            grantId: "provider-grant-1",
+            providerId: "provider-1",
             membershipId: "membership-1",
-            status: "active",
-            generation: 3,
-            name: "Alex Rivera",
-            email: "alex@example.org",
+            membershipGeneration: 3,
+            accessLevel: "manager",
+            status: "pending",
+            tokenHash,
+            deliveryMode,
+            expiresAt: "2099-01-01T00:00:00.000Z",
           },
-        ],
-      })
-      .mockResolvedValueOnce({
-        Items: [
-          {
+        })
+        .mockResolvedValueOnce({
+          Item: {
+            pk: "PROVIDER#provider-1",
+            sk: "#META",
+            providerId: "provider-1",
+            name: "Provider One",
+            status: "active",
+          },
+        })
+        .mockResolvedValueOnce({
+          Items: [
+            {
+              pk: "PROVIDER#provider-1",
+              sk: "PROVIDER_MANAGER#manager-1",
+              membershipId: "membership-1",
+              status: "active",
+              generation: 3,
+              name: "Alex Rivera",
+              email: "alex@example.org",
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          Items: [
+            {
+              siteId: "site-1",
+              siteName: "Site One",
+              status: "active",
+              siteCredentialGeneration: 2,
+            },
+          ],
+          LastEvaluatedKey: { pk: "PROVIDER#provider-1", sk: "SITE#site-1" },
+        })
+        .mockResolvedValueOnce({
+          Items: [
+            {
+              siteId: "site-2",
+              siteName: "Site Two",
+              status: "active",
+              siteCredentialGeneration: 4,
+            },
+            { siteId: "site-old", status: "inactive" },
+          ],
+        })
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({});
+
+      const response = await call(
+        event(
+          deliveryMode === "code"
+            ? { code: "a1b-2c3", label: "Alex's tablet" }
+            : { grantId: "provider-grant-1", token, label: "Alex's tablet" },
+        ),
+      );
+
+      expect(response.statusCode).toBe(201);
+      const body = JSON.parse(String(response.body));
+      expect(body).toMatchObject({
+        siteCount: 2,
+        provider: { providerId: "provider-1", name: "Provider One" },
+      });
+      expect(
+        body.bindings.map((/** @type {any} */ binding) => binding.siteId),
+      ).toEqual(["site-1", "site-2"]);
+      expect(send.mock.calls[3][0]).toBeInstanceOf(QueryCommand);
+      expect(send.mock.calls[4][0]).toBeInstanceOf(QueryCommand);
+      const transaction = send.mock.calls[6][0];
+      expect(transaction).toBeInstanceOf(TransactWriteCommand);
+      expect(transaction.input.TransactItems).toHaveLength(16);
+      const siteConditions = transaction.input.TransactItems.filter(
+        (/** @type {any} */ item) =>
+          item.ConditionCheck?.Key?.pk?.startsWith("SITE#"),
+      );
+      expect(siteConditions).toHaveLength(2);
+      expect(siteConditions[0].ConditionCheck.ConditionExpression).toContain(
+        "siteCredentialGeneration = :siteGeneration",
+      );
+      expect(
+        siteConditions.map(
+          (/** @type {any} */ item) =>
+            item.ConditionCheck.ExpressionAttributeValues[":siteGeneration"],
+        ),
+      ).toEqual([2, 4]);
+      expect(
+        transaction.input.TransactItems.filter(
+          (/** @type {any} */ item) =>
+            item.Put?.Item?.authorityScope === "provider",
+        ),
+      ).toHaveLength(4);
+      expect(sendProviderManagerSecurityNotification).toHaveBeenCalledWith({
+        to: "alex@example.org",
+        managerName: "Alex Rivera",
+        providerName: "Provider One",
+        siteCount: 2,
+        deviceLabel: "Alex's tablet",
+        clientDescription: "unknown browser on unknown device",
+        enrolledAt: expect.any(String),
+        revocationContact: "support@example.org",
+      });
+    },
+  );
+
+  it.each(["link", "code"])(
+    "atomically consumes one grant and creates a fresh binding on an existing physical identity (%s)",
+    async (deliveryMode) => {
+      const token =
+        deliveryMode === "code" ? "A1B2C3" : "one-time-secret-token";
+      const tokenHash = /^[A-Z0-9]{6}$/.test(token)
+        ? await enrollmentCodeVerifier(token)
+        : await sha256(token);
+      send
+        .mockResolvedValueOnce({
+          Item: {
+            pk: `ENROLLMENT_TOKEN#${tokenHash}`,
+            sk: "#META",
+            grantId: "grant-1",
+            grantPk: "SITE#site-1",
+            grantSk: "MANAGER_GRANT#time#grant-1",
+          },
+        })
+        .mockResolvedValueOnce({
+          Item: {
+            pk: "SITE#site-1",
+            sk: "MANAGER_GRANT#time#grant-1",
+            grantId: "grant-1",
             siteId: "site-1",
-            siteName: "Site One",
-            status: "active",
-            siteCredentialGeneration: 2,
+            membershipId: "membership-1",
+            accessLevel: "manager",
+            status: "pending",
+            tokenHash,
+            deliveryMode,
+            expiresAt: "2099-01-01T00:00:00.000Z",
           },
-        ],
-        LastEvaluatedKey: { pk: "PROVIDER#provider-1", sk: "SITE#site-1" },
-      })
-      .mockResolvedValueOnce({
-        Items: [
-          {
-            siteId: "site-2",
-            siteName: "Site Two",
+        })
+        .mockResolvedValueOnce({
+          Item: {
+            siteId: "site-1",
+            name: "Site One",
             status: "active",
             siteCredentialGeneration: 4,
           },
-          { siteId: "site-old", status: "inactive" },
-        ],
-      })
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({});
+        })
+        .mockResolvedValueOnce({
+          Item: {
+            pk: "SITE#site-1",
+            sk: "MANAGER_MEMBERSHIP#membership-1",
+            status: "active",
+            generation: 2,
+            name: "Alex Rivera",
+            email: "alex@example.org",
+          },
+        })
+        .mockResolvedValueOnce({
+          Item: {
+            pk: "PHYSICAL_DEVICE#physical_device_1",
+            sk: "#META",
+            physicalDeviceId: "physical_device_1",
+            status: "active",
+            label: "Previously suspended tablet",
+            lastSuspendedBindingId: "suspended-binding-1",
+          },
+        })
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({});
 
-    const response = await call(
-      event({ grantId: "provider-grant-1", token, label: "Alex's tablet" }),
-    );
-
-    expect(response.statusCode).toBe(201);
-    const body = JSON.parse(String(response.body));
-    expect(body).toMatchObject({
-      siteCount: 2,
-      provider: { providerId: "provider-1", name: "Provider One" },
-    });
-    expect(
-      body.bindings.map((/** @type {any} */ binding) => binding.siteId),
-    ).toEqual(["site-1", "site-2"]);
-    expect(send.mock.calls[3][0]).toBeInstanceOf(QueryCommand);
-    expect(send.mock.calls[4][0]).toBeInstanceOf(QueryCommand);
-    const transaction = send.mock.calls[6][0];
-    expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(16);
-    const siteConditions = transaction.input.TransactItems.filter(
-      (/** @type {any} */ item) =>
-        item.ConditionCheck?.Key?.pk?.startsWith("SITE#"),
-    );
-    expect(siteConditions).toHaveLength(2);
-    expect(siteConditions[0].ConditionCheck.ConditionExpression).toContain(
-      "siteCredentialGeneration = :siteGeneration",
-    );
-    expect(
-      siteConditions.map(
-        (/** @type {any} */ item) =>
-          item.ConditionCheck.ExpressionAttributeValues[":siteGeneration"],
-      ),
-    ).toEqual([2, 4]);
-    expect(
-      transaction.input.TransactItems.filter(
-        (/** @type {any} */ item) =>
-          item.Put?.Item?.authorityScope === "provider",
-      ),
-    ).toHaveLength(4);
-    expect(sendProviderManagerSecurityNotification).toHaveBeenCalledWith({
-      to: "alex@example.org",
-      managerName: "Alex Rivera",
-      providerName: "Provider One",
-      siteCount: 2,
-      deviceLabel: "Alex's tablet",
-      clientDescription: "unknown browser on unknown device",
-      enrolledAt: expect.any(String),
-      revocationContact: "support@example.org",
-    });
-  });
-
-  it("atomically consumes one grant and creates a fresh binding on an existing physical identity", async () => {
-    const token = "one-time-secret-token";
-    const tokenHash = await sha256(token);
-    send
-      .mockResolvedValueOnce({
-        Item: {
-          pk: `ENROLLMENT_TOKEN#${tokenHash}`,
-          sk: "#META",
-          grantId: "grant-1",
-          grantPk: "SITE#site-1",
-          grantSk: "MANAGER_GRANT#time#grant-1",
-        },
-      })
-      .mockResolvedValueOnce({
-        Item: {
-          pk: "SITE#site-1",
-          sk: "MANAGER_GRANT#time#grant-1",
-          grantId: "grant-1",
-          siteId: "site-1",
-          membershipId: "membership-1",
-          accessLevel: "manager",
-          status: "pending",
-          tokenHash,
-          expiresAt: "2099-01-01T00:00:00.000Z",
-        },
-      })
-      .mockResolvedValueOnce({
-        Item: {
-          siteId: "site-1",
-          name: "Site One",
-          status: "active",
-          siteCredentialGeneration: 4,
-        },
-      })
-      .mockResolvedValueOnce({
-        Item: {
-          pk: "SITE#site-1",
-          sk: "MANAGER_MEMBERSHIP#membership-1",
-          status: "active",
-          generation: 2,
-          name: "Alex Rivera",
-          email: "alex@example.org",
-        },
-      })
-      .mockResolvedValueOnce({
-        Item: {
-          pk: "PHYSICAL_DEVICE#physical_device_1",
-          sk: "#META",
-          physicalDeviceId: "physical_device_1",
-          status: "active",
-          label: "Previously suspended tablet",
-          lastSuspendedBindingId: "suspended-binding-1",
-        },
-      })
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({});
-
-    const response = await call(
-      event(
-        {
-          grantId: "grant-1",
-          token,
-          physicalDeviceId: "physical_device_1",
-          label: "Alex's tablet",
-        },
-        {
-          "user-agent": "Mozilla/5.0 (iPhone) Version/18.0 Mobile Safari/604.1",
-        },
-      ),
-    );
-    expect(response.statusCode).toBe(201);
-    const body = JSON.parse(String(response.body));
-    expect(body).toMatchObject({
-      physicalDeviceId: "physical_device_1",
-      accessLevel: "manager",
-      expiresIn: 15 * 60,
-      refreshExpiresIn: 30 * 24 * 60 * 60,
-    });
-    expect(body.token).toBeTruthy();
-    expect(body.refreshToken).toBeTruthy();
-    expect(new Date(body.absoluteExpiresAt).getTime()).toBeGreaterThan(
-      Date.now() + 364 * 24 * 60 * 60 * 1000,
-    );
-    expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
-    const transaction = send.mock.calls[5][0];
-    expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(9);
-    expect(transaction.input.TransactItems[2].Delete.Key).toEqual({
-      pk: "SITE#site-1",
-      sk: "MANAGER_GRANT_CURRENT#membership-1",
-    });
-    expect(transaction.input.TransactItems[4].Update.Key).toEqual({
-      pk: "PHYSICAL_DEVICE#physical_device_1",
-      sk: "#META",
-    });
-    const binding = transaction.input.TransactItems[5].Put.Item;
-    expect(binding).toMatchObject({
-      type: "deviceBinding",
-      physicalDeviceId: "physical_device_1",
-      siteId: "site-1",
-      accessLevel: "manager",
-      membershipGeneration: 2,
-      siteCredentialGeneration: 4,
-      inactivityLimitDays: 60,
-    });
-    expect(binding.bindingId).not.toBe("suspended-binding-1");
-    const compatibility = transaction.input.TransactItems[6].Put.Item;
-    expect(compatibility).toMatchObject({
-      type: "device",
-      accessLevel: "manager",
-    });
-    expect(transaction.input.TransactItems[7].Put.Item).toMatchObject({
-      type: "physicalDeviceBindingPointer",
-      physicalDeviceId: "physical_device_1",
-      bindingId: binding.bindingId,
-      siteId: "site-1",
-      status: "active",
-    });
-    expect(JSON.stringify(transaction.input)).not.toContain(token);
-    expect(sendManagerSecurityNotification).toHaveBeenCalledWith({
-      to: "alex@example.org",
-      managerName: "Alex Rivera",
-      siteName: "Site One",
-      deviceLabel: "Alex's tablet",
-      clientDescription: "Safari on iOS/iPadOS",
-      enrolledAt: expect.any(String),
-      revocationContact: "support@example.org",
-    });
-    expect(send.mock.calls[6][0]).toBeInstanceOf(UpdateCommand);
-    expect(send.mock.calls[6][0].input.ExpressionAttributeValues).toMatchObject(
-      {
+      const response = await call(
+        event(
+          {
+            grantId: "grant-1",
+            ...(deliveryMode === "code" ? { code: "a1b-2c3" } : { token }),
+            physicalDeviceId: "physical_device_1",
+            label: "Alex's tablet",
+          },
+          {
+            "user-agent":
+              "Mozilla/5.0 (iPhone) Version/18.0 Mobile Safari/604.1",
+          },
+        ),
+      );
+      expect(response.statusCode).toBe(201);
+      const body = JSON.parse(String(response.body));
+      expect(body).toMatchObject({
+        physicalDeviceId: "physical_device_1",
+        accessLevel: "manager",
+        expiresIn: 15 * 60,
+        refreshExpiresIn: 30 * 24 * 60 * 60,
+      });
+      expect(body.token).toBeTruthy();
+      expect(body.refreshToken).toBeTruthy();
+      expect(new Date(body.absoluteExpiresAt).getTime()).toBeGreaterThan(
+        Date.now() + 364 * 24 * 60 * 60 * 1000,
+      );
+      expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+      const transaction = send.mock.calls[5][0];
+      expect(transaction).toBeInstanceOf(TransactWriteCommand);
+      expect(transaction.input.TransactItems).toHaveLength(9);
+      expect(transaction.input.TransactItems[2].Delete.Key).toEqual({
+        pk: "SITE#site-1",
+        sk: "MANAGER_GRANT_CURRENT#membership-1",
+      });
+      expect(transaction.input.TransactItems[4].Update.Key).toEqual({
+        pk: "PHYSICAL_DEVICE#physical_device_1",
+        sk: "#META",
+      });
+      const binding = transaction.input.TransactItems[5].Put.Item;
+      expect(binding).toMatchObject({
+        type: "deviceBinding",
+        physicalDeviceId: "physical_device_1",
+        siteId: "site-1",
+        accessLevel: "manager",
+        membershipGeneration: 2,
+        siteCredentialGeneration: 4,
+        inactivityLimitDays: 60,
+      });
+      expect(binding.bindingId).not.toBe("suspended-binding-1");
+      const compatibility = transaction.input.TransactItems[6].Put.Item;
+      expect(compatibility).toMatchObject({
+        type: "device",
+        accessLevel: "manager",
+      });
+      expect(transaction.input.TransactItems[7].Put.Item).toMatchObject({
+        type: "physicalDeviceBindingPointer",
+        physicalDeviceId: "physical_device_1",
+        bindingId: binding.bindingId,
+        siteId: "site-1",
+        status: "active",
+      });
+      expect(JSON.stringify(transaction.input)).not.toContain(token);
+      expect(sendManagerSecurityNotification).toHaveBeenCalledWith({
+        to: "alex@example.org",
+        managerName: "Alex Rivera",
+        siteName: "Site One",
+        deviceLabel: "Alex's tablet",
+        clientDescription: "Safari on iOS/iPadOS",
+        enrolledAt: expect.any(String),
+        revocationContact: "support@example.org",
+      });
+      expect(send.mock.calls[6][0]).toBeInstanceOf(UpdateCommand);
+      expect(
+        send.mock.calls[6][0].input.ExpressionAttributeValues,
+      ).toMatchObject({
         ":status": "accepted",
         ":provider": "ses",
         ":messageId": "security-message-1",
         ":redeemed": "redeemed",
-      },
-    );
-  });
+      });
+    },
+  );
 
+  it.each([
+    ["redeemed", "2099-01-01T00:00:00.000Z", 409, "enrollment_already_used"],
+    ["pending", "2000-01-01T00:00:00.000Z", 410, "enrollment_expired"],
+    ["cancelled", "2099-01-01T00:00:00.000Z", 410, "enrollment_cancelled"],
+  ])(
+    "explains a verified %s invitation without writing",
+    async (status, expiresAt, expectedStatus, error) => {
+      const token = "private-token";
+      send
+        .mockResolvedValueOnce({
+          Item: { grantId: "grant-1", grantPk: "SITE#s", grantSk: "GRANT#g" },
+        })
+        .mockResolvedValueOnce({
+          Item: {
+            grantId: "grant-1",
+            tokenHash: await sha256(token),
+            accessLevel: "manager",
+            status,
+            expiresAt,
+          },
+        });
+      const response = await call(event({ grantId: "grant-1", token }));
+      expect(response.statusCode).toBe(expectedStatus);
+      expect(JSON.parse(String(response.body)).error).toBe(error);
+      expect(send).toHaveBeenCalledTimes(2);
+      expect(JSON.stringify(vi.mocked(console.info).mock.calls)).not.toContain(
+        token,
+      );
+    },
+  );
+
+  it("does not allow a manual code to be embedded as a clickable token", async () => {
+    const token = "A1B2C3";
+    send
+      .mockResolvedValueOnce({
+        Item: { grantId: "grant-1", grantPk: "SITE#s", grantSk: "GRANT#g" },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          grantId: "grant-1",
+          tokenHash: await sha256(token),
+          accessLevel: "manager",
+          deliveryMode: "code",
+          status: "pending",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+        },
+      });
+    const response = await call(event({ grantId: "grant-1", token }));
+    expect(response.statusCode).toBe(401);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+  it("rejects malformed manual codes without a database lookup", async () => {
+    const response = await call(event({ code: "12345" }));
+    expect(response.statusCode).toBe(401);
+    expect(send).not.toHaveBeenCalled();
+  });
   it("returns the same public failure for an unknown token", async () => {
     send.mockResolvedValueOnce({});
     const response = await call(
@@ -323,7 +399,9 @@ describe("Manager enrollment redemption", () => {
 
   it("keeps a successful Manager enrollment valid when notification delivery fails", async () => {
     const token = "notification-failure-token";
-    const tokenHash = await sha256(token);
+    const tokenHash = /^[A-Z0-9]{6}$/.test(token)
+      ? await enrollmentCodeVerifier(token)
+      : await sha256(token);
     sendManagerSecurityNotification.mockRejectedValueOnce(
       new Error("SES unavailable"),
     );
@@ -392,7 +470,9 @@ describe("Manager enrollment redemption", () => {
 
   it("fails closed when a concurrent redemption wins", async () => {
     const token = "one-time-secret-token";
-    const tokenHash = await sha256(token);
+    const tokenHash = /^[A-Z0-9]{6}$/.test(token)
+      ? await enrollmentCodeVerifier(token)
+      : await sha256(token);
     const conflict = new Error("already redeemed");
     conflict.name = "TransactionCanceledException";
     send
@@ -430,15 +510,17 @@ describe("Manager enrollment redemption", () => {
       .mockResolvedValueOnce({})
       .mockRejectedValueOnce(conflict);
     const response = await call(event({ grantId: "grant-1", token }));
-    expect(response.statusCode).toBe(401);
+    expect(response.statusCode).toBe(409);
     expect(JSON.parse(String(response.body))).toEqual({
-      error: "invalid_enrollment_grant",
+      error: "enrollment_conflict",
     });
   });
 
   it("redeems a staff grant only while its Manager binding and membership remain active", async () => {
     const token = "staff-one-time-secret";
-    const tokenHash = await sha256(token);
+    const tokenHash = /^[A-Z0-9]{6}$/.test(token)
+      ? await enrollmentCodeVerifier(token)
+      : await sha256(token);
     send
       .mockResolvedValueOnce({
         Item: {
