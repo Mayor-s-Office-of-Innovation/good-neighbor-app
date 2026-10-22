@@ -805,17 +805,20 @@ class AdminApp extends HTMLElement {
     }
   }
 
-  async issueProviderManagerGrant(membershipId) {
+  async issueProviderManagerGrant(membershipId, deliveryMode = "link") {
     const feedback = actionFeedback("admin.enrollment.emailed");
     try {
       if (!this.state.provider) return;
       const created = await adminApi.createProviderManagerGrant(
         this.state.provider.providerId,
         membershipId,
+        deliveryMode,
       );
       feedback.success(
         created.grant?.deliveryStatus === "accepted"
-          ? "admin.enrollment.emailed"
+          ? deliveryMode === "code"
+            ? "admin.enrollment.codeEmailed"
+            : "admin.enrollment.emailed"
           : "admin.toast.enrollmentEmailFailed",
         created.grant?.deliveryStatus === "accepted" ? "success" : "error",
       );
@@ -826,6 +829,15 @@ class AdminApp extends HTMLElement {
       );
       this.render();
     } catch (error) {
+      if (error.message === "provider_manager_grant_already_active") {
+        error.message = t("admin.enrollment.alreadyActive");
+      } else if (
+        ["provider_manager_grant_conflict", "manager_grant_conflict"].includes(
+          error.message,
+        )
+      ) {
+        error.message = t("admin.enrollment.conflict");
+      }
       feedback.failure(error);
       throw error;
     }
@@ -2411,7 +2423,7 @@ class AdminApp extends HTMLElement {
   }
 
   /** @param {string} membershipId */
-  async issueManagerGrant(membershipId) {
+  async issueManagerGrant(membershipId, deliveryMode = "link") {
     const feedback = actionFeedback("admin.enrollment.emailed");
     try {
       if (!this.state.site) return;
@@ -2436,10 +2448,13 @@ class AdminApp extends HTMLElement {
       const created = await adminApi.createManagerGrant(
         this.state.site.siteId,
         membershipId,
+        deliveryMode,
       );
       feedback.success(
         created.grant?.deliveryStatus === "accepted"
-          ? "admin.enrollment.emailed"
+          ? deliveryMode === "code"
+            ? "admin.enrollment.codeEmailed"
+            : "admin.enrollment.emailed"
           : "admin.toast.enrollmentEmailFailed",
         created.grant?.deliveryStatus === "accepted" ? "success" : "error",
       );
@@ -2450,6 +2465,15 @@ class AdminApp extends HTMLElement {
       );
       this.render();
     } catch (error) {
+      if (error.message === "provider_manager_grant_already_active") {
+        error.message = t("admin.enrollment.alreadyActive");
+      } else if (
+        ["provider_manager_grant_conflict", "manager_grant_conflict"].includes(
+          error.message,
+        )
+      ) {
+        error.message = t("admin.enrollment.conflict");
+      }
       feedback.failure(error);
       throw error;
     }
@@ -3113,6 +3137,7 @@ class AdminApp extends HTMLElement {
         button.addEventListener("click", () => {
           this.issueProviderManagerGrant(
             dataAttr(button, "data-issue-provider-manager-grant"),
+            button.dataset.deliveryMode || "link",
           ).catch((error) => {
             this.state.error = error.message;
             this.render();
@@ -4088,6 +4113,7 @@ class AdminApp extends HTMLElement {
       button.addEventListener("click", () =>
         this.issueManagerGrant(
           dataAttr(button, "data-issue-manager-grant"),
+          button.dataset.deliveryMode || "link",
         ).catch((err) => {
           this.state.error = err.message;
           this.render();
@@ -5035,7 +5061,7 @@ function managerMembershipList(memberships, siteId) {
     .map(
       (membership) => `<li>
         <div><strong>${escapeHtml(membership.name)}</strong><span><a href="mailto:${escapeHtml(membership.email)}">${escapeHtml(membership.email)}</a></span><span class="muted">Has ${escapeHtml(membership.activeBindingCount || 0)} active device${Number(membership.activeBindingCount || 0) === 1 ? "" : "s"} in use at this site</span></div>
-        <div class="contact-list__actions"><button class="btn-secondary" type="button" data-issue-manager-grant="${escapeHtml(membership.membershipId)}">${escapeHtml(t("admin.enrollment.emailLink"))}</button>${membership.userId ? `<a class="btn-secondary" href="/managers/${encodeURIComponent(membership.userId)}?returnSite=${encodeURIComponent(siteId)}" data-route>${escapeHtml(t("common.edit"))}</a>` : ""}<button class="btn-danger" type="button" data-remove-manager-membership="${escapeHtml(membership.membershipId)}">Remove</button></div>
+        <div class="contact-list__actions"><button class="btn-secondary" type="button" data-issue-manager-grant="${escapeHtml(membership.membershipId)}">${escapeHtml(t("admin.enrollment.emailLink"))}</button>${membership.userId ? `<a class="btn-secondary" href="/managers/${encodeURIComponent(membership.userId)}?returnSite=${encodeURIComponent(siteId)}" data-route>${escapeHtml(t("common.edit"))}</a>` : ""}${enrollmentOptions("site", membership.membershipId)}<button class="btn-danger" type="button" data-remove-manager-membership="${escapeHtml(membership.membershipId)}">Remove</button></div>
       </li>`,
     )
     .join("")}</ul>`;
@@ -5970,6 +5996,7 @@ function providerManagerRow(manager) {
     <div class="panel__head"><div><h3>${escapeHtml(manager.name)}</h3><p class="muted">${escapeHtml(manager.activeDeviceCount || 0)} active provider-wide device${Number(manager.activeDeviceCount || 0) === 1 ? "" : "s"} · ${escapeHtml(manager.status)}</p></div><div class="row">
       ${manager.status === "active" ? `<button class="btn-secondary" type="button" data-issue-provider-manager-grant="${escapeHtml(manager.membershipId)}">${escapeHtml(t("admin.enrollment.emailLink"))}</button>` : ""}
       <button class="btn-secondary" type="button" data-edit-provider-manager="${escapeHtml(manager.membershipId)}" aria-label="${escapeHtml(t("common.edit"))}: ${escapeHtml(manager.name)}" aria-haspopup="dialog">${escapeHtml(t("common.edit"))}</button>
+      ${inactive ? "" : enrollmentOptions("provider", manager.membershipId)}
       <button class="${inactive ? "btn-secondary" : "btn-danger"}" type="button" data-provider-manager-status="${escapeHtml(manager.membershipId)}" data-provider-manager-active="${inactive ? "true" : "false"}">${inactive ? "Reinstate" : "Deactivate"}</button>
     </div></div>
     <dialog class="places-modal provider-manager-edit-dialog" data-provider-manager-dialog aria-labelledby="${titleId}">
@@ -6977,4 +7004,19 @@ function managerSaveErrorMessage(error) {
   if (code === "manager_membership_conflict")
     return "A Site assignment changed. Reload the manager and try again.";
   return "The site manager couldn't be saved. Try again.";
+}
+
+/** @param {"site"|"provider"} scope @param {string} membershipId */
+function enrollmentOptions(scope, membershipId) {
+  const id = `enrollment-options-${scope}-${encodeURIComponent(membershipId)}`;
+  const attribute =
+    scope === "provider"
+      ? "data-issue-provider-manager-grant"
+      : "data-issue-manager-grant";
+  return `<button class="btn-secondary" type="button" popovertarget="${id}" aria-haspopup="menu">${escapeHtml(t("admin.enrollment.moreOptions"))}</button>
+    <div class="admin-settings-menu" id="${id}" popover role="menu" aria-label="${escapeHtml(t("admin.enrollment.moreOptions"))}">
+      <button class="btn-secondary" type="button" role="menuitem" ${attribute}="${escapeHtml(membershipId)}" data-delivery-mode="code" autofocus popovertarget="${id}" popovertargetaction="hide">
+        <wa-icon name="envelope" aria-hidden="true"></wa-icon><span>${escapeHtml(t("admin.enrollment.emailCode"))}</span>
+      </button>
+    </div>`;
 }

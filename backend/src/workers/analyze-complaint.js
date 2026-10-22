@@ -4,7 +4,10 @@ import { ddb } from "../db.js";
 import { getComplaintBucket, getConfig } from "../config.js";
 import { getObjectBytes, presignGet } from "../s3.js";
 import { downscaleImage } from "../media/downscale.js";
-import { createAnalyzerClient } from "../analysis/analyzer-client.js";
+import {
+  AnalyzerError,
+  createAnalyzerClient,
+} from "../analysis/analyzer-client.js";
 import { getAnalyzerApiKey } from "../analysis/api-key.js";
 import {
   complaintArtifactPrefix,
@@ -139,7 +142,9 @@ export async function handler(event) {
     const receiveCount = Number(
       event.Records[0].attributes?.ApproximateReceiveCount || 1,
     );
-    if (receiveCount >= 5) {
+    const permanent =
+      error instanceof AnalyzerError && error.retryable === false;
+    if (permanent || receiveCount >= 5) {
       try {
         await ddb.send(
           new UpdateCommand({

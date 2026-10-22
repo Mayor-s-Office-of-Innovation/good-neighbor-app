@@ -28,7 +28,7 @@ import { RUBRIC_ID, RUBRIC_VERSION } from "./contract.js";
  * The service's documented error `code`s (error-response.schema.json). Kept as a
  * plain typedef — we don't switch on them beyond surfacing, but naming them
  * documents what a caller can expect on `.code`.
- * @typedef {"invalid_request" | "unknown_rubric" | "unsupported_input_type" | "unauthorized" | "forbidden_rubric" | "model_invoke_failed" | "model_unavailable" | "model_access_denied" | "invalid_model_response"} AnalyzerErrorCode
+ * @typedef {"invalid_request" | "unknown_rubric" | "unsupported_input_type" | "unauthorized" | "forbidden_rubric" | "model_invoke_failed" | "model_unavailable" | "model_access_denied" | "invalid_model_response" | "evidence_retrieval_failed"} AnalyzerErrorCode
  */
 
 /** HTTP statuses worth a retry: throttling, gateway/model transients, 5xx. */
@@ -257,7 +257,8 @@ export function createAnalyzerClient({
         !permanentModelError &&
         (typeof err.retryable === "boolean"
           ? err.retryable
-          : RETRYABLE_STATUS.has(res.status));
+          : err.code === "evidence_retrieval_failed" ||
+            RETRYABLE_STATUS.has(res.status));
       if (retryable && attempt < maxRetries) {
         await sleep(baseDelayMs * 2 ** attempt);
         continue;

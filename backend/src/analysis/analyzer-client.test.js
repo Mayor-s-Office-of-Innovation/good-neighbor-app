@@ -305,6 +305,42 @@ describe("createAnalyzerClient", () => {
     expect(calls).toHaveLength(1); // no retry on 4xx
   });
 
+  it.each([undefined, true, false])(
+    "honors evidence retrieval retryability (%s)",
+    async (retryable) => {
+      const { fetchImpl, calls } = stubFetch([
+        {
+          ok: false,
+          status: 422,
+          body: {
+            error: {
+              code: "evidence_retrieval_failed",
+              ...(retryable === undefined ? {} : { retryable }),
+            },
+          },
+        },
+        { ok: true, status: 200, body: excellentResponse },
+      ]);
+      const client = createAnalyzerClient({
+        baseUrl: "https://analysis.example.org/",
+        apiKey: "k",
+        fetchImpl,
+        sleep: noSleep,
+      });
+      if (retryable === false) {
+        await expect(client.analyze({ metadata, media })).rejects.toMatchObject(
+          { retryable: false },
+        );
+        expect(calls).toHaveLength(1);
+      } else {
+        expect(await client.analyze({ metadata, media })).toBe(
+          excellentResponse,
+        );
+        expect(calls).toHaveLength(2);
+      }
+    },
+  );
+
   it("retries a 429 then succeeds", async () => {
     const { fetchImpl, calls } = stubFetch([
       {

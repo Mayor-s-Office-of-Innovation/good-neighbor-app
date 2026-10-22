@@ -108,8 +108,12 @@ export class AppRoot extends HTMLElement {
       // re-render of the shell and the current view (or the setup screen).
       this._onLocaleChange = () => {
         if (!this.isConnected) return;
-        if (!this._site) {
-          this._renderSetup();
+        if (!this._site || this.querySelector("site-setup")) {
+          // Keep pending enrollment credentials in the existing component:
+          // their fragment was stripped before the confirmation step.
+          const setup = this.querySelector("site-setup");
+          if (setup) setup._render();
+          else this._renderSetup();
           return;
         }
         // Only the view: the shell chrome is hidden, and re-creating it would

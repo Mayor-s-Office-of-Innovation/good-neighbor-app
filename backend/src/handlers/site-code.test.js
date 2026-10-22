@@ -1,3 +1,7 @@
+import { checkCodeAttemptLimit } from "./code-attempt-limit.js";
+vi.mock("./code-attempt-limit.js", () => ({
+  checkCodeAttemptLimit: vi.fn(async () => null),
+}));
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
@@ -22,10 +26,25 @@ describe("site-code handler", () => {
     send.mockReset();
   });
 
+  it("recognizes a six-character manager code without redeeming it", async () => {
+    vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
+    vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
+    send.mockResolvedValueOnce({ Item: { grantId: "grant-1" } });
+    const response = await callHandler({ code: "0AB123" });
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({
+      code: "0AB123",
+      enrollment: true,
+    });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+  });
+
   it("returns a provider site for an active code", async () => {
     vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
     vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
     send
+      .mockResolvedValueOnce({}) // enrollment-code lookup
       .mockResolvedValueOnce({}) // dynamic setup-code lookup
       .mockResolvedValueOnce({
         Item: {
@@ -61,6 +80,7 @@ describe("site-code handler", () => {
   it("backfills explicit task short-code metadata from an active site code", async () => {
     vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
     vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
+    send.mockResolvedValueOnce({}); // enrollment-code lookup
     send.mockResolvedValueOnce({}); // dynamic setup-code lookup
     send.mockResolvedValueOnce({
       Item: {
@@ -80,7 +100,7 @@ describe("site-code handler", () => {
 
     expect(res.statusCode).toBe(200);
     expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
-    const command = send.mock.calls[3][0];
+    const command = send.mock.calls[4][0];
     expect(command).toBeInstanceOf(UpdateCommand);
     expect(command.input).toMatchObject({
       TableName: "gnp-test-app",
@@ -96,6 +116,7 @@ describe("site-code handler", () => {
     vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
     vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
     send
+      .mockResolvedValueOnce({}) // enrollment-code lookup
       .mockResolvedValueOnce({}) // dynamic setup-code lookup
       .mockResolvedValueOnce({ Item: { active: false } });
 
@@ -109,6 +130,7 @@ describe("site-code handler", () => {
     vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
     vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
     send
+      .mockResolvedValueOnce({}) // enrollment-code lookup
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce({
         Item: {
@@ -158,3 +180,19 @@ async function callHandler(body) {
     await handler(event(body), /** @type {any} */ ({}), () => {})
   );
 }
+
+it("stops throttled code guesses before any lookup", async () => {
+  const limited = {
+    statusCode: 429,
+    body: JSON.stringify({ error: "code_attempts_limited" }),
+  };
+  vi.mocked(checkCodeAttemptLimit).mockResolvedValueOnce(limited);
+  expect(await callHandler({ code: "a1b-2c3" })).toEqual(limited);
+  expect(send).not.toHaveBeenCalled();
+});
+it("does not look up codes when the rate-limit store fails", async () => {
+  const error = new Error("rate store unavailable");
+  vi.mocked(checkCodeAttemptLimit).mockRejectedValueOnce(error);
+  await expect(callHandler({ code: "a1b-2c3" })).rejects.toBe(error);
+  expect(send).not.toHaveBeenCalled();
+});

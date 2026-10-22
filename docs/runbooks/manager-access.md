@@ -94,3 +94,66 @@ local logs containing a redeemable URL to an issue.
 For deployed verification, submit a designated test Manager address, confirm the generic UI
 response, redeem the single-Site link, and verify that no raw address or token appears in the
 API log group. Terraform changes are planned/applied through CI, not from a laptop.
+
+## Invitation confirmation and manual enrollment codes
+
+Provider and Site Manager invitations expire after 24 hours and remain single use.
+Opening an enrollment link shows a confirmation screen; only submitting **Enroll
+this device** redeems it. Staff and recovery links use the same confirmation screen.
+
+In the Provider manager row and the Site's App access manager row, **More options**
+(to the right of Edit) → **Email code** issues a fresh invitation in manual mode.
+The email includes a six-character uppercase letter/digit code and a plain `#login=1` link that opens the
+existing six-character login screen, including on a previously enrolled device.
+The code is entered in the normal code field and submitted with Continue.
+It redeems the same scoped manager grant; no separate enrollment-code screen is used.
+Codes are single use and stored only as verifiers. The plain link contains no code.
+
+Provider issuance still rejects a second unexpired invitation until it is cancelled
+or expires. Site Manager issuance retains its existing replacement behavior.
+Choosing Email code does not revoke previously enrolled devices.
+
+### Troubleshooting consumed invitations
+
+A successful redemption proves a client received credentials, not that the named
+recipient personally used the app. Email-security browsers may execute JavaScript.
+Confirmation reduces accidental scanning redemptions; use manual codes when a
+scanner also interacts with confirmation controls.
+
+API responses distinguish verified used (409), expired/cancelled (410), changed
+access (403), and transaction conflict (409) invitations. Unknown credentials
+remain a generic 401. The UI displays a support reference when available.
+Old grants whose token lookup was deleted before this change remain generic
+invalid-invitation errors; no historical secrets or lookups are reconstructed.
+
+CloudWatch markers `EnrollmentRejected` and `EnrollmentRedeemed` include the API
+request ID and, once verified, grant ID. Rejections include a reason and DynamoDB
+cancellation codes when available. Successful events include scope, delivery mode,
+physical-device ID, and a coarse browser/device description. Never log the request
+body, raw token/code, or complete invitation URL. Correlate request IDs with API
+Gateway access logs when investigating scanner activity.
+
+If scanner consumption is suspected, review/revoke the affected enrollment before
+issuing a replacement. A replacement invitation does not invalidate its predecessor's
+already-created sessions. The deployed frontend must include the confirmation
+change before scanning tests are meaningful.
+
+### Short-code abuse controls
+
+Both `/site-code` and manual-code submissions to `/app/v1/enrollment/redeem`
+consume the same atomic DynamoDB budget before any credential lookup: 300 attempts
+per five-minute UTC window and 3,000 per UTC day, per environment. Successful
+lookups and redemptions count too (a normal manager login consumes two attempts).
+The counters have numeric TTLs; window keys, not TTL deletion timing, control resets.
+This global cap also covers distributed guesses and requests sent directly to API Gateway.
+No counter is tied to an invitation or to a caller-supplied IP header.
+
+CloudFront WAF additionally shares a 60-request/five-minute viewer-IP limit across
+both paths. This edge rule includes link redemption, while the application budget
+applies only to short codes. Infrastructure changes deploy through CI.
+
+Exhausted application budgets return 429 with `Retry-After`, a localized wait message,
+and a `ShortCodeThrottled` log event without credentials. During an attack, the global
+cap can temporarily prevent all code logins until the window resets; full-token
+invitations remain outside that application cap. Investigate sustained throttling
+before raising limits. Storage failures fail closed before code resolution.

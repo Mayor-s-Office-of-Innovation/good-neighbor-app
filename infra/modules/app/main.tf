@@ -1306,6 +1306,12 @@ resource "aws_cloudfront_response_headers_policy" "admin_security" {
 }
 
 resource "aws_wafv2_web_acl" "web" {
+  custom_response_body {
+    key          = "code-attempts-limited"
+    content      = jsonencode({ error = "code_attempts_limited" })
+    content_type = "APPLICATION_JSON"
+  }
+
   # CLOUDFRONT-scoped WAF must live in us-east-1 regardless of the app's region.
   provider = aws.us_east_1
 
@@ -1499,6 +1505,66 @@ resource "aws_wafv2_web_acl" "web" {
     visibility_config {
       cloudwatch_metrics_enabled = true
       metric_name                = "${local.name_prefix}-device-auth-rate"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  # Share a viewer-IP budget across short-code lookup and enrollment. The
+  # application also caps attempts globally to cover distributed/direct-origin traffic.
+  rule {
+    name     = "EnrollmentCodeRateLimit"
+    priority = 9
+    action {
+      block {
+        custom_response {
+          response_code            = 429
+          custom_response_body_key = "code-attempts-limited"
+          response_header {
+            name  = "Retry-After"
+            value = "300"
+          }
+        }
+      }
+    }
+    statement {
+      rate_based_statement {
+        aggregate_key_type = "IP"
+        limit              = 60
+        scope_down_statement {
+          or_statement {
+            statement {
+              byte_match_statement {
+                positional_constraint = "EXACTLY"
+                search_string         = "/site-code"
+                field_to_match {
+                  uri_path {}
+                }
+                text_transformation {
+                  priority = 0
+                  type     = "LOWERCASE"
+                }
+              }
+            }
+            statement {
+              byte_match_statement {
+                positional_constraint = "EXACTLY"
+                search_string         = "/app/v1/enrollment/redeem"
+                field_to_match {
+                  uri_path {}
+                }
+                text_transformation {
+                  priority = 0
+                  type     = "LOWERCASE"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name_prefix}-enrollment-code-rate"
       sampled_requests_enabled   = true
     }
   }

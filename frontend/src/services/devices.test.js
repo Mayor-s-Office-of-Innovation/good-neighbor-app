@@ -136,6 +136,24 @@ describe("redeemEnrollmentGrant", () => {
     );
   });
 
+  it("preserves verified invitation failures and support references", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        jsonResponse({
+          status: 409,
+          body: { error: "enrollment_already_used", requestId: "request-1" },
+        }),
+      ),
+    );
+    await expect(
+      redeemEnrollmentGrant("grant-1", "secret"),
+    ).rejects.toMatchObject({
+      code: "enrollment_already_used",
+      requestId: "request-1",
+    });
+  });
+
   it("does not misreport a missing API route as an expired link", async () => {
     vi.stubGlobal(
       "fetch",

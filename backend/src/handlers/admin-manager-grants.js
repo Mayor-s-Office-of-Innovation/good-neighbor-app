@@ -1,3 +1,7 @@
+import {
+  generateEnrollmentCode,
+  enrollmentCodeVerifier,
+} from "./enrollment-codes.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { URLSearchParams } from "node:url";
 import {
@@ -122,14 +126,34 @@ export const createManagerGrant = (event) =>
       now.getTime() + MANAGER_GRANT_TTL_MS,
     ).toISOString();
     const grantId = randomUUID();
-    const token = randomBytes(32).toString("base64url");
-    const tokenHash = createHash("sha256").update(token).digest("hex");
+    if (
+      body.deliveryMode !== undefined &&
+      body.deliveryMode !== "link" &&
+      body.deliveryMode !== "code"
+    ) {
+      return jsonResponse(400, { error: "invalid_delivery_mode" });
+    }
+    const deliveryMode = body.deliveryMode === "code" ? "code" : "link";
+    const token =
+      deliveryMode === "code"
+        ? await generateEnrollmentCode()
+        : randomBytes(32).toString("base64url");
+    const tokenHash =
+      deliveryMode === "code"
+        ? await enrollmentCodeVerifier(token)
+        : createHash("sha256").update(token).digest("hex");
     const actor = actorId(event);
-    const enrollmentUrl = enrollmentLink(
-      process.env.PROVIDER_APP_URL ?? "http://localhost:5173/",
-      grantId,
-      token,
-    );
+    const enrollmentUrl =
+      deliveryMode === "code"
+        ? new URL(
+            "#login=1",
+            process.env.PROVIDER_APP_URL ?? "http://localhost:5173/",
+          ).toString()
+        : enrollmentLink(
+            process.env.PROVIDER_APP_URL ?? "http://localhost:5173/",
+            grantId,
+            token,
+          );
     const grant = {
       pk: `SITE#${siteId}`,
       sk: `MANAGER_GRANT#${nowIso}#${grantId}`,
@@ -140,6 +164,7 @@ export const createManagerGrant = (event) =>
       siteId,
       accessLevel: "manager",
       tokenHash,
+      deliveryMode,
       status: "pending",
       deliveryStatus: "queued",
       issuedTo: recipientEmail,
@@ -266,6 +291,7 @@ export const createManagerGrant = (event) =>
         managerName: String(recipientName),
         siteName: String(site.name),
         enrollmentUrl,
+        ...(deliveryMode === "code" ? { enrollmentCode: token } : {}),
         expiresAt,
       });
       deliveryProvider = delivery.provider;
@@ -396,6 +422,7 @@ function publicGrant(item, now) {
       ? "expired"
       : item.status;
   return {
+    deliveryMode: item.deliveryMode ?? "link",
     grantId: item.grantId,
     membershipId: item.membershipId,
     siteId: item.siteId,

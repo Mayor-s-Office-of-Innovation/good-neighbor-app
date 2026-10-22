@@ -1,3 +1,4 @@
+import { t } from "../i18n/enrollment.js";
 import { URLSearchParams } from "node:url";
 import { createHash } from "node:crypto";
 import { configuredEmailProvider, sendEmail } from "./email-transport.js";
@@ -96,7 +97,7 @@ export async function sendSetupCodeEmail(email) {
 /**
  * Send a single-Site Manager enrollment link. The token may appear in the
  * outbound message but never in logs.
- * @param {{ to: string, managerName: string, siteName: string, enrollmentUrl: string, expiresAt: string }} email
+ * @param {{ to: string, managerName: string, siteName: string, enrollmentUrl: string, enrollmentCode?: string, expiresAt: string }} email
  * @returns {Promise<{ provider: "log" | "ses" | "smtp", messageId: string }>}
  */
 export async function sendManagerEnrollmentEmail(email) {
@@ -104,6 +105,7 @@ export async function sendManagerEnrollmentEmail(email) {
   const localPreview = !isLambda && Boolean(process.env.LOCAL_API_PORT);
   const metadata = {
     marker: "manager_enrollment_email",
+    deliveryMode: email.enrollmentCode ? "code" : "link",
     contactHash: createHash("sha256")
       .update(email.to.trim().toLowerCase())
       .digest("hex"),
@@ -141,8 +143,18 @@ export async function sendManagerEnrollmentEmail(email) {
     });
     const prefix = process.env.SETUP_CODE_EMAIL_SUBJECT_PREFIX ?? "";
     const replyTo = process.env.SETUP_CODE_EMAIL_REPLY_TO;
-    const text = `Hello ${email.managerName},\n\nYou've been assigned as a site manager for ${email.siteName} under the Good Neighbor policy.\n\nThe Good Neighbor app is a website that runs in any smartphone, tablet, or desktop PC/Mac browser. We recommend using it with a mobile device with a cellular connection, like a smartphone.\n\nTo start using your device with the Good Neighbor app, use this one-time link:\n\n${email.enrollmentUrl}\n\nThis link expires ${expires} and enrolls one device for ${email.siteName} only. Do not forward it.\n\nThank you,\n\n- The Good Neighbor app team -`;
-    const html = `<p>Hello ${escapeHtml(email.managerName)},</p><p>You've been assigned as a site manager for ${escapeHtml(email.siteName)} under the Good Neighbor policy.</p><p>The Good Neighbor app is a website that runs in any smartphone, tablet, or desktop PC/Mac browser. We recommend using it with a mobile device with a cellular connection, like a smartphone.</p><p>To start using your device with the Good Neighbor app, use this one-time link:</p><p><a href="${escapeHtml(email.enrollmentUrl)}">${escapeHtml(email.enrollmentUrl)}</a></p><p>This link expires ${escapeHtml(expires)} and enrolls one device for ${escapeHtml(email.siteName)} only. Do not forward it.</p><p>Thank you,</p><p>- The Good Neighbor app team -</p>`;
+    const instructions = t(
+      email.enrollmentCode
+        ? "enrollment.email.code"
+        : "enrollment.email.confirm",
+      { code: email.enrollmentCode || "" },
+    );
+    const expiry = t("enrollment.email.expiry", {
+      expires,
+      scope: email.siteName,
+    });
+    const text = `Hello ${email.managerName},\n\nYou've been assigned as a site manager for ${email.siteName} under the Good Neighbor policy.\n\nThe Good Neighbor app is a website that runs in any smartphone, tablet, or desktop PC/Mac browser. We recommend using it with a mobile device with a cellular connection, like a smartphone.\n\n${instructions}\n\n${email.enrollmentUrl}\n\n${expiry}\n\nThank you,\n\n- The Good Neighbor app team -`;
+    const html = `<p>Hello ${escapeHtml(email.managerName)},</p><p>You've been assigned as a site manager for ${escapeHtml(email.siteName)} under the Good Neighbor policy.</p><p>The Good Neighbor app is a website that runs in any smartphone, tablet, or desktop PC/Mac browser. We recommend using it with a mobile device with a cellular connection, like a smartphone.</p><p>${escapeHtml(instructions)}</p><p><a href="${escapeHtml(email.enrollmentUrl)}">${escapeHtml(email.enrollmentUrl)}</a></p><p>${escapeHtml(expiry)}</p><p>Thank you,</p><p>- The Good Neighbor app team -</p>`;
     const response = await sendEmail({
       from,
       to: email.to,
@@ -177,7 +189,7 @@ export async function sendManagerEnrollmentEmail(email) {
  * Send one provider-wide Manager enrollment link. The active Site set is
  * resolved again at redemption, so the message states the current count but
  * does not enumerate Sites or promise that a stale count will be used.
- * @param {{ to:string, managerName:string, providerName:string, siteCount:number, enrollmentUrl:string, expiresAt:string }} email
+ * @param {{ to:string, managerName:string, providerName:string, siteCount:number, enrollmentUrl:string, enrollmentCode?:string, expiresAt:string }} email
  * @returns {Promise<{ provider: "log" | "ses" | "smtp", messageId: string }>}
  */
 export async function sendProviderManagerEnrollmentEmail(email) {
@@ -185,6 +197,7 @@ export async function sendProviderManagerEnrollmentEmail(email) {
   const localPreview = !isLambda && Boolean(process.env.LOCAL_API_PORT);
   const metadata = {
     marker: "provider_manager_enrollment_email",
+    deliveryMode: email.enrollmentCode ? "code" : "link",
     contactHash: createHash("sha256")
       .update(email.to.trim().toLowerCase())
       .digest("hex"),
@@ -216,8 +229,21 @@ export async function sendProviderManagerEnrollmentEmail(email) {
     const prefix = process.env.SETUP_CODE_EMAIL_SUBJECT_PREFIX ?? "";
     const replyTo = process.env.SETUP_CODE_EMAIL_REPLY_TO;
     const sites = `${email.siteCount} active ${email.siteCount === 1 ? "Site" : "Sites"}`;
-    const text = `Hello ${email.managerName},\n\nYou've been assigned as a manager for ${email.providerName} under the Good Neighbor policy. At the time this invitation was issued, the Provider had ${sites}. The active Site set will be verified when you redeem the link.\n\nThe Good Neighbor app is a website that runs in any smartphone, tablet, or desktop PC/Mac browser. We recommend using it with a mobile device with a cellular connection, like a smartphone.\n\nTo start using your device with the Good Neighbor app, use this one-time link:\n\n${email.enrollmentUrl}\n\nThis link expires ${expires} and enrolls one device as a manager for ${email.providerName} only. Do not forward it.\n\nThank you,\n\n- The Good Neighbor app team -`;
-    const html = `<p>Hello ${escapeHtml(email.managerName)},</p><p>You've been assigned as a manager for ${escapeHtml(email.providerName)} under the Good Neighbor policy. At the time this invitation was issued, the Provider had ${escapeHtml(sites)}. The active Site set will be verified when you redeem the link.</p><p>The Good Neighbor app is a website that runs in any smartphone, tablet, or desktop PC/Mac browser. We recommend using it with a mobile device with a cellular connection, like a smartphone.</p><p>To start using your device with the Good Neighbor app, use this one-time link:</p><p><a href="${escapeHtml(email.enrollmentUrl)}">${escapeHtml(email.enrollmentUrl)}</a></p><p>This link expires ${escapeHtml(expires)} and enrolls one device as a manager for ${escapeHtml(email.providerName)} only. Do not forward it.</p><p>Thank you,</p><p>- The Good Neighbor app team -</p>`;
+    const siteVerification = email.enrollmentCode
+      ? ""
+      : " The active Site set will be verified when you redeem the link.";
+    const instructions = t(
+      email.enrollmentCode
+        ? "enrollment.email.code"
+        : "enrollment.email.confirm",
+      { code: email.enrollmentCode || "" },
+    );
+    const expiry = t("enrollment.email.expiry", {
+      expires,
+      scope: email.providerName,
+    });
+    const text = `Hello ${email.managerName},\n\nYou've been assigned as a manager for ${email.providerName} under the Good Neighbor policy. At the time this invitation was issued, the Provider had ${sites}.${siteVerification}\n\nThe Good Neighbor app is a website that runs in any smartphone, tablet, or desktop PC/Mac browser. We recommend using it with a mobile device with a cellular connection, like a smartphone.\n\n${instructions}\n\n${email.enrollmentUrl}\n\n${expiry}\n\nThank you,\n\n- The Good Neighbor app team -`;
+    const html = `<p>Hello ${escapeHtml(email.managerName)},</p><p>You've been assigned as a manager for ${escapeHtml(email.providerName)} under the Good Neighbor policy. At the time this invitation was issued, the Provider had ${escapeHtml(sites)}.${escapeHtml(siteVerification)}</p><p>The Good Neighbor app is a website that runs in any smartphone, tablet, or desktop PC/Mac browser. We recommend using it with a mobile device with a cellular connection, like a smartphone.</p><p>${escapeHtml(instructions)}</p><p><a href="${escapeHtml(email.enrollmentUrl)}">${escapeHtml(email.enrollmentUrl)}</a></p><p>${escapeHtml(expiry)}</p><p>Thank you,</p><p>- The Good Neighbor app team -</p>`;
     const response = await sendEmail({
       from,
       to: email.to,
