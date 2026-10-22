@@ -351,7 +351,7 @@ describe("answerCondition", () => {
     send.mockReset();
   });
 
-  it("retries parent assessment revision conflicts with a fresh summary", async () => {
+  it("preserves the analyzer description after clarification, including revision retries", async () => {
     const assessmentBase = {
       pk: "SITE#site-1",
       sk: "ASSESSMENT#asm-1",
@@ -381,6 +381,7 @@ describe("answerCondition", () => {
       canonicalCategory: "Graffiti",
       severity: 2,
       userFriendlyLabel: "Tag covers most of wall",
+      description: "Several spray-painted tags cover the exterior wall.",
       translations: {
         language: "fil",
         user_friendly_label: "Pinta ang mukha ng pader",
@@ -459,10 +460,15 @@ describe("answerCondition", () => {
         escalationCount: 2,
       },
     });
+    const taskWrite = finalTx.input.TransactItems.find(
+      (/** @type {any} */ write) => write.Put?.Item?.entityType === "TASK",
+    );
+    expect(taskWrite.Put.Item.description).toBe(condition.description);
     expect(result.taskItem).toMatchObject({
       taskId: "task-2",
       shortId: "MOI-CIT-042",
       userFriendlyLabel: "Tag covers most of wall",
+      description: "Several spray-painted tags cover the exterior wall.",
       translations: {
         fil: { user_friendly_label: "Pinta ang mukha ng pader" },
       },
