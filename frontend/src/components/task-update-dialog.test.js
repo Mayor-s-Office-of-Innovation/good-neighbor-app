@@ -366,7 +366,11 @@ it.each(["save", "skip", "failure"])(
     );
     // Skip discards picked photos rather than uploading them.
     if (kind === "skip") expect(dialog._uploadFile).not.toHaveBeenCalled();
-    else expect(dialog._uploadFile).toHaveBeenCalledWith(file);
+    else
+      expect(dialog._uploadFile).toHaveBeenCalledWith(
+        file,
+        expect.objectContaining({ taskId: "task-1" }),
+      );
     if (kind === "failure")
       await vi.waitFor(() =>
         expect(toasts.showTaskUpdateErrorToast).toHaveBeenCalledOnce(),
@@ -565,7 +569,10 @@ describe("results prompt opened before the completion response", () => {
         { notes: ["Picked up"], photoKeys: ["photo-1"] },
       ),
     );
-    expect(dialog._uploadFile).toHaveBeenCalledWith(file);
+    expect(dialog._uploadFile).toHaveBeenCalledWith(
+      file,
+      expect.objectContaining({ taskId: "task-1" }),
+    );
   });
 
   it.each([

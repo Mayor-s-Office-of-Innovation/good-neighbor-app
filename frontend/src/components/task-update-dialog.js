@@ -436,18 +436,18 @@ export class TaskUpdateDialog extends HTMLElement {
     }
   }
 
-  /** @param {File} file @returns {Promise<string>} */
-  _uploadFile(file) {
+  /**
+   * Passing `task` pins a background upload to the prompt it came from.
+   * @param {File} file @param {Record<string, any>} [task]
+   * @returns {Promise<string>}
+   */
+  _uploadFile(file, task = this._task) {
     const cached = this._fileUploads.get(file);
     if (cached) return cached;
-    const upload = uploadTaskUpdatePhoto(
-      this._task.taskId,
-      this._task.checkId,
-      {
-        file,
-        capturedAt: new Date().toISOString(),
-      },
-    )
+    const upload = uploadTaskUpdatePhoto(task.taskId, task.checkId, {
+      file,
+      capturedAt: new Date().toISOString(),
+    })
       .then((uploaded) => uploaded.artifactId)
       .catch((error) => {
         this._fileUploads.delete(file);
@@ -522,14 +522,17 @@ export class TaskUpdateDialog extends HTMLElement {
     const pending = this._completion ?? Promise.resolve(this._pendingEvent);
     const draft = Boolean(notes.length || files.length);
     this._dismiss();
+    if (!task) return;
     void pending
       .then(async (pendingEvent) => {
+        // No documentation window (the action failed, or nothing to
+        // document): a draft typed for it cannot be attached anywhere.
         if (!pendingEvent) {
-          if (draft) throw new Error("Results could not be attached");
+          if (draft) showTaskUpdateErrorToast();
           return;
         }
         const photoKeys = await Promise.all(
-          files.map((file) => this._uploadFile(file)),
+          files.map((file) => this._uploadFile(file, task)),
         );
         await documentTaskUpdate(task.taskId, pendingEvent.updateId, {
           notes,
