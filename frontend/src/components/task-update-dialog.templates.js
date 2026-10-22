@@ -257,11 +257,10 @@ export function taskUpdateTimeline({
     <p>#${escapeHtml(task.shortId || task.taskId || "")}</p>`;
 }
 
-/** @param {{ pendingEvent: Record<string, any> | null, cityHelpNeeded?: boolean | null, results?: boolean, unattached?: boolean, task?: Record<string, any> | null, photosAllowed?: boolean, files: File[], notes: string[], previews: string[] }} view */
+/** @param {{ pendingEvent: Record<string, any> | null, cityHelpNeeded?: boolean | null, results?: boolean, task?: Record<string, any> | null, photosAllowed?: boolean, files: File[], notes: string[], previews: string[] }} view */
 export function taskUpdateCapture({
   pendingEvent,
   results = false,
-  unattached = false,
   task = null,
   photosAllowed = true,
   files,
@@ -283,9 +282,7 @@ export function taskUpdateCapture({
     ${results && task ? captureTaskIdentity(task) : ""}
     ${results && !pendingEvent
       ? html`<p role="alert">
-          ${translatedText(
-            `taskUpdate.capture.${unattached ? "unattached" : "conflict"}`,
-          )}
+          ${translatedText("taskUpdate.capture.unattached")}
         </p>`
       : ""}
     ${photoPicker(previews, "update", files, photosAllowed)}
