@@ -83,6 +83,7 @@ beforeEach(() => {
   setObjectTags.mockReset().mockResolvedValue({});
   process.env.S3_UPLOAD_BUCKET = "bucket";
   process.env.SQS_QUEUE_URL = "queue";
+  delete process.env.ANALYSIS_QUEUE_URL;
   process.env.DYNAMO_TABLE = "gnp-test-app";
 });
 
@@ -215,6 +216,21 @@ describe("registerArtifact", () => {
     text: "north gate clear",
   };
 
+  it("routes foreground evidence to the dedicated analysis queue", async () => {
+    process.env.ANALYSIS_QUEUE_URL = "analysis-queue";
+    ddbSend.mockResolvedValueOnce({});
+    sqsSend.mockResolvedValueOnce({});
+    const res = await callRegister(
+      artifactEvent({
+        checkId: "chk_01",
+        siteClaim: "site-1",
+        body: validBody,
+      }),
+    );
+    expect(res.statusCode).toBe(202);
+    expect(sqsSend.mock.calls[0][0].input.QueueUrl).toBe("analysis-queue");
+  });
+
   it("records the artifact with a conditional put then enqueues the S3 key only", async () => {
     ddbSend.mockResolvedValueOnce({});
     sqsSend.mockResolvedValueOnce({});
@@ -245,6 +261,7 @@ describe("registerArtifact", () => {
 
     const msg = sqsSend.mock.calls[0][0];
     expect(msg).toBeInstanceOf(SendMessageCommand);
+    expect(msg.input.QueueUrl).toBe("queue");
     const body = JSON.parse(msg.input.MessageBody);
     expect(body).toEqual({
       siteId: "site-1",

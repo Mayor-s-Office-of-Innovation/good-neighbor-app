@@ -612,3 +612,29 @@ resource "aws_cloudwatch_metric_alarm" "revocation_operation_partial" {
 
   tags = var.tags
 }
+
+resource "aws_cloudwatch_log_metric_filter" "analysis_worker_errors" {
+  name           = "${local.name_prefix}-analysis-server-errors"
+  log_group_name = aws_cloudwatch_log_group.analysis.name
+  pattern        = "{ $.level = \"ERROR\" }"
+
+  metric_transformation {
+    name          = "ServerError"
+    namespace     = local.error_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "analysis_media_rejected" {
+  name           = "${local.name_prefix}-analysis-media-rejected"
+  log_group_name = aws_cloudwatch_log_group.analysis.name
+  pattern        = "{ $.marker = \"MediaRejected\" }"
+
+  metric_transformation {
+    name          = "MediaRejected"
+    namespace     = local.security_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}

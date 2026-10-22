@@ -184,6 +184,7 @@ resource "aws_lambda_function" "api" {
       DYNAMO_TABLE                = aws_dynamodb_table.app.name
       COGNITO_USER_POOL_ID        = aws_cognito_user_pool.users.id
       SQS_QUEUE_URL               = aws_sqs_queue.submissions.url
+      ANALYSIS_QUEUE_URL          = aws_sqs_queue.analysis.url
       S3_UPLOAD_BUCKET            = aws_s3_bucket.uploads.bucket
       S3_COMPLAINT_BUCKET         = aws_s3_bucket.complaints.bucket
       S3_COMPLIANCE_LETTER_BUCKET = aws_s3_bucket.compliance_letters.bucket
@@ -312,7 +313,7 @@ resource "aws_lambda_function" "authorizer" {
 resource "aws_lambda_function" "worker" {
   #checkov:skip=CKV_AWS_117:No VPC — the function needs public egress to the analyzer + AWS APIs; revisit with VPC + endpoints.
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
-  #checkov:skip=CKV_AWS_115:SQS-triggered worker — concurrency is bounded on the event-source mapping (scaling_config.maximum_concurrency) below, not via reserved concurrency here. Reserved concurrency on an SQS trigger causes throttling→DLQ failures (see comment below).
+  #checkov:skip=CKV_AWS_115:SQS-triggered worker — concurrency is bounded on the event-source mapping (scaling_config.maximum_concurrency) below, not via reserved concurrency here. This legacy worker also consumes the DynamoDB outbox stream; foreground analysis has a separate reserved worker.
   function_name    = "${local.name_prefix}-worker"
   role             = aws_iam_role.worker.arn
   runtime          = "nodejs24.x"
@@ -322,12 +323,7 @@ resource "aws_lambda_function" "worker" {
   memory_size      = 1024
   timeout          = 300 # 5 min: headroom for a slow single analyzer call (photos now analyzed concurrently, so this bounds one call, not the batch)
   kms_key_arn      = aws_kms_key.app.arn
-  # Concurrency is bounded on the SQS event-source mapping below via
-  # `scaling_config.maximum_concurrency`, NOT via reserved concurrency here.
-  # Reserved concurrency on an SQS trigger causes throttling-induced failures
-  # that redrive to the DLQ (AWS docs: don't set it below 5 with SQS); the ESM
-  # cap bounds the drain rate without that side effect. The true downstream
-  # limit is the Bedrock (Sonnet 4, us-east-1) RPM/TPM quota.
+  # Background work and pre-migration analysis messages share this worker.
 
   tracing_config {
     mode = "Active"
@@ -393,23 +389,7 @@ resource "aws_lambda_event_source_mapping" "worker" {
   maximum_batching_window_in_seconds = 0
   function_response_types            = ["ReportBatchItemFailures"]
 
-  # Bound how many worker invocations SQS drives concurrently. Each invocation
-  # fans its whole batch out into CONCURRENT analyzer calls (worker.js does
-  # Promise.allSettled over event.Records), so the worst-case peak is
-  #   batch_size × maximum_concurrency = 10 × 20 = 200 concurrent Sonnet 4 calls.
-  # A burst that co-arrives and sits queued is pulled up to batch_size (10) per
-  # poll and fanned out — removing the batching window does not lower this peak;
-  # in the staggered/typical case invocations carry ~1 artifact and actual
-  # concurrency is far below 200.
-  #
-  # Size the Bedrock quota for the 200-call peak, not the typical case, or the app
-  # throttles (429 → SQS redrive). REQUIRES a quota increase (us-east-1,
-  # cross-region Sonnet 4) above the defaults. At ~8,500 tokens/call, target:
-  #   TPM ≥ 2,500,000  (default 200,000)   ← binding limit
-  #   RPM ≥ 500        (default 200)
-  # Prompt caching (#2) + output trim (#3) in the analyzer cut per-call tokens, so
-  # once those ship this same cap needs less quota — but size on the pre-
-  # optimization numbers above for burst headroom. Valid range 2–1000.
+  # Background queue; new perimeter evidence uses the dedicated analysis queue.
   scaling_config {
     maximum_concurrency = 20
   }
