@@ -514,7 +514,10 @@ export class TaskUpdateDialog extends HTMLElement {
    * the window. A results prompt is a single-use element (openResultsDialog
    * creates one per prompt and removes it on close), so its fields are free
    * to carry the late work. The draft leaves with the prompt: a failed save
-   * surfaces as the update error toast, an empty seal fails silently.
+   * surfaces as the update error toast with a retry that re-runs this chain
+   * (uploads that succeeded are cached per file; the document route replays
+   * identical content), except when another window already closed the
+   * event. An empty seal fails silently.
    * @param {string[]} notes @param {File[]} files
    */
   _finishResults(notes, files) {
@@ -523,25 +526,32 @@ export class TaskUpdateDialog extends HTMLElement {
     const draft = Boolean(notes.length || files.length);
     this._dismiss();
     if (!task) return;
-    void pending
-      .then(async (pendingEvent) => {
-        // No documentation window (the action failed, or nothing to
-        // document): a draft typed for it cannot be attached anywhere.
-        if (!pendingEvent) {
-          if (draft) showTaskUpdateErrorToast();
-          return;
-        }
-        const photoKeys = await Promise.all(
-          files.map((file) => this._uploadFile(file, task)),
-        );
-        await documentTaskUpdate(task.taskId, pendingEvent.updateId, {
-          notes,
-          photoKeys,
+    const attempt = () =>
+      pending
+        .then(async (pendingEvent) => {
+          // No documentation window (the action failed, or nothing to
+          // document): a draft typed for it cannot be attached anywhere.
+          if (!pendingEvent) {
+            if (draft) showTaskUpdateErrorToast();
+            return;
+          }
+          const photoKeys = await Promise.all(
+            files.map((file) => this._uploadFile(file, task)),
+          );
+          await documentTaskUpdate(task.taskId, pendingEvent.updateId, {
+            notes,
+            photoKeys,
+          });
+        })
+        .catch((error) => {
+          if (!draft) return;
+          const conflict =
+            error instanceof ApiError &&
+            /** @type {{ code?: string }} */ (error.body)?.code ===
+              "DocumentationConflict";
+          showTaskUpdateErrorToast(error, conflict ? undefined : attempt);
         });
-      })
-      .catch((error) => {
-        if (draft) showTaskUpdateErrorToast(error);
-      });
+    void attempt();
   }
 
   /** @param {HTMLElement} root @param {string[]} notes @param {string[]} photos */

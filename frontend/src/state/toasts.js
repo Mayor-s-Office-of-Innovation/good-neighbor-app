@@ -222,7 +222,12 @@ export function showReanalysisErrorToast() {
 }
 
 /** @param {unknown} [error] */
-export function showTaskUpdateErrorToast(error) {
+/**
+ * @param {unknown} [error]
+ * @param {() => void} [retry] offered as the toast's action; the toast then
+ *   stays until dismissed
+ */
+export function showTaskUpdateErrorToast(error, retry) {
   const saved =
     error &&
     typeof error === "object" &&
@@ -233,6 +238,9 @@ export function showTaskUpdateErrorToast(error) {
     error.body.updateSaved === true;
   const key = saved ? "toast.cityUpdateError" : "toast.taskUpdateError";
   return showToast({
+    ...(retry
+      ? { duration: 0, action: { label: t("common.retry"), run: retry } }
+      : {}),
     title: t(`${key}.title`),
     message: t(`${key}.message`),
     icon: "triangle-exclamation",

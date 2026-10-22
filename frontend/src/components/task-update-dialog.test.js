@@ -371,13 +371,51 @@ it.each(["save", "skip", "failure"])(
         file,
         expect.objectContaining({ taskId: "task-1" }),
       );
-    if (kind === "failure")
-      await vi.waitFor(() =>
-        expect(toasts.showTaskUpdateErrorToast).toHaveBeenCalledOnce(),
-      );
-    else expect(toasts.showTaskUpdateErrorToast).not.toHaveBeenCalled();
+    if (kind !== "failure") {
+      expect(toasts.showTaskUpdateErrorToast).not.toHaveBeenCalled();
+      return;
+    }
+    await vi.waitFor(() =>
+      expect(toasts.showTaskUpdateErrorToast).toHaveBeenCalledOnce(),
+    );
+    // The toast's retry re-runs the same save with the captured draft.
+    const [, retry] = toasts.showTaskUpdateErrorToast.mock.calls[0];
+    api.documentTaskUpdate.mockResolvedValue({ update: {} });
+    retry();
+    await vi.waitFor(() =>
+      expect(api.documentTaskUpdate).toHaveBeenCalledTimes(2),
+    );
+    expect(api.documentTaskUpdate).toHaveBeenLastCalledWith(
+      "task-1",
+      "update-1",
+      { notes: ["Work completed"], photoKeys: ["photo-1"] },
+    );
   },
 );
+
+it("offers no retry when another window already closed the event", async () => {
+  const { TaskUpdateDialog } = await import("./task-update-dialog.js");
+  const { ApiError } = await import("../services/api.js");
+  const dialog = /** @type {any} */ (new TaskUpdateDialog());
+  dialog._render = vi.fn();
+  dialog.dispatchEvent = vi.fn();
+  const modal = { close: vi.fn(), querySelectorAll: () => [] };
+  dialog.querySelector = vi.fn(() => modal);
+  dialog.openResults({ taskId: "task-1", latestUpdateId: "update-1" });
+  dialog._noteDrafts = ["Typed", "", ""];
+  toasts.showTaskUpdateErrorToast.mockClear();
+  api.documentTaskUpdate.mockReset().mockRejectedValue(
+    Object.assign(new ApiError("conflict"), {
+      status: 409,
+      body: { code: "DocumentationConflict" },
+    }),
+  );
+  await dialog._saveNotes(modal);
+  await vi.waitFor(() =>
+    expect(toasts.showTaskUpdateErrorToast).toHaveBeenCalledOnce(),
+  );
+  expect(toasts.showTaskUpdateErrorToast.mock.calls[0][1]).toBeUndefined();
+});
 
 it.each([false, true])(
   "documents the existing additional action (skip: %s)",
