@@ -64,6 +64,10 @@ jobs:
   e2e:
     name: E2E (Playwright)
     runs-on: ubuntu-latest
+    container:
+      # Keep the image version aligned with @playwright/test in e2e/package.json.
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      options: --ipc=host
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -80,10 +84,13 @@ jobs:
       - name: Install
         run: npm ci
 
-      # ubuntu-latest ships a JRE (needed by the DynamoDB Local / ElasticMQ jars
-      # the harness launches). Chromium only — the suite targets one engine.
-      - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+      # Browsers and their OS dependencies are in the image. The host runner's
+      # Java installation is not available inside the job container.
+      - name: Setup Java for local harness
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "21"
 
       # The harness self-downloads ~250 MB of emulator binaries (MinIO
       # ~103 MB, ElasticMQ jar, DynamoDB Local) into backend/.local/ on first
