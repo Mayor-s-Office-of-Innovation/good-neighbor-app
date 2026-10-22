@@ -144,3 +144,73 @@ describe("expiration routes cards to history", () => {
     },
   );
 });
+
+describe("resolution evidence shared by ticker and expiration", () => {
+  it("uses completedAt only with an explicit resolution marker", async () => {
+    const { unresolvedExpiryAt } = await import("./home-tasks.js");
+    const task = {
+      status: "completed",
+      completionMethod: "site_team_resolved",
+      createdAt: "2026-10-01T12:00:00Z",
+      completedAt: "2026-10-02T12:00:00Z",
+    };
+    expect(
+      statusTicker(task, { now: Date.parse("2026-10-03T12:00:00Z") }).key,
+    ).toBe("resolved");
+    expect(unresolvedExpiryAt(task, now)).toBe("");
+    task.completedAt = "2026-10-16T12:00:00Z";
+    expect(unresolvedExpiryAt(task, now)).toBe("2026-10-15T12:00:00.000Z");
+  });
+  it.each(["manual", "user_confirmed", "custom_action", "311_filed"])(
+    "does not treat %s action completion as resolution",
+    async (completionMethod) => {
+      const { unresolvedExpiryAt } = await import("./home-tasks.js");
+      const task = {
+        status: "completed",
+        canBeInProgress: false,
+        completionMethod,
+        createdAt: "2026-10-01T12:00:00Z",
+        completedAt: "2026-10-02T12:00:00Z",
+        resolvedAt: "2026-10-02T12:00:00Z",
+      };
+      expect(
+        statusTicker(task, { now: Date.parse("2026-10-03T12:00:00Z") }).key,
+      ).toBe("actionTaken");
+      expect(unresolvedExpiryAt(task, now)).toBe("2026-10-15T12:00:00.000Z");
+    },
+  );
+  it("does not infer resolution from a legacy completedAt alone", async () => {
+    const { unresolvedExpiryAt } = await import("./home-tasks.js");
+    const task = {
+      status: "completed",
+      createdAt: "2026-10-01T12:00:00Z",
+      completedAt: "2026-10-02T12:00:00Z",
+    };
+    expect(
+      statusTicker(task, {
+        history: true,
+        now: Date.parse("2026-10-03T12:00:00Z"),
+      }).key,
+    ).toBe("actionTaken");
+    expect(unresolvedExpiryAt(task, now)).toBe("2026-10-15T12:00:00.000Z");
+  });
+  it.each(["site_team_resolved", undefined])(
+    "recognizes explicit resolution with method %s before expiry",
+    async (completionMethod) => {
+      const { unresolvedExpiryAt } = await import("./home-tasks.js");
+      const task = {
+        status: "completed",
+        completionMethod,
+        createdAt: "2026-10-01T12:00:00Z",
+        resolvedAt: "2026-10-02T12:00:00Z",
+      };
+      expect(
+        statusTicker(task, { now: Date.parse("2026-10-03T12:00:00Z") }).key,
+      ).toBe("resolved");
+      expect(unresolvedExpiryAt(task, now)).toBe("");
+      expect(ticker(task).key).toBe("old");
+      task.resolvedAt = "2026-10-16T12:00:00Z";
+      expect(unresolvedExpiryAt(task, now)).toBe("2026-10-15T12:00:00.000Z");
+    },
+  );
+});

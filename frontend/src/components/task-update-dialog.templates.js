@@ -149,7 +149,13 @@ export function taskUpdateTimeline({
     ...legacyCompletion,
     ...(nextToken ? [] : [creation]),
   ]
-    .filter((update) => update.occurredAt)
+    .filter(
+      (update) =>
+        update.occurredAt ||
+        (update.type === "city_status" &&
+          "kind" in update &&
+          update.kind === "resolved"),
+    )
     .sort((a, b) => String(b.occurredAt).localeCompare(String(a.occurredAt)));
   const canonicalTitle =
     task.userFriendlyLabel || task.user_friendly_label || "";

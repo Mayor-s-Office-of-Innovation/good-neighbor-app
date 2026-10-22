@@ -9,6 +9,18 @@ import {
 } from "./task-update-dialog.templates.js";
 
 describe("task update dialog templates", () => {
+  it("renders an undated City closure without inventing a timestamp", () => {
+    const markup = taskUpdateTimeline({
+      task: {},
+      updates: [{ type: "city_status", kind: "resolved", occurredAt: "" }],
+      issueOrigin: "single-problem",
+      originalMediaUrl: "",
+      mediaUrls: new Map(),
+    });
+    expect(markup).toContain(t("card.ticker.cityClosed"));
+    expect(markup).not.toContain('<time datetime="">');
+    expect(markup).not.toContain("Invalid Date");
+  });
   it("adds expiry once at the 14-day mark, including paginated timelines", () => {
     const view = {
       task: { status: "in_progress", createdAt: "2026-10-01T12:00:00Z" },

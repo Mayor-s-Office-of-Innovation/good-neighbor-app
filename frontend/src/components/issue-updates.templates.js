@@ -84,9 +84,11 @@ export function taskUpdateTimelineItem(update, task, mediaUrls, title) {
                 ? t("duplicate.separatedTimeline")
                 : rulebookText(update.label, "server.taskUpdate"),
         )}</strong
-      ><time datetime="${escapeAttr(update.occurredAt)}"
-        >${escapeHtml(formatPacificDateTime(update.occurredAt))}</time
-      >
+      >${update.occurredAt
+        ? html`<time datetime="${escapeAttr(update.occurredAt)}"
+            >${escapeHtml(formatPacificDateTime(update.occurredAt))}</time
+          >`
+        : ""}
       ${update.type === "city_status" && cityText
         ? html`<p>${escapeHtml(cityText)}</p>`
         : ""}

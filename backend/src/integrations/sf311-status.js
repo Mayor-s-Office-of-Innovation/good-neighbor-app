@@ -227,12 +227,14 @@ function updateEvent(update) {
     kind = "detailsUpdated";
     description = notes;
   } else if (type === "10") kind = "accepted";
-  else if (type === "11" && CLOSED_REASONS[numeric]) {
+  else if (type === "11") {
     kind = "resolved";
-    extra.closureReason = CLOSED_REASONS[numeric];
+    if (CLOSED_REASONS[numeric]) extra.closureReason = CLOSED_REASONS[numeric];
     if (notes) extra.notes = notes;
     description = [
-      fill(EVENT_DESCRIPTIONS.agencySaid, CLOSED_REASONS[numeric]),
+      CLOSED_REASONS[numeric]
+        ? fill(EVENT_DESCRIPTIONS.agencySaid, CLOSED_REASONS[numeric])
+        : "",
       notes,
     ]
       .filter(Boolean)
@@ -251,7 +253,7 @@ function updateEvent(update) {
     update.ToHubDate,
     update.ToAgencyDate,
   );
-  if (!occurredAt) return null;
+  if (!occurredAt && kind !== "resolved") return null;
   return {
     kind: /** @type {keyof typeof EVENT_TITLES} */ (kind),
     ...(value ? { value } : {}),
@@ -410,6 +412,21 @@ export function normalizeSf311Detail({
         : null,
     )
     .filter((item) => item !== null);
+  // A summary-only closure has no trustworthy occurrence time. Keep it undated.
+  if (
+    status === "Closed" &&
+    !events.some(
+      (event) =>
+        event.kind === "resolved" ||
+        (event.kind === "statusChanged" && event.value === "Closed"),
+    )
+  ) {
+    events.push({
+      kind: "resolved",
+      title: EVENT_TITLES.resolved,
+      occurredAt: "",
+    });
+  }
   if (submittedAt)
     events.push({
       kind: "submitted",
