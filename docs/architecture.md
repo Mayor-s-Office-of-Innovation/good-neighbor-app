@@ -12,8 +12,8 @@ flowchart LR
   checks --> dynamodb["DynamoDB (single table + GSIs)"]
   checks -. presigned PUT/GET .-> media["S3 media bucket (GNP-owned)"]
   user -. uploads bytes direct .-> media
-  checks --> sqs["SQS analyze queue (S3 key only)"]
-  api --> analysisQueue["SQS: foreground analysis"]
+  checks --> sqs["SQS: background jobs"]
+  checks --> analysisQueue["SQS: foreground analysis"]
   analysisQueue --> analysisWorker["Lambda: analysis (500 slots)"]
   analysisWorker --> media
   analysisWorker --> dynamodb
