@@ -13,6 +13,12 @@ flowchart LR
   checks -. presigned PUT/GET .-> media["S3 media bucket (GNP-owned)"]
   user -. uploads bytes direct .-> media
   checks --> sqs["SQS analyze queue (S3 key only)"]
+  api --> analysisQueue["SQS: foreground analysis"]
+  analysisQueue --> analysisWorker["Lambda: analysis (500 slots)"]
+  analysisWorker --> media
+  analysisWorker --> dynamodb
+  analysisWorker --> analyzer
+  analysisWorker --> sqs
   sqs --> worker["Lambda: worker (checks, complaints, and submissions)"]
   worker --> media
   worker --> dynamodb
@@ -41,15 +47,27 @@ are esbuild ESM outputs of `backend/scripts/build-lambdas.mjs`:
 
 | Function | Trigger | Memory | Timeout | Role |
 |---|---|---|---|---|
-| `-api` | API Gateway, sync | 512 MB | 29 s | Every route handler behind one dispatch; reserved concurrency 10 |
-| `-authorizer` | API Gateway REQUEST authorizer | 256 MB | 5 s | Verifies the HS256 device token, pins `siteId`; verdicts cached 60 s by the gateway; reserved concurrency 200 (20× the api cap — every gated request passes through it) |
-| `-worker` | SQS, async | 1024 MB | 300 s | Both async jobs in one function: `process-submission` (demo flow) and `analyze-artifact` (per-photo), picked per message by shape (`backend/src/lambda/worker.js`); one queue, partial-batch failure reporting |
+| `-api` | API Gateway, sync | 512 MB | 29 s | Every route handler behind one dispatch; uses unreserved account concurrency |
+| `-authorizer` | API Gateway REQUEST authorizer | 256 MB | 5 s | Verifies the HS256 device token, pins `siteId`; verdicts cached 60 s by the gateway; reserved concurrency 200 |
+| `-worker` | SQS and DynamoDB outbox | 1024 MB | 300 s | Background translations, complaints, submissions and outbox jobs; also drains previously queued perimeter analyses |
+| `-analysis` | Dedicated analysis SQS | 1024 MB | 300 s | Foreground photo/text analysis; reserved concurrency 500, batch size 1, event-source maximum concurrency 500 |
 
-Worker tuning, all sized in `lambda.tf` comments: batch size 10 with a
-**0-second batching window** (photos register staggered as each S3 PUT lands, so a
-window would quantize them into waves) and `scaling_config.maximum_concurrency = 20`
-— worst-case peak 10 × 20 = **200 concurrent analyzer (Bedrock Sonnet 4) calls**,
-which is the quota-sizing number. The analyzer leg's per-call budget: the worker
+Foreground evidence is routed using `ANALYSIS_QUEUE_URL`. When unset (local
+harness), it falls back to `SQS_QUEUE_URL`. Both functions reuse the worker bundle
+and IAM role; follow-up translations continue to use the background queue.
+Both queues have a zero-second batching window. The background mapping retains
+batch size 10 and maximum concurrency 20. The foreground reservation prevents
+background work from occupying its 500 slots, but does not prewarm SQS pollers.
+
+Deploy the analyzer's increased usage-plan and method limits (500 requests/second,
+burst 1,000) before increasing caller capacity. Verify regional Lambda capacity
+for **all environments' reservations plus unreserved API/analyzer/background
+traffic**, and Bedrock request/token quotas. These are code ceilings, not a
+measured ten-second burst guarantee. Existing queued messages drain without migration.
+Each queue retains the existing retry policy (30-minute visibility, five receives)
+and has backlog/DLQ alarms; both functions have error/throttle/duration monitoring.
+
+The analysis worker
 reads the photo from S3, **downscales it (sharp: EXIF-orient, fit 1568 px long
 edge, JPEG q80)** — bounding the base64 payload so the analyzer never sees raw
 camera-resolution bytes (full-size input was rejected 413 `input_too_large` before

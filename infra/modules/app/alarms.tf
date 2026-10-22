@@ -638,3 +638,16 @@ resource "aws_cloudwatch_log_metric_filter" "analysis_media_rejected" {
     default_value = "0"
   }
 }
+
+resource "aws_cloudwatch_log_metric_filter" "analysis_311_action_failures" {
+  name           = "${local.name_prefix}-analysis-311-action-failures"
+  log_group_name = aws_cloudwatch_log_group.analysis.name
+  pattern        = "{ $.eventType = \"311_app_action_failed\" }"
+
+  metric_transformation {
+    name          = "Sf311ActionFailed"
+    namespace     = local.error_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
