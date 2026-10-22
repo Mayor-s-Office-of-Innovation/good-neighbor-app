@@ -50,8 +50,9 @@ The **only** durable copy of the media is GNP's.
 - [ ] **No request/media-body logging** — the base64 image is not captured in API Gateway exec/access
   logs, our Lambda/worker logs, or (analyzer-account) Bedrock model-invocation logs.
 - [x] **No viewer IP addresses in logs** — the API Gateway access log omits `$context.identity.sourceIp`
-  (per-device correlation uses the authorizer's pseudonymous device subject + site; unauthenticated
-  routes correlate by request ID). Lambda/worker logs never log headers or the raw event. CloudFront
+  (per-caller correlation uses the device authorizer's pseudonymous device subject + site on device
+  routes and the admin's Cognito user sub on JWT-authorized admin routes; unauthenticated routes
+  correlate by request ID). Lambda/worker logs never log headers or the raw event. CloudFront
   standard logging is off on all distributions, and S3 server-access logging is off on the uploads and
   complaints buckets (the only buckets clients reach directly, via presigned URLs). The remaining
   server-access logs (frontend/admin/analytics/compliance-letters buckets) only ever see CloudFront OAC

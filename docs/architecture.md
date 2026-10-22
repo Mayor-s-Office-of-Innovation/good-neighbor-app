@@ -393,7 +393,8 @@ separate distribution uses a DNS-validated certificate with TLS 1.2 minimum,
 WAF/rate limits, disabled caching, restrictive CSP, HSTS, and `no-referrer`.
 It omits standard access logging because query strings contain bearer tokens;
 API Gateway records request IDs, route keys, and status without queries, and
-never the viewer IP address (device subject and site stand in for it). Media
+never the viewer IP address (device subject and site, or the admin's Cognito
+sub, stand in for it). Media
 handlers also return security headers on direct-origin success and error
 responses. Local development sets a reachable API or tunnel origin, with
 `S3_PUBLIC_PRESIGN_ENDPOINT` pointing at the public MinIO proxy for redirects. Existing URLs already sent to 311 retain their original expiry.
