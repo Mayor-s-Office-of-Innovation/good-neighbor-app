@@ -1,3 +1,4 @@
+import { checkCodeAttemptLimit } from "./code-attempt-limit.js";
 import { enrollmentCodeVerifier } from "./enrollment-codes.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -44,6 +45,11 @@ export const redeemEnrollmentGrant = async (event) => {
   }
   if (requestedPhysicalDeviceId && !validDeviceId(requestedPhysicalDeviceId)) {
     return jsonResponse(400, { error: "invalid_physical_device_id" });
+  }
+
+  if (code) {
+    const limited = await checkCodeAttemptLimit();
+    if (limited) return limited;
   }
 
   const tableName = getDynamoTableName();

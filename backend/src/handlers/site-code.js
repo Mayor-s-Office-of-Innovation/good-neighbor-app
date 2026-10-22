@@ -1,3 +1,4 @@
+import { checkCodeAttemptLimit } from "./code-attempt-limit.js";
 import { enrollmentCodeVerifier } from "./enrollment-codes.js";
 import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { getDynamoTableName } from "../config.js";
@@ -36,6 +37,8 @@ export const handler = async (event) => {
   // Resolve manager invitations without consuming them. The normal login submit
   // redeems the grant, retaining its provider/site scope and single-use rules.
   if (/^[A-Z0-9]{6}$/.test(code)) {
+    const limited = await checkCodeAttemptLimit();
+    if (limited) return limited;
     const hash = await enrollmentCodeVerifier(code);
     const { Item } = await ddb.send(
       new GetCommand({

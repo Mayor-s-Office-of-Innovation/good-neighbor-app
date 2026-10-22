@@ -849,6 +849,7 @@
   "setup.enrollment.expired": "This invitation has expired. Ask your administrator for a new invitation.",
   "setup.enrollment.failed": "We could not enroll this device. Check your connection and try again.",
   "setup.enrollment.invalid": "This invitation is not valid. Check the code or ask your administrator for a new invitation.",
+  "setup.enrollment.limited": "Too many code attempts. Please wait before trying again.",
   "setup.enrollment.openApp": "Open the app without enrolling",
   "setup.enrollment.submit": "Enroll this device",
   "setup.enrollment.supportReference": "Support reference: {reference}",

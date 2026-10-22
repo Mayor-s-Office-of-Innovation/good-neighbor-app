@@ -137,15 +137,24 @@ describe("validateSetupCode", () => {
     vi.unstubAllGlobals();
   });
 
+  it("maps application or edge 429 responses to the wait state", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, status: 429 }),
+    );
+    expect(await validateSetupCode("A1B2C3")).toEqual({
+      ok: false,
+      reason: "limited",
+    });
+  });
+
   it("routes a six-character manager code to grant redemption, preserving leading zero", async () => {
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValue({
-          ok: true,
-          json: async () => ({ code: "0AB123", enrollment: true }),
-        }),
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ code: "0AB123", enrollment: true }),
+      }),
     );
     expect(await validateSetupCode("0AB123")).toEqual({
       ok: true,

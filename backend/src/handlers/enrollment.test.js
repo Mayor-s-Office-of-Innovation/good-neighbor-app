@@ -1,3 +1,7 @@
+import { checkCodeAttemptLimit } from "./code-attempt-limit.js";
+vi.mock("./code-attempt-limit.js", () => ({
+  checkCodeAttemptLimit: vi.fn(async () => null),
+}));
 import { enrollmentCodeVerifier } from "./enrollment-codes.js";
 import {
   GetCommand,
@@ -626,3 +630,19 @@ async function sha256(value) {
   const { createHash } = await import("node:crypto");
   return createHash("sha256").update(value).digest("hex");
 }
+
+it("stops throttled code guesses before any lookup", async () => {
+  const limited = {
+    statusCode: 429,
+    body: JSON.stringify({ error: "code_attempts_limited" }),
+  };
+  vi.mocked(checkCodeAttemptLimit).mockResolvedValueOnce(limited);
+  expect(await call(event({ code: "a1b-2c3" }))).toEqual(limited);
+  expect(send).not.toHaveBeenCalled();
+});
+it("does not look up codes when the rate-limit store fails", async () => {
+  const error = new Error("rate store unavailable");
+  vi.mocked(checkCodeAttemptLimit).mockRejectedValueOnce(error);
+  await expect(call(event({ code: "a1b-2c3" }))).rejects.toBe(error);
+  expect(send).not.toHaveBeenCalled();
+});

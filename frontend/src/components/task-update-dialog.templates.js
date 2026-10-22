@@ -13,6 +13,11 @@ import { rulebookText } from "../i18n/rulebook.js";
 import { formatPacificDateTime } from "../domain/task-updates.js";
 import { MAX_TASK_UPDATE_NOTES } from "../domain/task-update-draft.js";
 
+/** Translate static copy and escape it for HTML text. @param {string} key */
+function translatedText(key) {
+  return escapeHtml(t(key));
+}
+
 /** @param {{ mode: string, state: string, content: string }} view */
 export function taskUpdateDialogShell({ mode, state, content }) {
   const showBack = mode === "note-text" || mode === "action-photos";
@@ -37,9 +42,11 @@ export function taskUpdateDialogShell({ mode, state, content }) {
           </button>
         </header>
         ${state === "loading"
-          ? html`<p role="status">${escapeHtml(t("taskUpdate.loading"))}</p>`
+          ? html`<p role="status">${translatedText("taskUpdate.loading")}</p>`
           : state === "error"
-            ? html`<p role="alert">${escapeHtml(t("taskUpdate.loadError"))}</p>`
+            ? html`<p role="alert">
+                ${translatedText("taskUpdate.loadError")}
+              </p>`
             : content}
       </div>
     </dialog>
@@ -50,7 +57,7 @@ export function taskUpdateDialogShell({ mode, state, content }) {
     >
       <div class="task-update__discard-card">
         <h2 id="task-update-discard-title">
-          ${escapeHtml(t("taskUpdate.discard.title"))}
+          ${translatedText("taskUpdate.discard.title")}
         </h2>
         <div class="task-update__discard-actions">
           <button
@@ -58,10 +65,10 @@ export function taskUpdateDialogShell({ mode, state, content }) {
             class="task-update__discard-confirm"
             data-confirm-discard
           >
-            ${escapeHtml(t("common.discardChanges"))}
+            ${translatedText("common.discardChanges")}
           </button>
           <button type="button" class="btn-outline" data-continue-editing>
-            ${escapeHtml(t("taskUpdate.discard.cancel"))}
+            ${translatedText("taskUpdate.discard.cancel")}
           </button>
         </div>
       </div>
@@ -176,69 +183,59 @@ export function taskUpdateTimeline({
         : ""}
       ${showAgencyMetadata
         ? html`<dl class="task-update__metadata">
-            <div>
-              <dt>${escapeHtml(t("taskUpdate.metadata.agency"))}</dt>
-              <dd>
-                ${escapeHtml(
-                  rulebookText(task.agency, "rulebook.agency") ||
-                    t("taskUpdate.metadata.unknown"),
-                )}
-              </dd>
-            </div>
-            <div>
-              <dt>${escapeHtml(t("taskUpdate.metadata.notified"))}</dt>
-              <dd>
-                ${escapeHtml(
-                  task.notifiedAt
-                    ? formatPacificDateTime(task.notifiedAt)
-                    : t("taskUpdate.metadata.unknown"),
-                )}
-              </dd>
-            </div>
+            ${metadataRow(
+              "taskUpdate.metadata.agency",
+              rulebookText(task.agency, "rulebook.agency") ||
+                t("taskUpdate.metadata.unknown"),
+            )}
+            ${metadataRow(
+              "taskUpdate.metadata.notified",
+              task.notifiedAt
+                ? formatPacificDateTime(task.notifiedAt)
+                : t("taskUpdate.metadata.unknown"),
+            )}
             ${expected
-              ? html`<div>
-                  <dt>
-                    ${escapeHtml(t("taskUpdate.metadata.responseExpected"))}
-                  </dt>
-                  <dd>${escapeHtml(formatPacificDateTime(expected))}</dd>
-                </div>`
+              ? metadataRow(
+                  "taskUpdate.metadata.responseExpected",
+                  formatPacificDateTime(expected),
+                )
               : ""}
           </dl>`
         : ""}
       ${overdue && !task.resolvedAt
         ? html`<p class="task-update__overdue">
-            <strong>${escapeHtml(t("taskUpdate.overdue"))}</strong>
+            <strong>${translatedText("taskUpdate.overdue")}</strong>
           </p>`
         : ""}
     </section>
     ${task.presencePromptDue
       ? html`<section class="task-update__prompt">
-          <h3>${escapeHtml(t("taskUpdate.presence.title"))}</h3>
+          <h3>${translatedText("taskUpdate.presence.title")}</h3>
           <div class="task-update__actions">
             <button
               type="button"
               class="btn-theme wa-success wa-accent wa-pill"
               data-presence="presence_resolved"
             >
-              ${escapeHtml(t("taskUpdate.outcome.resolved"))}
+              ${translatedText("taskUpdate.outcome.resolved")}
             </button>
             <button
               type="button"
               class="btn-theme wa-neutral wa-filled wa-pill"
               data-presence="presence_still_present"
             >
-              ${escapeHtml(t("taskUpdate.outcome.stillThere"))}
+              ${translatedText("taskUpdate.outcome.stillThere")}
             </button>
           </div>
         </section>`
       : ""}
     ${task.status === "in_progress"
       ? html`<section class="task-update__section">
-          <h3>${escapeHtml(t("taskUpdate.updates.title"))}</h3>
+          <h3>${translatedText("taskUpdate.updates.title")}</h3>
           ${taskUpdateActions(task.presencePromptDue)}
         </section>`
       : html`<h3 class="task-update__updates-title">
-          ${escapeHtml(t("taskUpdate.updates.title"))}
+          ${translatedText("taskUpdate.updates.title")}
         </h3>`}
     <ol class="ticket-timeline task-update__timeline">
       ${timeline
@@ -247,7 +244,7 @@ export function taskUpdateTimeline({
     </ol>
     ${nextToken
       ? html`<button type="button" class="btn-outline" data-load-older>
-          ${escapeHtml(t("taskUpdate.updates.loadOlder"))}
+          ${translatedText("taskUpdate.updates.loadOlder")}
         </button>`
       : ""}
     <p>#${escapeHtml(task.shortId || task.taskId || "")}</p>`;
@@ -276,7 +273,7 @@ export function taskUpdateCapture({
     <h2 id="task-update-title">${escapeHtml(title)}</h2>
     ${results && !pendingEvent
       ? html`<p role="alert">
-          ${escapeHtml(t("taskUpdate.capture.conflict"))}
+          ${translatedText("taskUpdate.capture.conflict")}
         </p>`
       : ""}
     ${photoPicker(previews, "update", files, photosAllowed)}
@@ -301,7 +298,7 @@ export function taskUpdateCapture({
           class="btn-outline task-update__add-note"
           data-add-note
         >
-          ${escapeHtml(t("taskUpdate.capture.addNote"))}
+          ${translatedText("taskUpdate.capture.addNote")}
         </button>`
       : ""}
     ${cityHelpQuestion(cityHelpNeeded, !hasContent)}
@@ -314,11 +311,11 @@ export function taskUpdateCapture({
           ? "disabled"
           : ""}
       >
-        ${escapeHtml(t("common.done"))}
+        ${translatedText("common.done")}
       </button>
       ${pendingEvent || results
         ? html`<button type="button" class="btn-outline" data-skip>
-            ${escapeHtml(t("taskUpdate.skip"))}
+            ${translatedText("taskUpdate.skip")}
           </button>`
         : ""}
     </div>
@@ -328,7 +325,7 @@ export function taskUpdateCapture({
 /** @param {string[]} previews @param {"update" | "action"} kind @param {File[]} [files] @param {boolean} [allowed] */
 function photoPicker(previews, kind, files = [], allowed = true) {
   if (!allowed)
-    return html`<p>${escapeHtml(t("taskUpdate.photo.unavailable"))}</p>`;
+    return html`<p>${translatedText("taskUpdate.photo.unavailable")}</p>`;
   return html`<div class="task-update__photo-grid">
     <label class="photo-capture-tile task-update__photo-picker"
       ><input
@@ -343,7 +340,7 @@ function photoPicker(previews, kind, files = [], allowed = true) {
         aria-hidden="true"
         ><wa-icon name="camera"></wa-icon></span
       ><span class="photo-capture-tile__label"
-        >${escapeHtml(t("check.photo.take"))}</span
+        >${translatedText("check.photo.take")}</span
       ></label
     >
     ${previews
@@ -380,7 +377,7 @@ function photoPicker(previews, kind, files = [], allowed = true) {
 /** @param {{ note: string }} view */
 export function taskUpdateNoteEditor({ note }) {
   return html`<section class="task-update__capture task-update__capture--text">
-    <h2 id="task-update-title">${escapeHtml(t("taskUpdate.note.title"))}</h2>
+    <h2 id="task-update-title">${translatedText("taskUpdate.note.title")}</h2>
     ${taskUpdateTextCard(note, "note")}
     <button
       type="button"
@@ -388,7 +385,7 @@ export function taskUpdateNoteEditor({ note }) {
       data-save-note
       ${note.trim() ? "" : "disabled"}
     >
-      ${escapeHtml(t("common.continue"))}
+      ${translatedText("common.continue")}
     </button>
   </section>`;
 }
@@ -400,14 +397,14 @@ export function taskUpdateActionEditor({
   cityHelpNeeded,
 }) {
   return html`<section class="task-update__capture task-update__capture--text">
-    <h2 id="task-update-title">${escapeHtml(t("taskUpdate.action.title"))}</h2>
+    <h2 id="task-update-title">${translatedText("taskUpdate.action.title")}</h2>
     <p class="task-update__subtitle">
-      ${escapeHtml(t("taskUpdate.action.subtitle"))}
+      ${translatedText("taskUpdate.action.subtitle")}
     </p>
     ${taskUpdateTextCard(text, "action")}
     ${allowResolution
       ? html`<section class="task-update__outcome">
-          <h3>${escapeHtml(t("taskUpdate.action.outcomeTitle"))}</h3>
+          <h3>${translatedText("taskUpdate.action.outcomeTitle")}</h3>
           <div class="task-update__actions">
             <button
               type="button"
@@ -415,7 +412,7 @@ export function taskUpdateActionEditor({
               data-action-outcome="additional_action_resolved"
               ${text.trim() ? "" : "disabled"}
             >
-              ${escapeHtml(t("taskUpdate.outcome.resolved"))}
+              ${translatedText("taskUpdate.outcome.resolved")}
             </button>
             <button
               type="button"
@@ -423,7 +420,7 @@ export function taskUpdateActionEditor({
               data-action-outcome="additional_action_still_present"
               ${text.trim() ? "" : "disabled"}
             >
-              ${escapeHtml(t("taskUpdate.outcome.stillThere"))}
+              ${translatedText("taskUpdate.outcome.stillThere")}
             </button>
           </div>
         </section>`
@@ -433,7 +430,7 @@ export function taskUpdateActionEditor({
             data-save-action
             ${text.trim() && cityHelpNeeded !== null ? "" : "disabled"}
           >
-            ${escapeHtml(t("common.done"))}
+            ${translatedText("common.done")}
           </button>`}
   </section>`;
 }
@@ -446,7 +443,7 @@ export function taskUpdateActionPhotos(
 ) {
   return html`<section class="task-update__capture">
     <h2 id="task-update-title">
-      ${escapeHtml(t("taskUpdate.actionPhotos.title"))}
+      ${translatedText("taskUpdate.actionPhotos.title")}
     </h2>
     ${photoPicker(previews, "action", files, photosAllowed)}
     <div class="task-update__actions task-update__actions--footer">
@@ -456,10 +453,18 @@ export function taskUpdateActionPhotos(
         data-save-action
         ${previews.length ? "" : "disabled"}
       >
-        ${escapeHtml(t("common.done"))}</button
+        ${translatedText("common.done")}</button
       ><button type="button" class="btn-outline" data-skip-action>
-        ${escapeHtml(t("taskUpdate.skip"))}
+        ${translatedText("taskUpdate.skip")}
       </button>
     </div>
   </section>`;
+}
+
+/** @param {string} labelKey @param {string} value */
+function metadataRow(labelKey, value) {
+  return html`<div>
+    <dt>${translatedText(labelKey)}</dt>
+    <dd>${escapeHtml(value)}</dd>
+  </div>`;
 }

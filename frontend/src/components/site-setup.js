@@ -401,9 +401,11 @@ export class SiteSetup extends HTMLElement {
     if (!result.ok) {
       this._checking = false;
       this._error =
-        result.reason === "network"
-          ? t("setup.error.network")
-          : t("setup.error.invalidCode");
+        result.reason === "limited"
+          ? t("setup.enrollment.limited")
+          : result.reason === "network"
+            ? t("setup.error.network")
+            : t("setup.error.invalidCode");
       this._render();
       return;
     }
@@ -472,6 +474,7 @@ export class SiteSetup extends HTMLElement {
       this._render();
       return;
     }
+    stripLoginFromUrl();
     this.dispatchEvent(
       new CustomEvent("sitebound", { bubbles: true, detail: site }),
     );
@@ -504,6 +507,7 @@ export class SiteSetup extends HTMLElement {
         session.bindings || [],
         session.physicalDeviceId,
       );
+      stripLoginFromUrl();
       this.dispatchEvent(
         new CustomEvent("sitebound", { bubbles: true, detail: site }),
       );
@@ -512,6 +516,7 @@ export class SiteSetup extends HTMLElement {
       this._committingSite = false;
       this._checking = false;
       const messages = {
+        code_attempts_limited: "setup.enrollment.limited",
         invalid_enrollment_grant: "setup.enrollment.invalid",
         enrollment_expired: "setup.enrollment.expired",
         enrollment_already_used: "setup.enrollment.used",
@@ -572,6 +577,20 @@ export function stripEnrollmentFromUrl() {
     const fragment = new URLSearchParams(url.hash.slice(1));
     fragment.delete("enrollment_grant");
     fragment.delete("enrollment_token");
+    url.hash = fragment.toString();
+    history.replaceState(null, "", url.pathname + url.search + url.hash);
+  } catch {
+    /* no-op */
+  }
+}
+
+// Clear the login override only after the session is safely stored.
+export function stripLoginFromUrl() {
+  try {
+    const url = new URL(location.href);
+    const fragment = new URLSearchParams(url.hash.slice(1));
+    if (!fragment.has("login")) return;
+    fragment.delete("login");
     url.hash = fragment.toString();
     history.replaceState(null, "", url.pathname + url.search + url.hash);
   } catch {

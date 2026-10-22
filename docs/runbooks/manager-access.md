@@ -137,3 +137,23 @@ If scanner consumption is suspected, review/revoke the affected enrollment befor
 issuing a replacement. A replacement invitation does not invalidate its predecessor's
 already-created sessions. The deployed frontend must include the confirmation
 change before scanning tests are meaningful.
+
+### Short-code abuse controls
+
+Both `/site-code` and manual-code submissions to `/app/v1/enrollment/redeem`
+consume the same atomic DynamoDB budget before any credential lookup: 300 attempts
+per five-minute UTC window and 3,000 per UTC day, per environment. Successful
+lookups and redemptions count too (a normal manager login consumes two attempts).
+The counters have numeric TTLs; window keys, not TTL deletion timing, control resets.
+This global cap also covers distributed guesses and requests sent directly to API Gateway.
+No counter is tied to an invitation or to a caller-supplied IP header.
+
+CloudFront WAF additionally shares a 60-request/five-minute viewer-IP limit across
+both paths. This edge rule includes link redemption, while the application budget
+applies only to short codes. Infrastructure changes deploy through CI.
+
+Exhausted application budgets return 429 with `Retry-After`, a localized wait message,
+and a `ShortCodeThrottled` log event without credentials. During an attack, the global
+cap can temporarily prevent all code logins until the window resets; full-token
+invitations remain outside that application cap. Investigate sustained throttling
+before raising limits. Storage failures fail closed before code resolution.

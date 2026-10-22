@@ -53,3 +53,55 @@ test("manual enrollment requires a code and explicit submission", async ({
   );
   expect(attempts).toEqual([{ code: "012345" }]);
 });
+
+for (const manager of [true, false]) {
+  test(`saved code login survives reload (manager: ${manager})`, async ({
+    page,
+  }) => {
+    let redemptions = 0;
+    await page.route("**/v1/**", (route) => route.fulfill({ json: {} }));
+    await page.route("**/app/v1/**", (route) => route.fulfill({ json: {} }));
+    await page.route("**/site-code", (route) =>
+      route.fulfill({
+        json: manager
+          ? { code: "A1B2C3", enrollment: true }
+          : {
+              code: "A1B2C3",
+              providerSite: {
+                id: "site-1",
+                siteId: "site-1",
+                name: "Test Site",
+              },
+            },
+      }),
+    );
+    const session = {
+      deviceId: "test-device",
+      bindingId: "test-binding",
+      physicalDeviceId: "test-physical",
+      site: { siteId: "site-1", name: "Test Site" },
+      token: "test-token",
+      refreshToken: "test-refresh",
+      expiresIn: 3600,
+      tokenGeneration: 1,
+      accessLevel: "manager",
+      bindings: [],
+    };
+    await page.route(
+      manager ? "**/app/v1/enrollment/redeem" : "**/v1/devices",
+      (route) => {
+        redemptions += 1;
+        return route.fulfill({ status: 201, json: session });
+      },
+    );
+    await page.goto("/?theme=dark#login=1");
+    await page.locator("#code-input input").first().pressSequentially("A1B2C3");
+    await page.locator("#continue").click();
+    await expect(page.locator("site-setup")).toHaveCount(0);
+    await expect(page).not.toHaveURL(/login=1/);
+    await page.reload();
+    await expect(page.locator("app-root main")).toBeVisible();
+    await expect(page.locator("site-setup")).toHaveCount(0);
+    expect(redemptions).toBe(1);
+  });
+}

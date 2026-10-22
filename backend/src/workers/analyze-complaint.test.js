@@ -1,3 +1,4 @@
+import { presignGet } from "../s3.js";
 import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -191,4 +192,49 @@ describe("complaint permanent analyzer failures", () => {
     );
     await expect(handler(event())).resolves.toBeUndefined();
   });
+});
+
+it("regenerates evidence URLs on redelivery after a retrieval failure", async () => {
+  const error = new AnalyzerError("Try again", {
+    status: 422,
+    code: "evidence_retrieval_failed",
+    retryable: true,
+  });
+  vi.mocked(presignGet)
+    .mockReset()
+    .mockResolvedValueOnce("https://local/first")
+    .mockResolvedValueOnce("https://local/fresh");
+  extractComplaint.mockRejectedValue(error);
+  for (const receiveCount of [1, 2]) {
+    ddbSend
+      .mockResolvedValueOnce({
+        Item: {
+          status: "analyzing",
+          analysisAttemptId: "attempt-1",
+          description: "Noise",
+        },
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            name: "evidence.pdf",
+            contentType: "application/pdf",
+            s3Key: "evidence",
+          },
+        ],
+      });
+    await expect(handler(event({ receiveCount }))).rejects.toBe(error);
+  }
+  expect(presignGet).toHaveBeenCalledTimes(2);
+  expect(extractComplaint.mock.calls[0][0].files[0].source_url).toBe(
+    "https://local/first",
+  );
+  expect(extractComplaint.mock.calls[1][0].files[0].source_url).toBe(
+    "https://local/fresh",
+  );
+  expect(
+    ddbSend.mock.calls.every(
+      ([command]) => !(command instanceof UpdateCommand),
+    ),
+  ).toBe(true);
 });
