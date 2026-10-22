@@ -49,6 +49,11 @@ The **only** durable copy of the media is GNP's.
 - [ ] **No media bytes on SQS** — enqueue the **S3 key**, not the bytes.
 - [ ] **No request/media-body logging** — the base64 image is not captured in API Gateway exec/access
   logs, our Lambda/worker logs, or (analyzer-account) Bedrock model-invocation logs.
+- [x] **No viewer IP addresses in logs** — the API Gateway access log omits `$context.identity.sourceIp`
+  (per-device correlation uses the authorizer's pseudonymous device subject + site; unauthenticated
+  routes correlate by request ID). Lambda/worker logs never log headers or the raw event. CloudFront
+  standard logs and S3 server-access logs in the access-logs bucket still carry requester IPs for a year
+  (not CloudWatch; tracked separately).
 - [x] **Uploaded-media validation** before the analyzer call: independent byte/decode/type checks,
   size/dimension/page caps, metadata-stripping re-encode, and per-check/device/Site budgets.
 - [x] **TLS-only** for both uploads and complaint-evidence buckets through explicit `aws:SecureTransport = false` denies.

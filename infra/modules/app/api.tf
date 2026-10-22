@@ -336,11 +336,16 @@ resource "aws_apigatewayv2_stage" "default" {
   name        = "$default"
   auto_deploy = true
 
+  # Privacy: the viewer IP ($context.identity.sourceIp) is deliberately NOT
+  # logged. Per-device correlation during investigations uses the device
+  # authorizer's pseudonymous subject and site instead (flat context keys the
+  # Lambda authorizer returns); unauthenticated routes correlate by requestId.
   access_log_settings {
     destination_arn = aws_cloudwatch_log_group.api_gw.arn
     format = jsonencode({
       requestId       = "$context.requestId"
-      ip              = "$context.identity.sourceIp"
+      sub             = "$context.authorizer.sub"
+      siteId          = "$context.authorizer.siteId"
       requestTime     = "$context.requestTime"
       httpMethod      = "$context.httpMethod"
       routeKey        = "$context.routeKey"

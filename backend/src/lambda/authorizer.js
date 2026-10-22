@@ -186,6 +186,11 @@ export const handler = async (event) => {
       "claims.custom:siteId": claims.siteId,
       "claims.ver": claims.ver,
       "claims.accessLevel": claims.accessLevel,
+      // Undotted copies for the API Gateway access-log format
+      // ($context.authorizer.sub / .siteId), which replaces the viewer IP
+      // as the per-device correlation key (infra/modules/app/api.tf).
+      sub: claims.sub,
+      siteId: claims.siteId,
     },
   };
 };

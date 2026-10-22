@@ -86,7 +86,7 @@ Bearer links use a dedicated `media.<frontend-domain>` CloudFront distribution
 with a validated certificate, HSTS/CSP, `no-referrer`, WAF, and no caching.
 Standard CloudFront logging is intentionally disabled for this distribution
 because it includes query strings. API Gateway's access log retains request ID,
-route, status, and timing without tokens. Do not enable query/body logging on
+device subject, site, route, status, and timing without tokens or viewer IPs. Do not enable query/body logging on
 this route, and do not paste full links or bearer tokens into incident records.
 The application redacts bearer query parameters from failed SF311 request and
 response diagnostics before persistence. Local tunnel access also requires
