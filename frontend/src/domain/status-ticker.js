@@ -1,4 +1,4 @@
-import { submitted311Ticket } from "./home-tasks.js";
+import { isTaskExpired, submitted311Ticket } from "./home-tasks.js";
 import { duplicateUiEnabled } from "../services/feature-flags.js";
 
 /** A single ordered decision table for every issue-card surface.
@@ -12,6 +12,7 @@ export function statusTicker(task, { history = false, now = Date.now() } = {}) {
     icon,
     count,
   });
+  if (isTaskExpired(task, now)) return state("old", "warning");
   if (history || task.status === "completed") {
     const confirmed =
       task.completionMethod === "site_team_resolved" ||
@@ -56,12 +57,7 @@ export function statusTicker(task, { history = false, now = Date.now() } = {}) {
   }
   const filed = Boolean(submitted311Ticket(task));
   if (filed && task.ticketStatus === "Closed")
-    return task.ticketClosedReason
-      ? state("cityClosed", "warning")
-      : state("closedUnknown", "muted", "circle-question");
-  const created = Date.parse(task.createdAt || task.created_at || "");
-  if (Number.isFinite(created) && now - created > 30 * 86400000)
-    return state("old", "warning");
+    return state("cityClosed", "warning");
   if (filed && task.ticketResponseOverdue) return state("overdue", "warning");
   if (filed && task.ticketStatus === "Scheduled")
     return state("scheduled", "progress", "calendar-check");

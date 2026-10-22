@@ -128,7 +128,17 @@ export function normalizedHomeTab(value) {
   return HOME_TABS.some((tab) => tab.id === value) ? value : "todo";
 }
 
+/** Expiration is based only on original creation, never subsequent activity.
+ * @param {Record<string, any>} task
+ * @param {number | Date} now
+ */
+export function isTaskExpired(task, now = Date.now()) {
+  const created = Date.parse(task.createdAt || task.created_at || "");
+  return Number.isFinite(created) && Number(now) - created >= 14 * 86400000;
+}
+
 export function homeTaskStatus(task, override, now = new Date()) {
+  if (isTaskExpired(task, now)) return "archived";
   const status = String(task.status || "open");
   if (
     status === "completing" ||

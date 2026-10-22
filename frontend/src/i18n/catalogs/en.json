@@ -269,11 +269,10 @@
   "card.ticker.called": "Called",
   "card.ticker.checking": "Looking for duplicates",
   "card.ticker.cityClosed": "City closed this ticket",
-  "card.ticker.closedUnknown": "Closed (unknown resolution)",
   "card.ticker.duplicate": "Duplicate",
   "card.ticker.filed": "Request filed",
   "card.ticker.needsAction": "Needs action",
-  "card.ticker.old": "Older than 30 days",
+  "card.ticker.old": "Older than 14 days",
   "card.ticker.onHold": "On hold by the City",
   "card.ticker.overdue": "City response is overdue",
   "card.ticker.resolved": "Issue resolved",
@@ -1135,5 +1134,6 @@
   "webview.banner.dismiss.aria": "Dismiss",
   "webview.banner.message": "You're inside another app's browser. Open in your browser instead for the camera to work.",
   "webview.banner.open": "Open in browser",
-  "webview.banner.title": "Camera may not open here."
+  "webview.banner.title": "Camera may not open here.",
+  "taskUpdate.expired": "Issue archived: older than 14 days, no resolution"
 }

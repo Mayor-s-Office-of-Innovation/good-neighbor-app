@@ -1127,13 +1127,13 @@
   "card.ticker.checking": "Naghahanap ng mga duplicate",
   "card.ticker.duplicate": "Duplicate",
   "card.ticker.cityClosed": "Isinara ng Lungsod ang ticket na ito",
-  "card.ticker.closedUnknown": "Sarado (hindi alam ang resolusyon)",
-  "card.ticker.old": "Mahigit 30 araw na",
+  "card.ticker.old": "Mahigit 14 araw na",
   "card.ticker.overdue": "Lampas na sa takdang oras ang tugon ng Lungsod",
   "card.ticker.filed": "Naihain ang kahilingan",
   "card.ticker.called": "Nakatawag na",
   "card.ticker.scheduled": "Naka-iskedyul ang trabaho",
   "card.ticker.onHold": "Naka-hold sa Lungsod",
   "card.ticker.resolved": "Nalutas ang isyu",
-  "card.ticker.actionTaken": "Nagawa ang aksyon"
+  "card.ticker.actionTaken": "Nagawa ang aksyon",
+  "taskUpdate.expired": "Na-archive ang isyu: mahigit 14 araw na, walang resolusyon"
 }

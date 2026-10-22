@@ -1127,13 +1127,13 @@
   "card.ticker.checking": "正在尋找重複項目",
   "card.ticker.duplicate": "重複項目",
   "card.ticker.cityClosed": "市府已關閉此案件",
-  "card.ticker.closedUnknown": "已關閉（處理結果不明）",
-  "card.ticker.old": "已超過 30 天",
+  "card.ticker.old": "已超過 14 天",
   "card.ticker.overdue": "市府回應已逾期",
   "card.ticker.filed": "已提交申請",
   "card.ticker.called": "已致電",
   "card.ticker.scheduled": "已安排工作",
   "card.ticker.onHold": "市府暫緩處理",
   "card.ticker.resolved": "問題已解決",
-  "card.ticker.actionTaken": "已採取行動"
+  "card.ticker.actionTaken": "已採取行動",
+  "taskUpdate.expired": "問題已封存：超過 14 天，尚未解決"
 }

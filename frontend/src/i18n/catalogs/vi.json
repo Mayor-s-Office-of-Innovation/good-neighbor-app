@@ -1127,13 +1127,13 @@
   "card.ticker.checking": "Đang tìm mục trùng lặp",
   "card.ticker.duplicate": "Trùng lặp",
   "card.ticker.cityClosed": "Thành phố đã đóng yêu cầu này",
-  "card.ticker.closedUnknown": "Đã đóng (không rõ cách giải quyết)",
-  "card.ticker.old": "Đã hơn 30 ngày",
+  "card.ticker.old": "Đã hơn 14 ngày",
   "card.ticker.overdue": "Phản hồi của Thành phố đã quá hạn",
   "card.ticker.filed": "Đã gửi yêu cầu",
   "card.ticker.called": "Đã gọi",
   "card.ticker.scheduled": "Đã lên lịch xử lý",
   "card.ticker.onHold": "Thành phố đang tạm hoãn",
   "card.ticker.resolved": "Đã giải quyết vấn đề",
-  "card.ticker.actionTaken": "Đã thực hiện hành động"
+  "card.ticker.actionTaken": "Đã thực hiện hành động",
+  "taskUpdate.expired": "Vấn đề đã được lưu trữ: hơn 14 ngày, chưa được giải quyết"
 }

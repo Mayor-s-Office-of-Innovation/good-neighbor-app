@@ -858,7 +858,7 @@ describe("taskAnalysisCard", () => {
     ["Open", "", false, "filed"],
     ["Open", "", true, "overdue"],
     ["Closed", "8", false, "cityClosed"],
-    ["Closed", "", false, "closedUnknown"],
+    ["Closed", "", false, "cityClosed"],
     ["On hold", "", false, "onHold"],
   ])(
     "renders one status ticker for %s",

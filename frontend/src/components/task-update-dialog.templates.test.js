@@ -9,6 +9,47 @@ import {
 } from "./task-update-dialog.templates.js";
 
 describe("task update dialog templates", () => {
+  it("adds expiry once at the 14-day mark, including paginated timelines", () => {
+    const view = {
+      task: { status: "in_progress", createdAt: "2026-10-01T12:00:00Z" },
+      updates: [],
+      issueOrigin: "single-problem",
+      originalMediaUrl: "",
+      mediaUrls: new Map(),
+      now: new Date("2026-10-15T12:00:00Z"),
+      nextToken: "older",
+    };
+    const markup = taskUpdateTimeline(view);
+    expect(markup).toContain(t("taskUpdate.expired"));
+    expect(markup).toContain('datetime="2026-10-15T12:00:00.000Z"');
+    expect(
+      taskUpdateTimeline({ ...view, now: new Date("2026-10-15T11:59:59Z") }),
+    ).not.toContain(t("taskUpdate.expired"));
+    expect(
+      taskUpdateTimeline({
+        ...view,
+        task: { ...view.task, resolvedAt: "2026-10-10T12:00:00Z" },
+      }),
+    ).not.toContain(t("taskUpdate.expired"));
+    expect(
+      taskUpdateTimeline({
+        ...view,
+        task: { ...view.task, resolvedAt: "2026-10-16T12:00:00Z" },
+      }),
+    ).toContain(t("taskUpdate.expired"));
+    expect(
+      taskUpdateTimeline({
+        ...view,
+        updates: [
+          {
+            type: "issue_expired",
+            label: t("taskUpdate.expired"),
+            occurredAt: "2026-10-15T12:00:00Z",
+          },
+        ],
+      }).split(t("taskUpdate.expired")),
+    ).toHaveLength(2);
+  });
   it("shows legacy direct completion without call metadata and avoids duplicate events", () => {
     const view = {
       task: {
@@ -23,7 +64,7 @@ describe("task update dialog templates", () => {
       mediaUrls: new Map(),
     };
     const markup = taskUpdateTimeline(view);
-    expect(markup).toContain(t("card.ticker.needsAction"));
+    expect(markup).toContain(t("card.ticker.old"));
     expect(markup).not.toContain(t("card.route.nonEmergency"));
     expect(markup).not.toContain("task-update__metadata");
     expect(markup).toContain('datetime="2026-10-06T20:05:00Z"');

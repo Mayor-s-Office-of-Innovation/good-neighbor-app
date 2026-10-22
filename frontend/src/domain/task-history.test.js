@@ -27,6 +27,15 @@ describe("history day headings", () => {
   });
 });
 describe("history duration", () => {
+  it("groups expired unresolved cards at original creation plus 14 days", () => {
+    expect(
+      historyEnteredAt({
+        status: "in_progress",
+        createdAt: "2000-01-01T00:00:00Z",
+        updatedAt: "2000-01-02T00:00:00Z",
+      }),
+    ).toBe("2000-01-15T00:00:00.000Z");
+  });
   it.each([
     [0, "lessThanMinute", undefined],
     [59, "minutes", 59],

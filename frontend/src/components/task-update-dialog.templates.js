@@ -9,7 +9,7 @@ import { localizedAnalyzerText } from "../i18n/analyzer.js";
 import { statusTickerMarkup } from "./status-ticker.js";
 import { taskMediaUrl } from "../domain/task-media.js";
 import { taskCardTitle } from "../domain/task-title.js";
-import { displayTaskId } from "../domain/home-tasks.js";
+import { displayTaskId, isTaskExpired } from "../domain/home-tasks.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
@@ -132,7 +132,34 @@ export function taskUpdateTimeline({
   const isCall = task.kind === "non_actionable_escalation";
   const showAgencyMetadata =
     task.kind === "escalation" || isCall || Boolean(task.notifiedAt);
+  const expiresAt =
+    Date.parse(task.createdAt || task.created_at || "") + 14 * 86400000;
+  const resolutionAt = Date.parse(
+    task.resolvedAt ||
+      task.resolved_at ||
+      (task.completionMethod === "site_team_resolved"
+        ? task.completedAt || task.completed_at
+        : "") ||
+      "",
+  );
+  const resolvedBeforeExpiry = Number.isFinite(resolutionAt)
+    ? resolutionAt <= expiresAt
+    : task.completionMethod === "site_team_resolved" ||
+      task.latestUpdateLabel === "Resolved";
+  const archiveEvent =
+    isTaskExpired(task, now) &&
+    !resolvedBeforeExpiry &&
+    !updates.some((update) => update.type === "issue_expired")
+      ? [
+          {
+            type: "issue_expired",
+            label: t("taskUpdate.expired"),
+            occurredAt: new Date(expiresAt).toISOString(),
+          },
+        ]
+      : [];
   const timeline = [
+    ...archiveEvent,
     ...updates,
     ...legacyCompletion,
     ...(nextToken ? [] : [creation]),

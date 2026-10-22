@@ -54,20 +54,18 @@ describe("status ticker priorities", () => {
       }).key,
     ).toBe("needsAction");
   });
-  it("orders closure above age above overdue above scheduled/on hold above filed", () => {
+  it("orders closure above overdue above scheduled/on hold above filed", () => {
     const task = {
       ...filed,
       ticketStatus: "Closed",
       ticketClosedReason: "999",
-      createdAt: "2026-01-01",
+      createdAt: "2026-10-20",
       ticketResponseOverdue: true,
     };
     expect(ticker(task).key).toBe("cityClosed");
     task.ticketClosedReason = "";
-    expect(ticker(task).key).toBe("closedUnknown");
+    expect(ticker(task).key).toBe("cityClosed");
     task.ticketStatus = "Scheduled";
-    expect(ticker(task).key).toBe("old");
-    task.createdAt = new Date(now - 30 * 86400000).toISOString();
     expect(ticker(task).key).toBe("overdue");
     task.ticketResponseOverdue = false;
     expect(ticker(task).key).toBe("scheduled");
@@ -76,6 +74,22 @@ describe("status ticker priorities", () => {
     task.ticketStatus = "Open";
     expect(ticker(task).key).toBe("filed");
   });
+  it.each(["open", "in_progress", "completed", "cannot_do"])(
+    "expires %s ahead of all other tickers at exactly 14 days",
+    (status) => {
+      const task = {
+        ...filed,
+        status,
+        createdAt: new Date(now - 14 * 86400000).toISOString(),
+        ticketStatus: "Closed",
+        completionMethod: "site_team_resolved",
+        duplicate: {},
+        duplicateCheckState: "pending",
+      };
+      expect(ticker(task).key).toBe("old");
+      expect(statusTicker(task, { now, history: true }).key).toBe("old");
+    },
+  );
   it("uses original creation, never updatedAt, for age", () => {
     expect(
       ticker({
@@ -104,4 +118,29 @@ describe("status ticker priorities", () => {
       }),
     ).toMatchObject({ key: "resolved", tone: "success" });
   });
+});
+
+describe("expiration routes cards to history", () => {
+  it.each(["open", "in_progress", "completed", "cannot_do"])(
+    "archives %s regardless of overrides",
+    async (status) => {
+      const { homeTaskStatus, homeTabForStatus } = await import(
+        "./home-tasks.js"
+      );
+      const task = {
+        status,
+        createdAt: new Date(now - 14 * 86400000).toISOString(),
+      };
+      expect(
+        homeTabForStatus(
+          homeTaskStatus(task, { status: "in_progress" }, new Date(now)),
+        ),
+      ).toBe("history");
+      task.createdAt = new Date(now - 14 * 86400000 + 1).toISOString();
+      if (status === "open" || status === "in_progress")
+        expect(
+          homeTabForStatus(homeTaskStatus(task, null, new Date(now))),
+        ).not.toBe("history");
+    },
+  );
 });
