@@ -441,3 +441,36 @@ it("retries actual cache permission errors and emits safe job diagnostics", asyn
     log.mockRestore();
   }
 });
+
+it("keeps lifecycle timing stable across redelivery", async () => {
+  const { projection } = setup();
+  const enqueuedAt = "2026-10-15T10:00:00.000Z";
+  const event = {
+    Records: [
+      {
+        messageId: "lifecycle",
+        body: JSON.stringify({
+          siteId: "site",
+          checkId: "target",
+          artifactId: "photo",
+          revision: projection.revision,
+          id: projection.id,
+          observedAt: projection.observedAt,
+          lifecycleChange: true,
+          enqueuedAt,
+        }),
+      },
+    ],
+  };
+  for (let i = 0; i < 2; i++) {
+    await handler(
+      /** @type {import("aws-lambda").SQSEvent} */ (event),
+      /** @type {import("aws-lambda").Context} */ ({}),
+      () => {},
+    );
+    expect(
+      state.records.get(`DUP_RESULT#target:photo#${projection.revision}`)
+        .queuedAt,
+    ).toBe(enqueuedAt);
+  }
+});

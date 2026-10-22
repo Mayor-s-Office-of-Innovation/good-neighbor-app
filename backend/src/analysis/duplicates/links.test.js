@@ -333,3 +333,75 @@ it("does not describe failed candidate assessments as a clean no-match", async (
     "unavailable",
   );
 });
+
+it("uses fresh revision timing before projection exists, not the old task's age", async () => {
+  const { task, ref } = issue("requeued", "2026-10-15T10:00:00Z");
+  const queuedAt = new Date().toISOString();
+  put({
+    pk: task.pk,
+    sk: `DUP_RESULT#requeued:photo#${ref.revision}`,
+    status: "pending",
+    queuedAt,
+  });
+  state.items.delete(
+    task.pk + "|" + projectionKey("site", task.createdAt, "requeued:photo").sk,
+  );
+  const { getDuplicateLinks } = await import(
+    "../../handlers/duplicate-links.js"
+  );
+  vi.stubEnv("DUPLICATE_DETECTION_ENABLED", "true");
+  try {
+    const response = await getDuplicateLinks({
+      body: JSON.stringify({ taskIds: [task.taskId] }),
+    });
+    expect(JSON.parse(response.body).issues[0].state).toBe("pending");
+    const relation = await duplicateForTask("test", "site", task);
+    expect(relation.pendingSince).toBe(queuedAt);
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+it("uses fixed analysis readiness without a result and honors explicit recovery timing", async () => {
+  const { task, ref } = issue("timing", "2026-10-15T10:00:00Z");
+  const sk = `DUP_RESULT#timing:photo#${ref.revision}`;
+  state.items.delete(task.pk + "|" + sk);
+  const { visibleDuplicateState } = await import("./result-state.js");
+  const first = await duplicateForTask("test", "site", task);
+  expect(first.pendingSince).toBe(task.createdAt);
+  expect(
+    visibleDuplicateState(
+      first.state,
+      first.pendingSince,
+      Date.parse(task.createdAt) + 900000,
+    ),
+  ).toBe("unavailable");
+  expect((await duplicateForTask("test", "site", task)).pendingSince).toBe(
+    first.pendingSince,
+  );
+  const now = new Date().toISOString();
+  put({
+    pk: task.pk,
+    sk,
+    status: "evaluated",
+    evaluatedAt: task.createdAt,
+    recoveryRequestedAt: now,
+    conditionResults: [
+      {
+        conditionId: "condition",
+        possibleDuplicate: false,
+        assessmentOutcome: "no_match_with_failures",
+      },
+    ],
+  });
+  const recovery = await duplicateForTask("test", "site", task);
+  expect(recovery.state).toBe("pending");
+  expect(recovery.pendingSince).toBe(now);
+  expect(
+    visibleDuplicateState(
+      recovery.state,
+      recovery.pendingSince,
+      Date.parse(now) + 900000,
+    ),
+  ).toBe("unavailable");
+});

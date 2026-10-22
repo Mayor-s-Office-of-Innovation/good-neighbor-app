@@ -1,10 +1,22 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { analysisRevision } from "../src/analysis/duplicates/jobs.js";
-const state = vi.hoisted(() => ({ rows: [], analysis: {}, send: vi.fn() }));
+const state = vi.hoisted(() => ({
+  rows: [],
+  analysis: {},
+  send: vi.fn(),
+  updates: [],
+  updateError: null,
+}));
 vi.mock("../src/db.js", () => ({
   ddb: {
-    send: async (cmd) =>
-      cmd.input.Key ? { Item: state.analysis } : { Items: state.rows },
+    send: async (cmd) => {
+      if (cmd.input.UpdateExpression) {
+        state.updates.push(cmd.input);
+        if (state.updateError) throw state.updateError;
+        return {};
+      }
+      return cmd.input.Key ? { Item: state.analysis } : { Items: state.rows };
+    },
   },
 }));
 vi.mock("@aws-sdk/client-sqs", () => ({
@@ -23,7 +35,9 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
-async function run(apply) {
+async function run(apply, updateError = null) {
+  state.updates = [];
+  state.updateError = updateError;
   vi.resetModules();
   state.send.mockReset();
   vi.stubEnv("DYNAMO_TABLE", "test");
@@ -63,6 +77,7 @@ async function run(apply) {
 it("dry-runs current failed/incomplete results without touching SQS", async () => {
   const log = await run(false);
   expect(state.send).not.toHaveBeenCalled();
+  expect(state.updates).toHaveLength(0);
   expect(JSON.parse(log.mock.calls.at(-1)[0])).toEqual({
     selected: 2,
     skipped: 1,
@@ -75,4 +90,28 @@ it("only enqueues selected revisions when explicitly applied", async () => {
   expect(
     JSON.parse(state.send.mock.calls[0][0].input.MessageBody),
   ).toMatchObject({ siteId: "site", checkId: "check", artifactId: "photo" });
+});
+
+it("records one stable recovery timestamp without replacing result fields", async () => {
+  await run(true);
+  expect(state.updates).toHaveLength(2);
+  const sent = JSON.parse(state.send.mock.calls[0][0].input.MessageBody);
+  expect(state.updates[0]).toMatchObject({
+    UpdateExpression: "SET recoveryRequestedAt = :time",
+    ConditionExpression:
+      "#status = :status AND attribute_not_exists(evaluatedAt)",
+    ExpressionAttributeValues: {
+      ":time": sent.enqueuedAt,
+      ":status": "pending",
+    },
+  });
+});
+it("leaves concurrent completed results untouched", async () => {
+  await run(
+    true,
+    Object.assign(new Error("race"), {
+      name: "ConditionalCheckFailedException",
+    }),
+  );
+  expect(state.send).toHaveBeenCalledTimes(2);
 });

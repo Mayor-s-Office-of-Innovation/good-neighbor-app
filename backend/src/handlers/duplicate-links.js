@@ -68,7 +68,10 @@ export const getDuplicateLinks = async (event) => {
             );
             return {
               taskId,
-              state: visibleDuplicateState(relation.state, task.createdAt),
+              state: visibleDuplicateState(
+                relation.state,
+                relation.pendingSince,
+              ),
               ...(relation.state === "matched"
                 ? {
                     original: relation.original,

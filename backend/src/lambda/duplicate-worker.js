@@ -244,6 +244,14 @@ export const handler = async (event) => {
                 shadow: false,
                 sourceRevision: peer.revision,
                 invalidatedAt: new Date().toISOString(),
+                // Stable across redelivery of the same lifecycle event.
+                queuedAt:
+                  job.enqueuedAt ??
+                  (Number.isFinite(sent)
+                    ? new Date(sent).toISOString()
+                    : (previous?.queuedAt ??
+                      previous?.invalidatedAt ??
+                      new Date().toISOString())),
               },
             }),
           );

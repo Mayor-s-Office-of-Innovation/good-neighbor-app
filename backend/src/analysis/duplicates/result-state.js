@@ -24,11 +24,11 @@ export function processingState(result) {
 }
 
 /** Presentation only: never infer a negative match from overdue work.
- * @param {string} state @param {string|undefined} createdAt @param {number} [now]
+ * @param {string} state @param {string|undefined} pendingSince @param {number} [now]
  */
-export function visibleDuplicateState(state, createdAt, now = Date.now()) {
+export function visibleDuplicateState(state, pendingSince, now = Date.now()) {
   if (state !== "pending") return state;
-  const started = Date.parse(createdAt ?? "");
+  const started = Date.parse(pendingSince ?? "");
   return !Number.isFinite(started) || now - started >= 15 * 60 * 1000
     ? "unavailable"
     : "pending";

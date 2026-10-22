@@ -1,7 +1,7 @@
 // Site-scoped recovery after the worker/IAM fix is deployed. Dry-run by default.
 // Requeue current revisions only; never reset results, links, or human overrides.
 import { parseArgs } from "node:util";
-import { QueryCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { QueryCommand, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { ddb } from "../src/db.js";
 import { analysisRevision } from "../src/analysis/duplicates/jobs.js";
@@ -72,13 +72,40 @@ do {
       revision,
       enqueuedAt: new Date().toISOString(),
     };
-    if (values.apply)
+    if (values.apply) {
       await sqs.send(
         new SendMessageCommand({
           QueueUrl: queue,
           MessageBody: JSON.stringify(job),
         }),
       );
+      // Record an explicit recovery attempt, not every worker retry. Do not
+      // overwrite a result published while the message was being enqueued.
+      try {
+        await ddb.send(
+          new UpdateCommand({
+            TableName: table,
+            Key: { pk, sk: result.sk },
+            UpdateExpression: "SET recoveryRequestedAt = :time",
+            ConditionExpression:
+              "#status = :status AND " +
+              (result.evaluatedAt
+                ? "evaluatedAt = :evaluated"
+                : "attribute_not_exists(evaluatedAt)"),
+            ExpressionAttributeNames: { "#status": "status" },
+            ExpressionAttributeValues: {
+              ":time": job.enqueuedAt,
+              ":status": result.status,
+              ...(result.evaluatedAt
+                ? { ":evaluated": result.evaluatedAt }
+                : {}),
+            },
+          }),
+        );
+      } catch (error) {
+        if (error.name !== "ConditionalCheckFailedException") throw error;
+      }
+    }
     selected++;
     console.log(
       JSON.stringify({

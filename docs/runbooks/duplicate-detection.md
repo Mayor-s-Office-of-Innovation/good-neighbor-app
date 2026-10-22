@@ -214,7 +214,11 @@ it, S3 masks a missing object as AccessDenied, so the worker cannot build the
 cache. Keep real AccessDenied errors fatal/retryable; do not treat all permission
 failures as cache misses. The duplicate worker alone receives this permission.
 
-The batch API presents pending tasks older than fifteen minutes as `unavailable`.
+The batch API presents pending checks older than fifteen minutes as `unavailable`.
+Timing uses the current revision’s queue timestamp (even before its observation
+exists), falling back to analysis readiness when no result exists. Explicit
+recovery records a new recovery timestamp; ordinary retries and API reads never
+refresh the clock. Lifecycle redelivery preserves the event’s queue timestamp.
 This is a display state, not a negative match or cancellation. Completed searches
 with failed candidates also show unavailable for the affected unmatched condition.
 Confirmed matches still take precedence. At its fifteen-minute limit the browser
@@ -236,7 +240,8 @@ Review the selected IDs, then run the same command with `--apply` and
 `salvation-army-3110-octavia`, `st-john-the-evangelist`, and `moi-maanasa-sandbox`.
 The command queries results, revalidates current analysis revisions, skips
 analyses older than thirty days, and sends fresh jobs. It never resets results,
-links, overrides or the DLQ. The worker independently checks authoritative media
+links, overrides or the DLQ. After enqueueing, it conditionally records
+`recoveryRequestedAt` without overwriting concurrently completed results. The worker independently checks authoritative media
 retention and current revisions. Jobs are at-least-once; avoid repeated recovery
 runs while a prior run is processing. This targeted recovery includes incomplete
 completed searches that a DLQ redrive would miss.
