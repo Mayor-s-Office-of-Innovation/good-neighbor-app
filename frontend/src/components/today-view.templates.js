@@ -724,7 +724,7 @@ export function homeAllDonePanel() {
       aria-labelledby="home-all-done-title"
     >
       <div class="home-results__complete-content">
-        <img src="/clear-check-icon.png" alt="" width="96" height="98" />
+        <img src="/clear-check-icon.webp" alt="" width="96" height="98" />
         <h2 id="home-all-done-title">
           ${escapeHtml(t("today.allDone.title"))}
         </h2>

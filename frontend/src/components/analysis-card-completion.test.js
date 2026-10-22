@@ -59,15 +59,19 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
-it("allows cancellation without sending a request", async () => {
+it("sends the request on the first tap and ignores a second tap while it is in flight", async () => {
+  vi.mocked(completeTask).mockReturnValue(new Promise(() => {}));
   toggleCardCompletion(host, card, button, callbacks);
   expect(button.getAttribute("aria-checked")).toBe("true");
-  await vi.advanceTimersByTimeAsync(1499);
-  expect(completeTask).not.toHaveBeenCalled();
+  expect(button.disabled).toBe(true);
+  expect(card.setAttribute).toHaveBeenCalledWith("aria-busy", "true");
+  expect(completeTask).toHaveBeenCalledExactlyOnceWith("task", {
+    completionMethod: "manual",
+  });
   toggleCardCompletion(host, card, button, callbacks);
-  await vi.advanceTimersByTimeAsync(2000);
-  expect(completeTask).not.toHaveBeenCalled();
-  expect(isCompletingAnalysisCard(host)).toBe(false);
+  expect(completeTask).toHaveBeenCalledTimes(1);
+  expect(button.getAttribute("aria-checked")).toBe("true");
+  expect(isCompletingAnalysisCard(host)).toBe(true);
 });
 it("waits for a confirmed save and animation before updating the list", async () => {
   let resolveSave = (value) => {
@@ -83,7 +87,6 @@ it("waits for a confirmed save and animation before updating the list", async ()
     resolveAnimation = () => resolve(undefined);
   });
   toggleCardCompletion(host, card, button, callbacks);
-  await vi.advanceTimersByTimeAsync(1500);
   toggleCardCompletion(host, card, button, callbacks);
   expect(completeTask).toHaveBeenCalledTimes(1);
   expect(card.before).not.toHaveBeenCalled();
@@ -104,22 +107,13 @@ it.each(["rejected", "unconfirmed"])(
     else
       vi.mocked(completeTask).mockResolvedValue({ task: { status: "open" } });
     toggleCardCompletion(host, card, button, callbacks);
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(0);
     expect(card.before).not.toHaveBeenCalled();
     expect(button.getAttribute("aria-checked")).toBe("false");
     expect(button.disabled).toBe(false);
     expect(showActionSaveErrorToast).toHaveBeenCalledOnce();
   },
 );
-it("cancels an unsaved action when its card is detached", async () => {
-  toggleCardCompletion(host, card, button, callbacks);
-  host.isConnected = false;
-  card.isConnected = false;
-  await vi.advanceTimersByTimeAsync(1500);
-  expect(completeTask).not.toHaveBeenCalled();
-  expect(isCompletingAnalysisCard(host)).toBe(false);
-});
-
 it("keeps a completed card waiting until the results dialog closes", async () => {
   const task = {
     taskId: "task",
@@ -146,7 +140,7 @@ it("keeps a completed card waiting until the results dialog closes", async () =>
     completionMethod: "manual",
   }).then(finished);
   await vi.advanceTimersByTimeAsync(0);
-  expect(dialog.openResults).toHaveBeenCalledWith(task);
+  expect(dialog.openResults).toHaveBeenCalledWith(task, null);
   expect(finished).not.toHaveBeenCalled();
   close();
   await saving;
@@ -189,6 +183,29 @@ it("starts saving a phone action immediately and opens the dialer once", async (
   expect(callbacks.onSaved).toHaveBeenCalledWith({ status: "in_progress" });
 });
 
+it("clears busy before the slide and ignores a looping animation", async () => {
+  shell.getAnimations = () => [
+    {
+      finished: new Promise(() => {}),
+      effect: { getTiming: () => ({ iterations: Infinity }) },
+    },
+    { finished: animation, effect: { getTiming: () => ({ iterations: 1 }) } },
+  ];
+  toggleCardCompletion(host, card, button, callbacks);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(card.removeAttribute).toHaveBeenCalledWith("aria-busy");
+  expect(callbacks.onSaved).toHaveBeenCalledWith({ status: "completed" });
+  expect(callbacks.render).toHaveBeenCalled();
+});
+
+it("dials only a plain digit string from the phone attribute", () => {
+  const location = { href: "" };
+  vi.stubGlobal("window", { matchMedia: () => ({ matches: true }), location });
+  button.setAttribute("data-phone-number", "javascript:alert(1)");
+  toggleCardCompletion(host, card, button, callbacks);
+  expect(location.href).toBe("");
+});
+
 it("does not launch a phone CTA outside the mobile viewport", () => {
   const location = { href: "" };
   vi.stubGlobal("window", { matchMedia: () => ({ matches: false }), location });
@@ -210,4 +227,189 @@ it("leaves failed phone saves retryable without checkbox semantics", async () =>
   expect(button.disabled).toBe(false);
   expect(button.getAttribute("aria-checked")).toBeUndefined();
   expect(showActionSaveErrorToast).toHaveBeenCalledOnce();
+});
+
+function resultsDialogStub() {
+  const dialog = {
+    addEventListener: vi.fn((type, callback) => {
+      dialog.close = callback;
+    }),
+    close: () => {},
+    openResults: vi.fn(),
+    remove: vi.fn(),
+  };
+  return dialog;
+}
+
+it("opens the results prompt at tap time and lets the response arrive behind it", async () => {
+  const task = { taskId: "task", canBeInProgress: false, checkId: "check" };
+  let resolveSave = (value) => {
+    void value;
+  };
+  vi.mocked(completeTask).mockReturnValue(
+    new Promise((resolve) => {
+      resolveSave = resolve;
+    }),
+  );
+  const dialog = resultsDialogStub();
+  vi.stubGlobal("document", {
+    createElement: (tag) => (tag === "task-update-dialog" ? dialog : shell),
+    activeElement: button,
+    body: { append: vi.fn() },
+  });
+  toggleCardCompletion(host, card, button, { ...callbacks, task });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(document.body.append).toHaveBeenCalledWith(dialog);
+  const [promptedTask, completion] = dialog.openResults.mock.calls[0];
+  expect(promptedTask).toBe(task);
+  expect(completion).toBeInstanceOf(Promise);
+  expect(card.before).not.toHaveBeenCalled();
+  const saved = {
+    task: { taskId: "task", status: "completed", latestUpdateId: "update" },
+    resultsPending: true,
+  };
+  resolveSave(saved);
+  await expect(completion).resolves.toEqual({ task: saved.task });
+  // The card waits for the prompt to close before it slides away.
+  expect(card.before).not.toHaveBeenCalled();
+  dialog.close();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(dialog.remove).toHaveBeenCalledOnce();
+  expect(card.before).toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(callbacks.onSaved).toHaveBeenCalledWith(saved.task);
+});
+
+it("tells the prompt when the action failed or produced no results", async () => {
+  const task = { taskId: "task", canBeInProgress: false };
+  const dialog = resultsDialogStub();
+  vi.stubGlobal("document", {
+    createElement: () => dialog,
+    activeElement: button,
+    body: { append: vi.fn() },
+  });
+  vi.mocked(completeTask).mockRejectedValue(new Error("offline"));
+  const failing = completeCardAction(
+    "task",
+    { completionMethod: "manual" },
+    { task },
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  await expect(dialog.openResults.mock.calls[0][1]).resolves.toEqual({
+    task: null,
+    failed: true,
+  });
+  dialog.close();
+  await expect(failing).rejects.toThrow("offline");
+
+  vi.mocked(completeTask).mockResolvedValue({
+    task: { status: "in_progress" },
+    resultsPending: false,
+  });
+  const quiet = completeCardAction(
+    "task",
+    { completionMethod: "manual" },
+    { task },
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  await expect(dialog.openResults.mock.calls[1][1]).resolves.toEqual({
+    task: null,
+  });
+  dialog.close();
+  await expect(quiet).resolves.toEqual({
+    task: { status: "in_progress" },
+    resultsPending: false,
+  });
+});
+
+it("shows results prompts one at a time, in tap order", async () => {
+  const dialogs = [resultsDialogStub(), resultsDialogStub()];
+  let created = 0;
+  vi.stubGlobal("document", {
+    createElement: () => dialogs[created++],
+    activeElement: button,
+    body: { append: vi.fn() },
+  });
+  vi.mocked(completeTask).mockReturnValue(new Promise(() => {}));
+  const tasks = [
+    { taskId: "first", canBeInProgress: false },
+    { taskId: "second", canBeInProgress: false },
+  ];
+  tasks.forEach(
+    (task) =>
+      void completeCardAction(
+        task.taskId,
+        { completionMethod: "manual" },
+        { task },
+      ),
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  expect(completeTask).toHaveBeenCalledTimes(2);
+  expect(dialogs[0].openResults).toHaveBeenCalledWith(
+    tasks[0],
+    expect.any(Promise),
+  );
+  expect(created).toBe(1);
+  dialogs[0].close();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(created).toBe(2);
+  expect(dialogs[1].openResults).toHaveBeenCalledWith(
+    tasks[1],
+    expect.any(Promise),
+  );
+  // Drain the module-level queue so later tests start with no open prompt.
+  dialogs[1].close();
+  await vi.advanceTimersByTimeAsync(0);
+});
+
+it("reports a queued card's failure without waiting for the open prompt", async () => {
+  const dialogs = [resultsDialogStub(), resultsDialogStub()];
+  let created = 0;
+  vi.stubGlobal("document", {
+    createElement: () => dialogs[created++],
+    activeElement: button,
+    body: { append: vi.fn() },
+  });
+  const tasks = [
+    { taskId: "first", canBeInProgress: false },
+    { taskId: "second", canBeInProgress: false },
+  ];
+  vi.mocked(completeTask).mockReturnValueOnce(new Promise(() => {}));
+  void completeCardAction(
+    "first",
+    { completionMethod: "manual" },
+    { task: tasks[0] },
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  expect(created).toBe(1);
+  vi.mocked(completeTask).mockRejectedValueOnce(new Error("offline"));
+  const failing = completeCardAction(
+    "second",
+    { completionMethod: "manual" },
+    { task: tasks[1] },
+  );
+  // The first prompt is still open; the second card hears back anyway.
+  await expect(failing).rejects.toThrow("offline");
+  dialogs[0].close();
+  await vi.advanceTimersByTimeAsync(0);
+  // Its turn in the queue is skipped: no second prompt is ever created.
+  expect(created).toBe(1);
+});
+
+it("skips the prompt for actions the backend never documents", async () => {
+  vi.mocked(completeTask).mockResolvedValue({
+    task: { status: "in_progress" },
+  });
+  const create = vi.spyOn(document, "createElement");
+  await completeCardAction(
+    "task",
+    { completionMethod: "manual" },
+    { task: { taskId: "task", canBeInProgress: true } },
+  );
+  await completeCardAction(
+    "task",
+    { completionMethod: "311_filed" },
+    { task: { taskId: "task", canBeInProgress: false } },
+  );
+  expect(create).not.toHaveBeenCalled();
 });

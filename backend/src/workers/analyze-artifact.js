@@ -18,13 +18,14 @@ import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
 import { getObjectBytes, setObjectTags } from "../s3.js";
 import { downscaleImage, DownscaleError } from "../media/downscale.js";
+import { recordThumbnail, storeThumbnail } from "../media/thumbnail.js";
 import {
   AnalyzerError,
   createAnalyzerClient,
 } from "../analysis/analyzer-client.js";
 import { adaptAssessment } from "../analysis/adapt-scorecard.js";
 import { getAnalyzerApiKey } from "../analysis/api-key.js";
-import { analysisKey, checkHeaderKey } from "../handlers/keys.js";
+import { analysisKey, artifactKey, checkHeaderKey } from "../handlers/keys.js";
 import {
   enqueueTranslateArtifact,
   translateItemsFor,
@@ -226,6 +227,48 @@ async function markFailed({ dynamoTable, msg, err }) {
 }
 
 /**
+ * Store the card thumbnail beside the original and point the ART# row at it.
+ * Best-effort by contract: any failure is one `ThumbnailFailed` metric line
+ * (reason `store` or `record`, error name as a prop) and the card keeps using
+ * the original; nothing here can throw or fail the analysis.
+ * @param {{ msg: AnalyzeMessage, s3Key: string, bytes: Buffer, uploadBucket: string, dynamoTable: string }} input
+ * @returns {Promise<void>}
+ */
+async function storeAndRecordThumbnail({
+  msg,
+  s3Key,
+  bytes,
+  uploadBucket,
+  dynamoTable,
+}) {
+  let reason = "store";
+  try {
+    const thumbS3Key = await storeThumbnail({
+      bucket: uploadBucket,
+      s3Key,
+      bytes,
+    });
+    reason = "record";
+    await recordThumbnail({
+      tableName: dynamoTable,
+      key: artifactKey(msg.siteId, msg.checkId, msg.artifactId),
+      thumbS3Key,
+    });
+  } catch (err) {
+    emitMetrics({
+      marker: "ThumbnailFailed",
+      dimensions: { Kind: "photo" },
+      metrics: [{ name: "ThumbnailFailed", value: 1 }],
+      props: {
+        ...metricIds(msg),
+        reason,
+        error: err instanceof Error ? err.name : "UnknownError",
+      },
+    });
+  }
+}
+
+/**
  * Analyze one artifact end to end. Returns without effect when the ANALYSIS#
  * item already exists (redelivery), so it is safe to call repeatedly.
  * @param {AnalyzeMessage} msg
@@ -243,6 +286,8 @@ async function analyzeArtifact(
 ) {
   /** @type {import("../analysis/analyzer-client.js").AnalyzeMedia[]} */
   const media = [];
+  /** Normalized photo bytes, kept for the card thumbnail. @type {Buffer | null} */
+  let normalizedBytes = null;
   if (typeof msg.s3Key === "string" && msg.s3Key.length > 0) {
     // 1. Fetch the uploaded media (bytes only travel via the S3 key) + downscale.
     const object = await getObjectBytes({
@@ -333,6 +378,7 @@ async function analyzeArtifact(
         base64: bytes.toString("base64"),
       }),
     );
+    normalizedBytes = bytes;
   }
   if (typeof msg.text === "string" && msg.text.length > 0) {
     media.push({ type: "text", text: msg.text });
@@ -361,6 +407,23 @@ async function analyzeArtifact(
         })
       : Promise.resolve(null);
 
+  // Card thumbnail: encode + store + record, started here so it overlaps the
+  // analyzer's latency instead of adding to it, and drained (`await`) before
+  // every exit below so no S3 write is left in flight when the invocation
+  // ends. Independent of the analyzer outcome — the thumbnail is a property of
+  // the upload — and idempotent, so a redelivery that recorded nothing last
+  // time (e.g. a throttled UpdateItem) heals here. Never rejects.
+  const thumbnailPromise =
+    normalizedBytes && typeof msg.s3Key === "string"
+      ? storeAndRecordThumbnail({
+          msg,
+          s3Key: msg.s3Key,
+          bytes: normalizedBytes,
+          uploadBucket,
+          dynamoTable,
+        })
+      : Promise.resolve();
+
   // 2. Call the analyzer. Permanent failures are marked and consumed; transient
   //    ones (retryable) throw so SQS redelivers, then dead-letters.
   const kind = evidenceKindOf(msg);
@@ -375,6 +438,7 @@ async function analyzeArtifact(
       ...(msg.language ? { language: msg.language } : {}),
     });
   } catch (err) {
+    await thumbnailPromise;
     const permanent = err instanceof AnalyzerError && !err.retryable;
     // One AnalyzerLatencyMs sample per call regardless of outcome, so p95
     // reflects slow failures (timeouts) and not just the happy path.
@@ -465,6 +529,7 @@ async function analyzeArtifact(
       err.name === "ConditionalCheckFailedException"
     ) {
       // Redelivery: already analyzed. Don't double-count the counters.
+      await thumbnailPromise;
       emitMetrics({
         marker: "AnalysisDuplicate",
         dimensions: { Kind: kind },
@@ -473,6 +538,7 @@ async function analyzeArtifact(
       });
       return;
     }
+    await thumbnailPromise;
     throw err;
   }
   emitMetrics({
@@ -488,6 +554,8 @@ async function analyzeArtifact(
     ],
     props: { ...metricIds(msg), grade: adapted.grade },
   });
+
+  await thumbnailPromise;
 
   // 4. Hand the model-written text to the background translate worker so the
   //    locales the analyze call did not produce fill in (best-effort: a lost

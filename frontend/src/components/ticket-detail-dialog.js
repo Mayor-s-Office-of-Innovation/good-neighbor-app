@@ -54,6 +54,7 @@ export function buildTicketDetail(task, site, request) {
     ),
     location: ticketDetailLocation(task, site || {}, request),
     mediaUrl: taskMediaUrl(task),
+    fullMediaUrl: task.mediaUrl || taskMediaUrl(task),
   };
 }
 
@@ -115,7 +116,12 @@ class TicketDetailDialog extends HTMLElement {
     }
     this._task = task;
     if (this._detail) {
-      this._detail = { ...this._detail, task, mediaUrl: taskMediaUrl(task) };
+      this._detail = {
+        ...this._detail,
+        task,
+        mediaUrl: taskMediaUrl(task),
+        fullMediaUrl: task.mediaUrl || taskMediaUrl(task),
+      };
       if (this.isConnected && !this._editing) this._render();
     }
   }

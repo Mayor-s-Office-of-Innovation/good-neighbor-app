@@ -12,6 +12,7 @@ import { pendingDeletedConditionIds } from "../state/pending-deletions.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { formatPacificUpdated } from "../domain/task-updates.js";
 import { taskMediaUrl } from "../domain/task-media.js";
+import { taskCardTitle } from "../domain/task-title.js";
 import { t } from "../i18n/i18n.js";
 import { rulebookOptionLabel, rulebookText } from "../i18n/rulebook.js";
 import {
@@ -23,7 +24,7 @@ import {
   pacificWeekdayIndex,
 } from "../i18n/dates.js";
 
-const CLEAR_CHECK_ICON = "/clear-check-icon.png";
+const CLEAR_CHECK_ICON = "/clear-check-icon.webp";
 
 /**
  * @typedef {object} AnalysisCondition
@@ -524,7 +525,12 @@ export function clearCheckCard() {
     <article class="analysis-card analysis-card--clear">
       <div class="analysis-card__panel">
         <div class="analysis-card__clear-title">
-          <img src="${escapeAttr(CLEAR_CHECK_ICON)}" alt="" />
+          <img
+            src="${escapeAttr(CLEAR_CHECK_ICON)}"
+            alt=""
+            width="96"
+            height="98"
+          />
           <h3>${escapeHtml(t("card.clear.title"))}</h3>
         </div>
         <p class="analysis-card__clear-copy">${clearCheckCopy()}</p>
@@ -616,10 +622,7 @@ export function taskAnalysisCard({
     duplicateCheckState: duplicateUiEnabled()
       ? task.duplicateCheckState
       : undefined,
-    title:
-      displayCategory(task) ||
-      rulebookText(task.label) ||
-      t("card.title.fallback"),
+    title: taskCardTitle(task),
     description:
       task.status === "in_progress" || task.status === "completed"
         ? displayDescription(task) ||
@@ -1226,6 +1229,7 @@ function imagePreview(item) {
               place: placeName || t("card.evidence.siteFallback"),
             }),
           )}"
+          decoding="async"
         />
       </button>
     </div>
