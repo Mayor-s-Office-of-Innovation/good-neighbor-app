@@ -31,6 +31,7 @@ import {
   translateItemsFor,
 } from "../analysis/translate-enqueue.js";
 import { reverseGeocodePhoto } from "../integrations/reverse-geocoder.js";
+import { logServerError } from "../lib/log-server-error.js";
 import { elapsedMs, emitMetrics } from "../lib/metrics.js";
 
 // Image types the analyzer accepts. MVP capture is images + optional text.
@@ -641,9 +642,8 @@ export const handler = async (event) => {
   settled.forEach((result, index) => {
     if (result.status === "rejected") {
       const { messageId } = event.Records[index];
-      console.error("analyzeArtifact failed; message will redeliver", {
-        messageId,
-        error: result.reason,
+      logServerError("worker analyze-artifact", result.reason, {
+        extra: { messageId },
       });
       batchItemFailures.push({ itemIdentifier: messageId });
     }

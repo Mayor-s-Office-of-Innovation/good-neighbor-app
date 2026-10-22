@@ -248,7 +248,7 @@ export const presignUpload = async (event) => {
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const registerArtifact = async (event) => {
-  const { dynamoTable, queueUrl } = getConfig();
+  const { dynamoTable, queueUrl, analysisQueueUrl } = getConfig();
   const siteId = deriveSiteId(event);
 
   const checkId = event.pathParameters?.checkId;
@@ -424,7 +424,7 @@ export const registerArtifact = async (event) => {
   // and the already-registered path (see above) so analysis is always driven.
   await sqs.send(
     new SendMessageCommand({
-      QueueUrl: queueUrl,
+      QueueUrl: analysisQueueUrl || queueUrl,
       MessageBody: JSON.stringify({
         siteId,
         checkId,
