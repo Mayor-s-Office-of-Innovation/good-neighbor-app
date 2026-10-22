@@ -302,20 +302,18 @@ it("reads fresh simulator statuses on consecutive requests while leaving the pro
       body: JSON.stringify({ requests: [{ taskId: "task-1", srNum: "SR-1" }] }),
     };
     const results = [];
-    for (let i = 0; i < 2; i++)
-      results.push(
-        JSON.parse(
-          String(
-            (
-              await get311RequestDetails(
-                event,
-                /** @type {any} */ ({}),
-                () => {},
-              )
-            ).body,
-          ),
-        ).requests[0].request,
+    for (let i = 0; i < 2; i++) {
+      const response = await get311RequestDetails(
+        event,
+        /** @type {any} */ ({}),
+        () => {},
       );
+      if (!response || typeof response !== "object" || !("body" in response)) {
+        throw new Error("Expected an HTTP response with a JSON body");
+      }
+      expect(response.statusCode).toBe(200);
+      results.push(JSON.parse(String(response.body)).requests[0].request);
+    }
     expect(results.map((r) => r.status)).toEqual(["On hold", "Closed"]);
     expect(results[1].closedReason).toBe("8");
     expect(fetchSpy).toHaveBeenCalledTimes(2);
