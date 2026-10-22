@@ -245,6 +245,7 @@
   "duplicate.added": "Idinagdag bilang update sa #{reference}, na unang iniulat noong {date}.",
   "duplicate.addedShort": "Minarkahan bilang duplicate ng:",
   "duplicate.alreadyReported": "Naiulat na",
+  "duplicate.unavailable": "Hindi available ang pagsusuri ng duplicate. Maaari ka pa ring kumilos sa isyung ito.",
   "duplicate.checking": "Naghahanap ng mga duplicate",
   "duplicate.counts": "{newCount} bago · {duplicateCount} duplikado",
   "duplicate.earlierIssue": "naunang isyu",

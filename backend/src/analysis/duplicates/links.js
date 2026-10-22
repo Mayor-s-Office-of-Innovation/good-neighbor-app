@@ -97,8 +97,25 @@ export async function duplicateForTask(table, site, task, reader) {
     analysis.status !== "analyzed" ||
     !Number.isFinite(Date.parse(analysis.generatedAt ?? analysis.analyzedAt))
   )
-    return { state: "pending" };
+    return {
+      state: "pending",
+      pendingSince: analysis?.analyzedAt ?? task.createdAt,
+    };
   const revision = analysisRevision(analysis);
+  // Read timing before projection checks: a newly queued revision may not have
+  // an observation yet. Task age is unrelated to this job's age.
+  const result = await get({
+    pk: analysisKey.pk,
+    sk: `DUP_RESULT#${id}#${revision}`,
+  });
+  const pendingSince =
+    [result?.queuedAt, result?.recoveryRequestedAt]
+      .filter((value) => Number.isFinite(Date.parse(value)))
+      .sort((a, b) => Date.parse(a) - Date.parse(b))
+      .at(-1) ??
+    result?.invalidatedAt ??
+    analysis.analyzedAt;
+  const pending = { state: "pending", pendingSince };
   const artifact = await get({
     pk: analysisKey.pk,
     sk: `CHECK#${task.checkId}#ART#${artifactId}`,
@@ -112,17 +129,13 @@ export async function duplicateForTask(table, site, task, reader) {
     projection.revision !== revision ||
     projection.supersededAt
   )
-    return { state: "pending" };
+    return pending;
   const current = await taskForIssue(
     site,
     { observationId: id, conditionId: task.conditionId },
     get,
   );
   if (current?.taskId !== task.taskId) return { state: "not_applicable" };
-  const result = await get({
-    pk: analysisKey.pk,
-    sk: `DUP_RESULT#${id}#${revision}`,
-  });
   const incremental = await get({
     pk: analysisKey.pk,
     sk: `DUP_ISSUE#${id}#${revision}#${task.conditionId}`,
@@ -136,15 +149,22 @@ export async function duplicateForTask(table, site, task, reader) {
         );
   if (row?.possibleDuplicate !== true || row.matchStrength !== "strong")
     return {
+      pendingSince,
       state:
-        result?.processingState === "complete" || result?.status === "evaluated"
-          ? "complete"
-          : "pending",
+        result?.recoveryRequestedAt &&
+        (!result.evaluatedAt || result.recoveryRequestedAt > result.evaluatedAt)
+          ? "pending"
+          : row?.assessmentOutcome === "no_match_with_failures"
+            ? "unavailable"
+            : result?.processingState === "complete" ||
+                result?.status === "evaluated"
+              ? "complete"
+              : "pending",
     };
   const [directCheck, directArtifact, extra] = String(
     row.duplicateOf?.observationId,
   ).split(":");
-  if (!directCheck || !directArtifact || extra) return { state: "pending" };
+  if (!directCheck || !directArtifact || extra) return pending;
   const directAnalysis = await get({
     pk: analysisKey.pk,
     sk: `CHECK#${directCheck}#ANALYSIS#${directArtifact}`,
@@ -163,7 +183,7 @@ export async function duplicateForTask(table, site, task, reader) {
     direct: row.duplicateOf,
     get,
   });
-  if (!original.originalIssue) return { state: "pending" };
+  if (!original.originalIssue) return pending;
   const root = await taskForIssue(site, original.originalIssue, get);
   if (
     root?.resolvedAt &&
@@ -171,7 +191,7 @@ export async function duplicateForTask(table, site, task, reader) {
       Date.parse(analysis.generatedAt ?? analysis.analyzedAt)
   )
     return { state: "complete" };
-  if (!root || root.taskId === task.taskId) return { state: "pending" };
+  if (!root || root.taskId === task.taskId) return pending;
   return {
     state: "matched",
     original: root,

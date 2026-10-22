@@ -245,6 +245,7 @@
   "duplicate.added": "Añadido como actualización a #{reference}, presentado originalmente el {date}.",
   "duplicate.addedShort": "Marcado como duplicado de:",
   "duplicate.alreadyReported": "Ya reportado",
+  "duplicate.unavailable": "La comprobación de duplicados no está disponible. Aún puede actuar sobre este problema.",
   "duplicate.checking": "Buscando duplicados",
   "duplicate.counts": "{newCount} nuevos · {duplicateCount} duplicados",
   "duplicate.earlierIssue": "problema anterior",

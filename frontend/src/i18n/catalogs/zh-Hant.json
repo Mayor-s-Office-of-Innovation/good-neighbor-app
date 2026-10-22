@@ -245,6 +245,7 @@
   "duplicate.added": "已新增為 #{reference} 的更新，最初通報日期為 {date}。",
   "duplicate.addedShort": "已標記為以下問題的重複回報：",
   "duplicate.alreadyReported": "已通報",
+  "duplicate.unavailable": "暫時無法檢查重複問題。您仍可處理此問題。",
   "duplicate.checking": "正在檢查重複問題",
   "duplicate.counts": "{newCount} 個新問題 · {duplicateCount} 個重複問題",
   "duplicate.earlierIssue": "先前問題",

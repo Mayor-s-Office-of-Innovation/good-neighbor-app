@@ -1,3 +1,4 @@
+import { visibleDuplicateState } from "../analysis/duplicates/result-state.js";
 import { randomUUID } from "node:crypto";
 import { TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
@@ -67,7 +68,10 @@ export const getDuplicateLinks = async (event) => {
             );
             return {
               taskId,
-              state: relation.state,
+              state: visibleDuplicateState(
+                relation.state,
+                relation.pendingSince,
+              ),
               ...(relation.state === "matched"
                 ? {
                     original: relation.original,
