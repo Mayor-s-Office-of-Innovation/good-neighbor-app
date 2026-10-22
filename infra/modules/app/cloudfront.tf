@@ -294,12 +294,13 @@ resource "aws_cloudfront_distribution" "admin" {
   tags = var.tags
 }
 
-# S3 server-access logging (the remaining writer to this bucket, now that the
-# CloudFront distributions no longer log) delivers via the log-delivery ACL
-# grant, so the log bucket must allow ACLs. New buckets default to
-# BucketOwnerEnforced (ACLs disabled); relax to BucketOwnerPreferred.
+# Kept from when CloudFront standard logging (removed 2026-10-22, it recorded
+# viewer IPs) delivered here via an ACL grant. The remaining S3 server-access
+# logging also accepts the log-delivery ACL path, so this stays as-is rather
+# than flipping to BucketOwnerEnforced, which would also require a
+# logging.s3.amazonaws.com bucket policy (see infra/bootstrap/prod-state).
 resource "aws_s3_bucket_ownership_controls" "access_logs" {
-  #checkov:skip=CKV2_AWS_65:ACLs are intentionally re-enabled here — S3 server-access logging delivers to this bucket via an ACL grant.
+  #checkov:skip=CKV2_AWS_65:ACLs stay enabled so S3 server-access log delivery to this bucket keeps its ACL-based path; no viewer-facing objects live here.
   bucket = aws_s3_bucket.access_logs.id
 
   rule {
