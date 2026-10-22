@@ -1171,3 +1171,46 @@ html.wa-dark .analysis-card__clear-copy a {
     font-size: var(--wa-font-size-l, 1.25rem);
   }
 }
+
+/* The description itself is the disclosure target, in both open and closed states. */
+.analysis-card .card-description {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--wa-font-size-m, 1rem);
+  line-height: 1.6;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.analysis-card .card-description > summary {
+  display: block;
+  list-style: none;
+  cursor: pointer;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.card-description > summary::-webkit-details-marker {
+  display: none;
+}
+.card-description > summary:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 4px;
+  border-radius: 2px;
+}
+.card-description__full,
+.card-description[open] .card-description__short {
+  display: none;
+}
+.card-description[open] .card-description__full {
+  display: inline;
+}
+
+.analysis-card .card-description > summary::after {
+  display: none;
+}

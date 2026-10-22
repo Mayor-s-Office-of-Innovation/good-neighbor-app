@@ -1,3 +1,4 @@
+import { cardDescription } from "./card-description.js";
 import { statusTickerMarkup } from "./status-ticker.js";
 import { duplicateUiEnabled } from "../services/feature-flags.js";
 import {
@@ -1015,7 +1016,7 @@ function completedEvidenceCard(
                     ${escapeHtml(t("duplicate.view"))}
                   </button>`
               : ""}
-            <p>${escapeHtml(description)}</p>
+            ${cardDescription(description)}
             ${question ? clarifyingQuestion(question, conditionId) : ""}
             ${includeEditDelete
               ? html`<button
