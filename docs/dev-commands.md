@@ -322,7 +322,12 @@ Notes:
   screenshot with each finding's element boxed and numbered, attached next to the
   JSON result. The `[n]` at the start of a finding line (test failure, `warn:` line)
   is its box. Run `npm run a11y:report -w e2e` to run only the a11y spec and open
-  the HTML report; in CI the same report is in the `playwright-report` artifact on
+  ramp-check's screenshot-first report (`e2e/ramp-check-report/`), followed by findings
+  and then unused-exception notes. To demo just the home screen, use
+  `npm run a11y:report -w e2e -- --grep 'a11y: bound home' --headed`.
+  Stop local dev servers first; the suite starts its own isolated stack.
+  The standard Playwright report is also generated: open it with
+  `cd e2e && npx playwright show-report`. In CI that standard report is in the `playwright-report` artifact on
   every run, pass or fail. Blocking findings are red and numbered first, warnings
   (the AAA contrast gaps) blue. No flag is needed: ramp-check's default
   `screenshot` config captures any state with a blocking finding or a warning.

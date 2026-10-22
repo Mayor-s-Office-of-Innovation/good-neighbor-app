@@ -40,6 +40,7 @@ skills-lock.json
 e2e/test-results/
 frontend/test-results/
 e2e/playwright-report/
+e2e/a11y-demo-report/
 # Designer's local ramp-check pass (npm run a11y:local -w e2e): report + bound session
 e2e/ramp-check-report/
 e2e/.a11y-local/
