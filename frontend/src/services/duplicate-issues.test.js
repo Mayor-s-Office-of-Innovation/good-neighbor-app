@@ -94,3 +94,23 @@ it("does not poll when display is disabled and cancels in-flight publication whe
   expect(changed.mock.calls[0][0].size).toBe(0);
   stop();
 });
+
+it("replaces a stuck spinner when polling expires and preserves confirmed results", async () => {
+  api.getDuplicateLinks.mockResolvedValue({
+    enabled: true,
+    issues: [
+      { taskId: "one", state: "pending" },
+      { taskId: "two", state: "matched" },
+    ],
+  });
+  const changed = vi.fn();
+  const stop = watchDuplicateIssues(["one", "two"], changed);
+  await vi.advanceTimersByTimeAsync(16 * 60 * 1000);
+  const last = changed.mock.calls.at(-1)[0];
+  expect(last.get("one").state).toBe("unavailable");
+  expect(last.get("two").state).toBe("matched");
+  const calls = api.getDuplicateLinks.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(60000);
+  expect(api.getDuplicateLinks).toHaveBeenCalledTimes(calls);
+  stop();
+});

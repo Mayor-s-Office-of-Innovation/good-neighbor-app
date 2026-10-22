@@ -22,3 +22,14 @@ export function processingState(result) {
   if (result.status === "failed") return "retrying";
   return "complete";
 }
+
+/** Presentation only: never infer a negative match from overdue work.
+ * @param {string} state @param {string|undefined} createdAt @param {number} [now]
+ */
+export function visibleDuplicateState(state, createdAt, now = Date.now()) {
+  if (state !== "pending") return state;
+  const started = Date.parse(createdAt ?? "");
+  return !Number.isFinite(started) || now - started >= 15 * 60 * 1000
+    ? "unavailable"
+    : "pending";
+}

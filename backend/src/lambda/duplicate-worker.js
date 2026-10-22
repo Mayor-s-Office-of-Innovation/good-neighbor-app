@@ -156,8 +156,10 @@ export const handler = async (event) => {
     const timing = latencyTracker();
     const sent = Number(record.attributes?.SentTimestamp);
     if (Number.isFinite(sent)) timing.add("queueMs", Date.now() - sent);
+    /** @type {Record<string, any>} */
+    let job = {};
     try {
-      const job = JSON.parse(record.body);
+      job = JSON.parse(record.body);
       if (job.reconcileOnly) {
         await reconcileObservation(
           table,
@@ -1013,7 +1015,23 @@ export const handler = async (event) => {
           }),
         );
       }
-    } catch {
+    } catch (error) {
+      duplicateEvent("worker_failed", {
+        siteId: job?.siteId,
+        observationId:
+          job?.checkId && job?.artifactId
+            ? observationId(job.checkId, job.artifactId)
+            : undefined,
+        messageId: record.messageId,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        jobKind: job?.prepareOnly
+          ? "prepare"
+          : job?.reconcileOnly
+            ? "reconcile"
+            : "compare",
+        attempt: Number(record.attributes?.ApproximateReceiveCount),
+        outcome: "retrying",
+      });
       failures.push({ itemIdentifier: record.messageId });
     } finally {
       const snapshot = timing.snapshot();

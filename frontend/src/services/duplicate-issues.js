@@ -12,6 +12,8 @@ export function watchDuplicateIssues(taskIds, onChange) {
     previous = "",
     polls = 0;
   const started = Date.now();
+  /** @type {Record<string, any>[]} */
+  let lastRows = [];
   const ids = [...new Set(taskIds)].filter(Boolean);
   const unsubscribe = onDuplicateUiChange(() => {
     if (!duplicateUiEnabled()) {
@@ -23,6 +25,16 @@ export function watchDuplicateIssues(taskIds, onChange) {
   });
   const run = async () => {
     if (stopped || Date.now() - started > 15 * 60 * 1000 || !ids.length) {
+      if (!stopped && lastRows.some((row) => row.state === "pending")) {
+        onChange(
+          new Map(
+            lastRows.map((row) => [
+              row.taskId,
+              row.state === "pending" ? { ...row, state: "unavailable" } : row,
+            ]),
+          ),
+        );
+      }
       unsubscribe();
       return;
     }
@@ -41,6 +53,7 @@ export function watchDuplicateIssues(taskIds, onChange) {
           rows.push(...result.issues);
         }
         if (stopped || !duplicateUiEnabled()) return;
+        lastRows = rows;
         const key = JSON.stringify(rows);
         if (key !== previous) {
           previous = key;

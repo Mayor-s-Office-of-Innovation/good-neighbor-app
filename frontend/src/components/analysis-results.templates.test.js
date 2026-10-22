@@ -1220,6 +1220,14 @@ describe("duplicate card presentation", () => {
     });
     expect(completed).toContain(t("duplicate.noMatches"));
     expect(completed).not.toContain("<wa-spinner");
+    const unavailable = taskAnalysisCard({
+      task: { ...task, duplicateCheckState: "unavailable" },
+      action: null,
+      statusLabel: "",
+    });
+    expect(unavailable).toContain(t("duplicate.unavailable"));
+    expect(unavailable).not.toContain("<wa-spinner");
+    expect(unavailable).not.toContain(t("duplicate.noMatches"));
     const disabled = taskAnalysisCard({ task, action: null, statusLabel: "" });
     expect(disabled).not.toContain(t("duplicate.checking"));
     expect(disabled).not.toContain(t("duplicate.noMatches"));

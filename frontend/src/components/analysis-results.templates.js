@@ -1041,7 +1041,7 @@ function completedEvidenceCard(
               : ""}
             ${includeEditDelete &&
             !duplicateNote &&
-            ["pending", "complete"].includes(duplicateCheckState)
+            ["pending", "complete", "unavailable"].includes(duplicateCheckState)
               ? html`<p class="analysis-card__duplicate-status" role="status">
                   ${duplicateCheckState === "pending"
                     ? html`<wa-spinner aria-hidden="true"></wa-spinner>`
@@ -1051,7 +1051,9 @@ function completedEvidenceCard(
                       t(
                         duplicateCheckState === "pending"
                           ? "duplicate.checking"
-                          : "duplicate.noMatches",
+                          : duplicateCheckState === "unavailable"
+                            ? "duplicate.unavailable"
+                            : "duplicate.noMatches",
                       ),
                     )}</span
                   >

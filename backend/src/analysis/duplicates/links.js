@@ -137,9 +137,12 @@ export async function duplicateForTask(table, site, task, reader) {
   if (row?.possibleDuplicate !== true || row.matchStrength !== "strong")
     return {
       state:
-        result?.processingState === "complete" || result?.status === "evaluated"
-          ? "complete"
-          : "pending",
+        row?.assessmentOutcome === "no_match_with_failures"
+          ? "unavailable"
+          : result?.processingState === "complete" ||
+              result?.status === "evaluated"
+            ? "complete"
+            : "pending",
     };
   const [directCheck, directArtifact, extra] = String(
     row.duplicateOf?.observationId,

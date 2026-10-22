@@ -11,6 +11,7 @@ export function duplicateEvent(event, values, metrics = []) {
       "linked",
       "separated",
       "worker_complete",
+      "worker_failed",
     ].includes(event)
   )
     return;
@@ -18,6 +19,8 @@ export function duplicateEvent(event, values, metrics = []) {
     event: `duplicate_${event}`,
   };
   for (const key of [
+    "errorName",
+    "messageId",
     "siteId",
     "observationId",
     "candidateId",
@@ -44,6 +47,7 @@ export function duplicateEvent(event, values, metrics = []) {
       "complete",
       "retrying",
     ],
+    jobKind: ["prepare", "reconcile", "compare"],
     confidence: ["high", "medium", "low"],
     evidenceKind: ["image", "mixed", "text"],
     phase: ["fast", "background"],
@@ -51,6 +55,7 @@ export function duplicateEvent(event, values, metrics = []) {
   for (const [key, allowed] of Object.entries(enums))
     if (allowed.includes(String(values[key]))) props[key] = values[key];
   for (const key of [
+    "attempt",
     "elapsedMs",
     "queueMs",
     "totalMs",

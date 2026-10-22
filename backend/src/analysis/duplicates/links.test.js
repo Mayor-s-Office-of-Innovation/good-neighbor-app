@@ -322,3 +322,14 @@ it("never publishes a direct match outside the generation-time window", async ()
     "complete",
   );
 });
+
+it("does not describe failed candidate assessments as a clean no-match", async () => {
+  const { task, ref } = issue("incomplete", "2026-10-15T10:00:00Z");
+  const result = state.items.get(
+    `SITE#site|DUP_RESULT#incomplete:photo#${ref.revision}`,
+  );
+  result.conditionResults[0].assessmentOutcome = "no_match_with_failures";
+  expect((await duplicateForTask("test", "site", task)).state).toBe(
+    "unavailable",
+  );
+});

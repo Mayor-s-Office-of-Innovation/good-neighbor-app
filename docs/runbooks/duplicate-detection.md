@@ -31,7 +31,7 @@ human review. Normal analysis does not depend on duplicate queue availability.
 ## UI and API
 
 `POST /v1/duplicates:batch` accepts up to 50 `taskIds`, derives the Site from the
-principal, and returns pending/complete/matched/separated states and current
+principal, and returns pending/complete/unavailable/matched/separated states and current
 original-issue metadata. Reads never invoke Bedrock. The browser polls separately
 from analysis: initially every two seconds, then five seconds; settled groups use
 30-second refreshes. A watcher stops after fifteen minutes and restarts on screen
@@ -105,8 +105,9 @@ Metrics cannot establish precision or recall without human-labelled positives an
 negatives. A user separation is a correction signal, not necessarily a model error.
 Stream/SQS delivery is at least once, so event totals may include retries.
 
-Completed searches still return no match to the frontend when no candidate
-qualifies, including searches containing failed comparisons. Internally, each
+Completed searches return no match only when no candidate qualifies and the
+condition has no failed comparisons. Otherwise unmatched conditions return
+unavailable. Internally, each
 condition records `assessmentOutcome` and `failedCandidateCount`.
 `no_match_with_failures` emits `DuplicateIncompleteNoMatchIssues`, separately from
 `assessed_no_match` / `DuplicateNoMatchIssues`. These diagnostic distinctions do
@@ -205,3 +206,42 @@ and duplicate notes/cards, counts, check status, details/separation controls and
 duplicate-specific timeline entries are hidden. Cached duplicate presentation
 cannot override the flag. This is a presentation rollback, not an unlink operation;
 backend actions on already-linked issues still use their confirmed original.
+
+## Recovering stalled image comparisons
+
+Prepared-image cache misses need `s3:ListBucket` on the uploads bucket: without
+it, S3 masks a missing object as AccessDenied, so the worker cannot build the
+cache. Keep real AccessDenied errors fatal/retryable; do not treat all permission
+failures as cache misses. The duplicate worker alone receives this permission.
+
+The batch API presents pending tasks older than fifteen minutes as `unavailable`.
+This is a display state, not a negative match or cancellation. Completed searches
+with failed candidates also show unavailable for the affected unmatched condition.
+Confirmed matches still take precedence. At its fifteen-minute limit the browser
+removes remaining pending spinners; reload restarts polling. Worker failures log
+job IDs, job kind, exception name and receive count, never exception messages,
+images, keys or narrative evidence.
+
+After CI deploys the corrected infrastructure and worker, dry-run recovery for
+each affected Site (including text reports with failed image candidates):
+
+```bash
+AWS_PROFILE=nst-dev AWS_REGION=us-west-2 \
+DYNAMO_TABLE=good-neighbor-app-dev-app \
+node backend/scripts/recover-duplicate-checks.mjs --site city-hall
+```
+
+Review the selected IDs, then run the same command with `--apply` and
+`DUPLICATE_QUEUE_URL` set to the dev duplicates queue URL. Repeat for
+`salvation-army-3110-octavia`, `st-john-the-evangelist`, and `moi-maanasa-sandbox`.
+The command queries results, revalidates current analysis revisions, skips
+analyses older than thirty days, and sends fresh jobs. It never resets results,
+links, overrides or the DLQ. The worker independently checks authoritative media
+retention and current revisions. Jobs are at-least-once; avoid repeated recovery
+runs while a prior run is processing. This targeted recovery includes incomplete
+completed searches that a DLQ redrive would miss.
+
+Verify search-complete events, new prepared objects, and settled result states.
+Investigate any `duplicate_worker_failed` events before retrying further. Keep the
+DLQ messages for incident evidence until recovery is verified; do not blindly
+redrive the shared DLQ, which can also contain stream-dispatch failure envelopes.

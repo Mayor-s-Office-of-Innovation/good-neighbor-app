@@ -245,6 +245,7 @@
   "duplicate.added": "Đã thêm làm cập nhật cho #{reference}, được báo cáo lần đầu vào {date}.",
   "duplicate.addedShort": "Được đánh dấu là trùng lặp với:",
   "duplicate.alreadyReported": "Đã báo cáo",
+  "duplicate.unavailable": "Không thể kiểm tra vấn đề trùng lặp. Bạn vẫn có thể xử lý vấn đề này.",
   "duplicate.checking": "Đang kiểm tra vấn đề trùng lặp",
   "duplicate.counts": "{newCount} mới · {duplicateCount} trùng lặp",
   "duplicate.earlierIssue": "vấn đề trước đó",

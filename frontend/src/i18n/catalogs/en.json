@@ -408,6 +408,7 @@
   "duplicate.separatedTimeline": "Report separated from this issue",
   "duplicate.status": "Duplicate",
   "duplicate.timeline": "Same issue reported again",
+  "duplicate.unavailable": "Duplicate check unavailable. You can still act on this issue.",
   "duplicate.view": "View duplicate details",
   "error.submit.analyze.default": "The analysis service had a problem. Please try again soon.",
   "error.submit.analyze.network": "Lost connection while waiting for the AI analysis. Check your connection and reopen this check.",
