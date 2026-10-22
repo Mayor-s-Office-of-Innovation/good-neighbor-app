@@ -1,6 +1,10 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "./api-error.js";
-import { redeemEnrollmentGrant, refreshDeviceToken } from "./devices.js";
+import {
+  redeemEnrollmentGrant,
+  redeemHandoffGrant,
+  refreshDeviceToken,
+} from "./devices.js";
 
 /**
  * A JSON Response stub. `ok` derives from status, matching the real Response.
@@ -162,5 +166,42 @@ describe("redeemEnrollmentGrant", () => {
     await expect(redeemEnrollmentGrant("grant-1", "token")).rejects.toThrow(
       "enrollment failed (404)",
     );
+  });
+});
+
+describe("redeemHandoffGrant", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("posts the grant in the body and returns the session", async () => {
+    const fetch = vi.fn(() => jsonResponse({ body: session }));
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(redeemHandoffGrant("g-1", "t-1")).resolves.toMatchObject({
+      token: "access-2",
+    });
+    const [url, init] = /** @type {any[]} */ (fetch.mock.calls[0]);
+    expect(url).toMatch(/\/app\/v1\/session-handoff\/redeem$/);
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ grantId: "g-1", token: "t-1" });
+  });
+
+  it("maps a 401 to InvalidHandoffGrantError and other failures to ApiError", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => jsonResponse({ status: 401, body: {} })),
+    );
+    await expect(redeemHandoffGrant("g-1", "t-1")).rejects.toMatchObject({
+      name: "InvalidHandoffGrantError",
+      status: 401,
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => jsonResponse({ status: 503, body: {} })),
+    );
+    await expect(redeemHandoffGrant("g-1", "t-1")).rejects.toMatchObject({
+      name: "ApiError",
+      status: 503,
+    });
   });
 });

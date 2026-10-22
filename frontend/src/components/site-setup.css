@@ -108,6 +108,25 @@
   display: none;
 }
 
+/* A plain-language note above the code field: why the code is being asked
+   for (Home Screen handoff that didn't carry over, or a Safari copy whose
+   session moved to the installed app). Informational, not an error. */
+.login__notice {
+  margin: 1.5rem 0 0;
+  color: var(--text);
+  font-size: 1rem; /* rem so a raised browser font size applies (1.4.4) */
+  font-weight: 400;
+  line-height: 1.5rem;
+}
+
+/* Home Screen handoff in progress: no form, just the spinner. */
+.login__handoff {
+  display: flex;
+  justify-content: center;
+  margin-top: 32px;
+  font-size: 2rem;
+}
+
 .login__form--error .btn-ink.login__continue {
   margin-top: 16px;
 }

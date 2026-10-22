@@ -65,7 +65,6 @@
   /* ---- Back-compat aliases (existing components reference these names) ---- */
   --c-blue: var(--brand-blue);
   --muted: var(--text-secondary);
-  --c-red: var(--c-hazard);
 
   --card-outline: #c9caca; /* 1px outline around home/task cards */
   --group-grey: #e9eaea; /* grey check-group container + card footer strip */
@@ -78,10 +77,6 @@
 
   /* Figma notification status and soft elevation (independent of WA's hard shadows). */
   --toast-success: #00883c;
-  --toast-shadow: 0 4px 4px rgba(0, 0, 0, 0.12);
-
-  --timeline-done-fill: #000000;
-  --timeline-done-mark: #ffffff;
 }
 
 html.wa-dark {
@@ -121,8 +116,4 @@ html.wa-dark {
   --shadow-lift: 0 4px 10px rgba(0, 0, 0, 0.5), 0 12px 24px rgba(0, 0, 0, 0.5);
 
   --toast-success: #6bdc94;
-  --toast-shadow: 0 4px 4px rgba(0, 0, 0, 0.4);
-
-  --timeline-done-fill: #ffffff;
-  --timeline-done-mark: #000000;
 }

@@ -83,3 +83,16 @@ Manager binding, a City administrator issues a new Manager grant for the still-a
 membership. Do not edit the suspended row back to `active`, reduce its token generation, or
 reuse its refresh family. Confirm the new binding is active and the old binding remains
 suspended with its original reason and timestamp.
+
+## Home Screen handoff grants
+
+A device running in iOS Safari keeps one pending `SESSION_HANDOFF#` grant
+(`handoffGrantId` on its `DEVICE#` row) so an Add to Home Screen carries the
+session into the installed app. Redemption re-checks the device, its binding,
+the Site generation, and Manager membership exactly like the authorizer, so
+every revocation above also kills any pending grant; nothing extra is needed.
+An explicit sign-out in Safari retires the grant (`session_handoff_retired`
+audit event) and puts the static manifest back on the page.
+A redeem bumps `tokenGeneration` and writes a `session_handed_off` audit
+event, which is also what a stolen grant would look like: a Site reporting
+"signed out without installing" is the signal to revoke and re-enroll.

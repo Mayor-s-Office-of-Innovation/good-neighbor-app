@@ -33,6 +33,18 @@ export class InvalidSiteCodeError extends ApiError {
 }
 
 /**
+ * The Home Screen handoff grant was rejected (401 from redeem): unknown,
+ * expired, already redeemed, or the device is no longer live. The response
+ * never says which; the user re-enters the site code.
+ */
+export class InvalidHandoffGrantError extends ApiError {
+  constructor() {
+    super("invalid handoff grant", { status: 401 });
+    this.name = "InvalidHandoffGrantError";
+  }
+}
+
+/**
  * Raised when the device session cannot be renewed (refresh rejected after the
  * access token died — months of disuse, or the device was revoked). Callers
  * should route the user back to site setup; nothing else recovers from this.

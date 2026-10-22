@@ -7,6 +7,7 @@ import {
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse, readJsonBody } from "../http.js";
+import { sessionRotationItem } from "../lib/device-session.js";
 import { mintAccessToken, mintRefreshToken } from "../lib/device-token.js";
 import { deriveActorId, deriveSiteId } from "../lib/principal.js";
 
@@ -91,12 +92,13 @@ export const selectDeviceBinding = async (event) => {
     ),
   ]);
   const now = new Date().toISOString();
+  const rotation = { generation, refreshJti: refresh.jti, now };
   try {
     await ddb.send(
       new TransactWriteCommand({
         TransactItems: [
-          sessionUpdate(tableName, device, generation, refresh.jti, now),
-          sessionUpdate(tableName, binding, generation, refresh.jti, now),
+          sessionRotationItem(tableName, device, rotation),
+          sessionRotationItem(tableName, binding, rotation),
           {
             Put: {
               TableName: tableName,
@@ -303,22 +305,3 @@ async function resolveBinding(pointer, physicalDeviceId) {
  * @param {string} now
  * @returns {Record<string, any>}
  */
-function sessionUpdate(tableName, item, generation, refreshJti, now) {
-  return {
-    Update: {
-      TableName: tableName,
-      Key: { pk: item.pk, sk: item.sk },
-      UpdateExpression:
-        "SET tokenGeneration = :next, refreshJti = :jti, lastSeenAt = :now",
-      ConditionExpression: "#status = :active AND tokenGeneration = :current",
-      ExpressionAttributeNames: { "#status": "status" },
-      ExpressionAttributeValues: {
-        ":active": "active",
-        ":current": Number(item.tokenGeneration ?? 0),
-        ":next": generation,
-        ":jti": refreshJti,
-        ":now": now,
-      },
-    },
-  };
-}

@@ -60,6 +60,7 @@ import {
   hasAdminAccess,
   listBoundSites,
 } from "../db.js";
+import { retireHandoff } from "../services/session-handoff.js";
 import {
   listChecks,
   listTasks,
@@ -1232,6 +1233,9 @@ class TodayView extends HTMLElement {
     this._logoutError = "";
     if (this._homeModel) this._renderHome(this._homeModel);
     try {
+      // Before the session goes: retire the Home Screen handoff grant and
+      // put the static manifest back (services/session-handoff.js).
+      await retireHandoff();
       await clearSiteSession();
       discardInMemorySession();
       this._logoutDialogOpen = false;

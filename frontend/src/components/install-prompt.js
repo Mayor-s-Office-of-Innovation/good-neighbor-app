@@ -16,6 +16,10 @@ import {
   onInstallAvailable,
   promptInstall,
 } from "../services/install-prompt.js";
+import {
+  isHandoffPrepared,
+  onHandoffPrepared,
+} from "../services/session-handoff.js";
 import { escapeAttr, escapeHtml } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
 import "./install-prompt.css";
@@ -42,6 +46,11 @@ export class InstallPrompt extends HTMLElement {
       if (this.querySelector(".install-banner")) this._render(true);
     };
     window.addEventListener("localechange", this._onLocaleChange);
+    // The iOS copy promises the sign-in carries over only once the handoff
+    // manifest is actually installed (services/session-handoff.js).
+    this._unsubHandoff = onHandoffPrepared(() => {
+      if (this.querySelector(".install-banner")) this._render(true);
+    });
     if (this._method === "ios") {
       this._render();
     } else if (this._method === "prompt") {
@@ -60,6 +69,8 @@ export class InstallPrompt extends HTMLElement {
     if (this._onLocaleChange)
       window.removeEventListener("localechange", this._onLocaleChange);
     this._onLocaleChange = undefined;
+    this._unsubHandoff?.();
+    this._unsubHandoff = undefined;
   }
 
   /** @param {boolean} [force] rebuild existing markup (language switch) */
@@ -68,7 +79,7 @@ export class InstallPrompt extends HTMLElement {
     const ios = this._method === "ios";
     this.innerHTML = `<div class="install-banner" role="region" aria-label="${escapeAttr(t("install.banner.aria"))}">
       <img class="install-banner__icon" src="/img/icon-192.png" alt="" width="40" height="40" />
-      <p><strong>${escapeHtml(t("install.banner.title"))}</strong> ${escapeHtml(t(ios ? "install.banner.ios" : "install.banner.message"))}</p>
+      <p><strong>${escapeHtml(t("install.banner.title"))}</strong> ${escapeHtml(t(ios ? "install.banner.ios" : "install.banner.message"))}${ios && isHandoffPrepared() ? ` ${escapeHtml(t("install.banner.iosCarryOver"))}` : ""}</p>
       ${ios ? "" : `<button class="install-banner__install" type="button">${escapeHtml(t("install.banner.install"))}</button>`}
       <button class="install-banner__close" type="button" aria-label="${escapeAttr(t("install.banner.dismiss.aria"))}">✕</button>
     </div>`;

@@ -69,6 +69,11 @@ import {
   selectDeviceBinding,
 } from "../handlers/device-bindings.js";
 import {
+  issueSessionHandoff,
+  redeemSessionHandoff,
+  retireSessionHandoff,
+} from "../handlers/session-handoff.js";
+import {
   cancelStaffGrant,
   createStaffGrant,
   getCurrentStaffGrant,
@@ -213,6 +218,11 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /app/v1/manager-access/request": requestManagerAccess,
   "GET /app/v1/device-bindings": listDeviceBindings,
   "POST /app/v1/device-bindings/select": selectDeviceBinding,
+  // Home Screen session handoff (notes/pwa-session-handoff-plan.md): issue is
+  // authorized, redeem is open — the installed app has no session yet.
+  "POST /app/v1/session-handoff": issueSessionHandoff,
+  "DELETE /app/v1/session-handoff": retireSessionHandoff,
+  "POST /app/v1/session-handoff/redeem": redeemSessionHandoff,
   "POST /app/v1/manager/staff-grants": createStaffGrant,
   "GET /app/v1/manager/staff-grants/current": getCurrentStaffGrant,
   "DELETE /app/v1/manager/staff-grants/{grantId}": cancelStaffGrant,

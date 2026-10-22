@@ -6,7 +6,7 @@ import { t } from "../i18n/i18n.js";
 import { html, escapeAttr, escapeHtml } from "../lib/html.js";
 
 /**
- * @param {{value?: string, reference?: string, error?: string, checking?: boolean, mode?: "code"|"request", targetSiteName?: string, canCancel?: boolean, cancelDisabled?: boolean, request?: { query?: string, email?: string, searching?: boolean, requesting?: boolean, sites?: Array<{siteId:string, name:string, providerName?:string, label?:string}>, selectedSiteId?: string, message?: string, error?: string }}} state
+ * @param {{value?: string, reference?: string, error?: string, checking?: boolean, mode?: "code"|"request", targetSiteName?: string, canCancel?: boolean, cancelDisabled?: boolean, notice?: string, request?: { query?: string, email?: string, searching?: boolean, requesting?: boolean, sites?: Array<{siteId:string, name:string, providerName?:string, label?:string}>, selectedSiteId?: string, message?: string, error?: string }}} state
  * @returns {string}
  */
 export const codeEntryView = ({
@@ -18,6 +18,7 @@ export const codeEntryView = ({
   targetSiteName = "",
   canCancel = false,
   cancelDisabled = false,
+  notice = "",
   request = {},
 } = {}) => html`
   <div class="login" aria-labelledby="login-title">
@@ -35,6 +36,11 @@ export const codeEntryView = ({
                 : t("setup.enterCode"),
           )}
         </p>
+        ${notice
+          ? html`<p class="login__notice" role="status">
+              ${escapeHtml(notice)}
+            </p>`
+          : ""}
       </div>
 
       ${mode === "request"
