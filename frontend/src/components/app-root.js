@@ -32,6 +32,7 @@ import {
   readHandoffCredentials,
   rememberConsumedGrant,
   stripHandoffCredentials,
+  uninstallHandoffManifest,
 } from "../services/session-handoff.js";
 import {
   startHealthMonitoring,
@@ -109,8 +110,11 @@ export class AppRoot extends HTMLElement {
     // (services/session-handoff.js). Read and strip them synchronously, before
     // anything awaits or reads the location; they are acted on below once the
     // stored binding is known.
+    // Stripped whenever present — including a grant this install already
+    // consumed, which the reader hides — so the address bar and history
+    // entry never keep the secret.
     const handoff = readHandoffCredentials();
-    if (handoff) stripHandoffCredentials();
+    stripHandoffCredentials();
     if (!this._onPhotoLightbox) {
       this._onPhotoLightbox = (event) => {
         const trigger = event.target?.closest?.("[data-photo-lightbox]");
@@ -162,6 +166,9 @@ export class AppRoot extends HTMLElement {
       // form and make recovery unreachable. (sitebound's clearAuthState
       // below stays as belt-and-braces for AUTH states detected later.)
       clearAuthState();
+      // Backstop for the sign-out paths: the page must not keep offering a
+      // handoff grant for a session that no longer exists.
+      uninstallHandoffManifest();
       // The site binding is gone; re-render the first-run setup screen.
       this._site = null;
       if (this._unsub) this._unsub();
@@ -641,6 +648,7 @@ export class AppRoot extends HTMLElement {
         await clearSite();
         this._site = null;
         clearAuthState();
+        uninstallHandoffManifest();
         this._renderSetup();
         return false;
       }
@@ -658,6 +666,7 @@ export class AppRoot extends HTMLElement {
 
   async _resetFirstLaunch() {
     await resetLocalAppState();
+    uninstallHandoffManifest();
     this._site = null;
     history.replaceState({}, "", "/today");
     this._renderSetup();

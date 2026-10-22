@@ -24,7 +24,7 @@
 */
 import { getSite, saveSiteSettings } from "../db.js";
 import { trackEvent } from "./analytics.js";
-import { issueSessionHandoff } from "./api.js";
+import { issueSessionHandoff, retireSessionHandoff } from "./api.js";
 import { isInAppBrowser } from "./browser-context.js";
 import { installMethod, isStandalone } from "./install-prompt.js";
 
@@ -239,6 +239,46 @@ export function onHandoffPrepared(fn) {
 }
 
 /**
+ * Put the static manifest back and forget the installed grant. Idempotent;
+ * safe without a DOM.
+ * @param {Document | undefined} [doc]
+ */
+export function uninstallHandoffManifest(doc = globalThis.document) {
+  if (installedBlobUrl) {
+    doc
+      ?.querySelector?.('link[rel="manifest"]')
+      ?.setAttribute("href", MANIFEST_PATH);
+    URL.revokeObjectURL(installedBlobUrl);
+  }
+  installedBlobUrl = "";
+  installedGrantId = "";
+}
+
+/**
+ * Sign-out. The page must stop offering the grant — an Add to Home Screen
+ * from the still-open page would otherwise sign the next launch in to the
+ * device just signed out of — and the server must stop honoring it. Call
+ * BEFORE the session is cleared: the retire request is authorized. Never
+ * throws; signing out must not depend on the network.
+ * @param {{ site?: Record<string, any> | null, remote?: boolean }} [opts]
+ *   `remote: false` skips the server call (the session is already dead)
+ * @returns {Promise<boolean>} the server retired a pending grant
+ */
+export async function retireHandoff({ site, remote = true } = {}) {
+  uninstallHandoffManifest();
+  if (!remote) return false;
+  try {
+    const bound = site ?? (await getSite().catch(() => null));
+    if (!bound?.token || !bound.handoff) return false;
+    const result = await retireSessionHandoff();
+    return Boolean(result?.retired);
+  } catch (err) {
+    console.error("handoff retire failed", err);
+    return false;
+  }
+}
+
+/**
  * Mint (or reuse) the handoff grant for the bound device and install the
  * manifest that carries it. Resolves false when nothing was done: wrong
  * browser, already standalone, not bound, or the binding changed meanwhile.
@@ -268,8 +308,13 @@ export async function ensureHandoffManifest({ site } = {}) {
         startUrl: issued.startUrl,
       };
       // Stored next to the refresh token it is equivalent to; clearing the
-      // session clears it. Skipped when the binding changed mid-flight.
-      const saved = await saveSiteSettings({ handoff: grant }, bound.siteId);
+      // session clears it. Skipped when the binding changed mid-flight — the
+      // same site re-bound to another device must not inherit this grant.
+      const saved = await saveSiteSettings(
+        { handoff: grant },
+        bound.siteId,
+        bound.deviceId,
+      );
       if (!saved) return false;
       void trackEvent("handoff_grant_issued", {});
     }

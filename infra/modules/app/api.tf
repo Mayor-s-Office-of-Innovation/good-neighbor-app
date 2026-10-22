@@ -21,6 +21,7 @@ locals {
     # Home Screen session handoff (notes/pwa-session-handoff-plan.md): issue
     # is authorized; redeem is open (listed in route_is_open below).
     "POST /app/v1/session-handoff",
+    "DELETE /app/v1/session-handoff",
     "POST /app/v1/session-handoff/redeem",
     "POST /app/v1/manager/staff-grants",
     "GET /app/v1/manager/staff-grants/current",

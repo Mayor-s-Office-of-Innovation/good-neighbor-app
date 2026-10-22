@@ -82,6 +82,7 @@ import {
 import {
   issueSessionHandoff,
   redeemSessionHandoff,
+  retireSessionHandoff,
 } from "../src/handlers/session-handoff.js";
 import {
   cancelStaffGrant,
@@ -275,6 +276,7 @@ const routes = [
   route("GET", "/app/v1/device-bindings", listDeviceBindings),
   route("POST", "/app/v1/device-bindings/select", selectDeviceBinding),
   route("POST", "/app/v1/session-handoff", issueSessionHandoff),
+  route("DELETE", "/app/v1/session-handoff", retireSessionHandoff),
   route("POST", "/app/v1/session-handoff/redeem", redeemSessionHandoff),
   route("POST", "/app/v1/manager/staff-grants", createStaffGrant),
   route("GET", "/app/v1/manager/staff-grants/current", getCurrentStaffGrant),

@@ -74,7 +74,9 @@ registration) — the request body never asserts a site.
   fragment. `POST /app/v1/session-handoff/redeem` (open) re-mints a session
   on the SAME device record with `tokenGeneration + 1`, after the same
   liveness checks as the authorizer (`lib/device-liveness.js`,
-  `bindingLifecycleValid`), which signs the Safari copy out. The grant
-  carries no authority of its own. Design, threat notes, and the iPhone
+  `bindingLifecycleValid`), which signs the Safari copy out.
+  `DELETE /app/v1/session-handoff` (authorized) retires the pending grant on
+  sign-out, before the client clears its session. The grant carries no
+  authority of its own. Design, threat notes, and the iPhone
   spike that still has to confirm Safari's manifest handling:
   `notes/pwa-session-handoff-plan.md`.

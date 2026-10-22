@@ -60,6 +60,9 @@ const catalog = vi.hoisted(() => ({
   listBoundSites: vi.fn(),
   listTasks: vi.fn(),
 }));
+vi.mock("../services/session-handoff.js", () => ({
+  retireHandoff: vi.fn(async () => false),
+}));
 vi.mock("../db.js", () => ({
   getSite: siteRead,
   hasAdminAccess: () => false,

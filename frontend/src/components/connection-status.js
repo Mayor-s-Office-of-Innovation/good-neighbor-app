@@ -17,6 +17,7 @@ import {
   onHealthChange,
 } from "../services/backend-health.js";
 import { clearSiteSession } from "../db.js";
+import { retireHandoff } from "../services/session-handoff.js";
 import { discardInMemorySession } from "../state/check-session.js";
 import { html, escapeHtml } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
@@ -67,6 +68,9 @@ class ConnectionStatus extends HTMLElement {
         // survive would leak a previous site's photos into a different
         // site's binding after re-entry).
         discardInMemorySession();
+        // The session is already dead here, so only the local half of the
+        // handoff retire applies: stop offering the grant from this page.
+        await retireHandoff({ remote: false });
         await clearSiteSession();
         window.dispatchEvent(new CustomEvent("authsignout"));
       },

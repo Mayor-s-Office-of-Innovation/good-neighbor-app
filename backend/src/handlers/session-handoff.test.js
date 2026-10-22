@@ -1,12 +1,16 @@
 import { createHash } from "node:crypto";
-import { TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
+import { TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 
-const { issueSessionHandoff, redeemSessionHandoff, handoffStartUrl } =
-  await import("./session-handoff.js");
+const {
+  issueSessionHandoff,
+  redeemSessionHandoff,
+  retireSessionHandoff,
+  handoffStartUrl,
+} = await import("./session-handoff.js");
 const { verifyDeviceToken } = await import("../lib/device-token.js");
 
 const TOKEN = "handoff-secret-token";
@@ -316,6 +320,76 @@ describe("redeemSessionHandoff", () => {
     expect(JSON.parse(String(response.body))).toEqual({
       error: "invalid_handoff_grant",
     });
+  });
+});
+
+describe("retireSessionHandoff", () => {
+  it("answers retired:false when the device has no pending grant", async () => {
+    send.mockResolvedValueOnce({
+      Item: legacyDevice({ handoffGrantId: undefined }),
+    });
+    const response = await call(retireSessionHandoff, authorizedEvent());
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(String(response.body))).toEqual({ retired: false });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops the pointer from the value it read and marks the grant retired", async () => {
+    send
+      .mockResolvedValueOnce({ Item: legacyDevice() })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+
+    const response = await call(retireSessionHandoff, authorizedEvent());
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(String(response.body))).toEqual({ retired: true });
+    const transact = send.mock.calls[1][0];
+    expect(transact).toBeInstanceOf(TransactWriteCommand);
+    const [drop, audit] = transact.input.TransactItems;
+    expect(drop.Update.Key).toEqual({
+      pk: "SITE#site-1",
+      sk: "DEVICE#device-1",
+    });
+    expect(drop.Update.UpdateExpression).toBe("REMOVE handoffGrantId");
+    expect(drop.Update.ConditionExpression).toBe("handoffGrantId = :grantId");
+    expect(drop.Update.ExpressionAttributeValues[":grantId"]).toBe("grant-1");
+    expect(audit.Put.Item.eventType).toBe("session_handoff_retired");
+    const grantUpdate = send.mock.calls[2][0];
+    expect(grantUpdate).toBeInstanceOf(UpdateCommand);
+    expect(grantUpdate.input.Key).toEqual({
+      pk: "SESSION_HANDOFF#grant-1",
+      sk: "#META",
+    });
+    expect(grantUpdate.input.ConditionExpression).toContain(
+      "#status = :pending",
+    );
+  });
+
+  it("tolerates a grant row that is already redeemed or reclaimed", async () => {
+    send
+      .mockResolvedValueOnce({ Item: legacyDevice() })
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(
+        Object.assign(new Error("gone"), {
+          name: "ConditionalCheckFailedException",
+        }),
+      );
+    const response = await call(retireSessionHandoff, authorizedEvent());
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(String(response.body))).toEqual({ retired: true });
+  });
+
+  it("answers retired:false when the pointer moved meanwhile", async () => {
+    send.mockResolvedValueOnce({ Item: legacyDevice() }).mockRejectedValueOnce(
+      Object.assign(new Error("cancelled"), {
+        name: "TransactionCanceledException",
+      }),
+    );
+    const response = await call(retireSessionHandoff, authorizedEvent());
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(String(response.body))).toEqual({ retired: false });
+    expect(send).toHaveBeenCalledTimes(2);
   });
 });
 

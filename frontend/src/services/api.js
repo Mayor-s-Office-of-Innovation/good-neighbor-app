@@ -463,6 +463,14 @@ export function issueSessionHandoff() {
   return request("POST", "/app/v1/session-handoff");
 }
 
+/**
+ * Retire the authenticated device's pending handoff grant (sign-out).
+ * @returns {Promise<{ retired: boolean }>}
+ */
+export function retireSessionHandoff() {
+  return request("DELETE", "/app/v1/session-handoff");
+}
+
 /** @param {string} label */
 export function createStaffEnrollmentGrant(label) {
   return request("POST", "/app/v1/manager/staff-grants", {

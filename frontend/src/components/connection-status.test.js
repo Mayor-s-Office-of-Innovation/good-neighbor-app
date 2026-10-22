@@ -19,6 +19,9 @@ vi.mock("../services/backend-health.js", () => ({
   clearAuthState: vi.fn(),
   clearAccessState: vi.fn(),
 }));
+vi.mock("../services/session-handoff.js", () => ({
+  retireHandoff: vi.fn(async () => false),
+}));
 vi.mock("../db.js", () => ({
   clearSiteSession: vi.fn(async () => {}),
 }));

@@ -35,7 +35,11 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { URLSearchParams } from "node:url";
-import { GetCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  GetCommand,
+  TransactWriteCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse, readJsonBody } from "../http.js";
@@ -353,6 +357,94 @@ export const redeemSessionHandoff = async (event) => {
       ? { absoluteExpiresAt: device.absoluteExpiresAt }
       : {}),
   });
+};
+
+/**
+ * DELETE /app/v1/session-handoff — retire the calling device's pending grant
+ * (sign-out in Safari). Dropping the pointer is what makes the grant
+ * unredeemable; the grant row's status is updated best-effort for the audit
+ * trail. Authorized, so it runs BEFORE the client clears its session.
+ * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
+ */
+export const retireSessionHandoff = async (event) => {
+  const authorizedEvent =
+    /** @type {import("aws-lambda").APIGatewayProxyEventV2WithJWTAuthorizer} */ (
+      /** @type {unknown} */ (event)
+    );
+  const siteId = deriveSiteId(authorizedEvent);
+  const deviceId = deriveActorId(authorizedEvent);
+  const tableName = getDynamoTableName();
+  const nowIso = new Date().toISOString();
+
+  const deviceResult = await ddb.send(
+    new GetCommand({ TableName: tableName, Key: deviceKey(siteId, deviceId) }),
+  );
+  const device = deviceResult.Item;
+  const grantId =
+    typeof device?.handoffGrantId === "string" ? device.handoffGrantId : "";
+  if (!device || !grantId) return jsonResponse(200, { retired: false });
+
+  try {
+    await ddb.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            Update: {
+              TableName: tableName,
+              Key: { pk: device.pk, sk: device.sk },
+              UpdateExpression: "REMOVE handoffGrantId",
+              ConditionExpression: "handoffGrantId = :grantId",
+              ExpressionAttributeValues: { ":grantId": grantId },
+            },
+          },
+          auditItem(tableName, siteId, nowIso, {
+            eventType: "session_handoff_retired",
+            deviceId,
+            ...(device.bindingId ? { bindingId: device.bindingId } : {}),
+            grantId,
+          }),
+        ],
+      }),
+    );
+  } catch (error) {
+    // The pointer moved meanwhile (a concurrent issue or redeem): nothing of
+    // ours is left to retire.
+    if (
+      error instanceof Error &&
+      error.name === "TransactionCanceledException"
+    ) {
+      return jsonResponse(200, { retired: false });
+    }
+    throw error;
+  }
+
+  try {
+    await ddb.send(
+      new UpdateCommand({
+        TableName: tableName,
+        Key: grantKey(grantId),
+        UpdateExpression: "SET #status = :retired, retiredAt = :now",
+        ConditionExpression: "attribute_exists(pk) AND #status = :pending",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: {
+          ":retired": "retired",
+          ":pending": "pending",
+          ":now": nowIso,
+        },
+      }),
+    );
+  } catch (error) {
+    // Already redeemed, or reclaimed by TTL: the pointer is gone either way.
+    if (
+      !(
+        error instanceof Error &&
+        error.name === "ConditionalCheckFailedException"
+      )
+    ) {
+      throw error;
+    }
+  }
+  return jsonResponse(200, { retired: true });
 };
 
 /**

@@ -311,10 +311,17 @@ function tokenClaims(token) {
  *   GET /v1/site response); binding/session keys are ignored, see above
  * @param {string} [expectedSiteId] when given, write only while the current
  *   record still belongs to this site
+ * @param {string} [expectedDeviceId] when given (with `expectedSiteId`), write
+ *   only while the record is still the same device binding — a re-bind of the
+ *   same site must not inherit settings minted for the previous device
  * @returns {Promise<Record<string, any> | null>} the saved record, or null
  *   when the write was skipped
  */
-export async function saveSiteSettings(settings = {}, expectedSiteId) {
+export async function saveSiteSettings(
+  settings = {},
+  expectedSiteId,
+  expectedDeviceId,
+) {
   // Read and write in one transaction: the settings refresh now runs behind
   // the first screen, concurrently with that screen's requests, and a token
   // rotation (updateSiteSession) landing between a separate read and this
@@ -326,7 +333,9 @@ export async function saveSiteSettings(settings = {}, expectedSiteId) {
     reqToPromise(os.get("current")).then((stored) => {
       if (
         expectedSiteId &&
-        (!stored || (stored.siteId && stored.siteId !== expectedSiteId))
+        (!stored ||
+          (stored.siteId && stored.siteId !== expectedSiteId) ||
+          (expectedDeviceId && stored.deviceId !== expectedDeviceId))
       ) {
         return null;
       }

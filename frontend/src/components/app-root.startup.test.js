@@ -52,6 +52,7 @@ vi.mock("../services/session-handoff.js", () => ({
   stripHandoffCredentials: setup.stripHandoffCredentials,
   rememberConsumedGrant: setup.rememberConsumedGrant,
   ensureHandoffManifest: setup.ensureHandoffManifest,
+  uninstallHandoffManifest: vi.fn(),
 }));
 vi.mock("../services/backend-health.js", () => ({
   clearAuthState: setup.clearAuthState,

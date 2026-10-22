@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   getSite: vi.fn(),
   saveSiteSettings: vi.fn(),
   issueSessionHandoff: vi.fn(),
+  retireSessionHandoff: vi.fn(),
   trackEvent: vi.fn(),
   installMethod: vi.fn(() => "ios"),
   isStandalone: vi.fn(() => false),
@@ -13,7 +14,10 @@ vi.mock("../db.js", () => ({
   getSite: mocks.getSite,
   saveSiteSettings: mocks.saveSiteSettings,
 }));
-vi.mock("./api.js", () => ({ issueSessionHandoff: mocks.issueSessionHandoff }));
+vi.mock("./api.js", () => ({
+  issueSessionHandoff: mocks.issueSessionHandoff,
+  retireSessionHandoff: mocks.retireSessionHandoff,
+}));
 vi.mock("./analytics.js", () => ({ trackEvent: mocks.trackEvent }));
 vi.mock("./browser-context.js", () => ({
   isInAppBrowser: mocks.isInAppBrowser,
@@ -34,8 +38,10 @@ const {
   readHandoffCredentials,
   rememberConsumedGrant,
   resetHandoffManifest,
+  retireHandoff,
   shouldPrepareHandoff,
   stripHandoffCredentials,
+  uninstallHandoffManifest,
 } = await import("./session-handoff.js");
 
 const LAUNCH = "https://app.example.org/#handoff_grant=g-1&handoff_token=t-1";
@@ -370,6 +376,7 @@ describe("ensureHandoffManifest", () => {
   it("mints and caches a grant when none is fresh, then installs the manifest", async () => {
     mocks.getSite.mockResolvedValue({
       siteId: "s1",
+      deviceId: "d1",
       token: "a",
       handoff: { ...fresh, expiresAt: "2026-10-21T18:00:00Z" },
     });
@@ -383,7 +390,9 @@ describe("ensureHandoffManifest", () => {
 
     expect(await ensureHandoffManifest()).toBe(true);
 
-    // Only what the next load needs: the token lives inside startUrl.
+    // Only what the next load needs: the token lives inside startUrl. The
+    // write is guarded on the device as well as the site, so a re-bind of
+    // the same site mid-flight cannot inherit the grant.
     expect(mocks.saveSiteSettings).toHaveBeenCalledWith(
       {
         handoff: {
@@ -393,6 +402,7 @@ describe("ensureHandoffManifest", () => {
         },
       },
       "s1",
+      "d1",
     );
     expect(mocks.trackEvent).toHaveBeenCalledWith("handoff_grant_issued", {});
     expect(installedStartUrl()).toContain("g-new");
@@ -420,5 +430,65 @@ describe("ensureHandoffManifest", () => {
     await expect(ensureHandoffManifest()).rejects.toThrow("503");
     expect(link.setAttribute).not.toHaveBeenCalled();
     expect(isHandoffPrepared()).toBe(false);
+  });
+
+  it("puts the static manifest back on uninstall and forgets the grant", async () => {
+    const site = { siteId: "s1", token: "a", handoff: fresh };
+    expect(await ensureHandoffManifest({ site })).toBe(true);
+    expect(isHandoffPrepared()).toBe(true);
+
+    uninstallHandoffManifest();
+
+    expect(link.setAttribute).toHaveBeenLastCalledWith(
+      "href",
+      "/manifest.webmanifest",
+    );
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:m");
+    expect(isHandoffPrepared()).toBe(false);
+    // Idempotent, and safe without a DOM.
+    uninstallHandoffManifest();
+    uninstallHandoffManifest(undefined);
+    expect(link.setAttribute).toHaveBeenCalledTimes(2);
+    // The next shell render reinstalls rather than short-circuiting.
+    expect(await ensureHandoffManifest({ site })).toBe(true);
+    expect(link.setAttribute).toHaveBeenCalledTimes(3);
+  });
+
+  it("retires the grant server-side and locally on sign-out", async () => {
+    mocks.retireSessionHandoff.mockReset().mockResolvedValue({ retired: true });
+    const site = { siteId: "s1", token: "a", handoff: fresh };
+    await ensureHandoffManifest({ site });
+
+    expect(await retireHandoff({ site })).toBe(true);
+
+    expect(mocks.retireSessionHandoff).toHaveBeenCalledOnce();
+    expect(isHandoffPrepared()).toBe(false);
+    expect(link.setAttribute).toHaveBeenLastCalledWith(
+      "href",
+      "/manifest.webmanifest",
+    );
+  });
+
+  it("skips the server when there is nothing to retire or the session is dead, and never throws", async () => {
+    mocks.retireSessionHandoff.mockReset().mockResolvedValue({ retired: true });
+    expect(await retireHandoff({ site: { siteId: "s1", token: "a" } })).toBe(
+      false,
+    );
+    expect(await retireHandoff({ site: null })).toBe(false);
+    expect(
+      await retireHandoff({
+        site: { siteId: "s1", token: "a", handoff: fresh },
+        remote: false,
+      }),
+    ).toBe(false);
+    expect(mocks.retireSessionHandoff).not.toHaveBeenCalled();
+
+    mocks.retireSessionHandoff.mockRejectedValue(new Error("offline"));
+    expect(
+      await retireHandoff({
+        site: { siteId: "s1", token: "a", handoff: fresh },
+      }),
+    ).toBe(false);
+    expect(mocks.retireSessionHandoff).toHaveBeenCalledOnce();
   });
 });

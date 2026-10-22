@@ -91,6 +91,8 @@ A device running in iOS Safari keeps one pending `SESSION_HANDOFF#` grant
 session into the installed app. Redemption re-checks the device, its binding,
 the Site generation, and Manager membership exactly like the authorizer, so
 every revocation above also kills any pending grant; nothing extra is needed.
+An explicit sign-out in Safari retires the grant (`session_handoff_retired`
+audit event) and puts the static manifest back on the page.
 A redeem bumps `tokenGeneration` and writes a `session_handed_off` audit
 event, which is also what a stolen grant would look like: a Site reporting
 "signed out without installing" is the signal to revoke and re-enroll.
