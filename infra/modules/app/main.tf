@@ -381,6 +381,9 @@ resource "aws_s3_bucket_lifecycle_configuration" "admin_frontend" {
 }
 
 resource "aws_s3_bucket" "uploads" {
+  # checkov:skip=CKV_AWS_18:Server-access logs would record every phone's IP on
+  # presigned uploads for a year with no field selection; nothing reads them.
+  # Upload provenance is recorded in DynamoDB on artifact registration.
   # checkov:skip=CKV_AWS_21:Media is write-once under an unpredictable key and is
   # never overwritten or restored; the only deletes are the lifecycle rules below.
   # Versioning would keep expired photos alive as noncurrent versions, working
@@ -447,13 +450,6 @@ resource "aws_s3_bucket_versioning" "uploads" {
   versioning_configuration {
     status = "Suspended"
   }
-}
-
-resource "aws_s3_bucket_logging" "uploads" {
-  bucket = aws_s3_bucket.uploads.id
-
-  target_bucket = aws_s3_bucket.access_logs.id
-  target_prefix = "uploads/"
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
@@ -620,6 +616,7 @@ resource "aws_s3_bucket_cors_configuration" "uploads" {
 # a separate bucket lets the uploads bucket retain its fail-closed, bucket-wide
 # 30-day deletion rule for check and task photos.
 resource "aws_s3_bucket" "complaints" {
+  # checkov:skip=CKV_AWS_18:Server-access logs would record the IP of every presigned evidence read for a year with no field selection; nothing reads them.
   # checkov:skip=CKV_AWS_21:Complaint evidence is write-once and lifecycle-deleted; versioning would retain expired sensitive media beyond its approved window.
   bucket_prefix = "${local.bucket_name_prefix}-complaints-"
   force_destroy = false
@@ -674,12 +671,6 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "complaints" {
 resource "aws_s3_bucket_versioning" "complaints" {
   bucket = aws_s3_bucket.complaints.id
   versioning_configuration { status = "Suspended" }
-}
-
-resource "aws_s3_bucket_logging" "complaints" {
-  bucket        = aws_s3_bucket.complaints.id
-  target_bucket = aws_s3_bucket.access_logs.id
-  target_prefix = "complaints/"
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "complaints" {

@@ -52,8 +52,10 @@ The **only** durable copy of the media is GNP's.
 - [x] **No viewer IP addresses in logs** — the API Gateway access log omits `$context.identity.sourceIp`
   (per-device correlation uses the authorizer's pseudonymous device subject + site; unauthenticated
   routes correlate by request ID). Lambda/worker logs never log headers or the raw event. CloudFront
-  standard logs and S3 server-access logs in the access-logs bucket still carry requester IPs for a year
-  (not CloudWatch; tracked separately).
+  standard logging is off on all distributions, and S3 server-access logging is off on the uploads and
+  complaints buckets (the only buckets clients reach directly, via presigned URLs). The remaining
+  server-access logs (frontend/admin/analytics/compliance-letters buckets) only ever see CloudFront OAC
+  or Lambda requester IPs. Logs written before 2026-10-22 age out of the access-logs bucket after a year.
 - [x] **Uploaded-media validation** before the analyzer call: independent byte/decode/type checks,
   size/dimension/page caps, metadata-stripping re-encode, and per-check/device/Site budgets.
 - [x] **TLS-only** for both uploads and complaint-evidence buckets through explicit `aws:SecureTransport = false` denies.
