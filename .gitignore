@@ -50,3 +50,6 @@ e2e/.a11y-local/
 # speed-check (Lighthouse) reports written by `npm run perf` in frontend/;
 # CI uploads them as a workflow artifact.
 speed-check-report/
+
+# Generated Lighthouse CI reports
+/frontend/.lighthouseci/

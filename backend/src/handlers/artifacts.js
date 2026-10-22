@@ -40,10 +40,8 @@ const MAX_CHECK_ARTIFACTS = 20;
 const MAX_CHECK_BYTES = 50 * 1024 * 1024;
 export const MAX_DEVICE_DAILY_BYTES = 100 * 1024 * 1024;
 export const MAX_SITE_DAILY_BYTES = 1024 * 1024 * 1024;
-export const MAX_GLOBAL_DAILY_BYTES = 10 * 1024 * 1024 * 1024;
 export const MAX_DEVICE_DAILY_ARTIFACTS = 50;
 export const MAX_SITE_DAILY_ARTIFACTS = 1000;
-export const MAX_GLOBAL_DAILY_ARTIFACTS = 10000;
 
 /**
  * S3 layout for a check's media. Server-owned and tenant-prefixed, so a
@@ -157,15 +155,6 @@ export const presignUpload = async (event) => {
             maxBytes: MAX_SITE_DAILY_BYTES,
             countField: "reservedCount",
             maxCount: MAX_SITE_DAILY_ARTIFACTS,
-            expiresAt,
-          }),
-          quotaUpdate({
-            tableName,
-            key: { pk: `MEDIA_QUOTA#${day}`, sk: "#GLOBAL" },
-            bytes,
-            maxBytes: MAX_GLOBAL_DAILY_BYTES,
-            countField: "reservedCount",
-            maxCount: MAX_GLOBAL_DAILY_ARTIFACTS,
             expiresAt,
           }),
           {

@@ -173,7 +173,7 @@ describe("Site-scoped proactive care", () => {
       mocks.send.mock.calls.find(
         ([command]) => command instanceof TransactWriteCommand,
       )?.[0].input.TransactItems,
-    ).toHaveLength(6);
+    ).toHaveLength(5);
     expect(mocks.presignPut).toHaveBeenCalledWith(
       expect.objectContaining({
         bucket: "uploads",
@@ -303,7 +303,12 @@ describe("Site-scoped proactive care", () => {
       mocks.send.mock.calls.find(
         ([command]) => command instanceof TransactWriteCommand,
       )?.[0].input.TransactItems || [];
-    expect(transaction.filter((op) => op.Update)).toHaveLength(3);
+    expect(transaction.filter((op) => op.Update)).toHaveLength(2);
+    expect(
+      transaction
+        .filter((op) => op.Update)
+        .every((op) => op.Update?.Key?.pk === "SITE#site-a"),
+    ).toBe(true);
     expect(
       transaction.find((op) => op.Put?.Item?.revision)?.Put
         ?.ExpressionAttributeValues,
