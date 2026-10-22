@@ -72,5 +72,6 @@ resource "aws_lambda_event_source_mapping" "analysis" {
   scaling_config {
     maximum_concurrency = 500
   }
+  tags       = var.tags
   depends_on = [aws_iam_role_policy.worker]
 }

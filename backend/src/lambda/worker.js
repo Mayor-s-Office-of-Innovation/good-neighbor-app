@@ -1,7 +1,7 @@
 // Event-source entrypoint for the async worker. The demo /submissions, artifact
-// analysis, background translation, and Site-revocation flows share one SQS
-// queue; a filtered DynamoDB
-// stream also invokes this Lambda to dispatch durable revocation outbox rows.
+// analysis uses a dedicated SQS queue and Lambda; background jobs use the
+// submissions queue. Both Lambdas reuse this dispatcher. A filtered DynamoDB
+// stream also invokes the background Lambda to dispatch durable outbox rows.
 // Records run concurrently and `batchItemFailures` ensures only failures are
 // redriven by the originating event source.
 
@@ -85,7 +85,7 @@ export const handler = async (event, context) => {
     }),
   );
 
-  // Report only the records that threw (partial-batch-failure); the rest are
+  // Preserve both returned partial failures and thrown failures; the rest are
   // acknowledged and never redelivered. Requires the event-source mapping's
   // `function_response_types = ["ReportBatchItemFailures"]`.
   /** @type {{ itemIdentifier: string }[]} */
@@ -105,6 +105,10 @@ export const handler = async (event, context) => {
         extra: { messageId },
       });
       batchItemFailures.push({ itemIdentifier: messageId });
+    } else if (result.value?.batchItemFailures) {
+      // Child handlers may catch record errors and resolve with a partial-batch
+      // response. Dropping that response acknowledges failed work to SQS.
+      batchItemFailures.push(...result.value.batchItemFailures);
     }
   });
 

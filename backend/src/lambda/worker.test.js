@@ -88,6 +88,32 @@ describe("worker dispatch (pickHandler)", () => {
     expect(processSubmission).toHaveBeenCalledTimes(1);
   });
 
+  it("preserves returned partial failures while acknowledging successful records", async () => {
+    analyzeArtifact.mockResolvedValueOnce(
+      /** @type {any} */ ({
+        batchItemFailures: [{ itemIdentifier: "failed" }],
+      }),
+    );
+    const result = await handler(
+      /** @type {any} */ ({
+        Records: [
+          {
+            messageId: "failed",
+            body: JSON.stringify({ artifactId: "a1", text: "trash" }),
+          },
+          {
+            messageId: "ok",
+            body: JSON.stringify({ artifactId: "a2", text: "clear" }),
+          },
+        ],
+      }),
+      /** @type {any} */ ({}),
+    );
+    expect(result).toEqual({
+      batchItemFailures: [{ itemIdentifier: "failed" }],
+    });
+  });
+
   it("routes a translate_artifact message to the translate worker", async () => {
     await handler(
       event({

@@ -373,7 +373,7 @@ resource "aws_cloudwatch_metric_alarm" "app_health_check" {
 
 resource "aws_cloudwatch_metric_alarm" "analysis_dlq_not_empty" {
   alarm_name          = "${local.name_prefix}-analysis-dlq-not-empty"
-  alarm_description   = "At least one submission/analyze/translate message exhausted its retries and is sitting in the dead-letter queue. Inspect the DLQ body (ids only, never media), find the matching logServerError lines in the worker log group, fix, then redrive from the SQS console. See docs/runbooks/observability.md."
+  alarm_description   = "At least one foreground analysis message exhausted its retries in ${aws_sqs_queue.analysis_dlq.name}. Use the messageId to find structured errors in ${aws_cloudwatch_log_group.analysis.name}, fix the cause, then redrive the analysis DLQ. See docs/runbooks/observability.md."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
   datapoints_to_alarm = 1
@@ -396,7 +396,7 @@ resource "aws_cloudwatch_metric_alarm" "analysis_dlq_not_empty" {
 
 resource "aws_cloudwatch_metric_alarm" "analysis_queue_backlog" {
   alarm_name          = "${local.name_prefix}-analysis-queue-backlog"
-  alarm_description   = "The oldest message on the submissions queue has waited more than 10 minutes: the worker is behind (slow analyzer, concurrency cap, or repeated failures). Check AnalyzerLatencyMs and the worker error alarms."
+  alarm_description   = "The oldest message on ${aws_sqs_queue.analysis.name} has waited more than 10 minutes. Check ${aws_lambda_function.analysis.function_name} error/throttle alarms, AnalyzerLatencyMs, and logs in ${aws_cloudwatch_log_group.analysis.name} for slow analysis or repeated failures."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
   datapoints_to_alarm = 2
@@ -419,7 +419,7 @@ resource "aws_cloudwatch_metric_alarm" "analysis_queue_backlog" {
 
 resource "aws_cloudwatch_metric_alarm" "analysis_duration_high" {
   alarm_name          = "${local.name_prefix}-analysis-duration-high"
-  alarm_description   = "Worker p95 duration is above 4 minutes against a 5-minute timeout: analyzer calls are running long. Check AnalyzerLatencyMs by Kind before the next step is a timeout and a redelivery."
+  alarm_description   = "${aws_lambda_function.analysis.function_name} p95 duration is above 4 minutes against a 300-second timeout. Check AnalyzerLatencyMs by Kind and ${aws_cloudwatch_log_group.analysis.name} before calls time out and redeliver."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
   datapoints_to_alarm = 2
