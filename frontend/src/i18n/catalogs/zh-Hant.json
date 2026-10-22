@@ -1121,5 +1121,19 @@
   "webview.banner.dismiss.aria": "關閉",
   "webview.banner.message": "您正在另一個應用程式的內建瀏覽器中。請改用您的瀏覽器開啟，相機才能正常運作。",
   "webview.banner.open": "在瀏覽器中開啟",
-  "webview.banner.title": "相機可能無法在此開啟。"
+  "webview.banner.title": "相機可能無法在此開啟。",
+  "card.ticker.needsAction": "需要採取行動",
+  "card.ticker.seen": "需要採取行動 · 已發現 {count} 次",
+  "card.ticker.checking": "正在尋找重複項目",
+  "card.ticker.duplicate": "重複項目",
+  "card.ticker.cityClosed": "市府已關閉此案件",
+  "card.ticker.closedUnknown": "已關閉（處理結果不明）",
+  "card.ticker.old": "已超過 30 天",
+  "card.ticker.overdue": "市府回應已逾期",
+  "card.ticker.filed": "已提交申請",
+  "card.ticker.called": "已致電",
+  "card.ticker.scheduled": "已安排工作",
+  "card.ticker.onHold": "市府暫緩處理",
+  "card.ticker.resolved": "問題已解決",
+  "card.ticker.actionTaken": "已採取行動"
 }

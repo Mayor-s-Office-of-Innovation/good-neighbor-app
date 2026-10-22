@@ -1300,6 +1300,9 @@ class TodayView extends HTMLElement {
         task: this._taskWith311CardStatus({
           ...entry.task,
           createdAt: entry.createdAt,
+          ...(entry.homeStatus === "in_progress"
+            ? { status: "in_progress" }
+            : {}),
           siteAddress: entry.task.siteAddress || this._site?.address || "",
         }),
         siteName: this._site?.name || "",

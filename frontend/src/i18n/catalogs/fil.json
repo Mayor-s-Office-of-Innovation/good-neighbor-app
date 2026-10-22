@@ -1121,5 +1121,19 @@
   "webview.banner.dismiss.aria": "I-dismiss",
   "webview.banner.message": "Nasa loob kayo ng browser ng ibang app. Buksan sa inyong browser para gumana ang camera.",
   "webview.banner.open": "Buksan sa browser",
-  "webview.banner.title": "Maaaring hindi magbukas ang camera dito."
+  "webview.banner.title": "Maaaring hindi magbukas ang camera dito.",
+  "card.ticker.needsAction": "Kailangan ng aksyon",
+  "card.ticker.seen": "Kailangan ng aksyon · Nakita nang {count} beses",
+  "card.ticker.checking": "Naghahanap ng mga duplicate",
+  "card.ticker.duplicate": "Duplicate",
+  "card.ticker.cityClosed": "Isinara ng Lungsod ang ticket na ito",
+  "card.ticker.closedUnknown": "Sarado (hindi alam ang resolusyon)",
+  "card.ticker.old": "Mahigit 30 araw na",
+  "card.ticker.overdue": "Lampas na sa takdang oras ang tugon ng Lungsod",
+  "card.ticker.filed": "Naihain ang kahilingan",
+  "card.ticker.called": "Nakatawag na",
+  "card.ticker.scheduled": "Naka-iskedyul ang trabaho",
+  "card.ticker.onHold": "Naka-hold sa Lungsod",
+  "card.ticker.resolved": "Nalutas ang isyu",
+  "card.ticker.actionTaken": "Nagawa ang aksyon"
 }

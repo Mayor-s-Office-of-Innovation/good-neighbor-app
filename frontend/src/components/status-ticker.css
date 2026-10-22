@@ -1,0 +1,67 @@
+:root {
+  --ticker-action: #0046c2;
+  --ticker-progress: #001d4e;
+  --ticker-warning: #843f00;
+  --ticker-danger: #ac0000;
+  --ticker-success: #025e00;
+  --ticker-muted: #383939;
+}
+html.wa-dark {
+  --ticker-action: #80aeff;
+  --ticker-progress: #94add6;
+  --ticker-warning: #ff8f29;
+  --ticker-danger: #ff8a8a;
+  --ticker-success: #04c700;
+  --ticker-muted: #aaacac;
+}
+.status-ticker {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--wa-font-size-s, 0.875rem);
+  font-weight: var(--wa-font-weight-bold, 600);
+  line-height: 1.6;
+  color: var(--ticker-action);
+}
+.status-ticker--progress {
+  color: var(--ticker-progress);
+}
+.status-ticker--warning {
+  color: var(--ticker-warning);
+}
+.status-ticker--danger {
+  color: var(--ticker-danger);
+}
+.status-ticker--success {
+  color: var(--ticker-success);
+}
+.status-ticker--muted {
+  color: var(--ticker-muted);
+}
+.status-ticker > wa-icon {
+  font-size: 15px;
+  flex: 0 0 15px;
+}
+.status-ticker__dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.status-ticker__spinner {
+  animation: ticker-spin 1s linear infinite;
+}
+.analysis-card__panel > .status-ticker {
+  margin-bottom: 1rem;
+}
+@keyframes ticker-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-ticker__spinner {
+    animation: none;
+  }
+}

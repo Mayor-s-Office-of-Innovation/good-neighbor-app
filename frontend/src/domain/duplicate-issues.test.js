@@ -72,6 +72,7 @@ it("separation restores the full independent task after the group was acted on",
     ...repeat,
     duplicate: undefined,
     duplicateCheckState: "separated",
+    duplicateSeenCount: 1,
   });
 });
 it("includes the original even if its worklist card was outside the requested page", () => {
@@ -141,4 +142,21 @@ it("uses the original issue's phone action metadata for a duplicate", () => {
     now,
   );
   expect(legacy.phoneNumber).toBeUndefined();
+});
+
+it("counts the original and distinct matched observations, and removes separated sightings", () => {
+  const relations = new Map([
+    ["repeat", { state: "matched", original }],
+    ["other", { state: "matched", original }],
+    ["separated", { state: "separated", original }],
+  ]);
+  const projected = projectDuplicateTasks([original, repeat], relations, now);
+  expect(
+    projected.find((t) => t.taskId === original.taskId).duplicateSeenCount,
+  ).toBe(3);
+  relations.set("other", { state: "separated", original });
+  expect(
+    projectDuplicateTasks([original, repeat], relations, now)[0]
+      .duplicateSeenCount,
+  ).toBe(2);
 });

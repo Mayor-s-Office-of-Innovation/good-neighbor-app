@@ -207,3 +207,19 @@ describe("SF311 status normalization", () => {
     });
   });
 });
+
+it("passes through Verint closure codes without inventing a reason from notes", () => {
+  const detail = normalizeSf311Detail({
+    record: { Status: "4", ClosedReason: "999" },
+    task: {},
+    srNum: "123",
+  });
+  expect(detail.closedReason).toBe("999");
+  expect(detail.closureReason).toBeUndefined();
+  const unknown = normalizeSf311Detail({
+    record: { Status: "4", Notes: "Closed by agency" },
+    task: {},
+    srNum: "123",
+  });
+  expect(unknown.closedReason).toBeUndefined();
+});

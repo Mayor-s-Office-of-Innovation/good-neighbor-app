@@ -1,3 +1,4 @@
+import { statusTickerMarkup } from "./status-ticker.js";
 import { duplicateUiEnabled } from "../services/feature-flags.js";
 import {
   duplicateCard,
@@ -43,6 +44,9 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.webp";
  * @typedef {object} AnalysisTask
  * @property {boolean} [duplicateHidden]
  * @property {any} [duplicate]
+ * @property {number} [duplicateSeenCount]
+ * @property {any[]} [appActionResults]
+ * @property {string} [ticketClosedReason]
  * @property {string} [duplicateCheckState]
  * @property {string} [taskId]
  * @property {string} [status]
@@ -130,6 +134,9 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.webp";
  * @typedef {object} HomeTask
  * @property {boolean} [duplicateHidden]
  * @property {any} [duplicate]
+ * @property {number} [duplicateSeenCount]
+ * @property {any[]} [appActionResults]
+ * @property {string} [ticketClosedReason]
  * @property {string} [duplicateCheckState]
  * @property {string} [taskId]
  * @property {string} [shortId]
@@ -470,7 +477,7 @@ function analysisCardEntries(
             ].includes(task.status),
             actionKind: task.kind || "",
             phoneNumber: task.phoneNumber || "",
-            routeType: taskRoute(task),
+            tickerTask: task,
             taskId: task.taskId || "",
             conditionId: task.conditionId || condition.conditionId || "",
             metaLabel: newTaskMetaLabel(task),
@@ -649,7 +656,7 @@ export function taskAnalysisCard({
     actionValue: action?.kind || "done",
     includeEditDelete: includeControls,
     isNew,
-    routeType: taskRoute(task),
+    tickerTask: task,
     createdAt: task.createdAt || task.created_at || "",
     footerTimeLabel:
       task.status === "in_progress" && (task.updatedAt || task.ticketUpdatedAt)
@@ -916,7 +923,7 @@ function completedEvidenceCard(
     includeEditDelete = true,
     includeDelete = includeEditDelete,
     isNew = true,
-    routeType: route = taskRoute({ kind: actionKind }),
+    tickerTask = null,
     createdAt = item.uploadedAt || item.createdAt || "",
     shortId = "",
     footerTimeLabel = "",
@@ -967,33 +974,14 @@ function completedEvidenceCard(
               <wa-icon name="xmark" aria-hidden="true"></wa-icon>
             </button>`
           : ""}
-        <p
-          class="analysis-card__route analysis-card__route--${escapeAttr(
-            route.tone,
-          )}"
-        >
-          <span class="analysis-card__route-dot" aria-hidden="true"></span
-          ><span class="analysis-card__route-label"
-            >${escapeHtml(route.label)}</span
-          >${route.status
-            ? html`<span
-                  class="analysis-card__route-separator"
-                  aria-hidden="true"
-                  >·</span
-                ><span
-                  class="analysis-card__ticket-status analysis-card__ticket-status--${escapeAttr(
-                    route.statusTone,
-                  )}"
-                  >${escapeHtml(
-                    statusLine(
-                      route.status,
-                      route.statusDetail,
-                      route.statusScope,
-                    ),
-                  )}</span
-                >`
-            : ""}
-        </p>
+        ${statusTickerMarkup(
+          tickerTask || {
+            kind: actionKind,
+            phoneNumber,
+            duplicate: duplicateNote,
+            duplicateCheckState,
+          },
+        )}
         <div class="analysis-card__layout">
           <div class="analysis-card__content">
             <p class="analysis-card__place">${escapeHtml(cardPlace(item))}</p>
@@ -1038,26 +1026,6 @@ function completedEvidenceCard(
                   <wa-icon name="pen" aria-hidden="true"></wa-icon
                   ><span>${escapeHtml(t("card.editDetails"))}</span>
                 </button>`
-              : ""}
-            ${includeEditDelete &&
-            !duplicateNote &&
-            ["pending", "complete", "unavailable"].includes(duplicateCheckState)
-              ? html`<p class="analysis-card__duplicate-status" role="status">
-                  ${duplicateCheckState === "pending"
-                    ? html`<wa-spinner aria-hidden="true"></wa-spinner>`
-                    : ""}
-                  <span
-                    >${escapeHtml(
-                      t(
-                        duplicateCheckState === "pending"
-                          ? "duplicate.checking"
-                          : duplicateCheckState === "unavailable"
-                            ? "duplicate.unavailable"
-                            : "duplicate.noMatches",
-                      ),
-                    )}</span
-                  >
-                </p>`
               : ""}
             <p class="actioncard__error" role="alert" hidden></p>
           </div>
@@ -1501,16 +1469,10 @@ export const analysisDialogs = () => html`
 `;
 
 function historyCard(task) {
-  const route = taskRoute(task);
   const title =
     displayCategory(task) ||
     rulebookText(task.label) ||
     t("card.title.fallback");
-  const status =
-    route.status ||
-    (task.status === "cannot_do"
-      ? t("card.history.cannotDo")
-      : t("card.history.completed"));
   const entered = historyEnteredAt(task);
   const media = taskMediaUrl(task);
   return html`<article
@@ -1528,17 +1490,7 @@ function historyCard(task) {
           : html`<wa-icon name="image" aria-hidden="true"></wa-icon>`}</span
       >
       <span class="history-card__copy"
-        ><span
-          class="analysis-card__route analysis-card__route--${escapeAttr(
-            route.tone,
-          )}"
-          ><span class="analysis-card__route-dot" aria-hidden="true"></span
-          ><span>${escapeHtml(route.label)}</span
-          ><span aria-hidden="true">·</span
-          ><span class="history-card__status"
-            >${escapeHtml(rulebookText(status, route.statusScope))}</span
-          ></span
-        >
+        >${statusTickerMarkup(task, { history: true })}
         <span class="history-card__title"
           >${escapeHtml(sentenceCaseTitle(title))}</span
         ><span class="history-card__time"

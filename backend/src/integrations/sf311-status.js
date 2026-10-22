@@ -444,6 +444,7 @@ export function normalizeSf311Detail({
     status,
     responseOverdue: Boolean(overdue),
     ...(statusDetail ? { statusDetail } : {}),
+    ...(closedReasonCode ? { closedReason: closedReasonCode } : {}),
     ...(closureReason ? { closureReason } : {}),
     ...(location ? { location } : {}),
     problemType:
