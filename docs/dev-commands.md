@@ -325,6 +325,9 @@ Notes:
   ramp-check's screenshot-first report (`e2e/ramp-check-report/`), followed by findings
   and then unused-exception notes. To demo just the home screen, use
   `npm run a11y:report -w e2e -- --grep 'a11y: bound home' --headed`.
+  A caller-supplied `--reporter` replaces the default reporters and skips the
+  automatic report viewer; for example, `npm run a11y:report -w e2e -- --reporter=dot`.
+  The standard HTML reporter never opens automatically during this command.
   Stop local dev servers first; the suite starts its own isolated stack.
   The standard Playwright report is also generated: open it with
   `cd e2e && npx playwright show-report`. In CI that standard report is in the `playwright-report` artifact on
