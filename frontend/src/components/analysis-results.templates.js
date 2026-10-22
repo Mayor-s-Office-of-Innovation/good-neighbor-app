@@ -24,7 +24,7 @@ import {
   pacificWeekdayIndex,
 } from "../i18n/dates.js";
 
-const CLEAR_CHECK_ICON = "/clear-check-icon.png";
+const CLEAR_CHECK_ICON = "/clear-check-icon.webp";
 
 /**
  * @typedef {object} AnalysisCondition
@@ -525,7 +525,12 @@ export function clearCheckCard() {
     <article class="analysis-card analysis-card--clear">
       <div class="analysis-card__panel">
         <div class="analysis-card__clear-title">
-          <img src="${escapeAttr(CLEAR_CHECK_ICON)}" alt="" />
+          <img
+            src="${escapeAttr(CLEAR_CHECK_ICON)}"
+            alt=""
+            width="96"
+            height="98"
+          />
           <h3>${escapeHtml(t("card.clear.title"))}</h3>
         </div>
         <p class="analysis-card__clear-copy">${clearCheckCopy()}</p>
@@ -1224,6 +1229,7 @@ function imagePreview(item) {
               place: placeName || t("card.evidence.siteFallback"),
             }),
           )}"
+          decoding="async"
         />
       </button>
     </div>

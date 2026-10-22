@@ -61,6 +61,7 @@ the "which check" question the metric cannot. Dimensions are deliberately few:
 | `AnalysisFailed` | Kind | analyze worker `markFailed` | permanent failure recorded (analyzer 4xx, media rejected, unsupported type). Prop `reason` |
 | `AnalysisRetried` | Kind | analyze worker | transient analyzer failure; the message redelivers. Prop `reason` |
 | `AnalysisDuplicate` | Kind | analyze worker | a redelivered message found the analysis already stored |
+| `ThumbnailFailed` | Kind | analyze worker | the card thumbnail could not be stored (`reason: store`) or recorded on the ART# row (`reason: record`); the card keeps using the original. Props `reason`, `error` (SDK error name). Not an analysis failure |
 
 Useful ratios (metric math): failure rate `AnalysisFailed / (AnalysisCompleted +
 AnalysisFailed)`; completion rate `CheckCompleted / CheckStarted`.
@@ -69,7 +70,7 @@ Logs Insights, worker log group:
 
 ```
 fields @timestamp, marker, Kind, AnalyzerLatencyMs, reason, checkId, artifactId, siteId
-| filter marker in ["AnalysisCompleted", "AnalysisFailed", "AnalysisRetried", "AnalyzerCall"]
+| filter marker in ["AnalysisCompleted", "AnalysisFailed", "AnalysisRetried", "AnalyzerCall", "ThumbnailFailed"]
 | sort @timestamp desc
 ```
 

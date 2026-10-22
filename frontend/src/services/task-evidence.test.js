@@ -27,7 +27,7 @@ describe("hydrateTaskEvidenceFromCheck", () => {
     getMediaUrl.mockResolvedValue({ downloadUrl: "https://media/p1" });
   });
 
-  it("attaches the source artifact's street and a signed thumbnail", async () => {
+  it("attaches the source artifact's street and the signed original", async () => {
     const [task] = await hydrateTaskEvidenceFromCheck(
       [{ taskId: "t1", checkId: "c1", sourceArtifactIds: ["p1"] }],
       detail,
@@ -38,8 +38,24 @@ describe("hydrateTaskEvidenceFromCheck", () => {
       georeferencedAddress: "15th St",
       text: "",
     });
-    expect(task.thumbnailUrl).toBe("https://media/p1");
+    expect(task.mediaUrl).toBe("https://media/p1");
+    expect(task.thumbnailUrl).toBeUndefined();
     expect(getMediaUrl).toHaveBeenCalledWith("c1", "p1");
+  });
+
+  it("prefers the backend's card thumbnail and keeps the original for the lightbox", async () => {
+    getMediaUrl.mockResolvedValue({
+      downloadUrl: "https://media/p1",
+      thumbnailUrl: "https://media/p1.thumb.webp",
+    });
+    // A fresh checkId: media URLs are memoised per check + artifact.
+    const [task] = await hydrateTaskEvidenceFromCheck(
+      [{ taskId: "t4", checkId: "c3", sourceArtifactIds: ["p1"] }],
+      detail,
+    );
+    expect(getMediaUrl).toHaveBeenCalledWith("c3", "p1");
+    expect(task.thumbnailUrl).toBe("https://media/p1.thumb.webp");
+    expect(task.mediaUrl).toBe("https://media/p1");
   });
 
   it("leaves a task without a matching artifact untouched", async () => {
@@ -56,6 +72,6 @@ describe("hydrateTaskEvidenceFromCheck", () => {
       detail,
     );
     expect(task.evidence.georeferencedAddress).toBe("15th St");
-    expect(task.thumbnailUrl).toBeUndefined();
+    expect(task.mediaUrl).toBeUndefined();
   });
 });

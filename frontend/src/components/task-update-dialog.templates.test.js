@@ -127,6 +127,24 @@ describe("task update dialog templates", () => {
     );
   });
 
+  it("shows the card thumbnail as the original photo but opens the lightbox on the full file", () => {
+    const markup = taskUpdateTimeline({
+      task: {
+        taskId: "task-1",
+        status: "in_progress",
+        createdAt: "2026-09-30T16:00:00.000Z",
+      },
+      updates: [],
+      issueOrigin: "perimeter",
+      originalMediaUrl: "https://cdn.example/photo.thumb.webp",
+      originalFullMediaUrl: "https://cdn.example/photo.jpg",
+      mediaUrls: new Map(),
+      now: new Date("2026-09-30T17:00:00.000Z"),
+    });
+    expect(markup).toContain('src="https://cdn.example/photo.thumb.webp"');
+    expect(markup).toContain('data-full-src="https://cdn.example/photo.jpg"');
+  });
+
   it("renders issue creation only after the oldest update page is loaded", () => {
     const base = {
       task: {

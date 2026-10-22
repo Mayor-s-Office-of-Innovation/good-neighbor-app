@@ -35,7 +35,7 @@ import {
 import { fetchProviderSites } from "../services/provider-sites.js";
 import { switchToBoundSite } from "../services/site-switch.js";
 import {
-  cachedMediaUrl,
+  cachedMediaUrls,
   hydrateTaskEvidence,
   hydrateTaskEvidenceFromCheck,
   needsTaskEvidenceHydration,
@@ -733,7 +733,7 @@ class ReportsDayView extends ReportsScreen {
     const [urls, hydratedTasks] = await Promise.all([
       Promise.all(
         photos.map((a) =>
-          cachedMediaUrl(checkId, a.artifactId).catch(() => ""),
+          cachedMediaUrls(checkId, a.artifactId).catch(() => null),
         ),
       ),
       hydrateTaskEvidenceFromCheck(checkTasks, detail),
@@ -742,7 +742,8 @@ class ReportsDayView extends ReportsScreen {
       ...photos.map((a, i) => ({
         artifactId: a.artifactId,
         kind: "photo",
-        url: urls[i],
+        url: urls[i]?.downloadUrl || "",
+        thumbnailUrl: urls[i]?.thumbnailUrl,
       })),
       ...artifacts
         .filter((a) => a.text)

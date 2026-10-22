@@ -238,6 +238,9 @@ export class TaskUpdateDialog extends HTMLElement {
           task.evidence?.artifactId || taskArtifactIds(task)[0],
         ) ||
         "",
+      // The lightbox always opens the full-size original, never the card
+      // thumbnail `taskMediaUrl` may have picked above.
+      originalFullMediaUrl: task.mediaUrl || "",
       mediaUrls: this._mediaUrls,
       nextToken: this._nextToken,
     });

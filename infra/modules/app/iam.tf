@@ -446,6 +446,18 @@ data "aws_iam_policy_document" "worker" {
     resources = ["${aws_s3_bucket.uploads.arn}/*"]
   }
 
+  # The analyze worker stores a card thumbnail (`<key>.thumb.webp`) beside each
+  # check photo (backend/src/media/thumbnail.js). The resource pattern is what
+  # keeps originals write-once: only keys ending in the thumbnail suffix under
+  # the checks prefix are writable. PutObjectTagging (above) covers the
+  # lifecycle tag sent with the same PUT.
+  statement {
+    sid       = "WriteCheckThumbnails"
+    effect    = "Allow"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.uploads.arn}/checks/*.thumb.webp"]
+  }
+
 
   statement {
     sid       = "ReadAndClassifyComplaints"

@@ -870,11 +870,12 @@ export async function putMedia(
 }
 
 /**
- * GET /v1/checks/{checkId}/artifacts/{artifactId}/media — a short-lived presigned
- * GET so staff can review the original photo (admin/read path).
+ * GET /v1/checks/{checkId}/artifacts/{artifactId}/media — short-lived presigned
+ * GETs for one photo: `downloadUrl` is the original (lightbox); `thumbnailUrl`,
+ * when present, is the worker's small WebP card variant.
  * @param {string} checkId
  * @param {string} artifactId
- * @returns {Promise<{ artifactId: string, s3Key: string, downloadUrl: string, expiresIn: number }>}
+ * @returns {Promise<{ artifactId: string, s3Key: string, downloadUrl: string, thumbnailUrl?: string, expiresIn: number }>}
  */
 export function getMediaUrl(checkId, artifactId) {
   return request(

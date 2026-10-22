@@ -148,6 +148,9 @@ export function ticketDetailDialog({ detail, state }) {
                     class="ticket-detail__photo-trigger"
                     type="button"
                     data-photo-lightbox
+                    data-full-src="${escapeAttr(
+                      detail.fullMediaUrl || detail.mediaUrl,
+                    )}"
                     data-photo-address="${escapeAttr(detail.location || "")}"
                     data-photo-time="${escapeAttr(detail.submittedAt || "")}"
                   >
