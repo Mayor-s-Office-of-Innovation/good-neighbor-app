@@ -987,6 +987,7 @@
   "taskUpdate.created.single": "Issue added as a single issue",
   "taskUpdate.discard.cancel": "Back to editing",
   "taskUpdate.discard.title": "Closing will discard what you've added",
+  "taskUpdate.expired": "Issue archived: older than 14 days, no resolution",
   "taskUpdate.fallbackTitle": "Issue update",
   "taskUpdate.loadError": "We couldn't load this issue. Please try again.",
   "taskUpdate.loading": "Loading updates…",
@@ -1134,6 +1135,5 @@
   "webview.banner.dismiss.aria": "Dismiss",
   "webview.banner.message": "You're inside another app's browser. Open in your browser instead for the camera to work.",
   "webview.banner.open": "Open in browser",
-  "webview.banner.title": "Camera may not open here.",
-  "taskUpdate.expired": "Issue archived: older than 14 days, no resolution"
+  "webview.banner.title": "Camera may not open here."
 }
