@@ -163,16 +163,15 @@ resource "aws_lambda_function" "api" {
   #checkov:skip=CKV_AWS_116:Sync API-Gateway-invoked function; failures return to the caller, so a Lambda DLQ is N/A (the worker keeps a real DLQ).
   #checkov:skip=CKV_AWS_117:No VPC — the function needs public AWS-API egress and holds no VPC-only data; revisit with VPC + endpoints.
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
-  function_name                  = "${local.name_prefix}-api"
-  role                           = aws_iam_role.api.arn
-  runtime                        = "nodejs24.x"
-  handler                        = "index.handler"
-  filename                       = data.archive_file.api.output_path
-  source_code_hash               = data.archive_file.api.output_base64sha256
-  memory_size                    = 512
-  timeout                        = 29
-  kms_key_arn                    = aws_kms_key.app.arn
-  reserved_concurrent_executions = 10
+  function_name    = "${local.name_prefix}-api"
+  role             = aws_iam_role.api.arn
+  runtime          = "nodejs24.x"
+  handler          = "index.handler"
+  filename         = data.archive_file.api.output_path
+  source_code_hash = data.archive_file.api.output_base64sha256
+  memory_size      = 512
+  timeout          = 29
+  kms_key_arn      = aws_kms_key.app.arn
 
   tracing_config {
     mode = "Active"
