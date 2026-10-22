@@ -98,6 +98,25 @@ describe("task update dialog templates", () => {
       previews: [],
     });
     expect(capture).toContain(t("taskUpdate.capture.addNote"));
+    expect(capture).not.toContain("task-update__capture-task");
+    const results = taskUpdateCapture({
+      pendingEvent: { updateId: null },
+      results: true,
+      task: {
+        taskId: "task-1",
+        shortId: "AB12",
+        userFriendlyLabel: "Litter on sidewalk",
+        thumbnailUrl: "https://cdn.example/thumb.jpg",
+      },
+      files: [],
+      notes: ["", "", ""],
+      previews: [],
+    });
+    expect(results).toContain("task-update__capture-task");
+    expect(results).toContain("Litter on sidewalk");
+    expect(results).toContain("#AB12");
+    expect(results).toContain('src="https://cdn.example/thumb.jpg"');
+    expect(results).toContain("data-skip");
     expect(capture).toContain("photo-capture-tile");
     expect(capture).toContain("photo-capture-tile__icon");
     expect(capture).toContain("photo-capture-tile__label");

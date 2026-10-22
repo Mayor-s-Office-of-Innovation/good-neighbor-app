@@ -488,3 +488,111 @@ it("resets workflow state when reusing a 311 editor for completion results and b
   expect(dialog._content()).toContain("data-city-help");
   expect(dialog._content()).not.toContain("data-action-outcome");
 });
+
+describe("results prompt opened before the completion response", () => {
+  function deferred() {
+    let resolve = (value) => {
+      void value;
+    };
+    const promise = new Promise((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+  async function openPending(task = { taskId: "task-1", checkId: "check-1" }) {
+    const { TaskUpdateDialog } = await import("./task-update-dialog.js");
+    const dialog = /** @type {any} */ (new TaskUpdateDialog());
+    dialog._render = vi.fn();
+    dialog.dispatchEvent = vi.fn();
+    const modal = {
+      close: vi.fn(),
+      querySelectorAll: () => [],
+      querySelector: () => null,
+    };
+    dialog.querySelector = vi.fn(() => modal);
+    const completion = deferred();
+    dialog.openResults(task, completion.promise);
+    return { dialog, modal, completion };
+  }
+
+  it("lets the user draft right away and saves once the response lands", async () => {
+    const { dialog, modal, completion } = await openPending();
+    expect(dialog._open).toBe(true);
+    expect(dialog._pendingEvent).toEqual({ updateId: null });
+    expect(dialog._photosAllowed()).toBe(true);
+    dialog._uploadFiles = vi.fn().mockResolvedValue(["photo-1"]);
+    dialog._noteDrafts = ["Picked up", "", ""];
+    api.documentTaskUpdate.mockReset().mockResolvedValue({ update: {} });
+    const saving = dialog._saveNotes(modal);
+    await Promise.resolve();
+    expect(api.documentTaskUpdate).not.toHaveBeenCalled();
+    expect(dialog._open).toBe(true);
+    completion.resolve({
+      task: {
+        taskId: "task-1",
+        latestUpdateId: "update-1",
+        canUploadPhotos: true,
+      },
+    });
+    await saving;
+    expect(api.documentTaskUpdate).toHaveBeenCalledWith("task-1", "update-1", {
+      notes: ["Picked up"],
+      photoKeys: ["photo-1"],
+    });
+    expect(dialog._open).toBe(false);
+    expect(dialog._completion).toBeNull();
+  });
+
+  it("closes on skip at once and seals the documentation window later", async () => {
+    const { dialog, modal, completion } = await openPending();
+    api.documentTaskUpdate.mockReset().mockResolvedValue({ update: {} });
+    await dialog._finishDocumentation(modal, [], []);
+    expect(dialog._open).toBe(false);
+    expect(api.documentTaskUpdate).not.toHaveBeenCalled();
+    completion.resolve({
+      task: { taskId: "task-1", latestUpdateId: "update-1" },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(api.documentTaskUpdate).toHaveBeenCalledWith("task-1", "update-1", {
+      notes: [],
+      photoKeys: [],
+    });
+  });
+
+  it.each([
+    ["failed, no draft", { task: null, failed: true }, false, false],
+    ["failed, draft kept", { task: null, failed: true }, true, true],
+    ["no results, no draft", { task: null }, false, false],
+    ["no results, draft kept", { task: null }, true, true],
+  ])(
+    "handles a completion with nothing to document: %s",
+    async (_label, completed, hasDraft, staysOpen) => {
+      const { dialog, completion } = await openPending();
+      if (hasDraft) dialog._noteDrafts = ["Typed meanwhile", "", ""];
+      completion.resolve(completed);
+      await dialog._completion;
+      expect(dialog._open).toBe(staysOpen);
+      expect(dialog._pendingEvent).toBeNull();
+      // A kept draft is explained as unattached, not as a window conflict.
+      expect(dialog._unattached).toBe(true);
+      if (staysOpen) expect(dialog._render).toHaveBeenCalled();
+    },
+  );
+
+  it("re-renders only when the response changes the photo permission", async () => {
+    const { dialog, completion } = await openPending();
+    dialog._render.mockClear();
+    completion.resolve({
+      task: {
+        taskId: "task-1",
+        latestUpdateId: "update-1",
+        canUploadPhotos: false,
+      },
+    });
+    await dialog._completion;
+    expect(dialog._pendingEvent).toEqual({ updateId: "update-1" });
+    expect(dialog._photosAllowed()).toBe(false);
+    expect(dialog._render).toHaveBeenCalledOnce();
+  });
+});

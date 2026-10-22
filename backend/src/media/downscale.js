@@ -20,8 +20,24 @@
 //   failed marker instead of redelivering to the DLQ. Bytes can be corrupt
 //   even when presign pinned an image content-type — the type is declared by
 //   the uploader, never verified.
+// - `sharp` is imported lazily, on first use. The api Lambda bundles this
+//   module through care-work.js and guidance/app-actions.js, so a static
+//   import loaded the native libvips addon on EVERY api cold start — on the
+//   order of 100–300 ms at 512 MB — although only two routes ever downscale.
+//   The dynamic import resolves once per container (module cache); the
+//   worker, which always downscales, pays the same cost it did before.
 
-import sharp from "sharp";
+/** @type {Promise<typeof import("sharp").default> | undefined} */
+let sharpModule;
+
+/**
+ * Load sharp on first use (see the header note).
+ * @returns {Promise<typeof import("sharp").default>}
+ */
+function loadSharp() {
+  sharpModule ??= import("sharp").then((m) => m.default);
+  return sharpModule;
+}
 
 /**
  * A permanent downscale failure: the bytes are not a decodable image. Maps to
@@ -61,6 +77,10 @@ const TYPE_BY_FORMAT = {
  * @returns {Promise<DownscaleResult>}
  */
 export async function downscaleImage(bytes, contentType) {
+  // Outside the try: a sharp load failure (missing platform binary in the
+  // zip) is an infrastructure fault that must surface as an error, never as
+  // a permanent "undecodable image" rejection of the upload.
+  const sharp = await loadSharp();
   let result;
   try {
     const input = sharp(bytes, {
