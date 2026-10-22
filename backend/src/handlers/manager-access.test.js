@@ -23,7 +23,7 @@ beforeEach(() => {
 });
 
 describe("manager staff enrollment", () => {
-  it("issues one eight-hour general grant without storing its secret", async () => {
+  it("issues another eight-hour grant while one is pending without storing its secret", async () => {
     send
       .mockResolvedValueOnce({ Item: { siteId: "site-1", name: "Site One" } })
       .mockResolvedValueOnce({
@@ -37,7 +37,15 @@ describe("manager staff enrollment", () => {
           tokenGeneration: 4,
         },
       })
-      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            grantId: "already-pending",
+            issuedByBindingId: "manager-1",
+            status: "pending",
+          },
+        ],
+      })
       .mockResolvedValueOnce({});
 
     const response = await call(
@@ -57,7 +65,7 @@ describe("manager staff enrollment", () => {
     expect(body.enrollmentUrl).toContain("#enrollment_grant=");
     const transaction = send.mock.calls[3][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(5);
+    expect(transaction.input.TransactItems).toHaveLength(4);
     const serialized = JSON.stringify(transaction.input);
     expect(serialized).not.toContain(
       new URL(body.enrollmentUrl).hash.match(/enrollment_token=([^&]+)/)?.[1],
@@ -73,7 +81,7 @@ describe("manager staff enrollment", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("returns and cancels only the current Manager binding's grant", async () => {
+  it("returns and cancels only the Manager binding's grants", async () => {
     const marker = {
       pk: "SITE#site-1",
       sk: "ACTIVE_STAFF_GRANT#manager-1",
@@ -92,27 +100,22 @@ describe("manager staff enrollment", () => {
       createdAt: "2026-10-03T00:00:00.000Z",
       expiresAt: "2099-01-01T00:00:00.000Z",
     };
-    send
-      .mockResolvedValueOnce({ Item: marker })
-      .mockResolvedValueOnce({ Item: grant });
+    send.mockResolvedValueOnce({ Items: [grant] });
     const current = await call(getCurrentStaffGrant, event());
     expect(current.statusCode).toBe(200);
-    expect(JSON.parse(String(current.body)).grant).toMatchObject({
+    expect(JSON.parse(String(current.body)).grants[0]).toMatchObject({
       grantId: "staff-1",
       label: "Team phone",
     });
 
-    send
-      .mockResolvedValueOnce({ Item: marker })
-      .mockResolvedValueOnce({ Item: grant })
-      .mockResolvedValueOnce({});
+    send.mockResolvedValueOnce({ Items: [grant] }).mockResolvedValueOnce({});
     const cancelled = await call(
       cancelStaffGrant,
       event({ pathParameters: { grantId: "staff-1" } }),
     );
     expect(cancelled.statusCode).toBe(200);
-    const transaction = send.mock.calls[4][0];
-    expect(transaction.input.TransactItems).toHaveLength(4);
+    const transaction = send.mock.calls[2][0];
+    expect(transaction.input.TransactItems).toHaveLength(3);
     expect(transaction.input.TransactItems[1].Delete.Key).toEqual({
       pk: "ENROLLMENT_TOKEN#token-hash",
       sk: "#META",
@@ -199,3 +202,51 @@ async function call(handler, request) {
     await handler(request, /** @type {any} */ ({}), () => {})
   );
 }
+
+it("lists all issuer-owned grant statuses across pages without exposing secrets", async () => {
+  const cursor = { pk: "SITE#site-1", sk: "STAFF_GRANT#cursor" };
+  send
+    .mockResolvedValueOnce({
+      Items: [
+        {
+          grantId: "one",
+          issuedByBindingId: "manager-1",
+          status: "pending",
+          expiresAt: "2099-01-01",
+          tokenHash: "secret",
+        },
+        { grantId: "other", issuedByBindingId: "manager-2", status: "pending" },
+      ],
+      LastEvaluatedKey: cursor,
+    })
+    .mockResolvedValueOnce({
+      Items: [
+        { grantId: "two", issuedByBindingId: "manager-1", status: "redeemed" },
+      ],
+    });
+  const response = await call(getCurrentStaffGrant, event());
+  const body = JSON.parse(String(response.body));
+  expect(
+    body.grants.map((/** @type {{grantId: string}} */ grant) => grant.grantId),
+  ).toEqual(["one", "two"]);
+  expect(body.grants[1].status).toBe("redeemed");
+  expect(response.body).not.toContain("secret");
+  expect(send.mock.calls[1][0].input.ExclusiveStartKey).toEqual(cursor);
+});
+
+it("does not cancel another manager's grant", async () => {
+  send.mockResolvedValueOnce({
+    Items: [
+      { grantId: "other", issuedByBindingId: "manager-2", status: "pending" },
+    ],
+  });
+  expect(
+    (
+      await call(
+        cancelStaffGrant,
+        event({ pathParameters: { grantId: "other" } }),
+      )
+    ).statusCode,
+  ).toBe(404);
+  expect(send).toHaveBeenCalledTimes(1);
+});

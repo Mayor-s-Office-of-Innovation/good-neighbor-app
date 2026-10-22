@@ -61,7 +61,11 @@ export function taskUpdateTimelineItem(update, task, mediaUrls, title) {
             ? t("duplicate.timeline")
             : update.type === "duplicate_separated"
               ? t("duplicate.separatedTimeline")
-              : rulebookText(update.label, "server.taskUpdate"),
+              : ["Marked as complete", "Site marked as resolved"].includes(
+                    update.label,
+                  )
+                ? t("taskUpdate.siteResolved")
+                : rulebookText(update.label, "server.taskUpdate"),
         )}</strong
       ><time datetime="${escapeAttr(update.occurredAt)}"
         >${escapeHtml(formatPacificDateTime(update.occurredAt))}</time

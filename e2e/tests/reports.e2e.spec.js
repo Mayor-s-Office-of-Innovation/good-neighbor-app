@@ -133,9 +133,10 @@ test.describe("site manager reports", () => {
     await page.locator("#home-settings").click();
     const menu = page.getByRole("menu", { name: t("today.settings.aria") });
     await expect(menu.getByRole("menuitem")).toHaveText([
-      t("today.settings.feedback"),
+      t("access.title"),
       t("today.settings.siteAdmin"),
       t("today.settings.reports"),
+      t("today.settings.feedback"),
       t("today.settings.language"),
       t("today.settings.attributions"),
       t("today.settings.logout"),

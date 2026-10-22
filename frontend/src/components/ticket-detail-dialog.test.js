@@ -205,3 +205,28 @@ describe("311 issue updates", () => {
     }
   });
 });
+
+it.each(["notes", "action"])(
+  "opens the %s editor for a City-closed ticket while the task is in progress",
+  async (mode) => {
+    vi.resetModules();
+    vi.doMock("./task-update-dialog.js", () => ({}));
+    const editor = { addEventListener: vi.fn(), open: vi.fn() };
+    await import("./ticket-detail-dialog.js");
+    vi.stubGlobal("document", {
+      body: { append: vi.fn() },
+      createElement: () => editor,
+    });
+    const definition = vi
+      .mocked(customElements.define)
+      .mock.calls.find(([name]) => name === "ticket-detail-dialog");
+    const Dialog = definition[1];
+    const dialog = /** @type {any} */ (new Dialog());
+    dialog._task = { status: "in_progress", taskId: "one" };
+    dialog._detail = { status: "Closed" };
+    dialog._open = true;
+    await dialog._openEditor(mode);
+    expect(editor.open).toHaveBeenCalledWith(dialog._task, mode);
+    vi.doUnmock("./task-update-dialog.js");
+  },
+);

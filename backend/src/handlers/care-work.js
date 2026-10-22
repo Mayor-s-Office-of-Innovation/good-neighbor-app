@@ -31,6 +31,8 @@ export const CARE_WORK_TYPES = new Set([
   "called_hauler",
   "cleaned_graffiti",
   "offered_help",
+  "offered_services_at_site",
+  "picked_up_needles",
   "referred_non_client",
   "called_shelter",
   "addressed_client_issue",

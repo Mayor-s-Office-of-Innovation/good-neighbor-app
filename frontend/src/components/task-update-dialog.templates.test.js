@@ -27,7 +27,7 @@ describe("task update dialog templates", () => {
     expect(markup).not.toContain(t("card.route.nonEmergency"));
     expect(markup).not.toContain("task-update__metadata");
     expect(markup).toContain('datetime="2026-10-06T20:05:00Z"');
-    expect(markup.match(/Marked as complete/g)).toHaveLength(1);
+    expect(markup.match(/Site marked as resolved/g)).toHaveLength(1);
     expect(
       taskUpdateTimeline({
         ...view,
@@ -38,10 +38,10 @@ describe("task update dialog templates", () => {
             occurredAt: view.task.completedAt,
           },
         ],
-      }).match(/Marked as complete/g),
+      }).match(/Site marked as resolved/g),
     ).toHaveLength(1);
     expect(taskUpdateTimeline({ ...view, nextToken: "older" })).not.toContain(
-      "Marked as complete",
+      "Site marked as resolved",
     );
     expect(taskUpdateTimelineTone("task_completed")).toBe("resolved");
   });
@@ -312,7 +312,7 @@ it("reuses capture with the results title and skip, then renders saved content i
     updates: [
       {
         type: "task_completed",
-        label: "Marked as complete",
+        label: "Site marked as resolved",
         occurredAt: "2026-10-08T12:00:00Z",
         notes: ["Area cleaned"],
         photoKeys: ["photo-1"],

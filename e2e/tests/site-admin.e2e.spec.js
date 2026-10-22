@@ -18,9 +18,10 @@ test.describe("site admin access", () => {
     await page.locator("#home-settings").click();
     const menu = page.getByRole("menu", { name: t("today.settings.aria") });
     await expect(menu.getByRole("menuitem")).toHaveText([
-      t("today.settings.feedback"),
+      t("access.title"),
       t("today.settings.siteAdmin"),
       t("today.settings.reports"),
+      t("today.settings.feedback"),
       t("today.settings.language"),
       t("today.settings.attributions"),
       t("today.settings.logout"),
@@ -142,4 +143,62 @@ test.describe("general site access", () => {
       page.getByRole("heading", { name: t("siteAdmin.title") }),
     ).toHaveCount(0);
   });
+});
+
+test("access links stack, collapse, disappear after enrollment, and stay hidden after reopening", async ({
+  page,
+}) => {
+  await bindSite(page);
+  const grants = [];
+  await page.route("**/app/v1/manager/staff-grants/current", (route) =>
+    route.fulfill({ json: { grants } }),
+  );
+  await page.route("**/app/v1/manager/staff-grants", async (route) => {
+    const label = route.request().postDataJSON().label;
+    const grant = {
+      grantId: `grant-${grants.length}`,
+      label,
+      status: "pending",
+      expiresAt: new Date(Date.now() + 479 * 60000).toISOString(),
+    };
+    grants.push(grant);
+    await route.fulfill({
+      status: 201,
+      json: {
+        grant,
+        enrollmentUrl: `https://example.test/#enrollment_grant=${grant.grantId}&enrollment_token=secret`,
+      },
+    });
+  });
+  await page.locator("#home-settings").click();
+  await page.locator("#settings-access").click();
+  await expect(page).toHaveURL(/\/manage-access$/);
+  const name = page.locator("#staff-device-label input");
+  for (const label of ["First phone", "Second phone"]) {
+    await name.fill(label);
+    await page.locator('#staff-grant-form button[type="submit"]').click();
+    await expect(page.locator("[data-grant-id]")).toHaveCount(grants.length);
+  }
+  const cards = page.locator("[data-grant-id]");
+  await expect(cards.first()).toHaveAttribute("open", "");
+  await expect(cards.last()).not.toHaveAttribute("open", "");
+  await expect(cards.first()).toContainText(
+    t("access.duration.hours.other", { count: 7 }),
+  );
+  await cards.last().locator("summary").focus();
+  await page.keyboard.press("Enter");
+  await expect(cards.last()).toHaveAttribute("open", "");
+  grants[0].status = "redeemed";
+  await expect(page.locator('[data-grant-id="grant-0"]')).toHaveCount(0, {
+    timeout: 12000,
+  });
+  await expect(page.locator('[data-grant-id="grant-1"]')).toHaveCount(1);
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: t("access.title"), exact: true }),
+  ).toBeVisible();
+  await expect(page.locator("[data-grant-id]")).toHaveCount(0);
+  await expect(
+    page.locator('#staff-grant-form button[type="submit"]'),
+  ).toBeEnabled();
 });

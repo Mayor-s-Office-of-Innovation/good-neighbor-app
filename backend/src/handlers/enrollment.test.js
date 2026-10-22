@@ -591,15 +591,16 @@ describe("Manager enrollment redemption", () => {
       accessLevel: "general",
     });
     const transaction = send.mock.calls[6][0];
-    expect(transaction.input.TransactItems).toHaveLength(10);
+    expect(transaction.input.TransactItems).toHaveLength(9);
     expect(transaction.input.TransactItems[5].Put.Item).toMatchObject({
       accessLevel: "general",
       label: "Night team tablet",
     });
-    expect(transaction.input.TransactItems[9].Delete.Key).toEqual({
-      pk: "SITE#site-1",
-      sk: "ACTIVE_STAFF_GRANT#manager-1",
-    });
+    // Redemption no longer requires a singleton marker, so other pending
+    // grants from this issuer cannot block this enrollment.
+    expect(JSON.stringify(transaction.input)).not.toContain(
+      "ACTIVE_STAFF_GRANT",
+    );
   });
 });
 

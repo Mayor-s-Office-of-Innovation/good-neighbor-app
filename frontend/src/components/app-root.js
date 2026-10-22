@@ -60,6 +60,7 @@ import {
   deepActiveElement,
   isEditable,
   keyboardViewport,
+  revealEditable,
 } from "../services/keyboard-viewport.js";
 import {
   showQueuedSiteSwitchSuccessToast,
@@ -78,6 +79,7 @@ const ROUTE_VIEW = [
   ["/reports/issues/", "reports-type-view"],
   ["/reports", "reports-view"],
   ["/site-admin/edit", "site-admin-edit"],
+  ["/manage-access", "site-access-view"],
   ["/site-admin/access", "site-access-view"],
   ["/site-admin", "site-admin-view"],
   ["/problem/describe", "describe-instead"],
@@ -272,10 +274,17 @@ export class AppRoot extends HTMLElement {
   }
 
   _syncKeyboardViewport() {
-    const editing = isEditable(deepActiveElement(document));
+    const active = deepActiveElement(document);
+    const editing = isEditable(active);
     this._applyKeyboardViewport(
       keyboardViewport(window.visualViewport, window.innerHeight, editing),
     );
+    if (editing && window.visualViewport?.scale === 1) {
+      requestAnimationFrame(() => {
+        if (deepActiveElement(document) !== active) return;
+        revealEditable(active, window.visualViewport);
+      });
+    }
   }
 
   /** @param {{ height: number, top: number } | null} box */
@@ -478,18 +487,24 @@ export class AppRoot extends HTMLElement {
     // Manager-only screens: site admin and the reports. The access level is
     // a navigation hint from the stored token; the backend enforces it.
     const managerOnly =
-      route.startsWith("/site-admin") || route.startsWith("/reports");
+      route.startsWith("/site-admin") ||
+      route.startsWith("/manage-access") ||
+      route.startsWith("/reports");
     if (managerOnly && !hasAdminAccess(this._site)) {
       navigate("/today");
       return;
     }
     if (
-      route.startsWith("/site-admin") &&
+      (route.startsWith("/site-admin") || route.startsWith("/manage-access")) &&
       !customElements.get("site-admin-view")
     ) {
       this._view.replaceChildren();
       void import("./site-admin.js").then(() => {
-        if (currentRoute().startsWith("/site-admin")) this._renderView();
+        if (
+          currentRoute().startsWith("/site-admin") ||
+          currentRoute().startsWith("/manage-access")
+        )
+          this._renderView();
       });
       return;
     }

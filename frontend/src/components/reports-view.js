@@ -359,6 +359,9 @@ class ReportsView extends ReportsScreen {
     this.querySelector("#settings-feedback")?.addEventListener("click", () =>
       choose(() => feedback?.open()),
     );
+    this.querySelector("#settings-access")?.addEventListener("click", () =>
+      navigate("/manage-access"),
+    );
     this.querySelector("#settings-site-admin")?.addEventListener("click", () =>
       choose(() => navigate("/site-admin")),
     );

@@ -4,6 +4,7 @@ import { t } from "../i18n/i18n.js";
 
 const {
   formatAdminDate,
+  formatCountdown,
   formatDeviceEnrollmentSummary,
   formatAdminPhone,
   validateContact,
@@ -87,4 +88,18 @@ describe("site admin form decisions", () => {
     expect(formatAdminPhone("(415) 555-0148")).toBe("415-555-0148");
     expect(formatAdminPhone("+1 415 555 0148")).toBe("415-555-0148");
   });
+});
+
+it.each([
+  [0, "minutes", 0],
+  [59, "minutes", 59],
+  [60, "hours", 1],
+  [479, "hours", 7],
+  [1439, "hours", 23],
+  [1440, "days", 1],
+  [3000, "days", 2],
+])("formats %i minutes rounded down", (minutes, unit, count) => {
+  expect(formatCountdown(minutes * 60000)).toBe(
+    t(`access.duration.${unit}`, { count }),
+  );
 });
