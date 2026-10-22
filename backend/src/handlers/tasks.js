@@ -106,6 +106,13 @@ function taskHasTicket(task, srNum) {
 
 /** @param {import("../config.js").AppConfig} config */
 async function latestUpdates(config) {
+  // Simulator edits must be visible on the next refresh; retain the production cache.
+  if (
+    /^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?=[:/])/.test(
+      config.sf311LatestUpdatesUrl || "",
+    )
+  )
+    return createSf311Client({ config }).getLatestUpdatesBySourceAgency();
   const cached = updateCache.get(GOOD_NEIGHBOR_AGENCY);
   if (cached && Date.now() - cached.at < UPDATE_CACHE_MS) return cached.body;
   if (cached?.pending) return cached.pending;

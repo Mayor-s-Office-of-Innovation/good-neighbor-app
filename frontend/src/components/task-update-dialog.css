@@ -77,28 +77,6 @@
 .task-update__section h3 {
   margin-block: 0.35rem;
 }
-.task-update__route {
-  display: flex;
-  gap: 0.55rem;
-  align-items: center;
-}
-.task-update__route::before {
-  content: "";
-  width: 1rem;
-  height: 1rem;
-  flex: 0 0 1rem;
-  border-radius: 50%;
-  background: var(--wa-color-neutral-60, #9194a2);
-}
-.task-update__route--311::before {
-  background: var(--wa-color-blue-60, #0071ec);
-}
-.task-update__route--non-emergency::before {
-  background: var(--wa-color-warning-70, #ef9d00);
-}
-.task-update__route--emergency::before {
-  background: var(--wa-color-danger-60, #f3676c);
-}
 .task-update__location,
 .task-update__description,
 .task-update time {
@@ -353,23 +331,6 @@
 }
 
 @media (max-width: 32rem) {
-  .task-update__route {
-    display: grid;
-    grid-template-columns: 1rem minmax(0, 1fr);
-    column-gap: 0.55rem;
-    row-gap: 0.25rem;
-  }
-  .task-update__route::before {
-    grid-column: 1;
-    grid-row: 1;
-  }
-  .task-update__route-label,
-  .task-update__route > strong {
-    grid-column: 2;
-  }
-  .task-update__route-separator {
-    display: none;
-  }
   .task-update__sheet {
     min-height: 88vh;
     padding: 1.25rem;

@@ -4,6 +4,8 @@ const api = vi.hoisted(() => ({
   uploadTaskUpdatePhoto: vi.fn(),
   documentTaskUpdate: vi.fn(),
   createTaskUpdate: vi.fn(),
+  getTaskUpdates: vi.fn(),
+  get311RequestDetails: vi.fn(),
 }));
 const toasts = vi.hoisted(() => ({
   showTaskUpdateErrorToast: vi.fn(),
@@ -13,7 +15,8 @@ vi.mock("../services/api.js", () => ({
   createTaskUpdate: api.createTaskUpdate,
   documentTaskUpdate: api.documentTaskUpdate,
   getMediaUrl: vi.fn(),
-  getTaskUpdates: vi.fn(),
+  getTaskUpdates: api.getTaskUpdates,
+  get311RequestDetails: api.get311RequestDetails,
   uploadTaskUpdatePhoto: api.uploadTaskUpdatePhoto,
 }));
 vi.mock("../state/toasts.js", () => toasts);
@@ -594,5 +597,94 @@ describe("results prompt opened before the completion response", () => {
     expect(dialog._pendingEvent).toEqual({ updateId: "update-1" });
     expect(dialog._photosAllowed()).toBe(false);
     expect(dialog._render).toHaveBeenCalledOnce();
+  });
+});
+
+describe("City status in issue timeline", () => {
+  it("loads current closure and City events, without duplicate events on pagination", async () => {
+    await import("./task-update-dialog.js");
+    const Dialog = /** @type {any} */ (
+      vi
+        .mocked(customElements.define)
+        .mock.calls.find(([name]) => name === "task-update-dialog")[1]
+    );
+    const dialog = new Dialog();
+    dialog._render = vi.fn();
+    const task = {
+      taskId: "129",
+      status: "in_progress",
+      appActionResults: [
+        {
+          code: "create_311_ticket",
+          payload: { tickets: [{ srNum: "LOCAL-147" }] },
+        },
+      ],
+    };
+    const event = {
+      kind: "resolved",
+      title: "Resolved",
+      closureReason: "Field Work Completed",
+      occurredAt: "2026-10-22T21:17:24Z",
+    };
+    api.getTaskUpdates.mockResolvedValue({
+      task,
+      updates: [
+        {
+          type: "311_ticket_filed",
+          label: "311 ticket filed",
+          occurredAt: "2026-10-22T20:59:33Z",
+        },
+      ],
+      nextToken: null,
+    });
+    api.get311RequestDetails.mockResolvedValue({
+      requests: [
+        {
+          taskId: "129",
+          request: {
+            status: "Closed",
+            closedReason: "8",
+            events: [{ kind: "submitted" }, event, event],
+          },
+        },
+      ],
+    });
+    await dialog.open({ ...task, ticketStatus: "On hold" });
+    expect(dialog._task.ticketStatus).toBe("Closed");
+    expect(dialog._task.ticketClosedReason).toBe("8");
+    expect(dialog._cityUpdates).toHaveLength(1);
+    expect(dialog._content()).toContain('data-status-ticker="cityClosed"');
+    expect(dialog._content()).toContain("Field Work Completed");
+    await dialog._load("older");
+    expect(dialog._cityUpdates).toHaveLength(1);
+  });
+  it("keeps app activity and the last known ticker if the City feed is unavailable", async () => {
+    await import("./task-update-dialog.js");
+    const Dialog = /** @type {any} */ (
+      vi
+        .mocked(customElements.define)
+        .mock.calls.find(([name]) => name === "task-update-dialog")[1]
+    );
+    const dialog = new Dialog();
+    dialog._render = vi.fn();
+    const task = {
+      taskId: "129",
+      status: "in_progress",
+      appActionResults: [
+        {
+          code: "create_311_ticket",
+          payload: { tickets: [{ srNum: "LOCAL-147" }] },
+        },
+      ],
+    };
+    api.getTaskUpdates.mockResolvedValue({
+      task,
+      updates: [{ label: "Saved note", text: "Local activity" }],
+    });
+    api.get311RequestDetails.mockRejectedValue(new Error("unavailable"));
+    await dialog.open({ ...task, ticketStatus: "On hold" });
+    expect(dialog._state).toBe("ready");
+    expect(dialog._task.ticketStatus).toBe("On hold");
+    expect(dialog._detail.updates[0].text).toBe("Local activity");
   });
 });

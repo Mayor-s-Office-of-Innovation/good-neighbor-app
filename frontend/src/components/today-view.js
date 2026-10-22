@@ -273,6 +273,7 @@ class TodayView extends HTMLElement {
     /** @type {Map<string, import("../domain/task-311-status.js").Ticket311State>} */
     this._311StatusByTaskId = new Map();
     this._311StatusGeneration = 0;
+    this._refresh311OnReturn = () => this._refresh311Statuses();
     this._duplicateLinks = new Map();
     this._duplicateCloseHandler = () => {
       if (
@@ -288,6 +289,8 @@ class TodayView extends HTMLElement {
   }
 
   disconnectedCallback() {
+    window.removeEventListener("focus", this._refresh311OnReturn);
+    document.removeEventListener("visibilitychange", this._refresh311OnReturn);
     this._stopDuplicates?.();
     if (this._skeletonTabClick) {
       this.removeEventListener("click", this._skeletonTabClick);
@@ -312,6 +315,8 @@ class TodayView extends HTMLElement {
   }
 
   async connectedCallback() {
+    window.addEventListener("focus", this._refresh311OnReturn);
+    document.addEventListener("visibilitychange", this._refresh311OnReturn);
     document.addEventListener("close", this._duplicateCloseHandler, true);
     if (!this._phoneSaved)
       this._phoneSaved = () => {
@@ -631,6 +636,17 @@ class TodayView extends HTMLElement {
     this._watchDuplicates(tasks);
     void this._hydrate311CardStatuses(tasks);
     void this._hydrateVisibleHomeTasks();
+  }
+
+  _refresh311Statuses() {
+    if (
+      !this.isConnected ||
+      document.visibilityState === "hidden" ||
+      !this._homeModel ||
+      document.querySelector("dialog[open]")
+    )
+      return;
+    void this._hydrate311CardStatuses(this._homeModel.tasks);
   }
 
   async _hydrate311CardStatuses(tasks) {
@@ -1702,6 +1718,7 @@ class TodayView extends HTMLElement {
     if (this._homeModel) {
       this._renderHome(this._homeModel);
       void this._hydrateVisibleHomeTasks();
+      this._refresh311Statuses();
     }
   }
 

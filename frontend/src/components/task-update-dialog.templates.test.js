@@ -23,7 +23,7 @@ describe("task update dialog templates", () => {
       mediaUrls: new Map(),
     };
     const markup = taskUpdateTimeline(view);
-    expect(markup).toContain(t("card.route.onsite"));
+    expect(markup).toContain(t("card.ticker.needsAction"));
     expect(markup).not.toContain(t("card.route.nonEmergency"));
     expect(markup).not.toContain("task-update__metadata");
     expect(markup).toContain('datetime="2026-10-06T20:05:00Z"');
@@ -57,13 +57,13 @@ describe("task update dialog templates", () => {
       originalMediaUrl: "",
       mediaUrls: new Map(),
     };
-    expect(taskUpdateTimeline(view)).toContain(t("card.route.emergency"));
+    expect(taskUpdateTimeline(view)).toContain("status-ticker--danger");
     expect(
       taskUpdateTimeline({
         ...view,
         task: { kind: "non_actionable_escalation" },
       }),
-    ).toContain(t("card.route.nonEmergency"));
+    ).toContain(t("card.ticker.needsAction"));
   });
   it("renders the timeline independently of the controller", () => {
     const markup = taskUpdateTimeline({
@@ -352,4 +352,42 @@ it("preserves a conflicted draft with an explanation and disabled save", () => {
   expect(markup).toContain(t("taskUpdate.capture.conflict"));
   expect(markup).toMatch(/data-save-notes\s+disabled/);
   expect(markup).toContain("data-skip");
+});
+
+it("uses the identical shared ticker and shows City closure details in the timeline", async () => {
+  const { statusTickerMarkup } = await import("./status-ticker.js");
+  const task = {
+    taskId: "129",
+    status: "in_progress",
+    ticketStatus: "Closed",
+    ticketClosedReason: "8",
+    createdAt: "2026-10-16",
+    appActionResults: [
+      {
+        code: "create_311_ticket",
+        payload: { tickets: [{ srNum: "LOCAL-147" }] },
+      },
+    ],
+  };
+  const markup = taskUpdateTimeline({
+    task,
+    updates: [
+      {
+        type: "city_status",
+        kind: "resolved",
+        title: "Resolved",
+        label: "Resolved",
+        closureReason: "Field Work Completed",
+        occurredAt: "2026-10-22T21:17:24Z",
+      },
+    ],
+    issueOrigin: "perimeter",
+    originalMediaUrl: "",
+    mediaUrls: new Map(),
+  });
+  expect(markup).toContain(statusTickerMarkup(task));
+  expect(markup).toContain('data-status-ticker="cityClosed"');
+  expect(markup).toContain('datetime="2026-10-22T21:17:24Z"');
+  expect(markup).toContain("Field Work Completed");
+  expect(markup).not.toContain("task-update__route");
 });

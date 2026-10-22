@@ -1,7 +1,7 @@
 import { duplicateUiEnabled } from "../services/feature-flags.js";
 import { MAX_TASK_UPDATE_TEXT } from "../domain/task-update-draft.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
-import { t } from "../i18n/i18n.js";
+import { hasKey, t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
 import { formatPacificDateTime } from "../domain/task-updates.js";
 
@@ -49,6 +49,25 @@ export function taskUpdateTimelineItem(update, task, mediaUrls, title) {
     ["duplicate_detected", "duplicate_separated"].includes(update.type)
   )
     return "";
+  const cityTitleKey = `server.sf311.eventTitle.${update.kind}`;
+  const cityLabel =
+    update.kind === "resolved"
+      ? t("card.ticker.cityClosed")
+      : hasKey(cityTitleKey)
+        ? t(cityTitleKey, {
+            value: rulebookText(update.value || "", "server.sf311"),
+          })
+        : rulebookText(update.label || "", "server.sf311");
+  const cityText = update.closureReason
+    ? [
+        t("server.sf311.eventDescription.agencySaid", {
+          value: rulebookText(update.closureReason, "server.sf311"),
+        }),
+        update.notes,
+      ]
+        .filter(Boolean)
+        .join("\n")
+    : rulebookText(update.description || "", "server.sf311");
   return html`<li
     class="ticket-timeline__item task-update__timeline-item task-update__timeline-item--${taskUpdateTimelineTone(
       update.type,
@@ -57,17 +76,22 @@ export function taskUpdateTimelineItem(update, task, mediaUrls, title) {
     <div class="ticket-timeline__content">
       <strong
         >${escapeHtml(
-          update.type === "duplicate_detected"
-            ? t("duplicate.timeline")
-            : update.type === "duplicate_separated"
-              ? t("duplicate.separatedTimeline")
-              : rulebookText(update.label, "server.taskUpdate"),
+          update.type === "city_status"
+            ? cityLabel
+            : update.type === "duplicate_detected"
+              ? t("duplicate.timeline")
+              : update.type === "duplicate_separated"
+                ? t("duplicate.separatedTimeline")
+                : rulebookText(update.label, "server.taskUpdate"),
         )}</strong
       ><time datetime="${escapeAttr(update.occurredAt)}"
         >${escapeHtml(formatPacificDateTime(update.occurredAt))}</time
       >
+      ${update.type === "city_status" && cityText
+        ? html`<p>${escapeHtml(cityText)}</p>`
+        : ""}
       ${update.text ? html`<p>${escapeHtml(update.text)}</p>` : ""}
-      ${(update.notes || [])
+      ${(update.type === "city_status" ? [] : update.notes || [])
         .map((note) => html`<p>${escapeHtml(note)}</p>`)
         .join("")}
       ${(update.photoKeys || [])
