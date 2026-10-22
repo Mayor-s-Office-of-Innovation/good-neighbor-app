@@ -111,6 +111,16 @@ describe("presignUpload", () => {
     );
     expect(ddbSend.mock.calls[0][0]).toBeInstanceOf(TransactWriteCommand);
     const reservation = ddbSend.mock.calls[0][0].input.TransactItems;
+    expect(reservation).toHaveLength(5);
+    expect(
+      /** @type {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>} */ (
+        reservation
+      ).every(
+        (op) =>
+          (op.Update?.Key || op.ConditionCheck?.Key || op.Put?.Item)?.pk ===
+          "SITE#site-1",
+      ),
+    ).toBe(true);
     expect(reservation[0].ConditionCheck.Key).toEqual({
       pk: "SITE#site-1",
       sk: "CHECK#chk_01",

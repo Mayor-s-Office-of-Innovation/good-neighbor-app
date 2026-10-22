@@ -89,7 +89,7 @@ beforeEach(() => {
 });
 
 describe("complaint upload lifecycle", () => {
-  it("creates a draft and reserves complaint/device/site/global quota before presigning", async () => {
+  it("creates a draft and reserves complaint/device/site quota before presigning", async () => {
     ddbSend.mockResolvedValueOnce({});
 
     const response = await presignComplaintArtifact(
@@ -101,7 +101,12 @@ describe("complaint upload lifecycle", () => {
     expect(response.statusCode).toBe(200);
     const transaction = ddbSend.mock.calls[0][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(5);
+    expect(transaction.input.TransactItems).toHaveLength(4);
+    expect(
+      /** @type {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>} */ (
+        transaction.input.TransactItems
+      ).every((op) => op.Update?.Key?.pk === "SITE#site-1"),
+    ).toBe(true);
     expect(transaction.input.TransactItems[0].Update).toMatchObject({
       Key: { pk: "SITE#site-1", sk: `COMPLAINT#${COMPLAINT_ID}` },
       ConditionExpression: "attribute_not_exists(pk) OR #status = :draft",

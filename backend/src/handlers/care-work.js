@@ -24,8 +24,6 @@ import {
   MAX_DEVICE_DAILY_ARTIFACTS,
   MAX_SITE_DAILY_BYTES,
   MAX_SITE_DAILY_ARTIFACTS,
-  MAX_GLOBAL_DAILY_BYTES,
-  MAX_GLOBAL_DAILY_ARTIFACTS,
 } from "./artifacts.js";
 
 export const CARE_WORK_TYPES = new Set([
@@ -261,11 +259,6 @@ export async function presignCarePhoto(event) {
                 key: { pk: sitePk(siteId), sk: `MEDIA_QUOTA#${day}#SITE` },
                 maxBytes: MAX_SITE_DAILY_BYTES,
                 maxCount: MAX_SITE_DAILY_ARTIFACTS,
-              },
-              {
-                key: { pk: `MEDIA_QUOTA#${day}`, sk: "#GLOBAL" },
-                maxBytes: MAX_GLOBAL_DAILY_BYTES,
-                maxCount: MAX_GLOBAL_DAILY_ARTIFACTS,
               },
             ].map((budget) =>
               quotaUpdate({

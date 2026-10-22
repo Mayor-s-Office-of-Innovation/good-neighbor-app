@@ -50,7 +50,7 @@ The **only** durable copy of the media is GNP's.
 - [ ] **No request/media-body logging** — the base64 image is not captured in API Gateway exec/access
   logs, our Lambda/worker logs, or (analyzer-account) Bedrock model-invocation logs.
 - [x] **Uploaded-media validation** before the analyzer call: independent byte/decode/type checks,
-  size/dimension/page caps, metadata-stripping re-encode, and per-check/device/Site/global budgets.
+  size/dimension/page caps, metadata-stripping re-encode, and per-check/device/Site budgets.
 - [x] **TLS-only** for both uploads and complaint-evidence buckets through explicit `aws:SecureTransport = false` denies.
 
 **Before go-live / any real (non-test) user data:** re-review this classification against the
