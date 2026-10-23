@@ -89,6 +89,8 @@ import {
  * @property {any[]} availableSiteUsers
  * @property {any[]} newSiteUsers
  * @property {boolean} letterEmailUncertain
+ * @property {string | null} [expandedLettersSiteId]
+ * @property {string | null} [expandedTermsSiteId]
  * @property {any[]} letterEmailHistory
  * @property {any[]} siteTerms
  * @property {any[]} managerMemberships
@@ -1648,6 +1650,10 @@ class AdminApp extends HTMLElement {
    */
   async openSite(siteId, updateUrl = true) {
     if (updateUrl) return navigate(`/sites/${encodeURIComponent(siteId)}`);
+    if (this.state.site?.siteId !== siteId) {
+      this.state.expandedLettersSiteId = null;
+      this.state.expandedTermsSiteId = null;
+    }
     const [site, memberships, grants, devices, terms] = await Promise.all([
       adminApi.getSite(siteId),
       adminApi.listManagerMemberships(siteId),
@@ -1761,6 +1767,7 @@ class AdminApp extends HTMLElement {
         `/sites/${encodeURIComponent(siteId)}?section=compliance`,
       );
       await this.openSite(siteId, false);
+      this.state.expandedLettersSiteId = siteId;
       this.state.siteSaveMessage = t("admin.letters.pending");
       this.render();
       void this.refreshPendingComplianceLetter(siteId);
@@ -1870,6 +1877,7 @@ class AdminApp extends HTMLElement {
       await adminApi.endSiteTerms(siteId);
       feedback.success();
       await this.openSite(siteId, false);
+      this.state.expandedTermsSiteId = siteId;
       this.state.siteSaveMessage = "";
       this.render();
     } catch (error) {
@@ -3592,6 +3600,32 @@ class AdminApp extends HTMLElement {
         );
       },
     );
+    this.querySelectorAll("[data-compliance-reason]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const dialog = this.querySelector("#compliance-reasons-dialog");
+        dialog?.showModal();
+      });
+    });
+    const reasonsDialog = this.querySelector("#compliance-reasons-dialog");
+    const outsideReasonsDialog = (event) => {
+      if (!reasonsDialog || event.target !== reasonsDialog) return false;
+      const bounds = reasonsDialog.getBoundingClientRect();
+      return (
+        event.clientX < bounds.left ||
+        event.clientX > bounds.right ||
+        event.clientY < bounds.top ||
+        event.clientY > bounds.bottom
+      );
+    };
+    let reasonsBackdropPressed = false;
+    reasonsDialog?.addEventListener("pointerdown", (event) => {
+      reasonsBackdropPressed = outsideReasonsDialog(event);
+    });
+    reasonsDialog?.addEventListener("click", (event) => {
+      if (reasonsBackdropPressed && outsideReasonsDialog(event))
+        reasonsDialog.close();
+      reasonsBackdropPressed = false;
+    });
     this.querySelectorAll("[data-close-dialog]").forEach((button) => {
       button.addEventListener("click", () => button.closest("dialog")?.close());
     });
@@ -3681,7 +3715,23 @@ class AdminApp extends HTMLElement {
         }
       },
     );
-    let compliancePeriodSaved = false;
+    this.querySelector("[data-site-terms]")?.addEventListener(
+      "toggle",
+      (event) => {
+        if (!event.currentTarget.isConnected) return;
+        this.state.expandedTermsSiteId = event.currentTarget.open
+          ? this.state.site.siteId
+          : null;
+      },
+    );
+    this.querySelector("[data-site-letters]")?.addEventListener(
+      "toggle",
+      (event) => {
+        this.state.expandedLettersSiteId = event.currentTarget.open
+          ? this.state.site.siteId
+          : null;
+      },
+    );
     this.querySelectorAll("#site-terms-form, #site-compliance-form").forEach(
       (form) =>
         form.addEventListener("submit", async (e) => {
@@ -3699,7 +3749,7 @@ class AdminApp extends HTMLElement {
             saveButton.textContent = "Saving…";
           }
           try {
-            compliancePeriodSaved = await this.createSiteTerms(currentForm);
+            await this.createSiteTerms(currentForm);
           } catch (err) {
             const errorMessage = showFormSaveError(
               currentForm,
@@ -3741,20 +3791,24 @@ class AdminApp extends HTMLElement {
           }
         }),
     );
-    const requirementToggle = this.querySelector("#perimeter-checks-required");
+
     const newPeriodDialog = this.querySelector("#new-checks-period-dialog");
     const endPeriodDialog = this.querySelector("#end-checks-period-dialog");
     const requiredChecks = /** @type {{ value?: string } | null} */ (
       this.querySelector("wa-number-input[name='terms-checks-per-day']")
     );
     if (requiredChecks && !requiredChecks.value) requiredChecks.value = "3";
-    requirementToggle?.addEventListener("change", () => {
-      if (requirementToggle.checked) {
+    this.querySelector("[data-require-checks]")?.addEventListener(
+      "click",
+      () => {
         newPeriodDialog?.showModal();
         newPeriodDialog?.querySelector("wa-checkbox")?.focus();
-      } else {
-        endPeriodDialog?.showModal();
-      }
+      },
+    );
+    this.querySelector("[data-end-checks]")?.addEventListener("click", () => {
+      endPeriodDialog.returnValue = "";
+      endPeriodDialog.showModal();
+      endPeriodDialog.querySelector('[value="cancel"]')?.focus();
     });
     const syncPeriodFields = () => {
       const form = this.querySelector("#site-compliance-form");
@@ -3819,7 +3873,6 @@ class AdminApp extends HTMLElement {
       const form = this.querySelector("#site-compliance-form");
       if (form instanceof HTMLFormElement && newPeriodDialog) {
         restoreComplianceDraft(form, draft);
-        if (requirementToggle) requirementToggle.checked = true;
         // Web Awesome controls finish their internal render asynchronously.
         requestAnimationFrame(() => {
           if (
@@ -3847,19 +3900,12 @@ class AdminApp extends HTMLElement {
         newPeriodDialog?.close();
       },
     );
-    newPeriodDialog?.addEventListener("close", () => {
-      if (!compliancePeriodSaved && requirementToggle) {
-        requirementToggle.checked = false;
-      }
-    });
     endPeriodDialog?.addEventListener("close", () => {
       if (endPeriodDialog.returnValue === "confirm") {
         this.endSiteTerms().catch((error) => {
           this.state.error = error.message;
           this.render();
         });
-      } else if (requirementToggle) {
-        requirementToggle.checked = true;
       }
     });
     this.querySelector("#site-perimeter-form")?.addEventListener(
@@ -4797,7 +4843,7 @@ function siteSectionView(state, section, subview = "") {
   if (section === "oversight")
     return `${siteOversightView(state)}${state.siteSaveMessage ? `<p class="success" role="status">${escapeHtml(state.siteSaveMessage)}</p>` : ""}`;
   if (section === "compliance") {
-    return `${siteComplianceSummaryView(state)}${state.siteSaveMessage ? `<p class="success" role="status">${escapeHtml(state.siteSaveMessage)}</p>` : ""}${siteTermsView(state)}${siteLettersView(state)}${sitePerimeterView(state)}`;
+    return `${siteComplianceSummaryView(state)}${state.siteSaveMessage ? `<p class="success" role="status">${escapeHtml(state.siteSaveMessage)}</p>` : ""}${siteTermsView(state)}${siteLettersView(state)}${sitePerimeterView(state)}${complianceReasonsDialog()}`;
   }
   if (section === "access") return siteAccessView(state);
   return `${siteEditor(state)}
@@ -4838,8 +4884,10 @@ function siteTermsView(state) {
   const active = activeSiteTerms(terms);
   const history = terms.filter((term) => term !== active);
   return `<section class="subsection" aria-labelledby="terms-title">
-    <div><h2 id="terms-title">Past perimeter check compliance periods</h2></div>
-    ${termsHistory(history, "No past perimeter check compliance periods.")}
+    <details data-site-terms ${state.expandedTermsSiteId === state.site.siteId ? "open" : ""}>
+      <summary><h2 id="terms-title">${escapeHtml(t("admin.compliance.pastPeriods"))}</h2></summary>
+      ${termsHistory(history, "No past perimeter check compliance periods.", true)}
+    </details>
   </section>`;
 }
 
@@ -4850,28 +4898,29 @@ function siteLettersView(state) {
   const emails = [...(state.letterEmailHistory || [])].sort(
     (a, b) => a.number - b.number,
   );
-  return `<section class="subsection" aria-labelledby="letters-title">
-    <h2 id="letters-title">Perimeter check letters</h2>
+  return `<section class="subsection" aria-labelledby="letters-title"><details data-site-letters ${state.expandedLettersSiteId === site.siteId ? "open" : ""}>
+    <summary><h2 id="letters-title">${escapeHtml(t("admin.letters.title"))}</h2></summary>
     ${current ? `<div class="compliance-letter-preview">${current.previewUrl && current.url ? `<a class="compliance-letter-preview__thumbnail" href="${escapeHtml(current.url)}" target="_blank" rel="noopener" aria-label="Open ${escapeHtml(current.fileName || "the current perimeter check letter")}"><img src="${escapeHtml(current.previewUrl)}" alt="" loading="lazy" /></a>` : ""}<p>Current letter: ${current.url ? `<a href="${escapeHtml(current.url)}" target="_blank" rel="noopener">${escapeHtml(current.fileName || "Open PDF")}</a>` : escapeHtml(current.fileName || current.status || "Generating")}</p>${current.termsVersionId ? `<button type="button" class="btn-secondary" data-resend-letter>${escapeHtml(t("admin.letters.resend"))}</button>` : ""}</div>` : `<p class="${state.site?.letterState === "draft_pending" ? "" : "empty-state"}">${state.site?.letterState === "draft_pending" ? "The letter is being generated." : "No letter has been generated yet"}</p>`}
     <h3>Past letters</h3>
     ${past.length ? `<ul>${past.map((letter) => `<li>${letter.url ? `<a href="${escapeHtml(letter.url)}" target="_blank" rel="noopener">${escapeHtml(letter.fileName || letter.createdAt || "Previous letter")}</a>` : escapeHtml(letter.fileName || letter.createdAt || "Previous letter")}</li>`).join("")}</ul>` : '<p class="empty-state">No past letters.</p>'}
     <h3>${escapeHtml(t("admin.letters.emailHistory"))}</h3>
     ${state.letterEmailUncertain ? `<p class="error" role="alert">${escapeHtml(t("admin.letters.deliveryUncertain"))}</p>` : ""}
     ${emails.length ? `<div class="table-wrap"><table><thead><tr><th scope="col">#</th><th scope="col">${escapeHtml(t("admin.letters.letterLink"))}</th><th scope="col">${escapeHtml(t("admin.letters.sentTo"))}</th><th scope="col">${escapeHtml(t("admin.letters.dateSent"))}</th></tr></thead><tbody>${emails.map((email) => `<tr><td>${email.number}</td><td><a href="${escapeHtml(email.letter.url)}" target="_blank" rel="noopener">${escapeHtml(email.letter.fileName)}</a></td><td>${(email.recipients || []).map((address) => escapeHtml(address)).join("<br>") || "—"}</td><td>${escapeHtml(formatTimestamp(email.sentAt))}${email.provider === "local-preview" ? ` (${escapeHtml(t("admin.letters.localPreview"))})` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<p class="empty-state">${escapeHtml(t("admin.letters.noEmails"))}</p>`}
-  </section>`;
+  </details></section>`;
 }
 
-/** @param {any[]} terms @param {string} [emptyMessage] */
+/** @param {any[]} terms @param {string} [emptyMessage] @param {boolean} [past] */
 function termsHistory(
   terms,
   emptyMessage = "No effective-dated terms have been added.",
+  past = false,
 ) {
   if (!terms.length)
     return `<p class="empty-state">${escapeHtml(emptyMessage)}</p>`;
-  return `<div class="table-wrap"><table><thead><tr><th>Starts</th><th>Ends</th><th>Reasons</th><th>${escapeHtml(t("siteAdmin.compliance.enhancedMonitoring"))}</th><th>Checks/day</th><th>Created</th></tr></thead><tbody>${terms
+  return `<div class="table-wrap"><table class="compliance-terms-table"><colgroup><col class="compliance-terms-date"><col class="compliance-terms-date"><col class="compliance-terms-reasons"><col class="compliance-terms-monitoring"><col class="compliance-terms-cadence"><col class="compliance-terms-created"></colgroup><thead><tr><th>${escapeHtml(t("admin.compliance.started"))}</th><th>${escapeHtml(t(past ? "admin.compliance.ended" : "admin.compliance.ends"))}</th><th>${escapeHtml(t("admin.compliance.reasonsGiven"))}</th><th>${escapeHtml(t("siteAdmin.compliance.enhancedMonitoring"))}</th><th>Checks/day</th><th>Created</th></tr></thead><tbody>${terms
     .map(
       (term) =>
-        `<tr><td>${escapeHtml(term.effectiveStart)}</td><td>${escapeHtml(term.endedOn || term.periodEnd || "Until further notice")}</td><td>${escapeHtml((term.reasons || []).join(", ") || "Legacy period")}</td><td>${escapeHtml(t(term.underEnhancedMonitoring ? "admin.compliance.yes" : "admin.compliance.no"))}</td><td>${escapeHtml(term.requiredChecksPerDay)}</td><td>${escapeHtml(formatTimestamp(term.createdAt))}</td></tr>`,
+        `<tr><td>${escapeHtml(term.effectiveStart)}</td><td>${escapeHtml(term.endedOn || term.periodEnd || (past ? "Until further notice" : t("admin.compliance.noEndDate")))}</td><td>${(term.reasons || []).length ? term.reasons.map((reason) => `<button type="button" class="btn-link compliance-reason-link" data-compliance-reason="${escapeHtml(reason)}" aria-haspopup="dialog" aria-controls="compliance-reasons-dialog" aria-label="${escapeHtml(t("admin.compliance.viewReason", { number: reason }))}">${escapeHtml(reason)}</button>`).join(", ") : "Legacy period"}</td><td>${escapeHtml(t(term.underEnhancedMonitoring ? "admin.compliance.yes" : "admin.compliance.no"))}</td><td>${escapeHtml(term.requiredChecksPerDay)}</td><td>${escapeHtml(formatTimestamp(term.createdAt))}</td></tr>`,
     )
     .join("")}</tbody></table></div>`;
 }
@@ -6497,22 +6546,22 @@ function siteComplianceSummaryView(state) {
   );
   const active = activeSiteTerms(sortedTerms);
   const missingLetterDetails = complianceLetterDetailsMissing(state);
-  return `<section class="site-details-form" aria-labelledby="compliance-title">
-    <h2 id="compliance-title">Perimeter checks required</h2>
-    <wa-checkbox id="perimeter-checks-required" ${active ? "checked" : ""} ${missingLetterDetails && !active ? "disabled" : ""} ${missingLetterDetails ? 'aria-describedby="perimeter-checks-prerequisite-error"' : ""}>Require perimeter checks for this site</wa-checkbox>
+  return `<section class="site-details-form compliance-status" aria-labelledby="compliance-title">
+    <h2 id="compliance-title">${escapeHtml(t("admin.compliance.statusTitle"))}</h2>
+    ${active ? `<div class="compliance-status-row"><p>${escapeHtml(t("admin.compliance.active"))}</p><button type="button" class="btn-danger" data-end-checks>${escapeHtml(t("admin.compliance.cancelRequirement"))}</button></div>` : `<p>${escapeHtml(t("admin.compliance.inactive"))}</p><button type="button" class="btn-primary" data-require-checks ${missingLetterDetails ? 'disabled aria-describedby="perimeter-checks-prerequisite-error"' : ""}>${escapeHtml(t("admin.compliance.requireChecks"))}</button>`}
     ${missingLetterDetails ? '<p id="perimeter-checks-prerequisite-error" class="error compliance-prerequisite-error" role="alert">Complete the Site manager, address, department, and City program manager contact details before requiring checks.</p>' : ""}
-    ${active ? termsHistory([active]) : '<p class="empty-state">There is no current perimeter check compliance period.</p>'}
+    ${active ? termsHistory([active]) : ""}
   </section>
   ${newChecksPeriodDialog(state)}
   <dialog id="end-checks-period-dialog" class="places-modal" aria-labelledby="end-checks-period-title" aria-describedby="end-checks-period-copy">
     <form class="places-modal__card" method="dialog">
       <div class="places-modal__copy">
-        <h2 id="end-checks-period-title">Stop requiring perimeter checks?</h2>
-        <p id="end-checks-period-copy">The site will no longer be required to complete perimeter checks.</p>
+        <h2 id="end-checks-period-title">${escapeHtml(t("admin.compliance.endTitle"))}</h2>
+        <p id="end-checks-period-copy">${escapeHtml(t("admin.compliance.endConfirmation"))}</p>
       </div>
       <div class="places-modal__actions">
-        <button class="btn-danger" value="confirm">No longer require checks</button>
-        <button class="btn-secondary" value="cancel">Continue to require checks</button>
+        <button class="btn-danger" value="confirm">${escapeHtml(t("admin.compliance.endRequirement"))}</button>
+        <button class="btn-secondary" value="cancel">${escapeHtml(t("admin.compliance.keepRequirement"))}</button>
       </div>
     </form>
   </dialog>`;
@@ -6532,25 +6581,40 @@ function complianceLetterDetailsMissing(state) {
   );
 }
 
+/** The same numbered descriptions appear in setup and the history reference. */
+function complianceReasons() {
+  return ["1", "2", "3", "4", "6"].map((number) => [
+    number,
+    t(`admin.compliance.reason${number}`),
+  ]);
+}
+
+function complianceReasonsDialog() {
+  return `<dialog id="compliance-reasons-dialog" class="places-modal compliance-reasons-dialog" aria-labelledby="compliance-reasons-title">
+    <form class="places-modal__card" method="dialog">
+      <div class="compliance-reasons-dialog__close-row">
+        <button class="btn-icon" type="submit" value="close" aria-label="${escapeHtml(t("common.close"))}" autofocus><wa-icon name="xmark" aria-hidden="true"></wa-icon></button>
+      </div>
+      <div class="places-modal__copy">
+        <h2 id="compliance-reasons-title">${escapeHtml(t("admin.compliance.reasonsTitle"))}</h2>
+        <ol class="compliance-reasons-list">${complianceReasons()
+          .map(
+            ([number, text]) =>
+              `<li value="${number}">${escapeHtml(text)}</li>`,
+          )
+          .join("")}</ol>
+      </div>
+    </form>
+  </dialog>`;
+}
+
 function newChecksPeriodDialog(state) {
   const mappedReason = {
     permanent_supportive_housing: "2",
     shelter: "3",
     drop_in: "4",
   }[state.site?.siteType || ""];
-  const reasons = [
-    [
-      "1",
-      "Recurring or unresolved Good Neighbor concerns have been identified at this site.",
-    ],
-    ["2", "Site is a Permanent Supportive Housing property."],
-    ["3", "Site is a Shelter."],
-    [
-      "4",
-      "Site is a drop-in center characterized by frequent, high-volume visitor traffic, where continuous public-facing conditions make more frequent documentation reasonably necessary.",
-    ],
-    ["6", t("admin.compliance.enhancedReason")],
-  ];
+  const reasons = complianceReasons();
   return `<dialog id="new-checks-period-dialog" class="places-modal compliance-period-dialog" aria-labelledby="new-checks-period-title">
     <form id="site-compliance-form" class="places-modal__card site-details-form" novalidate>
       <div class="places-modal__copy">
@@ -6561,14 +6625,15 @@ function newChecksPeriodDialog(state) {
           ${reasons.map(([value, label]) => `<wa-checkbox name="terms-reason" value="${value}" ${mappedReason === value ? "checked" : ""}>${escapeHtml(label)}</wa-checkbox>`).join("")}
         </fieldset>
         <div class="form-grid form-grid--one compliance-period-fields">
-          <wa-select name="terms-site-manager-id" label="Site manager for this letter" placeholder="Choose a Site manager" hint="${escapeHtml(t("admin.compliance.letterRecipientsHint"))}" required>
-            ${state.assignedUsers.map((manager) => `<wa-option value="${escapeHtml(manager.userId)}" ${state.assignedUsers.length === 1 ? "selected" : ""}>${escapeHtml(`${manager.firstName || ""} ${manager.lastName || ""}`.trim())}</wa-option>`).join("")}
-          </wa-select>
-          <wa-input name="terms-expiry" type="date" label="Define when the check requirement will end" data-expiry-field hidden></wa-input>
-          <wa-number-input name="terms-checks-per-day" label="Required checks per day" min="1" max="100" step="1" value="3" required>
+          <wa-number-input name="terms-checks-per-day" label="${escapeHtml(t("siteAdmin.compliance.checksPerDay"))}" min="1" max="8" step="1" value="3" required>
             <wa-icon slot="decrement-icon" name="minus" aria-hidden="true"></wa-icon>
             <wa-icon slot="increment-icon" name="plus" aria-hidden="true"></wa-icon>
           </wa-number-input>
+          <wa-select name="terms-site-manager-id" label="${escapeHtml(t("admin.compliance.addressLetterTo"))}" placeholder="Choose a Site manager" hint="${escapeHtml(t("admin.compliance.letterRecipientsHint"))}" required>
+            ${state.assignedUsers.map((manager) => `<wa-option value="${escapeHtml(manager.userId)}" ${state.assignedUsers.length === 1 ? "selected" : ""}>${escapeHtml(`${manager.firstName || ""} ${manager.lastName || ""}`.trim())}</wa-option>`).join("")}
+          </wa-select>
+          <wa-input name="terms-expiry" type="date" label="Define when the check requirement will end" data-expiry-field hidden></wa-input>
+
         </div>
         <p class="error site-details-form__message compliance-period-error" role="alert" data-form-save-error hidden></p>
       </div>
@@ -6888,8 +6953,8 @@ function compliancePeriodValidationError(form) {
     return "Enter the last day checks are required for the selected reasons.";
   }
   const checksPerDay = Number(controlValue(form, "terms-checks-per-day"));
-  if (!Number.isInteger(checksPerDay) || checksPerDay < 1) {
-    return "Enter at least one required check per day.";
+  if (!Number.isInteger(checksPerDay) || checksPerDay < 1 || checksPerDay > 8) {
+    return t("admin.compliance.invalidCadence");
   }
   return "";
 }

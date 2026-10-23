@@ -1,3 +1,4 @@
+import { closeComplianceTerms } from "../domain/end-compliance-terms.js";
 import { sitePrimaryContactChange } from "../lib/site-primary-contact.js";
 import { queryAllItems } from "../lib/query-all-items.js";
 import { deactivateManagerMembershipRecord } from "./admin-manager-memberships.js";
@@ -204,7 +205,11 @@ export const createSiteTerms = (event) =>
       return jsonResponse(400, { error: "site_manager_required" });
     }
 
-    if (!Number.isInteger(requiredChecksPerDay) || requiredChecksPerDay < 1) {
+    if (
+      !Number.isInteger(requiredChecksPerDay) ||
+      requiredChecksPerDay < 1 ||
+      requiredChecksPerDay > 8
+    ) {
       return jsonResponse(400, { error: "invalid_check_cadence" });
     }
     if (body.periodEnd && !periodEnd) {
@@ -551,73 +556,7 @@ export const endSiteTerms = (event) =>
         "central-admin",
     );
     try {
-      await ddb.send(
-        new TransactWriteCommand({
-          TransactItems: [
-            {
-              Update: {
-                TableName: tableName,
-                Key: { pk: active.pk, sk: active.sk },
-                UpdateExpression:
-                  "SET expiresOnExclusive = :today, endedOn = :today, endedAt = :now, endedBy = :actor, #status = :ended",
-                ConditionExpression:
-                  "attribute_not_exists(expiresOnExclusive) OR expiresOnExclusive > :today",
-                ExpressionAttributeNames: { "#status": "status" },
-                ExpressionAttributeValues: {
-                  ":today": today,
-                  ":now": now,
-                  ":actor": actor,
-                  ":ended": "expired",
-                },
-              },
-            },
-            {
-              Update: {
-                TableName: tableName,
-                Key: { pk: `SITE#${siteId}`, sk: "#META" },
-                UpdateExpression:
-                  "SET compliance = :compliance, complianceTermsUpdatedAt = :now, updatedAt = :now, complianceLetters = :letters, letterState = :archived REMOVE latestComplianceTermsVersionId",
-                ConditionExpression:
-                  "latestComplianceTermsVersionId = :version AND " +
-                  (siteResult.Item.complianceLetters
-                    ? "complianceLetters = :observedLetters"
-                    : "attribute_not_exists(complianceLetters)"),
-                ExpressionAttributeValues: {
-                  ":compliance": {
-                    perimeterChecksRequired: false,
-                    underEnhancedMonitoring: false,
-                  },
-                  ":letters": {
-                    current: null,
-                    past: [
-                      ...(siteResult.Item.complianceLetters?.current
-                        ? [siteResult.Item.complianceLetters.current]
-                        : []),
-                      ...(siteResult.Item.complianceLetters?.past || []),
-                    ],
-                  },
-                  ":archived": "archived",
-                  ...(siteResult.Item.complianceLetters
-                    ? { ":observedLetters": siteResult.Item.complianceLetters }
-                    : {}),
-                  ":now": now,
-                  ":version": active.termsVersionId,
-                },
-              },
-            },
-            put({
-              pk: `SITE#${siteId}`,
-              sk: `AUDIT#${now}#${randomUUID()}`,
-              type: "siteAuditEvent",
-              eventType: "perimeter_checks_period_ended",
-              siteId,
-              termsVersionId: active.termsVersionId,
-              actor,
-              createdAt: now,
-            }),
-          ],
-        }),
-      );
+      await closeComplianceTerms(siteResult.Item, active, today, now, actor);
     } catch (error) {
       if (
         error instanceof Error &&

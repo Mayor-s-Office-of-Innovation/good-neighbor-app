@@ -130,3 +130,29 @@ it("does not release a claim after receipt persistence fails", async () => {
     ),
   ).toBe(false);
 });
+
+it("delivers end notices without a PDF or incrementing letter history, and resumes accepted delivery without resending", async () => {
+  await deliverComplianceLetter({ ...job, noticeOnly: true }, email, {});
+  expect(getObjectBytes).not.toHaveBeenCalled();
+  expect(mail).toHaveBeenCalledWith(
+    expect.objectContaining({ ...email, attachments: [] }),
+  );
+  expect(send.mock.calls.some(([c]) => c instanceof TransactWriteCommand)).toBe(
+    false,
+  );
+  expect(
+    send.mock.calls[send.mock.calls.length - 1][0].input
+      .ExpressionAttributeValues[":completed"],
+  ).toBe("completed");
+  mail.mockClear();
+  await deliverComplianceLetter(
+    {
+      ...job,
+      noticeOnly: true,
+      receipt: { sentAt: "now", messageId: "accepted" },
+    },
+    email,
+    {},
+  );
+  expect(mail).not.toHaveBeenCalled();
+});

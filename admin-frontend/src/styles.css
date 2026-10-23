@@ -1922,3 +1922,112 @@ app-toasts {
   color: var(--danger);
   flex-shrink: 0;
 }
+
+.compliance-status-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+.compliance-period-fields wa-number-input::part(number-input) {
+  max-inline-size: 9rem;
+}
+[data-site-letters] > summary,
+[data-site-terms] > summary {
+  cursor: pointer;
+}
+[data-site-letters] > summary h2,
+[data-site-terms] > summary h2 {
+  display: inline;
+}
+[data-site-letters] > summary:focus-visible,
+[data-site-terms] > summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 4px;
+}
+.compliance-period-fields wa-number-input::part(input) {
+  padding-inline: 0.25rem;
+  text-align: center;
+}
+
+.compliance-reasons-dialog {
+  width: min(42rem, calc(100vw - 2rem));
+  max-width: 42rem;
+}
+.compliance-reasons-dialog .places-modal__copy {
+  text-align: start;
+}
+.compliance-reasons-list {
+  padding-inline-start: 1.5rem;
+  display: grid;
+  gap: 0.75rem;
+}
+.compliance-reasons-list li::marker {
+  font-weight: 700;
+}
+.compliance-reason-link {
+  min-inline-size: 1.5rem;
+  min-block-size: 1.5rem;
+  padding: 0;
+  min-height: 24px;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--text);
+  justify-content: center;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.compliance-terms-table th,
+.compliance-terms-table td {
+  vertical-align: middle;
+}
+
+.compliance-reasons-dialog__close-row {
+  display: flex;
+  justify-content: flex-end;
+}
+.compliance-reasons-dialog .places-modal__copy {
+  align-items: stretch;
+}
+.compliance-reasons-dialog h2 {
+  margin: 0;
+}
+
+.compliance-terms-table {
+  table-layout: fixed;
+  min-width: 52rem;
+}
+.compliance-terms-date {
+  width: 15%;
+}
+.compliance-terms-reasons {
+  width: 15%;
+}
+.compliance-terms-monitoring {
+  width: 20%;
+}
+.compliance-terms-cadence {
+  width: 12%;
+}
+.compliance-terms-created {
+  width: 23%;
+}
+
+.site-details-form.compliance-status {
+  max-width: none;
+  width: 100%;
+}
+
+.compliance-reasons-dialog .places-modal__card {
+  gap: 8px;
+}
+.compliance-reasons-dialog__close-row .btn-icon {
+  border-radius: 50%;
+  background: var(--wa-color-neutral-fill-quiet);
+}
+
+[data-site-terms][open] > summary {
+  margin-block-end: 16px;
+}
