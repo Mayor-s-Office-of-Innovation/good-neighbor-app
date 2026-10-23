@@ -54,12 +54,11 @@ module "app" {
   provider_app_url                       = "https://${local.frontend_domain_name}/"
   cognito_admin_app_url                  = "https://goodneighbor-compliance.sf.gov/"
 
-  # Bootstrap empty credential containers before enabling production delivery.
-  # Populate both secrets out-of-band, then enable the relay and Cognito sender.
+  # Both SMTP secrets are populated out-of-band before enabling delivery.
   provision_city_smtp_relay_foundation = true
-  enable_city_smtp_relay               = false
+  enable_city_smtp_relay               = true
   city_smtp_from_address               = "goodneighbor@sf.gov"
-  enable_cognito_custom_email_sender   = false
+  enable_cognito_custom_email_sender   = true
 
   providers = {
     aws           = aws
