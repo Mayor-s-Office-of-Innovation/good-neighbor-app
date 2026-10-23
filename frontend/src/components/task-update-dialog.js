@@ -78,6 +78,10 @@ export class TaskUpdateDialog extends HTMLElement {
 
   /** @param {Record<string, any>} task @param {string} [mode] */
   async open(task, mode = "timeline") {
+    if (mode === "resolve") {
+      this.markResolved(task);
+      return;
+    }
     this._task = task;
     this._cityUpdates = [];
     this._results = false;
@@ -87,6 +91,33 @@ export class TaskUpdateDialog extends HTMLElement {
     this._mode = mode;
     this._resetDraft();
     await this._load();
+  }
+
+  /** Resolve immediately; documentation never holds the status update. */
+  markResolved(task = this._task) {
+    if (!task || task.status !== "in_progress" || this._resolving) return;
+    this._resolving = true;
+    const completion = createTaskUpdate(task.taskId, { type: "issue_resolved" })
+      .then(async (response) => {
+        this._task = { ...task, ...response.task };
+        this._notifyUpdated();
+        const detail = await getTaskUpdates(task.taskId).catch(() => null);
+        return {
+          task: {
+            ...this._task,
+            ...detail?.task,
+            latestUpdateId: response.update.updateId,
+          },
+        };
+      })
+      .catch((error) => {
+        showTaskUpdateErrorToast(error);
+        return { task: null, failed: true };
+      })
+      .finally(() => {
+        this._resolving = false;
+      });
+    this.openResults(task, completion);
   }
 
   /**
@@ -275,9 +306,7 @@ export class TaskUpdateDialog extends HTMLElement {
       );
     const task = this._task || {};
     return taskUpdateTimeline({
-      task: submitted311Ticket(task)
-        ? { ...task, presencePromptDue: false }
-        : task,
+      task,
       updates: [...(this._detail?.updates || []), ...this._cityUpdates],
       issueOrigin: this._detail?.issueOrigin || "perimeter",
       originalMediaUrl:
@@ -371,6 +400,10 @@ export class TaskUpdateDialog extends HTMLElement {
     root.querySelectorAll("[data-mode]").forEach((element) => {
       const button = /** @type {HTMLButtonElement} */ (element);
       button.addEventListener("click", () => {
+        if (button.dataset.mode === "resolve") {
+          this.markResolved();
+          return;
+        }
         this._mode = button.dataset.mode || "timeline";
         this._resetDraft();
         this._render();
@@ -781,6 +814,7 @@ export class TaskUpdateDialog extends HTMLElement {
   }
 
   _dismiss() {
+    const results = this._results;
     ++this._loadGeneration;
     this._resetDraft();
     this._completion = null;
@@ -791,7 +825,12 @@ export class TaskUpdateDialog extends HTMLElement {
     /** @type {HTMLDialogElement | null} */ (
       this.querySelector("dialog.task-update")
     )?.close();
-    this.dispatchEvent(new CustomEvent("taskupdateclosed", { bubbles: true }));
+    this.dispatchEvent(
+      new CustomEvent("taskupdateclosed", {
+        bubbles: true,
+        detail: { results },
+      }),
+    );
   }
 
   async _sealPendingEvent() {

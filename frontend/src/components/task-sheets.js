@@ -92,7 +92,13 @@ export class TaskSheets {
       dialog.addEventListener("taskupdated", () => {
         void this._options.reload?.();
       });
-      dialog.addEventListener("taskupdateclosed", () => {
+      dialog.addEventListener("taskupdateclosed", (event) => {
+        // Resolution documentation may still be saving after dismissal.
+        // Keep that controller single-use so another card cannot replace its state.
+        if (/** @type {CustomEvent} */ (event).detail?.results) {
+          this._updateDialog.remove();
+          this._updateDialog = null;
+        }
         const returnFocus = this._updateReturnFocus;
         this._updateReturnFocus = null;
         void Promise.resolve(this._options.reload?.()).then(() => {

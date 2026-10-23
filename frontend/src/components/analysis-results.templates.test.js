@@ -1308,3 +1308,21 @@ it.each([false, true])(
     setDuplicateUiSite(null);
   },
 );
+
+it.each(["in_progress", "open", "completed"])(
+  "shows permanent resolution only on in-progress cards (%s)",
+  (status) => {
+    const markup = taskAnalysisCard({
+      task: { taskId: "test", status, label: "Test" },
+      action: { kind: "update", label: "Updates" },
+      statusLabel: "",
+    });
+    expect(markup.includes('data-action="mark-resolved"')).toBe(
+      status === "in_progress",
+    );
+    if (status === "in_progress")
+      expect(markup.indexOf('data-action="mark-resolved"')).toBeLessThan(
+        markup.indexOf("analysis-card__updates"),
+      );
+  },
+);

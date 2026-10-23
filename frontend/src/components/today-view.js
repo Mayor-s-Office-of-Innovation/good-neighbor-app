@@ -2290,6 +2290,8 @@ class TodayView extends HTMLElement {
         onOriginal: (original, trigger) =>
           void this._openTaskUpdate(original, trigger),
       });
+    } else if (action === "mark-resolved") {
+      void this._taskSheets().openUpdates(task, btn, "resolve");
     } else if (action === "update") {
       void this._openTaskUpdate(task, btn);
     } else if (action === "view311") {
