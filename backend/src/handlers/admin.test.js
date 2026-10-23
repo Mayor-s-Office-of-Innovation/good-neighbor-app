@@ -681,6 +681,7 @@ describe("provider and site management", () => {
             bindingId: "binding-1",
             siteId: "site-1",
             label: "Current tablet",
+            membershipId: "member-1",
             accessLevel: "manager",
             status: "active",
           },
@@ -697,7 +698,11 @@ describe("provider and site management", () => {
             status: "active",
           },
         ],
-      });
+      })
+      .mockResolvedValueOnce({
+        Items: [{ membershipId: "member-1", email: "manager@example.org" }],
+      })
+      .mockResolvedValueOnce({ Items: [] });
 
     const res = await call(
       listDevices,
@@ -709,6 +714,7 @@ describe("provider and site management", () => {
       expect.objectContaining({
         bindingId: "binding-1",
         label: "Current tablet",
+        managerEmail: "manager@example.org",
         legacy: false,
       }),
       expect.objectContaining({
@@ -717,6 +723,44 @@ describe("provider and site management", () => {
         legacy: true,
       }),
     ]);
+  });
+
+  it("includes team nicknames and enrolling manager email without exposing grants", async () => {
+    send
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            bindingId: "team-1",
+            label: "Front desk iPad",
+            accessLevel: "general",
+            enrolledByGrantId: "grant-1",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({
+        Items: [{ membershipId: "manager-1", email: "manager@example.org" }],
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            grantId: "grant-1",
+            issuerMembershipId: "manager-1",
+            tokenHash: "secret-verifier",
+          },
+        ],
+      });
+    const res = await call(
+      listDevices,
+      event(undefined, "central-admin", { siteId: "site-1" }),
+    );
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).devices[0]).toMatchObject({
+      label: "Front desk iPad",
+      enrolledByEmail: "manager@example.org",
+      managerEmail: "",
+    });
+    expect(res.body).not.toContain("secret-verifier");
   });
 
   it("retains revocation compatibility for a pre-binding dev device", async () => {

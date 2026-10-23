@@ -154,7 +154,7 @@ test("saving assignments to several Sites serializes the shared staff count chan
   assert.equal(subject.state.siteManager.assignedSites[0].membershipId, "m-s1");
   assert.equal(peak, 1);
   assert.deepEqual(calls, ["s1", "s2"]);
-  assert.deepEqual(destinations, ["/sites/origin%2Fsite?section=access"]);
+  assert.deepEqual(destinations, ["/sites/origin%2Fsite?section=details"]);
   assert.equal(form.dataset.isDirty, "false");
 });
 

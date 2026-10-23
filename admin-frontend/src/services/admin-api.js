@@ -36,6 +36,11 @@ async function adminFetch(path, init = {}) {
 }
 
 export const adminApi = {
+  revokeManagerDevices: (programId, userId, confirmation) =>
+    adminFetch(
+      `/admin/v1/programs/${encodeURIComponent(programId)}/users/${encodeURIComponent(userId)}/devices:revoke`,
+      { method: "POST", body: JSON.stringify({ confirmation }) },
+    ),
   getMyProfile: () => adminFetch("/admin/v1/profile"),
   updateMyProfile: (values) =>
     adminFetch("/admin/v1/profile", {

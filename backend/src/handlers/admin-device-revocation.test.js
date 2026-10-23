@@ -427,3 +427,135 @@ async function call(handler, request) {
     await handler(request, /** @type {any} */ ({}), () => {})
   );
 }
+
+describe("manager devices across sites", () => {
+  async function fixture({ count = 2, failBatch = 0 } = {}) {
+    const { emailHash } = await import("./setup-codes.js");
+    vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-secret");
+    const hash = await emailHash("manager@example.org");
+    let writes = 0;
+    send.mockImplementation(async (command) => {
+      if (command instanceof GetCommand)
+        return {
+          Item: {
+            userId: "user-1",
+            email: "manager@example.org",
+            siteManager: true,
+          },
+        };
+      if (command instanceof QueryCommand) {
+        const { ":pk": pk, ":prefix": prefix } =
+          command.input.ExpressionAttributeValues || {};
+        if (pk === `MANAGER_EMAIL#${hash}`)
+          return { Items: [{ siteId: "site-1" }, { siteId: "site-2" }] };
+        if (pk === "PROGRAM#program-1") return { Items: [] };
+        if (prefix === "MANAGER_MEMBERSHIP#")
+          return {
+            Items: [
+              { membershipId: "member-1", userId: "user-1" },
+              { membershipId: "other", userId: "user-2" },
+            ],
+          };
+        if (prefix === "DEVICE_BINDING#")
+          return {
+            Items: [
+              ...Array.from(
+                { length: pk === "SITE#site-1" ? count - 1 : 1 },
+                (_, i) => ({
+                  ...binding(`${pk}-device-${i}`, `${pk}-physical-${i}`, 1),
+                  pk,
+                  sk: `DEVICE_BINDING#${pk}-device-${i}`,
+                  siteId: pk.slice(5),
+                  accessLevel: "manager",
+                  membershipId: "member-1",
+                }),
+              ),
+              {
+                ...binding("team", "team-physical", 1),
+                membershipId: "member-1",
+              },
+              {
+                ...binding("other", "other-physical", 1),
+                accessLevel: "manager",
+                membershipId: "other",
+              },
+              {
+                ...binding("revoked", "revoked-physical", 1),
+                accessLevel: "manager",
+                membershipId: "member-1",
+                status: "revoked",
+              },
+            ],
+          };
+      }
+      if (command instanceof TransactWriteCommand) {
+        if (++writes === failBatch) throw new Error("conflict");
+        return {};
+      }
+      throw new Error("unexpected command");
+    });
+    return (await import("./admin-device-revocation.js")).revokeManagerDevices;
+  }
+
+  it("revokes own manager bindings at every site, preserving assignments and team devices", async () => {
+    const handler = await fixture();
+    const response = await call(
+      handler,
+      event(
+        { confirmation: "manager@example.org" },
+        { programId: "program-1", userId: "user-1" },
+      ),
+    );
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(String(response.body)).affectedCount).toBe(2);
+    const writes = send.mock.calls
+      .map(([command]) => command)
+      .filter((command) => command instanceof TransactWriteCommand);
+    expect(writes).toHaveLength(1);
+    const items = writes[0].input.TransactItems || [];
+    expect(items).toHaveLength(7);
+    expect(
+      items
+        .filter((item) => item.Update)
+        .every((item) => /DEVICE|BINDING/.test(item.Update?.Key?.sk)),
+    ).toBe(true);
+    expect(JSON.stringify(items)).not.toContain("ASSIGNED_USER");
+    expect(JSON.stringify(items)).not.toContain("team-physical");
+    expect(items.at(-1)?.Put?.Item?.eventType).toBe("manager_devices_revoked");
+  });
+
+  it("requires confirmation and admin authorization before writes", async () => {
+    const handler = await fixture();
+    const request = event(
+      { confirmation: "wrong" },
+      { programId: "program-1", userId: "user-1" },
+    );
+    expect((await call(handler, request)).statusCode).toBe(400);
+    expect(
+      send.mock.calls.some(
+        ([command]) => command instanceof TransactWriteCommand,
+      ),
+    ).toBe(false);
+    send.mockClear();
+    request.requestContext.authorizer.jwt.claims["cognito:groups"] =
+      "site-manager";
+    expect((await call(handler, request)).statusCode).toBe(403);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("reports partial batch failures instead of claiming complete revocation", async () => {
+    const handler = await fixture({ count: 22, failBatch: 2 });
+    const response = await call(
+      handler,
+      event(
+        { confirmation: "manager@example.org" },
+        { programId: "program-1", userId: "user-1" },
+      ),
+    );
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(String(response.body))).toMatchObject({
+      status: "incomplete",
+      affectedCount: 20,
+    });
+  });
+});

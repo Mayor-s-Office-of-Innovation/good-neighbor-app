@@ -108,6 +108,7 @@ locals {
     "PATCH /admin/v1/programs/{programId}",
     "DELETE /admin/v1/programs/{programId}",
     "POST /admin/v1/programs/{programId}/users",
+    "POST /admin/v1/programs/{programId}/users/{userId}/devices:revoke",
     "PATCH /admin/v1/programs/{programId}/users/{userId}",
     "DELETE /admin/v1/programs/{programId}/users/{userId}",
     "POST /admin/v1/providers/{providerId}/programs",

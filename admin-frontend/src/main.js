@@ -2312,7 +2312,7 @@ class AdminApp extends HTMLElement {
         if (form.dataset?.returnSite) {
           form.dataset.isDirty = "false";
           navigate(
-            `/sites/${encodeURIComponent(form.dataset.returnSite)}?section=access`,
+            `/sites/${encodeURIComponent(form.dataset.returnSite)}?section=details`,
           );
           return true;
         }
@@ -2354,7 +2354,7 @@ class AdminApp extends HTMLElement {
         await this.loadSiteManagers(true);
         navigate(
           returnSite
-            ? `/sites/${encodeURIComponent(returnSite)}?section=access`
+            ? `/sites/${encodeURIComponent(returnSite)}?section=details`
             : "/managers",
         );
       } catch (error) {
@@ -2423,6 +2423,10 @@ class AdminApp extends HTMLElement {
 
   /** @param {string} membershipId */
   async issueManagerGrant(membershipId, deliveryMode = "link") {
+    if (this.state.error) {
+      this.state.error = "";
+      this.render();
+    }
     const feedback = actionFeedback("admin.enrollment.emailed");
     try {
       if (!this.state.site) return;
@@ -4112,9 +4116,8 @@ class AdminApp extends HTMLElement {
         this.issueManagerGrant(
           dataAttr(button, "data-issue-manager-grant"),
           button.dataset.deliveryMode || "link",
-        ).catch((err) => {
-          this.state.error = err.message;
-          this.render();
+        ).catch(() => {
+          // issueManagerGrant already reports the failure through its toast.
         }),
       );
     });
@@ -4142,80 +4145,57 @@ class AdminApp extends HTMLElement {
         ),
       );
     });
-    this.querySelectorAll("[data-device-selection]").forEach((input) => {
-      input.addEventListener("change", () => this.syncDeviceSelection(input));
-    });
-    this.querySelector("#remove-device-this-site")?.addEventListener(
-      "click",
-      () => {
-        const device = this.selectedDevice();
-        if (!device) return;
-        this.revokeDevice(device.bindingId || device.deviceId).catch((err) => {
+    this.querySelectorAll("[data-revoke-device]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        try {
+          await this.revokeDevice(button.dataset.revokeDevice);
+        } catch (err) {
           this.state.error = err.message;
           this.render();
-        });
-      },
-    );
-    this.querySelector("#remove-device-all-sites")?.addEventListener(
-      "click",
-      () => {
-        const device = this.selectedDevice();
-        if (!device?.physicalDeviceId) return;
-        this.beginPhysicalDeviceRevocation(device.physicalDeviceId).catch(
-          (err) => {
-            this.state.error = err.message;
-            this.render();
-          },
-        );
-      },
-    );
-    const revokeAllSiteDevicesForm = this.querySelector(
-      "#revoke-all-site-devices",
-    );
-    const revokeAllConfirmation = revokeAllSiteDevicesForm?.querySelector(
-      "#revoke-all-confirmation",
-    );
-    const revokeAllSubmit = revokeAllSiteDevicesForm?.querySelector(
-      "button[type='submit']",
-    );
-    const syncRevokeAllSubmit = () => {
-      if (revokeAllSubmit instanceof HTMLButtonElement) {
-        revokeAllSubmit.disabled =
-          String(revokeAllConfirmation?.value || "") !==
-          String(this.state.site?.name || "");
-      }
-    };
-    syncRevokeAllSubmit();
-    revokeAllConfirmation?.addEventListener("input", syncRevokeAllSubmit);
-    revokeAllSiteDevicesForm?.addEventListener("submit", (event) => {
-      event.preventDefault();
-      this.revokeAllSiteDevices(event.currentTarget).catch((err) => {
-        this.state.error = err.message;
-        this.render();
+        } finally {
+          button.disabled = false;
+        }
       });
     });
-    this.querySelectorAll("[data-suspend-device]").forEach((button) => {
-      button.addEventListener("click", () => {
-        this.beginDeviceSuspension(dataAttr(button, "data-suspend-device"));
-      });
-    });
-    this.querySelector("#device-suspension")?.addEventListener(
-      "submit",
-      (event) => {
+    const revokeManagerForm = this.querySelector("#revoke-manager-devices");
+    if (revokeManagerForm) {
+      const input = revokeManagerForm.querySelector("wa-input");
+      const button = revokeManagerForm.querySelector("button");
+      const sync = () => {
+        button.disabled =
+          input.value.trim().toLowerCase() !==
+          this.state.siteManager.email.toLowerCase();
+      };
+      input.addEventListener("input", sync);
+      revokeManagerForm.addEventListener("submit", async (event) => {
         event.preventDefault();
-        this.suspendDeviceBinding(event.currentTarget).catch((err) => {
-          this.state.error = err.message;
-          this.render();
-        });
-      },
-    );
-    this.querySelector("#cancel-device-suspension")?.addEventListener(
-      "click",
-      () => {
-        this.state.suspensionTarget = null;
-        this.render();
-      },
-    );
+        if (button.disabled) return;
+        button.disabled = true;
+        input.disabled = true;
+        const manager = this.state.siteManager;
+        const status = revokeManagerForm.querySelector(
+          "[data-revocation-status]",
+        );
+        try {
+          const result = await adminApi.revokeManagerDevices(
+            manager.programId,
+            manager.userId,
+            input.value,
+          );
+          status.textContent = t("admin.devices.managerRevoked", {
+            count: result.affectedCount,
+          });
+          this.state.managerDirectoryLoaded = false;
+          input.value = "";
+        } catch {
+          status.textContent = t("admin.devices.managerRevokeFailed");
+        } finally {
+          input.disabled = false;
+          sync();
+        }
+      });
+    }
     this.querySelector("#physical-device-revocation")?.addEventListener(
       "submit",
       (event) => {
@@ -4905,12 +4885,35 @@ function firstDayOfNextMonth() {
 
 /** @param {AdminState} state */
 function siteAccessView(state) {
-  const selectableDevices = state.devices.filter(
-    (device) => device.status !== "revoked" && !device.legacy,
-  );
   const revocableDevices = state.devices.filter(
     (device) => device.status !== "revoked",
   );
+  return `<section class="subsection site-access" aria-label="App access">
+    <h2>${escapeHtml(t("admin.enrollment.siteAccessTitle"))}</h2>
+    <p class="muted">${escapeHtml(t("admin.enrollment.instructions"))}</p>
+    ${managerMembershipList(state.managerMemberships, state.site.siteId)}
+    ${managerGrantList(state.managerGrants)}
+    <h2>${escapeHtml(t("admin.enrollment.enrolledDevices"))}</h2>
+    ${revocableDevices.length ? "" : '<p class="empty-state">No devices in use.</p>'}
+    ${state.revocationMessage ? `<p class="success" role="status">${escapeHtml(state.revocationMessage)}</p>` : ""}
+    <div class="device-list">${revocableDevices
+      .map((device) => {
+        const id = device.bindingId || device.deviceId;
+        const label = device.label || shortOpaqueId(id);
+        const attribution =
+          device.managerEmail ||
+          (device.enrolledByEmail
+            ? t("admin.devices.enrolledBy", { email: device.enrolledByEmail })
+            : t("admin.devices.emailUnavailable"));
+        return `<div class="device-row"><div class="device-row__details"><strong>${escapeHtml(label)}</strong><span>${escapeHtml(attribution)}</span><span>${escapeHtml(t("admin.devices.identifier", { id: shortOpaqueId(id) }))}</span><span>${escapeHtml(t("admin.devices.lastSeen", { date: formatTimestamp(device.lastSeenAt) }))}</span></div><button class="btn-icon device-remove" type="button" data-revoke-device="${escapeHtml(id)}" aria-label="${escapeHtml(t("admin.devices.removeFromSite", { name: label }))}" title="${escapeHtml(t("admin.devices.removeFromSite", { name: label }))}"><wa-icon name="trash" aria-hidden="true"></wa-icon></button></div>`;
+      })
+      .join("")}</div>
+    <form id="revoke-all-site-devices" class="inline-form destructive-confirmation"><wa-input id="revoke-all-confirmation" name="confirmation" autocomplete="off"><span slot="label">Type <strong>${escapeHtml(state.site.name)}</strong> to revoke access for every device used on this site</span></wa-input><button class="btn-danger" type="submit" disabled>Revoke all devices at this Site</button></form>
+  </section>`;
+}
+
+/** @param {AdminState} state */
+function siteManagersEditorView(state) {
   const hasCurrentManager = state.managerMemberships.length > 0;
   const availableManagers = state.availableSiteUsers.filter(
     (user) =>
@@ -4926,10 +4929,9 @@ function siteAccessView(state) {
       ? "admin.siteManagers.addAnother"
       : "admin.siteManagers.choose",
   );
-  return `<section class="subsection site-access" aria-label="App access">
-    <h2>${escapeHtml(t("admin.siteManagers.title"))}</h2>
-    <p class="muted">${escapeHtml(t("admin.enrollment.instructions"))}</p>
-    ${managerMembershipList(state.managerMemberships, state.site.siteId)}
+  return `<section class="subsection" aria-labelledby="site-managers-title">
+    <h2 id="site-managers-title">${escapeHtml(t("admin.siteManagers.title"))}</h2>
+    ${managerMembershipList(state.managerMemberships, state.site.siteId, true, state.capabilities.manageSiteManagers === true)}
     ${
       state.capabilities.manageSiteManagers === true
         ? `<form id="manager-membership-form" class="inline-form manager-membership-form">
@@ -4951,15 +4953,6 @@ function siteAccessView(state) {
     }
     ${state.capabilities.manageSiteManagers === true && state.site.leadProgramId ? newSiteManagerDialog() : ""}
     ${state.site.leadProgramId ? "" : '<p class="muted">Assign a Lead Program before adding a Site manager.</p>'}
-    ${managerGrantList(state.managerGrants)}
-    <h2>${escapeHtml(t("admin.enrollment.enrolledDevices"))}</h2>
-    ${revocableDevices.length ? "" : '<p class="empty-state">No devices in use.</p>'}
-    ${state.revocationMessage ? `<p class="success" role="status">${escapeHtml(state.revocationMessage)}</p>` : ""}
-    ${selectableDevices.length ? '<div id="device-selection-actions" class="device-selection-actions" hidden><button id="remove-device-this-site" class="btn-danger" type="button">Remove access to this site</button><button id="remove-device-all-sites" class="btn-danger" type="button">Remove access to all sites</button></div>' : ""}
-    <div class="device-list">${revocableDevices.map((device) => `<div class="device-row">${device.legacy ? "" : `<wa-checkbox aria-label="Select device ${escapeHtml(shortOpaqueId(device.bindingId || device.deviceId))}" data-device-selection="${escapeHtml(device.bindingId || device.deviceId)}">Select</wa-checkbox>`}<div class="device-row__details"><strong>ID ${escapeHtml(shortOpaqueId(device.bindingId || device.deviceId))}</strong><span>Last seen ${escapeHtml(formatTimestamp(device.lastSeenAt))}</span></div></div>`).join("")}</div>
-    ${deviceSuspensionForm(state.suspensionTarget)}
-    ${physicalDeviceRevocationConfirmation(state.physicalDeviceRevocationPreview)}
-    <form id="revoke-all-site-devices" class="inline-form destructive-confirmation"><wa-input id="revoke-all-confirmation" name="confirmation" autocomplete="off"><span slot="label">Type <strong>${escapeHtml(state.site.name)}</strong> to revoke access for every device used on this site</span></wa-input><button class="btn-danger" type="submit" disabled>Revoke all devices at this Site</button></form>
     ${removeManagerMembershipDialog(state.managerMembershipRemovalTarget, state.site.name)}
   </section>`;
 }
@@ -5051,8 +5044,13 @@ function emergencySiteRevocationPanel(state) {
   </form>`;
 }
 
-/** @param {any[]} memberships @param {string} siteId */
-function managerMembershipList(memberships, siteId) {
+/** @param {any[]} memberships @param {string} siteId @param {boolean} [editing] @param {boolean} [canManage] */
+function managerMembershipList(
+  memberships,
+  siteId,
+  editing = false,
+  canManage = false,
+) {
   if (!memberships.length) {
     return `<p class="empty-state">${escapeHtml(t("admin.siteManagers.none"))}</p>`;
   }
@@ -5060,7 +5058,11 @@ function managerMembershipList(memberships, siteId) {
     .map(
       (membership) => `<li>
         <div><strong>${escapeHtml(membership.name)}</strong><span><a href="mailto:${escapeHtml(membership.email)}">${escapeHtml(membership.email)}</a></span><span class="muted">Has ${escapeHtml(membership.activeBindingCount || 0)} active device${Number(membership.activeBindingCount || 0) === 1 ? "" : "s"} in use at this site</span></div>
-        <div class="contact-list__actions"><button class="btn-secondary" type="button" data-issue-manager-grant="${escapeHtml(membership.membershipId)}">${escapeHtml(t("admin.enrollment.emailLink"))}</button>${membership.userId ? `<a class="btn-secondary" href="/managers/${encodeURIComponent(membership.userId)}?returnSite=${encodeURIComponent(siteId)}" data-route>${escapeHtml(t("common.edit"))}</a>` : ""}${enrollmentOptions("site", membership.membershipId)}<button class="btn-danger" type="button" data-remove-manager-membership="${escapeHtml(membership.membershipId)}">Remove</button></div>
+        <div class="contact-list__actions">${
+          editing
+            ? `${membership.userId ? `<a class="btn-secondary" href="/managers/${encodeURIComponent(membership.userId)}?returnSite=${encodeURIComponent(siteId)}" data-route>${escapeHtml(t("common.edit"))}</a>` : ""}${canManage ? `<button class="btn-danger" type="button" data-remove-manager-membership="${escapeHtml(membership.membershipId)}">${escapeHtml(t("admin.siteManagers.remove"))}</button>` : ""}`
+            : `<button class="btn-secondary" type="button" data-issue-manager-grant="${escapeHtml(membership.membershipId)}" data-delivery-mode="link">${escapeHtml(t("admin.enrollment.emailMagicLink"))}</button><button class="btn-secondary" type="button" data-issue-manager-grant="${escapeHtml(membership.membershipId)}" data-delivery-mode="code">${escapeHtml(t("admin.enrollment.emailOneTimeCode"))}</button>`
+        }</div>
       </li>`,
     )
     .join("")}</ul>`;
@@ -5089,10 +5091,10 @@ function managerGrantList(grants) {
   if (!grants.length)
     return `<details class="table-disclosure site-enrollment-history"><summary>${escapeHtml(t("admin.enrollment.history", { count: 0 }))}</summary><p class="empty-state">No enrollment links issued.</p></details>`;
   const hasCopyableLink = grants.some((grant) => Boolean(grant.enrollmentUrl));
-  return `<details class="table-disclosure site-enrollment-history"><summary>${escapeHtml(t("admin.enrollment.history", { count: grants.length }))}</summary><div class="table-wrap"><table><thead><tr><th>Recipient</th><th>Issued</th><th>Expires</th><th>Status</th><th>Link delivery</th><th>Security notice</th>${hasCopyableLink ? `<th>${escapeHtml(t("admin.enrollment.link"))}</th>` : ""}<th>Action</th></tr></thead><tbody>${grants
+  return `<details class="table-disclosure site-enrollment-history"><summary>${escapeHtml(t("admin.enrollment.history", { count: grants.length }))}</summary><div class="table-wrap"><table><thead><tr><th>Recipient</th><th>${escapeHtml(t("admin.enrollment.type"))}</th><th>Issued</th><th>Expires</th><th>Status</th><th>${escapeHtml(t("admin.enrollment.delivery"))}</th><th>Security notice</th>${hasCopyableLink ? `<th>${escapeHtml(t("admin.enrollment.link"))}</th>` : ""}<th>Action</th></tr></thead><tbody>${grants
     .map(
       (grant) =>
-        `<tr><td>${escapeHtml(grant.issuedTo)}</td><td>${escapeHtml(formatTimestamp(grant.createdAt))}</td><td>${escapeHtml(formatTimestamp(grant.expiresAt))}</td><td>${escapeHtml(grant.status)}</td><td>${escapeHtml(grant.deliveryStatus || "queued")}</td><td>${escapeHtml(grant.securityNotificationStatus || (grant.status === "redeemed" ? "pending" : "Not applicable"))}</td>${hasCopyableLink ? `<td>${grant.enrollmentUrl ? `<button class="btn-secondary enrollment-copy" type="button" data-copy-enrollment-url="${escapeHtml(grant.enrollmentUrl)}" aria-label="${escapeHtml(t("admin.enrollment.copyFor", { email: grant.issuedTo }))}">${escapeHtml(t("admin.enrollment.copy"))}</button><span class="visually-hidden" aria-live="polite" data-copy-status></span>` : "—"}</td>` : ""}<td>${grant.status === "pending" ? `<button class="btn-danger" type="button" data-cancel-manager-grant="${escapeHtml(grant.grantId)}">Cancel</button>` : "—"}</td></tr>`,
+        `<tr><td>${escapeHtml(grant.issuedTo)}</td><td>${escapeHtml(t(grant.deliveryMode === "code" ? "admin.enrollment.oneTimeCode" : "admin.enrollment.magicLink"))}</td><td>${escapeHtml(formatTimestamp(grant.createdAt))}</td><td>${escapeHtml(formatTimestamp(grant.expiresAt))}</td><td>${escapeHtml(grant.status)}</td><td>${escapeHtml(grant.deliveryStatus || "queued")}</td><td>${escapeHtml(grant.securityNotificationStatus || (grant.status === "redeemed" ? "pending" : "Not applicable"))}</td>${hasCopyableLink ? `<td>${grant.enrollmentUrl ? `<button class="btn-secondary enrollment-copy" type="button" data-copy-enrollment-url="${escapeHtml(grant.enrollmentUrl)}" aria-label="${escapeHtml(t("admin.enrollment.copyFor", { email: grant.issuedTo }))}">${escapeHtml(t("admin.enrollment.copy"))}</button><span class="visually-hidden" aria-live="polite" data-copy-status></span>` : "—"}</td>` : ""}<td>${grant.status === "pending" ? `<button class="btn-danger" type="button" data-cancel-manager-grant="${escapeHtml(grant.grantId)}">Cancel</button>` : "—"}</td></tr>`,
     )
     .join("")}</tbody></table></div></details>`;
 }
@@ -5854,9 +5856,22 @@ function siteManagerEditorView(state, manager) {
       ${state.siteSaveMessage ? `<p class="success" role="status">${escapeHtml(state.siteSaveMessage)}</p>` : ""}
       <div class="row">
         <button class="btn-primary" type="submit" data-save-button disabled>${isNew ? "Add manager" : "Save changes"}</button>
-        ${returnSite ? `<a class="btn-secondary" href="/sites/${encodeURIComponent(returnSite)}?section=access" data-route>${escapeHtml(t("common.cancel"))}</a>` : ""}
+        ${returnSite ? `<a class="btn-secondary" href="/sites/${encodeURIComponent(returnSite)}?section=details" data-route>${escapeHtml(t("common.cancel"))}</a>` : ""}
       </div>
     </form>
+    ${
+      isNew
+        ? ""
+        : `<section class="subsection" aria-labelledby="manager-device-revocation-title">
+      <h2 id="manager-device-revocation-title">${escapeHtml(t("admin.devices.removeAllSites"))}</h2>
+      <p>${escapeHtml(t("admin.devices.managerRevokeHelp"))}</p>
+      <form id="revoke-manager-devices" class="inline-form destructive-confirmation">
+        <wa-input name="confirmation" type="email" required autocomplete="off" label="${escapeHtml(t("admin.devices.confirmEmail", { email: manager.email }))}"></wa-input>
+        <button class="btn-danger" type="submit" disabled>${escapeHtml(t("admin.devices.removeAllSites"))}</button>
+        <p data-revocation-status role="status"></p>
+      </form>
+    </section>`
+    }
     ${isNew ? "" : `${managerProgramChangeDialog()}${removeSiteManagerDialog(title)}`}
     ${discardChangesDialog()}
   </section>`;
@@ -6216,13 +6231,9 @@ function siteEditor(state) {
         <button class="btn-primary" type="button" data-save-lead-program disabled>Save lead program</button>
       </div>
     </fieldset>
-    <fieldset>
-      <legend>${escapeHtml(t("admin.siteManagers.title"))}</legend>
-      <p>${state.managerMemberships.length ? state.managerMemberships.map((member) => escapeHtml(member.name)).join(", ") : escapeHtml(t("admin.siteManagers.none"))}</p>
-      <a href="/sites/${encodeURIComponent(site.siteId)}?section=access" data-route>${escapeHtml(t("admin.siteManagers.manage"))}</a>
-    </fieldset>
     ${state.siteSaveError ? `<p id="site-save-error" class="error site-details-form__message" role="alert">${escapeHtml(state.siteSaveError)}</p>` : ""}
   </form>
+  ${siteManagersEditorView(state)}
   ${leadProgramConfirmationDialog()}
   ${state.capabilities.createEntities && site.providerId ? createSiteProgramDialog() : ""}
   `;

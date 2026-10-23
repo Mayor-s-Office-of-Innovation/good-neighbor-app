@@ -134,6 +134,7 @@ import {
 } from "../handlers/admin-oversight.js";
 import { suggestAddresses } from "../handlers/admin-addresses.js";
 import {
+  revokeManagerDevices,
   getPhysicalDeviceRevocationPreview,
   revokeAllSiteDeviceBindings,
   revokePhysicalDeviceEverywhere,
@@ -325,6 +326,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "PATCH /admin/v1/programs/{programId}": updateProgram,
   "DELETE /admin/v1/programs/{programId}": deactivateProgram,
   "POST /admin/v1/programs/{programId}/users": createProgramUser,
+  "POST /admin/v1/programs/{programId}/users/{userId}/devices:revoke":
+    revokeManagerDevices,
   "PATCH /admin/v1/programs/{programId}/users/{userId}": updateProgramUser,
   "DELETE /admin/v1/programs/{programId}/users/{userId}": deactivateProgramUser,
   "POST /admin/v1/providers/{providerId}/programs": assignProgramToProvider,

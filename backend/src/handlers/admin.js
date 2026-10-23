@@ -1341,29 +1341,74 @@ export const issueAdminSetupCode = (event) =>
 export const listDevices = (event) =>
   adminOnly(event, async () => {
     const siteId = event.pathParameters?.siteId ?? "";
-    const [bindings, legacyDevices] = await Promise.all([
-      queryAll({
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :binding)",
-        ExpressionAttributeValues: {
-          ":pk": `SITE#${siteId}`,
-          ":binding": "DEVICE_BINDING#",
-        },
-      }),
-      queryAll({
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :device)",
-        ExpressionAttributeValues: {
-          ":pk": `SITE#${siteId}`,
-          ":device": "DEVICE#",
-        },
-      }),
-    ]);
+    const [bindings, legacyDevices, memberships, staffGrants] =
+      await Promise.all([
+        queryAll({
+          KeyConditionExpression: "pk = :pk AND begins_with(sk, :binding)",
+          ExpressionAttributeValues: {
+            ":pk": `SITE#${siteId}`,
+            ":binding": "DEVICE_BINDING#",
+          },
+        }),
+        queryAll({
+          KeyConditionExpression: "pk = :pk AND begins_with(sk, :device)",
+          ExpressionAttributeValues: {
+            ":pk": `SITE#${siteId}`,
+            ":device": "DEVICE#",
+          },
+        }),
+        ...["MANAGER_MEMBERSHIP#", "STAFF_GRANT#"].map((prefix) =>
+          queryAll({
+            KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+            ExpressionAttributeValues: {
+              ":pk": `SITE#${siteId}`,
+              ":prefix": prefix,
+            },
+          }),
+        ),
+      ]);
+    const members = new Map(
+      memberships.map((member) => [member.membershipId, member]),
+    );
+    const grants = new Map(staffGrants.map((grant) => [grant.grantId, grant]));
+    const providerEmails = new Map();
+    for (const binding of bindings) {
+      if (!binding.providerId || !binding.providerMembershipId) continue;
+      const key = `${binding.providerId}/${binding.providerMembershipId}`;
+      if (!providerEmails.has(key)) {
+        const { Item } = await ddb.send(
+          new GetCommand({
+            TableName: getDynamoTableName(),
+            Key: {
+              pk: `PROVIDER#${binding.providerId}`,
+              sk: `PROVIDER_MANAGER#${binding.providerMembershipId}`,
+            },
+          }),
+        );
+        providerEmails.set(key, Item?.email || "");
+      }
+    }
+    /** @param {Record<string, any>} item */
+    const describeDevice = (item) => {
+      const grant = grants.get(item.enrolledByGrantId);
+      return {
+        ...publicDevice(item),
+        managerEmail:
+          item.authorityScope === "provider"
+            ? providerEmails.get(
+                `${item.providerId}/${item.providerMembershipId}`,
+              ) || ""
+            : members.get(item.membershipId)?.email || "",
+        enrolledByEmail: members.get(grant?.issuerMembershipId)?.email || "",
+      };
+    };
     const canonicalIds = new Set(bindings.map((item) => item.bindingId));
     return jsonResponse(200, {
       devices: [
-        ...bindings.map((item) => publicDevice(item)),
+        ...bindings.map(describeDevice),
         ...legacyDevices
           .filter((item) => !canonicalIds.has(item.bindingId ?? item.deviceId))
-          .map((item) => publicDevice({ ...item, legacy: true })),
+          .map((item) => describeDevice({ ...item, legacy: true })),
       ],
     });
   });

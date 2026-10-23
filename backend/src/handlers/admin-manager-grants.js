@@ -95,7 +95,10 @@ export const createManagerGrant = (event) =>
     if (!membership || membership.status !== "active") {
       return jsonResponse(404, { error: "manager_membership_not_found" });
     }
-    // Staff records are authoritative for recipients; membership snapshots may predate an email edit.
+    // The active Site membership authorizes enrollment. Site reassignment keeps
+    // existing memberships, so their staff records may belong to the previous
+    // lead Program. Resolve that linked record rather than rejecting the retained
+    // membership or falling back to a potentially outdated email snapshot.
     let recipientEmail = membership.email;
     let recipientName = membership.name;
     if (membership.userId && membership.programId) {
@@ -109,12 +112,7 @@ export const createManagerGrant = (event) =>
           ConsistentRead: true,
         }),
       );
-      if (
-        !staff.Item ||
-        staff.Item.status === "inactive" ||
-        !staff.Item.email ||
-        membership.programId !== siteResult.Item?.leadProgramId
-      )
+      if (!staff.Item || staff.Item.status === "inactive" || !staff.Item.email)
         return jsonResponse(409, { error: "program_user_not_found" });
       recipientEmail = staff.Item.email;
       recipientName =

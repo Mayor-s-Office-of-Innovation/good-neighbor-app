@@ -12,6 +12,7 @@
   --ink: #262626;
   --on-ink: #ffffff;
   --focus: #005ea8;
+  --danger: #a40000;
 }
 
 * {
@@ -777,7 +778,7 @@ h3 {
 
 .device-row {
   display: grid;
-  grid-template-columns: minmax(96px, auto) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 20px;
   min-height: 72px;
@@ -786,10 +787,9 @@ h3 {
 }
 
 .device-row__details {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 8px 20px;
+  display: grid;
+  gap: 4px;
+  overflow-wrap: anywhere;
 }
 
 .device-row__details span {
@@ -1915,4 +1915,10 @@ app-toasts {
 }
 .phone-field [hidden] {
   display: none;
+}
+
+.device-remove,
+.device-remove:hover {
+  color: var(--danger);
+  flex-shrink: 0;
 }
