@@ -54,18 +54,21 @@ exit "$TF_TEST_REMOVE_STATUS"
   }
 }
 
-for (const entry of [address, `${address}[0]`]) {
-  test(`forgets only the cost tag using a backend lock: ${entry}`, () => {
-    assert.deepEqual(
-      run({
-        entries: `module.app.aws_budgets_budget.daily_application_cost\n${entry}`,
-      }),
-      {
-        status: 0,
-        calls: ["state list", `state rm -lock-timeout=5m ${address}`],
-      },
-    );
-  });
+for (const environment of ["dev", "prod"]) {
+  for (const entry of [address, `${address}[0]`]) {
+    test(`forgets only the cost tag using a backend lock (${environment}): ${entry}`, () => {
+      assert.deepEqual(
+        run({
+          environment,
+          entries: `module.app.aws_budgets_budget.daily_application_cost\n${entry}`,
+        }),
+        {
+          status: 0,
+          calls: ["state list", `state rm -lock-timeout=5m ${address}`],
+        },
+      );
+    });
+  }
 }
 
 test("is idempotent and ignores similarly named resources", () => {
@@ -80,7 +83,7 @@ test("is idempotent and ignores similarly named resources", () => {
   );
 });
 
-for (const environment of ["prod", "", "development"]) {
+for (const environment of ["staging", "", "development"]) {
   test(`refuses ${JSON.stringify(environment)} before accessing state`, () => {
     const result = run({ environment, entries: address });
     assert.notEqual(result.status, 0);
