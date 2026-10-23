@@ -62,12 +62,17 @@ describe("City-issued Manager enrollment grants", () => {
     expect(String(response.body)).not.toContain("secret-verifier");
   });
 
-  it.each(["link", "code"])(
-    "emails the current program staff address while preserving other managers' grants (%s)",
-    async (deliveryMode) => {
+  it.each([
+    ["link", "p1"],
+    ["code", "p1"],
+    ["link", "new-lead-program"],
+    ["code", "new-lead-program"],
+  ])(
+    "emails the linked active staff address for %s with lead program %s",
+    async (deliveryMode, leadProgramId) => {
       send
         .mockResolvedValueOnce({
-          Item: { siteId: "site-1", name: "Site One", leadProgramId: "p1" },
+          Item: { siteId: "site-1", name: "Site One", leadProgramId },
         })
         .mockResolvedValueOnce({
           Item: {
@@ -319,7 +324,9 @@ function event(body = undefined, pathParameters = {}) {
     pathParameters,
     requestContext: {
       authorizer: {
-        jwt: { claims: { "cognito:groups": "central-admin", sub: "admin-1" } },
+        jwt: {
+          claims: { "cognito:groups": "compliance-supervisor", sub: "admin-1" },
+        },
       },
     },
   };
@@ -335,3 +342,44 @@ async function call(handler, request) {
     await handler(request, {}, () => {})
   );
 }
+
+it.each([
+  undefined,
+  { status: "inactive", email: "staff@example.org" },
+  { status: "active" },
+])(
+  "still rejects a missing, inactive, or email-less linked staff record",
+  async (staff) => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          status: "active",
+          leadProgramId: "new-program",
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          membershipId: "m1",
+          status: "active",
+          programId: "old-program",
+          userId: "u1",
+          email: "stale@example.org",
+        },
+      })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ Item: staff });
+    const response = await call(
+      createManagerGrant,
+      event({ membershipId: "m1", deliveryMode: "code" }, { siteId: "site-1" }),
+    );
+    expect(response.statusCode).toBe(409);
+    expect(sendManagerEnrollmentEmail).not.toHaveBeenCalled();
+    expect(
+      send.mock.calls.some(
+        ([command]) => command instanceof TransactWriteCommand,
+      ),
+    ).toBe(false);
+  },
+);

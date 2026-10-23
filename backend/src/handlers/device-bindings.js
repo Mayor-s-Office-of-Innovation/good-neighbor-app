@@ -235,7 +235,12 @@ async function resolveBinding(pointer, physicalDeviceId) {
   }
   if (binding.accessLevel === "manager") {
     if (binding.authorityScope === "provider") {
-      if (!binding.providerId || site.providerId !== binding.providerId) {
+      if (
+        !binding.providerId ||
+        site.providerId !== binding.providerId ||
+        Number(binding.providerAccessGeneration ?? 0) !==
+          Number(site.providerAccessGeneration ?? 0)
+      ) {
         return null;
       }
       const memberships = await ddb.send(

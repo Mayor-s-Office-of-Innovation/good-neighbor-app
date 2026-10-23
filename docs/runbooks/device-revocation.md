@@ -96,3 +96,31 @@ audit event) and puts the static manifest back on the page.
 A redeem bumps `tokenGeneration` and writes a `session_handed_off` audit
 event, which is also what a stolen grant would look like: a Site reporting
 "signed out without installing" is the signal to revoke and re-enroll.
+
+## Compliance dashboard controls
+
+Site details contains Site Manager assignments and the add/edit/remove controls.
+App access contains direct magic-link and one-time-code email actions, enrollment
+history with its delivery type, and enrolled-device nicknames and attribution.
+Manager devices show their membership email. Team devices show the issuing
+manager's email resolved through the staff grant. Older records without a known
+association show “Email unavailable”; a nickname alone is not proof of ownership.
+
+The red trash icon revokes only that row's Site access, with confirmation.
+The Site-wide revocation control still affects every device at that Site.
+
+On Manager details, below Assigned sites, “Remove access to all sites” requires
+the manager's email as confirmation. Its endpoint is
+`POST /admin/v1/programs/{programId}/users/{userId}/devices:revoke`.
+It discovers memberships using the email directory, Program Sites, and active
+Site directory (including retained memberships after a lead Program change),
+revalidates their Program/user identity, and revokes the manager's own Site bindings. It does not remove assignments, deactivate memberships, revoke
+team devices, or disable the physical device identity. A new valid enrollment
+can therefore restore app access. Pending invitations are not cancelled.
+
+Revocation uses atomic batches of at most 20 bindings, updating canonical,
+compatibility, and physical-device pointer records together with a Program audit
+event. A failure returns `409 manager_device_revocation_incomplete` and the count
+confirmed so far; retry discovers remaining non-revoked bindings. A timeout can
+leave the latest batch's outcome uncertain, so the UI never claims full success
+on a failed request. Batches already completed remain revoked.

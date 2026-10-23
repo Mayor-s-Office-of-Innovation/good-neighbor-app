@@ -30,3 +30,66 @@ it("snapshots the selected manager, sender, and active provider managers across 
   expect(email.text).toContain("Pat Lee at San Francisco's DPH");
   expect(send).toHaveBeenCalledTimes(2);
 });
+
+it("CCs other active site managers using current staff addresses and deduplicates all recipients", async () => {
+  send.mockReset().mockResolvedValue({});
+  send
+    .mockResolvedValueOnce({
+      Items: [{ status: "active", email: "provider@example.org" }],
+    })
+    .mockResolvedValueOnce({
+      Items: [
+        {
+          sk: "MANAGER_MEMBERSHIP#one",
+          status: "active",
+          programId: "old-program",
+          userId: "one",
+          email: "stale@example.org",
+        },
+        {
+          sk: "ASSIGNED_USER#one",
+          status: "active",
+          programId: "old-program",
+          userId: "one",
+        },
+        {
+          sk: "MANAGER_MEMBERSHIP#two",
+          status: "active",
+          email: "PROVIDER@example.org",
+        },
+        {
+          sk: "MANAGER_MEMBERSHIP#three",
+          status: "inactive",
+          email: "inactive@example.org",
+        },
+        {
+          sk: "MANAGER_MEMBERSHIP#four",
+          status: "active",
+          email: "other@example.org",
+        },
+      ],
+    })
+    .mockResolvedValueOnce({
+      Item: { status: "active", email: "current@example.org" },
+    })
+    .mockResolvedValueOnce({
+      Item: { status: "active", email: "current@example.org" },
+    });
+  const email = await complianceLetterEmail(
+    { siteId: "site", providerId: "provider", name: "Main" },
+    { email: "selected@example.org", firstName: "Sam" },
+    { email: "sender@example.org", firstName: "Pat", lastName: "Lee" },
+    "DPH",
+  );
+  expect(email.to).toBe("selected@example.org");
+  expect(email.cc).toEqual([
+    "sender@example.org",
+    "provider@example.org",
+    "current@example.org",
+    "other@example.org",
+  ]);
+  expect(email.text).toContain("Dear Sam,\n\n");
+  expect(email.text).toContain("\n\nThe attached letter");
+  expect(email.text).toContain("\n\nThank you");
+  expect(email.text).toContain("\n\n- Good Neighbor app team");
+});

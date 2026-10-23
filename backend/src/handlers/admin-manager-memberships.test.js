@@ -128,6 +128,74 @@ describe("Site Manager memberships", () => {
     });
   });
 
+  it("assigned manager creates one single-Site Manager membership with a uniqueness marker", async () => {
+    send
+      .mockResolvedValueOnce({ Item: { userId: "cm", status: "active" } })
+      .mockResolvedValueOnce({ Item: { status: "active" } });
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          status: "active",
+          leadProgramId: "program-1",
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          userId: "user-1",
+          status: "active",
+          firstName: "Alex",
+          lastName: "Rivera",
+          email: "alex@example.org",
+          siteAssignmentCount: 0,
+        },
+      })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+    const response = await call(
+      createManagerMembership,
+      event(
+        {
+          name: "  Alex Rivera  ",
+          email: " ALEX@example.org ",
+          programId: "program-1",
+          userId: "user-1",
+        },
+        { siteId: "site-1" },
+        "compliance-manager",
+      ),
+    );
+    expect(response.statusCode).toBe(201);
+    expect(send.mock.calls[2][0]).toBeInstanceOf(GetCommand);
+    const transaction = send.mock.calls[5][0];
+    expect(transaction).toBeInstanceOf(TransactWriteCommand);
+    expect(transaction.input.TransactItems).toHaveLength(8);
+    const membership = transaction.input.TransactItems[3].Put.Item;
+    expect(membership).toMatchObject({
+      siteId: "site-1",
+      name: "Alex Rivera",
+      email: "alex@example.org",
+      role: "manager",
+      status: "active",
+      generation: 1,
+      programId: "program-1",
+      userId: "user-1",
+    });
+    expect(transaction.input.TransactItems[4].Put.Item.sk).toMatch(
+      /^MANAGER_EMAIL#[a-f0-9]{64}$/,
+    );
+    expect(transaction.input.TransactItems[5].Put.Item).toMatchObject({
+      type: "managerMembershipDirectory",
+      membershipId: membership.membershipId,
+      siteId: "site-1",
+      status: "active",
+    });
+    expect(transaction.input.TransactItems[6].Put.Item).toMatchObject({
+      eventType: "manager_membership_created",
+      actor: "admin-1",
+    });
+  });
+
   it("adds another manager without replacing memberships or changing the primary contact", async () => {
     send
       .mockResolvedValueOnce({
@@ -286,6 +354,9 @@ describe("Site Manager memberships", () => {
 
   it("lets managers edit a display name without transferring access", async () => {
     send
+      .mockResolvedValueOnce({ Item: { userId: "cm1", status: "active" } })
+      .mockResolvedValueOnce({ Item: { status: "active" } });
+    send
       .mockResolvedValueOnce({
         Item: {
           pk: "SITE#site-1",
@@ -308,10 +379,13 @@ describe("Site Manager memberships", () => {
       ),
     );
     expect(response.statusCode).toBe(200);
-    expect(send.mock.calls[1][0].input.TransactItems).toHaveLength(3);
+    expect(send.mock.calls[3][0].input.TransactItems).toHaveLength(3);
   });
 
   it("does not let managers transfer a membership to another email", async () => {
+    send
+      .mockResolvedValueOnce({ Item: { userId: "cm1", status: "active" } })
+      .mockResolvedValueOnce({ Item: { status: "active" } });
     send.mockResolvedValueOnce({
       Item: {
         membershipId: "membership-1",
@@ -332,7 +406,7 @@ describe("Site Manager memberships", () => {
     expect(JSON.parse(String(response.body))).toEqual({
       error: "supervisor_required",
     });
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledTimes(3);
   });
 
   it("deactivates membership, advances its generation, and removes email uniqueness", async () => {
@@ -401,6 +475,80 @@ describe("Site Manager memberships", () => {
     ).toBe(1);
     expect(JSON.parse(String(response.body)).revokedBindingCount).toBe(1);
   });
+
+  it("assigned manager deactivates membership, advances its generation, and removes email uniqueness", async () => {
+    send
+      .mockResolvedValueOnce({ Item: { userId: "cm", status: "active" } })
+      .mockResolvedValueOnce({ Item: { status: "active" } });
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          pk: "SITE#site-1",
+          sk: "MANAGER_MEMBERSHIP#membership-1",
+          membershipId: "membership-1",
+          emailHash: "email-hash",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            pk: "SITE#site-1",
+            sk: "DEVICE_BINDING#binding-1",
+            bindingId: "binding-1",
+            physicalDeviceId: "physical-1",
+            siteId: "site-1",
+            membershipId: "membership-1",
+            accessLevel: "manager",
+            status: "active",
+            tokenGeneration: 3,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({});
+    const response = await call(
+      deactivateManagerMembership,
+      event(
+        undefined,
+        { siteId: "site-1", membershipId: "membership-1" },
+        "compliance-manager",
+      ),
+    );
+    expect(response.statusCode).toBe(200);
+    const transaction = send.mock.calls[4][0];
+    expect(transaction).toBeInstanceOf(TransactWriteCommand);
+    expect(transaction.input.TransactItems).toHaveLength(8);
+    expect(
+      transaction.input.TransactItems[0].Update.UpdateExpression,
+    ).toContain("generation = generation + :one");
+    expect(transaction.input.TransactItems[1].Delete.Key).toEqual({
+      pk: "SITE#site-1",
+      sk: "MANAGER_EMAIL#email-hash",
+    });
+    expect(transaction.input.TransactItems[2].Delete.Key).toEqual({
+      pk: "MANAGER_EMAIL#email-hash",
+      sk: "SITE#site-1#MEMBERSHIP#membership-1",
+    });
+    expect(transaction.input.TransactItems[3].Update.Key).toEqual({
+      pk: "SITE#site-1",
+      sk: "DEVICE_BINDING#binding-1",
+    });
+    expect(transaction.input.TransactItems[4].Update.Key).toEqual({
+      pk: "SITE#site-1",
+      sk: "DEVICE#binding-1",
+    });
+    expect(transaction.input.TransactItems[5].Update.Key).toEqual({
+      pk: "PHYSICAL_DEVICE#physical-1",
+      sk: "BINDING#binding-1",
+    });
+    expect(transaction.input.TransactItems[6].Put.Item.eventType).toBe(
+      "manager_membership_deactivated",
+    );
+    expect(
+      transaction.input.TransactItems[6].Put.Item.revokedBindingCount,
+    ).toBe(1);
+    expect(JSON.parse(String(response.body)).revokedBindingCount).toBe(1);
+  });
 });
 
 /**
@@ -422,6 +570,7 @@ function event(
           claims: {
             "cognito:groups": groups,
             sub: "admin-1",
+            email: "manager@sfgov.org",
           },
         },
       },
@@ -467,4 +616,45 @@ it("rejects ambiguous email-only membership removal before revoking access, incl
   );
   expect(send.mock.calls).toHaveLength(3);
   expect(send.mock.calls[2][0].input.ExclusiveStartKey).toEqual(cursor);
+});
+
+it("assigns a person directly without a program affiliation", async () => {
+  send
+    .mockResolvedValueOnce({
+      Item: {
+        pk: "PEOPLE",
+        sk: "PERSON#p",
+        personId: "p",
+        status: "active",
+        revision: "v1",
+        sources: [],
+        name: "Alex Rivera",
+        firstName: "Alex",
+        lastName: "Rivera",
+        email: "alex@example.org",
+      },
+    })
+    .mockResolvedValueOnce({
+      Item: { siteId: "site-1", status: "active", leadProgramId: "unrelated" },
+    })
+    .mockResolvedValueOnce({});
+  const response = await call(
+    createManagerMembership,
+    event({ personId: "p" }, { siteId: "site-1" }),
+  );
+  expect(response.statusCode).toBe(201);
+  const tx = /** @type {TransactWriteCommand} */ (
+    send.mock.calls.find(
+      ([command]) => command instanceof TransactWriteCommand,
+    )?.[0]
+  );
+  const membership = tx.input.TransactItems?.find((item) =>
+    item.Put?.Item?.sk.startsWith("MANAGER_MEMBERSHIP#"),
+  )?.Put?.Item;
+  expect(membership?.personId).toBe("p");
+  expect(membership).not.toHaveProperty("programId");
+  expect(membership).not.toHaveProperty("userId");
+  expect(
+    tx.input.TransactItems?.some((item) => item.Put?.Item?.sk === "PERSON#p"),
+  ).toBe(true);
 });

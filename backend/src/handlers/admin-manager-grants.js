@@ -1,3 +1,4 @@
+import { getPerson } from "../lib/people.js";
 import {
   generateEnrollmentCode,
   enrollmentCodeVerifier,
@@ -14,7 +15,7 @@ import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
 import { sendManagerEnrollmentEmail } from "../integrations/email.js";
-import { adminOnly } from "../lib/admin-auth.js";
+import { adminOnly, siteAdminOnly } from "../lib/admin-auth.js";
 
 const MANAGER_GRANT_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -41,7 +42,7 @@ export const listManagerGrants = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const createManagerGrant = (event) =>
-  adminOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const membershipId = String(body.membershipId ?? "").trim();
     if (!membershipId) {
@@ -95,10 +96,19 @@ export const createManagerGrant = (event) =>
     if (!membership || membership.status !== "active") {
       return jsonResponse(404, { error: "manager_membership_not_found" });
     }
-    // Staff records are authoritative for recipients; membership snapshots may predate an email edit.
+    // The active Site membership authorizes enrollment. Site reassignment keeps
+    // existing memberships, so their staff records may belong to the previous
+    // lead Program. Resolve that linked record rather than rejecting the retained
+    // membership or falling back to a potentially outdated email snapshot.
     let recipientEmail = membership.email;
     let recipientName = membership.name;
-    if (membership.userId && membership.programId) {
+    if (membership.personId) {
+      const person = await getPerson(membership.personId);
+      if (!person || person.status !== "active")
+        return jsonResponse(409, { error: "person_not_found" });
+      recipientEmail = person.email;
+      recipientName = person.name;
+    } else if (membership.userId && membership.programId) {
       const staff = await ddb.send(
         new GetCommand({
           TableName: tableName,
@@ -109,12 +119,7 @@ export const createManagerGrant = (event) =>
           ConsistentRead: true,
         }),
       );
-      if (
-        !staff.Item ||
-        staff.Item.status === "inactive" ||
-        !staff.Item.email ||
-        membership.programId !== siteResult.Item?.leadProgramId
-      )
+      if (!staff.Item || staff.Item.status === "inactive" || !staff.Item.email)
         return jsonResponse(409, { error: "program_user_not_found" });
       recipientEmail = staff.Item.email;
       recipientName =
@@ -327,7 +332,7 @@ export const createManagerGrant = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const cancelManagerGrant = (event) =>
-  adminOnly(event, async () => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async () => {
     const siteId = event.pathParameters?.siteId ?? "";
     const grantId = event.pathParameters?.grantId ?? "";
     const tableName = getDynamoTableName();

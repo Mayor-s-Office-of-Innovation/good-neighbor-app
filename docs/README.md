@@ -43,6 +43,8 @@
   Provider Manager lifecycle and all-or-nothing enrollment across the Provider's
   active Sites.
 
+- **[ADR 0017](adr/0017-independent-people-and-site-affiliations.md)** — stable people, independent affiliations, site assignments, provider transfers, and migration.
+
 ## Operations
 
 - **[Completion guidance migration](./runbooks/check-completion-guidance.md)** — atomic completion records, bounded capture-title counts, and historical backfill.

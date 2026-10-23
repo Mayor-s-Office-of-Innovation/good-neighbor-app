@@ -1,3 +1,5 @@
+import { getPerson } from "../lib/people.js";
+import { closeComplianceTerms } from "../domain/end-compliance-terms.js";
 import { sitePrimaryContactChange } from "../lib/site-primary-contact.js";
 import { queryAllItems } from "../lib/query-all-items.js";
 import { deactivateManagerMembershipRecord } from "./admin-manager-memberships.js";
@@ -204,7 +206,11 @@ export const createSiteTerms = (event) =>
       return jsonResponse(400, { error: "site_manager_required" });
     }
 
-    if (!Number.isInteger(requiredChecksPerDay) || requiredChecksPerDay < 1) {
+    if (
+      !Number.isInteger(requiredChecksPerDay) ||
+      requiredChecksPerDay < 1 ||
+      requiredChecksPerDay > 8
+    ) {
       return jsonResponse(400, { error: "invalid_check_cadence" });
     }
     if (body.periodEnd && !periodEnd) {
@@ -265,7 +271,28 @@ export const createSiteTerms = (event) =>
         ),
         resolveLetterGenerator(event, siteId, tableName),
       ]);
-    const siteManager = siteManagerResult.Item;
+    // The assignment, not the site's current lead program, identifies the contact.
+    const assignedProgramId = siteManagerAssignment.Item?.programId;
+    if (assignedProgramId && assignedProgramId !== site.leadProgramId) {
+      const originalStaff = await ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: {
+            pk: `PROGRAM#${assignedProgramId}`,
+            sk: `USER#${siteManagerUserId}`,
+          },
+          ConsistentRead: true,
+        }),
+      );
+      siteManagerResult.Item = originalStaff.Item;
+    }
+    let siteManager = siteManagerResult.Item;
+    const person = await getPerson(
+      siteManagerAssignment.Item?.personId ||
+        siteManager?.personId ||
+        (!siteManager ? siteManagerUserId : undefined),
+    );
+    if (person) siteManager = person;
     let assignedManager =
       siteManagerAssignment.Item?.status !== "inactive" &&
       Boolean(siteManagerAssignment.Item);
@@ -283,7 +310,8 @@ export const createSiteTerms = (event) =>
       assignedManager = (memberships.Items || []).some(
         (member) =>
           member.status === "active" &&
-          (member.userId === siteManagerUserId ||
+          (member.personId === siteManagerUserId ||
+            member.userId === siteManagerUserId ||
             (!member.userId &&
               String(member.email || "").toLowerCase() ===
                 String(siteManager.email || "").toLowerCase())),
@@ -320,14 +348,6 @@ export const createSiteTerms = (event) =>
       generator.departmentName || oversight.managingCityDepartment;
     if (!generatorDepartment) {
       return jsonResponse(409, { error: "generator_department_required" });
-    }
-    /* Preserve a strongly typed assignment check for the selected Site
-     * manager independently of the letter sender. */
-    if (
-      siteManagerAssignment.Item &&
-      siteManagerAssignment.Item.programId !== site.leadProgramId
-    ) {
-      return jsonResponse(409, { error: "site_manager_required" });
     }
     const existing = (termsResult.Items ?? []).filter(
       (item) => item.status !== "cancelled",
@@ -551,73 +571,7 @@ export const endSiteTerms = (event) =>
         "central-admin",
     );
     try {
-      await ddb.send(
-        new TransactWriteCommand({
-          TransactItems: [
-            {
-              Update: {
-                TableName: tableName,
-                Key: { pk: active.pk, sk: active.sk },
-                UpdateExpression:
-                  "SET expiresOnExclusive = :today, endedOn = :today, endedAt = :now, endedBy = :actor, #status = :ended",
-                ConditionExpression:
-                  "attribute_not_exists(expiresOnExclusive) OR expiresOnExclusive > :today",
-                ExpressionAttributeNames: { "#status": "status" },
-                ExpressionAttributeValues: {
-                  ":today": today,
-                  ":now": now,
-                  ":actor": actor,
-                  ":ended": "expired",
-                },
-              },
-            },
-            {
-              Update: {
-                TableName: tableName,
-                Key: { pk: `SITE#${siteId}`, sk: "#META" },
-                UpdateExpression:
-                  "SET compliance = :compliance, complianceTermsUpdatedAt = :now, updatedAt = :now, complianceLetters = :letters, letterState = :archived REMOVE latestComplianceTermsVersionId",
-                ConditionExpression:
-                  "latestComplianceTermsVersionId = :version AND " +
-                  (siteResult.Item.complianceLetters
-                    ? "complianceLetters = :observedLetters"
-                    : "attribute_not_exists(complianceLetters)"),
-                ExpressionAttributeValues: {
-                  ":compliance": {
-                    perimeterChecksRequired: false,
-                    underEnhancedMonitoring: false,
-                  },
-                  ":letters": {
-                    current: null,
-                    past: [
-                      ...(siteResult.Item.complianceLetters?.current
-                        ? [siteResult.Item.complianceLetters.current]
-                        : []),
-                      ...(siteResult.Item.complianceLetters?.past || []),
-                    ],
-                  },
-                  ":archived": "archived",
-                  ...(siteResult.Item.complianceLetters
-                    ? { ":observedLetters": siteResult.Item.complianceLetters }
-                    : {}),
-                  ":now": now,
-                  ":version": active.termsVersionId,
-                },
-              },
-            },
-            put({
-              pk: `SITE#${siteId}`,
-              sk: `AUDIT#${now}#${randomUUID()}`,
-              type: "siteAuditEvent",
-              eventType: "perimeter_checks_period_ended",
-              siteId,
-              termsVersionId: active.termsVersionId,
-              actor,
-              createdAt: now,
-            }),
-          ],
-        }),
-      );
+      await closeComplianceTerms(siteResult.Item, active, today, now, actor);
     } catch (error) {
       if (
         error instanceof Error &&
@@ -635,7 +589,7 @@ export const endSiteTerms = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const assignSiteUser = (event) =>
-  supervisorOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const userId = clean(body.userId);
     if (!userId) return jsonResponse(400, { error: "user_required" });
@@ -736,7 +690,7 @@ export const assignSiteUser = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const unassignSiteUser = (event) =>
-  supervisorOnly(event, async () => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async () => {
     const siteId = event.pathParameters?.siteId ?? "";
     const userId = event.pathParameters?.userId ?? "";
     const tableName = getDynamoTableName();

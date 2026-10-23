@@ -1,3 +1,4 @@
+import { expireComplianceTerms } from "../src/workers/expire-compliance-terms.js";
 // SQS → worker pump — the local stand-in for the Lambda event source mapping.
 // Long-polls ElasticMQ, wraps each message in an SQSEvent, invokes the SAME
 // exported worker handler we deploy, and deletes the message only after the
@@ -151,9 +152,14 @@ async function dispatchPendingOutbox() {
   } while (lastEvaluatedKey);
 }
 
+let lastExpirySweep = 0;
 async function poll(queueUrl) {
   while (running) {
     try {
+      if (Date.now() - lastExpirySweep > 60_000) {
+        await expireComplianceTerms();
+        lastExpirySweep = Date.now();
+      }
       await dispatchPendingOutbox();
     } catch (err) {
       console.error(

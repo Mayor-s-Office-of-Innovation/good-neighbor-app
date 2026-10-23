@@ -324,7 +324,12 @@ export async function bindingLifecycleValid(device, role, prefetchedSite) {
   }
   if (role !== "manager") return true;
   if (device.authorityScope === "provider") {
-    if (!device.providerId || site.providerId !== device.providerId)
+    if (
+      !device.providerId ||
+      site.providerId !== device.providerId ||
+      Number(device.providerAccessGeneration ?? 0) !==
+        Number(site.providerAccessGeneration ?? 0)
+    )
       return false;
     const membership = await findProviderManager(
       tableName,

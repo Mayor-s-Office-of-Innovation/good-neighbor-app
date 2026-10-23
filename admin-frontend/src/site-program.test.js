@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { siteProviderPrograms } from "./site-program.js";
 
-test("site program choices include only active programs belonging to its provider", () => {
+test("site program choices include active programs independently of its provider", () => {
   const programs = [
     { programId: "one", providerId: "provider", status: "active" },
     { programId: "two", providerId: "other", status: "active" },
@@ -10,7 +10,10 @@ test("site program choices include only active programs belonging to its provide
   ];
   assert.deepEqual(
     siteProviderPrograms(programs, "provider").map((p) => p.programId),
-    ["one"],
+    ["one", "two"],
   );
-  assert.deepEqual(siteProviderPrograms(programs, ""), []);
+  assert.deepEqual(
+    siteProviderPrograms(programs, "").map((p) => p.programId),
+    ["one", "two"],
+  );
 });

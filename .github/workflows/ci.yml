@@ -34,11 +34,8 @@ jobs:
 
       - name: Reject literal AWS account identifiers
         run: |
-          set -euo pipefail
-          if rg --pcre2 '(?<![[:alnum:]_.])[0-9]{12}(?![[:alnum:]_])' --hidden --glob '!.git/**'; then
-            echo "Literal AWS account identifiers are prohibited; use environment configuration." >&2
-            exit 1
-          fi
+          node --test scripts/check-aws-account-identifiers.test.mjs
+          node scripts/check-aws-account-identifiers.mjs
 
       - name: Format
         run: npm run format:check

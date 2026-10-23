@@ -1,3 +1,4 @@
+import { expireComplianceTerms } from "../workers/expire-compliance-terms.js";
 // Event-source entrypoint for the async worker. The demo /submissions, artifact
 // analysis uses a dedicated SQS queue and Lambda; background jobs use the
 // submissions queue. Both Lambdas reuse this dispatcher. A filtered DynamoDB
@@ -52,10 +53,15 @@ function pickHandler(body) {
 }
 
 /**
- * @param {import("aws-lambda").SQSEvent | import("aws-lambda").DynamoDBStreamEvent} event
+ * @param {import("aws-lambda").SQSEvent | import("aws-lambda").DynamoDBStreamEvent | { type: "expire_compliance_terms" }} event
  * @param {import("aws-lambda").Context} context
  */
 export const handler = async (event, context) => {
+  if ("type" in event && event.type === "expire_compliance_terms") {
+    await expireComplianceTerms();
+    return { batchItemFailures: [] };
+  }
+  if (!("Records" in event)) throw new Error("Unsupported worker event");
   // Node.js 24 rejects entrypoints with a third (callback) parameter. The
   // workers return promises; this shim only satisfies their legacy AWS types.
   const callback = () => {};

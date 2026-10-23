@@ -1,4 +1,10 @@
 import {
+  getPerson,
+  personRecord,
+  personPut,
+  updatePersonRecord,
+} from "../lib/people.js";
+import {
   generateEnrollmentCode,
   enrollmentCodeVerifier,
 } from "./enrollment-codes.js";
@@ -35,6 +41,7 @@ export const listProviderManagers = (event) =>
     }
     const enrollments = await reconcileEnrollmentStatus(
       enrollmentsResult.Items ?? [],
+      managersResult.Items ?? [],
     );
     const counts = new Map();
     for (const enrollment of enrollments) {
@@ -68,6 +75,7 @@ export const createProviderManager = (event) =>
     }
     const now = new Date().toISOString();
     const membershipId = randomUUID();
+    /** @type {Record<string, any>} */
     const item = {
       pk: `PROVIDER#${providerId}`,
       sk: `PROVIDER_MANAGER#${membershipId}`,
@@ -84,10 +92,53 @@ export const createProviderManager = (event) =>
       updatedAt: now,
       updatedBy: actorId(event),
     };
+    const existingPerson = body.personId
+      ? await getPerson(String(body.personId))
+      : null;
+    if (
+      body.personId &&
+      (!existingPerson || existingPerson.status !== "active")
+    )
+      return jsonResponse(404, { error: "person_not_found" });
+    if (existingPerson) {
+      for (const source of existingPerson.sources.filter(
+        (/** @type {{pk:string,sk:string}} */ source) =>
+          source.pk === `PROVIDER#${providerId}` &&
+          source.sk.startsWith("PROVIDER_MANAGER#"),
+      )) {
+        const current = await get(source);
+        if (current.Item?.status === "active")
+          return jsonResponse(409, {
+            error: "provider_manager_already_assigned",
+          });
+      }
+    }
+    const person = existingPerson
+      ? {
+          ...existingPerson,
+          sources: [...existingPerson.sources, { pk: item.pk, sk: item.sk }],
+          revision: randomUUID(),
+        }
+      : personRecord(
+          { ...input.value, primaryProviderId: providerId },
+          membershipId,
+          [{ pk: item.pk, sk: item.sk }],
+        );
+    item.personId = person.personId;
+    if (existingPerson)
+      Object.assign(item, {
+        firstName: person.firstName,
+        lastName: person.lastName,
+        name: person.name,
+        email: person.email,
+        phone: person.phone,
+        phoneExtension: person.phoneExtension,
+      });
     try {
       await ddb.send(
         new TransactWriteCommand({
           TransactItems: [
+            personPut(person, existingPerson?.revision),
             put(item),
             put(emailDirectory(item, now)),
             put(
@@ -118,6 +169,14 @@ export const updateProviderManager = (event) =>
     const manager = await findManager(providerId, membershipId);
     if (!manager) {
       return jsonResponse(404, { error: "provider_manager_not_found" });
+    }
+    if (manager.personId) {
+      const person = await getPerson(manager.personId);
+      if (!person) return jsonResponse(409, { error: "person_not_found" });
+      await updatePersonRecord(person, input.value || {}, actorId(event));
+      return jsonResponse(200, {
+        manager: publicManager({ ...manager, ...input.value }),
+      });
     }
     const now = new Date().toISOString();
     const updated = {
@@ -688,6 +747,7 @@ function managerInput(body) {
 /** @param {Record<string, any>} item */
 function publicManager(item) {
   return {
+    personId: item.personId,
     membershipId: item.membershipId,
     providerId: item.providerId,
     firstName: item.firstName,
@@ -873,8 +933,9 @@ async function query(providerId, prefix, ascending = true) {
 /**
  * Resolve enrollment display state from authoritative physical and binding rows.
  * @param {Array<Record<string, any>>} enrollments
+ * @param {Array<Record<string, any>>} managers
  */
-async function reconcileEnrollmentStatus(enrollments) {
+async function reconcileEnrollmentStatus(enrollments, managers) {
   const candidates = enrollments.filter((item) => item.status !== "revoked");
   /** @type {Array<Record<string, any>>} */
   const requestedKeys = candidates.flatMap((item) => [
@@ -917,6 +978,11 @@ async function reconcileEnrollmentStatus(enrollments) {
   }
   return enrollments.map((item) => {
     if (item.status === "revoked") return item;
+    const manager = managers.find(
+      (row) => row.membershipId === item.membershipId,
+    );
+    if (manager && manager.status !== "active")
+      return { ...item, status: "revoked", activeBindingCount: 0 };
     const physical = records.get(
       `PHYSICAL_DEVICE#${item.physicalDeviceId}|#META`,
     );
@@ -976,3 +1042,132 @@ function isConflict(error) {
     error instanceof Error && error.name === "TransactionCanceledException"
   );
 }
+
+/** Transfer authority, never the old device bindings. */
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const transferProviderManager = (event) =>
+  supervisorOnly(event, async (body) => {
+    const providerId = event.pathParameters?.providerId || "";
+    const manager = await findManager(
+      providerId,
+      event.pathParameters?.membershipId || "",
+    );
+    const targetId = clean(body.providerId);
+    if (!manager || manager.status !== "active")
+      return jsonResponse(404, { error: "provider_manager_not_found" });
+    if (!targetId || targetId === providerId)
+      return jsonResponse(400, { error: "different_provider_required" });
+    const target = await get(providerKey(targetId, "#META"));
+    if (!target.Item || target.Item.status !== "active")
+      return jsonResponse(404, { error: "provider_not_found" });
+    const person = await getPerson(manager.personId);
+    if (!person)
+      return jsonResponse(409, { error: "person_migration_required" });
+    for (const source of person.sources.filter(
+      (/** @type {{pk:string,sk:string}} */ source) =>
+        source.pk === `PROVIDER#${targetId}` &&
+        source.sk.startsWith("PROVIDER_MANAGER#"),
+    )) {
+      const existing = await get(source);
+      if (existing.Item?.status === "active")
+        return jsonResponse(409, {
+          error: "provider_manager_already_assigned",
+        });
+    }
+    const now = new Date().toISOString();
+    const membershipId = randomUUID();
+    const next = {
+      ...manager,
+      pk: `PROVIDER#${targetId}`,
+      sk: `PROVIDER_MANAGER#${membershipId}`,
+      providerId: targetId,
+      membershipId,
+      managerId: membershipId,
+      generation: 1,
+      createdAt: now,
+      updatedAt: now,
+      createdBy: actorId(event),
+      updatedBy: actorId(event),
+    };
+    const old = {
+      ...manager,
+      status: "inactive",
+      generation: Number(manager.generation || 1) + 1,
+      deactivatedAt: now,
+      updatedAt: now,
+      transferredTo: { providerId: targetId, membershipId },
+    };
+    const changedPerson = {
+      ...person,
+      primaryProviderId: targetId,
+      sources: [...person.sources, { pk: next.pk, sk: next.sk }],
+      revision: randomUUID(),
+    };
+    try {
+      await ddb.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            {
+              ConditionCheck: {
+                TableName: getDynamoTableName(),
+                Key: providerKey(targetId, "#META"),
+                ConditionExpression: "#status = :active",
+                ExpressionAttributeNames: { "#status": "status" },
+                ExpressionAttributeValues: { ":active": "active" },
+              },
+            },
+            personPut(changedPerson, person.revision),
+            {
+              Put: {
+                TableName: getDynamoTableName(),
+                Item: old,
+                ConditionExpression:
+                  manager.generation === undefined
+                    ? "#status = :active AND attribute_not_exists(generation)"
+                    : "#status = :active AND generation = :generation",
+                ExpressionAttributeNames: { "#status": "status" },
+                ExpressionAttributeValues: {
+                  ":active": "active",
+                  ...(manager.generation === undefined
+                    ? {}
+                    : { ":generation": manager.generation }),
+                },
+              },
+            },
+            put(next),
+            put(emailDirectory(next, now)),
+            {
+              Delete: {
+                TableName: getDynamoTableName(),
+                Key: providerManagerEmailKey(
+                  manager.email,
+                  providerId,
+                  manager.membershipId,
+                ),
+              },
+            },
+            put(
+              providerAudit(providerId, "provider_manager_transferred", now, {
+                membershipId: manager.membershipId,
+                targetProviderId: targetId,
+                newMembershipId: membershipId,
+                actor: actorId(event),
+              }),
+            ),
+            put(
+              providerAudit(targetId, "provider_manager_transferred_in", now, {
+                membershipId,
+                sourceProviderId: providerId,
+                actor: actorId(event),
+              }),
+            ),
+          ],
+        }),
+      );
+    } catch (error) {
+      if (isConflict(error))
+        return jsonResponse(409, { error: "provider_manager_conflict" });
+      throw error;
+    }
+    return jsonResponse(200, { manager: publicManager(next) });
+  });

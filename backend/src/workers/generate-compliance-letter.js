@@ -20,6 +20,10 @@ export const handler = async (event) => {
       }),
     );
     if (!job.Item || job.Item.status === "completed") continue;
+    if (job.Item.noticeOnly) {
+      await deliverComplianceLetter(job.Item, job.Item.email, {});
+      continue;
+    }
     if (job.Item.resend) {
       await deliverComplianceLetter(job.Item, job.Item.email, job.Item.letter);
       continue;

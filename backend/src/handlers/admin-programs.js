@@ -1,3 +1,11 @@
+import {
+  getPerson,
+  updatePersonRecord,
+  personRecord,
+  personPut,
+  registerPeopleChanges,
+} from "../lib/people.js";
+import { managerSiteScope } from "../lib/manager-site-scope.js";
 import { assignmentsMatchingEmail } from "../lib/manager-identity.js";
 import { queryAllItems } from "../lib/query-all-items.js";
 import { sitePrimaryContactChange } from "../lib/site-primary-contact.js";
@@ -18,6 +26,7 @@ import {
   adminOnly,
   adminPrincipal,
   supervisorOnly,
+  authorizeSiteChanges,
 } from "../lib/admin-auth.js";
 import { deactivateManagerMembershipRecord } from "./admin-manager-memberships.js";
 import { emailHash, normalizeEmail } from "./setup-codes.js";
@@ -197,6 +206,7 @@ export const createProgram = (event) =>
           updatedAt: now,
         }
       : null;
+    const personChanges = user ? await registerPeopleChanges([put(user)]) : [];
     try {
       await ddb.send(
         new TransactWriteCommand({
@@ -204,6 +214,7 @@ export const createProgram = (event) =>
             ...sourceChecks,
             put(program),
             ...(user ? [put(user)] : []),
+            ...personChanges,
             put({
               pk: `PROVIDER#${providerId}`,
               sk: `PROGRAM#${programId}`,
@@ -379,8 +390,28 @@ export const assignProgramToProvider = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const createProgramUser = (event) =>
-  supervisorOnly(event, async (body) => {
+  adminOnly(event, async (body) => {
     const programId = event.pathParameters?.programId ?? "";
+    if (adminPrincipal(event).role !== ADMIN_GROUPS.supervisor) {
+      const siteId = String(body.siteId || "");
+      const denied = await authorizeSiteChanges(event, [siteId]);
+      if (denied) return denied;
+      const { Item: site } = await ddb.send(
+        new GetCommand({
+          TableName: getDynamoTableName(),
+          Key: { pk: `SITE#${siteId}`, sk: "#META" },
+          ConsistentRead: true,
+        }),
+      );
+      if (
+        !site ||
+        site.status === "inactive" ||
+        site.leadProgramId !== programId ||
+        body.siteManager !== true ||
+        body.isPrimaryContact !== undefined
+      )
+        return jsonResponse(403, { error: "site_assignment_required" });
+    }
     const contact = normalizeContact(body);
     if (!contact.firstName || !contact.lastName) {
       return jsonResponse(400, { error: "name_required" });
@@ -416,9 +447,19 @@ export const createProgramUser = (event) =>
       createdAt: now,
       updatedAt: now,
     };
+    const person = personRecord(
+      {
+        ...user,
+        primaryProgramId: programId,
+        primaryProviderId: program.Item.providerId,
+      },
+      userId,
+      [{ pk: user.pk, sk: user.sk }],
+    );
+    Object.assign(user, { personId: person.personId });
     await ddb.send(
       new TransactWriteCommand({
-        TransactItems: [put(user)],
+        TransactItems: [put(user), personPut(person)],
       }),
     );
     return jsonResponse(201, { user });
@@ -456,6 +497,45 @@ export const updateProgramUser = (event) =>
         contact.email !== normalizeEmail(String(current.Item.email ?? "")))
     ) {
       return jsonResponse(403, { error: "supervisor_required" });
+    }
+    if (principal.role !== ADMIN_GROUPS.supervisor) {
+      if (body.isPrimaryContact !== undefined)
+        return jsonResponse(403, { error: "supervisor_required" });
+      const siteIds = await managerSiteScope(
+        programId,
+        userId,
+        String(current.Item.email || ""),
+      );
+      const denied = await authorizeSiteChanges(event, siteIds);
+      if (denied) return denied;
+    }
+    if (current.Item.personId) {
+      const person = await getPerson(current.Item.personId);
+      if (!person) return jsonResponse(409, { error: "person_not_found" });
+      if (
+        principal.role !== ADMIN_GROUPS.supervisor &&
+        person.sources.some((/** @type {{pk:string,sk:string}} */ source) =>
+          source.pk.startsWith("PROVIDER#"),
+        )
+      )
+        return jsonResponse(403, { error: "supervisor_required" });
+      if (principal.role !== ADMIN_GROUPS.supervisor) {
+        // A legacy URL still edits the shared person: authorize every source site.
+        const sites = [
+          ...new Set(
+            person.sources
+              .filter((/** @type {{pk:string}} */ source) =>
+                source.pk.startsWith("SITE#"),
+              )
+              .map((/** @type {{pk:string}} */ source) => source.pk.slice(5)),
+          ),
+        ];
+        const denied = await authorizeSiteChanges(event, sites);
+        if (denied) return denied;
+      }
+      await updatePersonRecord(person, contact, principal.subject);
+      if (body.isPrimaryContact === undefined)
+        return jsonResponse(200, { user: { ...current.Item, ...contact } });
     }
     if (body.isPrimaryContact !== undefined) {
       if (typeof body.isPrimaryContact !== "boolean")

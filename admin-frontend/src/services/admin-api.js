@@ -1,27 +1,48 @@
-import { getAdminToken } from "./admin-auth.js";
+import { localRoleHeaders } from "../local-role.js";
+import { getFreshAdminToken, startAdminLogin } from "./admin-auth.js";
 import { getAdminConfig } from "../config.js";
+
+let loginRedirect = null;
+
+function redirectToLogin() {
+  if (!loginRedirect) {
+    loginRedirect = startAdminLogin()
+      // Navigation replaces this page. Keep its operations pending so their
+      // success/error handlers cannot render a banner or toast during redirect.
+      .then(() => new Promise(() => {}))
+      .catch((error) => {
+        loginRedirect = null;
+        throw error;
+      });
+  }
+  return loginRedirect;
+}
 
 /**
  * @param {string} path
  * @param {RequestInit} [init]
  */
-async function adminFetch(path, init = {}) {
+async function authenticatedFetch(path, init = {}) {
   const config = getAdminConfig();
-  const token = getAdminToken();
+  if (loginRedirect) return loginRedirect;
+  const token = await getFreshAdminToken();
+  if (!config.localDebugAdmin && !token) return redirectToLogin();
   const res = await fetch(`${config.apiBase}${path}`, {
     ...init,
     headers: {
       "content-type": "application/json",
       ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...(config.localDebugAdmin
-        ? {
-            "x-debug-groups": "compliance-supervisor",
-            "x-debug-sub": "local-admin",
-          }
-        : {}),
+      ...localRoleHeaders(config),
       ...(init.headers || {}),
     },
   });
+  if (!config.localDebugAdmin && res.status === 401) return redirectToLogin();
+  return res;
+}
+
+/** @param {string} path @param {RequestInit} [init] */
+async function adminFetch(path, init = {}) {
+  const res = await authenticatedFetch(path, init);
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const err = new Error(body.error || "admin_request_failed");
@@ -36,6 +57,11 @@ async function adminFetch(path, init = {}) {
 }
 
 export const adminApi = {
+  revokeManagerDevices: (programId, userId, confirmation) =>
+    adminFetch(
+      `/admin/v1/programs/${encodeURIComponent(programId)}/users/${encodeURIComponent(userId)}/devices:revoke`,
+      { method: "POST", body: JSON.stringify({ confirmation }) },
+    ),
   getMyProfile: () => adminFetch("/admin/v1/profile"),
   updateMyProfile: (values) =>
     adminFetch("/admin/v1/profile", {
@@ -85,6 +111,39 @@ export const adminApi = {
       signal,
     }),
   listProviders: () => adminFetch("/admin/v1/providers"),
+  listPeople: () => adminFetch("/admin/v1/people"),
+  createPerson: (values) =>
+    adminFetch("/admin/v1/people", {
+      method: "POST",
+      body: JSON.stringify(values),
+    }),
+  updatePerson: (id, values) =>
+    adminFetch(`/admin/v1/people/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(values),
+    }),
+  revokePersonDevices: (id, confirmation) =>
+    adminFetch(`/admin/v1/people/${encodeURIComponent(id)}/devices:revoke`, {
+      method: "POST",
+      body: JSON.stringify({ confirmation }),
+    }),
+  transferProviderManager: (providerId, membershipId, targetId) =>
+    adminFetch(
+      `/admin/v1/providers/${encodeURIComponent(providerId)}/manager-memberships/${encodeURIComponent(membershipId)}/transfer`,
+      { method: "POST", body: JSON.stringify({ providerId: targetId }) },
+    ),
+  assignPersonToSite: (siteId, person) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/manager-memberships`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          personId: person.personId,
+          name: person.name,
+          email: person.email,
+        }),
+      },
+    ),
   listPrograms: () => adminFetch("/admin/v1/programs"),
   listCityProgramManagers: () => adminFetch("/admin/v1/program-managers"),
   createCityProgramManager: (values) =>
@@ -225,10 +284,10 @@ export const adminApi = {
       method: "PATCH",
       body: JSON.stringify(values),
     }),
-  reassignSite: (siteId, providerId, leadProgramId) =>
+  reassignSite: (siteId, providerId, leadProgramId, options = {}) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/reassign`, {
       method: "POST",
-      body: JSON.stringify({ providerId, leadProgramId }),
+      body: JSON.stringify({ providerId, leadProgramId, ...options }),
     }),
   assignSiteUser: (siteId, userId, primary = false) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/users`, {
@@ -322,21 +381,8 @@ export const adminApi = {
   getSiteImport: (importId) =>
     adminFetch(`/admin/v1/site-imports/${encodeURIComponent(importId)}`),
   downloadSiteImportConflicts: async (importId) => {
-    const config = getAdminConfig();
-    const token = getAdminToken();
-    const response = await fetch(
-      `${config.apiBase}/admin/v1/site-imports/${encodeURIComponent(importId)}/conflicts.csv`,
-      {
-        headers: {
-          ...(token ? { authorization: `Bearer ${token}` } : {}),
-          ...(config.localDebugAdmin
-            ? {
-                "x-debug-groups": "compliance-supervisor",
-                "x-debug-sub": "local-admin",
-              }
-            : {}),
-        },
-      },
+    const response = await authenticatedFetch(
+      `/admin/v1/site-imports/${encodeURIComponent(importId)}/conflicts.csv`,
     );
     if (!response.ok) throw new Error("conflict_report_failed");
     return response.blob();

@@ -1,3 +1,5 @@
+import { registerPeopleChanges } from "../lib/people.js";
+import { queryAllItems } from "../lib/query-all-items.js";
 import { contactRevisionChange } from "../lib/staff-contact-guard.js";
 import { currentManagerOversight } from "../lib/site-manager-name.js";
 import {
@@ -31,7 +33,14 @@ import {
   normalizeEmail,
   revokePendingSetupCodesForSite,
 } from "./setup-codes.js";
-import { adminOnly, siteAdminOnly, supervisorOnly } from "../lib/admin-auth.js";
+import {
+  adminOnly,
+  siteAdminOnly,
+  supervisorOnly,
+  authorizeSiteChanges,
+  adminPrincipal,
+  ADMIN_GROUPS,
+} from "../lib/admin-auth.js";
 
 /** GET /admin/v1/program-managers — non-authenticating domain directory. */
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -98,7 +107,7 @@ export const createCityProgramManager = (event) =>
 /** PATCH /admin/v1/program-managers/{userId} — update shared contact details. */
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const updateCityProgramManager = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const userId = event.pathParameters?.userId ?? "";
     const phone = normalizePhone(body.phone);
     if (!phone) return jsonResponse(400, { error: "valid_phone_required" });
@@ -315,11 +324,7 @@ export const createSite = (event) =>
         }),
       );
       program = result.Item;
-      if (
-        !program ||
-        program.status === "inactive" ||
-        program.providerId !== providerId
-      ) {
+      if (!program || program.status === "inactive") {
         return jsonResponse(400, { error: "incompatible_program" });
       }
       if (primaryContactUserId) {
@@ -504,6 +509,8 @@ export const createSite = (event) =>
         contactRevisionChange(getDynamoTableName(), leadProgramId, program),
       );
     }
+    if (primaryContact?.personId)
+      transactItems.push(...(await registerPeopleChanges(transactItems)));
     await ddb.send(
       new TransactWriteCommand({
         TransactItems: transactItems,
@@ -620,7 +627,10 @@ export const getAdminSite = (event) =>
         };
       }),
     );
-    return jsonResponse(200, { items });
+    return jsonResponse(200, {
+      items,
+      permissions: { canEdit: !(await authorizeSiteChanges(event, [siteId])) },
+    });
   });
 
 /**
@@ -667,12 +677,40 @@ export const reassignSite = (event) =>
     if (!provider || provider.status === "inactive") {
       return jsonResponse(404, { error: "provider_not_found" });
     }
-    if (
-      !program ||
-      program.status === "inactive" ||
-      program.providerId !== providerId
-    ) {
+    if (!program || program.status === "inactive") {
       return jsonResponse(400, { error: "incompatible_program" });
+    }
+    if (body.expectedUpdatedAt && body.expectedUpdatedAt !== site.updatedAt)
+      return jsonResponse(409, { error: "site_reassignment_conflict" });
+    if (body.preview === true) {
+      const children = await queryAllItems({
+        TableName: tableName,
+        KeyConditionExpression: "pk = :pk",
+        ExpressionAttributeValues: { ":pk": `SITE#${siteId}` },
+        ConsistentRead: true,
+      });
+      return jsonResponse(200, {
+        preview: {
+          updatedAt: site.updatedAt,
+          previousProvider: site.providerName,
+          newProvider: provider.name,
+          previousProgram: site.programName,
+          newProgram: program.name,
+          retainedManagers: (children.Items || [])
+            .filter(
+              (r) =>
+                r.sk.startsWith("MANAGER_MEMBERSHIP#") && r.status === "active",
+            )
+            .map((r) => r.name || r.email),
+          affectedProviderDevices: (children.Items || []).filter(
+            (r) =>
+              r.sk.startsWith("DEVICE_BINDING#") &&
+              r.status === "active" &&
+              r.authorityScope === "provider" &&
+              r.providerId !== providerId,
+          ).length,
+        },
+      });
     }
     if (
       site.providerId === providerId &&
@@ -688,11 +726,14 @@ export const reassignSite = (event) =>
           TableName: tableName,
           Key: { pk: `SITE#${siteId}`, sk: "#META" },
           UpdateExpression:
-            "SET providerId = :providerId, providerName = :providerName, leadProgramId = :programId, programName = :programName, updatedAt = :now REMOVE programMigrationRunId",
+            "SET providerId = :providerId, providerName = :providerName, leadProgramId = :programId, programName = :programName, updatedAt = :now, providerAccessGeneration = :providerGeneration REMOVE programMigrationRunId",
           ConditionExpression: site.updatedAt
             ? "attribute_exists(pk) AND updatedAt = :expectedUpdatedAt"
             : "attribute_exists(pk)",
           ExpressionAttributeValues: {
+            ":providerGeneration":
+              Number(site.providerAccessGeneration || 0) +
+              Number(site.providerId !== providerId),
             ":providerId": providerId,
             ":providerName": provider.name,
             ":programId": leadProgramId,
@@ -709,6 +750,9 @@ export const reassignSite = (event) =>
             pk: `PROVIDER#${providerId}`,
             sk: `SITE#${siteId}`,
             type: "providerSiteMembership",
+            providerAccessGeneration:
+              Number(site.providerAccessGeneration || 0) +
+              Number(site.providerId !== providerId),
             providerId,
             providerName: provider.name,
             siteId,
@@ -783,6 +827,9 @@ export const reassignSite = (event) =>
         ...site,
         providerId,
         providerName: provider.name,
+        providerAccessGeneration:
+          Number(site.providerAccessGeneration || 0) +
+          Number(site.providerId !== providerId),
         leadProgramId,
         programName: program.name,
         updatedAt: now,
@@ -798,7 +845,7 @@ const MAX_COMPLIANCE_LETTER_BYTES = 10 * 1024 * 1024;
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const presignComplianceLetter = (event) =>
-  adminOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const contentType = String(body.contentType ?? "").toLowerCase();
     const size = Number(body.size);
@@ -903,6 +950,11 @@ export const updateSite = (event) =>
     }
     /** @type {Record<string, any> | undefined} */
     let selectedProgramManager;
+    if (
+      programManagerPhone !== undefined &&
+      adminPrincipal(event).role !== ADMIN_GROUPS.supervisor
+    )
+      return jsonResponse(403, { error: "supervisor_required" });
     if (programManagerPhone !== undefined) {
       if (!oversight?.cityProgramManagerId) {
         return jsonResponse(400, { error: "program_manager_required" });
@@ -1295,7 +1347,7 @@ export const deactivateSite = (event) =>
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const issueAdminSetupCode = (event) =>
-  adminOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const email = normalizeEmail(String(body.email ?? ""));
     const accessLevel = body.accessLevel === "manager" ? "manager" : "general";
@@ -1341,29 +1393,74 @@ export const issueAdminSetupCode = (event) =>
 export const listDevices = (event) =>
   adminOnly(event, async () => {
     const siteId = event.pathParameters?.siteId ?? "";
-    const [bindings, legacyDevices] = await Promise.all([
-      queryAll({
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :binding)",
-        ExpressionAttributeValues: {
-          ":pk": `SITE#${siteId}`,
-          ":binding": "DEVICE_BINDING#",
-        },
-      }),
-      queryAll({
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :device)",
-        ExpressionAttributeValues: {
-          ":pk": `SITE#${siteId}`,
-          ":device": "DEVICE#",
-        },
-      }),
-    ]);
+    const [bindings, legacyDevices, memberships, staffGrants] =
+      await Promise.all([
+        queryAll({
+          KeyConditionExpression: "pk = :pk AND begins_with(sk, :binding)",
+          ExpressionAttributeValues: {
+            ":pk": `SITE#${siteId}`,
+            ":binding": "DEVICE_BINDING#",
+          },
+        }),
+        queryAll({
+          KeyConditionExpression: "pk = :pk AND begins_with(sk, :device)",
+          ExpressionAttributeValues: {
+            ":pk": `SITE#${siteId}`,
+            ":device": "DEVICE#",
+          },
+        }),
+        ...["MANAGER_MEMBERSHIP#", "STAFF_GRANT#"].map((prefix) =>
+          queryAll({
+            KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+            ExpressionAttributeValues: {
+              ":pk": `SITE#${siteId}`,
+              ":prefix": prefix,
+            },
+          }),
+        ),
+      ]);
+    const members = new Map(
+      memberships.map((member) => [member.membershipId, member]),
+    );
+    const grants = new Map(staffGrants.map((grant) => [grant.grantId, grant]));
+    const providerEmails = new Map();
+    for (const binding of bindings) {
+      if (!binding.providerId || !binding.providerMembershipId) continue;
+      const key = `${binding.providerId}/${binding.providerMembershipId}`;
+      if (!providerEmails.has(key)) {
+        const { Item } = await ddb.send(
+          new GetCommand({
+            TableName: getDynamoTableName(),
+            Key: {
+              pk: `PROVIDER#${binding.providerId}`,
+              sk: `PROVIDER_MANAGER#${binding.providerMembershipId}`,
+            },
+          }),
+        );
+        providerEmails.set(key, Item?.email || "");
+      }
+    }
+    /** @param {Record<string, any>} item */
+    const describeDevice = (item) => {
+      const grant = grants.get(item.enrolledByGrantId);
+      return {
+        ...publicDevice(item),
+        managerEmail:
+          item.authorityScope === "provider"
+            ? providerEmails.get(
+                `${item.providerId}/${item.providerMembershipId}`,
+              ) || ""
+            : members.get(item.membershipId)?.email || "",
+        enrolledByEmail: members.get(grant?.issuerMembershipId)?.email || "",
+      };
+    };
     const canonicalIds = new Set(bindings.map((item) => item.bindingId));
     return jsonResponse(200, {
       devices: [
-        ...bindings.map((item) => publicDevice(item)),
+        ...bindings.map(describeDevice),
         ...legacyDevices
           .filter((item) => !canonicalIds.has(item.bindingId ?? item.deviceId))
-          .map((item) => publicDevice({ ...item, legacy: true })),
+          .map((item) => describeDevice({ ...item, legacy: true })),
       ],
     });
   });
@@ -1373,7 +1470,7 @@ export const listDevices = (event) =>
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const revokeDevice = (event) =>
-  adminOnly(event, async () => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async () => {
     const siteId = event.pathParameters?.siteId ?? "";
     const deviceId = event.pathParameters?.deviceId ?? "";
     const tableName = getDynamoTableName();

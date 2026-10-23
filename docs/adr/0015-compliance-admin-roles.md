@@ -9,11 +9,16 @@ The admin application has two Cognito-backed roles: `compliance-manager` and
 `compliance-supervisor`. The legacy `central-admin` group is accepted only as a
 temporary alias for Compliance manager during migration.
 
-Compliance managers may read and edit existing administrative records, issue
-Site manager and Site user enrollment credentials, revoke device access, and
-generate compliance letters. They may not create or deactivate providers,
-programs, or sites; change a Site's lead Program; manage Site manager
-assignments; run imports; or administer Cognito users.
+Updated 2026-10-23: Compliance managers may read Sites, but may change Site
+details, oversight, compliance, and app access only when their active directory
+identity has an active assignment to that Site. This includes adding/removing
+Site managers and creating a manager in the Site's lead Program. Other Sites
+are read-only. Shared staff changes and cross-Site device revocations require
+authorization for every affected Site before any mutation.
+
+They may not create or deactivate providers, programs, or Sites; change a
+Site's lead Program; assign Compliance managers; change shared City manager
+records; run imports; or administer Cognito users. Those remain supervisor-only.
 
 Compliance supervisors have those additional capabilities. They may invite,
 suspend, reinstate, and change the role of either administrator type. The

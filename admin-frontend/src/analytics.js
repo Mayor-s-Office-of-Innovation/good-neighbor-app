@@ -2,7 +2,6 @@
 // from buttons, plus an advanced panel that shows and lets you edit the SQL
 // behind the last query. Reads only the lake — never the production table.
 import {
-  clearAdminSession,
   hasAdminSession,
   signOutAdmin,
   startAdminLogin,
@@ -206,7 +205,6 @@ class AdminAnalytics extends HTMLElement {
       });
     });
     this.querySelector("#clear-token")?.addEventListener("click", () => {
-      clearAdminSession();
       this.state = { ...initialState(), hasToken: false };
       signOutAdmin();
     });
@@ -240,6 +238,7 @@ class AdminAnalytics extends HTMLElement {
 
   /** Render the page from state. */
   render() {
+    this.state.hasToken = hasAdminSession();
     const s = this.state;
     this.innerHTML = `
       <main class="admin">

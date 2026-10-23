@@ -49,6 +49,7 @@ export async function managerAssignmentChanges(
               siteId,
               programId,
               userId,
+              ...(user?.personId ? { personId: user.personId } : {}),
               firstName: user?.firstName,
               lastName: user?.lastName,
               email: user?.email,

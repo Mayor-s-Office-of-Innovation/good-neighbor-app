@@ -1,3 +1,9 @@
+const { expireComplianceTerms } = vi.hoisted(() => ({
+  expireComplianceTerms: vi.fn(),
+}));
+vi.mock("../workers/expire-compliance-terms.js", () => ({
+  expireComplianceTerms,
+}));
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the underlying workers so we assert only which one the dispatcher routes
@@ -199,4 +205,9 @@ describe("worker dispatch (pickHandler)", () => {
     expect(dispatchRevocationOutbox).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ batchItemFailures: [] });
   });
+});
+
+it("routes scheduled expiry invocations without expecting SQS records", async () => {
+  await handler({ type: "expire_compliance_terms" }, /** @type {any} */ ({}));
+  expect(expireComplianceTerms).toHaveBeenCalledTimes(1);
 });

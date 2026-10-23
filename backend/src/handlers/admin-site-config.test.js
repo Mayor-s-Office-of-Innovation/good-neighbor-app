@@ -55,6 +55,28 @@ beforeEach(() => {
 });
 
 describe("effective-dated Site terms", () => {
+  it.each([0, 9, 1.5])(
+    "rejects cadence outside whole numbers 1–8 (%s)",
+    async (requiredChecksPerDay) => {
+      const response = await call(
+        createSiteTerms,
+        event(
+          {
+            reasons: ["2"],
+            siteManagerUserId: "contact-1",
+            requiredChecksPerDay,
+          },
+          { siteId: "site-1" },
+        ),
+      );
+      expect(response.statusCode).toBe(400);
+      expect(JSON.parse(String(response.body)).error).toBe(
+        "invalid_check_cadence",
+      );
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
+
   it("rejects the removed undocumented-conditions reason", async () => {
     const response = await call(
       createSiteTerms,
@@ -423,7 +445,7 @@ describe("effective-dated Site terms", () => {
     });
     expect(
       transaction.input.TransactItems[0].Update.UpdateExpression,
-    ).toContain("endedOn = :today");
+    ).toContain("endedOn = :endDay");
   });
 
   it("returns a conflict when the active period changes during close", async () => {

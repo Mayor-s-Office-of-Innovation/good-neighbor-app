@@ -243,3 +243,206 @@ test("successful callback consumes its transaction and rejects replay", async (t
   });
   assert.equal(globalThis.fetch.mock.callCount(), 1);
 });
+
+const SESSION_KEY = "good-neighbor-admin-session";
+const WEEK = 7 * 24 * 60 * 60 * 1000;
+
+async function persistentFixture(t) {
+  const fixture = callbackFixture(t);
+  t.mock.method(globalThis, "fetch", async () => ({
+    ok: true,
+    json: async () => ({
+      access_token: "first-access",
+      refresh_token: "refresh-1",
+      expires_in: 3600,
+    }),
+  }));
+  const auth = await import("./admin-auth.js");
+  await auth.completeAdminLoginFromUrl();
+  return { ...fixture, auth };
+}
+
+test("login survives browser closure and refresh keeps the original seven-day deadline", async (t) => {
+  const { session, local, auth } = await persistentFixture(t);
+  const saved = JSON.parse(local.getItem(SESSION_KEY));
+  assert.ok(Math.abs(saved.expiresAt - Date.now() - WEEK) < 1000);
+  session.clear();
+  assert.equal(auth.hasAdminSession(), true);
+  assert.equal(await auth.getFreshAdminToken(), "first-access");
+  saved.accessExpiresAt = Date.now() + 30000;
+  local.setItem(SESSION_KEY, JSON.stringify(saved));
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    assert.equal(url, "https://login.example.test/oauth2/token");
+    assert.equal(options.body.get("grant_type"), "refresh_token");
+    assert.equal(options.body.get("refresh_token"), "refresh-1");
+    return {
+      ok: true,
+      json: async () => ({ access_token: "renewed", expires_in: 3600 }),
+    };
+  });
+  assert.deepEqual(
+    await Promise.all([auth.getFreshAdminToken(), auth.getFreshAdminToken()]),
+    ["renewed", "renewed"],
+  );
+  assert.equal(globalThis.fetch.mock.callCount(), 1);
+  assert.equal(
+    JSON.parse(local.getItem(SESSION_KEY)).expiresAt,
+    saved.expiresAt,
+  );
+});
+
+test("seven-day deadline clears even a still-valid access token without refreshing", async (t) => {
+  const { local, auth } = await persistentFixture(t);
+  const saved = JSON.parse(local.getItem(SESSION_KEY));
+  saved.expiresAt = Date.now();
+  local.setItem(SESSION_KEY, JSON.stringify(saved));
+  const calls = globalThis.fetch.mock.callCount();
+  assert.equal(auth.hasAdminSession(), false);
+  assert.equal(await auth.getFreshAdminToken(), "");
+  assert.equal(local.getItem(SESSION_KEY), null);
+  assert.equal(globalThis.fetch.mock.callCount(), calls);
+});
+
+for (const failure of ["network", "server", "invalid_grant"]) {
+  test(`refresh handles ${failure} without extending the session`, async (t) => {
+    const { local, auth } = await persistentFixture(t);
+    const saved = JSON.parse(local.getItem(SESSION_KEY));
+    saved.accessExpiresAt = 1;
+    local.setItem(SESSION_KEY, JSON.stringify(saved));
+    t.mock.method(globalThis, "fetch", async () => {
+      if (failure === "network") throw new TypeError("offline");
+      return {
+        ok: false,
+        status: failure === "server" ? 503 : 400,
+        json: async () => ({ error: failure }),
+      };
+    });
+    if (failure === "invalid_grant") {
+      assert.equal(await auth.getFreshAdminToken(), "");
+      assert.equal(auth.hasAdminSession(), false);
+    } else {
+      await assert.rejects(auth.getFreshAdminToken());
+      assert.equal(auth.hasAdminSession(), true);
+      assert.deepEqual(JSON.parse(local.getItem(SESSION_KEY)), saved);
+      t.mock.method(globalThis, "fetch", async () => ({
+        ok: true,
+        json: async () => ({ access_token: "retried", expires_in: 3600 }),
+      }));
+      assert.equal(await auth.getFreshAdminToken(), "retried");
+    }
+  });
+}
+
+test("sign-out revokes refresh credentials and an in-flight refresh cannot restore them", async (t) => {
+  const { local, auth, location } = await persistentFixture(t);
+  const saved = JSON.parse(local.getItem(SESSION_KEY));
+  saved.accessExpiresAt = 1;
+  local.setItem(SESSION_KEY, JSON.stringify(saved));
+  let finish;
+  let revoked = false;
+  location.assign = () => {};
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (url.endsWith("/revoke")) {
+      revoked = true;
+      assert.equal(options.body.get("token"), "refresh-1");
+      return { ok: true };
+    }
+    return new Promise((resolve) => {
+      finish = resolve;
+    });
+  });
+  const pending = auth.getFreshAdminToken();
+  auth.signOutAdmin();
+  finish({
+    ok: true,
+    json: async () => ({ access_token: "too-late", expires_in: 3600 }),
+  });
+  assert.equal(await pending, "");
+  assert.equal(revoked, true);
+  assert.equal(local.getItem(SESSION_KEY), null);
+  assert.equal(auth.hasAdminSession(), false);
+});
+
+test("API calls and CSV downloads refresh credentials before sending authorization", async (t) => {
+  const { local } = await persistentFixture(t);
+  const { adminApi } = await import("./admin-api.js");
+  let refreshes = 0;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (url.endsWith("/oauth2/token")) {
+      refreshes++;
+      return {
+        ok: true,
+        json: async () => ({ access_token: "api-access", expires_in: 3600 }),
+      };
+    }
+    assert.equal(options.headers.authorization, "Bearer api-access");
+    return {
+      ok: true,
+      json: async () => ({ ok: true }),
+      blob: async () => "csv",
+    };
+  });
+  for (const request of [
+    () => adminApi.getSession(),
+    () => adminApi.downloadSiteImportConflicts("import-1"),
+  ]) {
+    const saved = JSON.parse(local.getItem(SESSION_KEY));
+    saved.accessExpiresAt = 1;
+    local.setItem(SESSION_KEY, JSON.stringify(saved));
+    await request();
+  }
+  assert.equal(refreshes, 2);
+});
+
+test("restricted persistent storage falls back to a refreshable tab session", async (t) => {
+  const { local, session } = callbackFixture(t);
+  session.setItem("good-neighbor-admin-oauth-state", "current-state");
+  session.setItem("good-neighbor-admin-pkce-verifier", "current-verifier");
+  for (const method of ["getItem", "setItem", "removeItem"]) {
+    t.mock.method(local, method, () => {
+      throw new Error("storage blocked");
+    });
+  }
+  t.mock.method(globalThis, "fetch", async () => ({
+    ok: true,
+    json: async () => ({
+      access_token: "tab-access",
+      refresh_token: "tab-refresh",
+      expires_in: 3600,
+    }),
+  }));
+  const auth = await import("./admin-auth.js");
+  assert.deepEqual(await auth.completeAdminLoginFromUrl(), { handled: true });
+  assert.equal(await auth.getFreshAdminToken(), "tab-access");
+  assert.ok(session.getItem(SESSION_KEY));
+  auth.clearAdminSession();
+  assert.equal(auth.hasAdminSession(), false);
+});
+
+test("a stale refresh failure cannot erase a newer login in another tab", async (t) => {
+  const { local, auth } = await persistentFixture(t);
+  const saved = JSON.parse(local.getItem(SESSION_KEY));
+  saved.accessExpiresAt = 1;
+  local.setItem(SESSION_KEY, JSON.stringify(saved));
+  let finish;
+  t.mock.method(
+    globalThis,
+    "fetch",
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const pending = auth.getFreshAdminToken();
+  const newer = {
+    ...saved,
+    refreshToken: "new-login",
+    accessToken: "new-access",
+    accessExpiresAt: Date.now() + 3600000,
+  };
+  local.setItem(SESSION_KEY, JSON.stringify(newer));
+  finish({ ok: false, json: async () => ({ error: "invalid_grant" }) });
+  assert.equal(await pending, "");
+  assert.deepEqual(JSON.parse(local.getItem(SESSION_KEY)), newer);
+  assert.equal(await auth.getFreshAdminToken(), "new-access");
+});

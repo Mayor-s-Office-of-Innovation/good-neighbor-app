@@ -1,3 +1,4 @@
+import { registerPeopleChanges } from "../lib/people.js";
 import { sitePrimaryContactChange } from "../lib/site-primary-contact.js";
 import {
   BatchGetCommand,
@@ -390,9 +391,9 @@ async function applyOneRow(importId, row) {
     items.push(
       activeMatch(
         { pk: `PROGRAM#${plan.program.id}`, sk: "#META" },
-        "providerId = :providerId AND #name = :name",
+        "#name = :name",
         { "#name": "name" },
-        { ":providerId": plan.provider.id, ":name": plan.program.name },
+        { ":name": plan.program.name },
       ),
     );
   }
@@ -861,6 +862,9 @@ async function applyOneRow(importId, row) {
       }
     }
     if (items.length) {
+      items.push(...(await registerPeopleChanges(items)));
+      if (items.length > 100)
+        throw new Error("import_transaction_limit_exceeded");
       await ddb.send(new TransactWriteCommand({ TransactItems: items }));
     }
     return recordOutcome(importId, row, "applied", "", {

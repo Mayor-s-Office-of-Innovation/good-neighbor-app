@@ -1,3 +1,8 @@
+import {
+  listPeople,
+  createPerson,
+  updatePerson,
+} from "../src/handlers/admin-people.js";
 import { seedLocalSiteAdmin } from "./lib/site-admin-seed.mjs";
 import {
   getDuplicateLinks,
@@ -148,6 +153,7 @@ import {
 } from "../src/handlers/admin-oversight.js";
 import { suggestAddresses } from "../src/handlers/admin-addresses.js";
 import {
+  revokeManagerDevices,
   getPhysicalDeviceRevocationPreview,
   revokeAllSiteDeviceBindings,
   revokePhysicalDeviceEverywhere,
@@ -202,6 +208,7 @@ import {
   reinstateProviderManager,
   revokeProviderManagerEnrollment,
   updateProviderManager,
+  transferProviderManager,
 } from "../src/handlers/admin-provider-managers.js";
 import {
   applySiteImport,
@@ -227,7 +234,7 @@ const LOCAL_CORS_HEADERS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
   "access-control-allow-headers":
-    "content-type,idempotency-key,authorization,x-debug-sub,x-debug-site,x-debug-groups,x-debug-access",
+    "content-type,idempotency-key,authorization,x-debug-sub,x-debug-site,x-debug-groups,x-debug-access,x-debug-email,x-debug-first-name,x-debug-last-name",
 };
 
 // Compile a route pattern into a matcher. Patterns use `{name}` for path params
@@ -439,6 +446,11 @@ const routes = [
   ),
   route("POST", "/admin/v1/programs/{programId}/users", createProgramUser),
   route(
+    "POST",
+    "/admin/v1/programs/{programId}/users/{userId}/devices:revoke",
+    revokeManagerDevices,
+  ),
+  route(
     "PATCH",
     "/admin/v1/programs/{programId}/users/{userId}",
     updateProgramUser,
@@ -491,6 +503,19 @@ const routes = [
     "/admin/v1/sites/{siteId}/grants/{grantId}",
     cancelManagerGrant,
   ),
+  route("GET", "/admin/v1/people", listPeople),
+  route("POST", "/admin/v1/people", createPerson),
+  route("PATCH", "/admin/v1/people/{personId}", updatePerson),
+  route(
+    "POST",
+    "/admin/v1/people/{personId}/devices:revoke",
+    revokeManagerDevices,
+  ),
+  route(
+    "POST",
+    "/admin/v1/providers/{providerId}/manager-memberships/{membershipId}/transfer",
+    transferProviderManager,
+  ),
   route(
     "GET",
     "/admin/v1/providers/{providerId}/manager-memberships",
@@ -505,6 +530,7 @@ const routes = [
     "PATCH",
     "/admin/v1/providers/{providerId}/manager-memberships/{membershipId}",
     updateProviderManager,
+    transferProviderManager,
   ),
   route(
     "DELETE",

@@ -21,10 +21,12 @@ export async function deliverComplianceLetter(job, email, letter) {
   let receipt = job.receipt;
   if (!receipt) {
     // Fetch and validate before claiming: these failures are safe to retry.
-    const { bytes: pdf } = await getObjectBytes({
-      bucket: getComplianceLetterBucket(),
-      key: letter.s3Key,
-    });
+    const { bytes: pdf } = job.noticeOnly
+      ? { bytes: undefined }
+      : await getObjectBytes({
+          bucket: getComplianceLetterBucket(),
+          key: letter.s3Key,
+        });
     const local =
       !process.env.AWS_LAMBDA_FUNCTION_NAME &&
       Boolean(process.env.LOCAL_API_PORT);
@@ -72,7 +74,8 @@ export async function deliverComplianceLetter(job, email, letter) {
           join(directory, `${job.letterJobId}.json`),
           JSON.stringify({ ...email, attachment: letter.fileName }, null, 2),
         );
-        await writeFile(join(directory, `${job.letterJobId}.pdf`), pdf);
+        if (pdf)
+          await writeFile(join(directory, `${job.letterJobId}.pdf`), pdf);
         receipt = { provider: "local-preview", messageId: job.letterJobId };
       } else {
         receipt = await sendEmail({
@@ -83,13 +86,15 @@ export async function deliverComplianceLetter(job, email, letter) {
           from: String(process.env.SETUP_CODE_EMAIL_FROM),
           replyTo: process.env.SETUP_CODE_EMAIL_REPLY_TO,
           html: `<div style="white-space:pre-wrap">${escapeHtml(email.text)}</div>`,
-          attachments: [
-            {
-              filename: letter.fileName,
-              content: pdf,
-              contentType: "application/pdf",
-            },
-          ],
+          attachments: !pdf
+            ? []
+            : [
+                {
+                  filename: letter.fileName,
+                  content: pdf,
+                  contentType: "application/pdf",
+                },
+              ],
         });
       }
       receipt.sentAt = new Date().toISOString();
@@ -146,6 +151,21 @@ export async function deliverComplianceLetter(job, email, letter) {
 /** @param {Record<string, any>} job @param {Record<string, any>} receipt @param {Record<string, any>} letter @param {Record<string, any>} email */
 async function finalizeDelivery(job, receipt, letter, email) {
   const TableName = getConfig().dynamoTable;
+  if (job.noticeOnly) {
+    await ddb.send(
+      new UpdateCommand({
+        TableName,
+        Key: { pk: job.pk, sk: job.sk },
+        UpdateExpression: "SET #status = :completed, completedAt = :now",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: {
+          ":completed": "completed",
+          ":now": receipt.sentAt,
+        },
+      }),
+    );
+    return;
+  }
   for (let attempt = 0; attempt < 5; attempt++) {
     const result = await ddb.send(
       new GetCommand({

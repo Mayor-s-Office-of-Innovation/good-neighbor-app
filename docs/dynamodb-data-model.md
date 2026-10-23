@@ -216,8 +216,9 @@ as task update events and every GSI sort key.
 | Provider Manager enrollment grant | `PROVIDER#<providerId>` | `PROVIDER_MANAGER_GRANT#<createdAt>#<grantId>` | Fifteen-minute, single-use provider-scoped grant issued by a Compliance Supervisor. It snapshots the membership generation but resolves active Sites at redemption. Stores only the token verifier and aggregate Site/delivery evidence. |
 | Current Provider Manager grant guard | `PROVIDER#<providerId>` | `PROVIDER_MANAGER_GRANT_CURRENT#<membershipId>` | Conditional singleton for one unexpired provider grant per membership. Redemption, cancellation, or replacement removes or changes the matching pointer atomically. |
 | Provider Manager enrollment | `PROVIDER#<providerId>` | `PROVIDER_MANAGER_ENROLLMENT#<enrollmentId>` | Directly addressable root lifecycle record for one physical device's all-or-nothing provider redemption. Stores the membership generation and up to 21 Site/binding pointers so a Supervisor can revoke every still-active projection in one transaction. List responses derive active/partial/revoked state from the authoritative physical-device and binding rows. |
-| Perimeter-check compliance period | `SITE#<siteId>` | `COMPLIANCE_TERMS#<effectiveStart>#<versionId>` | Immutable effective-dated period containing one or more reason codes, integer checks/day, a snapshotted `underEnhancedMonitoring` boolean (reason 6 only), and a snapshot of the selected Site manager plus the authenticated generator. The generator—not a client-nominated manager—appears as sender; Compliance managers must be assigned to the Site while supervisors may generate for any Site. Generator phone is required. Start is the server's current Pacific date; the user-facing end date is inclusive and is stored with an exclusive boundary. Reasons 1 or 6 require an end date. Missing expiry means indefinite. |
+| Perimeter-check compliance period | `SITE#<siteId>` | `COMPLIANCE_TERMS#<effectiveStart>#<versionId>` | Immutable effective-dated period containing one or more reason codes, integer checks/day (1–8), a snapshotted `underEnhancedMonitoring` boolean (reason 6 only), and a snapshot of the selected Site manager plus the authenticated generator. The generator—not a client-nominated manager—appears as sender; Compliance managers must be assigned to the Site while supervisors may generate for any Site. Generator phone is required. Start is the server's current Pacific date; the user-facing end date is inclusive and is stored with an exclusive boundary. Reasons 1 or 6 require an end date. Missing expiry means indefinite. |
 | Compliance-letter generation job | `SITE#<siteId>` | `LETTER_JOB#<createdAt>#<jobId>` | Transactional outbox item (`COMPLIANCE_LETTER_OUTBOX`) created with a perimeter-check period. DynamoDB Streams dispatches it to SQS; the worker renders the PDF, stores it in S3, and advances the Site letter state idempotently. |
+| Requirement-ended notice | `SITE#<siteId>` | `LETTER_JOB#ended-<termsVersionId>` | `COMPLIANCE_LETTER_OUTBOX`, `noticeOnly: true`; created atomically with manual cancellation or scheduled expiry. Copies the period's original email To/CC snapshot. Uses the existing delivery claim/receipt safeguards without a PDF or letter-history counter. |
 | Site audit event | `SITE#<siteId>` | `AUDIT#<createdAt>#<eventId>` | append-only actor/event record for Site administration changes. |
 | Revocation operation | `SITE#<siteId>`, `PHYSICAL_DEVICE#<physicalDeviceId>`, or `REVOCATION_OPERATION#<operationId>` | `REVOCATION_OPERATION#<createdAt>#<operationId>`, `#META`, `SITE#<siteId>`, or `OUTBOX#<siteId>` | Durable outcome for selected-binding, Site-wide, physical-device-wide, or emergency multi-Site revocation. The multi-Site root tracks queued/completed Site counts and has one idempotent Site-result row plus one transactional outbox row per reconciliation job. DynamoDB Streams dispatches pending outbox rows to SQS; reconciliation failures are retried rather than recorded as terminal partial success. Contains IDs and aggregate outcomes, never credentials. |
 | Site-import ledger | `SITE_IMPORT#<importId>` | `#META` | requester, source SHA-256 digest, preview version/expiry, idempotency key, confirmed counts, status, aggregate outcomes, and bounded-review TTL. |
@@ -775,3 +776,36 @@ After reviewing the target and candidate count, add --apply --confirm-table=TABL
 to write. Remote mode ignores configured emulator endpoints. There is no automatic
 deployment migration. Conditional checks prevent overwriting concurrent changes;
 conflicts produce a nonzero exit status and should be reviewed before rerunning.
+
+### Perimeter requirement notifications
+
+New requirement emails address the selected Site manager in To and CC the other
+active Site managers, all active Provider managers, and the authenticated generator.
+Addresses are deduplicated case-insensitively and saved on the terms version so
+resends and ending notices retain the original recipients.
+
+Manual cancellation and scheduled expiry atomically archive the current letter,
+clear the active Site projection, audit the ending, and create a deterministic
+notice outbox row. An EventBridge rule invokes the background worker every 15
+minutes; the local worker sweeps once a minute. The sweep uses Pacific dates and
+only closes a Site's latest terms version, never an older superseded version.
+Legacy terms without an email snapshot can still end but cannot notify original
+recipients. End notices use the same transport claim and receipt handling as
+letters: proven non-submission can retry; ambiguous sends require reconciliation.
+Local deliveries are captured under `/tmp/good-neighbor-letter-emails`.
+
+### Independent people and affiliations
+
+See [ADR 0017](adr/0017-independent-people-and-site-affiliations.md) for the current
+relationship model and migration. `PEOPLE / PERSON#<personId>` stores canonical contact
+fields, optional independent primary provider/program IDs, source references, and an
+optimistic revision. `PERSON#<personId> / AUDIT#...` records profile changes. Existing
+program staff, provider manager, site membership, and roster projections may carry
+`personId`; their original keys and access generations remain stable.
+
+A direct site membership can reference a person without a `programId`/`userId` pair.
+`SITE#<siteId> / MANAGER_PERSON#<personId>` prevents duplicate new direct assignments.
+Program selection no longer requires the site's provider to own that program.
+`providerAccessGeneration` on Site metadata and its provider-site projection advances
+only on a provider change; provider-derived bindings snapshot it and authorization,
+refresh, and discovery compare it with the canonical Site value (missing means zero).
