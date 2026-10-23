@@ -1,3 +1,4 @@
+import { getPerson } from "../lib/people.js";
 import { closeComplianceTerms } from "../domain/end-compliance-terms.js";
 import { sitePrimaryContactChange } from "../lib/site-primary-contact.js";
 import { queryAllItems } from "../lib/query-all-items.js";
@@ -270,7 +271,28 @@ export const createSiteTerms = (event) =>
         ),
         resolveLetterGenerator(event, siteId, tableName),
       ]);
-    const siteManager = siteManagerResult.Item;
+    // The assignment, not the site's current lead program, identifies the contact.
+    const assignedProgramId = siteManagerAssignment.Item?.programId;
+    if (assignedProgramId && assignedProgramId !== site.leadProgramId) {
+      const originalStaff = await ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: {
+            pk: `PROGRAM#${assignedProgramId}`,
+            sk: `USER#${siteManagerUserId}`,
+          },
+          ConsistentRead: true,
+        }),
+      );
+      siteManagerResult.Item = originalStaff.Item;
+    }
+    let siteManager = siteManagerResult.Item;
+    const person = await getPerson(
+      siteManagerAssignment.Item?.personId ||
+        siteManager?.personId ||
+        (!siteManager ? siteManagerUserId : undefined),
+    );
+    if (person) siteManager = person;
     let assignedManager =
       siteManagerAssignment.Item?.status !== "inactive" &&
       Boolean(siteManagerAssignment.Item);
@@ -288,7 +310,8 @@ export const createSiteTerms = (event) =>
       assignedManager = (memberships.Items || []).some(
         (member) =>
           member.status === "active" &&
-          (member.userId === siteManagerUserId ||
+          (member.personId === siteManagerUserId ||
+            member.userId === siteManagerUserId ||
             (!member.userId &&
               String(member.email || "").toLowerCase() ===
                 String(siteManager.email || "").toLowerCase())),
@@ -325,14 +348,6 @@ export const createSiteTerms = (event) =>
       generator.departmentName || oversight.managingCityDepartment;
     if (!generatorDepartment) {
       return jsonResponse(409, { error: "generator_department_required" });
-    }
-    /* Preserve a strongly typed assignment check for the selected Site
-     * manager independently of the letter sender. */
-    if (
-      siteManagerAssignment.Item &&
-      siteManagerAssignment.Item.programId !== site.leadProgramId
-    ) {
-      return jsonResponse(409, { error: "site_manager_required" });
     }
     const existing = (termsResult.Items ?? []).filter(
       (item) => item.status !== "cancelled",

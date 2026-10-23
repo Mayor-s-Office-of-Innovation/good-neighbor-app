@@ -1,3 +1,5 @@
+import { registerPeopleChanges } from "../lib/people.js";
+import { queryAllItems } from "../lib/query-all-items.js";
 import { contactRevisionChange } from "../lib/staff-contact-guard.js";
 import { currentManagerOversight } from "../lib/site-manager-name.js";
 import {
@@ -322,11 +324,7 @@ export const createSite = (event) =>
         }),
       );
       program = result.Item;
-      if (
-        !program ||
-        program.status === "inactive" ||
-        program.providerId !== providerId
-      ) {
+      if (!program || program.status === "inactive") {
         return jsonResponse(400, { error: "incompatible_program" });
       }
       if (primaryContactUserId) {
@@ -511,6 +509,8 @@ export const createSite = (event) =>
         contactRevisionChange(getDynamoTableName(), leadProgramId, program),
       );
     }
+    if (primaryContact?.personId)
+      transactItems.push(...(await registerPeopleChanges(transactItems)));
     await ddb.send(
       new TransactWriteCommand({
         TransactItems: transactItems,
@@ -677,12 +677,40 @@ export const reassignSite = (event) =>
     if (!provider || provider.status === "inactive") {
       return jsonResponse(404, { error: "provider_not_found" });
     }
-    if (
-      !program ||
-      program.status === "inactive" ||
-      program.providerId !== providerId
-    ) {
+    if (!program || program.status === "inactive") {
       return jsonResponse(400, { error: "incompatible_program" });
+    }
+    if (body.expectedUpdatedAt && body.expectedUpdatedAt !== site.updatedAt)
+      return jsonResponse(409, { error: "site_reassignment_conflict" });
+    if (body.preview === true) {
+      const children = await queryAllItems({
+        TableName: tableName,
+        KeyConditionExpression: "pk = :pk",
+        ExpressionAttributeValues: { ":pk": `SITE#${siteId}` },
+        ConsistentRead: true,
+      });
+      return jsonResponse(200, {
+        preview: {
+          updatedAt: site.updatedAt,
+          previousProvider: site.providerName,
+          newProvider: provider.name,
+          previousProgram: site.programName,
+          newProgram: program.name,
+          retainedManagers: (children.Items || [])
+            .filter(
+              (r) =>
+                r.sk.startsWith("MANAGER_MEMBERSHIP#") && r.status === "active",
+            )
+            .map((r) => r.name || r.email),
+          affectedProviderDevices: (children.Items || []).filter(
+            (r) =>
+              r.sk.startsWith("DEVICE_BINDING#") &&
+              r.status === "active" &&
+              r.authorityScope === "provider" &&
+              r.providerId !== providerId,
+          ).length,
+        },
+      });
     }
     if (
       site.providerId === providerId &&
@@ -698,11 +726,14 @@ export const reassignSite = (event) =>
           TableName: tableName,
           Key: { pk: `SITE#${siteId}`, sk: "#META" },
           UpdateExpression:
-            "SET providerId = :providerId, providerName = :providerName, leadProgramId = :programId, programName = :programName, updatedAt = :now REMOVE programMigrationRunId",
+            "SET providerId = :providerId, providerName = :providerName, leadProgramId = :programId, programName = :programName, updatedAt = :now, providerAccessGeneration = :providerGeneration REMOVE programMigrationRunId",
           ConditionExpression: site.updatedAt
             ? "attribute_exists(pk) AND updatedAt = :expectedUpdatedAt"
             : "attribute_exists(pk)",
           ExpressionAttributeValues: {
+            ":providerGeneration":
+              Number(site.providerAccessGeneration || 0) +
+              Number(site.providerId !== providerId),
             ":providerId": providerId,
             ":providerName": provider.name,
             ":programId": leadProgramId,
@@ -719,6 +750,9 @@ export const reassignSite = (event) =>
             pk: `PROVIDER#${providerId}`,
             sk: `SITE#${siteId}`,
             type: "providerSiteMembership",
+            providerAccessGeneration:
+              Number(site.providerAccessGeneration || 0) +
+              Number(site.providerId !== providerId),
             providerId,
             providerName: provider.name,
             siteId,
@@ -793,6 +827,9 @@ export const reassignSite = (event) =>
         ...site,
         providerId,
         providerName: provider.name,
+        providerAccessGeneration:
+          Number(site.providerAccessGeneration || 0) +
+          Number(site.providerId !== providerId),
         leadProgramId,
         programName: program.name,
         updatedAt: now,

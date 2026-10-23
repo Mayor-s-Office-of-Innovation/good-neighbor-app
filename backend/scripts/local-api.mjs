@@ -1,3 +1,8 @@
+import {
+  listPeople,
+  createPerson,
+  updatePerson,
+} from "../src/handlers/admin-people.js";
 import { seedLocalSiteAdmin } from "./lib/site-admin-seed.mjs";
 import {
   getDuplicateLinks,
@@ -203,6 +208,7 @@ import {
   reinstateProviderManager,
   revokeProviderManagerEnrollment,
   updateProviderManager,
+  transferProviderManager,
 } from "../src/handlers/admin-provider-managers.js";
 import {
   applySiteImport,
@@ -497,6 +503,19 @@ const routes = [
     "/admin/v1/sites/{siteId}/grants/{grantId}",
     cancelManagerGrant,
   ),
+  route("GET", "/admin/v1/people", listPeople),
+  route("POST", "/admin/v1/people", createPerson),
+  route("PATCH", "/admin/v1/people/{personId}", updatePerson),
+  route(
+    "POST",
+    "/admin/v1/people/{personId}/devices:revoke",
+    revokeManagerDevices,
+  ),
+  route(
+    "POST",
+    "/admin/v1/providers/{providerId}/manager-memberships/{membershipId}/transfer",
+    transferProviderManager,
+  ),
   route(
     "GET",
     "/admin/v1/providers/{providerId}/manager-memberships",
@@ -511,6 +530,7 @@ const routes = [
     "PATCH",
     "/admin/v1/providers/{providerId}/manager-memberships/{membershipId}",
     updateProviderManager,
+    transferProviderManager,
   ),
   route(
     "DELETE",

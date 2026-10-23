@@ -1,3 +1,4 @@
+import { getPerson } from "../lib/people.js";
 import {
   generateEnrollmentCode,
   enrollmentCodeVerifier,
@@ -101,7 +102,13 @@ export const createManagerGrant = (event) =>
     // membership or falling back to a potentially outdated email snapshot.
     let recipientEmail = membership.email;
     let recipientName = membership.name;
-    if (membership.userId && membership.programId) {
+    if (membership.personId) {
+      const person = await getPerson(membership.personId);
+      if (!person || person.status !== "active")
+        return jsonResponse(409, { error: "person_not_found" });
+      recipientEmail = person.email;
+      recipientName = person.name;
+    } else if (membership.userId && membership.programId) {
       const staff = await ddb.send(
         new GetCommand({
           TableName: tableName,

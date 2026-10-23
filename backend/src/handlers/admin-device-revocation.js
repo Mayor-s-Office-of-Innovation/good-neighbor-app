@@ -1,3 +1,4 @@
+import { getPerson } from "../lib/people.js";
 import { queryAllItems } from "../lib/query-all-items.js";
 import { assignmentsMatchingEmail } from "../lib/manager-identity.js";
 import { emailHash } from "./setup-codes.js";
@@ -28,13 +29,16 @@ export const revokeManagerDevices = (event) =>
   adminOnly(event, async (body) => {
     const { programId = "", userId = "" } = event.pathParameters || {};
     const tableName = getDynamoTableName();
-    const { Item: manager } = await ddb.send(
-      new GetCommand({
-        TableName: tableName,
-        Key: { pk: `PROGRAM#${programId}`, sk: `USER#${userId}` },
-        ConsistentRead: true,
-      }),
-    );
+    const personId = event.pathParameters?.personId;
+    const { Item: manager } = personId
+      ? { Item: await getPerson(personId) }
+      : await ddb.send(
+          new GetCommand({
+            TableName: tableName,
+            Key: { pk: `PROGRAM#${programId}`, sk: `USER#${userId}` },
+            ConsistentRead: true,
+          }),
+        );
     if (!manager) return jsonResponse(404, { error: "site_manager_not_found" });
     if (
       String(body.confirmation || "")
@@ -62,7 +66,19 @@ export const revokeManagerDevices = (event) =>
       }),
     ]);
     const siteIds = new Set(
-      [...directory.Items, ...programSites.Items]
+      [
+        ...directory.Items,
+        ...programSites.Items,
+        ...(personId
+          ? (manager.sources || [])
+              .filter((/** @type {{pk:string,sk:string}} */ source) =>
+                source.pk.startsWith("SITE#"),
+              )
+              .map((/** @type {{pk:string,sk:string}} */ source) => ({
+                siteId: source.pk.slice(5),
+              }))
+          : []),
+      ]
         .map((item) => item.siteId)
         .filter(Boolean),
     );
@@ -71,8 +87,10 @@ export const revokeManagerDevices = (event) =>
       const members = await queryAll(tableName, siteId, "MANAGER_MEMBERSHIP#");
       const ids = new Set();
       for (const member of members) {
-        if (member.userId === userId) ids.add(member.membershipId);
+        if (personId ? member.personId === personId : member.userId === userId)
+          ids.add(member.membershipId);
         else if (
+          !personId &&
           !member.userId &&
           String(member.email).toLowerCase() ===
             String(manager.email).toLowerCase()
@@ -132,7 +150,7 @@ export const revokeManagerDevices = (event) =>
                 bindingRevocationItems(tableName, binding, now, actor),
               ),
               transactionPut(tableName, {
-                pk: `PROGRAM#${programId}`,
+                pk: personId ? `PERSON#${personId}` : `PROGRAM#${programId}`,
                 sk: `AUDIT#${now}#${operationId}#${offset}`,
                 type: "programAuditEvent",
                 eventType: "manager_devices_revoked",

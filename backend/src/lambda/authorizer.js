@@ -114,7 +114,12 @@ export const handler = async (event) => {
     claims.accessLevel === "manager" &&
     device.authorityScope === "provider"
   ) {
-    if (!device.providerId || site.providerId !== device.providerId) {
+    if (
+      !device.providerId ||
+      site.providerId !== device.providerId ||
+      Number(device.providerAccessGeneration ?? 0) !==
+        Number(site.providerAccessGeneration ?? 0)
+    ) {
       return DENY({ reason: "revoked" });
     }
     const membershipResult = await ddb.send(

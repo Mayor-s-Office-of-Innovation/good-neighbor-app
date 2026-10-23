@@ -528,6 +528,7 @@ async function redeemProviderEnrollment(context) {
     siteId: String(site.siteId),
     siteName: String(site.siteName ?? site.name),
     siteCredentialGeneration: Number(site.siteCredentialGeneration ?? 0),
+    providerAccessGeneration: Number(site.providerAccessGeneration ?? 0),
   }));
   const initial = bindings[0];
   const [access, refresh] = await Promise.all([
@@ -590,6 +591,7 @@ async function redeemProviderEnrollment(context) {
       providerId,
       providerMembershipId: membershipId,
       providerMembershipGeneration: Number(membership.generation ?? 1),
+      providerAccessGeneration: entry.providerAccessGeneration,
       providerEnrollmentId: enrollmentId,
       siteCredentialGeneration: entry.siteCredentialGeneration,
       label,
@@ -608,12 +610,13 @@ async function redeemProviderEnrollment(context) {
           TableName: tableName,
           Key: { pk: `SITE#${entry.siteId}`, sk: "#META" },
           ConditionExpression:
-            "#status = :active AND providerId = :providerId AND (siteCredentialGeneration = :siteGeneration OR (attribute_not_exists(siteCredentialGeneration) AND :siteGeneration = :zero))",
+            "#status = :active AND providerId = :providerId AND (providerAccessGeneration = :providerGeneration OR (attribute_not_exists(providerAccessGeneration) AND :providerGeneration = :zero)) AND (siteCredentialGeneration = :siteGeneration OR (attribute_not_exists(siteCredentialGeneration) AND :siteGeneration = :zero))",
           ExpressionAttributeNames: { "#status": "status" },
           ExpressionAttributeValues: {
             ":active": "active",
             ":providerId": providerId,
             ":siteGeneration": entry.siteCredentialGeneration,
+            ":providerGeneration": entry.providerAccessGeneration,
             ":zero": 0,
           },
         },

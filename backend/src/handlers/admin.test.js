@@ -363,7 +363,7 @@ describe("provider and site management", () => {
     });
   });
 
-  it("rejects a program owned by a different provider", async () => {
+  it("allows a site program affiliated with a different provider", async () => {
     send
       .mockResolvedValueOnce({
         Item: {
@@ -394,12 +394,11 @@ describe("provider and site management", () => {
       ),
     );
 
-    expect(res.statusCode).toBe(400);
-    expect(JSON.parse(res.body)).toEqual({ error: "incompatible_program" });
-    expect(geocodeAddress).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(201);
+    expect(JSON.parse(res.body).site.providerId).toBe("provider-one");
   });
 
-  it("reassigns a site without changing site or access records", async () => {
+  it("reassigns a site preserving direct access while invalidating old provider access", async () => {
     send
       .mockResolvedValueOnce({
         Item: {
@@ -441,8 +440,13 @@ describe("provider and site management", () => {
     expect(res.statusCode).toBe(200);
     const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[3][0]);
     expect(tx.input.TransactItems).toHaveLength(6);
+    expect(
+      tx.input.TransactItems?.[0]?.Update?.ExpressionAttributeValues?.[
+        ":providerGeneration"
+      ],
+    ).toBe(1);
     expect(tx.input.TransactItems?.[0]?.Update?.UpdateExpression).not.toMatch(
-      /token|generation|device/i,
+      /tokenGeneration|siteCredentialGeneration|device/i,
     );
     expect(tx.input.TransactItems).toEqual(
       expect.arrayContaining([

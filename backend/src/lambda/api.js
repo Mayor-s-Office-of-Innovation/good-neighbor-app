@@ -1,4 +1,9 @@
 import {
+  listPeople,
+  createPerson,
+  updatePerson,
+} from "../handlers/admin-people.js";
+import {
   getDuplicateLinks,
   separateDuplicate,
 } from "../handlers/duplicate-links.js";
@@ -190,6 +195,7 @@ import {
   reinstateProviderManager,
   revokeProviderManagerEnrollment,
   updateProviderManager,
+  transferProviderManager,
 } from "../handlers/admin-provider-managers.js";
 import {
   applySiteImport,
@@ -322,6 +328,12 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /admin/v1/oversight-options": createOversightOption,
   "POST /admin/v1/address-suggestions": suggestAddresses,
   "POST /admin/v1/programs": createProgram,
+  "POST /admin/v1/providers/{providerId}/manager-memberships/{membershipId}/transfer":
+    transferProviderManager,
+  "POST /admin/v1/people/{personId}/devices:revoke": revokeManagerDevices,
+  "GET /admin/v1/people": listPeople,
+  "POST /admin/v1/people": createPerson,
+  "PATCH /admin/v1/people/{personId}": updatePerson,
   "GET /admin/v1/programs/{programId}": getProgram,
   "PATCH /admin/v1/programs/{programId}": updateProgram,
   "DELETE /admin/v1/programs/{programId}": deactivateProgram,
@@ -359,6 +371,7 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
     createProviderManager,
   "PATCH /admin/v1/providers/{providerId}/manager-memberships/{membershipId}":
     updateProviderManager,
+  transferProviderManager,
   "DELETE /admin/v1/providers/{providerId}/manager-memberships/{membershipId}":
     deactivateProviderManager,
   "POST /admin/v1/providers/{providerId}/manager-memberships/{membershipId}/reinstate":

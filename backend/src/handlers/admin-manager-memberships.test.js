@@ -617,3 +617,44 @@ it("rejects ambiguous email-only membership removal before revoking access, incl
   expect(send.mock.calls).toHaveLength(3);
   expect(send.mock.calls[2][0].input.ExclusiveStartKey).toEqual(cursor);
 });
+
+it("assigns a person directly without a program affiliation", async () => {
+  send
+    .mockResolvedValueOnce({
+      Item: {
+        pk: "PEOPLE",
+        sk: "PERSON#p",
+        personId: "p",
+        status: "active",
+        revision: "v1",
+        sources: [],
+        name: "Alex Rivera",
+        firstName: "Alex",
+        lastName: "Rivera",
+        email: "alex@example.org",
+      },
+    })
+    .mockResolvedValueOnce({
+      Item: { siteId: "site-1", status: "active", leadProgramId: "unrelated" },
+    })
+    .mockResolvedValueOnce({});
+  const response = await call(
+    createManagerMembership,
+    event({ personId: "p" }, { siteId: "site-1" }),
+  );
+  expect(response.statusCode).toBe(201);
+  const tx = /** @type {TransactWriteCommand} */ (
+    send.mock.calls.find(
+      ([command]) => command instanceof TransactWriteCommand,
+    )?.[0]
+  );
+  const membership = tx.input.TransactItems?.find((item) =>
+    item.Put?.Item?.sk.startsWith("MANAGER_MEMBERSHIP#"),
+  )?.Put?.Item;
+  expect(membership?.personId).toBe("p");
+  expect(membership).not.toHaveProperty("programId");
+  expect(membership).not.toHaveProperty("userId");
+  expect(
+    tx.input.TransactItems?.some((item) => item.Put?.Item?.sk === "PERSON#p"),
+  ).toBe(true);
+});

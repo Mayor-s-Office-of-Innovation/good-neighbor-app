@@ -2,12 +2,7 @@ import { upsertRecord } from "./save-feedback.js";
 
 /** @param {Record<string, any>[]} programs @param {string} providerId */
 export function siteProviderPrograms(programs, providerId) {
-  return programs.filter(
-    (program) =>
-      providerId &&
-      program.providerId === providerId &&
-      program.status !== "inactive",
-  );
+  return programs.filter((program) => program.status !== "inactive");
 }
 
 /** Bind the inline program creation flow without rerendering unsaved site edits. */

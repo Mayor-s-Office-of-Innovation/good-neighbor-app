@@ -793,3 +793,19 @@ Legacy terms without an email snapshot can still end but cannot notify original
 recipients. End notices use the same transport claim and receipt handling as
 letters: proven non-submission can retry; ambiguous sends require reconciliation.
 Local deliveries are captured under `/tmp/good-neighbor-letter-emails`.
+
+### Independent people and affiliations
+
+See [ADR 0017](adr/0017-independent-people-and-site-affiliations.md) for the current
+relationship model and migration. `PEOPLE / PERSON#<personId>` stores canonical contact
+fields, optional independent primary provider/program IDs, source references, and an
+optimistic revision. `PERSON#<personId> / AUDIT#...` records profile changes. Existing
+program staff, provider manager, site membership, and roster projections may carry
+`personId`; their original keys and access generations remain stable.
+
+A direct site membership can reference a person without a `programId`/`userId` pair.
+`SITE#<siteId> / MANAGER_PERSON#<personId>` prevents duplicate new direct assignments.
+Program selection no longer requires the site's provider to own that program.
+`providerAccessGeneration` on Site metadata and its provider-site projection advances
+only on a provider change; provider-derived bindings snapshot it and authorization,
+refresh, and discovery compare it with the canonical Site value (missing means zero).

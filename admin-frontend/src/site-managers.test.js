@@ -197,20 +197,14 @@ test("creating a Site manager retries assignment without duplicating staff", asy
         (key) => key,
       ),
     adminApi: {
-      createProgramUser: async (programId, values) => {
+      createPerson: async (values) => {
         staffCreates++;
-        assert.equal(programId, "p1");
-        return { user: { ...values, userId: "u1" } };
+        assert.equal(values.siteId, "s1");
+        return { person: { ...values, personId: "u1" } };
       },
-      createManagerMembership: async (
-        siteId,
-        _name,
-        _email,
-        programId,
-        userId,
-      ) => {
+      assignPersonToSite: async (siteId, person) => {
         assignments++;
-        assert.deepEqual([siteId, programId, userId], ["s1", "p1", "u1"]);
+        assert.deepEqual([siteId, person.personId], ["s1", "u1"]);
         if (assignments === 1) throw new Error("temporary");
       },
     },

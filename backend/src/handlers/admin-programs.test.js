@@ -129,7 +129,7 @@ describe("program administration", () => {
     expect(user.userId).toBeTruthy();
     /** @type {any[]} */
     const items = send.mock.calls[1][0].input.TransactItems;
-    expect(items).toHaveLength(4);
+    expect(items).toHaveLength(5);
     expect(items.map((item) => item.Put.Item)).toEqual(
       expect.arrayContaining([program, user]),
     );
@@ -1043,6 +1043,7 @@ it.each([true, false])(
           email: "a@example.org",
         },
       })
+      .mockResolvedValueOnce({})
       .mockRejectedValueOnce(failure);
     const request = call(
       createProgram,

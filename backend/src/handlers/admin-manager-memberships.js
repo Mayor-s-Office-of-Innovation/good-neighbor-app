@@ -1,3 +1,4 @@
+import { getPerson, personPut } from "../lib/people.js";
 import { assignmentsMatchingEmail } from "../lib/manager-identity.js";
 import { sitePrimaryContactChange } from "../lib/site-primary-contact.js";
 import { queryAllItems } from "../lib/query-all-items.js";
@@ -68,9 +69,19 @@ export const listManagerMemberships = (event) =>
 export const createManagerMembership = (event) =>
   siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
-    const name = clean(body.name);
-    const email = normalizeEmail(String(body.email ?? ""));
+    let name = clean(body.name);
+    let email = normalizeEmail(String(body.email ?? ""));
     const programId = clean(body.programId);
+    let personId = clean(body.personId);
+    if (personId && (body.userId || body.programId))
+      return jsonResponse(400, { error: "invalid_program_staff" });
+    let person = personId ? await getPerson(personId) : null;
+    if (personId && (!person || person.status !== "active"))
+      return jsonResponse(404, { error: "person_not_found" });
+    if (person) {
+      name = person.name;
+      email = person.email;
+    }
     const userId = clean(body.userId);
     if (!name || name.length > 200) {
       return jsonResponse(400, { error: "invalid_manager_name" });
@@ -88,16 +99,12 @@ export const createManagerMembership = (event) =>
     if (!siteResult.Item || siteResult.Item.status === "inactive") {
       return jsonResponse(404, { error: "site_not_found" });
     }
-    if (
-      (userId && !programId) ||
-      (programId && !userId) ||
-      (programId && programId !== siteResult.Item.leadProgramId)
-    ) {
+    if ((userId && !programId) || (programId && !userId)) {
       return jsonResponse(400, { error: "invalid_program_staff" });
     }
     const now = new Date().toISOString();
     const membershipId = randomUUID();
-    const verifier = await emailHash(email);
+
     const actor = actorId(event);
     let assignmentChanges;
     try {
@@ -114,6 +121,30 @@ export const createManagerMembership = (event) =>
         return jsonResponse(404, { error: "program_user_not_found" });
       throw error;
     }
+    if (!person) {
+      personId = String(
+        assignmentChanges.find((change) => change.Put?.Item?.personId)?.Put
+          ?.Item?.personId || "",
+      );
+      person = await getPerson(personId);
+      if (person) {
+        name = person.name;
+        email = person.email;
+      }
+    }
+    const verifier = await emailHash(email);
+    const personSources = person ? [...person.sources] : [];
+    for (const change of assignmentChanges)
+      if (change.Put?.Item && person) {
+        const row = change.Put.Item;
+        row.personId = personId;
+        if (
+          !personSources.some(
+            (source) => source.pk === row.pk && source.sk === row.sk,
+          )
+        )
+          personSources.push({ pk: row.pk, sk: row.sk });
+      }
     const membership = {
       pk: `SITE#${siteId}`,
       sk: `MANAGER_MEMBERSHIP#${membershipId}`,
@@ -123,6 +154,15 @@ export const createManagerMembership = (event) =>
       siteId,
       ...(programId ? { programId } : {}),
       ...(userId ? { userId } : {}),
+      ...(person
+        ? {
+            personId,
+            firstName: person.firstName,
+            lastName: person.lastName,
+            phone: person.phone,
+            phoneExtension: person.phoneExtension,
+          }
+        : {}),
       name,
       email,
       emailHash: verifier,
@@ -145,6 +185,22 @@ export const createManagerMembership = (event) =>
         new TransactWriteCommand({
           TransactItems: [
             ...assignmentChanges,
+            ...(person
+              ? [
+                  personPut(
+                    {
+                      ...person,
+                      siteManager: true,
+                      sources: [
+                        ...personSources,
+                        { pk: membership.pk, sk: membership.sk },
+                      ],
+                      revision: randomUUID(),
+                    },
+                    person.revision,
+                  ),
+                ]
+              : []),
             ...(userId
               ? [
                   put(tableName, {
@@ -152,6 +208,16 @@ export const createManagerMembership = (event) =>
                     sk: `MANAGER_USER#${userId}`,
                     membershipId,
                     userId,
+                  }),
+                ]
+              : []),
+            ...(person
+              ? [
+                  put(tableName, {
+                    pk: `SITE#${siteId}`,
+                    sk: `MANAGER_PERSON#${personId}`,
+                    membershipId,
+                    personId,
                   }),
                 ]
               : []),
@@ -222,6 +288,12 @@ export const updateManagerMembership = (event) =>
     const current = currentResult.Item;
     if (!current || current.status !== "active") {
       return jsonResponse(404, { error: "manager_membership_not_found" });
+    }
+    if (current.personId) {
+      const person = await getPerson(current.personId);
+      if (!person || person.name !== name || person.email !== email)
+        return jsonResponse(409, { error: "edit_person_contact" });
+      return jsonResponse(200, { membership: current });
     }
     const principal = adminPrincipal(event);
     if (
@@ -450,6 +522,19 @@ export async function deactivateManagerMembershipRecord({
       new TransactWriteCommand({
         TransactItems: [
           ...assignmentChanges,
+          ...(membership.personId
+            ? [
+                {
+                  Delete: {
+                    TableName: tableName,
+                    Key: {
+                      pk: `SITE#${siteId}`,
+                      sk: `MANAGER_PERSON#${membership.personId}`,
+                    },
+                  },
+                },
+              ]
+            : []),
           ...(membership.userId
             ? [
                 {

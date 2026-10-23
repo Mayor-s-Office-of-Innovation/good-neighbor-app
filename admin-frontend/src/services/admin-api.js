@@ -111,6 +111,39 @@ export const adminApi = {
       signal,
     }),
   listProviders: () => adminFetch("/admin/v1/providers"),
+  listPeople: () => adminFetch("/admin/v1/people"),
+  createPerson: (values) =>
+    adminFetch("/admin/v1/people", {
+      method: "POST",
+      body: JSON.stringify(values),
+    }),
+  updatePerson: (id, values) =>
+    adminFetch(`/admin/v1/people/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(values),
+    }),
+  revokePersonDevices: (id, confirmation) =>
+    adminFetch(`/admin/v1/people/${encodeURIComponent(id)}/devices:revoke`, {
+      method: "POST",
+      body: JSON.stringify({ confirmation }),
+    }),
+  transferProviderManager: (providerId, membershipId, targetId) =>
+    adminFetch(
+      `/admin/v1/providers/${encodeURIComponent(providerId)}/manager-memberships/${encodeURIComponent(membershipId)}/transfer`,
+      { method: "POST", body: JSON.stringify({ providerId: targetId }) },
+    ),
+  assignPersonToSite: (siteId, person) =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}/manager-memberships`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          personId: person.personId,
+          name: person.name,
+          email: person.email,
+        }),
+      },
+    ),
   listPrograms: () => adminFetch("/admin/v1/programs"),
   listCityProgramManagers: () => adminFetch("/admin/v1/program-managers"),
   createCityProgramManager: (values) =>
@@ -251,10 +284,10 @@ export const adminApi = {
       method: "PATCH",
       body: JSON.stringify(values),
     }),
-  reassignSite: (siteId, providerId, leadProgramId) =>
+  reassignSite: (siteId, providerId, leadProgramId, options = {}) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/reassign`, {
       method: "POST",
-      body: JSON.stringify({ providerId, leadProgramId }),
+      body: JSON.stringify({ providerId, leadProgramId, ...options }),
     }),
   assignSiteUser: (siteId, userId, primary = false) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/users`, {

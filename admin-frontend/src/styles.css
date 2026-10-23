@@ -551,6 +551,10 @@ h3 {
   border-radius: 0;
 }
 
+.site-page .provider-access-managers li:last-child {
+  border-bottom: 0;
+}
+
 .places-modal {
   max-height: calc(100dvh - 32px);
   width: min(400px, calc(100vw - 32px));
@@ -811,6 +815,8 @@ h3 {
 }
 
 .destructive-confirmation {
+  --wa-form-control-required-content: "";
+  --wa-form-control-required-content-offset: 0;
   gap: 16px;
   margin-top: 32px;
   border: 2px solid #a40000;
@@ -1935,6 +1941,10 @@ app-toasts {
   font-size: var(--wa-font-size-s);
   padding: var(--wa-space-xs) var(--wa-space-s);
 }
+#add-provider-manager-dialog [data-remove-extension] {
+  margin-top: var(--wa-space-s);
+}
+
 .phone-field [hidden] {
   display: none;
 }
@@ -2119,7 +2129,54 @@ app-toasts {
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  label { display: block; margin-bottom: 6px; font-weight: 600; }
-  select { font: inherit; padding: 8px; max-width: 100%; }
-  p { margin: 8px 0 0; }
+  label {
+    display: block;
+    margin-bottom: 6px;
+    font-weight: 600;
+  }
+  select {
+    font: inherit;
+    padding: 8px;
+    max-width: 100%;
+  }
+  p {
+    margin: 8px 0 0;
+  }
+}
+
+.provider-manager-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--wa-space-m);
+  padding-block: var(--wa-space-m);
+  &:has(+ .provider-manager-summary) {
+    border-bottom: 1px solid var(--line);
+  }
+  h3 {
+    margin: 0 0 4px;
+  }
+  p {
+    margin: 8px 0 0;
+  }
+  > .row {
+    align-items: stretch;
+  }
+  a.btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+  }
+}
+[data-revoke-provider-devices] {
+  margin-top: 0;
+}
+#provider-manager-record-form [data-remove-extension] {
+  margin-top: var(--wa-space-s);
+}
+@media (max-width: 600px) {
+  .provider-manager-summary {
+    flex-direction: column;
+  }
 }

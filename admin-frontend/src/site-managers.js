@@ -4,13 +4,18 @@
 export function siteManagerRoster(assignments, memberships, users = []) {
   const active = memberships.filter((item) => item.status === "active");
   const roster = active.map((membership) => {
-    const user = users.find(
-      (item) =>
-        item.userId === membership.userId ||
-        (!membership.userId &&
-          item.email &&
-          item.email.toLowerCase() === membership.email?.toLowerCase()),
-    );
+    const user =
+      users.find(
+        (item) => membership.personId && item.personId === membership.personId,
+      ) ||
+      (!membership.personId &&
+        users.find(
+          (item) =>
+            item.userId === membership.userId ||
+            (!membership.userId &&
+              item.email &&
+              item.email.toLowerCase() === membership.email?.toLowerCase()),
+        ));
     return {
       ...membership,
       ...(user

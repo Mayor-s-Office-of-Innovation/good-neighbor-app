@@ -1,3 +1,10 @@
+import { peopleDirectory } from "./people-directory.js";
+import {
+  providerManagerPath,
+  loadProviderManagerDirectory,
+  revokeProviderDevices,
+  removeProviderManagerAccess,
+} from "./provider-manager-directory.js";
 import { localRoleEnabled, getLocalRole, setLocalRole } from "./local-role.js";
 import { actionFeedback, notifyAdmin } from "./action-feedback.js";
 import "../../frontend/src/components/app-toasts.js";
@@ -75,6 +82,7 @@ import {
  * @property {string} adminUserStatusFilter
  * @property {string} adminUserMessage
  * @property {string} adminUserDirectoryMode
+ * @property {any[]} [people]
  * @property {any[]} siteManagers
  * @property {any | null} siteManager
  * @property {boolean} managerSearchFailed
@@ -82,7 +90,9 @@ import {
  * @property {{ departments: any[], systemsOfCare: any[] }} oversightOptions
  * @property {any | null} program
  * @property {AdminProvider | null} provider
+ * @property {any[]} [providerManagerDirectory]
  * @property {any[]} providerManagers
+ * @property {Record<string, string>} [providerManagerGrantErrors]
  * @property {any[]} providerManagerGrants
  * @property {any[]} providerManagerEnrollments
  * @property {AdminSite | null} site
@@ -346,6 +356,14 @@ class AdminApp extends HTMLElement {
       saved = await this.createSiteTerms(form);
     if (form.id === "site-perimeter-form")
       saved = await this.updatePerimeter(form);
+    if (form.id === "provider-manager-record-form") {
+      await this.saveProviderManager(form);
+      saved = true;
+    }
+    if (form.id === "provider-details-form") {
+      await this.updateProvider(form);
+      saved = true;
+    }
     if (form.id === "site-manager-record-form")
       saved = await this.saveSiteManager(form);
     if (saved && destination) navigate(destination);
@@ -424,6 +442,19 @@ class AdminApp extends HTMLElement {
 
   async openRoute() {
     const route = currentRoute();
+    if (
+      route.name === "provider-manager" ||
+      route.name === "provider-managers"
+    ) {
+      if (!this.state.capabilities.manageProviderManagers)
+        return navigate("/sites", { replace: true });
+      if (route.name === "provider-manager")
+        return this.openProvider(route.id, false);
+      this.state.providerManagerDirectory = await loadProviderManagerDirectory(
+        this.state.providers,
+        adminApi,
+      );
+    }
     if (route.name === "profile") {
       const result = await adminApi.getMyProfile();
       this.state.profile = result.profile;
@@ -586,6 +617,16 @@ class AdminApp extends HTMLElement {
           `${b.firstName} ${b.lastName}`,
         ),
       );
+    const { people = [] } = await adminApi.listPeople();
+    if (version !== (this.managerDirectoryVersion || 0)) return;
+    this.state.people = people;
+    this.state.siteManagers = peopleDirectory(
+      people,
+      memberships,
+      this.state.programs,
+      this.state.providers,
+      this.state.siteManagers,
+    );
     this.state.managerDirectoryLoaded = true;
     this.state.managerSearchFailed = false;
   }
@@ -595,12 +636,20 @@ class AdminApp extends HTMLElement {
     this.state.siteSaveMessage = "";
     this.state.siteSaveError = "";
     this.state.siteManager =
-      this.state.siteManagers.find((manager) => manager.userId === userId) ||
-      null;
+      this.state.siteManagers.find(
+        (manager) =>
+          manager.userId === userId || manager.legacyUserIds?.includes(userId),
+      ) || null;
     this.state.provider = null;
     this.state.program = null;
     this.state.site = null;
     if (!this.state.siteManager) this.state.error = "Site manager not found.";
+    else if (this.state.siteManager.userId !== userId)
+      window.history.replaceState(
+        {},
+        "",
+        `/managers/${encodeURIComponent(this.state.siteManager.userId)}${location.search}`,
+      );
     this.render();
     queueMicrotask(() => this.querySelector("h1")?.focus());
   }
@@ -752,6 +801,7 @@ class AdminApp extends HTMLElement {
       if (!this.state.provider) return;
       const data = new FormData(form);
       const values = {
+        ...(form.dataset.personId ? { personId: form.dataset.personId } : {}),
         firstName: formValue(data, "provider-manager-first-name"),
         lastName: formValue(data, "provider-manager-last-name"),
         email: formValue(data, "provider-manager-email"),
@@ -767,7 +817,12 @@ class AdminApp extends HTMLElement {
       if (this.state.provider?.providerId !== providerId) return;
       this.state.providerManagers = upsertRecord(
         this.state.providerManagers,
-        result.manager,
+        {
+          ...this.state.providerManagers.find(
+            (manager) => manager.membershipId === membershipId,
+          ),
+          ...result.manager,
+        },
         "membershipId",
       );
       this.state.siteSaveMessage = "";
@@ -796,7 +851,8 @@ class AdminApp extends HTMLElement {
           membershipId,
         );
       } else {
-        await adminApi.deactivateProviderManager(
+        await removeProviderManagerAccess(
+          adminApi,
           this.state.provider.providerId,
           membershipId,
         );
@@ -811,6 +867,7 @@ class AdminApp extends HTMLElement {
 
   async issueProviderManagerGrant(membershipId, deliveryMode = "link") {
     const feedback = actionFeedback("admin.enrollment.emailed");
+    const providerId = this.state.provider?.providerId;
     try {
       if (!this.state.provider) return;
       const created = await adminApi.createProviderManagerGrant(
@@ -835,6 +892,15 @@ class AdminApp extends HTMLElement {
     } catch (error) {
       if (error.message === "provider_manager_grant_already_active") {
         error.message = t("admin.enrollment.alreadyActive");
+        feedback.failure(error);
+        if (this.state.provider?.providerId === providerId) {
+          this.state.providerManagerGrantErrors = {
+            ...this.state.providerManagerGrantErrors,
+            [membershipId]: error.message,
+          };
+          this.render();
+        }
+        return;
       } else if (
         ["provider_manager_grant_conflict", "manager_grant_conflict"].includes(
           error.message,
@@ -913,10 +979,13 @@ class AdminApp extends HTMLElement {
         ? adminApi.listProviderManagerGrants(providerId)
         : Promise.resolve({ grants: [] }),
     ]);
+    if (canManage)
+      this.state.people = (await adminApi.listPeople()).people || [];
     this.state.provider = data.provider;
     this.state.providerManagers = managers.managers || [];
     this.state.providerManagerEnrollments = managers.enrollments || [];
     this.state.providerManagerGrants = grants.grants || [];
+    this.state.providerManagerGrantErrors = {};
     this.state.program = null;
     this.state.site = null;
     this.state.siteManager = null;
@@ -1158,7 +1227,10 @@ class AdminApp extends HTMLElement {
     }
     list.insertAdjacentHTML(
       "beforeend",
-      complianceManagerAssignmentRow(manager, this.state.capabilities.createEntities === true),
+      complianceManagerAssignmentRow(
+        manager,
+        this.state.capabilities.createEntities === true,
+      ),
     );
     this.bindComplianceManagerAssignmentControls();
     const form = list.closest("form");
@@ -1431,6 +1503,8 @@ class AdminApp extends HTMLElement {
       const data = new FormData(form);
       const name = formValue(data, "site-name");
       const leadProgramId = formValue(data, "lead-program-id");
+      const leadProviderId =
+        formValue(data, "lead-provider-id") || this.state.site.providerId;
       const addressParts = data.has("street-address")
         ? addressPartsFromForm(data)
         : null;
@@ -1462,7 +1536,8 @@ class AdminApp extends HTMLElement {
       try {
         if (
           (section === "all" || section === "lead-program") &&
-          leadProgramId !== String(this.state.site.leadProgramId || "")
+          (leadProgramId !== String(this.state.site.leadProgramId || "") ||
+            leadProviderId !== this.state.site.providerId)
         ) {
           const leadProgram = selectedLeadProgram(
             this.state.programs,
@@ -1473,8 +1548,9 @@ class AdminApp extends HTMLElement {
           }
           const reassignment = await adminApi.reassignSite(
             this.state.site.siteId,
-            leadProgram.providerId,
+            leadProviderId,
             leadProgramId,
+            { expectedUpdatedAt: form.dataset.reassignmentVersion },
           );
           feedback.changed();
           this.state.site = { ...this.state.site, ...reassignment.site };
@@ -1715,6 +1791,12 @@ class AdminApp extends HTMLElement {
         ...(currentUsers.get(assignment.userId) || {}),
       }));
     }
+    const { people = [] } = await adminApi.listPeople();
+    this.state.people = people;
+    this.state.availableSiteUsers = [
+      ...people.map((person) => ({ ...person, userId: person.personId })),
+      ...this.state.availableSiteUsers.filter((user) => !user.personId),
+    ];
     this.state.siteTerms = terms.terms || [];
     this.state.provider = null;
     this.state.program = null;
@@ -1724,18 +1806,33 @@ class AdminApp extends HTMLElement {
       memberships.memberships || [],
       this.state.availableSiteUsers,
     );
+    this.state.managerMemberships = this.state.managerMemberships.map(
+      (member) => {
+        const person = people.find((p) => p.personId === member.personId);
+        return person
+          ? {
+              ...member,
+              firstName: person.firstName,
+              lastName: person.lastName,
+              name: person.name,
+              email: person.email,
+            }
+          : member;
+      },
+    );
     this.state.assignedUsers = this.state.managerMemberships
       .filter(
         (membership) =>
-          membership.userId &&
+          (membership.personId || membership.userId) &&
           this.state.availableSiteUsers.some(
-            (user) => user.userId === membership.userId,
+            (user) =>
+              user.userId === (membership.personId || membership.userId),
           ),
       )
       .map((membership) => ({
         ...membership,
         ...(this.state.availableSiteUsers.find(
-          (user) => user.userId === membership.userId,
+          (user) => user.userId === (membership.personId || membership.userId),
         ) || {}),
       }));
     this.state.sites = this.state.sites.map((summary) =>
@@ -2105,15 +2202,29 @@ class AdminApp extends HTMLElement {
           { siteId, programId, values },
           {
             createProgramUser: async (...args) => {
-              const result = await adminApi.createProgramUser(args[0], {
+              const created = await adminApi.createPerson({
                 ...args[1],
                 siteId,
               });
+              const result = {
+                user: { ...created.person, userId: created.person.personId },
+              };
               feedback.changed();
               form.dataset.createdUser = JSON.stringify(result.user);
               return result;
             },
-            createManagerMembership: adminApi.createManagerMembership,
+            createManagerMembership: async (
+              siteId,
+              name,
+              email,
+              programId,
+              userId,
+            ) =>
+              adminApi.assignPersonToSite(siteId, {
+                personId: userId,
+                name,
+                email,
+              }),
           },
         );
         feedback.success();
@@ -2156,17 +2267,17 @@ class AdminApp extends HTMLElement {
       const user = this.state.availableSiteUsers.find(
         (item) => item.userId === formValue(data, "manager-user-id"),
       );
-      if (!user?.email)
-        throw new Error(
-          "Choose a Lead Program staff member with an email address.",
+      if (!user?.email) throw new Error(t("admin.relationships.chooseManager"));
+      if (user.personId)
+        await adminApi.assignPersonToSite(this.state.site.siteId, user);
+      else
+        await adminApi.createManagerMembership(
+          this.state.site.siteId,
+          `${user.firstName} ${user.lastName}`.trim(),
+          user.email,
+          this.state.site.leadProgramId,
+          user.userId,
         );
-      await adminApi.createManagerMembership(
-        this.state.site.siteId,
-        `${user.firstName} ${user.lastName}`.trim(),
-        user.email,
-        this.state.site.leadProgramId,
-        user.userId,
-      );
       feedback.success();
       this.state.managerDirectoryLoaded = false;
       form.reset();
@@ -2201,6 +2312,8 @@ class AdminApp extends HTMLElement {
       const origin = location.pathname + location.search;
       const data = new FormData(form);
       const current = this.state.siteManager;
+      if (!current || current.personId)
+        return this.persistPersonManager(form, current, feedback);
       const canManageAssignments =
         this.state.capabilities.createEntities === true;
       const programId = canManageAssignments
@@ -2354,6 +2467,74 @@ class AdminApp extends HTMLElement {
       feedback.failure(error);
       throw error;
     }
+  }
+
+  async persistPersonManager(form, current, feedback) {
+    const data = new FormData(form);
+    const supervisor = this.state.capabilities.createEntities;
+    const values = {
+      firstName: formValue(data, "manager-first-name"),
+      lastName: formValue(data, "manager-last-name"),
+      email: supervisor ? formValue(data, "manager-email") : current.email,
+      phone: formValue(data, "manager-phone"),
+      phoneExtension: formValue(data, "manager-phone-extension"),
+      ...(supervisor
+        ? {
+            primaryProviderId: formValue(data, "manager-provider-id"),
+            primaryProgramId: formValue(data, "manager-program-id"),
+          }
+        : {}),
+    };
+    const id = current?.personId || form.dataset.createdPersonId;
+    const { person } = id
+      ? await adminApi.updatePerson(id, values)
+      : await adminApi.createPerson(values);
+    form.dataset.createdPersonId = person.personId;
+    feedback.changed();
+    const selected = supervisor
+      ? data.getAll("manager-site-id").map(String)
+      : (current?.assignedSites || []).map((s) => s.siteId);
+    const existing = new Map(
+      (current?.assignedSites || []).map((s) => [s.siteId, s]),
+    );
+    for (const siteId of selected) {
+      const { memberships = [] } =
+        await adminApi.listManagerMemberships(siteId);
+      if (
+        !memberships.some(
+          (m) =>
+            m.personId === person.personId ||
+            existing.get(siteId)?.membershipId === m.membershipId,
+        )
+      )
+        await adminApi.assignPersonToSite(siteId, person);
+    }
+    for (const [siteId, membership] of existing)
+      if (!selected.includes(siteId)) {
+        const { memberships = [] } =
+          await adminApi.listManagerMemberships(siteId);
+        if (memberships.some((m) => m.membershipId === membership.membershipId))
+          await adminApi.deactivateManagerMembership(
+            siteId,
+            membership.membershipId,
+          );
+      }
+    feedback.success();
+    form.dataset.isDirty = "false";
+    this.state.managerDirectoryLoaded = false;
+    if (form.dataset.returnSite) {
+      navigate(
+        `/sites/${encodeURIComponent(form.dataset.returnSite)}?section=details`,
+      );
+      return true;
+    }
+    window.history.replaceState(
+      {},
+      "",
+      `/managers/${encodeURIComponent(person.personId)}`,
+    );
+    await this.openSiteManager(person.personId);
+    return true;
   }
 
   async removeSiteManager() {
@@ -2788,16 +2969,60 @@ class AdminApp extends HTMLElement {
    * @returns {void}
    */
   bind() {
-    this.querySelector("#local-role-switch")?.addEventListener("change", (event) => {
-      const select = event.currentTarget;
-      if (this.querySelector("[data-is-dirty='true']") && !window.confirm(t("admin.localRole.discard"))) {
-        select.value = getLocalRole();
-        return;
-      }
-      setLocalRole(select.value);
-      window.location.reload();
-    });
+    this.querySelector("#local-role-switch")?.addEventListener(
+      "change",
+      (event) => {
+        const select = event.currentTarget;
+        if (
+          this.querySelector("[data-is-dirty='true']") &&
+          !window.confirm(t("admin.localRole.discard"))
+        ) {
+          select.value = getLocalRole();
+          return;
+        }
+        setLocalRole(select.value);
+        window.location.reload();
+      },
+    );
     bindPhoneExtensions(this);
+    this.querySelectorAll("[data-revoke-provider-devices]").forEach((form) => {
+      const button = form.querySelector("button[type='submit']");
+      const sync = () => {
+        button.disabled =
+          form.dataset.saving === "true" ||
+          controlValue(form, "confirmation") !== form.dataset.confirmation;
+      };
+      form.addEventListener("input", sync);
+      form.addEventListener("change", sync);
+      sync();
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (controlValue(form, "confirmation") !== form.dataset.confirmation)
+          return;
+        await this.saveWithFeedback(form, async () => {
+          const feedback = actionFeedback("admin.toast.accessRemoved");
+          try {
+            if (form.dataset.membershipId)
+              await removeProviderManagerAccess(
+                adminApi,
+                this.state.provider.providerId,
+                form.dataset.membershipId,
+              );
+            else
+              await revokeProviderDevices(
+                adminApi,
+                this.state.provider.providerId,
+              );
+            feedback.success();
+            await this.openProvider(this.state.provider.providerId, false);
+          } catch (error) {
+            feedback.failure(error);
+            throw error;
+          }
+        });
+        sync();
+      });
+    });
     this.querySelector("#admin-user-form")?.addEventListener(
       "submit",
       (event) => {
@@ -3113,6 +3338,23 @@ class AdminApp extends HTMLElement {
         });
       },
     );
+    this.querySelector(
+      "[data-assign-existing-provider-person]",
+    )?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      void this.saveWithFeedback(form, async () => {
+        const person = this.state.people.find(
+          (p) => p.personId === controlValue(form, "person-id"),
+        );
+        if (!person) throw new Error(t("admin.relationships.choosePerson"));
+        await adminApi.createProviderManager(
+          this.state.provider.providerId,
+          person,
+        );
+        await this.openProvider(this.state.provider.providerId, false);
+      });
+    });
     this.querySelector("#add-provider-manager")?.addEventListener(
       "click",
       () => {
@@ -3140,6 +3382,30 @@ class AdminApp extends HTMLElement {
           dialog.querySelector("[data-form-save-error]")?.remove();
         });
       },
+    );
+    this.querySelectorAll("[data-transfer-provider-manager]").forEach((form) =>
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        void this.saveWithFeedback(form, async () => {
+          const member = this.state.providerManagers.find(
+            (m) => m.membershipId === form.dataset.transferProviderManager,
+          );
+          if (
+            controlValue(form, "confirmation").trim().toLowerCase() !==
+            member.email.toLowerCase()
+          )
+            throw new Error(t("admin.relationships.confirmationMismatch"));
+          const { manager } = await adminApi.transferProviderManager(
+            this.state.provider.providerId,
+            member.membershipId,
+            controlValue(form, "target-provider"),
+          );
+          form.dataset.isDirty = "false";
+          navigate(
+            providerManagerPath(manager.providerId, manager.membershipId),
+          );
+        });
+      }),
     );
     this.querySelectorAll("[data-provider-manager-form]").forEach((form) => {
       form.addEventListener("submit", async (event) => {
@@ -3376,26 +3642,6 @@ class AdminApp extends HTMLElement {
     this.querySelector(
       "wa-select[name='manager-program-id']",
     )?.addEventListener("change", (event) => {
-      const programId = String(event.currentTarget.value || "");
-      this.querySelectorAll("[data-manager-site-program]").forEach((row) => {
-        const matches =
-          row.getAttribute("data-manager-site-program") === programId;
-        row.toggleAttribute("hidden", !matches);
-        const checkbox = row.querySelector("wa-checkbox");
-        if (checkbox) {
-          checkbox.disabled = !matches;
-        }
-      });
-      const hasSites = [
-        ...this.querySelectorAll("[data-manager-site-program]"),
-      ].some((row) => !row.hasAttribute("hidden"));
-      const empty = this.querySelector("[data-manager-sites-empty]");
-      if (empty) {
-        empty.toggleAttribute("hidden", hasSites);
-        empty.textContent = programId
-          ? "This Program has no Sites to assign."
-          : "Choose a Program to see available Sites.";
-      }
       syncDirtyForm(this.querySelector("#site-manager-record-form"));
     });
     this.querySelectorAll(".new-record-form [required]").forEach((control) => {
@@ -3445,8 +3691,43 @@ class AdminApp extends HTMLElement {
     });
     this.querySelector("[data-save-lead-program]")?.addEventListener(
       "click",
-      () =>
-        this.querySelector("#lead-program-confirmation-dialog")?.showModal(),
+      async () => {
+        if (
+          !reportNamedControlsValidity(siteDetailsForm, [
+            "lead-program-id",
+            "lead-provider-id",
+          ])
+        )
+          return;
+        try {
+          const { preview } = await adminApi.reassignSite(
+            this.state.site.siteId,
+            controlValue(siteDetailsForm, "lead-provider-id"),
+            controlValue(siteDetailsForm, "lead-program-id"),
+            { preview: true },
+          );
+          siteDetailsForm.dataset.reassignmentVersion = preview.updatedAt || "";
+          const dialog = this.querySelector(
+            "#lead-program-confirmation-dialog",
+          );
+          dialog.querySelector("[data-reassignment-preview]").textContent = t(
+            "admin.relationships.impact",
+            {
+              previousProvider: preview.previousProvider,
+              provider: preview.newProvider,
+              previousProgram: preview.previousProgram,
+              program: preview.newProgram,
+              managers:
+                preview.retainedManagers.join(", ") ||
+                t("admin.relationships.none"),
+              count: preview.affectedProviderDevices,
+            },
+          );
+          dialog.showModal();
+        } catch (error) {
+          showFormSaveError(siteDetailsForm, error.message);
+        }
+      },
     );
     const leadProgramDialog = this.querySelector(
       "#lead-program-confirmation-dialog",
@@ -3651,7 +3932,7 @@ class AdminApp extends HTMLElement {
       button.addEventListener("click", () => button.closest("dialog")?.close());
     });
     this.querySelectorAll(
-      "#site-oversight-form, #site-compliance-form, #site-perimeter-form, #site-manager-record-form",
+      "#site-oversight-form, #site-compliance-form, #site-perimeter-form, #site-manager-record-form, #provider-manager-record-form",
     ).forEach((form) => {
       const sync = () => syncDirtyForm(form);
       syncDirtyForm(form, true);
@@ -4245,11 +4526,13 @@ class AdminApp extends HTMLElement {
           "[data-revocation-status]",
         );
         try {
-          const result = await adminApi.revokeManagerDevices(
-            manager.programId,
-            manager.userId,
-            input.value,
-          );
+          const result = manager.personId
+            ? await adminApi.revokePersonDevices(manager.personId, input.value)
+            : await adminApi.revokeManagerDevices(
+                manager.programId,
+                manager.userId,
+                input.value,
+              );
           status.textContent = t("admin.devices.managerRevoked", {
             count: result.affectedCount,
           });
@@ -4581,7 +4864,13 @@ class AdminApp extends HTMLElement {
         ${this.state.complianceProfileDraft?.phase === "recovery" ? `<button id="retry-compliance-draft" class="btn-secondary" type="button">${escapeHtml(t("admin.compliance.resumeDraft"))}</button>` : ""}
         ${
           this.state.hasToken &&
-          !["provider", "program", "site", "manager"].includes(route.name)
+          ![
+            "provider",
+            "program",
+            "site",
+            "manager",
+            "provider-manager",
+          ].includes(route.name)
             ? route.name === "profile"
               ? myProfileView(this.state)
               : route.name === "administrators"
@@ -4600,6 +4889,7 @@ class AdminApp extends HTMLElement {
             : ""
         }
         ${provider ? providerView(this.state) : ""}
+        ${route.name === "provider-manager" && this.state.provider?.providerId === route.id ? providerManagerDetailView(this.state, route.membershipId) : ""}
         ${program ? programView(program, this.state.capabilities.createEntities === true) : ""}
         ${siteManager ? siteManagerEditorView(this.state, siteManager) : ""}
         ${
@@ -4661,6 +4951,8 @@ class AdminApp extends HTMLElement {
       this.querySelectorAll(
         "[data-remove-manager-membership], [data-remove-site-manager], #manager-membership-form",
       ).forEach((element) => element.remove());
+    const leadProvider = this.querySelector('[name="lead-provider-id"]');
+    if (leadProvider) leadProvider.disabled = true;
     const leadProgram = this.querySelector('[name="lead-program-id"]');
     if (leadProgram) leadProgram.disabled = true;
   }
@@ -5044,6 +5336,7 @@ function siteManagersEditorView(state) {
     (user) =>
       !state.managerMemberships.some(
         (member) =>
+          (member.personId === user.personId && !!user.personId) ||
           member.userId === user.userId ||
           (!member.userId &&
             member.email?.toLowerCase() === user.email?.toLowerCase()),
@@ -5061,7 +5354,7 @@ function siteManagersEditorView(state) {
     ${
       canEditSite(state)
         ? `<form id="manager-membership-form" class="inline-form manager-membership-form">
-      <wa-select name="manager-user-id" aria-label="${escapeHtml(managerPrompt)}" placeholder="${escapeHtml(managerPrompt)}" ${state.site.leadProgramId ? "" : "disabled"}>
+      <wa-select name="manager-user-id" aria-label="${escapeHtml(managerPrompt)}" placeholder="${escapeHtml(managerPrompt)}" >
         ${availableManagers
           .map(
             (user) =>
@@ -5077,8 +5370,8 @@ function siteManagersEditorView(state) {
     </form>`
         : ""
     }
-    ${canEditSite(state) && state.site.leadProgramId ? newSiteManagerDialog() : ""}
-    ${state.site.leadProgramId ? "" : '<p class="muted">Assign a Lead Program before adding a Site manager.</p>'}
+    ${canEditSite(state) ? newSiteManagerDialog() : ""}
+
     ${removeManagerMembershipDialog(state.managerMembershipRemovalTarget, state.site.name)}
   </section>`;
 }
@@ -5186,7 +5479,7 @@ function managerMembershipList(
         <div><strong>${escapeHtml(membership.name)}</strong><span><a href="mailto:${escapeHtml(membership.email)}">${escapeHtml(membership.email)}</a></span><span class="muted">Has ${escapeHtml(membership.activeBindingCount || 0)} active device${Number(membership.activeBindingCount || 0) === 1 ? "" : "s"} in use at this site</span></div>
         <div class="contact-list__actions">${
           editing
-            ? `${membership.userId && canManage ? `<a class="btn-secondary" href="/managers/${encodeURIComponent(membership.userId)}?returnSite=${encodeURIComponent(siteId)}" data-route>${escapeHtml(t("common.edit"))}</a>` : ""}${canManage ? `<button class="btn-danger" type="button" data-remove-manager-membership="${escapeHtml(membership.membershipId)}">${escapeHtml(t("admin.siteManagers.remove"))}</button>` : ""}`
+            ? `${(membership.personId || membership.userId) && canManage ? `<a class="btn-secondary" href="/managers/${encodeURIComponent(membership.personId || membership.userId)}?returnSite=${encodeURIComponent(siteId)}" data-route>${escapeHtml(t("common.edit"))}</a>` : ""}${canManage ? `<button class="btn-danger" type="button" data-remove-manager-membership="${escapeHtml(membership.membershipId)}">${escapeHtml(t("admin.siteManagers.remove"))}</button>` : ""}`
             : `<button class="btn-secondary" type="button" data-issue-manager-grant="${escapeHtml(membership.membershipId)}" data-delivery-mode="link">${escapeHtml(t("admin.enrollment.emailMagicLink"))}</button><button class="btn-secondary" type="button" data-issue-manager-grant="${escapeHtml(membership.membershipId)}" data-delivery-mode="code">${escapeHtml(t("admin.enrollment.emailOneTimeCode"))}</button>`
         }</div>
       </li>`,
@@ -5239,11 +5532,14 @@ function shortOpaqueId(value) {
  * @param {{ name: string, id: string }} route
  */
 function directoryView(state, route) {
-  const section = route.name.startsWith("manager")
-    ? "managers"
-    : route.name.startsWith("provider") || route.name === "programs"
-      ? "providers"
-      : "sites";
+  const section =
+    route.name === "provider-managers"
+      ? "provider-managers"
+      : route.name.startsWith("manager")
+        ? "managers"
+        : route.name.startsWith("provider") || route.name === "programs"
+          ? "providers"
+          : "sites";
   const params = new URLSearchParams(window.location.search);
   const search = (params.get("q") || "").trim();
   const filterParams = {
@@ -5274,11 +5570,13 @@ function directoryView(state, route) {
         ? `<nav class="entity-tabs" aria-label="${escapeHtml(t("admin.directory.sections"))}">
       ${directoryTab("sites", "Sites", section, search)}
       ${directoryTab("managers", "Site managers", section, search)}
+      ${state.capabilities?.manageProviderManagers ? directoryTab("provider-managers", escapeHtml(t("admin.providerManagers.title")), section, search) : ""}
       ${directoryTab("providers", "Providers & Programs", section, search)}
     </nav>`
         : ""
     }
-    ${search ? globalDirectorySearch(state, search) : ""}
+    ${search && section !== "provider-managers" ? globalDirectorySearch(state, search) : ""}
+    ${section === "provider-managers" ? providerManagerDirectoryView(state, search) : ""}
     ${!search && section === "sites" ? siteDirectory(state, filterParams) : ""}
     ${!search && section === "providers" ? providerDirectory(state.providers) : ""}
     ${!search && section === "managers" ? siteManagerDirectory(state, { program: params.get("program") || "", site: params.get("site") || "" }, search) : ""}
@@ -5955,7 +6253,7 @@ function siteManagerEditorView(state, manager) {
     new URLSearchParams(window.location.search).get("returnSite") || "";
   const canManageAssignments = state.capabilities.createEntities === true;
   const assignmentDisabled = canManageAssignments ? "" : "disabled";
-  const programId = manager?.programId || "";
+  const programId = manager?.primaryProgramId ?? manager?.programId ?? "";
   const assigned = new Set(
     (manager?.assignedSites || []).map((site) => site.siteId),
   );
@@ -5972,13 +6270,20 @@ function siteManagerEditorView(state, manager) {
     ${entityBreadcrumb("manager", manager || {}, state.programs, state.providers)}
     <div class="panel__head">
       <h1 id="manager-record-title" tabindex="-1">${escapeHtml(title)}</h1>
-      ${isNew ? "" : `<button class="btn-danger" type="button" data-remove-site-manager>${escapeHtml(t("admin.managers.deleteRecord"))}</button>`}
+      ${isNew || manager?.personId ? "" : `<button class="btn-danger" type="button" data-remove-site-manager>${escapeHtml(t("admin.managers.deleteRecord"))}</button>`}
     </div>
     <form id="site-manager-record-form" class="site-details-form" data-read-only="${!canEditSiteManager(state)}" data-dirty-form data-return-site="${escapeHtml(returnSite)}">
       <fieldset>
         <legend>Manager details</legend>
-        <wa-select name="manager-program-id" label="Program" placeholder="Choose a program" required ${assignmentDisabled}>${programs.map((program) => `<wa-option value="${escapeHtml(program.programId)}" ${program.programId === programId ? "selected" : ""}>${escapeHtml(program.name)}</wa-option>`).join("")}</wa-select>
-        <p class="field-help">Changing the Program changes which Sites can be assigned.</p>
+        <wa-select name="manager-program-id" label="${escapeHtml(t("admin.relationships.primaryProgram"))}" placeholder="${escapeHtml(t("admin.relationships.none"))}" ${assignmentDisabled}><wa-option value="" ${programId ? "" : "selected"}>${escapeHtml(t("admin.relationships.none"))}</wa-option>${programs.map((program) => `<wa-option value="${escapeHtml(program.programId)}" ${program.programId === programId ? "selected" : ""}>${escapeHtml(program.name)}</wa-option>`).join("")}</wa-select>
+        <wa-select name="manager-provider-id" label="${escapeHtml(t("admin.relationships.primaryProvider"))}" ${assignmentDisabled}><wa-option value="" ${manager?.primaryProviderId ? "" : "selected"}>${escapeHtml(t("admin.relationships.none"))}</wa-option>${state.providers
+          .filter((p) => p.status !== "inactive")
+          .map(
+            (p) =>
+              `<wa-option value="${escapeHtml(p.providerId)}" ${p.providerId === manager?.primaryProviderId ? "selected" : ""}>${escapeHtml(p.name)}</wa-option>`,
+          )
+          .join("")}</wa-select>
+        <p class="field-help">${escapeHtml(t("admin.relationships.affiliationHelp"))}</p>
         <div class="form-grid form-grid--one">
           ${formInput("manager-first-name", "First name", manager?.firstName || "", { required: true, autocomplete: "given-name" })}
           ${formInput("manager-last-name", "Last name", manager?.lastName || "", { required: true, autocomplete: "family-name" })}
@@ -5988,15 +6293,15 @@ function siteManagerEditorView(state, manager) {
       </fieldset>
       <fieldset>
         <legend>Assigned sites</legend>
-        <p class="muted">A manager can be assigned only to Sites led by their Program.</p>
+        <p class="muted">${escapeHtml(t("admin.relationships.assignmentHelp"))}</p>
         <div class="manager-site-options">
           ${sites
             .map((site) => {
-              const matches = site.leadProgramId === programId;
+              const matches = true;
               return `<label class="manager-site-option" data-manager-site-program="${escapeHtml(site.leadProgramId || "")}" ${matches ? "" : "hidden"}><wa-checkbox name="manager-site-id" value="${escapeHtml(site.siteId)}" ${assigned.has(site.siteId) ? "checked" : ""} ${matches && canManageAssignments ? "" : "disabled"}>${escapeHtml(siteLabel(site))}</wa-checkbox></label>`;
             })
             .join("")}
-          <p class="empty-state" data-manager-sites-empty ${programId && sites.some((site) => site.leadProgramId === programId) ? "hidden" : ""}>${programId ? "This Program has no Sites to assign." : "Choose a Program to see available Sites."}</p>
+          <p class="empty-state" data-manager-sites-empty ${sites.length ? "hidden" : ""}>${escapeHtml(t("admin.relationships.noSites"))}</p>
         </div>
       </fieldset>
       ${state.siteSaveMessage ? `<p class="success" role="status">${escapeHtml(state.siteSaveMessage)}</p>` : ""}
@@ -6092,12 +6397,23 @@ function providerView(state) {
         program.providerId !== provider.providerId,
     )
     .sort((a, b) => a.name.localeCompare(b.name));
-  return `<section class="site-page" aria-labelledby="provider-title">
+  const access =
+    new URLSearchParams(location.search).get("section") === "access";
+  return `<section class="site-page site-record" aria-labelledby="provider-title">
     ${entityBreadcrumb("provider", provider)}
     <div class="panel__head">
       <h1 id="provider-title" tabindex="-1">${escapeHtml(provider.name)}</h1>
-      <button class="btn-danger" type="button" data-deactivate-provider="${escapeHtml(provider.providerId)}">Deactivate provider</button>
     </div>
+    <nav class="entity-tabs" aria-label="${escapeHtml(t("admin.providerManagers.providerTabs"))}">
+      <a href="/providers/${encodeURIComponent(provider.providerId)}?section=details" data-route ${access ? "" : 'aria-current="page"'}>${escapeHtml(t("admin.providerManagers.providerDetails"))}</a>
+      ${state.capabilities.manageProviderManagers ? `<a href="/providers/${encodeURIComponent(provider.providerId)}?section=access" data-route ${access ? 'aria-current="page"' : ""}>${escapeHtml(t("admin.providerManagers.appAccess"))}</a>` : ""}
+    </nav>
+    ${
+      access
+        ? state.capabilities.manageProviderManagers
+          ? providerAccessView(state)
+          : ""
+        : `
     <form id="provider-details-form" class="site-details-form" data-dirty-form>
       ${formInput("provider-name", "Provider name", provider.name, { required: true, autocomplete: "organization" })}
       <button class="btn-primary" type="submit" data-save-button disabled>Save changes</button>
@@ -6118,16 +6434,39 @@ function providerView(state) {
       </form>
       ${!availablePrograms.length && linkedPrograms.length ? '<p class="muted">Every active Program is already linked to this provider.</p>' : ""}
     </section>
+    ${state.capabilities.createEntities ? `<section class="subsection"><h2>${escapeHtml(t("admin.providerManagers.deactivateProvider"))}</h2><p>${escapeHtml(t("admin.providerManagers.deactivateProviderHelp"))}</p><button class="btn-danger" type="button" data-deactivate-provider="${escapeHtml(provider.providerId)}">${escapeHtml(t("admin.providerManagers.deactivateProvider"))}</button></section>` : ""}
+    `
+    }
     ${deactivateProviderDialog(provider.name)}
+    ${discardChangesDialog()}
   </section>`;
 }
 
 /** @param {AdminState} state */
 function providerManagerPanel(state) {
   return `<section class="subsection" aria-labelledby="provider-managers-title">
-    <div class="panel__head"><h2 id="provider-managers-title">Provider managers</h2><button class="btn-primary" id="add-provider-manager" type="button" aria-haspopup="dialog">${escapeHtml(t("admin.providers.addManager"))}</button></div>
-    <p class="muted">${escapeHtml(t("admin.enrollment.providerInstructions"))}</p>
-    ${state.providerManagers.map(providerManagerRow).join("")}
+    <div class="panel__head"><h2 id="provider-managers-title">${escapeHtml(t("admin.providerManagers.title"))}</h2><button class="btn-primary" id="add-provider-manager" type="button" aria-haspopup="dialog">${escapeHtml(t("admin.providers.addManager"))}</button></div>
+    <p class="muted">${escapeHtml(t("admin.enrollment.providerDefinition"))}</p>
+    ${state.providerManagers
+      .filter((manager) => manager.status === "active")
+      .map((manager) => providerManagerRow(manager, state.provider.providerId))
+      .join("")}
+    <form class="inline-form" data-assign-existing-provider-person><wa-select name="person-id" label="${escapeHtml(t("admin.relationships.assignExistingPerson"))}" placeholder="${escapeHtml(t("admin.relationships.choosePerson"))}" required>${(
+      state.people || []
+    )
+      .filter(
+        (person) =>
+          !state.providerManagers.some(
+            (m) => m.personId === person.personId && m.status === "active",
+          ),
+      )
+      .map(
+        (person) =>
+          `<wa-option value="${escapeHtml(person.personId)}">${escapeHtml(person.name)} · ${escapeHtml(person.email)}</wa-option>`,
+      )
+      .join(
+        "",
+      )}</wa-select><button class="btn-secondary" type="submit">${escapeHtml(t("admin.relationships.assignPerson"))}</button></form>
     <dialog id="add-provider-manager-dialog" class="places-modal" data-provider-manager-dialog aria-labelledby="add-provider-manager-title">
       <form class="places-modal__card site-details-form" data-provider-manager-form>
         <h2 id="add-provider-manager-title">${escapeHtml(t("admin.providers.addManager"))}</h2>
@@ -6143,61 +6482,112 @@ function providerManagerPanel(state) {
         </div>
       </form>
     </dialog>
-    ${providerManagerGrantList(state.providerManagerGrants)}
-    ${providerManagerEnrollmentList(state.providerManagerEnrollments, state.providerManagers)}
   </section>`;
 }
 
-/** @param {any} manager */
-function providerManagerRow(manager) {
+/** @param {any} manager @param {string} providerId */
+function providerManagerRow(manager, providerId) {
   const inactive = manager.status === "inactive";
-  const titleId = `provider-manager-edit-${encodeURIComponent(manager.membershipId)}`;
-  return `<article data-provider-manager-row>
-    <div class="panel__head"><div><h3>${escapeHtml(manager.name)}</h3><p class="muted">${escapeHtml(manager.activeDeviceCount || 0)} active provider-wide device${Number(manager.activeDeviceCount || 0) === 1 ? "" : "s"} · ${escapeHtml(manager.status)}</p></div><div class="row">
-      ${manager.status === "active" ? `<button class="btn-secondary" type="button" data-issue-provider-manager-grant="${escapeHtml(manager.membershipId)}">${escapeHtml(t("admin.enrollment.emailLink"))}</button>` : ""}
-      <button class="btn-secondary" type="button" data-edit-provider-manager="${escapeHtml(manager.membershipId)}" aria-label="${escapeHtml(t("common.edit"))}: ${escapeHtml(manager.name)}" aria-haspopup="dialog">${escapeHtml(t("common.edit"))}</button>
-      ${inactive ? "" : enrollmentOptions("provider", manager.membershipId)}
-      <button class="${inactive ? "btn-secondary" : "btn-danger"}" type="button" data-provider-manager-status="${escapeHtml(manager.membershipId)}" data-provider-manager-active="${inactive ? "true" : "false"}">${inactive ? "Reinstate" : "Deactivate"}</button>
-    </div></div>
-    <dialog class="places-modal provider-manager-edit-dialog" data-provider-manager-dialog aria-labelledby="${titleId}">
-    <form class="places-modal__card site-details-form" data-provider-manager-form>
-    <h2 id="${titleId}">${escapeHtml(t("admin.providers.editManager"))}</h2>
-    <input type="hidden" name="provider-manager-membership-id" value="${escapeHtml(manager.membershipId)}" />
-    <div class="form-grid">
-      ${formInput("provider-manager-first-name", "First name", manager.firstName, { required: true, autocomplete: "given-name" })}
-      ${formInput("provider-manager-last-name", "Last name", manager.lastName, { required: true, autocomplete: "family-name" })}
-      ${formInput("provider-manager-email", "Email", manager.email, { required: true, type: "email", autocomplete: "email" })}
-      ${phoneInput("provider-manager-phone", "Phone", manager.phone, { extension: manager.phoneExtension, required: true, type: "tel", autocomplete: "tel" })}
-    </div>
-    <div class="places-modal__actions">
-      <button class="btn-primary" type="submit" data-save-button>${escapeHtml(t("common.save"))}</button>
-      <button class="btn-outline" type="button" data-close-dialog>${escapeHtml(t("common.cancel"))}</button>
-    </div>
+  return `<article class="provider-manager-summary" data-provider-manager-row><div><h3>${escapeHtml(manager.name)}</h3><a href="mailto:${escapeHtml(manager.email)}">${escapeHtml(manager.email)}</a><p class="muted">${escapeHtml(t("admin.providerManagers.deviceCount", { count: manager.activeDeviceCount || 0 }))}${inactive ? ` · ${escapeHtml(t("admin.providerManagers.inactive"))}` : ""}</p></div><div class="row">
+    <a class="btn-secondary" href="${providerManagerPath(providerId, manager.membershipId)}" data-route>${escapeHtml(t("common.edit"))}</a>
+    <button class="${inactive ? "btn-secondary" : "btn-danger"}" type="button" data-provider-manager-status="${escapeHtml(manager.membershipId)}" data-provider-manager-active="${inactive ? "true" : "false"}">${escapeHtml(t(inactive ? "admin.providerManagers.reinstate" : "admin.siteManagers.remove"))}</button>
+  </div></article>`;
+}
+
+function providerManagerDirectoryView(state, search = "") {
+  const query = search.toLocaleLowerCase();
+  const managers = (state.providerManagerDirectory || []).filter((manager) =>
+    [manager.firstName, manager.lastName, manager.providerName, manager.email]
+      .join(" ")
+      .toLocaleLowerCase()
+      .includes(query),
+  );
+  return `<section aria-labelledby="provider-manager-directory-title"><h2 id="provider-manager-directory-title">${escapeHtml(t("admin.providerManagers.title"))}</h2>${managers.length ? `<ul class="site-directory-list">${managers.map((manager) => `<li><a class="site-directory-row" href="${providerManagerPath(manager.providerId, manager.membershipId)}" data-route><span class="site-directory-row__text"><strong>${escapeHtml([manager.firstName, manager.lastName].filter(Boolean).join(" ") || manager.name)}</strong><span>${escapeHtml(manager.status === "inactive" ? t("admin.providerManagers.previousProvider", { name: manager.providerName }) : manager.providerName)}</span></span><span class="site-directory-row__caret" aria-hidden="true">›</span></a></li>`).join("")}</ul>` : `<p class="empty-state">${escapeHtml(t("admin.providerManagers.none"))}</p>`}</section>`;
+}
+
+function providerManagerDetailView(state, membershipId) {
+  const manager = state.providerManagers.find(
+    (item) => item.membershipId === membershipId,
+  );
+  if (!manager)
+    return `<p role="alert">${escapeHtml(t("admin.providerManagers.notFound"))}</p>`;
+  return `<section class="site-page site-record"><nav class="entity-breadcrumb" aria-label="${escapeHtml(t("admin.breadcrumb.label"))}"><a href="/provider-managers" data-route>${escapeHtml(t("admin.providerManagers.title"))}</a><span aria-hidden="true"> › </span><a href="/providers/${encodeURIComponent(state.provider.providerId)}?section=details" data-route>${escapeHtml(state.provider.name)}</a></nav>
+    <h1 tabindex="-1">${escapeHtml(manager.name)}</h1>
+    <form id="provider-manager-record-form" class="site-details-form" data-provider-manager-form data-dirty-form>
+      <h2>${escapeHtml(t("admin.providerManagers.details"))}</h2>
+      <input type="hidden" name="provider-manager-membership-id" value="${escapeHtml(manager.membershipId)}">
+      ${formInput("provider-manager-first-name", t("admin.programs.firstName"), manager.firstName, { required: true, autocomplete: "given-name" })}
+      ${formInput("provider-manager-last-name", t("admin.programs.lastName"), manager.lastName, { required: true, autocomplete: "family-name" })}
+      ${formInput("provider-manager-email", t("admin.programs.email"), manager.email, { required: true, type: "email", autocomplete: "email" })}
+      ${phoneInput("provider-manager-phone", t("admin.programs.phone"), manager.phone, { extension: manager.phoneExtension, required: true, type: "tel", autocomplete: "tel" })}
+      <button class="btn-primary" type="submit" data-save-button disabled>${escapeHtml(t("admin.programs.saveStaff"))}</button>
     </form>
-    </dialog>
-  </article>`;
+    <section class="subsection"><h2>${escapeHtml(t("admin.providerManagers.associatedProvider"))}</h2>${manager.status === "inactive" ? `<p>${escapeHtml(t("admin.providerManagers.noAssignedProvider"))}</p><button class="btn-secondary" type="button" data-provider-manager-status="${escapeHtml(manager.membershipId)}" data-provider-manager-active="true">${escapeHtml(t("admin.providerManagers.reassign", { name: state.provider.name }))}</button>` : `<a href="/providers/${encodeURIComponent(state.provider.providerId)}" data-route>${escapeHtml(state.provider.name)}</a>`}</section>
+    ${
+      manager.status === "active"
+        ? `<section class="subsection"><h2>${escapeHtml(t("admin.relationships.changeProvider"))}</h2><p>${escapeHtml(t("admin.relationships.transferHelp"))}</p><form data-transfer-provider-manager="${escapeHtml(manager.membershipId)}" class="site-details-form"><wa-select name="target-provider" label="${escapeHtml(t("admin.relationships.newProvider"))}" required placeholder="${escapeHtml(t("admin.relationships.chooseProvider"))}">${state.providers
+            .filter(
+              (p) =>
+                p.status !== "inactive" &&
+                p.providerId !== state.provider.providerId,
+            )
+            .map(
+              (p) =>
+                `<wa-option value="${escapeHtml(p.providerId)}">${escapeHtml(p.name)}</wa-option>`,
+            )
+            .join(
+              "",
+            )}</wa-select><wa-input name="confirmation" label="${escapeHtml(t("admin.relationships.confirmTransfer", { name: manager.email }))}" required></wa-input><button class="btn-danger" type="submit">${escapeHtml(t("admin.relationships.changeProvider"))}</button></form></section>`
+        : ""
+    }
+    ${providerDeviceRemovalForm(state, manager)}
+    ${discardChangesDialog()}
+  </section>`;
+}
+
+function providerEmailActions(manager) {
+  return `<div class="contact-list__actions"><button class="btn-secondary" type="button" data-issue-provider-manager-grant="${escapeHtml(manager.membershipId)}" data-delivery-mode="link">${escapeHtml(t("admin.enrollment.emailMagicLink"))}</button><button class="btn-secondary" type="button" data-issue-provider-manager-grant="${escapeHtml(manager.membershipId)}" data-delivery-mode="code">${escapeHtml(t("admin.enrollment.emailOneTimeCode"))}</button></div>`;
+}
+
+function providerAccessView(state) {
+  const active = state.providerManagers.filter(
+    (manager) => manager.status === "active",
+  );
+  return `<section><h2>${escapeHtml(t("admin.providerManagers.accessTitle"))}</h2><p>${escapeHtml(t("admin.providerManagers.accessInstructions"))}</p>${active.length ? `<ul class="contact-list provider-access-managers">${active.map((manager) => `<li><div><strong>${escapeHtml(manager.name)}</strong><span>${escapeHtml(manager.email)}</span>${state.providerManagerGrantErrors?.[manager.membershipId] ? `<p class="error" role="alert" data-provider-manager-grant-error="${escapeHtml(manager.membershipId)}">${escapeHtml(state.providerManagerGrantErrors[manager.membershipId])}</p>` : ""}</div>${providerEmailActions(manager)}</li>`).join("")}</ul>` : `<p class="empty-state">${escapeHtml(t("admin.providerManagers.none"))}</p>`}</section>
+    <section class="subsection">${providerManagerGrantList(state.providerManagerGrants)}</section>
+    <section class="subsection"><h2>${escapeHtml(t("admin.enrollment.enrolledDevices"))}</h2>${providerManagerEnrollmentList(state.providerManagerEnrollments, state.providerManagers)}</section>
+    ${providerDeviceRemovalForm(state)}
+  `;
+}
+
+function providerDeviceRemovalForm(state, manager = null) {
+  const confirmation = manager ? manager.email : state.provider.name;
+  return `<section class="subsection"><h2>${escapeHtml(t(manager ? "admin.providerManagers.removeAccess" : "admin.providerManagers.removeAllAccess"))}</h2><p>${escapeHtml(t(manager ? "admin.providerManagers.unlinkHelp" : "admin.providerManagers.removeAccessHelp"))}</p><form class="inline-form destructive-confirmation" data-revoke-provider-devices data-membership-id="${escapeHtml(manager?.membershipId || "")}" data-confirmation="${escapeHtml(confirmation)}">
+    <wa-input name="confirmation" required autocomplete="off" label="${escapeHtml(t(manager ? "admin.providerManagers.confirmManager" : "admin.providerManagers.confirmProvider", { name: confirmation }))}"></wa-input><button class="btn-danger" type="submit" disabled>${escapeHtml(t("admin.providerManagers.removeAccess"))}</button>
+  </form></section>`;
 }
 
 /** @param {any[]} grants */
 function providerManagerGrantList(grants) {
   if (!grants.length) {
-    return '<p class="empty-state">No provider-wide enrollment links issued.</p>';
+    return `<h2>${escapeHtml(t("admin.enrollment.history", { count: 0 }))}</h2>`;
   }
-  return `<details class="table-disclosure"><summary>Provider enrollment link history (${escapeHtml(grants.length)})</summary><div class="table-wrap"><table class="provider-enrollment-history"><thead><tr><th>Recipient</th><th>Sites</th><th>Issued</th><th>Expires</th><th>Status</th><th>Delivery</th><th>Action</th></tr></thead><tbody>${grants
+  return `<details class="table-disclosure"><summary>${escapeHtml(t("admin.enrollment.history", { count: grants.length }))}</summary><div class="table-wrap"><table class="provider-enrollment-history"><thead><tr><th>Recipient</th><th>${escapeHtml(t("admin.enrollment.type"))}</th><th>Sites</th><th>Issued</th><th>Expires</th><th>Status</th><th>Delivery</th><th>Action</th></tr></thead><tbody>${grants
     .map(
       (grant) =>
-        `<tr><td><span class="enrollment-recipient"><span>${escapeHtml(grant.issuedTo)}</span>${grant.enrollmentUrl ? `<button class="btn-icon enrollment-copy" type="button" title="Copy enrollment link" aria-label="Copy provider enrollment link for ${escapeHtml(grant.issuedTo)}" data-copy-enrollment-url="${escapeHtml(grant.enrollmentUrl)}"><wa-icon name="copy" aria-hidden="true"></wa-icon></button><span class="visually-hidden" aria-live="polite" data-copy-status></span>` : ""}</span></td><td>${escapeHtml(grant.siteCount || 0)}</td><td>${escapeHtml(formatTimestamp(grant.createdAt))}</td><td>${escapeHtml(formatTimestamp(grant.expiresAt))}</td><td>${escapeHtml(grant.status)}</td><td>${escapeHtml(grant.deliveryStatus || "queued")}</td><td>${grant.status === "pending" ? `<button class="btn-danger" type="button" data-cancel-provider-manager-grant="${escapeHtml(grant.grantId)}">Cancel</button>` : "—"}</td></tr>`,
+        `<tr><td><span class="enrollment-recipient"><span>${escapeHtml(grant.issuedTo)}</span>${grant.enrollmentUrl ? `<button class="btn-icon enrollment-copy" type="button" title="Copy enrollment link" aria-label="Copy provider enrollment link for ${escapeHtml(grant.issuedTo)}" data-copy-enrollment-url="${escapeHtml(grant.enrollmentUrl)}"><wa-icon name="copy" aria-hidden="true"></wa-icon></button><span class="visually-hidden" aria-live="polite" data-copy-status></span>` : ""}</span></td><td>${escapeHtml(t(grant.deliveryMode === "code" ? "admin.enrollment.oneTimeCode" : "admin.enrollment.magicLink"))}</td><td>${escapeHtml(grant.siteCount || 0)}</td><td>${escapeHtml(formatTimestamp(grant.createdAt))}</td><td>${escapeHtml(formatTimestamp(grant.expiresAt))}</td><td>${escapeHtml(grant.status)}</td><td>${escapeHtml(grant.deliveryStatus || "queued")}</td><td>${grant.status === "pending" ? `<button class="btn-danger" type="button" data-cancel-provider-manager-grant="${escapeHtml(grant.grantId)}">Cancel</button>` : "—"}</td></tr>`,
     )
     .join("")}</tbody></table></div></details>`;
 }
 
 function providerManagerEnrollmentList(enrollments, managers) {
   const active = enrollments.filter((item) => item.status !== "revoked");
-  if (!active.length) return "";
+  if (!active.length)
+    return `<p class="empty-state">${escapeHtml(t("admin.providerManagers.noDevices"))}</p>`;
   const names = new Map(
     managers.map((manager) => [manager.membershipId, manager.name]),
   );
-  return `<h3>Enrolled devices</h3><div class="table-wrap"><table><thead><tr><th>Provider Manager</th><th>Device</th><th>Sites</th><th>Enrolled</th><th>Action</th></tr></thead><tbody>${active
+  return `<div class="table-wrap"><table><thead><tr><th>Provider Manager</th><th>Device</th><th>Sites</th><th>Enrolled</th><th>Action</th></tr></thead><tbody>${active
     .map(
       (enrollment) =>
         `<tr><td>${escapeHtml(names.get(enrollment.membershipId) || "Provider Manager")}</td><td>ID ${escapeHtml(shortOpaqueId(enrollment.physicalDeviceId))}</td><td>${escapeHtml(enrollment.activeSiteCount ?? enrollment.siteCount ?? 0)} of ${escapeHtml(enrollment.siteCount || 0)} active</td><td>${escapeHtml(formatTimestamp(enrollment.createdAt))}</td><td><button class="btn-danger" type="button" data-revoke-provider-enrollment="${escapeHtml(enrollment.enrollmentId)}">Revoke device</button></td></tr>`,
@@ -6367,14 +6757,21 @@ function siteEditor(state) {
       </div>
     </fieldset>
     <fieldset>
-      <legend>Lead program</legend>
+      <legend>${escapeHtml(t("admin.relationships.siteAffiliations"))}</legend>
       <div class="form-grid form-grid--one">
+        <wa-select name="lead-provider-id" label="${escapeHtml(t("admin.relationships.leadProvider"))}" data-initial-value="${escapeHtml(site.providerId)}">${state.providers
+          .filter((p) => p.status !== "inactive")
+          .map(
+            (p) =>
+              `<wa-option value="${escapeHtml(p.providerId)}" ${p.providerId === site.providerId ? "selected" : ""}>${escapeHtml(p.name)}</wa-option>`,
+          )
+          .join("")}</wa-select>
         <wa-select name="lead-program-id" aria-label="Lead program" placeholder="No lead program assigned" data-initial-value="${escapeHtml(site.leadProgramId || "")}">
           <wa-option value="" ${site.leadProgramId ? "" : "selected"}>No lead program assigned</wa-option>
           ${programs.map((program) => `<wa-option value="${escapeHtml(program.programId)}" ${program.programId === site.leadProgramId ? "selected" : ""}>${escapeHtml(program.name)}</wa-option>`).join("")}
           ${state.capabilities.createEntities && site.providerId ? `<wa-option value="__create_program__" data-create-program>${escapeHtml(t("admin.programs.createNew"))}</wa-option>` : ""}
         </wa-select>
-        <button class="btn-primary" type="button" data-save-lead-program disabled>Save lead program</button>
+        <button class="btn-primary" type="button" data-save-lead-program disabled>${escapeHtml(t("admin.relationships.saveAffiliations"))}</button>
       </div>
     </fieldset>
     ${state.siteSaveError ? `<p id="site-save-error" class="error site-details-form__message" role="alert">${escapeHtml(state.siteSaveError)}</p>` : ""}
@@ -6402,11 +6799,11 @@ function leadProgramConfirmationDialog() {
   return `<dialog id="lead-program-confirmation-dialog" class="places-modal" aria-labelledby="lead-program-confirmation-title" aria-describedby="lead-program-confirmation-copy">
     <form class="places-modal__card" method="dialog">
       <div class="places-modal__copy">
-        <h2 class="places-modal__title" id="lead-program-confirmation-title">Save lead program change?</h2>
-        <p class="places-modal__text" id="lead-program-confirmation-copy">This will move the site to the selected lead program. The available site managers will change to that program's staff.</p>
+        <h2 class="places-modal__title" id="lead-program-confirmation-title">${escapeHtml(t("admin.relationships.confirmSiteChange"))}</h2>
+        <p class="places-modal__text" id="lead-program-confirmation-copy">${escapeHtml(t("admin.relationships.siteChangeHelp"))}</p><p data-reassignment-preview></p>
       </div>
       <div class="places-modal__actions">
-        <button class="btn-primary" value="confirm">Save lead program</button>
+        <button class="btn-primary" value="confirm">${escapeHtml(t("admin.relationships.saveAffiliations"))}</button>
         <button class="btn-outline" value="cancel">Cancel</button>
       </div>
     </form>
@@ -6833,11 +7230,15 @@ function syncDirtyForm(form, initialize = false) {
   if (initialize || !form.dataset.initialValues) {
     form.dataset.initialValues = snapshot;
   }
-  form.dataset.isDirty = String(form.dataset.readOnly !== "true" && snapshot !== form.dataset.initialValues);
+  form.dataset.isDirty = String(
+    form.dataset.readOnly !== "true" && snapshot !== form.dataset.initialValues,
+  );
   const saveButton = form.querySelector("[data-save-button]");
   if (saveButton instanceof HTMLButtonElement) {
     saveButton.disabled =
-      form.dataset.readOnly === "true" || form.dataset.saving === "true" || snapshot === form.dataset.initialValues;
+      form.dataset.readOnly === "true" ||
+      form.dataset.saving === "true" ||
+      snapshot === form.dataset.initialValues;
   }
 }
 
@@ -6869,7 +7270,7 @@ function syncSiteDetailsForm(form, initialize = false) {
       "public-contact-extension",
     ],
     address: ["street-address", "city", "state", "zip"],
-    leadProgram: ["lead-program-id"],
+    leadProgram: ["lead-program-id", "lead-provider-id"],
     siteManager: ["site-manager-user-id"],
   };
   /** @param {string[]} names @param {boolean} [useDeclaredInitialValue] */
@@ -6908,9 +7309,11 @@ function syncSiteDetailsForm(form, initialize = false) {
   const editedSections = new Set(
     JSON.parse(form.dataset.editedSections || "[]"),
   );
-  const isDirty = form.dataset.readOnly !== "true" && Object.entries(dirty).some(
-    ([name, sectionIsDirty]) => sectionIsDirty && editedSections.has(name),
-  );
+  const isDirty =
+    form.dataset.readOnly !== "true" &&
+    Object.entries(dirty).some(
+      ([name, sectionIsDirty]) => sectionIsDirty && editedSections.has(name),
+    );
   form.dataset.isDirty = String(isDirty);
   const controls = {
     details: form.querySelector("[data-save-site-details]"),
@@ -6920,7 +7323,10 @@ function syncSiteDetailsForm(form, initialize = false) {
   };
   for (const [name, control] of Object.entries(controls)) {
     if (control instanceof HTMLButtonElement)
-      control.disabled = form.dataset.readOnly === "true" || !dirty[name] || !editedSections.has(name);
+      control.disabled =
+        form.dataset.readOnly === "true" ||
+        !dirty[name] ||
+        !editedSections.has(name);
   }
   if (controls.siteManager instanceof HTMLButtonElement && dirty.leadProgram) {
     controls.siteManager.disabled = true;
@@ -6951,6 +7357,7 @@ function markSiteDetailsSectionEdited(form, event) {
     state: "address",
     zip: "address",
     "lead-program-id": "leadProgram",
+    "lead-provider-id": "leadProgram",
     "site-manager-user-id": "siteManager",
   }[name];
   if (!section) return;
