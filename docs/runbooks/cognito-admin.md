@@ -109,9 +109,9 @@ leave this variable unset and continue to use the configured Cognito user pool.
   the required root Terraform outputs in the deployment job.
 - Callback assets fail: check that the index references `/src/` and `/config.js`.
 - `invalid_login_state` after credentials and MFA: confirm the deployed admin
-  bundle includes the expiry-bound OAuth transaction fallback. Access and ID
-  tokens remain session-scoped; only the one-time PKCE state/verifier uses the
-  30-minute fallback needed when hosted MFA replaces the browser session.
+  bundle includes the expiry-bound OAuth transaction fallback. The one-time
+  PKCE state/verifier uses a 30-minute fallback when hosted MFA replaces the
+  browser session.
   Session expiry must clear tokens only, preserving any pending login. Callback
   validation checks for a matching state in both session and fallback storage;
   stale tab state must not mask a valid fallback, and a mismatched callback must
@@ -157,3 +157,25 @@ Deploy the scoped `cognito-idp:AdminDeleteUserAttributes` permission with the
 backend so recovery can remove originally absent name attributes. Site views
 resolve oversight names by directory manager ID and retain legacy snapshots when
 no directory identity can be found.
+
+## Dashboard session lifetime
+
+The admin Cognito client issues one-hour access/ID tokens and a seven-day
+refresh token. The dashboard persists its access and refresh tokens in one
+localStorage record, so login survives tab and browser closure. ID tokens are
+not retained for new refreshable sessions. These credentials are accessible to
+same-origin JavaScript; retain the admin CSP and XSS protections.
+
+Before API calls (including CSV downloads), the client refreshes access tokens
+within one minute of expiry. Concurrent requests in one tab share a refresh.
+The session ends seven days after sign-in; refresh does not extend that deadline.
+A rejected refresh token clears the session, while temporary network/server
+failures preserve it for retry. Sign-out clears local credentials and attempts
+Cognito refresh-token revocation even while navigating to hosted logout.
+Other tabs read shared credentials on their next request; an in-flight refresh
+cannot restore a signed-out session.
+
+Deploy both the admin bundle and Terraform client settings through CI. Existing
+tab-only sessions need one new sign-in to receive persistent credentials. When
+persistent storage is blocked, credentials fall back to tab storage and cannot
+survive closing that tab. No Terraform apply is performed locally.

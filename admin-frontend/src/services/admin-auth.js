@@ -6,12 +6,114 @@ const EXPIRES_AT_KEY = "good-neighbor-admin-expires-at";
 const PKCE_VERIFIER_KEY = "good-neighbor-admin-pkce-verifier";
 const OAUTH_STATE_KEY = "good-neighbor-admin-oauth-state";
 const OAUTH_TRANSACTION_KEY = "good-neighbor-admin-oauth-transaction";
+const SESSION_KEY = "good-neighbor-admin-session";
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const REFRESH_MARGIN_MS = 60 * 1000;
+let refreshPromise = null;
+let refreshingToken = "";
+
+// One record keeps credentials and their fixed deadline consistent across tabs.
+function readSession() {
+  try {
+    let stored = null;
+    try {
+      stored = localStorage.getItem(SESSION_KEY);
+    } catch {
+      /* Use tab storage. */
+    }
+    const value = JSON.parse(
+      stored || sessionStorage.getItem(SESSION_KEY) || "null",
+    );
+    if (!value) return null;
+    if (
+      typeof value.accessToken !== "string" ||
+      !value.accessToken ||
+      typeof value.refreshToken !== "string" ||
+      !value.refreshToken ||
+      !Number.isFinite(value.accessExpiresAt) ||
+      !Number.isFinite(value.expiresAt) ||
+      Date.now() >= value.expiresAt
+    ) {
+      clearAdminTokens();
+      return null;
+    }
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+function writeSession(value) {
+  const serialized = JSON.stringify(value);
+  try {
+    localStorage.setItem(SESSION_KEY, serialized);
+    sessionStorage.removeItem(SESSION_KEY);
+  } catch {
+    // Restricted storage still permits a session in the current tab.
+    sessionStorage.setItem(SESSION_KEY, serialized);
+  }
+}
+
+/** Refresh on demand before authenticated requests, sharing concurrent work. */
+export async function getFreshAdminToken() {
+  if (getAdminConfig().localDebugAdmin) return "";
+  const session = readSession();
+  if (!session) return getAdminToken();
+  if (session.accessExpiresAt > Date.now() + REFRESH_MARGIN_MS)
+    return session.accessToken;
+  if (refreshPromise && refreshingToken === session.refreshToken)
+    return refreshPromise;
+  refreshingToken = session.refreshToken;
+  const pending = refreshSession(session);
+  refreshPromise = pending;
+  try {
+    return await pending;
+  } finally {
+    if (refreshPromise === pending) refreshPromise = null;
+  }
+}
+
+async function refreshSession(session) {
+  const config = requireAuthConfig();
+  const response = await fetch(`${config.cognitoDomain}/oauth2/token`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: config.clientId,
+      refresh_token: session.refreshToken,
+    }),
+  });
+  const token = await response.json().catch(() => null);
+  // Sign-out or a newer sign-in wins over an outstanding refresh response.
+  const current = readSession();
+  if (!current || current.refreshToken !== session.refreshToken) return "";
+  if (!response.ok || !token?.access_token) {
+    if (token?.error === "invalid_grant") {
+      clearAdminTokens();
+      return "";
+    }
+    // Network/server/configuration failures must not destroy a usable login.
+    throw new Error("token_refresh_failed");
+  }
+  writeSession({
+    ...current,
+    accessToken: token.access_token,
+    refreshToken: token.refresh_token || current.refreshToken,
+    accessExpiresAt: Date.now() + Number(token.expires_in || 3600) * 1000,
+  });
+  return token.access_token;
+}
+
 const OAUTH_TRANSACTION_TTL_MS = 30 * 60 * 1000;
 
 /**
  * @returns {string}
  */
 export function getAdminToken() {
+  const session = readSession();
+  if (session)
+    return session.accessExpiresAt > Date.now() ? session.accessToken : "";
   const expiresAt = Number(sessionStorage.getItem(EXPIRES_AT_KEY) || "0");
   if (expiresAt && Date.now() > expiresAt) {
     clearAdminTokens();
@@ -25,7 +127,7 @@ export function getAdminToken() {
  */
 export function hasAdminSession() {
   if (getAdminConfig().localDebugAdmin) return true;
-  return Boolean(getAdminToken());
+  return Boolean(readSession() || getAdminToken());
 }
 
 export function clearAdminSession() {
@@ -36,6 +138,12 @@ export function clearAdminSession() {
 // Session expiry can be observed while a new OAuth login is pending, including
 // in another tab. It must not delete that login's state or PKCE verifier.
 function clearAdminTokens() {
+  try {
+    localStorage.removeItem(SESSION_KEY);
+  } catch {
+    /* Storage may be restricted. */
+  }
+  sessionStorage.removeItem(SESSION_KEY);
   sessionStorage.removeItem(ACCESS_TOKEN_KEY);
   sessionStorage.removeItem(ID_TOKEN_KEY);
   sessionStorage.removeItem(EXPIRES_AT_KEY);
@@ -111,6 +219,17 @@ export async function completeAdminLoginFromUrl() {
     return { handled: true, error: "token_exchange_failed" };
   }
 
+  if (token.refresh_token) {
+    clearAdminTokens();
+    writeSession({
+      accessToken: token.access_token,
+      refreshToken: token.refresh_token,
+      accessExpiresAt: Date.now() + Number(token.expires_in || 3600) * 1000,
+      expiresAt: Date.now() + SESSION_TTL_MS,
+    });
+    return { handled: true };
+  }
+  // Existing clients without a refresh token retain their tab-scoped session.
   sessionStorage.setItem(ACCESS_TOKEN_KEY, token.access_token);
   if (token.id_token) sessionStorage.setItem(ID_TOKEN_KEY, token.id_token);
   sessionStorage.setItem(
@@ -121,8 +240,8 @@ export async function completeAdminLoginFromUrl() {
 }
 
 /**
- * Keep the PKCE transaction across Cognito's MFA navigation without moving
- * access or ID tokens out of sessionStorage. localStorage is a fallback for
+ * Keep the PKCE transaction across Cognito's MFA navigation.
+ * localStorage is a fallback for
  * browsers that replace the session context during the hosted-login journey.
  * @param {{ state: string, verifier: string, createdAt: number }} transaction
  */
@@ -188,7 +307,20 @@ function clearCallbackParameters() {
 
 export function signOutAdmin() {
   const config = getAdminConfig();
+  const session = readSession();
   clearAdminSession();
+  if (session && config.cognitoDomain && config.clientId) {
+    // Best effort; local sign-out succeeds even when the network is unavailable.
+    void fetch(`${config.cognitoDomain}/oauth2/revoke`, {
+      method: "POST",
+      keepalive: true,
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: config.clientId,
+        token: session.refreshToken,
+      }),
+    }).catch(() => {});
+  }
   if (config.localDebugAdmin) {
     location.assign(config.logoutUri || location.href);
     return;

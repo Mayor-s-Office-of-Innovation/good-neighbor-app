@@ -29,7 +29,6 @@ import "@awesome.me/webawesome/dist/components/icon/icon.js";
 import "@awesome.me/webawesome/dist/components/spinner/spinner.js";
 
 import {
-  clearAdminSession,
   completeAdminLoginFromUrl,
   hasAdminSession,
   signOutAdmin,
@@ -3059,7 +3058,6 @@ class AdminApp extends HTMLElement {
       });
     });
     this.querySelector("#clear-token")?.addEventListener("click", () => {
-      clearAdminSession();
       this.state.hasToken = false;
       this.state.providers = [];
       this.state.sites = [];
@@ -4479,6 +4477,7 @@ class AdminApp extends HTMLElement {
    * @returns {void}
    */
   render() {
+    this.state.hasToken = hasAdminSession();
     this.directorySearchDebounce?.cancel();
     const route = currentRoute();
     const { provider, program, site, siteManager } = visibleRecords(

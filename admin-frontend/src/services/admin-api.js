@@ -1,4 +1,4 @@
-import { getAdminToken } from "./admin-auth.js";
+import { getFreshAdminToken } from "./admin-auth.js";
 import { getAdminConfig } from "../config.js";
 
 /**
@@ -7,7 +7,7 @@ import { getAdminConfig } from "../config.js";
  */
 async function adminFetch(path, init = {}) {
   const config = getAdminConfig();
-  const token = getAdminToken();
+  const token = await getFreshAdminToken();
   const res = await fetch(`${config.apiBase}${path}`, {
     ...init,
     headers: {
@@ -323,7 +323,7 @@ export const adminApi = {
     adminFetch(`/admin/v1/site-imports/${encodeURIComponent(importId)}`),
   downloadSiteImportConflicts: async (importId) => {
     const config = getAdminConfig();
-    const token = getAdminToken();
+    const token = await getFreshAdminToken();
     const response = await fetch(
       `${config.apiBase}/admin/v1/site-imports/${encodeURIComponent(importId)}/conflicts.csv`,
       {

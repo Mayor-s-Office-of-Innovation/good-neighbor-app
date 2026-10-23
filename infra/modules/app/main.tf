@@ -1131,6 +1131,17 @@ resource "aws_cognito_user_pool_client" "web" {
 }
 
 resource "aws_cognito_user_pool_client" "admin" {
+  # Persist login for one week while keeping API credentials short-lived.
+  access_token_validity   = 1
+  id_token_validity       = 1
+  refresh_token_validity  = 7
+  enable_token_revocation = true
+  token_validity_units {
+    access_token  = "hours"
+    id_token      = "hours"
+    refresh_token = "days"
+  }
+
   name         = "${local.name_prefix}-admin"
   user_pool_id = aws_cognito_user_pool.users.id
 
