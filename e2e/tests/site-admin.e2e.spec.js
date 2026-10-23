@@ -149,6 +149,7 @@ test("access links stack, collapse, disappear after enrollment, and stay hidden 
   page,
 }) => {
   await bindSite(page);
+  /** @type {Array<{grantId: string, label: string, status: string, expiresAt: string}>} */
   const grants = [];
   await page.route("**/app/v1/manager/staff-grants/current", (route) =>
     route.fulfill({ json: { grants } }),
@@ -174,10 +175,19 @@ test("access links stack, collapse, disappear after enrollment, and stay hidden 
   await page.locator("#settings-access").click();
   await expect(page).toHaveURL(/\/manage-access$/);
   const name = page.locator("#staff-device-label input");
-  for (const label of ["First phone", "Second phone"]) {
+  for (const [index, label] of ["First phone", "Second phone"].entries()) {
     await name.fill(label);
+    const created = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname.endsWith("/manager/staff-grants"),
+    );
     await page.locator('#staff-grant-form button[type="submit"]').click();
-    await expect(page.locator("[data-grant-id]")).toHaveCount(grants.length);
+    expect((await created).status()).toBe(201);
+    await expect(page.locator("[data-grant-id]")).toHaveCount(index + 1);
+    await expect(
+      page.locator(`[data-grant-id="grant-${index}"]`),
+    ).toBeVisible();
   }
   const cards = page.locator("[data-grant-id]");
   await expect(cards.first()).toHaveAttribute("open", "");
@@ -197,6 +207,16 @@ test("access links stack, collapse, disappear after enrollment, and stay hidden 
   await expect(
     page.getByRole("heading", { name: t("access.title"), exact: true }),
   ).toBeVisible();
+  await expect(page.locator('[data-grant-id="grant-1"]')).toBeVisible();
+  await expect(page.locator("wa-qr-code")).toHaveCount(0);
+  await expect(page.locator("[data-share-grant]")).toHaveCount(0);
+  await page.route("**/app/v1/manager/staff-grants/grant-1", (route) => {
+    grants[1].status = "cancelled";
+    return route.fulfill({ json: {} });
+  });
+  await page
+    .locator('[data-grant-id="grant-1"] [data-cancel-staff-grant]')
+    .click();
   await expect(page.locator("[data-grant-id]")).toHaveCount(0);
   await expect(
     page.locator('#staff-grant-form button[type="submit"]'),

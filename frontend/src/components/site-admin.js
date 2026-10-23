@@ -208,13 +208,22 @@ class SiteAccessView extends HTMLElement {
         listManagerDeviceBindings(),
         getCurrentStaffEnrollmentGrant(),
       ]);
+      if (!this.isConnected) return;
       this._bindings = devices.bindings || [];
-      this._grants = this._grants.filter((local) =>
-        (currentGrant.grants || []).some(
-          (grant) =>
-            grant.grantId === local.grantId && grant.status === "pending",
-        ),
+      const localGrants = new Map(
+        this._grants.map((grant) => [grant.grantId, grant]),
       );
+      this._grants = (currentGrant.grants || [])
+        .filter(
+          (grant) =>
+            grant.status === "pending" &&
+            Date.parse(grant.expiresAt) > Date.now(),
+        )
+        .map((grant) => ({
+          ...grant,
+          enrollmentUrl: localGrants.get(grant.grantId)?.enrollmentUrl,
+        }))
+        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
       this._render();
       announceScreenHeading(this, ".site-admin-header h1");
     } catch {
@@ -226,6 +235,7 @@ class SiteAccessView extends HTMLElement {
   disconnectedCallback() {
     clearInterval(this._countdownTimer);
     this._grants = [];
+    this.querySelector("#staff-grant-result")?.replaceChildren();
   }
 
   _wireBack() {
@@ -371,7 +381,8 @@ class SiteAccessView extends HTMLElement {
       const grant = this._grants.find(
         (item) => item.grantId === card.getAttribute("data-grant-id"),
       );
-      void renderEnrollmentQr(card, grant.enrollmentUrl);
+      if (grant.enrollmentUrl)
+        void renderEnrollmentQr(card, grant.enrollmentUrl);
       card
         .querySelector("[data-share-grant]")
         ?.addEventListener("click", () => void this._shareGrant(grant));
@@ -1043,14 +1054,16 @@ function activeGrantView(grant, expanded) {
         )}</strong
       >
     </p>
-    <wa-qr-code
-      size="220"
-      error-correction="M"
-      label="${escapeAttr(t("access.qrLabel", { label: grant.label }))}"
-    ></wa-qr-code>
-    <button class="btn-outline" type="button" data-share-grant>
-      ${escapeHtml(t("access.share"))}
-    </button>
+    ${grant.enrollmentUrl
+      ? html`<wa-qr-code
+            size="220"
+            error-correction="M"
+            label="${escapeAttr(t("access.qrLabel", { label: grant.label }))}"
+          ></wa-qr-code>
+          <button class="btn-outline" type="button" data-share-grant>
+            ${escapeHtml(t("access.share"))}
+          </button>`
+      : ""}
     <button class="btn-outline" type="button" data-cancel-staff-grant>
       ${escapeHtml(t("access.cancel"))}
     </button>

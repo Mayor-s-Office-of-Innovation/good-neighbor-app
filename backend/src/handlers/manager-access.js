@@ -21,6 +21,20 @@ const SITE_HOURLY_LIMIT = 40;
 /** Create one short-lived general-access enrollment grant. */
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer} */
 export const createStaffGrant = async (event) => {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const response = await createStaffGrantAttempt(event);
+    if (response.statusCode !== 409 || attempt === 4) return response;
+    // Contention is not a rate-limit decision. Re-read the rolling window
+    // after a competing transaction wins, with bounded jittered backoff.
+    await new Promise((resolve) =>
+      setTimeout(resolve, (attempt + 1) * 10 + Math.random() * 20),
+    );
+  }
+  throw new Error("Unreachable staff grant retry state");
+};
+
+/** @param {import("aws-lambda").APIGatewayProxyEventV2WithJWTAuthorizer} event */
+const createStaffGrantAttempt = async (event) => {
   if (deriveAccessLevel(event) !== "manager") {
     return jsonResponse(403, { error: "manager_access_required" });
   }
@@ -41,21 +55,21 @@ export const createStaffGrant = async (event) => {
   const now = new Date();
   const nowIso = now.toISOString();
   const hourAgo = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
-  const [siteResult, issuerResult, grantsResult] = await Promise.all([
+  // Read the guard BEFORE counting. Any issuance committed during/after the
+  // paginated snapshot changes its version and makes our transaction retry.
+  const guardKey = { pk: `SITE#${siteId}`, sk: "STAFF_GRANT_ISSUANCE#VERSION" };
+  const guard = await ddb.send(
+    new GetCommand({
+      TableName: tableName,
+      Key: guardKey,
+      ConsistentRead: true,
+    }),
+  );
+  const version = guard.Item?.version;
+  const [siteResult, issuerResult, recent] = await Promise.all([
     get(tableName, `SITE#${siteId}`, "#META"),
     get(tableName, `SITE#${siteId}`, `DEVICE_BINDING#${issuerBindingId}`),
-    ddb.send(
-      new QueryCommand({
-        TableName: tableName,
-        KeyConditionExpression: "pk = :pk AND sk BETWEEN :start AND :end",
-        ExpressionAttributeValues: {
-          ":pk": `SITE#${siteId}`,
-          ":start": `STAFF_GRANT#${hourAgo}`,
-          ":end": "STAFF_GRANT#~",
-        },
-        ScanIndexForward: false,
-      }),
-    ),
+    recentStaffGrants(tableName, siteId, hourAgo),
   ]);
   const site = siteResult.Item;
   const issuer = issuerResult.Item;
@@ -70,7 +84,6 @@ export const createStaffGrant = async (event) => {
     return jsonResponse(403, { error: "manager_access_required" });
   }
 
-  const recent = grantsResult.Items ?? [];
   if (recent.length >= SITE_HOURLY_LIMIT) {
     return jsonResponse(429, { error: "site_grant_rate_limited" });
   }
@@ -131,6 +144,26 @@ export const createStaffGrant = async (event) => {
               },
             },
           },
+          {
+            Put: {
+              TableName: tableName,
+              Item: {
+                ...guardKey,
+                entityType: "STAFF_GRANT_ISSUANCE_VERSION",
+                version: randomUUID(),
+              },
+              ConditionExpression:
+                version === undefined
+                  ? "attribute_not_exists(pk)"
+                  : "#version = :version",
+              ...(version === undefined
+                ? {}
+                : {
+                    ExpressionAttributeNames: { "#version": "version" },
+                    ExpressionAttributeValues: { ":version": version },
+                  }),
+            },
+          },
           put(tableName, {
             pk: `SITE#${siteId}`,
             sk: `AUDIT#${nowIso}#${randomUUID()}`,
@@ -150,7 +183,18 @@ export const createStaffGrant = async (event) => {
       error instanceof Error &&
       error.name === "TransactionCanceledException"
     ) {
-      return jsonResponse(409, { error: "staff_grant_create_conflict" });
+      const reasons =
+        /** @type {{CancellationReasons?: Array<{Code?: string}>}} */ (error)
+          .CancellationReasons || [];
+      if (reasons[2]?.Code === "ConditionalCheckFailed") {
+        return jsonResponse(403, { error: "manager_access_required" });
+      }
+      if (
+        reasons[3]?.Code === "ConditionalCheckFailed" ||
+        reasons.some((reason) => reason.Code === "TransactionConflict")
+      ) {
+        return jsonResponse(409, { error: "staff_grant_create_conflict" });
+      }
     }
     throw error;
   }
@@ -457,6 +501,36 @@ async function issuerGrants(tableName, siteId, issuer) {
         (item) => item.issuedByBindingId === issuer,
       ),
     );
+    cursor = result.LastEvaluatedKey;
+  } while (cursor);
+  return grants;
+}
+
+/** Count every issued grant, including terminal grants, in a rolling window.
+ * @param {string} tableName
+ * @param {string} siteId
+ * @param {string} since
+ * @returns {Promise<Record<string, any>[]>}
+ */
+async function recentStaffGrants(tableName, siteId, since) {
+  const grants = [];
+  /** @type {Record<string, any> | undefined} */
+  let cursor;
+  do {
+    const result = await ddb.send(
+      new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: "pk = :pk AND sk BETWEEN :start AND :end",
+        ExpressionAttributeValues: {
+          ":pk": `SITE#${siteId}`,
+          ":start": `STAFF_GRANT#${since}`,
+          ":end": "STAFF_GRANT#~",
+        },
+        ConsistentRead: true,
+        ExclusiveStartKey: cursor,
+      }),
+    );
+    grants.push(...(result.Items ?? []));
     cursor = result.LastEvaluatedKey;
   } while (cursor);
   return grants;

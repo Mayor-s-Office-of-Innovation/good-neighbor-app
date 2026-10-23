@@ -196,7 +196,17 @@ async function runClearCheck(page) {
       .locator(".analysis-card--clear")
       .first(),
   ).toBeVisible({ timeout: 90_000 });
+  // Finish navigates home before the scorecard is persisted.
+  const completed = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/v1\/checks\/[^/]+\/complete$/.test(new URL(response.url()).pathname),
+    { timeout: 90_000 },
+  );
   await finishCheck(page);
+  const response = await completed;
+  expect(response.ok()).toBe(true);
+  expect((await response.json()).issueCount).toBe(0);
 }
 
 /**
@@ -230,6 +240,9 @@ export async function openHistoryWithTrays(page) {
   );
 
   await runClearCheck(page);
+
+  // Refresh the route snapshot after both background scorecards have saved.
+  await page.reload();
 
   // Open History via its real tab button; the older check's tray must render.
   // (Local DDB persists earlier runs' checks too, so several history trays can
