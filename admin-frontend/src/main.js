@@ -5301,12 +5301,32 @@ function siteDirectory(state, selected) {
                 .filter(Boolean)
                 .join(", ");
               const manager = managerName || "Site manager not assigned";
-              const leadProgramName =
-                site.programName ||
-                state.programs.find(
-                  (program) => program.programId === site.leadProgramId,
-                )?.name;
-              return `<li><a class="site-directory-row" href="/sites/${encodeURIComponent(site.siteId)}" data-route><span class="site-directory-row__text"><strong>${escapeHtml(site.name || site.siteName || site.siteId)}</strong><span>${escapeHtml(leadProgramName || "No lead program assigned")} · ${escapeHtml(manager)}</span></span><span class="site-directory-row__caret" aria-hidden="true">›</span></a></li>`;
+              const program = state.programs.find(
+                (program) => program.programId === site.leadProgramId,
+              );
+              const leadProgramName = site.programName || program?.name;
+              const providerId = site.providerId || program?.providerId;
+              const providerName =
+                state.providers.find(
+                  (provider) => provider.providerId === providerId,
+                )?.name ||
+                site.providerName ||
+                program?.providerName;
+              const description = [
+                ["hand-holding-heart", providerName],
+                ["puzzle-piece", leadProgramName || "No lead program assigned"],
+                ["users", manager],
+              ]
+                .filter(([, label]) => Boolean(label))
+                .map(
+                  ([icon, label]) =>
+                    `<span class="site-directory-meta__item"><wa-icon name="${icon}" aria-hidden="true"></wa-icon><span>${escapeHtml(label)}</span></span>`,
+                )
+                .join(
+                  '<span class="site-directory-meta__separator" aria-hidden="true">·</span>',
+                );
+              const siteUrl = `/sites/${encodeURIComponent(site.siteId)}`;
+              return `<li><div class="site-directory-row site-directory-row--actions"><a class="site-directory-row__main" href="${siteUrl}" data-route><span class="site-directory-row__text"><strong>${escapeHtml(site.name || site.siteName || site.siteId)}</strong><span class="site-directory-meta">${description}</span></span><span class="site-directory-row__caret" aria-hidden="true">›</span></a><div class="site-directory-row__actions"><a class="btn-secondary" href="${siteUrl}?section=compliance" data-route>${escapeHtml(t("admin.sites.updatePerimeterChecks"))}</a><a class="btn-secondary" href="${siteUrl}?section=access" data-route>${escapeHtml(t("admin.sites.giveAppAccess"))}</a></div></div></li>`;
             })
             .join("")}</ul>`
         : '<p class="empty-state">No sites match these filters.</p>'

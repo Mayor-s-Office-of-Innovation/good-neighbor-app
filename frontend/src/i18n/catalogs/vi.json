@@ -1212,5 +1212,7 @@
   "admin.compliance.ends": "Ends",
   "admin.compliance.reasonsGiven": "Reasons given",
   "admin.compliance.noEndDate": "N/A",
-  "admin.compliance.pastPeriods": "Past perimeter check compliance periods"
+  "admin.compliance.pastPeriods": "Past perimeter check compliance periods",
+  "admin.sites.updatePerimeterChecks": "Update perimeter checks",
+  "admin.sites.giveAppAccess": "Give app access"
 }

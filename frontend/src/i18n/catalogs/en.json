@@ -198,6 +198,8 @@
   "admin.siteManagers.remove": "Remove",
   "admin.siteManagers.savePrimary": "Save primary contact",
   "admin.siteManagers.title": "Site managers",
+  "admin.sites.giveAppAccess": "Give app access",
+  "admin.sites.updatePerimeterChecks": "Update perimeter checks",
   "admin.toast.accessRemoved": "Access removed",
   "admin.toast.accessUpdated": "Manager access updated",
   "admin.toast.accountActive": "Account already active",
