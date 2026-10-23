@@ -196,7 +196,14 @@ async function runClearCheck(page) {
       .locator(".analysis-card--clear")
       .first(),
   ).toBeVisible({ timeout: 90_000 });
+  const completed = page.waitForResponse(
+    (response) =>
+      /\/v1\/checks\/[^/]+\/complete$/.test(response.url()) &&
+      response.request().method() === "POST" &&
+      response.ok(),
+  );
   await finishCheck(page);
+  await completed;
 }
 
 /**
@@ -230,6 +237,11 @@ export async function openHistoryWithTrays(page) {
   );
 
   await runClearCheck(page);
+
+  // Done returns home before background scorecard finalization finishes.
+  // Both checks are now saved; reload so this accessibility scan reads those
+  // records instead of the home snapshot fetched during finalization.
+  await page.reload();
 
   // Open History via its real tab button; the older check's tray must render.
   // (Local DDB persists earlier runs' checks too, so several history trays can

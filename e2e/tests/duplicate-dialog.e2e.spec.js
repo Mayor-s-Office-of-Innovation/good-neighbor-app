@@ -6,7 +6,15 @@ test("duplicate custom element preserves keyboard focus, history, and flag clean
   page,
 }) => {
   await bindSite(page);
-  const trigger = page.locator("#start-check");
+  // This component test opens the dialog programmatically. Keep its trigger
+  // outside home's asynchronously replaced worklist, just like the dialog.
+  await page.evaluate(() => {
+    const button = document.createElement("button");
+    button.id = "duplicate-dialog-trigger";
+    button.textContent = "Open duplicate fixture";
+    document.body.append(button);
+  });
+  const trigger = page.locator("#duplicate-dialog-trigger");
   await trigger.focus();
   const open = async () =>
     page.evaluate(async () => {
@@ -29,7 +37,7 @@ test("duplicate custom element preserves keyboard focus, history, and flag clean
             },
           },
         },
-        document.querySelector("#start-check"),
+        document.querySelector("#duplicate-dialog-trigger"),
         {
           onSeparated: () => {},
           onOriginal: () => {},
