@@ -179,3 +179,10 @@ Deploy both the admin bundle and Terraform client settings through CI. Existing
 tab-only sessions need one new sign-in to receive persistent credentials. When
 persistent storage is blocked, credentials fall back to tab storage and cannot
 survive closing that tab. No Terraform apply is performed locally.
+
+When an operation finds no valid session, a rejected refresh token, or an API
+401 response, the dashboard starts Cognito sign-in automatically. Concurrent
+requests share one OAuth redirect. Operations remain pending while navigation
+replaces the page, avoiding a duplicate inline error or toast; the operation is
+not replayed after login. Network/server failures and 403 permission denials do
+not trigger sign-in. Local debug mode continues using its debug headers.

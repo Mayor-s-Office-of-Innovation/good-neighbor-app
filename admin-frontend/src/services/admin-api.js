@@ -1,13 +1,31 @@
-import { getFreshAdminToken } from "./admin-auth.js";
+import { getFreshAdminToken, startAdminLogin } from "./admin-auth.js";
 import { getAdminConfig } from "../config.js";
+
+let loginRedirect = null;
+
+function redirectToLogin() {
+  if (!loginRedirect) {
+    loginRedirect = startAdminLogin()
+      // Navigation replaces this page. Keep its operations pending so their
+      // success/error handlers cannot render a banner or toast during redirect.
+      .then(() => new Promise(() => {}))
+      .catch((error) => {
+        loginRedirect = null;
+        throw error;
+      });
+  }
+  return loginRedirect;
+}
 
 /**
  * @param {string} path
  * @param {RequestInit} [init]
  */
-async function adminFetch(path, init = {}) {
+async function authenticatedFetch(path, init = {}) {
   const config = getAdminConfig();
+  if (loginRedirect) return loginRedirect;
   const token = await getFreshAdminToken();
+  if (!config.localDebugAdmin && !token) return redirectToLogin();
   const res = await fetch(`${config.apiBase}${path}`, {
     ...init,
     headers: {
@@ -22,6 +40,13 @@ async function adminFetch(path, init = {}) {
       ...(init.headers || {}),
     },
   });
+  if (!config.localDebugAdmin && res.status === 401) return redirectToLogin();
+  return res;
+}
+
+/** @param {string} path @param {RequestInit} [init] */
+async function adminFetch(path, init = {}) {
+  const res = await authenticatedFetch(path, init);
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const err = new Error(body.error || "admin_request_failed");
@@ -327,21 +352,8 @@ export const adminApi = {
   getSiteImport: (importId) =>
     adminFetch(`/admin/v1/site-imports/${encodeURIComponent(importId)}`),
   downloadSiteImportConflicts: async (importId) => {
-    const config = getAdminConfig();
-    const token = await getFreshAdminToken();
-    const response = await fetch(
-      `${config.apiBase}/admin/v1/site-imports/${encodeURIComponent(importId)}/conflicts.csv`,
-      {
-        headers: {
-          ...(token ? { authorization: `Bearer ${token}` } : {}),
-          ...(config.localDebugAdmin
-            ? {
-                "x-debug-groups": "compliance-supervisor",
-                "x-debug-sub": "local-admin",
-              }
-            : {}),
-        },
-      },
+    const response = await authenticatedFetch(
+      `/admin/v1/site-imports/${encodeURIComponent(importId)}/conflicts.csv`,
     );
     if (!response.ok) throw new Error("conflict_report_failed");
     return response.blob();
