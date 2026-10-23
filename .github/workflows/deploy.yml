@@ -180,6 +180,31 @@ jobs:
               end
           ' "$RUNNER_TEMP/good-neighbor-tf-outputs.json" >> "$GITHUB_OUTPUT"
 
+      # Additive APIs are live after Apply. Block both frontend publications
+      # unless historical contacts are linked and a fresh scan finds no work.
+      # Never load .env.local here: the table comes from this environment's state.
+      - name: Check people migration
+        working-directory: ${{ github.workspace }}
+        env:
+          DYNAMO_TABLE: ${{ steps.tf.outputs.dynamo_table }}
+        run: node backend/scripts/migrate-people.mjs
+
+      - name: Apply people migration
+        working-directory: ${{ github.workspace }}
+        env:
+          DYNAMO_TABLE: ${{ steps.tf.outputs.dynamo_table }}
+        run: node backend/scripts/migrate-people.mjs --apply
+
+      - name: Verify people migration complete
+        working-directory: ${{ github.workspace }}
+        env:
+          DYNAMO_TABLE: ${{ steps.tf.outputs.dynamo_table }}
+        run: |
+          set -euo pipefail
+          node backend/scripts/migrate-people.mjs > "$RUNNER_TEMP/people-migration-verification.json"
+          cat "$RUNNER_TEMP/people-migration-verification.json"
+          jq -e '.people == 0 and (.conflicts | length) == 0' "$RUNNER_TEMP/people-migration-verification.json"
+
       - name: Seed dev site codes
         if: ${{ inputs.environment == 'dev' }}
         working-directory: ${{ github.workspace }}
