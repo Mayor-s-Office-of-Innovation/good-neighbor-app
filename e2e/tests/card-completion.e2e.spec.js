@@ -92,7 +92,7 @@ test("checklist waits for confirmed save, recovers from failure, and opens compl
   await expect(card.locator('[data-analysis-action="edit"]')).toHaveCount(0);
   await card.getByRole("button").click();
   const dialog = page.locator("dialog.task-update[open]");
-  await expect(dialog).toContainText("Marked as complete");
+  await expect(dialog).toContainText(t("taskUpdate.siteResolved"));
   await expect(
     dialog.locator('[data-status-ticker="actionTaken"]'),
   ).toBeVisible();

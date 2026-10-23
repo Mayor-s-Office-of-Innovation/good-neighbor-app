@@ -230,8 +230,7 @@ export function ticketDetailDialog({ detail, state }) {
             </section>
             <section class="ticket-detail__updates">
               <h3>${escapeHtml(t("ticket.updates.title"))}</h3>
-              ${detail.task?.status === "in_progress" &&
-              detail.status !== "Closed"
+              ${detail.task?.status === "in_progress"
                 ? taskUpdateActions()
                 : ""}
               ${events.length

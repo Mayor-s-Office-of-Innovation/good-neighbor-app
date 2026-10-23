@@ -124,7 +124,7 @@ export function taskUpdateTimeline({
       ? [
           {
             type: "task_completed",
-            label: "Marked as complete",
+            label: "Site marked as resolved",
             occurredAt: task.completedAt,
           },
         ]

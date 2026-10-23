@@ -1590,7 +1590,7 @@ export async function completeTaskWithAppActions(opts) {
       ? "311 ticket filed"
       : canBeInProgress
         ? String(existing.Item.buttons?.[0] ?? "Action taken")
-        : "Marked as complete");
+        : "Site marked as resolved");
   // App-action failures hold the task open but resolve as a 200 — without this
   // line the failure exists only in the task's stored appActionResults. One
   // structured ERROR per failed action (Logs Insights-groupable, alarmable;

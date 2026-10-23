@@ -29,10 +29,12 @@ describe("proactive care screens", () => {
       /data-save\s+disabled/,
     );
   });
-  it("offers seven fixed types and something else with localized titles", () => {
+  it("offers nine fixed types and something else with localized titles", () => {
     const markup = careOptions();
-    expect(markup.match(/data-kind=/g)).toHaveLength(8);
+    expect(markup.match(/data-kind=/g)).toHaveLength(10);
     expect(markup).toContain(t("care.kind.calledHauler"));
+    expect(markup).toContain(t("care.kind.offeredServicesAtSite"));
+    expect(markup).toContain(t("care.kind.pickedUpNeedles"));
   });
   it("groups by Pacific day rather than UTC, keeps years distinct and sorts newest first", () => {
     const groups = groupCareWork([

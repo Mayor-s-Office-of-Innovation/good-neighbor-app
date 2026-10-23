@@ -180,12 +180,11 @@ export function settingsMenu({ open, adminAccess = false, disabled = false }) {
             role="menu"
             aria-label="${escapeAttr(t("today.settings.aria"))}"
           >
-            <button id="settings-feedback" type="button" role="menuitem">
-              <wa-icon name="comment" aria-hidden="true"></wa-icon>
-              ${escapeHtml(t("today.settings.feedback"))}
-            </button>
             ${adminAccess
-              ? html`<button
+              ? html`<button id="settings-access" type="button" role="menuitem">
+                    <wa-icon name="key" aria-hidden="true"></wa-icon>
+                    ${escapeHtml(t("access.title"))}</button
+                  ><button
                     id="settings-site-admin"
                     type="button"
                     role="menuitem"
@@ -198,6 +197,10 @@ export function settingsMenu({ open, adminAccess = false, disabled = false }) {
                     ${escapeHtml(t("today.settings.reports"))}
                   </button>`
               : ""}
+            <button id="settings-feedback" type="button" role="menuitem">
+              <wa-icon name="comment" aria-hidden="true"></wa-icon>
+              ${escapeHtml(t("today.settings.feedback"))}
+            </button>
             <button id="settings-language" type="button" role="menuitem">
               <wa-icon name="language" aria-hidden="true"></wa-icon>
               ${escapeHtml(t("today.settings.language"))}
