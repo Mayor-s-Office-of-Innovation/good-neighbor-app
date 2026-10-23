@@ -1,3 +1,4 @@
+import { statusTickerMarkup } from "./status-ticker.js";
 import { duplicateUiEnabled } from "../services/feature-flags.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
@@ -50,9 +51,7 @@ export function duplicateCard(task) {
             ><wa-icon name="image" aria-hidden="true"></wa-icon
           ></span>`}
       <span class="duplicate-card__copy"
-        ><strong class="duplicate-card__status"
-          >${escapeHtml(t("duplicate.status"))}</strong
-        ><span class="duplicate-card__title"
+        >${statusTickerMarkup(task)}<span class="duplicate-card__title"
           >${escapeHtml(duplicateTitle(task))}</span
         ><span
           >${escapeHtml(

@@ -335,3 +335,21 @@
     grid-column: 2;
   }
 }
+
+.site-access-grant {
+  display: grid;
+  gap: 1rem;
+}
+.site-access-ready summary {
+  cursor: pointer;
+  font-weight: var(--wa-font-weight-semibold);
+  padding-block: 0.75rem;
+}
+.site-access-ready summary:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+.site-access-ready wa-qr-code {
+  display: block;
+  margin-block: 1rem;
+}

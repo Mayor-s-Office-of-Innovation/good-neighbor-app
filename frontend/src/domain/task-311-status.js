@@ -7,7 +7,7 @@
 import { submitted311Ticket } from "./home-tasks.js";
 
 /**
- * @typedef {{ status: string, statusDetail: string, responseOverdue: boolean, updatedAt: string }} Ticket311State
+ * @typedef {{ status: string, statusDetail: string, responseOverdue: boolean, updatedAt: string, closedReason?: string }} Ticket311State
  */
 
 /**
@@ -37,6 +37,9 @@ export function map311StatusResponse(response) {
               taskId,
               {
                 status: request.status,
+                ...(request.closedReason
+                  ? { closedReason: String(request.closedReason) }
+                  : {}),
                 statusDetail: request.statusDetail || "",
                 responseOverdue: Boolean(request.responseOverdue),
                 updatedAt: request.relevantDate || request.submittedAt || "",
@@ -60,6 +63,7 @@ export function taskWith311Status(task, statusByTaskId) {
   return {
     ...task,
     ticketStatus: state?.status || "",
+    ticketClosedReason: state?.closedReason || "",
     ticketStatusDetail: state?.statusDetail || "",
     ticketResponseOverdue: Boolean(state?.responseOverdue),
     ticketUpdatedAt: state?.updatedAt || task.createdAt || "",

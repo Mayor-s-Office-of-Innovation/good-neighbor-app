@@ -1,3 +1,4 @@
+import { actionsEscalationsV8Catalog } from "./actions-escalations-v8.js";
 import { describe, expect, it } from "vitest";
 import { actionsEscalationsV2Catalog } from "./actions-escalations-v2.js";
 import { actionsEscalationsV3Catalog } from "./actions-escalations-v3.js";
@@ -299,4 +300,13 @@ describe("actions/escalations v2 catalog", () => {
       "Alias Ghost points to unknown Missing",
     ]);
   });
+});
+
+it("keeps every current SFPD non-emergency phone rule eligible for in-progress tracking", () => {
+  const rules = actionsEscalationsV8Catalog.rules.filter(
+    (rule) => rule.outcome.phoneNumber === "415-553-0123",
+  );
+  expect(rules.length).toBeGreaterThan(0);
+  for (const rule of rules)
+    expect(rule.canBeInProgress, rule.ruleId).toBe(true);
 });

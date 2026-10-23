@@ -196,14 +196,17 @@ async function runClearCheck(page) {
       .locator(".analysis-card--clear")
       .first(),
   ).toBeVisible({ timeout: 90_000 });
+  // Finish returns home before background scorecard persistence completes.
   const completed = page.waitForResponse(
     (response) =>
-      /\/v1\/checks\/[^/]+\/complete$/.test(response.url()) &&
       response.request().method() === "POST" &&
-      response.ok(),
+      /\/v1\/checks\/[^/]+\/complete$/.test(new URL(response.url()).pathname),
+    { timeout: 90_000 },
   );
   await finishCheck(page);
-  await completed;
+  const response = await completed;
+  expect(response.ok()).toBe(true);
+  expect((await response.json()).issueCount).toBe(0);
 }
 
 /**
@@ -238,9 +241,7 @@ export async function openHistoryWithTrays(page) {
 
   await runClearCheck(page);
 
-  // Done returns home before background scorecard finalization finishes.
-  // Both checks are now saved; reload so this accessibility scan reads those
-  // records instead of the home snapshot fetched during finalization.
+  // Fetch both persisted scorecards instead of using the route-return snapshot.
   await page.reload();
 
   // Open History via its real tab button; the older check's tray must render.

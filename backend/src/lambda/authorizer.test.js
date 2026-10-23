@@ -183,6 +183,8 @@ describe("authorizer", () => {
         "claims.custom:siteId": "site-1",
         "claims.ver": 7,
         "claims.accessLevel": "general",
+        sub: "dev-1",
+        siteId: "site-1",
       });
       // The device lookup is pinned to the token's own partition.
       const cmd = send.mock.calls[0][0];

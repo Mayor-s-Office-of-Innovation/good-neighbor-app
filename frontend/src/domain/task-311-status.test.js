@@ -60,3 +60,25 @@ describe("task-311-status", () => {
     expect(taskWith311Status(plain, map)).toBe(plain);
   });
 });
+
+it("preserves a raw closure reason even when it has no mapped display label", () => {
+  const map = map311StatusResponse({
+    requests: [
+      { taskId: "t1", request: { status: "Closed", closedReason: "999" } },
+    ],
+  });
+  expect(taskWith311Status(filed, map).ticketClosedReason).toBe("999");
+  expect(
+    taskWith311Status(
+      filed,
+      map311StatusResponse({
+        requests: [
+          {
+            taskId: "t1",
+            request: { status: "Closed", statusDetail: "some notes" },
+          },
+        ],
+      }),
+    ).ticketClosedReason,
+  ).toBe("");
+});

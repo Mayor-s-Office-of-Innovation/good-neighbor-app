@@ -187,12 +187,7 @@ class TicketDetailDialog extends HTMLElement {
 
   /** @param {string} mode */
   async _openEditor(mode) {
-    if (
-      this._editing ||
-      !this._task ||
-      this._task.status !== "in_progress" ||
-      this._detail?.status === "Closed"
-    )
+    if (this._editing || !this._task || this._task.status !== "in_progress")
       return;
     this._editing = true;
     try {

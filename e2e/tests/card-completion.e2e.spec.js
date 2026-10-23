@@ -1,9 +1,12 @@
 // @ts-check
 import { test, expect } from "../helpers/harness.js";
+import { t } from "../helpers/i18n.js";
 
 test("checklist waits for confirmed save, recovers from failure, and opens completion history", async ({
   page,
 }) => {
+  // Keep the task inside Today's 14-day active window on every test run.
+  const createdAt = Date.now() - 5 * 60 * 1000;
   let task = {
     taskId: "completion-fixture",
     checkId: "completion-check",
@@ -13,7 +16,7 @@ test("checklist waits for confirmed save, recovers from failure, and opens compl
     userFriendlyLabel: "Scattered paper",
     ruleId: "LITTER-1",
     buttons: ["We picked this up"],
-    createdAt: "2026-09-01T12:00:00Z",
+    createdAt: new Date(createdAt).toISOString(),
     completedAt: "",
   };
   await page.route("**/v1/tasks?*", (route) =>
@@ -46,7 +49,7 @@ test("checklist waits for confirmed save, recovers from failure, and opens compl
     task = {
       ...task,
       status: "completed",
-      completedAt: "2026-09-01T12:05:00Z",
+      completedAt: new Date(createdAt + 5 * 60 * 1000).toISOString(),
     };
     await route.fulfill({ json: { task } });
   });
@@ -66,7 +69,9 @@ test("checklist waits for confirmed save, recovers from failure, and opens compl
   );
   await page.goto("/today?filter=todo");
   const card = page.locator('[data-task-id="completion-fixture"]');
-  const checkbox = card.getByRole("checkbox", { name: "Pick up the litter" });
+  const checkbox = card.getByRole("checkbox", {
+    name: t("rulebook.button.pick-up-the-litter-5088"),
+  });
   await checkbox.click();
   await expect(checkbox).toBeChecked();
   await expect(checkbox).not.toBeChecked();
@@ -82,16 +87,15 @@ test("checklist waits for confirmed save, recovers from failure, and opens compl
     release();
   }
   await expect(card).toHaveCount(0);
-  await page.getByRole("button", { name: "History", exact: true }).click();
-  await expect(card).toContainText("took 5 minutes");
-  await expect(card.getByRole("button", { name: "Edit details" })).toHaveCount(
-    0,
-  );
+  await page.locator('[data-home-filter="history"]').click();
+  await expect(card).toContainText(t("card.history.minutes", { count: 5 }));
+  await expect(card.locator('[data-analysis-action="edit"]')).toHaveCount(0);
   await card.getByRole("button").click();
   const dialog = page.locator("dialog.task-update[open]");
-  await expect(dialog).toContainText("Marked as complete");
-  await expect(dialog.locator(".task-update__route")).toContainText(
-    "On-site action",
-  );
+  await expect(dialog).toContainText(t("taskUpdate.siteResolved"));
+  await expect(
+    dialog.locator('[data-status-ticker="actionTaken"]'),
+  ).toBeVisible();
+  await expect(dialog.locator(".task-update__route")).toHaveCount(0);
   await expect(dialog.locator(".task-update__metadata")).toHaveCount(0);
 });

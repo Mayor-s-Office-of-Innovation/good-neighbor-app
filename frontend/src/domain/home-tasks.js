@@ -128,7 +128,56 @@ export function normalizedHomeTab(value) {
   return HOME_TABS.some((tab) => tab.id === value) ? value : "todo";
 }
 
+/** Expiration is based only on original creation, never subsequent activity.
+ * @param {Record<string, any>} task
+ * @param {number | Date} now
+ */
+export function isTaskExpired(task, now = Date.now()) {
+  const created = Date.parse(task.createdAt || task.created_at || "");
+  return Number.isFinite(created) && Number(now) - created >= 14 * 86400000;
+}
+
+/** Shared evidence of an explicit resolution, excluding action-only legacy writes.
+ * @param {Record<string, any>} task
+ */
+export function taskResolution(task) {
+  const explicit =
+    task.completionMethod === "site_team_resolved" ||
+    task.latestUpdateLabel === "Resolved";
+  const actionOnly =
+    task.canBeInProgress === false &&
+    ["user_confirmed", "manual", "custom_action", "311_filed"].includes(
+      task.completionMethod,
+    );
+  const resolvedAt = task.resolvedAt || task.resolved_at || "";
+  return {
+    confirmed: explicit || (!actionOnly && Boolean(resolvedAt)),
+    at: explicit
+      ? resolvedAt || task.completedAt || task.completed_at || ""
+      : actionOnly
+        ? ""
+        : resolvedAt,
+  };
+}
+
+/** The archive-event timestamp, only if no resolution preceded expiration.
+ * @param {Record<string, any>} task
+ * @param {number | Date} now
+ */
+export function unresolvedExpiryAt(task, now = Date.now()) {
+  if (!isTaskExpired(task, now)) return "";
+  const expiresAt =
+    Date.parse(task.createdAt || task.created_at || "") + 14 * 86400000;
+  const resolution = taskResolution(task);
+  const resolutionAt = Date.parse(resolution.at);
+  const resolved =
+    resolution.confirmed &&
+    (!Number.isFinite(resolutionAt) || resolutionAt <= expiresAt);
+  return resolved ? "" : new Date(expiresAt).toISOString();
+}
+
 export function homeTaskStatus(task, override, now = new Date()) {
+  if (isTaskExpired(task, now)) return "archived";
   const status = String(task.status || "open");
   if (
     status === "completing" ||

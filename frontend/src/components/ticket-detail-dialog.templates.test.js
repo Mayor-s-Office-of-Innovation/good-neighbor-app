@@ -189,3 +189,12 @@ it.each(["in_progress", "completed"])(
     );
   },
 );
+
+it("keeps both update controls for an in-progress task with a closed City ticket", () => {
+  const markup = ticketDetailDialog({
+    state: "ready",
+    detail: { status: "Closed", task: { status: "in_progress" }, events: [] },
+  });
+  expect(markup).toContain('data-mode="notes"');
+  expect(markup).toContain('data-mode="action"');
+});

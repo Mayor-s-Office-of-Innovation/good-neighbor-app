@@ -239,3 +239,20 @@ describe("homeAllDonePanel", () => {
     expect(markup).not.toContain("{link}");
   });
 });
+
+it("orders manager settings and uses the key icon for access", () => {
+  const markup = settingsMenu({ open: true, adminAccess: true });
+  const ids = [
+    "access",
+    "site-admin",
+    "reports",
+    "feedback",
+    "language",
+    "attributions",
+    "logout",
+  ];
+  const positions = ids.map((id) => markup.indexOf(`id="settings-${id}"`));
+  expect(positions.every((position) => position >= 0)).toBe(true);
+  expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  expect(markup).toContain('name="key"');
+});
