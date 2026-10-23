@@ -160,6 +160,11 @@ describe("toast lifetime", () => {
       message: t("toast.taskUpdateError.message"),
       tone: "error",
     });
+    const retry = vi.fn();
+    expect(showTaskUpdateErrorToast(undefined, retry)).toMatchObject({
+      action: { label: t("common.retry"), run: retry },
+      tone: "error",
+    });
     expect(showFeedbackErrorToast()).toMatchObject({
       title: t("toast.feedbackError.title"),
       message: t("toast.feedbackError.message"),

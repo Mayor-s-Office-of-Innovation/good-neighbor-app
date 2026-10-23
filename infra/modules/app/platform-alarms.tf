@@ -72,18 +72,18 @@ locals {
   # logServerError filters see, since a timeout or OOM never reaches them.
   lambda_error_alarms = {
     api        = { function = aws_lambda_function.api.function_name, threshold = 3 }
+    analysis   = { function = aws_lambda_function.analysis.function_name, threshold = 3 }
     worker     = { function = aws_lambda_function.worker.function_name, threshold = 3 }
     authorizer = { function = aws_lambda_function.authorizer.function_name, threshold = 3 }
     intake     = { function = aws_lambda_function.intake.function_name, threshold = 5 }
   }
 
-  # A throttle on these is a user-visible failure (api: reserved concurrency
-  # 10; authorizer: 200). The worker is capped on its event-source mapping and
-  # must never throttle; if it does the cap is misconfigured.
+  # Watch both reserved capacity and shared account-pool exhaustion.
   lambda_throttle_alarms = {
     api        = aws_lambda_function.api.function_name
     authorizer = aws_lambda_function.authorizer.function_name
     worker     = aws_lambda_function.worker.function_name
+    analysis   = aws_lambda_function.analysis.function_name
   }
 }
 
@@ -116,7 +116,7 @@ resource "aws_cloudwatch_metric_alarm" "lambda_throttles" {
   for_each = local.lambda_throttle_alarms
 
   alarm_name          = "${local.name_prefix}-${each.key}-lambda-throttles"
-  alarm_description   = "The ${each.key} Lambda was throttled. For api/authorizer this is a user-facing failure (raise the reservation or find the burst). For the worker it should be impossible (event-source maximum_concurrency bounds it) — check lambda.tf."
+  alarm_description   = "The ${each.key} Lambda was throttled. Check function reservations, event-source caps, and account concurrency usage."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
   datapoints_to_alarm = 1
@@ -367,6 +367,75 @@ resource "aws_cloudwatch_metric_alarm" "app_health_check" {
 
   alarm_actions = [aws_sns_topic.alarms_us_east_1.arn]
   ok_actions    = [aws_sns_topic.alarms_us_east_1.arn]
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "analysis_dlq_not_empty" {
+  alarm_name          = "${local.name_prefix}-analysis-dlq-not-empty"
+  alarm_description   = "At least one foreground analysis message exhausted its retries in ${aws_sqs_queue.analysis_dlq.name}. Use the messageId to find structured errors in ${aws_cloudwatch_log_group.analysis.name}, fix the cause, then redrive the analysis DLQ. See docs/runbooks/observability.md."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  threshold           = 1
+  period              = 300
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  statistic           = "Maximum"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    QueueName = aws_sqs_queue.analysis_dlq.name
+  }
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
+  ok_actions    = [aws_sns_topic.alarms.arn]
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "analysis_queue_backlog" {
+  alarm_name          = "${local.name_prefix}-analysis-queue-backlog"
+  alarm_description   = "The oldest message on ${aws_sqs_queue.analysis.name} has waited more than 10 minutes. Check ${aws_lambda_function.analysis.function_name} error/throttle alarms, AnalyzerLatencyMs, and logs in ${aws_cloudwatch_log_group.analysis.name} for slow analysis or repeated failures."
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  datapoints_to_alarm = 2
+  threshold           = 600
+  period              = 300
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateAgeOfOldestMessage"
+  statistic           = "Maximum"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    QueueName = aws_sqs_queue.analysis.name
+  }
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
+  ok_actions    = [aws_sns_topic.alarms.arn]
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "analysis_duration_high" {
+  alarm_name          = "${local.name_prefix}-analysis-duration-high"
+  alarm_description   = "${aws_lambda_function.analysis.function_name} p95 duration is above 4 minutes against a 300-second timeout. Check AnalyzerLatencyMs by Kind and ${aws_cloudwatch_log_group.analysis.name} before calls time out and redeliver."
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  datapoints_to_alarm = 2
+  threshold           = 240000
+  period              = 300
+  namespace           = "AWS/Lambda"
+  metric_name         = "Duration"
+  extended_statistic  = "p95"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    FunctionName = aws_lambda_function.analysis.function_name
+  }
+
+  alarm_actions = [aws_sns_topic.alarms.arn]
+  ok_actions    = [aws_sns_topic.alarms.arn]
 
   tags = var.tags
 }

@@ -196,7 +196,7 @@ async function runClearCheck(page) {
       .locator(".analysis-card--clear")
       .first(),
   ).toBeVisible({ timeout: 90_000 });
-  // Finish navigates home before the scorecard is persisted.
+  // Finish returns home before background scorecard persistence completes.
   const completed = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -241,7 +241,7 @@ export async function openHistoryWithTrays(page) {
 
   await runClearCheck(page);
 
-  // Refresh the route snapshot after both background scorecards have saved.
+  // Fetch both persisted scorecards instead of using the route-return snapshot.
   await page.reload();
 
   // Open History via its real tab button; the older check's tray must render.

@@ -205,7 +205,7 @@ data "aws_iam_policy_document" "api" {
     sid       = "EnqueueSubmissions"
     effect    = "Allow"
     actions   = ["sqs:SendMessage"]
-    resources = [aws_sqs_queue.submissions.arn]
+    resources = [aws_sqs_queue.submissions.arn, aws_sqs_queue.analysis.arn]
   }
 
   statement {
@@ -481,7 +481,7 @@ data "aws_iam_policy_document" "worker" {
       "sqs:DeleteMessage",
       "sqs:GetQueueAttributes",
     ]
-    resources = [aws_sqs_queue.submissions.arn]
+    resources = [aws_sqs_queue.submissions.arn, aws_sqs_queue.analysis.arn]
   }
 
   statement {
@@ -507,7 +507,7 @@ data "aws_iam_policy_document" "worker" {
     sid       = "SendToDlq"
     effect    = "Allow"
     actions   = ["sqs:SendMessage"]
-    resources = [aws_sqs_queue.submissions_dlq.arn]
+    resources = [aws_sqs_queue.submissions_dlq.arn, aws_sqs_queue.analysis_dlq.arn]
   }
 
   statement {
@@ -535,7 +535,7 @@ data "aws_iam_policy_document" "worker" {
     sid       = "Logs"
     effect    = "Allow"
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-    resources = ["${aws_cloudwatch_log_group.worker.arn}:*"]
+    resources = ["${aws_cloudwatch_log_group.worker.arn}:*", "${aws_cloudwatch_log_group.analysis.arn}:*"]
   }
 
   statement {

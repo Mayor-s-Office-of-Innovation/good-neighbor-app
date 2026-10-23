@@ -53,9 +53,12 @@ locals {
 }
 
 module "app" {
-  source                        = "../../modules/app"
-  setup_code_email_identity_arn = aws_sesv2_email_identity.setup_codes.arn
-  provider_app_url              = "https://${local.frontend_domain_name}/"
+  # DEV is a linked account: tag activation belongs to the billing payer.
+  # CI forgets the old activation state without calling the Cost Explorer API.
+  manage_application_cost_allocation_tag = false
+  source                                 = "../../modules/app"
+  setup_code_email_identity_arn          = aws_sesv2_email_identity.setup_codes.arn
+  provider_app_url                       = "https://${local.frontend_domain_name}/"
   # The authenticated relay was verified directly against Proofpoint before enablement.
   provision_city_smtp_relay_foundation = true
   enable_city_smtp_relay               = true
