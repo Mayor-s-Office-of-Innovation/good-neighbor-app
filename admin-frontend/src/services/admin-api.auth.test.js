@@ -21,7 +21,9 @@ async function fixture(t, options = {}) {
       cognitoDomain: "https://login.example.test",
       clientId: "admin-client",
       redirectUri: "https://admin.example.test/auth/callback",
-      apiBase: options.debug ? "http://localhost:3001" : "https://admin.example.test",
+      apiBase: options.debug
+        ? "http://localhost:3001"
+        : "https://admin.example.test",
       localDebugAdmin: options.debug || false,
     },
   };

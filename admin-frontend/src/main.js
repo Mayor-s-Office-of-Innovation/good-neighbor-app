@@ -4506,6 +4506,38 @@ class AdminApp extends HTMLElement {
         }
       });
     });
+    const revokeAllForm = this.querySelector("#revoke-all-site-devices");
+    if (revokeAllForm) {
+      const input = revokeAllForm.querySelector("wa-input");
+      const button = revokeAllForm.querySelector("button");
+      let pending = false;
+      const sync = () => {
+        button.disabled =
+          pending ||
+          !canEditSite(this.state) ||
+          input.value !== this.state.site?.name;
+      };
+      sync();
+      input.addEventListener("input", sync);
+      revokeAllForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        sync();
+        if (button.disabled) return;
+        pending = true;
+        input.disabled = true;
+        sync();
+        try {
+          await this.revokeAllSiteDevices(revokeAllForm);
+        } catch (err) {
+          this.state.error = err.message;
+          this.render();
+        } finally {
+          pending = false;
+          input.disabled = !canEditSite(this.state);
+          sync();
+        }
+      });
+    }
     const revokeManagerForm = this.querySelector("#revoke-manager-devices");
     if (revokeManagerForm) {
       const input = revokeManagerForm.querySelector("wa-input");

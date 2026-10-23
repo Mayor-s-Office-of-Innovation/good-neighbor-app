@@ -1122,11 +1122,15 @@ export const transferProviderManager = (event) =>
                 TableName: getDynamoTableName(),
                 Item: old,
                 ConditionExpression:
-                  "#status = :active AND generation = :generation",
+                  manager.generation === undefined
+                    ? "#status = :active AND attribute_not_exists(generation)"
+                    : "#status = :active AND generation = :generation",
                 ExpressionAttributeNames: { "#status": "status" },
                 ExpressionAttributeValues: {
                   ":active": "active",
-                  ":generation": manager.generation,
+                  ...(manager.generation === undefined
+                    ? {}
+                    : { ":generation": manager.generation }),
                 },
               },
             },

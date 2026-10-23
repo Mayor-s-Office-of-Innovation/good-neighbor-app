@@ -61,20 +61,41 @@ test("read-only Site disables write controls but preserves informational reason 
 });
 
 test("later dirty-state updates cannot re-enable Save on a read-only Site", () => {
-  class Button { disabled = false; }
-  const sync = vm.runInNewContext(`${source.slice(source.indexOf('function syncSiteDetailsForm('), source.indexOf('function markSiteDetailsSectionEdited('))}; syncSiteDetailsForm`, {HTMLButtonElement:Button, controlValue:(_form,name)=>name === "site-name" ? "Changed" : ""});
-  const buttons=Object.fromEntries(["details","address","lead-program","site-manager"].map(key=>[key,new Button()]));
-  const form={dataset:{readOnly:"true"},querySelector(selector) {
-    if(selector.startsWith('[name=')) return {getAttribute:()=>""};
-    return buttons[selector.replace('[data-save-','').replace(']','').replace('site-details','details')];
-  }};
-  sync(form,true);
-  form.dataset.editedSections='["details"]';
+  class Button {
+    disabled = false;
+  }
+  const sync = vm.runInNewContext(
+    `${source.slice(source.indexOf("function syncSiteDetailsForm("), source.indexOf("function markSiteDetailsSectionEdited("))}; syncSiteDetailsForm`,
+    {
+      HTMLButtonElement: Button,
+      controlValue: (_form, name) => (name === "site-name" ? "Changed" : ""),
+    },
+  );
+  const buttons = Object.fromEntries(
+    ["details", "address", "lead-program", "site-manager"].map((key) => [
+      key,
+      new Button(),
+    ]),
+  );
+  const form = {
+    dataset: { readOnly: "true" },
+    querySelector(selector) {
+      if (selector.startsWith("[name=")) return { getAttribute: () => "" };
+      return {
+        "[data-save-site-details]": buttons.details,
+        "[data-save-address]": buttons.address,
+        "[data-save-lead-program]": buttons["lead-program"],
+        "[data-save-site-manager]": buttons["site-manager"],
+      }[selector];
+    },
+  };
+  sync(form, true);
+  form.dataset.editedSections = '["details"]';
   sync(form);
-  assert.equal(buttons.details.disabled,true);
-  assert.equal(form.dataset.isDirty,"false");
-  form.dataset.readOnly="false";
+  assert.equal(buttons.details.disabled, true);
+  assert.equal(form.dataset.isDirty, "false");
+  form.dataset.readOnly = "false";
   sync(form);
-  assert.equal(buttons.details.disabled,false);
-  assert.equal(form.dataset.isDirty,"true");
+  assert.equal(buttons.details.disabled, false);
+  assert.equal(form.dataset.isDirty, "true");
 });

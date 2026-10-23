@@ -22,7 +22,7 @@ const MAX_SELECTED_BINDINGS = 20;
 const MAX_PHYSICAL_BINDINGS = 20;
 
 /** Revoke a manager's own bindings without deleting memberships or assignments.
- * Discovery includes program sites for memberships predating the email directory.
+ * Legacy discovery includes active sites for retained memberships missing email pointers.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const revokeManagerDevices = (event) =>
@@ -48,7 +48,7 @@ export const revokeManagerDevices = (event) =>
       return jsonResponse(400, { error: "confirmation_mismatch" });
     }
     const hash = await emailHash(manager.email);
-    const [directory, programSites] = await Promise.all([
+    const [directory, programSites, activeSites] = await Promise.all([
       queryAllItems({
         TableName: tableName,
         KeyConditionExpression: "pk = :pk",
@@ -64,11 +64,20 @@ export const revokeManagerDevices = (event) =>
         },
         ConsistentRead: true,
       }),
+      personId
+        ? Promise.resolve({ Items: [] })
+        : queryAllItems({
+            TableName: tableName,
+            KeyConditionExpression: "pk = :pk",
+            ExpressionAttributeValues: { ":pk": "SITE_SEARCH#ACTIVE" },
+            ConsistentRead: true,
+          }),
     ]);
     const siteIds = new Set(
       [
         ...directory.Items,
         ...programSites.Items,
+        ...activeSites.Items,
         ...(personId
           ? (manager.sources || [])
               .filter((/** @type {{pk:string,sk:string}} */ source) =>
@@ -87,7 +96,11 @@ export const revokeManagerDevices = (event) =>
       const members = await queryAll(tableName, siteId, "MANAGER_MEMBERSHIP#");
       const ids = new Set();
       for (const member of members) {
-        if (personId ? member.personId === personId : member.userId === userId)
+        if (
+          personId
+            ? member.personId === personId
+            : member.userId === userId && member.programId === programId
+        )
           ids.add(member.membershipId);
         else if (
           !personId &&
@@ -105,7 +118,11 @@ export const revokeManagerDevices = (event) =>
             assignments,
             manager.email,
           );
-          if (matches.length === 1 && matches[0].userId === userId)
+          if (
+            matches.length === 1 &&
+            matches[0].userId === userId &&
+            matches[0].programId === programId
+          )
             ids.add(member.membershipId);
         }
       }

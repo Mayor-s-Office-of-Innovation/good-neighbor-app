@@ -112,9 +112,9 @@ The Site-wide revocation control still affects every device at that Site.
 On Manager details, below Assigned sites, “Remove access to all sites” requires
 the manager's email as confirmation. Its endpoint is
 `POST /admin/v1/programs/{programId}/users/{userId}/devices:revoke`.
-It discovers memberships using the email directory plus Program Sites (for older
-memberships), revalidates their manager identity, and revokes the manager's own
-Site bindings. It does not remove assignments, deactivate memberships, revoke
+It discovers memberships using the email directory, Program Sites, and active
+Site directory (including retained memberships after a lead Program change),
+revalidates their Program/user identity, and revokes the manager's own Site bindings. It does not remove assignments, deactivate memberships, revoke
 team devices, or disable the physical device identity. A new valid enrollment
 can therefore restore app access. Pending invitations are not cancelled.
 

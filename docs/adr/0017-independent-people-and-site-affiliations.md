@@ -48,6 +48,13 @@ there is no automatic merge. Selecting an existing person for another role expli
 reuses that identity. Combining two already-existing person records is not automatic.
 Historical letters, report records, audits, and contact snapshots are not rewritten.
 
+The migration follows explicit `staffSource` chains and reuses already-linked people
+with revision protection. Missing sources, cycles, conflicting person identities,
+and groups exceeding the transaction limit are reported without partial writes.
+Conditional-write conflicts are reported per group while later groups continue;
+unexpected failures abort the run. A report containing unresolved conflicts exits
+with a nonzero status. Review and resolve those conflicts before rerunning.
+
 Deploy the additive APIs before the frontend. The migration is required before
 transferring older provider manager records. Legacy manager URLs continue resolving
 through their source references. No new table or index is required.

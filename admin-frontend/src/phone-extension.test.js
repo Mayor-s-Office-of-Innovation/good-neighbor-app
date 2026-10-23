@@ -32,22 +32,43 @@ test("removing an extension clears its value, marks the form changed, and allows
     hidden = false;
     listeners = {};
     attributes = {};
-    addEventListener(type, fn) { this.listeners[type] = fn; }
-    setAttribute(key, value) { this.attributes[key] = value; }
-    focus() { this.focused = true; }
+    addEventListener(type, fn) {
+      this.listeners[type] = fn;
+    }
+    setAttribute(key, value) {
+      this.attributes[key] = value;
+    }
+    focus() {
+      this.focused = true;
+    }
   }
   const original = globalThis.HTMLElement;
   globalThis.HTMLElement = Element;
-  t.after(() => { if (original) globalThis.HTMLElement = original; else delete globalThis.HTMLElement; });
-  const add = new Element(), remove = new Element(), field = new Element();
+  t.after(() => {
+    if (original) globalThis.HTMLElement = original;
+    else delete globalThis.HTMLElement;
+  });
+  const add = new Element(),
+    remove = new Element(),
+    field = new Element();
   const events = [];
-  const input = {value: "123", disabled: false, focus() {}, dispatchEvent(event) { events.push(event.type); }};
+  const input = {
+    value: "123",
+    disabled: false,
+    focus() {},
+    dispatchEvent(event) {
+      events.push(event.type);
+    },
+  };
   field.querySelector = () => input;
-  field.parentElement = {querySelector: () => add};
-  add.parentElement = {querySelector: () => field};
+  field.parentElement = { querySelector: () => add };
+  add.parentElement = { querySelector: () => field };
   remove.closest = () => field;
   add.hidden = true;
-  bindPhoneExtensions({querySelectorAll: selector => selector === "[data-add-extension]" ? [add] : [remove]});
+  bindPhoneExtensions({
+    querySelectorAll: (selector) =>
+      selector === "[data-add-extension]" ? [add] : [remove],
+  });
   remove.listeners.click();
   assert.equal(input.value, "");
   assert.deepEqual(events, ["input", "change"]);

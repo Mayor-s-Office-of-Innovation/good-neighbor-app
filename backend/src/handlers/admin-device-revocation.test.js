@@ -429,7 +429,7 @@ async function call(handler, request) {
 }
 
 describe("manager devices across sites", () => {
-  async function fixture({ count = 2, failBatch = 0 } = {}) {
+  async function fixture({ count = 2, failBatch = 0, retained = false } = {}) {
     const { emailHash } = await import("./setup-codes.js");
     vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-secret");
     const hash = await emailHash("manager@example.org");
@@ -447,13 +447,32 @@ describe("manager devices across sites", () => {
         const { ":pk": pk, ":prefix": prefix } =
           command.input.ExpressionAttributeValues || {};
         if (pk === `MANAGER_EMAIL#${hash}`)
-          return { Items: [{ siteId: "site-1" }, { siteId: "site-2" }] };
+          return {
+            Items: retained ? [] : [{ siteId: "site-1" }, { siteId: "site-2" }],
+          };
         if (pk === "PROGRAM#program-1") return { Items: [] };
+        if (pk === "SITE_SEARCH#ACTIVE")
+          return {
+            Items: retained ? [{ siteId: "site-1" }, { siteId: "site-2" }] : [],
+          };
         if (prefix === "MANAGER_MEMBERSHIP#")
           return {
             Items: [
-              { membershipId: "member-1", userId: "user-1" },
-              { membershipId: "other", userId: "user-2" },
+              {
+                membershipId: "member-1",
+                userId: "user-1",
+                programId: "program-1",
+              },
+              {
+                membershipId: "other",
+                userId: "user-2",
+                programId: "program-1",
+              },
+              {
+                membershipId: "collision",
+                userId: "user-1",
+                programId: "different-program",
+              },
             ],
           };
         if (prefix === "DEVICE_BINDING#")
@@ -478,6 +497,17 @@ describe("manager devices across sites", () => {
                 ...binding("other", "other-physical", 1),
                 accessLevel: "manager",
                 membershipId: "other",
+              },
+              {
+                ...binding("collision", "collision-physical", 1),
+                accessLevel: "manager",
+                membershipId: "collision",
+              },
+              {
+                ...binding("provider", "provider-physical", 1),
+                accessLevel: "manager",
+                authorityScope: "provider",
+                membershipId: "member-1",
               },
               {
                 ...binding("revoked", "revoked-physical", 1),
@@ -522,6 +552,54 @@ describe("manager devices across sites", () => {
     expect(JSON.stringify(items)).not.toContain("ASSIGNED_USER");
     expect(JSON.stringify(items)).not.toContain("team-physical");
     expect(items.at(-1)?.Put?.Item?.eventType).toBe("manager_devices_revoked");
+  });
+
+  it("finds retained memberships outside the current program without email pointers", async () => {
+    const handler = await fixture({ retained: true });
+    const response = await call(
+      handler,
+      event(
+        { confirmation: "manager@example.org" },
+        { programId: "program-1", userId: "user-1" },
+      ),
+    );
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body).affectedCount).toBe(2);
+    const writes = send.mock.calls.filter(
+      ([c]) => c instanceof TransactWriteCommand,
+    );
+    expect(JSON.stringify(writes)).not.toContain("collision-physical");
+    expect(JSON.stringify(writes)).not.toContain("provider-physical");
+  });
+
+  it("authorizes every retained site before starting any revocation batch", async () => {
+    const handler = await fixture({ retained: true });
+    const original = send.getMockImplementation();
+    if (!original) throw new Error("Missing fixture implementation");
+    send.mockImplementation(async (command) => {
+      if (command instanceof GetCommand) {
+        const { pk, sk } = command.input.Key || {};
+        if (pk === "ADMIN_DIRECTORY#PROGRAM_MANAGERS")
+          return { Item: { userId: "cm", status: "active" } };
+        if (sk === "COMPLIANCE_MANAGER#cm")
+          return {
+            Item: pk === "SITE#site-1" ? { status: "active" } : undefined,
+          };
+      }
+      return original(command);
+    });
+    const request = event(
+      { confirmation: "manager@example.org" },
+      { programId: "program-1", userId: "user-1" },
+    );
+    Object.assign(request.requestContext.authorizer.jwt.claims, {
+      "cognito:groups": "compliance-manager",
+      email: "cm@example.org",
+    });
+    expect((await call(handler, request)).statusCode).toBe(403);
+    expect(
+      send.mock.calls.some(([c]) => c instanceof TransactWriteCommand),
+    ).toBe(false);
   });
 
   it("requires confirmation and admin authorization before writes", async () => {
