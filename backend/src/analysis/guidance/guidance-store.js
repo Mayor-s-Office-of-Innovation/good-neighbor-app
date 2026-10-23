@@ -17,8 +17,11 @@ import {
   siteMetaKey,
   taskDisplayCounterKey,
   taskKey,
+  taskTimelineGsi,
+  taskTimelineGsiFor,
   taskUpdateKey,
   taskUpdatePointerKey,
+  taskUpdateTimelineGsi,
   taskWorklistPk,
   taskWorklistDateGsi,
   unresolvedConditionGsi,
@@ -34,6 +37,23 @@ import {
 import { activeCatalog, catalogForPolicyVersion } from "./catalog-registry.js";
 import { logServerError } from "../../lib/log-server-error.js";
 import { shortCodePart } from "../../lib/short-codes.js";
+import {
+  mergeTranslations,
+  normalizeTranslations,
+  translationsEqual,
+} from "../translations.js";
+
+/**
+ * `translations` attribute for a new CONDITION#/TASK# item: the per-locale map,
+ * or nothing. Normalizing here (not only in the evaluate handler) keeps the
+ * storage shape uniform whatever the caller passed.
+ * @param {unknown} value
+ * @returns {{ translations?: import("../translations.js").TranslationsMap }}
+ */
+function translationsField(value) {
+  const translations = normalizeTranslations(value);
+  return translations ? { translations } : {};
+}
 
 /**
  * @typedef {import("./rule-catalog.js").GuidanceCatalog} GuidanceCatalog
@@ -268,6 +288,13 @@ function applyAssessmentConditionDelta({
 }
 
 /**
+ * Per-locale copies of `userFriendlyLabel` / `description` (the normalized
+ * map from analysis/translations.js; the evaluate handler converts the
+ * analyzer's single block before it reaches here).
+ * @typedef {import("../translations.js").TranslationsMap} ConditionTranslationsInput
+ */
+
+/**
  * @typedef {object} AssessmentConditionInput
  * @property {string} [conditionId]
  * @property {string} category
@@ -275,6 +302,7 @@ function applyAssessmentConditionDelta({
  * @property {string} [severityLabel]
  * @property {string} [userFriendlyLabel]
  * @property {string} [description]
+ * @property {ConditionTranslationsInput} [translations]
  * @property {string[]} [sourceArtifactIds]
  * @property {number[]} [evidenceIndices]
  * @property {Record<string, unknown>} [source]
@@ -363,6 +391,7 @@ function buildConditionItem({
     severityLabel: condition.severityLabel,
     userFriendlyLabel: condition.userFriendlyLabel,
     description: condition.description,
+    ...translationsField(condition.translations),
     answers: {},
     status:
       evaluation.kind === "needs_answer"
@@ -455,13 +484,14 @@ function buildTaskItem({
     userFriendlyLabel: condition.userFriendlyLabel,
     label: rule.outcome.label,
     description: condition.description,
+    ...translationsField(condition.translations),
     guidance: rule.outcome.guidance,
     buttons: rule.outcome.buttons,
     appActions: rule.outcome.appActions,
     appActionStatus: initialAppActionStatus(rule.outcome.appActions),
     appActionResults: [],
     category311: rule.outcome.category311,
-    cannotDoReasons: rule.outcome.cannotDoReasons,
+    phoneNumber: rule.outcome.phoneNumber || "",
     sourceArtifactIds: condition.sourceArtifactIds ?? [],
     source: condition.source ?? {},
     ...taskWorklistDateGsi(
@@ -472,6 +502,7 @@ function buildTaskItem({
       now,
       taskId,
     ),
+    ...taskTimelineGsi(siteId, now, taskId),
     createdAt: now,
     updatedAt: now,
   };
@@ -567,6 +598,8 @@ export async function storeEvaluatedAssessment(input, options) {
   const retainedConditionIds = new Set();
   /** @type {Record<string, unknown>[]} */
   const retainedTasks = [];
+  /** @type {{ taskId: string, translations: ConditionTranslationsInput | undefined }[]} */
+  const retainedTaskTranslationUpdates = [];
 
   /** @type {Record<string, unknown>[]} */
   const conditionItems = [];
@@ -604,8 +637,18 @@ export async function storeEvaluatedAssessment(input, options) {
       priorTasks.length === priorTaskIds.length &&
       priorTasks.every((task) => task.status !== "superseded")
     ) {
+      // A retained condition has the same English text as before, so every
+      // stored locale is still valid: merge per locale, letting a refresh that
+      // carries a locale replace that locale and keeping the rest (the
+      // background translate worker may have filled them in since). A refresh
+      // without any keeps the prior map.
+      const translations = mergeTranslations(
+        prior.translations,
+        condition.translations,
+      );
       const preserved = {
         ...prior,
+        ...(translations ? { translations } : {}),
         ...conditionKey(input.siteId, input.assessmentId, conditionId),
         assessmentId: input.assessmentId,
         ...conditionTimelineGsi(
@@ -629,7 +672,20 @@ export async function storeEvaluatedAssessment(input, options) {
         );
       retainedConditionIds.add(conditionId);
       conditionItems.push(preserved);
-      retainedTasks.push(...priorTasks);
+      for (const task of priorTasks) {
+        if (translationsEqual(task.translations, translations)) {
+          retainedTasks.push(task);
+          continue;
+        }
+        const updatedTranslations = { ...task };
+        if (translations) updatedTranslations.translations = translations;
+        else delete updatedTranslations.translations;
+        retainedTasks.push(updatedTranslations);
+        retainedTaskTranslationUpdates.push({
+          taskId: String(task.taskId),
+          translations,
+        });
+      }
       continue;
     }
     const evaluation = evaluateCondition({
@@ -830,6 +886,7 @@ export async function storeEvaluatedAssessment(input, options) {
         TableName: options.tableName,
         Item: {
           ...task,
+          ...taskTimelineGsiFor(input.siteId, task),
           status: "superseded",
           supersededAt: now,
           supersessionReason: "assessment_refreshed",
@@ -853,6 +910,24 @@ export async function storeEvaluatedAssessment(input, options) {
           ":open": "open",
           ...(task.updatedAt ? { ":updatedAt": task.updatedAt } : {}),
         },
+      },
+    });
+  }
+  // Keep a retained task's translations map in step with its retained
+  // condition (per-locale merge); only tasks that actually differ get an Update.
+  for (const { taskId, translations } of retainedTaskTranslationUpdates) {
+    transactItems.push({
+      Update: {
+        TableName: options.tableName,
+        Key: taskKey(input.siteId, taskId),
+        ...(translations
+          ? {
+              UpdateExpression: "SET translations = :translations",
+              ExpressionAttributeValues: { ":translations": translations },
+            }
+          : {
+              UpdateExpression: "REMOVE translations",
+            }),
       },
     });
   }
@@ -910,7 +985,7 @@ export async function storeEvaluatedAssessment(input, options) {
  * @param {Date} [opts.now]
  * @returns {Promise<Record<string, unknown>[]>}
  */
-async function executeTaskCreatedAppActions({
+export async function executeTaskCreatedAppActions({
   tableName,
   siteId,
   taskItems,
@@ -1183,6 +1258,13 @@ export async function answerCondition(opts) {
             typeof conditionItem.userFriendlyLabel === "string"
               ? conditionItem.userFriendlyLabel
               : undefined,
+          description:
+            typeof conditionItem.description === "string"
+              ? conditionItem.description
+              : undefined,
+          ...(conditionItem.translations
+            ? { translations: conditionItem.translations }
+            : {}),
           sourceArtifactIds:
             /** @type {{ artifactIds?: string[] }} */ (conditionItem.source)
               ?.artifactIds ?? [],
@@ -1309,82 +1391,17 @@ export async function answerCondition(opts) {
  * @param {string} opts.tableName
  * @param {string} opts.siteId
  * @param {string} opts.taskId
- * @param {string} opts.reason
- * @param {string} [opts.note]
- * @param {Date} [opts.now]
- * @returns {Promise<Record<string, unknown>>}
- */
-export async function markTaskCannotDo(opts) {
-  const now = (opts.now ?? new Date()).toISOString();
-  const existing = await ddb.send(
-    new GetCommand({
-      TableName: opts.tableName,
-      Key: taskKey(opts.siteId, opts.taskId),
-      ConsistentRead: true,
-    }),
-  );
-  if (!existing.Item) {
-    throw namedError("NotFound", "Task not found");
-  }
-  if (existing.Item.status === "cannot_do") {
-    const cannotDo = /** @type {{ reason?: unknown, note?: unknown }} */ (
-      existing.Item.cannotDo ?? {}
-    );
-    if (cannotDo.reason === opts.reason && cannotDo.note === opts.note) {
-      return existing.Item;
-    }
-    throw namedError("TerminalConflict", "Task is already cannot_do");
-  }
-  if (existing.Item.status !== "open") {
-    throw namedError("TerminalConflict", "Task is no longer open");
-  }
-  const allowed = /** @type {string[]} */ (existing.Item.cannotDoReasons ?? []);
-  if (allowed.length > 0 && !allowed.includes(opts.reason)) {
-    throw namedError("InvalidReason", "Invalid cannot-do reason");
-  }
-
-  const updated = {
-    ...existing.Item,
-    status: "cannot_do",
-    cannotDo: { reason: opts.reason, note: opts.note, recordedAt: now },
-    updatedAt: now,
-    ...taskWorklistDateGsi(
-      opts.siteId,
-      "cannot_do",
-      String(existing.Item.kind),
-      Number(existing.Item.severity ?? 0),
-      now,
-      opts.taskId,
-    ),
-  };
-
-  await ddb.send(
-    new TransactWriteCommand({
-      TransactItems: [
-        {
-          Put: {
-            TableName: opts.tableName,
-            Item: updated,
-            ConditionExpression: "#status = :open",
-            ExpressionAttributeNames: { "#status": "status" },
-            ExpressionAttributeValues: { ":open": "open" },
-          },
-        },
-      ],
-    }),
-  );
-  return updated;
-}
-
-/**
- * @param {object} opts
- * @param {string} opts.tableName
- * @param {string} opts.siteId
- * @param {string} opts.taskId
  * @param {string} [opts.completionMethod]
  * @param {string} [opts.actorId]
  * @param {Record<string, string | undefined>} [opts.env]
+ * @param {any[]} [opts.duplicateChecks]
  * @param {Date} [opts.now]
+ * @param {boolean} [opts.forceComplete]
+ * @param {boolean} [opts.skipUserConfirmedActions]
+ * @param {Record<string, unknown>} [opts.taskPatch]
+ * @param {string} [opts.timelineType]
+ * @param {string} [opts.timelineLabel]
+ * @param {string} [opts.timelineText]
  * @returns {Promise<Record<string, unknown>>}
  */
 export async function completeTaskWithAppActions(opts) {
@@ -1403,7 +1420,11 @@ export async function completeTaskWithAppActions(opts) {
   if (!existing.Item) {
     throw namedError("NotFound", "Task not found");
   }
-  if (existing.Item.status === "completed") {
+  if (
+    existing.Item.status === "completed" ||
+    (existing.Item.status === "in_progress" &&
+      existing.Item.kind === "non_actionable_escalation")
+  ) {
     const method = opts.completionMethod ?? "user_confirmed";
     if (existing.Item.completionMethod === method) {
       return existing.Item;
@@ -1471,6 +1492,7 @@ export async function completeTaskWithAppActions(opts) {
   await ddb.send(
     new TransactWriteCommand({
       TransactItems: [
+        ...(opts.duplicateChecks ?? []),
         {
           Put: {
             TableName: opts.tableName,
@@ -1485,7 +1507,7 @@ export async function completeTaskWithAppActions(opts) {
   );
 
   const appActions = /** @type {import("./app-actions.js").AppAction[]} */ (
-    existing.Item.appActions ?? []
+    opts.skipUserConfirmedActions ? [] : (existing.Item.appActions ?? [])
   );
   const priorResults =
     /** @type {import("./app-actions.js").AppActionResult[]} */ (
@@ -1501,7 +1523,10 @@ export async function completeTaskWithAppActions(opts) {
     priorResults,
     trigger: "user_confirmed",
   });
-  const canBeInProgress = existing.Item.canBeInProgress === true;
+  const canBeInProgress =
+    opts.forceComplete === true
+      ? false
+      : existing.Item.canBeInProgress === true;
 
   // Informational 311 tickets we filed under our own agency (76) are closed
   // when the site owner marks the underlying work done. The prior filing
@@ -1559,11 +1584,13 @@ export async function completeTaskWithAppActions(opts) {
       !hasSubmitted311ActionResult(executedAppActionResults));
   const filed311 = !appActionFailed && opts.completionMethod === "311_filed";
   const actionUpdateId = !appActionFailed ? randomUUID() : "";
-  const actionLabel = filed311
-    ? "311 ticket filed"
-    : canBeInProgress
-      ? String(existing.Item.buttons?.[0] ?? "Action taken")
-      : "Marked as complete";
+  const actionLabel =
+    opts.timelineLabel ??
+    (filed311
+      ? "311 ticket filed"
+      : canBeInProgress
+        ? String(existing.Item.buttons?.[0] ?? "Action taken")
+        : "Site marked as resolved");
   // App-action failures hold the task open but resolve as a 200 — without this
   // line the failure exists only in the task's stored appActionResults. One
   // structured ERROR per failed action (Logs Insights-groupable, alarmable;
@@ -1592,12 +1619,15 @@ export async function completeTaskWithAppActions(opts) {
 
   const updated = {
     ...claimed,
+    ...(opts.taskPatch ?? {}),
     status: appActionFailed
       ? "open"
       : canBeInProgress
         ? "in_progress"
         : "completed",
-    ...(appActionFailed || canBeInProgress ? {} : { completedAt: now }),
+    ...(appActionFailed || canBeInProgress
+      ? {}
+      : { completedAt: now, resolvedAt: now }),
     ...(appActionFailed || canBeInProgress
       ? {}
       : { completionMethod: opts.completionMethod ?? "user_confirmed" }),
@@ -1611,6 +1641,9 @@ export async function completeTaskWithAppActions(opts) {
           latestUpdateLabel: actionLabel,
           lastAnsweredPresencePeriod: 0,
         }
+      : {}),
+    ...(!appActionFailed && existing.Item.canBeInProgress === false
+      ? { latestUpdateId: actionUpdateId }
       : {}),
     appActionStatus,
     appActionResults,
@@ -1665,18 +1698,25 @@ export async function completeTaskWithAppActions(opts) {
                       now,
                       actionUpdateId,
                     ),
+                    ...taskUpdateTimelineGsi(opts.siteId, now, actionUpdateId),
                     entityType: "task_update",
                     taskId: opts.taskId,
                     updateId: actionUpdateId,
-                    type: filed311
-                      ? "311_ticket_filed"
-                      : canBeInProgress
-                        ? "escalation_action_taken"
-                        : "task_completed",
+                    type:
+                      opts.timelineType ??
+                      (filed311
+                        ? "311_ticket_filed"
+                        : canBeInProgress
+                          ? "escalation_action_taken"
+                          : "task_completed"),
                     label: actionLabel,
+                    ...(opts.timelineText ? { text: opts.timelineText } : {}),
                     occurredAt: now,
                     actorId: opts.actorId ?? "site-team",
-                    documentationState: "closed",
+                    documentationState:
+                      existing.Item.canBeInProgress === false
+                        ? "open_for_documentation"
+                        : "closed",
                   },
                   ConditionExpression: "attribute_not_exists(pk)",
                 },
@@ -1799,6 +1839,7 @@ function supersedeTaskWrites(tasks, opts, now) {
     const taskId = String(task.taskId);
     const updated = {
       ...task,
+      ...taskTimelineGsiFor(opts.siteId, task),
       status: "superseded",
       supersededAt: now,
       supersessionReason: opts.reason ?? "analysis_condition_amended",

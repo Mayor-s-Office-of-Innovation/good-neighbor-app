@@ -1,3 +1,4 @@
+import { duplicateCountLabel } from "./duplicate-issue.templates.js";
 /*
   Presentational templates for <today-view>, the home hub. Pure
   (data) → HTML string functions: state lives in today-view.js, which builds
@@ -30,7 +31,10 @@ import { analysisDialogs } from "./analysis-results.templates.js";
  *   showAnalysisDialogs: boolean,
  *   logoutError: string,
  *   logoutPending: boolean,
- * }} vm
+ *   busy?: boolean,
+ *   settingsDisabled?: boolean,
+ * }} vm `busy` marks the results region aria-busy; `settingsDisabled`
+ *   renders the settings button inert (both: the pre-data skeleton)
  * @returns {string}
  */
 export function homeShell({
@@ -41,12 +45,18 @@ export function homeShell({
   showAnalysisDialogs,
   logoutError,
   logoutPending,
+  busy = false,
+  settingsDisabled = false,
 }) {
   return html`
     <div class="home">
       <section class="home-region home-region--header">
         <div class="home-top-actions">
-          ${settingsMenu({ open: settingsMenuOpen, adminAccess })}
+          ${settingsMenu({
+            open: settingsMenuOpen,
+            adminAccess,
+            disabled: settingsDisabled,
+          })}
           <feedback-dialog
             class="feedback-dialog"
             hide-trigger
@@ -64,6 +74,7 @@ export function homeShell({
       <section
         class="home-region home-region--results"
         aria-label="${escapeAttr(t("today.results.aria"))}"
+        ${busy ? 'aria-busy="true"' : ""}
       >
         ${results}
       </section>
@@ -75,8 +86,81 @@ export function homeShell({
   `;
 }
 
-/** @param {{ open: boolean, adminAccess?: boolean }} state */
-export function settingsMenu({ open, adminAccess = false }) {
+/**
+ * The home painted before the worklist responds: the real chrome from the
+ * stored site record (identity, settings, tabs) plus placeholder cards, so
+ * the first paint does not wait on the network. No `#start-check` here on
+ * purpose — the real button arrives with the data, and the e2e suite treats
+ * its presence as "home loaded". Replaced wholesale by the live render.
+ * @param {{ siteName: string, adminAccess: boolean, homeFilter: string, checkLabel: string }} vm
+ */
+export function homeSkeleton({
+  siteName,
+  adminAccess,
+  homeFilter,
+  checkLabel,
+}) {
+  return homeShell({
+    settingsMenuOpen: false,
+    adminAccess,
+    hero: html`
+      <div class="screen__sec home-lead">
+        <div class="home-identity home-identity--with-summary">
+          <h1 class="home-identity__site" tabindex="-1">
+            ${escapeHtml(siteName)}
+          </h1>
+          <div class="lastlog" aria-hidden="true">
+            <span class="skeleton-line skeleton-line--eyebrow"></span>
+          </div>
+        </div>
+        <div class="home-actions">
+          <button
+            id="start-check-pending"
+            class="btn-blue"
+            type="button"
+            disabled
+          >
+            ${escapeHtml(checkLabel)}
+          </button>
+        </div>
+      </div>
+    `,
+    results: html`${taskTabs({ activeId: homeFilter })}${pendingCards()}`,
+    showAnalysisDialogs: false,
+    logoutError: "",
+    logoutPending: false,
+    busy: true,
+    settingsDisabled: true,
+  });
+}
+
+/**
+ * Placeholder card rail shown while a list is still loading: the pre-data
+ * skeleton, and the In-progress / History tabs before their lists arrive.
+ * @param {number} [count]
+ */
+export function pendingCards(count = 3) {
+  const card = html`
+    <div class="analysis-card analysis-card--pending">
+      <div class="analysis-card__panel">
+        <span class="skeleton-line skeleton-line--title"></span>
+        <span class="skeleton-line"></span>
+        <span class="skeleton-line skeleton-line--short"></span>
+      </div>
+    </div>
+  `;
+  return html`
+    <div
+      class="home-results__cards home-results__cards--pending"
+      aria-hidden="true"
+    >
+      ${card.repeat(count)}
+    </div>
+  `;
+}
+
+/** @param {{ open: boolean, adminAccess?: boolean, disabled?: boolean }} state */
+export function settingsMenu({ open, adminAccess = false, disabled = false }) {
   return html`
     <div class="home-settings-wrap">
       <button
@@ -86,6 +170,7 @@ export function settingsMenu({ open, adminAccess = false }) {
         aria-label="${escapeAttr(t("today.settings.aria"))}"
         aria-haspopup="menu"
         aria-expanded="${open ? "true" : "false"}"
+        ${disabled ? "disabled" : ""}
       >
         <span class="home-settings__icon" aria-hidden="true"></span>
       </button>
@@ -95,20 +180,27 @@ export function settingsMenu({ open, adminAccess = false }) {
             role="menu"
             aria-label="${escapeAttr(t("today.settings.aria"))}"
           >
+            ${adminAccess
+              ? html`<button id="settings-access" type="button" role="menuitem">
+                    <wa-icon name="key" aria-hidden="true"></wa-icon>
+                    ${escapeHtml(t("access.title"))}</button
+                  ><button
+                    id="settings-site-admin"
+                    type="button"
+                    role="menuitem"
+                  >
+                    <wa-icon name="location-dot" aria-hidden="true"></wa-icon>
+                    ${escapeHtml(t("today.settings.siteAdmin"))}
+                  </button>
+                  <button id="settings-reports" type="button" role="menuitem">
+                    <wa-icon name="list-check" aria-hidden="true"></wa-icon>
+                    ${escapeHtml(t("today.settings.reports"))}
+                  </button>`
+              : ""}
             <button id="settings-feedback" type="button" role="menuitem">
               <wa-icon name="comment" aria-hidden="true"></wa-icon>
               ${escapeHtml(t("today.settings.feedback"))}
             </button>
-            ${adminAccess
-              ? html`<button
-                  id="settings-site-admin"
-                  type="button"
-                  role="menuitem"
-                >
-                  <wa-icon name="location-dot" aria-hidden="true"></wa-icon>
-                  ${escapeHtml(t("today.settings.siteAdmin"))}
-                </button>`
-              : ""}
             <button id="settings-language" type="button" role="menuitem">
               <wa-icon name="language" aria-hidden="true"></wa-icon>
               ${escapeHtml(t("today.settings.language"))}
@@ -281,9 +373,9 @@ export function logoutDialog({ error, pending }) {
 /**
  * The <site-switcher> placeholder is replaced by the host's persistent
  * element after render (see today-view._mountSiteSwitcher).
- * @param {{ siteName: string, summary: string, checkLabel: string, reportLabel: string }} vm
+ * @param {{ siteName: string, summary: string, checkLabel: string }} vm
  */
-export function heroBlock({ siteName, summary, checkLabel, reportLabel }) {
+export function heroBlock({ siteName, summary, checkLabel }) {
   return html`
     <div class="screen__sec home-lead">
       <site-switcher></site-switcher>
@@ -293,21 +385,44 @@ export function heroBlock({ siteName, summary, checkLabel, reportLabel }) {
         </h1>
         ${summary}
       </div>
-      ${homeActions({ checkLabel, reportLabel })}
+      ${homeActions({ checkLabel })}
     </div>
   `;
 }
 
-/** @param {{ checkLabel: string, reportLabel: string }} labels */
-export function homeActions({ checkLabel, reportLabel }) {
+/** @param {{ checkLabel: string }} labels */
+export function homeActions({ checkLabel }) {
   return html`
     <div class="home-actions">
-      <button id="start-check" class="btn-ink" type="button">
+      <button id="start-check" class="btn-blue" type="button">
         ${escapeHtml(checkLabel)}
       </button>
-      <button id="report-problem" class="btn-outline" type="button">
-        ${escapeHtml(reportLabel)}
-      </button>
+      <div class="home-action-menu-wrap">
+        <button
+          id="home-action-menu-trigger"
+          class="btn-outline home-action-menu-trigger"
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded="false"
+          aria-label="${escapeAttr(t("today.actions.more"))}"
+        >
+          <wa-icon name="ellipsis" aria-hidden="true"></wa-icon>
+        </button>
+        <div class="home-action-menu" id="home-action-menu" role="menu" hidden>
+          <button type="button" role="menuitem" id="view-complaints">
+            <wa-icon name="bullhorn" aria-hidden="true"></wa-icon>
+            ${escapeHtml(t("today.actions.complaints"))}
+          </button>
+          <button type="button" role="menuitem" id="report-problem">
+            <wa-icon name="flag" aria-hidden="true"></wa-icon>
+            ${escapeHtml(t("today.actions.report"))}
+          </button>
+          <button type="button" role="menuitem" id="view-care-work">
+            <wa-icon name="broom" aria-hidden="true"></wa-icon>
+            ${escapeHtml(t("care.menu"))}
+          </button>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -356,10 +471,14 @@ export function summaryBlock({ outsideRadius, label }) {
  *   newTaskCards: Array<{ markup: string }>,
  *   newTaskCardsMarkup: string,
  *   newTaskCount: number,
+ *   counts?: {newCount:number,duplicateCount:number},
+ *   tabCounts?: Record<string, number>,
  *   activeClearCheck: { submittedAt?: string, startedAt?: string } | null,
  *   hasPendingClearResult: boolean,
+ *   showActiveClearTray?: boolean,
  *   historyGrouping?: string,
- *   historyGroups: Array<{ checkTime: string | Date, cards: string, title?: string, compact?: boolean }>,
+ *   remainingStatus?: "pending" | "loaded" | "error",
+ *   historyGroups: Array<{ checkTime: string | Date, cards: string, title?: string, compact?: boolean, counts?: any }>,
  * }} vm
  */
 export function homeResults({
@@ -373,16 +492,26 @@ export function homeResults({
   newTaskCards,
   newTaskCardsMarkup,
   newTaskCount,
+  counts = { newCount: newTaskCount, duplicateCount: 0 },
+  tabCounts = {},
   activeClearCheck,
   hasPendingClearResult,
+  showActiveClearTray = false,
   historyGroups,
   historyGrouping = "resolved",
+  remainingStatus = "loaded",
 }) {
   const hasVisibleCards =
     recentItems.length ||
     newTaskCount ||
     Boolean(activeClearCheck) ||
     historyGroups.length;
+  // The In-progress and History lists load after the first paint (the open
+  // list is all the To-do tab needs). Until they land those tabs show one
+  // placeholder card instead of an empty state — never a previous load's
+  // cards; a failed load says so and offers a retry.
+  const awaitingRemaining =
+    homeFilter !== "todo" && remainingStatus !== "loaded";
   const trayOptions = {
     id: "home-analysis-results",
     title: "",
@@ -397,10 +526,10 @@ export function homeResults({
     <div class="home-results">
       ${hasPendingClearResult
         ? analysisResultsTray(recentItems, pendingSessionId, trayOptions)
-        : activeClearCheck && !recentItems.length && !newTaskCount
+        : showActiveClearTray && activeClearCheck
           ? clearCheckTray(activeClearCheck, true)
           : ""}
-      ${taskTabs({ activeId: homeFilter })}
+      ${taskTabs({ activeId: homeFilter, counts: tabCounts })}
       ${homeFilter === "history"
         ? html`<div class="history-grouping">
             <wa-select
@@ -424,7 +553,11 @@ export function homeResults({
         ? analysisResultsTray(recentItems, pendingSessionId, trayOptions)
         : ""}
       ${newTaskCount && !recentItems.length
-        ? newTaskTray({ cards: newTaskCardsMarkup, checkTime: recentCheckTime })
+        ? newTaskTray({
+            cards: newTaskCardsMarkup,
+            checkTime: recentCheckTime,
+            counts,
+          })
         : ""}
       ${historyGroups.length
         ? html`
@@ -433,17 +566,34 @@ export function homeResults({
             </div>
           `
         : ""}
-      ${!hasVisibleCards
-        ? homeFilter === "todo" && !hasPendingSession
-          ? homeAllDonePanel()
-          : emptyResults({ homeFilter })
-        : ""}
+      ${awaitingRemaining
+        ? remainingStatus === "error"
+          ? html`<p class="home-results__empty" role="status">
+              ${escapeHtml(t("today.remaining.error"))}
+              <button
+                id="retry-remaining"
+                class="btn-outline home-results__retry"
+                type="button"
+              >
+                ${escapeHtml(t("common.retry"))}
+              </button>
+            </p>`
+          : pendingCards(1)
+        : !hasVisibleCards
+          ? homeFilter === "todo" && !hasPendingSession
+            ? homeAllDonePanel()
+            : emptyResults({ homeFilter })
+          : ""}
     </div>
   `;
 }
 
-/** @param {{ cards: string, checkTime: string }} vm */
-export function newTaskTray({ cards, checkTime }) {
+/** @param {{ cards: string, checkTime: string, counts?: {newCount:number,duplicateCount:number} }} vm */
+export function newTaskTray({
+  cards,
+  checkTime,
+  counts = { newCount: 0, duplicateCount: 0 },
+}) {
   return html`
     <section
       class="analysis-tray analysis-tray--new analysis-tray--recent"
@@ -453,7 +603,7 @@ export function newTaskTray({ cards, checkTime }) {
         <h2 class="analysis-tray__check-title">
           ${escapeHtml(recentCheckTitle(checkTime))}
         </h2>
-        ${cards}
+        ${duplicateCountLabel(counts)} ${cards}
       </div>
     </section>
   `;
@@ -486,9 +636,15 @@ export function clearCheckTray(check, recent = false) {
 /**
  * One past check's tray: its task cards, or the clear-check card when the
  * check found nothing.
- * @param {{ checkTime: string | Date, cards: string, title?: string, compact?: boolean }} group
+ * @param {{ checkTime: string | Date, cards: string, title?: string, compact?: boolean, counts?: any }} group
  */
-export function historyTray({ checkTime, cards, title = "", compact = false }) {
+export function historyTray({
+  checkTime,
+  cards,
+  title = "",
+  compact = false,
+  counts = null,
+}) {
   return html`
     <section
       class="analysis-tray analysis-tray--history ${compact
@@ -500,6 +656,7 @@ export function historyTray({ checkTime, cards, title = "", compact = false }) {
         <h2 class="analysis-tray__check-title">
           ${escapeHtml(title || historicalCheckTitle(checkTime))}
         </h2>
+        ${counts ? duplicateCountLabel(counts) : ""}
         ${compact
           ? html`<div class="history-card-list">${cards}</div>`
           : cards || clearCheckCard()}
@@ -508,8 +665,8 @@ export function historyTray({ checkTime, cards, title = "", compact = false }) {
   `;
 }
 
-/** @param {{ activeId: string, tabs?: Array<{ id: string, labelKey: string }> }} vm */
-export function taskTabs({ activeId, tabs = HOME_TABS }) {
+/** @param {{ activeId: string, tabs?: Array<{ id: string, labelKey: string }>, counts?: Record<string, number> }} vm */
+export function taskTabs({ activeId, tabs = HOME_TABS, counts = {} }) {
   return html`
     <div
       class="home-tabs"
@@ -527,7 +684,11 @@ export function taskTabs({ activeId, tabs = HOME_TABS }) {
               aria-pressed="${tab.id === activeId ? "true" : "false"}"
               data-home-filter="${escapeAttr(tab.id)}"
             >
-              ${escapeHtml(t(tab.labelKey))}
+              ${escapeHtml(t(tab.labelKey))}${counts[tab.id]
+                ? html`<span class="home-tabs__count"
+                    >${Number(counts[tab.id])}</span
+                  >`
+                : ""}
             </button>
           `,
         )
@@ -566,7 +727,7 @@ export function homeAllDonePanel() {
       aria-labelledby="home-all-done-title"
     >
       <div class="home-results__complete-content">
-        <img src="/clear-check-icon.png" alt="" width="96" height="98" />
+        <img src="/clear-check-icon.webp" alt="" width="96" height="98" />
         <h2 id="home-all-done-title">
           ${escapeHtml(t("today.allDone.title"))}
         </h2>
@@ -606,38 +767,6 @@ export function actionButton(a) {
   return html`<button type="button" class="${cls}" data-action="${a.kind}">
     ${escapeHtml(a.label)}
   </button>`;
-}
-
-/**
- * "Can't" → the task's allowlisted reasons (the backend rejects arbitrary
- * ones), plus a cancel.
- * Each reason carries the stored English `value` (submitted to the API, which
- * validates it) and a display `label` in the active language.
- * @param {{ reasons: Array<{ value: string, label: string }> }} vm
- */
-export function reasonPicker({ reasons }) {
-  return html`
-    ${reasons
-      .map(
-        (r) =>
-          html`<button
-            type="button"
-            class="btn-outline btn-outline--sm"
-            data-action="cant-reason"
-            data-reason="${escapeAttr(r.value)}"
-          >
-            ${escapeHtml(r.label)}
-          </button>`,
-      )
-      .join("")}
-    <button
-      type="button"
-      class="home-cta__link actioncard__cancel"
-      data-action="cant-cancel"
-    >
-      ${escapeHtml(t("common.cancel"))}
-    </button>
-  `;
 }
 
 /* ---- Error view ---- */

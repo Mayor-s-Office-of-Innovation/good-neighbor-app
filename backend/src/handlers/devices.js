@@ -16,6 +16,7 @@
 import { randomUUID } from "node:crypto";
 import {
   GetCommand,
+  QueryCommand,
   TransactWriteCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
@@ -27,6 +28,7 @@ import {
   consumeSetupCodeTransactItem,
   validateSetupCode,
 } from "./setup-codes.js";
+import { deviceLivenessProblem } from "../lib/device-liveness.js";
 import {
   canonicalAccessLevel,
   DeviceTokenError,
@@ -59,6 +61,7 @@ import {
  * @property {string} [membershipId]
  * @property {number} [membershipGeneration]
  * @property {number} [siteCredentialGeneration]
+ * @property {string} [handoffGrantId] the pending Home Screen handoff grant (handlers/session-handoff.js)
  */
 
 /**
@@ -237,21 +240,13 @@ export const refreshDeviceToken = async (event) => {
   const device = /** @type {DeviceItem | undefined} */ (res.Item);
   const now = new Date();
   const canonicalRole = canonicalAccessLevel(device?.accessLevel);
-  const inactiveAfter = device?.lastSeenAt
-    ? new Date(device.lastSeenAt).getTime() +
-      Number(device.inactivityLimitDays ?? 60) * 24 * 60 * 60 * 1000
-    : Number.POSITIVE_INFINITY;
   if (
     !device ||
-    device.status === "revoked" ||
-    device.status === "suspended" ||
+    deviceLivenessProblem(device, now) || // revoked, suspended, expired, idle
     device.tokenGeneration !== claims.ver || // revoked (generation bumped)
     canonicalRole !== claims.accessLevel ||
     !claims.jti ||
-    device.refreshJti !== claims.jti || // already used / superseded
-    (device.absoluteExpiresAt &&
-      device.absoluteExpiresAt <= now.toISOString()) ||
-    inactiveAfter <= now.getTime()
+    device.refreshJti !== claims.jti // already used / superseded
   ) {
     return jsonResponse(401, {
       error: "invalid_refresh_token",
@@ -299,19 +294,26 @@ export const refreshDeviceToken = async (event) => {
  * Recheck Site and Manager membership generations. A generation-less legacy
  * device is generation zero: it remains compatible with an unadvanced Site,
  * but fails closed immediately after any Site-wide generation bump.
+ * Shared with handlers/session-handoff.js, which re-mints a session for an
+ * existing device and must apply the same answer; it passes the SITE#META
+ * row it already read so the check costs no extra round trip.
  * @param {DeviceItem & Record<string, any>} device
  * @param {"general"|"manager"} role
+ * @param {Record<string, any> | undefined} [prefetchedSite] the SITE#META row, when the caller has it
  * @returns {Promise<boolean>}
  */
-async function bindingLifecycleValid(device, role) {
+export async function bindingLifecycleValid(device, role, prefetchedSite) {
   const tableName = getDynamoTableName();
-  const siteResult = await ddb.send(
-    new GetCommand({
-      TableName: tableName,
-      Key: { pk: `SITE#${device.siteId}`, sk: "#META" },
-    }),
-  );
-  const site = siteResult.Item;
+  const site =
+    prefetchedSite ??
+    (
+      await ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { pk: `SITE#${device.siteId}`, sk: "#META" },
+        }),
+      )
+    ).Item;
   if (
     !site ||
     site.status === "inactive" ||
@@ -320,7 +322,27 @@ async function bindingLifecycleValid(device, role) {
   ) {
     return false;
   }
-  if (role !== "manager" || !device.membershipId) return true;
+  if (role !== "manager") return true;
+  if (device.authorityScope === "provider") {
+    if (
+      !device.providerId ||
+      site.providerId !== device.providerId ||
+      Number(device.providerAccessGeneration ?? 0) !==
+        Number(site.providerAccessGeneration ?? 0)
+    )
+      return false;
+    const membership = await findProviderManager(
+      tableName,
+      String(device.providerId),
+      String(device.providerMembershipId),
+    );
+    return Boolean(
+      membership?.status === "active" &&
+        Number(membership.generation ?? 0) ===
+          Number(device.providerMembershipGeneration ?? -1),
+    );
+  }
+  if (!device.membershipId) return true;
   const membershipResult = await ddb.send(
     new GetCommand({
       TableName: tableName,
@@ -335,6 +357,23 @@ async function bindingLifecycleValid(device, role) {
     membership?.status === "active" &&
       Number(membership.generation ?? 0) ===
         Number(device.membershipGeneration ?? -1),
+  );
+}
+
+/** @param {string} tableName @param {string} providerId @param {string} membershipId */
+async function findProviderManager(tableName, providerId, membershipId) {
+  const result = await ddb.send(
+    new QueryCommand({
+      TableName: tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+      ExpressionAttributeValues: {
+        ":pk": `PROVIDER#${providerId}`,
+        ":prefix": "PROVIDER_MANAGER#",
+      },
+    }),
+  );
+  return (result.Items ?? []).find(
+    (item) => String(item.membershipId) === membershipId,
   );
 }
 

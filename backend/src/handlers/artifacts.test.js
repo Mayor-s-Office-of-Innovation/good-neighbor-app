@@ -83,6 +83,7 @@ beforeEach(() => {
   setObjectTags.mockReset().mockResolvedValue({});
   process.env.S3_UPLOAD_BUCKET = "bucket";
   process.env.SQS_QUEUE_URL = "queue";
+  delete process.env.ANALYSIS_QUEUE_URL;
   process.env.DYNAMO_TABLE = "gnp-test-app";
 });
 
@@ -111,6 +112,16 @@ describe("presignUpload", () => {
     );
     expect(ddbSend.mock.calls[0][0]).toBeInstanceOf(TransactWriteCommand);
     const reservation = ddbSend.mock.calls[0][0].input.TransactItems;
+    expect(reservation).toHaveLength(5);
+    expect(
+      /** @type {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>} */ (
+        reservation
+      ).every(
+        (op) =>
+          (op.Update?.Key || op.ConditionCheck?.Key || op.Put?.Item)?.pk ===
+          "SITE#site-1",
+      ),
+    ).toBe(true);
     expect(reservation[0].ConditionCheck.Key).toEqual({
       pk: "SITE#site-1",
       sk: "CHECK#chk_01",
@@ -205,6 +216,21 @@ describe("registerArtifact", () => {
     text: "north gate clear",
   };
 
+  it("routes foreground evidence to the dedicated analysis queue", async () => {
+    process.env.ANALYSIS_QUEUE_URL = "analysis-queue";
+    ddbSend.mockResolvedValueOnce({});
+    sqsSend.mockResolvedValueOnce({});
+    const res = await callRegister(
+      artifactEvent({
+        checkId: "chk_01",
+        siteClaim: "site-1",
+        body: validBody,
+      }),
+    );
+    expect(res.statusCode).toBe(202);
+    expect(sqsSend.mock.calls[0][0].input.QueueUrl).toBe("analysis-queue");
+  });
+
   it("records the artifact with a conditional put then enqueues the S3 key only", async () => {
     ddbSend.mockResolvedValueOnce({});
     sqsSend.mockResolvedValueOnce({});
@@ -235,6 +261,7 @@ describe("registerArtifact", () => {
 
     const msg = sqsSend.mock.calls[0][0];
     expect(msg).toBeInstanceOf(SendMessageCommand);
+    expect(msg.input.QueueUrl).toBe("queue");
     const body = JSON.parse(msg.input.MessageBody);
     expect(body).toEqual({
       siteId: "site-1",
@@ -673,6 +700,66 @@ describe("presignMedia", () => {
       key: "checks/site-1/chk_01/place-north/art_1",
       expiresIn: 300,
     });
+  });
+
+  it("also signs the recorded card thumbnail", async () => {
+    ddbSend.mockResolvedValueOnce({
+      Items: [
+        {
+          sk: "CHECK#chk_01#ART#art_1",
+          artifactId: "art_1",
+          s3Key: "checks/site-1/chk_01/art_1",
+          thumbS3Key: "checks/site-1/chk_01/art_1.thumb.webp",
+        },
+      ],
+    });
+    presignGet.mockImplementation(async ({ key }) => `https://signed/${key}`);
+
+    const res = await callMedia(
+      mediaEvent({
+        checkId: "chk_01",
+        artifactId: "art_1",
+        siteClaim: "site-1",
+      }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    const payload = JSON.parse(res.body);
+    expect(payload.downloadUrl).toBe(
+      "https://signed/checks/site-1/chk_01/art_1",
+    );
+    expect(payload.thumbnailUrl).toBe(
+      "https://signed/checks/site-1/chk_01/art_1.thumb.webp",
+    );
+    expect(presignGet).toHaveBeenCalledTimes(2);
+  });
+
+  it("omits thumbnailUrl when none is recorded or the key is outside this check", async () => {
+    ddbSend.mockResolvedValueOnce({
+      Items: [
+        {
+          sk: "CHECK#chk_01#ART#art_1",
+          artifactId: "art_1",
+          s3Key: "checks/site-1/chk_01/art_1",
+          thumbS3Key: "checks/site-2/chk_01/art_1.thumb.webp",
+        },
+      ],
+    });
+    presignGet.mockResolvedValueOnce("https://signed.example/get");
+
+    const res = await callMedia(
+      mediaEvent({
+        checkId: "chk_01",
+        artifactId: "art_1",
+        siteClaim: "site-1",
+      }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    const payload = JSON.parse(res.body);
+    expect(payload.downloadUrl).toBe("https://signed.example/get");
+    expect(payload).not.toHaveProperty("thumbnailUrl");
+    expect(presignGet).toHaveBeenCalledTimes(1);
   });
 
   it("404s when no artifact matches the id (no presign)", async () => {

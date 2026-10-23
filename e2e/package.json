@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "e2e": "playwright test",
+    "test": "node --test a11y-report.test.mjs",
+    "a11y:report": "node a11y-report.mjs",
+    "a11y:local": "node a11y-local.mjs",
     "test:headed": "E2E_SLOW_MS=200 playwright test --headed",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json"
@@ -13,7 +16,7 @@
     "@axe-core/playwright": "4.13.0",
     "@eslint/js": "9.9.1",
     "@playwright/test": "1.63.0",
-    "ramp-check": "github:Mayor-s-Office-of-Innovation/ramp-check#36099c1d1f962ce6d250d95881a7482cd8c2bfcd",
+    "ramp-check": "github:Mayor-s-Office-of-Innovation/ramp-check#5fee75fe16e71c3748b417abf9818990904aef43",
     "typescript": "5.5.4"
   }
 }

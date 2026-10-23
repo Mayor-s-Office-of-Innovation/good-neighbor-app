@@ -38,8 +38,19 @@ skills-lock.json
 
 # Playwright e2e artifacts
 e2e/test-results/
+frontend/test-results/
 e2e/playwright-report/
+e2e/a11y-demo-report/
+# Designer's local ramp-check pass (npm run a11y:local -w e2e): report + bound session
+e2e/ramp-check-report/
+e2e/.a11y-local/
+# Root-level test-results/: Playwright writes here if invoked from the repo
+# root instead of the e2e workspace (artifacts are never source).
+/test-results/
 
-# Lighthouse CI local artifacts (lhci writes to ./<cwd>/.lighthouseci; CI and
-# local runs land it at the repo root)
-.lighthouseci/
+# speed-check (Lighthouse) reports written by `npm run perf` in frontend/;
+# CI uploads them as a workflow artifact.
+speed-check-report/
+
+# Generated Lighthouse CI reports
+/frontend/.lighthouseci/

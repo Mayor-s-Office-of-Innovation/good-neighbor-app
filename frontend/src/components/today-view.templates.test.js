@@ -8,13 +8,22 @@ import {
   emptyResults,
   errorView,
   homeAllDonePanel,
+  homeActions,
   homeResults,
   logoutDialog,
-  reasonPicker,
   settingsMenu,
   summaryBlock,
   taskTabs,
 } from "./today-view.templates.js";
+
+describe("homeActions", () => {
+  it("renders an icon for each overflow-menu action", () => {
+    const markup = homeActions({ checkLabel: "Start a full check" });
+
+    expect(markup).toContain('<wa-icon name="bullhorn"');
+    expect(markup).toContain('<wa-icon name="flag"');
+  });
+});
 
 describe("settingsMenu", () => {
   it("renders the menu only while open", () => {
@@ -23,14 +32,15 @@ describe("settingsMenu", () => {
     expect(open).toContain('aria-expanded="true"');
     expect(open).toContain('id="settings-feedback"');
     expect(open).toContain('id="settings-site-admin"');
+    expect(open).toContain('id="settings-reports"');
     expect(open).toContain('id="settings-attributions"');
     expect(open).toContain('id="settings-logout"');
   });
 
-  it("hides Site admin without admin access", () => {
-    expect(settingsMenu({ open: true, adminAccess: false })).not.toContain(
-      'id="settings-site-admin"',
-    );
+  it("hides Site admin and Reports without admin access", () => {
+    const markup = settingsMenu({ open: true, adminAccess: false });
+    expect(markup).not.toContain('id="settings-site-admin"');
+    expect(markup).not.toContain('id="settings-reports"');
   });
 });
 
@@ -203,23 +213,6 @@ describe("actionButton", () => {
   });
 });
 
-describe("reasonPicker", () => {
-  it("lists each reason and a cancel", () => {
-    const markup = reasonPicker({
-      reasons: [
-        { value: "Locked", label: "Cerrado" },
-        { value: "No access", label: "Sin acceso" },
-      ],
-    });
-    expect(markup.match(/data-action="cant-reason"/g)).toHaveLength(2);
-    expect(markup).toContain('data-reason="No access"');
-    expect(markup).toMatch(/>\s*Sin acceso\s*</);
-    expect(markup).not.toMatch(/>\s*No access\s*</);
-    expect(markup).toContain('data-action="cant-cancel"');
-    expect(markup).toContain(escapeHtml(t("common.cancel")));
-  });
-});
-
 describe("errorView", () => {
   it("shows the org line only when known", () => {
     expect(errorView({ identity: { org: "", site: "Site" } })).not.toContain(
@@ -245,4 +238,21 @@ describe("homeAllDonePanel", () => {
     expect(markup).toContain(escapeHtml(after));
     expect(markup).not.toContain("{link}");
   });
+});
+
+it("orders manager settings and uses the key icon for access", () => {
+  const markup = settingsMenu({ open: true, adminAccess: true });
+  const ids = [
+    "access",
+    "site-admin",
+    "reports",
+    "feedback",
+    "language",
+    "attributions",
+    "logout",
+  ];
+  const positions = ids.map((id) => markup.indexOf(`id="settings-${id}"`));
+  expect(positions.every((position) => position >= 0)).toBe(true);
+  expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  expect(markup).toContain('name="key"');
 });

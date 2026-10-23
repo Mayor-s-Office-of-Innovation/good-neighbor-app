@@ -15,6 +15,7 @@ const setup = vi.hoisted(() => ({
   registerDevice: vi.fn(),
   redeemEnrollmentGrant: vi.fn(),
   getSite: vi.fn(),
+  saveDiscoveredBindings: vi.fn(),
   setSite: vi.fn(),
 }));
 vi.mock("../services/onboarding.js", () => ({
@@ -28,7 +29,18 @@ vi.mock("../services/devices.js", () => ({
   redeemEnrollmentGrant: setup.redeemEnrollmentGrant,
 }));
 vi.mock("../db.js", () => ({
+  bindingFromSession: (session) => ({
+    siteId: session.site?.siteId,
+    deviceId: session.deviceId,
+    bindingId: session.bindingId,
+    physicalDeviceId: session.physicalDeviceId,
+    token: session.token,
+    refreshToken: session.refreshToken,
+    tokenGeneration: session.tokenGeneration,
+    accessLevel: session.accessLevel,
+  }),
   getSite: setup.getSite,
+  saveDiscoveredBindings: setup.saveDiscoveredBindings,
   setSite: setup.setSite,
 }));
 
@@ -56,6 +68,7 @@ afterEach(() => {
   setup.registerDevice.mockReset();
   setup.redeemEnrollmentGrant.mockReset();
   setup.getSite.mockReset();
+  setup.saveDiscoveredBindings.mockReset();
   setup.setSite.mockReset();
 });
 
@@ -65,7 +78,7 @@ describe("Manager enrollment URLs", () => {
     expect(markup).toContain("Welcome to Good Neighbor.");
     expect(markup).toContain('id="code-input"');
     expect(markup).toContain('id="continue"');
-    expect(markup).toContain("Need a new code?");
+    expect(markup).not.toContain("Need a new code?");
     expect(markup).not.toContain("Site Manager access");
     expect(markup).not.toContain("Enrollment link");
     expect(markup).not.toContain("Camera app");
@@ -103,6 +116,23 @@ describe("Manager enrollment URLs", () => {
     );
   });
 
+  it.each(["#enrollment_grant=grant-1&enrollment_token=secret", "#login=1"])(
+    "never redeems on opening %s",
+    (hash) => {
+      vi.stubGlobal("location", new URL("https://goodneighborsf.org/" + hash));
+      vi.stubGlobal("history", { replaceState: vi.fn() });
+      vi.stubGlobal("window", { addEventListener: vi.fn() });
+      const component = new SiteSetup();
+      component.getAttribute = vi.fn(() => null);
+      component.hasAttribute = vi.fn(() => false);
+      component._render = vi.fn();
+      component._redeemEnrollment = vi.fn();
+      component.connectedCallback();
+      expect(component._redeemEnrollment).not.toHaveBeenCalled();
+      expect(setup.redeemEnrollmentGrant).not.toHaveBeenCalled();
+      expect(component._checking).toBe(false);
+    },
+  );
   it("persists a redeemed Manager binding", async () => {
     setup.getSite.mockResolvedValue({ physicalDeviceId: "physical-1" });
     setup.redeemEnrollmentGrant.mockResolvedValue({
@@ -383,4 +413,109 @@ describe("site-switch validation", () => {
     expect(component._checking).toBe(false);
     expect(component._error).toBe(t("setup.error.save"));
   });
+});
+
+it.each([true, false])(
+  "clears login override only after a saved session (manager: %s)",
+  async (manager) => {
+    const location = new URL(
+      "https://goodneighborsf.org/?theme=dark#login=1&section=home",
+    );
+    vi.stubGlobal("location", location);
+    vi.stubGlobal("history", {
+      replaceState: (_state, _title, url) => {
+        location.href = new URL(url, location).href;
+      },
+    });
+    vi.stubGlobal("CustomEvent", class {});
+    const session = {
+      site: { siteId: "site-1", name: "Site" },
+      deviceId: "device-1",
+      token: "token",
+      refreshToken: "refresh",
+      expiresIn: 900,
+    };
+    setup.validateSetupCode.mockResolvedValue(
+      manager
+        ? { ok: true, enrollment: true, code: "ABC123" }
+        : {
+            ok: true,
+            code: "ABC123",
+            providerSite: { siteId: "site-1", name: "Site" },
+          },
+    );
+    setup.registerDevice.mockResolvedValue(session);
+    setup.redeemEnrollmentGrant.mockResolvedValue(session);
+    setup.saveDiscoveredBindings.mockResolvedValue(undefined);
+    setup.setSite.mockImplementation(async () => {
+      expect(location.hash).toContain("login=1");
+      return { siteId: "site-1" };
+    });
+    const component = new SiteSetup();
+    Object.assign(component, {
+      _otp: { value: "ABC123" },
+      _checking: false,
+      _validationGeneration: 0,
+      _cancelled: false,
+      _render: vi.fn(),
+      dispatchEvent: vi.fn(),
+    });
+    await component._validate();
+    expect(location.href).toBe(
+      "https://goodneighborsf.org/?theme=dark#section=home",
+    );
+    const { hasEnrollmentCredentials } = await import(
+      "../services/startup-auth.js"
+    );
+    expect(hasEnrollmentCredentials(location.href)).toBe(false);
+    expect(component.dispatchEvent).toHaveBeenCalledOnce();
+  },
+);
+
+it.each([true, false])(
+  "keeps the login override on persistence failure (manager: %s)",
+  async (manager) => {
+    vi.stubGlobal("location", new URL("https://goodneighborsf.org/#login=1"));
+    const replaceState = vi.fn();
+    vi.stubGlobal("history", { replaceState });
+    setup.validateSetupCode.mockResolvedValue(
+      manager
+        ? { ok: true, enrollment: true, code: "ABC123" }
+        : {
+            ok: true,
+            code: "ABC123",
+            providerSite: { siteId: "site-1", name: "Site" },
+          },
+    );
+    const session = {
+      site: { siteId: "site-1", name: "Site" },
+      expiresIn: 900,
+    };
+    setup.registerDevice.mockResolvedValue(session);
+    setup.redeemEnrollmentGrant.mockResolvedValue(session);
+    setup.setSite.mockRejectedValue(new Error("storage failed"));
+    const component = new SiteSetup();
+    Object.assign(component, {
+      _otp: { value: "ABC123" },
+      _checking: false,
+      _validationGeneration: 0,
+      _cancelled: false,
+      _render: vi.fn(),
+      dispatchEvent: vi.fn(),
+    });
+    await component._validate();
+    expect(replaceState).not.toHaveBeenCalled();
+    expect(component.dispatchEvent).not.toHaveBeenCalled();
+  },
+);
+
+it("shows the translated wait message for throttled code redemption", async () => {
+  setup.redeemEnrollmentGrant.mockRejectedValue(
+    Object.assign(new Error(), { code: "code_attempts_limited" }),
+  );
+  const component = new SiteSetup();
+  Object.assign(component, { _cancelled: false, _render: vi.fn() });
+  await component._redeemEnrollment({ code: "A1B2C3" });
+  expect(component._error).toBe(t("setup.enrollment.limited"));
+  expect(setup.setSite).not.toHaveBeenCalled();
 });

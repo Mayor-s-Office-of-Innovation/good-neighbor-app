@@ -2,6 +2,54 @@
 
 *Policy operations log for the action/escalation rulebase.*
 
+## actions-escalations-v8 - 2026-10-15
+
+- Imports `GNP - rubrics-3.csv` (39 rules). Removes full phone numbers from nine
+  button labels; Call 911 and Call 311 remain unchanged.
+- Explicit phone-number fields, routing, filing behavior, and all other rule
+  fields are unchanged. Prior catalogs and saved task snapshots remain available.
+
+## actions-escalations-v7 - 2026-10-15
+
+- Imports `GNP - rubrics-2.csv` (39 rules) with Sidewalk action, Phone call,
+  and 311 ticket action types. Filing is derived from type: the first two
+  file silently at creation; 311 tickets require user confirmation.
+- Phone numbers are explicit task snapshots. At viewport widths of 520px or
+  less, the phone CTA opens `tel:` and records the action as In progress;
+  wider viewports retain the checkbox without dialing.
+- Corrects BLOCK-3's primary agency to SFPD and THREAT-1's number to
+  415-553-0123. ANIMAL-4 and THREAT-3 have Moderate weighting.
+- Removes the Can't do this mutation and controls. Historical records remain
+  readable. Earlier policy catalogs remain registered.
+
+## actions-escalations-v6 - 2026-10-08
+
+- Source: `GNP - rubrics-updated-2.csv` (39 rules), checked in as
+  `backend/src/analysis/guidance/sources/GNP-rules-v6.csv`. Category source:
+  `GNP - categories.csv` (14 categories), checked in alongside it.
+- Activates the supplied rule fields, including SFAF needle pickup during
+  09:00–17:00 and SFFD low-severity fire-hazard calls during weekday 08:00–17:00.
+  Weekend daytime and overnight fire hazards route to 311; severity 3–5 routes
+  to 911 at all times. The source assigns FIRE-3 to overnight reporting and
+  FIRE-4 to emergencies.
+- Time validity accepts `HH:MM-HH:MM, Mo+Tu+We+Th+Fr`, using `Mo`, `Tu`, `We`,
+  `Th`, `Fr`, `Sa`, and `Su`. Without a qualifier, a range applies every day.
+  `24 hours` remains unrestricted. Endpoints include the entire named minute.
+- Both clock time and weekday come from the original report timestamp in
+  `America/Los_Angeles`, including daylight-saving transitions. For overnight
+  ranges, the weekday qualifier applies to the report's actual local calendar
+  day, not the day when the window began. Validation checks all seven days for
+  missing coverage when a category has weekday-qualified rules.
+- Canonical names now match the supplied category rubric, including “Someone
+  in distress” and “Threats, intimidation, or violence”. Older analyzer names
+  remain compatibility aliases in both guidance evaluation and capture labels.
+- The analyzer companion repository imports the category CSV as rubric
+  `good-neighbor-app` v2.0.0; the app now requests that version. Deploy the
+  analyzer version before deploying the app's updated request version.
+- Prior guidance catalogs and analyzer rubric v1 remain available. Saved
+  assessments keep their original policy version, and v6 task labels use their
+  persisted button text so reused rule IDs do not substitute older actions.
+
 ## actions-escalations-v5 - 2026-10-06
 
 - Source asset: `GNP rubrics.csv` (36 rules).
@@ -36,6 +84,11 @@
   animal category to `Animals`.
 - A zero-hour response value explicitly disables response-overdue assessment.
 - Preserved `actions-escalations-v2` for historical assessments and tasks.
+
+## 311 ticket closure reason correction - 2026-10-13
+
+- Silent informational ticket closures now use `UpdateType 11` with `ClosedReason` 1
+  (`NumericSubType: "1"`). The previously used reason 8 caused API closure errors.
 
 ## 311 ticket closure - 2026-09-04
 

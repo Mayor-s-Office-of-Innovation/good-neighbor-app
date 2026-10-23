@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv } from "vite";
+import { remoteApiPlugin } from "./scripts/vite-remote-api.mjs";
 
 const releaseSha =
   /** @type {{ process?: { env?: { RELEASE_SHA?: string } } }} */ (globalThis)
@@ -12,20 +13,54 @@ const releaseSha =
   paths to /index.html before the S3 origin (infra/modules/app/cloudfront.tf);
   Vite's dev/preview server serves the same SPA fallback locally.
 
-  TODO(offline pass): the PWA is intentionally OFF for the MVP — no service
-  worker is generated or registered while we finalize screens. When we do the
-  dedicated offline pass, re-wire vite-plugin-pwa here (it's already in
-  devDependencies) with a workbox precache of the shell + the write-queue/sync.
-  (The CSP hash for the inline theme script is now set in infra — see the
-  script-src note in infra/modules/app/main.tf; regenerate it there if that
-  script changes.) Reference manifest:
-    name "Good Neighbor App", short_name "Good Neighbor", display "standalone",
-    theme/background "#0f172a", icons icon-192.png / icon-512.png (+ maskable),
-    workbox precache of the built js, css, html, woff2, png, and svg assets.
+  TODO(offline pass): the service worker is intentionally OFF for the MVP —
+  none is generated or registered while we finalize screens. The installable
+  half of the PWA does ship: public/manifest.webmanifest (static, linked from
+  index.html) plus the icon set that scripts/make-pwa-icons.mjs derives from
+  public/img/gn-logo.png, and the Add-to-Home-Screen offer in
+  src/services/install-prompt.js.
+
+  A service worker is NOT needed for install (researched 2026-10-20, written
+  up in ../notes/pwa-install-plan.md). Chromium's installability evaluator
+  (components/webapps/browser/installable/installable_evaluator.cc on main)
+  checks only: secure origin, not incognito, a parseable manifest with a
+  valid start_url, name or short_name, a supported display, and a suitable
+  icon. No worker, fetch-handler, or offline check. Chrome 108 (Android) /
+  112 (desktop) dropped the worker requirement for menu install; the
+  beforeinstallprompt event followed later (exact version not pinned, but
+  Google's criteria page stopped listing it by Sept 2024). iOS Safari never
+  required one. The only devices that still need a worker to install are
+  stuck on old Chrome: Android 5 (Chrome 95) and 6 (Chrome 106) cannot
+  install at all without one; Android 7 (Chrome 119) can from the menu and
+  maybe not from the prompt. Under 1% of Play devices combined as of Jan 2026.
+  Third-party pages that still say "fetch handler required" are stale.
+
+  What the missing worker DOES cost is the offline launch: an installed app
+  opened with no network gets the browser's generic offline page instead of
+  the shell. That is the offline pass. When we do it, re-wire vite-plugin-pwa
+  here (it's already in devDependencies) with `manifest: false` so the static
+  manifest stays the source of truth, and a workbox precache of the built js,
+  css, html, woff2, png, and svg assets + the write-queue/sync. Register the
+  worker from a module, not an inline script: the CSP hash for the inline
+  theme script is set in infra — see the script-src note in
+  infra/modules/app/main.tf; regenerate it there if that script changes.
 */
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const localMinioApiPort = env.LOCAL_MINIO_API_PORT || "9000";
+
+  // Where the dev server forwards API paths. Default: the Docker-free local
+  // harness (npm run dev -w backend). Set API_PROXY_TARGET to a deployed origin
+  // (npm run dev:remote → https://dev.goodneighborsf.org) for "frontend-only
+  // mode": no local backend, JVM, MinIO, or analyzer key. Not VITE_-prefixed, so
+  // it never reaches the client bundle. An https target also installs the
+  // remote-api plugin that carries presigned S3 uploads through this server
+  // (see scripts/vite-remote-api.mjs for why that beats widening S3 CORS).
+  const apiProxyTarget = env.API_PROXY_TARGET || "http://localhost:3001";
+  const remoteApi = /^https:\/\//i.test(apiProxyTarget);
+  // CloudFront routes by Host, so a deployed target needs the browser's
+  // `127.0.0.1:5173` Host rewritten to the target's; the local harness doesn't.
+  const apiProxy = { target: apiProxyTarget, changeOrigin: remoteApi };
 
   return {
     base: "/",
@@ -54,12 +89,16 @@ export default defineConfig(({ mode }) => {
         },
       ],
     },
-    plugins: [],
+    plugins: remoteApi ? [remoteApiPlugin({ target: apiProxyTarget })] : [],
     define: {
       // Release stamp for error reports (services/error-report.js reads
       // __RELEASE__) and the key for the CI sourcemap upload. CI sets RELEASE_SHA
       // (deploy.yml); local builds get "dev". Guarded for non-Node contexts.
       __RELEASE__: JSON.stringify(releaseSha),
+      // Dev-server-only switch read by services/api.js: route presigned S3 PUTs
+      // through this server's /__s3/ middleware. `false` in every build, so the
+      // rewrite is dead code in production bundles.
+      __S3_UPLOAD_PROXY__: JSON.stringify(command === "serve" && remoteApi),
     },
     build: {
       // Source maps for the error tracker's symbolication (Phase 3 of the
@@ -89,21 +128,22 @@ export default defineConfig(({ mode }) => {
         ".ngrok-free.dev",
         "randi-nonstereotypical-alfredo.ngrok-free.dev",
       ],
-      // Dev-only: proxy the backend API to the local harness (npm run dev -w
-      // backend, :3001) so the app calls same-origin paths — no CORS, and the
-      // router needs no CORS headers. Because the proxy runs on the dev machine
-      // and forwards to 127.0.0.1, this also works when the app is opened from a
-      // phone on the LAN (e.g. `npm run dev:lan`): the browser only ever talks to
-      // this origin. Keep this route list in step with the local-api.mjs routes.
-      // In production the SPA and API share one CloudFront distribution, so the
-      // app uses a same-origin base and calls these same relative paths (see
-      // services/api.js + services/onboarding.js); presigned S3 PUTs go straight
-      // to their own origin and never touch this proxy.
+      // Dev-only: proxy the backend API (local harness on :3001 by default, or
+      // API_PROXY_TARGET) so the app calls same-origin paths — no CORS, and the
+      // router needs no CORS headers. Because the proxy runs on the dev machine,
+      // this also works when the app is opened from a phone on the LAN (e.g.
+      // `npm run dev:lan`): the browser only ever talks to this origin. Keep
+      // this route list in step with the local-api.mjs routes and the CloudFront
+      // API behaviors (infra/modules/app/cloudfront.tf). In production the SPA
+      // and API share one CloudFront distribution, so the app uses a same-origin
+      // base and calls these same relative paths (see services/api.js +
+      // services/onboarding.js); presigned S3 PUTs go straight to their own
+      // origin and never touch this proxy (except in remote mode — see above).
       proxy: {
-        "/v1": "http://localhost:3001",
-        "/app": "http://localhost:3001",
-        "/site-code": "http://localhost:3001",
-        "/health": "http://localhost:3001",
+        "/v1": apiProxy,
+        "/app/v1": apiProxy,
+        "/site-code": apiProxy,
+        "/health": apiProxy,
         // DynamoDB/SQS stay behind the API, but presigned media uploads go
         // directly to S3. Proxy the local bucket path so a phone using the HTTPS
         // ngrok origin can reach MinIO without receiving an unusable localhost

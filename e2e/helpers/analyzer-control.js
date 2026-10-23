@@ -10,13 +10,14 @@ const STUB = "http://127.0.0.1:3101";
 
 /**
  * @param {"multi" | "excellent"} fixture
+ * @param {"wide" | "detail" | null} [shotType]
  * @returns {Promise<void>}
  */
-export async function setAnalyzerFixture(fixture) {
+export async function setAnalyzerFixture(fixture, shotType = null) {
   const res = await fetch(`${STUB}/__control`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ fixture }),
+    body: JSON.stringify({ fixture, shotType }),
   });
   if (!res.ok) {
     throw new Error(`analyzer-stub control failed: ${res.status}`);

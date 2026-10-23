@@ -3,7 +3,8 @@
 ## Scope
 
 This runbook covers City individual-binding, selected-binding, Site-wide, and
-physical-device-wide, and emergency multi-Site revocation.
+physical-device-wide, emergency multi-Site revocation, and Provider Manager
+enrollment revocation.
 All operations preserve history. Re-enrollment creates a new binding; it never reactivates a
 revoked binding or lowers a credential generation.
 
@@ -21,6 +22,11 @@ revoked binding or lowers a credential generation.
 - Emergency multi-Site revocation previews every current binding for 2–20 selected Sites and
   requires the generated phrase. One transaction advances every selected Site generation
   before one asynchronous reconciliation job is queued per Site.
+- Provider Manager enrollment revocation is Supervisor-only and atomically revokes the
+  canonical binding, compatibility Device row, and physical pointer for every Site in that
+  enrollment (maximum 21). Deactivating the Provider Manager instead advances the membership
+  generation, immediately denying every derived binding; reinstatement does not reactivate
+  those older bindings.
 - Unmigrated legacy dev devices do not understand the Site generation, so the same request
   explicitly revokes their Device rows. A partial legacy reconciliation requires immediate
   follow-up.
@@ -77,3 +83,44 @@ Manager binding, a City administrator issues a new Manager grant for the still-a
 membership. Do not edit the suspended row back to `active`, reduce its token generation, or
 reuse its refresh family. Confirm the new binding is active and the old binding remains
 suspended with its original reason and timestamp.
+
+## Home Screen handoff grants
+
+A device running in iOS Safari keeps one pending `SESSION_HANDOFF#` grant
+(`handoffGrantId` on its `DEVICE#` row) so an Add to Home Screen carries the
+session into the installed app. Redemption re-checks the device, its binding,
+the Site generation, and Manager membership exactly like the authorizer, so
+every revocation above also kills any pending grant; nothing extra is needed.
+An explicit sign-out in Safari retires the grant (`session_handoff_retired`
+audit event) and puts the static manifest back on the page.
+A redeem bumps `tokenGeneration` and writes a `session_handed_off` audit
+event, which is also what a stolen grant would look like: a Site reporting
+"signed out without installing" is the signal to revoke and re-enroll.
+
+## Compliance dashboard controls
+
+Site details contains Site Manager assignments and the add/edit/remove controls.
+App access contains direct magic-link and one-time-code email actions, enrollment
+history with its delivery type, and enrolled-device nicknames and attribution.
+Manager devices show their membership email. Team devices show the issuing
+manager's email resolved through the staff grant. Older records without a known
+association show “Email unavailable”; a nickname alone is not proof of ownership.
+
+The red trash icon revokes only that row's Site access, with confirmation.
+The Site-wide revocation control still affects every device at that Site.
+
+On Manager details, below Assigned sites, “Remove access to all sites” requires
+the manager's email as confirmation. Its endpoint is
+`POST /admin/v1/programs/{programId}/users/{userId}/devices:revoke`.
+It discovers memberships using the email directory, Program Sites, and active
+Site directory (including retained memberships after a lead Program change),
+revalidates their Program/user identity, and revokes the manager's own Site bindings. It does not remove assignments, deactivate memberships, revoke
+team devices, or disable the physical device identity. A new valid enrollment
+can therefore restore app access. Pending invitations are not cancelled.
+
+Revocation uses atomic batches of at most 20 bindings, updating canonical,
+compatibility, and physical-device pointer records together with a Program audit
+event. A failure returns `409 manager_device_revocation_incomplete` and the count
+confirmed so far; retry discovers remaining non-revoked bindings. A timeout can
+leave the latest batch's outcome uncertain, so the UI never claims full success
+on a failed request. Batches already completed remain revoked.

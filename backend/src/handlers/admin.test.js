@@ -14,6 +14,7 @@ const {
   geocodeAddress,
   headObject,
   presignPut,
+  presignGet,
   setObjectTags,
 } = vi.hoisted(() => ({
   send: vi.fn(),
@@ -21,6 +22,7 @@ const {
   geocodeAddress: vi.fn(),
   headObject: vi.fn(),
   presignPut: vi.fn(),
+  presignGet: vi.fn(),
   setObjectTags: vi.fn(),
 }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
@@ -38,17 +40,17 @@ vi.mock("../s3.js", () => ({
   deleteObject,
   headObject,
   presignPut,
+  presignGet,
   setObjectTags,
 }));
 
 const {
+  getAdminSite,
   createCityProgramManager,
-  createMasterContact,
   createProvider,
   createSite,
   deactivateProvider,
   deactivateSite,
-  deactivateMasterContact,
   issueAdminSetupCode,
   listDevices,
   listProviders,
@@ -78,6 +80,7 @@ beforeEach(() => {
   deleteObject.mockResolvedValue({});
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
   vi.stubEnv("S3_UPLOAD_BUCKET", "gnp-test-uploads");
+  vi.stubEnv("S3_COMPLIANCE_LETTER_BUCKET", "gnp-test-compliance-letters");
   vi.stubEnv("SQS_QUEUE_URL", "https://sqs.example/queue");
   vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "test-setup-secret");
 });
@@ -87,6 +90,8 @@ describe("admin authorization", () => {
     "central-admin",
     "[central-admin]",
     "[support, central-admin]",
+    "[support central-admin]",
+    "[central-admin compliance-supervisor]",
     '["support","central-admin"]',
     ["support", "central-admin"],
   ])(
@@ -103,7 +108,6 @@ describe("admin authorization", () => {
     "not-central-admin",
     "[not-central-admin]",
     "[central-admin-readonly]",
-    "[support central-admin]",
     "[central-admin",
     '["central-admin-readonly"]',
     { role: "central-admin" },
@@ -135,6 +139,7 @@ describe("City program manager administration", () => {
         firstName: "Jamie",
         lastName: "Lee",
         email: "jamie.lee@sfgov.org",
+        phone: "415-555-0123",
       }),
     );
     expect(res.statusCode).toBe(201);
@@ -328,6 +333,7 @@ describe("provider and site management", () => {
           publicContact: {
             email: "public@example.org",
             phone: "415-555-0100",
+            phoneExtension: "0042",
           },
         },
         "central-admin",
@@ -337,12 +343,13 @@ describe("provider and site management", () => {
 
     expect(res.statusCode).toBe(201);
     const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[3][0]);
-    expect(tx.input.TransactItems).toHaveLength(6);
+    expect(tx.input.TransactItems).toHaveLength(7);
     expect(tx.input.TransactItems?.[0]?.Put?.Item).toMatchObject({
       addressParts: { city: "San Francisco", state: "CA", zip: "94102" },
       publicContact: {
         email: "public@example.org",
         phone: "415-555-0100",
+        phoneExtension: "0042",
       },
       primaryContactUserId: "user-one",
     });
@@ -356,7 +363,7 @@ describe("provider and site management", () => {
     });
   });
 
-  it("rejects a program owned by a different provider", async () => {
+  it("allows a site program affiliated with a different provider", async () => {
     send
       .mockResolvedValueOnce({
         Item: {
@@ -387,12 +394,11 @@ describe("provider and site management", () => {
       ),
     );
 
-    expect(res.statusCode).toBe(400);
-    expect(JSON.parse(res.body)).toEqual({ error: "incompatible_program" });
-    expect(geocodeAddress).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(201);
+    expect(JSON.parse(res.body).site.providerId).toBe("provider-one");
   });
 
-  it("reassigns a site without changing site or access records", async () => {
+  it("reassigns a site preserving direct access while invalidating old provider access", async () => {
     send
       .mockResolvedValueOnce({
         Item: {
@@ -434,8 +440,13 @@ describe("provider and site management", () => {
     expect(res.statusCode).toBe(200);
     const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[3][0]);
     expect(tx.input.TransactItems).toHaveLength(6);
+    expect(
+      tx.input.TransactItems?.[0]?.Update?.ExpressionAttributeValues?.[
+        ":providerGeneration"
+      ],
+    ).toBe(1);
     expect(tx.input.TransactItems?.[0]?.Update?.UpdateExpression).not.toMatch(
-      /token|generation|device/i,
+      /tokenGeneration|siteCredentialGeneration|device/i,
     );
     expect(tx.input.TransactItems).toEqual(
       expect.arrayContaining([
@@ -499,72 +510,6 @@ describe("provider and site management", () => {
 
     expect(send).toHaveBeenCalledTimes(2);
     expect(send.mock.calls[1][0]).toBeInstanceOf(TransactWriteCommand);
-  });
-
-  it("adds master contacts to a site", async () => {
-    send.mockResolvedValue({});
-
-    const res = await call(
-      createMasterContact,
-      event({ email: "Lead@Example.org", name: "Site Lead" }, "central-admin", {
-        siteId: "site-1",
-      }),
-    );
-
-    expect(res.statusCode).toBe(201);
-    const put = /** @type {PutCommand} */ (send.mock.calls[0][0]);
-    expect(put.input.Item).toMatchObject({
-      pk: "SITE#site-1",
-      type: "masterContact",
-      email: "lead@example.org",
-      status: "active",
-    });
-  });
-
-  it("revokes pending setup codes when removing master contacts", async () => {
-    send
-      .mockResolvedValueOnce({
-        Attributes: {
-          pk: "SITE#site-1",
-          sk: "MASTER_CONTACT#contact-hash",
-          emailHash: "contact-hash",
-          status: "inactive",
-        },
-      })
-      .mockResolvedValueOnce({
-        Items: [
-          {
-            pk: "SETUP_CODE#old",
-            sk: "#META",
-            status: "pending",
-            gsi6pk: "SETUP_CODE_PENDING#site-1#contact-hash",
-            gsi6sk: "2026-01-01T00:00:00.000Z",
-          },
-        ],
-      })
-      .mockResolvedValueOnce({});
-
-    const res = await call(
-      deactivateMasterContact,
-      event(undefined, "central-admin", {
-        siteId: "site-1",
-        emailHash: "contact-hash",
-      }),
-    );
-
-    expect(res.statusCode).toBe(200);
-    const query = /** @type {QueryCommand} */ (send.mock.calls[1][0]);
-    expect(query).toBeInstanceOf(QueryCommand);
-    expect(query.input.ExpressionAttributeValues).toMatchObject({
-      ":pk": "SETUP_CODE_PENDING#site-1#contact-hash",
-    });
-    const revoke = /** @type {PutCommand} */ (send.mock.calls[2][0]);
-    expect(revoke.input.Item).toMatchObject({
-      pk: "SETUP_CODE#old",
-      status: "revoked",
-      revokedReason: "contact_removed",
-    });
-    expect(revoke.input.Item?.gsi6pk).toBeUndefined();
   });
 
   it("lists providers from the provider search partition", async () => {
@@ -740,6 +685,7 @@ describe("provider and site management", () => {
             bindingId: "binding-1",
             siteId: "site-1",
             label: "Current tablet",
+            membershipId: "member-1",
             accessLevel: "manager",
             status: "active",
           },
@@ -756,7 +702,11 @@ describe("provider and site management", () => {
             status: "active",
           },
         ],
-      });
+      })
+      .mockResolvedValueOnce({
+        Items: [{ membershipId: "member-1", email: "manager@example.org" }],
+      })
+      .mockResolvedValueOnce({ Items: [] });
 
     const res = await call(
       listDevices,
@@ -768,6 +718,7 @@ describe("provider and site management", () => {
       expect.objectContaining({
         bindingId: "binding-1",
         label: "Current tablet",
+        managerEmail: "manager@example.org",
         legacy: false,
       }),
       expect.objectContaining({
@@ -776,6 +727,44 @@ describe("provider and site management", () => {
         legacy: true,
       }),
     ]);
+  });
+
+  it("includes team nicknames and enrolling manager email without exposing grants", async () => {
+    send
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            bindingId: "team-1",
+            label: "Front desk iPad",
+            accessLevel: "general",
+            enrolledByGrantId: "grant-1",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({
+        Items: [{ membershipId: "manager-1", email: "manager@example.org" }],
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            grantId: "grant-1",
+            issuerMembershipId: "manager-1",
+            tokenHash: "secret-verifier",
+          },
+        ],
+      });
+    const res = await call(
+      listDevices,
+      event(undefined, "central-admin", { siteId: "site-1" }),
+    );
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).devices[0]).toMatchObject({
+      label: "Front desk iPad",
+      enrolledByEmail: "manager@example.org",
+      managerEmail: "",
+    });
+    expect(res.body).not.toContain("secret-verifier");
   });
 
   it("retains revocation compatibility for a pre-binding dev device", async () => {
@@ -1106,6 +1095,64 @@ describe("provider and site management", () => {
     ).not.toHaveProperty(":compliance");
   });
 
+  it("updates oversight and the shared program-manager phone atomically", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          name: "Site One",
+          status: "active",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+            sk: "MANAGER#rob@sfgov.org",
+            userId: "manager-1",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({});
+
+    const res = await call(
+      updateSite,
+      event(
+        {
+          name: "Site One",
+          oversight: {
+            managingCityDepartment: "DPH",
+            managingSystemOfCare: "BHS-PBH",
+            cityProgramManagerId: "manager-1",
+            cityProgramManager: "Rob Hoffman",
+          },
+          programManagerPhone: "415-555-0199",
+        },
+        "central-admin",
+        { siteId: "site-1" },
+      ),
+    );
+
+    expect(res.statusCode).toBe(200);
+    const transaction = /** @type {TransactWriteCommand} */ (
+      send.mock.calls[2][0]
+    );
+    expect(transaction.input.TransactItems?.length).toBeGreaterThanOrEqual(2);
+    expect(transaction.input.TransactItems?.[1]).toMatchObject({
+      Update: {
+        Key: {
+          pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+          sk: "MANAGER#rob@sfgov.org",
+        },
+        ExpressionAttributeValues: expect.objectContaining({
+          ":phone": "415-555-0199",
+        }),
+      },
+    });
+  });
+
   it("updates all site information fields and supersedes the current letter", async () => {
     send
       .mockResolvedValueOnce({
@@ -1152,7 +1199,7 @@ describe("provider and site management", () => {
             cityProgramManagerLastName: "Hoffman",
           },
           compliance: {
-            currentTier: 2,
+            underEnhancedMonitoring: true,
             periodStart: "2026-01-15",
             periodEnd: "",
             requiredChecksPerDay: 3,
@@ -1171,11 +1218,11 @@ describe("provider and site management", () => {
 
     expect(res.statusCode).toBe(200);
     expect(headObject).toHaveBeenCalledWith({
-      bucket: "gnp-test-uploads",
+      bucket: "gnp-test-compliance-letters",
       key: "compliance-letters/site-1/new.pdf",
     });
     expect(setObjectTags).toHaveBeenCalledWith({
-      bucket: "gnp-test-uploads",
+      bucket: "gnp-test-compliance-letters",
       key: "compliance-letters/site-1/new.pdf",
       tags: { state: "active" },
     });
@@ -1196,7 +1243,7 @@ describe("provider and site management", () => {
         cityProgramManager: "Rob Hoffman",
       },
       ":compliance": {
-        currentTier: 2,
+        underEnhancedMonitoring: true,
         periodStart: "2026-01-15",
         periodEnd: "",
         requiredChecksPerDay: 3,
@@ -1253,7 +1300,7 @@ describe("provider and site management", () => {
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.body).error).toBe("invalid_compliance_letter");
     expect(deleteObject).toHaveBeenCalledWith({
-      bucket: "gnp-test-uploads",
+      bucket: "gnp-test-compliance-letters",
       key: "compliance-letters/site-1/too-large.pdf",
     });
     expect(send).toHaveBeenCalledTimes(1);
@@ -1299,7 +1346,7 @@ describe("provider and site management", () => {
       "updatedAt = :expectedUpdatedAt",
     );
     expect(deleteObject).toHaveBeenCalledWith({
-      bucket: "gnp-test-uploads",
+      bucket: "gnp-test-compliance-letters",
       key: "compliance-letters/site-1/concurrent.pdf",
     });
   });
@@ -1327,7 +1374,7 @@ describe("provider and site management", () => {
     const body = JSON.parse(res.body);
     expect(body.s3Key).toMatch(/^compliance-letters\/site-1\/[0-9a-f-]+\.pdf$/);
     expect(presignPut).toHaveBeenCalledWith({
-      bucket: "gnp-test-uploads",
+      bucket: "gnp-test-compliance-letters",
       key: body.s3Key,
       contentType: "application/pdf",
       tagging: "state=pending",
@@ -1342,7 +1389,7 @@ describe("provider and site management", () => {
  * @param {Record<string,string>} [pathParameters]
  * @returns {any}
  */
-function event(body, groups = "central-admin", pathParameters = {}) {
+function event(body, groups = "compliance-supervisor", pathParameters = {}) {
   return {
     body: body === undefined ? undefined : JSON.stringify(body),
     pathParameters,
@@ -1350,7 +1397,8 @@ function event(body, groups = "central-admin", pathParameters = {}) {
       authorizer: {
         jwt: {
           claims: {
-            "cognito:groups": groups,
+            "cognito:groups":
+              groups === "central-admin" ? "compliance-supervisor" : groups,
           },
         },
       },
@@ -1366,3 +1414,95 @@ function event(body, groups = "central-admin", pathParameters = {}) {
 function call(handler, evt) {
   return Promise.resolve(handler(evt, /** @type {any} */ ({}), () => {}));
 }
+
+it("returns the current directory name to the dashboard site directory", async () => {
+  send.mockResolvedValueOnce({
+    Items: [
+      {
+        pk: "SITE#site-1",
+        sk: "#META",
+        oversight: {
+          cityProgramManagerId: "manager-1",
+          cityProgramManager: "Old Name",
+        },
+      },
+    ],
+  });
+  send.mockResolvedValueOnce({
+    Items: [{ userId: "manager-1", firstName: "New", lastName: "Name" }],
+  });
+  const request = /** @type {any} */ ({
+    pathParameters: { siteId: "site-1" },
+    requestContext: {
+      authorizer: {
+        jwt: { claims: { "cognito:groups": "compliance-supervisor" } },
+      },
+    },
+  });
+  const response = await /** @type {any} */ (getAdminSite)(request);
+  expect(JSON.parse(response.body).items[0].oversight.cityProgramManager).toBe(
+    "New Name",
+  );
+});
+
+it("loads every roster prefix page without querying the entire site history", async () => {
+  const cursor = { pk: "SITE#s1", sk: "ASSIGNED_USER#middle" };
+  send.mockImplementation(async (command) => {
+    if (command instanceof GetCommand)
+      return { Item: { sk: "#META", siteId: "s1" } };
+    const input = command.input;
+    if (input.ExpressionAttributeValues[":prefix"] === "MANAGER_MEMBERSHIP#")
+      return { Items: [{ type: "managerMembership", userId: "u2" }] };
+    if (!input.ExclusiveStartKey)
+      return {
+        Items: [{ type: "siteUserAssignment", userId: "u1" }],
+        LastEvaluatedKey: cursor,
+      };
+    return { Items: [{ type: "siteUserAssignment", userId: "u3" }] };
+  });
+  const request = event(undefined, "central-admin", { siteId: "s1" });
+  request.queryStringParameters = { roster: "1" };
+  const response = await call(getAdminSite, request);
+  expect(
+    JSON.parse(String(response.body))
+      .items.map((/** @type {any} */ row) => row.userId)
+      .filter(Boolean)
+      .sort(),
+  ).toEqual(["u1", "u2", "u3"]);
+  const queries = send.mock.calls
+    .map(([command]) => command)
+    .filter((command) => command instanceof QueryCommand);
+  expect(queries).toHaveLength(3);
+  expect(
+    queries.every((command) =>
+      command.input.KeyConditionExpression?.includes("begins_with"),
+    ),
+  ).toBe(true);
+  expect(
+    queries.some((command) => command.input.ExclusiveStartKey === cursor),
+  ).toBe(true);
+});
+
+it("does not allow manual site primary contact changes", async () => {
+  send
+    .mockResolvedValueOnce({
+      Item: {
+        siteId: "site-1",
+        name: "Mission",
+        updatedAt: "old",
+        primaryContactUserId: "oldest",
+      },
+    })
+    .mockResolvedValue({});
+  const response = await call(
+    updateSite,
+    event({ name: "Mission", primaryContactUserId: "u1" }, "central-admin", {
+      siteId: "site-1",
+    }),
+  );
+  expect(response.statusCode).toBe(200);
+  const tx = send.mock.calls.find(
+    ([command]) => command instanceof TransactWriteCommand,
+  )?.[0].input.TransactItems;
+  expect(tx[0].Update.UpdateExpression).not.toContain("primaryContact");
+});

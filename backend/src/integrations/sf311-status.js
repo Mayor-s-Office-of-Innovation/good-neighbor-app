@@ -227,12 +227,14 @@ function updateEvent(update) {
     kind = "detailsUpdated";
     description = notes;
   } else if (type === "10") kind = "accepted";
-  else if (type === "11" && CLOSED_REASONS[numeric]) {
+  else if (type === "11") {
     kind = "resolved";
-    extra.closureReason = CLOSED_REASONS[numeric];
+    if (CLOSED_REASONS[numeric]) extra.closureReason = CLOSED_REASONS[numeric];
     if (notes) extra.notes = notes;
     description = [
-      fill(EVENT_DESCRIPTIONS.agencySaid, CLOSED_REASONS[numeric]),
+      CLOSED_REASONS[numeric]
+        ? fill(EVENT_DESCRIPTIONS.agencySaid, CLOSED_REASONS[numeric])
+        : "",
       notes,
     ]
       .filter(Boolean)
@@ -251,7 +253,7 @@ function updateEvent(update) {
     update.ToHubDate,
     update.ToAgencyDate,
   );
-  if (!occurredAt) return null;
+  if (!occurredAt && kind !== "resolved") return null;
   return {
     kind: /** @type {keyof typeof EVENT_TITLES} */ (kind),
     ...(value ? { value } : {}),
@@ -328,6 +330,27 @@ export function serviceRequestClosureState(body, srNum) {
   return summaryStatus && STATUS_NAMES[summaryStatus] ? "open" : "unknown";
 }
 
+/**
+ * Read the observed HUB closure reason, preferring the latest closure update
+ * over a potentially stale summary. An absent reason stays unspecified.
+ * @param {unknown} body
+ * @param {string} srNum
+ * @returns {string}
+ */
+export function serviceRequestClosureReason(body, srNum) {
+  const record = findServiceRequest(body, srNum);
+  if (!record) return "";
+  const updates = requestUpdates(record)
+    .filter((item) => item && typeof item === "object")
+    .map((item) => /** @type {Record<string, unknown>} */ (item))
+    .filter((update) => first(update, "UpdateType", "update_type") === "11")
+    .sort((a, b) => updateDate(b).localeCompare(updateDate(a)));
+  if (updates.length) {
+    return first(updates[0], "NumericSubType", "numeric_sub_type");
+  }
+  return first(record, "ClosedReason", "ClosedReasonCode", "closed_reason");
+}
+
 /** Normalize a HUB record into the app's stable, PII-free ticket-detail contract. */
 /** @param {{record: Record<string, unknown>, task: Record<string, any>, srNum: string, now?: Date}} params */
 export function normalizeSf311Detail({
@@ -389,6 +412,21 @@ export function normalizeSf311Detail({
         : null,
     )
     .filter((item) => item !== null);
+  // A summary-only closure has no trustworthy occurrence time. Keep it undated.
+  if (
+    status === "Closed" &&
+    !events.some(
+      (event) =>
+        event.kind === "resolved" ||
+        (event.kind === "statusChanged" && event.value === "Closed"),
+    )
+  ) {
+    events.push({
+      kind: "resolved",
+      title: EVENT_TITLES.resolved,
+      occurredAt: "",
+    });
+  }
   if (submittedAt)
     events.push({
       kind: "submitted",
@@ -423,6 +461,7 @@ export function normalizeSf311Detail({
     status,
     responseOverdue: Boolean(overdue),
     ...(statusDetail ? { statusDetail } : {}),
+    ...(closedReasonCode ? { closedReason: closedReasonCode } : {}),
     ...(closureReason ? { closureReason } : {}),
     ...(location ? { location } : {}),
     problemType:

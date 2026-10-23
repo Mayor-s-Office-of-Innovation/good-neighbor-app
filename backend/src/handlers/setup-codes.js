@@ -40,7 +40,7 @@ const setupCodeSecretCache = new Map();
  * @property {number} uses
  * @property {string} siteId
  * @property {string} siteName
- * @property {"general"|"admin"} [accessLevel]
+ * @property {"general"|"manager"|"admin"} [accessLevel]
  * @property {string} [providerId]
  * @property {string} [providerName]
  * @property {string} [providerSiteId]
@@ -60,7 +60,7 @@ const setupCodeSecretCache = new Map();
  * @property {string} providerSiteId
  * @property {string} siteId
  * @property {string} siteName
- * @property {"general"|"admin"} [accessLevel]
+ * @property {"general"|"manager"|"admin"} [accessLevel]
  */
 
 /**
@@ -71,7 +71,7 @@ const setupCodeSecretCache = new Map();
  * @property {string} siteId
  * @property {string} siteName
  * @property {string|undefined} providerSiteId
- * @property {"general"|"admin"} [accessLevel]
+ * @property {"general"|"manager"} [accessLevel]
  * @property {number} [siteCredentialGeneration]
  */
 
@@ -156,7 +156,7 @@ export function consumeSetupCodeTransactItem(valid, nowIso) {
 /**
  * Issue a setup code for a site/contact, invalidating any pending code for the
  * same pair before writing the replacement.
- * @param {{ siteId: string, siteName: string, providerId?: string, providerName?: string, providerSiteId?: string, issuedTo: string, issuedBy: string, accessLevel?: "general"|"admin", now?: Date, generateCode?: () => string }} input
+ * @param {{ siteId: string, siteName: string, providerId?: string, providerName?: string, providerSiteId?: string, issuedTo: string, issuedBy: string, accessLevel?: "general"|"manager"|"admin", now?: Date, generateCode?: () => string }} input
  * @returns {Promise<{ code: string, item: SetupCodeItem }>}
  */
 export async function issueSetupCode(input) {
@@ -188,10 +188,10 @@ export async function issueSetupCode(input) {
 /**
  * Unknown and legacy values fail closed to general access.
  * @param {unknown} value
- * @returns {"general"|"admin"}
+ * @returns {"general"|"manager"}
  */
 export function normalizeAccessLevel(value) {
-  return value === "admin" ? "admin" : "general";
+  return value === "manager" || value === "admin" ? "manager" : "general";
 }
 
 /**
@@ -388,7 +388,7 @@ async function getCurrentSetupCodeReference({ siteId, contactHash }) {
 }
 
 /**
- * @param {{ siteId: string, siteName: string, providerId?: string, providerName?: string, providerSiteId?: string, issuedTo: string, issuedBy: string, accessLevel?: "general"|"admin", now: Date, nowIso: string, contactHash: string, current?: CurrentSetupCodeReference, generateCode?: () => string }} input
+ * @param {{ siteId: string, siteName: string, providerId?: string, providerName?: string, providerSiteId?: string, issuedTo: string, issuedBy: string, accessLevel?: "general"|"manager"|"admin", now: Date, nowIso: string, contactHash: string, current?: CurrentSetupCodeReference, generateCode?: () => string }} input
  * @returns {Promise<{ code: string, item: SetupCodeItem }>}
  */
 async function reserveCurrentSetupCode(input) {
@@ -464,7 +464,7 @@ function writeCurrentSetupCode(input, item) {
 }
 
 /**
- * @param {{ siteId: string, siteName: string, providerId?: string, providerName?: string, providerSiteId?: string, issuedTo: string, issuedBy: string, accessLevel?: "general"|"admin", now: Date, nowIso: string, contactHash: string, code: string, codeVerifier: string }} input
+ * @param {{ siteId: string, siteName: string, providerId?: string, providerName?: string, providerSiteId?: string, issuedTo: string, issuedBy: string, accessLevel?: "general"|"manager"|"admin", now: Date, nowIso: string, contactHash: string, code: string, codeVerifier: string }} input
  * @returns {SetupCodeItem}
  */
 function setupCodeItem(input) {

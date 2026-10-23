@@ -36,7 +36,14 @@ const SHORT_TEXT = "Trash by door";
 const DESCRIPTION =
   "Sidewalks are clear on both sides. There is trash near the entrance and " +
   "graffiti on the wall, plus a tent against the side of the building.";
-const RECOMMENDED_PHOTOS = 3;
+
+/** @param {import("@playwright/test").Page} page */
+async function startSingleIssue(page) {
+  await page.locator("#home-action-menu-trigger").click();
+  const reportProblem = page.locator("#report-problem");
+  await expect(reportProblem).toBeVisible();
+  await reportProblem.click();
+}
 
 test.describe("describe instead", () => {
   test("one description completes a check with zero photos and yields task cards", async ({
@@ -146,10 +153,7 @@ test.describe("describe instead", () => {
 
     // One description satisfies the rule with zero photos.
     await expect(page.locator(".shot img")).toHaveCount(0);
-    await expect(progress).toContainText(
-      t("check.progress.count", { photos: 0, recommended: RECOMMENDED_PHOTOS }),
-    );
-    await expect(progress).toContainText(t("check.progress.hint"));
+    await expect(progress).toBeHidden();
     await expect(progress).not.toContainText("Description saved");
     await expect(progress).not.toContainText("Ready to finish");
     await expect(done).toBeEnabled();
@@ -166,7 +170,7 @@ test.describe("describe instead", () => {
   test("single-issue capture and description share the flow width and 20-character minimum", async ({
     page,
   }) => {
-    await page.locator("#report-problem").click();
+    await startSingleIssue(page);
     await expect(page).toHaveURL(/\/problem$/);
     const capture = page.locator(".single-issue");
     const captureWidth = await capture.evaluate(
@@ -262,8 +266,10 @@ test.describe("describe instead", () => {
   test("failed single-issue analysis is not reported as problem-free", async ({
     page,
   }) => {
-    await page.locator("#report-problem").click();
+    await startSingleIssue(page);
     await expect(page).toHaveURL(/\/problem$/);
+    // The route changes before the async draft/site load creates the session.
+    await expect(page.locator("#submit-report")).toBeVisible();
 
     await page.evaluate(async () => {
       // @ts-expect-error -- this URL is resolved by the Vite browser server.

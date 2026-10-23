@@ -56,3 +56,22 @@ export function keyboardViewport(viewport, layoutHeight, editing) {
   if (!(height > 0) || height >= layoutHeight - 1) return null;
   return { height, top: Math.max(0, Math.round(viewport.offsetTop)) };
 }
+
+/** Reveal a focused field after the keyboard animation changes the viewport.
+ * @param {{ getBoundingClientRect: () => {top: number, bottom: number, height: number}, scrollIntoView: (options: ScrollIntoViewOptions) => void } | null} active
+ * @param {{height: number, offsetTop: number, scale: number} | null | undefined} viewport
+ */
+export function revealEditable(active, viewport) {
+  if (!active || !viewport || viewport.scale !== 1) return;
+  const rect = active.getBoundingClientRect();
+  const top = viewport.offsetTop + 16;
+  const bottom = viewport.offsetTop + viewport.height - 16;
+  // A tall textarea cannot fit completely: reveal its beginning without
+  // repeatedly centering it on each Safari pan event.
+  const tall = rect.height > bottom - top;
+  if (rect.top < top || (tall ? rect.top > bottom - 48 : rect.bottom > bottom))
+    active.scrollIntoView({
+      block: tall ? "start" : "center",
+      behavior: "instant",
+    });
+}

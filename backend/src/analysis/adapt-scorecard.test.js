@@ -6,6 +6,41 @@ import { multiHighConcernResponse } from "./fixtures/multi-high-concern.js";
 import { realPoorSampleResponse } from "./fixtures/real-poor-sample.js";
 
 describe("adaptAssessment", () => {
+  it.each(["wide", "detail"])(
+    "carries %s photo framing from manifest index zero",
+    (shotType) => {
+      const response = {
+        ...excellentResponse,
+        media_manifest: [
+          { index: 1, type: "image", shot_type: "detail" },
+          { index: 0, type: "image", shot_type: shotType },
+        ],
+      };
+      expect(
+        adaptAssessment(
+          /** @type {import("./contract.js").AnalysisResponse} */ (response),
+        ).shotType,
+      ).toBe(shotType);
+    },
+  );
+  it("ignores absent, unknown, text, or other-index framing", () => {
+    for (const manifest of [
+      undefined,
+      [{ index: 0, type: "image", shot_type: "unknown" }],
+      [{ index: 0, type: "text", shot_type: "wide" }],
+      [{ index: 1, type: "image", shot_type: "wide" }],
+    ]) {
+      expect(
+        adaptAssessment(
+          /** @type {import("./contract.js").AnalysisResponse} */ ({
+            ...excellentResponse,
+            media_manifest: manifest,
+          }),
+        ),
+      ).not.toHaveProperty("shotType");
+    }
+  });
+
   it("adopts the service grade and carries provenance", () => {
     const adapted = adaptAssessment(excellentResponse);
     expect(adapted.grade).toBe("Excellent");
@@ -87,7 +122,7 @@ describe("adaptAssessment", () => {
     expect(litter).not.toHaveProperty("ratingLabel");
   });
 
-  it("carries the condition's translations block through untouched", () => {
+  it("stores the condition's single translations block as a per-locale map", () => {
     const response = {
       ...singleLowConcernResponse,
       assessment: {
@@ -109,10 +144,30 @@ describe("adaptAssessment", () => {
     const adapted = adaptAssessment(response);
 
     expect(adapted.concerns[0].translations).toEqual({
-      language: "es",
-      user_friendly_label: "Basura scatterada",
-      description: "Envolturas a lo largo del bordillo.",
+      es: {
+        user_friendly_label: "Basura scatterada",
+        description: "Envolturas a lo largo del bordillo.",
+      },
     });
+  });
+
+  it("drops a malformed translations block instead of failing the analysis", () => {
+    const response = {
+      ...singleLowConcernResponse,
+      assessment: {
+        ...singleLowConcernResponse.assessment,
+        identified_conditions_of_concern: [
+          {
+            ...singleLowConcernResponse.assessment
+              .identified_conditions_of_concern[0],
+            translations: /** @type {any} */ ({ language: "es" }),
+          },
+        ],
+      },
+    };
+    expect(adaptAssessment(response).concerns[0]).not.toHaveProperty(
+      "translations",
+    );
   });
 
   it("omits translations when the service does not provide one (English request)", () => {

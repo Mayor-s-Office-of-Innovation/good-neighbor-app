@@ -7,8 +7,9 @@
     "build": "vite build",
     "dev": "vite --host 127.0.0.1",
     "dev:lan": "vite --host 0.0.0.0",
+    "dev:remote": "API_PROXY_TARGET=https://dev.goodneighborsf.org vite --host 127.0.0.1",
     "lint": "eslint src",
-    "perf": "node scripts/run-lighthouse.mjs && node scripts/print-lighthouse.mjs",
+    "perf": "speed-check",
     "size": "size-limit",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json",
@@ -33,7 +34,7 @@
     {
       "name": "task update js",
       "path": "dist/assets/task-update-dialog-*.js",
-      "limit": "5 kB"
+      "limit": "5.75 kB"
     },
     {
       "name": "task update css",
@@ -44,6 +45,16 @@
       "name": "site admin css",
       "path": "dist/assets/site-admin-*.css",
       "limit": "2 kB"
+    },
+    {
+      "name": "reports js",
+      "path": "dist/assets/reports-view-*.js",
+      "limit": "13 kB"
+    },
+    {
+      "name": "reports css",
+      "path": "dist/assets/reports-view-*.css",
+      "limit": "3 kB"
     }
   ],
   "dependencies": {
@@ -56,8 +67,8 @@
     "eslint": "9.9.1",
     "eslint-plugin-jsdoc": "^64.5.4",
     "globals": "15.9.0",
-    "lighthouse": "^13.5.0",
     "size-limit": "^14.0.0",
+    "speed-check": "github:Mayor-s-Office-of-Innovation/speed-check#d472e8682b2e76504627f446e6881275bddfefd9",
     "typescript": "5.5.4",
     "vite": "8.2.1",
     "vite-plugin-pwa": "1.3.0",

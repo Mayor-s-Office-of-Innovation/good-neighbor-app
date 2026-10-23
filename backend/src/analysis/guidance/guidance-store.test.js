@@ -6,6 +6,7 @@ import {
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { activeCatalog } from "./catalog-registry.js";
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../../db.js", () => ({ ddb: { send } }));
@@ -14,7 +15,6 @@ const {
   answerCondition,
   completeTaskWithAppActions,
   getAssessmentGuidance,
-  markTaskCannotDo,
   storeEvaluatedAssessment,
   supersedeOpenTasksForCondition,
 } = await import("./guidance-store.js");
@@ -72,6 +72,12 @@ describe("storeEvaluatedAssessment", () => {
             severity: 3,
             userFriendlyLabel: "Lots of trash in tree well",
             description: "trash",
+            // The analyzer's single block: the store normalizes it to a map.
+            translations: /** @type {any} */ ({
+              language: "es",
+              user_friendly_label: "Montón de basura",
+              description: "basura",
+            }),
             sourceArtifactIds: ["art-1"],
           },
           {
@@ -114,7 +120,7 @@ describe("storeEvaluatedAssessment", () => {
       sk: "ASSESSMENT#asm-1",
       entityType: "ASSESSMENT",
       status: "needs_answers",
-      policyVersion: "actions-escalations-v5",
+      policyVersion: activeCatalog().policyVersion,
       assessmentRevision: 0,
       gsi1pk: "SITE#site-1#ASSESSMENT",
       gsi1sk: "2026-08-18T12:00:00.000Z#asm-1",
@@ -134,10 +140,16 @@ describe("storeEvaluatedAssessment", () => {
     expect(litter).toMatchObject({
       sk: "ASSESSMENT#asm-1#COND#001-litter",
       entityType: "CONDITION",
-      policyVersion: "actions-escalations-v5",
+      policyVersion: activeCatalog().policyVersion,
       status: "tasks_created",
       selectedRuleId: "LITTER-2",
       userFriendlyLabel: "Lots of trash in tree well",
+      translations: {
+        es: {
+          user_friendly_label: "Montón de basura",
+          description: "basura",
+        },
+      },
       taskIds: ["task-1"],
       resolvedToTasks: true,
       gsi4pk: "SITE#site-1#CONDITION#SEV#3",
@@ -148,7 +160,7 @@ describe("storeEvaluatedAssessment", () => {
     const graffiti = writes[2].Put.Item;
     expect(graffiti).toMatchObject({
       sk: "ASSESSMENT#asm-1#COND#002-graffiti",
-      policyVersion: "actions-escalations-v5",
+      policyVersion: activeCatalog().policyVersion,
       status: "needs_answer",
       needsAnswer: { key: "onsite" },
       resolvedToTasks: false,
@@ -156,6 +168,7 @@ describe("storeEvaluatedAssessment", () => {
       gsi5pk: "SITE#site-1#CONDITION#UNRESOLVED",
       gsi5sk: "2026-08-18T12:00:00.000Z#SEV#2#asm-1#002-graffiti",
     });
+    expect(graffiti).not.toHaveProperty("translations");
 
     const task = writes[3].Put.Item;
     expect(task).toMatchObject({
@@ -175,6 +188,12 @@ describe("storeEvaluatedAssessment", () => {
       category: "Litter",
       severity: 3,
       userFriendlyLabel: "Lots of trash in tree well",
+      translations: {
+        es: {
+          user_friendly_label: "Montón de basura",
+          description: "basura",
+        },
+      },
       appActionStatus: "pending",
       appActionResults: [],
       gsi2pk: "SITE#site-1#TASK#open",
@@ -332,7 +351,7 @@ describe("answerCondition", () => {
     send.mockReset();
   });
 
-  it("retries parent assessment revision conflicts with a fresh summary", async () => {
+  it("preserves the analyzer description after clarification, including revision retries", async () => {
     const assessmentBase = {
       pk: "SITE#site-1",
       sk: "ASSESSMENT#asm-1",
@@ -362,6 +381,11 @@ describe("answerCondition", () => {
       canonicalCategory: "Graffiti",
       severity: 2,
       userFriendlyLabel: "Tag covers most of wall",
+      description: "Several spray-painted tags cover the exterior wall.",
+      translations: {
+        language: "fil",
+        user_friendly_label: "Pinta ang mukha ng pader",
+      },
       answers: {},
       taskIds: [],
       source: { artifactIds: ["art-1"] },
@@ -436,17 +460,80 @@ describe("answerCondition", () => {
         escalationCount: 2,
       },
     });
+    const taskWrite = finalTx.input.TransactItems.find(
+      (/** @type {any} */ write) => write.Put?.Item?.entityType === "TASK",
+    );
+    expect(taskWrite.Put.Item.description).toBe(condition.description);
     expect(result.taskItem).toMatchObject({
       taskId: "task-2",
       shortId: "MOI-CIT-042",
       userFriendlyLabel: "Tag covers most of wall",
+      description: "Several spray-painted tags cover the exterior wall.",
+      translations: {
+        fil: { user_friendly_label: "Pinta ang mukha ng pader" },
+      },
     });
   });
 });
 
 describe("completeTaskWithAppActions", () => {
+  it("replays a saved phone handoff without another write or app action", async () => {
+    send.mockReset();
+    const existing = {
+      taskId: "phone",
+      kind: "non_actionable_escalation",
+      status: "in_progress",
+      completionMethod: "manual",
+    };
+    send.mockResolvedValueOnce({ Item: existing });
+    const result = await completeTaskWithAppActions({
+      tableName: "table",
+      siteId: "site-1",
+      taskId: "phone",
+      actorId: "device-1",
+      completionMethod: "manual",
+      env: {},
+    });
+    expect(result).toEqual(existing);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   beforeEach(() => {
     send.mockReset();
+  });
+
+  it("opens completion documentation for tasks that cannot be in progress", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          pk: "SITE#site-1",
+          sk: "TASK#task-1",
+          taskId: "task-1",
+          status: "open",
+          kind: "onsite",
+          severity: 1,
+          canBeInProgress: false,
+          appActions: [],
+        },
+      })
+      .mockResolvedValue({});
+    const task = await completeTaskWithAppActions({
+      tableName: "table",
+      siteId: "site-1",
+      taskId: "task-1",
+      actorId: "device-1",
+      completionMethod: "manual",
+      env: { GNP_311_SUBMISSION_ENABLED: "false" },
+    });
+    const transaction = /** @type {any} */ (send.mock.calls.at(-1)?.[0]);
+    expect(task.status).toBe("completed");
+    expect(transaction.input.TransactItems[1].Put.Item).toMatchObject({
+      updateId: task.latestUpdateId,
+      type: "task_completed",
+      actorId: "device-1",
+      documentationState: "open_for_documentation",
+    });
+    expect(task.latestUpdateId).toBeTruthy();
   });
 
   it("marks a task completed and records app action results", async () => {
@@ -524,7 +611,7 @@ describe("completeTaskWithAppActions", () => {
     expect(finalTx.input.TransactItems[1].Put.Item).toMatchObject({
       entityType: "task_update",
       type: "task_completed",
-      label: "Marked as complete",
+      label: "Site marked as resolved",
       occurredAt: "2026-08-18T12:02:00.000Z",
     });
     expect(finalTx.input.TransactItems[2].Put.Item).toMatchObject({
@@ -533,55 +620,58 @@ describe("completeTaskWithAppActions", () => {
     });
   });
 
-  it("moves an eligible task to in progress on its first card action", async () => {
-    send
-      .mockResolvedValueOnce({
-        Item: {
-          pk: "SITE#site-1",
-          sk: "TASK#task-1",
-          taskId: "task-1",
-          status: "open",
-          kind: "non_actionable_escalation",
-          severity: 4,
-          canBeInProgress: true,
-          primaryInProgressAgency: "SF Police Department (SFPD)",
-          buttons: ["We called 911"],
-          appActions: [],
-        },
-      })
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({});
+  it.each(["We called 911", "Call SFPD"])(
+    "moves a phone escalation to in progress: %s",
+    async (label) => {
+      send
+        .mockResolvedValueOnce({
+          Item: {
+            pk: "SITE#site-1",
+            sk: "TASK#task-1",
+            taskId: "task-1",
+            status: "open",
+            kind: "non_actionable_escalation",
+            severity: 4,
+            canBeInProgress: true,
+            primaryInProgressAgency: "SF Police Department (SFPD)",
+            buttons: [label],
+            appActions: [],
+          },
+        })
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({});
 
-    const task = await completeTaskWithAppActions({
-      tableName: "table",
-      siteId: "site-1",
-      taskId: "task-1",
-      completionMethod: "manual",
-      actorId: "device-7",
-      now: new Date("2026-10-01T18:00:00.000Z"),
-    });
+      const task = await completeTaskWithAppActions({
+        tableName: "table",
+        siteId: "site-1",
+        taskId: "task-1",
+        completionMethod: "manual",
+        actorId: "device-7",
+        now: new Date("2026-10-01T18:00:00.000Z"),
+      });
 
-    expect(task).toMatchObject({
-      status: "in_progress",
-      inProgressAt: "2026-10-01T18:00:00.000Z",
-      notifiedAt: "2026-10-01T18:00:00.000Z",
-      agency: "SF Police Department (SFPD)",
-      latestUpdateLabel: "We called 911",
-      gsi2pk: "SITE#site-1#TASK#in_progress",
-    });
-    expect(task).not.toHaveProperty("completedAt");
-    const writes = send.mock.calls[2][0].input.TransactItems;
-    expect(writes).toHaveLength(3);
-    expect(writes[1].Put.Item).toMatchObject({
-      type: "escalation_action_taken",
-      label: "We called 911",
-      actorId: "device-7",
-    });
-    expect(writes[2].Put.Item).toMatchObject({
-      entityType: "task_update_pointer",
-      taskId: "task-1",
-    });
-  });
+      expect(task).toMatchObject({
+        status: "in_progress",
+        inProgressAt: "2026-10-01T18:00:00.000Z",
+        notifiedAt: "2026-10-01T18:00:00.000Z",
+        agency: "SF Police Department (SFPD)",
+        latestUpdateLabel: label,
+        gsi2pk: "SITE#site-1#TASK#in_progress",
+      });
+      expect(task).not.toHaveProperty("completedAt");
+      const writes = send.mock.calls[2][0].input.TransactItems;
+      expect(writes).toHaveLength(3);
+      expect(writes[1].Put.Item).toMatchObject({
+        type: "escalation_action_taken",
+        label,
+        actorId: "device-7",
+      });
+      expect(writes[2].Put.Item).toMatchObject({
+        entityType: "task_update_pointer",
+        taskId: "task-1",
+      });
+    },
+  );
 
   it("returns a stored completed task for an identical replay", async () => {
     send.mockResolvedValueOnce({
@@ -880,7 +970,7 @@ describe("completeTaskWithAppActions", () => {
       expect(JSON.parse(closeCall[1].body)).toMatchObject({
         SRnum: "2000008106",
         UpdateType: "11",
-        NumericSubType: "8",
+        NumericSubType: "1",
       });
     } finally {
       vi.unstubAllGlobals();
@@ -1272,36 +1362,6 @@ describe("completeTaskWithAppActions", () => {
   });
 });
 
-describe("markTaskCannotDo", () => {
-  beforeEach(() => {
-    send.mockReset();
-  });
-
-  it("returns a stored cannot-do task for an identical replay", async () => {
-    send.mockResolvedValueOnce({
-      Item: {
-        pk: "SITE#site-1",
-        sk: "TASK#task-1",
-        taskId: "task-1",
-        status: "cannot_do",
-        cannotDo: { reason: "It doesn't feel safe", note: "dark outside" },
-      },
-    });
-
-    const task = await markTaskCannotDo({
-      tableName: "table",
-      siteId: "site-1",
-      taskId: "task-1",
-      reason: "It doesn't feel safe",
-      note: "dark outside",
-      now: new Date("2026-08-18T12:02:00.000Z"),
-    });
-
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(task).toMatchObject({ status: "cannot_do" });
-  });
-});
-
 describe("supersedeOpenTasksForCondition", () => {
   beforeEach(() => {
     send.mockReset();
@@ -1320,6 +1380,8 @@ describe("supersedeOpenTasksForCondition", () => {
           conditionId: "cond-litter",
           checkId: "chk-1",
           assessmentId: "chk-1-art-1",
+          // A legacy task with no report-timeline stamp yet.
+          createdAt: "2026-08-18T11:00:00.000Z",
         },
         {
           pk: "SITE#site-1",
@@ -1372,6 +1434,10 @@ describe("supersedeOpenTasksForCondition", () => {
       supersededByAnalysisId: "ana-1",
       supersessionReason: "analysis_condition_edited",
       gsi2pk: "SITE#site-1#TASK#superseded",
+      // Every full re-put re-derives the report timeline stamp, so a
+      // legacy task is stamped here and a backfilled stamp is never lost.
+      gsi1pk: "SITE#site-1#TASK",
+      gsi1sk: "2026-08-18T11:00:00.000Z#task-1",
     });
   });
 
@@ -1674,6 +1740,194 @@ describe("assessment refresh preserves unchanged conditions", () => {
     );
     expect(result.conditionItems[0].answers).toEqual({});
     expect(result.conditionItems[0].taskIds).not.toContain("existing-task");
+  });
+
+  /** Spanish map stored on the prior condition/task before the refresh. */
+  const priorSpanish = {
+    es: { user_friendly_label: "Sofá en la acera", description: "Sofá" },
+  };
+  /** Filipino map carried by the refreshed assessment. */
+  const refreshedFilipino = {
+    fil: {
+      user_friendly_label: "Nakatagilid na sofa sa bangketa",
+      description: "Nakatagilid na sofa",
+    },
+  };
+  /** Per-locale merge of the two: the refresh adds Filipino, Spanish stays. */
+  const mergedSpanishFilipino = { ...priorSpanish, ...refreshedFilipino };
+
+  /** Read path with a translated prior condition + task for the refresh diffs. */
+  function mockTranslatedPrevious() {
+    mockPrevious();
+    const original = send.getMockImplementation();
+    send.mockImplementation(async (command) => {
+      if (command instanceof QueryCommand)
+        return {
+          Items: [{ ...previousCondition, translations: priorSpanish }],
+        };
+      if (command instanceof BatchGetCommand)
+        return {
+          Responses: {
+            table: [{ ...mockPreviousTask() }],
+          },
+        };
+      return original?.(command);
+    });
+  }
+
+  /** @returns {Record<string, unknown>} The prior stored task fixture. */
+  function mockPreviousTask() {
+    return {
+      pk: "SITE#site-1",
+      sk: "TASK#existing-task",
+      taskId: "existing-task",
+      conditionId: "couch",
+      assessmentId: "original",
+      kind: "action",
+      status: "open",
+      translations: priorSpanish,
+    };
+  }
+
+  /**
+   * Task-key Update entries in the refresh transaction (excludes the
+   * predecessor supersede marker, which is always an Update too).
+   * @param {any[] | undefined} tx
+   * @returns {any[]}
+   */
+  function taskTranslationUpdates(tx) {
+    return (tx ?? []).filter(
+      (entry) => entry.Update?.Key?.sk === "TASK#existing-task",
+    );
+  }
+
+  it("merges a refreshed translations map into a retained condition and task", async () => {
+    mockTranslatedPrevious();
+    const result = await storeEvaluatedAssessment(
+      {
+        ...input,
+        conditions: [
+          { ...input.conditions[0], translations: refreshedFilipino },
+        ],
+      },
+      { tableName: "table" },
+    );
+    // Same English text, so the stored Spanish stays valid and Filipino joins it.
+    expect(result.conditionItems[0].translations).toEqual(
+      mergedSpanishFilipino,
+    );
+    expect(result.taskItems[0].translations).toEqual(mergedSpanishFilipino);
+    const tx = send.mock.calls.find(
+      ([command]) => command instanceof TransactWriteCommand,
+    )?.[0].input.TransactItems;
+    expect(tx).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          Update: expect.objectContaining({
+            Key: { pk: "SITE#site-1", sk: "TASK#existing-task" },
+            UpdateExpression: "SET translations = :translations",
+            ExpressionAttributeValues: {
+              ":translations": mergedSpanishFilipino,
+            },
+          }),
+        }),
+      ]),
+    );
+    // Changing display language must not retire the open task.
+    expect(
+      tx.filter(
+        (/** @type {any} */ entry) =>
+          entry.Put?.Item?.supersessionReason === "assessment_refreshed",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("keeps a retained condition's prior map when the refresh has none", async () => {
+    mockTranslatedPrevious();
+    const result = await storeEvaluatedAssessment(
+      {
+        ...input,
+        conditions: [{ ...input.conditions[0], translations: undefined }],
+      },
+      { tableName: "table" },
+    );
+    expect(result.conditionItems[0].translations).toEqual(priorSpanish);
+    expect(result.taskItems[0].translations).toEqual(priorSpanish);
+    // Prior maps already match, so the transaction carries no task Updates.
+    const tx = send.mock.calls.find(
+      ([command]) => command instanceof TransactWriteCommand,
+    )?.[0].input.TransactItems;
+    expect(taskTranslationUpdates(tx)).toHaveLength(0);
+  });
+
+  it("applies a refreshed map to a retained condition that had none", async () => {
+    mockPrevious();
+    const original = send.getMockImplementation();
+    send.mockImplementation(async (command) => {
+      if (command instanceof BatchGetCommand)
+        return {
+          Responses: { table: [{ ...mockPreviousTask() }] },
+        };
+      return original?.(command);
+    });
+    const result = await storeEvaluatedAssessment(
+      {
+        ...input,
+        conditions: [
+          { ...input.conditions[0], translations: refreshedFilipino },
+        ],
+      },
+      { tableName: "table" },
+    );
+    expect(result.conditionItems[0].translations).toEqual(refreshedFilipino);
+    expect(result.taskItems[0].translations).toEqual(refreshedFilipino);
+    const tx = send.mock.calls.find(
+      ([command]) => command instanceof TransactWriteCommand,
+    )?.[0].input.TransactItems;
+    expect(taskTranslationUpdates(tx)).toHaveLength(1);
+  });
+
+  it("mirrors a translated map onto a retained task that had none", async () => {
+    mockPrevious();
+    const original = send.getMockImplementation();
+    send.mockImplementation(async (command) => {
+      if (command instanceof BatchGetCommand)
+        return {
+          Responses: {
+            table: [
+              {
+                ...mockPreviousTask(),
+                translations: undefined,
+              },
+            ],
+          },
+        };
+      return original?.(command);
+    });
+    const result = await storeEvaluatedAssessment(
+      {
+        ...input,
+        conditions: [
+          { ...input.conditions[0], translations: refreshedFilipino },
+        ],
+      },
+      { tableName: "table" },
+    );
+    expect(result.conditionItems[0].translations).toEqual(refreshedFilipino);
+    expect(result.taskItems[0].translations).toEqual(refreshedFilipino);
+    const tx = send.mock.calls.find(
+      ([command]) => command instanceof TransactWriteCommand,
+    )?.[0].input.TransactItems;
+    expect(tx).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          Update: expect.objectContaining({
+            Key: { pk: "SITE#site-1", sk: "TASK#existing-task" },
+            UpdateExpression: "SET translations = :translations",
+          }),
+        }),
+      ]),
+    );
   });
 
   it("pins refreshed assessments and condition evaluation to the original report time", async () => {

@@ -1,8 +1,17 @@
+import { duplicateUiEnabled } from "../services/feature-flags.js";
+import {
+  projectDuplicateTasks,
+  duplicateCounts,
+} from "../domain/duplicate-issues.js";
+import { watchDuplicateIssues } from "../services/duplicate-issues.js";
+import { openDuplicateIssue } from "./duplicate-issue-launcher.js";
 import {
   toggleCardCompletion,
+  completeCardAction,
   isCompletingAnalysisCard,
   slideCompletedCard,
 } from "./analysis-card-completion.js";
+import { taskCardTitle } from "../domain/task-title.js";
 import { groupHistory } from "../domain/task-history.js";
 import { pacificDateKey } from "../i18n/dates.js";
 /*
@@ -11,7 +20,7 @@ import { pacificDateKey } from "../i18n/dates.js";
   One always-on screen (no due/up-to-date fork), driven by real data. When we have
   the data, it shows a timestamp for the last check, the current issue count,
   and the site's real TASK# worklist. Cards carry the task's own action buttons,
-  wired to the real complete / cannot-do endpoints.
+  wired to the completion endpoint.
 
   311 filing is a backend app action: explicit escalation buttons file during
   completion, while action/non-actionable escalation rules may file silently when
@@ -32,9 +41,7 @@ import {
   showSiteCatalogErrorToast,
   showSiteSwitchBlockedToast,
   showSiteSwitchErrorToast,
-  showSiteSwitchSuccessToast,
   showLanguageErrorToast,
-  queueSiteSwitchSuccessToast,
 } from "../state/toasts.js";
 import {
   onDeletionsChange,
@@ -48,21 +55,17 @@ import { navigate } from "../router.js";
 import { awaitOverlayUnwind, openOverlayDialog } from "../dialog-history.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import {
-  activateSiteBinding,
   clearSiteSession,
   getSite,
   hasAdminAccess,
   listBoundSites,
-  setSite,
 } from "../db.js";
+import { retireHandoff } from "../services/session-handoff.js";
 import {
   listChecks,
   listTasks,
-  completeTask,
-  cannotDoTask,
   editAnalysisCondition,
   get311RequestDetails,
-  selectDeviceBinding,
 } from "../services/api.js";
 import {
   answerAnalysisQuestion,
@@ -87,7 +90,6 @@ import {
   relativeDay,
   sessionProblemItemHasBackendCards,
   splitSiteIdentity,
-  submitted311Ticket,
   taskArtifactIdSet,
   taskArtifactIds,
   taskCheckGroupId,
@@ -134,18 +136,23 @@ import {
   taskAnalysisCard,
 } from "./analysis-results.templates.js";
 import {
-  actionButton,
   errorView,
   heroBlock,
   homeResults,
   homeShell,
-  reasonPicker,
+  homeSkeleton,
   summaryBlock,
 } from "./today-view.templates.js";
-import "./ticket-detail-dialog.js";
+import { TaskSheets } from "./task-sheets.js";
+import {
+  map311StatusResponse,
+  submitted311Requests,
+  taskWith311Status,
+} from "../domain/task-311-status.js";
 import "./site-switcher.js";
 import "./location-dialog.js";
 import { fetchProviderSites } from "../services/provider-sites.js";
+import { switchToBoundSite } from "../services/site-switch.js";
 import { getLocale, setLocale, t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
@@ -156,6 +163,64 @@ import {
   onDeviceLocationChange,
   refreshGrantedDeviceLocation,
 } from "../services/device-location.js";
+
+/**
+ * The outgoing home element's last rendered state, captured on unmount and
+ * painted synchronously by the next element to mount. app-root mounts a
+ * fresh element for every navigation and this screen paints only after its
+ * data chain resolves, so a route transition arriving here otherwise
+ * snapshots a blank work list and pops the content in after the slides.
+ * One snapshot; cleared when an element unmounts with nothing rendered.
+ * Keys mirror the adopting instance fields: model, homeFilter,
+ * historyGrouping, taskOverrides, hasPerimeterDraft, site, siteId,
+ * providerName, providerSites, providerSitesStatus, boundSites,
+ * task311Statuses, duplicateLinks.
+ * @type {Record<string, any> | null}
+ */
+let lastHomeState = null;
+
+/** @param {TodayView} view */
+function stashHomeState(view) {
+  lastHomeState = view._homeModel
+    ? {
+        model: view._homeModel,
+        homeFilter: view._homeFilter,
+        historyGrouping: view._historyGrouping,
+        taskOverrides: view._taskOverrides,
+        hasPerimeterDraft: view._hasPerimeterDraft,
+        site: view._site,
+        siteId: view._siteId,
+        providerName: view._providerName,
+        providerSites: view._providerSites,
+        providerSitesStatus: view._providerSitesStatus,
+        boundSites: view._boundSites,
+        task311Statuses: view._311StatusByTaskId,
+        duplicateLinks: new Map(view._duplicateLinks),
+        remainingStatus: view._remainingStatus,
+        remainingLoadedAt: view._remainingLoadedAt,
+      }
+    : null;
+}
+
+// How long the In-progress / History lists stay fresh enough to reuse on a
+// reload (route return, or an action on this screen) without re-fetching.
+// Cross-list actions expire them early — see _expireRemainingLists.
+const REMAINING_LISTS_FRESH_MS = 60_000;
+
+// The stash belongs to one site session and must never paint for the next
+// one: sign-out and re-binding replace the device's binding in the same
+// document (app-root re-renders setup, then `sitebound` navigates back to
+// /today). A bound-site switch is a full `location.assign` reload, so the
+// module state is already fresh there. Both events bubble to window
+// (site-setup dispatches `sitebound` with bubbles: true).
+if (typeof window !== "undefined") {
+  window.addEventListener("authsignout", () => {
+    lastHomeState = null;
+  });
+  window.addEventListener("sitebound", () => {
+    lastHomeState = null;
+  });
+}
 
 class TodayView extends HTMLElement {
   constructor() {
@@ -169,6 +234,13 @@ class TodayView extends HTMLElement {
     };
     this._focusAfterRender = null;
     this._homeModel = null;
+    /**
+     * Cards with a non-checklist action in flight (the 311 filing, 5–20 s),
+     * by task id: `_applyBusyCards` restores their busy state after any
+     * repaint during the request, so renders are never held for them.
+     * @type {Map<string, { action?: string, label?: string }>}
+     */
+    this._busyCards = new Map();
     this._hydrationGeneration = 0;
     this._answeringConditionIds = new Set();
     this._settingsMenuOpen = false;
@@ -194,18 +266,39 @@ class TodayView extends HTMLElement {
     /** @type {{ flowType: string, launcher: EventTarget | null } | null} capture waiting on the prompt */
     this._locationPrompt = null;
     this._pendingLocationRender = false;
+    /** A home paint held while a native dialog in the subtree was open. */
+    this._pendingDialogRender = false;
     this._startingCapture = false;
-    /** @type {any} the persistent <ticket-detail-dialog>, created on first render */
-    this._ticketDetailDialog = null;
-    /** @type {any} */
-    this._taskUpdateDialog = null;
-    /** @type {{ taskId: string, trigger: HTMLElement } | null} */
-    this._taskUpdateReturnFocus = null;
+    /** @type {TaskSheets | null} the 311 and updates sheets, created on first use */
+    this._sheets = null;
+    /** @type {Map<string, import("../domain/task-311-status.js").Ticket311State>} */
     this._311StatusByTaskId = new Map();
     this._311StatusGeneration = 0;
+    this._refresh311OnReturn = () => this._refresh311Statuses();
+    this._duplicateLinks = new Map();
+    this._duplicateCloseHandler = () => {
+      if (
+        this._duplicatesNeedRender &&
+        this.isConnected &&
+        this._homeModel &&
+        !document.querySelector("dialog[open]")
+      ) {
+        this._duplicatesNeedRender = false;
+        this._renderHome(this._homeModel);
+      }
+    };
   }
 
   disconnectedCallback() {
+    window.removeEventListener("focus", this._refresh311OnReturn);
+    document.removeEventListener("visibilitychange", this._refresh311OnReturn);
+    this._stopDuplicates?.();
+    if (this._skeletonTabClick) {
+      this.removeEventListener("click", this._skeletonTabClick);
+      this._skeletonTabClick = null;
+    }
+    document.removeEventListener("close", this._duplicateCloseHandler, true);
+    window.removeEventListener("phonecompletionsaved", this._phoneSaved);
     this._deletionUnsub?.();
     this._deletionUnsub = null;
     this._sessionUnsub?.();
@@ -213,11 +306,24 @@ class TodayView extends HTMLElement {
     this.removeEventListener("analysiscarddeleted", this._cardDeletedHandler);
     document.removeEventListener("click", this._settingsDocumentClick);
     this._settingsDocumentClick = null;
+    document.removeEventListener("click", this._actionMenuDocumentClick);
+    this._actionMenuDocumentClick = null;
     this._locationUnsub?.();
     this._locationUnsub = null;
+    // Hand the freshly rendered state to the next element to mount, so route
+    // transitions never snapshot a blank screen (see lastHomeState).
+    stashHomeState(this);
   }
 
   async connectedCallback() {
+    window.addEventListener("focus", this._refresh311OnReturn);
+    document.addEventListener("visibilitychange", this._refresh311OnReturn);
+    document.addEventListener("close", this._duplicateCloseHandler, true);
+    if (!this._phoneSaved)
+      this._phoneSaved = () => {
+        void this.connectedCallback();
+      };
+    window.addEventListener("phonecompletionsaved", this._phoneSaved);
     if (isDeletingAnalysisCard(this) || isCompletingAnalysisCard(this)) {
       this._deferredDeletionRender = true;
       return;
@@ -225,8 +331,10 @@ class TodayView extends HTMLElement {
     if (!this._deletionUnsub) {
       this._deletionUnsub = onDeletionsChange((status) => {
         if (!this.isConnected) return;
-        if (status === "saved") void this.connectedCallback();
-        else if (this._homeModel) this._renderHome(this._homeModel);
+        if (status === "saved") {
+          this._expireRemainingLists();
+          void this.connectedCallback();
+        } else if (this._homeModel) this._renderHome(this._homeModel);
       });
     }
     if (!this._locationUnsub) {
@@ -261,34 +369,66 @@ class TodayView extends HTMLElement {
 
     // Refreshing a completed card is not a new screen arrival. Re-focusing
     // the heading after that refresh would scroll the worklist to the top.
-    const announceArrival = !this._homeModel;
+    // A restored snapshot IS an arrival (the outgoing element stashed its
+    // state on unmount), and it must paint synchronously: the route
+    // transition snapshots this screen the moment the swap callback returns,
+    // before the data chain's first await lands. The chain below still
+    // refetches everything and re-renders.
+    const requestedFilter = new URLSearchParams(window.location.search).get(
+      "filter",
+    );
+    const restoring = !this._homeModel && lastHomeState != null;
+    const announceArrival = !this._homeModel || restoring;
+    if (restoring)
+      this._restoreHomeState(
+        /** @type {any} */ (lastHomeState),
+        requestedFilter,
+      );
+    const previousSiteId = this._siteId;
     this._site = await getSite();
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
+    if (previousSiteId && previousSiteId !== this._siteId) {
+      this._stopDuplicates?.();
+      this._duplicateLinks = new Map();
+    }
+    // First arrival with nothing to show yet: paint the chrome and placeholder
+    // cards from the stored site record now, so first contentful paint does
+    // not wait on the worklist round trip below. A refresh (model present)
+    // or a restored snapshot already has real content on screen.
+    if (!this._homeModel && !restoring) this._renderSkeleton(requestedFilter);
     this._providerSitesStatus = "loading";
-    const [catalog, bindings] = await Promise.all([
+    // The provider catalog only feeds the site switcher and the location
+    // prompt, so it rides in the same round trip as the worklist below
+    // instead of gating it: one network tier before first paint, not two.
+    // Neither read can reject — a failed catalog is a switcher state, and a
+    // failed bindings read must not take the worklist down with it. The
+    // latter stays `null` (unknown) rather than an empty list so a switch
+    // re-reads it instead of treating every bound site as unbound.
+    const catalogLoad = Promise.all([
       fetchProviderSites().catch((error) => {
         console.error("listProviderSites failed", error);
         showSiteCatalogErrorToast();
         return null;
       }),
-      listBoundSites(),
+      listBoundSites().catch((error) => {
+        console.error("listBoundSites failed", error);
+        return null;
+      }),
     ]);
-    this._providerSitesStatus = catalog ? "loaded" : "error";
-    this._providerSites = catalog?.sites || [];
-    this._providerName = catalog?.providerName || this._site.providerName || "";
-    this._boundSites = bindings;
 
     const active = getCurrentCheck();
-    const requestedFilter = new URLSearchParams(window.location.search).get(
-      "filter",
-    );
     // An in-progress draft no longer re-enters capture from home: capture
     // lives on its own route (/check, /problem) and home stays the worklist.
+    // A failed local read must not strand the skeleton: no pending session
+    // is the safe reading, and the worklist load below carries on.
     let pendingSession =
       active && active.status === "capture-complete"
         ? active
-        : await loadSubmitted();
+        : await loadSubmitted().catch((err) => {
+            console.error("loadSubmitted failed", err);
+            return null;
+          });
     // Legacy-stage records (uploading/analyzing/submitted) are unreachable now —
     // clear them instead of letting them linger in the review store forever.
     if (pendingSession && pendingSession.status !== "capture-complete") {
@@ -299,30 +439,46 @@ class TodayView extends HTMLElement {
     // Checks + the open worklist are read from the backend on load (AP6/AP10) —
     // newest first, adapted to the UI record shape. Online-only: on failure show
     // an error, not a crash.
+    // Only the open list gates the first paint: it is all the default To-do
+    // tab shows. The In-progress and History lists (the slowest call is the
+    // ever-growing completed list) load right after the first render — see
+    // _loadRemainingTasks.
     let submitted, tasks;
+    let reuseRemaining = false;
     try {
-      const [
-        { checks },
-        openTasksResult,
-        completingTasksResult,
-        completedTasksResult,
-        cannotDoTasksResult,
-        inProgressTasksResult,
-      ] = await Promise.all([
-        listChecks({ limit: 30 }),
-        listTasks({ status: "open", limit: 50 }),
-        listTasks({ status: "completing", limit: 50 }),
-        listTasks({ status: "completed", limit: 50 }),
-        listTasks({ status: "cannot_do", limit: 50 }),
-        listTasks({ status: "in_progress", limit: 50 }),
-      ]);
-      tasks = uniqueTasks([
-        ...(openTasksResult.tasks || []),
-        ...(completingTasksResult.tasks || []),
-        ...(completedTasksResult.tasks || []),
-        ...(cannotDoTasksResult.tasks || []),
-        ...(inProgressTasksResult.tasks || []),
-      ]);
+      const [[catalog, bindings], { checks }, openTasksResult] =
+        await Promise.all([
+          catalogLoad,
+          listChecks({ limit: 30 }),
+          listTasks({ status: "open", limit: 50 }),
+        ]);
+      this._providerSitesStatus = catalog ? "loaded" : "error";
+      this._providerSites = catalog?.sites || [];
+      this._providerName =
+        catalog?.providerName || this._site.providerName || "";
+      this._boundSites = bindings;
+      // The remaining lists are reused only on a route return (restored
+      // snapshot) for this site, loaded within REMAINING_LISTS_FRESH_MS and
+      // not expired by a cross-list action since; then only the open list is
+      // re-fetched. Every reload triggered from this screen follows an action
+      // (a task update, 311 filing, deletion, phone save, check finished)
+      // and re-fetches everything, so a status change made on the server is
+      // never masked by a cached list. When not reused they are dropped:
+      // In-progress and History show a placeholder and the tab counts stay
+      // hidden until the fresh lists land. Old cards are never shown.
+      const sameSite = !previousSiteId || previousSiteId === this._siteId;
+      reuseRemaining =
+        restoring &&
+        sameSite &&
+        this._remainingStatus === "loaded" &&
+        Date.now() - (this._remainingLoadedAt || 0) < REMAINING_LISTS_FRESH_MS;
+      const reused = reuseRemaining
+        ? (this._homeModel?.tasks || []).filter(
+            (task) => task.status && task.status !== "open",
+          )
+        : [];
+      tasks = uniqueTasks([...(openTasksResult.tasks || []), ...reused]);
+      if (!reuseRemaining) this._remainingStatus = "pending";
       submitted = (checks || [])
         .map((h) => adaptCheckHeader(h))
         .filter((c) => c.status === "submitted")
@@ -357,65 +513,198 @@ class TodayView extends HTMLElement {
       this._homeFilter || normalizedHomeTab(requestedFilter || "");
     this._activeProblem = null;
     this._hasPerimeterDraft = await hasDraft("perimeter");
+    if (!duplicateUiEnabled()) this._duplicateLinks = new Map();
     this._renderHome({
       last,
       checks: submitted,
       tasks,
       pendingSession: effectivePendingSession,
     });
-    void this._hydrate311CardStatuses(tasks);
+    // Evidence hydration is for the cards on screen now. The duplicate watcher
+    // (a poll) and the 311 status batch wait for the complete list, so each
+    // starts once per load: here when the remaining lists were reused, else
+    // in _loadRemainingTasks.
     void this._hydrateVisibleHomeTasks();
+    if (reuseRemaining) {
+      this._remainingLoad = Promise.resolve();
+      this._watchDuplicates(tasks);
+      void this._hydrate311CardStatuses(tasks);
+    } else {
+      this._startRemainingLoad();
+    }
     if (announceArrival) announceScreenHeading(this, ".home-identity__site");
   }
 
+  /**
+   * A cross-list action (a task completed, filed to 311, moved to in
+   * progress, or a card deleted) changes the In-progress / History lists:
+   * forget their freshness so the next reload re-fetches them.
+   */
+  _expireRemainingLists() {
+    this._remainingLoadedAt = 0;
+    // A request already in flight predates the change: its answer must not
+    // land and re-stamp the lists as fresh.
+    this._remainingGeneration = (this._remainingGeneration || 0) + 1;
+  }
+
+  _startRemainingLoad() {
+    this._remainingLoad = this._loadRemainingTasks().catch((err) =>
+      console.error("remaining worklist failed", err),
+    );
+  }
+
+  /** The retry button on a failed In-progress / History load. */
+  _retryRemaining() {
+    this._remainingStatus = "pending";
+    // The re-render replaces the focused button with the placeholder: keep
+    // keyboard users on the tab they are looking at.
+    this._focusAfterRender = "home-tab-current";
+    if (this._homeModel) this._renderHome(this._homeModel);
+    this._startRemainingLoad();
+  }
+
   _taskWith311CardStatus(task) {
-    if (!submitted311Ticket(task)) return task;
-    const cardState = this._311StatusByTaskId.get(task.taskId);
-    return {
-      ...task,
-      ticketStatus: cardState?.status || "",
-      ticketStatusDetail: cardState?.statusDetail || "",
-      ticketResponseOverdue: Boolean(cardState?.responseOverdue),
-      ticketUpdatedAt: cardState?.updatedAt || task.createdAt || "",
-    };
+    return taskWith311Status(task, this._311StatusByTaskId);
+  }
+
+  /** @param {Record<string, any>[]} tasks */
+  _watchDuplicates(tasks) {
+    this._stopDuplicates?.();
+    const siteId = this._siteId;
+    this._stopDuplicates = watchDuplicateIssues(
+      tasks.map((t) => t.taskId),
+      (links) => {
+        if (!this.isConnected || this._siteId !== siteId) return;
+        this._duplicateLinks = links;
+        if (document.querySelector("dialog[open]")) {
+          this._duplicatesNeedRender = true;
+          return;
+        }
+        if (
+          this._homeModel &&
+          !isCompletingAnalysisCard(this) &&
+          !isDeletingAnalysisCard(this)
+        )
+          this._renderHome(this._homeModel);
+      },
+    );
+  }
+
+  /**
+   * Second data tier: the lists behind the In-progress and History tabs,
+   * fetched after the first paint (connectedCallback loads only `open`).
+   * Merges into the current model and re-renders; the tab counts stay
+   * hidden until this lands. A failure leaves those tabs on a retry state
+   * (`#retry-remaining`) — the To-do tab is unaffected.
+   */
+  async _loadRemainingTasks() {
+    const generation = (this._remainingGeneration =
+      (this._remainingGeneration || 0) + 1);
+    const siteId = this._siteId;
+    const stillCurrent = () =>
+      generation === this._remainingGeneration &&
+      this._siteId === siteId &&
+      this.isConnected &&
+      Boolean(this._homeModel);
+    let results;
+    try {
+      results = await Promise.all(
+        ["in_progress", "completing", "completed", "cannot_do"].map((status) =>
+          listTasks({ status, limit: 50 }),
+        ),
+      );
+    } catch (err) {
+      console.error("listTasks (remaining) failed", err);
+      if (!stillCurrent()) return;
+      this._remainingStatus = "error";
+      this._renderHome(this._homeModel);
+      // The open list is all we have; watch and hydrate that much.
+      this._watchDuplicates(this._homeModel.tasks);
+      void this._hydrate311CardStatuses(this._homeModel.tasks);
+      return;
+    }
+    if (!stillCurrent()) return;
+    const model = this._homeModel;
+    // The model holds only the open list (possibly hydrated); the fresh
+    // lists are the other statuses, so there is nothing to reconcile.
+    const tasks = uniqueTasks([
+      ...results.flatMap((result) => result.tasks || []),
+      ...model.tasks,
+    ]);
+    this._remainingStatus = "loaded";
+    this._remainingLoadedAt = Date.now();
+    this._renderHome({ ...model, tasks });
+    this._watchDuplicates(tasks);
+    void this._hydrate311CardStatuses(tasks);
+    void this._hydrateVisibleHomeTasks();
+  }
+
+  _refresh311Statuses() {
+    if (
+      !this.isConnected ||
+      document.visibilityState === "hidden" ||
+      !this._homeModel ||
+      document.querySelector("dialog[open]")
+    )
+      return;
+    void this._hydrate311CardStatuses(this._homeModel.tasks);
   }
 
   async _hydrate311CardStatuses(tasks) {
     const generation = ++this._311StatusGeneration;
-    const submittedTasks = tasks
-      .map((task) => ({ task, ticket: submitted311Ticket(task) }))
-      .filter(({ task, ticket }) => task.taskId && ticket?.srNum);
-    if (!submittedTasks.length) return;
+    const requests = submitted311Requests(tasks);
+    if (!requests.length) return;
     let response;
     try {
-      response = await get311RequestDetails(
-        submittedTasks.map(({ task, ticket }) => ({
-          taskId: task.taskId,
-          srNum: ticket.srNum,
-        })),
-      );
+      response = await get311RequestDetails(requests);
     } catch {
       return;
     }
     if (generation !== this._311StatusGeneration || !this.isConnected) return;
-    this._311StatusByTaskId = new Map(
-      (response.requests || []).flatMap(({ taskId, request }) =>
-        taskId && request?.status
-          ? [
-              [
-                taskId,
-                {
-                  status: request.status,
-                  statusDetail: request.statusDetail || "",
-                  responseOverdue: Boolean(request.responseOverdue),
-                  updatedAt: request.relevantDate || request.submittedAt || "",
-                },
-              ],
-            ]
-          : [],
-      ),
-    );
+    this._311StatusByTaskId = map311StatusResponse(response);
     if (this._homeModel) this._renderHome(this._homeModel);
+  }
+
+  /**
+   * Adopt the state the outgoing home element stashed on unmount (see
+   * lastHomeState) and paint its model immediately, before the data chain
+   * resolves. Everything it adopts is re-derived or refetched below; this
+   * exists so the route-transition snapshot shows a fully rendered screen.
+   * @param {any} snapshot
+   * @param {string | null} requestedFilter a `?filter=` that the arriving
+   *   URL carries explicitly — deep links and direct navigations must show
+   *   the tab they name, so it wins over the restored tab
+   * @returns {void}
+   */
+  _restoreHomeState(snapshot, requestedFilter) {
+    this._homeModel = snapshot.model;
+    this._homeFilter = snapshot.homeFilter;
+    // An explicit URL filter request wins over the restored tab; a plain
+    // back-navigation carries none and keeps the tab that was on screen —
+    // the URL is rewritten to match so a refresh stays on the same tab.
+    if (requestedFilter) {
+      this._homeFilter = normalizedHomeTab(requestedFilter);
+    } else if (this._homeFilter) {
+      const url = new URL(window.location.href);
+      url.searchParams.set("filter", this._homeFilter);
+      window.history.replaceState(window.history.state, "", url);
+    }
+    this._historyGrouping = snapshot.historyGrouping;
+    this._taskOverrides = snapshot.taskOverrides;
+    this._hasPerimeterDraft = snapshot.hasPerimeterDraft;
+    this._site = snapshot.site;
+    this._siteId = snapshot.siteId;
+    this._providerName = snapshot.providerName;
+    this._providerSites = snapshot.providerSites;
+    this._providerSitesStatus = snapshot.providerSitesStatus;
+    this._boundSites = snapshot.boundSites;
+    this._311StatusByTaskId = snapshot.task311Statuses;
+    this._remainingStatus = snapshot.remainingStatus;
+    this._remainingLoadedAt = snapshot.remainingLoadedAt;
+    this._duplicateLinks = duplicateUiEnabled()
+      ? new Map(snapshot.duplicateLinks ?? [])
+      : new Map();
+    this._renderHome(this._homeModel);
   }
 
   _renderHome(model) {
@@ -427,12 +716,20 @@ class TodayView extends HTMLElement {
       this._pendingLocationRender = true;
       return;
     }
+    // Same for a native dialog open in the home subtree (success, delete,
+    // edit): the innerHTML swap would remove it unseen, orphaning its overlay
+    // history entry and any close handler. The paint resumes on its `close`
+    // (wired below) with whatever model arrived meanwhile.
+    if (this.querySelector(":scope > .home > dialog[open]")) {
+      this._pendingDialogRender = true;
+      return;
+    }
     if (isDeletingAnalysisCard(this) || isCompletingAnalysisCard(this)) {
       this._deferredDeletionRender = true;
       return;
     }
     // Index tasks by id so card action handlers can read the task (e.g. its
-    // allowlisted cannot-do reasons) at click time.
+    // action metadata) at click time.
     this._tasksById = new Map(model.tasks.map((t) => [t.taskId, t]));
     this.innerHTML = this._render(model);
 
@@ -518,8 +815,14 @@ class TodayView extends HTMLElement {
         "language",
       );
     });
+    this.querySelector("#settings-access")?.addEventListener("click", () =>
+      navigate("/manage-access"),
+    );
     this.querySelector("#settings-site-admin")?.addEventListener("click", () =>
       navigate("/site-admin"),
+    );
+    this.querySelector("#settings-reports")?.addEventListener("click", () =>
+      navigate("/reports"),
     );
     this._languageDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector(":scope > .home > #language-dialog")
@@ -569,8 +872,7 @@ class TodayView extends HTMLElement {
     this._restoreLogoutDialog();
     this._restoreAttributionsDialog();
     this._restoreLanguageDialog();
-    this._mountTicketDetailDialog();
-    this._mountTaskUpdateDialog();
+    this._taskSheets().mount();
     this._mountLocationDialog();
     this.querySelector("#logout-confirm")?.addEventListener("click", () =>
       this._logout(),
@@ -581,6 +883,66 @@ class TodayView extends HTMLElement {
         this._startCapture("single-problem", event.currentTarget),
       );
     }
+    const actionMenuTrigger = /** @type {HTMLButtonElement | null} */ (
+      this.querySelector("#home-action-menu-trigger")
+    );
+    const actionMenu = /** @type {HTMLElement | null} */ (
+      this.querySelector("#home-action-menu")
+    );
+    actionMenuTrigger?.addEventListener("click", () => {
+      const opening = actionMenu.hidden;
+      actionMenu.hidden = !opening;
+      actionMenuTrigger.setAttribute("aria-expanded", String(opening));
+      if (opening)
+        /** @type {HTMLElement | null} */ (
+          actionMenu.querySelector('[role="menuitem"]')
+        )?.focus();
+    });
+    // One document-level click closer per element, added once: a re-render
+    // replaces the menu's nodes, so the stable handler resolves the live
+    // menu + trigger at click time (the old render-scoped closure would
+    // keep firing against the detached nodes after every re-render).
+    if (!this._actionMenuDocumentClick) {
+      this._actionMenuDocumentClick = /** @param {Event} event */ (event) => {
+        const menu = /** @type {HTMLElement | null} */ (
+          this.querySelector("#home-action-menu")
+        );
+        const trigger = /** @type {HTMLElement | null} */ (
+          this.querySelector("#home-action-menu-trigger")
+        );
+        if (!menu?.isConnected || menu.hidden) return;
+        const path = event.composedPath?.() || [];
+        if (path.includes(trigger) || path.includes(menu)) return;
+        menu.hidden = true;
+        trigger?.setAttribute("aria-expanded", "false");
+      };
+      document.addEventListener("click", this._actionMenuDocumentClick);
+    }
+    actionMenu?.addEventListener("keydown", (event) => {
+      const keyEvent = /** @type {KeyboardEvent} */ (event);
+      const items = /** @type {HTMLElement[]} */ ([
+        ...actionMenu.querySelectorAll('[role="menuitem"]'),
+      ]);
+      const index = items.indexOf(
+        /** @type {HTMLElement} */ (document.activeElement),
+      );
+      if (keyEvent.key === "Escape") {
+        actionMenu.hidden = true;
+        actionMenuTrigger.setAttribute("aria-expanded", "false");
+        actionMenuTrigger.focus();
+      }
+      if (keyEvent.key === "ArrowDown" || keyEvent.key === "ArrowUp") {
+        event.preventDefault();
+        const delta = keyEvent.key === "ArrowDown" ? 1 : -1;
+        items[(index + delta + items.length) % items.length]?.focus();
+      }
+    });
+    this.querySelector("#view-care-work")?.addEventListener("click", () =>
+      navigate("/care-work"),
+    );
+    this.querySelector("#view-complaints")?.addEventListener("click", () =>
+      navigate("/complaints"),
+    );
     this.querySelectorAll("[data-start-capture='single-problem']").forEach(
       (control) => {
         control.addEventListener("click", (event) => {
@@ -597,6 +959,9 @@ class TodayView extends HTMLElement {
         void this._startCapture("single-problem", control);
       });
     });
+    this.querySelector("#retry-remaining")?.addEventListener("click", () =>
+      this._retryRemaining(),
+    );
     this.querySelectorAll("[data-home-filter]").forEach((button) => {
       button.addEventListener("click", () => {
         this._activateHomeTab(
@@ -651,10 +1016,21 @@ class TodayView extends HTMLElement {
             /** @type {HTMLDialogElement} */ (dialog).close();
           }
         });
+        dialog.addEventListener("close", () => this._flushDialogRender());
       },
     );
     this._wireCards();
+    this._applyBusyCards();
     this._restoreFocusAfterRender();
+    const requestedIssue = new URLSearchParams(window.location.search).get(
+      "issue",
+    );
+    if (
+      requestedIssue &&
+      requestedIssue !== this._focusedIssueId &&
+      this._focusIssueCard(requestedIssue)
+    )
+      this._focusedIssueId = requestedIssue;
   }
 
   async _hydrateVisibleHomeTasks() {
@@ -678,8 +1054,8 @@ class TodayView extends HTMLElement {
       return;
     }
     const tasks = mergeHydratedTasks(model.tasks, hydratedTasks);
-    this._ticketDetailDialog?.updateTask(
-      tasks.find((task) => task.taskId === this._ticketDetailDialog.taskId),
+    this._sheets?.updateTask(
+      tasks.find((task) => task.taskId === this._sheets?.ticketTaskId),
     );
     this._renderHome({ ...model, tasks });
   }
@@ -712,6 +1088,11 @@ class TodayView extends HTMLElement {
         (entry) => homeTabForStatus(entry.homeStatus) === this._homeFilter,
       ),
     );
+    const tabCounts = { todo: 0, in_progress: 0 };
+    for (const entry of homeTasks) {
+      const tab = homeTabForStatus(entry.homeStatus);
+      if (tab in tabCounts) tabCounts[tab] += 1;
+    }
     const newTaskEntries = selectedTaskEntries.filter(
       (entry) =>
         this._homeFilter !== "history" &&
@@ -754,6 +1135,20 @@ class TodayView extends HTMLElement {
         (item) =>
           item.analysis?.status === "analyzed" && !hasProblemResults(item),
       );
+    // The standing "check was clear" tray sits above the tabs, so its
+    // visibility must not depend on the active tab. It stays until the next
+    // check and disappears the moment a newer check records an issue (a task
+    // card from the pending session, or an analyzed item with problems).
+    const newCheckIssueRecorded =
+      pendingHasTaskCards ||
+      displayRecentItems.some(
+        (item) =>
+          item.analysis?.status === "analyzed" && hasProblemResults(item),
+      );
+    const showActiveClearTray =
+      Boolean(activeClearCheck) &&
+      !hasPendingClearResult &&
+      !newCheckIssueRecorded;
     const hasResultCards =
       recentItems.length || homeTasks.length || clearChecks.length;
     // First-run hero only for a truly empty account: no submitted check, no
@@ -763,11 +1158,17 @@ class TodayView extends HTMLElement {
     return homeShell({
       settingsMenuOpen: this._settingsMenuOpen,
       adminAccess: hasAdminAccess(this._site),
+      // The visible tab's list is still loading (In-progress / History
+      // before the second data tier lands).
+      busy:
+        this._homeFilter !== "todo" &&
+        (this._remainingStatus || "loaded") === "pending",
       hero: showFirstRun
         ? this._firstRunBlock()
         : this._activityBlock({ last, homeTasks }),
       results: this._homeResults({
         pendingSession,
+        tabCounts,
         recentCheckTime:
           newestCheck.time ||
           pendingSession?.startedAt ||
@@ -779,6 +1180,7 @@ class TodayView extends HTMLElement {
         visibleTasks,
         activeClearCheck,
         hasPendingClearResult,
+        showActiveClearTray,
         historicalClearChecks,
       }),
       showAnalysisDialogs: Boolean(hasPendingAssessment || hasResultCards),
@@ -792,70 +1194,26 @@ class TodayView extends HTMLElement {
     if (this._homeModel) this._renderHome(this._homeModel);
   }
 
-  _mountTicketDetailDialog() {
-    if (!this._ticketDetailDialog) {
-      const dialog = document.createElement("ticket-detail-dialog");
-      dialog.addEventListener("ticketdetailclosed", (event) => {
-        const { taskId, trigger } = /** @type {CustomEvent} */ (event).detail;
-        // The card that opened the sheet was re-rendered since; find its
-        // current button and fall back to the original trigger.
-        const current = taskId
-          ? this.querySelector(
-              `[data-task-id="${CSS.escape(taskId)}"] [data-action="view311"]`,
-            )
-          : null;
-        (current || trigger)?.focus?.();
+  _taskSheets() {
+    if (!this._sheets) {
+      this._sheets = new TaskSheets({
+        host: this,
+        container: () => this.querySelector(":scope > .home"),
+        resolveTask: (task) => this._tasksById.get(task.taskId) || task,
+        reload: () => this.connectedCallback(),
+        fallbackFocus: () => this.querySelector(".home-tabs__tab--active"),
       });
-      this._ticketDetailDialog = dialog;
     }
-    this._ticketDetailDialog.site = this._site;
-    // Re-appending the same element keeps its state across innerHTML
-    // replacement; it restores its open state on reconnect.
-    this.querySelector(":scope > .home")?.append(this._ticketDetailDialog);
+    this._sheets.site = this._site;
+    return this._sheets;
   }
 
   _open311Detail(task, trigger) {
-    this._mountTicketDetailDialog();
-    void this._ticketDetailDialog.open(
-      this._tasksById.get(task.taskId) || task,
-      trigger,
-    );
-  }
-
-  async _mountTaskUpdateDialog() {
-    await import("./task-update-dialog.js");
-    if (!this._taskUpdateDialog) {
-      const dialog = document.createElement("task-update-dialog");
-      dialog.addEventListener("taskupdated", () => {
-        void this.connectedCallback();
-      });
-      dialog.addEventListener("taskupdateclosed", () => {
-        const returnFocus = this._taskUpdateReturnFocus;
-        this._taskUpdateReturnFocus = null;
-        void this.connectedCallback().then(() => {
-          const current = returnFocus?.taskId
-            ? this.querySelector(
-                `[data-task-id="${CSS.escape(returnFocus.taskId)}"] [data-action="update"]`,
-              )
-            : null;
-          const fallback = returnFocus?.trigger?.isConnected
-            ? returnFocus.trigger
-            : this.querySelector(".home-tabs__tab--active");
-          const target = /** @type {HTMLElement | null | undefined} */ (
-            current || fallback
-          );
-          target?.focus();
-        });
-      });
-      this._taskUpdateDialog = dialog;
-    }
-    this.querySelector(":scope > .home")?.append(this._taskUpdateDialog);
+    this._taskSheets().open311(task, trigger);
   }
 
   async _openTaskUpdate(task, trigger) {
-    this._taskUpdateReturnFocus = { taskId: task.taskId, trigger };
-    await this._mountTaskUpdateDialog();
-    await this._taskUpdateDialog.open(this._tasksById.get(task.taskId) || task);
+    await this._taskSheets().openUpdates(task, trigger);
   }
 
   _closeSettingsMenu() {
@@ -894,6 +1252,9 @@ class TodayView extends HTMLElement {
     this._logoutError = "";
     if (this._homeModel) this._renderHome(this._homeModel);
     try {
+      // Before the session goes: retire the Home Screen handoff grant and
+      // put the static manifest back (services/session-handoff.js).
+      await retireHandoff();
       await clearSiteSession();
       discardInMemorySession();
       this._logoutDialogOpen = false;
@@ -907,6 +1268,7 @@ class TodayView extends HTMLElement {
 
   _homeResults({
     pendingSession,
+    tabCounts,
     recentCheckTime,
     checks,
     recentItems,
@@ -914,12 +1276,19 @@ class TodayView extends HTMLElement {
     visibleTasks,
     activeClearCheck,
     hasPendingClearResult,
+    showActiveClearTray,
     historicalClearChecks,
   }) {
     const newTaskCards = this._newTaskCardEntries(newTaskEntries);
+    const remainingStatus = /** @type {"pending" | "loaded" | "error"} */ (
+      this._remainingStatus || "loaded"
+    );
     return homeResults({
       historyGrouping: this._historyGrouping || "resolved",
       homeFilter: this._homeFilter,
+      // Counts only once every list is in — a partial count would be wrong.
+      tabCounts: remainingStatus === "loaded" ? tabCounts : {},
+      remainingStatus,
       siteName: this._site?.name || "",
       siteAddress: this._site?.address || "",
       pendingSessionId: pendingSession?.id || "",
@@ -931,8 +1300,10 @@ class TodayView extends HTMLElement {
         .map((card) => card.markup)
         .join(""),
       newTaskCount: newTaskEntries.length,
+      counts: duplicateCounts(newTaskEntries.map((e) => e.task)),
       activeClearCheck,
       hasPendingClearResult,
+      showActiveClearTray,
       historyGroups: this._historyGroups(
         visibleTasks,
         checks,
@@ -952,6 +1323,9 @@ class TodayView extends HTMLElement {
         task: this._taskWith311CardStatus({
           ...entry.task,
           createdAt: entry.createdAt,
+          ...(entry.homeStatus === "in_progress"
+            ? { status: "in_progress" }
+            : {}),
           siteAddress: entry.task.siteAddress || this._site?.address || "",
         }),
         siteName: this._site?.name || "",
@@ -972,6 +1346,7 @@ class TodayView extends HTMLElement {
         includeControls: entry.homeStatus === "needs_action",
       }),
       createdAt: entry.createdAt,
+      isDuplicate: Boolean(entry.task.duplicate),
       needsAnswer: Boolean(entry.task.needsAnswer),
       actionPriority: analysisActionPriority(entry.task),
     };
@@ -1032,6 +1407,7 @@ class TodayView extends HTMLElement {
       })
       .map(([checkId, group]) => ({
         checkTime: checkTimes.get(checkId) || group[0]?.createdAt || new Date(),
+        counts: duplicateCounts(group.map((e) => e.task)),
         cards: sortAnalysisCards(
           group.map((entry) => this._taskCardEntry(entry, false)),
         )
@@ -1090,13 +1466,45 @@ class TodayView extends HTMLElement {
     return this._activityBlock({ last: null, homeTasks: [] });
   }
 
+  /**
+   * Pre-data paint (see connectedCallback). Markup only — no handlers are
+   * wired, nothing here is interactive, and the live render replaces it.
+   * @param {string | null} requestedFilter the ?filter= query value
+   */
+  _renderSkeleton(requestedFilter) {
+    this._homeFilter =
+      this._homeFilter || normalizedHomeTab(requestedFilter || "");
+    this.innerHTML = homeSkeleton({
+      siteName: this._siteIdentity().site,
+      adminAccess: hasAdminAccess(this._site),
+      homeFilter: this._homeFilter,
+      checkLabel: t("today.actions.startCheck"),
+    });
+    // The skeleton's tabs are live: a tap selects the tab the worklist will
+    // open on. Delegated on the host (the markup has no handlers of its
+    // own) and inert once the live render has wired the real tabs.
+    if (!this._skeletonTabClick) {
+      this._skeletonTabClick = (event) => {
+        if (this._homeModel) return;
+        const tab = /** @type {Element | null} */ (
+          /** @type {any} */ (event.target)?.closest?.("[data-home-filter]")
+        );
+        if (!tab) return;
+        this._homeFilter = normalizedHomeTab(
+          tab.getAttribute("data-home-filter") || "todo",
+        );
+        this._renderSkeleton(null);
+      };
+      this.addEventListener("click", this._skeletonTabClick);
+    }
+  }
+
   _activityBlock({ last, homeTasks }) {
     const identity = this._siteIdentity();
     return heroBlock({
       siteName: identity.site,
       summary: this._summaryBlock(last, homeTasks),
       checkLabel: this._checkActionLabel(),
-      reportLabel: t("today.actions.report"),
     });
   }
 
@@ -1201,6 +1609,13 @@ class TodayView extends HTMLElement {
    * to replace the page anyway.
    * @param {{ changingSite: boolean }} detail
    */
+  /** A home dialog closed: paint whatever `_renderHome` held while it was open. */
+  _flushDialogRender() {
+    if (!this._pendingDialogRender) return;
+    this._pendingDialogRender = false;
+    if (this._homeModel) this._renderHome(this._homeModel);
+  }
+
   _onLocationDialogClosed({ changingSite }) {
     this._locationPrompt = null;
     if (this._pendingLocationRender) {
@@ -1243,53 +1658,31 @@ class TodayView extends HTMLElement {
   }
 
   async _switchToSite(siteId) {
-    if (!siteId || siteId === this._siteId) {
+    // The bindings read failed at load (kept as null, not an empty list):
+    // retry it now rather than offer enrollment for a site that is bound.
+    if (!this._boundSites) {
+      this._boundSites = await listBoundSites().catch((error) => {
+        console.error("listBoundSites failed", error);
+        return null;
+      });
+      if (!this._boundSites) {
+        showSiteCatalogErrorToast();
+        return;
+      }
+    }
+    const outcome = await switchToBoundSite({
+      siteId,
+      currentSiteId: this._siteId,
+      boundSites: this._boundSites,
+      destination: "/today",
+    });
+    if (outcome === "same") {
       this._siteSwitcher?.close();
       return;
     }
-    const target = this._providerSites.find((site) => site.siteId === siteId);
-    const bound = this._boundSites.find(
-      (site) => site.siteId === siteId && site.token && site.refreshToken,
-    );
-    if (!bound) {
+    if (outcome === "needs-binding") {
+      const target = this._providerSites.find((site) => site.siteId === siteId);
       await this._requestAnotherSite("code", siteId, target?.name || "");
-      return;
-    }
-    const active = getCurrentCheck();
-    if (active?.status === "capture-complete") {
-      showSiteSwitchBlockedToast();
-      return;
-    }
-    try {
-      if (active) await pauseCheck();
-      let selected;
-      if (bound.bindingId && bound.physicalDeviceId) {
-        const session = await selectDeviceBinding(bound.bindingId);
-        selected = await setSite(session.site.name, {
-          siteId: session.site.siteId,
-          deviceId: session.deviceId,
-          bindingId: session.bindingId,
-          physicalDeviceId: session.physicalDeviceId,
-          token: session.token,
-          refreshToken: session.refreshToken,
-          tokenExpiresAt: Date.now() + session.expiresIn * 1000,
-          tokenGeneration: session.tokenGeneration,
-          accessLevel: session.accessLevel,
-          absoluteExpiresAt: session.absoluteExpiresAt,
-        });
-      } else {
-        selected = await activateSiteBinding(siteId);
-      }
-      if (!selected) {
-        await this._requestAnotherSite("code", siteId, target?.name || "");
-        return;
-      }
-      discardInMemorySession();
-      if (!queueSiteSwitchSuccessToast()) showSiteSwitchSuccessToast();
-      window.location.assign("/today");
-    } catch (error) {
-      console.error("site switch failed", error);
-      showSiteSwitchErrorToast();
     }
   }
 
@@ -1309,7 +1702,7 @@ class TodayView extends HTMLElement {
 
   _homeTasks(tasks) {
     const now = new Date();
-    return tasks
+    return projectDuplicateTasks(tasks, this._duplicateLinks)
       .filter((task) => !isTaskPendingDeletion(task))
       .map((task) => ({
         task,
@@ -1332,6 +1725,7 @@ class TodayView extends HTMLElement {
     if (this._homeModel) {
       this._renderHome(this._homeModel);
       void this._hydrateVisibleHomeTasks();
+      this._refresh311Statuses();
     }
   }
 
@@ -1401,13 +1795,6 @@ class TodayView extends HTMLElement {
         variant: "ink",
       });
     }
-    if ((task.cannotDoReasons || []).length) {
-      actions.push({
-        kind: "cant",
-        label: t("today.action.cant"),
-        variant: "outline",
-      });
-    }
     return actions;
   }
 
@@ -1456,7 +1843,34 @@ class TodayView extends HTMLElement {
     return null;
   }
 
+  _focusIssueCard(taskId) {
+    const card = [
+      ...this.querySelectorAll(
+        ":scope > .home > .home-region--results article[data-task-id]",
+      ),
+    ].find((candidate) => candidate.getAttribute("data-task-id") === taskId);
+    if (!(card instanceof HTMLElement)) return false;
+    card.focus({ preventScroll: true });
+    card.scrollIntoView({ block: "center", behavior: "instant" });
+    return true;
+  }
+
   _wireCards() {
+    this.querySelectorAll(".duplicate-earlier-link").forEach((link) => {
+      link.addEventListener("click", (event) => {
+        if (!(event instanceof MouseEvent)) return;
+        if (
+          event.button !== 0 ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.shiftKey ||
+          event.altKey
+        )
+          return;
+        if (this._focusIssueCard(link.getAttribute("data-original-task-id")))
+          event.preventDefault();
+      });
+    });
     this.querySelectorAll(
       ":scope > .home > .home-region--results [data-task-id]",
     ).forEach((card) => {
@@ -1499,16 +1913,28 @@ class TodayView extends HTMLElement {
     } else if (action === "delete") {
       this._openDeleteProblem(problem);
     } else if (action === "edit") {
-      this._openEditProblem(problem);
+      if (task && btn instanceof HTMLElement) {
+        void import("./task-details-dialog.js").then(({ openTaskDetails }) =>
+          openTaskDetails(task, problem, btn, () => this.connectedCallback()),
+        );
+      } else {
+        this._openEditProblem(problem);
+      }
     } else if (action === "resolve") {
-      if (btn.getAttribute("role") === "checkbox") {
+      if (
+        btn.getAttribute("role") === "checkbox" ||
+        btn.hasAttribute("data-phone-number")
+      ) {
         toggleCardCompletion(this, card, btn, {
-          onSaved: (task) =>
+          task,
+          onSaved: (saved) => {
             this._markAnalysisProblemResolved(problem, {
               taskStatus:
-                task.status === "in_progress" ? "in_progress" : "resolved",
-            }),
-          render: () => this.connectedCallback(),
+                saved.status === "in_progress" ? "in_progress" : "resolved",
+            });
+            this._applyTaskResult(problem.taskId, saved);
+          },
+          render: () => this._refreshAfterAction(),
         });
       } else this._resolveAnalysisProblem(problem, card);
     } else if (action === "answer") {
@@ -1733,7 +2159,7 @@ class TodayView extends HTMLElement {
     }
 
     if (problem.actionKind === "escalation") {
-      const result = await completeTask(problem.taskId, {
+      const result = await completeCardAction(problem.taskId, {
         completionMethod: "311_filed",
       }).catch((err) => {
         console.error("escalation failed", err);
@@ -1744,14 +2170,16 @@ class TodayView extends HTMLElement {
         return;
       }
       show311SuccessToast(submitted311ServiceRequestNumber(result.task));
+      this._expireRemainingLists(); // filed → In-progress on the server
       if (card.isConnected) await slideCompletedCard(card);
       this._markAnalysisProblemResolved(problem, { taskStatus: null });
-      await this.connectedCallback();
+      this._applyTaskResult(problem.taskId, result.task);
+      void this._refreshAfterAction();
       return;
     }
 
     try {
-      const result = await completeTask(problem.taskId, {
+      const result = await completeCardAction(problem.taskId, {
         completionMethod: "manual",
       });
       if (card.isConnected) await slideCompletedCard(card);
@@ -1759,11 +2187,14 @@ class TodayView extends HTMLElement {
         taskStatus:
           result?.task?.status === "in_progress" ? "in_progress" : "resolved",
       });
+      this._applyTaskResult(problem.taskId, result?.task);
       openOverlayDialog(
         /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),
         "analysis-success",
       );
-      await this.connectedCallback();
+      // The reload starts now; every paint it (or anything else) requests is
+      // held by _renderHome while the dialog is open and lands on its close.
+      void this._refreshAfterAction();
     } catch (err) {
       console.error("resolve task failed", err);
       showActionSaveErrorToast();
@@ -1845,48 +2276,123 @@ class TodayView extends HTMLElement {
 
   _onAction(card, task, btn) {
     const action = btn.getAttribute("data-action");
-    if (action === "update") {
+    if (action === "duplicate") {
+      const decorated = projectDuplicateTasks(
+        [task],
+        this._duplicateLinks,
+      ).find((t) => t.taskId === task.taskId);
+      if (!decorated?.duplicate) return;
+      openDuplicateIssue(decorated, btn, {
+        onSeparated: () => {
+          this._duplicateLinks.delete(task.taskId);
+          if (this.isConnected) void this.connectedCallback();
+        },
+        onOriginal: (original, trigger) =>
+          void this._openTaskUpdate(original, trigger),
+      });
+    } else if (action === "update") {
       void this._openTaskUpdate(task, btn);
     } else if (action === "view311") {
       void this._open311Detail(task, btn);
     } else if (action === "done") {
       toggleCardCompletion(this, card, btn, {
-        onSaved: (taskResult) =>
+        task,
+        onSaved: (taskResult) => {
           this._setTaskOverride(
             task.taskId,
             taskResult.status === "in_progress" ? "in_progress" : "resolved",
-          ),
-        render: () => this.connectedCallback(),
+          );
+          this._applyTaskResult(task.taskId, taskResult);
+        },
+        render: () => this._refreshAfterAction(),
       });
     } else if (action === "file311") {
-      this._run(
+      // Filing runs inside the request (5–20 s): the button says so at once,
+      // and the toast names the card the moment the response lands, before
+      // the slide and the reload.
+      const title = taskCardTitle(task);
+      void this._run(
         card,
         () =>
-          completeTask(task.taskId, {
+          completeCardAction(task.taskId, {
             completionMethod: "311_filed",
           }),
-        { requireSubmitted311: true, animateOnSuccess: true },
+        {
+          requireSubmitted311: true,
+          animateOnSuccess: true,
+          pending: { button: btn, label: t("today.action.filing") },
+          onSuccess: (result) =>
+            show311SuccessToast(
+              submitted311ServiceRequestNumber(result.task),
+              title,
+            ),
+        },
       ).then((result) => {
-        if (result) {
-          show311SuccessToast(submitted311ServiceRequestNumber(result.task));
-          this.connectedCallback();
-        }
+        if (!result) return;
+        this._applyTaskResult(task.taskId, result.task);
+        // Filed → In-progress on the server. The override (which also expires
+        // the remaining lists) keeps the card there if a reload's open-list
+        // read lands before the worklist index has caught up.
+        this._setTaskOverride(task.taskId, "in_progress");
+        void this._refreshAfterAction();
       });
-    } else if (action === "cant") {
-      this._renderReasonPicker(card, task);
-    } else if (action === "cant-reason") {
-      const reason = btn.getAttribute("data-reason") || "";
-      this._run(card, () => cannotDoTask(task.taskId, { reason }), {
-        animateOnSuccess: true,
-      }).then((ok) => {
-        if (ok) {
-          this._setTaskOverride(task.taskId, "resolved");
-          this.connectedCallback();
-        }
-      });
-    } else if (action === "cant-cancel") {
-      this._restoreActions(card, task);
     }
+  }
+
+  /**
+   * Fold a completion response into the model so the card changes tabs on
+   * the next paint instead of after a full reload. The server record is
+   * authoritative; it is merged over the list record to keep hydrated
+   * fields (thumbnail, 311 status) the response does not carry.
+   */
+  _applyTaskResult(taskId, task) {
+    const model = this._homeModel;
+    if (!model || !taskId || !task) return;
+    const known = model.tasks.some((entry) => entry.taskId === taskId);
+    const tasks = known
+      ? model.tasks.map((entry) =>
+          entry.taskId === taskId ? { ...entry, ...task } : entry,
+        )
+      : [...model.tasks, task];
+    this._homeModel = { ...model, tasks };
+  }
+
+  /**
+   * Paint the updated model now; the full reload (every list, 311 statuses,
+   * duplicates) runs behind it rather than gating the UI. Returns the reload
+   * so a caller that places focus afterwards (the checklist) waits for the
+   * final paint, which replaces the home subtree again.
+   */
+  _refreshAfterAction() {
+    if (this._homeModel) this._renderHome(this._homeModel);
+    return this.connectedCallback();
+  }
+
+  /**
+   * @param {Element} card
+   * @param {{ action?: string, label?: string }} busy the in-flight action's
+   *   button kind and pending label
+   */
+  _setCardBusy(card, { action, label }) {
+    card.querySelectorAll("button").forEach((b) => (b.disabled = true));
+    const button = action
+      ? card.querySelector(`[data-action="${action}"]`)
+      : null;
+    if (button && label) button.textContent = label;
+    // Busy goes on the triggering button, not the card: the card-level hook
+    // styles the checklist box as a spinner, which is wrong for a filing.
+    (button || card).setAttribute("aria-busy", "true");
+  }
+
+  /** Re-apply in-flight action state to freshly rendered cards. */
+  _applyBusyCards() {
+    if (!this._busyCards.size) return;
+    this.querySelectorAll(
+      ":scope > .home > .home-region--results [data-task-id]",
+    ).forEach((card) => {
+      const busy = this._busyCards.get(card.getAttribute("data-task-id"));
+      if (busy) this._setCardBusy(card, busy);
+    });
   }
 
   _setTaskOverride(taskId, status) {
@@ -1896,37 +2402,7 @@ class TodayView extends HTMLElement {
     };
     writeTaskStatusOverrides(overrides);
     this._taskOverrides = overrides;
-  }
-
-  // A "failed" app action holds the task open but still returns 200, so the
-  // caller must read the stored results to know the filing didn't happen.
-  // Map the recorded reason to one actionable line (mirrors SUBMIT_MESSAGES).
-  // "Can't" -> swap the action row for the task's allowlisted reasons (the backend
-  // rejects arbitrary ones), plus a cancel.
-  _renderReasonPicker(card, task) {
-    const actions = card.querySelector(
-      ".analysis-card__actions, .actioncard__actions",
-    );
-    if (!actions) return;
-    // The backend validates the reason against the task's English list, so
-    // each option submits the stored string and displays its translation.
-    const reasons = (task.cannotDoReasons || []).map((value) => ({
-      value: String(value),
-      label: rulebookText(value),
-    }));
-    actions.innerHTML = reasonPicker({ reasons });
-    this._wireCardButtons(card, task);
-  }
-
-  _restoreActions(card, task) {
-    const actions = card.querySelector(
-      ".analysis-card__actions, .actioncard__actions",
-    );
-    if (!actions) return;
-    actions.innerHTML = this._cardActions(task)
-      .map((a) => actionButton(a))
-      .join("");
-    this._wireCardButtons(card, task);
+    this._expireRemainingLists();
   }
 
   // Run a task mutation: disable the card's buttons, and on success re-render the
@@ -1937,11 +2413,42 @@ class TodayView extends HTMLElement {
   async _run(
     card,
     fn,
-    { requireSubmitted311 = false, animateOnSuccess = false } = {},
+    {
+      requireSubmitted311 = false,
+      animateOnSuccess = false,
+      pending = null,
+      onSuccess = null,
+    } = {},
   ) {
-    const buttons = card.querySelectorAll("button");
     const err = card.querySelector(".actioncard__error");
-    buttons.forEach((b) => (b.disabled = true));
+    // The card shows it is busy from the first frame. Renders are not held
+    // during the request: `_busyCards` lets `_applyBusyCards` re-apply the
+    // state to a repainted card, so tabs, remaining lists and hydration keep
+    // painting while a 5–20 s filing runs.
+    const taskId = card.getAttribute("data-task-id");
+    const busy = {
+      action: pending?.button?.dataset.action,
+      label: pending?.label,
+    };
+    const pendingLabel = pending?.button?.textContent;
+    if (taskId) this._busyCards.set(taskId, busy);
+    this._setCardBusy(card, busy);
+    const release = () => {
+      if (taskId) this._busyCards.delete(taskId);
+    };
+    const restore = () => {
+      release();
+      if (!card.isConnected && this._homeModel) {
+        // A repaint during the request replaced the card: paint it idle.
+        this._renderHome(this._homeModel);
+        return;
+      }
+      card.querySelectorAll("button").forEach((b) => (b.disabled = false));
+      if (pending?.button) {
+        pending.button.textContent = pendingLabel;
+        pending.button.removeAttribute("aria-busy");
+      } else card.removeAttribute("aria-busy");
+    };
     if (err) {
       err.hidden = true;
       err.textContent = "";
@@ -1955,21 +2462,24 @@ class TodayView extends HTMLElement {
             "We couldn't file this ticket right now. Please try again."
           : appActionFailureMessage(task);
       if (failure) {
-        buttons.forEach((b) => (b.disabled = false));
+        restore();
         if (requireSubmitted311) show311ErrorToast();
         else showActionSaveErrorToast();
         return;
       }
+      onSuccess?.(result);
       if (animateOnSuccess && card.isConnected) {
         await slideCompletedCard(card);
       }
       return result || true;
     } catch (e) {
       console.error("task action failed", e);
-      buttons.forEach((b) => (b.disabled = false));
+      restore();
       if (requireSubmitted311) show311ErrorToast();
       else showActionSaveErrorToast();
       return false;
+    } finally {
+      release();
     }
   }
 

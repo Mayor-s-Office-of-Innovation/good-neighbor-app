@@ -99,86 +99,7 @@
   width: min(100%, 200px);
 }
 
-/* Bottom action row shared by check/report flows. The perimeter flow adds a
-   stacked nav row so previous/next sit opposite each other, with "Describe
-   instead" below. */
-.check__actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding-top: 0.2rem;
-}
-
-.check__describe {
-  appearance: none;
-  background: none;
-  border: 0;
-  box-shadow: none;
-  text-shadow: none;
-  color: var(--ink);
-  cursor: pointer;
-  font: inherit;
-  font-weight: 700;
-  font-size: 1rem;
-  line-height: 1.2;
-  margin: 0;
-  min-width: 0;
-  padding: 0.35rem 0;
-  text-align: left;
-}
-
-.check__describe:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 3px;
-  border-radius: 6px;
-}
-
-.check__next {
-  appearance: none;
-  border: 0;
-  cursor: pointer;
-  flex: 0 0 auto;
-  background: var(--ink);
-  color: var(--on-ink);
-  font: inherit;
-  font-weight: 700;
-  font-size: 1rem;
-  padding: 0.9rem 1.1rem;
-  border-radius: var(--radius-pill);
-  height: auto;
-  box-shadow: none;
-  margin: 0;
-}
-
-.check__next:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.check__next:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 3px;
-}
-
-@media (max-width: 359px) {
-  .check__actions {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .check__describe,
-  .check__next {
-    width: 100%;
-  }
-  .check__describe {
-    text-align: center;
-  }
-}
-
 .check-timeline {
-  --check-flow-ink: #2f323f;
-  --check-flow-on-ink: #fff;
   --check-flow-text: var(--wa-color-text-normal, #1b1d26);
   /* Routed capture is the primary flow: keep the phone-app column width
      (today-view's content width), not the stale desktop 64rem. */
@@ -353,19 +274,21 @@
    status. Reuses the
    .check-timeline chrome (topbar, title, footer buttons) and the .shotgrid /
    .shot / .addshot tiles shared with the single-issue flow. */
-.check-roll__progress {
-  display: grid;
-  gap: 0.25rem;
-  text-align: center;
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 1.0625rem;
-  line-height: 1.4;
+.check-roll {
+  gap: 1.125rem;
 }
 
-.check-roll__progress strong {
-  color: var(--check-flow-text);
-  font-weight: 700;
+.check-roll__progress {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--wa-font-size-m, 1rem);
+  font-weight: var(--wa-font-weight-action, 500);
+  line-height: 1.6;
+  text-align: start;
+}
+
+.check-roll__progress[hidden] {
+  display: none;
 }
 
 .check-roll__grid {

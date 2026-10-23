@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { setDuplicateUiSite } from "../services/feature-flags.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { t, setLocale } from "../i18n/i18n.js";
 import { formatNumericDate, formatTime, formatWeekday } from "../i18n/dates.js";
@@ -854,31 +855,34 @@ describe("taskAnalysisCard", () => {
   });
 
   it.each([
-    ["Open", "", false, "default", "Open"],
-    ["Open", "response overdue", true, "overdue", "Open: response overdue"],
-    ["Closed", "resolved", false, "closed", "Closed: resolved"],
-    ["Closed", "unable to locate", false, "closed", "Closed: unable to locate"],
-    ["On hold", "", false, "default", "On hold"],
+    ["Open", "", false, "filed"],
+    ["Open", "", true, "overdue"],
+    ["Closed", "8", false, "cityClosed"],
+    ["Closed", "", false, "cityClosed"],
+    ["On hold", "", false, "onHold"],
   ])(
-    "shows the %s 311 status and qualifier beside the route",
-    (ticketStatus, ticketStatusDetail, ticketResponseOverdue, tone, label) => {
+    "renders one status ticker for %s",
+    (ticketStatus, ticketClosedReason, ticketResponseOverdue, key) => {
       const card = taskAnalysisCard({
         task: {
           taskId: "task_311",
+          status: "in_progress",
           kind: "escalation",
-          category: "Litter",
           ticketStatus,
-          ticketStatusDetail,
+          ticketClosedReason,
           ticketResponseOverdue,
+          appActionResults: [
+            {
+              code: "create_311_ticket",
+              payload: { tickets: [{ srNum: "123" }] },
+            },
+          ],
         },
-        action: { label: "View details", variant: "outline", kind: "view311" },
-        statusLabel: "Today",
-        includeControls: false,
+        action: null,
+        statusLabel: "",
       });
-
-      expect(card).toContain(escapeHtml(t("card.route.ticket")));
-      expect(card).toContain(`analysis-card__ticket-status--${tone}`);
-      expect(card).toContain(`>${label}</span`);
+      expect(card).toContain(`data-status-ticker="${key}"`);
+      expect(card).not.toContain("analysis-card__route-dot");
     },
   );
 
@@ -895,7 +899,7 @@ describe("taskAnalysisCard", () => {
       includeControls: false,
     });
 
-    expect(card).toContain(escapeHtml(t("card.route.ticket")));
+    expect(card).toContain(escapeHtml(t("card.ticker.needsAction")));
     expect(card).not.toContain("analysis-card__ticket-status");
   });
 });
@@ -1034,8 +1038,112 @@ describe("card redesign", () => {
         action: null,
         statusLabel: "",
       });
-      expect(card).toContain("Resuelto");
+      expect(card).toContain(t("card.ticker.resolved"));
       expect(card).not.toContain("Resuelta");
+    } finally {
+      await setLocale("en");
+    }
+  });
+
+  it("renders the analyzer's localized label and in-progress description", async () => {
+    await setLocale("es");
+    try {
+      const task = {
+        taskId: "task_es",
+        kind: "escalation",
+        category: "Litter",
+        status: "in_progress",
+        userFriendlyLabel: "Trash blocking the sidewalk",
+        guidance:
+          "If there is too much trash for you to clean up, ask the City for help.",
+        description: "English description",
+        translations: {
+          language: "es",
+          user_friendly_label: "Basura que bloquea la acera",
+          description: "Descripción en español",
+        },
+      };
+      const card = taskAnalysisCard({
+        task,
+        action: null,
+        statusLabel: "Today",
+      });
+      expect(card).toContain("<h3>Basura que bloquea la acera</h3>");
+      expect(card).toContain("<p>Descripción en español</p>");
+      // The visible description is localized; the canonical English stays on
+      // the edit-target attribute the edit dialog seeds from.
+      expect(card).toContain(
+        'data-card-edit-description="English description"',
+      );
+      expect(card).not.toContain("<p>English description</p>");
+      expect(card).not.toContain("Trash blocking the sidewalk");
+    } finally {
+      await setLocale("en");
+    }
+  });
+
+  it("renders the active locale from a per-locale translations map", async () => {
+    await setLocale("fil");
+    try {
+      const task = {
+        taskId: "task_map",
+        kind: "escalation",
+        category: "Litter",
+        status: "in_progress",
+        userFriendlyLabel: "Trash blocking the sidewalk",
+        guidance:
+          "If there is too much trash for you to clean up, ask the City for help.",
+        description: "English description",
+        translations: {
+          es: {
+            user_friendly_label: "Basura que bloquea la acera",
+            description: "Descripción en español",
+          },
+          fil: {
+            user_friendly_label: "Basura na naghaharang ng bangketa",
+            description: "Paglalarawan sa Filipino",
+          },
+        },
+      };
+      const card = taskAnalysisCard({
+        task,
+        action: null,
+        statusLabel: "Today",
+      });
+      expect(card).toContain("<h3>Basura na naghaharang ng bangketa</h3>");
+      expect(card).toContain("<p>Paglalarawan sa Filipino</p>");
+      expect(card).not.toContain("Basura que bloquea la acera");
+    } finally {
+      await setLocale("en");
+    }
+  });
+
+  it("keeps English analyzer text when the translations target another locale", async () => {
+    await setLocale("es");
+    try {
+      const task = {
+        taskId: "task_mismatch",
+        kind: "escalation",
+        category: "Litter",
+        status: "in_progress",
+        userFriendlyLabel: "Trash blocking the sidewalk",
+        guidance:
+          "If there is too much trash for you to clean up, ask the City for help.",
+        description: "English description",
+        translations: {
+          language: "fil",
+          user_friendly_label: "Basura na naghaharang ng bangketa",
+          description: "Paglalarawan sa Filipino",
+        },
+      };
+      const card = taskAnalysisCard({
+        task,
+        action: null,
+        statusLabel: "Today",
+      });
+      expect(card).toContain("<h3>Trash blocking the sidewalk</h3>");
+      expect(card).toContain("English description");
+      expect(card).not.toContain("Basura na naghaharang ng bangketa");
     } finally {
       await setLocale("en");
     }
@@ -1085,3 +1193,118 @@ describe("card redesign", () => {
     expect(card).not.toContain("Guidance omitted");
   });
 });
+
+describe("duplicate card presentation", () => {
+  beforeEach(() =>
+    setDuplicateUiSite({ featureFlags: { duplicateDetection: true } }),
+  );
+  afterEach(() => setDuplicateUiSite(null));
+  it("shows duplicate progress in the ticker and silently falls back after completion or failure", () => {
+    const task = {
+      taskId: "duplicate-status-task",
+      status: "open",
+      category: "Litter",
+      createdAt: "2026-10-15T12:00:00Z",
+    };
+    const checking = taskAnalysisCard({
+      task: { ...task, duplicateCheckState: "pending" },
+      action: null,
+      statusLabel: "",
+    });
+    expect(checking).toContain(t("card.ticker.checking"));
+    expect(checking).toContain("status-ticker__spinner");
+    expect(checking.indexOf(t("card.ticker.checking"))).toBeLessThan(
+      checking.indexOf(t("card.editDetails")),
+    );
+    const completed = taskAnalysisCard({
+      task: { ...task, duplicateCheckState: "complete" },
+      action: null,
+      statusLabel: "",
+    });
+    expect(completed).toContain(t("card.ticker.needsAction"));
+    expect(completed).not.toContain("<wa-spinner");
+    const unavailable = taskAnalysisCard({
+      task: { ...task, duplicateCheckState: "unavailable" },
+      action: null,
+      statusLabel: "",
+    });
+    expect(unavailable).not.toContain(t("duplicate.unavailable"));
+    expect(unavailable).toContain(t("card.ticker.needsAction"));
+    expect(unavailable).not.toContain("<wa-spinner");
+    expect(unavailable).not.toContain(t("duplicate.noMatches"));
+    const disabled = taskAnalysisCard({ task, action: null, statusLabel: "" });
+    expect(disabled).not.toContain(t("duplicate.checking"));
+    expect(disabled).not.toContain(t("duplicate.noMatches"));
+  });
+
+  it("links the earlier-issue phrase to the original worklist card", () => {
+    const card = taskAnalysisCard({
+      task: {
+        taskId: "repeat",
+        status: "open",
+        category: "Graffiti",
+        duplicate: { original: { taskId: "original-id" } },
+      },
+      action: null,
+      statusLabel: "",
+    });
+    expect(card).toContain('href="/today?issue=original-id"');
+    expect(card).toContain('data-original-task-id="original-id"');
+    expect(card).toContain(t("duplicate.earlierIssue"));
+    expect(card).not.toContain("{issue}");
+  });
+
+  it("hides persisted duplicate presentation and status when display is off", () => {
+    setDuplicateUiSite(null);
+    const card = taskAnalysisCard({
+      task: {
+        taskId: "repeat",
+        status: "open",
+        category: "Graffiti",
+        duplicateCheckState: "pending",
+        duplicate: { compact: true, original: { taskId: "original" } },
+      },
+      action: null,
+      statusLabel: "",
+    });
+    expect(card).not.toContain("duplicate-card__body");
+    expect(card).not.toContain("duplicate-earlier-link");
+    expect(card).not.toContain(t("duplicate.checking"));
+    expect(card).toContain(t("card.editDetails"));
+  });
+});
+
+it.each([false, true])(
+  "renders responsive phone controls with duplicate UI enabled=%s only for a phone action with an explicit number",
+  (enabled) => {
+    setDuplicateUiSite({ featureFlags: { duplicateDetection: enabled } });
+    const task = {
+      taskId: "phone",
+      kind: "non_actionable_escalation",
+      phoneNumber: "415-553-0123",
+      policyVersion: "actions-escalations-v7",
+      buttons: ["Call SFPD: 415-553-0123"],
+      status: "open",
+    };
+    const render = (value) =>
+      taskAnalysisCard({
+        task: value,
+        statusLabel: "",
+        action: { kind: "done", label: t("common.done") },
+      });
+    const markup = render(task);
+    expect(markup).toContain('data-phone-number="415-553-0123"');
+    expect(markup).toContain("analysis-card__check--phone");
+    expect(markup).toContain('role="checkbox"');
+    expect(render({ ...task, phoneNumber: "" })).not.toContain(
+      "data-phone-number",
+    );
+    expect(render({ ...task, kind: "action" })).not.toContain(
+      "data-phone-number",
+    );
+    expect(render({ ...task, phoneNumber: '911" onclick="bad' })).not.toContain(
+      "data-phone-number",
+    );
+    setDuplicateUiSite(null);
+  },
+);

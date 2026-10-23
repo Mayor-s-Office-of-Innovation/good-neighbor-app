@@ -7,11 +7,21 @@
 // shape lib/principal.js (deriveSiteId) reads.
 //
 // Attached to every route except the bootstrap/intake set (see api.tf). API
-// API Gateway caching is disabled in Terraform so every protected request sees
-// the current binding, Site, and Manager membership state.
+// Gateway caches the verdict per Authorization header for 60 s
+// (`authorizer_result_ttl_in_seconds` in api.tf), so a revocation — generation
+// bump, suspension, Site deactivation, membership removal — takes effect
+// within a minute rather than on the very next request. The trade was made
+// for latency: this function is a second Lambda invoke plus 2–3 serial
+// DynamoDB reads on every uncached request (~55 ms warm), and a /today load
+// makes dozens of them.
+//
+// The DEVICE# and SITE#META reads depend only on the token claims, so they are
+// issued together and awaited in order; the Manager membership read depends on
+// fields of the DEVICE# item and stays serial.
 
-import { GetCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
+import { deviceLivenessProblem } from "../lib/device-liveness.js";
 import {
   canonicalAccessLevel,
   DeviceTokenError,
@@ -62,38 +72,34 @@ export const handler = async (event) => {
   }
 
   // Live check against the DEVICE# item: revocation (generation bumped or
-  // device deleted) kills a still-cryptographically-valid token instantly.
-  const res = await ddb.send(
-    new GetCommand({
-      TableName: process.env.DYNAMO_TABLE,
-      Key: { pk: `SITE#${claims.siteId}`, sk: `DEVICE#${claims.sub}` },
-    }),
-  );
+  // device deleted) kills a still-cryptographically-valid token. The SITE#META
+  // read needed below is keyed by the claims alone, so both go out in one
+  // round trip (a device-level deny discards the site read).
+  const [res, siteRes] = await Promise.all([
+    ddb.send(
+      new GetCommand({
+        TableName: process.env.DYNAMO_TABLE,
+        Key: { pk: `SITE#${claims.siteId}`, sk: `DEVICE#${claims.sub}` },
+      }),
+    ),
+    ddb.send(
+      new GetCommand({
+        TableName: process.env.DYNAMO_TABLE,
+        Key: { pk: `SITE#${claims.siteId}`, sk: "#META" },
+      }),
+    ),
+  ]);
   const device = /** @type {Record<string, any> | undefined} */ (res.Item);
   const now = new Date();
-  const inactiveAfter = device?.lastSeenAt
-    ? new Date(device.lastSeenAt).getTime() +
-      Number(device.inactivityLimitDays ?? 60) * 24 * 60 * 60 * 1000
-    : Number.POSITIVE_INFINITY;
   if (
     !device ||
-    device.status === "revoked" ||
-    device.status === "suspended" ||
+    deviceLivenessProblem(device, now) ||
     device.tokenGeneration !== claims.ver ||
-    canonicalAccessLevel(device.accessLevel) !== claims.accessLevel ||
-    (device.absoluteExpiresAt &&
-      device.absoluteExpiresAt <= now.toISOString()) ||
-    inactiveAfter <= now.getTime()
+    canonicalAccessLevel(device.accessLevel) !== claims.accessLevel
   ) {
     return DENY({ reason: "revoked" });
   }
 
-  const siteRes = await ddb.send(
-    new GetCommand({
-      TableName: process.env.DYNAMO_TABLE,
-      Key: { pk: `SITE#${claims.siteId}`, sk: "#META" },
-    }),
-  );
   const site = /** @type {Record<string, any> | undefined} */ (siteRes.Item);
   if (!site || site.status === "inactive") {
     return DENY({ reason: "site_inactive" });
@@ -104,7 +110,54 @@ export const handler = async (event) => {
   ) {
     return DENY({ reason: "revoked" });
   }
-  if (claims.accessLevel === "manager" && device.membershipId) {
+  if (
+    claims.accessLevel === "manager" &&
+    device.authorityScope === "provider"
+  ) {
+    if (
+      !device.providerId ||
+      site.providerId !== device.providerId ||
+      Number(device.providerAccessGeneration ?? 0) !==
+        Number(site.providerAccessGeneration ?? 0)
+    ) {
+      return DENY({ reason: "revoked" });
+    }
+    const membershipResult = await ddb.send(
+      new GetCommand({
+        TableName: process.env.DYNAMO_TABLE,
+        Key: {
+          pk: `PROVIDER#${device.providerId}`,
+          sk: `PROVIDER_MANAGER#${device.providerMembershipId}`,
+        },
+      }),
+    );
+    let membership = membershipResult.Item;
+    // Imported memberships may have a managerId-based sort key that predates
+    // provider enrollment. Resolve that bounded Provider partition safely.
+    if (!membership) {
+      const matches = await ddb.send(
+        new QueryCommand({
+          TableName: process.env.DYNAMO_TABLE,
+          KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+          ExpressionAttributeValues: {
+            ":pk": `PROVIDER#${device.providerId}`,
+            ":prefix": "PROVIDER_MANAGER#",
+          },
+        }),
+      );
+      membership = matches.Items?.find(
+        (item) => item.membershipId === device.providerMembershipId,
+      );
+    }
+    if (
+      !membership ||
+      membership.status !== "active" ||
+      Number(membership.generation ?? 0) !==
+        Number(device.providerMembershipGeneration ?? -1)
+    ) {
+      return DENY({ reason: "revoked" });
+    }
+  } else if (claims.accessLevel === "manager" && device.membershipId) {
     const membershipResult = await ddb.send(
       new GetCommand({
         TableName: process.env.DYNAMO_TABLE,
@@ -138,6 +191,11 @@ export const handler = async (event) => {
       "claims.custom:siteId": claims.siteId,
       "claims.ver": claims.ver,
       "claims.accessLevel": claims.accessLevel,
+      // Undotted copies for the API Gateway access-log format
+      // ($context.authorizer.sub / .siteId), which replaces the viewer IP
+      // as the per-device correlation key (infra/modules/app/api.tf).
+      sub: claims.sub,
+      siteId: claims.siteId,
     },
   };
 };

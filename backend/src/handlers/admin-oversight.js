@@ -2,10 +2,9 @@ import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
-import { adminOnly } from "../lib/admin-auth.js";
+import { adminOnly, supervisorOnly } from "../lib/admin-auth.js";
 
 const DIRECTORY_PK = "ADMIN_DIRECTORY#OVERSIGHT";
-const DEFAULT_DEPARTMENTS = ["DPH", "HSH"];
 const DEFAULT_SYSTEMS_OF_CARE = ["BHS-PBH"];
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -21,7 +20,7 @@ export const listOversightOptions = (event) =>
     const items = result.Items || [];
     return jsonResponse(200, {
       departments: mergeDefaults(
-        DEFAULT_DEPARTMENTS,
+        [],
         items.filter((item) => item.optionType === "department"),
         "department",
       ),
@@ -35,7 +34,7 @@ export const listOversightOptions = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const createOversightOption = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const type = String(body.type || "").trim();
     const name = String(body.name || "")
       .trim()
@@ -50,6 +49,7 @@ export const createOversightOption = (event) =>
       sk: `${type.toUpperCase()}#${normalizeKey(name)}`,
       type: "oversightDirectoryOption",
       optionType: type,
+      ...(type === "department" ? { departmentId: normalizeKey(name) } : {}),
       name,
       status: "active",
       createdAt: now,
@@ -97,7 +97,18 @@ function mergeDefaults(defaults, items, type) {
 
 /** @param {Record<string, any>} item */
 function publicOption(item) {
-  return { type: item.optionType, name: String(item.name || "") };
+  return {
+    type: item.optionType,
+    name: String(item.name || ""),
+    ...(item.optionType === "department"
+      ? {
+          departmentId: String(
+            item.departmentId ||
+              String(item.sk || "").replace(/^DEPARTMENT#/, ""),
+          ),
+        }
+      : {}),
+  };
 }
 
 /** @param {string} value */

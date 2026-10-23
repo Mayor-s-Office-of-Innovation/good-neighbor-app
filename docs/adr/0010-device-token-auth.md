@@ -37,11 +37,16 @@ JWT dependency), signed with a server-side key:
   - *refresh* — 180 days, **single-use**, carries a `jti` (`typ: "refresh"`)
 - **Rotation:** refresh tokens rotate on use. A refresh must match the
   `DEVICE#` item's current `refreshJti`; each successful refresh bumps
-  `tokenGeneration`, which also kills the previous access token immediately.
+  `tokenGeneration`, which also kills the previous access token — at the next
+  uncached authorizer run, so within the 60 s verdict cache described below.
 - **Revocation:** bump `tokenGeneration` (or delete the device). The
   authorizer's live `GetItem` check makes a still-cryptographically-valid token
-  dead on the next protected request; REQUEST-authorizer verdict caching is
-  disabled so no stale allow decision survives a revocation.
+  dead on the next uncached protected request. API Gateway caches the verdict
+  per Authorization header for 60 s (`authorizer_result_ttl_in_seconds`, raised
+  from 0 on 2026-10-21), so a revoked, suspended or deactivated binding can
+  keep working for up to a minute. The cache was enabled for latency: the
+  uncached authorizer costs ~55 ms and 2–3 DynamoDB reads on every request,
+  and a /today load makes dozens of them.
 - **Routing:** `POST /v1/devices` (register) and
   `POST /v1/devices/token:refresh` are the only device routes reachable
   anonymously; everything else attaches a REQUEST authorizer
@@ -66,3 +71,17 @@ registration) — the request body never asserts a site.
   (already a security-review.md hardening item) applies to these routes too.
 - **Re-review trigger:** before any real (non-test) data, revisit per
   security-review.md — Option 3 or a documented re-acceptance of this posture.
+- **Home Screen handoff (2026-10-21).** An iOS Home Screen web app has its
+  own storage container, so the IndexedDB session never reaches the installed
+  app. `POST /app/v1/session-handoff` (authorized) mints a single-use,
+  7-day grant for the calling device, stored as a sha256 hash with a numeric
+  `expiresAt` for TTL; the client carries it in the manifest `start_url`
+  fragment. `POST /app/v1/session-handoff/redeem` (open) re-mints a session
+  on the SAME device record with `tokenGeneration + 1`, after the same
+  liveness checks as the authorizer (`lib/device-liveness.js`,
+  `bindingLifecycleValid`), which signs the Safari copy out.
+  `DELETE /app/v1/session-handoff` (authorized) retires the pending grant on
+  sign-out, before the client clears its session. The grant carries no
+  authority of its own. Design, threat notes, and the iPhone
+  spike that still has to confirm Safari's manifest handling:
+  `notes/pwa-session-handoff-plan.md`.

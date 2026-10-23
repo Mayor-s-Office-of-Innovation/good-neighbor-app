@@ -1,13 +1,23 @@
+import { getPerson, personPut } from "../lib/people.js";
+import { assignmentsMatchingEmail } from "../lib/manager-identity.js";
+import { sitePrimaryContactChange } from "../lib/site-primary-contact.js";
+import { queryAllItems } from "../lib/query-all-items.js";
 import {
   GetCommand,
   QueryCommand,
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
+import { managerAssignmentChanges } from "../lib/site-manager-assignment.js";
 import { randomUUID } from "node:crypto";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
-import { adminOnly } from "../lib/admin-auth.js";
+import {
+  ADMIN_GROUPS,
+  adminOnly,
+  adminPrincipal,
+  siteAdminOnly,
+} from "../lib/admin-auth.js";
 import { emailHash, normalizeEmail } from "./setup-codes.js";
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -57,11 +67,21 @@ export const listManagerMemberships = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const createManagerMembership = (event) =>
-  adminOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
-    const name = clean(body.name);
-    const email = normalizeEmail(String(body.email ?? ""));
+    let name = clean(body.name);
+    let email = normalizeEmail(String(body.email ?? ""));
     const programId = clean(body.programId);
+    let personId = clean(body.personId);
+    if (personId && (body.userId || body.programId))
+      return jsonResponse(400, { error: "invalid_program_staff" });
+    let person = personId ? await getPerson(personId) : null;
+    if (personId && (!person || person.status !== "active"))
+      return jsonResponse(404, { error: "person_not_found" });
+    if (person) {
+      name = person.name;
+      email = person.email;
+    }
     const userId = clean(body.userId);
     if (!name || name.length > 200) {
       return jsonResponse(400, { error: "invalid_manager_name" });
@@ -79,10 +99,52 @@ export const createManagerMembership = (event) =>
     if (!siteResult.Item || siteResult.Item.status === "inactive") {
       return jsonResponse(404, { error: "site_not_found" });
     }
+    if ((userId && !programId) || (programId && !userId)) {
+      return jsonResponse(400, { error: "invalid_program_staff" });
+    }
     const now = new Date().toISOString();
     const membershipId = randomUUID();
-    const verifier = await emailHash(email);
+
     const actor = actorId(event);
+    let assignmentChanges;
+    try {
+      assignmentChanges = await managerAssignmentChanges(
+        tableName,
+        siteId,
+        programId,
+        userId,
+        true,
+        now,
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message === "program_user_not_found")
+        return jsonResponse(404, { error: "program_user_not_found" });
+      throw error;
+    }
+    if (!person) {
+      personId = String(
+        assignmentChanges.find((change) => change.Put?.Item?.personId)?.Put
+          ?.Item?.personId || "",
+      );
+      person = await getPerson(personId);
+      if (person) {
+        name = person.name;
+        email = person.email;
+      }
+    }
+    const verifier = await emailHash(email);
+    const personSources = person ? [...person.sources] : [];
+    for (const change of assignmentChanges)
+      if (change.Put?.Item && person) {
+        const row = change.Put.Item;
+        row.personId = personId;
+        if (
+          !personSources.some(
+            (source) => source.pk === row.pk && source.sk === row.sk,
+          )
+        )
+          personSources.push({ pk: row.pk, sk: row.sk });
+      }
     const membership = {
       pk: `SITE#${siteId}`,
       sk: `MANAGER_MEMBERSHIP#${membershipId}`,
@@ -92,6 +154,15 @@ export const createManagerMembership = (event) =>
       siteId,
       ...(programId ? { programId } : {}),
       ...(userId ? { userId } : {}),
+      ...(person
+        ? {
+            personId,
+            firstName: person.firstName,
+            lastName: person.lastName,
+            phone: person.phone,
+            phoneExtension: person.phoneExtension,
+          }
+        : {}),
       name,
       email,
       emailHash: verifier,
@@ -103,10 +174,53 @@ export const createManagerMembership = (event) =>
       updatedAt: now,
       updatedBy: actor,
     };
+    const primaryChange = await sitePrimaryContactChange(
+      tableName,
+      siteId,
+      now,
+      { add: membership },
+    );
     try {
       await ddb.send(
         new TransactWriteCommand({
           TransactItems: [
+            ...assignmentChanges,
+            ...(person
+              ? [
+                  personPut(
+                    {
+                      ...person,
+                      siteManager: true,
+                      sources: [
+                        ...personSources,
+                        { pk: membership.pk, sk: membership.sk },
+                      ],
+                      revision: randomUUID(),
+                    },
+                    person.revision,
+                  ),
+                ]
+              : []),
+            ...(userId
+              ? [
+                  put(tableName, {
+                    pk: `SITE#${siteId}`,
+                    sk: `MANAGER_USER#${userId}`,
+                    membershipId,
+                    userId,
+                  }),
+                ]
+              : []),
+            ...(person
+              ? [
+                  put(tableName, {
+                    pk: `SITE#${siteId}`,
+                    sk: `MANAGER_PERSON#${personId}`,
+                    membershipId,
+                    personId,
+                  }),
+                ]
+              : []),
             put(tableName, membership),
             put(tableName, {
               pk: `SITE#${siteId}`,
@@ -135,6 +249,7 @@ export const createManagerMembership = (event) =>
               actor,
               createdAt: now,
             }),
+            primaryChange,
           ],
         }),
       );
@@ -149,7 +264,7 @@ export const createManagerMembership = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const updateManagerMembership = (event) =>
-  adminOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const membershipId = event.pathParameters?.membershipId ?? "";
     const name = clean(body.name);
@@ -173,6 +288,19 @@ export const updateManagerMembership = (event) =>
     const current = currentResult.Item;
     if (!current || current.status !== "active") {
       return jsonResponse(404, { error: "manager_membership_not_found" });
+    }
+    if (current.personId) {
+      const person = await getPerson(current.personId);
+      if (!person || person.name !== name || person.email !== email)
+        return jsonResponse(409, { error: "edit_person_contact" });
+      return jsonResponse(200, { membership: current });
+    }
+    const principal = adminPrincipal(event);
+    if (
+      principal.role !== ADMIN_GROUPS.supervisor &&
+      email !== normalizeEmail(String(current.email ?? ""))
+    ) {
+      return jsonResponse(403, { error: "supervisor_required" });
     }
     const nextHash = await emailHash(email);
     const now = new Date().toISOString();
@@ -254,6 +382,12 @@ export const updateManagerMembership = (event) =>
       }),
     );
     try {
+      items.push(
+        await sitePrimaryContactChange(tableName, siteId, now, {
+          removeMembershipId: membershipId,
+          add: { ...current, name, email, emailHash: nextHash, updatedAt: now },
+        }),
+      );
       await ddb.send(new TransactWriteCommand({ TransactItems: items }));
     } catch (error) {
       if (isTransactionConflict(error)) {
@@ -275,7 +409,7 @@ export const updateManagerMembership = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const deactivateManagerMembership = (event) =>
-  adminOnly(event, async () => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async () => {
     const siteId = event.pathParameters?.siteId ?? "";
     const membershipId = event.pathParameters?.membershipId ?? "";
     const result = await deactivateManagerMembershipRecord({
@@ -295,12 +429,13 @@ export const deactivateManagerMembership = (event) =>
 /**
  * Deactivate one manager membership and revoke its active manager bindings.
  * Returns null when the membership is already absent or inactive.
- * @param {{ siteId: string, membershipId: string, actor: string }} input
+ * @param {{ siteId: string, membershipId: string, actor: string, expectedUserId?: string }} input
  */
 export async function deactivateManagerMembershipRecord({
   siteId,
   membershipId,
   actor,
+  expectedUserId,
 }) {
   const tableName = getDynamoTableName();
   const result = await ddb.send(
@@ -316,6 +451,39 @@ export async function deactivateManagerMembershipRecord({
   if (!membership || membership.status !== "active") {
     return null;
   }
+  // Older memberships can identify staff only by email. Resolve the matching
+  // projection so removing access cannot leave a second, ghost manager row.
+  if ((!membership.userId || !membership.programId) && membership.email) {
+    const assignments = await queryAllItems({
+      TableName: tableName,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+      ExpressionAttributeValues: {
+        ":pk": `SITE#${siteId}`,
+        ":prefix": "ASSIGNED_USER#",
+      },
+      ConsistentRead: true,
+    });
+    const matches = await assignmentsMatchingEmail(
+      tableName,
+      assignments.Items || [],
+      String(membership.email),
+    );
+    if (
+      matches.length > 1 ||
+      (membership.userId &&
+        matches.length === 1 &&
+        matches[0].userId !== membership.userId) ||
+      (expectedUserId &&
+        (matches.length !== 1 || matches[0].userId !== expectedUserId))
+    )
+      return { error: "ambiguous_manager_identity" };
+    if (matches.length === 1) {
+      membership.userId = matches[0].userId;
+      membership.programId = matches[0].programId;
+    }
+  }
+  if (expectedUserId && membership.userId !== expectedUserId)
+    return { error: "ambiguous_manager_identity" };
   const now = new Date().toISOString();
   const bindingsResult = await ddb.send(
     new QueryCommand({
@@ -336,10 +504,53 @@ export async function deactivateManagerMembershipRecord({
   if (bindings.length > 30) {
     return { error: "membership_binding_limit_exceeded" };
   }
+  const assignmentChanges = await managerAssignmentChanges(
+    tableName,
+    siteId,
+    String(membership.programId || ""),
+    String(membership.userId || ""),
+    false,
+    now,
+  );
+  const primaryChange = await sitePrimaryContactChange(tableName, siteId, now, {
+    removeUserId: membership.userId,
+    removeMembershipId: membershipId,
+    removeEmail: membership.email,
+  });
   try {
     await ddb.send(
       new TransactWriteCommand({
         TransactItems: [
+          ...assignmentChanges,
+          ...(membership.personId
+            ? [
+                {
+                  Delete: {
+                    TableName: tableName,
+                    Key: {
+                      pk: `SITE#${siteId}`,
+                      sk: `MANAGER_PERSON#${membership.personId}`,
+                    },
+                  },
+                },
+              ]
+            : []),
+          ...(membership.userId
+            ? [
+                {
+                  Delete: {
+                    TableName: tableName,
+                    Key: {
+                      pk: `SITE#${siteId}`,
+                      sk: `MANAGER_USER#${membership.userId}`,
+                    },
+                    ConditionExpression:
+                      "attribute_not_exists(pk) OR membershipId = :member",
+                    ExpressionAttributeValues: { ":member": membershipId },
+                  },
+                },
+              ]
+            : []),
           {
             Update: {
               TableName: tableName,
@@ -393,6 +604,7 @@ export async function deactivateManagerMembershipRecord({
             actor,
             createdAt: now,
           }),
+          primaryChange,
         ],
       }),
     );

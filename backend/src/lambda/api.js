@@ -1,3 +1,21 @@
+import {
+  listPeople,
+  createPerson,
+  updatePerson,
+} from "../handlers/admin-people.js";
+import {
+  getDuplicateLinks,
+  separateDuplicate,
+} from "../handlers/duplicate-links.js";
+import { get311Media } from "../integrations/sf311-media.js";
+import { getDuplicateResult } from "../handlers/duplicate-results.js";
+import {
+  listCareWork,
+  createCareWork,
+  getCareWork,
+  presignCarePhoto,
+  getCarePhoto,
+} from "../handlers/care-work.js";
 // API Gateway (HTTP API v2) entrypoint for the whole check/artifact API. One
 // Lambda backs every route; API Gateway sets `event.routeKey` to the matched
 // route (e.g. "POST /v1/checks/{checkId}"), so we dispatch on it directly — no
@@ -9,6 +27,7 @@ import {
   createCheck,
   completeCheck,
   listChecks,
+  getCaptureGuidance,
   getCheck,
 } from "../handlers/checks.js";
 import {
@@ -17,6 +36,17 @@ import {
   deleteArtifact,
   presignMedia,
 } from "../handlers/artifacts.js";
+import {
+  createComplaint,
+  deleteComplaint,
+  deleteComplaintArtifact,
+  getComplaint,
+  listComplaints,
+  presignComplaintArtifact,
+  presignComplaintMedia,
+  registerComplaintArtifact,
+  retryComplaint,
+} from "../handlers/complaints.js";
 import {
   get311RequestDetail,
   get311RequestDetails,
@@ -29,7 +59,6 @@ import {
   registerTaskUpdateMedia,
 } from "../handlers/task-updates.js";
 import {
-  cannotDoTask,
   completeTask,
   evaluateAssessment,
   getGuidance,
@@ -45,17 +74,24 @@ import {
   selectDeviceBinding,
 } from "../handlers/device-bindings.js";
 import {
+  issueSessionHandoff,
+  redeemSessionHandoff,
+  retireSessionHandoff,
+} from "../handlers/session-handoff.js";
+import {
   cancelStaffGrant,
   createStaffGrant,
   getCurrentStaffGrant,
   listGeneralBindings,
   revokeGeneralBinding,
 } from "../handlers/manager-access.js";
-import { requestManagerAccess } from "../handlers/manager-access-requests.js";
 import {
-  requestSetupCode,
-  searchSites,
-} from "../handlers/setup-code-requests.js";
+  getChecksReport,
+  getTaskUpdatesReport,
+  getTasksReport,
+} from "../handlers/manager-reports.js";
+import { requestManagerAccess } from "../handlers/manager-access-requests.js";
+import { searchSites } from "../handlers/setup-code-requests.js";
 import {
   getSite,
   getSiteAdmin,
@@ -67,35 +103,43 @@ import {
   rejectAnalysisCondition,
 } from "../handlers/analysis-amendments.js";
 import {
-  createCodeContact,
   createCityProgramManager,
-  createMasterContact,
   createProvider,
   createSite,
-  deactivateCodeContact,
-  deactivateMasterContact,
   deactivateProvider,
   deactivateSite,
   getAdminSite,
   getProvider,
   issueAdminSetupCode,
-  listCodeContacts,
   listCityProgramManagers,
   listDevices,
-  listMasterContacts,
   listProviders,
   presignComplianceLetter,
   reassignSite,
   revokeDevice,
   updateProvider,
+  updateCityProgramManager,
   updateSite,
 } from "../handlers/admin.js";
+import {
+  getAdminSession,
+  getMyProfile,
+  updateMyProfile,
+  inviteAdminUser,
+  listAdminUsers,
+  reinviteAdminUser,
+  reinstateAdminUser,
+  resetAdminUserPassword,
+  suspendAdminUser,
+  updateAdminUserRole,
+} from "../handlers/admin-users.js";
 import {
   createOversightOption,
   listOversightOptions,
 } from "../handlers/admin-oversight.js";
 import { suggestAddresses } from "../handlers/admin-addresses.js";
 import {
+  revokeManagerDevices,
   getPhysicalDeviceRevocationPreview,
   revokeAllSiteDeviceBindings,
   revokePhysicalDeviceEverywhere,
@@ -122,9 +166,12 @@ import {
 import {
   assignSiteUser,
   createSiteTerms,
+  endSiteTerms,
+  resendSiteLetter,
   getSitePerimeter,
   listSiteTerms,
   putSitePerimeter,
+  replaceSiteComplianceManagers,
   unassignSiteUser,
 } from "../handlers/admin-site-config.js";
 import {
@@ -139,6 +186,18 @@ import {
   listManagerGrants,
 } from "../handlers/admin-manager-grants.js";
 import {
+  cancelProviderManagerGrant,
+  createProviderManager,
+  createProviderManagerGrant,
+  deactivateProviderManager,
+  listProviderManagerGrants,
+  listProviderManagers,
+  reinstateProviderManager,
+  revokeProviderManagerEnrollment,
+  updateProviderManager,
+  transferProviderManager,
+} from "../handlers/admin-provider-managers.js";
+import {
   applySiteImport,
   getSiteImport,
   getSiteImportConflicts,
@@ -146,11 +205,17 @@ import {
   previewSiteImport,
 } from "../handlers/admin-site-imports.js";
 import { withServerErrorsLogged } from "../lib/log-server-error.js";
+import {
+  getTaskDetails,
+  recordCustomTaskAction,
+  updateTaskAction,
+} from "../handlers/task-details.js";
 
 // Route key → handler. Keys are the API Gateway v2 route keys ("<METHOD> <path>").
 // The individual handlers carry richer (event, context, callback) signatures; we
 // only ever call them with the event, so the map is typed to that call shape.
 const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
+  "GET /v1/311-media": get311Media,
   "POST /site-code": siteCodeHandler,
   // Device bootstrap (Option 4 device auth — see docs/adr/0010): open routes,
   // no authorizer. Everything under /v1/* except these + the intakes is gated.
@@ -160,14 +225,22 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /app/v1/manager-access/request": requestManagerAccess,
   "GET /app/v1/device-bindings": listDeviceBindings,
   "POST /app/v1/device-bindings/select": selectDeviceBinding,
+  // Home Screen session handoff (notes/pwa-session-handoff-plan.md): issue is
+  // authorized, redeem is open — the installed app has no session yet.
+  "POST /app/v1/session-handoff": issueSessionHandoff,
+  "DELETE /app/v1/session-handoff": retireSessionHandoff,
+  "POST /app/v1/session-handoff/redeem": redeemSessionHandoff,
   "POST /app/v1/manager/staff-grants": createStaffGrant,
   "GET /app/v1/manager/staff-grants/current": getCurrentStaffGrant,
   "DELETE /app/v1/manager/staff-grants/{grantId}": cancelStaffGrant,
   "GET /app/v1/manager/device-bindings": listGeneralBindings,
   "POST /app/v1/manager/device-bindings/{bindingId}/revoke":
     revokeGeneralBinding,
+  // Site manager reports (AP27, AP28): manager-only, site from the token.
+  "GET /app/v1/manager/reports/checks": getChecksReport,
+  "GET /app/v1/manager/reports/tasks": getTasksReport,
+  "GET /app/v1/manager/reports/task-updates": getTaskUpdatesReport,
   "GET /v1/sites:search": searchSites,
-  "POST /v1/setup-codes:request": requestSetupCode,
   // Site config
   "GET /v1/site": getSite,
   "GET /v1/site-admin": getSiteAdmin,
@@ -176,18 +249,42 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   // Perimeter checks (analysis-backend Step C)
   "POST /v1/checks": createCheck,
   "GET /v1/checks": listChecks,
+  "GET /v1/checks:capture-guidance": getCaptureGuidance,
   "POST /v1/checks/{checkId}/artifacts:presign": presignUpload,
   "POST /v1/checks/{checkId}/artifacts": registerArtifact,
   "DELETE /v1/checks/{checkId}/artifacts/{artifactId}": deleteArtifact,
   "POST /v1/checks/{checkId}/complete": completeCheck,
   "GET /v1/checks/{checkId}/artifacts/{artifactId}/media": presignMedia,
+  "GET /v1/checks/{checkId}/artifacts/{artifactId}/duplicates":
+    getDuplicateResult,
   "GET /v1/checks/{checkId}": getCheck,
+  "GET /v1/care-work": listCareWork,
+  "POST /v1/care-work": createCareWork,
+  "GET /v1/care-work/{workId}": getCareWork,
+  "POST /v1/care-work/{workId}/photos:presign": presignCarePhoto,
+  "GET /v1/care-work/{workId}/photos/{photoId}/media": getCarePhoto,
+  "GET /v1/complaints": listComplaints,
+  "POST /v1/complaints": createComplaint,
+  "GET /v1/complaints/{complaintId}": getComplaint,
+  "DELETE /v1/complaints/{complaintId}": deleteComplaint,
+  "POST /v1/complaints/{complaintId}/analysis:retry": retryComplaint,
+  "POST /v1/complaints/{complaintId}/artifacts:presign":
+    presignComplaintArtifact,
+  "POST /v1/complaints/{complaintId}/artifacts": registerComplaintArtifact,
+  "DELETE /v1/complaints/{complaintId}/artifacts/{artifactId}":
+    deleteComplaintArtifact,
+  "GET /v1/complaints/{complaintId}/artifacts/{artifactId}/media":
+    presignComplaintMedia,
   // Staff worklist (AP10)
   "GET /v1/tasks": listTasks,
+  "POST /v1/duplicates:batch": getDuplicateLinks,
+  "POST /v1/tasks/{taskId}/duplicate:separate": separateDuplicate,
+  "GET /v1/tasks/{taskId}/details": getTaskDetails,
+  "PATCH /v1/tasks/{taskId}/action": updateTaskAction,
+  "POST /v1/tasks/{taskId}/custom-action": recordCustomTaskAction,
   "POST /v1/311-requests:batch": get311RequestDetails,
   "GET /v1/tasks/{taskId}/311-requests/{srNum}": get311RequestDetail,
   "POST /v1/tasks/{taskId}/complete": completeTask,
-  "POST /v1/tasks/{taskId}/cannot-do": cannotDoTask,
   "GET /v1/tasks/{taskId}/updates": getTaskUpdates,
   "POST /v1/tasks/{taskId}/updates": createTaskUpdate,
   "POST /v1/tasks/{taskId}/updates/{updateId}/document": documentTaskUpdate,
@@ -208,6 +305,17 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   // served by the separate intake Lambda (lambda/intake.js) so a slow PostHog
   // forward can never hold this function's reserved executions.
   "GET /admin/v1/providers": listProviders,
+  "GET /admin/v1/session": getAdminSession,
+  "GET /admin/v1/profile": getMyProfile,
+  "PUT /admin/v1/profile": updateMyProfile,
+  "GET /admin/v1/admin-users": listAdminUsers,
+  "POST /admin/v1/admin-users": inviteAdminUser,
+  "PUT /admin/v1/admin-users/{username}/role": updateAdminUserRole,
+  "POST /admin/v1/admin-users/{username}/suspend": suspendAdminUser,
+  "POST /admin/v1/admin-users/{username}/reinstate": reinstateAdminUser,
+  "POST /admin/v1/admin-users/{username}/reinvite": reinviteAdminUser,
+  "POST /admin/v1/admin-users/{username}/reset-password":
+    resetAdminUserPassword,
   "POST /admin/v1/providers": createProvider,
   "GET /admin/v1/providers/{providerId}": getProvider,
   "PATCH /admin/v1/providers/{providerId}": updateProvider,
@@ -215,14 +323,23 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /admin/v1/programs": listPrograms,
   "GET /admin/v1/program-managers": listCityProgramManagers,
   "POST /admin/v1/program-managers": createCityProgramManager,
+  "PATCH /admin/v1/program-managers/{userId}": updateCityProgramManager,
   "GET /admin/v1/oversight-options": listOversightOptions,
   "POST /admin/v1/oversight-options": createOversightOption,
   "POST /admin/v1/address-suggestions": suggestAddresses,
   "POST /admin/v1/programs": createProgram,
+  "POST /admin/v1/providers/{providerId}/manager-memberships/{membershipId}/transfer":
+    transferProviderManager,
+  "POST /admin/v1/people/{personId}/devices:revoke": revokeManagerDevices,
+  "GET /admin/v1/people": listPeople,
+  "POST /admin/v1/people": createPerson,
+  "PATCH /admin/v1/people/{personId}": updatePerson,
   "GET /admin/v1/programs/{programId}": getProgram,
   "PATCH /admin/v1/programs/{programId}": updateProgram,
   "DELETE /admin/v1/programs/{programId}": deactivateProgram,
   "POST /admin/v1/programs/{programId}/users": createProgramUser,
+  "POST /admin/v1/programs/{programId}/users/{userId}/devices:revoke":
+    revokeManagerDevices,
   "PATCH /admin/v1/programs/{programId}/users/{userId}": updateProgramUser,
   "DELETE /admin/v1/programs/{programId}/users/{userId}": deactivateProgramUser,
   "POST /admin/v1/providers/{providerId}/programs": assignProgramToProvider,
@@ -231,8 +348,12 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /admin/v1/sites/{siteId}/reassign": reassignSite,
   "POST /admin/v1/sites/{siteId}/users": assignSiteUser,
   "DELETE /admin/v1/sites/{siteId}/users/{userId}": unassignSiteUser,
+  "PUT /admin/v1/sites/{siteId}/compliance-managers":
+    replaceSiteComplianceManagers,
   "GET /admin/v1/sites/{siteId}/terms": listSiteTerms,
   "POST /admin/v1/sites/{siteId}/terms": createSiteTerms,
+  "POST /admin/v1/sites/{siteId}/terms:close": endSiteTerms,
+  "POST /admin/v1/sites/{siteId}/letter:resend": resendSiteLetter,
   "GET /admin/v1/sites/{siteId}/perimeter": getSitePerimeter,
   "PUT /admin/v1/sites/{siteId}/perimeter": putSitePerimeter,
   "GET /admin/v1/sites/{siteId}/manager-memberships": listManagerMemberships,
@@ -244,6 +365,24 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /admin/v1/sites/{siteId}/grants": listManagerGrants,
   "POST /admin/v1/sites/{siteId}/manager-grants": createManagerGrant,
   "DELETE /admin/v1/sites/{siteId}/grants/{grantId}": cancelManagerGrant,
+  "GET /admin/v1/providers/{providerId}/manager-memberships":
+    listProviderManagers,
+  "POST /admin/v1/providers/{providerId}/manager-memberships":
+    createProviderManager,
+  "PATCH /admin/v1/providers/{providerId}/manager-memberships/{membershipId}":
+    updateProviderManager,
+  transferProviderManager,
+  "DELETE /admin/v1/providers/{providerId}/manager-memberships/{membershipId}":
+    deactivateProviderManager,
+  "POST /admin/v1/providers/{providerId}/manager-memberships/{membershipId}/reinstate":
+    reinstateProviderManager,
+  "GET /admin/v1/providers/{providerId}/grants": listProviderManagerGrants,
+  "POST /admin/v1/providers/{providerId}/manager-grants":
+    createProviderManagerGrant,
+  "DELETE /admin/v1/providers/{providerId}/grants/{grantId}":
+    cancelProviderManagerGrant,
+  "POST /admin/v1/providers/{providerId}/manager-enrollments/{enrollmentId}/revoke":
+    revokeProviderManagerEnrollment,
   "POST /admin/v1/site-imports/preview": previewSiteImport,
   "GET /admin/v1/site-imports": listSiteImports,
   "POST /admin/v1/site-imports/{importId}/apply": applySiteImport,
@@ -253,14 +392,6 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /admin/v1/sites/{siteId}/compliance-letters:presign":
     presignComplianceLetter,
   "DELETE /admin/v1/sites/{siteId}": deactivateSite,
-  "GET /admin/v1/sites/{siteId}/master-contacts": listMasterContacts,
-  "POST /admin/v1/sites/{siteId}/master-contacts": createMasterContact,
-  "DELETE /admin/v1/sites/{siteId}/master-contacts/{emailHash}":
-    deactivateMasterContact,
-  "GET /admin/v1/sites/{siteId}/code-contacts": listCodeContacts,
-  "POST /admin/v1/sites/{siteId}/code-contacts": createCodeContact,
-  "DELETE /admin/v1/sites/{siteId}/code-contacts/{emailHash}":
-    deactivateCodeContact,
   "POST /admin/v1/sites/{siteId}/setup-codes": issueAdminSetupCode,
   "GET /admin/v1/sites/{siteId}/devices": listDevices,
   "DELETE /admin/v1/sites/{siteId}/devices/{deviceId}": revokeDevice,

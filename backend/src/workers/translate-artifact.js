@@ -1,0 +1,439 @@
+// Translate worker: fills in the per-locale `translations` map for the two
+// model-written analyzer fields (`userFriendlyLabel`, `description`) of one
+// artifact, in the background, after the analysis itself has landed.
+//
+// The analyze call returns at most ONE locale (the capturing device's) so the
+// card appears at today's speed; this worker asks the analysis service's
+// text-only `/v1/translations` endpoint for the rest and writes the merged map
+// onto every stored copy of that text: the ANALYSIS# concern, and any
+// CONDITION# / TASK# items the evaluate flow has already copied it onto.
+// Copies are matched by exact English text, never by id, so a copy whose text
+// has since been edited is left alone (its own translate job covers it) and
+// the same job is correct whether it runs before or after the user evaluates.
+//
+// Idempotent: a redelivered message finds nothing missing and makes no call
+// and no writes. Permanent analyzer failures are consumed (translations are
+// display sugar); transient ones throw so SQS redelivers, then dead-letters.
+
+import {
+  BatchGetCommand,
+  GetCommand,
+  QueryCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
+import { ddb } from "../db.js";
+import { getConfig } from "../config.js";
+import {
+  AnalyzerError,
+  createAnalyzerClient,
+} from "../analysis/analyzer-client.js";
+import { getAnalyzerApiKey } from "../analysis/api-key.js";
+import {
+  TRANSLATION_TARGET_LOCALES,
+  mergeTranslations,
+  missingTranslationLocales,
+  normalizeTranslations,
+  translationsEqual,
+} from "../analysis/translations.js";
+import { TRANSLATE_MESSAGE_TYPE } from "../analysis/translate-enqueue.js";
+import { TRANSLATE_LIMITS } from "../analysis/contract.js";
+import { analysisKey, sitePk, taskKey } from "../handlers/keys.js";
+
+/** @typedef {import("../analysis/translate-enqueue.js").TranslateMessage} TranslateMessage */
+/** @typedef {import("../analysis/translations.js").TranslationsMap} TranslationsMap */
+
+const APP_ID = "good-neighbor-app";
+const BATCH_GET_LIMIT = 100;
+
+/**
+ * One stored copy of a label/description pair and how to write its map back.
+ * @typedef {object} Target
+ * @property {string} text match key (label + description)
+ * @property {unknown} translations what is stored now
+ * @property {(translations: TranslationsMap) => Promise<void>} write
+ */
+
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+const textOf = (value) => (typeof value === "string" ? value.trim() : "");
+
+/**
+ * @param {unknown} label
+ * @param {unknown} description
+ * @returns {string}
+ */
+const textKey = (label, description) =>
+  JSON.stringify([textOf(label), textOf(description)]);
+
+/**
+ * @param {string} value
+ * @returns {number}
+ */
+const codePoints = (value) => Array.from(value).length;
+
+/**
+ * Gather every stored copy of this artifact's analyzer text. Concern writes
+ * are buffered and flushed as one Update on the ANALYSIS# item.
+ * @param {TranslateMessage} msg
+ * @param {string} dynamoTable
+ * @returns {Promise<{ targets: Target[], flushConcerns: () => Promise<void> }>}
+ */
+async function loadTargets(msg, dynamoTable) {
+  /** @type {Target[]} */
+  const targets = [];
+
+  // 1. The ANALYSIS# concerns. One Update covers every concern on the item.
+  const analysis = await ddb.send(
+    new GetCommand({
+      TableName: dynamoTable,
+      Key: analysisKey(msg.siteId, msg.checkId, msg.artifactId),
+      ConsistentRead: true,
+      ProjectionExpression: "#st, concerns",
+      ExpressionAttributeNames: { "#st": "status" },
+    }),
+  );
+  const concerns = Array.isArray(analysis.Item?.concerns)
+    ? /** @type {Record<string, unknown>[]} */ (analysis.Item?.concerns)
+    : [];
+  /** @type {Map<number, TranslationsMap>} */
+  const concernWrites = new Map();
+  concerns.forEach((concern, index) => {
+    targets.push({
+      text: textKey(concern.userFriendlyLabel, concern.explanation),
+      translations: concern.translations,
+      write: async (translations) => {
+        concernWrites.set(index, translations);
+      },
+    });
+  });
+  const flushConcerns = async () => {
+    if (concernWrites.size === 0) return;
+    /** @type {Record<string, unknown>} */
+    const values = {};
+    const sets = [...concernWrites].map(([index, translations]) => {
+      values[`:t${index}`] = translations;
+      return `#c[${index}].translations = :t${index}`;
+    });
+    await ddb.send(
+      new UpdateCommand({
+        TableName: dynamoTable,
+        Key: analysisKey(msg.siteId, msg.checkId, msg.artifactId),
+        UpdateExpression: `SET ${sets.join(", ")}`,
+        ConditionExpression: "attribute_exists(sk)",
+        ExpressionAttributeNames: { "#c": "concerns" },
+        ExpressionAttributeValues: values,
+      }),
+    );
+  };
+
+  // 2. CONDITION# copies: every assessment for this artifact shares the
+  //    `${checkId}-${artifactId}` id prefix (photo-analysis.js), so one
+  //    begins_with query lists the assessments and their conditions. The
+  //    prefix is re-checked on each row so `art_1` never matches `art_10`.
+  const prefix = `ASSESSMENT#${msg.checkId}-${msg.artifactId}`;
+  /** @type {Record<string, unknown>[]} */
+  const conditions = [];
+  /** @type {Record<string, unknown> | undefined} */
+  let exclusiveStartKey;
+  do {
+    const page = await ddb.send(
+      new QueryCommand({
+        TableName: dynamoTable,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues: {
+          ":pk": sitePk(msg.siteId),
+          ":prefix": prefix,
+        },
+        ConsistentRead: true,
+        ExclusiveStartKey: exclusiveStartKey,
+      }),
+    );
+    for (const item of page.Items ?? []) {
+      const sk = String(item.sk ?? "");
+      const scoped =
+        sk === prefix ||
+        sk.startsWith(`${prefix}#`) ||
+        sk.startsWith(`${prefix}-`);
+      if (scoped && sk.includes("#COND#")) conditions.push(item);
+    }
+    exclusiveStartKey = page.LastEvaluatedKey;
+  } while (exclusiveStartKey);
+
+  /** @type {Set<string>} */
+  const taskIds = new Set();
+  for (const condition of conditions) {
+    targets.push({
+      text: textKey(condition.userFriendlyLabel, condition.description),
+      translations: condition.translations,
+      write: (translations) =>
+        setTranslations(
+          dynamoTable,
+          { pk: condition.pk, sk: condition.sk },
+          translations,
+        ),
+    });
+    for (const taskId of Array.isArray(condition.taskIds)
+      ? condition.taskIds
+      : []) {
+      if (typeof taskId === "string" && taskId) taskIds.add(taskId);
+    }
+  }
+
+  // 3. TASK# copies, reached through the conditions' task lists.
+  const tasks = await batchGetAll(
+    dynamoTable,
+    [...taskIds].map((taskId) => taskKey(msg.siteId, taskId)),
+  );
+  for (const task of tasks) {
+    targets.push({
+      text: textKey(task.userFriendlyLabel, task.description),
+      translations: task.translations,
+      write: (translations) =>
+        setTranslations(
+          dynamoTable,
+          { pk: task.pk, sk: task.sk },
+          translations,
+        ),
+    });
+  }
+
+  return { targets, flushConcerns };
+}
+
+/**
+ * @param {string} dynamoTable
+ * @param {{ pk: unknown, sk: unknown }} key
+ * @param {TranslationsMap} translations
+ * @returns {Promise<void>}
+ */
+async function setTranslations(dynamoTable, key, translations) {
+  await ddb.send(
+    new UpdateCommand({
+      TableName: dynamoTable,
+      Key: { pk: key.pk, sk: key.sk },
+      UpdateExpression: "SET translations = :translations",
+      ConditionExpression: "attribute_exists(sk)",
+      ExpressionAttributeValues: { ":translations": translations },
+    }),
+  );
+}
+
+/**
+ * @param {string} dynamoTable
+ * @param {{ pk: string, sk: string }[]} keys
+ * @returns {Promise<Record<string, unknown>[]>}
+ */
+async function batchGetAll(dynamoTable, keys) {
+  /** @type {Record<string, unknown>[]} */
+  const items = [];
+  for (let start = 0; start < keys.length; start += BATCH_GET_LIMIT) {
+    let pending = keys.slice(start, start + BATCH_GET_LIMIT);
+    while (pending.length > 0) {
+      const result = await ddb.send(
+        new BatchGetCommand({
+          RequestItems: { [dynamoTable]: { Keys: pending } },
+        }),
+      );
+      items.push(...(result.Responses?.[dynamoTable] ?? []));
+      pending = /** @type {{ pk: string, sk: string }[]} */ (
+        result.UnprocessedKeys?.[dynamoTable]?.Keys ?? []
+      );
+    }
+  }
+  return items;
+}
+
+/**
+ * Translate one artifact's text and write the maps back.
+ * @param {TranslateMessage} msg
+ * @param {object} deps
+ * @param {import("../analysis/analyzer-client.js").AnalyzerClient} deps.client
+ * @param {string} deps.dynamoTable
+ * @returns {Promise<{ requestedLocales: string[], updatedTargets: number, skippedOverCap: number }>}
+ */
+export async function translateArtifact(msg, { client, dynamoTable }) {
+  if (
+    msg?.type !== TRANSLATE_MESSAGE_TYPE ||
+    typeof msg.siteId !== "string" ||
+    typeof msg.checkId !== "string" ||
+    typeof msg.artifactId !== "string" ||
+    !Array.isArray(msg.items)
+  ) {
+    throw new Error("translateArtifact: malformed message");
+  }
+
+  const { targets, flushConcerns } = await loadTargets(msg, dynamoTable);
+
+  // Group the message's text pairs with every stored copy. A pair with no
+  // stored copy is skipped (its text was edited away before we ran); the
+  // locales any copy already holds are shared with the others for free.
+  /** @type {Map<string, { item: { user_friendly_label: string, description: string }, known: TranslationsMap | undefined, targets: Target[] }>} */
+  const groups = new Map();
+  for (const item of msg.items) {
+    const label = textOf(item?.user_friendly_label);
+    const description = textOf(item?.description);
+    if (!label || !description) continue;
+    const key = textKey(label, description);
+    if (groups.has(key)) continue;
+    const matching = targets.filter((target) => target.text === key);
+    if (matching.length === 0) continue;
+    const known = matching.reduce(
+      (acc, target) => mergeTranslations(acc, target.translations),
+      /** @type {TranslationsMap | undefined} */ (undefined),
+    );
+    groups.set(key, {
+      item: { user_friendly_label: label, description },
+      known,
+      targets: matching,
+    });
+  }
+
+  // Items the service would reject outright are skipped here so one bad pair
+  // never fails its neighbours' batch (they keep English). Counts only in the
+  // log: the text itself is user content.
+  let skippedOverCap = 0;
+  const needing = [...groups.values()].filter((group) => {
+    if (missingTranslationLocales(group.known).length === 0) return false;
+    if (
+      codePoints(group.item.user_friendly_label) >
+        TRANSLATE_LIMITS.maxLabelLength ||
+      codePoints(group.item.description) > TRANSLATE_LIMITS.maxDescriptionLength
+    ) {
+      skippedOverCap += 1;
+      return false;
+    }
+    return true;
+  });
+  if (skippedOverCap > 0) {
+    console.warn("translateArtifact: skipped items over the service caps", {
+      checkId: msg.checkId,
+      artifactId: msg.artifactId,
+      skippedOverCap,
+    });
+  }
+  const requestedLocales = TRANSLATION_TARGET_LOCALES.filter((locale) =>
+    needing.some((group) =>
+      missingTranslationLocales(group.known).includes(locale),
+    ),
+  );
+
+  // One call per locale per chunk of `maxItems`, all in flight together. Output
+  // tokens dominate the service's latency and it sits behind a 29 s gateway
+  // budget, so many small calls beat one large one; a locale that fails also
+  // leaves the others intact. Each call only carries the items still missing
+  // that locale, so a redelivery re-requests exactly what is left.
+  /** @type {{ locale: string, chunk: typeof needing, requestId: string }[]} */
+  const calls = [];
+  for (const locale of requestedLocales) {
+    const wanting = needing.filter(
+      (group) => missingTranslationLocales(group.known, [locale]).length > 0,
+    );
+    for (let i = 0; i < wanting.length; i += TRANSLATE_LIMITS.maxItems) {
+      calls.push({
+        locale,
+        chunk: wanting.slice(i, i + TRANSLATE_LIMITS.maxItems),
+        requestId: `${msg.checkId}#${msg.artifactId}#translate#${locale}#${calls.length}`,
+      });
+    }
+  }
+  const settled = await Promise.allSettled(
+    calls.map(({ locale, chunk, requestId }) =>
+      client.translate({
+        items: chunk.map((group, index) => ({
+          id: String(index),
+          ...group.item,
+        })),
+        languages: [locale],
+        requestId,
+        appId: APP_ID,
+      }),
+    ),
+  );
+  /** @type {unknown} */
+  let retryableFailure;
+  settled.forEach((result, index) => {
+    const { locale, chunk } = calls[index];
+    if (result.status === "rejected") {
+      const err = result.reason;
+      if (err instanceof AnalyzerError && !err.retryable) {
+        // Permanent for this locale: leave English, keep the other locales.
+        console.warn("translateArtifact: analyzer rejected a locale", {
+          checkId: msg.checkId,
+          artifactId: msg.artifactId,
+          locale,
+          code: err.code,
+          status: err.status,
+        });
+        return;
+      }
+      retryableFailure ??= err;
+      return;
+    }
+    const byId = new Map(
+      (Array.isArray(result.value?.items) ? result.value.items : []).map(
+        (item) => [String(item?.id), normalizeTranslations(item?.translations)],
+      ),
+    );
+    chunk.forEach((group, itemIndex) => {
+      group.known = mergeTranslations(group.known, byId.get(String(itemIndex)));
+    });
+  });
+
+  // Write the merged map onto every copy that differs from it — including
+  // what succeeded when another locale failed, so a redelivery has less to do.
+  let updatedTargets = 0;
+  for (const group of groups.values()) {
+    if (!group.known) continue;
+    for (const target of group.targets) {
+      const next = mergeTranslations(target.translations, group.known);
+      if (!next || translationsEqual(next, target.translations)) continue;
+      await target.write(next);
+      updatedTargets += 1;
+    }
+  }
+  await flushConcerns();
+  if (retryableFailure !== undefined) throw retryableFailure;
+  return { requestedLocales, updatedTargets, skippedOverCap };
+}
+
+/**
+ * SQS entry point (dispatched by lambda/worker.js on `type`). Records run
+ * concurrently; only failed ones are reported back for redelivery.
+ * @type {import("aws-lambda").SQSHandler}
+ */
+export const handler = async (event) => {
+  const { dynamoTable, analyzerBaseUrl } = getConfig();
+  if (!analyzerBaseUrl) {
+    throw new Error(
+      "Missing required environment variable ANALYZER_BASE_URL for the translate worker",
+    );
+  }
+  const apiKey = await getAnalyzerApiKey();
+  // Unlike the analyze worker, keep the client's short in-process retries: a
+  // text-only call is cheap, and a transient blip is better absorbed in a few
+  // hundred milliseconds than after an SQS visibility timeout.
+  const client = createAnalyzerClient({ baseUrl: analyzerBaseUrl, apiKey });
+
+  const settled = await Promise.allSettled(
+    event.Records.map(async (record) => {
+      const msg = /** @type {TranslateMessage} */ (JSON.parse(record.body));
+      await translateArtifact(msg, { client, dynamoTable });
+    }),
+  );
+
+  /** @type {{ itemIdentifier: string }[]} */
+  const batchItemFailures = [];
+  settled.forEach((result, index) => {
+    if (result.status === "rejected") {
+      const { messageId } = event.Records[index];
+      console.error("translateArtifact failed; message will redeliver", {
+        messageId,
+        error: result.reason,
+      });
+      batchItemFailures.push({ itemIdentifier: messageId });
+    }
+  });
+  return { batchItemFailures };
+};

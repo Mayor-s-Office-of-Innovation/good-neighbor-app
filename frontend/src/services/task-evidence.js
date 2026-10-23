@@ -26,41 +26,80 @@ export async function hydrateTaskEvidence(tasks) {
   );
 
   return Promise.all(
-    tasks.map(async (task) => {
-      const artifact = firstTaskArtifact(task, artifactsByCheck);
-      if (!artifact) return task;
-      // `positionDescriptor` is not a fallback here: since ADR 0014 it is a
-      // fixed literal, not a location. Only pre-Phase-2 rows carry a place
-      // name; the card falls back to the site name otherwise.
-      const evidence = {
-        artifactId: artifact.artifactId || "",
-        placeName: artifact.placeName || task.placeName || task.location || "",
-        georeferencedAddress: artifact.georeferencedAddress || "",
-        text: artifact.text || "",
-      };
-      if (artifact.s3Key && artifact.contentType?.startsWith?.("image/")) {
-        try {
-          const downloadUrl = await cachedMediaUrl(
-            task.checkId,
-            artifact.artifactId,
-          );
-          return {
-            ...task,
-            evidence,
-            mediaUrl: downloadUrl,
-            thumbnailUrl: downloadUrl,
-          };
-        } catch (err) {
-          console.warn("Could not hydrate task media", {
-            checkId: task.checkId,
-            artifactId: artifact.artifactId,
-            err,
-          });
-        }
-      }
-      return { ...task, evidence };
-    }),
+    tasks.map((task) =>
+      hydrateTaskFromArtifacts(task, artifactsByCheck.get(task?.checkId) || []),
+    ),
   );
+}
+
+/**
+ * Same hydration for tasks whose check detail the caller already holds
+ * (the reports day view fetches each check for its photo strip), so the
+ * check is not fetched a second time. Media URLs still go through the
+ * shared cache.
+ * @param {Record<string, any>[]} tasks
+ * @param {{ artifacts?: any[], analyses?: any[] } | null | undefined} detail
+ */
+export function hydrateTaskEvidenceFromCheck(tasks, detail) {
+  const artifacts = artifactsWithAddresses(detail || {});
+  return Promise.all(
+    tasks.map((task) => hydrateTaskFromArtifacts(task, artifacts)),
+  );
+}
+
+/**
+ * @param {Record<string, any>} task
+ * @param {Record<string, any>[]} artifacts the task's check's artifacts
+ */
+async function hydrateTaskFromArtifacts(task, artifacts) {
+  const artifact = firstTaskArtifact(task, artifacts);
+  if (!artifact) return task;
+  // `positionDescriptor` is not a fallback here: since ADR 0014 it is a
+  // fixed literal, not a location. Only pre-Phase-2 rows carry a place
+  // name; the card falls back to the site name otherwise.
+  const evidence = {
+    artifactId: artifact.artifactId || "",
+    placeName: artifact.placeName || task.placeName || task.location || "",
+    georeferencedAddress: artifact.georeferencedAddress || "",
+    text: artifact.text || "",
+  };
+  if (artifact.s3Key && artifact.contentType?.startsWith?.("image/")) {
+    try {
+      const { downloadUrl, thumbnailUrl } = await cachedMediaUrls(
+        task.checkId,
+        artifact.artifactId,
+      );
+      // `taskMediaUrl` picks the thumbnail for cards when the worker has
+      // stored one and falls back to the original; the original is always
+      // the lightbox source.
+      return { ...task, evidence, mediaUrl: downloadUrl, thumbnailUrl };
+    } catch (err) {
+      console.warn("Could not hydrate task media", {
+        checkId: task.checkId,
+        artifactId: artifact.artifactId,
+        err,
+      });
+    }
+  }
+  return { ...task, evidence };
+}
+
+/**
+ * A check's artifacts with the street each analysis georeferenced folded in.
+ * @param {{ artifacts?: any[], analyses?: any[] }} result
+ */
+function artifactsWithAddresses(result) {
+  const addresses = new Map(
+    (result.analyses || []).map((analysis) => [
+      analysis.artifactId,
+      analysis.georeferencedAddress || "",
+    ]),
+  );
+  return (result.artifacts || []).map((artifact) => ({
+    ...artifact,
+    georeferencedAddress:
+      addresses.get(artifact.artifactId) || artifact.georeferencedAddress || "",
+  }));
 }
 
 async function cachedCheckArtifacts(checkId) {
@@ -68,21 +107,7 @@ async function cachedCheckArtifacts(checkId) {
     CHECK_ARTIFACTS_CACHE.set(
       checkId,
       getCheck(checkId)
-        .then((result) => {
-          const addresses = new Map(
-            (result.analyses || []).map((analysis) => [
-              analysis.artifactId,
-              analysis.georeferencedAddress || "",
-            ]),
-          );
-          return (result.artifacts || []).map((artifact) => ({
-            ...artifact,
-            georeferencedAddress:
-              addresses.get(artifact.artifactId) ||
-              artifact.georeferencedAddress ||
-              "",
-          }));
-        })
+        .then(artifactsWithAddresses)
         .catch((err) => {
           console.warn("Could not hydrate task evidence", { checkId, err });
           CHECK_ARTIFACTS_CACHE.delete(checkId);
@@ -93,13 +118,27 @@ async function cachedCheckArtifacts(checkId) {
   return CHECK_ARTIFACTS_CACHE.get(checkId);
 }
 
-async function cachedMediaUrl(checkId, artifactId) {
+/**
+ * @typedef {{ downloadUrl: string, thumbnailUrl?: string }} MediaUrls
+ *   `downloadUrl` is the original; `thumbnailUrl` the small card variant when
+ *   the backend has one for this photo.
+ */
+
+/**
+ * Presigned URLs for one artifact, memoised per page load.
+ * @param {string} checkId @param {string} artifactId
+ * @returns {Promise<MediaUrls>}
+ */
+export async function cachedMediaUrls(checkId, artifactId) {
   const key = `${checkId}:${artifactId}`;
   if (!MEDIA_URL_CACHE.has(key)) {
     MEDIA_URL_CACHE.set(
       key,
       getMediaUrl(checkId, artifactId)
-        .then((media) => media.downloadUrl)
+        .then(({ downloadUrl, thumbnailUrl }) => ({
+          downloadUrl,
+          thumbnailUrl,
+        }))
         .catch((err) => {
           MEDIA_URL_CACHE.delete(key);
           throw err;
@@ -109,8 +148,7 @@ async function cachedMediaUrl(checkId, artifactId) {
   return MEDIA_URL_CACHE.get(key);
 }
 
-function firstTaskArtifact(task, artifactsByCheck) {
-  const artifacts = artifactsByCheck.get(task?.checkId) || [];
+function firstTaskArtifact(task, artifacts) {
   const sourceIds = new Set(taskArtifactIds(task));
   return (
     artifacts.find((artifact) =>

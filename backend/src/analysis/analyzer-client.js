@@ -28,11 +28,12 @@ import { RUBRIC_ID, RUBRIC_VERSION } from "./contract.js";
  * The service's documented error `code`s (error-response.schema.json). Kept as a
  * plain typedef — we don't switch on them beyond surfacing, but naming them
  * documents what a caller can expect on `.code`.
- * @typedef {"invalid_request" | "unknown_rubric" | "unsupported_input_type" | "unauthorized" | "forbidden_rubric" | "model_invoke_failed" | "invalid_model_response"} AnalyzerErrorCode
+ * @typedef {"invalid_request" | "unknown_rubric" | "unsupported_input_type" | "unauthorized" | "forbidden_rubric" | "model_invoke_failed" | "model_unavailable" | "model_access_denied" | "invalid_model_response" | "evidence_retrieval_failed"} AnalyzerErrorCode
  */
 
 /** HTTP statuses worth a retry: throttling, gateway/model transients, 5xx. */
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const ERROR_BODY_TIMEOUT_MS = 5000;
 
 /**
  * @param {number} ms
@@ -146,6 +147,10 @@ export function buildAnalyzeRequest({
  * @property {(analysisId: string, conditionId: string, input?: { reason?: { key: "not_a_problem" | "other", note?: string }, requestId?: string, appId?: string }) => Promise<unknown>} rejectCondition
  * @property {(input: { classifierId: string, evidence: ClassifierEvidence, requestId?: string, appId?: string }) => Promise<unknown>} classifyEvidence
  * @property {(input: { classifierId: string, image: { content_type: "image/jpeg" | "image/png" | "image/webp", base64: string, metadata?: object }, requestId?: string, appId?: string }) => Promise<unknown>} classifyImage
+ * @property {(input: { items: import("./contract.js").TranslateRequestItem[], languages: string[], requestId?: string, appId?: string }) => Promise<import("./contract.js").TranslateResponse>} translate
+ * @property {(input: { description?: string, files?: Array<{name:string, content_type:string, base64?:string, source_url?:string}>, requestId?: string, appId?: string }) => Promise<unknown>} extractComplaint
+ *   text-only background translation of model-written label/description
+ *   pairs into every requested locale (`POST /v1/translations`)
  * @property {() => Promise<unknown>} listRubrics
  */
 
@@ -174,14 +179,27 @@ export function createAnalyzerClient({
   /**
    * Try to read the service's `{ error: { code, message, details } }` body.
    * @param {Response} res
-   * @returns {Promise<{ code?: string, message?: string, details?: string[] }>}
+   * @param {{abort: () => void}} controller
+   * @returns {Promise<{ code?: string, message?: string, details?: string[], retryable?: boolean }>}
    */
-  const readError = async (res) => {
+  const readError = async (res, controller) => {
+    let timer;
     try {
-      const body = await res.json();
+      const body = await Promise.race([
+        res.json(),
+        new Promise((resolve) => {
+          timer = setTimeout(() => {
+            // Abort the underlying fetch body, then use HTTP-status fallback.
+            controller.abort();
+            resolve(undefined);
+          }, ERROR_BODY_TIMEOUT_MS);
+        }),
+      ]);
       return body && typeof body === "object" && body.error ? body.error : {};
     } catch {
       return {};
+    } finally {
+      clearTimeout(timer);
     }
   };
 
@@ -195,8 +213,10 @@ export function createAnalyzerClient({
 
     for (let attempt = 0; ; attempt++) {
       let res;
+      const controller = new globalThis.AbortController();
       try {
         res = await fetchImpl(url, {
+          signal: controller.signal,
           method,
           headers: {
             accept: "application/json",
@@ -227,25 +247,50 @@ export function createAnalyzerClient({
 
       if (res.ok) return res.json();
 
-      if (RETRYABLE_STATUS.has(res.status) && attempt < maxRetries) {
+      const err = await readError(res, controller);
+      // Read the contract before deciding: a retired model is a permanent 502.
+      const permanentModelError = [
+        "model_unavailable",
+        "model_access_denied",
+      ].includes(err.code || "");
+      const retryable =
+        !permanentModelError &&
+        (typeof err.retryable === "boolean"
+          ? err.retryable
+          : err.code === "evidence_retrieval_failed" ||
+            RETRYABLE_STATUS.has(res.status));
+      if (retryable && attempt < maxRetries) {
         await sleep(baseDelayMs * 2 ** attempt);
         continue;
       }
 
-      const err = await readError(res);
       throw new AnalyzerError(
         err.message || `Analyzer returned ${res.status}`,
         {
           status: res.status,
           code: err.code,
           details: err.details,
-          retryable: RETRYABLE_STATUS.has(res.status),
+          retryable,
         },
       );
     }
   };
 
   return {
+    extractComplaint({ description, files, requestId, appId }) {
+      const caller = {};
+      if (appId !== undefined) caller.app_id = appId;
+      if (requestId !== undefined) caller.request_id = requestId;
+      return request("/v1/complaints:extract", {
+        method: "POST",
+        auth: true,
+        body: {
+          ...(description ? { description } : {}),
+          files: files || [],
+          ...(Object.keys(caller).length ? { caller } : {}),
+        },
+      });
+    },
     async analyze({ metadata, media, requestId, appId, language }) {
       const body = buildAnalyzeRequest({
         metadata,
@@ -326,6 +371,23 @@ export function createAnalyzerClient({
         },
         auth: true,
       });
+    },
+    translate({ items, languages, requestId, appId }) {
+      /** @type {Record<string, string>} */
+      const caller = {};
+      if (appId !== undefined) caller.app_id = appId;
+      if (requestId !== undefined) caller.request_id = requestId;
+      return /** @type {Promise<import("./contract.js").TranslateResponse>} */ (
+        request("/v1/translations", {
+          method: "POST",
+          body: {
+            languages,
+            items,
+            ...(Object.keys(caller).length > 0 ? { caller } : {}),
+          },
+          auth: true,
+        })
+      );
     },
     listRubrics() {
       return request("/v1/rubrics", { method: "GET", auth: false });

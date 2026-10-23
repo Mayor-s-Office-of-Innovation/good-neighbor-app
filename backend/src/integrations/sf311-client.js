@@ -131,12 +131,31 @@ export function buildAttachmentUpdatePayload({ srNum, imageUrl, now }) {
   };
 }
 
+/**
+ * Add Notes: HUB API Documentation, appendix 4.4 (type 5, subtype 2).
+ * @param {{ srNum: string, siteName: string, now: Date }} input
+ * @returns {Record<string, string>}
+ */
+export function buildNoteUpdatePayload({ srNum, siteName, now }) {
+  return {
+    SRnum: srNum,
+    UpdateType: "5",
+    SendingAgency: SENDING_AGENCY,
+    SourceOperator: "Good Neighbor App",
+    NumericSubType: "2",
+    TextSubType: "",
+    EffectiveDate: hubDateTime(now),
+    ToAgencyDate: "",
+    Notes: `The provider site "${siteName}" reports that the issue is resolved or City help is no longer needed.`,
+  };
+}
+
 // HUB UpdateType 11 = ClosedReason; "HUB changes update status to closed"
-// (HUB_Lookup_Tables.xlsx UpdateType sheet). NumericSubType 8 = "Field Work
-// Completed" (ClosedReasonCode sheet). HUB rejects the update with return
+// (HUB_Lookup_Tables.xlsx UpdateType sheet). Silent ticket closures must use
+// ClosedReason 1 (NumericSubType). HUB rejects the update with return
 // code 26 unless SendingAgency is the SR's responsible agency, so closure is
 // only ever attempted for tickets we filed under our own agency id.
-export const CLOSE_REASON_FIELD_WORK_COMPLETED = "8";
+export const SILENT_TICKET_CLOSED_REASON = "1";
 
 /**
  * @param {object} params
@@ -148,7 +167,7 @@ export const CLOSE_REASON_FIELD_WORK_COMPLETED = "8";
  */
 export function buildCloseSrPayload({
   srNum,
-  closedReasonCode = CLOSE_REASON_FIELD_WORK_COMPLETED,
+  closedReasonCode = SILENT_TICKET_CLOSED_REASON,
   notes = "",
   now,
 }) {
@@ -312,12 +331,6 @@ function isAbortError(error) {
  * @returns {{ lookupResponsibleAgency: (serviceCode: string) => Promise<string>, createServiceRequest: (payload: Record<string, string>) => Promise<{ srNum: string, response: unknown }>, updateServiceRequest: (payload: Record<string, string>) => Promise<{ updateId: string | null, response: unknown }>, getLatestUpdatesBySourceAgency: (agencyId?: string) => Promise<unknown> }}
  */
 export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
-  if (!config.sf311CreateSrUrl) {
-    throw new Error("SF311_CREATESR_URL is required");
-  }
-  if (!config.sf311AgencyLookupUrl) {
-    throw new Error("SF311_AGENCY_LOOKUP_URL is required");
-  }
   const createSrUrl = config.sf311CreateSrUrl;
   const updateSrUrl = config.sf311UpdateSrUrl;
   const agencyLookupUrl = config.sf311AgencyLookupUrl;
@@ -410,6 +423,8 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
      * @returns {Promise<string>}
      */
     async lookupResponsibleAgency(serviceCode) {
+      if (!agencyLookupUrl)
+        throw new Error("SF311_AGENCY_LOOKUP_URL is required");
       const auth = await getSf311BasicAuth(config);
       const res = await fetchSf311(
         agencyLookupUrl,
@@ -446,6 +461,7 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
      * @returns {Promise<{ srNum: string, response: unknown }>}
      */
     async createServiceRequest(payload) {
+      if (!createSrUrl) throw new Error("SF311_CREATESR_URL is required");
       const auth = await getSf311BasicAuth(config);
       const res = await fetchSf311(
         createSrUrl,

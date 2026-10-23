@@ -33,3 +33,27 @@ only runtime prerequisites are Node and a JVM.
 - Handler logic and data access are exercised locally; API Gateway/IAM/event-source wiring is
   *not* — that is verified only in the Terraform-provisioned cloud dev env.
 - First run pays one-time binary downloads (JVM jars + ~103 MB MinIO) into `backend/.local/`.
+
+## Addendum — e2e table isolation (2026-10-14)
+
+The e2e suite previously ran against the same DynamoDB Local table a developer's
+`npm run dev` uses (`gnp-local-app`, one `-sharedDb` instance), and globalSetup
+deleted every `TASK#` item for rerun hygiene — which silently wiped developer
+data when the host table held real work. Two changes close that:
+
+- **The suite owns its table.** `playwright.config.js` pins
+  `DYNAMO_TABLE=gnp-local-e2e` for the spawned backend: `ensureLocalInfra()`
+  creates + seeds it at boot through the same code path as the dev table (one
+  source of truth for schema and seed), and globalSetup/globalTeardown guard on
+  the same name. globalSetup **refuses to run** against any other table.
+- **The suite never reuses running servers.** `reuseExistingServer: false` — a
+  dev-started backend carries the dev table's env, so attaching to it would
+  defeat the isolation. If ports 3001/5173/3101 are occupied, Playwright fails
+  fast; stop the dev stack before running the suite.
+- **globalTeardown deletes `gnp-local-e2e`** after the run (the suite's table is
+  disposable). The next boot re-creates + reseeds it, so checks and tasks are
+  always coherent; globalSetup's entry cleanup remains as crash self-healing.
+
+Developer-facing consequence: `npm run dev` data is never touched by the suite,
+and a clean dev table is `rm -rf backend/.local/dynamodb-data` (optionally
+`minio-data` too) with the stack stopped, since the next dev boot re-bootstraps.

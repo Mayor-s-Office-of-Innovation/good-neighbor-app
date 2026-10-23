@@ -1,0 +1,132 @@
+[
+  {
+    "name": "litter-light",
+    "node": "1897:13064",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "litter-dark",
+    "node": "1926:14094",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "bulky-light",
+    "node": "1897:13066",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "bulky-dark",
+    "node": "1926:14093",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "feces-light",
+    "node": "1699:14281",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "feces-dark",
+    "node": "1926:14100",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "needles-light",
+    "node": "1897:13069",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "needles-dark",
+    "node": "1926:14127",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "encampment-light",
+    "node": "1897:13070",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "encampment-dark",
+    "node": "1926:14097",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "graffiti-light",
+    "node": "1902:15176",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "graffiti-dark",
+    "node": "1932:14158",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "fire-light",
+    "node": "1897:13075",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "fire-dark",
+    "node": "1926:14098",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "blocked-light",
+    "node": "1897:13067",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "blocked-dark",
+    "node": "1926:14099",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "drugs-light",
+    "node": "1897:13074",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "drugs-dark",
+    "node": "1932:14160",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "animals-light",
+    "node": "1902:15175",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "animals-dark",
+    "node": "1926:14096",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "medical-light",
+    "node": "1897:13072",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "medical-dark",
+    "node": "1926:14092",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "threats-light",
+    "node": "1897:13065",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "threats-dark",
+    "node": "1926:14091",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "distress-light",
+    "node": "1897:13076",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  },
+  {
+    "name": "distress-dark",
+    "node": "1932:14166",
+    "fileKey": "muHTWTeWZtAiTmHE1UMxJd"
+  }
+]

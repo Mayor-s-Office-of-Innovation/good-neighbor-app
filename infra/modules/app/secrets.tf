@@ -49,3 +49,70 @@ resource "aws_secretsmanager_secret" "sf311_basic_auth" {
   kms_key_id  = aws_kms_key.app.arn
   tags        = var.tags
 }
+
+# Proofpoint authenticates the outbound hop from SES Mail Manager. Terraform
+# owns only the encrypted container and access policy; the JSON value is set
+# out-of-band so the SMTP password never enters source control or state:
+# {"username":"<provided SMTP username>","password":"<provided SMTP password>"}
+resource "aws_secretsmanager_secret" "city_smtp_relay" {
+  count = var.provision_city_smtp_relay_foundation ? 1 : 0
+
+  #checkov:skip=CKV2_AWS_57:DT owns credential rotation; the operational agreement provides 30 days for normal rotations and an emergency path for immediate changes.
+  name        = "${local.name_prefix}-city-smtp-relay"
+  description = "City Proofpoint SMTP credentials for SES Mail Manager (value set out-of-band)."
+  kms_key_id  = aws_kms_key.smtp_secrets[0].arn
+  tags        = var.tags
+}
+
+# Applications submit mail to an authenticated Mail Manager ingress point.
+# This separate credential prevents the City/Proofpoint password from ever
+# being available to application code. Expected JSON: {"password":"<random>"}.
+resource "aws_secretsmanager_secret" "mail_manager_ingress" {
+  count = var.provision_city_smtp_relay_foundation ? 1 : 0
+
+  #checkov:skip=CKV2_AWS_57:Rotation is coordinated with every SMTP client; Mail Manager accepts AWSCURRENT and AWSPREVIOUS during a controlled manual rotation.
+  name        = "${local.name_prefix}-mail-manager-ingress"
+  description = "Authentication password for the SES Mail Manager application ingress (value set out-of-band)."
+  kms_key_id  = aws_kms_key.smtp_secrets[0].arn
+  tags        = var.tags
+}
+
+resource "aws_secretsmanager_secret_policy" "city_smtp_relay" {
+  count = var.provision_city_smtp_relay_foundation ? 1 : 0
+
+  secret_arn = aws_secretsmanager_secret.city_smtp_relay[0].arn
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "AllowMailManagerRelayRead"
+      Effect    = "Allow"
+      Principal = { Service = "ses.amazonaws.com" }
+      Action    = ["secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue"]
+      Resource  = aws_secretsmanager_secret.city_smtp_relay[0].arn
+      Condition = {
+        StringEquals = { "aws:SourceAccount" = data.aws_caller_identity.current.account_id }
+        ArnLike      = { "aws:SourceArn" = "arn:aws:ses:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:mailmanager-smtp-relay/*" }
+      }
+    }]
+  })
+}
+
+resource "aws_secretsmanager_secret_policy" "mail_manager_ingress" {
+  count = var.provision_city_smtp_relay_foundation ? 1 : 0
+
+  secret_arn = aws_secretsmanager_secret.mail_manager_ingress[0].arn
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "AllowMailManagerIngressRead"
+      Effect    = "Allow"
+      Principal = { Service = "ses.amazonaws.com" }
+      Action    = ["secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue"]
+      Resource  = aws_secretsmanager_secret.mail_manager_ingress[0].arn
+      Condition = {
+        StringEquals = { "aws:SourceAccount" = data.aws_caller_identity.current.account_id }
+        ArnLike      = { "aws:SourceArn" = "arn:aws:ses:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:mailmanager-ingress-point/*" }
+      }
+    }]
+  })
+}

@@ -254,3 +254,71 @@ describe("get311RequestDetail", () => {
     fetchSpy.mockRestore();
   });
 });
+
+it("reads fresh simulator statuses on consecutive requests while leaving the production cache separate", async () => {
+  send.mockReset();
+  vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
+  vi.stubEnv("S3_UPLOAD_BUCKET", "bucket");
+  vi.stubEnv("SQS_QUEUE_URL", "queue");
+  vi.stubEnv(
+    "SF311_LATEST_UPDATES_URL",
+    "http://127.0.0.1:3999/latest/{agencyID}",
+  );
+  vi.stubEnv("SF311_BASIC_AUTH_USER", "local");
+  vi.stubEnv("SF311_BASIC_AUTH_PASS", "local");
+  send.mockResolvedValue({
+    Item: {
+      taskId: "task-1",
+      appActionResults: [
+        {
+          code: "create_311_ticket",
+          payload: { tickets: [{ srNum: "SR-1" }] },
+        },
+      ],
+    },
+  });
+  const fetchSpy = vi.spyOn(globalThis, "fetch");
+  for (const status of ["6", "4"])
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          data: {
+            return_code: 0,
+            requests: [
+              {
+                SRNum: "SR-1",
+                Status: status,
+                ...(status === "4" ? { ClosedReason: "8" } : {}),
+              },
+            ],
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+  try {
+    const event = {
+      ...readEvent({ siteClaim: "site-1", query: undefined }),
+      body: JSON.stringify({ requests: [{ taskId: "task-1", srNum: "SR-1" }] }),
+    };
+    const results = [];
+    for (let i = 0; i < 2; i++) {
+      const response = await get311RequestDetails(
+        event,
+        /** @type {any} */ ({}),
+        () => {},
+      );
+      if (!response || typeof response !== "object" || !("body" in response)) {
+        throw new Error("Expected an HTTP response with a JSON body");
+      }
+      expect(response.statusCode).toBe(200);
+      results.push(JSON.parse(String(response.body)).requests[0].request);
+    }
+    expect(results.map((r) => r.status)).toEqual(["On hold", "Closed"]);
+    expect(results[1].closedReason).toBe("8");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  } finally {
+    fetchSpy.mockRestore();
+    vi.unstubAllEnvs();
+  }
+});

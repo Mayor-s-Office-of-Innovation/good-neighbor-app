@@ -12,6 +12,9 @@ const {
   analyze,
   createAnalyzerClient,
   reverseGeocodePhoto,
+  enqueueTranslateArtifact,
+  storeThumbnail,
+  recordThumbnail,
 } = vi.hoisted(() => ({
   ddbSend: vi.fn(),
   getObjectBytes: vi.fn(),
@@ -19,6 +22,14 @@ const {
   analyze: vi.fn(),
   createAnalyzerClient: vi.fn(),
   reverseGeocodePhoto: vi.fn(),
+  enqueueTranslateArtifact: vi.fn(async () => true),
+  storeThumbnail: vi.fn(),
+  recordThumbnail: vi.fn(),
+}));
+vi.mock("../media/thumbnail.js", () => ({ storeThumbnail, recordThumbnail }));
+vi.mock("../analysis/translate-enqueue.js", async (importOriginal) => ({
+  .../** @type {any} */ (await importOriginal()),
+  enqueueTranslateArtifact,
 }));
 vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
 vi.mock("../s3.js", () => ({ getObjectBytes, setObjectTags }));
@@ -64,13 +75,37 @@ const invoke = (msg) =>
     )
   );
 
+/**
+ * Parsed metric lines (lib/metrics.js) with the given marker, in order.
+ * @param {import("vitest").MockInstance} log
+ * @param {string} marker
+ * @returns {any[]}
+ */
+function metricLines(log, marker) {
+  return log.mock.calls
+    .map((call) => {
+      try {
+        return JSON.parse(String(call[0]));
+      } catch {
+        return null;
+      }
+    })
+    .filter((line) => line && line.marker === marker);
+}
+
 beforeEach(() => {
+  vi.restoreAllMocks();
   ddbSend.mockReset();
   getObjectBytes.mockReset();
   setObjectTags.mockReset().mockResolvedValue({});
   analyze.mockReset();
   createAnalyzerClient.mockReset();
   reverseGeocodePhoto.mockReset();
+  enqueueTranslateArtifact.mockClear();
+  storeThumbnail
+    .mockReset()
+    .mockImplementation(async ({ s3Key }) => `${s3Key}.thumb.webp`);
+  recordThumbnail.mockReset().mockResolvedValue({});
   delete process.env.REVERSE_GEOCODING_ENABLED;
   createAnalyzerClient.mockReturnValue({ analyze });
   process.env.S3_UPLOAD_BUCKET = "bucket";
@@ -81,6 +116,76 @@ beforeEach(() => {
 });
 
 describe("analyze-artifact worker", () => {
+  it("enqueues a background translate job for the stored concerns", async () => {
+    getObjectBytes.mockResolvedValue({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    analyze.mockResolvedValue(singleLowConcernResponse);
+    ddbSend.mockResolvedValue({});
+
+    await invoke(baseMsg);
+
+    const concern =
+      singleLowConcernResponse.assessment.identified_conditions_of_concern[0];
+    expect(enqueueTranslateArtifact).toHaveBeenCalledTimes(1);
+    expect(enqueueTranslateArtifact).toHaveBeenCalledWith({
+      queueUrl: "queue",
+      siteId: "site-1",
+      checkId: "chk_01",
+      artifactId: "art_1",
+      items: [
+        {
+          user_friendly_label: concern.user_friendly_label,
+          description: concern.description,
+        },
+      ],
+    });
+    // The enqueue follows the conditional ANALYSIS# put.
+    expect(ddbSend.mock.calls[0][0]).toBeInstanceOf(PutCommand);
+  });
+
+  it("keeps the analysis when the translate enqueue fails", async () => {
+    getObjectBytes.mockResolvedValue({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    analyze.mockResolvedValue(singleLowConcernResponse);
+    ddbSend.mockResolvedValue({});
+    enqueueTranslateArtifact.mockRejectedValueOnce(new Error("sqs down"));
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      const result = await invoke(baseMsg);
+      expect(result.batchItemFailures).toEqual([]);
+      expect(warning).toHaveBeenCalledWith(
+        "Translate enqueue failed; analysis keeps English only",
+        { checkId: "chk_01", artifactId: "art_1", error: "Error" },
+      );
+      // Counters still bump after the failed enqueue.
+      expect(ddbSend.mock.calls.length).toBeGreaterThan(1);
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it("does not enqueue translation on an already-analyzed redelivery", async () => {
+    getObjectBytes.mockResolvedValue({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    analyze.mockResolvedValue(singleLowConcernResponse);
+    ddbSend.mockRejectedValueOnce(
+      Object.assign(new Error("exists"), {
+        name: "ConditionalCheckFailedException",
+      }),
+    );
+
+    await invoke(baseMsg);
+
+    expect(enqueueTranslateArtifact).not.toHaveBeenCalled();
+  });
+
   it("stores a photo address returned for its coordinates", async () => {
     process.env.REVERSE_GEOCODING_ENABLED = "true";
     getObjectBytes.mockResolvedValue({
@@ -130,10 +235,28 @@ describe("analyze-artifact worker", () => {
       bytes: Buffer.from("img-bytes"),
       contentType: "image/jpeg",
     });
-    analyze.mockResolvedValueOnce(singleLowConcernResponse);
+    analyze.mockResolvedValueOnce({
+      ...singleLowConcernResponse,
+      media_manifest: [{ index: 0, type: "image", shot_type: "wide" }],
+    });
     ddbSend.mockResolvedValue({});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
     await invoke(baseMsg);
+
+    // One AnalysisCompleted metric line, Kind=photo (the message has an S3
+    // key), carrying the ids as searchable properties and the call latency.
+    const completed = metricLines(log, "AnalysisCompleted");
+    expect(completed).toHaveLength(1);
+    expect(completed[0]).toMatchObject({
+      Kind: "photo",
+      AnalysisCompleted: 1,
+      siteId: "site-1",
+      checkId: "chk_01",
+      artifactId: "art_1",
+    });
+    expect(completed[0].AnalyzerLatencyMs).toBeGreaterThanOrEqual(0);
+    expect(metricLines(log, "AnalysisFailed")).toHaveLength(0);
 
     // Media is fetched by S3 key — never carried on the message.
     expect(getObjectBytes).toHaveBeenCalledWith({
@@ -174,6 +297,7 @@ describe("analyze-artifact worker", () => {
       ":failed": "failed",
     });
     expect(put.input.Item).toMatchObject({
+      shotType: "wide",
       pk: "SITE#site-1",
       sk: "CHECK#chk_01#ANALYSIS#art_1",
       status: "analyzed",
@@ -233,12 +357,52 @@ describe("analyze-artifact worker", () => {
       }),
     );
 
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
     await invoke(baseMsg);
 
     // Only the ANALYSIS# put was attempted; no counter updates followed it.
     expect(ddbSend).toHaveBeenCalledTimes(1);
     expect(ddbSend.mock.calls[0][0]).toBeInstanceOf(PutCommand);
+    // Counted as a duplicate, never as a second completion.
+    expect(metricLines(log, "AnalysisDuplicate")).toHaveLength(1);
+    expect(metricLines(log, "AnalysisCompleted")).toHaveLength(0);
   });
+
+  it.each(["analyzer", "persistence"])(
+    "preserves a %s failure through the deployed Lambda dispatcher",
+    async (failureStage) => {
+      const { handler: dispatch } = await import("../lambda/worker.js");
+      getObjectBytes.mockResolvedValue({
+        bytes: Buffer.from("img"),
+        contentType: "image/jpeg",
+      });
+      if (failureStage === "analyzer") {
+        analyze.mockRejectedValueOnce(
+          new AnalyzerError("unavailable", { status: 503, retryable: true }),
+        );
+      } else {
+        analyze.mockResolvedValueOnce(singleLowConcernResponse);
+        ddbSend.mockRejectedValueOnce(new Error("database unavailable"));
+      }
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+      const result = await dispatch(
+        /** @type {any} */ ({
+          Records: [{ messageId: "failed", body: JSON.stringify(baseMsg) }],
+        }),
+        /** @type {any} */ ({}),
+      );
+      expect(result).toEqual({
+        batchItemFailures: [{ itemIdentifier: "failed" }],
+      });
+      expect(errorLog).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(errorLog.mock.calls[0][0])).toMatchObject({
+        level: "ERROR",
+        messageId: "failed",
+        route: "worker analyze-artifact",
+      });
+    },
+  );
 
   it("reports a retryable analyzer error as a batch item failure so SQS redelivers just that message", async () => {
     getObjectBytes.mockResolvedValueOnce({
@@ -249,11 +413,33 @@ describe("analyze-artifact worker", () => {
       new AnalyzerError("throttled", { status: 429, retryable: true }),
     );
 
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+
     // A rejected artifact no longer throws the whole batch — it comes back in
     // batchItemFailures so only that message redelivers.
     const res = await invoke(baseMsg);
     expect(res).toEqual({ batchItemFailures: [{ itemIdentifier: "m1" }] });
     expect(ddbSend).not.toHaveBeenCalled();
+    expect(errorLog).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(errorLog.mock.calls[0][0])).toMatchObject({
+      level: "ERROR",
+      route: "worker analyze-artifact",
+      messageId: "m1",
+      message: "throttled",
+    });
+    // A transient failure is a retry, not a failed analysis; the call still
+    // contributes a latency sample so slow failures show up in p95.
+    const calls = metricLines(log, "AnalyzerCall");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      Kind: "photo",
+      AnalysisRetried: 1,
+      outcome: "retryable",
+      reason: "http_429",
+    });
+    expect(calls[0].AnalyzerLatencyMs).toBeGreaterThanOrEqual(0);
+    expect(metricLines(log, "AnalysisFailed")).toHaveLength(0);
   });
 
   it("analyzes a batch concurrently and isolates one failure to its own message", async () => {
@@ -290,35 +476,58 @@ describe("analyze-artifact worker", () => {
     expect(res).toEqual({ batchItemFailures: [{ itemIdentifier: "m2" }] });
   });
 
-  it("marks a permanent analyzer failure and consumes the message", async () => {
-    getObjectBytes.mockResolvedValueOnce({
-      bytes: Buffer.from("img"),
-      contentType: "image/jpeg",
-    });
-    analyze.mockRejectedValueOnce(
-      new AnalyzerError("bad request", {
-        status: 400,
-        code: "invalid_request",
-        retryable: false,
-      }),
-    );
-    ddbSend.mockResolvedValue({});
+  it.each([
+    [400, "invalid_request"],
+    [502, "model_unavailable"],
+    [502, "model_access_denied"],
+  ])(
+    "marks permanent analyzer failure %s %s and consumes the message",
+    async (status, code) => {
+      getObjectBytes.mockResolvedValueOnce({
+        bytes: Buffer.from("img"),
+        contentType: "image/jpeg",
+      });
+      analyze.mockRejectedValueOnce(
+        new AnalyzerError("bad request", {
+          status,
+          code,
+          retryable: false,
+        }),
+      );
+      ddbSend.mockResolvedValue({});
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await invoke(baseMsg);
+      expect(await invoke(baseMsg)).toEqual({ batchItemFailures: [] });
 
-    // A single failure marker, conditional so a replay can't duplicate it.
-    expect(ddbSend).toHaveBeenCalledTimes(1);
-    const put = ddbSend.mock.calls[0][0];
-    expect(put).toBeInstanceOf(PutCommand);
-    expect(put.input.ConditionExpression).toBe("attribute_not_exists(sk)");
-    expect(put.input.Item).toMatchObject({
-      sk: "CHECK#chk_01#ANALYSIS#art_1",
-      status: "failed",
-      error: { code: "invalid_request", status: 400, message: "bad request" },
-    });
-    expect(put.input.Item).not.toHaveProperty("placeId");
-    expect(put.input.Item).not.toHaveProperty("placeName");
-  });
+      // Counted once as a permanent failure with the analyzer's reason code.
+      expect(metricLines(log, "AnalysisFailed")).toEqual([
+        expect.objectContaining({
+          Kind: "photo",
+          AnalysisFailed: 1,
+          reason: code,
+          checkId: "chk_01",
+          artifactId: "art_1",
+        }),
+      ]);
+      expect(metricLines(log, "AnalyzerCall")[0]).toMatchObject({
+        outcome: "permanent",
+      });
+      expect(metricLines(log, "AnalysisRetried")).toHaveLength(0);
+
+      // A single failure marker, conditional so a replay can't duplicate it.
+      expect(ddbSend).toHaveBeenCalledTimes(1);
+      const put = ddbSend.mock.calls[0][0];
+      expect(put).toBeInstanceOf(PutCommand);
+      expect(put.input.ConditionExpression).toBe("attribute_not_exists(sk)");
+      expect(put.input.Item).toMatchObject({
+        sk: "CHECK#chk_01#ANALYSIS#art_1",
+        status: "failed",
+        error: { code, status, message: "bad request" },
+      });
+      expect(put.input.Item).not.toHaveProperty("placeId");
+      expect(put.input.Item).not.toHaveProperty("placeName");
+    },
+  );
 
   it("lets a re-driven analyze replace a failed marker but not an existing success", async () => {
     getObjectBytes.mockResolvedValueOnce({
@@ -418,6 +627,129 @@ describe("analyze-artifact worker", () => {
     });
   });
 
+  it("stores and records the card thumbnail, started before the analyzer call", async () => {
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    analyze.mockResolvedValueOnce(singleLowConcernResponse);
+    ddbSend.mockResolvedValue({});
+
+    await invoke(baseMsg);
+
+    // Encoded from the normalized bytes the analyzer gets, not a second read.
+    expect(storeThumbnail).toHaveBeenCalledWith({
+      bucket: "bucket",
+      s3Key: "checks/site-1/chk_01/art_1",
+      bytes: Buffer.from("img-bytes"),
+    });
+    expect(storeThumbnail.mock.invocationCallOrder[0]).toBeLessThan(
+      analyze.mock.invocationCallOrder[0],
+    );
+    expect(recordThumbnail).toHaveBeenCalledWith({
+      tableName: "gnp-test-app",
+      key: { pk: "SITE#site-1", sk: "CHECK#chk_01#ART#art_1" },
+      thumbS3Key: "checks/site-1/chk_01/art_1.thumb.webp",
+    });
+    // The ANALYSIS# put is untouched by the thumbnail bookkeeping.
+    expect(ddbSend.mock.calls[0][0]).toBeInstanceOf(PutCommand);
+  });
+
+  it("keeps the analysis when the thumbnail write fails, and counts it", async () => {
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    storeThumbnail.mockRejectedValueOnce(
+      Object.assign(new Error("s3 down"), { name: "ServiceUnavailable" }),
+    );
+    analyze.mockResolvedValueOnce(singleLowConcernResponse);
+    ddbSend.mockResolvedValue({});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await invoke(baseMsg);
+
+    expect(metricLines(log, "AnalysisCompleted")).toHaveLength(1);
+    const failed = metricLines(log, "ThumbnailFailed");
+    expect(failed).toHaveLength(1);
+    expect(failed[0]).toMatchObject({
+      Kind: "photo",
+      reason: "store",
+      error: "ServiceUnavailable",
+      checkId: "chk_01",
+      artifactId: "art_1",
+    });
+    expect(recordThumbnail).not.toHaveBeenCalled();
+  });
+
+  it("keeps the analysis when recording the thumbnail key fails, and counts it", async () => {
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    recordThumbnail.mockRejectedValueOnce(
+      Object.assign(new Error("gone"), {
+        name: "ConditionalCheckFailedException",
+      }),
+    );
+    analyze.mockResolvedValueOnce(singleLowConcernResponse);
+    ddbSend.mockResolvedValue({});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await invoke(baseMsg);
+
+    expect(metricLines(log, "AnalysisCompleted")).toHaveLength(1);
+    expect(metricLines(log, "ThumbnailFailed")[0]).toMatchObject({
+      reason: "record",
+      error: "ConditionalCheckFailedException",
+    });
+    expect(enqueueTranslateArtifact).toHaveBeenCalledTimes(1);
+  });
+
+  it("drains the thumbnail write before a retryable analyzer failure rethrows", async () => {
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    let settled = false;
+    storeThumbnail.mockImplementationOnce(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(() => {
+            settled = true;
+            resolve("checks/site-1/chk_01/art_1.thumb.webp");
+          }, 5),
+        ),
+    );
+    analyze.mockRejectedValueOnce(
+      new AnalyzerError("throttled", { status: 429, retryable: true }),
+    );
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const res = await invoke(baseMsg);
+
+    expect(res.batchItemFailures).toEqual([{ itemIdentifier: "m1" }]);
+    expect(settled).toBe(true);
+    expect(recordThumbnail).toHaveBeenCalledTimes(1);
+  });
+
+  it("still records the thumbnail when the analysis fails permanently", async () => {
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("img-bytes"),
+      contentType: "image/jpeg",
+    });
+    analyze.mockRejectedValueOnce(
+      new AnalyzerError("bad", { status: 400, retryable: false }),
+    );
+    ddbSend.mockResolvedValue({});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await invoke(baseMsg);
+
+    expect(storeThumbnail).toHaveBeenCalledTimes(1);
+    expect(recordThumbnail).toHaveBeenCalledTimes(1);
+  });
+
   it("throws when ANALYZER_BASE_URL is not configured", async () => {
     delete process.env.ANALYZER_BASE_URL;
     await expect(invoke(baseMsg)).rejects.toThrow(/ANALYZER_BASE_URL/);
@@ -427,6 +759,7 @@ describe("analyze-artifact worker", () => {
   it("analyzes text-only evidence without fetching S3 bytes", async () => {
     analyze.mockResolvedValueOnce(singleLowConcernResponse);
     ddbSend.mockResolvedValue({});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
     await invoke({
       siteId: "site-1",
@@ -441,5 +774,10 @@ describe("analyze-artifact worker", () => {
     expect(analyze.mock.calls[0][0].media).toEqual([
       { type: "text", text: "Trash is next to the west entrance." },
     ]);
+    // A description (no S3 key) is counted as Kind=text.
+    expect(metricLines(log, "AnalysisCompleted")[0]).toMatchObject({
+      Kind: "text",
+      artifactId: "art_text_1",
+    });
   });
 });

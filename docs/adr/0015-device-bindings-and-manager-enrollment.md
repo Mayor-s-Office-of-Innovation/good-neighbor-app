@@ -19,9 +19,10 @@ Site/device record, so deployment needs a bounded compatibility path.
 - Store a stable physical-device identity separately from each Site binding.
 - Store Manager membership by normalized email at one Site; membership removal
   advances its generation and invalidates bindings derived from the old value.
-- City administrators issue a 15-minute, single-use Manager enrollment link.
+- City administrators issue a 24-hour, single-use Manager enrollment link.
   Only a SHA-256 verifier is stored. Redemption atomically consumes the grant,
   rechecks membership, and creates the binding.
+- Managers issue single-use general-access device enrollment links valid for 8 hours.
 - New records and tokens use `manager`; readers treat legacy `admin` as
   Manager-equivalent and refresh migrates it to `manager`.
 - Access tokens last 15 minutes. Rotating refresh tokens last 30 days. An

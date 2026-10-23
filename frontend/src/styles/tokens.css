@@ -11,20 +11,22 @@
   Accessibility: the greyscale values below are AA-checked against the worst-case
   background each sits on (see docs/take5-plan.md "Accessible palette").
     - --text-secondary #666666 : >=5.0:1 on #fff / #fafafa / #f5f5f5 / #f0f0f0
-    - --brand-blue    #155fce  : 5.90:1 on white, 5.15:1 on the pale-blue pill
+    - --brand-blue    #2a60af  : 6.19:1 on white, 5.14:1 on the pale-blue pill
     - --text-faint    #767676  : 4.54:1 on white; used only where shape/text also
                                   conveys the state (donut segments, legend dots) — never sole carrier
 */
 :root {
   color-scheme: light;
   --app-content-max-width: 550px;
+  --capture-scanner-ink: #fff;
+  --capture-category-bg: #fff;
 
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
     Arial, sans-serif;
 
   /* Interactive / status accent — the ONLY chromatic color in the neutral system */
-  --brand-blue: #155fce;
-  --brand-blue-bg: #e8f0fe; /* pale pill behind brand-blue text/badges */
+  --brand-blue: #2a60af;
+  --brand-blue-bg: #dfebfd; /* pale pill behind brand-blue text/badges */
 
   /* Severity reinforcement (never the sole carrier — grouping + labels lead) */
   --c-hazard: #b42318; /* 5.9:1 on white; pairs with the "Hazard" label + icon */
@@ -34,6 +36,13 @@
      red (hazard). Used for the dispute status line, always paired with the "You
      marked this as ..." text so color isn't the sole carrier. ~5:1 on white. */
   --c-flag: #b45309;
+  --c-flag-bg: #fdf3e2;
+
+  /* Compliance status reinforcement (site manager reports): met / partly met /
+     missed / not yet. Each is always paired with its word or count; the fills
+     are pale so the dark text on them stays AA. */
+  --c-ok: #0b6b2f; /* 6.8:1 on white */
+  --c-ok-bg: #e4f4e8;
 
   /* Neutral surfaces */
   --bg: #fafafa;
@@ -56,8 +65,9 @@
   /* ---- Back-compat aliases (existing components reference these names) ---- */
   --c-blue: var(--brand-blue);
   --muted: var(--text-secondary);
-  --c-red: var(--c-hazard);
 
+  --card-outline: #c9caca; /* 1px outline around home/task cards */
+  --group-grey: #e9eaea; /* grey check-group container + card footer strip */
   --radius: 12px;
   --radius-sm: 8px;
   --radius-pill: 999px;
@@ -67,14 +77,14 @@
 
   /* Figma notification status and soft elevation (independent of WA's hard shadows). */
   --toast-success: #00883c;
-  --toast-shadow: 0 4px 4px rgba(0, 0, 0, 0.12);
-
-  --timeline-done-fill: #000000;
-  --timeline-done-mark: #ffffff;
 }
 
 html.wa-dark {
+  --capture-category-bg: #1b1d26;
   color-scheme: dark;
+
+  --card-outline: #545868;
+  --group-grey: #242424;
 
   --brand-blue: #6ba7f0; /* brightened for dark surfaces, keeps hue */
   --brand-blue-bg: #17273d;
@@ -83,6 +93,10 @@ html.wa-dark {
   --c-hazard-bg: #2a1614;
 
   --c-flag: #e8a54d; /* brightened amber for dark surfaces */
+  --c-flag-bg: #2e2110;
+
+  --c-ok: #7ad69a;
+  --c-ok-bg: #12301c;
 
   --bg: #0f0f0f;
   --surface: #1a1a1a;
@@ -102,8 +116,4 @@ html.wa-dark {
   --shadow-lift: 0 4px 10px rgba(0, 0, 0, 0.5), 0 12px 24px rgba(0, 0, 0, 0.5);
 
   --toast-success: #6bdc94;
-  --toast-shadow: 0 4px 4px rgba(0, 0, 0, 0.4);
-
-  --timeline-done-fill: #ffffff;
-  --timeline-done-mark: #000000;
 }

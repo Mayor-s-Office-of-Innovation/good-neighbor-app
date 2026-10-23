@@ -1,3 +1,4 @@
+import { actionsEscalationsV8Catalog } from "./actions-escalations-v8.js";
 import { describe, expect, it } from "vitest";
 import { actionsEscalationsV2Catalog } from "./actions-escalations-v2.js";
 import { actionsEscalationsV3Catalog } from "./actions-escalations-v3.js";
@@ -45,6 +46,58 @@ describe("actions/escalations v2 catalog", () => {
     expect(() => parseValidTimeRange("24:00-25:00")).toThrow(
       "Invalid valid time range",
     );
+  });
+
+  it("parses weekday-qualified ranges without changing unqualified daily ranges", () => {
+    expect(parseValidTimeRange("08:00-17:00, Mo+Tu+We+Th+Fr")).toEqual({
+      kind: "daily",
+      startMinute: 480,
+      endMinute: 1020,
+      timeZone: "America/Los_Angeles",
+      daysOfWeek: [1, 2, 3, 4, 5],
+    });
+    expect(parseValidTimeRange("17:01-07:59, Sa+Su")).toMatchObject({
+      daysOfWeek: [6, 0],
+    });
+    expect(parseValidTimeRange("08:00-17:00")).not.toHaveProperty("daysOfWeek");
+  });
+
+  it.each([
+    "08:00-17:00,",
+    "08:00-17:00, Monday",
+    "08:00-17:00, Mo+",
+    "08:00-17:00, Mo+Mo",
+    "08:00-17:00, Mo+Xx",
+    "24 hours, Mo",
+    "08:00-25:00, Mo",
+  ])("rejects malformed weekday ranges: %s", (value) => {
+    expect(() => parseValidTimeRange(value)).toThrow(
+      "Invalid valid time range",
+    );
+  });
+
+  it("detects a weekend coverage gap even when every weekday is covered", () => {
+    const catalog = {
+      ...actionsEscalationsV4Catalog,
+      rules: actionsEscalationsV4Catalog.rules.map((rule) =>
+        rule.ruleId === "ANIMAL-2"
+          ? {
+              ...rule,
+              validTimeRange: parseValidTimeRange(
+                "06:00-23:59, Mo+Tu+We+Th+Fr",
+              ),
+            }
+          : rule,
+      ),
+    };
+    const errors = validateCatalog(catalog);
+    expect(errors).toContain(
+      "Animals severity 1 (affiliated=false) has no rule at 06:00 on Sa",
+    );
+    expect(errors).toContain(
+      "Animals severity 1 (affiliated=false) has no rule at 06:00 on Su",
+    );
+    expect(errors.some((error) => error.endsWith("on Mo"))).toBe(false);
   });
 
   it("requires a primary agency for every in-progress-capable rule", () => {
@@ -247,4 +300,13 @@ describe("actions/escalations v2 catalog", () => {
       "Alias Ghost points to unknown Missing",
     ]);
   });
+});
+
+it("keeps every current SFPD non-emergency phone rule eligible for in-progress tracking", () => {
+  const rules = actionsEscalationsV8Catalog.rules.filter(
+    (rule) => rule.outcome.phoneNumber === "415-553-0123",
+  );
+  expect(rules.length).toBeGreaterThan(0);
+  for (const rule of rules)
+    expect(rule.canBeInProgress, rule.ruleId).toBe(true);
 });

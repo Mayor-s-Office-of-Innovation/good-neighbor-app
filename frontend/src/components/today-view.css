@@ -95,6 +95,63 @@
   position: relative;
 }
 
+.home-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+.home-actions > .btn-ink {
+  flex: 1;
+}
+.home-action-menu-wrap {
+  position: relative;
+}
+.home-action-menu-trigger {
+  width: 54px;
+  min-width: 54px;
+  padding-inline: 0;
+}
+.home-action-menu {
+  position: absolute;
+  z-index: 8;
+  inset-block-start: calc(100% + 0.5rem);
+  inset-inline-end: 0;
+  width: min(20rem, calc(100vw - 2rem));
+  padding: 0.5rem;
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-lift);
+}
+.home-action-menu[hidden] {
+  display: none;
+}
+.home-action-menu button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 44px;
+  padding: 0.75rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+}
+.home-action-menu wa-icon {
+  flex: 0 0 var(--wa-font-size-s, 0.875rem);
+  width: var(--wa-font-size-s, 0.875rem);
+  font-size: var(--wa-font-size-s, 0.875rem);
+  line-height: 1;
+  text-align: center;
+}
+.home-action-menu button:hover,
+.home-action-menu button:focus-visible {
+  background: var(--surface-3);
+}
+
 .home-top-actions {
   width: min(100%, var(--app-content-max-width));
   min-height: 2.75rem;
@@ -287,8 +344,16 @@
 }
 
 .home-region--results {
+  position: relative;
+  z-index: 1;
   transform: translateY(0);
   opacity: 1;
+}
+
+.home-region--header {
+  position: relative;
+  z-index: 10;
+  overflow: visible;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -362,8 +427,8 @@
 
 .home-identity__site {
   margin: 0;
-  font-size: clamp(1.9rem, 6vw, 2.45rem);
-  font-weight: 700;
+  font-size: var(--wa-font-size-2xl, 2rem);
+  font-weight: var(--wa-font-weight-heading, 600);
   line-height: 1.12;
   text-wrap: balance;
   outline: none; /* programmatic focus target (route announcement) */
@@ -381,27 +446,18 @@
   min-width: 12.25rem;
 }
 
-/* "Start over" — a faint secondary link under the Resume button (draft present). */
-.home-cta__link {
-  display: block;
-  width: 100%;
-  margin-top: 0.7rem;
-  appearance: none;
-  background: none;
-  border: 0;
-  cursor: pointer;
-  font: inherit;
-  font-weight: 600;
-  color: var(--text-secondary);
-  padding: 0.3rem;
-  box-shadow: none;
-  height: auto;
+.home-actions .home-action-menu-trigger {
+  flex: 0 0 54px;
+  width: 54px;
+  height: 54px;
+  min-width: 54px;
+  min-height: 54px;
+  padding: 0;
+  border-radius: 50%;
 }
 
-.home-cta__link:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 2px;
-  border-radius: 6px;
+.home-action-menu {
+  z-index: 100;
 }
 
 /* Last submitted check metadata shown under the site title. */
@@ -448,14 +504,100 @@
   gap: 1.5rem;
 }
 
+/* Pre-data skeleton (today-view.templates.js homeSkeleton): the card rail
+   holds its shape while the worklist loads so the swap to real cards moves
+   as little as possible. Heights approximate a typical task card. The
+   shimmer is killed by the global reduced-motion rule in base.css. */
+.analysis-card--pending .analysis-card__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-height: 8rem;
+}
+
+.skeleton-line {
+  display: block;
+  height: 0.9rem;
+  width: 100%;
+  border-radius: 999px;
+  background: var(--wa-color-surface-lowered, #f1f2f3);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--wa-color-surface-default, #fff) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+.skeleton-line--title {
+  height: 1.3rem;
+  width: 55%;
+}
+
+.skeleton-line--short {
+  width: 40%;
+}
+
+.skeleton-line--eyebrow {
+  height: 0.8rem;
+  width: 9rem;
+  margin: 0.35rem auto 0;
+}
+
+html.wa-dark .skeleton-line {
+  background-color: var(--wa-color-neutral-fill-quiet, #2a2d35);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--wa-color-neutral-fill-normal, #3a3e48) 50%,
+    transparent 100%
+  );
+}
+
+@keyframes skeleton-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* Pinned while the task list scrolls (top: 0 against the document, which is
+   the scroll container; no overflow ancestors in between). The gap compresses
+   on narrow screens so three tabs + count badges fit a 320px viewport with no
+   horizontal scroll (WCAG 1.4.10). Full-bleed width so the rule spans edge to
+   edge and the opaque background covers the blue tray scrolling underneath —
+   a translucent bar would break the status colors' verified contrast.
+   z-index sits above the cards (z-auto) and below the menus (5+). */
 .home-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 2rem;
-  width: min(100%, 30rem);
-  margin-inline: auto;
+  gap: clamp(0.75rem, 6vw, 2rem);
+  width: 100vw;
+  margin-inline: calc(50% - 50vw);
+  background: var(--bg);
   border-bottom: 1px solid #e4e5e9;
+}
+
+/* Short viewports (landscape phones, 200% zoom): release the pin so the bar
+   does not eat the viewport. The full-bleed rule stays. */
+@media (max-height: 500px) {
+  .home-tabs {
+    position: static;
+  }
+}
+
+/* 2.4.11 Focus Not Obscured: when the browser scrolls a focused control into
+   view, keep it clear of the 45px pinned bar. */
+.home-results :is(a, button, input, select, textarea, wa-select, [tabindex]) {
+  scroll-margin-top: 3.5rem;
 }
 
 .home-tabs__tab {
@@ -475,7 +617,7 @@
   cursor: pointer;
   font: inherit;
   font-size: var(--wa-font-size-m, 1rem);
-  font-weight: 400;
+  font-weight: var(--wa-font-weight-bold, 600);
   line-height: normal;
   margin: 0;
   padding: 0 0.25rem;
@@ -485,9 +627,25 @@
 }
 
 .home-tabs__tab--active {
-  border-bottom-color: #2f323f;
-  color: #1b1d26;
-  font-weight: 600;
+  border-bottom-color: var(--brand-blue);
+  color: var(--brand-blue);
+}
+
+/* Open-item count beside the tab label; same ink-on-blue pairing as .btn-blue. */
+.home-tabs__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  margin-inline-start: 0.375rem;
+  padding: 0 0.3rem;
+  border-radius: var(--radius-pill);
+  background: var(--brand-blue);
+  color: var(--on-ink);
+  font-size: var(--wa-font-size-2xs, 0.6875rem);
+  font-weight: var(--wa-font-weight-bold, 600);
+  line-height: 1.6;
 }
 
 html.wa-dark .home-tabs {
@@ -567,7 +725,7 @@ html.wa-dark .home-tabs__tab--active {
 }
 
 .home-results__complete-note a {
-  color: var(--wa-color-text-link, #0053c0);
+  color: var(--brand-blue);
   text-decoration: underline;
 }
 
@@ -583,12 +741,6 @@ html.wa-dark .home-results__complete {
 html.wa-dark .home-results__complete-content img {
   filter: invert(1);
   mix-blend-mode: screen;
-}
-
-.actioncard__cancel {
-  width: auto;
-  margin-top: 0;
-  padding-inline: 0.4rem;
 }
 
 /* Language picker (settings menu → Language). Options are submit buttons so
@@ -624,4 +776,12 @@ html.wa-dark .home-results__complete-content img {
 .language-list__option:focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 2px;
+}
+
+/* Responsive display type: the place header steps down from Heading 2XL to
+   Heading XL on phones (discrete breakpoint, not clamp — WCAG 1.4.4). */
+@media (max-width: 520px) {
+  .home-identity__site {
+    font-size: var(--wa-font-size-xl, 1.5625rem);
+  }
 }

@@ -67,3 +67,22 @@ window.GOOD_NEIGHBOR_ADMIN_CONFIG = {
   localDebugAdmin: false,
 };
 ```
+
+### Local role switch
+
+On loopback hosts with `localDebugAdmin: true` and a loopback API, the header
+provides a tab-scoped Supervisor / Compliance manager (Maya Manager) switch.
+Switching reloads the current page and confirms before discarding dirty forms.
+The API still enforces actual directory status and Site assignments.
+
+To prepare Maya's local directory record (without changing Site assignments):
+
+```sh
+node --env-file=.env.local backend/scripts/seed-local-compliance-manager.mjs
+```
+
+Run that command from the repository root. It refuses nonlocal emulator targets.
+Maya starts unassigned. As Supervisor, assign Maya in a Site's Oversight tab and
+save; switch to Maya to test editing there and read-only behavior elsewhere.
+Switch back to Supervisor to remove the test assignment. No Cognito password or
+real invitation is used. The switch is unavailable on deployed hosts.

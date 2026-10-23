@@ -1,3 +1,7 @@
+import { getPerson } from "../lib/people.js";
+import { queryAllItems } from "../lib/query-all-items.js";
+import { assignmentsMatchingEmail } from "../lib/manager-identity.js";
+import { emailHash } from "./setup-codes.js";
 import { randomUUID } from "node:crypto";
 import {
   GetCommand,
@@ -8,14 +12,197 @@ import {
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
-import { adminOnly } from "../lib/admin-auth.js";
+import {
+  adminOnly,
+  siteAdminOnly,
+  authorizeSiteChanges,
+} from "../lib/admin-auth.js";
 
 const MAX_SELECTED_BINDINGS = 20;
 const MAX_PHYSICAL_BINDINGS = 20;
 
+/** Revoke a manager's own bindings without deleting memberships or assignments.
+ * Legacy discovery includes active sites for retained memberships missing email pointers.
+ * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
+ */
+export const revokeManagerDevices = (event) =>
+  adminOnly(event, async (body) => {
+    const { programId = "", userId = "" } = event.pathParameters || {};
+    const tableName = getDynamoTableName();
+    const personId = event.pathParameters?.personId;
+    const { Item: manager } = personId
+      ? { Item: await getPerson(personId) }
+      : await ddb.send(
+          new GetCommand({
+            TableName: tableName,
+            Key: { pk: `PROGRAM#${programId}`, sk: `USER#${userId}` },
+            ConsistentRead: true,
+          }),
+        );
+    if (!manager) return jsonResponse(404, { error: "site_manager_not_found" });
+    if (
+      String(body.confirmation || "")
+        .trim()
+        .toLowerCase() !== String(manager.email).trim().toLowerCase()
+    ) {
+      return jsonResponse(400, { error: "confirmation_mismatch" });
+    }
+    const hash = await emailHash(manager.email);
+    const [directory, programSites, activeSites] = await Promise.all([
+      queryAllItems({
+        TableName: tableName,
+        KeyConditionExpression: "pk = :pk",
+        ExpressionAttributeValues: { ":pk": `MANAGER_EMAIL#${hash}` },
+        ConsistentRead: true,
+      }),
+      queryAllItems({
+        TableName: tableName,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues: {
+          ":pk": `PROGRAM#${programId}`,
+          ":prefix": "SITE#",
+        },
+        ConsistentRead: true,
+      }),
+      personId
+        ? Promise.resolve({ Items: [] })
+        : queryAllItems({
+            TableName: tableName,
+            KeyConditionExpression: "pk = :pk",
+            ExpressionAttributeValues: { ":pk": "SITE_SEARCH#ACTIVE" },
+            ConsistentRead: true,
+          }),
+    ]);
+    const siteIds = new Set(
+      [
+        ...directory.Items,
+        ...programSites.Items,
+        ...activeSites.Items,
+        ...(personId
+          ? (manager.sources || [])
+              .filter((/** @type {{pk:string,sk:string}} */ source) =>
+                source.pk.startsWith("SITE#"),
+              )
+              .map((/** @type {{pk:string,sk:string}} */ source) => ({
+                siteId: source.pk.slice(5),
+              }))
+          : []),
+      ]
+        .map((item) => item.siteId)
+        .filter(Boolean),
+    );
+    const bindings = [];
+    for (const siteId of siteIds) {
+      const members = await queryAll(tableName, siteId, "MANAGER_MEMBERSHIP#");
+      const ids = new Set();
+      for (const member of members) {
+        if (
+          personId
+            ? member.personId === personId
+            : member.userId === userId && member.programId === programId
+        )
+          ids.add(member.membershipId);
+        else if (
+          !personId &&
+          !member.userId &&
+          String(member.email).toLowerCase() ===
+            String(manager.email).toLowerCase()
+        ) {
+          const assignments = await queryAll(
+            tableName,
+            siteId,
+            "ASSIGNED_USER#",
+          );
+          const matches = await assignmentsMatchingEmail(
+            tableName,
+            assignments,
+            manager.email,
+          );
+          if (
+            matches.length === 1 &&
+            matches[0].userId === userId &&
+            matches[0].programId === programId
+          )
+            ids.add(member.membershipId);
+        }
+      }
+      if (!ids.size) continue;
+      bindings.push(
+        ...(await queryAll(tableName, siteId, "DEVICE_BINDING#")).filter(
+          (binding) =>
+            binding.status !== "revoked" &&
+            binding.accessLevel === "manager" &&
+            binding.authorityScope !== "provider" &&
+            ids.has(binding.membershipId),
+        ),
+      );
+    }
+    if (!bindings.length)
+      return jsonResponse(200, { status: "complete", affectedCount: 0 });
+    const denied = await authorizeSiteChanges(event, [
+      ...new Set(
+        bindings.map((binding) =>
+          String(binding.siteId || binding.pk?.replace(/^SITE#/, "") || ""),
+        ),
+      ),
+    ]);
+    if (denied) return denied;
+    // Each bounded batch is atomic. Completed batches remain revoked on failure;
+    // retry discovers only the remaining bindings and never touches assignments.
+    const operationId = randomUUID();
+    const now = new Date().toISOString();
+    const actor = actorId(event);
+    let affectedCount = 0;
+    for (
+      let offset = 0;
+      offset < bindings.length;
+      offset += MAX_SELECTED_BINDINGS
+    ) {
+      const batch = bindings.slice(offset, offset + MAX_SELECTED_BINDINGS);
+      try {
+        await ddb.send(
+          new TransactWriteCommand({
+            TransactItems: [
+              ...batch.flatMap((binding) =>
+                bindingRevocationItems(tableName, binding, now, actor),
+              ),
+              transactionPut(tableName, {
+                pk: personId ? `PERSON#${personId}` : `PROGRAM#${programId}`,
+                sk: `AUDIT#${now}#${operationId}#${offset}`,
+                type: "programAuditEvent",
+                eventType: "manager_devices_revoked",
+                operationId,
+                userId,
+                actor,
+                bindingIds: batch.map((binding) => ({
+                  siteId: binding.siteId,
+                  bindingId: binding.bindingId,
+                })),
+                createdAt: now,
+              }),
+            ],
+          }),
+        );
+        affectedCount += batch.length;
+      } catch {
+        return jsonResponse(409, {
+          error: "manager_device_revocation_incomplete",
+          status: "incomplete",
+          operationId,
+          affectedCount,
+        });
+      }
+    }
+    return jsonResponse(200, {
+      status: "complete",
+      operationId,
+      affectedCount,
+    });
+  });
+
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const suspendDeviceBinding = (event) =>
-  adminOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const bindingId = event.pathParameters?.bindingId ?? "";
     if (
@@ -168,6 +355,11 @@ export const revokePhysicalDeviceEverywhere = (event) =>
         alreadyRevoked: true,
       });
     }
+    const denied = await authorizeSiteChanges(
+      event,
+      preview.bindings.map(({ binding }) => String(binding.siteId || "")),
+    );
+    if (denied) return denied;
     if (
       preview.bindingLimitExceeded ||
       preview.bindings.length > MAX_PHYSICAL_BINDINGS
@@ -251,7 +443,7 @@ export const revokePhysicalDeviceEverywhere = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const revokeSelectedDeviceBindings = (event) =>
-  adminOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const bindingIds = uniqueIds(body.bindingIds);
     if (
@@ -328,7 +520,7 @@ export const revokeSelectedDeviceBindings = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const revokeAllSiteDeviceBindings = (event) =>
-  adminOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const tableName = getDynamoTableName();
     const siteResult = await ddb.send(
@@ -792,6 +984,7 @@ async function queryAll(tableName, siteId, prefix) {
           ":prefix": prefix,
         },
         ExclusiveStartKey,
+        ConsistentRead: true,
       }),
     );
     items.push(...(page.Items ?? []));

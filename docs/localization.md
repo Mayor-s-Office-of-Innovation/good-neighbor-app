@@ -32,9 +32,50 @@ English by design.
   reason and a task-update label), so callers pass a key-prefix `scope` such as
   `"server.sf311"` where the context is known. The API wire format is
   unchanged: the UI still submits and compares the stored English.
-- **Analyzer text:** the model-written task title and description are not
-  translated by the app yet. See the analyzer service for the per-request
-  language option.
+- **Analyzer text:** the two model-written fields (`user_friendly_label`,
+  `description`) are stored with a per-locale `translations` map
+  (`{ es: { user_friendly_label, description }, vi: {…}, … }`) on the
+  ANALYSIS# concern and on the CONDITION and TASK copies
+  (`backend/src/analysis/translations.js` owns the shape; it also upgrades
+  records stored in the earlier single-block form on read, so nothing needs a
+  backfill). Two sources fill the map:
+  - **Capture time, one locale.** The analyze request carries the capturing
+    device's locale (stamped at `registerArtifact`), and the service returns
+    that one translation in the same call, so the card appears at today's
+    speed in the user's language.
+  - **Background, every other locale.** After the analysis is persisted, the
+    analyze worker enqueues a `translate_artifact` message on the shared
+    worker queue; `assessments:evaluate` enqueues one too for the condition
+    copies it stores (covering edited, added, and described conditions). The
+    translate worker (`backend/src/workers/translate-artifact.js`) asks the
+    service's text-only `POST /v1/translations` for the locales still
+    missing — one call per locale per chunk of 10 items, in parallel, since
+    output tokens dominate the service's latency behind its 29 s gateway
+    budget — and writes the merged map onto every stored copy of that exact
+    English text — the concern, the conditions, and their tasks — whether the
+    user has evaluated yet or not. Items over the service's text caps are
+    skipped (they keep English) rather than failing their batch; a locale the
+    service rejects permanently is skipped the same way, while a transient
+    failure writes what did succeed and then redelivers for the rest. It is
+    idempotent (a redelivery finds nothing missing), best-effort (a failed
+    enqueue leaves English), and never retries into the analysis idempotency
+    gate.
+  A locale counts as filled only when both fields are present; a half answer
+  is requested again by the next job, and maps merge per field.
+  The UI reads `translations[activeLocale]` through
+  `frontend/src/i18n/analyzer-text.js` — card titles (`h3`),
+  in-progress/completed card descriptions, the ticket detail and task-update
+  dialogs — and falls back to the canonical English field. Cards in an
+  active capture render from session state captured when the analysis
+  landed, so a language switch also refetches the check once (and once more
+  a few seconds later if the worker is still running) and merges the new
+  locales into the session's concerns, conditions, and tasks by text
+  (`frontend/src/services/session-translations.js`). On amendment
+  refreshes, conditions the rulebase considers unchanged keep their stored
+  answers and tasks and the maps merge per locale (one DynamoDB `Update` per
+  task that differs); a condition whose English text changed is a new
+  condition with only the locales its edit call returned, and the background
+  job fills the rest.
 
 ## Key naming
 

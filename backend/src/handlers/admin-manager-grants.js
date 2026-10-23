@@ -1,3 +1,8 @@
+import { getPerson } from "../lib/people.js";
+import {
+  generateEnrollmentCode,
+  enrollmentCodeVerifier,
+} from "./enrollment-codes.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { URLSearchParams } from "node:url";
 import {
@@ -10,9 +15,9 @@ import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
 import { sendManagerEnrollmentEmail } from "../integrations/email.js";
-import { adminOnly } from "../lib/admin-auth.js";
+import { adminOnly, siteAdminOnly } from "../lib/admin-auth.js";
 
-const MANAGER_GRANT_TTL_MS = 15 * 60 * 1000;
+const MANAGER_GRANT_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const listManagerGrants = (event) =>
@@ -37,7 +42,7 @@ export const listManagerGrants = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const createManagerGrant = (event) =>
-  adminOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const membershipId = String(body.membershipId ?? "").trim();
     if (!membershipId) {
@@ -91,20 +96,69 @@ export const createManagerGrant = (event) =>
     if (!membership || membership.status !== "active") {
       return jsonResponse(404, { error: "manager_membership_not_found" });
     }
+    // The active Site membership authorizes enrollment. Site reassignment keeps
+    // existing memberships, so their staff records may belong to the previous
+    // lead Program. Resolve that linked record rather than rejecting the retained
+    // membership or falling back to a potentially outdated email snapshot.
+    let recipientEmail = membership.email;
+    let recipientName = membership.name;
+    if (membership.personId) {
+      const person = await getPerson(membership.personId);
+      if (!person || person.status !== "active")
+        return jsonResponse(409, { error: "person_not_found" });
+      recipientEmail = person.email;
+      recipientName = person.name;
+    } else if (membership.userId && membership.programId) {
+      const staff = await ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: {
+            pk: `PROGRAM#${membership.programId}`,
+            sk: `USER#${membership.userId}`,
+          },
+          ConsistentRead: true,
+        }),
+      );
+      if (!staff.Item || staff.Item.status === "inactive" || !staff.Item.email)
+        return jsonResponse(409, { error: "program_user_not_found" });
+      recipientEmail = staff.Item.email;
+      recipientName =
+        `${staff.Item.firstName || ""} ${staff.Item.lastName || ""}`.trim();
+    }
     const now = new Date();
     const nowIso = now.toISOString();
     const expiresAt = new Date(
       now.getTime() + MANAGER_GRANT_TTL_MS,
     ).toISOString();
     const grantId = randomUUID();
-    const token = randomBytes(32).toString("base64url");
-    const tokenHash = createHash("sha256").update(token).digest("hex");
+    if (
+      body.deliveryMode !== undefined &&
+      body.deliveryMode !== "link" &&
+      body.deliveryMode !== "code"
+    ) {
+      return jsonResponse(400, { error: "invalid_delivery_mode" });
+    }
+    const deliveryMode = body.deliveryMode === "code" ? "code" : "link";
+    const token =
+      deliveryMode === "code"
+        ? await generateEnrollmentCode()
+        : randomBytes(32).toString("base64url");
+    const tokenHash =
+      deliveryMode === "code"
+        ? await enrollmentCodeVerifier(token)
+        : createHash("sha256").update(token).digest("hex");
     const actor = actorId(event);
-    const enrollmentUrl = enrollmentLink(
-      process.env.PROVIDER_APP_URL ?? "http://localhost:5173/",
-      grantId,
-      token,
-    );
+    const enrollmentUrl =
+      deliveryMode === "code"
+        ? new URL(
+            "#login=1",
+            process.env.PROVIDER_APP_URL ?? "http://localhost:5173/",
+          ).toString()
+        : enrollmentLink(
+            process.env.PROVIDER_APP_URL ?? "http://localhost:5173/",
+            grantId,
+            token,
+          );
     const grant = {
       pk: `SITE#${siteId}`,
       sk: `MANAGER_GRANT#${nowIso}#${grantId}`,
@@ -115,9 +169,10 @@ export const createManagerGrant = (event) =>
       siteId,
       accessLevel: "manager",
       tokenHash,
+      deliveryMode,
       status: "pending",
       deliveryStatus: "queued",
-      issuedTo: membership.email,
+      issuedTo: recipientEmail,
       issuedBy: actor,
       createdAt: nowIso,
       expiresAt,
@@ -233,14 +288,15 @@ export const createManagerGrant = (event) =>
     }
 
     let deliveryStatus = "accepted";
-    let deliveryProvider = "ses";
+    let deliveryProvider = configuredDeliveryProvider();
     let messageId = "";
     try {
       const delivery = await sendManagerEnrollmentEmail({
-        to: String(membership.email),
-        managerName: String(membership.name),
+        to: String(recipientEmail),
+        managerName: String(recipientName),
         siteName: String(site.name),
         enrollmentUrl,
+        ...(deliveryMode === "code" ? { enrollmentCode: token } : {}),
         expiresAt,
       });
       deliveryProvider = delivery.provider;
@@ -276,7 +332,7 @@ export const createManagerGrant = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const cancelManagerGrant = (event) =>
-  adminOnly(event, async () => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async () => {
     const siteId = event.pathParameters?.siteId ?? "";
     const grantId = event.pathParameters?.grantId ?? "";
     const tableName = getDynamoTableName();
@@ -371,6 +427,7 @@ function publicGrant(item, now) {
       ? "expired"
       : item.status;
   return {
+    deliveryMode: item.deliveryMode ?? "link",
     grantId: item.grantId,
     membershipId: item.membershipId,
     siteId: item.siteId,
@@ -386,6 +443,10 @@ function publicGrant(item, now) {
     createdAt: item.createdAt,
     expiresAt: item.expiresAt,
   };
+}
+
+function configuredDeliveryProvider() {
+  return process.env.EMAIL_TRANSPORT === "smtp" ? "smtp" : "ses";
 }
 
 /**

@@ -16,6 +16,21 @@ describe("ticketDetailDialog", () => {
     expect(error).not.toContain("ticket-detail__summary");
   });
 
+  it("shows the card thumbnail but opens the lightbox on the original", () => {
+    const markup = ticketDetailDialog({
+      state: "ready",
+      detail: {
+        status: "Open",
+        title: "Litter",
+        mediaUrl: "https://cdn.example/photo.thumb.webp",
+        fullMediaUrl: "https://cdn.example/photo.jpg",
+        events: [],
+      },
+    });
+    expect(markup).toContain('src="https://cdn.example/photo.thumb.webp"');
+    expect(markup).toContain('data-full-src="https://cdn.example/photo.jpg"');
+  });
+
   it("renders the request summary, overdue tone, and timeline", () => {
     const expectedResponseAt = "2026-09-01T00:00:00.000Z";
     const markup = ticketDetailDialog({
@@ -126,4 +141,60 @@ describe("ticketDetailDialog 311 timeline events", () => {
     // Status line keeps the backend's lower-cased closure detail.
     expect(markup).toMatch(/Closed: resolved/);
   });
+});
+
+it.each(["in_progress", "completed"])(
+  "shows saved content in the %s 311 timeline",
+  (status) => {
+    const markup = ticketDetailDialog({
+      state: "ready",
+      detail: {
+        status: status === "completed" ? "Closed" : "Open",
+        task: { status },
+        title: "Litter",
+        mediaUrls: new Map([["photo-1", "https://example.test/photo.jpg"]]),
+        events: [
+          { title: "Agency update", occurredAt: "2026-10-08T10:00:00Z" },
+        ],
+        updates: [
+          {
+            type: "note_photo_update",
+            label: "Updated with photos and notes",
+            notes: ["Still <there>"],
+            photoKeys: ["photo-1"],
+            occurredAt: "2026-10-08T12:00:00Z",
+          },
+          {
+            type: "additional_action",
+            label: "Additional action taken",
+            text: "Called agency",
+            occurredAt: "2026-10-08T11:00:00Z",
+          },
+        ],
+        nextToken: "older",
+      },
+    });
+    expect(markup).toContain("Still &lt;there&gt;");
+    expect(markup).toContain('src="https://example.test/photo.jpg"');
+    expect(markup.indexOf("Still &lt;there&gt;")).toBeLessThan(
+      markup.indexOf("Called agency"),
+    );
+    expect(markup.indexOf("Called agency")).toBeLessThan(
+      markup.indexOf("Agency update"),
+    );
+    expect(markup).toContain("data-load-older");
+    expect(markup.includes('data-mode="notes"')).toBe(status === "in_progress");
+    expect(markup.includes('data-mode="action"')).toBe(
+      status === "in_progress",
+    );
+  },
+);
+
+it("keeps both update controls for an in-progress task with a closed City ticket", () => {
+  const markup = ticketDetailDialog({
+    state: "ready",
+    detail: { status: "Closed", task: { status: "in_progress" }, events: [] },
+  });
+  expect(markup).toContain('data-mode="notes"');
+  expect(markup).toContain('data-mode="action"');
 });

@@ -34,6 +34,64 @@ locals {
   ]
 }
 
+# ---- Cognito custom email sender role ---------------------------------------
+
+resource "aws_iam_role" "cognito_email_sender" {
+  count = var.enable_cognito_custom_email_sender ? 1 : 0
+
+  name               = "${local.name_prefix}-cognito-email-sender"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+  tags               = var.tags
+}
+
+data "aws_iam_policy_document" "cognito_email_sender" {
+  count = var.enable_cognito_custom_email_sender ? 1 : 0
+
+  statement {
+    sid       = "DecryptCognitoMessageSecrets"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt"]
+    resources = [aws_kms_key.cognito_email[0].arn]
+  }
+
+  statement {
+    sid       = "ReadMailManagerIngressSecret"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.mail_manager_ingress[0].arn]
+  }
+
+  statement {
+    sid       = "DecryptMailManagerIngressSecret"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt"]
+    resources = [aws_kms_key.smtp_secrets[0].arn]
+  }
+
+  statement {
+    sid       = "Logs"
+    effect    = "Allow"
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    resources = ["${aws_cloudwatch_log_group.cognito_email_sender[0].arn}:*"]
+  }
+
+  statement {
+    sid       = "XRay"
+    effect    = "Allow"
+    actions   = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "cognito_email_sender" {
+  count = var.enable_cognito_custom_email_sender ? 1 : 0
+
+  #checkov:skip=CKV_AWS_355:X-Ray PutTraceSegments/PutTelemetryRecords have no resource-level scope; "*" is required.
+  name   = "${local.name_prefix}-cognito-email-sender"
+  role   = aws_iam_role.cognito_email_sender[0].id
+  policy = data.aws_iam_policy_document.cognito_email_sender[0].json
+}
+
 # ---- api Lambda role ----------------------------------------------------------
 
 resource "aws_iam_role" "api" {
@@ -43,16 +101,39 @@ resource "aws_iam_role" "api" {
 }
 
 data "aws_iam_policy_document" "api" {
-  statement {
-    sid       = "SendSetupCodeEmails"
-    effect    = "Allow"
-    actions   = ["ses:SendEmail"]
-    resources = [var.setup_code_email_identity_arn]
+  dynamic "statement" {
+    for_each = var.enable_city_smtp_relay ? [] : [1]
+    content {
+      sid       = "SendSetupCodeEmails"
+      effect    = "Allow"
+      actions   = ["ses:SendEmail"]
+      resources = [var.setup_code_email_identity_arn]
 
-    condition {
-      test     = "StringEquals"
-      variable = "ses:FromAddress"
-      values   = [var.setup_code_email_from]
+      condition {
+        test     = "StringEquals"
+        variable = "ses:FromAddress"
+        values   = [var.setup_code_email_from]
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.enable_city_smtp_relay ? [1] : []
+    content {
+      sid       = "ReadMailManagerIngressSecret"
+      effect    = "Allow"
+      actions   = ["secretsmanager:GetSecretValue"]
+      resources = [aws_secretsmanager_secret.mail_manager_ingress[0].arn]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.enable_city_smtp_relay ? [1] : []
+    content {
+      sid       = "DecryptMailManagerIngressSecret"
+      effect    = "Allow"
+      actions   = ["kms:Decrypt"]
+      resources = [aws_kms_key.smtp_secrets[0].arn]
     }
   }
 
@@ -69,8 +150,16 @@ data "aws_iam_policy_document" "api" {
     actions = [
       "cognito-idp:AdminAddUserToGroup",
       "cognito-idp:AdminCreateUser",
+      "cognito-idp:AdminDeleteUser",
+      "cognito-idp:AdminDisableUser",
+      "cognito-idp:AdminEnableUser",
       "cognito-idp:AdminGetUser",
+      "cognito-idp:AdminListGroupsForUser",
+      "cognito-idp:AdminRemoveUserFromGroup",
+      "cognito-idp:AdminResetUserPassword",
       "cognito-idp:AdminUpdateUserAttributes",
+      "cognito-idp:AdminDeleteUserAttributes",
+      "cognito-idp:ListUsersInGroup",
       "cognito-idp:ListUsers",
     ]
     resources = [aws_cognito_user_pool.users.arn]
@@ -89,10 +178,34 @@ data "aws_iam_policy_document" "api" {
   }
 
   statement {
+    sid    = "ComplaintObjects"
+    effect = "Allow"
+    actions = [
+      "s3:DeleteObject",
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:PutObjectTagging",
+    ]
+    resources = ["${aws_s3_bucket.complaints.arn}/*"]
+  }
+
+  statement {
+    sid    = "ComplianceLetterObjects"
+    effect = "Allow"
+    actions = [
+      "s3:DeleteObject",
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:PutObjectTagging",
+    ]
+    resources = ["${aws_s3_bucket.compliance_letters.arn}/*"]
+  }
+
+  statement {
     sid       = "EnqueueSubmissions"
     effect    = "Allow"
     actions   = ["sqs:SendMessage"]
-    resources = [aws_sqs_queue.submissions.arn]
+    resources = [aws_sqs_queue.submissions.arn, aws_sqs_queue.analysis.arn]
   }
 
   statement {
@@ -269,6 +382,49 @@ resource "aws_iam_role" "worker" {
 
 data "aws_iam_policy_document" "worker" {
   statement {
+    sid       = "FindExpiredComplianceTerms"
+    effect    = "Allow"
+    actions   = ["dynamodb:Scan"]
+    resources = [aws_dynamodb_table.app.arn]
+  }
+  dynamic "statement" {
+    for_each = var.enable_city_smtp_relay ? [] : [1]
+    content {
+      sid       = "SendComplianceLetters"
+      effect    = "Allow"
+      actions   = ["ses:SendEmail"]
+      resources = [var.setup_code_email_identity_arn]
+
+      condition {
+        test     = "StringEquals"
+        variable = "ses:FromAddress"
+        values   = [var.setup_code_email_from]
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.enable_city_smtp_relay ? [1] : []
+    content {
+      sid       = "ReadMailManagerIngressSecret"
+      effect    = "Allow"
+      actions   = ["secretsmanager:GetSecretValue"]
+      resources = [aws_secretsmanager_secret.mail_manager_ingress[0].arn]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.enable_city_smtp_relay ? [1] : []
+    content {
+      sid       = "DecryptMailManagerIngressSecret"
+      effect    = "Allow"
+      actions   = ["kms:Decrypt"]
+      resources = [aws_kms_key.smtp_secrets[0].arn]
+    }
+  }
+
+
+  statement {
     sid       = "ReverseGeocodePhoto"
     effect    = "Allow"
     actions   = ["geo-places:ReverseGeocode"]
@@ -281,11 +437,46 @@ data "aws_iam_policy_document" "worker" {
     resources = local.dynamo_resources
   }
 
+  # Silent 311 submissions snapshot images into the lease-specific prefix.
+  statement {
+    sid       = "Write311AttachmentCopies"
+    effect    = "Allow"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.uploads.arn}/sf311-media/*"]
+  }
+
   statement {
     sid       = "ReadAndClassifyUploads"
     effect    = "Allow"
     actions   = ["s3:GetObject", "s3:PutObjectTagging"]
     resources = ["${aws_s3_bucket.uploads.arn}/*"]
+  }
+
+  # The analyze worker stores a card thumbnail (`<key>.thumb.webp`) beside each
+  # check photo (backend/src/media/thumbnail.js). The resource pattern is what
+  # keeps originals write-once: only keys ending in the thumbnail suffix under
+  # the checks prefix are writable. PutObjectTagging (above) covers the
+  # lifecycle tag sent with the same PUT.
+  statement {
+    sid       = "WriteCheckThumbnails"
+    effect    = "Allow"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.uploads.arn}/checks/*.thumb.webp"]
+  }
+
+
+  statement {
+    sid       = "ReadAndClassifyComplaints"
+    effect    = "Allow"
+    actions   = ["s3:GetObject", "s3:PutObjectTagging"]
+    resources = ["${aws_s3_bucket.complaints.arn}/*"]
+  }
+
+  statement {
+    sid       = "ReadWriteComplianceLetters"
+    effect    = "Allow"
+    actions   = ["s3:GetObject", "s3:PutObject"]
+    resources = ["${aws_s3_bucket.compliance_letters.arn}/compliance-letters/*"]
   }
 
   statement {
@@ -296,7 +487,7 @@ data "aws_iam_policy_document" "worker" {
       "sqs:DeleteMessage",
       "sqs:GetQueueAttributes",
     ]
-    resources = [aws_sqs_queue.submissions.arn]
+    resources = [aws_sqs_queue.submissions.arn, aws_sqs_queue.analysis.arn]
   }
 
   statement {
@@ -322,7 +513,7 @@ data "aws_iam_policy_document" "worker" {
     sid       = "SendToDlq"
     effect    = "Allow"
     actions   = ["sqs:SendMessage"]
-    resources = [aws_sqs_queue.submissions_dlq.arn]
+    resources = [aws_sqs_queue.submissions_dlq.arn, aws_sqs_queue.analysis_dlq.arn]
   }
 
   statement {
@@ -350,7 +541,7 @@ data "aws_iam_policy_document" "worker" {
     sid       = "Logs"
     effect    = "Allow"
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-    resources = ["${aws_cloudwatch_log_group.worker.arn}:*"]
+    resources = ["${aws_cloudwatch_log_group.worker.arn}:*", "${aws_cloudwatch_log_group.analysis.arn}:*"]
   }
 
   statement {

@@ -7,11 +7,17 @@ Type safety is JSDoc + `tsc --checkJs`.
 ## Run it
 
 ```bash
-npm run dev -w frontend       # dev server
+npm run dev -w frontend       # dev server against the local backend harness (:3001)
+npm run dev:remote            # dev server against the DEPLOYED dev API — no local backend needed
 npm run build -w frontend     # production build → dist/
 npm run typecheck -w frontend # tsc --checkJs
-npm run dev:lan -w frontend # launches vite with external friendly config
+npm run dev:lan -w frontend   # launches vite with external friendly config
 ```
+
+`dev:remote` sets `API_PROXY_TARGET=https://dev.goodneighborsf.org`; the Vite proxy forwards
+API paths there and presigned S3 uploads ride through the dev server too (see
+`scripts/vite-remote-api.mjs`). Frontend-only contributors start at the
+[designer quickstart](../docs/quickstart-design.md).
 
 First run shows the site-setup screen. To get it back after binding a site you can logout.
 
@@ -41,6 +47,11 @@ Dev-only, like `design-system.html`: `vite build` ships only the app's `index.ht
 - `/check/describe` — the description alternative to photos (one per check; reopening
   edits it)
 - `/problem` — single-issue capture (with a `/problem/describe` variant)
+- `/site-admin` — site manager screens (manager access level only; lazy chunk)
+- `/reports` — site manager reports: Checks and a draft combined Issues tab
+  (`?tab=checks|issues&period=week|month|quarter&start=YYYY-MM-DD`);
+  `/reports/checks/<date>` is one day's detail. Manager access level only; lazy chunk
+  (`reports-view.js`, served by the manager report endpoints)
 
 First-run site setup is enforced by `app-root`, not by a route. There is no per-site
 places setup: a bound device lands straight on `/today`

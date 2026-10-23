@@ -6,7 +6,7 @@ const adminRoot = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig({
   root: adminRoot,
-  publicDir: false,
+  publicDir: "public",
   server: {
     host: "127.0.0.1",
     port: 5175,

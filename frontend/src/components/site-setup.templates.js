@@ -6,17 +6,19 @@ import { t } from "../i18n/i18n.js";
 import { html, escapeAttr, escapeHtml } from "../lib/html.js";
 
 /**
- * @param {{value?: string, error?: string, checking?: boolean, mode?: "code"|"request", targetSiteName?: string, canCancel?: boolean, cancelDisabled?: boolean, request?: { query?: string, email?: string, searching?: boolean, requesting?: boolean, sites?: Array<{siteId:string, name:string, providerName?:string, label?:string}>, selectedSiteId?: string, message?: string, error?: string }}} state
+ * @param {{value?: string, reference?: string, error?: string, checking?: boolean, mode?: "code"|"request", targetSiteName?: string, canCancel?: boolean, cancelDisabled?: boolean, notice?: string, request?: { query?: string, email?: string, searching?: boolean, requesting?: boolean, sites?: Array<{siteId:string, name:string, providerName?:string, label?:string}>, selectedSiteId?: string, message?: string, error?: string }}} state
  * @returns {string}
  */
 export const codeEntryView = ({
   value = "",
+  reference = "",
   error = "",
   checking = false,
   mode = "code",
   targetSiteName = "",
   canCancel = false,
   cancelDisabled = false,
+  notice = "",
   request = {},
 } = {}) => html`
   <div class="login" aria-labelledby="login-title">
@@ -34,11 +36,16 @@ export const codeEntryView = ({
                 : t("setup.enterCode"),
           )}
         </p>
+        ${notice
+          ? html`<p class="login__notice" role="status">
+              ${escapeHtml(notice)}
+            </p>`
+          : ""}
       </div>
 
       ${mode === "request"
         ? requestCodeView(request)
-        : enterCodeView({ value, error, checking })}
+        : enterCodeView({ value, error, checking, reference })}
       ${canCancel
         ? html`<button
             id="cancel-site-switch"
@@ -54,10 +61,10 @@ export const codeEntryView = ({
 `;
 
 /**
- * @param {{ value: string, error: string, checking: boolean }} state
+ * @param {{ value: string, error: string, checking: boolean, reference: string }} state
  * @returns {string}
  */
-function enterCodeView({ value, error, checking }) {
+function enterCodeView({ value, error, checking, reference }) {
   return html`
     <form
       id="code-form"
@@ -84,6 +91,11 @@ function enterCodeView({ value, error, checking }) {
         ${escapeHtml(error)}
       </p>
 
+      ${reference
+        ? html`<p>
+            ${escapeHtml(t("setup.enrollment.supportReference", { reference }))}
+          </p>`
+        : ""}
       <button
         id="continue"
         class="btn-ink login__continue"
@@ -97,9 +109,6 @@ function enterCodeView({ value, error, checking }) {
           : escapeHtml(t("common.continue"))}
       </button>
     </form>
-    <button id="show-request-code" class="btn-link" type="button">
-      ${escapeHtml(t("setup.needNewCode"))}
-    </button>
   `;
 }
 
@@ -191,4 +200,54 @@ function requestCodeView({
       ${escapeHtml(t("setup.searching"))}
     </p>
   `;
+}
+
+/** @param {{checking:boolean, error:string, reference?:string}} state */
+export function enrollmentView({ checking, error, reference = "" }) {
+  return html`<div class="login">
+    <section
+      class="login__panel"
+      aria-labelledby="enrollment-title"
+      aria-busy="${checking}"
+    >
+      <img
+        class="login__mark login__mark--app-icon"
+        src="/img/icon-512.png"
+        width="160"
+        height="160"
+        alt=""
+      />
+      <div class="login__copy">
+        <h1 id="enrollment-title">
+          ${escapeHtml(t("setup.enrollment.title"))}
+        </h1>
+        <p class="login__enrollment-instructions">
+          ${escapeHtml(t("setup.enrollment.confirm"))}
+        </p>
+      </div>
+      <form id="enrollment-form" class="login__form">
+        <p role="alert" class="login__error" ${error ? "" : "hidden"}>
+          ${escapeHtml(error)}
+        </p>
+        ${reference
+          ? html`<p>
+              ${escapeHtml(
+                t("setup.enrollment.supportReference", { reference }),
+              )}
+            </p>`
+          : ""}
+        <button
+          id="confirm-enrollment"
+          class="btn-ink login__continue"
+          type="submit"
+          ${checking ? "disabled" : ""}
+        >
+          ${escapeHtml(t("setup.enrollment.submit"))}
+        </button>
+      </form>
+      <a class="btn-link" href="/"
+        >${escapeHtml(t("setup.enrollment.openApp"))}</a
+      >
+    </section>
+  </div>`;
 }

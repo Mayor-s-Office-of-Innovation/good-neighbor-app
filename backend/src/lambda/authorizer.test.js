@@ -135,7 +135,8 @@ describe("authorizer", () => {
       const res = await invoke(event(`Bearer ${token}`));
       expect(res.isAuthorized).toBe(false);
       expect(res.context.reason).toBe("revoked");
-      expect(send).toHaveBeenCalledTimes(1);
+      // DEVICE# and SITE#META are read concurrently; nothing past them runs.
+      expect(send).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }
@@ -182,6 +183,8 @@ describe("authorizer", () => {
         "claims.custom:siteId": "site-1",
         "claims.ver": 7,
         "claims.accessLevel": "general",
+        sub: "dev-1",
+        siteId: "site-1",
       });
       // The device lookup is pinned to the token's own partition.
       const cmd = send.mock.calls[0][0];
@@ -362,4 +365,58 @@ describe("authorizer", () => {
       vi.useRealTimers();
     }
   });
+});
+
+it("does not revive provider access when a site returns to its former provider", async () => {
+  const { token } = await mintAccessToken({
+    siteId: "s",
+    deviceId: "d",
+    tokenGeneration: 1,
+    accessLevel: "manager",
+  });
+  send
+    .mockResolvedValueOnce({
+      Item: {
+        status: "active",
+        tokenGeneration: 1,
+        accessLevel: "manager",
+        authorityScope: "provider",
+        providerId: "p",
+        providerAccessGeneration: 0,
+      },
+    })
+    .mockResolvedValueOnce({
+      Item: { status: "active", providerId: "p", providerAccessGeneration: 2 },
+    });
+  const result = await invoke(event(`Bearer ${token}`));
+  expect(result.isAuthorized).toBe(false);
+  expect(result.context.reason).toBe("revoked");
+});
+
+it("retains direct site access after provider changes", async () => {
+  const { token } = await mintAccessToken({
+    siteId: "s",
+    deviceId: "d",
+    tokenGeneration: 1,
+    accessLevel: "manager",
+  });
+  send
+    .mockResolvedValueOnce({
+      Item: {
+        status: "active",
+        tokenGeneration: 1,
+        accessLevel: "manager",
+        membershipId: "m",
+        membershipGeneration: 1,
+      },
+    })
+    .mockResolvedValueOnce({
+      Item: {
+        status: "active",
+        providerId: "new",
+        providerAccessGeneration: 2,
+      },
+    })
+    .mockResolvedValueOnce({ Item: { status: "active", generation: 1 } });
+  expect((await invoke(event(`Bearer ${token}`))).isAuthorized).toBe(true);
 });

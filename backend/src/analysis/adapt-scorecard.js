@@ -12,6 +12,8 @@
 // analysis/guidance/, sourcing any rubric weightings from the service rather than
 // a vendored copy.)
 
+import { normalizeTranslations } from "./translations.js";
+
 /** @typedef {import("./contract.js").AnalysisResponse} AnalysisResponse */
 
 /**
@@ -23,9 +25,10 @@
  * @property {string} [userFriendlyLabel]
  * @property {string} explanation
  * @property {number[]} evidenceIndices
- * @property {import("./contract.js").ConditionTranslations} [translations]
- *   localized copies of userFriendlyLabel/explanation, present only when the
- *   analyze request carried a supported non-English `language`
+ * @property {import("./translations.js").TranslationsMap} [translations]
+ *   per-locale copies of userFriendlyLabel/explanation. At analyze time it
+ *   holds at most the requesting device's locale; the background translate
+ *   worker fills the rest (see analysis/translations.js).
  */
 
 /**
@@ -38,6 +41,7 @@
  * @property {AdaptedConcern[]} concerns
  * @property {number} issueCount
  * @property {number} maxSeverity
+ * @property {"wide" | "detail"} [shotType]
  */
 
 /**
@@ -60,13 +64,22 @@ export function adaptAssessment(response) {
     if (c.user_friendly_label !== undefined) {
       concern.userFriendlyLabel = c.user_friendly_label;
     }
-    if (c.translations !== undefined) concern.translations = c.translations;
+    // Single wire block → per-locale map (malformed blocks are dropped).
+    const translations = normalizeTranslations(c.translations);
+    if (translations) concern.translations = translations;
     return concern;
   });
 
   const maxSeverity = concerns.reduce((max, c) => Math.max(max, c.rating), 0);
 
+  // Each artifact is analyzed with one media item at manifest index zero.
+  const framing = response.media_manifest?.find(
+    (item) => item.index === 0 && item.type === "image",
+  )?.shot_type;
   return {
+    ...(framing === "wide" || framing === "detail"
+      ? { shotType: framing }
+      : {}),
     analysisId: response.analysis_id,
     rubricVersion: response.rubric.version,
     model: response.model,

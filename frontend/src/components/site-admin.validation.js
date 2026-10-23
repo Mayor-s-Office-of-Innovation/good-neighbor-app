@@ -80,3 +80,13 @@ export function validateSiteDetails(value) {
 export function valuesChanged(left, right) {
   return JSON.stringify(left) !== JSON.stringify(right);
 }
+
+/** @param {number} milliseconds */
+export function formatCountdown(milliseconds) {
+  const minutes = Math.max(0, Math.floor(milliseconds / 60000));
+  const unit = minutes >= 1440 ? "days" : minutes >= 60 ? "hours" : "minutes";
+  const count = Math.floor(
+    minutes / (unit === "days" ? 1440 : unit === "hours" ? 60 : 1),
+  );
+  return t(`access.duration.${unit}`, { count });
+}

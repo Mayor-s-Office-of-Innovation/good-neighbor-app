@@ -1,0 +1,130 @@
+# City SMTP relay operations
+
+Good Neighbor sends City application email through an authenticated SES Mail
+Manager ingress point, which relays it to Proofpoint Secure Email Relay over
+STARTTLS. DEV uses `goodneighbor-dev@sf.gov`; PROD will use
+`goodneighbor@sf.gov`. DT has approved both senders, internal and external
+recipients, shared credentials across the two AWS accounts, and confirmed that
+no source-IP allowlist or application-side DNS changes are required.
+
+When `enable_city_smtp_relay` is true, the API Lambda sends setup codes,
+Manager enrollment and recovery links, and device-enrollment notifications
+through the Mail Manager ingress. Its execution role can read only the ingress
+credential; it cannot read the Proofpoint relay credential. When
+`enable_cognito_custom_email_sender` is also true, a separate least-privilege
+Lambda routes Cognito invitations and recovery messages through the same
+authenticated ingress.
+
+## Bootstrap dev
+
+The bootstrap deliberately takes two CI deployments so secret values never
+enter Terraform state.
+
+1. Deploy with `enable_city_smtp_relay = false` in
+   `infra/environments/dev/main.tf`. This creates two empty secret containers.
+2. Read their ARNs:
+
+   ```sh
+   terraform -chdir=infra/environments/dev output -raw city_smtp_relay_secret_arn
+   terraform -chdir=infra/environments/dev output -raw mail_manager_ingress_secret_arn
+   ```
+
+3. Put the Proofpoint value into the first secret from a trusted shell. Avoid a
+   literal password in shell history by preparing a protected temporary JSON
+   file using the operator's approved password-manager workflow:
+
+   ```sh
+   aws secretsmanager put-secret-value \
+     --secret-id <city_smtp_relay_secret_arn> \
+     --secret-string file://<protected-proofpoint-json> \
+     --region us-west-2
+   ```
+
+   The file must contain `username` and `password` string properties. Delete it
+   securely according to the workstation's credential-handling policy.
+
+4. Generate a separate ingress password and put `{"password":"..."}` into the
+   second secret. This is not the Proofpoint password. Keep the generated value
+   in the approved password manager because SMTP clients will need it.
+5. Change `enable_city_smtp_relay` to `true`, review the complete CI plan, and
+   deploy again. Terraform creates the Mail Manager gateway through its owned
+   CloudFormation stack.
+
+The deployment role needs CloudFormation and SES Mail Manager CRUD permissions,
+CloudWatch Logs v2 delivery permissions, and
+`ses:AllowVendedLogDeliveryForResource`. A denied stack event identifies a
+missing deployment-role permission; do not work around it with console-created
+resources.
+
+## Unblock deployments during relay bootstrap
+
+If creating the relay fails because Proofpoint is unavailable or SMTP
+authentication fails, set `enable_city_smtp_relay = false` in
+`infra/environments/dev/main.tf`, keeping
+`provision_city_smtp_relay_foundation = true`. Run a fresh CI plan and apply.
+Terraform removes the failed gateway stack from its managed configuration while
+preserving the SMTP secrets, KMS key, log group, and alarms. The API Lambda
+then returns to its existing direct-SES sender; Cognito delivery is unchanged.
+
+This is a bootstrap recovery path, before application senders use the gateway.
+Once Proofpoint authentication succeeds, set `enable_city_smtp_relay = true`
+and deploy through CI, then complete the connectivity tests below before
+enabling application delivery through the gateway.
+
+## Application cutover
+
+The same `enable_city_smtp_relay` switch controls both the gateway and the API
+Lambda transport. When enabled, Terraform configures the Lambda with the Mail
+Manager hostname, ingress-point ID, ingress secret ARN, and the environment's
+approved `city_smtp_from_address`. It replaces the Lambda's direct-SES send
+permission with least-privilege access to the ingress secret and its KMS key.
+
+After deployment, trigger at least one real application-generated message in
+dev and confirm the From address, `[dev]` subject prefix, content, links, and
+receipt. Check the API log entry reports `provider: "smtp"`; logs must not
+contain the recipient, message body, token, code, or SMTP credential. Exercise
+each distinct workflow before promoting the same configuration pattern to
+prod. A connectivity-probe success alone does not prove that the application
+Lambda has the required configuration and IAM permissions.
+
+## Connectivity test
+
+Wait until the requested dev mailbox exists. Obtain the non-secret endpoint
+values from Terraform and the ingress password from the approved password
+manager. The probe always uses `goodneighbor-dev@sf.gov` and refuses a different
+From address.
+
+```sh
+SMTP_HOST="$(terraform -chdir=infra/environments/dev output -raw mail_manager_ingress_hostname)" \
+SMTP_USERNAME="$(terraform -chdir=infra/environments/dev output -raw mail_manager_ingress_username)" \
+SMTP_PASSWORD='<ingress password>' \
+SMTP_TO='<designated test recipient>' \
+npm run test:mail-relay -w @good-neighbor/backend
+```
+
+Test one City recipient and one external recipient. Confirm STARTTLS, receipt,
+the dev From address and subject marker, and SPF/DKIM/DMARC results. Then send an
+intentionally invalid recipient and confirm the notification reaches the dev
+mailbox or is visible to the DT mail team.
+
+Mail Manager logs are written to
+`/aws/ses/mail-manager/good-neighbor-app-dev`. Relay failures alarm through the
+environment alarm SNS topic. SES acceptance proves only that the next SMTP hop
+accepted a message, not inbox delivery.
+
+## Rotation and incidents
+
+DT says Proofpoint credentials do not normally expire. DT provides 30 days for
+a routine rotation, but may require immediate replacement during a security
+incident. Put the new value as a new `AWSCURRENT` secret version. Mail Manager
+can continue accepting `AWSPREVIOUS` during coordinated ingress-password
+rotation; remove the old version after every client has changed. Application
+SMTP clients cache the current credential for at most five minutes. An explicit
+SMTP authentication rejection discards the cached credential and retries once
+with the current secret version. Timeouts and other errors with ambiguous
+delivery status are never retried automatically, to avoid duplicate messages.
+
+On failure, check in order: CloudFormation stack status, Mail Manager rule-set
+logs, the relay-failure alarm, sender authorization, mailbox notices, and the DT
+mail team. Never paste SMTP credentials, message bodies, authentication codes,
+or full recipient addresses into tickets or logs.

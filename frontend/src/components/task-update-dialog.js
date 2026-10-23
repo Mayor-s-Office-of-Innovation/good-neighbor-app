@@ -1,3 +1,8 @@
+import {
+  map311StatusResponse,
+  taskWith311Status,
+} from "../domain/task-311-status.js";
+import { openOverlayDialog } from "../dialog-history.js";
 import "./timeline.css";
 import "./task-update-dialog.css";
 import {
@@ -6,10 +11,11 @@ import {
   documentTaskUpdate,
   getMediaUrl,
   getTaskUpdates,
+  get311RequestDetails,
   uploadTaskUpdatePhoto,
 } from "../services/api.js";
 import { showTaskUpdateErrorToast } from "../state/toasts.js";
-import { taskArtifactIds } from "../domain/home-tasks.js";
+import { taskArtifactIds, submitted311Ticket } from "../domain/home-tasks.js";
 import { taskMediaUrl } from "../domain/task-media.js";
 import {
   emptyTaskUpdateNotes,
@@ -26,16 +32,30 @@ import {
   taskUpdateTimeline,
 } from "./task-update-dialog.templates.js";
 
-class TaskUpdateDialog extends HTMLElement {
+export class TaskUpdateDialog extends HTMLElement {
   constructor() {
     super();
     /** @type {Record<string, any> | null} */
     this._task = null;
     /** @type {Record<string, any> | null} */
     this._detail = null;
+    this._savingNotes = false;
+    this._results = false;
     this._mode = "timeline";
+    this._editorOnly = false;
+    /** @type {boolean | null | undefined} */
+    this._cityHelpNeeded = undefined;
+    this._requests = new Map();
+    this._cityUpdates = [];
+    this._loadGeneration = 0;
     /** @type {Record<string, any> | null} */
     this._pendingEvent = null;
+    /**
+     * Results mode opened before the completion response: resolves to the
+     * documentation event once it lands (null when there is none).
+     * @type {Promise<Record<string, any> | null> | null}
+     */
+    this._completion = null;
     /** @type {File[]} */
     this._files = [];
     this._actionText = "";
@@ -56,17 +76,83 @@ class TaskUpdateDialog extends HTMLElement {
     this._render();
   }
 
-  /** @param {Record<string, any>} task */
-  async open(task) {
+  /** @param {Record<string, any>} task @param {string} [mode] */
+  async open(task, mode = "timeline") {
     this._task = task;
+    this._cityUpdates = [];
+    this._results = false;
+    this._pendingEvent = null;
     this._open = true;
-    this._mode = "timeline";
+    this._editorOnly = mode !== "timeline";
+    this._mode = mode;
+    this._resetDraft();
     await this._load();
+  }
+
+  /**
+   * Collect documentation for the action that just completed this task.
+   * With `completion` the prompt opens before the completion response: the
+   * user can pick photos and type notes right away. Done and Skip both close
+   * at once; the documentation finishes in the background (_finishResults).
+   * @param {Record<string, any>} task
+   * @param {Promise<{ task: Record<string, any> | null, failed?: boolean }> | null} [completion]
+   */
+  openResults(task, completion = null) {
+    ++this._loadGeneration;
+    this._task = task;
+    this._results = true;
+    this._editorOnly = false;
+    this._resetDraft();
+    this._completion = completion
+      ? completion.then((completed) => this._adoptCompletion(completed))
+      : null;
+    this._pendingEvent = { updateId: completion ? null : task.latestUpdateId };
+    this._mode = "notes";
+    this._state = "ready";
+    this._open = true;
+    this._render();
+  }
+
+  /**
+   * The completion response landed: adopt its task (documentation event,
+   * photo permission), or close when there is nothing to document.
+   * @param {{ task: Record<string, any> | null, failed?: boolean }} completed
+   */
+  _adoptCompletion(completed) {
+    const photosAllowed = this._photosAllowed();
+    this._completion = null;
+    const task = completed.task;
+    const showing = this._open && this._results;
+    if (!task) {
+      if (showing) {
+        this._pendingEvent = null;
+        // The action failed (reported on the card) or opened no documentation
+        // window: an empty prompt just goes away, but a draft typed meanwhile
+        // stays on screen with a note saying so, so it can be copied first.
+        if (this._hasUnsavedDraft()) this._render();
+        else this._dismiss();
+      }
+      return null;
+    }
+    const pendingEvent = { updateId: task.latestUpdateId };
+    if (showing) {
+      this._task = { ...this._task, ...task };
+      this._pendingEvent = pendingEvent;
+      if (this._photosAllowed() !== photosAllowed) this._render();
+    }
+    return pendingEvent;
+  }
+
+  /** Before the response lands, any task with a check can take photos. */
+  _photosAllowed() {
+    if (this._completion) return Boolean(this._task?.checkId);
+    return this._task?.canUploadPhotos === true;
   }
 
   /** @param {string} [nextToken] */
   async _load(nextToken = "") {
     if (!this._task) return;
+    const generation = ++this._loadGeneration;
     this._state = "loading";
     this._render();
     try {
@@ -74,6 +160,7 @@ class TaskUpdateDialog extends HTMLElement {
         this._task.taskId,
         nextToken || undefined,
       );
+      if (generation !== this._loadGeneration) return;
       this._detail = nextToken
         ? {
             ...page,
@@ -83,61 +170,125 @@ class TaskUpdateDialog extends HTMLElement {
             ],
           }
         : page;
-      this._nextToken = page.nextToken || null;
-      this._task = this._detail.task;
+      this._nextToken = page.nextToken;
+      this._task = { ...this._task, ...this._detail.task };
+      const ticket = submitted311Ticket(this._task);
+      if (ticket) {
+        try {
+          const response = await get311RequestDetails([
+            { taskId: this._task.taskId, srNum: ticket.srNum },
+          ]);
+          if (generation !== this._loadGeneration) return;
+          this._task = taskWith311Status(
+            this._task,
+            map311StatusResponse(response),
+          );
+          const request = response.requests.find(
+            (item) => item.taskId === this._task.taskId,
+          )?.request;
+          const seen = new Set();
+          this._cityUpdates = (request?.events || [])
+            .filter((event) => {
+              if (event.kind === "submitted") return false;
+              const key = JSON.stringify([
+                event.kind,
+                event.occurredAt,
+                event.value,
+                event.closureReason,
+                event.notes,
+                event.description,
+              ]);
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            })
+            .map((event) => ({
+              ...event,
+              type: "city_status",
+              label: event.title,
+            }));
+        } catch {
+          // A City feed failure must not prevent access to the app's own timeline.
+        }
+      } else this._cityUpdates = [];
+
       const photoIds = [
         ...new Set(
           [
-            this._task.evidence?.artifactId,
-            ...taskArtifactIds(this._task),
+            this._task.evidence?.artifactId || taskArtifactIds(this._task)[0],
             ...(this._detail.updates || []).flatMap(
               (update) => update.photoKeys || [],
             ),
           ].filter(Boolean),
         ),
       ];
-      this._mediaUrls = new Map(
+      const mediaUrls = new Map(
         await Promise.all(
-          photoIds.map(async (artifactId) => {
-            try {
-              const media = await getMediaUrl(this._task.checkId, artifactId);
-              return /** @type {[string, string]} */ ([
-                artifactId,
-                media.downloadUrl || "",
-              ]);
-            } catch {
-              return /** @type {[string, string]} */ ([artifactId, ""]);
-            }
-          }),
+          photoIds.map((artifactId) =>
+            getMediaUrl(this._task.checkId, artifactId)
+              .then(
+                (media) =>
+                  /** @type {[string, string]} */ ([
+                    artifactId,
+                    media.downloadUrl || "",
+                  ]),
+              )
+              .catch(() => /** @type {[string, string]} */ ([artifactId, ""])),
+          ),
         ),
       );
+      if (generation !== this._loadGeneration) return;
+      this._mediaUrls = mediaUrls;
       this._state = "ready";
     } catch {
+      if (generation !== this._loadGeneration) return;
       this._state = "error";
     }
     this._render();
   }
 
   _content() {
-    if (this._mode === "notes" || this._mode === "document")
+    if (this._mode === "notes")
       return taskUpdateCapture({
         pendingEvent: this._pendingEvent,
+        results: this._results,
+        task: this._results ? this._task : null,
+        photosAllowed: this._photosAllowed(),
         files: this._files,
         notes: this._noteDrafts,
         previews: this._filePreviews,
+        cityHelpNeeded: this._cityHelpNeeded,
       });
     if (this._mode === "note-text")
       return taskUpdateNoteEditor({ note: this._noteDrafts[this._noteIndex] });
     if (this._mode === "action")
-      return taskUpdateActionEditor({ text: this._actionText });
+      return taskUpdateActionEditor({
+        text: this._actionText,
+        allowResolution: this._cityHelpNeeded === undefined,
+        cityHelpNeeded: this._cityHelpNeeded,
+      });
     if (this._mode === "action-photos")
-      return taskUpdateActionPhotos(this._filePreviews, this._files);
+      return taskUpdateActionPhotos(
+        this._filePreviews,
+        this._files,
+        this._task?.canUploadPhotos === true,
+      );
     const task = this._task || {};
     return taskUpdateTimeline({
-      task,
-      updates: this._detail?.updates || [],
+      task: submitted311Ticket(task)
+        ? { ...task, presencePromptDue: false }
+        : task,
+      updates: [...(this._detail?.updates || []), ...this._cityUpdates],
       issueOrigin: this._detail?.issueOrigin || "perimeter",
-      originalMediaUrl: this._originalMediaUrl(task),
+      originalMediaUrl:
+        taskMediaUrl(task) ||
+        this._mediaUrls.get(
+          task.evidence?.artifactId || taskArtifactIds(task)[0],
+        ) ||
+        "",
+      // The lightbox always opens the full-size original, never the card
+      // thumbnail `taskMediaUrl` may have picked above.
+      originalFullMediaUrl: task.mediaUrl || "",
       mediaUrls: this._mediaUrls,
       nextToken: this._nextToken,
     });
@@ -157,12 +308,7 @@ class TaskUpdateDialog extends HTMLElement {
       .querySelector("[data-close]")
       ?.addEventListener("click", () => void this._close());
     dialog.querySelector("[data-back]")?.addEventListener("click", () => {
-      this._mode =
-        this._mode === "note-text"
-          ? this._pendingEvent
-            ? "document"
-            : "notes"
-          : "action";
+      this._mode = this._mode === "note-text" ? "notes" : "action";
       this._render();
     });
     dialog.addEventListener("cancel", (event) => {
@@ -185,50 +331,57 @@ class TaskUpdateDialog extends HTMLElement {
       ?.querySelector("[data-continue-editing]")
       ?.addEventListener("click", () => discardDialog.close());
     this._wire(dialog);
-    if (this._open && !dialog.open) dialog.showModal();
+    if (this._open) {
+      if (this._editorOnly)
+        openOverlayDialog(
+          dialog,
+          "task-update-editor",
+          () => void this._close(),
+        );
+      else if (!dialog.open) dialog.showModal();
+      this._settle();
+    }
   }
 
-  /** @param {Record<string, any>} task */
-  _originalMediaUrl(task) {
-    const embedded = taskMediaUrl(task);
-    if (embedded) return embedded;
-    const artifactId = task.evidence?.artifactId || taskArtifactIds(task)[0];
-    return artifactId ? this._mediaUrls.get(artifactId) || "" : "";
+  /**
+   * The open transition is keyed off the host's `data-settled` attribute:
+   * every render rebuilds the <dialog>, so without it the entrance would
+   * replay on each state change while the sheet is up.
+   */
+  _settle() {
+    // Optional chaining: the node unit tests stub HTMLElement bare.
+    globalThis.requestAnimationFrame?.(() => {
+      if (this._open) this.setAttribute?.("data-settled", "");
+    });
   }
 
   /** @param {HTMLDialogElement} root */
   _wire(root) {
+    root.querySelectorAll("[data-city-help]").forEach((element) => {
+      const button = /** @type {HTMLButtonElement} */ (element);
+      button.addEventListener("click", () => {
+        if (this._busy) return;
+        this._cityHelpNeeded = button.dataset.cityHelp === "yes";
+        this._render();
+        /** @type {HTMLButtonElement | null} */ (
+          this.querySelector(`[data-city-help="${button.dataset.cityHelp}"]`)
+        )?.focus();
+      });
+    });
     root.querySelectorAll("[data-mode]").forEach((element) => {
       const button = /** @type {HTMLButtonElement} */ (element);
       button.addEventListener("click", () => {
         this._mode = button.dataset.mode || "timeline";
-        this._resetFiles();
-        this._noteDrafts = emptyTaskUpdateNotes();
+        this._resetDraft();
         this._render();
       });
     });
     root.querySelectorAll("[data-presence]").forEach((element) => {
       const button = /** @type {HTMLButtonElement} */ (element);
-      button.addEventListener("click", async () => {
-        if (!this._task) return;
-        const response = await this._runMutation(
-          root,
-          "[data-presence]",
-          () =>
-            createTaskUpdate(this._task.taskId, {
-              type: button.dataset.presence,
-            }),
-          true,
-        );
-        if (!response) return;
-        this._pendingEvent = response.update;
-        this._task = response.task;
-        this._mode = "document";
-        this._resetFiles();
-        this._noteDrafts = emptyTaskUpdateNotes();
-        this._render();
-        this._notifyUpdated();
-      });
+      button.addEventListener(
+        "click",
+        () => void this._recordOutcome(root, button.dataset.presence || ""),
+      );
     });
     root.querySelector("[data-load-older]")?.addEventListener("click", () => {
       if (this._nextToken) void this._load(this._nextToken);
@@ -245,10 +398,14 @@ class TaskUpdateDialog extends HTMLElement {
       ?.addEventListener("input", (event) => {
         const input = /** @type {HTMLTextAreaElement} */ (event.currentTarget);
         this._actionText = input.value.slice(0, MAX_TASK_UPDATE_TEXT);
-        root.querySelectorAll("[data-action-outcome]").forEach((element) => {
-          /** @type {HTMLButtonElement} */ (element).disabled =
-            !this._actionText.trim();
-        });
+        root
+          .querySelectorAll(".task-update__outcome button, [data-save-action]")
+          .forEach((element) => {
+            /** @type {HTMLButtonElement} */ (element).disabled =
+              !this._actionText.trim() ||
+              (element.hasAttribute("data-save-action") &&
+                this._cityHelpNeeded === null);
+          });
       });
     root.querySelector("[data-add-note]")?.addEventListener("click", () => {
       this._noteIndex = this._noteDrafts.findIndex((note) => !note.trim());
@@ -281,7 +438,7 @@ class TaskUpdateDialog extends HTMLElement {
       this._render();
     });
     root.querySelector("[data-save-note]")?.addEventListener("click", () => {
-      this._mode = this._pendingEvent ? "document" : "notes";
+      this._mode = "notes";
       this._render();
     });
     root.querySelector("[data-clear]")?.addEventListener("click", () => {
@@ -293,9 +450,10 @@ class TaskUpdateDialog extends HTMLElement {
       button.addEventListener(
         "click",
         () =>
-          void this._recordActionOutcome(
+          void this._recordOutcome(
             root,
             button.dataset.actionOutcome || "",
+            this._actionText.trim(),
           ),
       );
     });
@@ -318,6 +476,7 @@ class TaskUpdateDialog extends HTMLElement {
 
   /** @returns {Promise<string[] | null>} */
   async _uploadFiles() {
+    this._busy = true;
     try {
       if (!this._task) return null;
       return await Promise.all(
@@ -326,21 +485,23 @@ class TaskUpdateDialog extends HTMLElement {
     } catch {
       showTaskUpdateErrorToast();
       return null;
+    } finally {
+      this._busy = false;
     }
   }
 
-  /** @param {File} file @returns {Promise<string>} */
-  _uploadFile(file) {
+  /**
+   * Passing `task` pins a background upload to the prompt it came from.
+   * @param {File} file @param {Record<string, any>} [task]
+   * @returns {Promise<string>}
+   */
+  _uploadFile(file, task = this._task) {
     const cached = this._fileUploads.get(file);
     if (cached) return cached;
-    const upload = this._readFile(file)
-      .then((dataUrl) => {
-        if (!this._task) throw new Error("Task is no longer available");
-        return uploadTaskUpdatePhoto(this._task.taskId, this._task.checkId, {
-          dataUrl,
-          capturedAt: new Date().toISOString(),
-        });
-      })
+    const upload = uploadTaskUpdatePhoto(task.taskId, task.checkId, {
+      file,
+      capturedAt: new Date().toISOString(),
+    })
       .then((uploaded) => uploaded.artifactId)
       .catch((error) => {
         this._fileUploads.delete(file);
@@ -348,16 +509,6 @@ class TaskUpdateDialog extends HTMLElement {
       });
     this._fileUploads.set(file, upload);
     return upload;
-  }
-
-  /** @param {File} file @returns {Promise<string>} */
-  _readFile(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
   }
 
   _resetFiles() {
@@ -369,35 +520,104 @@ class TaskUpdateDialog extends HTMLElement {
 
   /** @param {HTMLElement} root */
   async _saveNotes(root) {
-    if (!this._task) return;
-    const notes = this._noteDrafts.map((note) => note.trim()).filter(Boolean);
-    const photos = await this._uploadFiles();
-    if (!photos || (!this._pendingEvent && !notes.length && !photos.length))
+    if (
+      !this._task ||
+      this._busy ||
+      this._savingNotes ||
+      this._cityHelpNeeded === null ||
+      (this._results && !this._pendingEvent)
+    )
       return;
-    if (this._pendingEvent)
-      await this._finishDocumentation(root, notes, photos);
-    else {
-      const response = await this._runMutation(root, "[data-save-notes]", () =>
-        createTaskUpdate(this._task.taskId, {
-          type: "note_photo_update",
-          notes,
-          photoKeys: photos,
-        }),
-      );
-      if (!response) return;
-      this._resetFiles();
-      this._mode = "timeline";
-      await this._load();
-      this._notifyUpdated();
+    const notes = this._noteDrafts.map((note) => note.trim()).filter(Boolean);
+    if (this._results) {
+      this._finishResults(notes, this._files);
+      return;
     }
+    this._savingNotes = true;
+    root.inert = true;
+    try {
+      const photos = await this._uploadFiles();
+      if (!photos || (!this._pendingEvent && !notes.length && !photos.length))
+        return;
+      if (this._pendingEvent)
+        await this._finishDocumentation(root, notes, photos);
+      else {
+        const response = await this._runMutation(
+          root,
+          "[data-save-notes]",
+          () =>
+            this._createUpdate({
+              type: "note_photo_update",
+              notes,
+              photoKeys: photos,
+            }),
+        );
+        if (response) await this._finishSave();
+      }
+    } finally {
+      this._savingNotes = false;
+      root.inert = false;
+    }
+  }
+
+  /**
+   * Results mode (Done, Skip, close): the prompt closes now and the
+   * documentation finishes in the background: the completion response when
+   * still in flight, then photo uploads (update media registers only once
+   * the server has moved the task on), then the document write that seals
+   * the window. A results prompt is a single-use element (openResultsDialog
+   * creates one per prompt and removes it on close), so its fields are free
+   * to carry the late work. The draft leaves with the prompt: a failed save
+   * surfaces as the update error toast with a retry that re-runs this chain
+   * (uploads that succeeded are cached per file; the document route replays
+   * identical content), except when another window already closed the
+   * event. An empty seal fails silently.
+   * @param {string[]} notes @param {File[]} files
+   */
+  _finishResults(notes, files) {
+    const task = this._task;
+    const pending = this._completion ?? Promise.resolve(this._pendingEvent);
+    const draft = Boolean(notes.length || files.length);
+    this._dismiss();
+    if (!task) return;
+    const attempt = () =>
+      pending
+        .then(async (pendingEvent) => {
+          // No documentation window (the action failed, or nothing to
+          // document): a draft typed for it cannot be attached anywhere.
+          if (!pendingEvent) {
+            if (draft) showTaskUpdateErrorToast();
+            return;
+          }
+          const photoKeys = await Promise.all(
+            files.map((file) => this._uploadFile(file, task)),
+          );
+          await documentTaskUpdate(task.taskId, pendingEvent.updateId, {
+            notes,
+            photoKeys,
+          });
+        })
+        .catch((error) => {
+          if (!draft) return;
+          const conflict =
+            error instanceof ApiError &&
+            /** @type {{ code?: string }} */ (error.body)?.code ===
+              "DocumentationConflict";
+          showTaskUpdateErrorToast(error, conflict ? undefined : attempt);
+        });
+    void attempt();
   }
 
   /** @param {HTMLElement} root @param {string[]} notes @param {string[]} photos */
   async _finishDocumentation(root, notes, photos) {
+    if (this._results) {
+      this._finishResults(notes, []);
+      return;
+    }
     if (!this._task || !this._pendingEvent) return;
     const response = await this._runMutation(
       root,
-      "[data-save-notes], [data-skip]",
+      "[data-save-notes], [data-skip], [data-save-action], [data-skip-action]",
       () =>
         documentTaskUpdate(this._task.taskId, this._pendingEvent.updateId, {
           notes,
@@ -406,57 +626,80 @@ class TaskUpdateDialog extends HTMLElement {
     );
     if (!response) return;
     this._pendingEvent = null;
-    this._noteDrafts = emptyTaskUpdateNotes();
-    this._resetFiles();
+    this._resetDraft();
     this._mode = "timeline";
     await this._load();
   }
 
-  /** @param {HTMLElement} root @param {string} type */
-  async _recordActionOutcome(root, type) {
-    const text = this._actionText.trim();
-    if (!text || !this._task) return;
+  /** @param {HTMLElement} root @param {string} type @param {string} [text] */
+  async _recordOutcome(root, type, text) {
+    const action = text !== undefined;
+    if (!this._task || (action && !text)) return;
     const response = await this._runMutation(
       root,
-      "[data-action-outcome]",
-      () => createTaskUpdate(this._task.taskId, { type, text }),
+      action ? "[data-action-outcome]" : "[data-presence]",
+      () =>
+        createTaskUpdate(this._task.taskId, {
+          type,
+          ...(action ? { text } : {}),
+        }),
+      !action,
     );
     if (!response) return;
     this._pendingEvent = response.update;
     this._task = response.task;
-    this._mode = "action-photos";
+    this._mode = action ? "action-photos" : "notes";
     this._resetFiles();
+    this._noteDrafts = emptyTaskUpdateNotes();
     this._render();
     this._notifyUpdated();
   }
 
   /** @param {HTMLElement} root @param {boolean} [skipPhotos] */
   async _saveAction(root, skipPhotos = false) {
-    if (!this._task) return;
+    if (!this._task || this._busy || this._cityHelpNeeded === null) return;
     const photos = skipPhotos ? [] : await this._uploadFiles();
     if (!photos) return;
+    if (this._pendingEvent) {
+      await this._finishDocumentation(root, [], photos);
+      if (!this._pendingEvent) this._notifyUpdated();
+      return;
+    }
     const response = await this._runMutation(
       root,
       "[data-save-action], [data-skip-action]",
       () =>
-        this._pendingEvent
-          ? documentTaskUpdate(this._task.taskId, this._pendingEvent.updateId, {
-              notes: [],
-              photoKeys: photos,
-            })
-          : createTaskUpdate(this._task.taskId, {
-              type: "additional_action",
-              text: this._actionText.trim(),
-              photoKeys: photos,
-            }),
+        this._createUpdate({
+          type: "additional_action",
+          text: this._actionText.trim(),
+          photoKeys: photos,
+        }),
     );
-    if (!response) return;
-    this._pendingEvent = null;
-    this._actionText = "";
-    this._resetFiles();
+    if (response) await this._finishSave();
+  }
+
+  /**
+   * Keep retries of the same draft idempotent, including the City note.
+   * @param {Record<string, unknown>} body
+   */
+  _createUpdate(body) {
+    if (this._cityHelpNeeded !== undefined)
+      body.cityHelpNeeded = this._cityHelpNeeded;
+    const key = JSON.stringify(body);
+    if (!this._requests.has(key)) this._requests.set(key, crypto.randomUUID());
+    return createTaskUpdate(this._task.taskId, body, this._requests.get(key));
+  }
+
+  async _finishSave() {
     this._mode = "timeline";
-    await this._load();
-    this._notifyUpdated();
+    this._resetDraft();
+    if (this._editorOnly) {
+      this._notifyUpdated();
+      await this._close(true);
+    } else {
+      await this._load();
+      this._notifyUpdated();
+    }
   }
 
   /**
@@ -467,14 +710,12 @@ class TaskUpdateDialog extends HTMLElement {
    * @param {boolean} [reloadOnConflict]
    */
   async _runMutation(root, buttonSelector, action, reloadOnConflict = false) {
-    const buttons = [...root.querySelectorAll(buttonSelector)].map(
-      (element) => /** @type {HTMLButtonElement} */ (element),
-    );
-    const error = /** @type {HTMLElement | null} */ (
-      root.querySelector(".task-update__error")
+    if (this._busy) return null;
+    this._busy = true;
+    const buttons = /** @type {NodeListOf<HTMLButtonElement>} */ (
+      root.querySelectorAll(buttonSelector)
     );
     buttons.forEach((button) => (button.disabled = true));
-    if (error) error.hidden = true;
     try {
       return await action();
     } catch (caught) {
@@ -486,22 +727,27 @@ class TaskUpdateDialog extends HTMLElement {
         await this._load();
         return null;
       }
-      showTaskUpdateErrorToast();
+      showTaskUpdateErrorToast(caught);
       return null;
     } finally {
+      this._busy = false;
       buttons.forEach((button) => (button.disabled = false));
     }
   }
 
   _hasUnsavedDraft() {
-    return hasUnsavedTaskUpdateDraft(this._mode, {
-      files: this._files,
-      notes: this._noteDrafts,
-      actionText: this._actionText,
-    });
+    return (
+      (this._mode !== "timeline" &&
+        typeof this._cityHelpNeeded === "boolean") ||
+      hasUnsavedTaskUpdateDraft(this._mode, {
+        files: this._files,
+        notes: this._noteDrafts,
+        actionText: this._actionText,
+      })
+    );
   }
 
-  _showDiscardConfirmation() {
+  _showDiscard() {
     const dialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector("[data-discard-dialog]")
     );
@@ -510,11 +756,20 @@ class TaskUpdateDialog extends HTMLElement {
 
   /** @param {boolean} [discardConfirmed] */
   async _close(discardConfirmed = false) {
+    if (this._busy || (this._savingNotes && !discardConfirmed)) return;
     if (!discardConfirmed && this._hasUnsavedDraft()) {
-      this._showDiscardConfirmation();
+      this._showDiscard();
       return;
     }
-    if (this._mode !== "timeline") {
+    if (this._results) {
+      await this._finishDocumentation(
+        /** @type {HTMLElement} */ (this.querySelector("dialog.task-update")),
+        [],
+        [],
+      );
+      return;
+    }
+    if (this._mode !== "timeline" && !this._editorOnly) {
       await this._sealPendingEvent();
       this._resetDraft();
       this._mode = "timeline";
@@ -522,7 +777,17 @@ class TaskUpdateDialog extends HTMLElement {
       return;
     }
     await this._sealPendingEvent();
+    this._dismiss();
+  }
+
+  _dismiss() {
+    ++this._loadGeneration;
+    this._resetDraft();
+    this._completion = null;
+    this._results = false;
+    this._editorOnly = false;
     this._open = false;
+    this.removeAttribute?.("data-settled");
     /** @type {HTMLDialogElement | null} */ (
       this.querySelector("dialog.task-update")
     )?.close();
@@ -539,6 +804,9 @@ class TaskUpdateDialog extends HTMLElement {
   }
 
   _resetDraft() {
+    this._cityHelpNeeded =
+      !this._results && submitted311Ticket(this._task) ? null : undefined;
+    this._requests.clear();
     this._resetFiles();
     this._noteDrafts = emptyTaskUpdateNotes();
     this._noteIndex = 0;

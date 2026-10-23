@@ -88,13 +88,31 @@ export function onToastsChange(listener) {
   };
 }
 
-/** @param {string} [serviceRequestNumber] */
-export function show311SuccessToast(serviceRequestNumber = "") {
+/**
+ * @param {string} [serviceRequestNumber]
+ * @param {string} [title] the card's title, so a toast that lands after the
+ *   user has moved on to other cards still says which ticket this is
+ */
+export function show311SuccessToast(serviceRequestNumber = "", title = "") {
+  const number = serviceRequestNumber;
   return showToast({
     title: t("toast.ticketFiled.title"),
-    message: serviceRequestNumber
-      ? t("toast.ticketFiled.message", { number: serviceRequestNumber })
-      : t("toast.ticketFiled.messageNoNumber"),
+    message: title
+      ? number
+        ? t("toast.ticketFiled.messageFor", { number, title })
+        : t("toast.ticketFiled.messageNoNumberFor", { title })
+      : number
+        ? t("toast.ticketFiled.message", { number })
+        : t("toast.ticketFiled.messageNoNumber"),
+    icon: "circle-check",
+    tone: "success",
+  });
+}
+
+export function showComplaintLoggedToast() {
+  return showToast({
+    title: t("complaints.toast.logged"),
+    message: "",
     icon: "circle-check",
     tone: "success",
   });
@@ -118,8 +136,12 @@ export function showEditSavedToast() {
   });
 }
 
-export function showActionSaveErrorToast() {
+/** @param {() => void} [retry] */
+export function showActionSaveErrorToast(retry) {
   return showToast({
+    ...(retry
+      ? { duration: 0, action: { label: t("common.retry"), run: retry } }
+      : {}),
     title: t("toast.actionSaveError.title"),
     message: t("toast.actionSaveError.message"),
     icon: "triangle-exclamation",
@@ -199,10 +221,28 @@ export function showReanalysisErrorToast() {
   });
 }
 
-export function showTaskUpdateErrorToast() {
+/** @param {unknown} [error] */
+/**
+ * @param {unknown} [error]
+ * @param {() => void} [retry] offered as the toast's action; the toast then
+ *   stays until dismissed
+ */
+export function showTaskUpdateErrorToast(error, retry) {
+  const saved =
+    error &&
+    typeof error === "object" &&
+    "body" in error &&
+    error.body &&
+    typeof error.body === "object" &&
+    "updateSaved" in error.body &&
+    error.body.updateSaved === true;
+  const key = saved ? "toast.cityUpdateError" : "toast.taskUpdateError";
   return showToast({
-    title: t("toast.taskUpdateError.title"),
-    message: t("toast.taskUpdateError.message"),
+    ...(retry
+      ? { duration: 0, action: { label: t("common.retry"), run: retry } }
+      : {}),
+    title: t(`${key}.title`),
+    message: t(`${key}.message`),
     icon: "triangle-exclamation",
     tone: "error",
   });

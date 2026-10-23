@@ -34,7 +34,7 @@ const distDir = resolve(backendRoot, "dist");
 const shared = {
   bundle: true,
   platform: "node",
-  target: "node22",
+  target: "node24",
   format: "esm",
   minify: true,
   sourcemap: false,
@@ -55,6 +55,15 @@ const shared = {
 
 const entries = [
   {
+    name: "duplicate-dispatch",
+    entry: resolve(backendRoot, "src/lambda/duplicate-dispatch.js"),
+  },
+  {
+    name: "duplicate-worker",
+    entry: resolve(backendRoot, "src/lambda/duplicate-worker.js"),
+    external: ["sharp"],
+  },
+  {
     name: "api",
     entry: resolve(backendRoot, "src/lambda/api.js"),
     // Native addons can't be bundled — keep the import as a runtime require
@@ -64,6 +73,10 @@ const entries = [
   {
     name: "authorizer",
     entry: resolve(backendRoot, "src/lambda/authorizer.js"),
+  },
+  {
+    name: "cognito-email-sender",
+    entry: resolve(backendRoot, "src/lambda/cognito-email-sender.js"),
   },
   {
     // Best-effort public intakes (client errors/events, feedback) — their own
@@ -127,10 +140,46 @@ for (const { name, entry, external } of entries) {
 // and each platform package self-describes its os/cpu, so extras are inert.
 // The wasm32 fallback (~9 MB) is what sharp loads if no native binary matches,
 // so it doubles as insurance against an os/cpu mismatch in the zip.
-const sharpTargets = ["api", "worker"];
+const sharpTargets = ["api", "worker", "duplicate-worker"];
 const roots = [resolve(backendRoot, ".."), backendRoot];
 const findPkg = (pkg) =>
   roots.map((root) => resolve(root, "node_modules", pkg)).find(existsSync);
+
+const fontSrc = findPkg("@fontsource/noto-sans");
+if (!fontSrc) {
+  throw new Error(
+    "[build-lambdas] @fontsource/noto-sans not found — compliance letters would fail to render",
+  );
+}
+const fontDist = join(
+  distDir,
+  "worker",
+  "node_modules",
+  "@fontsource",
+  "noto-sans",
+);
+await mkdir(join(fontDist, "files"), { recursive: true });
+await Promise.all([
+  cp(join(fontSrc, "package.json"), join(fontDist, "package.json")),
+  cp(join(fontSrc, "LICENSE"), join(fontDist, "LICENSE")),
+  ...[
+    "latin",
+    "latin-ext",
+    "vietnamese",
+    "greek",
+    "greek-ext",
+    "cyrillic",
+    "cyrillic-ext",
+  ].flatMap((subset) =>
+    [400, 700].map((weight) => {
+      const file = `noto-sans-${subset}-${weight}-normal.woff`;
+      return cp(join(fontSrc, "files", file), join(fontDist, "files", file));
+    }),
+  ),
+]);
+console.log(
+  "[build-lambdas] copied @fontsource/noto-sans into dist/worker/node_modules/",
+);
 
 const sharpSrc = findPkg("sharp");
 if (!sharpSrc) {
@@ -189,7 +238,7 @@ const duckTargets = [
   "analytics-report",
   "analytics-query",
 ];
-// Lambda nodejs22.x runs on x86_64 glibc (AL2023) unless explicitly configured
+// Lambda nodejs24.x runs on x86_64 glibc (AL2023) unless explicitly configured
 // for arm64 — keep this in sync with the Terraform Lambda architectures.
 const LAMBDA_TARGET = process.env.ANALYTICS_LAMBDA_ARCH ?? "linux-x64";
 const duckApiSrc = findPkg("@duckdb/node-api");

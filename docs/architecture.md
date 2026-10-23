@@ -12,8 +12,14 @@ flowchart LR
   checks --> dynamodb["DynamoDB (single table + GSIs)"]
   checks -. presigned PUT/GET .-> media["S3 media bucket (GNP-owned)"]
   user -. uploads bytes direct .-> media
-  checks --> sqs["SQS analyze queue (S3 key only)"]
-  sqs --> worker["Lambda: worker (analyze-artifact + process-submission)"]
+  checks --> sqs["SQS: background jobs"]
+  checks --> analysisQueue["SQS: foreground analysis"]
+  analysisQueue --> analysisWorker["Lambda: analysis (500 slots)"]
+  analysisWorker --> media
+  analysisWorker --> dynamodb
+  analysisWorker --> analyzer
+  analysisWorker --> sqs
+  sqs --> worker["Lambda: worker (checks, complaints, and submissions)"]
   worker --> media
   worker --> dynamodb
   worker --> analyzer["Street Conditions analyzer (external service)"]
@@ -24,6 +30,16 @@ they never travel through the SQS queue and are never logged. The perimeter-chec
 handlers never see the bytes either — the device PUTs straight to S3 against a
 presigned URL, and the handler stores only the S3 key.
 
+Public complaints use the same private upload boundary. The app owns complaint
+authorization, lifecycle, persistence, retry, and deletion. The analyzer owns only
+structured multimodal extraction through `POST /v1/complaints:extract`. JPEG, PNG,
+WebP, HEIC, and HEIF images may be uploaded up to 10 MiB and are normalized before
+being sent inline. PDF and UTF-8 text documents are limited to 4.5 MiB, matching the
+Bedrock document ceiling, and are fetched by the analyzer through five-minute,
+read-only S3 URLs with strict host and byte checks. Legacy Word `.doc` uploads are not
+accepted because an OLE signature alone cannot safely validate their structure. The
+analyzer does not retain complaint input.
+
 ## Compute topology (Lambdas)
 
 Three functions (`infra/modules/app/lambda.tf`), split by invocation style; bundles
@@ -31,19 +47,38 @@ are esbuild ESM outputs of `backend/scripts/build-lambdas.mjs`:
 
 | Function | Trigger | Memory | Timeout | Role |
 |---|---|---|---|---|
-| `-api` | API Gateway, sync | 512 MB | 29 s | Every route handler behind one dispatch; reserved concurrency 10 |
-| `-authorizer` | API Gateway REQUEST authorizer | 256 MB | 5 s | Verifies the HS256 device token, pins `siteId`; verdicts cached 60 s by the gateway; reserved concurrency 200 (20× the api cap — every gated request passes through it) |
-| `-worker` | SQS, async | 1024 MB | 300 s | Both async jobs in one function: `process-submission` (demo flow) and `analyze-artifact` (per-photo), picked per message by shape (`backend/src/lambda/worker.js`); one queue, partial-batch failure reporting |
+| `-api` | API Gateway, sync | 512 MB | 29 s | Every route handler behind one dispatch; uses unreserved account concurrency |
+| `-authorizer` | API Gateway REQUEST authorizer | 256 MB | 5 s | Verifies the HS256 device token, pins `siteId`; verdicts cached 60 s by the gateway; reserved concurrency 200 |
+| `-worker` | SQS and DynamoDB outbox | 1024 MB | 300 s | Background translations, complaints, submissions and outbox jobs; also drains previously queued perimeter analyses |
+| `-analysis` | Dedicated analysis SQS | 1024 MB | 300 s | Foreground photo/text analysis; reserved concurrency 500, batch size 1, event-source maximum concurrency 500 |
 
-Worker tuning, all sized in `lambda.tf` comments: batch size 10 with a
-**0-second batching window** (photos register staggered as each S3 PUT lands, so a
-window would quantize them into waves) and `scaling_config.maximum_concurrency = 20`
-— worst-case peak 10 × 20 = **200 concurrent analyzer (Bedrock Sonnet 4) calls**,
-which is the quota-sizing number. The analyzer leg's per-call budget: the worker
+Foreground evidence is routed using `ANALYSIS_QUEUE_URL`. When unset (local
+harness), it falls back to `SQS_QUEUE_URL`. Both functions reuse the worker bundle
+and IAM role; follow-up translations continue to use the background queue.
+Both queues have a zero-second batching window. The background mapping retains
+batch size 10 and maximum concurrency 20. The foreground reservation prevents
+background work from occupying its 500 slots, but does not prewarm SQS pollers.
+
+Deploy the analyzer's increased usage-plan and method limits (500 requests/second,
+burst 1,000) before increasing caller capacity. Verify regional Lambda capacity
+for **all environments' reservations plus unreserved API/analyzer/background
+traffic**, and Bedrock request/token quotas. These are code ceilings, not a
+measured ten-second burst guarantee. Existing queued messages drain without migration.
+Each queue retains the existing retry policy (30-minute visibility, five receives)
+and has backlog/DLQ alarms; both functions have error/throttle/duration monitoring.
+
+The analysis worker
 reads the photo from S3, **downscales it (sharp: EXIF-orient, fit 1568 px long
 edge, JPEG q80)** — bounding the base64 payload so the analyzer never sees raw
 camera-resolution bytes (full-size input was rejected 413 `input_too_large` before
 the downscale existed) — then calls the analyzer and writes the `ANALYSIS#` item.
+From the same normalized bytes it also makes the ≤480 px WebP card thumbnail
+(`media/thumbnail.js`: stored beside the original as `<key>.thumb.webp`, then recorded
+on the `ART#` row as `thumbS3Key`). That work starts just before the analyzer call and
+is drained before every exit, so it overlaps the analyzer's latency rather than adding
+to it; it is independent of the analyzer's outcome, and a failure only means the card
+shows the original (`ThumbnailFailed` metric). `presignMedia` signs the recorded key as
+`thumbnailUrl` next to the original.
 sharp is esbuild-`external` and copied from node_modules into the worker bundle
 only (api/authorizer never import it).
 
@@ -117,6 +152,21 @@ still surfaces. The client's per-item poll (`photo-analysis.js`) bounds a stuck
 analyzer with a timeout; the check-level `complete` runs a **coverage gate**
 (every registered artifact must have an ANALYSIS# item, analyzed or failed
 marker) before synthesizing, and is idempotent-once so re-completion is a no-op.
+
+## Public complaint flow
+
+The browser uploads up to five validated complaint files directly to the dedicated
+complaint-evidence S3 bucket and registers their metadata. Submission retags every
+object while the header remains a draft, then transactionally publishes the Site-scoped
+`COMPLAINT#` header and extends every artifact row's retention. The API immediately
+returns an `analyzing` row and enqueues an IDs-only SQS message. The complaint worker
+loads the evidence, calls the analyzer's complaint-extraction contract, validates the
+six required string fields, and updates the row to `ready`. After the fifth failed SQS
+delivery it records `analysis_failed`; the UI exposes an explicit retry. Confirmed
+deletion removes every S3 object before deleting DynamoDB metadata. Complaint objects
+and records carry a one-year lifecycle/TTL; unsubmitted draft uploads retain the
+one-day pending lifecycle. The separate bucket preserves the check/task photo
+bucket's unconditional 30-day retention backstop.
 
 ## Site address lookup and validation
 
@@ -196,7 +246,9 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   reuses the private artifact/S3 read path but does not enqueue analyzer work.
 - Endpoints: `POST /v1/assessments:evaluate`, `GET /v1/assessments/{id}/guidance`,
   `POST /v1/assessments/{id}/conditions/{id}/answers`, `POST /v1/tasks/{id}/complete`,
-  `POST /v1/tasks/{id}/cannot-do`, `POST /v1/311-requests:batch`, and
+  `GET /v1/tasks/{id}/details`, `PATCH /v1/tasks/{id}/action`,
+  `POST /v1/tasks/{id}/custom-action`,
+  `POST /v1/311-requests:batch`, and
   `GET /v1/tasks/{taskId}/311-requests/{srNum}`. The 311 routes verify that each site-scoped task
   owns its service-request number and return only the normalized summary and timeline fields used
   by the client. Card hydration batches visible requests so one handler invocation loads the
@@ -205,6 +257,14 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   harness page (`frontend/dev/guidance-harness.html` — a standalone entry point outside the app
   build, served only by the dev server) exercises the flow with fixtures against the real local
   API; see [dev-commands.md](./dev-commands.md#guidance-harness-dev-only-page).
+
+Open tasks may replace their card action with any distinct action in the task's
+snapshotted category and policy catalog. The task retains its evaluated `ruleId`;
+`actionOverride` records the selected rule and original rule while the executable
+fields are replaced atomically. Duplicate-group edits resolve to the original task,
+so every linked card shares one action. A free-text custom action either moves that
+root task to `in_progress` or completes it regardless of `canBeInProgress`, and
+appends the entered text to the immutable task timeline.
 
 ## Single-table data model
 
@@ -234,9 +294,16 @@ partition, never a body-supplied one. (Demo/test data remains disposable; see
   A further platform backstop therefore requires a separate tenant-only data-plane
   function/role or per-request tagged-role assumption; a static `SITE#*` condition
   would not isolate one Site from another.
+- A Provider Manager still receives Site-scoped device tokens and independently
+  selectable Site bindings. The provider-wide enrollment link is only a
+  provisioning mechanism: redemption resolves all active Provider Sites in one
+  transaction (maximum 21), and every later authorization/refresh revalidates
+  the Provider membership generation and the Site's current `providerId`.
+  Provider Manager lifecycle and link issuance are restricted to Compliance
+  Supervisors; Compliance Managers cannot exercise this cross-Site authority.
 - The analyzer API key is a server-side credential (Secrets Manager), never sent to the device and never logged. Every analyze call sets `store_input:false`, so the analyzer retains none of our media.
 - Media bytes travel only device→S3 (presigned PUT) and S3→worker→analyzer. They never pass through the SQS queue (key only) or appear in API Gateway / Lambda / worker logs.
-- Lambda roles are scoped per function and avoid wildcard resource access; the media bucket blocks public access, is SSE-KMS + TLS-only. Pending/rejected media expires after one day, registered-but-unprocessed media after two days, and accepted media after seven days; noncurrent media versions expire after one day.
+- Lambda roles are scoped per function and avoid wildcard resource access. The check/task media bucket and the separate complaint-evidence bucket both block public access and require SSE-KMS + TLS. Every check/task photo expires 30 days after upload via a bucket-wide rule. Complaint evidence expires after one year via its own bucket-wide rule. In either bucket, uploads that were never registered or were rejected expire after one day. Bucket versioning is suspended so expired media leaves no noncurrent copy.
 - Public endpoints are protected by CloudFront security headers, TLS policy, CAA DNS records, WAF managed rules, and rate limits.
 
 ## Edge routing contract (SPA fallback vs API routes)
@@ -264,3 +331,89 @@ replayed request can never create a duplicate. For the MVP there is **no active 
 worker** — full offline queue-and-replay is deferred (tracked on the issue
 tracker) —
 but the idempotency contract is already in place for when it lands.
+
+### Duplicate issue links (feature-gated; not yet deployed)
+
+A separate DynamoDB stream dispatcher and SQS/Lambda worker perform duplicate
+assessment without calling or delaying the normal analysis worker. Only the
+analyzer's isolated comparison function invokes Bedrock. Matching uses same-Site,
+same-category issues generated within the preceding 72 hours, all available images,
+and issue descriptions; text-only evidence is supported conservatively.
+
+Confirmed condition links map through current guidance pointers to tasks. The app
+retains individual observations and uses the earliest valid original for shared
+actions and the in-progress/history card. Separate frontend polling updates cards
+incrementally. A durable human override restores an independent actionable report
+without reversing the group's action. Details and deployment/retention controls:
+[ADR 0017](adr/0017-duplicate-issue-links.md),
+[duplicate operations](runbooks/duplicate-detection.md).
+
+## Proactive care work logs
+
+All devices bound to a Site can create and read that Site's proactive care logs
+at `/care-work`. These are independent records, with no check, assessment, task,
+analysis job, location capture, or reporting/compliance side effect. Seven stable
+work kinds and a custom `other` kind are supported. Custom work requires a
+nonblank description; fixed kinds permit an empty note and no photos. Submitted
+records are immutable and have no edit/delete routes.
+
+The client retains one submission UUID and payload across network retries. The
+API conditionally creates the header and compares a payload/actor fingerprint on
+replay, returning the original result for an identical retry and rejecting an
+attempt to change a saved record. Reads derive the Site from the authenticated
+principal. Listing uses a dedicated GSI1 partition, bounded pages, and Site-bound
+cursors; the UI combines pages before computing Pacific-date groups and counts.
+
+Photos use a distinct `care-work/<siteId>/<workId>/<photoId>` prefix in the existing
+30-day uploads bucket. Upload reservations share device/Site media quotas,
+with five images, 10 MiB per image, and 25 MiB per log. Submission checks the
+reservation owner, signed byte metadata, actual size and decoded image format,
+then uses the existing image normalizer to strip EXIF and produce a JPEG under a
+server-only `.jpg` key. Source uploads remain `state=pending` and expire after one
+day; submitted JPEGs use `state=active`. The existing bucket lifecycle and all
+check/task/complaint workflows are unchanged. Failed submission attempts can leave
+normalized orphan JPEGs, bounded by the same 30-day bucket backstop.
+
+Logs retain their text and photo-expiry metadata for one year. Photo access ends
+30 days after reservation even if S3 lifecycle deletion is delayed; signed URL
+lifetimes are capped at that boundary. The detail view explains expired photos
+while continuing to display the log. No offline submission queue is introduced.
+
+Care photo UUIDs are allocated by the client before the first presign request.
+Matching retries reuse the reservation without charging quota again, including
+concurrent retries. Explicit reservation-expiry responses identify the affected
+photo so the client can re-reserve and upload its retained file; uncertain log
+submissions replay their original payload before any recovery. Per-log quotas
+count live reservations using conditional revision updates, independent of
+DynamoDB TTL cleanup. Daily device/Site quotas are not refunded.
+
+### 311 attachment image leases
+
+Silent and manually triggered 311 filings share the same attachment path. Each
+attachment receives an opaque bearer URL at `GET /v1/311-media?token=…` valid for
+48 hours from issuance. This anonymous route requires a random 256-bit token;
+it grants access to one image only. DynamoDB stores the SHA-256 token hash under
+`pk=SF311_MEDIA#<hash>`, `sk=LEASE`, with `entityType=SF311_MEDIA_LEASE`, `s3Key`,
+`sourceS3Key`, and epoch-seconds `expiresAt`. The handler enforces expiry even before DynamoDB
+TTL removes the record, then redirects valid requests to a fresh S3 GET URL
+capped to five minutes or the remaining lease, whichever is shorter. Responses
+are not cached. Each lease references a fresh `sf311-media/` snapshot in the uploads
+bucket. These copies expire after three days, independently of the source's
+30-day window, and do not inherit pending/rejected lifecycle tags. A source
+that is already missing cannot receive a lease. Revocation deletes the lease
+and its snapshot; deleting only the source does not revoke an issued snapshot.
+See the [media safeguards runbook](runbooks/media-safeguards.md#311-attachment-leases).
+
+This indirection avoids S3 URLs expiring early with Lambda's temporary AWS
+credentials. Both the API and worker receive `SF311_MEDIA_BASE_URL` from
+Terraform (the dedicated `media.<frontend-domain>` CloudFront origin). This
+separate distribution uses a DNS-validated certificate with TLS 1.2 minimum,
+WAF/rate limits, disabled caching, restrictive CSP, HSTS, and `no-referrer`.
+It omits standard access logging because query strings contain bearer tokens;
+API Gateway records request IDs, route keys, and status without queries, and
+never the viewer IP address (device subject and site, or the admin's Cognito
+sub, stand in for it). Media
+handlers also return security headers on direct-origin success and error
+responses. Local development sets a reachable API or tunnel origin, with
+`S3_PUBLIC_PRESIGN_ENDPOINT` pointing at the public MinIO proxy for redirects. Existing URLs already sent to 311 retain their original expiry.
+Do not log bearer tokens, full lease URLs, or redirect URLs.

@@ -1,3 +1,21 @@
+import {
+  listPeople,
+  createPerson,
+  updatePerson,
+} from "../src/handlers/admin-people.js";
+import { seedLocalSiteAdmin } from "./lib/site-admin-seed.mjs";
+import {
+  getDuplicateLinks,
+  separateDuplicate,
+} from "../src/handlers/duplicate-links.js";
+import { getDuplicateResult } from "../src/handlers/duplicate-results.js";
+import {
+  listCareWork,
+  createCareWork,
+  getCareWork,
+  presignCarePhoto,
+  getCarePhoto,
+} from "../src/handlers/care-work.js";
 // In-process HTTP router — the local stand-in for API Gateway (HTTP API v2). It
 // maps method+path to the SAME exported Lambda handlers we deploy, builds a
 // realistic APIGatewayProxyEventV2, injects a stub Cognito `sub`, and writes the
@@ -15,6 +33,7 @@ import {
   createCheck,
   completeCheck,
   listChecks,
+  getCaptureGuidance,
   getCheck,
 } from "../src/handlers/checks.js";
 import {
@@ -23,6 +42,17 @@ import {
   deleteArtifact,
   presignMedia,
 } from "../src/handlers/artifacts.js";
+import {
+  createComplaint,
+  deleteComplaint,
+  deleteComplaintArtifact,
+  getComplaint,
+  listComplaints,
+  presignComplaintArtifact,
+  presignComplaintMedia,
+  registerComplaintArtifact,
+  retryComplaint,
+} from "../src/handlers/complaints.js";
 import {
   get311RequestDetail,
   get311RequestDetails,
@@ -35,7 +65,11 @@ import {
   registerTaskUpdateMedia,
 } from "../src/handlers/task-updates.js";
 import {
-  cannotDoTask,
+  getTaskDetails,
+  recordCustomTaskAction,
+  updateTaskAction,
+} from "../src/handlers/task-details.js";
+import {
   completeTask,
   evaluateAssessment,
   getGuidance,
@@ -51,17 +85,24 @@ import {
   selectDeviceBinding,
 } from "../src/handlers/device-bindings.js";
 import {
+  issueSessionHandoff,
+  redeemSessionHandoff,
+  retireSessionHandoff,
+} from "../src/handlers/session-handoff.js";
+import {
   cancelStaffGrant,
   createStaffGrant,
   getCurrentStaffGrant,
   listGeneralBindings,
   revokeGeneralBinding,
 } from "../src/handlers/manager-access.js";
-import { requestManagerAccess } from "../src/handlers/manager-access-requests.js";
 import {
-  requestSetupCode,
-  searchSites,
-} from "../src/handlers/setup-code-requests.js";
+  getChecksReport,
+  getTaskUpdatesReport,
+  getTasksReport,
+} from "../src/handlers/manager-reports.js";
+import { requestManagerAccess } from "../src/handlers/manager-access-requests.js";
+import { searchSites } from "../src/handlers/setup-code-requests.js";
 import {
   getSite,
   getSiteAdmin,
@@ -76,35 +117,43 @@ import {
   rejectAnalysisCondition,
 } from "../src/handlers/analysis-amendments.js";
 import {
-  createCodeContact,
   createCityProgramManager,
-  createMasterContact,
   createProvider,
   createSite,
-  deactivateCodeContact,
-  deactivateMasterContact,
   deactivateProvider,
   deactivateSite,
   getAdminSite,
   getProvider,
   issueAdminSetupCode,
-  listCodeContacts,
   listCityProgramManagers,
   listDevices,
-  listMasterContacts,
   listProviders,
   presignComplianceLetter,
   reassignSite,
   revokeDevice,
   updateProvider,
+  updateCityProgramManager,
   updateSite,
 } from "../src/handlers/admin.js";
+import {
+  getAdminSession,
+  getMyProfile,
+  updateMyProfile,
+  inviteAdminUser,
+  listAdminUsers,
+  reinviteAdminUser,
+  reinstateAdminUser,
+  resetAdminUserPassword,
+  suspendAdminUser,
+  updateAdminUserRole,
+} from "../src/handlers/admin-users.js";
 import {
   createOversightOption,
   listOversightOptions,
 } from "../src/handlers/admin-oversight.js";
 import { suggestAddresses } from "../src/handlers/admin-addresses.js";
 import {
+  revokeManagerDevices,
   getPhysicalDeviceRevocationPreview,
   revokeAllSiteDeviceBindings,
   revokePhysicalDeviceEverywhere,
@@ -130,9 +179,12 @@ import {
 import {
   assignSiteUser,
   createSiteTerms,
+  endSiteTerms,
+  resendSiteLetter,
   getSitePerimeter,
   listSiteTerms,
   putSitePerimeter,
+  replaceSiteComplianceManagers,
   unassignSiteUser,
 } from "../src/handlers/admin-site-config.js";
 import {
@@ -147,6 +199,18 @@ import {
   listManagerGrants,
 } from "../src/handlers/admin-manager-grants.js";
 import {
+  cancelProviderManagerGrant,
+  createProviderManager,
+  createProviderManagerGrant,
+  deactivateProviderManager,
+  listProviderManagerGrants,
+  listProviderManagers,
+  reinstateProviderManager,
+  revokeProviderManagerEnrollment,
+  updateProviderManager,
+  transferProviderManager,
+} from "../src/handlers/admin-provider-managers.js";
+import {
   applySiteImport,
   getSiteImport,
   getSiteImportConflicts,
@@ -159,6 +223,8 @@ import {
   runAnalyticsQuery,
 } from "../src/handlers/admin-analytics.js";
 
+import { get311Media } from "../src/integrations/sf311-media.js";
+
 const PORT = Number(process.env.LOCAL_API_PORT ?? 3001);
 const DEFAULT_SUB = process.env.DEBUG_SUB ?? "local-dev-user";
 // Stub-only requests (no Bearer token) always carry a site claim: the
@@ -168,7 +234,7 @@ const LOCAL_CORS_HEADERS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
   "access-control-allow-headers":
-    "content-type,idempotency-key,authorization,x-debug-sub,x-debug-site,x-debug-groups,x-debug-access",
+    "content-type,idempotency-key,authorization,x-debug-sub,x-debug-site,x-debug-groups,x-debug-access,x-debug-email,x-debug-first-name,x-debug-last-name",
 };
 
 // Compile a route pattern into a matcher. Patterns use `{name}` for path params
@@ -207,6 +273,7 @@ function route(method, pattern, handler) {
 
 /** method+path → handler. Extend alongside Terraform's API Gateway routes. */
 const routes = [
+  route("GET", "/v1/311-media", get311Media),
   route("POST", "/site-code", siteCodeHandler),
   // Device bootstrap (Option 4 device auth): open routes, no authorizer.
   route("POST", "/v1/devices", registerDevice),
@@ -215,6 +282,9 @@ const routes = [
   route("POST", "/app/v1/manager-access/request", requestManagerAccess),
   route("GET", "/app/v1/device-bindings", listDeviceBindings),
   route("POST", "/app/v1/device-bindings/select", selectDeviceBinding),
+  route("POST", "/app/v1/session-handoff", issueSessionHandoff),
+  route("DELETE", "/app/v1/session-handoff", retireSessionHandoff),
+  route("POST", "/app/v1/session-handoff/redeem", redeemSessionHandoff),
   route("POST", "/app/v1/manager/staff-grants", createStaffGrant),
   route("GET", "/app/v1/manager/staff-grants/current", getCurrentStaffGrant),
   route("DELETE", "/app/v1/manager/staff-grants/{grantId}", cancelStaffGrant),
@@ -224,8 +294,10 @@ const routes = [
     "/app/v1/manager/device-bindings/{bindingId}/revoke",
     revokeGeneralBinding,
   ),
+  route("GET", "/app/v1/manager/reports/checks", getChecksReport),
+  route("GET", "/app/v1/manager/reports/tasks", getTasksReport),
+  route("GET", "/app/v1/manager/reports/task-updates", getTaskUpdatesReport),
   route("GET", "/v1/sites:search", searchSites),
-  route("POST", "/v1/setup-codes:request", requestSetupCode),
   // Site config
   route("GET", "/v1/site", getSite),
   route("GET", "/v1/site-admin", getSiteAdmin),
@@ -234,6 +306,7 @@ const routes = [
   // Perimeter checks (analysis-backend Step C)
   route("POST", "/v1/checks", createCheck),
   route("GET", "/v1/checks", listChecks),
+  route("GET", "/v1/checks:capture-guidance", getCaptureGuidance),
   route("POST", "/v1/checks/{checkId}/artifacts:presign", presignUpload),
   route("POST", "/v1/checks/{checkId}/artifacts", registerArtifact),
   route(
@@ -248,13 +321,52 @@ const routes = [
     "/v1/checks/{checkId}/artifacts/{artifactId}/media",
     presignMedia,
   ),
+  route(
+    "GET",
+    "/v1/checks/{checkId}/artifacts/{artifactId}/duplicates",
+    getDuplicateResult,
+  ),
   route("GET", "/v1/checks/{checkId}", getCheck),
+  route("GET", "/v1/care-work", listCareWork),
+  route("POST", "/v1/care-work", createCareWork),
+  route("GET", "/v1/care-work/{workId}", getCareWork),
+  route("POST", "/v1/care-work/{workId}/photos:presign", presignCarePhoto),
+  route("GET", "/v1/care-work/{workId}/photos/{photoId}/media", getCarePhoto),
+  route("GET", "/v1/complaints", listComplaints),
+  route("POST", "/v1/complaints", createComplaint),
+  route("GET", "/v1/complaints/{complaintId}", getComplaint),
+  route("DELETE", "/v1/complaints/{complaintId}", deleteComplaint),
+  route("POST", "/v1/complaints/{complaintId}/analysis:retry", retryComplaint),
+  route(
+    "POST",
+    "/v1/complaints/{complaintId}/artifacts:presign",
+    presignComplaintArtifact,
+  ),
+  route(
+    "POST",
+    "/v1/complaints/{complaintId}/artifacts",
+    registerComplaintArtifact,
+  ),
+  route(
+    "DELETE",
+    "/v1/complaints/{complaintId}/artifacts/{artifactId}",
+    deleteComplaintArtifact,
+  ),
+  route(
+    "GET",
+    "/v1/complaints/{complaintId}/artifacts/{artifactId}/media",
+    presignComplaintMedia,
+  ),
   // Staff worklist (AP10)
   route("GET", "/v1/tasks", listTasks),
+  route("POST", "/v1/duplicates:batch", getDuplicateLinks),
+  route("POST", "/v1/tasks/{taskId}/duplicate:separate", separateDuplicate),
+  route("GET", "/v1/tasks/{taskId}/details", getTaskDetails),
+  route("PATCH", "/v1/tasks/{taskId}/action", updateTaskAction),
+  route("POST", "/v1/tasks/{taskId}/custom-action", recordCustomTaskAction),
   route("POST", "/v1/311-requests:batch", get311RequestDetails),
   route("GET", "/v1/tasks/{taskId}/311-requests/{srNum}", get311RequestDetail),
   route("POST", "/v1/tasks/{taskId}/complete", completeTask),
-  route("POST", "/v1/tasks/{taskId}/cannot-do", cannotDoTask),
   route("GET", "/v1/tasks/{taskId}/updates", getTaskUpdates),
   route("POST", "/v1/tasks/{taskId}/updates", createTaskUpdate),
   route(
@@ -290,6 +402,24 @@ const routes = [
   // User feedback intake (log-based store; handler always 204s)
   route("POST", "/v1/feedback", feedbackHandler),
   route("GET", "/admin/v1/providers", listProviders),
+  route("GET", "/admin/v1/session", getAdminSession),
+  route("GET", "/admin/v1/profile", getMyProfile),
+  route("PUT", "/admin/v1/profile", updateMyProfile),
+  route("GET", "/admin/v1/admin-users", listAdminUsers),
+  route("POST", "/admin/v1/admin-users", inviteAdminUser),
+  route("PUT", "/admin/v1/admin-users/{username}/role", updateAdminUserRole),
+  route("POST", "/admin/v1/admin-users/{username}/suspend", suspendAdminUser),
+  route(
+    "POST",
+    "/admin/v1/admin-users/{username}/reinstate",
+    reinstateAdminUser,
+  ),
+  route("POST", "/admin/v1/admin-users/{username}/reinvite", reinviteAdminUser),
+  route(
+    "POST",
+    "/admin/v1/admin-users/{username}/reset-password",
+    resetAdminUserPassword,
+  ),
   route("POST", "/admin/v1/providers", createProvider),
   route("GET", "/admin/v1/providers/{providerId}", getProvider),
   route("PATCH", "/admin/v1/providers/{providerId}", updateProvider),
@@ -297,6 +427,11 @@ const routes = [
   route("GET", "/admin/v1/programs", listPrograms),
   route("GET", "/admin/v1/program-managers", listCityProgramManagers),
   route("POST", "/admin/v1/program-managers", createCityProgramManager),
+  route(
+    "PATCH",
+    "/admin/v1/program-managers/{userId}",
+    updateCityProgramManager,
+  ),
   route("GET", "/admin/v1/oversight-options", listOversightOptions),
   route("POST", "/admin/v1/oversight-options", createOversightOption),
   route("POST", "/admin/v1/address-suggestions", suggestAddresses),
@@ -310,6 +445,11 @@ const routes = [
     assignProgramToProvider,
   ),
   route("POST", "/admin/v1/programs/{programId}/users", createProgramUser),
+  route(
+    "POST",
+    "/admin/v1/programs/{programId}/users/{userId}/devices:revoke",
+    revokeManagerDevices,
+  ),
   route(
     "PATCH",
     "/admin/v1/programs/{programId}/users/{userId}",
@@ -325,8 +465,15 @@ const routes = [
   route("POST", "/admin/v1/sites/{siteId}/reassign", reassignSite),
   route("POST", "/admin/v1/sites/{siteId}/users", assignSiteUser),
   route("DELETE", "/admin/v1/sites/{siteId}/users/{userId}", unassignSiteUser),
+  route(
+    "PUT",
+    "/admin/v1/sites/{siteId}/compliance-managers",
+    replaceSiteComplianceManagers,
+  ),
   route("GET", "/admin/v1/sites/{siteId}/terms", listSiteTerms),
   route("POST", "/admin/v1/sites/{siteId}/terms", createSiteTerms),
+  route("POST", "/admin/v1/sites/{siteId}/terms:close", endSiteTerms),
+  route("POST", "/admin/v1/sites/{siteId}/letter:resend", resendSiteLetter),
   route("GET", "/admin/v1/sites/{siteId}/perimeter", getSitePerimeter),
   route("PUT", "/admin/v1/sites/{siteId}/perimeter", putSitePerimeter),
   route(
@@ -356,6 +503,65 @@ const routes = [
     "/admin/v1/sites/{siteId}/grants/{grantId}",
     cancelManagerGrant,
   ),
+  route("GET", "/admin/v1/people", listPeople),
+  route("POST", "/admin/v1/people", createPerson),
+  route("PATCH", "/admin/v1/people/{personId}", updatePerson),
+  route(
+    "POST",
+    "/admin/v1/people/{personId}/devices:revoke",
+    revokeManagerDevices,
+  ),
+  route(
+    "POST",
+    "/admin/v1/providers/{providerId}/manager-memberships/{membershipId}/transfer",
+    transferProviderManager,
+  ),
+  route(
+    "GET",
+    "/admin/v1/providers/{providerId}/manager-memberships",
+    listProviderManagers,
+  ),
+  route(
+    "POST",
+    "/admin/v1/providers/{providerId}/manager-memberships",
+    createProviderManager,
+  ),
+  route(
+    "PATCH",
+    "/admin/v1/providers/{providerId}/manager-memberships/{membershipId}",
+    updateProviderManager,
+    transferProviderManager,
+  ),
+  route(
+    "DELETE",
+    "/admin/v1/providers/{providerId}/manager-memberships/{membershipId}",
+    deactivateProviderManager,
+  ),
+  route(
+    "POST",
+    "/admin/v1/providers/{providerId}/manager-memberships/{membershipId}/reinstate",
+    reinstateProviderManager,
+  ),
+  route(
+    "GET",
+    "/admin/v1/providers/{providerId}/grants",
+    listProviderManagerGrants,
+  ),
+  route(
+    "POST",
+    "/admin/v1/providers/{providerId}/manager-grants",
+    createProviderManagerGrant,
+  ),
+  route(
+    "DELETE",
+    "/admin/v1/providers/{providerId}/grants/{grantId}",
+    cancelProviderManagerGrant,
+  ),
+  route(
+    "POST",
+    "/admin/v1/providers/{providerId}/manager-enrollments/{enrollmentId}/revoke",
+    revokeProviderManagerEnrollment,
+  ),
   route("POST", "/admin/v1/site-imports/preview", previewSiteImport),
   route("GET", "/admin/v1/site-imports", listSiteImports),
   route("POST", "/admin/v1/site-imports/{importId}/apply", applySiteImport),
@@ -372,24 +578,6 @@ const routes = [
     presignComplianceLetter,
   ),
   route("DELETE", "/admin/v1/sites/{siteId}", deactivateSite),
-  route("GET", "/admin/v1/sites/{siteId}/master-contacts", listMasterContacts),
-  route(
-    "POST",
-    "/admin/v1/sites/{siteId}/master-contacts",
-    createMasterContact,
-  ),
-  route(
-    "DELETE",
-    "/admin/v1/sites/{siteId}/master-contacts/{emailHash}",
-    deactivateMasterContact,
-  ),
-  route("GET", "/admin/v1/sites/{siteId}/code-contacts", listCodeContacts),
-  route("POST", "/admin/v1/sites/{siteId}/code-contacts", createCodeContact),
-  route(
-    "DELETE",
-    "/admin/v1/sites/{siteId}/code-contacts/{emailHash}",
-    deactivateCodeContact,
-  ),
   route("POST", "/admin/v1/sites/{siteId}/setup-codes", issueAdminSetupCode),
   route("GET", "/admin/v1/sites/{siteId}/devices", listDevices),
   route("DELETE", "/admin/v1/sites/{siteId}/devices/{deviceId}", revokeDevice),
@@ -575,6 +763,7 @@ const server = createServer(async (req, res) => {
 
 async function main() {
   await ensureLocalInfra();
+  if (process.env.LOCAL_SITE_ADMIN_SEED === "true") await seedLocalSiteAdmin();
   server.listen(PORT, "127.0.0.1", () => {
     console.log(`[api] listening on http://localhost:${PORT}`);
     console.log(

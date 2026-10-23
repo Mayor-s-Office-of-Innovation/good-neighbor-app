@@ -1,6 +1,6 @@
 # Developer command reference
 
-**Prereqs:** Node 22 LTS+, npm 10+. Terraform 1.9+ and pre-commit for infra work; AWS access is
+**Prereqs:** Node 24 LTS+, npm 11+. Terraform 1.9+ and pre-commit for infra work; AWS access is
 for approved operators only — developers work through Git and CI. The backend local harness also
 needs **JRE 17+** (DynamoDB Local + ElasticMQ are Java jars) — install with
 `brew install --cask temurin` (not `java.com`'s Java 8), confirm `java -version` reports 17+. The
@@ -27,7 +27,8 @@ frontend, tests, lint, and typecheck do **not** need Java.
 
 | Command | Does |
 |---|---|
-| `npm run dev -w frontend` | Run the field app locally (Vite dev server) |
+| `npm run dev -w frontend` | Run the field app locally (Vite dev server) against the local backend harness |
+| `npm run dev:remote` | Same dev server, API proxied to the **deployed dev** environment (`API_PROXY_TARGET=https://dev.goodneighborsf.org`). No backend, JVM, MinIO, or analyzer key needed. Presigned uploads are forwarded through the dev server (`frontend/scripts/vite-remote-api.mjs`) so S3 CORS is untouched. See the [designer quickstart](./quickstart-design.md). |
 
 ### Theme toggle (dark/light)
 
@@ -135,7 +136,7 @@ Runs the **exact Lambda handler + worker code** against local emulators (design 
 MinIO is the local stand-in for S3, so the presigned-PUT upload leg and the analyze worker's
 read-back work without real AWS. On **first run** `local:minio` downloads the official MinIO
 binary into `backend/.local/` (git-ignored, ~100 MB) — allow a moment. `ensureLocalInfra()` then
-creates the `S3_UPLOAD_BUCKET`; the CORS that lets the browser's cross-origin PUT clear preflight
+creates the `S3_UPLOAD_BUCKET` and durable `S3_COMPLIANCE_LETTER_BUCKET`; the CORS that lets the browser's cross-origin PUT clear preflight
 is set **globally** by the launcher via `MINIO_API_CORS_ALLOW_ORIGIN` (MinIO returns 501 for the
 per-bucket `PutBucketCors` API, so bucket-level CORS is not used). Browse uploaded objects at the
 console: **http://localhost:9001** (log in with the `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`
@@ -305,6 +306,7 @@ history trays) × light/dark, under reduced-motion emulation.
 | File | Does |
 |---|---|
 | `e2e/a11y-allowlist.json` | Exceptions: rule + target + reason + **expiry date**. An expired entry fails the run by name until removed. |
+| `e2e/ramp-check.config.js` | The same states for ramp-check's CLI against a running `dev:remote` server: `npm run a11y:local -w e2e`, the designer's pass ([quickstart-design.md](./quickstart-design.md#accessibility-check-with-screenshots)). Writes `e2e/ramp-check-report/` with named screenshots. |
 
 Notes:
 
@@ -316,6 +318,25 @@ Notes:
 - The suite also runs ramp-check's **keyboard audit** (full Tab traversal — reachability,
   visible focus, focus not obscured, no trap) and a **text-spacing check** (warns by
   default) on every scanned state, on top of axe/motion/reflow.
+- **Seeing what a finding means:** every scanned state with findings gets a
+  screenshot with each finding's element boxed and numbered, attached next to the
+  JSON result. The `[n]` at the start of a finding line (test failure, `warn:` line)
+  is its box. Run `npm run a11y:report -w e2e` to run only the a11y spec and open
+  ramp-check's screenshot-first report (`e2e/ramp-check-report/`), followed by findings
+  and then unused-exception notes. To demo just the home screen, use
+  `npm run a11y:report -w e2e -- --grep 'a11y: bound home' --headed`.
+  A caller-supplied `--reporter` replaces the default reporters and skips the
+  automatic report viewer; for example, `npm run a11y:report -w e2e -- --reporter=dot`.
+  The standard HTML reporter never opens automatically during this command.
+  Stop local dev servers first; the suite starts its own isolated stack.
+  The standard Playwright report is also generated: open it with
+  `cd e2e && npx playwright show-report`. In CI that standard report is in the `playwright-report` artifact on
+  every run, pass or fail. Blocking findings are red and numbered first, warnings
+  (the AAA contrast gaps) blue. No flag is needed: ramp-check's default
+  `screenshot` config captures any state with a blocking finding or a warning.
+  To box only blocking findings add `screenshot: { warnings: false }` to
+  `A11Y_CONFIG` in the spec; `{ mode: "off" }` disables the capture. Options are in
+  ramp-check's `docs/config.md` under Screenshots.
 - To see warnings for a state without failing it, use `a11y.scan()` instead of
   `a11y.check()` in the spec. For one-off audits of a behavior that needs an action
   (dialog open/close, focus placement, live-region announcements, form errors), use
@@ -326,3 +347,51 @@ Notes:
 
 CI runs the same suite in its own `e2e` job (Chromium only, one retry, trace
 artifacts uploaded on failure) — see `.github/workflows/ci.yml`.
+
+### Standard localhost site-admin dataset
+
+`backend/seeds/site-admin.csv` is the standard site-admin seed (28 sites from
+`gnp_site_admin_seed.csv`). Set `LOCAL_SITE_ADMIN_SEED=true` in `.env.local` to use
+it instead of the device-login sample sites. The API seeds a fresh database before
+listening, using the normal CSV importer and creating its DPH/HSH departments.
+A local seed marker prevents restarts from overwriting edits. This imports contacts
+and assignments, but does not send invitations or create real Cognito accounts.
+
+For an explicit reset, stop the API and worker while keeping the emulators running
+(`npm run local:services -w backend`), then run:
+
+```sh
+npm run local:seed:admin -w backend -- --reset
+```
+
+This deletes and recreates only the configured `gnp-local-*` DynamoDB table.
+It refuses non-loopback DynamoDB, SQS, or S3 endpoints. Storage objects are not
+removed. Restart the backend afterward and refresh the dashboard. Without
+`--reset`, the command seeds only if the marker is absent. To reload a changed
+CSV, use the explicit reset command. Leave `LOCAL_SITE_ADMIN_SEED` unset for the
+original device-login fixtures used by the existing local/E2E harness.
+
+### Compliance letter email testing
+
+Saving perimeter-check terms snapshots the selected site manager as the email
+recipient and the generating compliance user plus active linked provider managers
+as CC recipients. The worker generates the PDF and submits it as an attachment.
+Resend uses the original email snapshot and PDF, including the original recipients.
+Successful transport acceptance is recorded as a numbered `LETTER_EMAIL#` item;
+this is acceptance for delivery, not proof that the recipient read or received it.
+
+With `LOCAL_API_PORT` set outside Lambda, delivery is captured in
+`/tmp/good-neighbor-letter-emails` (override with `LOCAL_COMPLIANCE_EMAIL_DIR`).
+Each job creates a JSON message preview and a PDF. No external mail is sent, and
+the dashboard labels these history entries “Local preview”.
+
+A transport timeout can mean an email was already accepted. Such attempts are
+marked uncertain and are not sent again automatically. Check provider logs and
+recipients before explicitly resending; the worker queue/DLQ retains failed jobs.
+If acceptance was persisted but the history update failed, retrying the job only
+completes history without another email. Legacy letters created before email
+snapshots were introduced must be regenerated before they can be emailed.
+
+Deployment includes the resend API route and worker mail permissions/environment.
+Ending a check period moves the current letter into history and clears the current
+terms pointer so queued generation cannot restore it.

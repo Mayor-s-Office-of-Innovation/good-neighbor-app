@@ -4,7 +4,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.64"
+      version = "~> 6.21"
     }
     archive = {
       source  = "hashicorp/archive"
@@ -50,18 +50,30 @@ module "app" {
   source                        = "../../modules/app"
   setup_code_email_identity_arn = aws_sesv2_email_identity.setup_codes.arn
   provider_app_url              = "https://${local.frontend_domain_name}/"
+  cognito_admin_app_url         = "https://goodneighbor-compliance.sf.gov/"
+
+  # Bootstrap empty credential containers before enabling production delivery.
+  # Populate both secrets out-of-band, then enable the relay and Cognito sender.
+  provision_city_smtp_relay_foundation = true
+  enable_city_smtp_relay               = false
+  city_smtp_from_address               = "goodneighbor@sf.gov"
+  enable_cognito_custom_email_sender   = false
 
   providers = {
     aws           = aws
     aws.us_east_1 = aws.us_east_1
   }
 
-  application              = var.application
-  environment              = var.environment
-  s3_bucket_name_prefix    = "gnp-prod"
-  data_classification      = var.data_classification
-  bedrock_model_id         = var.bedrock_model_id
-  tags                     = local.common_tags
+  application             = var.application
+  environment             = var.environment
+  s3_bucket_name_prefix   = "gnp-prod"
+  data_classification     = var.data_classification
+  bedrock_model_id        = var.bedrock_model_id
+  alarm_emails            = var.alarm_emails
+  tags                    = local.common_tags
+  sf311_media_domain_name = "media.${local.frontend_domain_name}"
+  sf311_media_zone_id     = aws_route53_zone.goodneighbor.zone_id
+
   frontend_domain_names    = local.frontend_domain_names
   frontend_certificate_arn = aws_acm_certificate_validation.frontend.certificate_arn
 }

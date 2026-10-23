@@ -1,3 +1,9 @@
+import {
+  cityHelpTicket,
+  logCityNoteFailure,
+  prepareCityHelpNote,
+  deliverCityHelpNote,
+} from "../task-updates/city-help-note.js";
 import { randomUUID } from "node:crypto";
 import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
@@ -115,7 +121,13 @@ export const getTaskUpdates = async (event) => {
     String(task.checkId || ""),
   );
   return jsonResponse(200, {
-    ...detail(task, timelinePage.items),
+    ...detail(
+      {
+        ...task,
+        canUploadPhotos: ["in_progress", "completed"].includes(check?.status),
+      },
+      timelinePage.items,
+    ),
     nextToken: timelinePage.nextToken,
     issueOrigin:
       check?.flowType === "single-problem" ? "single-problem" : "perimeter",
@@ -138,11 +150,18 @@ export const createTaskUpdate = async (event) => {
     taskId,
     updateId,
   );
-  if (priorUpdate)
+  if (priorUpdate) {
+    if (!(await deliverCityHelpNote(dynamoTable, siteId, priorUpdate)))
+      return jsonResponse(502, {
+        error: "City update not confirmed",
+        updateSaved: true,
+        retryable: true,
+      });
     return jsonResponse(200, {
       task: detail(task, [priorUpdate]).task,
       update: priorUpdate,
     });
+  }
   const resolutionLeaseExpired =
     task.status === "resolving" &&
     new Date(String(task.resolutionLeaseExpiresAt ?? "")).getTime() <=
@@ -162,6 +181,21 @@ export const createTaskUpdate = async (event) => {
     return jsonResponse(409, { error: "Task is not in progress" });
   }
 
+  const srNum = cityHelpTicket(task);
+  const informational = ["note_photo_update", "additional_action"].includes(
+    input.type,
+  );
+  if (informational && srNum && typeof input.cityHelpNeeded !== "boolean")
+    return jsonResponse(400, {
+      error: "Choose whether City help is still needed",
+    });
+  if (input.cityHelpNeeded !== undefined && (!informational || !srNum))
+    return jsonResponse(400, {
+      error: "City help choice requires a filed 311 request",
+    });
+  if (input.cityHelpNeeded === false && !is311SubmissionEnabled(process.env))
+    return jsonResponse(503, { error: "City updates are unavailable" });
+
   const transition = buildTaskUpdateTransition(task, input, {
     taskId,
     updateId,
@@ -171,6 +205,23 @@ export const createTaskUpdate = async (event) => {
     return jsonResponse(transition.statusCode, { error: transition.error });
   const { update, task: updated } = transition;
   const now = update.occurredAt;
+  if (informational && srNum) {
+    update.cityHelpNeeded = input.cityHelpNeeded;
+    if (input.cityHelpNeeded === false) {
+      try {
+        update.cityNotePayload = await prepareCityHelpNote(
+          dynamoTable,
+          siteId,
+          srNum,
+          now,
+        );
+        update.cityNoteStatus = "pending";
+      } catch (error) {
+        logCityNoteFailure("preparation", error, update);
+        return jsonResponse(503, { error: "City update cannot be prepared" });
+      }
+    }
+  }
   let resolutionLeaseExpiresAt = "";
   if (updated.status === "completed" && is311SubmissionEnabled(process.env)) {
     let priorResults = Array.isArray(task.appActionResults)
@@ -296,15 +347,28 @@ export const createTaskUpdate = async (event) => {
         taskId,
         updateId,
       );
-      if (legacyRetry)
+      if (legacyRetry) {
+        if (!(await deliverCityHelpNote(dynamoTable, siteId, legacyRetry)))
+          return jsonResponse(502, {
+            error: "City update not confirmed",
+            updateSaved: true,
+            retryable: true,
+          });
         return jsonResponse(200, {
           task: detail(task, [legacyRetry]).task,
           update: legacyRetry,
         });
+      }
       return jsonResponse(409, { error: "Task update conflict" });
     }
     throw error;
   }
+  if (!(await deliverCityHelpNote(dynamoTable, siteId, update)))
+    return jsonResponse(502, {
+      error: "City update not confirmed",
+      updateSaved: true,
+      retryable: true,
+    });
   return jsonResponse(201, { task: detail(updated, [update]).task, update });
 };
 
@@ -324,8 +388,19 @@ export const documentTaskUpdate = async (event) => {
   if (!existing) return jsonResponse(404, { error: "Update not found" });
   if (existing.actorId !== deriveActorId(event))
     return jsonResponse(403, { error: "Update belongs to another session" });
-  if (existing.documentationState === "closed")
-    return jsonResponse(200, { update: existing });
+  /** @param {Record<string, any>} saved */
+  const replay = (saved) => {
+    const sameContent =
+      JSON.stringify(saved.notes || []) === JSON.stringify(notes) &&
+      JSON.stringify(saved.photoKeys || []) === JSON.stringify(photoKeys);
+    return sameContent
+      ? jsonResponse(200, { update: saved })
+      : jsonResponse(409, {
+          error: "Documentation is already closed",
+          code: "DocumentationConflict",
+        });
+  };
+  if (existing.documentationState === "closed") return replay(existing);
   if (existing.documentationState !== "open_for_documentation")
     return jsonResponse(409, { error: "Update cannot be documented" });
   const updated = {
@@ -335,7 +410,24 @@ export const documentTaskUpdate = async (event) => {
     documentationState: "closed",
     documentedAt: new Date().toISOString(),
   };
-  await writeDocumentedUpdate(dynamoTable, updated);
+  try {
+    await writeDocumentedUpdate(dynamoTable, updated);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.name === "TransactionCanceledException"
+    ) {
+      // A second tab may have closed the event after our consistent read.
+      const latest = await readUpdateById(
+        dynamoTable,
+        siteId,
+        taskId,
+        updateId,
+      );
+      if (latest?.documentationState === "closed") return replay(latest);
+    }
+    throw error;
+  }
   return jsonResponse(200, { update: updated });
 };
 
@@ -441,10 +533,12 @@ export const registerTaskUpdateMedia = async (event) => {
       throw error;
     }
   }
+  // Clears the presign's `state=pending` tag so the 1-day pending rule leaves
+  // the object alone; the bucket-wide 30-day rule owns it from here.
   await setObjectTags({
     bucket: uploadBucket,
     key: s3Key,
-    tags: { state: "accepted" },
+    tags: { state: "registered" },
   });
   return jsonResponse(alreadyRegistered ? 200 : 201, {
     artifactId,

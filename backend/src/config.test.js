@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { getConfig, getDynamoTableName } from "./config.js";
+import {
+  getComplianceLetterBucket,
+  getComplaintBucket,
+  getConfig,
+  getDynamoTableName,
+} from "./config.js";
 
 describe("getConfig", () => {
   it("requires deployment configuration", () => {
@@ -20,6 +25,40 @@ describe("getConfig", () => {
       queueUrl: "queue",
       dynamoTable: "table",
     });
+  });
+
+  it("uses a dedicated compliance-letter bucket when configured", () => {
+    expect(
+      getConfig({
+        S3_UPLOAD_BUCKET: "uploads",
+        S3_COMPLIANCE_LETTER_BUCKET: "letters",
+        SQS_QUEUE_URL: "queue",
+        DYNAMO_TABLE: "table",
+      }),
+    ).toMatchObject({
+      uploadBucket: "uploads",
+      complianceLetterBucket: "letters",
+    });
+  });
+
+  it("requires dedicated storage when a complaint operation runs", () => {
+    expect(() => getComplaintBucket({})).toThrow(
+      "Missing required environment variable for complaintBucket",
+    );
+    expect(getComplaintBucket({ S3_COMPLAINT_BUCKET: "complaints" })).toBe(
+      "complaints",
+    );
+  });
+
+  it("requires dedicated storage when a compliance-letter operation runs", () => {
+    expect(() => getComplianceLetterBucket({})).toThrow(
+      "Missing required environment variable for complianceLetterBucket",
+    );
+    expect(
+      getComplianceLetterBucket({
+        S3_COMPLIANCE_LETTER_BUCKET: "letters",
+      }),
+    ).toBe("letters");
   });
 
   it("enables reverse geocoding only when explicitly configured", () => {

@@ -7,11 +7,26 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { send } = vi.hoisted(() => ({ send: vi.fn() }));
+const { send, enqueueTranslateArtifact } = vi.hoisted(() => ({
+  send: vi.fn(),
+  enqueueTranslateArtifact: vi.fn(async () => true),
+}));
 vi.mock("../db.js", () => ({ ddb: { send } }));
+// Shared-link validation is exercised in duplicates/links.test.js; these handler
+// tests isolate request/response and existing completion behavior.
+vi.mock("../analysis/duplicates/links.js", () => ({
+  sharedActionTarget: async (
+    /** @type {string} */ table,
+    /** @type {string} */ site,
+    /** @type {string} */ taskId,
+  ) => ({ taskId, duplicateChecks: [] }),
+}));
+vi.mock("../analysis/translate-enqueue.js", async (importOriginal) => ({
+  .../** @type {any} */ (await importOriginal()),
+  enqueueTranslateArtifact,
+}));
 
 const {
-  cannotDoTask,
   completeTask,
   evaluateAssessment,
   getGuidance,
@@ -68,6 +83,7 @@ function mockTaskShortIdAllocation({
 describe("guidance handlers", () => {
   beforeEach(() => {
     send.mockReset();
+    enqueueTranslateArtifact.mockClear();
     process.env.S3_UPLOAD_BUCKET = "bucket";
     process.env.SQS_QUEUE_URL = "queue";
     process.env.DYNAMO_TABLE = "table";
@@ -98,6 +114,12 @@ describe("guidance handlers", () => {
                 severity: 3,
                 user_friendly_label: "Lots of trash in tree well",
                 description: "trash",
+                translations: {
+                  language: "es",
+                  user_friendly_label: "Montón de basura",
+                  description: "basura",
+                },
+                sourceArtifactIds: ["art-1"],
               },
             ],
           },
@@ -121,6 +143,12 @@ describe("guidance handlers", () => {
     expect(writes[1].Put.Item).toMatchObject({
       sk: "ASSESSMENT#asm-1#COND#001-litter",
       userFriendlyLabel: "Lots of trash in tree well",
+      translations: {
+        es: {
+          user_friendly_label: "Montón de basura",
+          description: "basura",
+        },
+      },
       source: {
         latitude: 37.7,
         longitude: -122.4,
@@ -129,10 +157,112 @@ describe("guidance handlers", () => {
     });
     expect(writes[2].Put.Item).toMatchObject({
       ruleId: "LITTER-2",
+      checkId: "chk-1",
       shortId: "MOI-CIT-001",
       userFriendlyLabel: "Lots of trash in tree well",
+      translations: {
+        es: {
+          user_friendly_label: "Montón de basura",
+          description: "basura",
+        },
+      },
     });
     expect(parse(res).tasks).toHaveLength(1);
+    // The stored copies still lack three locales, so the background translate
+    // worker is asked to fill them, scoped to the condition's source artifact.
+    expect(enqueueTranslateArtifact).toHaveBeenCalledTimes(1);
+    expect(enqueueTranslateArtifact).toHaveBeenCalledWith({
+      queueUrl: "queue",
+      siteId: "site-1",
+      checkId: "chk-1",
+      artifactId: "art-1",
+      items: [
+        {
+          user_friendly_label: "Lots of trash in tree well",
+          description: "trash",
+        },
+      ],
+    });
+  });
+
+  it("does not enqueue translation when the evaluate has no check", async () => {
+    mockTaskShortIdAllocation();
+    send.mockResolvedValueOnce({});
+    const res = await invoke(
+      evaluateAssessment,
+      event({
+        body: {
+          assessmentId: "asm-1",
+          reportedAt: "2026-08-18T12:00:00.000Z",
+          conditions: [
+            {
+              category: "Litter",
+              severity: 3,
+              user_friendly_label: "Trash",
+              description: "trash",
+              sourceArtifactIds: ["art-1"],
+            },
+          ],
+        },
+      }),
+    );
+    expect(res.statusCode).toBe(201);
+    expect(enqueueTranslateArtifact).not.toHaveBeenCalled();
+  });
+
+  it("drops malformed and empty translations instead of rejecting", async () => {
+    mockTaskShortIdAllocation();
+    send.mockResolvedValueOnce({});
+
+    const res = await invoke(
+      evaluateAssessment,
+      event({
+        body: {
+          assessmentId: "asm-1",
+          reportedAt: "2026-08-18T12:00:00.000Z",
+          conditions: [
+            {
+              category: "Litter",
+              severity: 3,
+              translations: "es",
+            },
+            {
+              category: "Litter",
+              severity: 3,
+              translations: { user_friendly_label: "no language" },
+            },
+            {
+              category: "Litter",
+              severity: 3,
+              translations: { language: 7 },
+            },
+            {
+              category: "Litter",
+              severity: 3,
+              translations: { language: "es", user_friendly_label: 42 },
+            },
+            {
+              category: "Litter",
+              severity: 3,
+              translations: { language: "es" },
+            },
+            { category: "Litter", severity: 3, translations: null },
+          ],
+        },
+      }),
+    );
+
+    expect(res.statusCode).toBe(201);
+    const writes = /** @type {any[]} */ (
+      send.mock.calls[2][0].input.TransactItems
+    );
+    const conditionItems = writes
+      .map((write) => write.Put.Item)
+      .filter((item) => item.sk.includes("#COND#"));
+    expect(conditionItems).toHaveLength(6);
+    for (const item of conditionItems) {
+      expect(item).not.toHaveProperty("translations");
+    }
   });
 
   it("preserves top-level grade from explicit check-completion assessments", async () => {
@@ -432,37 +562,6 @@ describe("guidance handlers", () => {
     });
   });
 
-  it("records cannot-do on a task", async () => {
-    send.mockResolvedValueOnce({
-      Item: {
-        pk: "SITE#site-1",
-        sk: "TASK#task-1",
-        taskId: "task-1",
-        status: "open",
-        kind: "action",
-        severity: 2,
-        cannotDoReasons: ["It doesn't feel safe"],
-      },
-    });
-    send.mockResolvedValueOnce({});
-
-    const res = await invoke(
-      cannotDoTask,
-      event({
-        pathParameters: { taskId: "task-1" },
-        body: { reason: "It doesn't feel safe", note: "dark outside" },
-      }),
-    );
-
-    expect(res.statusCode).toBe(200);
-    const tx = send.mock.calls[1][0];
-    expect(tx.input.TransactItems[0].Put.Item).toMatchObject({
-      status: "cannot_do",
-      cannotDo: { reason: "It doesn't feel safe", note: "dark outside" },
-      gsi2pk: "SITE#site-1#TASK#cannot_do",
-    });
-  });
-
   it("completes a task and records app action results", async () => {
     process.env.GNP_311_SUBMISSION_ENABLED = "false";
     send.mockResolvedValueOnce({
@@ -508,6 +607,49 @@ describe("guidance handlers", () => {
       ],
     });
   });
+
+  it.each([
+    ["open_for_documentation", "site-team", "completed", true, true],
+    ["closed", "site-team", "completed", false, true],
+    ["open_for_documentation", "another-device", "completed", false, true],
+    ["open_for_documentation", "site-team", "missing", true, false],
+    ["open_for_documentation", "site-team", "no-id", true, false],
+  ])(
+    "returns current result capabilities: %s / %s / %s",
+    async (documentationState, actorId, checkStatus, pending, photos) => {
+      const task = {
+        taskId: "task-1",
+        status: "completed",
+        canBeInProgress: false,
+        completionMethod: "manual",
+        latestUpdateId: "update-1",
+        ...(checkStatus === "no-id" ? {} : { checkId: "check-1" }),
+      };
+      send.mockResolvedValueOnce({ Item: task });
+      send.mockImplementation(async (command) => {
+        const key = command.input.Key;
+        if (key.sk === "event-1")
+          return { Item: { documentationState, actorId } };
+        if (key.sk.startsWith("CHECK#"))
+          return {
+            Item:
+              checkStatus === "missing" ? undefined : { status: checkStatus },
+          };
+        return { Item: { updateSk: "event-1" } };
+      });
+      const response = await invoke(
+        completeTask,
+        event({
+          pathParameters: { taskId: "task-1" },
+          body: { completionMethod: "manual" },
+        }),
+      );
+      expect(parse(response)).toMatchObject({
+        resultsPending: pending,
+        task: { canUploadPhotos: photos },
+      });
+    },
+  );
 
   it("reports an active task completion lease as in progress", async () => {
     send.mockResolvedValueOnce({

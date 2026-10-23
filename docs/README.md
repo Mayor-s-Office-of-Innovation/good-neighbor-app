@@ -36,9 +36,18 @@
 - **[ADR 0014](./adr/0014-remove-places-photo-roll.md)** — the perimeter check as a flat
   photo roll: no per-site places setup, completion at three photos or one description
   (client-side rule), text as a full alternative to photos.
+- **[ADR 0015](./adr/0015-compliance-admin-roles.md)** — Compliance manager and
+  Compliance supervisor authorization, Cognito lifecycle safeguards, and the
+  retirement of legacy setup-code contacts.
+- **[ADR 0016](./adr/0016-provider-manager-enrollment.md)** — supervisor-only
+  Provider Manager lifecycle and all-or-nothing enrollment across the Provider's
+  active Sites.
+
+- **[ADR 0017](adr/0017-independent-people-and-site-affiliations.md)** — stable people, independent affiliations, site assignments, provider transfers, and migration.
 
 ## Operations
 
+- **[Completion guidance migration](./runbooks/check-completion-guidance.md)** — atomic completion records, bounded capture-title counts, and historical backfill.
 - **[dev-commands.md](./dev-commands.md)** — developer command reference (setup, CI checks,
   local harness).
 - **[runbooks/](./runbooks/)** — operational runbooks (source of truth; the `~/dev/notes/`
@@ -47,6 +56,8 @@
   to PostHog without an SDK: events, allowlists, kill switches, CloudWatch markers.
 - **[SES sender operations](./runbooks/ses.md)** — setup-code sender identity, DNS ownership,
   Terraform adoption, and sending-readiness checks.
+- **[City SMTP relay operations](./runbooks/city-smtp.md)** — Proofpoint credentials,
+  SES Mail Manager bootstrap, connectivity verification, rotation, and failure triage.
 
 - **[Cognito admin access](./runbooks/cognito-admin.md)** — admin login, invitations, MFA,
   and deployment troubleshooting.
@@ -57,7 +68,14 @@
 - **[Media safeguards](./runbooks/media-safeguards.md)** — upload validation, quota and
   rejection alarms, retention, and incident triage without inspecting private media.
 
+- **[Duplicate detection](./runbooks/duplicate-detection.md)** — isolated matching, deployment order, reversible links, CloudWatch metrics, and media retention.
+
 ## Domain & policy reference
+
+- **[duplicate-evaluation.md](duplicate-evaluation.md)** — local duplicate-detection
+  experiment: replay dataset, baseline and model comparisons, and recall-focused metrics.
+- **[duplicate-detection-handoff.md](duplicate-detection-handoff.md)** — user-requested
+  cross-machine handoff: agreed scope, completed work, next user actions, and remaining plan.
 
 - **[guidance-policy-changelog.md](./guidance-policy-changelog.md)** — policy operations log
   for the action/escalation rulebase (versions, update process). The workflow itself is

@@ -151,7 +151,7 @@ function event(body) {
     requestContext: {
       authorizer: {
         jwt: {
-          claims: { "cognito:groups": "central-admin", sub: "admin-1" },
+          claims: { "cognito:groups": "compliance-supervisor", sub: "admin-1" },
         },
       },
     },

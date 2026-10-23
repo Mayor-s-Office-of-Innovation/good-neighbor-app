@@ -13,6 +13,16 @@ output "upload_bucket_name" {
   value       = aws_s3_bucket.uploads.bucket
 }
 
+output "complaint_bucket_name" {
+  description = "S3 bucket for complaint evidence with one-year retention."
+  value       = aws_s3_bucket.complaints.bucket
+}
+
+output "compliance_letter_bucket_name" {
+  description = "S3 bucket for durable compliance-letter PDFs and previews."
+  value       = aws_s3_bucket.compliance_letters.bucket
+}
+
 output "submission_queue_url" {
   description = "SQS queue URL for offline submissions."
   value       = aws_sqs_queue.submissions.url
@@ -76,4 +86,29 @@ output "admin_cloudfront_domain_name" {
 output "analyzer_secret_arn" {
   description = "Secrets Manager ARN holding the analyzer x-api-key (value set out-of-band)."
   value       = aws_secretsmanager_secret.analyzer_api_key.arn
+}
+
+output "city_smtp_relay_secret_arn" {
+  description = "Secrets Manager container for City Proofpoint SMTP credentials; populate out-of-band."
+  value       = var.provision_city_smtp_relay_foundation ? aws_secretsmanager_secret.city_smtp_relay[0].arn : null
+}
+
+output "mail_manager_ingress_secret_arn" {
+  description = "Secrets Manager container for the Mail Manager ingress password; populate out-of-band."
+  value       = var.provision_city_smtp_relay_foundation ? aws_secretsmanager_secret.mail_manager_ingress[0].arn : null
+}
+
+output "mail_manager_ingress_hostname" {
+  description = "Public authenticated SMTP ingress hostname; null until the relay stack is enabled."
+  value       = var.enable_city_smtp_relay ? aws_cloudformation_stack.city_smtp_relay[0].outputs["IngressARecord"] : null
+}
+
+output "mail_manager_ingress_username" {
+  description = "Mail Manager SMTP AUTH username (the ingress point ID); null until enabled."
+  value       = var.enable_city_smtp_relay ? aws_cloudformation_stack.city_smtp_relay[0].outputs["IngressPointId"] : null
+}
+
+output "duplicate_analyzer_key_secret_arn" {
+  description = "Container for the separate comparison key, provisioned out-of-band."
+  value       = aws_secretsmanager_secret.duplicate_analyzer_key.arn
 }

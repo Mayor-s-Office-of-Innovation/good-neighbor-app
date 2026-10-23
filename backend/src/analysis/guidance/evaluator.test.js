@@ -1,7 +1,58 @@
 import { describe, expect, it } from "vitest";
-import { evaluateCondition } from "./evaluator.js";
+import { evaluateCondition, timeRangeMatches } from "./evaluator.js";
+import { parseValidTimeRange } from "./rule-catalog.js";
 import { actionsEscalationsV3Catalog } from "./actions-escalations-v3.js";
 import { actionsEscalationsV4Catalog } from "./actions-escalations-v4.js";
+
+describe("weekday-qualified Pacific time windows", () => {
+  /**
+   * @param {string} range
+   * @param {string | undefined} reportedAt
+   * @returns {boolean}
+   */
+  const matches = (range, reportedAt) =>
+    timeRangeMatches(
+      {
+        ...actionsEscalationsV4Catalog.rules[0],
+        validTimeRange: parseValidTimeRange(range),
+      },
+      reportedAt,
+    );
+
+  it.each([
+    ["2026-10-09T14:59:00Z", false], // Friday 07:59 PDT
+    ["2026-10-09T15:00:00Z", true],
+    ["2026-10-10T00:00:59Z", true], // Friday 17:00 PDT, Saturday UTC
+    ["2026-10-10T00:01:00Z", false],
+    ["2026-10-10T15:00:00Z", false], // Saturday
+    ["2026-10-11T15:00:00Z", false], // Sunday
+    ["2026-10-12T15:00:00Z", true],
+    ["2026-11-02T16:00:00Z", true], // Monday 08:00 PST after DST ends
+    ["2026-03-09T15:00:00Z", true], // Monday 08:00 PDT after DST starts
+  ])(
+    "uses the report's local weekday and inclusive minute at %s",
+    (reportedAt, expected) => {
+      expect(matches("08:00-17:00, Mo+Tu+We+Th+Fr", reportedAt)).toBe(expected);
+    },
+  );
+
+  it("keeps unqualified ranges active on weekends", () => {
+    expect(matches("08:00-17:00", "2026-10-10T15:00:00Z")).toBe(true);
+    expect(matches("24 hours", undefined)).toBe(true);
+  });
+
+  it("applies overnight qualifiers to the actual local calendar day", () => {
+    expect(matches("17:01-07:59, Fr", "2026-10-10T06:59:00Z")).toBe(true);
+    expect(matches("17:01-07:59, Fr", "2026-10-10T07:00:00Z")).toBe(false);
+    expect(matches("17:01-07:59, Sa", "2026-10-10T07:00:00Z")).toBe(true);
+    expect(matches("17:01-07:59, Sa", "2026-10-10T15:00:00Z")).toBe(false);
+  });
+
+  it("rejects missing or invalid timestamps for qualified ranges", () => {
+    expect(matches("08:00-17:00, Mo", undefined)).toBe(false);
+    expect(matches("08:00-17:00, Mo", "invalid")).toBe(false);
+  });
+});
 
 /**
  * @param {string} category

@@ -17,6 +17,9 @@ import { PHOTO_CLEAR } from "../helpers/fixtures.js";
   - Browser back after finishing a capture flow never revisits the finished
     screen (replace-at-completion).
 
+  Home restoration may persist the default tab as ?filter=todo. Home URL
+  assertions allow that query while still rejecting leftover dialog hashes.
+
   System back is driven the same way the site-admin spec drives it:
   page.evaluate(() => window.history.back()) — the same popstate path as
   hardware back / iOS swipe-back.
@@ -38,7 +41,7 @@ test.describe("back button handling", () => {
 
     // System back: a normal route pop to home.
     await page.evaluate(() => window.history.back());
-    await expect(page).toHaveURL(/\/today$/);
+    await expect(page).toHaveURL(/\/today(?:\?filter=todo)?$/);
     await expect(page.locator("#start-check")).toBeVisible({ timeout: 30_000 });
     // The draft survives for later resume.
     await expect(
@@ -67,7 +70,7 @@ test.describe("back button handling", () => {
     await expect(page).toHaveURL(/\/check$/);
 
     await page.goBack();
-    await expect(page).toHaveURL(/\/today$/);
+    await expect(page).toHaveURL(/\/today(?:\?filter=todo)?$/);
     await expect(locationDialog).toBeHidden();
   });
 
@@ -86,7 +89,7 @@ test.describe("back button handling", () => {
     // System back: the sentinel unwinds, the dialog closes, the hash is gone.
     await page.evaluate(() => window.history.back());
     await expect(attributions).not.toBeVisible({ timeout: 5_000 });
-    await expect(page).toHaveURL(/\/today$/);
+    await expect(page).toHaveURL(/\/today(?:\?filter=todo)?$/);
     await expect(page.locator("#start-check")).toBeVisible();
   });
 
@@ -105,7 +108,7 @@ test.describe("back button handling", () => {
       timeout: 5_000,
     });
     await expect(page.locator("#start-check")).toBeVisible();
-    await expect(page).toHaveURL(/\/today$/);
+    await expect(page).toHaveURL(/\/today(?:\?filter=todo)?$/);
   });
 
   test("browser back after finishing a routed flow never revisits it", async ({
@@ -125,7 +128,9 @@ test.describe("back button handling", () => {
     await done.click();
 
     // Finish replaces the entry with /today…
-    await expect(page).toHaveURL(/\/today$/, { timeout: 30_000 });
+    await expect(page).toHaveURL(/\/today(?:\?filter=todo)?$/, {
+      timeout: 30_000,
+    });
     // …so the next back leaves the app (previous URL), never /check again.
     await page.evaluate(() => window.history.back());
     await expect(page.locator("#add-photo")).not.toBeVisible({
@@ -157,7 +162,9 @@ test.describe("back button handling", () => {
 
     // The discard must land on home — NOT re-enter a fresh /check (the
     // unwind/replace race). Draft machinery is discarded with it.
-    await expect(page).toHaveURL(/\/today$/, { timeout: 30_000 });
+    await expect(page).toHaveURL(/\/today(?:\?filter=todo)?$/, {
+      timeout: 30_000,
+    });
     await expect(page.locator("#start-check")).toBeVisible({
       timeout: 30_000,
     });

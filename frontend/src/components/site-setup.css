@@ -29,37 +29,38 @@
   height: 160px;
   border-radius: 4px;
   background-color: var(--surface-2);
-  background-image: linear-gradient(
-      45deg,
-      var(--surface-3) 25%,
-      transparent 25%
-    ),
-    linear-gradient(-45deg, var(--surface-3) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, var(--surface-3) 75%),
-    linear-gradient(-45deg, transparent 75%, var(--surface-3) 75%);
-  background-position:
-    0 0,
-    0 8px,
-    8px -8px,
-    -8px 0;
+  background-image: repeating-conic-gradient(
+    var(--surface-3) 0% 25%,
+    transparent 0% 50%
+  );
   background-size: 16px 16px;
+}
+
+.login__mark--app-icon {
+  background: none;
+  object-fit: contain;
 }
 
 .login__copy h1 {
   margin: 0;
   color: var(--text);
-  font-size: 32px;
+  font-size: 2rem; /* 32px at the default size; rem so a raised browser font size applies (1.4.4) */
   font-weight: 700;
-  line-height: 40px;
+  line-height: 2.5rem;
 }
 
 .login__copy p {
   max-width: 100%;
   margin: 0;
   color: var(--text);
-  font-size: 32px;
-  line-height: 40px;
+  font-size: 2rem;
+  line-height: 2.5rem;
   text-wrap: balance;
+}
+
+.login__copy p.login__enrollment-instructions {
+  font-size: var(--wa-font-size-xl, 1.5rem);
+  line-height: 1.4;
 }
 
 .login__form {
@@ -105,6 +106,25 @@
 
 .login__error[hidden] {
   display: none;
+}
+
+/* A plain-language note above the code field: why the code is being asked
+   for (Home Screen handoff that didn't carry over, or a Safari copy whose
+   session moved to the installed app). Informational, not an error. */
+.login__notice {
+  margin: 1.5rem 0 0;
+  color: var(--text);
+  font-size: 1rem; /* rem so a raised browser font size applies (1.4.4) */
+  font-weight: 400;
+  line-height: 1.5rem;
+}
+
+/* Home Screen handoff in progress: no form, just the spinner. */
+.login__handoff {
+  display: flex;
+  justify-content: center;
+  margin-top: 32px;
+  font-size: 2rem;
 }
 
 .login__form--error .btn-ink.login__continue {

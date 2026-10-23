@@ -134,14 +134,66 @@ describe("classifyApiFailure", () => {
     expect(mod.classifyApiFailure(err)).toBe("auth");
   });
 
-  it("maps ApiError 403 → AUTH (not a connectivity problem)", async () => {
+  it("maps missing manager access to ACCESS", async () => {
     const mod = await load();
     const err = Object.assign(new Error("403"), {
       name: "ApiError",
       status: 403,
-      body: { error: "forbidden" },
+      body: { error: "manager_access_required" },
     });
-    expect(mod.classifyApiFailure(err)).toBe("auth");
+    expect(mod.classifyApiFailure(err)).toBe("access");
+  });
+
+  it.each(["Update belongs to another session", "forbidden"])(
+    "leaves unrelated permission denial %s to the action UI",
+    async (code) => {
+      const mod = await load();
+      const listener = vi.fn();
+      const unsubscribe = mod.onHealthChange(listener);
+      const error = Object.assign(new Error("403"), {
+        name: "ApiError",
+        status: 403,
+        body: { error: code },
+      });
+      expect(mod.classifyApiFailure(error)).toBe("healthy");
+      expect(listener).not.toHaveBeenCalled();
+      mod.classifyApiFailure(
+        Object.assign(new Error("expired"), { name: "ReauthRequiredError" }),
+      );
+      expect(mod.classifyApiFailure(error)).toBe("auth");
+      unsubscribe();
+    },
+  );
+
+  it("still treats a bare gateway denial as a rejected session", async () => {
+    const mod = await load();
+    expect(
+      mod.classifyApiFailure(
+        Object.assign(new Error("403"), {
+          name: "ApiError",
+          status: 403,
+          body: { message: "Forbidden" },
+        }),
+      ),
+    ).toBe("auth");
+  });
+
+  it("dismisses missing manager enrollment without treating the session as expired", async () => {
+    const mod = await load();
+    const err = Object.assign(new Error("denied"), {
+      name: "ApiError",
+      status: 403,
+      body: { error: "manager_access_required" },
+    });
+    expect(mod.classifyApiFailure(err)).toBe("access");
+    mod.clearAccessState();
+    expect(mod.getHealthState()).toBe("healthy");
+    mod.classifyApiFailure(
+      Object.assign(new Error("expired"), { name: "ReauthRequiredError" }),
+    );
+    mod.classifyApiFailure(err);
+    mod.clearAccessState();
+    expect(mod.getHealthState()).toBe("auth");
   });
 
   it("maps transport failure (status 0) → OUTAGE", async () => {

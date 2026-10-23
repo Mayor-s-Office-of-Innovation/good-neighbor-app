@@ -18,14 +18,21 @@ import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
 import { getObjectBytes, setObjectTags } from "../s3.js";
 import { downscaleImage, DownscaleError } from "../media/downscale.js";
+import { recordThumbnail, storeThumbnail } from "../media/thumbnail.js";
 import {
   AnalyzerError,
   createAnalyzerClient,
 } from "../analysis/analyzer-client.js";
 import { adaptAssessment } from "../analysis/adapt-scorecard.js";
 import { getAnalyzerApiKey } from "../analysis/api-key.js";
-import { analysisKey, checkHeaderKey } from "../handlers/keys.js";
+import { analysisKey, artifactKey, checkHeaderKey } from "../handlers/keys.js";
+import {
+  enqueueTranslateArtifact,
+  translateItemsFor,
+} from "../analysis/translate-enqueue.js";
 import { reverseGeocodePhoto } from "../integrations/reverse-geocoder.js";
+import { logServerError } from "../lib/log-server-error.js";
+import { elapsedMs, emitMetrics } from "../lib/metrics.js";
 
 // Image types the analyzer accepts. MVP capture is images + optional text.
 const ANALYZER_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -36,6 +43,33 @@ const MAX_OBJECT_BYTES = 10 * 1024 * 1024;
 // decides on the value — it is echoed back and lands on tasks as
 // `source.positionDescriptor` — so every artifact sends this fixed literal.
 export const POSITION_DESCRIPTOR = "perimeter";
+
+/**
+ * Evidence kind for the business metrics (observability plan Phase 2): a
+ * message with an S3 key is a photo, anything else is a typed description.
+ * Mirrors evidenceSummary in handlers/checks.js.
+ * @param {Pick<AnalyzeMessage, "s3Key">} msg
+ * @returns {"photo" | "text"}
+ */
+export function evidenceKindOf(msg) {
+  return typeof msg.s3Key === "string" && msg.s3Key.length > 0
+    ? "photo"
+    : "text";
+}
+
+/**
+ * Log-searchable ids every metric line carries (properties, never
+ * dimensions — see lib/metrics.js).
+ * @param {AnalyzeMessage} msg
+ * @returns {{ siteId: string, checkId: string, artifactId: string }}
+ */
+function metricIds(msg) {
+  return {
+    siteId: msg.siteId,
+    checkId: msg.checkId,
+    artifactId: msg.artifactId,
+  };
+}
 
 /**
  * @typedef {object} AnalyzeMessage
@@ -177,6 +211,61 @@ async function markFailed({ dynamoTable, msg, err }) {
     ) {
       throw putErr;
     }
+    return;
+  }
+  // Counted once, when the failure is first recorded (a redelivery that finds
+  // the marker already present returns above and is not double-counted).
+  emitMetrics({
+    marker: "AnalysisFailed",
+    dimensions: { Kind: evidenceKindOf(msg) },
+    metrics: [{ name: "AnalysisFailed", value: 1 }],
+    props: {
+      ...metricIds(msg),
+      reason:
+        err.code ?? (err.status ? `http_${err.status}` : "analyzer_error"),
+    },
+  });
+}
+
+/**
+ * Store the card thumbnail beside the original and point the ART# row at it.
+ * Best-effort by contract: any failure is one `ThumbnailFailed` metric line
+ * (reason `store` or `record`, error name as a prop) and the card keeps using
+ * the original; nothing here can throw or fail the analysis.
+ * @param {{ msg: AnalyzeMessage, s3Key: string, bytes: Buffer, uploadBucket: string, dynamoTable: string }} input
+ * @returns {Promise<void>}
+ */
+async function storeAndRecordThumbnail({
+  msg,
+  s3Key,
+  bytes,
+  uploadBucket,
+  dynamoTable,
+}) {
+  let reason = "store";
+  try {
+    const thumbS3Key = await storeThumbnail({
+      bucket: uploadBucket,
+      s3Key,
+      bytes,
+    });
+    reason = "record";
+    await recordThumbnail({
+      tableName: dynamoTable,
+      key: artifactKey(msg.siteId, msg.checkId, msg.artifactId),
+      thumbS3Key,
+    });
+  } catch (err) {
+    emitMetrics({
+      marker: "ThumbnailFailed",
+      dimensions: { Kind: "photo" },
+      metrics: [{ name: "ThumbnailFailed", value: 1 }],
+      props: {
+        ...metricIds(msg),
+        reason,
+        error: err instanceof Error ? err.name : "UnknownError",
+      },
+    });
   }
 }
 
@@ -187,16 +276,19 @@ async function markFailed({ dynamoTable, msg, err }) {
  * @param {object} deps
  * @param {import("../analysis/analyzer-client.js").AnalyzerClient} deps.client
  * @param {string} deps.dynamoTable
+ * @param {string} deps.queueUrl where the follow-up translate message goes
  * @param {string} deps.uploadBucket
  * @param {boolean} deps.reverseGeocodingEnabled
  * @returns {Promise<void>}
  */
 async function analyzeArtifact(
   msg,
-  { client, dynamoTable, uploadBucket, reverseGeocodingEnabled },
+  { client, dynamoTable, uploadBucket, queueUrl, reverseGeocodingEnabled },
 ) {
   /** @type {import("../analysis/analyzer-client.js").AnalyzeMedia[]} */
   const media = [];
+  /** Normalized photo bytes, kept for the card thumbnail. @type {Buffer | null} */
+  let normalizedBytes = null;
   if (typeof msg.s3Key === "string" && msg.s3Key.length > 0) {
     // 1. Fetch the uploaded media (bytes only travel via the S3 key) + downscale.
     const object = await getObjectBytes({
@@ -263,11 +355,6 @@ async function analyzeArtifact(
       return;
     }
     const { bytes, contentType } = downscaled;
-    await setObjectTags({
-      bucket: uploadBucket,
-      key: msg.s3Key,
-      tags: { state: "accepted" },
-    });
 
     if (!ANALYZER_IMAGE_TYPES.has(contentType)) {
       // A key that isn't one of our accepted image types can never analyze —
@@ -292,6 +379,7 @@ async function analyzeArtifact(
         base64: bytes.toString("base64"),
       }),
     );
+    normalizedBytes = bytes;
   }
   if (typeof msg.text === "string" && msg.text.length > 0) {
     media.push({ type: "text", text: msg.text });
@@ -320,8 +408,27 @@ async function analyzeArtifact(
         })
       : Promise.resolve(null);
 
+  // Card thumbnail: encode + store + record, started here so it overlaps the
+  // analyzer's latency instead of adding to it, and drained (`await`) before
+  // every exit below so no S3 write is left in flight when the invocation
+  // ends. Independent of the analyzer outcome — the thumbnail is a property of
+  // the upload — and idempotent, so a redelivery that recorded nothing last
+  // time (e.g. a throttled UpdateItem) heals here. Never rejects.
+  const thumbnailPromise =
+    normalizedBytes && typeof msg.s3Key === "string"
+      ? storeAndRecordThumbnail({
+          msg,
+          s3Key: msg.s3Key,
+          bytes: normalizedBytes,
+          uploadBucket,
+          dynamoTable,
+        })
+      : Promise.resolve();
+
   // 2. Call the analyzer. Permanent failures are marked and consumed; transient
   //    ones (retryable) throw so SQS redelivers, then dead-letters.
+  const kind = evidenceKindOf(msg);
+  const analyzeStartedAt = Date.now();
   let response;
   try {
     response = await client.analyze({
@@ -332,12 +439,45 @@ async function analyzeArtifact(
       ...(msg.language ? { language: msg.language } : {}),
     });
   } catch (err) {
-    if (err instanceof AnalyzerError && !err.retryable) {
-      await markFailed({ dynamoTable, msg, err });
+    await thumbnailPromise;
+    const permanent = err instanceof AnalyzerError && !err.retryable;
+    // One AnalyzerLatencyMs sample per call regardless of outcome, so p95
+    // reflects slow failures (timeouts) and not just the happy path.
+    emitMetrics({
+      marker: "AnalyzerCall",
+      dimensions: { Kind: kind },
+      metrics: [
+        {
+          name: "AnalyzerLatencyMs",
+          value: elapsedMs(analyzeStartedAt),
+          unit: "Milliseconds",
+        },
+        // Transient failures are counted here (they rethrow and redeliver);
+        // permanent ones are counted by markFailed as AnalysisFailed.
+        ...(permanent ? [] : [{ name: "AnalysisRetried", value: 1 }]),
+      ],
+      props: {
+        ...metricIds(msg),
+        outcome: permanent ? "permanent" : "retryable",
+        reason:
+          err instanceof AnalyzerError
+            ? (err.code ?? (err.status ? `http_${err.status}` : "network"))
+            : err instanceof Error
+              ? err.name
+              : "UnknownError",
+      },
+    });
+    if (permanent) {
+      await markFailed({
+        dynamoTable,
+        msg,
+        err: /** @type {AnalyzerError} */ (err),
+      });
       return;
     }
     throw err;
   }
+  const analyzerLatencyMs = elapsedMs(analyzeStartedAt);
 
   const adapted = adaptAssessment(response);
   // A missing or failed lookup is a normal fallback to the site's address.
@@ -363,6 +503,7 @@ async function analyzeArtifact(
     analysisId: adapted.analysisId,
     rubricVersion: adapted.rubricVersion,
     model: adapted.model,
+    ...(adapted.shotType ? { shotType: adapted.shotType } : {}),
     grade: adapted.grade,
     gradeDescription: adapted.gradeDescription,
     concerns: adapted.concerns,
@@ -389,12 +530,54 @@ async function analyzeArtifact(
       err.name === "ConditionalCheckFailedException"
     ) {
       // Redelivery: already analyzed. Don't double-count the counters.
+      await thumbnailPromise;
+      emitMetrics({
+        marker: "AnalysisDuplicate",
+        dimensions: { Kind: kind },
+        metrics: [{ name: "AnalysisDuplicate", value: 1 }],
+        props: metricIds(msg),
+      });
       return;
     }
+    await thumbnailPromise;
     throw err;
   }
+  emitMetrics({
+    marker: "AnalysisCompleted",
+    dimensions: { Kind: kind },
+    metrics: [
+      { name: "AnalysisCompleted", value: 1 },
+      {
+        name: "AnalyzerLatencyMs",
+        value: analyzerLatencyMs,
+        unit: "Milliseconds",
+      },
+    ],
+    props: { ...metricIds(msg), grade: adapted.grade },
+  });
 
-  // 4. Nudge the header's in-progress counters (best-effort).
+  await thumbnailPromise;
+
+  // 4. Hand the model-written text to the background translate worker so the
+  //    locales the analyze call did not produce fill in (best-effort: a lost
+  //    enqueue leaves English, never fails an analysis that just landed).
+  try {
+    await enqueueTranslateArtifact({
+      queueUrl,
+      siteId: msg.siteId,
+      checkId: msg.checkId,
+      artifactId: msg.artifactId,
+      items: translateItemsFor(adapted.concerns),
+    });
+  } catch (err) {
+    console.warn("Translate enqueue failed; analysis keeps English only", {
+      checkId: msg.checkId,
+      artifactId: msg.artifactId,
+      error: err instanceof Error ? err.name : "UnknownError",
+    });
+  }
+
+  // 5. Nudge the header's in-progress counters (best-effort).
   await bumpHeaderCounters({
     dynamoTable,
     siteId: msg.siteId,
@@ -418,6 +601,7 @@ export const handler = async (event) => {
   const {
     dynamoTable,
     uploadBucket,
+    queueUrl,
     analyzerBaseUrl,
     reverseGeocodingEnabled,
   } = getConfig();
@@ -444,6 +628,7 @@ export const handler = async (event) => {
         client,
         dynamoTable,
         uploadBucket,
+        queueUrl,
         reverseGeocodingEnabled: reverseGeocodingEnabled === true,
       });
     }),
@@ -457,9 +642,8 @@ export const handler = async (event) => {
   settled.forEach((result, index) => {
     if (result.status === "rejected") {
       const { messageId } = event.Records[index];
-      console.error("analyzeArtifact failed; message will redeliver", {
-        messageId,
-        error: result.reason,
+      logServerError("worker analyze-artifact", result.reason, {
+        extra: { messageId },
       });
       batchItemFailures.push({ itemIdentifier: messageId });
     }

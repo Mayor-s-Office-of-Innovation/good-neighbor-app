@@ -17,6 +17,10 @@ vi.mock("../services/backend-health.js", () => ({
   getHealthState: vi.fn(() => healthModule.state),
   onHealthChange: vi.fn(() => () => {}),
   clearAuthState: vi.fn(),
+  clearAccessState: vi.fn(),
+}));
+vi.mock("../services/session-handoff.js", () => ({
+  retireHandoff: vi.fn(async () => false),
 }));
 vi.mock("../db.js", () => ({
   clearSiteSession: vi.fn(async () => {}),
@@ -58,6 +62,25 @@ const load = () => import("./connection-status.js");
 function makeElement() {
   const listeners = {};
   const dialogs = [];
+  const nodes = {
+    "#conn-auth-title": { textContent: "" },
+    "#conn-auth-message": { textContent: "" },
+  };
+  const dialog = {
+    open: false,
+    showModal() {
+      dialog.open = true;
+      dialogs.push("showModal");
+    },
+    close() {
+      dialog.open = false;
+    },
+    addEventListener: (t, fn) => (listeners[t] = fn),
+  };
+  const signout = {
+    textContent: "",
+    addEventListener: (t, fn) => (listeners.signout = fn),
+  };
   /** The live banner element (null when none) — `remove()` detaches it. */
   let banner = /** @type {any} */ (null);
   const el = {
@@ -84,21 +107,14 @@ function makeElement() {
     },
     querySelector(/** @type {string} */ selector) {
       if (selector === "#conn-auth-signout") {
-        return { addEventListener: (t, fn) => (listeners["signout"] = fn) };
+        return signout;
       }
       if (selector === "#conn-auth-dialog") {
-        const dialog = {
-          open: false,
-          showModal() {
-            dialog.open = true;
-            dialogs.push("showModal");
-          },
-          close() {
-            dialog.open = false;
-          },
-        };
         return dialog;
       }
+      if (selector === "#conn-auth-cancel")
+        return { addEventListener: (t, fn) => (listeners.cancelClick = fn) };
+      if (nodes[selector]) return nodes[selector];
       if (selector === ".conn-banner") {
         return banner ? banner : null;
       }
@@ -189,6 +205,49 @@ describe("sign-out handler (fix 2 + 3)", () => {
     healthModule.state = "auth";
     const el = await mount(ConnectionStatus);
     expect(el._dialogs).toContain("showModal");
+  });
+});
+
+describe("permission and session dialog recovery", () => {
+  it.each(["auth", "access"])(
+    "shows distinct copy for %s and lets Cancel preserve local work",
+    async (state) => {
+      const { default: ConnectionStatus } = await load();
+      const { t } = await import("../i18n/i18n.js");
+      const { clearSiteSession } = await import("../db.js");
+      const { discardInMemorySession } = await import(
+        "../state/check-session.js"
+      );
+      healthModule.state = state;
+      const el = await mount(ConnectionStatus);
+      const prefix =
+        state === "access"
+          ? "connection.accessDenied"
+          : "connection.authExpired";
+      expect(el.querySelector("#conn-auth-title").textContent).toBe(
+        t(`${prefix}.title`),
+      );
+      expect(el.querySelector("#conn-auth-message").textContent).toBe(
+        t(`${prefix}.message`),
+      );
+      el._listeners.cancelClick();
+      expect(el.querySelector("#conn-auth-dialog").open).toBe(false);
+      el._sync();
+      expect(el.querySelector("#conn-auth-dialog").open).toBe(false);
+      expect(clearSiteSession).not.toHaveBeenCalled();
+      expect(discardInMemorySession).not.toHaveBeenCalled();
+      expect(window.dispatchEvent).not.toHaveBeenCalled();
+    },
+  );
+
+  it("allows Escape to dismiss the dialog without signing out", async () => {
+    const { default: ConnectionStatus } = await load();
+    healthModule.state = "auth";
+    const el = await mount(ConnectionStatus);
+    const preventDefault = vi.fn();
+    el._listeners.cancel({ preventDefault });
+    expect(preventDefault).toHaveBeenCalled();
+    expect(el.querySelector("#conn-auth-dialog").open).toBe(false);
   });
 });
 

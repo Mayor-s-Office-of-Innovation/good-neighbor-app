@@ -68,6 +68,7 @@ const catalogs = all
       "actions-escalations-v3",
       "actions-escalations-v4",
       "actions-escalations-v5",
+      "actions-escalations-v6",
     ].map((v) => registry.catalogForPolicyVersion(v))
   : [registry.activeCatalog()];
 

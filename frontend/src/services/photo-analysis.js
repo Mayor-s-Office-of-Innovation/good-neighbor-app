@@ -1,3 +1,5 @@
+import { watchDuplicateIssues } from "./duplicate-issues.js";
+import { projectDuplicateTasks } from "../domain/duplicate-issues.js";
 // @ts-nocheck -- matches the surrounding frontend migration baseline.
 /*
   photo-analysis — incremental evidence pipeline for perimeter checks.
@@ -60,6 +62,56 @@ function sessionItem(check, itemId) {
  */
 
 const active = new Set();
+const duplicateWatches = new Map();
+function checkDuplicates(itemId, tasks, analysisId) {
+  if (typeof document === "undefined") return;
+  duplicateWatches.get(itemId)?.();
+  for (const [id, cancel] of duplicateWatches)
+    if (!sessionItem(getCurrentCheck(), id)) {
+      cancel();
+      duplicateWatches.delete(id);
+    }
+  const assessmentId = sessionItem(getCurrentCheck(), itemId)?.analysis
+    ?.assessment?.assessmentId;
+  let pendingLinks = null;
+  const publish = () => {
+    const current = sessionItem(getCurrentCheck(), itemId);
+    if (
+      !current ||
+      current.analysis?.sourceAnalysis?.analysisId !== analysisId ||
+      current.analysis?.assessment?.assessmentId !== assessmentId
+    ) {
+      cancel();
+      duplicateWatches.delete(itemId);
+      return;
+    }
+    if (!pendingLinks || document.querySelector("dialog[open]")) return;
+    const projected = projectDuplicateTasks(tasks, pendingLinks);
+    pendingLinks = null;
+    updateItemAnalysis(itemId, {
+      tasks: tasks.map(
+        (task) =>
+          projected.find((t) => t.taskId === task.taskId) || {
+            ...task,
+            duplicateHidden: true,
+          },
+      ),
+    });
+  };
+  const stop = watchDuplicateIssues(
+    tasks.map((task) => task.taskId),
+    (links) => {
+      pendingLinks = links;
+      publish();
+    },
+  );
+  const cancel = () => {
+    stop();
+    document.removeEventListener("close", publish, true);
+  };
+  document.addEventListener("close", publish, true);
+  duplicateWatches.set(itemId, cancel);
+}
 
 /**
  * @typedef {object} AnswerAnalysisQuestionResult
@@ -294,6 +346,7 @@ function assessmentFromRefreshedAnalysis({
         severityLabel: concern.ratingLabel,
         userFriendlyLabel: concern.userFriendlyLabel,
         description: concern.explanation || "",
+        ...(concern.translations ? { translations: concern.translations } : {}),
         sourceArtifactIds: [artifactId],
         evidenceIndices: concern.evidenceIndices || [],
       })),
@@ -352,6 +405,7 @@ async function evaluateArtifact(checkId, itemId, artifactId) {
     conditions: guidance.conditions || assessment.conditions,
     tasks: guidance.tasks || [],
   });
+  checkDuplicates(itemId, guidance.tasks || [], analysis.analysisId);
 }
 
 /**
@@ -606,6 +660,7 @@ export async function refreshEvidenceAnalysis(itemId, response, opts = {}) {
         }
       : {}),
   });
+  checkDuplicates(itemId, guidance.tasks || [], analysisId);
 }
 
 export async function analyzeNoIssueDescriptionEdit(itemId, text) {
@@ -665,6 +720,7 @@ export async function analyzeNoIssueDescriptionEdit(itemId, text) {
     conditions: guidance.conditions || [],
     tasks: guidance.tasks || [],
   });
+  checkDuplicates(textItem.id, guidance.tasks || [], analysis.analysisId);
   return { status: "problems", artifactId, itemId: textItem.id };
 }
 
@@ -743,6 +799,11 @@ export async function answerAnalysisQuestion(
     tasks: nextTasks,
     assessment: result?.assessmentItem || latestItem.analysis?.assessment,
   });
+  checkDuplicates(
+    itemId,
+    nextTasks,
+    latestItem.analysis?.sourceAnalysis?.analysisId,
+  );
   return result;
 }
 
@@ -858,4 +919,15 @@ async function run(itemId) {
       },
     });
   }
+}
+
+/** Resume independent matching after a human separation restores task identity. */
+export function restartDuplicateChecks(itemId) {
+  const item = sessionItem(getCurrentCheck(), itemId);
+  if (item)
+    checkDuplicates(
+      itemId,
+      item.analysis?.tasks || [],
+      item.analysis?.sourceAnalysis?.analysisId,
+    );
 }

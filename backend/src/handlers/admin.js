@@ -1,3 +1,7 @@
+import { registerPeopleChanges } from "../lib/people.js";
+import { queryAllItems } from "../lib/query-all-items.js";
+import { contactRevisionChange } from "../lib/staff-contact-guard.js";
+import { currentManagerOversight } from "../lib/site-manager-name.js";
 import {
   DeleteCommand,
   GetCommand,
@@ -6,19 +10,17 @@ import {
   TransactWriteCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
-import {
-  AdminAddUserToGroupCommand,
-  AdminCreateUserCommand,
-  AdminGetUserCommand,
-  AdminUpdateUserAttributesCommand,
-  CognitoIdentityProviderClient,
-  ListUsersCommand,
-} from "@aws-sdk/client-cognito-identity-provider";
 import { randomUUID } from "node:crypto";
-import { getConfig, getDynamoTableName } from "../config.js";
+import { getComplianceLetterBucket, getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
-import { deleteObject, headObject, presignPut, setObjectTags } from "../s3.js";
+import {
+  deleteObject,
+  headObject,
+  presignGet,
+  presignPut,
+  setObjectTags,
+} from "../s3.js";
 import { GeocodingError } from "../integrations/census-geocoder.js";
 import {
   geocodeSiteAddress,
@@ -27,166 +29,112 @@ import {
   siteSearchSk,
 } from "../domain/site-metadata.js";
 import {
-  emailHash,
   issueSetupCode,
   normalizeEmail,
-  revokePendingSetupCodes,
   revokePendingSetupCodesForSite,
 } from "./setup-codes.js";
-import { adminOnly } from "../lib/admin-auth.js";
+import {
+  adminOnly,
+  siteAdminOnly,
+  supervisorOnly,
+  authorizeSiteChanges,
+  adminPrincipal,
+  ADMIN_GROUPS,
+} from "../lib/admin-auth.js";
 
-const cognito = new CognitoIdentityProviderClient({});
-
-/** GET /admin/v1/program-managers — directory of Cognito users marked as City program managers. */
+/** GET /admin/v1/program-managers — non-authenticating domain directory. */
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const listCityProgramManagers = (event) =>
   adminOnly(event, async () => {
-    const userPoolId = getConfig().cognitoUserPoolId;
-    if (!userPoolId) {
-      const items = await queryAll({
-        KeyConditionExpression: "pk = :pk",
-        ExpressionAttributeValues: {
-          ":pk": "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
-        },
-      });
-      return jsonResponse(200, {
-        programManagers: items.map(publicProgramManager),
-      });
-    }
-    /** @type {any[]} */
-    const programManagers = [];
-    let paginationToken;
-    do {
-      const result =
-        /** @type {import("@aws-sdk/client-cognito-identity-provider").ListUsersCommandOutput} */ (
-          await cognito.send(
-            new ListUsersCommand({
-              UserPoolId: userPoolId,
-              Limit: 60,
-              ...(paginationToken ? { PaginationToken: paginationToken } : {}),
-            }),
-          )
-        );
-      for (const user of result.Users || []) {
-        const attributes = Object.fromEntries(
-          (user.Attributes || []).map((attribute) => [
-            attribute.Name,
-            attribute.Value,
-          ]),
-        );
-        if (
-          user.Enabled === false ||
-          attributes["custom:program_manager"] !== "true"
-        )
-          continue;
-        const name =
-          [attributes.given_name, attributes.family_name]
-            .filter(Boolean)
-            .join(" ") ||
-          attributes.name ||
-          attributes.email ||
-          user.Username;
-        programManagers.push({
-          userId: attributes.sub || user.Username,
-          name,
-          email: attributes.email || "",
-        });
-      }
-      paginationToken = result.PaginationToken;
-    } while (paginationToken);
-    programManagers.sort((a, b) => a.name.localeCompare(b.name));
-    return jsonResponse(200, { programManagers });
+    const items = await queryAll({
+      KeyConditionExpression: "pk = :pk",
+      ExpressionAttributeValues: {
+        ":pk": "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+      },
+    });
+    return jsonResponse(200, {
+      programManagers: items
+        .filter((item) => item.status !== "inactive")
+        .map(publicProgramManager),
+    });
   });
 
-/** POST /admin/v1/program-managers — invite a Cognito admin marked as a Program manager. */
+/** POST /admin/v1/program-managers — add a Compliance manager directory identity. */
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const createCityProgramManager = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const firstName = cleanText(body.firstName);
     const lastName = cleanText(body.lastName);
     const email = cleanText(body.email).toLowerCase();
+    const phone = normalizePhone(body.phone);
     if (!firstName || !lastName) {
       return jsonResponse(400, { error: "name_required" });
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return jsonResponse(400, { error: "valid_email_required" });
     }
-    const userPoolId = getConfig().cognitoUserPoolId;
-    if (!userPoolId) {
-      const now = new Date().toISOString();
-      const item = {
-        pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
-        sk: `MANAGER#${email}`,
-        type: "cityProgramManager",
-        userId: randomUUID(),
-        firstName,
-        lastName,
-        name: `${firstName} ${lastName}`,
-        email,
-        createdAt: now,
-        updatedAt: now,
-      };
-      await ddb.send(
-        new PutCommand({
-          TableName: getDynamoTableName(),
-          Item: item,
-          ConditionExpression: "attribute_not_exists(pk)",
-        }),
-      );
-      return jsonResponse(201, { programManager: publicProgramManager(item) });
-    }
-    const attributes = [
-      { Name: "email", Value: email },
-      { Name: "email_verified", Value: "true" },
-      { Name: "given_name", Value: firstName },
-      { Name: "family_name", Value: lastName },
-      { Name: "name", Value: `${firstName} ${lastName}` },
-      { Name: "custom:program_manager", Value: "true" },
-    ];
-    try {
-      await cognito.send(
-        new AdminCreateUserCommand({
-          UserPoolId: userPoolId,
-          Username: email,
-          DesiredDeliveryMediums: ["EMAIL"],
-          UserAttributes: attributes,
-        }),
-      );
-    } catch (error) {
-      if (error instanceof Error && error.name === "UsernameExistsException") {
-        await cognito.send(
-          new AdminUpdateUserAttributesCommand({
-            UserPoolId: userPoolId,
-            Username: email,
-            UserAttributes: attributes,
-          }),
-        );
-      } else {
-        throw error;
-      }
-    }
-    await cognito.send(
-      new AdminAddUserToGroupCommand({
-        UserPoolId: userPoolId,
-        Username: email,
-        GroupName: "central-admin",
+    if (!phone) return jsonResponse(400, { error: "valid_phone_required" });
+    const now = new Date().toISOString();
+    const item = {
+      pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+      sk: `MANAGER#${email}`,
+      type: "cityProgramManager",
+      userId: randomUUID(),
+      firstName,
+      lastName,
+      name: `${firstName} ${lastName}`,
+      email,
+      phone,
+      phoneExtension: cleanText(body.phoneExtension),
+      departmentId: cleanText(body.departmentId),
+      departmentName: cleanText(body.departmentName),
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    };
+    await ddb.send(
+      new PutCommand({
+        TableName: getDynamoTableName(),
+        Item: item,
+        ConditionExpression: "attribute_not_exists(pk)",
       }),
     );
-    const user = await cognito.send(
-      new AdminGetUserCommand({ UserPoolId: userPoolId, Username: email }),
-    );
-    const userAttributes = Object.fromEntries(
-      (user.UserAttributes || []).map((attribute) => [
-        attribute.Name,
-        attribute.Value,
-      ]),
-    );
     return jsonResponse(201, {
-      programManager: {
-        userId: userAttributes.sub || user.Username || email,
-        name: `${firstName} ${lastName}`,
-        email,
-      },
+      programManager: publicProgramManager(item),
+    });
+  });
+
+/** PATCH /admin/v1/program-managers/{userId} — update shared contact details. */
+/** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
+export const updateCityProgramManager = (event) =>
+  supervisorOnly(event, async (body) => {
+    const userId = event.pathParameters?.userId ?? "";
+    const phone = normalizePhone(body.phone);
+    if (!phone) return jsonResponse(400, { error: "valid_phone_required" });
+    const items = await queryAll({
+      KeyConditionExpression: "pk = :pk",
+      ExpressionAttributeValues: { ":pk": "ADMIN_DIRECTORY#PROGRAM_MANAGERS" },
+    });
+    const manager = items.find((item) => item.userId === userId);
+    if (!manager)
+      return jsonResponse(404, { error: "program_manager_not_found" });
+    const result = await ddb.send(
+      new UpdateCommand({
+        TableName: getDynamoTableName(),
+        Key: { pk: manager.pk, sk: manager.sk },
+        UpdateExpression: "SET phone = :phone, updatedAt = :now",
+        ConditionExpression: "attribute_exists(pk)",
+        ExpressionAttributeValues: {
+          ":phone": phone,
+          ":now": new Date().toISOString(),
+        },
+        ReturnValues: "ALL_NEW",
+      }),
+    );
+    return jsonResponse(200, {
+      programManager: publicProgramManager(
+        result.Attributes || { ...manager, phone },
+      ),
     });
   });
 
@@ -209,7 +157,7 @@ export const listProviders = (event) =>
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const createProvider = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const name = String(body.name ?? "").trim();
     if (!name) return jsonResponse(400, { error: "name_required" });
     const providerId = slug(body.providerId, name);
@@ -300,7 +248,7 @@ export const updateProvider = (event) =>
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const deactivateProvider = (event) =>
-  adminOnly(event, async () => {
+  supervisorOnly(event, async () => {
     const providerId = event.pathParameters?.providerId ?? "";
     const now = new Date().toISOString();
     const res = await ddb.send(
@@ -331,7 +279,7 @@ export const deactivateProvider = (event) =>
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const createSite = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const providerId = event.pathParameters?.providerId ?? "";
     const name = String(body.name ?? "").trim();
     if (!name) return jsonResponse(400, { error: "name_required" });
@@ -362,6 +310,10 @@ export const createSite = (event) =>
     if (body.publicContact !== undefined && !publicContact) {
       return jsonResponse(400, { error: "invalid_public_contact" });
     }
+    const siteType = normalizeSiteType(body.siteType);
+    if (body.siteType !== undefined && body.siteType !== "" && !siteType) {
+      return jsonResponse(400, { error: "invalid_site_type" });
+    }
     let program = null;
     let primaryContact = null;
     if (leadProgramId) {
@@ -372,11 +324,7 @@ export const createSite = (event) =>
         }),
       );
       program = result.Item;
-      if (
-        !program ||
-        program.status === "inactive" ||
-        program.providerId !== providerId
-      ) {
+      if (!program || program.status === "inactive") {
         return jsonResponse(400, { error: "incompatible_program" });
       }
       if (primaryContactUserId) {
@@ -390,7 +338,7 @@ export const createSite = (event) =>
           }),
         );
         primaryContact = user.Item;
-        if (!primaryContact || primaryContact.status === "inactive") {
+        if (!primaryContact || primaryContact.status !== "active") {
           return jsonResponse(400, { error: "invalid_internal_site_contact" });
         }
       }
@@ -421,6 +369,7 @@ export const createSite = (event) =>
       geocodedAddress: geocoded.matchedAddress,
       ...(addressParts ? { addressParts } : {}),
       ...(publicContact ? { publicContact } : {}),
+      ...(siteType ? { siteType } : {}),
       providerId,
       providerName: provider.Item.name,
       ...(program ? { leadProgramId, programName: String(program.name) } : {}),
@@ -431,6 +380,7 @@ export const createSite = (event) =>
               firstName: primaryContact.firstName,
               lastName: primaryContact.lastName,
               phone: primaryContact.phone,
+              phoneExtension: primaryContact.phoneExtension || "",
               email: primaryContact.email,
             },
           }
@@ -509,7 +459,7 @@ export const createSite = (event) =>
         },
       });
     }
-    if (primaryContact) {
+    if (primaryContact && program) {
       transactItems.push(
         {
           Put: {
@@ -524,6 +474,7 @@ export const createSite = (event) =>
               firstName: primaryContact.firstName,
               lastName: primaryContact.lastName,
               phone: primaryContact.phone,
+              phoneExtension: primaryContact.phoneExtension || "",
               email: primaryContact.email,
               status: "active",
               createdAt: now,
@@ -553,6 +504,13 @@ export const createSite = (event) =>
         },
       );
     }
+    if (primaryContact && program) {
+      transactItems.push(
+        contactRevisionChange(getDynamoTableName(), leadProgramId, program),
+      );
+    }
+    if (primaryContact?.personId)
+      transactItems.push(...(await registerPeopleChanges(transactItems)));
     await ddb.send(
       new TransactWriteCommand({
         TransactItems: transactItems,
@@ -568,6 +526,30 @@ export const createSite = (event) =>
 export const getAdminSite = (event) =>
   adminOnly(event, async () => {
     const siteId = event.pathParameters?.siteId ?? "";
+    if (event.queryStringParameters?.roster === "1") {
+      const tableName = getDynamoTableName();
+      const { Item: site } = await ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { pk: `SITE#${siteId}`, sk: "#META" },
+          ConsistentRead: true,
+        }),
+      );
+      if (!site) return jsonResponse(404, { error: "not_found" });
+      const batches = await Promise.all(
+        ["ASSIGNED_USER#", "MANAGER_MEMBERSHIP#"].map((prefix) =>
+          queryAll({
+            KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+            ExpressionAttributeValues: {
+              ":pk": `SITE#${siteId}`,
+              ":prefix": prefix,
+            },
+            ConsistentRead: true,
+          }),
+        ),
+      );
+      return jsonResponse(200, { items: [site, ...batches.flat()] });
+    }
     const res = await ddb.send(
       new QueryCommand({
         TableName: getDynamoTableName(),
@@ -576,7 +558,79 @@ export const getAdminSite = (event) =>
       }),
     );
     if (!res.Items?.length) return jsonResponse(404, { error: "not_found" });
-    return jsonResponse(200, { items: res.Items });
+    const items = await Promise.all(
+      res.Items.map(async (item) => {
+        if (item.sk === "#META" && item.oversight) {
+          item = {
+            ...item,
+            oversight: await currentManagerOversight(item.oversight),
+          };
+        }
+        if (item.type === "complianceLetterEmail" && item.letter?.s3Key) {
+          const originalEmail = res.Items?.find(
+            (row) =>
+              String(row.sk).startsWith("COMPLIANCE_TERMS#") &&
+              row.termsVersionId === item.letter.termsVersionId,
+          )?.email;
+          const recipients =
+            item.recipients ||
+            (originalEmail
+              ? [
+                  ...new Set(
+                    [originalEmail.to, ...(originalEmail.cc || [])].filter(
+                      Boolean,
+                    ),
+                  ),
+                ]
+              : []);
+          return {
+            ...item,
+            recipients,
+            letter: {
+              ...item.letter,
+              url: await presignGet({
+                bucket: getComplianceLetterBucket(),
+                key: item.letter.s3Key,
+                expiresIn: 300,
+              }),
+            },
+          };
+        }
+        if (item.sk !== "#META" || !item.complianceLetters) return item;
+        /** @param {Record<string, any> | null | undefined} letter */
+        const link = async (letter) => {
+          if (!letter?.s3Key) return letter;
+          const [url, previewUrl] = await Promise.all([
+            presignGet({
+              bucket: getComplianceLetterBucket(),
+              key: letter.s3Key,
+              expiresIn: 300,
+            }),
+            letter.previewS3Key
+              ? presignGet({
+                  bucket: getComplianceLetterBucket(),
+                  key: letter.previewS3Key,
+                  expiresIn: 300,
+                })
+              : Promise.resolve(""),
+          ]);
+          return { ...letter, url, ...(previewUrl ? { previewUrl } : {}) };
+        };
+        return {
+          ...item,
+          complianceLetters: {
+            current: await link(item.complianceLetters.current),
+            past: await Promise.all(
+              (item.complianceLetters.past || []).map(link),
+            ),
+          },
+        };
+      }),
+    );
+    return jsonResponse(200, {
+      items,
+      permissions: { canEdit: !(await authorizeSiteChanges(event, [siteId])) },
+    });
   });
 
 /**
@@ -586,7 +640,7 @@ export const getAdminSite = (event) =>
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const reassignSite = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const providerId = cleanText(body.providerId);
     const leadProgramId = cleanText(body.leadProgramId);
@@ -623,12 +677,40 @@ export const reassignSite = (event) =>
     if (!provider || provider.status === "inactive") {
       return jsonResponse(404, { error: "provider_not_found" });
     }
-    if (
-      !program ||
-      program.status === "inactive" ||
-      program.providerId !== providerId
-    ) {
+    if (!program || program.status === "inactive") {
       return jsonResponse(400, { error: "incompatible_program" });
+    }
+    if (body.expectedUpdatedAt && body.expectedUpdatedAt !== site.updatedAt)
+      return jsonResponse(409, { error: "site_reassignment_conflict" });
+    if (body.preview === true) {
+      const children = await queryAllItems({
+        TableName: tableName,
+        KeyConditionExpression: "pk = :pk",
+        ExpressionAttributeValues: { ":pk": `SITE#${siteId}` },
+        ConsistentRead: true,
+      });
+      return jsonResponse(200, {
+        preview: {
+          updatedAt: site.updatedAt,
+          previousProvider: site.providerName,
+          newProvider: provider.name,
+          previousProgram: site.programName,
+          newProgram: program.name,
+          retainedManagers: (children.Items || [])
+            .filter(
+              (r) =>
+                r.sk.startsWith("MANAGER_MEMBERSHIP#") && r.status === "active",
+            )
+            .map((r) => r.name || r.email),
+          affectedProviderDevices: (children.Items || []).filter(
+            (r) =>
+              r.sk.startsWith("DEVICE_BINDING#") &&
+              r.status === "active" &&
+              r.authorityScope === "provider" &&
+              r.providerId !== providerId,
+          ).length,
+        },
+      });
     }
     if (
       site.providerId === providerId &&
@@ -644,11 +726,14 @@ export const reassignSite = (event) =>
           TableName: tableName,
           Key: { pk: `SITE#${siteId}`, sk: "#META" },
           UpdateExpression:
-            "SET providerId = :providerId, providerName = :providerName, leadProgramId = :programId, programName = :programName, updatedAt = :now REMOVE programMigrationRunId",
+            "SET providerId = :providerId, providerName = :providerName, leadProgramId = :programId, programName = :programName, updatedAt = :now, providerAccessGeneration = :providerGeneration REMOVE programMigrationRunId",
           ConditionExpression: site.updatedAt
             ? "attribute_exists(pk) AND updatedAt = :expectedUpdatedAt"
             : "attribute_exists(pk)",
           ExpressionAttributeValues: {
+            ":providerGeneration":
+              Number(site.providerAccessGeneration || 0) +
+              Number(site.providerId !== providerId),
             ":providerId": providerId,
             ":providerName": provider.name,
             ":programId": leadProgramId,
@@ -665,6 +750,9 @@ export const reassignSite = (event) =>
             pk: `PROVIDER#${providerId}`,
             sk: `SITE#${siteId}`,
             type: "providerSiteMembership",
+            providerAccessGeneration:
+              Number(site.providerAccessGeneration || 0) +
+              Number(site.providerId !== providerId),
             providerId,
             providerName: provider.name,
             siteId,
@@ -739,6 +827,9 @@ export const reassignSite = (event) =>
         ...site,
         providerId,
         providerName: provider.name,
+        providerAccessGeneration:
+          Number(site.providerAccessGeneration || 0) +
+          Number(site.providerId !== providerId),
         leadProgramId,
         programName: program.name,
         updatedAt: now,
@@ -754,7 +845,7 @@ const MAX_COMPLIANCE_LETTER_BYTES = 10 * 1024 * 1024;
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const presignComplianceLetter = (event) =>
-  adminOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const contentType = String(body.contentType ?? "").toLowerCase();
     const size = Number(body.size);
@@ -779,7 +870,7 @@ export const presignComplianceLetter = (event) =>
     }
     const s3Key = `compliance-letters/${siteId}/${randomUUID()}.pdf`;
     const uploadUrl = await presignPut({
-      bucket: getConfig().uploadBucket,
+      bucket: getComplianceLetterBucket(),
       key: s3Key,
       contentType: COMPLIANCE_LETTER_CONTENT_TYPE,
       tagging: "state=pending",
@@ -797,7 +888,7 @@ export const presignComplianceLetter = (event) =>
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const updateSite = (event) =>
-  adminOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const name = String(body.name ?? "").trim();
     if (!name) return jsonResponse(400, { error: "name_required" });
@@ -845,31 +936,41 @@ export const updateSite = (event) =>
     if (body.publicContact !== undefined && !publicContact) {
       return jsonResponse(400, { error: "invalid_public_contact" });
     }
-    const primaryContactUserId =
-      body.primaryContactUserId === undefined
-        ? undefined
-        : String(body.primaryContactUserId || "").trim();
-    /** @type {Record<string, unknown> | undefined} */
-    let selectedPrimaryContact;
-    if (primaryContactUserId) {
-      const assigned = await ddb.send(
-        new GetCommand({
-          TableName: tableName,
-          Key: {
-            pk: `SITE#${siteId}`,
-            sk: `ASSIGNED_USER#${primaryContactUserId}`,
-          },
-        }),
-      );
-      if (!assigned.Item || assigned.Item.programId !== site.leadProgramId) {
-        return jsonResponse(400, { error: "invalid_internal_site_contact" });
-      }
-      selectedPrimaryContact = assigned.Item;
-    }
     const oversight =
       body.oversight === undefined ? null : normalizeOversight(body.oversight);
     if (body.oversight !== undefined && !oversight) {
       return jsonResponse(400, { error: "invalid_oversight" });
+    }
+    const programManagerPhone =
+      body.programManagerPhone === undefined
+        ? undefined
+        : normalizePhone(body.programManagerPhone);
+    if (body.programManagerPhone !== undefined && !programManagerPhone) {
+      return jsonResponse(400, { error: "valid_phone_required" });
+    }
+    /** @type {Record<string, any> | undefined} */
+    let selectedProgramManager;
+    if (
+      programManagerPhone !== undefined &&
+      adminPrincipal(event).role !== ADMIN_GROUPS.supervisor
+    )
+      return jsonResponse(403, { error: "supervisor_required" });
+    if (programManagerPhone !== undefined) {
+      if (!oversight?.cityProgramManagerId) {
+        return jsonResponse(400, { error: "program_manager_required" });
+      }
+      const programManagers = await queryAll({
+        KeyConditionExpression: "pk = :pk",
+        ExpressionAttributeValues: {
+          ":pk": "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+        },
+      });
+      selectedProgramManager = programManagers.find(
+        (item) => item.userId === oversight.cityProgramManagerId,
+      );
+      if (!selectedProgramManager) {
+        return jsonResponse(400, { error: "program_manager_not_found" });
+      }
     }
     const compliance =
       body.compliance === undefined
@@ -877,6 +978,13 @@ export const updateSite = (event) =>
         : normalizeCompliance(body.compliance);
     if (body.compliance !== undefined && !compliance) {
       return jsonResponse(400, { error: "invalid_compliance" });
+    }
+    const siteType =
+      body.siteType === undefined
+        ? undefined
+        : normalizeSiteType(body.siteType);
+    if (body.siteType !== undefined && body.siteType !== "" && !siteType) {
+      return jsonResponse(400, { error: "invalid_site_type" });
     }
     const perimeter =
       body.perimeter === undefined ? null : cleanLongText(body.perimeter);
@@ -922,7 +1030,7 @@ export const updateSite = (event) =>
         return jsonResponse(400, { error: "invalid_compliance_letter" });
       }
       await setObjectTags({
-        bucket: getConfig().uploadBucket,
+        bucket: getComplianceLetterBucket(),
         key: uploadedLetterKey,
         tags: { state: "active" },
       });
@@ -935,11 +1043,9 @@ export const updateSite = (event) =>
       ...(addressParts ? { addressParts } : {}),
       ...(contactPerson ? { contactPerson } : {}),
       ...(publicContact ? { publicContact } : {}),
-      ...(primaryContactUserId !== undefined
-        ? { primaryContactUserId: primaryContactUserId || undefined }
-        : {}),
       ...(oversight ? { oversight } : {}),
       ...(compliance ? { compliance } : {}),
+      ...(siteType !== undefined ? { siteType: siteType || undefined } : {}),
       ...(perimeter !== null ? { perimeter } : {}),
       ...(complianceLetters ? { complianceLetters } : {}),
       ...(geocoded
@@ -985,24 +1091,6 @@ export const updateSite = (event) =>
       setExpressions.push("publicContact = :publicContact");
       expressionAttributeValues[":publicContact"] = publicContact;
     }
-    if (primaryContactUserId !== undefined) {
-      if (primaryContactUserId) {
-        setExpressions.push(
-          "primaryContactUserId = :primaryContactUserId",
-          "primaryContact = :primaryContact",
-        );
-        expressionAttributeValues[":primaryContactUserId"] =
-          primaryContactUserId;
-        expressionAttributeValues[":primaryContact"] = {
-          firstName: selectedPrimaryContact?.firstName || "",
-          lastName: selectedPrimaryContact?.lastName || "",
-          email: selectedPrimaryContact?.email || "",
-          phone: selectedPrimaryContact?.phone || "",
-        };
-      } else {
-        removeExpressions.push("primaryContactUserId", "primaryContact");
-      }
-    }
     if (oversight) {
       setExpressions.push("oversight = :oversight");
       expressionAttributeValues[":oversight"] = oversight;
@@ -1010,6 +1098,14 @@ export const updateSite = (event) =>
     if (compliance) {
       setExpressions.push("compliance = :compliance");
       expressionAttributeValues[":compliance"] = compliance;
+    }
+    if (siteType !== undefined) {
+      if (siteType) {
+        setExpressions.push("siteType = :siteType");
+        expressionAttributeValues[":siteType"] = siteType;
+      } else {
+        removeExpressions.push("siteType");
+      }
     }
     if (perimeter !== null) {
       setExpressions.push("perimeter = :perimeter");
@@ -1037,6 +1133,28 @@ export const updateSite = (event) =>
         },
       },
     ];
+    if (selectedProgramManager && programManagerPhone !== undefined) {
+      transactItems.push({
+        Update: {
+          TableName: tableName,
+          Key: {
+            pk: selectedProgramManager.pk,
+            sk: selectedProgramManager.sk,
+          },
+          UpdateExpression: "SET phone = :phone, updatedAt = :managerNow",
+          ConditionExpression: selectedProgramManager.updatedAt
+            ? "attribute_exists(pk) AND updatedAt = :managerUpdatedAt"
+            : "attribute_exists(pk) AND attribute_not_exists(updatedAt)",
+          ExpressionAttributeValues: {
+            ":phone": programManagerPhone,
+            ":managerNow": now,
+            ...(selectedProgramManager.updatedAt
+              ? { ":managerUpdatedAt": selectedProgramManager.updatedAt }
+              : {}),
+          },
+        },
+      });
+    }
     if (site.providerId) {
       transactItems.push({
         Update: {
@@ -1102,7 +1220,7 @@ export const updateSite = (event) =>
 async function validateComplianceLetterUpload(key) {
   try {
     const object = await headObject({
-      bucket: getConfig().uploadBucket,
+      bucket: getComplianceLetterBucket(),
       key,
     });
     return (
@@ -1122,7 +1240,10 @@ async function validateComplianceLetterUpload(key) {
  */
 async function deleteComplianceLetterUpload(key) {
   try {
-    await deleteObject({ bucket: getConfig().uploadBucket, key });
+    await deleteObject({
+      bucket: getComplianceLetterBucket(),
+      key,
+    });
   } catch (error) {
     console.error("Failed to clean up compliance-letter upload", {
       key,
@@ -1136,7 +1257,7 @@ async function deleteComplianceLetterUpload(key) {
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const deactivateSite = (event) =>
-  adminOnly(event, async () => {
+  supervisorOnly(event, async () => {
     const siteId = event.pathParameters?.siteId ?? "";
     const now = new Date().toISOString();
     const tableName = getDynamoTableName();
@@ -1221,25 +1342,15 @@ export const deactivateSite = (event) =>
     });
   });
 
-export const listMasterContacts = contactLister("MASTER_CONTACT#");
-export const createMasterContact = contactCreator(
-  "MASTER_CONTACT#",
-  "masterContact",
-);
-export const deactivateMasterContact = contactDeactivator("MASTER_CONTACT#");
-export const listCodeContacts = contactLister("CODE_CONTACT#");
-export const createCodeContact = contactCreator("CODE_CONTACT#", "codeContact");
-export const deactivateCodeContact = contactDeactivator("CODE_CONTACT#");
-
 /**
  * POST /admin/v1/sites/{siteId}/setup-codes
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const issueAdminSetupCode = (event) =>
-  adminOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const email = normalizeEmail(String(body.email ?? ""));
-    const accessLevel = body.accessLevel === "admin" ? "admin" : "general";
+    const accessLevel = body.accessLevel === "manager" ? "manager" : "general";
     if (!email) return jsonResponse(400, { error: "email_required" });
     const siteRes = await ddb.send(
       new GetCommand({
@@ -1282,29 +1393,74 @@ export const issueAdminSetupCode = (event) =>
 export const listDevices = (event) =>
   adminOnly(event, async () => {
     const siteId = event.pathParameters?.siteId ?? "";
-    const [bindings, legacyDevices] = await Promise.all([
-      queryAll({
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :binding)",
-        ExpressionAttributeValues: {
-          ":pk": `SITE#${siteId}`,
-          ":binding": "DEVICE_BINDING#",
-        },
-      }),
-      queryAll({
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :device)",
-        ExpressionAttributeValues: {
-          ":pk": `SITE#${siteId}`,
-          ":device": "DEVICE#",
-        },
-      }),
-    ]);
+    const [bindings, legacyDevices, memberships, staffGrants] =
+      await Promise.all([
+        queryAll({
+          KeyConditionExpression: "pk = :pk AND begins_with(sk, :binding)",
+          ExpressionAttributeValues: {
+            ":pk": `SITE#${siteId}`,
+            ":binding": "DEVICE_BINDING#",
+          },
+        }),
+        queryAll({
+          KeyConditionExpression: "pk = :pk AND begins_with(sk, :device)",
+          ExpressionAttributeValues: {
+            ":pk": `SITE#${siteId}`,
+            ":device": "DEVICE#",
+          },
+        }),
+        ...["MANAGER_MEMBERSHIP#", "STAFF_GRANT#"].map((prefix) =>
+          queryAll({
+            KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+            ExpressionAttributeValues: {
+              ":pk": `SITE#${siteId}`,
+              ":prefix": prefix,
+            },
+          }),
+        ),
+      ]);
+    const members = new Map(
+      memberships.map((member) => [member.membershipId, member]),
+    );
+    const grants = new Map(staffGrants.map((grant) => [grant.grantId, grant]));
+    const providerEmails = new Map();
+    for (const binding of bindings) {
+      if (!binding.providerId || !binding.providerMembershipId) continue;
+      const key = `${binding.providerId}/${binding.providerMembershipId}`;
+      if (!providerEmails.has(key)) {
+        const { Item } = await ddb.send(
+          new GetCommand({
+            TableName: getDynamoTableName(),
+            Key: {
+              pk: `PROVIDER#${binding.providerId}`,
+              sk: `PROVIDER_MANAGER#${binding.providerMembershipId}`,
+            },
+          }),
+        );
+        providerEmails.set(key, Item?.email || "");
+      }
+    }
+    /** @param {Record<string, any>} item */
+    const describeDevice = (item) => {
+      const grant = grants.get(item.enrolledByGrantId);
+      return {
+        ...publicDevice(item),
+        managerEmail:
+          item.authorityScope === "provider"
+            ? providerEmails.get(
+                `${item.providerId}/${item.providerMembershipId}`,
+              ) || ""
+            : members.get(item.membershipId)?.email || "",
+        enrolledByEmail: members.get(grant?.issuerMembershipId)?.email || "",
+      };
+    };
     const canonicalIds = new Set(bindings.map((item) => item.bindingId));
     return jsonResponse(200, {
       devices: [
-        ...bindings.map((item) => publicDevice(item)),
+        ...bindings.map(describeDevice),
         ...legacyDevices
           .filter((item) => !canonicalIds.has(item.bindingId ?? item.deviceId))
-          .map((item) => publicDevice({ ...item, legacy: true })),
+          .map((item) => describeDevice({ ...item, legacy: true })),
       ],
     });
   });
@@ -1314,7 +1470,7 @@ export const listDevices = (event) =>
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const revokeDevice = (event) =>
-  adminOnly(event, async () => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async () => {
     const siteId = event.pathParameters?.siteId ?? "";
     const deviceId = event.pathParameters?.deviceId ?? "";
     const tableName = getDynamoTableName();
@@ -1451,30 +1607,6 @@ async function revokeLegacyDevice(tableName, siteId, deviceId) {
   }
 }
 
-/**
- * @param {string} prefix
- * @returns {import("aws-lambda").APIGatewayProxyHandlerV2}
- */
-function contactLister(prefix) {
-  return /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */ (
-    (event) =>
-      adminOnly(event, async () => {
-        const siteId = event.pathParameters?.siteId ?? "";
-        const res = await ddb.send(
-          new QueryCommand({
-            TableName: getDynamoTableName(),
-            KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-            ExpressionAttributeValues: {
-              ":pk": `SITE#${siteId}`,
-              ":prefix": prefix,
-            },
-          }),
-        );
-        return jsonResponse(200, { contacts: res.Items ?? [] });
-      })
-  );
-}
-
 /** @param {unknown} value */
 function normalizeAddressParts(value) {
   if (!value || typeof value !== "object") return null;
@@ -1555,6 +1687,7 @@ function normalizePublicContact(value) {
     return null;
   return {
     email,
+    phoneExtension: cleanText(input.phoneExtension).slice(0, 20),
     phone: nationalPhone
       ? `${nationalPhone.slice(0, 3)}-${nationalPhone.slice(3, 6)}-${nationalPhone.slice(6)}`
       : "",
@@ -1587,14 +1720,11 @@ function normalizeOversight(value) {
 function normalizeCompliance(value) {
   if (!value || typeof value !== "object") return null;
   const input = /** @type {Record<string, unknown>} */ (value);
-  const currentTier = Number(input.currentTier);
+  const underEnhancedMonitoring = input.underEnhancedMonitoring === true;
   const periodStart = cleanText(input.periodStart);
   const periodEnd = cleanText(input.periodEnd);
   const requiredChecksPerDay = Number(input.requiredChecksPerDay);
   if (
-    !Number.isInteger(currentTier) ||
-    currentTier < 1 ||
-    currentTier > 4 ||
     !isIsoDate(periodStart) ||
     (periodEnd && (!isIsoDate(periodEnd) || periodEnd < periodStart)) ||
     !Number.isInteger(requiredChecksPerDay) ||
@@ -1604,7 +1734,7 @@ function normalizeCompliance(value) {
     return null;
   }
   return {
-    currentTier,
+    underEnhancedMonitoring,
     periodStart,
     periodEnd,
     requiredChecksPerDay,
@@ -1657,13 +1787,40 @@ function cleanText(value) {
 function publicProgramManager(item) {
   return {
     userId: String(item.userId || ""),
+    firstName: cleanText(item.firstName),
+    lastName: cleanText(item.lastName),
     name:
       cleanText(item.name) ||
       [cleanText(item.firstName), cleanText(item.lastName)]
         .filter(Boolean)
         .join(" "),
     email: cleanText(item.email),
+    phone: cleanText(item.phone),
+    phoneExtension: cleanText(item.phoneExtension),
+    departmentId: cleanText(item.departmentId),
+    departmentName: cleanText(item.departmentName),
+    accountStatus: cleanText(item.cognitoSubject) ? "linked" : "not-invited",
   };
+}
+
+/** @param {unknown} value */
+function normalizePhone(value) {
+  const digits = cleanText(value).replace(/\D/g, "");
+  const national =
+    digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  return national.length === 10
+    ? `${national.slice(0, 3)}-${national.slice(3, 6)}-${national.slice(6)}`
+    : "";
+}
+
+/** @param {unknown} value */
+function normalizeSiteType(value) {
+  const siteType = cleanText(value);
+  return ["permanent_supportive_housing", "shelter", "drop_in"].includes(
+    siteType,
+  )
+    ? siteType
+    : "";
 }
 
 /** @param {unknown} value */
@@ -1697,78 +1854,6 @@ function normalizeAddress(value) {
   const address =
     typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
   return address.length >= 3 && address.length <= 240 ? address : "";
-}
-
-/**
- * @param {string} prefix
- * @param {string} type
- * @returns {import("aws-lambda").APIGatewayProxyHandlerV2}
- */
-function contactCreator(prefix, type) {
-  return /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */ (
-    (event) =>
-      adminOnly(event, async (body) => {
-        const siteId = event.pathParameters?.siteId ?? "";
-        const email = normalizeEmail(String(body.email ?? ""));
-        if (!email) return jsonResponse(400, { error: "email_required" });
-        const now = new Date().toISOString();
-        const hash = await emailHash(email);
-        const item = {
-          pk: `SITE#${siteId}`,
-          sk: `${prefix}${hash}`,
-          type,
-          email,
-          emailHash: hash,
-          name: String(body.name ?? "").trim() || undefined,
-          siteId,
-          status: "active",
-          createdAt: now,
-          updatedAt: now,
-        };
-        await ddb.send(
-          new PutCommand({
-            TableName: getDynamoTableName(),
-            Item: item,
-          }),
-        );
-        return jsonResponse(201, { contact: item });
-      })
-  );
-}
-
-/**
- * @param {string} prefix
- * @returns {import("aws-lambda").APIGatewayProxyHandlerV2}
- */
-function contactDeactivator(prefix) {
-  return /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */ (
-    (event) =>
-      adminOnly(event, async () => {
-        const siteId = event.pathParameters?.siteId ?? "";
-        const hash = event.pathParameters?.emailHash ?? "";
-        const now = new Date().toISOString();
-        const res = await ddb.send(
-          new UpdateCommand({
-            TableName: getDynamoTableName(),
-            Key: { pk: `SITE#${siteId}`, sk: `${prefix}${hash}` },
-            UpdateExpression: "SET #status = :inactive, updatedAt = :now",
-            ConditionExpression: "attribute_exists(pk)",
-            ExpressionAttributeNames: { "#status": "status" },
-            ExpressionAttributeValues: {
-              ":inactive": "inactive",
-              ":now": now,
-            },
-            ReturnValues: "ALL_NEW",
-          }),
-        );
-        await revokePendingSetupCodes({
-          siteId,
-          contactHash: hash,
-          reason: "contact_removed",
-        });
-        return jsonResponse(200, { contact: res.Attributes });
-      })
-  );
 }
 
 /**

@@ -1,6 +1,9 @@
 /**
  * @typedef {object} AppConfig
  * @property {string} uploadBucket
+ * @property {string} [complaintBucket]
+ * @property {string} [complianceLetterBucket]
+ * @property {string} [analysisQueueUrl]
  * @property {string} queueUrl
  * @property {string} dynamoTable
  * @property {string} [cognitoUserPoolId]
@@ -11,6 +14,7 @@
  * @property {string} [posthogApiKeySecretArn]
  * @property {string} [posthogFeedbackSurveyId]
  * @property {string} [posthogFeedbackQuestionId]
+ * @property {string} [sf311MediaBaseUrl]
  * @property {string} [sf311CreateSrUrl]
  * @property {string} [sf311UpdateSrUrl]
  * @property {string} [sf311AgencyLookupUrl]
@@ -41,6 +45,13 @@ export function getConfig(env = process.env) {
   }
 
   const config = /** @type {AppConfig} */ (required);
+  if (env.ANALYSIS_QUEUE_URL) config.analysisQueueUrl = env.ANALYSIS_QUEUE_URL;
+  if (env.S3_COMPLAINT_BUCKET) {
+    config.complaintBucket = env.S3_COMPLAINT_BUCKET;
+  }
+  if (env.S3_COMPLIANCE_LETTER_BUCKET) {
+    config.complianceLetterBucket = env.S3_COMPLIANCE_LETTER_BUCKET;
+  }
   if (env.COGNITO_USER_POOL_ID)
     config.cognitoUserPoolId = env.COGNITO_USER_POOL_ID;
   if (env.REVERSE_GEOCODING_ENABLED === "true") {
@@ -78,6 +89,8 @@ export function getConfig(env = process.env) {
     config.posthogFeedbackQuestionId = env.FEEDBACK_QUESTION_ID;
   }
 
+  if (env.SF311_MEDIA_BASE_URL)
+    config.sf311MediaBaseUrl = env.SF311_MEDIA_BASE_URL;
   if (env.SF311_CREATESR_URL) config.sf311CreateSrUrl = env.SF311_CREATESR_URL;
   if (env.SF311_UPDATESR_URL) config.sf311UpdateSrUrl = env.SF311_UPDATESR_URL;
   if (env.SF311_AGENCY_LOOKUP_URL) {
@@ -104,6 +117,37 @@ export function getConfig(env = process.env) {
   }
 
   return config;
+}
+
+/**
+ * Complaint evidence has a one-year retention boundary and must never fall
+ * back to the 30-day check-photo bucket.
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string}
+ */
+export function getComplaintBucket(env = process.env) {
+  if (!env.S3_COMPLAINT_BUCKET) {
+    throw new Error(
+      "Missing required environment variable for complaintBucket",
+    );
+  }
+  return env.S3_COMPLAINT_BUCKET;
+}
+
+/**
+ * Compliance letters must never silently fall back to the expiring media
+ * bucket. This validation stays scoped to letter operations so unrelated
+ * commands do not need letter storage configured.
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string}
+ */
+export function getComplianceLetterBucket(env = process.env) {
+  if (!env.S3_COMPLIANCE_LETTER_BUCKET) {
+    throw new Error(
+      "Missing required environment variable for complianceLetterBucket",
+    );
+  }
+  return env.S3_COMPLIANCE_LETTER_BUCKET;
 }
 
 /**

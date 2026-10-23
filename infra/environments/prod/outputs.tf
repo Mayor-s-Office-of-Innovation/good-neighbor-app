@@ -3,6 +3,11 @@ output "frontend_bucket_name" {
   value       = module.app.frontend_bucket_name
 }
 
+output "compliance_letter_bucket_name" {
+  description = "S3 bucket for durable compliance-letter PDFs and previews."
+  value       = module.app.compliance_letter_bucket_name
+}
+
 output "submission_queue_url" {
   description = "SQS queue URL for offline submissions."
   value       = module.app.submission_queue_url
@@ -56,4 +61,24 @@ output "cognito_user_pool_id" {
 output "cognito_managed_login_domain" {
   description = "Cognito managed-login domain for admin OAuth redirects."
   value       = module.app.cognito_managed_login_domain
+}
+
+output "city_smtp_relay_secret_arn" {
+  description = "Secret container for the City Proofpoint username/password."
+  value       = module.app.city_smtp_relay_secret_arn
+}
+
+output "mail_manager_ingress_secret_arn" {
+  description = "Secret container for the Mail Manager SMTP ingress password."
+  value       = module.app.mail_manager_ingress_secret_arn
+}
+
+output "mail_manager_ingress_hostname" {
+  description = "Authenticated Mail Manager SMTP hostname after relay enablement."
+  value       = module.app.mail_manager_ingress_hostname
+}
+
+output "mail_manager_ingress_username" {
+  description = "Authenticated Mail Manager SMTP username after relay enablement."
+  value       = module.app.mail_manager_ingress_username
 }

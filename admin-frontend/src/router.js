@@ -1,4 +1,8 @@
 const ROUTES = [
+  ["provider-manager", /^\/provider-managers\/([^/]+)\/([^/]+)\/?$/],
+  ["provider-managers", /^\/provider-managers\/?$/],
+  ["profile", /^\/profile\/?$/],
+  ["administrators", /^\/administrators\/?$/],
   ["manager-new", /^\/managers\/new\/?$/],
   ["manager", /^\/managers\/([^/]+)\/?$/],
   ["managers", /^\/managers\/?$/],
@@ -18,7 +22,12 @@ export function currentRoute() {
   const path = window.location.pathname;
   for (const [name, pattern] of ROUTES) {
     const match = pattern.exec(path);
-    if (match) return { name, id: match[1] || "" };
+    if (match)
+      return {
+        name,
+        id: match[1] || "",
+        ...(match[2] ? { membershipId: match[2] } : {}),
+      };
   }
   return { name: "sites", id: "" };
 }

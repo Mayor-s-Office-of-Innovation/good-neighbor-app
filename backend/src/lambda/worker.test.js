@@ -1,17 +1,27 @@
+const { expireComplianceTerms } = vi.hoisted(() => ({
+  expireComplianceTerms: vi.fn(),
+}));
+vi.mock("../workers/expire-compliance-terms.js", () => ({
+  expireComplianceTerms,
+}));
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Mock both underlying workers so we assert only which one the dispatcher routes
+// Mock the underlying workers so we assert only which one the dispatcher routes
 // a message to, by its shape — not what the worker itself does.
 const {
   processSubmission,
   analyzeArtifact,
   reconcileSiteRevocation,
   dispatchRevocationOutbox,
+  generateComplianceLetter,
+  translateArtifact,
 } = vi.hoisted(() => ({
   processSubmission: vi.fn(async () => {}),
   analyzeArtifact: vi.fn(async () => {}),
   reconcileSiteRevocation: vi.fn(async () => {}),
   dispatchRevocationOutbox: vi.fn(async () => {}),
+  generateComplianceLetter: vi.fn(async () => {}),
+  translateArtifact: vi.fn(async () => {}),
 }));
 vi.mock("../workers/process-submission.js", () => ({
   handler: processSubmission,
@@ -22,6 +32,12 @@ vi.mock("../workers/reconcile-site-revocation.js", () => ({
 }));
 vi.mock("../workers/dispatch-revocation-outbox.js", () => ({
   handler: dispatchRevocationOutbox,
+}));
+vi.mock("../workers/generate-compliance-letter.js", () => ({
+  handler: generateComplianceLetter,
+}));
+vi.mock("../workers/translate-artifact.js", () => ({
+  handler: translateArtifact,
 }));
 
 const { handler } = await import("./worker.js");
@@ -42,13 +58,89 @@ describe("worker dispatch (pickHandler)", () => {
     analyzeArtifact.mockClear();
     reconcileSiteRevocation.mockClear();
     dispatchRevocationOutbox.mockClear();
+    generateComplianceLetter.mockClear();
+    translateArtifact.mockClear();
+  });
+
+  it("exposes a promise handler accepted by the Node.js 24 runtime", async () => {
+    expect(handler.length).toBeLessThan(3);
+    await expect(
+      handler({ Records: [] }, /** @type {any} */ ({})),
+    ).resolves.toEqual({
+      batchItemFailures: [],
+    });
+  });
+
+  it("reports only failed records for SQS retry", async () => {
+    analyzeArtifact.mockRejectedValueOnce(new Error("analyzer unavailable"));
+    const result = await handler(
+      /** @type {any} */ ({
+        Records: [
+          {
+            messageId: "failed",
+            body: JSON.stringify({ artifactId: "a1", text: "trash" }),
+          },
+          {
+            messageId: "ok",
+            body: JSON.stringify({ requestId: "r1", body: "{}" }),
+          },
+        ],
+      }),
+      /** @type {any} */ ({}),
+    );
+    expect(result).toEqual({
+      batchItemFailures: [{ itemIdentifier: "failed" }],
+    });
+    expect(processSubmission).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves returned partial failures while acknowledging successful records", async () => {
+    analyzeArtifact.mockResolvedValueOnce(
+      /** @type {any} */ ({
+        batchItemFailures: [{ itemIdentifier: "failed" }],
+      }),
+    );
+    const result = await handler(
+      /** @type {any} */ ({
+        Records: [
+          {
+            messageId: "failed",
+            body: JSON.stringify({ artifactId: "a1", text: "trash" }),
+          },
+          {
+            messageId: "ok",
+            body: JSON.stringify({ artifactId: "a2", text: "clear" }),
+          },
+        ],
+      }),
+      /** @type {any} */ ({}),
+    );
+    expect(result).toEqual({
+      batchItemFailures: [{ itemIdentifier: "failed" }],
+    });
+  });
+
+  it("routes a translate_artifact message to the translate worker", async () => {
+    await handler(
+      event({
+        type: "translate_artifact",
+        siteId: "s1",
+        checkId: "c1",
+        artifactId: "a1",
+        items: [{ user_friendly_label: "Trash", description: "Bags" }],
+      }),
+      /** @type {any} */ ({}),
+    );
+    expect(translateArtifact).toHaveBeenCalledTimes(1);
+    expect(generateComplianceLetter).not.toHaveBeenCalled();
+    expect(analyzeArtifact).not.toHaveBeenCalled();
+    expect(processSubmission).not.toHaveBeenCalled();
   });
 
   it("routes a photo artifact (s3Key) to the analyze worker", async () => {
     await handler(
       event({ checkId: "c1", artifactId: "a1", s3Key: "k" }),
       /** @type {any} */ ({}),
-      () => {},
     );
     expect(analyzeArtifact).toHaveBeenCalledTimes(1);
     expect(processSubmission).not.toHaveBeenCalled();
@@ -61,7 +153,6 @@ describe("worker dispatch (pickHandler)", () => {
     await handler(
       event({ checkId: "c1", artifactId: "a1", text: "trash" }),
       /** @type {any} */ ({}),
-      () => {},
     );
     expect(analyzeArtifact).toHaveBeenCalledTimes(1);
     expect(processSubmission).not.toHaveBeenCalled();
@@ -71,7 +162,6 @@ describe("worker dispatch (pickHandler)", () => {
     await handler(
       event({ requestId: "r1", subject: "s", body: "{}" }),
       /** @type {any} */ ({}),
-      () => {},
     );
     expect(processSubmission).toHaveBeenCalledTimes(1);
     expect(analyzeArtifact).not.toHaveBeenCalled();
@@ -81,11 +171,21 @@ describe("worker dispatch (pickHandler)", () => {
     await handler(
       event({ type: "reconcile_site_revocation", operationId: "operation-1" }),
       /** @type {any} */ ({}),
-      () => {},
     );
     expect(reconcileSiteRevocation).toHaveBeenCalledTimes(1);
     expect(processSubmission).not.toHaveBeenCalled();
     expect(analyzeArtifact).not.toHaveBeenCalled();
+  });
+
+  it("routes compliance-letter jobs to the letter worker", async () => {
+    await handler(
+      event({ type: "generate_compliance_letter", siteId: "site-1" }),
+      /** @type {any} */ ({}),
+    );
+    expect(generateComplianceLetter).toHaveBeenCalledTimes(1);
+    expect(translateArtifact).not.toHaveBeenCalled();
+    expect(analyzeArtifact).not.toHaveBeenCalled();
+    expect(processSubmission).not.toHaveBeenCalled();
   });
 
   it("routes DynamoDB stream records to the revocation outbox dispatcher", async () => {
@@ -100,10 +200,14 @@ describe("worker dispatch (pickHandler)", () => {
         ],
       }),
       /** @type {any} */ ({}),
-      () => {},
     );
 
     expect(dispatchRevocationOutbox).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ batchItemFailures: [] });
   });
+});
+
+it("routes scheduled expiry invocations without expecting SQS records", async () => {
+  await handler({ type: "expire_compliance_terms" }, /** @type {any} */ ({}));
+  expect(expireComplianceTerms).toHaveBeenCalledTimes(1);
 });

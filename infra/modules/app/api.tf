@@ -18,13 +18,20 @@ locals {
     "POST /app/v1/manager-access/request",
     "GET /app/v1/device-bindings",
     "POST /app/v1/device-bindings/select",
+    # Home Screen session handoff (notes/pwa-session-handoff-plan.md): issue
+    # is authorized; redeem is open (listed in route_is_open below).
+    "POST /app/v1/session-handoff",
+    "DELETE /app/v1/session-handoff",
+    "POST /app/v1/session-handoff/redeem",
     "POST /app/v1/manager/staff-grants",
     "GET /app/v1/manager/staff-grants/current",
     "DELETE /app/v1/manager/staff-grants/{grantId}",
     "GET /app/v1/manager/device-bindings",
     "POST /app/v1/manager/device-bindings/{bindingId}/revoke",
+    "GET /app/v1/manager/reports/checks",
+    "GET /app/v1/manager/reports/tasks",
+    "GET /app/v1/manager/reports/task-updates",
     "GET /v1/sites:search",
-    "POST /v1/setup-codes:request",
     # Site config
     "GET /v1/site",
     "GET /v1/site-admin",
@@ -33,16 +40,36 @@ locals {
     # Everything below is authorizer-protected (except /health + the intakes).
     "POST /v1/checks",
     "GET /v1/checks",
+    "GET /v1/checks:capture-guidance",
     "POST /v1/checks/{checkId}/artifacts:presign",
     "POST /v1/checks/{checkId}/artifacts",
     "DELETE /v1/checks/{checkId}/artifacts/{artifactId}",
     "POST /v1/checks/{checkId}/complete",
     "GET /v1/checks/{checkId}/artifacts/{artifactId}/media",
+    "GET /v1/checks/{checkId}/artifacts/{artifactId}/duplicates",
     "GET /v1/checks/{checkId}",
+    "GET /v1/care-work",
+    "POST /v1/care-work",
+    "GET /v1/care-work/{workId}",
+    "POST /v1/care-work/{workId}/photos:presign",
+    "GET /v1/care-work/{workId}/photos/{photoId}/media",
+    "GET /v1/complaints",
+    "POST /v1/complaints",
+    "GET /v1/complaints/{complaintId}",
+    "DELETE /v1/complaints/{complaintId}",
+    "POST /v1/complaints/{complaintId}/analysis:retry",
+    "POST /v1/complaints/{complaintId}/artifacts:presign",
+    "POST /v1/complaints/{complaintId}/artifacts",
+    "DELETE /v1/complaints/{complaintId}/artifacts/{artifactId}",
+    "GET /v1/complaints/{complaintId}/artifacts/{artifactId}/media",
     "GET /v1/tasks",
+    "POST /v1/duplicates:batch",
+    "POST /v1/tasks/{taskId}/duplicate:separate",
+    "GET /v1/tasks/{taskId}/details",
+    "PATCH /v1/tasks/{taskId}/action",
+    "POST /v1/tasks/{taskId}/custom-action",
     "POST /v1/311-requests:batch",
     "POST /v1/tasks/{taskId}/complete",
-    "POST /v1/tasks/{taskId}/cannot-do",
     "GET /v1/tasks/{taskId}/updates",
     "POST /v1/tasks/{taskId}/updates",
     "POST /v1/tasks/{taskId}/updates/{updateId}/document",
@@ -55,6 +82,16 @@ locals {
     "POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}/reject",
     "POST /submissions",
     "GET /admin/v1/providers",
+    "GET /admin/v1/session",
+    "GET /admin/v1/profile",
+    "PUT /admin/v1/profile",
+    "GET /admin/v1/admin-users",
+    "POST /admin/v1/admin-users",
+    "PUT /admin/v1/admin-users/{username}/role",
+    "POST /admin/v1/admin-users/{username}/suspend",
+    "POST /admin/v1/admin-users/{username}/reinstate",
+    "POST /admin/v1/admin-users/{username}/reinvite",
+    "POST /admin/v1/admin-users/{username}/reset-password",
     "POST /admin/v1/providers",
     "GET /admin/v1/providers/{providerId}",
     "PATCH /admin/v1/providers/{providerId}",
@@ -62,14 +99,21 @@ locals {
     "GET /admin/v1/programs",
     "GET /admin/v1/program-managers",
     "POST /admin/v1/program-managers",
+    "PATCH /admin/v1/program-managers/{userId}",
     "GET /admin/v1/oversight-options",
     "POST /admin/v1/oversight-options",
     "POST /admin/v1/address-suggestions",
     "POST /admin/v1/programs",
+    "GET /admin/v1/people",
+    "POST /admin/v1/people",
+    "PATCH /admin/v1/people/{personId}",
+    "POST /admin/v1/people/{personId}/devices:revoke",
+    "POST /admin/v1/providers/{providerId}/manager-memberships/{membershipId}/transfer",
     "GET /admin/v1/programs/{programId}",
     "PATCH /admin/v1/programs/{programId}",
     "DELETE /admin/v1/programs/{programId}",
     "POST /admin/v1/programs/{programId}/users",
+    "POST /admin/v1/programs/{programId}/users/{userId}/devices:revoke",
     "PATCH /admin/v1/programs/{programId}/users/{userId}",
     "DELETE /admin/v1/programs/{programId}/users/{userId}",
     "POST /admin/v1/providers/{providerId}/programs",
@@ -78,8 +122,11 @@ locals {
     "POST /admin/v1/sites/{siteId}/reassign",
     "POST /admin/v1/sites/{siteId}/users",
     "DELETE /admin/v1/sites/{siteId}/users/{userId}",
+    "PUT /admin/v1/sites/{siteId}/compliance-managers",
     "GET /admin/v1/sites/{siteId}/terms",
     "POST /admin/v1/sites/{siteId}/terms",
+    "POST /admin/v1/sites/{siteId}/terms:close",
+    "POST /admin/v1/sites/{siteId}/letter:resend",
     "GET /admin/v1/sites/{siteId}/perimeter",
     "PUT /admin/v1/sites/{siteId}/perimeter",
     "GET /admin/v1/sites/{siteId}/manager-memberships",
@@ -89,6 +136,15 @@ locals {
     "GET /admin/v1/sites/{siteId}/grants",
     "POST /admin/v1/sites/{siteId}/manager-grants",
     "DELETE /admin/v1/sites/{siteId}/grants/{grantId}",
+    "GET /admin/v1/providers/{providerId}/manager-memberships",
+    "POST /admin/v1/providers/{providerId}/manager-memberships",
+    "PATCH /admin/v1/providers/{providerId}/manager-memberships/{membershipId}",
+    "DELETE /admin/v1/providers/{providerId}/manager-memberships/{membershipId}",
+    "POST /admin/v1/providers/{providerId}/manager-memberships/{membershipId}/reinstate",
+    "GET /admin/v1/providers/{providerId}/grants",
+    "POST /admin/v1/providers/{providerId}/manager-grants",
+    "DELETE /admin/v1/providers/{providerId}/grants/{grantId}",
+    "POST /admin/v1/providers/{providerId}/manager-enrollments/{enrollmentId}/revoke",
     "POST /admin/v1/site-imports/preview",
     "GET /admin/v1/site-imports",
     "POST /admin/v1/site-imports/{importId}/apply",
@@ -97,12 +153,6 @@ locals {
     "PATCH /admin/v1/sites/{siteId}",
     "POST /admin/v1/sites/{siteId}/compliance-letters:presign",
     "DELETE /admin/v1/sites/{siteId}",
-    "GET /admin/v1/sites/{siteId}/master-contacts",
-    "POST /admin/v1/sites/{siteId}/master-contacts",
-    "DELETE /admin/v1/sites/{siteId}/master-contacts/{emailHash}",
-    "GET /admin/v1/sites/{siteId}/code-contacts",
-    "POST /admin/v1/sites/{siteId}/code-contacts",
-    "DELETE /admin/v1/sites/{siteId}/code-contacts/{emailHash}",
     "POST /admin/v1/sites/{siteId}/setup-codes",
     "GET /admin/v1/sites/{siteId}/devices",
     "DELETE /admin/v1/sites/{siteId}/devices/{deviceId}",
@@ -115,6 +165,7 @@ locals {
     "POST /admin/v1/emergency-site-revocations:preview",
     "POST /admin/v1/emergency-site-revocations",
     "GET /health",
+    "GET /v1/311-media",
   ]
 
   # Admin analytics (ADR 0013): served by aws_lambda_function.analytics_query,
@@ -144,9 +195,10 @@ locals {
     "POST /v1/devices"                    = true
     "POST /v1/devices/token:refresh"      = true
     "POST /app/v1/enrollment/redeem"      = true
+    "POST /app/v1/session-handoff/redeem" = true
     "POST /app/v1/manager-access/request" = true
     "GET /v1/sites:search"                = true
-    "POST /v1/setup-codes:request"        = true
+    "GET /v1/311-media"                   = true
     "GET /health"                         = true
     "POST /submissions"                   = true
   }
@@ -205,8 +257,12 @@ resource "aws_apigatewayv2_integration" "analytics_query" {
 # Device-token REQUEST authorizer (Option 4 device auth). Verifies the Bearer
 # JWT + DEVICE# revocation state (backend/src/lambda/authorizer.js) and injects
 # the claim-shaped context handlers read. Identity source = the Authorization
-# header. Results are deliberately not cached: device revocation is a security
-# boundary and must take effect on the next request.
+# header, which is also the cache key: a verdict is reused for 60 s per access
+# token, so one /today load (dozens of gated calls) runs the authorizer once or
+# twice instead of every time (~55 ms warm and 2–3 DynamoDB reads per uncached
+# call). The cost is that device revocation, suspension, Site deactivation and
+# membership removal take up to 60 s to bite instead of the next request; the
+# access token itself still expires after 15 min regardless (ADR 0010).
 resource "aws_apigatewayv2_authorizer" "device_token" {
   api_id                            = aws_apigatewayv2_api.http.id
   name                              = "${local.name_prefix}-device-token"
@@ -218,7 +274,7 @@ resource "aws_apigatewayv2_authorizer" "device_token" {
   # context }) — without this flag API Gateway expects an IAM policy and
   # rejects the verdict at runtime.
   enable_simple_responses          = true
-  authorizer_result_ttl_in_seconds = 0
+  authorizer_result_ttl_in_seconds = 60
 }
 
 resource "aws_apigatewayv2_route" "routes" {
@@ -286,11 +342,19 @@ resource "aws_apigatewayv2_stage" "default" {
   name        = "$default"
   auto_deploy = true
 
+  # Privacy: the viewer IP ($context.identity.sourceIp) is deliberately NOT
+  # logged. Per-caller correlation during investigations uses the device
+  # authorizer's pseudonymous subject and site (flat context keys the Lambda
+  # authorizer returns) on device routes, and the Cognito user sub from the
+  # JWT authorizer's claims on admin routes; each is blank on the other's
+  # routes. Unauthenticated routes correlate by requestId.
   access_log_settings {
     destination_arn = aws_cloudwatch_log_group.api_gw.arn
     format = jsonencode({
       requestId       = "$context.requestId"
-      ip              = "$context.identity.sourceIp"
+      sub             = "$context.authorizer.sub"
+      siteId          = "$context.authorizer.siteId"
+      adminSub        = "$context.authorizer.claims.sub"
       requestTime     = "$context.requestTime"
       httpMethod      = "$context.httpMethod"
       routeKey        = "$context.routeKey"

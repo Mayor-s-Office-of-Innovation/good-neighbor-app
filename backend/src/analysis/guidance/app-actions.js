@@ -1,6 +1,7 @@
 import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../../db.js";
-import { getObjectBytes, presignGet } from "../../s3.js";
+import { getObjectBytes } from "../../s3.js";
+import { create311MediaLink } from "../../integrations/sf311-media.js";
 import { downscaleImage } from "../../media/downscale.js";
 import { getAnalyzerApiKey } from "../api-key.js";
 import { createAnalyzerClient } from "../analyzer-client.js";
@@ -9,7 +10,7 @@ import {
   buildAttachmentUpdatePayload,
   buildCloseSrPayload,
   buildCreateSrPayload,
-  CLOSE_REASON_FIELD_WORK_COMPLETED,
+  SILENT_TICKET_CLOSED_REASON,
   createSf311Client,
   GOOD_NEIGHBOR_AGENCY,
   Sf311Error,
@@ -19,7 +20,10 @@ import {
   parseServiceCodeOrAction,
   serviceCodesForClassifierLabels,
 } from "../../integrations/sf311-service-codes.js";
-import { serviceRequestClosureState } from "../../integrations/sf311-status.js";
+import {
+  serviceRequestClosureReason,
+  serviceRequestClosureState,
+} from "../../integrations/sf311-status.js";
 import {
   checkArtifactPrefix,
   siteMetaKey,
@@ -487,10 +491,9 @@ async function attachImagesToServiceRequest({
       continue;
     }
     try {
-      const imageUrl = await presignGet({
-        bucket: config.uploadBucket,
+      const imageUrl = await create311MediaLink({
+        config,
         key: artifact.s3Key,
-        expiresIn: 300,
       });
       const payload = buildAttachmentUpdatePayload({
         srNum,
@@ -758,7 +761,7 @@ export function eligibleTicketsForClosure(priorResults) {
       }
       eligible.set(serviceCode, {
         ticket,
-        closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+        closedReasonCode: SILENT_TICKET_CLOSED_REASON,
       });
     }
   }
@@ -852,7 +855,7 @@ async function execute311ClosureAction({
         closures: [...eligible].map(([serviceCode, { ticket }]) => ({
           serviceCode,
           srNum: String(ticket.srNum),
-          closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+          closedReasonCode: SILENT_TICKET_CLOSED_REASON,
           status: "failed",
           reason: "sf311_closure_reconciliation_failed",
         })),
@@ -902,10 +905,14 @@ async function execute311ClosureAction({
         String(ticket.srNum),
       );
       if (closureState === "closed") {
+        const closedReasonCode = serviceRequestClosureReason(
+          latestUpdates,
+          String(ticket.srNum),
+        );
         closures.push({
           serviceCode,
           srNum: String(ticket.srNum),
-          closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+          ...(closedReasonCode ? { closedReasonCode } : {}),
           status: "closed",
           reconciled: true,
         });
@@ -916,7 +923,7 @@ async function execute311ClosureAction({
         closures.push({
           serviceCode,
           srNum: String(ticket.srNum),
-          closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+          closedReasonCode: SILENT_TICKET_CLOSED_REASON,
           status: "failed",
           reason: "sf311_closure_state_unknown",
         });
@@ -932,7 +939,7 @@ async function execute311ClosureAction({
       closures.push({
         serviceCode,
         srNum: String(ticket.srNum),
-        closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+        closedReasonCode: SILENT_TICKET_CLOSED_REASON,
         status: "closed",
         ...(response.updateId ? { updateId: response.updateId } : {}),
       });
@@ -947,7 +954,7 @@ async function execute311ClosureAction({
       closures.push({
         serviceCode,
         srNum: String(ticket.srNum),
-        closedReasonCode: CLOSE_REASON_FIELD_WORK_COMPLETED,
+        closedReasonCode: SILENT_TICKET_CLOSED_REASON,
         status: "failed",
         reason: appActionErrorReason(error),
         ...(appActionErrorDiagnostics(error)
@@ -1009,10 +1016,11 @@ function sanitizeDiagnosticValue(value, depth = 0) {
     for (const [key, item] of Object.entries(
       /** @type {Record<string, unknown>} */ (value),
     ).slice(0, 60)) {
+      const safeKey = redactSignedUrl(key);
       if (/authorization|password|secret|token|api[-_]?key/i.test(key)) {
-        sanitized[key] = "[redacted]";
+        sanitized[safeKey] = "[redacted]";
       } else {
-        sanitized[key] = sanitizeDiagnosticValue(item, depth + 1);
+        sanitized[safeKey] = sanitizeDiagnosticValue(item, depth + 1);
       }
     }
     return sanitized;
@@ -1025,23 +1033,25 @@ function sanitizeDiagnosticValue(value, depth = 0) {
  * @returns {string}
  */
 function redactSignedUrl(value) {
-  if (!value.includes("X-Amz-")) return value;
-  try {
-    const url = new URL(value);
-    for (const key of [
-      "X-Amz-Credential",
-      "X-Amz-Signature",
-      "X-Amz-Security-Token",
-    ]) {
-      if (url.searchParams.has(key)) url.searchParams.set(key, "[redacted]");
-    }
-    return url.toString();
-  } catch {
-    return value.replace(
-      /(X-Amz-(?:Credential|Signature|Security-Token)=)[^&]+/g,
-      "$1[redacted]",
-    );
-  }
+  // Decode escaped query separators in diagnostic echoes before redaction.
+  // Never decode or mutate the actual outbound SF311 payload.
+  let text = value;
+  let previous;
+  do {
+    previous = text;
+    text = text
+      .replace(/%([0-9a-f]{2})/gi, (_, hex) =>
+        String.fromCharCode(parseInt(hex, 16)),
+      )
+      .replace(/&amp;|&#0*38;|&#x0*26;/gi, "&")
+      .replace(/\\u00([0-9a-f]{2})/gi, (_, hex) =>
+        String.fromCharCode(parseInt(hex, 16)),
+      );
+  } while (text !== previous);
+  return text.replace(
+    /([?&](?:token|X-Amz-(?:Credential|Signature|Security-Token))=)[^&\s"'<>\\]*/gi,
+    "$1[redacted]",
+  );
 }
 
 /**

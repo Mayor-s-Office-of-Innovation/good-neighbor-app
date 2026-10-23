@@ -21,6 +21,7 @@
 .single-issue .shotgrid {
   margin-bottom: 0;
   flex: 0 0 auto;
+  min-height: 0;
 }
 
 .single-issue .shotgrid--empty {

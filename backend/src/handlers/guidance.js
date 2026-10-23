@@ -1,3 +1,4 @@
+import { sharedActionTarget } from "../analysis/duplicates/links.js";
 import { randomUUID } from "node:crypto";
 import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
@@ -7,15 +8,35 @@ import {
   completeTaskWithAppActions,
   getAssessmentGuidance,
   getPublishedAssessmentGuidance,
-  markTaskCannotDo,
   storeEvaluatedAssessment,
 } from "../analysis/guidance/guidance-store.js";
+import { normalizeTranslations as normalizeTranslationsMap } from "../analysis/translations.js";
+import {
+  enqueueTranslateArtifact,
+  translateItemsFor,
+} from "../analysis/translate-enqueue.js";
+
+import {
+  readCheckHeader,
+  readUpdateById,
+} from "../task-updates/task-update-store.js";
 
 const MAX_ASSESSMENT_CONDITIONS = 49;
 
 /**
  * @param {unknown} body
- * @returns {{ assessmentId: string, previousAssessmentId?: string, checkId?: string, reportedAt: string, rubricVersion?: string, grade?: string | null, rawAssessment: Record<string, unknown>, conditions: import("../analysis/guidance/guidance-store.js").AssessmentConditionInput[] }}
+ * @returns {{ assessmentId: string, previousAssessmentId?: string, checkId?: string, reportedAt: string, rubricVersion?: string, grade?: string | null, rawAssessment: Record<string, unknown>, conditions: NormalizedConditionInput[] }}
+ * @typedef {object} NormalizedConditionInput
+ * @property {string} [conditionId]
+ * @property {string} category
+ * @property {number} severity
+ * @property {string} [severityLabel]
+ * @property {string} [userFriendlyLabel]
+ * @property {string} [description]
+ * @property {NormalizedTranslations} [translations]
+ * @property {string[]} [sourceArtifactIds]
+ * @property {number[]} [evidenceIndices]
+ * @property {{ latitude: unknown, longitude: unknown, positionDescriptor: unknown }} source
  */
 function normalizeAssessmentBody(body) {
   if (!body || typeof body !== "object") {
@@ -96,6 +117,9 @@ function normalizeAssessmentBody(body) {
         : Array.isArray(item.evidenceIndices)
           ? item.evidenceIndices.filter((id) => typeof id === "number")
           : [],
+      ...(normalizeTranslations(item.translations)
+        ? { translations: normalizeTranslations(item.translations) }
+        : {}),
       source: {
         latitude: metadata.latitude,
         longitude: metadata.longitude,
@@ -141,11 +165,83 @@ function normalizeAssessmentBody(body) {
 }
 
 /**
+ * @typedef {import("../analysis/translations.js").TranslationsMap} NormalizedTranslations
+ */
+
+/**
+ * Accept the per-condition `translations` field in either shape — the
+ * analyzer's single block (`{ language, … }`) or our per-locale map — and
+ * return the map, or undefined. Malformed shapes are dropped rather than
+ * rejected: translations are display sugar, so bad input degrades to the
+ * canonical English fields instead of failing the assessment.
+ * @param {unknown} value
+ * @returns {NormalizedTranslations | undefined}
+ */
+function normalizeTranslations(value) {
+  return normalizeTranslationsMap(value);
+}
+
+/**
+ * Ask the background translate worker to fill the locales the stored
+ * CONDITION#/TASK# copies still lack — one message per source artifact, since
+ * the worker scopes its reads by `${checkId}-${artifactId}`. Covers edited,
+ * added, and describe-instead conditions, whose text the analyze-time job
+ * never saw; a condition whose map is already complete sends nothing.
+ * Best-effort: translations are display sugar, so a failed enqueue is logged
+ * and the assessment that just stored still returns 201.
+ * @param {object} params
+ * @param {string} params.queueUrl
+ * @param {string} params.siteId
+ * @param {string} [params.checkId]
+ * @param {Record<string, unknown>[]} params.conditionItems
+ * @returns {Promise<void>}
+ */
+async function enqueueConditionTranslations({
+  queueUrl,
+  siteId,
+  checkId,
+  conditionItems,
+}) {
+  if (!checkId) return;
+  /** @type {Map<string, Record<string, unknown>[]>} */
+  const byArtifact = new Map();
+  for (const item of conditionItems) {
+    const source = /** @type {{ artifactIds?: unknown } | undefined} */ (
+      item.source
+    );
+    const artifactId = Array.isArray(source?.artifactIds)
+      ? source.artifactIds[0]
+      : undefined;
+    if (typeof artifactId !== "string" || !artifactId) continue;
+    const group = byArtifact.get(artifactId) ?? [];
+    group.push(item);
+    byArtifact.set(artifactId, group);
+  }
+  for (const [artifactId, items] of byArtifact) {
+    try {
+      await enqueueTranslateArtifact({
+        queueUrl,
+        siteId,
+        checkId,
+        artifactId,
+        items: translateItemsFor(items),
+      });
+    } catch (err) {
+      console.warn("Translate enqueue failed; conditions keep English only", {
+        checkId,
+        artifactId,
+        error: err instanceof Error ? err.name : "UnknownError",
+      });
+    }
+  }
+}
+
+/**
  * POST /v1/assessments:evaluate
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const evaluateAssessment = async (event) => {
-  const { dynamoTable } = getConfig();
+  const { dynamoTable, queueUrl } = getConfig();
   const siteId = deriveSiteId(event);
 
   let body;
@@ -167,6 +263,12 @@ export const evaluateAssessment = async (event) => {
       { siteId, ...input },
       { tableName: dynamoTable },
     );
+    await enqueueConditionTranslations({
+      queueUrl,
+      siteId,
+      checkId: input.checkId,
+      conditionItems: result.conditionItems,
+    });
     return jsonResponse(201, {
       assessment: result.assessmentItem,
       conditions: result.conditionItems,
@@ -367,56 +469,6 @@ export const submitConditionAnswers = async (event) => {
 };
 
 /**
- * POST /v1/tasks/{taskId}/cannot-do
- * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
- */
-export const cannotDoTask = async (event) => {
-  const { dynamoTable } = getConfig();
-  const siteId = deriveSiteId(event);
-  const taskId = event.pathParameters?.taskId;
-  if (!taskId) return jsonResponse(400, { error: "Missing taskId" });
-
-  let body;
-  try {
-    body = readJsonBody(event);
-  } catch {
-    return jsonResponse(400, { error: "Invalid JSON body" });
-  }
-  const { reason, note } = /** @type {{ reason?: unknown, note?: unknown }} */ (
-    body ?? {}
-  );
-  if (typeof reason !== "string" || !reason) {
-    return jsonResponse(400, { error: "Expected reason" });
-  }
-
-  try {
-    const task = await markTaskCannotDo({
-      tableName: dynamoTable,
-      siteId,
-      taskId,
-      reason,
-      note: typeof note === "string" ? note : undefined,
-    });
-    return jsonResponse(200, { task });
-  } catch (err) {
-    if (err instanceof Error && err.name === "NotFound") {
-      return jsonResponse(404, { error: "Task not found" });
-    }
-    if (err instanceof Error && err.name === "InvalidReason") {
-      return jsonResponse(400, { error: "Invalid cannot-do reason" });
-    }
-    if (
-      err instanceof Error &&
-      (err.name === "TerminalConflict" ||
-        err.name === "TransactionCanceledException")
-    ) {
-      return jsonResponse(409, { error: "Task is no longer open" });
-    }
-    throw err;
-  }
-};
-
-/**
  * POST /v1/tasks/{taskId}/complete
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
@@ -440,14 +492,37 @@ export const completeTask = async (event) => {
   );
 
   try {
+    const shared = await sharedActionTarget(dynamoTable, siteId, taskId);
     const task = await completeTaskWithAppActions({
       tableName: dynamoTable,
       siteId,
-      taskId,
+      ...shared,
       completionMethod:
         typeof completionMethod === "string" ? completionMethod : undefined,
       actorId: deriveActorId(event),
     });
+    if (task.status === "completed" && task.canBeInProgress === false) {
+      const [update, check] = await Promise.all([
+        task.latestUpdateId
+          ? readUpdateById(
+              dynamoTable,
+              siteId,
+              String(task.taskId),
+              String(task.latestUpdateId),
+            )
+          : null,
+        readCheckHeader(dynamoTable, siteId, String(task.checkId || "")),
+      ]);
+      return jsonResponse(200, {
+        task: {
+          ...task,
+          canUploadPhotos: ["in_progress", "completed"].includes(check?.status),
+        },
+        resultsPending:
+          update?.documentationState === "open_for_documentation" &&
+          update.actorId === deriveActorId(event),
+      });
+    }
     return jsonResponse(200, { task });
   } catch (err) {
     if (err instanceof Error && err.name === "NotFound") {

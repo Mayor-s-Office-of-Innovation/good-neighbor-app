@@ -13,21 +13,22 @@ Status: in progress — testing-phase data-handling decision recorded (2026-08-1
 - Cognito authentication and authorization.
 - Terraform and GitHub Actions deployment pipeline.
 
-## Data classification & media handling — GNP-owned bucket, ~7-day lifecycle (revised 2026-08-13 PM)
+## Data classification & media handling — GNP-owned bucket, 30-day lifecycle (revised 2026-10-09)
 
 **Supersedes the 2026-08-13 "no media at rest" note.** The interim design dropped the media bucket
 and posted images base64-inline from the client. That is **reversed** (D1/D3):
 captured media is uploaded via **presigned PUT to an S3 bucket GNP owns**, the backend reads it back
-to call the analyzer, and S3 lifecycle rules expire accepted media after seven days (with shorter
-windows for pending, rejected, and unprocessed media). Drivers: **large-upload
+to call the analyzer, and an S3 lifecycle rule expires every photo 30 days after upload (with a
+one-day window for never-registered and rejected media). Drivers: **large-upload
 support** (presigned PUT bypasses the Lambda ~6 MB payload ceiling), **admin review of AI output
 against the source media** (the product driver), and **GNP owning retention** (our KMS key +
 lifecycle window, changeable at will). This also matches the deployed origin app
 `../street-conditions`, which stores media in S3.
 
 **What is at rest.** Person-images live in **GNP's KMS-encrypted bucket**. Declarative lifecycle
-rules expire pending/rejected media after one day, registered media after two days, accepted media
-after seven days, and noncurrent media versions after one day. DynamoDB stores the **analysis document + the S3 key**
+rules expire every photo 30 days after upload, and never-registered (pending) or rejected media
+after one day. Bucket versioning is suspended, so expiry removes the bytes outright rather than
+leaving a noncurrent version. DynamoDB stores the **analysis document + the S3 key**
 (the scorecard is `sensitive`; the key is a pointer, not PII). This is a step **up** in data-at-rest
 exposure from the no-media design and puts a **photo-retention control in scope**.
 
@@ -48,9 +49,17 @@ The **only** durable copy of the media is GNP's.
 - [ ] **No media bytes on SQS** — enqueue the **S3 key**, not the bytes.
 - [ ] **No request/media-body logging** — the base64 image is not captured in API Gateway exec/access
   logs, our Lambda/worker logs, or (analyzer-account) Bedrock model-invocation logs.
+- [x] **No viewer IP addresses in logs** — the API Gateway access log omits `$context.identity.sourceIp`
+  (per-caller correlation uses the device authorizer's pseudonymous device subject + site on device
+  routes and the admin's Cognito user sub on JWT-authorized admin routes; unauthenticated routes
+  correlate by request ID). Lambda/worker logs never log headers or the raw event. CloudFront
+  standard logging is off on all distributions, and S3 server-access logging is off on the uploads and
+  complaints buckets (the only buckets clients reach directly, via presigned URLs). The remaining
+  server-access logs (frontend/admin/analytics/compliance-letters buckets) only ever see CloudFront OAC
+  or Lambda requester IPs. Logs written before 2026-10-22 age out of the access-logs bucket after a year.
 - [x] **Uploaded-media validation** before the analyzer call: independent byte/decode/type checks,
-  size/dimension/page caps, metadata-stripping re-encode, and per-check/device/Site/global budgets.
-- [x] **TLS-only** for the uploads bucket through an explicit `aws:SecureTransport = false` deny.
+  size/dimension/page caps, metadata-stripping re-encode, and per-check/device/Site budgets.
+- [x] **TLS-only** for both uploads and complaint-evidence buckets through explicit `aws:SecureTransport = false` denies.
 
 **Before go-live / any real (non-test) user data:** re-review this classification against the
 as-built path — confirm the lifecycle rules are active in the target account, confirm the bucket is private + KMS-encrypted, no incidental

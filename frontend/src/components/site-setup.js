@@ -5,7 +5,12 @@
   site this shared device should operate as.
 */
 import "./site-setup.css";
-import { getSite, setSite } from "../db.js";
+import {
+  bindingFromSession,
+  getSite,
+  saveDiscoveredBindings,
+  setSite,
+} from "../db.js";
 import { t } from "../i18n/i18n.js";
 import {
   formatSiteCode,
@@ -14,7 +19,7 @@ import {
   validateSetupCode,
 } from "../services/onboarding.js";
 import { redeemEnrollmentGrant, registerDevice } from "../services/devices.js";
-import { codeEntryView } from "./site-setup.templates.js";
+import { codeEntryView, enrollmentView } from "./site-setup.templates.js";
 
 const CODE_LENGTH = 6;
 const SITE_SEARCH_DELAY_MS = 250;
@@ -38,8 +43,13 @@ export class SiteSetup extends HTMLElement {
     this._canCancel = this.hasAttribute("data-can-cancel");
     this._code = formatSiteCode(readCodeFromUrl());
     const enrollment = readEnrollmentFromUrl();
+    this._enrollment = enrollment;
     this._checking = false;
     this._error = "";
+    // A notice key (setup.notice.<key>) app-root sets to explain why the code
+    // is being asked for: a Home Screen handoff that didn't carry over, or a
+    // Safari copy whose session moved to the installed app.
+    this._notice = this.getAttribute("data-notice") || "";
     this._mode =
       this.getAttribute("data-mode") === "request"
         ? this.getAttribute("data-mode")
@@ -60,9 +70,7 @@ export class SiteSetup extends HTMLElement {
 
     if (enrollment) {
       stripEnrollmentFromUrl();
-      this._checking = true;
-      this._render();
-      this._redeemEnrollment(enrollment);
+      // Loading a link must never consume it: scanners execute JavaScript.
       return;
     }
 
@@ -84,14 +92,37 @@ export class SiteSetup extends HTMLElement {
 
   _render() {
     this._cancelTouchSubmit();
+    if (this._enrollment) {
+      this.innerHTML = enrollmentView({
+        checking: this._checking,
+        error: this._error,
+        reference: this._enrollmentReference,
+      });
+      this.querySelector("#enrollment-form").addEventListener(
+        "submit",
+        (event) => {
+          event.preventDefault();
+          if (this._checking) return;
+          const credentials = this._enrollment;
+          this._checking = true;
+          this._error = "";
+          this._enrollmentReference = "";
+          this._render();
+          void this._redeemEnrollment(credentials);
+        },
+      );
+      return;
+    }
     this.innerHTML = codeEntryView({
       value: this._code,
+      reference: this._enrollmentReference,
       error: this._error,
       checking: this._checking,
       mode: this._mode,
       targetSiteName: this._targetSiteName,
       canCancel: this._canCancel,
       cancelDisabled: this._committingSite,
+      notice: this._notice ? t(`setup.notice.${this._notice}`) : "",
       request: this._request,
     });
 
@@ -380,10 +411,18 @@ export class SiteSetup extends HTMLElement {
     if (!result.ok) {
       this._checking = false;
       this._error =
-        result.reason === "network"
-          ? t("setup.error.network")
-          : t("setup.error.invalidCode");
+        result.reason === "limited"
+          ? t("setup.enrollment.limited")
+          : result.reason === "network"
+            ? t("setup.error.network")
+            : t("setup.error.invalidCode");
       this._render();
+      return;
+    }
+
+    if (result.enrollment) {
+      stripCodeFromUrl();
+      await this._redeemEnrollment({ code: result.code });
       return;
     }
 
@@ -428,15 +467,8 @@ export class SiteSetup extends HTMLElement {
       site = await setSite(providerSite.name, {
         code: result.code,
         providerSiteId: providerSite.id,
+        ...bindingFromSession(session),
         siteId: providerSite.siteId,
-        deviceId: session.deviceId,
-        token: session.token,
-        refreshToken: session.refreshToken,
-        tokenExpiresAt: new Date(
-          Date.now() + session.expiresIn * 1000,
-        ).toISOString(),
-        tokenGeneration: session.tokenGeneration,
-        accessLevel: session.accessLevel,
       });
     } catch {
       this._committingSite = false;
@@ -445,33 +477,31 @@ export class SiteSetup extends HTMLElement {
       this._render();
       return;
     }
+    stripLoginFromUrl();
     this.dispatchEvent(
       new CustomEvent("sitebound", { bubbles: true, detail: site }),
     );
   }
 
-  async _redeemEnrollment({ grantId, token }) {
+  async _redeemEnrollment({ grantId = "", token = "", code }) {
     try {
       const current = await getSite();
       const session = await redeemEnrollmentGrant(grantId, token, {
         physicalDeviceId: current?.physicalDeviceId,
+        ...(code ? { code } : {}),
       });
       if (this._cancelled) return;
       this._committingSite = true;
       this._render();
-      const site = await setSite(session.site.name, {
-        siteId: session.site.siteId,
-        deviceId: session.deviceId,
-        bindingId: session.bindingId,
-        physicalDeviceId: session.physicalDeviceId,
-        token: session.token,
-        refreshToken: session.refreshToken,
-        tokenExpiresAt: new Date(
-          Date.now() + session.expiresIn * 1000,
-        ).toISOString(),
-        tokenGeneration: session.tokenGeneration,
-        accessLevel: session.accessLevel,
-      });
+      const site = await setSite(
+        session.site.name,
+        bindingFromSession(session),
+      );
+      await saveDiscoveredBindings(
+        session.bindings || [],
+        session.physicalDeviceId,
+      );
+      stripLoginFromUrl();
       this.dispatchEvent(
         new CustomEvent("sitebound", { bubbles: true, detail: site }),
       );
@@ -479,10 +509,17 @@ export class SiteSetup extends HTMLElement {
       if (this._cancelled) return;
       this._committingSite = false;
       this._checking = false;
-      this._error =
-        err instanceof Error && /invalid enrollment link/.test(err.message)
-          ? "This enrollment link is invalid or has expired. Ask a City administrator for a new link."
-          : "We couldn't enroll this device. Try again in a moment.";
+      const messages = {
+        code_attempts_limited: "setup.enrollment.limited",
+        invalid_enrollment_grant: "setup.enrollment.invalid",
+        enrollment_expired: "setup.enrollment.expired",
+        enrollment_already_used: "setup.enrollment.used",
+        enrollment_cancelled: "setup.enrollment.cancelled",
+        enrollment_access_unavailable: "setup.enrollment.unavailable",
+        enrollment_conflict: "setup.enrollment.conflict",
+      };
+      this._error = t(messages[err?.code] || "setup.enrollment.failed");
+      this._enrollmentReference = err?.requestId || "";
       this._render();
     }
   }
@@ -534,6 +571,20 @@ export function stripEnrollmentFromUrl() {
     const fragment = new URLSearchParams(url.hash.slice(1));
     fragment.delete("enrollment_grant");
     fragment.delete("enrollment_token");
+    url.hash = fragment.toString();
+    history.replaceState(null, "", url.pathname + url.search + url.hash);
+  } catch {
+    /* no-op */
+  }
+}
+
+// Clear the login override only after the session is safely stored.
+export function stripLoginFromUrl() {
+  try {
+    const url = new URL(location.href);
+    const fragment = new URLSearchParams(url.hash.slice(1));
+    if (!fragment.has("login")) return;
+    fragment.delete("login");
     url.hash = fragment.toString();
     history.replaceState(null, "", url.pathname + url.search + url.hash);
   } catch {

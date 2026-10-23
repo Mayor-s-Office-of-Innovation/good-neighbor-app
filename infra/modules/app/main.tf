@@ -1,10 +1,121 @@
 locals {
   name_prefix        = lower(replace("${var.application}-${var.environment}", "_", "-"))
   bucket_name_prefix = var.s3_bucket_name_prefix != "" ? var.s3_bucket_name_prefix : local.name_prefix
+  # CloudWatch namespace for the business metrics the api/worker Lambdas emit
+  # as EMF lines (backend/src/lib/metrics.js); read by dashboard + alarms.
+  metrics_namespace = "${local.name_prefix}-app"
 }
 
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
+
+# Resolve the IAM role behind CI's STS session. Its name/path is configured by
+# AWS_DEPLOY_ROLE_ARN, not derived from the application/environment names.
+data "aws_iam_session_context" "deploy" {
+  count = var.provision_city_smtp_relay_foundation ? 1 : 0
+
+  arn = data.aws_caller_identity.current.arn
+}
+
+# SMTP credentials use a purpose-specific key because SES Mail Manager, rather
+# than an application role, must decrypt them through Secrets Manager.
+resource "aws_kms_key" "smtp_secrets" {
+  count = var.provision_city_smtp_relay_foundation ? 1 : 0
+
+  description             = "KMS key for ${var.application} ${var.environment} SMTP credentials"
+  deletion_window_in_days = 30
+  enable_key_rotation     = true
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # Standard KMS account-administration statement. Granting the account
+        # principal full key administration keeps IAM delegation and key
+        # recovery possible and prevents an unrecoverable key lockout; it does
+        # not grant Mail Manager runtime access. The following statement grants
+        # that service only Decrypt/Describe through Secrets Manager and scopes
+        # it to this environment's two SMTP secrets.
+        Sid       = "EnableIamUserPermissions"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid       = "AllowMailManagerSmtpSecretDecrypt"
+        Effect    = "Allow"
+        Principal = { Service = "ses.amazonaws.com" }
+        Action    = ["kms:Decrypt", "kms:DescribeKey"]
+        Resource  = "*"
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+            "kms:ViaService"    = "secretsmanager.${data.aws_region.current.name}.amazonaws.com"
+          }
+          ArnLike = {
+            "kms:EncryptionContext:SecretARN" = [
+              "arn:aws:secretsmanager:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:secret:${local.name_prefix}-city-smtp-relay-*",
+              "arn:aws:secretsmanager:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:secret:${local.name_prefix}-mail-manager-ingress-*",
+            ]
+          }
+        }
+      }
+    ]
+  })
+  tags = var.tags
+}
+
+resource "aws_kms_alias" "smtp_secrets" {
+  count = var.provision_city_smtp_relay_foundation ? 1 : 0
+
+  name          = "alias/${local.name_prefix}-smtp-secrets"
+  target_key_id = aws_kms_key.smtp_secrets[0].key_id
+}
+
+# Cognito encrypts temporary passwords and verification codes before invoking
+# the custom sender. Keep that message-secret boundary separate from both the
+# SMTP credential key and the general application-data key.
+resource "aws_kms_key" "cognito_email" {
+  count = var.provision_city_smtp_relay_foundation ? 1 : 0
+
+  description             = "KMS key for ${var.application} ${var.environment} Cognito email secrets"
+  deletion_window_in_days = 30
+  enable_key_rotation     = true
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # Standard KMS account-administration statement. The account principal
+        # enables IAM delegation and key recovery; it does not grant arbitrary
+        # principals runtime access. Resource "*" is required inside a KMS key
+        # policy and refers only to the key to which this policy is attached.
+        Sid       = "EnableIamUserPermissions"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid       = "AllowDeployRoleCreateCognitoGrant"
+        Effect    = "Allow"
+        Principal = { AWS = data.aws_iam_session_context.deploy[0].issuer_arn }
+        Action    = "kms:CreateGrant"
+        Resource  = "*"
+        Condition = {
+          Bool = { "kms:GrantIsForAWSResource" = "true" }
+        }
+      }
+    ]
+  })
+  tags = var.tags
+}
+
+resource "aws_kms_alias" "cognito_email" {
+  count = var.provision_city_smtp_relay_foundation ? 1 : 0
+
+  name          = "alias/${local.name_prefix}-cognito-email"
+  target_key_id = aws_kms_key.cognito_email[0].key_id
+}
 
 resource "aws_kms_key" "app" {
   description             = "KMS key for ${var.application} ${var.environment} application data"
@@ -270,6 +381,14 @@ resource "aws_s3_bucket_lifecycle_configuration" "admin_frontend" {
 }
 
 resource "aws_s3_bucket" "uploads" {
+  # checkov:skip=CKV_AWS_18:Server-access logs would record every phone's IP on
+  # presigned uploads for a year with no field selection; nothing reads them.
+  # Upload provenance is recorded in DynamoDB on artifact registration.
+  # checkov:skip=CKV_AWS_21:Media is write-once under an unpredictable key and is
+  # never overwritten or restored; the only deletes are the lifecycle rules below.
+  # Versioning would keep expired photos alive as noncurrent versions, working
+  # against the retention window, so it is suspended. The frontend and
+  # compliance-letter buckets keep it on.
   bucket_prefix = "${local.bucket_name_prefix}-uploads-"
   force_destroy = false
 }
@@ -326,40 +445,98 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "uploads" {
 resource "aws_s3_bucket_versioning" "uploads" {
   bucket = aws_s3_bucket.uploads.id
 
+  # S3 cannot disable versioning once enabled, only suspend it. Suspended also
+  # works for a fresh bucket, so every environment uses the same value.
   versioning_configuration {
-    status = "Enabled"
+    status = "Suspended"
   }
-}
-
-resource "aws_s3_bucket_logging" "uploads" {
-  bucket = aws_s3_bucket.uploads.id
-
-  target_bucket = aws_s3_bucket.access_logs.id
-  target_prefix = "uploads/"
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
   bucket = aws_s3_bucket.uploads.id
 
+  # Every check/task photo expires after 30 days. Upload-state rules below can
+  # shorten that window, but no missing/legacy tag can extend it.
+  # Fresh 311 snapshots outlive the 48-hour bearer lease, without extending
+  # retention of any source upload. The shorter matching rule wins.
   rule {
-    id     = "expire-incomplete-uploads"
+    id     = "expire-311-attachment-copies"
+    status = "Enabled"
+    filter { prefix = "sf311-media/" }
+    expiration { days = 3 }
+    noncurrent_version_expiration { noncurrent_days = 1 }
+  }
+
+  rule {
+    id     = "expire-duplicate-prepared-images"
+    status = "Enabled"
+    filter { prefix = "duplicate-prepared/" }
+    expiration { days = 3 }
+    noncurrent_version_expiration { noncurrent_days = 1 }
+  }
+
+  rule {
+    id     = "expire-registered-media"
     status = "Enabled"
 
-    filter {
-      prefix = ""
+    filter { prefix = "" }
+
+    expiration {
+      days = 30
     }
 
     abort_incomplete_multipart_upload {
       days_after_initiation = 7
     }
 
+    # Versioning is suspended, so this only drains versions created before the
+    # suspension. It can be removed once none remain.
     noncurrent_version_expiration {
-      noncurrent_days = 90
+      noncurrent_days = 7
     }
   }
 
   rule {
-    id     = "expire-pending-compliance-letters"
+    id     = "expire-active-media"
+    status = "Enabled"
+
+    filter {
+      tag {
+        key   = "state"
+        value = "active"
+      }
+    }
+
+    expiration {
+      days = 30
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 7
+    }
+  }
+
+  # Expiring an object on a versioning-suspended bucket still leaves a delete
+  # marker behind. Clean those up once nothing sits under them. S3 forbids
+  # combining this with a day-based expiration or a tag filter, hence its own rule.
+  rule {
+    id     = "clean-expired-delete-markers"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    expiration {
+      expired_object_delete_marker = true
+    }
+  }
+
+  # The presigned PUT tags every upload `state=pending`; registration retags it
+  # `state=registered`. Anything still pending after a day was abandoned
+  # between the PUT and the register call.
+  rule {
+    id     = "expire-pending-media"
     status = "Enabled"
 
     filter {
@@ -371,26 +548,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
 
     expiration {
       days = 1
-    }
-
-    noncurrent_version_expiration {
-      noncurrent_days = 1
-    }
-  }
-
-  rule {
-    id     = "expire-registered-media"
-    status = "Enabled"
-
-    filter {
-      tag {
-        key   = "state"
-        value = "registered"
-      }
-    }
-
-    expiration {
-      days = 2
     }
 
     noncurrent_version_expiration {
@@ -418,23 +575,19 @@ resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
     }
   }
 
+  # Apply incomplete-multipart cleanup across the whole bucket. Checkov's
+  # CKV_AWS_300 requires an unfiltered abort rule; tag-scoped retention rules
+  # do not cover uploads that have not yet become objects and received tags.
   rule {
-    id     = "expire-accepted-media"
+    id     = "abort-incomplete-uploads"
     status = "Enabled"
 
     filter {
-      tag {
-        key   = "state"
-        value = "accepted"
-      }
+      prefix = ""
     }
 
-    expiration {
-      days = 7
-    }
-
-    noncurrent_version_expiration {
-      noncurrent_days = 1
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
     }
   }
 }
@@ -445,6 +598,243 @@ resource "aws_s3_bucket_cors_configuration" "uploads" {
   # Media is uploaded directly from the browser via presigned PUT URLs, so the
   # bucket must answer CORS preflight for the frontend origin(s). Reads stay
   # server-side (worker), but GET/HEAD are allowed for presigned preview URLs.
+  cors_rule {
+    allowed_methods = ["PUT", "GET", "HEAD"]
+    allowed_origins = distinct(concat(
+      ["https://${aws_cloudfront_distribution.frontend.domain_name}"],
+      [for name in var.frontend_domain_names : "https://${name}"],
+      ["https://${aws_cloudfront_distribution.admin.domain_name}"],
+      [for name in var.admin_domain_names : "https://${name}"],
+    ))
+    allowed_headers = ["*"]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3000
+  }
+}
+
+# Complaint evidence has a distinct one-year retention boundary. Keeping it in
+# a separate bucket lets the uploads bucket retain its fail-closed, bucket-wide
+# 30-day deletion rule for check and task photos.
+resource "aws_s3_bucket" "complaints" {
+  # checkov:skip=CKV_AWS_18:Server-access logs would record the IP of every presigned evidence read for a year with no field selection; nothing reads them.
+  # checkov:skip=CKV_AWS_21:Complaint evidence is write-once and lifecycle-deleted; versioning would retain expired sensitive media beyond its approved window.
+  bucket_prefix = "${local.bucket_name_prefix}-complaints-"
+  force_destroy = false
+  tags          = var.tags
+}
+
+resource "aws_s3_bucket_public_access_block" "complaints" {
+  bucket                  = aws_s3_bucket.complaints.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+data "aws_iam_policy_document" "complaints_tls_only" {
+  statement {
+    sid     = "DenyInsecureTransport"
+    effect  = "Deny"
+    actions = ["s3:*"]
+    resources = [
+      aws_s3_bucket.complaints.arn,
+      "${aws_s3_bucket.complaints.arn}/*",
+    ]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "complaints_tls_only" {
+  bucket     = aws_s3_bucket.complaints.id
+  policy     = data.aws_iam_policy_document.complaints_tls_only.json
+  depends_on = [aws_s3_bucket_public_access_block.complaints]
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "complaints" {
+  bucket = aws_s3_bucket.complaints.id
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = aws_kms_key.app.arn
+      sse_algorithm     = "aws:kms"
+    }
+  }
+}
+
+resource "aws_s3_bucket_versioning" "complaints" {
+  bucket = aws_s3_bucket.complaints.id
+  versioning_configuration { status = "Suspended" }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "complaints" {
+  bucket = aws_s3_bucket.complaints.id
+
+  rule {
+    id     = "expire-all-complaint-media"
+    status = "Enabled"
+    filter { prefix = "" }
+    expiration { days = 365 }
+    noncurrent_version_expiration { noncurrent_days = 1 }
+  }
+
+  rule {
+    id     = "expire-pending-complaint-media"
+    status = "Enabled"
+    filter {
+      tag {
+        key   = "state"
+        value = "pending"
+      }
+    }
+    expiration { days = 1 }
+    noncurrent_version_expiration { noncurrent_days = 1 }
+  }
+
+  rule {
+    id     = "expire-rejected-complaint-media"
+    status = "Enabled"
+    filter {
+      tag {
+        key   = "state"
+        value = "rejected"
+      }
+    }
+    expiration { days = 1 }
+    noncurrent_version_expiration { noncurrent_days = 1 }
+  }
+
+  rule {
+    id     = "clean-expired-delete-markers"
+    status = "Enabled"
+    filter { prefix = "" }
+    expiration { expired_object_delete_marker = true }
+  }
+
+  rule {
+    id     = "abort-incomplete-uploads"
+    status = "Enabled"
+    filter { prefix = "" }
+    abort_incomplete_multipart_upload { days_after_initiation = 7 }
+  }
+}
+
+resource "aws_s3_bucket_cors_configuration" "complaints" {
+  bucket = aws_s3_bucket.complaints.id
+  cors_rule {
+    allowed_methods = ["PUT", "GET", "HEAD"]
+    allowed_origins = distinct(concat(
+      ["https://${aws_cloudfront_distribution.frontend.domain_name}"],
+      [for name in var.frontend_domain_names : "https://${name}"],
+      ["https://${aws_cloudfront_distribution.admin.domain_name}"],
+      [for name in var.admin_domain_names : "https://${name}"],
+    ))
+    allowed_headers = ["*"]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3000
+  }
+}
+
+# Compliance letters are durable administrative records. Keep them separate
+# from short-lived submitted imagery so media lifecycle rules cannot delete
+# current letters.
+resource "aws_s3_bucket" "compliance_letters" {
+  # Keep the generated prefix within S3's 37-character provider limit.
+  bucket_prefix = "${local.bucket_name_prefix}-letters-"
+  force_destroy = false
+  tags          = var.tags
+}
+
+resource "aws_s3_bucket_public_access_block" "compliance_letters" {
+  bucket                  = aws_s3_bucket.compliance_letters.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+data "aws_iam_policy_document" "compliance_letters_tls_only" {
+  statement {
+    sid     = "DenyInsecureTransport"
+    effect  = "Deny"
+    actions = ["s3:*"]
+    resources = [
+      aws_s3_bucket.compliance_letters.arn,
+      "${aws_s3_bucket.compliance_letters.arn}/*",
+    ]
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "compliance_letters_tls_only" {
+  bucket = aws_s3_bucket.compliance_letters.id
+  policy = data.aws_iam_policy_document.compliance_letters_tls_only.json
+
+  depends_on = [aws_s3_bucket_public_access_block.compliance_letters]
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "compliance_letters" {
+  bucket = aws_s3_bucket.compliance_letters.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = aws_kms_key.app.arn
+      sse_algorithm     = "aws:kms"
+    }
+  }
+}
+
+resource "aws_s3_bucket_versioning" "compliance_letters" {
+  bucket = aws_s3_bucket.compliance_letters.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_logging" "compliance_letters" {
+  bucket = aws_s3_bucket.compliance_letters.id
+
+  target_bucket = aws_s3_bucket.access_logs.id
+  target_prefix = "compliance-letters/"
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "compliance_letters" {
+  bucket = aws_s3_bucket.compliance_letters.id
+
+  rule {
+    id     = "abort-incomplete-multipart-uploads"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+
+resource "aws_s3_bucket_cors_configuration" "compliance_letters" {
+  bucket = aws_s3_bucket.compliance_letters.id
+
   cors_rule {
     allowed_methods = ["PUT", "GET", "HEAD"]
     allowed_origins = distinct(concat(
@@ -552,7 +942,11 @@ resource "aws_dynamodb_table" "app" {
     type = "S"
   }
 
-  # GSI1 — checks timeline: SITE#<siteId> / <startedAt ISO>. (AP6, AP12)
+  # GSI1 — per-site timelines, one partition per entity type: checks
+  # SITE#<siteId> / <startedAt ISO> (AP6, AP12); assessments
+  # SITE#<siteId>#ASSESSMENT (AP14); tasks SITE#<siteId>#TASK /
+  # <createdAt>#<taskId> and task updates SITE#<siteId>#UPDATE /
+  # <occurredAt>#<updateId> (AP27, AP28 — the site manager reports).
   global_secondary_index {
     name            = "GSI1"
     hash_key        = "gsi1pk"
@@ -650,6 +1044,18 @@ resource "aws_cognito_user_pool" "users" {
 
   auto_verified_attributes = ["email"]
 
+  dynamic "lambda_config" {
+    for_each = var.enable_cognito_custom_email_sender ? [1] : []
+    content {
+      kms_key_id = aws_kms_key.cognito_email[0].arn
+
+      custom_email_sender {
+        lambda_arn     = aws_lambda_function.cognito_email_sender[0].arn
+        lambda_version = "V1_0"
+      }
+    }
+  }
+
   email_configuration {
     email_sending_account = "DEVELOPER"
     source_arn            = var.setup_code_email_identity_arn
@@ -662,8 +1068,8 @@ resource "aws_cognito_user_pool" "users" {
     # AWS provider 5.x sends omitted invitation fields as empty strings on
     # UpdateUserPool. Declare every field: Cognito validates SMS even with TOTP MFA.
     invite_message_template {
-      email_subject = "${var.environment == "prod" ? "" : "[${var.environment}] "}Your Good Neighbor admin invitation"
-      email_message = "You have been invited to Good Neighbor Admin (${var.environment}).<br><br>Username: {username}<br>Temporary password: {####}<br><br>Sign in at https://${aws_cloudfront_distribution.admin.domain_name}/ and choose a new password. You will also be asked to set up an authenticator app.<br><br>This invitation expires in 7 days."
+      email_subject = "${var.environment == "prod" ? "" : "[${var.environment}] "}Your Good Neighbor compliance app invitation"
+      email_message = "You have been invited to the Good Neighbor compliance app (${var.environment}).<br><br>Username: {username}<br>Temporary password: {####}<br><br>Sign in at ${var.cognito_admin_app_url} and choose a new password. You will also be asked to set up an authenticator app.<br><br>This invitation expires in 7 days.<br><br>Any questions? Contact the Good Neighbor app team at ${var.city_smtp_from_address != "" ? var.city_smtp_from_address : var.setup_code_email_from}.<br><br>Thanks!<br><br>The Good Neighbor app team"
       sms_message   = "Your Good Neighbor username is {username} and temporary password is {####}."
     }
   }
@@ -708,7 +1114,8 @@ resource "aws_cognito_user_pool" "users" {
     temporary_password_validity_days = 7
   }
 
-  tags = var.tags
+  depends_on = [aws_lambda_permission.cognito_email_sender]
+  tags       = var.tags
 }
 
 resource "aws_cognito_user_pool_client" "web" {
@@ -724,6 +1131,17 @@ resource "aws_cognito_user_pool_client" "web" {
 }
 
 resource "aws_cognito_user_pool_client" "admin" {
+  # Persist login for one week while keeping API credentials short-lived.
+  access_token_validity   = 1
+  id_token_validity       = 1
+  refresh_token_validity  = 7
+  enable_token_revocation = true
+  token_validity_units {
+    access_token  = "hours"
+    id_token      = "hours"
+    refresh_token = "days"
+  }
+
   name         = "${local.name_prefix}-admin"
   user_pool_id = aws_cognito_user_pool.users.id
 
@@ -755,10 +1173,35 @@ resource "aws_cognito_user_pool_domain" "managed_login" {
   user_pool_id = aws_cognito_user_pool.users.id
 }
 
+# Keep the classic Cognito-hosted authentication flow, but apply the app's
+# neutral palette to sign-in, password, recovery, and TOTP screens. Cognito
+# accepts only a restricted CSS vocabulary here; see cognito-hosted-ui.css.
+resource "aws_cognito_user_pool_ui_customization" "admin" {
+  client_id = aws_cognito_user_pool_client.admin.id
+  css       = file("${path.module}/cognito-hosted-ui.css")
+  # Referencing the domain ensures Cognito has activated it before accepting
+  # the customization request.
+  user_pool_id = aws_cognito_user_pool_domain.managed_login.user_pool_id
+}
+
 resource "aws_cognito_user_group" "central_admin" {
   name         = "central-admin"
   user_pool_id = aws_cognito_user_pool.users.id
-  description  = "Central support and program administrators for Good Neighbor."
+  description  = "Legacy Compliance manager group retained during migration."
+}
+
+resource "aws_cognito_user_group" "compliance_manager" {
+  name         = "compliance-manager"
+  user_pool_id = aws_cognito_user_pool.users.id
+  description  = "Compliance managers with routine edit and device-management access."
+  precedence   = 20
+}
+
+resource "aws_cognito_user_group" "compliance_supervisor" {
+  name         = "compliance-supervisor"
+  user_pool_id = aws_cognito_user_pool.users.id
+  description  = "Compliance supervisors with entity, assignment, import, and administrator-management access."
+  precedence   = 10
 }
 
 resource "aws_cloudfront_response_headers_policy" "security" {
@@ -774,7 +1217,7 @@ resource "aws_cloudfront_response_headers_policy" "security" {
       # script, so it MUST be regenerated and deployed with the frontend on any
       # edit to it. Regenerate from a fresh build with:
       #   cd frontend && npm run build && node -e 'const fs=require("fs"),c=require("crypto");const h=fs.readFileSync("dist/index.html","utf8");const m=/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/i.exec(h);console.log("sha256-"+c.createHash("sha256").update(m[1],"utf8").digest("base64"))'
-      content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self' https://${aws_s3_bucket.uploads.bucket_regional_domain_name}; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob: https://${aws_s3_bucket.uploads.bucket_regional_domain_name}; media-src 'self' blob:; object-src 'none'; script-src 'self' 'sha256-5rcv/GJbmG54xVM3aFN2g2zzX8gx7IiHjAimoG8sp/s='; style-src 'self' 'unsafe-inline'"
+      content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self' https://${aws_s3_bucket.uploads.bucket_regional_domain_name} https://${aws_s3_bucket.complaints.bucket_regional_domain_name}; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob: https://${aws_s3_bucket.uploads.bucket_regional_domain_name} https://${aws_s3_bucket.complaints.bucket_regional_domain_name}; media-src 'self' blob:; object-src 'none'; script-src 'self' 'sha256-5rcv/GJbmG54xVM3aFN2g2zzX8gx7IiHjAimoG8sp/s='; style-src 'self' 'unsafe-inline'"
       override                = true
     }
 
@@ -823,7 +1266,7 @@ resource "aws_cloudfront_response_headers_policy" "admin_security" {
       # Only the admin app needs cross-origin access to Cognito's token endpoint.
       # Derive the domain string without a pool dependency (the pool invite
       # template references this distribution).
-      content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self' https://${var.cognito_domain_prefix != "" ? var.cognito_domain_prefix : local.name_prefix}.auth.${data.aws_region.current.name}.amazoncognito.com; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+      content_security_policy = "default-src 'self'; base-uri 'self'; connect-src 'self' https://${var.cognito_domain_prefix != "" ? var.cognito_domain_prefix : local.name_prefix}.auth.${data.aws_region.current.name}.amazoncognito.com https://${aws_s3_bucket.complaints.bucket_regional_domain_name}; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: https://${aws_s3_bucket.uploads.bucket_regional_domain_name} https://${aws_s3_bucket.complaints.bucket_regional_domain_name} https://${aws_s3_bucket.compliance_letters.bucket_regional_domain_name}; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
       override                = true
     }
 
@@ -865,6 +1308,12 @@ resource "aws_cloudfront_response_headers_policy" "admin_security" {
 }
 
 resource "aws_wafv2_web_acl" "web" {
+  custom_response_body {
+    key          = "code-attempts-limited"
+    content      = jsonencode({ error = "code_attempts_limited" })
+    content_type = "APPLICATION_JSON"
+  }
+
   # CLOUDFRONT-scoped WAF must live in us-east-1 regardless of the app's region.
   provider = aws.us_east_1
 
@@ -1058,6 +1507,66 @@ resource "aws_wafv2_web_acl" "web" {
     visibility_config {
       cloudwatch_metrics_enabled = true
       metric_name                = "${local.name_prefix}-device-auth-rate"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  # Share a viewer-IP budget across short-code lookup and enrollment. The
+  # application also caps attempts globally to cover distributed/direct-origin traffic.
+  rule {
+    name     = "EnrollmentCodeRateLimit"
+    priority = 9
+    action {
+      block {
+        custom_response {
+          response_code            = 429
+          custom_response_body_key = "code-attempts-limited"
+          response_header {
+            name  = "Retry-After"
+            value = "300"
+          }
+        }
+      }
+    }
+    statement {
+      rate_based_statement {
+        aggregate_key_type = "IP"
+        limit              = 60
+        scope_down_statement {
+          or_statement {
+            statement {
+              byte_match_statement {
+                positional_constraint = "EXACTLY"
+                search_string         = "/site-code"
+                field_to_match {
+                  uri_path {}
+                }
+                text_transformation {
+                  priority = 0
+                  type     = "LOWERCASE"
+                }
+              }
+            }
+            statement {
+              byte_match_statement {
+                positional_constraint = "EXACTLY"
+                search_string         = "/app/v1/enrollment/redeem"
+                field_to_match {
+                  uri_path {}
+                }
+                text_transformation {
+                  priority = 0
+                  type     = "LOWERCASE"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name_prefix}-enrollment-code-rate"
       sampled_requests_enabled   = true
     }
   }

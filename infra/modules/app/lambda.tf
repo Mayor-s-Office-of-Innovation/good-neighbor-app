@@ -7,6 +7,7 @@
 # cannot drift apart.
 locals {
   sf311_lambda_environment = {
+    SF311_MEDIA_BASE_URL              = "https://${var.sf311_media_domain_name}"
     GNP_311_SUBMISSION_ENABLED        = tostring(var.enable_311_submission)
     SF311_CREATESR_URL                = var.sf311_createsr_url
     SF311_UPDATESR_URL                = var.sf311_updatesr_url
@@ -15,6 +16,20 @@ locals {
     SF311_BASIC_AUTH_SECRET_ARN       = aws_secretsmanager_secret.sf311_basic_auth.arn
     SF311_DEFAULT_RESPONSIBLE_AGENCY  = var.sf311_default_responsible_agency
     SF311_CLASSIFIER_SERVICE_CODE_MAP = var.sf311_classifier_service_code_map
+  }
+
+  email_lambda_environment = var.enable_city_smtp_relay ? {
+    EMAIL_TRANSPORT              = "smtp"
+    MAIL_MANAGER_SMTP_HOST       = aws_cloudformation_stack.city_smtp_relay[0].outputs["IngressARecord"]
+    MAIL_MANAGER_SMTP_USERNAME   = aws_cloudformation_stack.city_smtp_relay[0].outputs["IngressPointId"]
+    MAIL_MANAGER_SMTP_SECRET_ARN = aws_secretsmanager_secret.mail_manager_ingress[0].arn
+    SETUP_CODE_EMAIL_FROM        = var.city_smtp_from_address
+    } : {
+    EMAIL_TRANSPORT              = "ses"
+    MAIL_MANAGER_SMTP_HOST       = ""
+    MAIL_MANAGER_SMTP_USERNAME   = ""
+    MAIL_MANAGER_SMTP_SECRET_ARN = ""
+    SETUP_CODE_EMAIL_FROM        = var.setup_code_email_from
   }
 }
 
@@ -28,6 +43,12 @@ data "archive_file" "authorizer" {
   type        = "zip"
   source_dir  = "${path.module}/../../../backend/dist/authorizer"
   output_path = "${path.module}/dist/authorizer.zip"
+}
+
+data "archive_file" "cognito_email_sender" {
+  type        = "zip"
+  source_dir  = "${path.module}/../../../backend/dist/cognito-email-sender"
+  output_path = "${path.module}/dist/cognito-email-sender.zip"
 }
 
 data "archive_file" "intake" {
@@ -80,20 +101,78 @@ resource "aws_cloudwatch_log_group" "worker" {
   tags              = var.tags
 }
 
+resource "aws_cloudwatch_log_group" "cognito_email_sender" {
+  count = var.enable_cognito_custom_email_sender ? 1 : 0
+
+  name              = "/aws/lambda/${local.name_prefix}-cognito-email-sender"
+  retention_in_days = 365
+  kms_key_id        = aws_kms_key.app.arn
+  tags              = var.tags
+}
+
+resource "aws_lambda_function" "cognito_email_sender" {
+  count = var.enable_cognito_custom_email_sender ? 1 : 0
+
+  #checkov:skip=CKV_AWS_116:Synchronous Cognito trigger; an invocation failure must fail the originating Cognito delivery rather than enter a DLQ.
+  #checkov:skip=CKV_AWS_117:Public egress is required for the authenticated Mail Manager SMTP endpoint.
+  #checkov:skip=CKV_AWS_272:Code signing is not yet configured for this application.
+  function_name                  = "${local.name_prefix}-cognito-email-sender"
+  role                           = aws_iam_role.cognito_email_sender[0].arn
+  runtime                        = "nodejs22.x"
+  handler                        = "index.handler"
+  filename                       = data.archive_file.cognito_email_sender.output_path
+  source_code_hash               = data.archive_file.cognito_email_sender.output_base64sha256
+  memory_size                    = 256
+  timeout                        = 20
+  kms_key_arn                    = aws_kms_key.app.arn
+  reserved_concurrent_executions = 2
+
+  tracing_config {
+    mode = "Active"
+  }
+
+  environment {
+    variables = {
+      ADMIN_APP_URL                   = var.cognito_admin_app_url
+      COGNITO_EMAIL_KMS_KEY_ARN       = aws_kms_key.cognito_email[0].arn
+      EMAIL_TRANSPORT                 = "smtp"
+      ENVIRONMENT                     = var.environment
+      MAIL_MANAGER_SMTP_HOST          = aws_cloudformation_stack.city_smtp_relay[0].outputs["IngressARecord"]
+      MAIL_MANAGER_SMTP_USERNAME      = aws_cloudformation_stack.city_smtp_relay[0].outputs["IngressPointId"]
+      MAIL_MANAGER_SMTP_SECRET_ARN    = aws_secretsmanager_secret.mail_manager_ingress[0].arn
+      SETUP_CODE_EMAIL_FROM           = var.city_smtp_from_address
+      SETUP_CODE_EMAIL_SUBJECT_PREFIX = var.environment == "prod" ? "" : "[${var.environment}] "
+    }
+  }
+
+  depends_on = [aws_cloudwatch_log_group.cognito_email_sender]
+  tags       = var.tags
+}
+
+resource "aws_lambda_permission" "cognito_email_sender" {
+  count = var.enable_cognito_custom_email_sender ? 1 : 0
+
+  statement_id   = "AllowCognitoInvoke"
+  action         = "lambda:InvokeFunction"
+  function_name  = aws_lambda_function.cognito_email_sender[0].function_name
+  principal      = "cognito-idp.amazonaws.com"
+  source_account = data.aws_caller_identity.current.account_id
+}
+
 resource "aws_lambda_function" "api" {
+  #checkov:skip=CKV_AWS_115:Intentional use of account unreserved concurrency for synchronized perimeter checks across 400 sites; the former cap of 10 rejected normal result reads. API Gateway and WAF rate limits remain in place, with API Lambda throttle alarms for capacity monitoring.
   #checkov:skip=CKV_AWS_116:Sync API-Gateway-invoked function; failures return to the caller, so a Lambda DLQ is N/A (the worker keeps a real DLQ).
   #checkov:skip=CKV_AWS_117:No VPC — the function needs public AWS-API egress and holds no VPC-only data; revisit with VPC + endpoints.
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
-  function_name                  = "${local.name_prefix}-api"
-  role                           = aws_iam_role.api.arn
-  runtime                        = "nodejs22.x"
-  handler                        = "index.handler"
-  filename                       = data.archive_file.api.output_path
-  source_code_hash               = data.archive_file.api.output_base64sha256
-  memory_size                    = 512
-  timeout                        = 29
-  kms_key_arn                    = aws_kms_key.app.arn
-  reserved_concurrent_executions = 10
+  function_name    = "${local.name_prefix}-api"
+  role             = aws_iam_role.api.arn
+  runtime          = "nodejs24.x"
+  handler          = "index.handler"
+  filename         = data.archive_file.api.output_path
+  source_code_hash = data.archive_file.api.output_base64sha256
+  memory_size      = 512
+  timeout          = 29
+  kms_key_arn      = aws_kms_key.app.arn
 
   tracing_config {
     mode = "Active"
@@ -101,10 +180,14 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = merge({
+      DUPLICATE_DETECTION_ENABLED = tostring(var.enable_duplicate_detection)
       DYNAMO_TABLE                = aws_dynamodb_table.app.name
       COGNITO_USER_POOL_ID        = aws_cognito_user_pool.users.id
       SQS_QUEUE_URL               = aws_sqs_queue.submissions.url
+      ANALYSIS_QUEUE_URL          = aws_sqs_queue.analysis.url
       S3_UPLOAD_BUCKET            = aws_s3_bucket.uploads.bucket
+      S3_COMPLAINT_BUCKET         = aws_s3_bucket.complaints.bucket
+      S3_COMPLIANCE_LETTER_BUCKET = aws_s3_bucket.compliance_letters.bucket
       DEMO_SITE_ID                = "demo-site"
       BEDROCK_MODEL_ID            = var.bedrock_model_id
       ANALYZER_BASE_URL           = var.analyzer_base_url
@@ -112,11 +195,12 @@ resource "aws_lambda_function" "api" {
       # Device token minting (Option 4 device auth — docs/adr/0010): the api
       # Lambda mints session tokens for the registration/refresh routes.
       DEVICE_TOKEN_SECRET_SECRET_ARN  = aws_secretsmanager_secret.device_token_key.arn
-      SETUP_CODE_EMAIL_FROM           = var.setup_code_email_from
       SETUP_CODE_EMAIL_REPLY_TO       = var.setup_code_email_reply_to
       SETUP_CODE_EMAIL_SUBJECT_PREFIX = var.environment == "prod" ? "" : "[${var.environment}] "
       PROVIDER_APP_URL                = var.provider_app_url
-    }, local.sf311_lambda_environment)
+      # Business metrics (lib/metrics.js, EMF): CheckStarted / CheckCompleted.
+      METRICS_NAMESPACE = local.metrics_namespace
+    }, local.sf311_lambda_environment, local.email_lambda_environment)
   }
 
   depends_on = [aws_cloudwatch_log_group.api]
@@ -142,7 +226,7 @@ resource "aws_lambda_function" "intake" {
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
   function_name    = "${local.name_prefix}-intake"
   role             = aws_iam_role.intake.arn
-  runtime          = "nodejs22.x"
+  runtime          = "nodejs24.x"
   handler          = "index.handler"
   filename         = data.archive_file.intake.output_path
   source_code_hash = data.archive_file.intake.output_base64sha256
@@ -198,7 +282,7 @@ resource "aws_lambda_function" "authorizer" {
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
   function_name    = "${local.name_prefix}-authorizer"
   role             = aws_iam_role.authorizer.arn
-  runtime          = "nodejs22.x"
+  runtime          = "nodejs24.x"
   handler          = "index.handler"
   filename         = data.archive_file.authorizer.output_path
   source_code_hash = data.archive_file.authorizer.output_base64sha256
@@ -229,22 +313,17 @@ resource "aws_lambda_function" "authorizer" {
 resource "aws_lambda_function" "worker" {
   #checkov:skip=CKV_AWS_117:No VPC — the function needs public egress to the analyzer + AWS APIs; revisit with VPC + endpoints.
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
-  #checkov:skip=CKV_AWS_115:SQS-triggered worker — concurrency is bounded on the event-source mapping (scaling_config.maximum_concurrency) below, not via reserved concurrency here. Reserved concurrency on an SQS trigger causes throttling→DLQ failures (see comment below).
+  #checkov:skip=CKV_AWS_115:SQS-triggered worker — concurrency is bounded on the event-source mapping (scaling_config.maximum_concurrency) below, not via reserved concurrency here. This legacy worker also consumes the DynamoDB outbox stream; foreground analysis has a separate reserved worker.
   function_name    = "${local.name_prefix}-worker"
   role             = aws_iam_role.worker.arn
-  runtime          = "nodejs22.x"
+  runtime          = "nodejs24.x"
   handler          = "index.handler"
   filename         = data.archive_file.worker.output_path
   source_code_hash = data.archive_file.worker.output_base64sha256
   memory_size      = 1024
   timeout          = 300 # 5 min: headroom for a slow single analyzer call (photos now analyzed concurrently, so this bounds one call, not the batch)
   kms_key_arn      = aws_kms_key.app.arn
-  # Concurrency is bounded on the SQS event-source mapping below via
-  # `scaling_config.maximum_concurrency`, NOT via reserved concurrency here.
-  # Reserved concurrency on an SQS trigger causes throttling-induced failures
-  # that redrive to the DLQ (AWS docs: don't set it below 5 with SQS); the ESM
-  # cap bounds the drain rate without that side effect. The true downstream
-  # limit is the Bedrock (Sonnet 4, us-east-1) RPM/TPM quota.
+  # Background work and pre-migration analysis messages share this worker.
 
   tracing_config {
     mode = "Active"
@@ -261,10 +340,16 @@ resource "aws_lambda_function" "worker" {
       DYNAMO_TABLE                = aws_dynamodb_table.app.name
       SQS_QUEUE_URL               = aws_sqs_queue.submissions.url
       S3_UPLOAD_BUCKET            = aws_s3_bucket.uploads.bucket
+      S3_COMPLAINT_BUCKET         = aws_s3_bucket.complaints.bucket
+      S3_COMPLIANCE_LETTER_BUCKET = aws_s3_bucket.compliance_letters.bucket
       ANALYZER_BASE_URL           = var.analyzer_base_url
       ANALYZER_API_KEY_SECRET_ARN = aws_secretsmanager_secret.analyzer_api_key.arn
       REVERSE_GEOCODING_ENABLED   = "true"
-    }, local.sf311_lambda_environment)
+      # Business metrics (lib/metrics.js, EMF): Analysis* + AnalyzerLatencyMs.
+      METRICS_NAMESPACE               = local.metrics_namespace
+      SETUP_CODE_EMAIL_REPLY_TO       = var.setup_code_email_reply_to
+      SETUP_CODE_EMAIL_SUBJECT_PREFIX = var.environment == "prod" ? "" : "[${var.environment}] "
+    }, local.sf311_lambda_environment, local.email_lambda_environment)
   }
 
   depends_on = [aws_cloudwatch_log_group.worker]
@@ -304,32 +389,14 @@ resource "aws_lambda_event_source_mapping" "worker" {
   maximum_batching_window_in_seconds = 0
   function_response_types            = ["ReportBatchItemFailures"]
 
-  # Bound how many worker invocations SQS drives concurrently. Each invocation
-  # fans its whole batch out into CONCURRENT analyzer calls (worker.js does
-  # Promise.allSettled over event.Records), so the worst-case peak is
-  #   batch_size × maximum_concurrency = 10 × 20 = 200 concurrent Sonnet 4 calls.
-  # A burst that co-arrives and sits queued is pulled up to batch_size (10) per
-  # poll and fanned out — removing the batching window does not lower this peak;
-  # in the staggered/typical case invocations carry ~1 artifact and actual
-  # concurrency is far below 200.
-  #
-  # Size the Bedrock quota for the 200-call peak, not the typical case, or the app
-  # throttles (429 → SQS redrive). REQUIRES a quota increase (us-east-1,
-  # cross-region Sonnet 4) above the defaults. At ~8,500 tokens/call, target:
-  #   TPM ≥ 2,500,000  (default 200,000)   ← binding limit
-  #   RPM ≥ 500        (default 200)
-  # Prompt caching (#2) + output trim (#3) in the analyzer cut per-call tokens, so
-  # once those ship this same cap needs less quota — but size on the pre-
-  # optimization numbers above for burst headroom. Valid range 2–1000.
+  # Background queue; new perimeter evidence uses the dedicated analysis queue.
   scaling_config {
     maximum_concurrency = 20
   }
 }
 
-# Revocation requests and their outbox entries are committed atomically. This
-# filtered stream mapping forwards only new pending outbox entries to the worker,
-# which publishes the site reconciliation message to SQS and marks the entry as
-# dispatched. Stream retries close the former commit-then-send failure window.
+# Revocation and compliance-letter requests are committed with durable outbox
+# entries. This filtered stream mapping forwards them to the worker queue.
 resource "aws_lambda_event_source_mapping" "revocation_outbox" {
   event_source_arn = aws_dynamodb_table.app.stream_arn
   function_name    = aws_lambda_function.worker.arn
@@ -346,7 +413,7 @@ resource "aws_lambda_event_source_mapping" "revocation_outbox" {
         eventName = ["INSERT"]
         dynamodb = {
           NewImage = {
-            entityType = { S = ["REVOCATION_OUTBOX"] }
+            entityType = { S = ["REVOCATION_OUTBOX", "COMPLIANCE_LETTER_OUTBOX"] }
           }
         }
       })

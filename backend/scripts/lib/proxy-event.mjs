@@ -58,6 +58,13 @@ export function buildProxyEvent({
   // X-Debug-Groups stands in for Cognito groups on admin routes.
   const siteId = flatHeaders["x-debug-site"] ?? defaultSite;
   const groups = flatHeaders["x-debug-groups"] ?? "";
+  const isAdmin = groups
+    .split(",")
+    .some((group) =>
+      ["compliance-manager", "compliance-supervisor", "central-admin"].includes(
+        group.trim(),
+      ),
+    );
   const requestId = randomUUID();
 
   return {
@@ -107,6 +114,21 @@ export function buildProxyEvent({
                 ...(siteId ? { "custom:siteId": siteId } : {}),
                 accessLevel: flatHeaders["x-debug-access"] || "general",
                 ...(groups ? { "cognito:groups": groups } : {}),
+                ...(isAdmin
+                  ? {
+                      email:
+                        flatHeaders["x-debug-email"] ||
+                        "local.supervisor@example.org",
+                      given_name: flatHeaders["x-debug-first-name"] || "Local",
+                      family_name:
+                        flatHeaders["x-debug-last-name"] || "Supervisor",
+                      phone_number:
+                        flatHeaders["x-debug-phone"] || "+14155550199",
+                      "custom:department":
+                        flatHeaders["x-debug-department"] ||
+                        "Department of Public Health (DPH)",
+                    }
+                  : {}),
               },
               scopes: [],
             },

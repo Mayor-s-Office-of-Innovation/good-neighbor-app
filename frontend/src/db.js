@@ -153,6 +153,35 @@ export async function activateSiteBinding(siteId) {
   });
 }
 
+/**
+ * The site-record fields a minted device session contributes. Registration,
+ * enrollment, binding select, and the Home Screen handoff all store this one
+ * shape; callers add their own provenance (code, providerSiteId) on top.
+ * @param {{ deviceId: string, token: string, refreshToken: string, expiresIn: number, tokenGeneration: number, accessLevel?: string, bindingId?: string, physicalDeviceId?: string, absoluteExpiresAt?: string, site?: { siteId: string } }} session
+ * @returns {Record<string, any>}
+ */
+export function bindingFromSession(session) {
+  /** @type {Record<string, any>} */
+  const fields = {
+    siteId: session.site?.siteId,
+    deviceId: session.deviceId,
+    bindingId: session.bindingId,
+    physicalDeviceId: session.physicalDeviceId,
+    token: session.token,
+    refreshToken: session.refreshToken,
+    tokenExpiresAt: new Date(
+      Date.now() + session.expiresIn * 1000,
+    ).toISOString(),
+    tokenGeneration: session.tokenGeneration,
+    accessLevel: session.accessLevel,
+    absoluteExpiresAt: session.absoluteExpiresAt,
+  };
+  for (const key of Object.keys(fields)) {
+    if (fields[key] === undefined) delete fields[key];
+  }
+  return fields;
+}
+
 export async function setSite(name, meta = {}) {
   // meta may carry the onboarding code (identity provenance) and, once device
   // auth lands (services/devices.js), the device session (deviceId, token,
@@ -174,6 +203,35 @@ export async function setSite(name, meta = {}) {
     if (record.siteId) os.put({ ...record, id: bindingKey(record.siteId) });
   });
   return record;
+}
+
+/**
+ * Persist server-created Site binding metadata without inventing local token
+ * state. Selecting one later exchanges the current physical-device session
+ * for that binding through `/device-bindings/select`.
+ * @param {Array<{siteId:string,siteName:string,bindingId:string,accessLevel?:"general"|"manager"}>} bindings
+ * @param {string} physicalDeviceId
+ */
+export async function saveDiscoveredBindings(bindings, physicalDeviceId) {
+  if (!physicalDeviceId || !Array.isArray(bindings)) return;
+  await tx("site", "readwrite", async (os) => {
+    for (const binding of bindings) {
+      if (!binding?.siteId || !binding.bindingId) continue;
+      const id = bindingKey(binding.siteId);
+      const existing = await reqToPromise(os.get(id));
+      os.put({
+        ...(existing || {}),
+        id,
+        siteId: binding.siteId,
+        name: binding.siteName || existing?.name || binding.siteId,
+        bindingId: binding.bindingId,
+        deviceId: binding.bindingId,
+        physicalDeviceId,
+        accessLevel: binding.accessLevel || "manager",
+        boundAt: existing?.boundAt || new Date().toISOString(),
+      });
+    }
+  });
 }
 /**
  * Fields owned by the device binding (setSite at registration) and the session
@@ -251,35 +309,63 @@ function tokenClaims(token) {
 /**
  * @param {Record<string, any>} [settings] site settings to merge (typically the
  *   GET /v1/site response); binding/session keys are ignored, see above
+ * @param {string} [expectedSiteId] when given, write only while the current
+ *   record still belongs to this site
+ * @param {string} [expectedDeviceId] when given (with `expectedSiteId`), write
+ *   only while the record is still the same device binding — a re-bind of the
+ *   same site must not inherit settings minted for the previous device
+ * @returns {Promise<Record<string, any> | null>} the saved record, or null
+ *   when the write was skipped
  */
-export async function saveSiteSettings(settings = {}) {
-  const current = (await getSite()) || { id: "current", name: "Your site" };
-  const incoming = { ...settings };
-  for (const key of SITE_BINDING_FIELDS) {
-    const bound = /** @type {Record<string, unknown>} */ (current)[key];
-    if (bound !== undefined && bound !== null && bound !== "") {
-      delete incoming[key];
-    }
-  }
-  // Self-heal: the access token's `custom:siteId` claim is the binding the
-  // server actually enforces. A server-reported siteId that matches it may
-  // replace a stale local value (devices whose record was rewritten to the
-  // demo partition before the backend failed closed recover on next load).
-  const claimed = siteIdFromToken(current.token);
-  if (claimed && settings.siteId === claimed) {
-    incoming.siteId = claimed;
-  }
-  const record = {
-    ...current,
-    ...incoming,
-    id: "current",
-    name: String(settings.name || current.name || "Your site").trim(),
-  };
-  await tx("site", "readwrite", (os) => {
-    os.put(record);
-    if (record.siteId) os.put({ ...record, id: bindingKey(record.siteId) });
-  });
-  return record;
+export async function saveSiteSettings(
+  settings = {},
+  expectedSiteId,
+  expectedDeviceId,
+) {
+  // Read and write in one transaction: the settings refresh now runs behind
+  // the first screen, concurrently with that screen's requests, and a token
+  // rotation (updateSiteSession) landing between a separate read and this
+  // write would be overwritten with the stale credentials. With
+  // `expectedSiteId`, the write is also skipped (null) when the current
+  // record is gone or belongs to another site — a settings answer that
+  // outlived a sign-out or site switch must not resurrect or rename it.
+  return tx("site", "readwrite", (os) =>
+    reqToPromise(os.get("current")).then((stored) => {
+      if (
+        expectedSiteId &&
+        (!stored ||
+          (stored.siteId && stored.siteId !== expectedSiteId) ||
+          (expectedDeviceId && stored.deviceId !== expectedDeviceId))
+      ) {
+        return null;
+      }
+      const current = stored || { id: "current", name: "Your site" };
+      const incoming = { ...settings };
+      for (const key of SITE_BINDING_FIELDS) {
+        const bound = /** @type {Record<string, unknown>} */ (current)[key];
+        if (bound !== undefined && bound !== null && bound !== "") {
+          delete incoming[key];
+        }
+      }
+      // Self-heal: the access token's `custom:siteId` claim is the binding the
+      // server actually enforces. A server-reported siteId that matches it may
+      // replace a stale local value (devices whose record was rewritten to the
+      // demo partition before the backend failed closed recover on next load).
+      const claimed = siteIdFromToken(current.token);
+      if (claimed && settings.siteId === claimed) {
+        incoming.siteId = claimed;
+      }
+      const record = {
+        ...current,
+        ...incoming,
+        id: "current",
+        name: String(settings.name || current.name || "Your site").trim(),
+      };
+      os.put(record);
+      if (record.siteId) os.put({ ...record, id: bindingKey(record.siteId) });
+      return record;
+    }),
+  );
 }
 export async function clearSite() {
   return tx("site", "readwrite", (os) => os.delete("current"));

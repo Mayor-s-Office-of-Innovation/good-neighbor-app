@@ -14,6 +14,23 @@
     <meta name="theme-color" content="#ffffff" />
     <title>Good Neighbor App</title>
 
+    <!-- Favicon + PWA identity. Icons are generated from public/img/gn-logo.png
+         by scripts/make-pwa-icons.mjs; the manifest is static in public/ (no
+         service worker yet — see the PWA note in vite.config.js). The Apple
+         tags cover iOS versions that ignore the manifest's short_name/display. -->
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="192x192"
+      href="/img/icon-192.png"
+    />
+    <link rel="apple-touch-icon" href="/img/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Good Neighbor" />
+
     <!--
       Theme init — runs synchronously BEFORE first paint to avoid a flash of the
       wrong theme. Mirrors the intervention-evaluation pattern: OS default via

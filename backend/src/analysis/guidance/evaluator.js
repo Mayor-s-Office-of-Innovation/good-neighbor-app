@@ -1,5 +1,6 @@
-import { actionsEscalationsV4Catalog } from "./actions-escalations-v4.js";
+import { activeCatalog } from "./catalog-registry.js";
 import { resolveCategory } from "./category-resolver.js";
+import { timeRangeContains } from "./rule-catalog.js";
 
 /**
  * @typedef {import("./rule-catalog.js").GuidanceCatalog} GuidanceCatalog
@@ -71,19 +72,25 @@ const PACIFIC_TIME = new Intl.DateTimeFormat("en-US", {
   hour: "2-digit",
   minute: "2-digit",
   hourCycle: "h23",
+  weekday: "short",
 });
 
 /**
  * @param {string | number | Date} reportedAt
- * @returns {number | null}
+ * @returns {{ minute: number, weekday: number } | null}
  */
-function pacificMinute(reportedAt) {
+function pacificTime(reportedAt) {
   const date = new Date(reportedAt);
   if (Number.isNaN(date.getTime())) return null;
   const parts = Object.fromEntries(
     PACIFIC_TIME.formatToParts(date).map(({ type, value }) => [type, value]),
   );
-  return Number(parts.hour) * 60 + Number(parts.minute);
+  return {
+    minute: Number(parts.hour) * 60 + Number(parts.minute),
+    weekday: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(
+      parts.weekday,
+    ),
+  };
 }
 
 /**
@@ -95,12 +102,9 @@ export function timeRangeMatches(rule, reportedAt) {
   const range = rule.validTimeRange;
   if (!range || range.kind === "always") return true;
   if (reportedAt === undefined) return false;
-  const minute = pacificMinute(reportedAt);
-  if (minute === null) return false;
-  if (range.startMinute <= range.endMinute) {
-    return minute >= range.startMinute && minute <= range.endMinute;
-  }
-  return minute >= range.startMinute || minute <= range.endMinute;
+  const local = pacificTime(reportedAt);
+  if (local === null) return false;
+  return timeRangeContains(range, local.minute, local.weekday);
 }
 
 /**
@@ -143,7 +147,7 @@ function rulesByEvaluationOrder(rules) {
 export function evaluateCondition({
   condition,
   answers = {},
-  catalog = actionsEscalationsV4Catalog,
+  catalog = activeCatalog(),
   reportedAt,
 }) {
   const severity = conditionSeverity(condition);

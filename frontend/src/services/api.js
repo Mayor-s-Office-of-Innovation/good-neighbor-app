@@ -153,10 +153,63 @@ function isAccessTokenError(err) {
 }
 
 /**
+ * Refresh this close to the stored access-token expiry instead of sending a
+ * token the authorizer is about to reject. Covers a slightly fast client
+ * clock as well as the request's own travel time.
+ */
+export const ACCESS_TOKEN_REFRESH_MARGIN_MS = 60_000;
+
+/**
+ * Whether a stored access token is expired or inside the refresh margin.
+ * `tokenExpiresAt` is an ISO string (db.js) but older records may hold an
+ * epoch-millisecond number; an unreadable value means "unknown", and the
+ * token is sent as-is so the rejection path can decide.
+ * @param {unknown} tokenExpiresAt
+ * @param {number} [now]
+ * @returns {boolean}
+ */
+export function isAccessTokenExpiring(tokenExpiresAt, now = Date.now()) {
+  const expiresAt =
+    typeof tokenExpiresAt === "number"
+      ? tokenExpiresAt
+      : typeof tokenExpiresAt === "string"
+        ? Date.parse(tokenExpiresAt)
+        : NaN;
+  if (!Number.isFinite(expiresAt)) return false;
+  return expiresAt - now <= ACCESS_TOKEN_REFRESH_MARGIN_MS;
+}
+
+/**
+ * Wait for `promise`, but stop waiting as soon as `signal` aborts. The
+ * promise itself keeps running (a shared refresh must still persist its
+ * result for the other requests riding it); only this caller lets go.
+ * @template T
+ * @param {Promise<T>} promise
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<T>}
+ */
+function untilAborted(promise, signal) {
+  if (!signal) return promise;
+  if (signal.aborted) {
+    return Promise.reject(new DOMException("Request aborted", "AbortError"));
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = () =>
+      reject(new DOMException("Request aborted", "AbortError"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
+  });
+}
+
+/**
  * One JSON request against the backend. Serializes an object body, parses a
  * JSON response, and throws `ApiError` on a non-2xx status or a transport
- * failure. Attaches the device token when a session exists and retries once
- * through a silent refresh on an access-token rejection.
+ * failure. Attaches the device token when a session exists, refreshing first
+ * when the stored token is known to be expiring (so the common idle-tab case
+ * never produces a 403 round trip), and retries once through a silent
+ * refresh on an access-token rejection.
  * @param {string} method
  * @param {string} path        path beginning with `/` (joined onto BASE)
  * @param {object} [opts]
@@ -179,9 +232,38 @@ async function request(
     throw new SiteBindingChangedError();
   }
   const requestSiteId = originSiteId || site?.siteId || "";
-  const authHeaders = site?.token
-    ? { authorization: `Bearer ${site.token}` }
-    : {};
+  let token = site?.token;
+  // Pre-flight refresh: a token past (or within a minute of) its stored
+  // expiry is certain to be rejected, so renew before the fetch rather than
+  // after a 403. Only a fatal refresh outcome stops the request. A 5xx or
+  // transport failure is remembered and the stored token is sent anyway —
+  // inside the margin it usually still works — but if it IS rejected the
+  // remembered failure is surfaced rather than asking the same unhealthy
+  // refresh endpoint a second time. The caller's signal is honored while
+  // waiting: an aborted request stops here without touching the network.
+  /** @type {Error | null} */
+  let preflightRefreshError = null;
+  if (
+    allowAuthRetry &&
+    token &&
+    site?.refreshToken &&
+    isAccessTokenExpiring(site.tokenExpiresAt)
+  ) {
+    try {
+      token = (await untilAborted(refreshSession(requestSiteId), signal)).token;
+    } catch (err) {
+      if (
+        signal?.aborted ||
+        err instanceof ReauthRequiredError ||
+        err instanceof SiteBindingChangedError
+      ) {
+        if (!signal?.aborted) classifyApiFailure(err);
+        throw err;
+      }
+      preflightRefreshError = err instanceof Error ? err : null;
+    }
+  }
+  const authHeaders = token ? { authorization: `Bearer ${token}` } : {};
 
   /** @type {Response} */
   let res;
@@ -197,6 +279,7 @@ async function request(
       signal,
     });
   } catch (err) {
+    if (signal?.aborted) throw err;
     // fetch only rejects on a transport failure (offline, DNS, CORS, abort).
     classifyApiFailure(
       new ApiError(`Network error calling ${method} ${path}: ${err}`, {
@@ -238,6 +321,13 @@ async function request(
     // auth rejection (or a rejected refresh) is fatal UNLESS the stored session was
     // superseded mid-flight (see the retry leg below).
     if (isAccessTokenRejection(res.status, parsed) && allowAuthRetry) {
+      // The pre-flight refresh already failed on this request: the token was
+      // rejected as predicted and the refresh endpoint is the problem.
+      // Surface that (retryable) failure instead of a second doomed refresh.
+      if (preflightRefreshError) {
+        classifyApiFailure(preflightRefreshError);
+        throw preflightRefreshError;
+      }
       // Refresh from the CURRENT stored session — `site` here may be stale
       // (read before this request's fetch); refreshSession re-reads it.
       try {
@@ -364,6 +454,23 @@ export function selectDeviceBinding(bindingId) {
   });
 }
 
+/**
+ * Mint a Home Screen handoff grant for the authenticated device
+ * (services/session-handoff.js). The secret comes back once, in this body.
+ * @returns {Promise<{ grantId: string, token: string, expiresAt: string, startUrl: string }>}
+ */
+export function issueSessionHandoff() {
+  return request("POST", "/app/v1/session-handoff");
+}
+
+/**
+ * Retire the authenticated device's pending handoff grant (sign-out).
+ * @returns {Promise<{ retired: boolean }>}
+ */
+export function retireSessionHandoff() {
+  return request("DELETE", "/app/v1/session-handoff");
+}
+
 /** @param {string} label */
 export function createStaffEnrollmentGrant(label) {
   return request("POST", "/app/v1/manager/staff-grants", {
@@ -371,7 +478,7 @@ export function createStaffEnrollmentGrant(label) {
   });
 }
 
-/** Return the current Manager binding's unfinished staff grant metadata. */
+/** Return metadata for the current Manager binding's staff grants; secrets are never returned. */
 export function getCurrentStaffEnrollmentGrant() {
   return request("GET", "/app/v1/manager/staff-grants/current");
 }
@@ -515,6 +622,18 @@ export function listChecks({ limit, nextToken } = {}) {
 }
 
 /**
+ * @param {{startedAt: string, checkId: string, signal?: AbortSignal, siteId?: string}} opts
+ * @returns {Promise<{counts: number[]}>}
+ */
+export function getCaptureGuidance({ startedAt, checkId, signal, siteId }) {
+  return request(
+    "GET",
+    `/v1/checks:capture-guidance${qs({ startedAt, checkId })}`,
+    { signal, originSiteId: siteId },
+  );
+}
+
+/**
  * GET /v1/checks/{checkId} — one check with its artifacts + analyses, in a single
  * base-table query. 404 → ApiError(status 404).
  * @param {string} checkId
@@ -522,6 +641,162 @@ export function listChecks({ limit, nextToken } = {}) {
  */
 export function getCheck(checkId) {
   return request("GET", `/v1/checks/${encodeURIComponent(checkId)}`);
+}
+
+// ── Public complaints ──────────────────────────────────────────────────────
+
+export function listComplaints() {
+  return request("GET", "/v1/complaints");
+}
+
+export function getComplaint(complaintId) {
+  return request("GET", `/v1/complaints/${encodeURIComponent(complaintId)}`);
+}
+
+export function createComplaint(body) {
+  return request("POST", "/v1/complaints", {
+    body,
+    headers: { "idempotency-key": body.complaintId },
+  });
+}
+
+export function retryComplaint(complaintId) {
+  return request(
+    "POST",
+    `/v1/complaints/${encodeURIComponent(complaintId)}/analysis:retry`,
+    { body: {} },
+  );
+}
+
+export function deleteComplaint(complaintId) {
+  return request("DELETE", `/v1/complaints/${encodeURIComponent(complaintId)}`);
+}
+
+export function presignComplaintArtifact(complaintId, body, signal) {
+  return request(
+    "POST",
+    `/v1/complaints/${encodeURIComponent(complaintId)}/artifacts:presign`,
+    { body, signal },
+  );
+}
+
+export function registerComplaintArtifact(complaintId, body, signal) {
+  return request(
+    "POST",
+    `/v1/complaints/${encodeURIComponent(complaintId)}/artifacts`,
+    { body, signal },
+  );
+}
+
+export function deleteComplaintArtifact(complaintId, artifactId) {
+  return request(
+    "DELETE",
+    `/v1/complaints/${encodeURIComponent(complaintId)}/artifacts/${encodeURIComponent(artifactId)}`,
+  );
+}
+
+export function getComplaintMediaUrl(complaintId, artifactId) {
+  return request(
+    "GET",
+    `/v1/complaints/${encodeURIComponent(complaintId)}/artifacts/${encodeURIComponent(artifactId)}/media`,
+  );
+}
+
+// ── Dev-only: presigned uploads via the Vite dev server ─────────────────────
+//
+// In "frontend-only mode" (npm run dev:remote — the dev server proxies the API
+// to a deployed origin) the backend presigns REAL S3 URLs. A direct browser PUT
+// from http://127.0.0.1:5173 is cross-origin and the bucket's CORS lists only
+// the deployed origins, so instead the URL is rewritten onto this origin at
+// `/__s3/<bucket-host>/<key>?<presigned query>` and the dev server forwards it
+// to S3 with the Host restored (scripts/vite-remote-api.mjs). The signature
+// still validates — it covers host, path, query, and content-type, all of which
+// arrive unchanged — and S3 still authorizes on that signature alone.
+//
+// `__S3_UPLOAD_PROXY__` is a Vite `define` that is `true` only for a dev server
+// started with an https API_PROXY_TARGET and `false` in every build, so in
+// production this is a no-op and the URL goes straight to S3 as before.
+
+/** Same prefix the dev-server middleware listens on. */
+const S3_UPLOAD_PROXY_PREFIX = "/__s3/";
+/** Virtual-hosted S3 hostnames only (`bucket.s3.<region>.amazonaws.com`). */
+const S3_HOST_RE =
+  /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]\.s3\.[a-z0-9-]+\.amazonaws\.com$/;
+
+/** @returns {boolean} the build-time define, guarded for non-Vite contexts (tests) */
+function s3UploadProxyEnabled() {
+  try {
+    // @ts-expect-error -- build-time define (vite.config.js `define`); not a
+    // runtime global, so it has no ambient declaration.
+    return typeof __S3_UPLOAD_PROXY__ === "boolean" && __S3_UPLOAD_PROXY__;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Rewrite an absolute presigned S3 URL onto the dev server's `/__s3/` route when
+ * the upload proxy is enabled; otherwise (production, local harness, non-S3
+ * host, unparseable URL) return the URL unchanged.
+ * @param {string} url
+ * @param {boolean} [enabled]  defaults to the build-time define; tests pass it explicitly
+ * @returns {string}
+ */
+export function toDevUploadUrl(url, enabled = s3UploadProxyEnabled()) {
+  if (!enabled) return url;
+  /** @type {URL} */
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  if (parsed.protocol !== "https:" || !S3_HOST_RE.test(parsed.hostname)) {
+    return url;
+  }
+  return `${S3_UPLOAD_PROXY_PREFIX}${parsed.hostname}${parsed.pathname}${parsed.search}`;
+}
+
+/** @param {string} uploadUrl @param {Blob} file @param {Record<string,string>} uploadHeaders @param {(progress:number) => void} onProgress @param {AbortSignal} [signal] */
+export function putMediaWithProgress(
+  uploadUrl,
+  file,
+  uploadHeaders = {},
+  onProgress = () => {},
+  signal,
+) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Upload cancelled", "AbortError"));
+      return;
+    }
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", toDevUploadUrl(uploadUrl));
+    Object.entries(uploadHeaders).forEach(([name, value]) =>
+      xhr.setRequestHeader(name, value),
+    );
+    xhr.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable)
+        onProgress(Math.round((event.loaded / event.total) * 100));
+    });
+    xhr.addEventListener("load", () =>
+      xhr.status >= 200 && xhr.status < 300
+        ? resolve()
+        : reject(
+            new ApiError(`Media upload → ${xhr.status}`, {
+              status: xhr.status,
+            }),
+          ),
+    );
+    xhr.addEventListener("error", () =>
+      reject(new ApiError("Network error uploading media", { status: 0 })),
+    );
+    xhr.addEventListener("abort", () =>
+      reject(new DOMException("Upload cancelled", "AbortError")),
+    );
+    signal?.addEventListener("abort", () => xhr.abort(), { once: true });
+    xhr.send(file);
+  });
 }
 
 // ── Artifacts (photo upload leg) ────────────────────────────────────────────
@@ -579,7 +854,8 @@ export function deleteArtifact(checkId, artifactId) {
 /**
  * Raw presigned PUT of the media bytes straight to S3. NOT joined onto BASE and
  * carries no auth — the signature is the authorization, and the content-type must
- * match what was presigned. Throws `ApiError` on a non-2xx.
+ * match what was presigned. Throws `ApiError` on a non-2xx. (Dev-only exception:
+ * `toDevUploadUrl` may route it via the dev server — see above.)
  * @param {string} uploadUrl  absolute presigned URL from `presignArtifact`
  * @param {Blob} blob
  * @param {string} contentType
@@ -595,7 +871,7 @@ export async function putMedia(
   /** @type {Response} */
   let res;
   try {
-    res = await fetch(uploadUrl, {
+    res = await fetch(toDevUploadUrl(uploadUrl), {
       method: "PUT",
       headers: { "content-type": contentType, ...uploadHeaders },
       body: blob,
@@ -611,16 +887,61 @@ export async function putMedia(
 }
 
 /**
- * GET /v1/checks/{checkId}/artifacts/{artifactId}/media — a short-lived presigned
- * GET so staff can review the original photo (admin/read path).
+ * GET /v1/checks/{checkId}/artifacts/{artifactId}/media — short-lived presigned
+ * GETs for one photo: `downloadUrl` is the original (lightbox); `thumbnailUrl`,
+ * when present, is the worker's small WebP card variant.
  * @param {string} checkId
  * @param {string} artifactId
- * @returns {Promise<{ artifactId: string, s3Key: string, downloadUrl: string, expiresIn: number }>}
+ * @returns {Promise<{ artifactId: string, s3Key: string, downloadUrl: string, thumbnailUrl?: string, expiresIn: number }>}
  */
 export function getMediaUrl(checkId, artifactId) {
   return request(
     "GET",
     `/v1/checks/${encodeURIComponent(checkId)}/artifacts/${encodeURIComponent(artifactId)}/media`,
+  );
+}
+
+// ── Site manager reports (AP27, AP28; manager access level only) ─────────────
+
+/**
+ * @typedef {{ kind: "week" | "month" | "quarter", start: string, endExclusive: string }} ReportPeriod
+ * @typedef {{ period?: "week" | "month" | "quarter", start?: string }} ReportQuery
+ *   `start` is any Pacific day key (YYYY-MM-DD) inside the wanted period.
+ */
+
+/**
+ * GET /app/v1/manager/reports/checks — per-day check compliance for one period.
+ * @param {ReportQuery} [query]
+ * @returns {Promise<{ period: ReportPeriod, today: string, requirement: any, days: any[], totals: any, previous: ReportPeriod & { totals: any } }>}
+ */
+export function getChecksReport({ period, start } = {}) {
+  return request(
+    "GET",
+    `/app/v1/manager/reports/checks${qs({ period, start })}`,
+  );
+}
+
+/**
+ * GET /app/v1/manager/reports/tasks — every task created in the period.
+ * @param {ReportQuery} [query]
+ * @returns {Promise<{ period: ReportPeriod, today: string, tasks: any[], previous: ReportPeriod & { count: number } }>}
+ */
+export function getTasksReport({ period, start } = {}) {
+  return request(
+    "GET",
+    `/app/v1/manager/reports/tasks${qs({ period, start })}`,
+  );
+}
+
+/**
+ * GET /app/v1/manager/reports/task-updates — every task update event in the period.
+ * @param {ReportQuery} [query]
+ * @returns {Promise<{ period: ReportPeriod, today: string, updates: any[], previous: ReportPeriod & { count: number } }>}
+ */
+export function getTaskUpdatesReport({ period, start } = {}) {
+  return request(
+    "GET",
+    `/app/v1/manager/reports/task-updates${qs({ period, start })}`,
   );
 }
 
@@ -642,10 +963,14 @@ export function getTaskUpdates(taskId, nextToken) {
   );
 }
 
-export function createTaskUpdate(taskId, body) {
+export function createTaskUpdate(
+  taskId,
+  body,
+  requestId = crypto.randomUUID(),
+) {
   return request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/updates`, {
     body,
-    headers: { "idempotency-key": crypto.randomUUID() },
+    headers: { "idempotency-key": requestId },
   });
 }
 
@@ -672,8 +997,35 @@ export function get311RequestDetail(taskId, srNum) {
   );
 }
 
-export function get311RequestDetails(requests) {
-  return request("POST", "/v1/311-requests:batch", { body: { requests } });
+/** The backend rejects a `311-requests:batch` body with more than this many items. */
+export const MAX_311_BATCH_SIZE = 50;
+
+/**
+ * POST /v1/311-requests:batch — live SF311 status for filed tickets. The
+ * backend caps a batch at 50, and the home hub can hold far more filed
+ * tickets than that, so the pairs are split into capped batches sent in
+ * parallel and merged. A batch that fails is dropped so the others still
+ * hydrate their cards; the call rejects only when every batch failed.
+ * @param {Array<{ taskId: string, srNum: string }>} requests
+ * @returns {Promise<{ requests: Array<{ taskId: string, request: Record<string, any> }> }>}
+ */
+export async function get311RequestDetails(requests) {
+  const batches = [];
+  for (let i = 0; i < requests.length; i += MAX_311_BATCH_SIZE) {
+    batches.push(requests.slice(i, i + MAX_311_BATCH_SIZE));
+  }
+  const settled = await Promise.allSettled(
+    batches.map((batch) =>
+      request("POST", "/v1/311-requests:batch", { body: { requests: batch } }),
+    ),
+  );
+  const fulfilled = settled.filter((r) => r.status === "fulfilled");
+  if (batches.length && !fulfilled.length) {
+    throw /** @type {PromiseRejectedResult} */ (settled[0]).reason;
+  }
+  return {
+    requests: fulfilled.flatMap((r) => r.value?.requests || []),
+  };
 }
 
 /**
@@ -681,23 +1033,12 @@ export function get311RequestDetails(requests) {
  * any backend app-action results for audit.
  * @param {string} taskId
  * @param {{ completionMethod?: string }} [body]
- * @returns {Promise<{ task: any }>}
+ * @param {{originSiteId?: string, signal?: AbortSignal}} [options]
+ * @returns {Promise<{ task: any, resultsPending?: boolean }>}
  */
-export function completeTask(taskId, body = {}) {
+export function completeTask(taskId, body = {}, options = {}) {
   return request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/complete`, {
-    body,
-  });
-}
-
-/**
- * POST /v1/tasks/{taskId}/cannot-do — audit-only reason capture when the user
- * cannot complete an action or escalation.
- * @param {string} taskId
- * @param {{ reason: string, note?: string }} body
- * @returns {Promise<{ task: any }>}
- */
-export function cannotDoTask(taskId, body) {
-  return request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/cannot-do`, {
+    ...options,
     body,
   });
 }
@@ -807,11 +1148,11 @@ export async function uploadArtifact(
  * Upload documentation for a task update without registering it for analysis.
  * @param {string} taskId
  * @param {string} checkId
- * @param {{ dataUrl: string, capturedAt?: string }} item
+ * @param {{ file: File, capturedAt?: string }} item
  */
 export async function uploadTaskUpdatePhoto(taskId, checkId, item) {
-  const contentType = contentTypeFromDataUrl(item.dataUrl);
-  const blob = await dataUrlToBlob(item.dataUrl);
+  const blob = item.file;
+  const contentType = blob.type || "application/octet-stream";
   const { artifactId, s3Key, uploadUrl, uploadHeaders } = await presignArtifact(
     checkId,
     {
@@ -935,4 +1276,68 @@ export async function waitForAnalyses(
     await new Promise((r) => setTimeout(r, intervalMs));
     last = await getCheck(checkId);
   }
+}
+
+/** @param {string[]} taskIds */
+export function getDuplicateLinks(taskIds) {
+  return request("POST", "/v1/duplicates:batch", { body: { taskIds } });
+}
+/** @param {string} taskId @param {{sourceRevision:string,originalTaskId:string}} expected */
+export function separateDuplicate(taskId, expected) {
+  return request(
+    "POST",
+    `/v1/tasks/${encodeURIComponent(taskId)}/duplicate:separate`,
+    { body: expected },
+  );
+}
+
+/** @param {string} taskId */
+export function getTaskDetails(taskId) {
+  return request("GET", `/v1/tasks/${encodeURIComponent(taskId)}/details`);
+}
+
+/** @param {string} taskId @param {string} ruleId */
+export function updateTaskAction(taskId, ruleId) {
+  return request("PATCH", `/v1/tasks/${encodeURIComponent(taskId)}/action`, {
+    body: { ruleId },
+  });
+}
+
+/** @param {string} taskId @param {{text:string,resolved:boolean}} body */
+export function recordCustomTaskAction(taskId, body) {
+  return request(
+    "POST",
+    `/v1/tasks/${encodeURIComponent(taskId)}/custom-action`,
+    { body },
+  );
+}
+
+// Proactive care logs are Site-scoped, independent of checks and tasks.
+export function listCareWork(nextToken = "") {
+  return request(
+    "GET",
+    `/v1/care-work${qs({ nextToken: nextToken || undefined })}`,
+  );
+}
+export function getCareWork(workId) {
+  return request("GET", `/v1/care-work/${encodeURIComponent(workId)}`);
+}
+export function createCareWork(body) {
+  return request("POST", "/v1/care-work", {
+    body,
+    headers: { "idempotency-key": body.workId },
+  });
+}
+export function presignCarePhoto(workId, body) {
+  return request(
+    "POST",
+    `/v1/care-work/${encodeURIComponent(workId)}/photos:presign`,
+    { body },
+  );
+}
+export function getCarePhoto(workId, photoId) {
+  return request(
+    "GET",
+    `/v1/care-work/${encodeURIComponent(workId)}/photos/${encodeURIComponent(photoId)}/media`,
+  );
 }

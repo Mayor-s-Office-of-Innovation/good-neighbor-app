@@ -24,8 +24,13 @@ vi.stubGlobal("window", {
 });
 vi.stubGlobal("document", { addEventListener: vi.fn() });
 
-const { backOrNavigate, currentRoute, navigate, setPopstateGuard } =
-  await import("./router.js");
+const {
+  backOrNavigate,
+  currentRoute,
+  navigate,
+  setPopstateGuard,
+  captureRouteReturn,
+} = await import("./router.js");
 
 /**
  * Fire a synthetic popstate after applying the history mutation the browser
@@ -36,6 +41,14 @@ async function pop() {
 }
 
 describe("router history", () => {
+  it("finishing a nested flow returns to its list without revisiting the chooser", () => {
+    browser.history.state = { goodNeighborAppNavigation: 1 };
+    const finish = captureRouteReturn("/care-work");
+    browser.history.state = { goodNeighborAppNavigation: 3 };
+    finish();
+    expect(browser.history.go).toHaveBeenCalledWith(-2);
+  });
+
   beforeEach(() => {
     browser.location.pathname = "/today";
     browser.history.state = null;
@@ -335,5 +348,35 @@ describe("router overlays", () => {
     expect(browser.history.state).toEqual({ goodNeighborAppNavigation: 1 });
     expect(browser.location.hash).toBe("");
     removeRoute();
+  });
+});
+
+describe("routeTransitionDirection", () => {
+  it("pushes into deeper routes, pops back out, fades between siblings", async () => {
+    const { routeTransitionDirection } = await import("./router.js");
+    expect(routeTransitionDirection(null, "/today")).toBe("fade");
+    // Reports and site admin carry a back arrow to the hub: they push.
+    expect(routeTransitionDirection("/today", "/reports")).toBe("push");
+    expect(routeTransitionDirection("/reports", "/today")).toBe("pop");
+    expect(routeTransitionDirection("/today", "/site-admin")).toBe("push");
+    // The capture flows close with an X: they fade in and out.
+    expect(routeTransitionDirection("/today", "/check")).toBe("fade");
+    expect(routeTransitionDirection("/problem", "/today")).toBe("fade");
+    // Describe-instead has a back arrow to its flow.
+    expect(routeTransitionDirection("/check", "/check/describe")).toBe("push");
+    expect(routeTransitionDirection("/check/describe", "/check")).toBe("pop");
+    expect(
+      routeTransitionDirection("/reports", "/reports/checks/2026-09-29"),
+    ).toBe("push");
+    expect(routeTransitionDirection("/reports/issues/Litter", "/reports")).toBe(
+      "pop",
+    );
+    expect(routeTransitionDirection("/site-admin", "/site-admin/edit")).toBe(
+      "push",
+    );
+    // Query strings do not count as depth.
+    expect(
+      routeTransitionDirection("/reports?tab=issues", "/reports?tab=checks"),
+    ).toBe("fade");
   });
 });

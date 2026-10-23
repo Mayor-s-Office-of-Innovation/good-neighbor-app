@@ -1,23 +1,39 @@
 // @ts-nocheck -- lenient migration baseline (checkJs). Ratchet target: remove this line and add JSDoc types, one file per PR. See memory step2-gnp-port-scope.
+import { startPhoneCompletionRecovery } from "../services/phone-completion.js";
 /*
   app-root — the shell. Enforces first-run site setup, renders the header, and swaps
   the main view based on the route. Everything is scoped to the bound site.
 
   Routes → views: /today → today-view, /check → perimeter-check, /problem →
-  problem-report, /check/describe + /problem/describe → describe-instead.
+  problem-report, /check/describe + /problem/describe → describe-instead,
+  /site-admin* and /reports* → lazily loaded manager-only screens.
   Setup (device→site binding) is retained and gates everything. There is no
   per-site places setup any more (docs/plan-remove-places.md): a bound device
   lands straight on home.
 */
+import { setDuplicateUiSite } from "../services/feature-flags.js";
 import { requestLocationPermissionEarly } from "../services/device-location.js";
+import { refreshSessionTranslationsOnLocaleChange } from "../services/session-translations.js";
 import {
+  bindingFromSession,
   hasAdminAccess,
   clearSite,
   getSite,
   resetLocalAppState,
+  saveDiscoveredBindings,
   saveSiteSettings,
+  setSite,
 } from "../db.js";
-import { getSiteSettings } from "../services/api.js";
+import { getSiteSettings, listDeviceBindings } from "../services/api.js";
+import { ApiError, InvalidHandoffGrantError } from "../services/api-error.js";
+import { redeemHandoffGrant } from "../services/devices.js";
+import {
+  ensureHandoffManifest,
+  readHandoffCredentials,
+  rememberConsumedGrant,
+  stripHandoffCredentials,
+  uninstallHandoffManifest,
+} from "../services/session-handoff.js";
 import {
   startHealthMonitoring,
   stopHealthMonitoring,
@@ -25,9 +41,10 @@ import {
 } from "../services/backend-health.js";
 import {
   currentRoute,
-  onRouteChange,
   navigate,
+  onRouteChange,
   replaceRoute,
+  routeTransitionDirection,
 } from "../router.js";
 import { hasDraft } from "../state/check-session.js";
 import {
@@ -35,13 +52,15 @@ import {
   captureResumeProperties,
 } from "../state/capture-resume.js";
 import { trackEvent } from "../services/analytics.js";
-import { setupView, appShell } from "./app-root.templates.js";
+import { setupView, appShell, handoffView } from "./app-root.templates.js";
 import "./connection-status.js";
 import { isInAppBrowser } from "../services/browser-context.js";
+import { shouldOfferInstall } from "../services/install-prompt.js";
 import {
   deepActiveElement,
   isEditable,
   keyboardViewport,
+  revealEditable,
 } from "../services/keyboard-viewport.js";
 import {
   showQueuedSiteSwitchSuccessToast,
@@ -54,7 +73,13 @@ import {
 import { ready as i18nReady } from "../i18n/i18n.js";
 
 const ROUTE_VIEW = [
+  ["/care-work", "care-work-view"],
+  ["/complaints", "complaint-view"],
+  ["/reports/checks/", "reports-day-view"],
+  ["/reports/issues/", "reports-type-view"],
+  ["/reports", "reports-view"],
   ["/site-admin/edit", "site-admin-edit"],
+  ["/manage-access", "site-access-view"],
   ["/site-admin/access", "site-access-view"],
   ["/site-admin", "site-admin-view"],
   ["/problem/describe", "describe-instead"],
@@ -64,8 +89,34 @@ const ROUTE_VIEW = [
   ["/today", "today-view"],
 ];
 
+/**
+ * Analytics bucket for a failed Home Screen handoff. Never the grant itself.
+ * `rejected` is final (the grant is consumed, expired, or superseded);
+ * everything else may succeed on the next launch.
+ * @param {unknown} err
+ * @returns {"rejected" | "network" | "error" | "storage"}
+ */
+function handoffFailureReason(err) {
+  if (err instanceof InvalidHandoffGrantError) return "rejected";
+  if (err instanceof ApiError) return err.status === 0 ? "network" : "error";
+  return "storage";
+}
+
 export class AppRoot extends HTMLElement {
+  /** @type {string | null} the route the view last swapped to */
+  _swappedRoute = null;
+  _routeTransitionId = 0;
+
   async connectedCallback() {
+    // Home Screen handoff credentials ride the launch URL's fragment
+    // (services/session-handoff.js). Read and strip them synchronously, before
+    // anything awaits or reads the location; they are acted on below once the
+    // stored binding is known.
+    // Stripped whenever present — including a grant this install already
+    // consumed, which the reader hides — so the address bar and history
+    // entry never keep the secret.
+    const handoff = readHandoffCredentials();
+    stripHandoffCredentials();
     if (!this._onPhotoLightbox) {
       this._onPhotoLightbox = (event) => {
         const trigger = event.target?.closest?.("[data-photo-lightbox]");
@@ -93,18 +144,27 @@ export class AppRoot extends HTMLElement {
       // re-render of the shell and the current view (or the setup screen).
       this._onLocaleChange = () => {
         if (!this.isConnected) return;
-        if (!this._site) {
-          this._renderSetup();
+        if (!this._site || this.querySelector("site-setup")) {
+          // Keep pending enrollment credentials in the existing component:
+          // their fragment was stripped before the confirmation step.
+          const setup = this.querySelector("site-setup");
+          if (setup) setup._render();
+          else this._renderSetup();
           return;
         }
         // Only the view: the shell chrome is hidden, and re-creating it would
         // re-show a dismissed in-app-browser banner and replay queued toasts.
         this._renderView();
+        // Cards in an active capture render from session state captured when
+        // the analysis landed; pull in the locales the backend filled since.
+        void refreshSessionTranslationsOnLocaleChange();
       };
       window.addEventListener("localechange", this._onLocaleChange);
     }
     requestLocationPermissionEarly();
     this._site = await getSite();
+    this._stopPhoneRecovery?.();
+    this._stopPhoneRecovery = startPhoneCompletionRecovery();
     this._onAuthSignout = () => {
       // Recovery is IN PROGRESS: the user chose sign-out, so the health
       // state must leave `auth` now — a freshly mounted connection-status on
@@ -112,6 +172,9 @@ export class AppRoot extends HTMLElement {
       // form and make recovery unreachable. (sitebound's clearAuthState
       // below stays as belt-and-braces for AUTH states detected later.)
       clearAuthState();
+      // Backstop for the sign-out paths: the page must not keep offering a
+      // handoff grant for a session that no longer exists.
+      uninstallHandoffManifest();
       // The site binding is gone; re-render the first-run setup screen.
       this._site = null;
       if (this._unsub) this._unsub();
@@ -140,17 +203,31 @@ export class AppRoot extends HTMLElement {
       return;
     }
     if (!this._site) {
-      this._renderSetup();
+      if (handoff) await this._beginHandoffFromUrl(handoff);
+      else this._renderSetup();
       return;
     }
-    if (!(await this._refreshSiteSettings())) return;
+    // A later launch of the installed app whose start URL still carries a
+    // grant this install has not recorded as consumed (storage was cleared):
+    // a stale grant never replaces a live session.
+    if (handoff) void trackEvent("handoff_stale_ignored", {});
     await this._restoreInterruptedCapture();
     this._renderApp();
     this._unsub = onRouteChange(() => this._renderView());
     this._renderView();
+    // Off the critical path: the shell and the first screen render from the
+    // stored binding, and the settings refresh (site name, flags, and the
+    // revocation check) lands behind them instead of costing a serial round
+    // trip before anything paints. A revoked session still ends on the setup
+    // screen (see _refreshSiteSettings), and every request the first screen
+    // makes is re-authorized by the backend anyway.
+    void this._refreshSiteSettings().catch((err) =>
+      console.error("site settings refresh failed", err),
+    );
   }
 
   disconnectedCallback() {
+    this._stopPhoneRecovery?.();
     if (this._unsub) this._unsub();
     stopHealthMonitoring();
     window.removeEventListener("authsignout", this._onAuthSignout);
@@ -197,10 +274,17 @@ export class AppRoot extends HTMLElement {
   }
 
   _syncKeyboardViewport() {
-    const editing = isEditable(deepActiveElement(document));
+    const active = deepActiveElement(document);
+    const editing = isEditable(active);
     this._applyKeyboardViewport(
       keyboardViewport(window.visualViewport, window.innerHeight, editing),
     );
+    if (editing && window.visualViewport?.scale === 1) {
+      requestAnimationFrame(() => {
+        if (deepActiveElement(document) !== active) return;
+        revealEditable(active, window.visualViewport);
+      });
+    }
   }
 
   /** @param {{ height: number, top: number } | null} box */
@@ -231,17 +315,11 @@ export class AppRoot extends HTMLElement {
       this._renderView();
     });
     this.querySelector("site-setup").addEventListener("sitebound", async () => {
-      this._site = await getSite();
-      clearAuthState(); // re-bind heals an AUTH state
       void trackEvent("site_setup_completed", {
         switching_site: switchingSite,
       });
-      if (!(await this._refreshSiteSettings())) return;
-      this._renderApp();
+      if (!(await this._enterAppAfterBind())) return;
       if (switchingSite) showSiteSwitchSuccessToast();
-      this._unsub = onRouteChange(() => this._renderView());
-      navigate("/today");
-      this._renderView();
     });
   }
 
@@ -254,6 +332,81 @@ export class AppRoot extends HTMLElement {
     this._renderSetup();
   }
 
+  /**
+   * First launch of the Home Screen app (services/session-handoff.js): the
+   * launch URL carried a handoff grant and IndexedDB holds no session. Redeem
+   * it for a session on the same device record, then render the hub as a
+   * fresh bind would. Any failure lands on the setup screen with a notice
+   * saying why the code is being asked for.
+   * @param {{ grantId: string, token: string }} credentials
+   */
+  async _beginHandoffFromUrl({ grantId, token }) {
+    clearAuthState();
+    this._renderHandoff();
+    let session;
+    try {
+      session = await redeemHandoffGrant(grantId, token);
+    } catch (err) {
+      const reason = handoffFailureReason(err);
+      // The start URL carries this grant for the life of the install: once
+      // the server has said no for good, never present it again. A network
+      // blip may succeed on the next launch, so that one is not remembered.
+      if (reason === "rejected") rememberConsumedGrant(grantId);
+      void trackEvent("handoff_failed", { reason });
+      this._renderSetup({ notice: "handoffFailed" });
+      return;
+    }
+    rememberConsumedGrant(grantId);
+    try {
+      await setSite(session.site.name, bindingFromSession(session));
+    } catch (err) {
+      console.error("handoff session could not be stored", err);
+      void trackEvent("handoff_failed", { reason: "storage" });
+      this._renderSetup({ notice: "handoffFailed" });
+      return;
+    }
+    // Binding-backed devices keep their site switcher: the handed-off session
+    // is for one binding, the others are re-discovered through the API.
+    if (session.physicalDeviceId) {
+      try {
+        const { bindings } = await listDeviceBindings();
+        await saveDiscoveredBindings(bindings || [], session.physicalDeviceId);
+      } catch (err) {
+        console.error("device bindings refresh failed after handoff", err);
+      }
+    }
+    void trackEvent("handoff_redeemed", {});
+    await this._enterAppAfterBind();
+  }
+
+  /** The handoff-in-progress screen: setup chrome, spinner, no code form. */
+  _renderHandoff() {
+    if (this._unsub) {
+      this._unsub();
+      this._unsub = null;
+    }
+    this.innerHTML = handoffView();
+    this.append(document.createElement("app-toasts"));
+    this.append(document.createElement("connection-status"));
+  }
+
+  /**
+   * A session was just stored (site code, enrollment link, or Home Screen
+   * handoff): read it back, refresh settings (a revoked session ends on the
+   * setup screen here), and render the hub.
+   * @returns {Promise<boolean>} false when the session was rejected
+   */
+  async _enterAppAfterBind() {
+    this._site = await getSite();
+    clearAuthState(); // re-bind heals an AUTH state
+    if (!(await this._refreshSiteSettings())) return false;
+    this._renderApp();
+    this._unsub = onRouteChange(() => this._renderView());
+    navigate("/today");
+    this._renderView();
+    return true;
+  }
+
   _renderApp() {
     this.innerHTML = appShell({ siteName: this._site.name });
     this.append(document.createElement("app-toasts"));
@@ -262,6 +415,32 @@ export class AppRoot extends HTMLElement {
     this._view = this.querySelector("#view");
     this._shell = this.querySelector(".app");
     showQueuedSiteSwitchSuccessToast();
+    this._maybeOfferInstall();
+    // iOS Safari only, and only while not yet standalone: keep a handoff grant
+    // in the manifest so an Add to Home Screen from any route carries the
+    // session over. Off the critical path; a failure costs nothing visible.
+    void ensureHandoffManifest({ site: this._site }).catch((err) =>
+      console.error("handoff manifest failed", err),
+    );
+  }
+
+  /**
+   * Add-to-Home-Screen offer: a bound device on the home hub gets one card
+   * (Install on Chromium, Share-sheet steps on iOS Safari). The service
+   * decides eligibility (standalone already, webview, snoozed); the element
+   * sits above <main> so route swaps leave it alone and hides itself off
+   * /today. Lazy like the webview banner to keep it out of the main bundle.
+   */
+  _maybeOfferInstall() {
+    if (!this._shell || !shouldOfferInstall()) return;
+    void import("./install-prompt.js").then(() => {
+      if (!this._shell?.isConnected || this.querySelector("install-prompt"))
+        return;
+      this._shell.insertBefore(
+        document.createElement("install-prompt"),
+        this._view,
+      );
+    });
   }
 
   /**
@@ -305,17 +484,54 @@ export class AppRoot extends HTMLElement {
       void this._resetFirstLaunch();
       return;
     }
-    if (route.startsWith("/site-admin") && !hasAdminAccess(this._site)) {
+    // Manager-only screens: site admin and the reports. The access level is
+    // a navigation hint from the stored token; the backend enforces it.
+    const managerOnly =
+      route.startsWith("/site-admin") ||
+      route.startsWith("/manage-access") ||
+      route.startsWith("/reports");
+    if (managerOnly && !hasAdminAccess(this._site)) {
       navigate("/today");
       return;
     }
     if (
-      route.startsWith("/site-admin") &&
+      (route.startsWith("/site-admin") || route.startsWith("/manage-access")) &&
       !customElements.get("site-admin-view")
     ) {
       this._view.replaceChildren();
       void import("./site-admin.js").then(() => {
-        if (currentRoute().startsWith("/site-admin")) this._renderView();
+        if (
+          currentRoute().startsWith("/site-admin") ||
+          currentRoute().startsWith("/manage-access")
+        )
+          this._renderView();
+      });
+      return;
+    }
+    if (
+      route.startsWith("/care-work") &&
+      !customElements.get("care-work-view")
+    ) {
+      this._view.replaceChildren();
+      void import("./care-work-view.js").then(() => {
+        if (currentRoute().startsWith("/care-work")) this._renderView();
+      });
+      return;
+    }
+    if (
+      route.startsWith("/complaints") &&
+      !customElements.get("complaint-view")
+    ) {
+      this._view.replaceChildren();
+      void import("./complaint-view.js").then(() => {
+        if (currentRoute().startsWith("/complaints")) this._renderView();
+      });
+      return;
+    }
+    if (route.startsWith("/reports") && !customElements.get("reports-view")) {
+      this._view.replaceChildren();
+      void import("./reports-view.js").then(() => {
+        if (currentRoute().startsWith("/reports")) this._renderView();
       });
       return;
     }
@@ -327,22 +543,39 @@ export class AppRoot extends HTMLElement {
     if (this._shell) {
       this._shell.classList.add("app--chromeless");
     }
+    const direction = routeTransitionDirection(this._swappedRoute, route);
     const swap = () => {
       // Always mount a fresh element (each screen reads current state on
       // connect).
+      this._swappedRoute = route;
       this._view.replaceChildren(document.createElement(tag));
       this._restateScreenFocus();
     };
-    // Same-document View Transition: cross-fades the route swap (full-blown
-    // zoom animations could re-use this hook later). No-op where unsupported.
-    // The API does NOT honor prefers-reduced-motion on its own: base.css
-    // zeroes the ::view-transition-* animations as the safety net, and we skip
-    // the call entirely here so those users also avoid the snapshot pause.
+    // Same-document View Transition: a cross-fade between sibling screens,
+    // a slide from the right when the new screen is a level deeper (its
+    // back arrow returns here) and back out when it is a level shallower;
+    // base.css keys the animations off <html data-route-transition>. No-op
+    // where unsupported. The API does NOT honor prefers-reduced-motion on
+    // its own: base.css zeroes the ::view-transition-* animations as the
+    // safety net, and we skip the call entirely here so those users also
+    // avoid the snapshot pause.
     const reduceMotion =
       typeof window.matchMedia === "function" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (!reduceMotion && typeof document.startViewTransition === "function") {
-      document.startViewTransition(swap);
+      const id = ++this._routeTransitionId;
+      document.documentElement.dataset.routeTransition = direction;
+      const transition = document.startViewTransition(swap);
+      // A navigation that lands mid-swap skips this transition; those
+      // rejections are expected, not errors.
+      transition.ready.catch(() => {});
+      transition.updateCallbackDone.catch(() => {});
+      transition.finished
+        .catch(() => {})
+        .then(() => {
+          if (id === this._routeTransitionId)
+            delete document.documentElement.dataset.routeTransition;
+        });
     } else {
       swap();
     }
@@ -384,24 +617,57 @@ export class AppRoot extends HTMLElement {
    * Pull the site's settings (name etc.) from the backend and merge them onto
    * the local binding record. Best-effort: the app runs on the stored record
    * when a transient request fails. A rejected or revoked session is fatal:
-   * clear the current binding and return to setup before rendering app data.
-   * @returns {Promise<boolean>} whether the app shell may be rendered
+   * clear the current binding and return to setup. On first launch this runs
+   * behind the already-rendered shell, so a changed site name is written into
+   * the header here and a dead session tears the shell down.
+   *
+   * Because it no longer blocks the app, the user can act while it is in
+   * flight: both outcomes are dropped when the answer belongs to a binding
+   * that is no longer the current one, and a rejection only clears a session
+   * that is still the one this request rode (a plain 401 can also mean a
+   * retry superseded by a newer rotation — see services/api.js).
+   * @returns {Promise<boolean>} whether the app shell may stay rendered
    */
   async _refreshSiteSettings() {
+    setDuplicateUiSite(null);
+    const bound = this._site;
     try {
       const { site } = await getSiteSettings();
+      if (this._site !== bound) return true;
       if (site) {
-        this._site = await saveSiteSettings({
-          ...site,
-          providerSiteId: this._site.providerSiteId || site.providerSiteId,
-        });
+        const saved = await saveSiteSettings(
+          {
+            ...site,
+            providerSiteId: bound.providerSiteId || site.providerSiteId,
+          },
+          bound.siteId,
+        );
+        if (!saved) return true;
+        this._site = saved;
+        setDuplicateUiSite(
+          site.siteId && site.siteId !== saved.siteId ? null : site,
+        );
+        const title = this.querySelector(".app__title");
+        if (title && title.textContent !== saved.name) {
+          title.textContent = saved.name;
+        }
       }
       return true;
     } catch (err) {
       if (isFatalSessionError(err)) {
+        // Stale verdicts are not ours to act on: the binding was replaced or
+        // cleared meanwhile, the user is already on the setup screen binding
+        // another site (tearing that down would orphan its `sitebound`), or a
+        // newer session was stored since this request started.
+        if (this._site !== bound || this.querySelector("site-setup")) {
+          return true;
+        }
+        const stored = await getSite().catch(() => null);
+        if (!stored || stored.token !== bound?.token) return true;
         await clearSite();
         this._site = null;
         clearAuthState();
+        uninstallHandoffManifest();
         this._renderSetup();
         return false;
       }
@@ -419,6 +685,7 @@ export class AppRoot extends HTMLElement {
 
   async _resetFirstLaunch() {
     await resetLocalAppState();
+    uninstallHandoffManifest();
     this._site = null;
     history.replaceState({}, "", "/today");
     this._renderSetup();

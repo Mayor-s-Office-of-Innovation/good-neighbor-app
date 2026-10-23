@@ -1,0 +1,198 @@
+﻿"Category","Definition","Weighting","Includes","Excludes","Visual cues","Severity guidance","Description guidance"
+"Litter ","Scattered small refuse or litter that does not obstruct movement.","Low","Loose trash, 
+Food wrappers, 
+Paper, 
+Plastic bags, 
+Bottles, 
+Cans.","Large furniture or bulky items; 
+Human or animal waste.","Dispersed small items along sidewalk, curb, or gutter","0: No litter present.
+1: A few small items (e.g., a handful of wrappers, cups, or cans) confined to a small area — collectible by staff in a couple of minutes during a routine pass.
+2: A visible but manageable amount of loose litter scattered along a short stretch of sidewalk or curb — still collectible by a site manager or staff member in one pass (roughly a bag's worth or less).
+3: Litter spread across a full block face or spilling into the gutter/street, or including items requiring special handling (e.g., broken glass) — volume exceeds what one staff member can reasonably clear during routine cleanup
+4 : Large accumulation spanning multiple block faces, or partially obstructing pedestrian path — requires City cleaning equipment or crew.
+5: Litter substantially obstructing pedestrian or vehicle access, or spread across a large area/multiple blocks, posing a sanitation or safety hazard.
+ ","Use neutral, quantitative language (e.g., ""several wrappers along the curb"") rather than judgmental terms (""gross,"" ""disgusting""). Do not speculate about who littered."
+"Bulky items","Bulky items or materials that are difficult to move and visually dominate space.","Low","Mattresses, 
+Couches, 
+Chairs, 
+Pallets, 
+Appliances, 
+Large bags or carts.","Small loose trash; 
+Tents or vehicles.","Objects occupying significant sidewalk or curb space
+Stacked items.","0: No bulky items present.
+1: A single small-to-medium item (e.g., a chair, small appliance) not obstructing the pedestrian path.
+2: One or two larger items (e.g., a couch, mattress) occupying part of the sidewalk but leaving a clear path.
+3: Multiple items, or a bulky item plus loose debris, narrowing the walkway to single-file passage.
+4: Items narrowing the sidewalk enough to make passage difficult or unsafe, forcing some pedestrians (e.g., wheelchair or stroller users) into the street.
+5: Sidewalk nearly or fully blocked by bulky item(s), forcing all pedestrians into the street or travel lane to get around it.","Describe items and approximate volume factually. Do not make assumptions about whether items were illegally dumped or about the housing status of anyone nearby."
+"Feces and urine","Visible feces, urine staining, or biological waste residue.","High","Feces, 
+Urine puddles or stains, 
+Soiled paper or cloth.
+People actively urinating or defecating.","Mud, 
+Water stains, 
+Trash spills without biological indicators.
+Shadows","Piles of waste
+Brown or yellow discoloration 
+Toilet paper nearby
+Staining near walls or tents.
+Someone appearing be actively urinating or defecating","0: None present.
+1: Old or dried evidence (e.g., a stain, no fresh odor) in a low-traffic area.
+2: Fresh feces or urine present but confined to a small area, off the direct pedestrian path.
+3: Fresh feces or urine directly in the pedestrian path or at an entrance, requiring people to step around it.
+4: Multiple fresh instances/locations along the same block face, or clear evidence of repeated use of the same spot.
+5: Someone is actively urinating or defecating in the IASS at the time of observation.","Use neutral, sanitation-focused language. Do not attribute the waste to any specific person unless directly observed, and avoid crude or stigmatizing terms."
+"Needles","Visible needles or sharp medical objects posing puncture risk.","High","Hypodermic needles, 
+Syringes with or without caps.","Non-medical sharp objects; 
+Sealed sharps containers.","Needle shape
+Syringe barrel
+Exposed tips
+Orange caps.","0: No needles visible.
+1: A single needle/syringe in a low-traffic spot (e.g., against a wall, off the direct path).
+2: A single needle directly in the pedestrian path or near an entrance.
+3: Multiple needles (roughly 2–5) scattered in a small area.
+4: A larger cluster (6+) or needles spread across a wider area, raising the risk of accidental contact.
+5: Needles present in enough volume or spread that the sidewalk is nearly or partially blocked / impassable without risk of contact, forcing pedestrians to alter their route.","Describe the object and its location factually. Do not speculate whether use was medical or non-medical unless clearly evidenced, and avoid labeling any person as an ""addict"" or similar."
+"Tents, tarps, or bedding ","Visible evidence of people living or sleeping in public spaces without shelter.","High","People sleeping outdoors, 
+Tents, 
+Tarps, 
+Bedding, 
+Sleeping bags.","People walking or sitting temporarily; 
+Construction or event tents.","Tents tied to poles 
+Bedding on ground 
+Belongings arranged for living.","0: No tents, tarps, or bedding present.
+1: A single small item (e.g., a sleeping bag or bedroll) tucked against a wall or in a low-traffic area, not affecting the pedestrian path.
+2: A single tent or tarp structure, or a small cluster of bedding, occupying part of the sidewalk but leaving a clear path for pedestrians.
+3: One or more structures narrowing the walkway to single-file passage, or multiple separate bedding/tarp setups along the same block face.
+4: Structure(s) narrowing the sidewalk enough to make passage difficult or unsafe, forcing some pedestrians (e.g., wheelchair or stroller users) into the street.
+5: Tent(s), tarp(s), or bedding causing near-total or total blockage of the sidewalk, forcing all pedestrians into the street or travel lane to get around it.","Use neutral, non-stigmatizing language (""person sleeping outdoors,"" ""tent set up on sidewalk"") rather than judgmental or dehumanizing terms. Describe only what is visible, not assumptions about how someone became unhoused."
+"Graffiti","Intentional, expressive markings (writing, symbols, or drawings) applied to surfaces not designed for such use, without clear indicators of official or authorized purpose.","Low","Unauthorized writing, 
+Tags, 
+Symbols, 
+Drawings on buildings, infrastructure, vehicles, signage, or street furniture.","Official signage, 
+Commissioned murals, 
+Construction/utility markings, 
+Chalk on designated play surfaces, 
+Non-intentional surface damage (rust, stains, peeling paint).","Spray paint or marker lines
+Stylized or irregular lettering
+High contrast colors
+Drips/overspray
+Placement over functional or architectural elements 
+Repeated tags","0: No intentional markings present. 
+1: A single small tag or mark, negligible surface coverage, easily overlooked. 
+2: Moderate coverage, small tags or limited markings, minimal surface coverage, no hate speech. 
+3: Extensive coverage, multiple tags or drawings, clearly visible, partial surface coverage, no hate speech.
+4: Someone is actively applying graffiti 
+5: The graffiti may represent hate speech for a protected group","Describe markings factually by location, size, and coverage. Do not interpret message content or attribute markings to a specific group unless clearly evidenced."
+"Fire hazard","Visible conditions that increase risk of fire, explosion, or injury.","High","Open flames, 
+Propane tanks, 
+Generators, 
+Fuel containers, 
+Exposed wiring.","Standard street infrastructure
+Parked vehicles without hazard indicators","Burn marks
+Smoke
+Gas canisters
+Extension cords near flammable items","0: No hazard indicators present. 
+1: Minor hazard, contained and low risk (e.g., an upright propane tank with no ignition source nearby). 
+2: Moderate hazard; risk factors present but not actively dangerous (e.g., exposed wiring away from flammable material). 
+3: Elevated hazard; risk factors combined with proximity to flammable material or people (e.g., open flame near debris). 
+4: Severe hazard; active danger with signs of imminent ignition or spread (e.g., visible smoke, sparking wires near fuel). 
+5: Critical hazard; fire or explosion actively occurring or clearly imminent (e.g., open flame burning, container at risk of exploding).","Describe the specific hazard source and its spatial relationship to flammable material or people. Avoid speculative claims about cause or intent (e.g., arson) unless clearly evidenced."
+"Blocked doorway or sidewalk","Physical blockage limiting pedestrian, wheelchair, or vehicle access.","Moderate","Blocked sidewalks, 
+Obstructed curb ramps or entrances.","Minor narrowing with clear passage 
+Signed construction zones","Objects spanning sidewalk width, 
+Forced detours, 
+Inaccessible ramps.","0: Full, unobstructed access for pedestrians, wheelchairs, and vehicles. 
+1: Minor narrowing; passage is still easy for all users. 
+2: Partial obstruction requiring users to maneuver or take a minor detour. 
+3: Significant obstruction; wheelchair or stroller access is effectively blocked, pedestrians must leave the path. 
+4: Full blockage of a sidewalk, ramp, or entrance, forcing users onto a hazardous alternate route (e.g., into a traffic lane). 
+5: Complete blockage of all access routes with no safe alternate path; entry or exit is impossible or hazardous for all users.","Describe the physical obstruction and its specific impact on pedestrian, wheelchair, or vehicle access. Avoid assigning blame or intent to whoever placed the obstruction unless directly observed."
+"Public drug use","A person displaying suspected effects of intoxication, actively using drugs, or surrounded by visible paraphernalia.","Moderate","Persons visibly consuming drugs (smoking, injecting, snorting), 
+Persons showing clear signs of intoxication
+Persons immediately surrounded by drug paraphernalia.","Prescription medication taken as directed, medical settings, alcohol-only use (unless explicitly included elsewhere), or ambiguous objects without contextual use.","Drug paraphernalia (needles, pipes, foil, tourniquets), 
+Hand-to-mouth smoking gestures
+Injection posture, 
+Visible powders or substances,
+Impaired posture or consciousness (slumped, unconscious, disoriented).","0: No evidence of drug use or intoxication.
+1: Ambiguous indicators only — paraphernalia nearby with no visible use, or mild/uncertain impairment (e.g., unsteady gait with no other signs).
+2: Clear evidence of drug use or intoxication by one individual, who remains alert and stable (e.g., hand-to-mouth smoking motion, slurred speech, upright but unsteady).
+3: Strong, unambiguous signs of active use or intoxication by one individual (e.g., visible injection, snorting), or ambiguous indicators involving multiple individuals.
+4: Multiple individuals actively using or intoxicated together, or one individual showing significant impairment or in a hazardous location (e.g., near traffic, at height) but not in medical distress.
+5: Overdose indicators or medical distress present (unconscious, unresponsive, irregular or absent breathing, blue lips/skin), or conditions directly endangering the person or others.","Avoid clinical or diagnostic terms (""addict,"" ""junkie""). Describe observed actions and posture only (e.g., ""hand-to-mouth motion,"" ""slumped position"") and avoid naming a specific drug unless clearly identifiable from packaging or paraphernalia."
+"Someone in distress","Visible signs that a person may be experiencing a mental health crisis, severe distress, or significant impairment affecting their safety or ability to function in the environment. Covers what is observable, not a clinical determination.","High","A person appearing disoriented, agitated, or unable to orient to surroundings (e.g., pacing repeatedly, unresponsive to environment)
+Visible signs of talking to no one/reacting to unseen stimuli
+A person appearing to be in significant emotional distress (crying uncontrollably, visibly panicked)
+Unsafe behavior consistent with impairment (walking into traffic, lying in a roadway without apparent injury)
+Visible signs of substance impairment affecting motor control or awareness (stumbling, extreme drowsiness in an unsafe location)","A person resting, sitting, or sleeping peacefully in a location with no signs of distress or danger (see homelessness/encampment conditions if that's a separate category in your system — not covered here)
+Ordinary emotional expression (a person laughing loudly, arguing on the phone)
+Costumes, performance, or clearly theatrical behavior (street performers)
+Any behavior where impairment/distress is not visually evident, even if described in text metadata","Erratic or repetitive movement patterns (pacing, rocking, circling)
+Gesturing or speaking directed at no visible person
+Disheveled state combined with visible agitation (not disheveled state alone)
+Person positioned in a hazardous location (roadway, median) without an apparent physical cause
+Bystanders visibly keeping distance or reacting with concern","0: No indicators present
+1: Mild signs of distress or unusual behavior, no safety concern (e.g., animated self-talk while walking normally on sidewalk)
+2: Noticeable agitation or disorientation, contained to a safe area
+3: Behavior suggests a person may be a danger to themselves through impaired judgment, but not in immediate physical danger (e.g., agitated pacing near but not in traffic)
+4: Person is in a hazardous position or situation linked to apparent impairment/distress (e.g., sitting in a traffic lane, near a ledge)
+5: Imminent risk to self or others visibly underway (e.g., person entering moving traffic, physically endangered right now)","Avoid clinical or diagnostic terms (e.g., ""psychotic,"" ""schizophrenic,"" ""manic""). Use descriptive, observable language only (""appears disoriented,"" ""repetitive movement,"" ""speaking with no one visibly present""). Do not speculate about diagnosis, history, or a person's mental state beyond what is visible."
+"Animals","Animals that are unleashed, unattended, or where conditions are unsafe for an animal or the public","Moderate","Animals that are loose, unattended, improperly restrained, or in environments posing clear safety risks to the animal or public.","Leashed or properly contained animals, animals under direct supervision, wildlife in natural habitats, or service animals performing tasks appropriately.","Unleashed dogs in public areas, animals tied without shelter or water, animals in traffic or hazardous zones, signs of neglect or distress (emaciation, injury, overheating).","0: Animals properly restrained and in safe conditions.
+1: Temporary or low-risk lapse — briefly unattended, loose in a low-risk area, calm demeanor, no signs of distress or aggression.
+2: Animal unleashed or loosely supervised with no aggression, but in a setting with some risk (e.g., near pedestrians, inadequate shelter or tether, off-leash in a busy area).
+3: Clear safety concern — unleashed near traffic or a crowd, or showing mild agitation (barking, pacing, lunging on leash) without any contact.
+4: Animal displaying aggressive behavior with a realistic risk of contact (charging, snapping, cornering a person), or in an actively hazardous position (loose in traffic) without injury yet.
+5: Immediate danger or active harm occurring — animal biting or attacking a person or another animal, animal-vehicle collision in progress, or severe neglect resulting in visible injury or extreme exposure.","Describe animal behavior and physical condition factually (e.g., ""dog off-leash near roadway""). Only describe an animal as ""aggressive"" if specific behavior (bared teeth, lunging, snapping) is visible, and avoid assumptions about ownership or intent."
+"Medical emergency","Visible signs that a person may need urgent medical attention due to injury, collapse, or acute physical distress.","High","A person lying motionless or unresponsive on the ground
+Visible injury (blood, wounds, deformed limb, visible trauma)
+A person clutching chest/throat or showing visible signs of acute physical distress (gasping, collapsing)
+Signs of a recent crash (crashed vehicle, bicycle down, person near wreckage)
+Bystanders visibly administering aid or forming a concerned cluster around a person on the ground","A person sitting, lying, or resting with no visible signs of injury or distress
+A person exercising (visible exertion without signs of collapse)
+Objects on the ground unrelated to a person (spilled bags, dropped items)
+Historical/static scenes with no person present (a bandage wrapper, an ambulance parked with no visible patient)","Person prone, supine, or slumped in an unnatural position
+Visible blood, bruising, or asymmetry suggesting injury
+Damaged mobility aids (fallen bike, wheelchair tipped over) near a person
+Presence of emergency responders, open first-aid kit, or bystanders actively rendering aid
+Vehicle damage consistent with a collision, especially paired with a person nearby","0: No indicators present
+1: Person appears mildly unwell or fatigued (sitting, head in hands) with no visible injury
+2: Visible minor injury or discomfort, person is conscious and mobile
+3: Visible injury or distress with limited mobility; person conscious but clearly impaired
+4: Person unresponsive or severely injured but scene shows aid already in progress (bystanders/responders present)
+5: Person unresponsive/severely injured with no visible aid in progress; scene suggests urgent, unaddressed emergency","Use neutral, descriptive language for injuries (e.g., ""visible bleeding,"" ""limb in an unnatural position"") without diagnosing the medical condition or cause. Avoid graphic or sensationalized language."
+"Threats, intimidation, or violence","Visible signs of physical aggression, threats, or behavior intended to intimidate, between two or more people or directed at property.","Moderate","Physical altercation (pushing, striking, grappling) between people
+A person brandishing an object in a threatening manner (raised weapon-like object, thrown object)
+Aggressive posturing (raised fists, chest-to-chest confrontation, cornering another person)
+Visible property destruction in progress (breaking a window, vandalizing a vehicle) with a person present doing it
+A group surrounding an isolated individual in a manner suggesting threat (blocking exits, closing in)","Animated but clearly non-threatening interaction (friends play-fighting with visible laughter, sports activity)
+Static aftermath with no people present (broken window, graffiti, no one visible)
+A single person alone displaying anger without a target (yelling with no one nearby)
+Security or law enforcement performing a routine, non-confrontational stop","Raised arms/fists, weapon-like objects held or raised
+Two or more people in close, confrontational proximity with aggressive body language
+Visible impact motion (mid-swing, mid-shove) captured in frame
+Bystanders reacting with alarm, filming, or intervening
+One person cornered against a wall/vehicle by another","0: No indicators present
+1: Verbal or postural tension only, no physical contact or object involved
+2: Aggressive posturing or crowding with no visible weapon or contact yet
+3: Physical contact (pushing, shoving) without a weapon-like object visible
+4: Physical altercation involving a weapon-like object, or multiple aggressors against one person
+5: Active violent assault clearly underway, especially involving a weapon or an incapacitated victim","Describe physical actions and positioning factually (e.g., ""raised fist,"" ""two people in close, confrontational contact""). Do not assign blame, motive, or characterize the individuals' identities or relationship beyond what is visible."
+"Illegal parking","Visible evidence that a vehicle is parked illegally in a way that might impact access to or from the property	","Low","Double parking
+Parking in white or red curb zones
+Parking that blocks a sidewalk adjacent to the property
+Parking that blocks a curb access ramp adjacent to the property
+Parking in a marked or unmarked crosswalk
+","Wheel orientation
+Parking against flow of traffic
+Violations of parking meters or permits
+Parking in a disordered way, with substantial distance from the curb
+Parking in a bus lane, bike lane, or two-way lane, if adjacent to property","Double parking: Vehicle stopped in a travel lane beside a curbside parked car, often with hazards on or doors open.
+White or red curb zones: Painted curb color beside the wheels, plus ""No Stopping"" or ""Passenger Loading"" signs or stenciling
+Sidewalk blocking: Wheels on the raised sidewalk or the body overhanging the pedestrian path, leaving no clear route along the building
+Curb ramp blocking: Vehicle in front of a sloped ramp with a tactile dome panel at a corner or mid-block crossing; ramps are small and easily hidden by the vehicle.
+Crosswalk: Vehicle over painted crosswalk stripes, or in the extension of the sidewalk lines across an intersection for unmarked crosswalks; stop lines can be mistaken for crosswalks.
+Use known-size references: Estimate distances from car length, curb height, tire width, or stall width rather than pixel distances.","0: no indicator present.
+1: the parking violation is slowing or diverting vehicle traffic, often temporarily, without directly affecting pedestrian safety or access. Example: Double parking.
+2: the parking violation occupies space reserved for safety or loading purposes, creating risk or inconvenience without directly blocking a path. Example: Parking in a white or red curb zone.
+3: the parking violation cuts off a specific access feature that some people walking, biking, or rolling might depend on, even if others can route around it. Example: Blocking a curb access ramp.
+4: the parking violation interferes with where pedestrians cross traffic, reducing visibility between drivers and walkers and pushing people into the roadway at intersections. Example: Parking in a marked or unmarked crosswalk.
+5: the parking violation removes the primary walking route, forcing pedestrians (including wheelchair users, strollers, and people with low vision) into the street. Example: Sidewalk blocking.","Describe the violation factually. Do not assign blame or motive."

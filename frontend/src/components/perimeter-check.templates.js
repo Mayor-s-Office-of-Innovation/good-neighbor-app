@@ -9,13 +9,14 @@
 */
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
-import { RECOMMENDED_PERIMETER_PHOTOS } from "../domain/check-completion.js";
 import {
   analysisDialogs,
   analysisResultsTray,
   problemSummary,
   problemSummaryLabel,
 } from "./analysis-results.templates.js";
+
+import { analysisScanner } from "./capture-analysis.templates.js";
 
 export const shell = () => html`
   <div class="flow view-check check check-timeline check-roll">
@@ -29,13 +30,19 @@ export const shell = () => html`
       </button>
     </div>
 
-    <h1 class="check-timeline__title" tabindex="-1">
+    <h1
+      class="check-timeline__title"
+      tabindex="-1"
+      aria-live="polite"
+      aria-atomic="true"
+    >
       ${escapeHtml(t("check.title"))}
     </h1>
 
     <p
       class="check-roll__progress"
       id="check-progress"
+      hidden
       role="status"
       aria-live="polite"
     ></p>
@@ -44,6 +51,13 @@ export const shell = () => html`
       class="shotgrid check-roll__grid"
       id="shotgrid"
       aria-label="${escapeAttr(t("check.grid.aria"))}"
+    ></div>
+
+    <div
+      class="capture-labels"
+      id="capture-labels"
+      role="status"
+      aria-live="polite"
     ></div>
 
     <button
@@ -96,16 +110,16 @@ export const shell = () => html`
 `;
 
 /**
- * Stacked capture status under the title. The description minimum is
- * instructional copy; the existing completion rule is unchanged.
+ * Photo count under the title; hidden until the first live photo.
  * @param {{ photos: number }} status
  * @returns {string}
  */
 export function progressLine({ photos }) {
-  return (
-    `<strong>${escapeHtml(t("check.progress.count", { photos, recommended: RECOMMENDED_PERIMETER_PHOTOS }))}</strong>` +
-    `<span>${escapeHtml(t("check.progress.hint"))}</span>`
-  );
+  return photos > 0
+    ? escapeHtml(
+        t(photos === 1 ? "check.photos.one" : "check.photos.other", { photos }),
+      )
+    : "";
 }
 
 /**
@@ -243,6 +257,7 @@ export const shotTile = (item, index) => html`
         src="${escapeAttr(item.dataUrl)}"
         alt="${escapeAttr(t("check.photo.alt", { index: index + 1 }))}"
       />
+      ${analysisScanner(item)}
     </button>
     <button
       class="shot__del"

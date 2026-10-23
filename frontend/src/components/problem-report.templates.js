@@ -25,6 +25,13 @@ export const shell = ({ title = t("problem.title.single") } = {}) => html`
       aria-label="${escapeAttr(t("problem.grid.aria"))}"
     ></div>
 
+    <div
+      class="capture-labels"
+      id="capture-labels"
+      role="status"
+      aria-live="polite"
+    ></div>
+
     <button
       class="btn-outline check-roll__describe"
       id="describe-instead"

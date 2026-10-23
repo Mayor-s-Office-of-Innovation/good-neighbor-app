@@ -4,6 +4,10 @@
   with zero cloud dependency — identical locally and in CI, where no
   ANALYZER_API_KEY exists.
 
+  POST /v1/translations (the background translate worker's text-only call)
+  answers deterministically: every requested locale gets "[<locale>] <English>"
+  for both fields, so specs can assert on the exact localized text.
+
   Selection contract: tests set the next fixture via POST /__control
   {fixture:"multi"|"excellent"} BEFORE uploading a photo, then read it back to
   confirm. The stub serves that fixture for every /v1/analyses call until
@@ -18,6 +22,7 @@ const PORT = Number(process.env.LOCAL_ANALYZER_PORT ?? 3101);
 
 /** Fixture served for /v1/analyses until /__control changes it. */
 let pendingFixture = "multi";
+let pendingShotType = null;
 
 const multi = {
   analysis_id: "ana_e2e_multi01",
@@ -110,6 +115,9 @@ const server = createServer((req, res) => {
         const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
         if (body?.fixture === "multi" || body?.fixture === "excellent") {
           pendingFixture = body.fixture;
+          pendingShotType = ["wide", "detail"].includes(body.shotType)
+            ? body.shotType
+            : null;
           console.log(
             `[analyzer-stub] control: next fixture = ${pendingFixture}`,
           );
@@ -132,7 +140,57 @@ const server = createServer((req, res) => {
       console.log(`[analyzer-stub] /v1/analyses -> ${pendingFixture}`);
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
-        JSON.stringify(pendingFixture === "excellent" ? excellent : multi),
+        JSON.stringify({
+          ...(pendingFixture === "excellent" ? excellent : multi),
+          ...(pendingShotType
+            ? {
+                media_manifest: [
+                  {
+                    index: 0,
+                    type: "image",
+                    content_type: "image/jpeg",
+                    shot_type: pendingShotType,
+                  },
+                ],
+              }
+            : {}),
+        }),
+      );
+    });
+    return;
+  }
+  if (req.method === "POST" && req.url?.startsWith("/v1/translations")) {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      let body;
+      try {
+        body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      } catch {
+        body = {};
+      }
+      const languages = Array.isArray(body?.languages) ? body.languages : [];
+      const items = Array.isArray(body?.items) ? body.items : [];
+      console.log(
+        `[analyzer-stub] /v1/translations -> ${items.length} item(s) × ${languages.join(",")}`,
+      );
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          model: { provider: "stub", model_id: "e2e-stub" },
+          items: items.map((item) => ({
+            id: item.id,
+            translations: Object.fromEntries(
+              languages.map((locale) => [
+                locale,
+                {
+                  user_friendly_label: `[${locale}] ${item.user_friendly_label}`,
+                  description: `[${locale}] ${item.description}`,
+                },
+              ]),
+            ),
+          })),
+        }),
       );
     });
     return;

@@ -2,7 +2,6 @@ import { existsSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { RECOMMENDED_PERIMETER_PHOTOS } from "../domain/check-completion.js";
 import { t } from "../i18n/i18n.js";
 import { escapeHtml } from "../lib/html.js";
 import {
@@ -45,36 +44,13 @@ describe("shell", () => {
 });
 
 describe("progressLine", () => {
-  it("counts photos toward the minimum and offers the text alternative", () => {
-    const markup = progressLine({ photos: 2 });
-
-    expect(markup).toContain(
-      t("check.progress.count", {
-        photos: 2,
-        recommended: RECOMMENDED_PERIMETER_PHOTOS,
-      }),
-    );
-    expect(markup).toContain(t("check.progress.hint"));
+  it("hides the count at zero", () => {
+    expect(progressLine({ photos: 0 })).toBe("");
   });
-
-  it("does not add a completion label once the photo minimum is met", () => {
-    const markup = progressLine({ photos: 1 });
-
-    expect(markup).toContain(
-      t("check.progress.count", { photos: 1, recommended: 3 }),
+  it.each([1, 2, 4])("shows the localized count for %s photos", (photos) => {
+    expect(progressLine({ photos })).toBe(
+      t(photos === 1 ? "check.photos.one" : "check.photos.other", { photos }),
     );
-    expect(markup).not.toContain("Ready to finish");
-  });
-
-  it("keeps the photo guidance without a saved-description status", () => {
-    const markup = progressLine({ photos: 0 });
-
-    expect(markup).toContain(
-      t("check.progress.count", { photos: 0, recommended: 3 }),
-    );
-    expect(markup).toContain(t("check.progress.hint"));
-    expect(markup).not.toContain("Description saved");
-    expect(markup).not.toContain("Ready to finish");
   });
 });
 

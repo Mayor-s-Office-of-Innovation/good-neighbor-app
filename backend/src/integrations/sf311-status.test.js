@@ -3,6 +3,7 @@ import {
   findServiceRequest,
   normalizeSf311Detail,
   serviceRequestClosureState,
+  serviceRequestClosureReason,
 } from "./sf311-status.js";
 
 describe("SF311 status normalization", () => {
@@ -20,6 +21,43 @@ describe("SF311 status normalization", () => {
       ),
     ).toBe("open");
     expect(serviceRequestClosureState({ requests: [] }, "123")).toBe("unknown");
+  });
+
+  it("reads the latest closure reason without inventing missing reasons", () => {
+    const body = {
+      requests: [
+        {
+          SRNum: "123",
+          ClosedReasonCode: "1",
+          Updates: [
+            {
+              UpdateType: "11",
+              NumericSubType: "8",
+              EffectiveDate: "2026-09-20T14:00:00Z",
+            },
+            {
+              UpdateType: "11",
+              NumericSubType: "2",
+              EffectiveDate: "2026-09-20T12:00:00Z",
+            },
+          ],
+        },
+      ],
+    };
+    expect(serviceRequestClosureReason(body, "123")).toBe("8");
+    expect(
+      serviceRequestClosureReason(
+        { requests: [{ SRNum: "123", ClosedReasonCode: 2 }] },
+        "123",
+      ),
+    ).toBe("2");
+    expect(
+      serviceRequestClosureReason(
+        { requests: [{ SRNum: "123", Status: "4" }] },
+        "123",
+      ),
+    ).toBe("");
+    expect(serviceRequestClosureReason(body, "missing")).toBe("");
   });
 
   it("returns human-readable updates newest first and omits attachment events", () => {
@@ -167,5 +205,87 @@ describe("SF311 status normalization", () => {
       title: "The ticket was resolved",
       description: "Agency said: Field Work Completed\nRemoved the debris.",
     });
+  });
+});
+
+it("passes through Verint closure codes without inventing a reason from notes", () => {
+  const detail = normalizeSf311Detail({
+    record: { Status: "4", ClosedReason: "999" },
+    task: {},
+    srNum: "123",
+  });
+  expect(detail.closedReason).toBe("999");
+  expect(detail.closureReason).toBeUndefined();
+  const unknown = normalizeSf311Detail({
+    record: { Status: "4", Notes: "Closed by agency" },
+    task: {},
+    srNum: "123",
+  });
+  expect(unknown.closedReason).toBeUndefined();
+});
+
+describe("City closure timeline completeness", () => {
+  const normalize = (/** @type {Record<string, unknown>} */ record) =>
+    normalizeSf311Detail({ record, task: {}, srNum: "123" });
+  it("keeps summary-only closure undated rather than using submission or refresh time", () => {
+    const detail = normalize({
+      Status: "4",
+      SourceAgencyReceiveDate: "2026-10-01T12:00:00Z",
+    });
+    expect(detail.status).toBe("Closed");
+    expect(detail.events.filter((e) => e.kind === "resolved")).toEqual([
+      { kind: "resolved", title: "The ticket was resolved", occurredAt: "" },
+    ]);
+  });
+  it.each([undefined, "999", "8"])(
+    "preserves dated closure with reason %s without duplication",
+    (reason) => {
+      const detail = normalize({
+        Status: "4",
+        Updates: [
+          {
+            UpdateType: "11",
+            NumericSubType: reason,
+            EffectiveDate: "2026-10-02T12:00:00Z",
+          },
+        ],
+      });
+      expect(detail.events.filter((e) => e.kind === "resolved")).toHaveLength(
+        1,
+      );
+      expect(detail.events[0].occurredAt).toBe("2026-10-02T12:00:00.000Z");
+    },
+  );
+  it("keeps an undated unrecognized closure without a fabricated reason", () => {
+    const detail = normalize({
+      Updates: [{ UpdateType: "11", NumericSubType: "999" }],
+    });
+    expect(detail.status).toBe("Closed");
+    expect(detail.events).toHaveLength(1);
+    expect(detail.events[0]).toMatchObject({
+      kind: "resolved",
+      occurredAt: "",
+    });
+    expect(detail.events[0]).not.toHaveProperty("closureReason");
+  });
+  it("does not duplicate a Closed status-change event", () => {
+    const detail = normalize({
+      Status: "4",
+      Updates: [
+        {
+          UpdateType: "3",
+          NumericSubType: "4",
+          EffectiveDate: "2026-10-02T12:00:00Z",
+        },
+      ],
+    });
+    expect(detail.events).toHaveLength(1);
+    expect(detail.events[0]).toMatchObject({
+      kind: "statusChanged",
+      value: "Closed",
+    });
+  });
+  it("does not synthesize a closure for an open ticket", () => {
+    expect(normalize({ Status: "9" }).events).toEqual([]);
   });
 });

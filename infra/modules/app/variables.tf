@@ -168,6 +168,73 @@ variable "setup_code_email_reply_to" {
   default     = ""
 }
 
+variable "enable_city_smtp_relay" {
+  description = "Create the SES Mail Manager gateway to the City Proofpoint SMTP relay. Enable only after both SMTP secret values have been populated out-of-band."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.enable_city_smtp_relay || var.provision_city_smtp_relay_foundation
+    error_message = "The City SMTP relay cannot be enabled unless its environment foundation is provisioned."
+  }
+}
+
+variable "provision_city_smtp_relay_foundation" {
+  description = "Create the environment's SMTP KMS key, empty secret containers, log group, and alarms. Enable in dev first; add prod only after dev verification."
+  type        = bool
+  default     = false
+}
+
+variable "city_smtp_relay_host" {
+  description = "Public City SMTP relay hostname used by SES Mail Manager."
+  type        = string
+  default     = "smtp-us.ser.proofpoint.com"
+}
+
+variable "city_smtp_relay_port" {
+  description = "City SMTP submission port; Proofpoint recommends 587 with STARTTLS."
+  type        = number
+  default     = 587
+
+  validation {
+    condition     = var.city_smtp_relay_port == 587
+    error_message = "The approved Proofpoint integration must use authenticated submission on port 587."
+  }
+}
+
+variable "city_smtp_from_address" {
+  description = "Only envelope sender that the environment's Mail Manager rule relays to Proofpoint."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = !var.enable_city_smtp_relay || can(regex("^[^@]+@sf\\.gov$", var.city_smtp_from_address))
+    error_message = "An enabled City SMTP relay requires an @sf.gov sender address."
+  }
+}
+
+variable "enable_cognito_custom_email_sender" {
+  description = "Route Cognito user-pool email through the City SMTP relay using a custom sender Lambda."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.enable_cognito_custom_email_sender || var.enable_city_smtp_relay
+    error_message = "The Cognito custom email sender requires the City SMTP relay to be enabled."
+  }
+}
+
+variable "cognito_admin_app_url" {
+  description = "Environment-specific Good Neighbor compliance app URL included in Cognito invitations."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = !var.enable_cognito_custom_email_sender || startswith(var.cognito_admin_app_url, "https://")
+    error_message = "An enabled Cognito custom email sender requires an HTTPS compliance app URL."
+  }
+}
+
 variable "provider_app_url" {
   description = "Public HTTPS provider app URL used in setup-code emails."
   type        = string
@@ -176,4 +243,20 @@ variable "provider_app_url" {
     condition     = startswith(var.provider_app_url, "https://")
     error_message = "Provider app URL must use HTTPS."
   }
+}
+
+variable "sf311_media_domain_name" {
+  description = "Dedicated HTTPS hostname for 311 bearer links, separate from logged SPA traffic."
+  type        = string
+}
+
+variable "sf311_media_zone_id" {
+  description = "Route53 hosted zone for the dedicated 311 media hostname and ACM validation."
+  type        = string
+}
+
+variable "manage_application_cost_allocation_tag" {
+  description = "Manage Application cost-tag activation only in an account allowed to do so. Linked accounts delegate activation to their billing management account."
+  type        = bool
+  default     = true
 }

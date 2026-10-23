@@ -2,6 +2,11 @@
 useDefault = true
 
 [allowlist]
-description = "Historical synthetic enrollment-token fixture from frontend tests"
+description = "Known non-secret fixture and Figma design identifiers"
 regexTarget = "secret"
-regexes = ['''abcdefghijklmnopqrstuvwxyz_123456''']
+regexes = [
+  '''abcdefghijklmnopqrstuvwxyz_123456''',
+  # Public design-file identifier in category-icons/sources.json, not an API token.
+  # Match only this value, including historical commits; keep scanning all files.
+  '''^muHTWTeWZtAiTmHE1UMxJd$''',
+]

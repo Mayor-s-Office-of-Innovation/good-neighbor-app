@@ -23,7 +23,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: Rewrite git protocol for npm git deps
@@ -34,11 +34,8 @@ jobs:
 
       - name: Reject literal AWS account identifiers
         run: |
-          set -euo pipefail
-          if rg --pcre2 '(?<![[:alnum:]_.])[0-9]{12}(?![[:alnum:]_])' --hidden --glob '!.git/**'; then
-            echo "Literal AWS account identifiers are prohibited; use environment configuration." >&2
-            exit 1
-          fi
+          node --test scripts/check-aws-account-identifiers.test.mjs
+          node scripts/check-aws-account-identifiers.mjs
 
       - name: Format
         run: npm run format:check
@@ -64,6 +61,10 @@ jobs:
   e2e:
     name: E2E (Playwright)
     runs-on: ubuntu-latest
+    container:
+      # Keep the image version aligned with @playwright/test in e2e/package.json.
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      options: --ipc=host
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -71,7 +72,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: Rewrite git protocol for npm git deps
@@ -80,10 +81,13 @@ jobs:
       - name: Install
         run: npm ci
 
-      # ubuntu-latest ships a JRE (needed by the DynamoDB Local / ElasticMQ jars
-      # the harness launches). Chromium only — the suite targets one engine.
-      - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+      # Browsers and their OS dependencies are in the image. The host runner's
+      # Java installation is not available inside the job container.
+      - name: Setup Java for local harness
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "21"
 
       # The harness self-downloads ~250 MB of emulator binaries (MinIO
       # ~103 MB, ElasticMQ jar, DynamoDB Local) into backend/.local/ on first
@@ -101,9 +105,12 @@ jobs:
       - name: Run e2e tests
         run: npm run test:e2e
 
-      - name: Upload failure artifacts
-        if: failure()
-        uses: actions/upload-artifact@v7.0.1
+      # Always, not only on failure: the HTML report holds ramp-check's
+      # highlight screenshots for AAA findings, which warn without failing
+      # the suite and are what the design review works from.
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: playwright-report
           path: |
@@ -117,7 +124,7 @@ jobs:
     # Runs for Dependabot PRs too (unlike `security`): dependency bumps are the
     # size-budget's primary target. size-limit is the hard gate — raising a
     # limit is a deliberate, reviewable package.json edit. Lighthouse runs
-    # warn-only (see frontend/lighthouse-budgets.json) until its noise floor is
+    # warn-only (see frontend/speed-check.config.js) until its noise floor is
     # measured; promotion to hard gate is a separate change.
     runs-on: ubuntu-latest
     steps:
@@ -127,7 +134,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: Rewrite git protocol for npm git deps
@@ -143,29 +150,26 @@ jobs:
         run: npx size-limit
         working-directory: frontend
 
-      - name: Lighthouse (lab metrics, warn-only)
-        # scripts/run-lighthouse.mjs serves dist/ via `vite preview` and runs
-        # the lighthouse CLI 3x into .lighthouseci/; print-lighthouse.mjs then
-        # evaluates the warn-only budgets in lighthouse-budgets.json (median
-        # across runs) and prints a per-run metrics table into the step log
-        # AND the run's Summary tab. All paths are relative to THIS
-        # working-directory: frontend.
+      - name: Lighthouse via speed-check (lab metrics, warn-only)
+        # speed-check (github:Mayor-s-Office-of-Innovation/speed-check, pinned
+        # by commit in frontend/package.json) serves dist/ via `vite preview`,
+        # runs Lighthouse 3x against /, evaluates the warn-only budgets in
+        # speed-check.config.js (median across runs), and prints the table
+        # into the step log AND the run's Summary tab. Reports land in
+        # frontend/speed-check-report/ (not a dot-dir, so no hidden-files flag).
         run: npm run perf
         working-directory: frontend
 
-      # Full HTML/JSON Lighthouse reports. NOTE: .lighthouseci is a dot-dir and
-      # upload-artifact@v7 excludes hidden files by default — hence
-      # include-hidden-files: true (its absence is what produced
-      # "No files were found" on the first runs, twice).
+      # Lighthouse JSON results (drag into the Lighthouse Viewer) plus the
+      # summary table and JSON.
       - name: Upload Lighthouse reports
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: lighthouse-reports
-          path: frontend/.lighthouseci/
+          path: frontend/speed-check-report/
           retention-days: 7
           if-no-files-found: ignore
-          include-hidden-files: true
 
   security:
     name: Security scans
@@ -204,6 +208,10 @@ jobs:
 
       - name: Format
         run: terraform fmt -recursive -check ../..
+
+      - name: Test dev state migration guards
+        working-directory: ${{ github.workspace }}
+        run: node --test infra/scripts/*.test.mjs
 
       - name: Init without backend
         run: terraform init -backend=false

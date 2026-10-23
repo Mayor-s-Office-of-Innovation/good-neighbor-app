@@ -1,6 +1,8 @@
+import { expireComplianceTerms } from "../workers/expire-compliance-terms.js";
 // Event-source entrypoint for the async worker. The demo /submissions, artifact
-// analysis, and Site-revocation flows share one SQS queue; a filtered DynamoDB
-// stream also invokes this Lambda to dispatch durable revocation outbox rows.
+// analysis uses a dedicated SQS queue and Lambda; background jobs use the
+// submissions queue. Both Lambdas reuse this dispatcher. A filtered DynamoDB
+// stream also invokes the background Lambda to dispatch durable outbox rows.
 // Records run concurrently and `batchItemFailures` ensures only failures are
 // redriven by the originating event source.
 
@@ -8,6 +10,10 @@ import { handler as processSubmission } from "../workers/process-submission.js";
 import { handler as analyzeArtifact } from "../workers/analyze-artifact.js";
 import { handler as reconcileSiteRevocation } from "../workers/reconcile-site-revocation.js";
 import { handler as dispatchRevocationOutbox } from "../workers/dispatch-revocation-outbox.js";
+import { handler as generateComplianceLetter } from "../workers/generate-compliance-letter.js";
+import { handler as translateArtifact } from "../workers/translate-artifact.js";
+import { handler as analyzeComplaint } from "../workers/analyze-complaint.js";
+import { TRANSLATE_MESSAGE_TYPE } from "../analysis/translate-enqueue.js";
 import { logServerError } from "../lib/log-server-error.js";
 
 /**
@@ -25,6 +31,15 @@ function pickHandler(body) {
     if (msg?.type === "reconcile_site_revocation") {
       return reconcileSiteRevocation;
     }
+    if (msg?.type === "generate_compliance_letter") {
+      return generateComplianceLetter;
+    }
+    if (msg?.type === TRANSLATE_MESSAGE_TYPE) {
+      return translateArtifact;
+    }
+    if (msg?.type === "analyze_complaint") {
+      return analyzeComplaint;
+    }
     if (
       typeof msg?.artifactId === "string" &&
       (typeof msg?.s3Key === "string" || typeof msg?.text === "string")
@@ -38,11 +53,18 @@ function pickHandler(body) {
 }
 
 /**
- * @param {import("aws-lambda").SQSEvent | import("aws-lambda").DynamoDBStreamEvent} event
+ * @param {import("aws-lambda").SQSEvent | import("aws-lambda").DynamoDBStreamEvent | { type: "expire_compliance_terms" }} event
  * @param {import("aws-lambda").Context} context
- * @param {import("aws-lambda").Callback} callback
  */
-export const handler = async (event, context, callback) => {
+export const handler = async (event, context) => {
+  if ("type" in event && event.type === "expire_compliance_terms") {
+    await expireComplianceTerms();
+    return { batchItemFailures: [] };
+  }
+  if (!("Records" in event)) throw new Error("Unsupported worker event");
+  // Node.js 24 rejects entrypoints with a third (callback) parameter. The
+  // workers return promises; this shim only satisfies their legacy AWS types.
+  const callback = () => {};
   // Fan out: each record is an independent unit of work whose latency is almost
   // entirely the remote analyzer call, so process the whole batch CONCURRENTLY and
   // await it together — batch wall-clock ≈ the slowest record, not the sum.
@@ -69,7 +91,7 @@ export const handler = async (event, context, callback) => {
     }),
   );
 
-  // Report only the records that threw (partial-batch-failure); the rest are
+  // Preserve both returned partial failures and thrown failures; the rest are
   // acknowledged and never redelivered. Requires the event-source mapping's
   // `function_response_types = ["ReportBatchItemFailures"]`.
   /** @type {{ itemIdentifier: string }[]} */
@@ -89,6 +111,10 @@ export const handler = async (event, context, callback) => {
         extra: { messageId },
       });
       batchItemFailures.push({ itemIdentifier: messageId });
+    } else if (result.value?.batchItemFailures) {
+      // Child handlers may catch record errors and resolve with a partial-batch
+      // response. Dropping that response acknowledges failed work to SQS.
+      batchItemFailures.push(...result.value.batchItemFailures);
     }
   });
 

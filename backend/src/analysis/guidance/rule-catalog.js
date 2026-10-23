@@ -1,6 +1,9 @@
 /** @typedef {"Low" | "Moderate" | "High"} RuleWeighting */
 /** @typedef {"action" | "escalation" | "non_actionable_escalation" | "manual_review"} OutcomeKind */
-/** @typedef {{ kind: "always" } | { kind: "daily", startMinute: number, endMinute: number, timeZone: "America/Los_Angeles" }} RuleTimeRange */
+/** @typedef {{ kind: "always" } | { kind: "daily", startMinute: number, endMinute: number, timeZone: "America/Los_Angeles", daysOfWeek?: number[] }} RuleTimeRange */
+
+// Sunday = 0, matching the Pacific-local calendar day used by the evaluator.
+const WEEKDAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 
 /**
  * @typedef {object} RuleQuestion
@@ -19,6 +22,7 @@
 
 /**
  * @typedef {object} RuleOutcome
+ * @property {string} [phoneNumber]
  * @property {OutcomeKind} kind
  * @property {string} label
  * @property {string[]} buttons
@@ -93,9 +97,17 @@ export function parseSeverityRange(raw) {
 export function parseValidTimeRange(raw) {
   const value = cleanCell(raw);
   if (value.toLowerCase() === "24 hours") return { kind: "always" };
-  const match = value.match(/^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/);
+  const match = value.match(
+    /^(\d{2}):(\d{2})-(\d{2}):(\d{2})(?:,\s*((?:Mo|Tu|We|Th|Fr|Sa|Su)(?:\+(?:Mo|Tu|We|Th|Fr|Sa|Su))*))?$/,
+  );
   if (!match) throw new Error(`Invalid valid time range: ${raw}`);
-  const [, startHour, startMinute, endHour, endMinute] = match.map(Number);
+  const [startHour, startMinute, endHour, endMinute] = match
+    .slice(1, 5)
+    .map(Number);
+  const daysOfWeek = match[5]?.split("+").map((day) => WEEKDAYS.indexOf(day));
+  if (daysOfWeek && new Set(daysOfWeek).size !== daysOfWeek.length) {
+    throw new Error(`Invalid valid time range: ${raw}`);
+  }
   if (startHour > 23 || endHour > 23 || startMinute > 59 || endMinute > 59) {
     throw new Error(`Invalid valid time range: ${raw}`);
   }
@@ -104,6 +116,7 @@ export function parseValidTimeRange(raw) {
     startMinute: startHour * 60 + startMinute,
     endMinute: endHour * 60 + endMinute,
     timeZone: "America/Los_Angeles",
+    ...(daysOfWeek ? { daysOfWeek } : {}),
   };
 }
 
@@ -253,7 +266,9 @@ export function parseAppActions(raw, options = {}) {
  */
 export function normalizeOutcomeKind(raw) {
   const value = cleanCell(raw).toLowerCase();
-  if (value === "non-actionable escalation") {
+  if (value === "sidewalk action") return "action";
+  if (value === "311 ticket") return "escalation";
+  if (value === "non-actionable escalation" || value === "phone call") {
     return "non_actionable_escalation";
   }
   return /** @type {OutcomeKind} */ (value.replaceAll(" ", "_"));
@@ -278,6 +293,28 @@ export function buildCatalog({ policyVersion, metadata, rows, aliases }) {
     },
     aliases,
     rules: rows.map((row) => {
+      // Adapt the current rubric to the historical column layout. Stored kinds
+      // remain stable; filing triggers now follow the explicit action type.
+      const phoneNumber = row.length === 18 ? cleanCell(row[14]) : "";
+      if (row.length === 18) {
+        if (!["Sidewalk action", "Phone call", "311 ticket"].includes(row[8]))
+          throw new Error(`Invalid action type: ${row[8]}`);
+        if (
+          row[8] === "Phone call" &&
+          !/^(?:911|311|[2-9]\d{2}-\d{3}-\d{4})$/.test(phoneNumber)
+        )
+          throw new Error(`Invalid phone number for ${row[2]}`);
+        row = [
+          ...row.slice(0, 13),
+          row[8] === "311 ticket"
+            ? "Create and file 311 ticket on confirmation"
+            : "File 311 ticket on action creation",
+          row[13],
+          ...row.slice(15),
+          "",
+          "",
+        ];
+      }
       const isAgencyAwareRulebaseShape = row.length === 20;
       const isTimeValidityRulebaseShape =
         row.length === 19 || isAgencyAwareRulebaseShape;
@@ -372,6 +409,7 @@ export function buildCatalog({ policyVersion, metadata, rows, aliases }) {
         predicate: parsePredicate(userResponse),
         outcome: {
           kind: normalizeOutcomeKind(thenKind),
+          ...(phoneNumber ? { phoneNumber } : {}),
           label: cleanCell(label),
           buttons: splitLines(buttons),
           appActions: parseAppActions(appAction, {
@@ -402,13 +440,14 @@ function validationPredicateMatches(rule, answers) {
 }
 
 /**
- * @param {GuidanceRule} rule
+ * @param {RuleTimeRange} range
  * @param {number} minute
+ * @param {number} weekday Sunday = 0; the report's local day, including overnight ranges.
  * @returns {boolean}
  */
-function validationTimeMatches(rule, minute) {
-  const range = rule.validTimeRange;
+export function timeRangeContains(range, minute, weekday) {
   if (!range || range.kind === "always") return true;
+  if (range.daysOfWeek && !range.daysOfWeek.includes(weekday)) return false;
   return range.startMinute <= range.endMinute
     ? minute >= range.startMinute && minute <= range.endMinute
     : minute >= range.startMinute || minute <= range.endMinute;
@@ -428,7 +467,7 @@ function booleanAnswerCombinations(keys) {
 
 /**
  * Ensure every fully answered, positive-severity path resolves to exactly one
- * rule for every Pacific-local minute. This catches both predicate and daily
+ * rule for every Pacific-local minute and weekday. This catches predicate and weekly
  * time-window gaps before a catalog can become active.
  * @param {GuidanceCatalog} catalog
  * @returns {string[]}
@@ -459,30 +498,39 @@ function validateRuleCoverage(catalog) {
         const answerLabel = questionKeys.length
           ? questionKeys.map((key) => `${key}=${answers[key]}`).join(", ")
           : "no answers";
-        let gapMinute = null;
-        for (let minute = 0; minute < 24 * 60; minute += 1) {
-          const matching = candidates.filter(
-            (rule) =>
-              validationPredicateMatches(rule, answers) &&
-              validationTimeMatches(rule, minute),
-          );
-          if (!matching.length) {
-            gapMinute ??= minute;
-            continue;
+        const weekdays = candidates.some(
+          (rule) =>
+            rule.validTimeRange?.kind === "daily" &&
+            rule.validTimeRange.daysOfWeek,
+        )
+          ? WEEKDAYS.map((_, day) => day)
+          : [0];
+        for (const weekday of weekdays) {
+          let gapMinute = null;
+          for (let minute = 0; minute < 24 * 60; minute += 1) {
+            const matching = candidates.filter(
+              (rule) =>
+                validationPredicateMatches(rule, answers) &&
+                timeRangeContains(rule.validTimeRange, minute, weekday),
+            );
+            if (!matching.length) {
+              gapMinute ??= minute;
+              continue;
+            }
           }
-        }
-        /**
-         * @param {number} minute
-         * @returns {string}
-         */
-        const formatMinute = (minute) =>
-          `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(
-            minute % 60,
-          ).padStart(2, "0")}`;
-        if (gapMinute !== null) {
-          errors.add(
-            `${category} severity ${severity} (${answerLabel}) has no rule at ${formatMinute(gapMinute)}`,
-          );
+          /**
+           * @param {number} minute
+           * @returns {string}
+           */
+          const formatMinute = (minute) =>
+            `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(
+              minute % 60,
+            ).padStart(2, "0")}`;
+          if (gapMinute !== null) {
+            errors.add(
+              `${category} severity ${severity} (${answerLabel}) has no rule at ${formatMinute(gapMinute)}${weekdays.length > 1 ? ` on ${WEEKDAYS[weekday]}` : ""}`,
+            );
+          }
         }
       }
     }

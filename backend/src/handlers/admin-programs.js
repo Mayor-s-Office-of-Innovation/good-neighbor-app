@@ -1,4 +1,16 @@
 import {
+  getPerson,
+  updatePersonRecord,
+  personRecord,
+  personPut,
+  registerPeopleChanges,
+} from "../lib/people.js";
+import { managerSiteScope } from "../lib/manager-site-scope.js";
+import { assignmentsMatchingEmail } from "../lib/manager-identity.js";
+import { queryAllItems } from "../lib/query-all-items.js";
+import { sitePrimaryContactChange } from "../lib/site-primary-contact.js";
+import { staffRemovalContactGuard } from "../lib/staff-contact-guard.js";
+import {
   DeleteCommand,
   GetCommand,
   QueryCommand,
@@ -9,9 +21,15 @@ import { randomUUID } from "node:crypto";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
-import { adminOnly } from "../lib/admin-auth.js";
+import {
+  ADMIN_GROUPS,
+  adminOnly,
+  adminPrincipal,
+  supervisorOnly,
+  authorizeSiteChanges,
+} from "../lib/admin-auth.js";
 import { deactivateManagerMembershipRecord } from "./admin-manager-memberships.js";
-import { emailHash } from "./setup-codes.js";
+import { emailHash, normalizeEmail } from "./setup-codes.js";
 
 const SEARCH_PK = "PROGRAM_SEARCH#ACTIVE";
 
@@ -28,11 +46,19 @@ export const listPrograms = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const createProgram = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const name = clean(body.name);
     const providerId = clean(body.providerId);
     if (!name) return jsonResponse(400, { error: "name_required" });
     if (!providerId) return jsonResponse(400, { error: "provider_required" });
+    let firstStaff =
+      body.firstStaff === undefined ? null : normalizeContact(body.firstStaff);
+    if (firstStaff) {
+      if (!firstStaff.firstName || !firstStaff.lastName)
+        return jsonResponse(400, { error: "name_required" });
+      if (!isEmail(firstStaff.email))
+        return jsonResponse(400, { error: "valid_email_required" });
+    }
     const provider = await ddb.send(
       new GetCommand({
         TableName: getDynamoTableName(),
@@ -42,9 +68,112 @@ export const createProgram = (event) =>
     if (!provider.Item || provider.Item.status === "inactive") {
       return jsonResponse(404, { error: "provider_not_found" });
     }
+    // Staff memberships are additive: selecting a source never moves or edits it.
+    const sourceInput = body.existingStaff;
+    const sourceChecks = [];
+    let staffSource;
+    if (sourceInput !== undefined) {
+      if (firstStaff || !sourceInput || typeof sourceInput !== "object")
+        return jsonResponse(400, { error: "invalid_staff_source" });
+      const sourceRef = /** @type {Record<string, unknown>} */ (sourceInput);
+      let sourceKey;
+      if (
+        sourceRef.providerManagerId &&
+        !sourceRef.programId &&
+        !sourceRef.userId
+      ) {
+        sourceKey = {
+          pk: `PROVIDER#${providerId}`,
+          sk: `PROVIDER_MANAGER#${clean(sourceRef.providerManagerId)}`,
+        };
+        staffSource = {
+          providerId,
+          providerManagerId: clean(sourceRef.providerManagerId),
+        };
+      } else if (
+        sourceRef.programId &&
+        sourceRef.userId &&
+        !sourceRef.providerManagerId
+      ) {
+        const sourceProgramKey = {
+          pk: `PROGRAM#${clean(sourceRef.programId)}`,
+          sk: "#META",
+        };
+        const sourceProgram = await ddb.send(
+          new GetCommand({
+            TableName: getDynamoTableName(),
+            Key: sourceProgramKey,
+            ConsistentRead: true,
+          }),
+        );
+        if (
+          sourceProgram.Item?.providerId !== providerId ||
+          sourceProgram.Item?.status !== "active"
+        )
+          return jsonResponse(400, { error: "invalid_staff_source" });
+        sourceChecks.push({
+          ConditionCheck: {
+            TableName: getDynamoTableName(),
+            Key: sourceProgramKey,
+            ConditionExpression: "providerId = :provider AND #status = :active",
+            ExpressionAttributeNames: { "#status": "status" },
+            ExpressionAttributeValues: {
+              ":provider": providerId,
+              ":active": "active",
+            },
+          },
+        });
+        sourceKey = {
+          pk: sourceProgramKey.pk,
+          sk: `USER#${clean(sourceRef.userId)}`,
+        };
+        staffSource = {
+          programId: clean(sourceRef.programId),
+          userId: clean(sourceRef.userId),
+        };
+      } else return jsonResponse(400, { error: "invalid_staff_source" });
+      const source = await ddb.send(
+        new GetCommand({
+          TableName: getDynamoTableName(),
+          Key: sourceKey,
+          ConsistentRead: true,
+        }),
+      );
+      if (source.Item?.status !== "active")
+        return jsonResponse(400, { error: "invalid_staff_source" });
+      firstStaff = normalizeContact(source.Item);
+      if (
+        !firstStaff.firstName ||
+        !firstStaff.lastName ||
+        !isEmail(firstStaff.email)
+      )
+        return jsonResponse(400, { error: "invalid_staff_source" });
+      sourceChecks.push({
+        ConditionCheck: {
+          TableName: getDynamoTableName(),
+          Key: sourceKey,
+          ConditionExpression:
+            "#status = :active" +
+            (source.Item.updatedAt
+              ? " AND updatedAt = :version"
+              : " AND attribute_not_exists(updatedAt)"),
+          ExpressionAttributeNames: { "#status": "status" },
+          ExpressionAttributeValues: {
+            ":active": "active",
+            ...(source.Item.updatedAt
+              ? { ":version": source.Item.updatedAt }
+              : {}),
+          },
+        },
+      });
+    }
     const programId = slug(body.programId, `${providerId}-${name}`);
     const now = new Date().toISOString();
+    const userId = firstStaff ? randomUUID() : null;
     const program = {
+      ...(userId && body.contact === undefined
+        ? { primaryContactUserId: userId }
+        : {}),
       pk: `PROGRAM#${programId}`,
       sk: "#META",
       type: "program",
@@ -53,44 +182,83 @@ export const createProgram = (event) =>
       name,
       providerId,
       providerName: provider.Item.name,
-      contact: normalizeContact(body.contact),
+      contact: normalizeContact(body.contact ?? firstStaff),
       status: "active",
       migrationPlaceholder: body.migrationPlaceholder === true,
       needsReview: body.needsReview === true,
       createdAt: now,
       updatedAt: now,
     };
-    await ddb.send(
-      new TransactWriteCommand({
-        TransactItems: [
-          put(program),
-          put({
-            pk: `PROVIDER#${providerId}`,
-            sk: `PROGRAM#${programId}`,
-            type: "providerProgramMembership",
-            providerId,
-            programId,
-            programName: name,
-            status: "active",
-            createdAt: now,
-            updatedAt: now,
-          }),
-          put({
-            pk: SEARCH_PK,
-            sk: `${name.toLocaleLowerCase("en-US")}#${programId}`,
-            type: "programSearch",
-            programId,
-            name,
-            providerId,
-            providerName: provider.Item.name,
-            migrationPlaceholder: program.migrationPlaceholder,
-            needsReview: program.needsReview,
-            updatedAt: now,
-          }),
-        ],
-      }),
-    );
-    return jsonResponse(201, { program });
+    const user = firstStaff
+      ? {
+          pk: `PROGRAM#${programId}`,
+          sk: `USER#${userId}`,
+          type: "programUser",
+          entityType: "PROGRAM_USER",
+          programId,
+          userId,
+          ...firstStaff,
+          ...(staffSource ? { staffSource } : {}),
+          siteManager: false,
+          status: "active",
+          siteAssignmentCount: 0,
+          createdAt: now,
+          updatedAt: now,
+        }
+      : null;
+    const personChanges = user ? await registerPeopleChanges([put(user)]) : [];
+    try {
+      await ddb.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            ...sourceChecks,
+            put(program),
+            ...(user ? [put(user)] : []),
+            ...personChanges,
+            put({
+              pk: `PROVIDER#${providerId}`,
+              sk: `PROGRAM#${programId}`,
+              type: "providerProgramMembership",
+              providerId,
+              programId,
+              programName: name,
+              status: "active",
+              createdAt: now,
+              updatedAt: now,
+            }),
+            put({
+              pk: SEARCH_PK,
+              sk: `${name.toLocaleLowerCase("en-US")}#${programId}`,
+              type: "programSearch",
+              programId,
+              name,
+              providerId,
+              providerName: provider.Item.name,
+              migrationPlaceholder: program.migrationPlaceholder,
+              needsReview: program.needsReview,
+              updatedAt: now,
+            }),
+          ],
+        }),
+      );
+    } catch (error) {
+      const cancellation =
+        /** @type {{ name?: string, CancellationReasons?: { Code?: string }[] }} */ (
+          error
+        );
+      if (
+        cancellation.name === "TransactionCanceledException" &&
+        sourceChecks.some(
+          (_, index) =>
+            cancellation.CancellationReasons?.[index]?.Code ===
+            "ConditionalCheckFailed",
+        )
+      ) {
+        return jsonResponse(409, { error: "staff_source_changed" });
+      }
+      throw error;
+    }
+    return jsonResponse(201, { program, ...(user ? { user } : {}) });
   });
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -118,7 +286,7 @@ export const getProgram = (event) =>
 /** Assign an existing Program to a provider when it has no active Site bindings. */
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const assignProgramToProvider = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const providerId = event.pathParameters?.providerId ?? "";
     const programId = clean(body.programId);
     if (!programId) return jsonResponse(400, { error: "program_required" });
@@ -224,6 +392,26 @@ export const assignProgramToProvider = (event) =>
 export const createProgramUser = (event) =>
   adminOnly(event, async (body) => {
     const programId = event.pathParameters?.programId ?? "";
+    if (adminPrincipal(event).role !== ADMIN_GROUPS.supervisor) {
+      const siteId = String(body.siteId || "");
+      const denied = await authorizeSiteChanges(event, [siteId]);
+      if (denied) return denied;
+      const { Item: site } = await ddb.send(
+        new GetCommand({
+          TableName: getDynamoTableName(),
+          Key: { pk: `SITE#${siteId}`, sk: "#META" },
+          ConsistentRead: true,
+        }),
+      );
+      if (
+        !site ||
+        site.status === "inactive" ||
+        site.leadProgramId !== programId ||
+        body.siteManager !== true ||
+        body.isPrimaryContact !== undefined
+      )
+        return jsonResponse(403, { error: "site_assignment_required" });
+    }
     const contact = normalizeContact(body);
     if (!contact.firstName || !contact.lastName) {
       return jsonResponse(400, { error: "name_required" });
@@ -259,9 +447,19 @@ export const createProgramUser = (event) =>
       createdAt: now,
       updatedAt: now,
     };
+    const person = personRecord(
+      {
+        ...user,
+        primaryProgramId: programId,
+        primaryProviderId: program.Item.providerId,
+      },
+      userId,
+      [{ pk: user.pk, sk: user.sk }],
+    );
+    Object.assign(user, { personId: person.personId });
     await ddb.send(
       new TransactWriteCommand({
-        TransactItems: [put(user)],
+        TransactItems: [put(user), personPut(person)],
       }),
     );
     return jsonResponse(201, { user });
@@ -279,8 +477,158 @@ export const updateProgramUser = (event) =>
     if (!isEmail(contact.email)) {
       return jsonResponse(400, { error: "valid_email_required" });
     }
-    if (!contact.phone) {
+    const current = await ddb.send(
+      new GetCommand({
+        TableName: getDynamoTableName(),
+        Key: { pk: `PROGRAM#${programId}`, sk: `USER#${userId}` },
+      }),
+    );
+    if (!current.Item || current.Item.status !== "active") {
+      return jsonResponse(404, { error: "program_user_not_found" });
+    }
+    if (current.Item.phone && !contact.phone) {
       return jsonResponse(400, { error: "phone_required" });
+    }
+    const principal = adminPrincipal(event);
+    const requestedSiteManager = body.siteManager === true;
+    if (
+      principal.role !== ADMIN_GROUPS.supervisor &&
+      (requestedSiteManager !== (current.Item.siteManager === true) ||
+        contact.email !== normalizeEmail(String(current.Item.email ?? "")))
+    ) {
+      return jsonResponse(403, { error: "supervisor_required" });
+    }
+    if (principal.role !== ADMIN_GROUPS.supervisor) {
+      if (body.isPrimaryContact !== undefined)
+        return jsonResponse(403, { error: "supervisor_required" });
+      const siteIds = await managerSiteScope(
+        programId,
+        userId,
+        String(current.Item.email || ""),
+      );
+      const denied = await authorizeSiteChanges(event, siteIds);
+      if (denied) return denied;
+    }
+    if (current.Item.personId) {
+      const person = await getPerson(current.Item.personId);
+      if (!person) return jsonResponse(409, { error: "person_not_found" });
+      if (
+        principal.role !== ADMIN_GROUPS.supervisor &&
+        person.sources.some((/** @type {{pk:string,sk:string}} */ source) =>
+          source.pk.startsWith("PROVIDER#"),
+        )
+      )
+        return jsonResponse(403, { error: "supervisor_required" });
+      if (principal.role !== ADMIN_GROUPS.supervisor) {
+        // A legacy URL still edits the shared person: authorize every source site.
+        const sites = [
+          ...new Set(
+            person.sources
+              .filter((/** @type {{pk:string}} */ source) =>
+                source.pk.startsWith("SITE#"),
+              )
+              .map((/** @type {{pk:string}} */ source) => source.pk.slice(5)),
+          ),
+        ];
+        const denied = await authorizeSiteChanges(event, sites);
+        if (denied) return denied;
+      }
+      await updatePersonRecord(person, contact, principal.subject);
+      if (body.isPrimaryContact === undefined)
+        return jsonResponse(200, { user: { ...current.Item, ...contact } });
+    }
+    if (body.isPrimaryContact !== undefined) {
+      if (typeof body.isPrimaryContact !== "boolean")
+        return jsonResponse(400, { error: "invalid_primary_contact" });
+      const tableName = getDynamoTableName();
+      const { Item: program } = await ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { pk: `PROGRAM#${programId}`, sk: "#META" },
+          ConsistentRead: true,
+        }),
+      );
+      if (!program || program.status === "inactive")
+        return jsonResponse(404, { error: "program_not_found" });
+      const wasPrimary = program.primaryContactUserId
+        ? program.primaryContactUserId === userId
+        : Boolean(
+            program.contact?.email &&
+              normalizeEmail(program.contact.email) ===
+                normalizeEmail(current.Item.email),
+          );
+      const primaryId = body.isPrimaryContact
+        ? userId
+        : wasPrimary
+          ? null
+          : program.primaryContactUserId;
+      const programContact = body.isPrimaryContact
+        ? contact
+        : wasPrimary
+          ? {}
+          : program.contact || {};
+      const now = new Date().toISOString();
+      const user = {
+        ...current.Item,
+        ...contact,
+        siteManager: requestedSiteManager,
+        updatedAt: now,
+      };
+      try {
+        await ddb.send(
+          new TransactWriteCommand({
+            TransactItems: [
+              {
+                Update: {
+                  TableName: tableName,
+                  Key: { pk: `PROGRAM#${programId}`, sk: `USER#${userId}` },
+                  UpdateExpression:
+                    "SET firstName = :firstName, lastName = :lastName, phone = :phone, phoneExtension = :extension, email = :email, siteManager = :manager, updatedAt = :now",
+                  ConditionExpression:
+                    "attribute_exists(pk) AND #status = :active",
+                  ExpressionAttributeNames: { "#status": "status" },
+                  ExpressionAttributeValues: {
+                    ":firstName": contact.firstName,
+                    ":lastName": contact.lastName,
+                    ":phone": contact.phone,
+                    ":extension": contact.phoneExtension,
+                    ":email": contact.email,
+                    ":manager": requestedSiteManager,
+                    ":now": now,
+                    ":active": "active",
+                  },
+                },
+              },
+              {
+                Update: {
+                  TableName: tableName,
+                  Key: { pk: `PROGRAM#${programId}`, sk: "#META" },
+                  UpdateExpression: `SET contact = :contact, updatedAt = :now${primaryId ? ", primaryContactUserId = :primary" : " REMOVE primaryContactUserId"}`,
+                  ConditionExpression: `attribute_exists(pk) AND #status = :active AND ${program.updatedAt ? "updatedAt = :version" : "attribute_not_exists(updatedAt)"}`,
+                  ExpressionAttributeNames: { "#status": "status" },
+                  ExpressionAttributeValues: {
+                    ":contact": programContact,
+                    ":now": now,
+                    ":active": "active",
+                    ...(primaryId ? { ":primary": primaryId } : {}),
+                    ...(program.updatedAt
+                      ? { ":version": program.updatedAt }
+                      : {}),
+                  },
+                },
+              },
+            ],
+          }),
+        );
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.name === "TransactionCanceledException"
+        )
+          return jsonResponse(409, { error: "program_staff_conflict" });
+        throw error;
+      }
+      return jsonResponse(200, { user });
     }
     const now = new Date().toISOString();
     const result = await ddb.send(
@@ -297,7 +645,7 @@ export const updateProgramUser = (event) =>
           ":phone": contact.phone,
           ":phoneExtension": contact.phoneExtension,
           ":email": contact.email,
-          ":siteManager": body.siteManager === true,
+          ":siteManager": requestedSiteManager,
           ":now": now,
           ":active": "active",
         },
@@ -309,7 +657,7 @@ export const updateProgramUser = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const deactivateProgramUser = (event) =>
-  adminOnly(event, async () => {
+  supervisorOnly(event, async () => {
     const programId = event.pathParameters?.programId ?? "";
     const userId = event.pathParameters?.userId ?? "";
     const tableName = getDynamoTableName();
@@ -322,37 +670,52 @@ export const deactivateProgramUser = (event) =>
     if (!current.Item || current.Item.status === "inactive") {
       return jsonResponse(404, { error: "program_user_not_found" });
     }
-    if (current.Item.siteManager === true) {
-      return removeSiteManager(event, programId, userId, current.Item);
-    }
+    const guard = await staffRemovalContactGuard(
+      tableName,
+      programId,
+      current.Item,
+    );
+    if (!guard.change) return jsonResponse(409, { error: guard.error });
+    const removingManager = current.Item.siteManager === true;
     const now = new Date().toISOString();
     try {
-      const result = await ddb.send(
-        new UpdateCommand({
-          TableName: tableName,
-          Key: { pk: `PROGRAM#${programId}`, sk: `USER#${userId}` },
-          UpdateExpression: "SET #status = :inactive, updatedAt = :now",
-          ConditionExpression:
-            "attribute_exists(pk) AND (attribute_not_exists(siteAssignmentCount) OR siteAssignmentCount = :zero)",
-          ExpressionAttributeNames: { "#status": "status" },
-          ExpressionAttributeValues: {
-            ":inactive": "inactive",
-            ":now": now,
-            ":zero": 0,
-          },
-          ReturnValues: "ALL_NEW",
+      await ddb.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            guard.change,
+            {
+              Update: {
+                TableName: tableName,
+                Key: { pk: `PROGRAM#${programId}`, sk: `USER#${userId}` },
+                UpdateExpression: "SET #status = :next, updatedAt = :now",
+                ConditionExpression: `attribute_exists(pk) AND (#status = :active${removingManager ? " OR #status = :removing" : ""})${removingManager ? "" : " AND (attribute_not_exists(siteAssignmentCount) OR siteAssignmentCount = :zero)"}`,
+                ExpressionAttributeNames: { "#status": "status" },
+                ExpressionAttributeValues: {
+                  ":next": removingManager ? "removing" : "inactive",
+                  ":now": now,
+                  ":active": "active",
+                  ...(removingManager
+                    ? { ":removing": "removing" }
+                    : { ":zero": 0 }),
+                },
+              },
+            },
+          ],
         }),
       );
-      return jsonResponse(200, { user: result.Attributes });
     } catch (error) {
       if (
         error instanceof Error &&
-        error.name === "ConditionalCheckFailedException"
-      ) {
+        error.name === "TransactionCanceledException"
+      )
         return jsonResponse(409, { error: "program_user_in_use" });
-      }
       throw error;
     }
+    if (removingManager)
+      return removeSiteManager(event, programId, userId, current.Item);
+    return jsonResponse(200, {
+      user: { ...current.Item, status: "inactive", updatedAt: now },
+    });
   });
 
 /**
@@ -374,7 +737,7 @@ async function removeSiteManager(event, programId, userId, user) {
         ExpressionAttributeValues: { ":pk": `MANAGER_EMAIL#${verifier}` },
       }),
     ),
-    queryChildren(programId, "SITE#"),
+    queryChildren(programId, "SITE#", true),
   ]);
   const actor = String(
     /** @type {any} */ (event.requestContext)?.authorizer?.jwt?.claims?.sub ??
@@ -382,7 +745,6 @@ async function removeSiteManager(event, programId, userId, user) {
   );
   const siteIds = new Set(
     (programSitesResult.Items ?? [])
-      .filter((site) => site.status !== "inactive")
       .map((site) => String(site.siteId || ""))
       .filter(Boolean),
   );
@@ -401,18 +763,43 @@ async function removeSiteManager(event, programId, userId, user) {
       }),
     );
     const membership = membershipResult.Item;
-    const belongsToManager =
-      membership?.userId === userId ||
-      (!membership?.userId &&
-        membership?.programId === programId &&
-        String(membership?.email || "").toLocaleLowerCase("en-US") ===
-          String(user.email || "").toLocaleLowerCase("en-US"));
+    let belongsToManager = membership?.userId === userId;
+    if (
+      !membership?.userId &&
+      String(membership?.email || "")
+        .trim()
+        .toLowerCase() ===
+        String(user.email || "")
+          .trim()
+          .toLowerCase()
+    ) {
+      const assignments = await queryAllItems({
+        TableName: tableName,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues: {
+          ":pk": `SITE#${siteId}`,
+          ":prefix": "ASSIGNED_USER#",
+        },
+        ConsistentRead: true,
+      });
+      const matches = await assignmentsMatchingEmail(
+        tableName,
+        assignments.Items,
+        String(user.email || ""),
+      );
+      belongsToManager = matches.some(
+        (row) => row.userId === userId && row.programId === programId,
+      );
+      if (belongsToManager && matches.length !== 1)
+        return jsonResponse(409, { error: "ambiguous_manager_identity" });
+    }
     if (!belongsToManager) continue;
     siteIds.add(siteId);
     const result = await deactivateManagerMembershipRecord({
       siteId,
       membershipId,
       actor,
+      expectedUserId: userId,
     });
     if (result?.error) return jsonResponse(409, { error: result.error });
     revokedBindingCount += Number(result?.revokedBindingCount || 0);
@@ -425,6 +812,7 @@ async function removeSiteManager(event, programId, userId, user) {
         new GetCommand({
           TableName: tableName,
           Key: { pk: `SITE#${siteId}`, sk: "#META" },
+          ConsistentRead: true,
         }),
       ),
       ddb.send(
@@ -450,18 +838,11 @@ async function removeSiteManager(event, programId, userId, user) {
         },
       });
     }
-    if (isPrimary) {
-      items.push({
-        Update: {
-          TableName: tableName,
-          Key: { pk: `SITE#${siteId}`, sk: "#META" },
-          UpdateExpression:
-            "REMOVE primaryContactUserId, primaryContact SET updatedAt = :now",
-          ConditionExpression: "primaryContactUserId = :userId",
-          ExpressionAttributeValues: { ":userId": userId, ":now": now },
-        },
-      });
-    }
+    items.push(
+      await sitePrimaryContactChange(tableName, siteId, now, {
+        removeUserId: userId,
+      }),
+    );
     items.push(
       put({
         pk: `SITE#${siteId}`,
@@ -623,7 +1004,7 @@ export const updateProgram = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const deactivateProgram = (event) =>
-  adminOnly(event, async () => {
+  supervisorOnly(event, async () => {
     const programId = event.pathParameters?.programId ?? "";
     const now = new Date().toISOString();
     const current = await ddb.send(
@@ -655,10 +1036,11 @@ export const deactivateProgram = (event) =>
     return jsonResponse(200, { program: result.Attributes });
   });
 
-/** @param {string} programId @param {string} prefix */
-async function queryChildren(programId, prefix) {
+/** @param {string} programId @param {string} prefix @param {boolean} [consistentRead] */
+async function queryChildren(programId, prefix, consistentRead = false) {
   const Items = await queryAll({
     TableName: getDynamoTableName(),
+    ConsistentRead: consistentRead,
     KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
     ExpressionAttributeValues: {
       ":pk": `PROGRAM#${programId}`,

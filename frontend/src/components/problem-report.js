@@ -1,5 +1,8 @@
+import { openSessionDuplicate } from "./duplicate-issue-launcher.js";
+import { captureLabels } from "./capture-analysis.templates.js";
 import {
   toggleCardCompletion,
+  completeCardAction,
   isCompletingAnalysisCard,
 } from "./analysis-card-completion.js";
 /*
@@ -44,7 +47,7 @@ import {
   refreshEvidenceAnalysis,
   retryEvidenceItem,
 } from "../services/photo-analysis.js";
-import { completeTask, editAnalysisCondition } from "../services/api.js";
+import { editAnalysisCondition } from "../services/api.js";
 import {
   expectedArtifactCountForCheck,
   finalizeCaptureScorecardInBackground,
@@ -362,7 +365,7 @@ class ProblemReport extends HTMLElement {
     grid.classList.toggle("shotgrid--empty", items.length === 0);
     const tile = addTile(items.length === 0);
     grid.innerHTML =
-      items.map((item, index) => shotTile(item, index)).join("") + tile;
+      tile + items.map((item, index) => shotTile(item, index)).join("");
   }
 
   /** @returns {EvidenceItem[]} */
@@ -398,6 +401,7 @@ class ProblemReport extends HTMLElement {
     if (isDeletingAnalysisCard(this) || isCompletingAnalysisCard(this)) return;
     this._renderTitle();
     this._renderShots();
+    this.querySelector("#capture-labels").innerHTML = captureLabels(getItems());
     this._renderAnalysis();
     this._syncControls();
   }
@@ -458,12 +462,19 @@ class ProblemReport extends HTMLElement {
         if (!card) return;
         const action = target.getAttribute("data-analysis-action");
         const problem = this._problemFromCard(card);
+        if (action === "duplicate") {
+          openSessionDuplicate(target, this);
+          return;
+        }
         if (action === "delete") {
           this._openDeleteProblem(problem);
         } else if (action === "edit") {
           this._openEditProblem(problem);
         } else if (action === "resolve") {
-          if (target.getAttribute("role") === "checkbox") {
+          if (
+            target.getAttribute("role") === "checkbox" ||
+            target.hasAttribute("data-phone-number")
+          ) {
             toggleCardCompletion(this, card, target, {
               onSaved: () => this._markProblemResolved(problem),
               render: () => this._render(),
@@ -643,7 +654,7 @@ class ProblemReport extends HTMLElement {
         "analysis-progress",
       );
       try {
-        const result = await completeTask(problem.taskId, {
+        const result = await completeCardAction(problem.taskId, {
           completionMethod: "311_filed",
         });
         this._analysisProgressDialog?.close();
@@ -662,7 +673,7 @@ class ProblemReport extends HTMLElement {
     }
 
     try {
-      await completeTask(problem.taskId, { completionMethod: "manual" });
+      await completeCardAction(problem.taskId, { completionMethod: "manual" });
       this._markProblemResolved(problem);
       openOverlayDialog(
         /** @type {HTMLDialogElement} */ (this._analysisSuccessDialog),

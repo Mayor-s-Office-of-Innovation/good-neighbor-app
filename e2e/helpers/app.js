@@ -85,7 +85,7 @@ export async function addPhoto(page, filePath) {
 
 /**
  * Finish the check from the capture screen and wait for home.
- * Finish carries `disabled` until the completion rule is met (three photos or
+ * Finish carries `disabled` until the completion rule is met (one photo or
  * one description), so callers assert on that before calling this.
  * @param {import("@playwright/test").Page} page
  */
@@ -196,7 +196,17 @@ async function runClearCheck(page) {
       .locator(".analysis-card--clear")
       .first(),
   ).toBeVisible({ timeout: 90_000 });
+  // Finish returns home before background scorecard persistence completes.
+  const completed = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/v1\/checks\/[^/]+\/complete$/.test(new URL(response.url()).pathname),
+    { timeout: 90_000 },
+  );
   await finishCheck(page);
+  const response = await completed;
+  expect(response.ok()).toBe(true);
+  expect((await response.json()).issueCount).toBe(0);
 }
 
 /**
@@ -230,6 +240,9 @@ export async function openHistoryWithTrays(page) {
   );
 
   await runClearCheck(page);
+
+  // Fetch both persisted scorecards instead of using the route-return snapshot.
+  await page.reload();
 
   // Open History via its real tab button; the older check's tray must render.
   // (Local DDB persists earlier runs' checks too, so several history trays can

@@ -38,6 +38,7 @@ beforeEach(() => {
   });
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
   vi.stubEnv("S3_UPLOAD_BUCKET", "test-bucket");
+  vi.stubEnv("S3_COMPLIANCE_LETTER_BUCKET", "test-compliance-letters");
   vi.stubEnv("SQS_QUEUE_URL", "test-queue");
 });
 
@@ -267,7 +268,11 @@ describe("site admin", () => {
       },
     });
     const response = await /** @type {any} */ (getSite)(event("site-1"));
-    expect(body(response).site).toEqual({ siteId: "site-1", name: "Mission" });
+    expect(body(response).site).toEqual({
+      siteId: "site-1",
+      name: "Mission",
+      featureFlags: { duplicateDetection: false },
+    });
   });
 
   it("denies general-access devices without reading site data", async () => {
@@ -299,6 +304,57 @@ describe("site admin", () => {
     });
   });
 
+  it("shows the current directory name after a manager profile edit", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        siteId: "site-1",
+        oversight: {
+          cityProgramManagerId: "manager-1",
+          cityProgramManager: "Old Name",
+        },
+      },
+    });
+    send.mockResolvedValueOnce({
+      Items: [
+        {
+          userId: "manager-1",
+          firstName: "New",
+          lastName: "Name",
+          email: "private@example.org",
+        },
+      ],
+    });
+    const response = await /** @type {any} */ (getSiteAdmin)(
+      accessEvent("site-1", "admin"),
+    );
+    expect(body(response).site.oversight).toEqual({
+      cityProgramManagerId: "manager-1",
+      cityProgramManager: "New Name",
+    });
+    expect(String(response.body)).not.toContain("private@example.org");
+  });
+
+  it("does not expose an expired perimeter-check period as current", async () => {
+    send.mockResolvedValueOnce({
+      Item: {
+        siteId: "site-1",
+        name: "Mission",
+        compliance: {
+          perimeterChecksRequired: true,
+          periodStart: "2000-01-01",
+          periodEnd: "2000-01-31",
+          requiredChecksPerDay: 3,
+        },
+      },
+    });
+    const response = await /** @type {any} */ (getSiteAdmin)(
+      accessEvent("site-1", "admin"),
+    );
+    expect(body(response).site.compliance).toEqual({
+      perimeterChecksRequired: false,
+    });
+  });
+
   it("returns a fresh download URL for an uploaded compliance letter", async () => {
     send.mockResolvedValueOnce({
       Item: {
@@ -324,7 +380,7 @@ describe("site admin", () => {
       "https://uploads.example/current",
     );
     expect(presignGet).toHaveBeenCalledWith({
-      bucket: "test-bucket",
+      bucket: "test-compliance-letters",
       key: "compliance-letters/site-1/current.pdf",
       expiresIn: 300,
     });
@@ -418,5 +474,46 @@ describe("site admin", () => {
       siteName: "New Name",
       searchText: "new name provider one",
     });
+  });
+});
+
+describe("duplicate UI display policy", () => {
+  it("reads the site rollout flag independently of enabled backend matching", async () => {
+    vi.stubEnv("DUPLICATE_DETECTION_ENABLED", "true");
+    send.mockResolvedValue({
+      Item: { siteId: "site-1", featureFlags: { duplicateDetection: true } },
+    });
+    expect(
+      body(await /** @type {any} */ (getSite)(event("site-1"))).site
+        .featureFlags.duplicateDetection,
+    ).toBe(true);
+  });
+  it("defaults off unless the stored site flag is explicitly true", async () => {
+    send
+      .mockResolvedValueOnce({ Item: { siteId: "site-1" } })
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-2",
+          featureFlags: { duplicateDetection: false },
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-3",
+          featureFlags: { duplicateDetection: "true" },
+        },
+      });
+    expect(
+      body(await /** @type {any} */ (getSite)(event("site-1"))).site
+        .featureFlags.duplicateDetection,
+    ).toBe(false);
+    expect(
+      body(await /** @type {any} */ (getSite)(event("site-2"))).site
+        .featureFlags.duplicateDetection,
+    ).toBe(false);
+    expect(
+      body(await /** @type {any} */ (getSite)(event("site-3"))).site
+        .featureFlags.duplicateDetection,
+    ).toBe(false);
   });
 });

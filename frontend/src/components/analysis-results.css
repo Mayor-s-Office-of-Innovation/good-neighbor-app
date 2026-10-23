@@ -84,18 +84,18 @@
 }
 
 .analysis-tray--recent .analysis-tray__cards {
-  gap: var(--wa-space-m, 1rem);
+  gap: var(--wa-space-s, 0.75rem);
   padding: var(--wa-space-l, 1.5rem) var(--wa-space-xs, 0.5rem)
     var(--wa-space-xs, 0.5rem);
   border-radius: 2rem;
-  background: var(--wa-color-brand-fill-quiet, #e8f3ff);
+  background: var(--brand-blue-bg);
 }
 
 .analysis-tray h2.analysis-tray__check-title {
   width: 100%;
   margin: 0;
   color: var(--wa-color-text-normal, #1b1d26);
-  font-size: var(--wa-font-size-l, 1.25rem);
+  font-size: var(--wa-font-size-m, 1rem);
   line-height: 1.2;
   text-align: center;
 }
@@ -105,15 +105,15 @@
 }
 
 .analysis-tray--history .analysis-tray__cards {
-  gap: var(--wa-space-m, 1rem);
+  gap: var(--wa-space-s, 0.75rem);
   padding: var(--wa-space-l, 1.5rem) var(--wa-space-xs, 0.5rem)
     var(--wa-space-xs, 0.5rem);
   border-radius: 2rem;
-  background: var(--wa-color-neutral-fill-normal, #e4e5e9);
+  background: var(--group-grey, #e9eaea);
 }
 
 .analysis-tray--history .analysis-card {
-  background: var(--wa-color-surface-lowered, #f1f2f3);
+  background: var(--wa-color-surface-default, #fff);
 }
 
 .analysis-tray__empty {
@@ -142,19 +142,17 @@
 
 .analysis-tray--recent,
 .analysis-tray--history {
-  --analysis-card-outline: var(--wa-color-neutral-90, #e4e5e9);
+  --analysis-card-outline: var(--card-outline, #c9caca);
 }
 
+html.wa-dark .analysis-tray--recent,
 html.wa-dark .analysis-tray--history {
   --analysis-card-outline: var(--wa-color-neutral-border-quiet, #545868);
 }
 
-/* Latest-check outlines blend into the tray in either theme. The separate
-   action area's neutral top border remains the content divider. */
-.analysis-tray--recent {
-  --analysis-card-outline: var(--wa-color-brand-fill-quiet, #e8f3ff);
-}
-
+/* One outline around the white card body (panel + action row), closing with
+   the action row's rounded bottom edge. The footer sits below it, outside the
+   outline, on the group grey. */
 .analysis-tray--recent .analysis-card__panel,
 .analysis-tray--history .analysis-card__panel {
   border: 1px solid var(--analysis-card-outline);
@@ -162,16 +160,19 @@ html.wa-dark .analysis-tray--history {
 
 .analysis-tray--recent .analysis-card__action-area,
 .analysis-tray--history .analysis-card__action-area {
-  border-inline: 1px solid var(--wa-color-neutral-90);
-  border-bottom: 1px solid var(--wa-color-neutral-90);
+  border-inline: 1px solid var(--analysis-card-outline);
+  border-bottom: 1px solid var(--analysis-card-outline);
 }
 
 .analysis-card__panel:has(+ .analysis-card__action-area) {
   border-bottom: 0;
 }
 
-.analysis-tray .analysis-card--done {
-  background: var(--wa-color-neutral-fill-quiet, #f1f2f3);
+/* The card shell shows only behind the footer strip; it matches the card
+   surface so the date/number row reads as part of the card (no outline). */
+.analysis-tray .analysis-card--done,
+.analysis-card--done.analysis-card--standard {
+  background: var(--wa-color-surface-default, #fff);
 }
 
 .analysis-card__layout {
@@ -202,7 +203,7 @@ html.wa-dark .analysis-tray--history {
   margin: 0;
   color: var(--wa-color-neutral-fill-loud, #2f323f);
   font-family: var(--wa-font-family-body, var(--font-sans));
-  font-size: var(--wa-font-size-l, 1.25rem);
+  font-size: var(--wa-font-size-xl, 1.5625rem);
   font-weight: var(--wa-font-weight-bold, 600);
   line-height: 1.2;
 }
@@ -215,7 +216,7 @@ html.wa-dark .analysis-tray--history {
 }
 
 .analysis-card__clear-copy a {
-  color: #0053c0;
+  color: var(--brand-blue);
   text-decoration-line: underline;
   text-decoration-style: dotted;
   text-underline-position: from-font;
@@ -278,50 +279,9 @@ html.wa-dark .analysis-card__clear-copy a {
   min-width: 0;
 }
 
-.analysis-card__route {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin: 0 0 1rem;
-  color: var(--wa-color-text-normal, #1b1d26);
-  font-size: var(--wa-font-size-s, 0.875rem);
-  line-height: 1.2;
-}
-
-.analysis-card__route > .analysis-card__route-dot {
-  width: 1rem;
-  height: 1rem;
-  flex: 0 0 1rem;
-  border-radius: 50%;
-  background: var(--wa-color-neutral-60, #9194a2);
-}
-
-.analysis-card__route--311 > .analysis-card__route-dot {
-  background: var(--wa-color-blue-60, #0071ec);
-}
-
-.analysis-card__route--non-emergency > .analysis-card__route-dot {
-  background: var(--wa-color-warning-70, #ef9d00);
-}
-
-.analysis-card__route--emergency > .analysis-card__route-dot {
-  background: var(--wa-color-danger-60, #f3676c);
-}
-
-.analysis-card__route-separator {
-  color: var(--wa-color-neutral-70, #abaeb9);
-}
-
-.analysis-card__ticket-status--closed {
-  color: var(--wa-color-success-50, #00883c);
-}
-
-.analysis-card__ticket-status--overdue {
-  color: var(--wa-color-warning-on-quiet, #8c4602);
-}
-
+/* Eyebrow line above the title: hugs the title it introduces. */
 .analysis-card .analysis-card__place {
-  margin: 0 0 0.5rem;
+  margin: 0 0 0.25rem;
   color: var(--wa-color-text-quiet, #545868);
   font-size: var(--wa-font-size-s, 0.875rem);
   line-height: 1.6;
@@ -351,7 +311,7 @@ html.wa-dark .analysis-card__clear-copy a {
 .analysis-card h3 {
   margin: 0 0 0.125rem;
   color: var(--wa-color-text-normal, #1b1d26);
-  font-size: var(--wa-font-size-l, 1.25rem);
+  font-size: var(--wa-font-size-xl, 1.5625rem);
   font-weight: var(--wa-font-weight-heading, 600);
   line-height: 1.2;
 }
@@ -367,8 +327,8 @@ html.wa-dark .analysis-card__clear-copy a {
   line-height: 1.6;
 }
 
+/* Caption row outside the card outline, on the group grey (no outline). */
 .analysis-card__footer {
-  background: var(--wa-color-neutral-fill-quiet, #f1f2f3);
   display: flex;
   justify-content: space-between;
   gap: 1rem;
@@ -473,14 +433,14 @@ html.wa-dark .analysis-card__clear-copy a {
   color: var(--wa-color-neutral-on-loud, var(--on-ink));
   font-family: var(--wa-font-family-body, var(--font-sans));
   font-size: var(--wa-font-size-m, 1rem);
-  font-weight: 500;
+  font-weight: var(--wa-font-weight-bold, 600);
   line-height: 1.2;
   white-space: nowrap;
 }
 
 .analysis-card__primary--escalation {
-  background: var(--wa-color-brand-fill-normal, #d1e8ff);
-  color: var(--wa-color-brand-on-normal, #003f9c);
+  background: var(--brand-blue);
+  color: var(--on-ink);
 }
 
 .analysis-card__primary--outline {
@@ -573,7 +533,7 @@ html.wa-dark .analysis-card__clear-copy a {
 }
 
 .analysis-dialog__text span {
-  color: #0053c0;
+  color: var(--brand-blue);
   text-decoration: underline;
   text-decoration-style: dotted;
   text-underline-position: from-font;
@@ -796,38 +756,13 @@ html.wa-dark .analysis-card__clear-copy a {
     order: 3;
   }
 
-  .analysis-card__route,
+  .status-ticker,
   .analysis-card__skeleton--route {
     order: 1;
   }
 
-  .analysis-card .analysis-card__route {
+  .analysis-card .status-ticker {
     margin-bottom: 1rem;
-  }
-
-  .analysis-card__route--311:has(.analysis-card__ticket-status) {
-    display: grid;
-    grid-template-columns: 1rem minmax(0, 1fr);
-    column-gap: 0.5rem;
-    row-gap: 0.25rem;
-  }
-
-  .analysis-card__route--311:has(.analysis-card__ticket-status)
-    .analysis-card__route-dot {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
-  .analysis-card__route--311:has(.analysis-card__ticket-status)
-    .analysis-card__route-label,
-  .analysis-card__route--311:has(.analysis-card__ticket-status)
-    .analysis-card__ticket-status {
-    grid-column: 2;
-  }
-
-  .analysis-card__route--311:has(.analysis-card__ticket-status)
-    .analysis-card__route-separator {
-    display: none;
   }
 
   .analysis-card__media {
@@ -884,7 +819,7 @@ html.wa-dark .analysis-card__clear-copy a {
   padding: 1.25rem;
   border-radius: 1.5rem 1.5rem 0 0;
 }
-.analysis-card__panel:has(.analysis-card__dismiss) > .analysis-card__route {
+.analysis-card__panel:has(.analysis-card__dismiss) > .status-ticker {
   padding-right: 2rem;
 }
 .analysis-card__dismiss {
@@ -903,7 +838,7 @@ html.wa-dark .analysis-card__clear-copy a {
   margin-top: 0.5rem;
   padding: 0;
   color: var(--text-secondary);
-  font-size: 0.875rem;
+  font-size: var(--wa-font-size-s, 0.875rem);
 }
 .analysis-card__edit span {
   text-decoration: underline dotted;
@@ -913,7 +848,7 @@ html.wa-dark .analysis-card__clear-copy a {
 .analysis-card__action-area {
   margin: 0;
   padding: 0.875rem 1.25rem 1.25rem;
-  border-top: 1px solid var(--wa-color-neutral-90);
+  border-top: 1px solid var(--analysis-card-outline, var(--card-outline));
   background: var(--wa-color-surface-default);
   border-radius: 0 0 1.5rem 1.5rem;
 }
@@ -941,7 +876,7 @@ html.wa-dark .analysis-card__clear-copy a {
   width: 1.75rem;
   height: 1.75rem;
   border: 2px solid var(--text-secondary);
-  border-radius: 50%;
+  border-radius: var(--radius-sm);
 }
 .analysis-card__check-tick {
   transform: scale(0);
@@ -970,6 +905,18 @@ html.wa-dark .analysis-card__clear-copy a {
 .analysis-card__check:disabled {
   opacity: 1;
 }
+/* The save is in flight from the first tap: the box spins until the
+   response lands and the card slides away. */
+.analysis-card[aria-busy="true"] .analysis-card__check-circle {
+  background: transparent;
+  border: 2px solid var(--text-secondary);
+  border-top-color: var(--text);
+  border-radius: 50%;
+  animation: analysis-progress-spin 0.8s linear infinite;
+}
+.analysis-card[aria-busy="true"] .analysis-card__check-tick {
+  transform: scale(0);
+}
 .analysis-card--completing {
   display: grid;
   grid-template-rows: 1fr;
@@ -997,6 +944,16 @@ html.wa-dark .analysis-card__clear-copy a {
 @media (prefers-reduced-motion: reduce) {
   .analysis-card--completing .analysis-card {
     animation: none;
+  }
+  /* No spinner: show the tapped box as checked until the card goes. */
+  .analysis-card[aria-busy="true"] .analysis-card__check-circle {
+    animation: none;
+    border-radius: var(--radius-sm);
+    border-color: var(--text);
+    background: var(--text);
+  }
+  .analysis-card[aria-busy="true"] .analysis-card__check-tick {
+    transform: scale(1);
   }
   .analysis-card__check-tick,
   .analysis-card__check-label {
@@ -1074,11 +1031,10 @@ html.wa-dark .analysis-card__clear-copy a {
   flex: 1;
   min-width: 0;
 }
-.history-card__copy .analysis-card__route {
+.history-card__copy .status-ticker {
   flex-wrap: wrap;
   gap: 0.4375rem;
   margin: 0 0 0.5rem;
-  font-weight: 400;
 }
 .history-card__title {
   font-size: 1.25rem;
@@ -1103,18 +1059,19 @@ html.wa-dark .analysis-card__clear-copy a {
 .analysis-card__dismiss {
   background: transparent;
 }
+/* Address eyebrow + title read as one lockup (see __place margin); the
+   structural break sits between that lockup and the guidance text. */
 .analysis-card--done h3 {
-  font-size: 1.5625rem;
   line-height: 1.2;
-  margin: 0 0 1rem;
+  margin: 0 0 0.75rem;
 }
+/* Top-aligned with the title so the alignment holds at any title length. */
 .analysis-card--done .analysis-card__media {
   width: 6.5rem;
   height: 6.5rem;
   flex: 0 0 6.5rem;
-  margin-top: 2.875rem;
 }
-.analysis-card--done .analysis-card__route {
+.analysis-card--done .status-ticker {
   margin-bottom: 1rem;
 }
 .analysis-card__panel:not(:has(+ .analysis-card__action-area)) {
@@ -1143,7 +1100,7 @@ html.wa-dark .analysis-card__clear-copy a {
 .analysis-card--done .analysis-card__content {
   display: block;
 }
-.history-card__copy .analysis-card__route {
+.history-card__copy .status-ticker {
   order: 0;
 }
 #history-grouping::part(form-control-label) {
@@ -1161,4 +1118,99 @@ html.wa-dark .analysis-card__clear-copy a {
   .analysis-card--completing {
     animation-duration: 1s !important;
   }
+}
+
+/* Phone actions follow viewport width, including when the window resizes. */
+.analysis-card__phone {
+  display: none;
+}
+@media (max-width: 520px) {
+  .analysis-card__check--phone {
+    display: none;
+  }
+  .analysis-card__phone {
+    display: flex;
+  }
+}
+
+/* Mobile stacked card (per the mobile design): status line, then the 120px
+   photo, then place, title, details, edit, actions, footer. Clear cards keep
+   their own column layout. Last in the sheet so it wins over the desktop
+   side-by-side rules above at the same specificity. */
+@media (max-width: 520px) {
+  .analysis-card:not(.analysis-card--clear) .analysis-card__panel {
+    display: flex;
+    flex-direction: column;
+  }
+  .analysis-card:not(.analysis-card--clear) .analysis-card__layout,
+  .analysis-card:not(.analysis-card--clear) .analysis-card__content {
+    display: contents;
+  }
+  .analysis-card .status-ticker {
+    order: -2;
+  }
+  .analysis-card .analysis-card__media {
+    order: -1;
+    width: 7.5rem;
+    height: 7.5rem;
+    flex: 0 0 auto;
+    margin: 0 0 1rem;
+  }
+  /* Flex items stretch in the stacked column; keep the edit link hugging left. */
+  .analysis-card .analysis-card__edit {
+    align-self: flex-start;
+  }
+}
+
+/* Responsive display type: headings step down one size on phones (discrete
+   breakpoint, not clamp, so zoom keeps working — WCAG 1.4.4). Body sizes
+   (16 and below) never move. The clear-title stays locked to card titles. */
+@media (max-width: 520px) {
+  .analysis-card h3,
+  .analysis-card__clear-title h3 {
+    font-size: var(--wa-font-size-l, 1.25rem);
+  }
+}
+
+/* The description itself is the disclosure target, in both open and closed states. */
+.analysis-card .card-description {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--wa-font-size-m, 1rem);
+  line-height: 1.6;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.analysis-card .card-description > summary {
+  display: block;
+  list-style: none;
+  cursor: pointer;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.card-description > summary::-webkit-details-marker {
+  display: none;
+}
+.card-description > summary:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 4px;
+  border-radius: 2px;
+}
+.card-description__full,
+.card-description[open] .card-description__short {
+  display: none;
+}
+.card-description[open] .card-description__full {
+  display: inline;
+}
+
+.analysis-card .card-description > summary::after {
+  display: none;
 }

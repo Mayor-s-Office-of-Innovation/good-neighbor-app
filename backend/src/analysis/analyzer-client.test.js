@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   AnalyzerError,
   buildAnalyzeRequest,
@@ -185,6 +185,47 @@ describe("createAnalyzerClient", () => {
     expect(JSON.parse(calls[0].init.body)).not.toHaveProperty("language");
   });
 
+  it("translate() posts items and languages to /v1/translations with the api key", async () => {
+    const response = {
+      model: { provider: "bedrock", model_id: "m" },
+      items: [
+        {
+          id: "0",
+          translations: { es: { user_friendly_label: "Basura" } },
+        },
+      ],
+    };
+    const { fetchImpl, calls } = stubFetch([
+      { ok: true, status: 200, body: response },
+    ]);
+    const client = createAnalyzerClient({
+      baseUrl: "https://analysis.example.org/",
+      apiKey: "secret-key",
+      fetchImpl,
+    });
+
+    const result = await client.translate({
+      items: [{ id: "0", user_friendly_label: "Trash", description: "Bags" }],
+      languages: ["es", "vi"],
+      requestId: "chk#art#translate",
+      appId: "good-neighbor-app",
+    });
+
+    expect(result).toEqual(response);
+    expect(calls).toHaveLength(1);
+    const [call] = calls;
+    expect(String(call.url)).toBe(
+      "https://analysis.example.org/v1/translations",
+    );
+    expect(call.init.method).toBe("POST");
+    expect(call.init.headers["x-api-key"]).toBe("secret-key");
+    expect(JSON.parse(call.init.body)).toEqual({
+      languages: ["es", "vi"],
+      items: [{ id: "0", user_friendly_label: "Trash", description: "Bags" }],
+      caller: { app_id: "good-neighbor-app", request_id: "chk#art#translate" },
+    });
+  });
+
   it("classifyEvidence() sends text to the existing classifier endpoint", async () => {
     const { fetchImpl, calls } = stubFetch([
       { ok: true, status: 200, body: { labels: ["Mattress"] } },
@@ -264,6 +305,42 @@ describe("createAnalyzerClient", () => {
     expect(calls).toHaveLength(1); // no retry on 4xx
   });
 
+  it.each([undefined, true, false])(
+    "honors evidence retrieval retryability (%s)",
+    async (retryable) => {
+      const { fetchImpl, calls } = stubFetch([
+        {
+          ok: false,
+          status: 422,
+          body: {
+            error: {
+              code: "evidence_retrieval_failed",
+              ...(retryable === undefined ? {} : { retryable }),
+            },
+          },
+        },
+        { ok: true, status: 200, body: excellentResponse },
+      ]);
+      const client = createAnalyzerClient({
+        baseUrl: "https://analysis.example.org/",
+        apiKey: "k",
+        fetchImpl,
+        sleep: noSleep,
+      });
+      if (retryable === false) {
+        await expect(client.analyze({ metadata, media })).rejects.toMatchObject(
+          { retryable: false },
+        );
+        expect(calls).toHaveLength(1);
+      } else {
+        expect(await client.analyze({ metadata, media })).toBe(
+          excellentResponse,
+        );
+        expect(calls).toHaveLength(2);
+      }
+    },
+  );
+
   it("retries a 429 then succeeds", async () => {
     const { fetchImpl, calls } = stubFetch([
       {
@@ -288,6 +365,69 @@ describe("createAnalyzerClient", () => {
     expect(calls).toHaveLength(2);
     expect(slept).toBe(1);
   });
+
+  it.each([
+    { code: "model_unavailable", retryable: false },
+    { code: "model_access_denied" },
+    { code: "model_unavailable", retryable: true },
+    { code: "future_permanent_error", retryable: false },
+  ])("does not retry permanent 502: %j", async (error) => {
+    const { fetchImpl, calls } = stubFetch([
+      { ok: false, status: 502, body: { error } },
+    ]);
+    const client = createAnalyzerClient({
+      baseUrl: "https://analysis.example.org/",
+      apiKey: "k",
+      fetchImpl,
+      sleep: noSleep,
+    });
+    await expect(client.analyze({ metadata, media })).rejects.toMatchObject({
+      status: 502,
+      code: error.code,
+      retryable: false,
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it.each([429, 502, 503, 400])(
+    "bounds stalled %i error bodies and preserves status retry policy",
+    async (status) => {
+      vi.useFakeTimers();
+      try {
+        /** @type {{aborted: boolean}[]} */
+        const signals = [];
+        const fetchImpl = vi.fn(async (_url, init) => {
+          signals.push(init.signal);
+          return {
+            ok: false,
+            status,
+            // Deliberately ignore abort: the deadline must still settle the call.
+            json: () => new Promise(() => {}),
+          };
+        });
+        const client = createAnalyzerClient({
+          baseUrl: "https://analysis.example.org/",
+          apiKey: "k",
+          fetchImpl: /** @type {typeof fetch} */ (
+            /** @type {unknown} */ (fetchImpl)
+          ),
+          sleep: noSleep,
+        });
+        const result = client.analyze({ metadata, media }).catch((e) => e);
+        await vi.runAllTimersAsync();
+        expect(await result).toMatchObject({
+          name: "AnalyzerError",
+          status,
+          retryable: status !== 400,
+        });
+        expect(fetchImpl).toHaveBeenCalledTimes(status === 400 ? 1 : 3);
+        expect(signals.every((signal) => signal.aborted)).toBe(true);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("gives up after maxRetries on persistent 503", async () => {
     const { fetchImpl, calls } = stubFetch([
