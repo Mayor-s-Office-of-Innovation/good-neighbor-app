@@ -205,6 +205,10 @@ jobs:
       - name: Format
         run: terraform fmt -recursive -check ../..
 
+      - name: Test dev state migration guards
+        working-directory: ${{ github.workspace }}
+        run: node --test infra/scripts/*.test.mjs
+
       - name: Init without backend
         run: terraform init -backend=false
 
