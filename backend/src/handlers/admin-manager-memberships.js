@@ -15,7 +15,7 @@ import {
   ADMIN_GROUPS,
   adminOnly,
   adminPrincipal,
-  supervisorOnly,
+  siteAdminOnly,
 } from "../lib/admin-auth.js";
 import { emailHash, normalizeEmail } from "./setup-codes.js";
 
@@ -66,7 +66,7 @@ export const listManagerMemberships = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const createManagerMembership = (event) =>
-  supervisorOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const name = clean(body.name);
     const email = normalizeEmail(String(body.email ?? ""));
@@ -198,7 +198,7 @@ export const createManagerMembership = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const updateManagerMembership = (event) =>
-  adminOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const membershipId = event.pathParameters?.membershipId ?? "";
     const name = clean(body.name);
@@ -337,7 +337,7 @@ export const updateManagerMembership = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const deactivateManagerMembership = (event) =>
-  supervisorOnly(event, async () => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async () => {
     const siteId = event.pathParameters?.siteId ?? "";
     const membershipId = event.pathParameters?.membershipId ?? "";
     const result = await deactivateManagerMembershipRecord({

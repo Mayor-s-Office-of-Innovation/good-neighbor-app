@@ -1,3 +1,4 @@
+import { managerSiteScope } from "../lib/manager-site-scope.js";
 import { assignmentsMatchingEmail } from "../lib/manager-identity.js";
 import { queryAllItems } from "../lib/query-all-items.js";
 import { sitePrimaryContactChange } from "../lib/site-primary-contact.js";
@@ -18,6 +19,7 @@ import {
   adminOnly,
   adminPrincipal,
   supervisorOnly,
+  authorizeSiteChanges,
 } from "../lib/admin-auth.js";
 import { deactivateManagerMembershipRecord } from "./admin-manager-memberships.js";
 import { emailHash, normalizeEmail } from "./setup-codes.js";
@@ -379,8 +381,28 @@ export const assignProgramToProvider = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const createProgramUser = (event) =>
-  supervisorOnly(event, async (body) => {
+  adminOnly(event, async (body) => {
     const programId = event.pathParameters?.programId ?? "";
+    if (adminPrincipal(event).role !== ADMIN_GROUPS.supervisor) {
+      const siteId = String(body.siteId || "");
+      const denied = await authorizeSiteChanges(event, [siteId]);
+      if (denied) return denied;
+      const { Item: site } = await ddb.send(
+        new GetCommand({
+          TableName: getDynamoTableName(),
+          Key: { pk: `SITE#${siteId}`, sk: "#META" },
+          ConsistentRead: true,
+        }),
+      );
+      if (
+        !site ||
+        site.status === "inactive" ||
+        site.leadProgramId !== programId ||
+        body.siteManager !== true ||
+        body.isPrimaryContact !== undefined
+      )
+        return jsonResponse(403, { error: "site_assignment_required" });
+    }
     const contact = normalizeContact(body);
     if (!contact.firstName || !contact.lastName) {
       return jsonResponse(400, { error: "name_required" });
@@ -456,6 +478,17 @@ export const updateProgramUser = (event) =>
         contact.email !== normalizeEmail(String(current.Item.email ?? "")))
     ) {
       return jsonResponse(403, { error: "supervisor_required" });
+    }
+    if (principal.role !== ADMIN_GROUPS.supervisor) {
+      if (body.isPrimaryContact !== undefined)
+        return jsonResponse(403, { error: "supervisor_required" });
+      const siteIds = await managerSiteScope(
+        programId,
+        userId,
+        String(current.Item.email || ""),
+      );
+      const denied = await authorizeSiteChanges(event, siteIds);
+      if (denied) return denied;
     }
     if (body.isPrimaryContact !== undefined) {
       if (typeof body.isPrimaryContact !== "boolean")

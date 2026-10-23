@@ -136,11 +136,22 @@ export async function supervisorOnly(event, fn) {
  * @param {(body: Record<string, unknown>) => Promise<any>} fn
  */
 export async function siteAdminOnly(event, siteId, fn) {
+  const denied = await authorizeSiteChanges(event, [siteId]);
+  return denied || withBody(event, fn);
+}
+
+/** Check every affected Site before any side effects, including cross-site operations.
+ * @param {import("aws-lambda").APIGatewayProxyEventV2} event
+ * @param {string[]} siteIds
+ */
+export async function authorizeSiteChanges(event, siteIds) {
   const principal = adminPrincipal(event);
   if (!principal.authenticated) {
     return jsonResponse(403, { error: "forbidden" });
   }
-  if (principal.role === ADMIN_GROUPS.supervisor) return withBody(event, fn);
+  if (principal.role === ADMIN_GROUPS.supervisor) return null;
+  if (!siteIds.length || siteIds.some((id) => !id))
+    return jsonResponse(403, { error: "site_assignment_required" });
   const email = (principal.email || principal.username)
     .trim()
     .toLocaleLowerCase("en-US");
@@ -158,20 +169,22 @@ export async function siteAdminOnly(event, siteId, fn) {
   if (!directory.Item?.userId || directory.Item.status !== "active") {
     return jsonResponse(403, { error: "site_assignment_required" });
   }
-  const assignment = await ddb.send(
-    new GetCommand({
-      TableName: getDynamoTableName(),
-      Key: {
-        pk: `SITE#${siteId}`,
-        sk: `COMPLIANCE_MANAGER#${directory.Item.userId}`,
-      },
-      ConsistentRead: true,
-    }),
-  );
-  if (!assignment.Item || assignment.Item.status !== "active") {
-    return jsonResponse(403, { error: "site_assignment_required" });
+  for (const siteId of new Set(siteIds)) {
+    const assignment = await ddb.send(
+      new GetCommand({
+        TableName: getDynamoTableName(),
+        Key: {
+          pk: `SITE#${siteId}`,
+          sk: `COMPLIANCE_MANAGER#${directory.Item.userId}`,
+        },
+        ConsistentRead: true,
+      }),
+    );
+    if (!assignment.Item || assignment.Item.status !== "active") {
+      return jsonResponse(403, { error: "site_assignment_required" });
+    }
   }
-  return withBody(event, fn);
+  return null;
 }
 
 /**

@@ -11,7 +11,11 @@ import {
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
-import { adminOnly } from "../lib/admin-auth.js";
+import {
+  adminOnly,
+  siteAdminOnly,
+  authorizeSiteChanges,
+} from "../lib/admin-auth.js";
 
 const MAX_SELECTED_BINDINGS = 20;
 const MAX_PHYSICAL_BINDINGS = 20;
@@ -98,6 +102,16 @@ export const revokeManagerDevices = (event) =>
         ),
       );
     }
+    if (!bindings.length)
+      return jsonResponse(200, { status: "complete", affectedCount: 0 });
+    const denied = await authorizeSiteChanges(event, [
+      ...new Set(
+        bindings.map((binding) =>
+          String(binding.siteId || binding.pk?.replace(/^SITE#/, "") || ""),
+        ),
+      ),
+    ]);
+    if (denied) return denied;
     // Each bounded batch is atomic. Completed batches remain revoked on failure;
     // retry discovers only the remaining bindings and never touches assignments.
     const operationId = randomUUID();
@@ -153,7 +167,7 @@ export const revokeManagerDevices = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const suspendDeviceBinding = (event) =>
-  adminOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const bindingId = event.pathParameters?.bindingId ?? "";
     if (
@@ -306,6 +320,11 @@ export const revokePhysicalDeviceEverywhere = (event) =>
         alreadyRevoked: true,
       });
     }
+    const denied = await authorizeSiteChanges(
+      event,
+      preview.bindings.map(({ binding }) => String(binding.siteId || "")),
+    );
+    if (denied) return denied;
     if (
       preview.bindingLimitExceeded ||
       preview.bindings.length > MAX_PHYSICAL_BINDINGS
@@ -389,7 +408,7 @@ export const revokePhysicalDeviceEverywhere = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const revokeSelectedDeviceBindings = (event) =>
-  adminOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const bindingIds = uniqueIds(body.bindingIds);
     if (
@@ -466,7 +485,7 @@ export const revokeSelectedDeviceBindings = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const revokeAllSiteDeviceBindings = (event) =>
-  adminOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const tableName = getDynamoTableName();
     const siteResult = await ddb.send(

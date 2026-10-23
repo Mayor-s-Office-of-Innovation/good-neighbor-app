@@ -228,7 +228,7 @@ const LOCAL_CORS_HEADERS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
   "access-control-allow-headers":
-    "content-type,idempotency-key,authorization,x-debug-sub,x-debug-site,x-debug-groups,x-debug-access",
+    "content-type,idempotency-key,authorization,x-debug-sub,x-debug-site,x-debug-groups,x-debug-access,x-debug-email,x-debug-first-name,x-debug-last-name",
 };
 
 // Compile a route pattern into a matcher. Patterns use `{name}` for path params

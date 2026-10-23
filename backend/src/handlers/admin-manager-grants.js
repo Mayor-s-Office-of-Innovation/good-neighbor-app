@@ -14,7 +14,7 @@ import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
 import { sendManagerEnrollmentEmail } from "../integrations/email.js";
-import { adminOnly } from "../lib/admin-auth.js";
+import { adminOnly, siteAdminOnly } from "../lib/admin-auth.js";
 
 const MANAGER_GRANT_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -41,7 +41,7 @@ export const listManagerGrants = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const createManagerGrant = (event) =>
-  adminOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const membershipId = String(body.membershipId ?? "").trim();
     if (!membershipId) {
@@ -325,7 +325,7 @@ export const createManagerGrant = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const cancelManagerGrant = (event) =>
-  adminOnly(event, async () => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async () => {
     const siteId = event.pathParameters?.siteId ?? "";
     const grantId = event.pathParameters?.grantId ?? "";
     const tableName = getDynamoTableName();

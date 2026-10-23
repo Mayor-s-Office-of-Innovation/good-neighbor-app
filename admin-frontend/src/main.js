@@ -1,3 +1,4 @@
+import { localRoleEnabled, getLocalRole, setLocalRole } from "./local-role.js";
 import { actionFeedback, notifyAdmin } from "./action-feedback.js";
 import "../../frontend/src/components/app-toasts.js";
 import {
@@ -27,6 +28,7 @@ import "@awesome.me/webawesome/dist/components/textarea/textarea.js";
 import "@awesome.me/webawesome/dist/components/checkbox/checkbox.js";
 import "@awesome.me/webawesome/dist/components/icon/icon.js";
 import "@awesome.me/webawesome/dist/components/spinner/spinner.js";
+import "@awesome.me/webawesome/dist/components/callout/callout.js";
 
 import {
   completeAdminLoginFromUrl,
@@ -108,6 +110,7 @@ import {
  * @property {any | null} profile
  * @property {string} profileMessage
  * @property {string} role
+ * @property {boolean} [siteCanEdit]
  * @property {Record<string, boolean>} capabilities
  * @property {any | null} importPreview
  * @property {any | null} importResult
@@ -982,7 +985,9 @@ class AdminApp extends HTMLElement {
               ? formValue(data, "staff-email")
               : user.email,
           siteManager: user.siteManager === true,
-          isPrimaryContact: data.has("staff-primary-contact"),
+          ...(this.state.capabilities.createEntities === true
+            ? { isPrimaryContact: data.has("staff-primary-contact") }
+            : {}),
         });
       } catch (error) {
         feedback.failure(error);
@@ -1148,12 +1153,12 @@ class AdminApp extends HTMLElement {
       list.querySelector(`[data-manager-id="${CSS.escape(managerId)}"]`)
     )
       return;
-    if (list.querySelectorAll("[data-manager-id]").length >= 2) {
+    if (list.querySelectorAll("li[data-manager-id]").length >= 2) {
       throw new Error("A site can have no more than two Program managers.");
     }
     list.insertAdjacentHTML(
       "beforeend",
-      complianceManagerAssignmentRow(manager),
+      complianceManagerAssignmentRow(manager, this.state.capabilities.createEntities === true),
     );
     this.bindComplianceManagerAssignmentControls();
     const form = list.closest("form");
@@ -1167,7 +1172,7 @@ class AdminApp extends HTMLElement {
         if (button.dataset.bound === "true") return;
         button.dataset.bound = "true";
         button.addEventListener("click", () => {
-          button.closest("[data-manager-id]")?.remove();
+          button.closest("li[data-manager-id]")?.remove();
           const form = this.querySelector("#site-oversight-form");
           if (form instanceof HTMLFormElement) syncDirtyForm(form);
           this.updateComplianceManagerCount();
@@ -1245,10 +1250,12 @@ class AdminApp extends HTMLElement {
 
   updateComplianceManagerCount() {
     const count = this.querySelectorAll(
-      "[data-compliance-manager-list] [data-manager-id]",
+      "[data-compliance-manager-list] > li[data-manager-id]",
     ).length;
     const addButton = this.querySelector("#add-compliance-manager");
     if (addButton) addButton.disabled = count >= 2;
+    const limit = this.querySelector("[data-compliance-manager-limit]");
+    if (limit) limit.hidden = count < 2;
     const empty = this.querySelector("[data-no-compliance-managers]");
     if (empty) empty.hidden = count > 0;
   }
@@ -1417,6 +1424,7 @@ class AdminApp extends HTMLElement {
    * @param {"all" | "details" | "address" | "lead-program" | "site-manager"} [section]
    */
   async updateSite(form, section = "all") {
+    if (form.dataset.readOnly === "true") return false;
     const feedback = actionFeedback("admin.toast.siteSaved");
     try {
       if (!this.state.site) return;
@@ -1661,6 +1669,7 @@ class AdminApp extends HTMLElement {
       adminApi.listDevices(siteId),
       adminApi.listSiteTerms(siteId),
     ]);
+    this.state.siteCanEdit = site.permissions?.canEdit === true;
     this.state.letterEmailUncertain = (site.items || []).some(
       (item) => item.deliveryState === "uncertain",
     );
@@ -2096,7 +2105,10 @@ class AdminApp extends HTMLElement {
           { siteId, programId, values },
           {
             createProgramUser: async (...args) => {
-              const result = await adminApi.createProgramUser(...args);
+              const result = await adminApi.createProgramUser(args[0], {
+                ...args[1],
+                siteId,
+              });
               feedback.changed();
               form.dataset.createdUser = JSON.stringify(result.user);
               return result;
@@ -2776,6 +2788,15 @@ class AdminApp extends HTMLElement {
    * @returns {void}
    */
   bind() {
+    this.querySelector("#local-role-switch")?.addEventListener("change", (event) => {
+      const select = event.currentTarget;
+      if (this.querySelector("[data-is-dirty='true']") && !window.confirm(t("admin.localRole.discard"))) {
+        select.value = getLocalRole();
+        return;
+      }
+      setLocalRole(select.value);
+      window.location.reload();
+    });
     bindPhoneExtensions(this);
     this.querySelector("#admin-user-form")?.addEventListener(
       "submit",
@@ -4536,6 +4557,7 @@ class AdminApp extends HTMLElement {
               : ""
           }
         </header>
+        ${localRoleEnabled(this.state.authConfig) ? `<div class="local-role-switch"><label for="local-role-switch">${escapeHtml(t("admin.localRole.label"))}</label><select id="local-role-switch"><option value="supervisor" ${getLocalRole() === "supervisor" ? "selected" : ""}>${escapeHtml(t("admin.localRole.supervisor"))}</option><option value="manager" ${getLocalRole() === "manager" ? "selected" : ""}>${escapeHtml(t("admin.localRole.manager"))}</option></select><p class="muted">${escapeHtml(t("admin.localRole.help"))}</p></div>` : ""}
         ${
           this.state.hasToken
             ? ""
@@ -4583,7 +4605,7 @@ class AdminApp extends HTMLElement {
         ${
           site
             ? `
-              <section class="site-page">
+              <section class="site-page site-record">
                 ${entityBreadcrumb("site", site, this.state.programs, this.state.providers)}
                 <div class="panel__head">
                   <div class="site-title">
@@ -4609,16 +4631,67 @@ class AdminApp extends HTMLElement {
 
   applyCapabilities() {
     const capabilities = this.state.capabilities;
-    if (!this.state.hasToken || capabilities.createEntities) return;
+    const editableSite = canEditSite(this.state);
+    if (this.state.site && !editableSite) {
+      this.querySelectorAll(
+        '.site-page form input, .site-page form select, .site-page form textarea, .site-page form wa-input, .site-page form wa-select, .site-page form wa-textarea, .site-page form wa-checkbox, .site-page form wa-number-input, .site-page form button:not([data-close-dialog]):not([value="cancel"]):not([value="close"])',
+      ).forEach((element) => {
+        // Informational dialogs and their Close controls remain usable.
+        if (!element.closest("#compliance-reasons-dialog"))
+          element.disabled = true;
+      });
+      this.querySelectorAll(
+        "[data-require-checks], [data-end-checks], [data-resend-letter], [data-issue-manager-grant], [data-cancel-manager-grant], [data-revoke-device], [data-remove-manager-membership], [data-remove-site-manager], [data-edit-manager-membership]",
+      ).forEach((element) => {
+        element.disabled = true;
+      });
+    }
+    if (this.state.siteManager && !canEditSiteManager(this.state)) {
+      this.querySelectorAll(
+        "#site-manager-record-form input, #site-manager-record-form wa-input, #site-manager-record-form wa-select, #site-manager-record-form wa-checkbox, #site-manager-record-form button, #revoke-manager-devices input, #revoke-manager-devices wa-input, #revoke-manager-devices button",
+      ).forEach((element) => {
+        element.disabled = true;
+      });
+    }
+    if (capabilities.createEntities) return;
     this.querySelectorAll(
-      'a[href="/sites/new"], a[href^="/providers/new"], a[href^="/programs/new"], a[href="/managers/new"], a[href="/sites/import"], [data-deactivate-provider], [data-deactivate-site], [data-remove-manager-membership], [data-remove-site-manager], [data-save-lead-program], #manager-membership-form, #provider-program-form, #new-city-program-manager-dialog',
+      'a[href="/sites/new"], a[href^="/providers/new"], a[href^="/programs/new"], a[href="/managers/new"], a[href="/sites/import"], [data-deactivate-provider], [data-deactivate-site], [data-remove-site-manager], [data-save-lead-program], #provider-program-form, #new-city-program-manager-dialog',
     ).forEach((element) => element.remove());
+    if (!editableSite)
+      this.querySelectorAll(
+        "[data-remove-manager-membership], [data-remove-site-manager], #manager-membership-form",
+      ).forEach((element) => element.remove());
     const leadProgram = this.querySelector('[name="lead-program-id"]');
     if (leadProgram) leadProgram.disabled = true;
   }
 }
 
 customElements.define("admin-app", AdminApp);
+
+/** @param {AdminState} state */
+function canEditSite(state) {
+  return (
+    state.capabilities.createEntities === true || state.siteCanEdit === true
+  );
+}
+
+/** Shared staff changes require access to every assigned Site. @param {AdminState} state */
+function canEditSiteManager(state) {
+  if (state.capabilities.createEntities === true) return true;
+  const assigned = state.siteManager?.assignedSites || [];
+  const id = state.profile?.directoryUserId;
+  return Boolean(
+    id &&
+      assigned.length &&
+      assigned.every((site) =>
+        state.sites.some(
+          (item) =>
+            item.siteId === site.siteId &&
+            (item.complianceManagerIds || []).includes(id),
+        ),
+      ),
+  );
+}
 
 /** @param {AdminState} state */
 function myProfileView(state) {
@@ -4840,13 +4913,16 @@ function siteSectionNav(siteId, current) {
 /** @param {AdminState} state @param {string} section @param {string} [subview] */
 function siteSectionView(state, section, subview = "") {
   const site = /** @type {AdminSite} */ (state.site);
+  const readOnly = canEditSite(state)
+    ? ""
+    : `<wa-callout variant="warning" appearance="filled" size="small" role="status"><wa-icon slot="icon" name="triangle-exclamation" aria-hidden="true"></wa-icon>${escapeHtml(t("admin.sites.readOnly"))}</wa-callout>`;
   if (section === "oversight")
-    return `${siteOversightView(state)}${state.siteSaveMessage ? `<p class="success" role="status">${escapeHtml(state.siteSaveMessage)}</p>` : ""}`;
+    return `${readOnly}${siteOversightView(state)}${state.siteSaveMessage ? `<p class="success" role="status">${escapeHtml(state.siteSaveMessage)}</p>` : ""}`;
   if (section === "compliance") {
-    return `${siteComplianceSummaryView(state)}${state.siteSaveMessage ? `<p class="success" role="status">${escapeHtml(state.siteSaveMessage)}</p>` : ""}${siteTermsView(state)}${siteLettersView(state)}${sitePerimeterView(state)}${complianceReasonsDialog()}`;
+    return `${readOnly}${siteComplianceSummaryView(state)}${state.siteSaveMessage ? `<p class="success" role="status">${escapeHtml(state.siteSaveMessage)}</p>` : ""}${siteTermsView(state)}${siteLettersView(state)}${sitePerimeterView(state)}${complianceReasonsDialog()}`;
   }
-  if (section === "access") return siteAccessView(state);
-  return `${siteEditor(state)}
+  if (section === "access") return readOnly + siteAccessView(state);
+  return `${readOnly}${siteEditor(state)}
     ${state.siteSaveMessage ? `<p id="site-save-status" class="success" role="status">${escapeHtml(state.siteSaveMessage)}</p>` : ""}
     ${state.capabilities.createEntities ? deactivateSiteSection(site.name) : ""}
     `;
@@ -4980,9 +5056,10 @@ function siteManagersEditorView(state) {
   );
   return `<section class="subsection" aria-labelledby="site-managers-title">
     <h2 id="site-managers-title">${escapeHtml(t("admin.siteManagers.title"))}</h2>
-    ${managerMembershipList(state.managerMemberships, state.site.siteId, true, state.capabilities.manageSiteManagers === true)}
+    <p>${escapeHtml(t("admin.siteManagers.description"))}</p>
+    ${managerMembershipList(state.managerMemberships, state.site.siteId, true, canEditSite(state))}
     ${
-      state.capabilities.manageSiteManagers === true
+      canEditSite(state)
         ? `<form id="manager-membership-form" class="inline-form manager-membership-form">
       <wa-select name="manager-user-id" aria-label="${escapeHtml(managerPrompt)}" placeholder="${escapeHtml(managerPrompt)}" ${state.site.leadProgramId ? "" : "disabled"}>
         ${availableManagers
@@ -5000,7 +5077,7 @@ function siteManagersEditorView(state) {
     </form>`
         : ""
     }
-    ${state.capabilities.manageSiteManagers === true && state.site.leadProgramId ? newSiteManagerDialog() : ""}
+    ${canEditSite(state) && state.site.leadProgramId ? newSiteManagerDialog() : ""}
     ${state.site.leadProgramId ? "" : '<p class="muted">Assign a Lead Program before adding a Site manager.</p>'}
     ${removeManagerMembershipDialog(state.managerMembershipRemovalTarget, state.site.name)}
   </section>`;
@@ -5109,7 +5186,7 @@ function managerMembershipList(
         <div><strong>${escapeHtml(membership.name)}</strong><span><a href="mailto:${escapeHtml(membership.email)}">${escapeHtml(membership.email)}</a></span><span class="muted">Has ${escapeHtml(membership.activeBindingCount || 0)} active device${Number(membership.activeBindingCount || 0) === 1 ? "" : "s"} in use at this site</span></div>
         <div class="contact-list__actions">${
           editing
-            ? `${membership.userId ? `<a class="btn-secondary" href="/managers/${encodeURIComponent(membership.userId)}?returnSite=${encodeURIComponent(siteId)}" data-route>${escapeHtml(t("common.edit"))}</a>` : ""}${canManage ? `<button class="btn-danger" type="button" data-remove-manager-membership="${escapeHtml(membership.membershipId)}">${escapeHtml(t("admin.siteManagers.remove"))}</button>` : ""}`
+            ? `${membership.userId && canManage ? `<a class="btn-secondary" href="/managers/${encodeURIComponent(membership.userId)}?returnSite=${encodeURIComponent(siteId)}" data-route>${escapeHtml(t("common.edit"))}</a>` : ""}${canManage ? `<button class="btn-danger" type="button" data-remove-manager-membership="${escapeHtml(membership.membershipId)}">${escapeHtml(t("admin.siteManagers.remove"))}</button>` : ""}`
             : `<button class="btn-secondary" type="button" data-issue-manager-grant="${escapeHtml(membership.membershipId)}" data-delivery-mode="link">${escapeHtml(t("admin.enrollment.emailMagicLink"))}</button><button class="btn-secondary" type="button" data-issue-manager-grant="${escapeHtml(membership.membershipId)}" data-delivery-mode="code">${escapeHtml(t("admin.enrollment.emailOneTimeCode"))}</button>`
         }</div>
       </li>`,
@@ -5823,7 +5900,7 @@ function newSiteRecordStep(provider, program, users) {
       </fieldset>
       <fieldset><legend>Public site contact</legend><div class="form-grid form-grid--two">
         ${requiredFlowInput("public-contact-email", "Email", { type: "email", autocomplete: "email" })}
-        ${phoneExtensionField(requiredFlowInput("public-contact-phone", "Phone", { type: "tel", autocomplete: "tel", pattern: "[0-9()+ .-]{10,20}" }), formInput("public-contact-extension", t("admin.phone.extension"), "", { autocomplete: "tel-extension", maxlength: 20 }), escapeHtml(t("admin.phone.addExtension")), false)}
+        ${phoneExtensionField(requiredFlowInput("public-contact-phone", "Phone", { type: "tel", autocomplete: "tel", pattern: "[0-9()+ .-]{10,20}" }), formInput("public-contact-extension", t("admin.phone.extension"), "", { autocomplete: "tel-extension", maxlength: 20 }), escapeHtml(t("admin.phone.addExtension")), false, escapeHtml(t("admin.phone.removeExtension")))}
       </div></fieldset>
       <button class="btn-primary" type="submit" data-address-dependent ${users.length ? "disabled" : "disabled data-address-blocked"}>Create Site</button>
     </form>
@@ -5897,7 +5974,7 @@ function siteManagerEditorView(state, manager) {
       <h1 id="manager-record-title" tabindex="-1">${escapeHtml(title)}</h1>
       ${isNew ? "" : `<button class="btn-danger" type="button" data-remove-site-manager>${escapeHtml(t("admin.managers.deleteRecord"))}</button>`}
     </div>
-    <form id="site-manager-record-form" class="site-details-form" data-dirty-form data-return-site="${escapeHtml(returnSite)}">
+    <form id="site-manager-record-form" class="site-details-form" data-read-only="${!canEditSiteManager(state)}" data-dirty-form data-return-site="${escapeHtml(returnSite)}">
       <fieldset>
         <legend>Manager details</legend>
         <wa-select name="manager-program-id" label="Program" placeholder="Choose a program" required ${assignmentDisabled}>${programs.map((program) => `<wa-option value="${escapeHtml(program.programId)}" ${program.programId === programId ? "selected" : ""}>${escapeHtml(program.name)}</wa-option>`).join("")}</wa-select>
@@ -6207,7 +6284,7 @@ function programStaffEditDialog(user, primary, canEditEmail = false) {
       ${formInput("staff-last-name", t("admin.programs.lastName"), user.lastName, { required: true, autocomplete: "family-name" })}
       ${phoneInput("staff-phone", t("admin.programs.phone"), user.phone, { extension: user.phoneExtension, required: Boolean(user.phone), type: "tel", autocomplete: "tel" })}
       ${formInput("staff-email", t("admin.programs.email"), user.email, { required: true, type: "email", autocomplete: "email", disabled: !canEditEmail })}
-      <wa-checkbox name="staff-primary-contact" ${primary ? "checked" : ""}>${escapeHtml(t("admin.programs.primaryContact"))}</wa-checkbox>
+      <wa-checkbox name="staff-primary-contact" ${canEditEmail ? "" : "disabled"} ${primary ? "checked" : ""}>${escapeHtml(t("admin.programs.primaryContact"))}</wa-checkbox>
       <p class="muted">${escapeHtml(t("admin.programs.primaryHelp"))}</p>
       <div class="places-modal__actions">
         <button class="btn-primary" type="submit">${escapeHtml(t("admin.programs.saveStaff"))}</button>
@@ -6256,7 +6333,7 @@ function siteEditor(state) {
   const publicContact = site.publicContact || site.contactPerson || {};
   const programs = siteProviderPrograms(state.programs, site.providerId);
   const hasAddress = Boolean(site.address || streetLineFromParts(address));
-  return `<form id="site-details-form" class="site-details-form" data-dirty-form>
+  return `<form id="site-details-form" class="site-details-form" data-read-only="${!canEditSite(state)}" data-dirty-form>
     <fieldset>
       <legend>Site name and public contact</legend>
       <div class="form-grid form-grid--one" data-site-details-fields>
@@ -6497,6 +6574,7 @@ function complianceManagerAssignmentRow(manager, canManageAssignments) {
   const profile = manager.manager || manager;
   const name = profile.name || manager.name || "Program manager";
   const email = profile.email || manager.email || "";
+  const department = profile.departmentName || manager.departmentName || "";
   const accountStatus = profile.accountStatus || manager.accountStatus || "";
   const statusLabel =
     accountStatus === "not-invited"
@@ -6506,7 +6584,7 @@ function complianceManagerAssignmentRow(manager, canManageAssignments) {
         : "";
   return `<li class="compliance-manager-assignment" data-manager-id="${escapeHtml(managerId)}">
     <input type="hidden" name="compliance-manager-id" value="${escapeHtml(managerId)}" />
-    <span class="compliance-manager-assignment__identity"><strong>${escapeHtml(name)}</strong>${email ? `<span>${escapeHtml(email)}</span>` : ""}${accountStatus === "not-invited" ? `<span class="compliance-manager-assignment__warning">${escapeHtml(t("admin.oversight.invitationNeeded", { name }))}</span>${canManageAssignments ? `<button class="btn-text" type="button" data-invite-compliance-manager data-manager-id="${escapeHtml(managerId)}">Send invite</button>` : ""}` : statusLabel ? `<span class="muted">${escapeHtml(statusLabel)}</span>` : ""}</span>
+    <span class="compliance-manager-assignment__identity"><strong>${escapeHtml(name)}</strong>${email ? `<span>${escapeHtml(email)}</span>` : ""}${department ? `<span>${escapeHtml(department)}</span>` : ""}${accountStatus === "not-invited" ? `<span class="compliance-manager-assignment__warning">${escapeHtml(t("admin.oversight.invitationNeeded", { name }))}</span>${canManageAssignments ? `<button class="btn-text" type="button" data-invite-compliance-manager data-manager-id="${escapeHtml(managerId)}">Send invite</button>` : ""}` : statusLabel ? `<span class="muted">${escapeHtml(statusLabel)}</span>` : ""}</span>
     ${canManageAssignments ? `<button class="btn-danger" type="button" data-remove-compliance-manager aria-label="${escapeHtml(t("admin.oversight.removeNamed", { name }))}">${escapeHtml(t("admin.oversight.remove"))}</button>` : ""}
   </li>`;
 }
@@ -6530,10 +6608,9 @@ function siteOversightView(state) {
       ? [{ name: oversight.managingSystemOfCare }]
       : []),
   ]);
-  return `<form id="site-oversight-form" class="site-details-form" data-dirty-form>
+  return `<form id="site-oversight-form" class="site-details-form" data-read-only="${!canEditSite(state)}" data-dirty-form>
     <fieldset aria-labelledby="city-program-managers-title"><div class="form-grid form-grid--one">
       <fieldset class="compliance-manager-assignments"><legend><h2 id="city-program-managers-title">${escapeHtml(t("admin.oversight.cityProgramManagers"))}</h2></legend>
-        <p class="muted">${escapeHtml(t("admin.oversight.managerLimit"))}</p>
         <ul class="compliance-manager-assignment-list" data-compliance-manager-list>
           ${managers
             .filter((manager) => assignedManagerIds.has(manager.userId))
@@ -6543,7 +6620,7 @@ function siteOversightView(state) {
             .join("")}
         </ul>
         ${assignedManagerIds.size ? "" : '<p class="empty-state" data-no-compliance-managers>No program managers assigned.</p>'}
-        ${canManageAssignments ? `<button class="btn-secondary" id="add-compliance-manager" type="button">${escapeHtml(t("admin.oversight.assignCityProgramManager"))}</button>` : ""}
+        ${canManageAssignments ? `<button class="btn-secondary" id="add-compliance-manager" type="button" aria-describedby="compliance-manager-limit">${escapeHtml(t("admin.oversight.assignCityProgramManager"))}</button><p id="compliance-manager-limit" class="muted" data-compliance-manager-limit hidden>${escapeHtml(t("admin.oversight.managerLimit"))}</p>` : ""}
       </fieldset>
       <wa-select name="managing-city-department" label="Managing City department" placeholder="Choose department">
         ${departments.map((item) => `<wa-option value="${escapeHtml(item.name)}" ${department === item.name ? "selected" : ""}>${escapeHtml(item.name)}</wa-option>`).join("")}
@@ -6712,6 +6789,7 @@ function phoneInput(name, label, value, options = {}) {
     ),
     escapeHtml(t("admin.phone.addExtension")),
     Boolean(options.extension),
+    escapeHtml(t("admin.phone.removeExtension")),
   );
 }
 
@@ -6755,11 +6833,11 @@ function syncDirtyForm(form, initialize = false) {
   if (initialize || !form.dataset.initialValues) {
     form.dataset.initialValues = snapshot;
   }
-  form.dataset.isDirty = String(snapshot !== form.dataset.initialValues);
+  form.dataset.isDirty = String(form.dataset.readOnly !== "true" && snapshot !== form.dataset.initialValues);
   const saveButton = form.querySelector("[data-save-button]");
   if (saveButton instanceof HTMLButtonElement) {
     saveButton.disabled =
-      form.dataset.saving === "true" || snapshot === form.dataset.initialValues;
+      form.dataset.readOnly === "true" || form.dataset.saving === "true" || snapshot === form.dataset.initialValues;
   }
 }
 
@@ -6830,7 +6908,7 @@ function syncSiteDetailsForm(form, initialize = false) {
   const editedSections = new Set(
     JSON.parse(form.dataset.editedSections || "[]"),
   );
-  const isDirty = Object.entries(dirty).some(
+  const isDirty = form.dataset.readOnly !== "true" && Object.entries(dirty).some(
     ([name, sectionIsDirty]) => sectionIsDirty && editedSections.has(name),
   );
   form.dataset.isDirty = String(isDirty);
@@ -6842,7 +6920,7 @@ function syncSiteDetailsForm(form, initialize = false) {
   };
   for (const [name, control] of Object.entries(controls)) {
     if (control instanceof HTMLButtonElement)
-      control.disabled = !dirty[name] || !editedSections.has(name);
+      control.disabled = form.dataset.readOnly === "true" || !dirty[name] || !editedSections.has(name);
   }
   if (controls.siteManager instanceof HTMLButtonElement && dirty.leadProgram) {
     controls.siteManager.disabled = true;
@@ -6857,7 +6935,7 @@ function syncSiteDetailsForm(form, initialize = false) {
  * @param {Event} event
  */
 function markSiteDetailsSectionEdited(form, event) {
-  if (!event.isTrusted) return;
+  if (form.dataset.readOnly === "true" || !event.isTrusted) return;
   const target = event.target;
   if (!(target instanceof Element)) return;
   const name = target.getAttribute("name") || "";

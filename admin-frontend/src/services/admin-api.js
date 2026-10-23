@@ -1,3 +1,4 @@
+import { localRoleHeaders } from "../local-role.js";
 import { getFreshAdminToken, startAdminLogin } from "./admin-auth.js";
 import { getAdminConfig } from "../config.js";
 
@@ -31,12 +32,7 @@ async function authenticatedFetch(path, init = {}) {
     headers: {
       "content-type": "application/json",
       ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...(config.localDebugAdmin
-        ? {
-            "x-debug-groups": "compliance-supervisor",
-            "x-debug-sub": "local-admin",
-          }
-        : {}),
+      ...localRoleHeaders(config),
       ...(init.headers || {}),
     },
   });

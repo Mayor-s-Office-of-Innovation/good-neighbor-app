@@ -181,7 +181,9 @@ function seedUser(
     enabled,
     status,
     attributes: {
-      sub: username === "local-admin" ? "local-admin" : randomUUID(),
+      sub: ["local-admin", "maya.manager@example.org"].includes(username)
+        ? username
+        : randomUUID(),
       email: username.includes("@") ? username : "local.supervisor@example.org",
       given_name: firstName,
       family_name: lastName,

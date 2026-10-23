@@ -31,7 +31,14 @@ import {
   normalizeEmail,
   revokePendingSetupCodesForSite,
 } from "./setup-codes.js";
-import { adminOnly, siteAdminOnly, supervisorOnly } from "../lib/admin-auth.js";
+import {
+  adminOnly,
+  siteAdminOnly,
+  supervisorOnly,
+  authorizeSiteChanges,
+  adminPrincipal,
+  ADMIN_GROUPS,
+} from "../lib/admin-auth.js";
 
 /** GET /admin/v1/program-managers — non-authenticating domain directory. */
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -98,7 +105,7 @@ export const createCityProgramManager = (event) =>
 /** PATCH /admin/v1/program-managers/{userId} — update shared contact details. */
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const updateCityProgramManager = (event) =>
-  adminOnly(event, async (body) => {
+  supervisorOnly(event, async (body) => {
     const userId = event.pathParameters?.userId ?? "";
     const phone = normalizePhone(body.phone);
     if (!phone) return jsonResponse(400, { error: "valid_phone_required" });
@@ -620,7 +627,10 @@ export const getAdminSite = (event) =>
         };
       }),
     );
-    return jsonResponse(200, { items });
+    return jsonResponse(200, {
+      items,
+      permissions: { canEdit: !(await authorizeSiteChanges(event, [siteId])) },
+    });
   });
 
 /**
@@ -798,7 +808,7 @@ const MAX_COMPLIANCE_LETTER_BYTES = 10 * 1024 * 1024;
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const presignComplianceLetter = (event) =>
-  adminOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const contentType = String(body.contentType ?? "").toLowerCase();
     const size = Number(body.size);
@@ -903,6 +913,11 @@ export const updateSite = (event) =>
     }
     /** @type {Record<string, any> | undefined} */
     let selectedProgramManager;
+    if (
+      programManagerPhone !== undefined &&
+      adminPrincipal(event).role !== ADMIN_GROUPS.supervisor
+    )
+      return jsonResponse(403, { error: "supervisor_required" });
     if (programManagerPhone !== undefined) {
       if (!oversight?.cityProgramManagerId) {
         return jsonResponse(400, { error: "program_manager_required" });
@@ -1295,7 +1310,7 @@ export const deactivateSite = (event) =>
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const issueAdminSetupCode = (event) =>
-  adminOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const email = normalizeEmail(String(body.email ?? ""));
     const accessLevel = body.accessLevel === "manager" ? "manager" : "general";
@@ -1418,7 +1433,7 @@ export const listDevices = (event) =>
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const revokeDevice = (event) =>
-  adminOnly(event, async () => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async () => {
     const siteId = event.pathParameters?.siteId ?? "";
     const deviceId = event.pathParameters?.deviceId ?? "";
     const tableName = getDynamoTableName();

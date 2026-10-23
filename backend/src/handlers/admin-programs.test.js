@@ -664,6 +664,13 @@ describe("program administration", () => {
           siteManager: true,
         },
       })
+      .mockResolvedValueOnce({ Items: [{ siteId: "site-1" }] })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Item: { status: "active" } })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Item: { userId: "cm1", status: "active" } })
+      .mockResolvedValueOnce({ Item: { status: "active" } })
       .mockResolvedValueOnce({ Attributes: { userId: "user-1" } });
     const response = await call(
       updateProgramUser,
@@ -680,7 +687,7 @@ describe("program administration", () => {
       ),
     );
     expect(response.statusCode).toBe(200);
-    expect(send.mock.calls[1][0]).toBeInstanceOf(UpdateCommand);
+    expect(send.mock.calls[8][0]).toBeInstanceOf(UpdateCommand);
   });
 
   it.each([
@@ -1001,7 +1008,9 @@ function event(
     pathParameters,
     requestContext: {
       authorizer: {
-        jwt: { claims: { "cognito:groups": groups } },
+        jwt: {
+          claims: { "cognito:groups": groups, email: "manager@sfgov.org" },
+        },
       },
     },
   };

@@ -414,7 +414,7 @@ function event(body, pathParameters = { siteId: "site-1" }) {
     requestContext: {
       authorizer: {
         jwt: {
-          claims: { "cognito:groups": "central-admin", sub: "admin-1" },
+          claims: { "cognito:groups": "compliance-supervisor", sub: "admin-1" },
         },
       },
     },

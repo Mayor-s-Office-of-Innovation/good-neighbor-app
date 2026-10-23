@@ -7,7 +7,7 @@ import {
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse } from "../http.js";
-import { adminOnly } from "../lib/admin-auth.js";
+import { adminOnly, authorizeSiteChanges } from "../lib/admin-auth.js";
 
 const MAX_SITES = 20;
 
@@ -44,6 +44,8 @@ export const startEmergencySiteRevocation = (event) =>
   adminOnly(event, async (body) => {
     const siteIds = validSiteIds(body.siteIds);
     if (!siteIds) return jsonResponse(400, { error: "invalid_site_selection" });
+    const denied = await authorizeSiteChanges(event, siteIds);
+    if (denied) return denied;
     const tableName = getDynamoTableName();
     const sites = await loadSitesWithBindings(tableName, siteIds);
     if (!sites) return jsonResponse(404, { error: "site_not_found" });

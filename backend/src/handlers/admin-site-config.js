@@ -574,7 +574,7 @@ export const endSiteTerms = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const assignSiteUser = (event) =>
-  supervisorOnly(event, async (body) => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async (body) => {
     const siteId = event.pathParameters?.siteId ?? "";
     const userId = clean(body.userId);
     if (!userId) return jsonResponse(400, { error: "user_required" });
@@ -675,7 +675,7 @@ export const assignSiteUser = (event) =>
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const unassignSiteUser = (event) =>
-  supervisorOnly(event, async () => {
+  siteAdminOnly(event, event.pathParameters?.siteId ?? "", async () => {
     const siteId = event.pathParameters?.siteId ?? "";
     const userId = event.pathParameters?.userId ?? "";
     const tableName = getDynamoTableName();

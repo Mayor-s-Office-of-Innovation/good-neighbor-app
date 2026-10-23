@@ -21,7 +21,7 @@ async function fixture(t, options = {}) {
       cognitoDomain: "https://login.example.test",
       clientId: "admin-client",
       redirectUri: "https://admin.example.test/auth/callback",
-      apiBase: "https://admin.example.test",
+      apiBase: options.debug ? "http://localhost:3001" : "https://admin.example.test",
       localDebugAdmin: options.debug || false,
     },
   };
@@ -33,6 +33,7 @@ async function fixture(t, options = {}) {
     redirected = resolve;
   });
   globalThis.location = {
+    hostname: "localhost",
     assign(url) {
       redirects.push(url);
       redirected();
