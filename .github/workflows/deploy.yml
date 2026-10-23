@@ -129,11 +129,10 @@ jobs:
             terraform init
           fi
 
-      # The DEV account cannot activate/deactivate payer-owned cost tags. Forget
+      # DEV and PROD are linked accounts and cannot manage payer-owned cost tags. Forget
       # only this obsolete state entry before planning the disabled resource.
       # terraform state rm holds the backend lock; S3 versioning retains history.
-      - name: Relinquish dev cost-tag activation state
-        if: inputs.environment == 'dev'
+      - name: Relinquish linked-account cost-tag activation state
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
         run: bash "$GITHUB_WORKSPACE/infra/scripts/relinquish-dev-cost-tag.sh"
@@ -141,8 +140,7 @@ jobs:
       - name: Plan
         run: terraform plan -out=tfplan
 
-      - name: Reject dev cost-tag activation changes
-        if: inputs.environment == 'dev'
+      - name: Reject linked-account cost-tag activation changes
         run: |
           set -euo pipefail
           terraform show -json tfplan | jq -e '
@@ -150,7 +148,7 @@ jobs:
              | select(.type == "aws_ce_cost_allocation_tag")
              | select(.change.actions != ["no-op"])] | length == 0
           ' || {
-            echo "DEV must not create, update, or destroy payer-owned cost-allocation tags." >&2
+            echo "Linked accounts must not create, update, or destroy payer-owned cost-allocation tags." >&2
             exit 1
           }
 

@@ -56,6 +56,23 @@ CloudWatch Logs v2 delivery permissions, and
 missing deployment-role permission; do not work around it with console-created
 resources.
 
+### Deployment-role lookup permission
+
+The SMTP foundation uses `aws_iam_session_context.deploy` to resolve the IAM
+role behind the CI session for the Cognito email KMS key policy. Planning
+therefore requires `iam:GetRole` on the deployment role itself, even while
+relay delivery and the Cognito custom sender are disabled.
+
+The deployment role is externally owned. Its administrator must provision the
+supplemental policy from `infra/policies/deploy-smtp-role-read.json.tftpl`
+through the authoritative role infrastructure. Render `deploy_role_arn` as the
+target environment's actual IAM role ARN, including any role path (not its STS
+session ARN). The policy grants only that role lookup. Keep the role's trust
+policy, existing permissions, and self-mutation deny intact; do not attach it
+from application Terraform, which cannot bootstrap its own permissions.
+
+After provisioning, run a fresh normal CI plan and review it before apply.
+
 ## Unblock deployments during relay bootstrap
 
 If creating the relay fails because Proofpoint is unavailable or SMTP

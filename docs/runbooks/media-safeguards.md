@@ -110,7 +110,7 @@ caused that usage. This is attributed application cost, not full end-to-end cost
 Tag activation is optional in the application module. DEV sets
 `manage_application_cost_allocation_tag=false` because it is a linked account;
 the daily budget remains configured and deployment does not require activation.
-PROD retains its existing configuration. Where activation is managed locally,
+PROD also sets `manage_application_cost_allocation_tag=false` because it is a linked account. Where activation is managed locally,
 Terraform activates the existing Application cost-allocation tag.
 Activation is account-wide: if already managed in another Terraform state, move or
 import that ownership through the infrastructure workflow rather than managing it
@@ -133,14 +133,14 @@ Keep the role's trust policy and existing self-mutation deny intact. After provi
 
 If the error changes to `Linked account doesn't have access to cost allocation
 tags`, IAM permissions are no longer the blocker. AWS permits activation only
-from the Organizations management account or a standalone account. The DEV
-account is a linked account, so its application Terraform cannot own activation.
-DEV CI relinquishes only `module.app.aws_ce_cost_allocation_tag.application`
+from the Organizations management account or a standalone account. DEV and PROD
+are linked accounts, so their application Terraform cannot own activation.
+CI relinquishes only `module.app.aws_ce_cost_allocation_tag.application`
 (including its indexed form) using locked `terraform state rm` before planning.
 This forgets Terraform ownership without deactivating the actual tag; S3 backend
 versioning retains earlier state versions. The step is idempotent, DEV-only, and
 fails the deployment if state migration fails. A plan guard rejects any later
-cost-tag create/update/delete in DEV. Do not re-import the entry into DEV or
+cost-tag create/update/delete in either environment. Do not re-import the entry or
 re-enable local activation there. Activation belongs in the billing management
 account's infrastructure. Tag-filtered budget alerts remain incomplete until the
 payer activates `Application`; application deployment is independent of that work.

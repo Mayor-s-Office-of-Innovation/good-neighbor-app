@@ -2,8 +2,8 @@
 # CI-only state migration. Never call the Cost Explorer activation API.
 set -euo pipefail
 
-if [ "${DEPLOY_ENVIRONMENT:-}" != "dev" ]; then
-  echo "Cost-tag state migration is allowed only for DEV." >&2
+if [ "${DEPLOY_ENVIRONMENT:-}" != "dev" ] && [ "${DEPLOY_ENVIRONMENT:-}" != "prod" ]; then
+  echo "Cost-tag state migration is allowed only for DEV or PROD." >&2
   exit 1
 fi
 
@@ -14,5 +14,5 @@ if grep -Fxq "$address" <<< "$entries" || grep -Fxq "$address[0]" <<< "$entries"
   # The backend lock and versioned S3 state preserve the normal recovery path.
   terraform state rm -lock-timeout=5m "$address"
 else
-  echo "No dev cost-tag activation entry remains; no state change needed."
+  echo "No cost-tag activation entry remains; no state change needed."
 fi
