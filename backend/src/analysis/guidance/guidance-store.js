@@ -1258,6 +1258,10 @@ export async function answerCondition(opts) {
             typeof conditionItem.userFriendlyLabel === "string"
               ? conditionItem.userFriendlyLabel
               : undefined,
+          description:
+            typeof conditionItem.description === "string"
+              ? conditionItem.description
+              : undefined,
           ...(conditionItem.translations
             ? { translations: conditionItem.translations }
             : {}),

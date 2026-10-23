@@ -1,3 +1,7 @@
+import {
+  map311StatusResponse,
+  taskWith311Status,
+} from "../domain/task-311-status.js";
 import { openOverlayDialog } from "../dialog-history.js";
 import "./timeline.css";
 import "./task-update-dialog.css";
@@ -7,6 +11,7 @@ import {
   documentTaskUpdate,
   getMediaUrl,
   getTaskUpdates,
+  get311RequestDetails,
   uploadTaskUpdatePhoto,
 } from "../services/api.js";
 import { showTaskUpdateErrorToast } from "../state/toasts.js";
@@ -41,6 +46,8 @@ export class TaskUpdateDialog extends HTMLElement {
     /** @type {boolean | null | undefined} */
     this._cityHelpNeeded = undefined;
     this._requests = new Map();
+    this._cityUpdates = [];
+    this._loadGeneration = 0;
     /** @type {Record<string, any> | null} */
     this._pendingEvent = null;
     /**
@@ -72,6 +79,7 @@ export class TaskUpdateDialog extends HTMLElement {
   /** @param {Record<string, any>} task @param {string} [mode] */
   async open(task, mode = "timeline") {
     this._task = task;
+    this._cityUpdates = [];
     this._results = false;
     this._pendingEvent = null;
     this._open = true;
@@ -90,6 +98,7 @@ export class TaskUpdateDialog extends HTMLElement {
    * @param {Promise<{ task: Record<string, any> | null, failed?: boolean }> | null} [completion]
    */
   openResults(task, completion = null) {
+    ++this._loadGeneration;
     this._task = task;
     this._results = true;
     this._editorOnly = false;
@@ -143,6 +152,7 @@ export class TaskUpdateDialog extends HTMLElement {
   /** @param {string} [nextToken] */
   async _load(nextToken = "") {
     if (!this._task) return;
+    const generation = ++this._loadGeneration;
     this._state = "loading";
     this._render();
     try {
@@ -150,6 +160,7 @@ export class TaskUpdateDialog extends HTMLElement {
         this._task.taskId,
         nextToken || undefined,
       );
+      if (generation !== this._loadGeneration) return;
       this._detail = nextToken
         ? {
             ...page,
@@ -160,7 +171,47 @@ export class TaskUpdateDialog extends HTMLElement {
           }
         : page;
       this._nextToken = page.nextToken;
-      this._task = this._detail.task;
+      this._task = { ...this._task, ...this._detail.task };
+      const ticket = submitted311Ticket(this._task);
+      if (ticket) {
+        try {
+          const response = await get311RequestDetails([
+            { taskId: this._task.taskId, srNum: ticket.srNum },
+          ]);
+          if (generation !== this._loadGeneration) return;
+          this._task = taskWith311Status(
+            this._task,
+            map311StatusResponse(response),
+          );
+          const request = response.requests.find(
+            (item) => item.taskId === this._task.taskId,
+          )?.request;
+          const seen = new Set();
+          this._cityUpdates = (request?.events || [])
+            .filter((event) => {
+              if (event.kind === "submitted") return false;
+              const key = JSON.stringify([
+                event.kind,
+                event.occurredAt,
+                event.value,
+                event.closureReason,
+                event.notes,
+                event.description,
+              ]);
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            })
+            .map((event) => ({
+              ...event,
+              type: "city_status",
+              label: event.title,
+            }));
+        } catch {
+          // A City feed failure must not prevent access to the app's own timeline.
+        }
+      } else this._cityUpdates = [];
+
       const photoIds = [
         ...new Set(
           [
@@ -171,7 +222,7 @@ export class TaskUpdateDialog extends HTMLElement {
           ].filter(Boolean),
         ),
       ];
-      this._mediaUrls = new Map(
+      const mediaUrls = new Map(
         await Promise.all(
           photoIds.map((artifactId) =>
             getMediaUrl(this._task.checkId, artifactId)
@@ -186,8 +237,11 @@ export class TaskUpdateDialog extends HTMLElement {
           ),
         ),
       );
+      if (generation !== this._loadGeneration) return;
+      this._mediaUrls = mediaUrls;
       this._state = "ready";
     } catch {
+      if (generation !== this._loadGeneration) return;
       this._state = "error";
     }
     this._render();
@@ -224,7 +278,7 @@ export class TaskUpdateDialog extends HTMLElement {
       task: submitted311Ticket(task)
         ? { ...task, presencePromptDue: false }
         : task,
-      updates: this._detail?.updates || [],
+      updates: [...(this._detail?.updates || []), ...this._cityUpdates],
       issueOrigin: this._detail?.issueOrigin || "perimeter",
       originalMediaUrl:
         taskMediaUrl(task) ||
@@ -727,6 +781,7 @@ export class TaskUpdateDialog extends HTMLElement {
   }
 
   _dismiss() {
+    ++this._loadGeneration;
     this._resetDraft();
     this._completion = null;
     this._results = false;

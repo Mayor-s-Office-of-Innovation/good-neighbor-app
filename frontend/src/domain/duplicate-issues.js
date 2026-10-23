@@ -20,11 +20,29 @@ export function projectDuplicateTasks(tasks, links, now = Date.now()) {
         ...all.get(link.original.taskId),
         ...link.original,
       });
+  const sightings = new Map();
+  for (const [sourceId, link] of links) {
+    if (
+      link.state !== "matched" ||
+      !link.original ||
+      sourceId === link.original.taskId
+    )
+      continue;
+    const ids =
+      sightings.get(link.original.taskId) || new Set([link.original.taskId]);
+    ids.add(sourceId);
+    sightings.set(link.original.taskId, ids);
+  }
   return [...all.values()].flatMap((task) => {
     const link = links.get(task.taskId);
     if (link?.state !== "matched")
       return [
-        { ...task, duplicate: undefined, duplicateCheckState: link?.state },
+        {
+          ...task,
+          duplicate: undefined,
+          duplicateSeenCount: sightings.get(task.taskId)?.size || 1,
+          duplicateCheckState: link?.state,
+        },
       ];
     const original = all.get(link.original.taskId) ?? link.original;
     const acted = original.status !== "open";
@@ -56,6 +74,7 @@ export function projectDuplicateTasks(tasks, links, now = Date.now()) {
       {
         ...task,
         ...sharedActions,
+        duplicateSeenCount: 1,
         duplicateCheckState: "matched",
         duplicate: {
           original,

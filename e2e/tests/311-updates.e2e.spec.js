@@ -7,6 +7,12 @@ import { PHOTO_ISSUES } from "../helpers/fixtures.js";
 async function filedTicket(
   /** @type {import('@playwright/test').Page} */ page,
 ) {
+  // Today archives tasks after 14 days. Keep this active-ticket fixture recent
+  // regardless of the calendar date on the CI runner.
+  const createdAt = Date.now() - 60 * 60 * 1000;
+  /** @param {number} minutes */
+  const timestamp = (minutes) =>
+    new Date(createdAt + minutes * 60 * 1000).toISOString();
   const task = {
     taskId: "311-update-fixture",
     checkId: "311-update-check",
@@ -15,8 +21,8 @@ async function filedTicket(
     status: "in_progress",
     completedAt: "",
     userFriendlyLabel: "311 update fixture",
-    createdAt: "2026-09-01T12:00:00Z",
-    inProgressAt: "2026-09-01T12:01:00Z",
+    createdAt: timestamp(0),
+    inProgressAt: timestamp(1),
     appActionResults: [
       {
         code: "create_311_ticket",
@@ -45,7 +51,7 @@ async function filedTicket(
         updates.push({
           ...body,
           updateId: key,
-          occurredAt: "2026-09-01T12:05:00Z",
+          occurredAt: timestamp(5),
         });
       }
       if (state.failDelivery) {
@@ -211,7 +217,7 @@ for (const width of [393, 1178]) {
       expect(state.updates).toHaveLength(1);
       // Simulate a later City closure: previously saved content remains in history.
       state.task.status = "completed";
-      state.task.completedAt = "2026-09-01T13:00:00Z";
+      state.task.completedAt = new Date().toISOString();
       await page.goto("/today?filter=history");
       await page
         .locator('[data-task-id="311-update-fixture"] [data-action="update"]')

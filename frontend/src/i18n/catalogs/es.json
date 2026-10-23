@@ -1155,5 +1155,19 @@
   "webview.banner.dismiss.aria": "Descartar",
   "webview.banner.message": "Está dentro del navegador de otra aplicación. Ábrala en su navegador para que funcione la cámara.",
   "webview.banner.open": "Abrir en el navegador",
-  "webview.banner.title": "Es posible que la cámara no se abra aquí."
+  "webview.banner.title": "Es posible que la cámara no se abra aquí.",
+  "card.ticker.needsAction": "Requiere acción",
+  "card.ticker.seen": "Requiere acción · Visto {count} veces",
+  "card.ticker.checking": "Buscando duplicados",
+  "card.ticker.duplicate": "Duplicado",
+  "card.ticker.cityClosed": "La Ciudad cerró este caso",
+  "card.ticker.old": "Más de 14 días",
+  "card.ticker.overdue": "La respuesta de la Ciudad está atrasada",
+  "card.ticker.filed": "Solicitud presentada",
+  "card.ticker.called": "Llamada realizada",
+  "card.ticker.scheduled": "Trabajo programado",
+  "card.ticker.onHold": "En espera por la Ciudad",
+  "card.ticker.resolved": "Problema resuelto",
+  "card.ticker.actionTaken": "Acción realizada",
+  "taskUpdate.expired": "Problema archivado: más de 14 días, sin resolución"
 }

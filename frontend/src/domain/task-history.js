@@ -7,9 +7,22 @@ import {
   pacificDateKey,
   pacificWeekdayIndex,
 } from "../i18n/dates.js";
-import { taskCreatedAt } from "./home-tasks.js";
+import { isTaskExpired, taskCreatedAt } from "./home-tasks.js";
 
 export function historyEnteredAt(task) {
+  if (
+    isTaskExpired(task) &&
+    !task.resolvedAt &&
+    !task.resolved_at &&
+    !task.completedAt &&
+    !task.completed_at &&
+    !task.historyEnteredAt &&
+    !task.cannotDo?.recordedAt
+  ) {
+    return new Date(
+      Date.parse(task.createdAt || task.created_at) + 14 * 86400000,
+    ).toISOString();
+  }
   return (
     [
       task.resolvedAt,

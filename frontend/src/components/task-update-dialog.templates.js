@@ -6,10 +6,10 @@ import {
 } from "./issue-updates.templates.js";
 export { taskUpdateTimelineTone } from "./issue-updates.templates.js";
 import { localizedAnalyzerText } from "../i18n/analyzer.js";
-import { taskRoute } from "../domain/task-route.js";
+import { statusTickerMarkup } from "./status-ticker.js";
 import { taskMediaUrl } from "../domain/task-media.js";
 import { taskCardTitle } from "../domain/task-title.js";
-import { displayTaskId } from "../domain/home-tasks.js";
+import { displayTaskId, unresolvedExpiryAt } from "../domain/home-tasks.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
@@ -94,8 +94,10 @@ export function taskUpdateTimeline({
   const expected = task.responseExpectedAt
     ? new Date(task.responseExpectedAt)
     : null;
-  const overdue = expected && expected.getTime() < now.getTime();
-  const latestUpdateLabel = String(task.latestUpdateLabel || "").trim();
+  const overdue =
+    task.ticketStatus !== "Closed" &&
+    expected &&
+    expected.getTime() < now.getTime();
   const creation = /** @type {Record<string, any>} */ ({
     type: "issue_created",
     label:
@@ -128,15 +130,32 @@ export function taskUpdateTimeline({
         ]
       : [];
   const isCall = task.kind === "non_actionable_escalation";
-  const route = taskRoute(task);
   const showAgencyMetadata =
     task.kind === "escalation" || isCall || Boolean(task.notifiedAt);
+  const expiresAt = unresolvedExpiryAt(task, now);
+  const archiveEvent =
+    expiresAt && !updates.some((update) => update.type === "issue_expired")
+      ? [
+          {
+            type: "issue_expired",
+            label: t("taskUpdate.expired"),
+            occurredAt: expiresAt,
+          },
+        ]
+      : [];
   const timeline = [
+    ...archiveEvent,
     ...updates,
     ...legacyCompletion,
     ...(nextToken ? [] : [creation]),
   ]
-    .filter((update) => update.occurredAt)
+    .filter(
+      (update) =>
+        update.occurredAt ||
+        (update.type === "city_status" &&
+          "kind" in update &&
+          update.kind === "resolved"),
+    )
     .sort((a, b) => String(b.occurredAt).localeCompare(String(a.occurredAt)));
   const canonicalTitle =
     task.userFriendlyLabel || task.user_friendly_label || "";
@@ -148,19 +167,7 @@ export function taskUpdateTimeline({
     rulebookText(task.category) ||
     t("taskUpdate.fallbackTitle");
   return html`<section class="task-update__summary">
-      <p class="task-update__route task-update__route--${route.tone}">
-        <span class="task-update__route-label">${escapeHtml(route.label)}</span
-        >${latestUpdateLabel
-          ? html`<span class="task-update__route-separator" aria-hidden="true"
-                >·</span
-              >
-              <strong
-                >${escapeHtml(
-                  rulebookText(latestUpdateLabel, "server.taskUpdate"),
-                )}</strong
-              >`
-          : ""}
-      </p>
+      ${statusTickerMarkup(task, { now: now.getTime() })}
       <p class="task-update__location">
         ${escapeHtml(String(address).split(/\r?\n|,/)[0])}
       </p>

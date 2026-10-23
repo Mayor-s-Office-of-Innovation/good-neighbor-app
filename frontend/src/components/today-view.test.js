@@ -681,3 +681,31 @@ describe("in-progress card actions", () => {
     expect(card.markup).toContain('data-action="update"');
   });
 });
+
+describe("live ticker refresh", () => {
+  it("refreshes saved ticket statuses on return without disturbing an open dialog", async () => {
+    await import("./today-view.js");
+    const registration = /** @type {any} */ (
+      customElements.define
+    ).mock.calls.find(([name]) => name === "today-view");
+    const view = new registration[1]();
+    view.isConnected = true;
+    view._homeModel = { tasks: [{ taskId: "129" }] };
+    const refresh = vi.fn();
+    view._hydrate311CardStatuses = refresh;
+    vi.stubGlobal("document", {
+      visibilityState: "visible",
+      querySelector: () => null,
+    });
+    view._refresh311Statuses();
+    expect(refresh).toHaveBeenCalledWith(view._homeModel.tasks);
+    refresh.mockClear();
+    document.querySelector = () => /** @type {any} */ ({ open: true });
+    view._refresh311Statuses();
+    expect(refresh).not.toHaveBeenCalled();
+    document.querySelector = () => null;
+    view.isConnected = false;
+    view._refresh311Statuses();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+});

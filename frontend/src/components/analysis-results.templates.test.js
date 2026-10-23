@@ -855,31 +855,34 @@ describe("taskAnalysisCard", () => {
   });
 
   it.each([
-    ["Open", "", false, "default", "Open"],
-    ["Open", "response overdue", true, "overdue", "Open: response overdue"],
-    ["Closed", "resolved", false, "closed", "Closed: resolved"],
-    ["Closed", "unable to locate", false, "closed", "Closed: unable to locate"],
-    ["On hold", "", false, "default", "On hold"],
+    ["Open", "", false, "filed"],
+    ["Open", "", true, "overdue"],
+    ["Closed", "8", false, "cityClosed"],
+    ["Closed", "", false, "cityClosed"],
+    ["On hold", "", false, "onHold"],
   ])(
-    "shows the %s 311 status and qualifier beside the route",
-    (ticketStatus, ticketStatusDetail, ticketResponseOverdue, tone, label) => {
+    "renders one status ticker for %s",
+    (ticketStatus, ticketClosedReason, ticketResponseOverdue, key) => {
       const card = taskAnalysisCard({
         task: {
           taskId: "task_311",
+          status: "in_progress",
           kind: "escalation",
-          category: "Litter",
           ticketStatus,
-          ticketStatusDetail,
+          ticketClosedReason,
           ticketResponseOverdue,
+          appActionResults: [
+            {
+              code: "create_311_ticket",
+              payload: { tickets: [{ srNum: "123" }] },
+            },
+          ],
         },
-        action: { label: "View details", variant: "outline", kind: "view311" },
-        statusLabel: "Today",
-        includeControls: false,
+        action: null,
+        statusLabel: "",
       });
-
-      expect(card).toContain(escapeHtml(t("card.route.ticket")));
-      expect(card).toContain(`analysis-card__ticket-status--${tone}`);
-      expect(card).toContain(`>${label}</span`);
+      expect(card).toContain(`data-status-ticker="${key}"`);
+      expect(card).not.toContain("analysis-card__route-dot");
     },
   );
 
@@ -896,7 +899,7 @@ describe("taskAnalysisCard", () => {
       includeControls: false,
     });
 
-    expect(card).toContain(escapeHtml(t("card.route.ticket")));
+    expect(card).toContain(escapeHtml(t("card.ticker.needsAction")));
     expect(card).not.toContain("analysis-card__ticket-status");
   });
 });
@@ -1035,7 +1038,7 @@ describe("card redesign", () => {
         action: null,
         statusLabel: "",
       });
-      expect(card).toContain("Resuelto");
+      expect(card).toContain(t("card.ticker.resolved"));
       expect(card).not.toContain("Resuelta");
     } finally {
       await setLocale("en");
@@ -1196,7 +1199,7 @@ describe("duplicate card presentation", () => {
     setDuplicateUiSite({ featureFlags: { duplicateDetection: true } }),
   );
   afterEach(() => setDuplicateUiSite(null));
-  it("shows duplicate progress below Edit details and removes the ring on completion", () => {
+  it("shows duplicate progress in the ticker and silently falls back after completion or failure", () => {
     const task = {
       taskId: "duplicate-status-task",
       status: "open",
@@ -1208,9 +1211,9 @@ describe("duplicate card presentation", () => {
       action: null,
       statusLabel: "",
     });
-    expect(checking).toContain(t("duplicate.checking"));
-    expect(checking).toContain('<wa-spinner aria-hidden="true">');
-    expect(checking.indexOf(t("duplicate.checking"))).toBeGreaterThan(
+    expect(checking).toContain(t("card.ticker.checking"));
+    expect(checking).toContain("status-ticker__spinner");
+    expect(checking.indexOf(t("card.ticker.checking"))).toBeLessThan(
       checking.indexOf(t("card.editDetails")),
     );
     const completed = taskAnalysisCard({
@@ -1218,14 +1221,15 @@ describe("duplicate card presentation", () => {
       action: null,
       statusLabel: "",
     });
-    expect(completed).toContain(t("duplicate.noMatches"));
+    expect(completed).toContain(t("card.ticker.needsAction"));
     expect(completed).not.toContain("<wa-spinner");
     const unavailable = taskAnalysisCard({
       task: { ...task, duplicateCheckState: "unavailable" },
       action: null,
       statusLabel: "",
     });
-    expect(unavailable).toContain(t("duplicate.unavailable"));
+    expect(unavailable).not.toContain(t("duplicate.unavailable"));
+    expect(unavailable).toContain(t("card.ticker.needsAction"));
     expect(unavailable).not.toContain("<wa-spinner");
     expect(unavailable).not.toContain(t("duplicate.noMatches"));
     const disabled = taskAnalysisCard({ task, action: null, statusLabel: "" });
