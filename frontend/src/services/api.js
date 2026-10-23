@@ -478,7 +478,7 @@ export function createStaffEnrollmentGrant(label) {
   });
 }
 
-/** Return the current Manager binding's unfinished staff grant metadata. */
+/** Return metadata for the current Manager binding's staff grants; secrets are never returned. */
 export function getCurrentStaffEnrollmentGrant() {
   return request("GET", "/app/v1/manager/staff-grants/current");
 }

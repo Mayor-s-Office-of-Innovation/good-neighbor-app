@@ -1,6 +1,7 @@
 import "./site-admin.css";
 import "@awesome.me/webawesome/dist/components/input/input.js";
 import { getSite, hasAdminAccess, saveSiteSettings } from "../db.js";
+import { formatDateTime } from "../i18n/dates.js";
 import { t } from "../i18n/i18n.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
 import {
@@ -24,7 +25,7 @@ import {
 } from "../state/toasts.js";
 import {
   formatAdminDate,
-  formatDeviceEnrollmentSummary,
+  formatCountdown,
   formatAdminPhone,
   validateContact,
   validateSiteDetails,
@@ -50,12 +51,8 @@ class SiteAdminView extends HTMLElement {
     }
     this.innerHTML = loadingView(t("siteAdmin.title"));
     try {
-      const [siteResult, deviceResult] = await Promise.all([
-        getSiteAdmin(),
-        listManagerDeviceBindings(),
-      ]);
+      const siteResult = await getSiteAdmin();
       this._site = siteResult.site;
-      this._bindings = deviceResult.bindings || [];
       this._render();
       announceScreenHeading(this, ".site-admin-header h1");
     } catch {
@@ -143,15 +140,6 @@ class SiteAdminView extends HTMLElement {
             </div>
           </section>
           <section class="site-admin-section">
-            <div class="site-admin-section-heading">
-              <h2>Access &amp; devices</h2>
-              <button type="button" data-access-devices>Manage</button>
-            </div>
-            <div class="site-admin-card site-admin-card--prose">
-              ${escapeHtml(formatDeviceEnrollmentSummary(this._bindings))}
-            </div>
-          </section>
-          <section class="site-admin-section">
             <h2>${escapeHtml(t("siteAdmin.letters.title"))}</h2>
             ${current
               ? letterCard(
@@ -198,9 +186,6 @@ class SiteAdminView extends HTMLElement {
         ),
       );
     });
-    this.querySelector("[data-access-devices]")?.addEventListener("click", () =>
-      navigate("/site-admin/access"),
-    );
   }
 }
 
@@ -212,9 +197,8 @@ class SiteAccessView extends HTMLElement {
       return;
     }
     this._site = binding;
-    this._secretUrl = "";
-    this._activeGrant = null;
-    this.innerHTML = loadingView("Manage access");
+    this._grants = [];
+    this.innerHTML = loadingView(t("access.title"));
     await this._load();
   }
 
@@ -224,37 +208,54 @@ class SiteAccessView extends HTMLElement {
         listManagerDeviceBindings(),
         getCurrentStaffEnrollmentGrant(),
       ]);
+      if (!this.isConnected) return;
       this._bindings = devices.bindings || [];
-      this._activeGrant =
-        currentGrant.grant?.status === "pending" ? currentGrant.grant : null;
+      const localGrants = new Map(
+        this._grants.map((grant) => [grant.grantId, grant]),
+      );
+      this._grants = (currentGrant.grants || [])
+        .filter(
+          (grant) =>
+            grant.status === "pending" &&
+            Date.parse(grant.expiresAt) > Date.now(),
+        )
+        .map((grant) => ({
+          ...grant,
+          enrollmentUrl: localGrants.get(grant.grantId)?.enrollmentUrl,
+        }))
+        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
       this._render();
       announceScreenHeading(this, ".site-admin-header h1");
     } catch {
-      this.innerHTML = errorView("We couldn't load the registered devices.");
+      this.innerHTML = errorView(t("access.loadError"));
       this._wireBack();
     }
   }
 
   disconnectedCallback() {
     clearInterval(this._countdownTimer);
+    this._grants = [];
+    this.querySelector("#staff-grant-result")?.replaceChildren();
   }
 
   _wireBack() {
     this.querySelector("[data-admin-back]")?.addEventListener("click", () =>
-      backOrNavigate("/site-admin"),
+      backOrNavigate("/today"),
     );
   }
 
   _render() {
     this.innerHTML = html`
       <div class="site-admin-page">
-        ${adminHeader("Manage access")}
+        ${adminHeader(t("access.title"))}
         <div class="site-admin-content">
           <section
             class="site-admin-section"
             aria-labelledby="enroll-team-title"
           >
-            <h2 id="enroll-team-title">Enroll a team member's device</h2>
+            <h2 id="enroll-team-title">
+              ${escapeHtml(t("access.enrollTitle"))}
+            </h2>
             <form
               class="site-admin-card site-access-form"
               id="staff-grant-form"
@@ -262,28 +263,20 @@ class SiteAccessView extends HTMLElement {
               <wa-input
                 id="staff-device-label"
                 name="label"
-                label="Give the new device a name, e.g., Amisha's iPhone"
+                label="${escapeHtml(t("access.deviceLabel"))}"
                 maxlength="100"
                 autocomplete="off"
                 required
                 style="--wa-form-control-required-content: ''"
-                ${this._activeGrant ? "disabled" : ""}
               ></wa-input>
-              <p class="site-access-help">
-                Create one 10-minute, single-use enrollment link. Finish sharing
-                it before creating another.
-              </p>
+              <p class="site-access-help">${escapeHtml(t("access.help"))}</p>
               <p
                 class="site-admin-form-error"
                 id="staff-grant-error"
                 role="alert"
               ></p>
-              <button
-                class="btn-ink"
-                type="submit"
-                ${this._activeGrant ? "disabled" : ""}
-              >
-                Create enrollment link
+              <button class="btn-ink" type="submit">
+                ${escapeHtml(t("access.create"))}
               </button>
             </form>
             <div
@@ -291,21 +284,21 @@ class SiteAccessView extends HTMLElement {
               id="staff-grant-result"
               aria-live="polite"
             >
-              ${this._activeGrant
-                ? activeGrantView(this._activeGrant, false)
-                : ""}
+              ${this._grants
+                .map((grant, index) => activeGrantView(grant, index === 0))
+                .join("")}
             </div>
           </section>
           <section
             class="site-admin-section"
             aria-labelledby="team-devices-title"
           >
-            <h2 id="team-devices-title">Team devices</h2>
+            <h2 id="team-devices-title">${escapeHtml(t("access.devices"))}</h2>
             <div class="site-admin-card site-access-list">
               ${this._bindings.length
                 ? this._bindings.map(deviceRow).join("")
                 : html`<p class="site-admin-empty">
-                    No team devices enrolled.
+                    ${escapeHtml(t("access.empty"))}
                   </p>`}
             </div>
           </section>
@@ -319,7 +312,7 @@ class SiteAccessView extends HTMLElement {
           <form class="places-modal__card" method="dialog">
             <div class="places-modal__copy">
               <h2 class="places-modal__title" id="site-access-revoke-title">
-                Revoke this team member's device?
+                ${escapeHtml(t("access.revokeTitle"))}
               </h2>
               <p
                 class="places-modal__text"
@@ -340,14 +333,14 @@ class SiteAccessView extends HTMLElement {
                 value="cancel"
                 data-cancel-device-revoke
               >
-                Cancel
+                ${escapeHtml(t("common.cancel"))}
               </button>
               <button
                 class="logout-dialog__confirm"
                 type="button"
                 data-confirm-device-revoke
               >
-                Revoke device
+                ${escapeHtml(t("access.revoke"))}
               </button>
             </div>
           </form>
@@ -363,7 +356,8 @@ class SiteAccessView extends HTMLElement {
       button.addEventListener("click", () =>
         this._openRevokeDialog(
           button.getAttribute("data-revoke-team-device") || "",
-          button.getAttribute("data-revoke-team-device-label") || "Team device",
+          button.getAttribute("data-revoke-team-device-label") ||
+            t("access.device"),
         ),
       );
     });
@@ -383,10 +377,19 @@ class SiteAccessView extends HTMLElement {
         if (!this._revoking) this._pendingRevokeBindingId = "";
       },
     );
-    this.querySelector("[data-cancel-staff-grant]")?.addEventListener(
-      "click",
-      () => void this._cancelGrant(),
-    );
+    this.querySelectorAll("[data-grant-id]").forEach((card) => {
+      const grant = this._grants.find(
+        (item) => item.grantId === card.getAttribute("data-grant-id"),
+      );
+      if (grant.enrollmentUrl)
+        void renderEnrollmentQr(card, grant.enrollmentUrl);
+      card
+        .querySelector("[data-share-grant]")
+        ?.addEventListener("click", () => void this._shareGrant(grant));
+      card
+        .querySelector("[data-cancel-staff-grant]")
+        ?.addEventListener("click", () => void this._cancelGrant(grant));
+    });
     this._startCountdown();
   }
 
@@ -399,8 +402,7 @@ class SiteAccessView extends HTMLElement {
     ).trim();
     const error = this.querySelector("#staff-grant-error");
     if (!label) {
-      if (error)
-        error.textContent = "Enter a label for the team member's device.";
+      if (error) error.textContent = t("access.labelError");
       return;
     }
     const button = form.querySelector("button[type=submit]");
@@ -408,84 +410,84 @@ class SiteAccessView extends HTMLElement {
     if (error) error.textContent = "";
     try {
       const result = await createStaffEnrollmentGrant(label);
-      this._secretUrl = result.enrollmentUrl;
-      this._activeGrant = result.grant;
-      const output = this.querySelector("#staff-grant-result");
-      if (output) {
-        output.innerHTML = activeGrantView(result.grant, true);
-        void renderEnrollmentQr(output, this._secretUrl);
-        output
-          .querySelector("#share-staff-grant")
-          ?.addEventListener("click", () => void this._shareGrant());
-        output
-          .querySelector("[data-cancel-staff-grant]")
-          ?.addEventListener("click", () => void this._cancelGrant());
-        this._startCountdown();
-      }
-    } catch (caught) {
+      if (!this.isConnected) return;
+      this._grants.unshift({
+        ...result.grant,
+        enrollmentUrl: result.enrollmentUrl,
+      });
+      this._render();
+    } catch {
       if (error) {
-        error.textContent =
-          caught?.status === 409
-            ? "Finish or wait for the current enrollment link to expire before creating another."
-            : "We couldn't create the enrollment link. Try again.";
+        error.textContent = t("access.createError");
       }
       button?.removeAttribute("disabled");
     }
   }
 
-  async _cancelGrant() {
-    if (!this._activeGrant?.grantId) return;
-    const button = this.querySelector("[data-cancel-staff-grant]");
-    button?.setAttribute("disabled", "");
+  async _cancelGrant(grant) {
     try {
-      await cancelStaffEnrollmentGrant(this._activeGrant.grantId);
-      this._secretUrl = "";
-      this._activeGrant = null;
-      clearInterval(this._countdownTimer);
+      await cancelStaffEnrollmentGrant(grant.grantId);
+      this._grants = this._grants.filter(
+        (item) => item.grantId !== grant.grantId,
+      );
       await this._load();
     } catch {
-      button?.removeAttribute("disabled");
       const error = this.querySelector("#staff-grant-error");
-      if (error)
-        error.textContent =
-          "We couldn't cancel that enrollment link. Try again.";
+      if (error) error.textContent = t("access.cancelError");
     }
   }
 
   _startCountdown() {
     clearInterval(this._countdownTimer);
-    if (!this._activeGrant) return;
-    const update = () => {
-      const countdown = this.querySelector("[data-grant-countdown]");
-      if (!countdown || !this._activeGrant) return;
-      const remaining = Math.max(
-        0,
-        Date.parse(this._activeGrant.expiresAt) - Date.now(),
-      );
-      countdown.textContent = formatCountdown(remaining);
-      if (remaining === 0) {
-        clearInterval(this._countdownTimer);
-        this._secretUrl = "";
-        this._activeGrant = null;
-        void this._load();
-      }
-    };
-    update();
-    this._countdownTimer = setInterval(update, 1000);
+    if (!this._grants.length) return;
+    this._countdownTimer = setInterval(() => void this._refreshGrants(), 5000);
   }
 
-  async _shareGrant() {
-    if (!this._secretUrl) return;
-    if (navigator.share) {
-      await navigator.share({
-        title: "Good Neighbor enrollment",
-        url: this._secretUrl,
+  async _refreshGrants() {
+    if (this._refreshing) return;
+    this._refreshing = true;
+    const checked = new Set(this._grants.map((grant) => grant.grantId));
+    try {
+      const current = await getCurrentStaffEnrollmentGrant();
+      if (!this.isConnected) return;
+      const pending = new Set(
+        (current.grants || [])
+          .filter((grant) => grant.status === "pending")
+          .map((grant) => grant.grantId),
+      );
+      this._grants = this._grants.filter(
+        (grant) =>
+          (!checked.has(grant.grantId) || pending.has(grant.grantId)) &&
+          Date.parse(grant.expiresAt) > Date.now(),
+      );
+      this.querySelectorAll("[data-grant-id]").forEach((card) => {
+        const grant = this._grants.find(
+          (item) => item.grantId === card.getAttribute("data-grant-id"),
+        );
+        if (!grant) card.remove();
+        else
+          card.querySelector("[data-grant-countdown]").textContent =
+            formatCountdown(Date.parse(grant.expiresAt) - Date.now());
       });
-      return;
+      if (!this._grants.length) clearInterval(this._countdownTimer);
+    } catch {
+      /* Keep links until their status can be confirmed. */
+    } finally {
+      this._refreshing = false;
     }
-    await navigator.clipboard.writeText(this._secretUrl);
-    const button = this.querySelector("#share-staff-grant");
-    if (button) button.textContent = "Enrollment link copied";
+  }
+
+  async _shareGrant(grant) {
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: t("access.title"),
+          url: grant.enrollmentUrl,
+        });
+      } catch {
+        /* Dismissing the share sheet keeps the link available. */
+      }
+    } else await navigator.clipboard.writeText(grant.enrollmentUrl);
   }
 
   _openRevokeDialog(bindingId, label) {
@@ -493,7 +495,10 @@ class SiteAccessView extends HTMLElement {
     this._pendingRevokeBindingId = bindingId;
     const copy = this.querySelector("[data-revoke-device-copy]");
     if (copy) {
-      copy.textContent = `“${label}” will immediately lose access to ${this._site?.name || "this Site"} on this device. They’ll need a new enrollment link to regain access.`;
+      copy.textContent = t("access.revokeCopy", {
+        label,
+        site: this._site?.name || t("access.site"),
+      });
     }
     const error = /** @type {HTMLElement | null} */ (
       this.querySelector("[data-revoke-device-error]")
@@ -526,7 +531,7 @@ class SiteAccessView extends HTMLElement {
     this._revoking = true;
     if (confirm) {
       confirm.disabled = true;
-      confirm.textContent = "Revoking…";
+      confirm.textContent = t("access.revoking");
     }
     if (cancel) cancel.disabled = true;
     try {
@@ -536,12 +541,12 @@ class SiteAccessView extends HTMLElement {
       await this._load();
     } catch {
       if (error) {
-        error.textContent = "We couldn't revoke this device. Try again.";
+        error.textContent = t("access.revokeError");
         error.hidden = false;
       }
       if (confirm) {
         confirm.disabled = false;
-        confirm.textContent = "Revoke device";
+        confirm.textContent = t("access.revoke");
       }
       if (cancel) cancel.disabled = false;
     } finally {
@@ -1011,9 +1016,10 @@ function field(id, label, value, autocomplete, type, required = true) {
 function deviceRow(binding) {
   return html`<article class="site-access-device">
     <div>
-      <h3>${escapeHtml(binding.label || "Team device")}</h3>
+      <h3>${escapeHtml(binding.label || t("access.device"))}</h3>
       <p>
-        ${escapeHtml(binding.status || "active")} · Last seen
+        ${escapeHtml(binding.status || "active")} ·
+        ${escapeHtml(t("access.lastSeen"))}
         ${escapeHtml(formatTimestamp(binding.lastSeenAt))}
       </p>
     </div>
@@ -1023,56 +1029,45 @@ function deviceRow(binding) {
           type="button"
           data-revoke-team-device="${escapeAttr(binding.bindingId)}"
           data-revoke-team-device-label="${escapeAttr(
-            binding.label || "Team device",
+            binding.label || t("access.device"),
           )}"
         >
-          Revoke
+          ${escapeHtml(t("access.revoke"))}
         </button>`
       : ""}
   </article>`;
 }
 
-/** @param {Record<string, any>} grant @param {boolean} showSecretActions */
-function activeGrantView(grant, showSecretActions) {
-  return html`<div class="site-admin-card site-access-ready">
-    <h3>
-      ${showSecretActions ? "Enrollment QR ready" : "Enrollment in progress"}
-    </h3>
+/** @param {Record<string, any>} grant @param {boolean} expanded */
+function activeGrantView(grant, expanded) {
+  return html`<details
+    class="site-admin-card site-access-ready"
+    data-grant-id="${escapeAttr(grant.grantId)}"
+    ${expanded ? "open" : ""}
+  >
+    <summary>${escapeHtml(grant.label)}</summary>
     <p>
-      For ${escapeHtml(grant.label)}. Expires in
+      ${escapeHtml(t("access.expires"))}
       <strong data-grant-countdown
         >${escapeHtml(
-          formatCountdown(
-            Math.max(0, Date.parse(grant.expiresAt) - Date.now()),
-          ),
+          formatCountdown(Date.parse(grant.expiresAt) - Date.now()),
         )}</strong
-      >. It works once.
+      >
     </p>
-    ${showSecretActions
+    ${grant.enrollmentUrl
       ? html`<wa-qr-code
             size="220"
             error-correction="M"
-            label="Scan to enroll ${escapeAttr(grant.label)} for this Site"
+            label="${escapeAttr(t("access.qrLabel", { label: grant.label }))}"
           ></wa-qr-code>
-          <button class="btn-outline" type="button" id="share-staff-grant">
-            Share enrollment link
+          <button class="btn-outline" type="button" data-share-grant>
+            ${escapeHtml(t("access.share"))}
           </button>`
-      : html`<p>
-          The secret link is no longer shown after leaving this screen. Cancel
-          it to create a replacement.
-        </p>`}
+      : ""}
     <button class="btn-outline" type="button" data-cancel-staff-grant>
-      Cancel enrollment link
+      ${escapeHtml(t("access.cancel"))}
     </button>
-  </div>`;
-}
-
-/** @param {number} milliseconds */
-function formatCountdown(milliseconds) {
-  const seconds = Math.ceil(milliseconds / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds % 60;
-  return `${minutes}:${String(remainder).padStart(2, "0")}`;
+  </details>`;
 }
 
 /** @param {Element} container @param {string} value */
@@ -1086,10 +1081,10 @@ async function renderEnrollmentQr(container, value) {
 function formatTimestamp(value) {
   const date = new Date(String(value || ""));
   if (Number.isNaN(date.getTime())) return EMPTY;
-  return new Intl.DateTimeFormat(undefined, {
+  return formatDateTime(date, {
     dateStyle: "medium",
     timeStyle: "short",
-  }).format(date);
+  });
 }
 
 customElements.define("site-admin-view", SiteAdminView);

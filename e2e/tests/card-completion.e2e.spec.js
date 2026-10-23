@@ -1,5 +1,6 @@
 // @ts-check
 import { test, expect } from "../helpers/harness.js";
+import { t } from "../helpers/i18n.js";
 
 test("checklist waits for confirmed save, recovers from failure, and opens completion history", async ({
   page,
@@ -89,7 +90,7 @@ test("checklist waits for confirmed save, recovers from failure, and opens compl
   );
   await card.getByRole("button").click();
   const dialog = page.locator("dialog.task-update[open]");
-  await expect(dialog).toContainText("Marked as complete");
+  await expect(dialog).toContainText(t("taskUpdate.siteResolved"));
   await expect(dialog.locator(".task-update__route")).toContainText(
     "On-site action",
   );

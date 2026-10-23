@@ -324,7 +324,7 @@ export const recordCustomTaskAction = async (event) => {
           },
         },
         timelineType: "task_completed",
-        timelineLabel: "Marked as complete",
+        timelineLabel: "Site marked as resolved",
         timelineText: text,
         now: new Date(now),
       });

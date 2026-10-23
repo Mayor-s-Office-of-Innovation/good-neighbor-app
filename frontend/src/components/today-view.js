@@ -799,6 +799,9 @@ class TodayView extends HTMLElement {
         "language",
       );
     });
+    this.querySelector("#settings-access")?.addEventListener("click", () =>
+      navigate("/manage-access"),
+    );
     this.querySelector("#settings-site-admin")?.addEventListener("click", () =>
       navigate("/site-admin"),
     );

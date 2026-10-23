@@ -458,3 +458,12 @@ describe("Site-scoped proactive care", () => {
     expect(mocks.presignGet).not.toHaveBeenCalled();
   });
 });
+
+it.each(["offered_services_at_site", "picked_up_needles"])(
+  "saves the new care option %s",
+  async (kind) => {
+    const result = await createCareWork(event({ ...payload(), kind }));
+    expect(result.statusCode).toBe(201);
+    expect(records.get(`SITE#site-a/CARE_WORK#${ID}`).kind).toBe(kind);
+  },
+);

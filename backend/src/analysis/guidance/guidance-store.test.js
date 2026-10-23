@@ -605,7 +605,7 @@ describe("completeTaskWithAppActions", () => {
     expect(finalTx.input.TransactItems[1].Put.Item).toMatchObject({
       entityType: "task_update",
       type: "task_completed",
-      label: "Marked as complete",
+      label: "Site marked as resolved",
       occurredAt: "2026-08-18T12:02:00.000Z",
     });
     expect(finalTx.input.TransactItems[2].Put.Item).toMatchObject({
@@ -614,55 +614,58 @@ describe("completeTaskWithAppActions", () => {
     });
   });
 
-  it("moves an eligible task to in progress on its first card action", async () => {
-    send
-      .mockResolvedValueOnce({
-        Item: {
-          pk: "SITE#site-1",
-          sk: "TASK#task-1",
-          taskId: "task-1",
-          status: "open",
-          kind: "non_actionable_escalation",
-          severity: 4,
-          canBeInProgress: true,
-          primaryInProgressAgency: "SF Police Department (SFPD)",
-          buttons: ["We called 911"],
-          appActions: [],
-        },
-      })
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({});
+  it.each(["We called 911", "Call SFPD"])(
+    "moves a phone escalation to in progress: %s",
+    async (label) => {
+      send
+        .mockResolvedValueOnce({
+          Item: {
+            pk: "SITE#site-1",
+            sk: "TASK#task-1",
+            taskId: "task-1",
+            status: "open",
+            kind: "non_actionable_escalation",
+            severity: 4,
+            canBeInProgress: true,
+            primaryInProgressAgency: "SF Police Department (SFPD)",
+            buttons: [label],
+            appActions: [],
+          },
+        })
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({});
 
-    const task = await completeTaskWithAppActions({
-      tableName: "table",
-      siteId: "site-1",
-      taskId: "task-1",
-      completionMethod: "manual",
-      actorId: "device-7",
-      now: new Date("2026-10-01T18:00:00.000Z"),
-    });
+      const task = await completeTaskWithAppActions({
+        tableName: "table",
+        siteId: "site-1",
+        taskId: "task-1",
+        completionMethod: "manual",
+        actorId: "device-7",
+        now: new Date("2026-10-01T18:00:00.000Z"),
+      });
 
-    expect(task).toMatchObject({
-      status: "in_progress",
-      inProgressAt: "2026-10-01T18:00:00.000Z",
-      notifiedAt: "2026-10-01T18:00:00.000Z",
-      agency: "SF Police Department (SFPD)",
-      latestUpdateLabel: "We called 911",
-      gsi2pk: "SITE#site-1#TASK#in_progress",
-    });
-    expect(task).not.toHaveProperty("completedAt");
-    const writes = send.mock.calls[2][0].input.TransactItems;
-    expect(writes).toHaveLength(3);
-    expect(writes[1].Put.Item).toMatchObject({
-      type: "escalation_action_taken",
-      label: "We called 911",
-      actorId: "device-7",
-    });
-    expect(writes[2].Put.Item).toMatchObject({
-      entityType: "task_update_pointer",
-      taskId: "task-1",
-    });
-  });
+      expect(task).toMatchObject({
+        status: "in_progress",
+        inProgressAt: "2026-10-01T18:00:00.000Z",
+        notifiedAt: "2026-10-01T18:00:00.000Z",
+        agency: "SF Police Department (SFPD)",
+        latestUpdateLabel: label,
+        gsi2pk: "SITE#site-1#TASK#in_progress",
+      });
+      expect(task).not.toHaveProperty("completedAt");
+      const writes = send.mock.calls[2][0].input.TransactItems;
+      expect(writes).toHaveLength(3);
+      expect(writes[1].Put.Item).toMatchObject({
+        type: "escalation_action_taken",
+        label,
+        actorId: "device-7",
+      });
+      expect(writes[2].Put.Item).toMatchObject({
+        entityType: "task_update_pointer",
+        taskId: "task-1",
+      });
+    },
+  );
 
   it("returns a stored completed task for an identical replay", async () => {
     send.mockResolvedValueOnce({

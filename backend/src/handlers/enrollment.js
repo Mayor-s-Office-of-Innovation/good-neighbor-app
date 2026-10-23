@@ -402,21 +402,6 @@ export const redeemEnrollmentGrant = async (event) => {
             actor: `physical-device:${physicalDeviceId}`,
             createdAt: nowIso,
           }),
-          ...(accessLevel === "general"
-            ? [
-                {
-                  Delete: {
-                    TableName: tableName,
-                    Key: {
-                      pk: `SITE#${siteId}`,
-                      sk: `ACTIVE_STAFF_GRANT#${issuerBindingId}`,
-                    },
-                    ConditionExpression: "grantId = :grantId",
-                    ExpressionAttributeValues: { ":grantId": grantId },
-                  },
-                },
-              ]
-            : []),
         ],
       }),
     );

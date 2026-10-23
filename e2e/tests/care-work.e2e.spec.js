@@ -29,7 +29,7 @@ async function openLogs(page) {
  */
 async function choose(page, kind) {
   await page.locator("[data-new]").click();
-  await expect(page.locator("[data-kind]")).toHaveCount(8);
+  await expect(page.locator("[data-kind]")).toHaveCount(10);
   await page.locator(`[data-kind="${kind}"]`).click();
 }
 /**
