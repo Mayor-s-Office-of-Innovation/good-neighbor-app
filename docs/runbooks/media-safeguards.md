@@ -11,12 +11,15 @@ strips metadata and applies orientation while enforcing byte, pixel, edge, and s
 - one check: 20 artifacts and 50 MiB
 - one device per UTC day: 50 artifacts and 100 MiB
 - one Site per UTC day: 1,000 artifacts and 1 GiB
-- global per UTC day: 10,000 artifacts and 10 GiB
 
 Reservations are deliberately conservative: issuing a PUT URL consumes quota even if the client
-abandons the upload. Reservation records and check/device/Site/global daily counters expire after
+abandons the upload. Reservation records and check/device/Site daily counters expire after
 24 hours, so an abandoned URL cannot permanently block its Check. Do not manually lower counters during an active incident—doing so weakens the cost
 control and can race in-flight uploads.
+
+There is no global daily upload quota. Upload reservations do not update a shared
+cross-site counter. Existing global counter rows are unused and expire through their
+existing DynamoDB TTL; no counter deletion or migration is required.
 
 ## Alarms
 
@@ -26,7 +29,7 @@ into tickets or chat. A single rejection is normally bad camera/upload data. A c
 from one Site or device may indicate abuse or a broken client release.
 
 `MediaQuotaExceeded` alarms after five rejected reservations in five minutes. Determine which
-counter is near its conditional limit from the Site's `MEDIA_QUOTA#` rows and the global daily row.
+counter is near its conditional limit from the Site's `MEDIA_QUOTA#` rows.
 Confirm whether traffic is expected before changing a limit in code. The public response
 intentionally does not reveal which budget was exhausted.
 
@@ -83,8 +86,71 @@ Bearer links use a dedicated `media.<frontend-domain>` CloudFront distribution
 with a validated certificate, HSTS/CSP, `no-referrer`, WAF, and no caching.
 Standard CloudFront logging is intentionally disabled for this distribution
 because it includes query strings. API Gateway's access log retains request ID,
-route, status, and timing without tokens. Do not enable query/body logging on
+device subject, site, admin user sub, route, status, and timing without tokens
+or viewer IPs. Do not enable query/body logging on
 this route, and do not paste full links or bearer tokens into incident records.
 The application redacts bearer query parameters from failed SF311 request and
 response diagnostics before persistence. Local tunnel access also requires
 `S3_PUBLIC_PRESIGN_ENDPOINT` to reach the MinIO proxy.
+
+## Daily cost warning
+
+Terraform creates a warning-only AWS COST budget of USD 100 per UTC day. It sends
+an ACTUAL-cost notification when attributed daily spending is greater than $100
+to `alarm_emails` (currently `aaron.hans@sf.gov` in both environments). It has no
+budget actions and cannot stop uploads, revoke permissions, or throttle processing.
+
+The filter is `user:Application$Good-Neighbor-App` (using `var.application`), across
+all regions in the deployment account. Dev and prod have separate accounts and
+therefore separate daily warnings; this is not a combined cross-account budget.
+Only charges allocated to that tag count. Untagged charges and the separately
+tagged analyzer/Bedrock service are outside this warning, even when Good Neighbor
+caused that usage. This is attributed application cost, not full end-to-end cost.
+
+Tag activation is optional in the application module. DEV sets
+`manage_application_cost_allocation_tag=false` because it is a linked account;
+the daily budget remains configured and deployment does not require activation.
+PROD retains its existing configuration. Where activation is managed locally,
+Terraform activates the existing Application cost-allocation tag.
+Activation is account-wide: if already managed in another Terraform state, move or
+import that ownership through the infrastructure workflow rather than managing it
+twice. In an AWS Organization, billing/tag activation may require management-account
+permissions; ensure the CI role can manage cost-allocation tags and budgets. A new
+tag can take up to 24 hours to become available for activation.
+
+The deployment role is externally owned and explicitly denies changing its own
+IAM policies. Do not add a self-attached policy to the application Terraform: it
+cannot bootstrap these permissions. The role's administrator must provision the
+supplemental policy from `infra/policies/deploy-billing.json.tftpl` through the
+authoritative role infrastructure. Render `account_id` from the target account
+and `budget_name` as `<app-prefix>-daily-application-cost`. The Cost Explorer
+actions require account-wide resource scope; budget permissions are restricted
+to that one named budget. DEV uses the inline policy
+`good-neighbor-app-dev-billing`, installed with an explicitly approved one-time
+administrator repair; the template is retained in Git for reconciliation with the
+external role infrastructure. This does not provision PROD's permissions.
+Keep the role's trust policy and existing self-mutation deny intact. After provisioning, rerun the latest normal CI deployment.
+
+If the error changes to `Linked account doesn't have access to cost allocation
+tags`, IAM permissions are no longer the blocker. AWS permits activation only
+from the Organizations management account or a standalone account. The DEV
+account is a linked account, so its application Terraform cannot own activation.
+DEV CI relinquishes only `module.app.aws_ce_cost_allocation_tag.application`
+(including its indexed form) using locked `terraform state rm` before planning.
+This forgets Terraform ownership without deactivating the actual tag; S3 backend
+versioning retains earlier state versions. The step is idempotent, DEV-only, and
+fails the deployment if state migration fails. A plan guard rejects any later
+cost-tag create/update/delete in DEV. Do not re-import the entry into DEV or
+re-enable local activation there. Activation belongs in the billing management
+account's infrastructure. Tag-filtered budget alerts remain incomplete until the
+payer activates `Application`; application deployment is independent of that work.
+
+Billing ingestion and budget evaluation are delayed (typically 8–12 hours between budget updates),
+so this is not a real-time spend guard and can notify after the threshold was crossed.
+
+After the normal CI deployment, inspect the budget in the Billing Console: verify
+DAILY, USD 100, ACTUAL > 100, the Application filter, and the recipient list. Verify
+the Application tag is active and compare attributed cost with Cost Explorer after
+billing data arrives; zero reported cost alone does not prove the filter works.
+No console configuration changes are required. Existing global quota rows can expire
+normally; the cost warning uses billing data, not those counters.

@@ -5,7 +5,12 @@
   site this shared device should operate as.
 */
 import "./site-setup.css";
-import { getSite, saveDiscoveredBindings, setSite } from "../db.js";
+import {
+  bindingFromSession,
+  getSite,
+  saveDiscoveredBindings,
+  setSite,
+} from "../db.js";
 import { t } from "../i18n/i18n.js";
 import {
   formatSiteCode,
@@ -41,6 +46,10 @@ export class SiteSetup extends HTMLElement {
     this._enrollment = enrollment;
     this._checking = false;
     this._error = "";
+    // A notice key (setup.notice.<key>) app-root sets to explain why the code
+    // is being asked for: a Home Screen handoff that didn't carry over, or a
+    // Safari copy whose session moved to the installed app.
+    this._notice = this.getAttribute("data-notice") || "";
     this._mode =
       this.getAttribute("data-mode") === "request"
         ? this.getAttribute("data-mode")
@@ -113,6 +122,7 @@ export class SiteSetup extends HTMLElement {
       targetSiteName: this._targetSiteName,
       canCancel: this._canCancel,
       cancelDisabled: this._committingSite,
+      notice: this._notice ? t(`setup.notice.${this._notice}`) : "",
       request: this._request,
     });
 
@@ -457,15 +467,8 @@ export class SiteSetup extends HTMLElement {
       site = await setSite(providerSite.name, {
         code: result.code,
         providerSiteId: providerSite.id,
+        ...bindingFromSession(session),
         siteId: providerSite.siteId,
-        deviceId: session.deviceId,
-        token: session.token,
-        refreshToken: session.refreshToken,
-        tokenExpiresAt: new Date(
-          Date.now() + session.expiresIn * 1000,
-        ).toISOString(),
-        tokenGeneration: session.tokenGeneration,
-        accessLevel: session.accessLevel,
       });
     } catch {
       this._committingSite = false;
@@ -490,19 +493,10 @@ export class SiteSetup extends HTMLElement {
       if (this._cancelled) return;
       this._committingSite = true;
       this._render();
-      const site = await setSite(session.site.name, {
-        siteId: session.site.siteId,
-        deviceId: session.deviceId,
-        bindingId: session.bindingId,
-        physicalDeviceId: session.physicalDeviceId,
-        token: session.token,
-        refreshToken: session.refreshToken,
-        tokenExpiresAt: new Date(
-          Date.now() + session.expiresIn * 1000,
-        ).toISOString(),
-        tokenGeneration: session.tokenGeneration,
-        accessLevel: session.accessLevel,
-      });
+      const site = await setSite(
+        session.site.name,
+        bindingFromSession(session),
+      );
       await saveDiscoveredBindings(
         session.bindings || [],
         session.physicalDeviceId,

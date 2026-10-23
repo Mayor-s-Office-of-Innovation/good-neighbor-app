@@ -15,7 +15,6 @@ import {
   uploadTaskUpdatePhoto,
 } from "../services/api.js";
 import { showTaskUpdateErrorToast } from "../state/toasts.js";
-import { t } from "../i18n/i18n.js";
 import { taskArtifactIds, submitted311Ticket } from "../domain/home-tasks.js";
 import { taskMediaUrl } from "../domain/task-media.js";
 import {
@@ -93,8 +92,8 @@ export class TaskUpdateDialog extends HTMLElement {
   /**
    * Collect documentation for the action that just completed this task.
    * With `completion` the prompt opens before the completion response: the
-   * user can pick photos and type notes right away, and Done waits for the
-   * response to learn the documentation event; Skip closes at once.
+   * user can pick photos and type notes right away. Done and Skip both close
+   * at once; the documentation finishes in the background (_finishResults).
    * @param {Record<string, any>} task
    * @param {Promise<{ task: Record<string, any> | null, failed?: boolean }> | null} [completion]
    */
@@ -104,9 +103,6 @@ export class TaskUpdateDialog extends HTMLElement {
     this._results = true;
     this._editorOnly = false;
     this._resetDraft();
-    // Results mode: set when the response leaves nothing to attach a kept
-    // draft to, so the prompt explains that instead of a window conflict.
-    this._unattached = false;
     this._completion = completion
       ? completion.then((completed) => this._adoptCompletion(completed))
       : null;
@@ -132,8 +128,7 @@ export class TaskUpdateDialog extends HTMLElement {
         this._pendingEvent = null;
         // The action failed (reported on the card) or opened no documentation
         // window: an empty prompt just goes away, but a draft typed meanwhile
-        // stays on screen with an accurate note so it can be copied first.
-        this._unattached = true;
+        // stays on screen with a note saying so, so it can be copied first.
         if (this._hasUnsavedDraft()) this._render();
         else this._dismiss();
       }
@@ -257,7 +252,6 @@ export class TaskUpdateDialog extends HTMLElement {
       return taskUpdateCapture({
         pendingEvent: this._pendingEvent,
         results: this._results,
-        unattached: this._unattached,
         task: this._results ? this._task : null,
         photosAllowed: this._photosAllowed(),
         files: this._files,
@@ -496,18 +490,18 @@ export class TaskUpdateDialog extends HTMLElement {
     }
   }
 
-  /** @param {File} file @returns {Promise<string>} */
-  _uploadFile(file) {
+  /**
+   * Passing `task` pins a background upload to the prompt it came from.
+   * @param {File} file @param {Record<string, any>} [task]
+   * @returns {Promise<string>}
+   */
+  _uploadFile(file, task = this._task) {
     const cached = this._fileUploads.get(file);
     if (cached) return cached;
-    const upload = uploadTaskUpdatePhoto(
-      this._task.taskId,
-      this._task.checkId,
-      {
-        file,
-        capturedAt: new Date().toISOString(),
-      },
-    )
+    const upload = uploadTaskUpdatePhoto(task.taskId, task.checkId, {
+      file,
+      capturedAt: new Date().toISOString(),
+    })
       .then((uploaded) => uploaded.artifactId)
       .catch((error) => {
         this._fileUploads.delete(file);
@@ -534,18 +528,14 @@ export class TaskUpdateDialog extends HTMLElement {
       (this._results && !this._pendingEvent)
     )
       return;
+    const notes = this._noteDrafts.map((note) => note.trim()).filter(Boolean);
+    if (this._results) {
+      this._finishResults(notes, this._files);
+      return;
+    }
     this._savingNotes = true;
     root.inert = true;
-    const save = /** @type {HTMLButtonElement | null} */ (
-      root.querySelector?.("[data-save-notes]")
-    );
-    const label = save?.textContent;
     try {
-      const notes = this._noteDrafts.map((note) => note.trim()).filter(Boolean);
-      // Update media registers only against a task the server has already
-      // moved to in_progress/completed, so a Done tapped while the completion
-      // is in flight waits for its response before uploading anything.
-      if (this._completion && !(await this._awaitCompletion(root))) return;
       const photos = await this._uploadFiles();
       if (!photos || (!this._pendingEvent && !notes.length && !photos.length))
         return;
@@ -565,46 +555,63 @@ export class TaskUpdateDialog extends HTMLElement {
         if (response) await this._finishSave();
       }
     } finally {
-      if (save && label && this._open) save.textContent = label;
       this._savingNotes = false;
       root.inert = false;
     }
   }
 
   /**
-   * Done while the completion is in flight: wait for its response (the
-   * documentation event) first. Resolves null when there is nothing to save.
-   * @param {HTMLElement} root
+   * Results mode (Done, Skip, close): the prompt closes now and the
+   * documentation finishes in the background: the completion response when
+   * still in flight, then photo uploads (update media registers only once
+   * the server has moved the task on), then the document write that seals
+   * the window. A results prompt is a single-use element (openResultsDialog
+   * creates one per prompt and removes it on close), so its fields are free
+   * to carry the late work. The draft leaves with the prompt: a failed save
+   * surfaces as the update error toast with a retry that re-runs this chain
+   * (uploads that succeeded are cached per file; the document route replays
+   * identical content), except when another window already closed the
+   * event. An empty seal fails silently.
+   * @param {string[]} notes @param {File[]} files
    */
-  _awaitCompletion(root) {
-    const save = root.querySelector?.("[data-save-notes]");
-    if (save) save.textContent = t("taskUpdate.capture.saving");
-    return this._runMutation(
-      root,
-      "[data-save-notes], [data-skip]",
-      () => this._completion,
-    );
+  _finishResults(notes, files) {
+    const task = this._task;
+    const pending = this._completion ?? Promise.resolve(this._pendingEvent);
+    const draft = Boolean(notes.length || files.length);
+    this._dismiss();
+    if (!task) return;
+    const attempt = () =>
+      pending
+        .then(async (pendingEvent) => {
+          // No documentation window (the action failed, or nothing to
+          // document): a draft typed for it cannot be attached anywhere.
+          if (!pendingEvent) {
+            if (draft) showTaskUpdateErrorToast();
+            return;
+          }
+          const photoKeys = await Promise.all(
+            files.map((file) => this._uploadFile(file, task)),
+          );
+          await documentTaskUpdate(task.taskId, pendingEvent.updateId, {
+            notes,
+            photoKeys,
+          });
+        })
+        .catch((error) => {
+          if (!draft) return;
+          const conflict =
+            error instanceof ApiError &&
+            /** @type {{ code?: string }} */ (error.body)?.code ===
+              "DocumentationConflict";
+          showTaskUpdateErrorToast(error, conflict ? undefined : attempt);
+        });
+    void attempt();
   }
 
   /** @param {HTMLElement} root @param {string[]} notes @param {string[]} photos */
   async _finishDocumentation(root, notes, photos) {
-    if (this._completion) {
-      // Skip while the completion is in flight (Done awaits it in _saveNotes
-      // before getting here): close now and seal the documentation window
-      // in the background once the response lands.
-      // A results prompt is a single-use element (openResultsDialog creates
-      // one per prompt and removes it on close), so its fields are free to
-      // carry the late seal.
-      const completion = this._completion;
-      this._dismiss();
-      void completion.then((pendingEvent) => {
-        this._pendingEvent = pendingEvent;
-        return this._sealPendingEvent();
-      });
-      return;
-    }
-    if (!this._pendingEvent && this._results) {
-      this._dismiss();
+    if (this._results) {
+      this._finishResults(notes, []);
       return;
     }
     if (!this._task || !this._pendingEvent) return;
@@ -621,8 +628,7 @@ export class TaskUpdateDialog extends HTMLElement {
     this._pendingEvent = null;
     this._resetDraft();
     this._mode = "timeline";
-    if (this._results) this._dismiss();
-    else await this._load();
+    await this._load();
   }
 
   /** @param {HTMLElement} root @param {string} type @param {string} [text] */
@@ -713,16 +719,6 @@ export class TaskUpdateDialog extends HTMLElement {
     try {
       return await action();
     } catch (caught) {
-      if (
-        caught instanceof ApiError &&
-        /** @type {{ code?: string }} */ (caught.body)?.code ===
-          "DocumentationConflict" &&
-        this._results
-      ) {
-        this._pendingEvent = null;
-        this._render();
-        return null;
-      }
       if (
         reloadOnConflict &&
         caught instanceof ApiError &&

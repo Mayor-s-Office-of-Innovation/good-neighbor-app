@@ -254,3 +254,9 @@ variable "sf311_media_zone_id" {
   description = "Route53 hosted zone for the dedicated 311 media hostname and ACM validation."
   type        = string
 }
+
+variable "manage_application_cost_allocation_tag" {
+  description = "Manage Application cost-tag activation only in an account allowed to do so. Linked accounts delegate activation to their billing management account."
+  type        = bool
+  default     = true
+}

@@ -100,8 +100,6 @@
 }
 
 .check-timeline {
-  --check-flow-ink: #2f323f;
-  --check-flow-on-ink: #fff;
   --check-flow-text: var(--wa-color-text-normal, #1b1d26);
   /* Routed capture is the primary flow: keep the phone-app column width
      (today-view's content width), not the stale desktop 64rem. */

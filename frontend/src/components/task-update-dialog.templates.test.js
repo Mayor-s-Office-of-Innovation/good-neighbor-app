@@ -393,7 +393,7 @@ it("keeps notes and skip available without an uploadable check", () => {
   expect(markup).toContain("data-add-note");
   expect(markup).toContain("data-skip");
 });
-it("preserves a conflicted draft with an explanation and disabled save", () => {
+it("preserves an unattached draft with an explanation and disabled save", () => {
   const markup = taskUpdateCapture({
     pendingEvent: null,
     results: true,
@@ -402,7 +402,7 @@ it("preserves a conflicted draft with an explanation and disabled save", () => {
     previews: [],
   });
   expect(markup).toContain("Unsaved note");
-  expect(markup).toContain(t("taskUpdate.capture.conflict"));
+  expect(markup).toContain(t("taskUpdate.capture.unattached"));
   expect(markup).toMatch(/data-save-notes\s+disabled/);
   expect(markup).toContain("data-skip");
 });

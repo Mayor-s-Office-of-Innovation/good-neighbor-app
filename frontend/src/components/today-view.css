@@ -743,12 +743,6 @@ html.wa-dark .home-results__complete-content img {
   mix-blend-mode: screen;
 }
 
-.actioncard__cancel {
-  width: auto;
-  margin-top: 0;
-  padding-inline: 0.4rem;
-}
-
 /* Language picker (settings menu → Language). Options are submit buttons so
    the dialog's returnValue carries the chosen locale id. */
 .language-list {

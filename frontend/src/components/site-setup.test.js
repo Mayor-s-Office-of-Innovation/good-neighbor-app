@@ -29,6 +29,16 @@ vi.mock("../services/devices.js", () => ({
   redeemEnrollmentGrant: setup.redeemEnrollmentGrant,
 }));
 vi.mock("../db.js", () => ({
+  bindingFromSession: (session) => ({
+    siteId: session.site?.siteId,
+    deviceId: session.deviceId,
+    bindingId: session.bindingId,
+    physicalDeviceId: session.physicalDeviceId,
+    token: session.token,
+    refreshToken: session.refreshToken,
+    tokenGeneration: session.tokenGeneration,
+    accessLevel: session.accessLevel,
+  }),
   getSite: setup.getSite,
   saveDiscoveredBindings: setup.saveDiscoveredBindings,
   setSite: setup.setSite,

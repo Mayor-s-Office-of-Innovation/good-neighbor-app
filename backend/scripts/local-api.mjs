@@ -80,6 +80,11 @@ import {
   selectDeviceBinding,
 } from "../src/handlers/device-bindings.js";
 import {
+  issueSessionHandoff,
+  redeemSessionHandoff,
+  retireSessionHandoff,
+} from "../src/handlers/session-handoff.js";
+import {
   cancelStaffGrant,
   createStaffGrant,
   getCurrentStaffGrant,
@@ -270,6 +275,9 @@ const routes = [
   route("POST", "/app/v1/manager-access/request", requestManagerAccess),
   route("GET", "/app/v1/device-bindings", listDeviceBindings),
   route("POST", "/app/v1/device-bindings/select", selectDeviceBinding),
+  route("POST", "/app/v1/session-handoff", issueSessionHandoff),
+  route("DELETE", "/app/v1/session-handoff", retireSessionHandoff),
+  route("POST", "/app/v1/session-handoff/redeem", redeemSessionHandoff),
   route("POST", "/app/v1/manager/staff-grants", createStaffGrant),
   route("GET", "/app/v1/manager/staff-grants/current", getCurrentStaffGrant),
   route("DELETE", "/app/v1/manager/staff-grants/{grantId}", cancelStaffGrant),

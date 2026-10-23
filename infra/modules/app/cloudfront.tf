@@ -88,6 +88,7 @@ resource "aws_cloudfront_function" "frontend_spa_rewrite" {
 }
 
 resource "aws_cloudfront_distribution" "frontend" {
+  #checkov:skip=CKV_AWS_86:Standard access logs record every viewer IP for a year and nothing reads them; API Gateway access logs (no IP) and CloudFront metrics cover operations.
   #checkov:skip=CKV_AWS_310:Single-origin static SPA; origin failover is N/A until there is a second origin.
   #checkov:skip=CKV_AWS_374:Public citywide app — no geo restriction is intentional.
   #checkov:skip=CKV2_AWS_47:Log4j is covered by AWSManagedRulesKnownBadInputsRuleSet (active, non-override) on the attached WAF ACL.
@@ -214,16 +215,11 @@ resource "aws_cloudfront_distribution" "frontend" {
     minimum_protocol_version       = var.frontend_certificate_arn != "" ? "TLSv1.2_2021" : null
   }
 
-  logging_config {
-    bucket          = aws_s3_bucket.access_logs.bucket_domain_name
-    prefix          = "cloudfront/"
-    include_cookies = false
-  }
-
   tags = var.tags
 }
 
 resource "aws_cloudfront_distribution" "admin" {
+  #checkov:skip=CKV_AWS_86:Standard access logs record every viewer IP for a year and nothing reads them; API Gateway access logs (no IP) and CloudFront metrics cover operations.
   #checkov:skip=CKV_AWS_310:Single-origin static admin SPA; origin failover is N/A until there is a second origin.
   #checkov:skip=CKV_AWS_374:City admin app — no geo restriction is intentional.
   #checkov:skip=CKV_AWS_174:Custom SSL is configured with TLSv1.2_2021 whenever admin_domain_names is non-empty; the default certificate branch exists only for no-alias deployments.
@@ -295,20 +291,16 @@ resource "aws_cloudfront_distribution" "admin" {
     minimum_protocol_version       = var.admin_certificate_arn != "" ? "TLSv1.2_2021" : null
   }
 
-  logging_config {
-    bucket          = aws_s3_bucket.access_logs.bucket_domain_name
-    prefix          = "cloudfront-admin/"
-    include_cookies = false
-  }
-
   tags = var.tags
 }
 
-# CloudFront standard (legacy) logging writes to S3 via an ACL grant, so the
-# log bucket must allow ACLs. New buckets default to BucketOwnerEnforced (ACLs
-# disabled); relax to BucketOwnerPreferred so the log-delivery grant is accepted.
+# Kept from when CloudFront standard logging (removed 2026-10-22, it recorded
+# viewer IPs) delivered here via an ACL grant. The remaining S3 server-access
+# logging also accepts the log-delivery ACL path, so this stays as-is rather
+# than flipping to BucketOwnerEnforced, which would also require a
+# logging.s3.amazonaws.com bucket policy (see infra/bootstrap/prod-state).
 resource "aws_s3_bucket_ownership_controls" "access_logs" {
-  #checkov:skip=CKV2_AWS_65:ACLs are intentionally re-enabled here — CloudFront standard (legacy) logging delivers to S3 via an ACL grant.
+  #checkov:skip=CKV2_AWS_65:ACLs stay enabled so S3 server-access log delivery to this bucket keeps its ACL-based path; no viewer-facing objects live here.
   bucket = aws_s3_bucket.access_logs.id
 
   rule {

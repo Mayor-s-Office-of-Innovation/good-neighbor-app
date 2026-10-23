@@ -18,6 +18,11 @@ locals {
     "POST /app/v1/manager-access/request",
     "GET /app/v1/device-bindings",
     "POST /app/v1/device-bindings/select",
+    # Home Screen session handoff (notes/pwa-session-handoff-plan.md): issue
+    # is authorized; redeem is open (listed in route_is_open below).
+    "POST /app/v1/session-handoff",
+    "DELETE /app/v1/session-handoff",
+    "POST /app/v1/session-handoff/redeem",
     "POST /app/v1/manager/staff-grants",
     "GET /app/v1/manager/staff-grants/current",
     "DELETE /app/v1/manager/staff-grants/{grantId}",
@@ -184,6 +189,7 @@ locals {
     "POST /v1/devices"                    = true
     "POST /v1/devices/token:refresh"      = true
     "POST /app/v1/enrollment/redeem"      = true
+    "POST /app/v1/session-handoff/redeem" = true
     "POST /app/v1/manager-access/request" = true
     "GET /v1/sites:search"                = true
     "GET /v1/311-media"                   = true
@@ -330,11 +336,19 @@ resource "aws_apigatewayv2_stage" "default" {
   name        = "$default"
   auto_deploy = true
 
+  # Privacy: the viewer IP ($context.identity.sourceIp) is deliberately NOT
+  # logged. Per-caller correlation during investigations uses the device
+  # authorizer's pseudonymous subject and site (flat context keys the Lambda
+  # authorizer returns) on device routes, and the Cognito user sub from the
+  # JWT authorizer's claims on admin routes; each is blank on the other's
+  # routes. Unauthenticated routes correlate by requestId.
   access_log_settings {
     destination_arn = aws_cloudwatch_log_group.api_gw.arn
     format = jsonencode({
       requestId       = "$context.requestId"
-      ip              = "$context.identity.sourceIp"
+      sub             = "$context.authorizer.sub"
+      siteId          = "$context.authorizer.siteId"
+      adminSub        = "$context.authorizer.claims.sub"
       requestTime     = "$context.requestTime"
       httpMethod      = "$context.httpMethod"
       routeKey        = "$context.routeKey"

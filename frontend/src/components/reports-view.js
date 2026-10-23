@@ -21,6 +21,7 @@ import {
   hasAdminAccess,
   listBoundSites,
 } from "../db.js";
+import { retireHandoff } from "../services/session-handoff.js";
 import { openOverlayDialog } from "../dialog-history.js";
 import { getLocale, setLocale, t } from "../i18n/i18n.js";
 import { discardInMemorySession } from "../state/check-session.js";
@@ -431,6 +432,9 @@ class ReportsView extends ReportsScreen {
     this._logoutError = "";
     this._render();
     try {
+      // Before the session goes: retire the Home Screen handoff grant and
+      // put the static manifest back (services/session-handoff.js).
+      await retireHandoff();
       await clearSiteSession();
       discardInMemorySession();
       this._logoutDialogOpen = false;

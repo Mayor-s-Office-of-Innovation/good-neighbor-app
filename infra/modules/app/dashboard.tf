@@ -29,6 +29,9 @@ locals {
       aws_cloudwatch_metric_alarm.submissions_dlq_not_empty.arn,
       aws_cloudwatch_metric_alarm.submissions_queue_backlog.arn,
       aws_cloudwatch_metric_alarm.worker_duration_high.arn,
+      aws_cloudwatch_metric_alarm.analysis_dlq_not_empty.arn,
+      aws_cloudwatch_metric_alarm.analysis_queue_backlog.arn,
+      aws_cloudwatch_metric_alarm.analysis_duration_high.arn,
       aws_cloudwatch_metric_alarm.api_5xx.arn,
       aws_cloudwatch_metric_alarm.dynamodb_throttles.arn,
       aws_cloudwatch_metric_alarm.server_error_rate.arn,
@@ -177,13 +180,17 @@ locals {
     {
       type = "metric", x = 0, y = 18, width = 12, height = 6
       properties = merge(local.five_min, {
-        title   = "Submissions queue"
+        title   = "Analysis and background queues"
         stacked = false
         metrics = [
           ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", aws_sqs_queue.submissions.name, { stat = "Maximum", label = "queued" }],
+          ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", aws_sqs_queue.analysis.name, { stat = "Maximum", label = "analysis: queued" }],
           ["AWS/SQS", "ApproximateNumberOfMessagesNotVisible", "QueueName", aws_sqs_queue.submissions.name, { stat = "Maximum", label = "in flight" }],
+          ["AWS/SQS", "ApproximateNumberOfMessagesNotVisible", "QueueName", aws_sqs_queue.analysis.name, { stat = "Maximum", label = "analysis: in flight" }],
           ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", aws_sqs_queue.submissions_dlq.name, { stat = "Maximum", label = "dead-lettered", color = "#d62728" }],
+          ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", aws_sqs_queue.analysis_dlq.name, { stat = "Maximum", label = "analysis: dead-lettered", color = "#d62728" }],
           ["AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName", aws_sqs_queue.submissions.name, { stat = "Maximum", label = "oldest message age (s)", yAxis = "right" }],
+          ["AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName", aws_sqs_queue.analysis.name, { stat = "Maximum", label = "analysis: oldest message age (s)", yAxis = "right" }],
         ]
         yAxis = {
           left  = { min = 0, showUnits = false }
@@ -199,14 +206,19 @@ locals {
     {
       type = "metric", x = 12, y = 18, width = 12, height = 6
       properties = merge(local.five_min, {
-        title   = "Worker Lambda"
+        title   = "Analysis and background workers"
         stacked = false
         metrics = [
           ["AWS/Lambda", "Invocations", "FunctionName", aws_lambda_function.worker.function_name, { label = "invocations" }],
+          ["AWS/Lambda", "Invocations", "FunctionName", aws_lambda_function.analysis.function_name, { label = "analysis: invocations" }],
           ["AWS/Lambda", "Errors", "FunctionName", aws_lambda_function.worker.function_name, { label = "errors", color = "#d62728" }],
+          ["AWS/Lambda", "Errors", "FunctionName", aws_lambda_function.analysis.function_name, { label = "analysis: errors", color = "#d62728" }],
           ["AWS/Lambda", "Throttles", "FunctionName", aws_lambda_function.worker.function_name, { label = "throttles", color = "#ff7f0e" }],
+          ["AWS/Lambda", "Throttles", "FunctionName", aws_lambda_function.analysis.function_name, { label = "analysis: throttles", color = "#ff7f0e" }],
           ["AWS/Lambda", "ConcurrentExecutions", "FunctionName", aws_lambda_function.worker.function_name, { stat = "Maximum", label = "concurrent (max)" }],
+          ["AWS/Lambda", "ConcurrentExecutions", "FunctionName", aws_lambda_function.analysis.function_name, { stat = "Maximum", label = "analysis: concurrent (max)" }],
           ["AWS/Lambda", "Duration", "FunctionName", aws_lambda_function.worker.function_name, { stat = "p95", label = "duration p95 (ms)", yAxis = "right" }],
+          ["AWS/Lambda", "Duration", "FunctionName", aws_lambda_function.analysis.function_name, { stat = "p95", label = "analysis: duration p95 (ms)", yAxis = "right" }],
         ]
         yAxis = {
           left  = { min = 0, showUnits = false }

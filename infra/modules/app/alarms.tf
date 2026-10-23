@@ -370,7 +370,7 @@ resource "aws_cloudwatch_log_metric_filter" "media_quota_exceeded" {
 
 resource "aws_cloudwatch_metric_alarm" "media_quota_exceeded" {
   alarm_name          = "${local.name_prefix}-media-quota-exceeded"
-  alarm_description   = "A device, check, Site, or global media quota is repeatedly exhausted. Follow docs/runbooks/media-safeguards.md."
+  alarm_description   = "A device, check, or Site media quota is repeatedly exhausted. Follow docs/runbooks/media-safeguards.md."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
   datapoints_to_alarm = 1
@@ -611,4 +611,43 @@ resource "aws_cloudwatch_metric_alarm" "revocation_operation_partial" {
   ok_actions    = [aws_sns_topic.alarms.arn]
 
   tags = var.tags
+}
+
+resource "aws_cloudwatch_log_metric_filter" "analysis_worker_errors" {
+  name           = "${local.name_prefix}-analysis-server-errors"
+  log_group_name = aws_cloudwatch_log_group.analysis.name
+  pattern        = "{ $.level = \"ERROR\" }"
+
+  metric_transformation {
+    name          = "ServerError"
+    namespace     = local.error_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "analysis_media_rejected" {
+  name           = "${local.name_prefix}-analysis-media-rejected"
+  log_group_name = aws_cloudwatch_log_group.analysis.name
+  pattern        = "{ $.marker = \"MediaRejected\" }"
+
+  metric_transformation {
+    name          = "MediaRejected"
+    namespace     = local.security_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "analysis_311_action_failures" {
+  name           = "${local.name_prefix}-analysis-311-action-failures"
+  log_group_name = aws_cloudwatch_log_group.analysis.name
+  pattern        = "{ $.eventType = \"311_app_action_failed\" }"
+
+  metric_transformation {
+    name          = "Sf311ActionFailed"
+    namespace     = local.error_namespace
+    value         = "1"
+    default_value = "0"
+  }
 }

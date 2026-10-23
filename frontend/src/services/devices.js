@@ -10,7 +10,11 @@
   rotating refresh token.
 */
 
-import { ApiError, InvalidSiteCodeError } from "./api-error.js";
+import {
+  ApiError,
+  InvalidHandoffGrantError,
+  InvalidSiteCodeError,
+} from "./api-error.js";
 
 // Same-origin everywhere (shared strategy with services/api.js): in dev the
 // Vite proxy forwards `/v1/*` → the local API; in production the SPA and API
@@ -98,6 +102,40 @@ export async function redeemEnrollmentGrant(grantId, token, opts = {}) {
       },
     );
     throw error;
+  }
+  const body = await res.json();
+  assertSession(body);
+  return body;
+}
+
+/**
+ * Redeem a Home Screen handoff grant (services/session-handoff.js) for a
+ * fresh session on the device it was issued for. Open route: the installed
+ * app has no session yet. The secret travels only in the JSON body; the
+ * caller strips it from the launch URL before awaiting this.
+ * @param {string} grantId
+ * @param {string} token
+ * @returns {Promise<DeviceSession>}
+ * @throws {InvalidHandoffGrantError} on 401, else a network/5xx failure
+ */
+export async function redeemHandoffGrant(grantId, token) {
+  /** @type {Response} */
+  let res;
+  try {
+    res = await fetch(`${BASE}/app/v1/session-handoff/redeem`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ grantId, token }),
+    });
+  } catch (err) {
+    // fetch only rejects on a transport failure (offline, DNS, CORS, abort).
+    throw new ApiError(`handoff transport failure: ${err}`, { status: 0 });
+  }
+  if (res.status === 401) throw new InvalidHandoffGrantError();
+  if (!res.ok) {
+    throw new ApiError(`handoff redemption failed (${res.status})`, {
+      status: res.status,
+    });
   }
   const body = await res.json();
   assertSession(body);

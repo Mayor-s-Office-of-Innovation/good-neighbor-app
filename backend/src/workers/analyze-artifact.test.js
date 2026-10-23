@@ -369,6 +369,41 @@ describe("analyze-artifact worker", () => {
     expect(metricLines(log, "AnalysisCompleted")).toHaveLength(0);
   });
 
+  it.each(["analyzer", "persistence"])(
+    "preserves a %s failure through the deployed Lambda dispatcher",
+    async (failureStage) => {
+      const { handler: dispatch } = await import("../lambda/worker.js");
+      getObjectBytes.mockResolvedValue({
+        bytes: Buffer.from("img"),
+        contentType: "image/jpeg",
+      });
+      if (failureStage === "analyzer") {
+        analyze.mockRejectedValueOnce(
+          new AnalyzerError("unavailable", { status: 503, retryable: true }),
+        );
+      } else {
+        analyze.mockResolvedValueOnce(singleLowConcernResponse);
+        ddbSend.mockRejectedValueOnce(new Error("database unavailable"));
+      }
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+      const result = await dispatch(
+        /** @type {any} */ ({
+          Records: [{ messageId: "failed", body: JSON.stringify(baseMsg) }],
+        }),
+        /** @type {any} */ ({}),
+      );
+      expect(result).toEqual({
+        batchItemFailures: [{ itemIdentifier: "failed" }],
+      });
+      expect(errorLog).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(errorLog.mock.calls[0][0])).toMatchObject({
+        level: "ERROR",
+        messageId: "failed",
+        route: "worker analyze-artifact",
+      });
+    },
+  );
+
   it("reports a retryable analyzer error as a batch item failure so SQS redelivers just that message", async () => {
     getObjectBytes.mockResolvedValueOnce({
       bytes: Buffer.from("img"),
@@ -379,13 +414,20 @@ describe("analyze-artifact worker", () => {
     );
 
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
 
     // A rejected artifact no longer throws the whole batch — it comes back in
     // batchItemFailures so only that message redelivers.
     const res = await invoke(baseMsg);
     expect(res).toEqual({ batchItemFailures: [{ itemIdentifier: "m1" }] });
     expect(ddbSend).not.toHaveBeenCalled();
+    expect(errorLog).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(errorLog.mock.calls[0][0])).toMatchObject({
+      level: "ERROR",
+      route: "worker analyze-artifact",
+      messageId: "m1",
+      message: "throttled",
+    });
     // A transient failure is a retry, not a failed analysis; the call still
     // contributes a latency sample so slow failures show up in p95.
     const calls = metricLines(log, "AnalyzerCall");

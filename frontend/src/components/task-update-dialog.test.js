@@ -329,7 +329,7 @@ it.each(["notes", "action"])(
   },
 );
 it.each(["save", "skip", "failure"])(
-  "handles completion results: %s",
+  "closes at once and documents completion results in the background: %s",
   async (kind) => {
     const { TaskUpdateDialog } = await import("./task-update-dialog.js");
     const dialog = /** @type {any} */ (new TaskUpdateDialog());
@@ -342,22 +342,83 @@ it.each(["save", "skip", "failure"])(
     };
     dialog.querySelector = vi.fn(() => modal);
     dialog.openResults({ taskId: "task-1", latestUpdateId: "update-1" });
-    dialog._uploadFiles = vi.fn().mockResolvedValue(["photo-1"]);
+    const file = { name: "pile.jpg" };
+    dialog._uploadFile = vi.fn().mockResolvedValue("photo-1");
+    dialog._files = [file];
     dialog._noteDrafts = [" Work completed ", "", ""];
+    toasts.showTaskUpdateErrorToast.mockClear();
     api.documentTaskUpdate.mockReset();
     if (kind === "failure")
       api.documentTaskUpdate.mockRejectedValue(new Error("offline"));
     else api.documentTaskUpdate.mockResolvedValue({ update: {} });
     if (kind === "skip") await dialog._finishDocumentation(modal, [], []);
     else await dialog._saveNotes(modal);
-    expect(api.documentTaskUpdate).toHaveBeenCalledWith("task-1", "update-1", {
-      notes: kind === "skip" ? [] : ["Work completed"],
-      photoKeys: kind === "skip" ? [] : ["photo-1"],
-    });
-    expect(dialog._open).toBe(kind === "failure");
-    expect(dialog._pendingEvent === null).toBe(kind !== "failure");
+    // The prompt is gone before any request completes; the draft with it.
+    expect(dialog._open).toBe(false);
+    expect(modal.close).toHaveBeenCalledOnce();
+    expect(dialog._files).toEqual([]);
+    await vi.waitFor(() =>
+      expect(api.documentTaskUpdate).toHaveBeenCalledWith(
+        "task-1",
+        "update-1",
+        {
+          notes: kind === "skip" ? [] : ["Work completed"],
+          photoKeys: kind === "skip" ? [] : ["photo-1"],
+        },
+      ),
+    );
+    // Skip discards picked photos rather than uploading them.
+    if (kind === "skip") expect(dialog._uploadFile).not.toHaveBeenCalled();
+    else
+      expect(dialog._uploadFile).toHaveBeenCalledWith(
+        file,
+        expect.objectContaining({ taskId: "task-1" }),
+      );
+    if (kind !== "failure") {
+      expect(toasts.showTaskUpdateErrorToast).not.toHaveBeenCalled();
+      return;
+    }
+    await vi.waitFor(() =>
+      expect(toasts.showTaskUpdateErrorToast).toHaveBeenCalledOnce(),
+    );
+    // The toast's retry re-runs the same save with the captured draft.
+    const [, retry] = toasts.showTaskUpdateErrorToast.mock.calls[0];
+    api.documentTaskUpdate.mockResolvedValue({ update: {} });
+    retry();
+    await vi.waitFor(() =>
+      expect(api.documentTaskUpdate).toHaveBeenCalledTimes(2),
+    );
+    expect(api.documentTaskUpdate).toHaveBeenLastCalledWith(
+      "task-1",
+      "update-1",
+      { notes: ["Work completed"], photoKeys: ["photo-1"] },
+    );
   },
 );
+
+it("offers no retry when another window already closed the event", async () => {
+  const { TaskUpdateDialog } = await import("./task-update-dialog.js");
+  const { ApiError } = await import("../services/api.js");
+  const dialog = /** @type {any} */ (new TaskUpdateDialog());
+  dialog._render = vi.fn();
+  dialog.dispatchEvent = vi.fn();
+  const modal = { close: vi.fn(), querySelectorAll: () => [] };
+  dialog.querySelector = vi.fn(() => modal);
+  dialog.openResults({ taskId: "task-1", latestUpdateId: "update-1" });
+  dialog._noteDrafts = ["Typed", "", ""];
+  toasts.showTaskUpdateErrorToast.mockClear();
+  api.documentTaskUpdate.mockReset().mockRejectedValue(
+    Object.assign(new ApiError("conflict"), {
+      status: 409,
+      body: { code: "DocumentationConflict" },
+    }),
+  );
+  await dialog._saveNotes(modal);
+  await vi.waitFor(() =>
+    expect(toasts.showTaskUpdateErrorToast).toHaveBeenCalledOnce(),
+  );
+  expect(toasts.showTaskUpdateErrorToast.mock.calls[0][1]).toBeUndefined();
+});
 
 it.each([false, true])(
   "documents the existing additional action (skip: %s)",
@@ -383,9 +444,8 @@ it.each([false, true])(
   },
 );
 
-it("retains a conflicted result draft until the user confirms discard", async () => {
+it("asks before discarding a results draft on close, then seals without it", async () => {
   const { TaskUpdateDialog } = await import("./task-update-dialog.js");
-  const { ApiError } = await import("../services/api.js");
   const dialog = /** @type {any} */ (new TaskUpdateDialog());
   dialog._render = vi.fn();
   dialog._showDiscard = vi.fn();
@@ -394,24 +454,22 @@ it("retains a conflicted result draft until the user confirms discard", async ()
   dialog.querySelector = vi.fn(() => modal);
   dialog.openResults({ taskId: "task-1", latestUpdateId: "update-1" });
   dialog._noteDrafts = ["Keep this note", "", ""];
-  dialog._uploadFiles = vi.fn().mockResolvedValue(["photo-1"]);
-  api.documentTaskUpdate.mockReset().mockRejectedValue(
-    Object.assign(new ApiError("conflict"), {
-      status: 409,
-      body: { code: "DocumentationConflict" },
-    }),
-  );
-  await dialog._saveNotes(modal);
-  expect(dialog._noteDrafts[0]).toBe("Keep this note");
-  expect(dialog._open).toBe(true);
-  expect(dialog._pendingEvent).toBeNull();
-  await dialog._saveNotes(modal);
-  expect(api.documentTaskUpdate).toHaveBeenCalledTimes(1);
+  dialog._files = [{ name: "pile.jpg" }];
+  dialog._uploadFile = vi.fn();
+  api.documentTaskUpdate.mockReset().mockResolvedValue({ update: {} });
   await dialog._close();
   expect(dialog._showDiscard).toHaveBeenCalledOnce();
   expect(dialog._open).toBe(true);
+  expect(api.documentTaskUpdate).not.toHaveBeenCalled();
   await dialog._close(true);
   expect(dialog._open).toBe(false);
+  await vi.waitFor(() =>
+    expect(api.documentTaskUpdate).toHaveBeenCalledWith("task-1", "update-1", {
+      notes: [],
+      photoKeys: [],
+    }),
+  );
+  expect(dialog._uploadFile).not.toHaveBeenCalled();
 });
 
 it.each([undefined, "Followed up"])(
@@ -453,12 +511,14 @@ it("saves notes for a check-free task without attempting a photo upload", async 
   api.uploadTaskUpdatePhoto.mockClear();
   api.documentTaskUpdate.mockReset().mockResolvedValue({ update: {} });
   await dialog._saveNotes(modal);
-  expect(api.uploadTaskUpdatePhoto).not.toHaveBeenCalled();
-  expect(api.documentTaskUpdate).toHaveBeenCalledWith("task-1", "update-1", {
-    notes: ["Area cleaned"],
-    photoKeys: [],
-  });
   expect(dialog._open).toBe(false);
+  await vi.waitFor(() =>
+    expect(api.documentTaskUpdate).toHaveBeenCalledWith("task-1", "update-1", {
+      notes: ["Area cleaned"],
+      photoKeys: [],
+    }),
+  );
+  expect(api.uploadTaskUpdatePhoto).not.toHaveBeenCalled();
 });
 
 it("resets workflow state when reusing a 311 editor for completion results and back", async () => {
@@ -518,18 +578,24 @@ describe("results prompt opened before the completion response", () => {
     return { dialog, modal, completion };
   }
 
-  it("lets the user draft right away and saves once the response lands", async () => {
+  it("closes on Done at once and saves once the response lands", async () => {
     const { dialog, modal, completion } = await openPending();
     expect(dialog._open).toBe(true);
     expect(dialog._pendingEvent).toEqual({ updateId: null });
     expect(dialog._photosAllowed()).toBe(true);
-    dialog._uploadFiles = vi.fn().mockResolvedValue(["photo-1"]);
+    const file = { name: "pile.jpg" };
+    dialog._uploadFile = vi.fn().mockResolvedValue("photo-1");
+    dialog._files = [file];
     dialog._noteDrafts = ["Picked up", "", ""];
     api.documentTaskUpdate.mockReset().mockResolvedValue({ update: {} });
-    const saving = dialog._saveNotes(modal);
+    await dialog._saveNotes(modal);
+    expect(dialog._open).toBe(false);
+    expect(dialog._completion).toBeNull();
     await Promise.resolve();
+    // Update media registers only once the task has moved on: nothing is
+    // uploaded or documented until the completion response lands.
+    expect(dialog._uploadFile).not.toHaveBeenCalled();
     expect(api.documentTaskUpdate).not.toHaveBeenCalled();
-    expect(dialog._open).toBe(true);
     completion.resolve({
       task: {
         taskId: "task-1",
@@ -537,14 +603,37 @@ describe("results prompt opened before the completion response", () => {
         canUploadPhotos: true,
       },
     });
-    await saving;
-    expect(api.documentTaskUpdate).toHaveBeenCalledWith("task-1", "update-1", {
-      notes: ["Picked up"],
-      photoKeys: ["photo-1"],
-    });
-    expect(dialog._open).toBe(false);
-    expect(dialog._completion).toBeNull();
+    await vi.waitFor(() =>
+      expect(api.documentTaskUpdate).toHaveBeenCalledWith(
+        "task-1",
+        "update-1",
+        { notes: ["Picked up"], photoKeys: ["photo-1"] },
+      ),
+    );
+    expect(dialog._uploadFile).toHaveBeenCalledWith(
+      file,
+      expect.objectContaining({ taskId: "task-1" }),
+    );
   });
+
+  it.each([
+    ["a draft", ["Typed meanwhile", "", ""], 1],
+    ["no draft", ["", "", ""], 0],
+  ])(
+    "reports a late response that leaves nothing to attach: %s",
+    async (_label, notes, toastCount) => {
+      const { dialog, modal, completion } = await openPending();
+      dialog._noteDrafts = notes;
+      toasts.showTaskUpdateErrorToast.mockClear();
+      api.documentTaskUpdate.mockReset();
+      await dialog._saveNotes(modal);
+      expect(dialog._open).toBe(false);
+      completion.resolve({ task: null });
+      await new Promise((resolve) => setTimeout(resolve));
+      expect(api.documentTaskUpdate).not.toHaveBeenCalled();
+      expect(toasts.showTaskUpdateErrorToast).toHaveBeenCalledTimes(toastCount);
+    },
+  );
 
   it("closes on skip at once and seals the documentation window later", async () => {
     const { dialog, modal, completion } = await openPending();
@@ -555,12 +644,13 @@ describe("results prompt opened before the completion response", () => {
     completion.resolve({
       task: { taskId: "task-1", latestUpdateId: "update-1" },
     });
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(api.documentTaskUpdate).toHaveBeenCalledWith("task-1", "update-1", {
-      notes: [],
-      photoKeys: [],
-    });
+    await vi.waitFor(() =>
+      expect(api.documentTaskUpdate).toHaveBeenCalledWith(
+        "task-1",
+        "update-1",
+        { notes: [], photoKeys: [] },
+      ),
+    );
   });
 
   it.each([
@@ -577,8 +667,6 @@ describe("results prompt opened before the completion response", () => {
       await dialog._completion;
       expect(dialog._open).toBe(staysOpen);
       expect(dialog._pendingEvent).toBeNull();
-      // A kept draft is explained as unattached, not as a window conflict.
-      expect(dialog._unattached).toBe(true);
       if (staysOpen) expect(dialog._render).toHaveBeenCalled();
     },
   );

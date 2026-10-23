@@ -49,8 +49,16 @@ The **only** durable copy of the media is GNP's.
 - [ ] **No media bytes on SQS** — enqueue the **S3 key**, not the bytes.
 - [ ] **No request/media-body logging** — the base64 image is not captured in API Gateway exec/access
   logs, our Lambda/worker logs, or (analyzer-account) Bedrock model-invocation logs.
+- [x] **No viewer IP addresses in logs** — the API Gateway access log omits `$context.identity.sourceIp`
+  (per-caller correlation uses the device authorizer's pseudonymous device subject + site on device
+  routes and the admin's Cognito user sub on JWT-authorized admin routes; unauthenticated routes
+  correlate by request ID). Lambda/worker logs never log headers or the raw event. CloudFront
+  standard logging is off on all distributions, and S3 server-access logging is off on the uploads and
+  complaints buckets (the only buckets clients reach directly, via presigned URLs). The remaining
+  server-access logs (frontend/admin/analytics/compliance-letters buckets) only ever see CloudFront OAC
+  or Lambda requester IPs. Logs written before 2026-10-22 age out of the access-logs bucket after a year.
 - [x] **Uploaded-media validation** before the analyzer call: independent byte/decode/type checks,
-  size/dimension/page caps, metadata-stripping re-encode, and per-check/device/Site/global budgets.
+  size/dimension/page caps, metadata-stripping re-encode, and per-check/device/Site budgets.
 - [x] **TLS-only** for both uploads and complaint-evidence buckets through explicit `aws:SecureTransport = false` denies.
 
 **Before go-live / any real (non-test) user data:** re-review this classification against the

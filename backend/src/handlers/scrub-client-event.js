@@ -11,6 +11,11 @@ export const EVENTS = /** @type {const} */ ([
   "capture_resumed",
   "camera_opened",
   "photo_picked",
+  // Home Screen session handoff (frontend services/session-handoff.js).
+  "handoff_grant_issued",
+  "handoff_redeemed",
+  "handoff_failed",
+  "handoff_stale_ignored",
 ]);
 
 /**
@@ -47,6 +52,7 @@ export const PROPERTY_KEYS = /** @type {const} */ ([
   "switching_site",
   "photo_bytes",
   "photo_type",
+  "reason",
 ]);
 const URL_KEYS = new Set(["$current_url", "$pathname", "landing_path"]);
 
