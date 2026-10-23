@@ -69,7 +69,6 @@ for (const environment of ["dev", "prod"]) {
       );
     });
   }
-
 }
 
 test("is idempotent and ignores similarly named resources", () => {
