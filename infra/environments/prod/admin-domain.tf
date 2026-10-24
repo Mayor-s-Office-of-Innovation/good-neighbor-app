@@ -1,6 +1,5 @@
-# Provisioned ahead of DT delegation. The ACM certificate, CloudFront alias,
-# and application records are intentionally managed in a later change after
-# the parent sf.gov zone delegates this zone to Route 53.
+# Delegated by DT from sf.gov. Zone signing and parent DS publication are
+# separate operations; retain the signing resources through hostname changes.
 resource "aws_route53_zone" "admin" {
   name    = "goodneighbor-compliance.sf.gov"
   comment = "Delegated production DNS zone for the Good Neighbor admin app."
