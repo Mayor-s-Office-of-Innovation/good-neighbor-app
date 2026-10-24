@@ -239,3 +239,27 @@ describe("pre-Phase-2 records (places map)", () => {
     expect(check.analyzingOpen).toBe(false);
   });
 });
+
+it("only finishing a perimeter check ends the install offer", async () => {
+  const install = await import("../services/install-prompt.js");
+  const { startCheck, clearCheck, markCaptureComplete, getCurrentCheck } =
+    await import("./check-session.js");
+  const completed = vi.fn();
+  install.resetInstallPrompt();
+  const unsubscribe = install.onFirstPerimeterCheckCompleted(completed);
+  startCheck("site-1");
+  expect(completed).not.toHaveBeenCalled();
+  clearCheck();
+  expect(completed).not.toHaveBeenCalled();
+  startCheck("site-1");
+  getCurrentCheck().flowType = "single-problem";
+  markCaptureComplete({ submissionKind: "problem_report" });
+  expect(completed).not.toHaveBeenCalled();
+  clearCheck();
+  startCheck("site-1");
+  getCurrentCheck().flowType = "perimeter";
+  markCaptureComplete({ submissionKind: "check" });
+  expect(completed).toHaveBeenCalledTimes(1);
+  unsubscribe();
+  install.resetInstallPrompt();
+});

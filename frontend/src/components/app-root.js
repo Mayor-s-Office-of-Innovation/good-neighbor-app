@@ -434,7 +434,11 @@ export class AppRoot extends HTMLElement {
   _maybeOfferInstall() {
     if (!this._shell || !shouldOfferInstall()) return;
     void import("./install-prompt.js").then(() => {
-      if (!this._shell?.isConnected || this.querySelector("install-prompt"))
+      if (
+        !this._shell?.isConnected ||
+        !shouldOfferInstall() ||
+        this.querySelector("install-prompt")
+      )
         return;
       this._shell.insertBefore(
         document.createElement("install-prompt"),

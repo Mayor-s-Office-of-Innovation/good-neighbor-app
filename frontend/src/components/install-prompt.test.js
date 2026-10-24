@@ -6,6 +6,7 @@ const state = vi.hoisted(() => ({
   route: "/today",
   heldPrompt: false,
   preparedListeners: new Set(),
+  checkListeners: new Set(),
 }));
 vi.mock("../router.js", () => ({
   currentRoute: () => state.route,
@@ -20,6 +21,10 @@ vi.mock("../services/install-prompt.js", () => ({
     return () => {};
   },
   onAppInstalled: () => () => {},
+  onFirstPerimeterCheckCompleted: (fn) => {
+    state.checkListeners.add(fn);
+    return () => state.checkListeners.delete(fn);
+  },
   dismissInstall: vi.fn(),
   promptInstall: vi.fn(),
 }));
@@ -38,6 +43,7 @@ beforeEach(() => {
   state.route = "/today";
   state.heldPrompt = false;
   state.preparedListeners.clear();
+  state.checkListeners.clear();
   vi.stubGlobal(
     "HTMLElement",
     class {
@@ -104,4 +110,14 @@ it("allows a held Chromium install prompt without an iOS handoff", async () => {
   const banner = await mount();
   expect(banner.hidden).toBe(false);
   expect(banner.innerHTML).toContain("install-banner__install");
+});
+
+it("removes the banner on first perimeter completion and cleans up its subscription", async () => {
+  state.prepared = true;
+  const banner = await mount();
+  banner.remove = vi.fn();
+  for (const fn of state.checkListeners) fn();
+  expect(banner.remove).toHaveBeenCalledTimes(1);
+  banner.disconnectedCallback();
+  expect(state.checkListeners.size).toBe(0);
 });

@@ -13,6 +13,7 @@ import {
   hasHeldPrompt,
   installMethod,
   onAppInstalled,
+  onFirstPerimeterCheckCompleted,
   onInstallAvailable,
   promptInstall,
 } from "../services/install-prompt.js";
@@ -40,6 +41,7 @@ export class InstallPrompt extends HTMLElement {
     // Installed by any route (the browser's own menu included): the offer is
     // moot, and a click on the stale button would read as a dismissal.
     this._unsubInstalled = onAppInstalled(() => this.remove());
+    this._unsubCheck = onFirstPerimeterCheckCompleted(() => this.remove());
     // The shell re-renders only #view on a language switch; this element
     // sits outside it, so it re-translates itself.
     this._onLocaleChange = () => {
@@ -62,6 +64,8 @@ export class InstallPrompt extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._unsubCheck?.();
+    this._unsubCheck = undefined;
     this._unsubRoute?.();
     this._unsubAvailable?.();
     this._unsubInstalled?.();
