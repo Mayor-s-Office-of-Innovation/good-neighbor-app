@@ -17,6 +17,7 @@
   The item API stays kind-agnostic on purpose ({kind:'photo', dataUrl} /
   {kind:'text', text}) so post-MVP capture kinds don't require a reshaping.
 */
+import { completeFirstPerimeterCheck } from "../services/install-prompt.js";
 import {
   newId,
   saveDraft,
@@ -342,6 +343,8 @@ export function markCaptureComplete({
 } = {}) {
   if (!current || !canMutateCurrentSession(checkId)) return null;
   current.status = "capture-complete";
+  if (current.flowType === "perimeter" && submissionKind === "check")
+    completeFirstPerimeterCheck();
   current.submittedAt = current.submittedAt || new Date().toISOString();
   current.submissionKind = submissionKind;
   if (typeof expectedArtifacts === "number") {

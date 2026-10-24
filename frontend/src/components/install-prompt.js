@@ -13,6 +13,7 @@ import {
   hasHeldPrompt,
   installMethod,
   onAppInstalled,
+  onFirstPerimeterCheckCompleted,
   onInstallAvailable,
   promptInstall,
 } from "../services/install-prompt.js";
@@ -40,19 +41,20 @@ export class InstallPrompt extends HTMLElement {
     // Installed by any route (the browser's own menu included): the offer is
     // moot, and a click on the stale button would read as a dismissal.
     this._unsubInstalled = onAppInstalled(() => this.remove());
+    this._unsubCheck = onFirstPerimeterCheckCompleted(() => this.remove());
     // The shell re-renders only #view on a language switch; this element
     // sits outside it, so it re-translates itself.
     this._onLocaleChange = () => {
       if (this.querySelector(".install-banner")) this._render(true);
     };
     window.addEventListener("localechange", this._onLocaleChange);
-    // The iOS copy promises the sign-in carries over only once the handoff
-    // manifest is actually installed (services/session-handoff.js).
+    // Wait for the sign-in handoff before giving iOS installation instructions.
+    // A slow or failed preparation must not offer an unauthenticated install.
     this._unsubHandoff = onHandoffPrepared(() => {
-      if (this.querySelector(".install-banner")) this._render(true);
+      if (this._method === "ios") this._render(true);
     });
     if (this._method === "ios") {
-      this._render();
+      if (isHandoffPrepared()) this._render();
     } else if (this._method === "prompt") {
       // Render only once the browser has actually handed us a prompt.
       this._unsubAvailable = onInstallAvailable(() => {
@@ -62,6 +64,8 @@ export class InstallPrompt extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._unsubCheck?.();
+    this._unsubCheck = undefined;
     this._unsubRoute?.();
     this._unsubAvailable?.();
     this._unsubInstalled?.();

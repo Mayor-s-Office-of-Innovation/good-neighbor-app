@@ -301,6 +301,12 @@ partition, never a body-supplied one. (Demo/test data remains disposable; see
   the Provider membership generation and the Site's current `providerId`.
   Provider Manager lifecycle and link issuance are restricted to Compliance
   Supervisors; Compliance Managers cannot exercise this cross-Site authority.
+- Manage access allows Provider Managers to issue eight-hour Site Manager or Site
+  Team Member invitations for the selected Site. Named manager assignments are added
+  atomically without replacing other managers. Site Managers continue issuing only
+  team invitations. Provider-derived issuer authority is snapshotted and rechecked
+  transactionally at redemption; invitees never inherit provider-wide authority.
+  See [ADR 0018](adr/0018-provider-issued-site-invitations.md).
 - The analyzer API key is a server-side credential (Secrets Manager), never sent to the device and never logged. Every analyze call sets `store_input:false`, so the analyzer retains none of our media.
 - Media bytes travel only device→S3 (presigned PUT) and S3→worker→analyzer. They never pass through the SQS queue (key only) or appear in API Gateway / Lambda / worker logs.
 - Lambda roles are scoped per function and avoid wildcard resource access. The check/task media bucket and the separate complaint-evidence bucket both block public access and require SSE-KMS + TLS. Every check/task photo expires 30 days after upload via a bucket-wide rule. Complaint evidence expires after one year via its own bucket-wide rule. In either bucket, uploads that were never registered or were rejected expire after one day. Bucket versioning is suspended so expired media leaves no noncurrent copy.

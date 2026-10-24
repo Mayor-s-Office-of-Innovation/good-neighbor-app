@@ -222,27 +222,36 @@
      into the unobscured upper portion instead. Keep that layout while Continue
      is pressed so blurring the OTP cannot move the button out from under the
      same tap before its click is delivered. */
-  .login:has(.login__otp:focus-within, .login__continue:active) {
+  .login:has(.login__otp):has(
+      .login__otp:focus-within,
+      .login__continue:active
+    ) {
     padding-block: max(1rem, env(safe-area-inset-top))
       max(2rem, env(safe-area-inset-bottom));
   }
 
-  .login:has(.login__otp:focus-within, .login__continue:active) .login__panel {
+  .login:has(.login__otp):has(.login__otp:focus-within, .login__continue:active)
+    .login__panel {
     gap: 1rem;
   }
 
-  .login:has(.login__otp:focus-within, .login__continue:active) .login__mark {
+  .login:has(.login__otp):has(.login__otp:focus-within, .login__continue:active)
+    .login__mark {
     width: 80px;
     height: 80px;
   }
 
-  .login:has(.login__otp:focus-within, .login__continue:active) .login__copy h1,
-  .login:has(.login__otp:focus-within, .login__continue:active) .login__copy p {
+  .login:has(.login__otp):has(.login__otp:focus-within, .login__continue:active)
+    .login__copy
+    h1,
+  .login:has(.login__otp):has(.login__otp:focus-within, .login__continue:active)
+    .login__copy
+    p {
     font-size: 1.35rem;
     line-height: 1.4;
   }
 
-  .login:has(.login__otp:focus-within, .login__continue:active)
+  .login:has(.login__otp):has(.login__otp:focus-within, .login__continue:active)
     .login__otp::part(segments) {
     padding-block: 0.5rem;
   }
@@ -257,4 +266,21 @@
 .setup .btn-ink,
 .setup .btn-outline {
   width: 100%;
+}
+
+/* A generous enrollment target without stretching across the panel. */
+#enrollment-form {
+  inline-size: 100%;
+}
+#confirm-enrollment {
+  box-sizing: border-box;
+  inline-size: min(20rem, 90%);
+  min-block-size: 4.5rem;
+  padding: 1.25rem 2.5rem;
+}
+#confirm-enrollment:active:not(:disabled) {
+  transform: none;
+  background: var(--surface-3);
+  color: var(--text);
+  box-shadow: inset 0 0 0 3px var(--text);
 }
