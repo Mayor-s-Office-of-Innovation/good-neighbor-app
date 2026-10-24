@@ -372,6 +372,7 @@ export const registerArtifact = async (event) => {
     artifactId,
     ...(hasS3Key ? { s3Key } : {}),
     capturedAt: capturedAtValue,
+    receivedAt: now,
     ...(hasCoordinates ? { latitude, longitude } : {}),
     ...(typeof contentType === "string" ? { contentType } : {}),
     ...(verifiedContentLength ? { contentLength: verifiedContentLength } : {}),

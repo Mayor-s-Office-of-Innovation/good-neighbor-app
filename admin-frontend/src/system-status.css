@@ -1,0 +1,162 @@
+.status-page {
+  max-width: 52rem;
+  margin-inline: auto;
+}
+.status-list {
+  border-block-start: 1px solid var(--line);
+}
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding-block: 1.1rem;
+  color: inherit;
+  text-decoration: none;
+  border-block-end: 1px solid var(--line);
+  min-height: 3rem;
+}
+.status-row-title {
+  flex: 1;
+}
+.status-dot {
+  inline-size: 0.75rem;
+  block-size: 0.75rem;
+  flex: 0 0 0.75rem;
+  border-radius: 50%;
+  background: #6b7280;
+}
+.status-dot--green {
+  background: #19843b;
+}
+.status-dot--orange {
+  background: #a75b00;
+}
+.status-dot--red {
+  background: #c12e25;
+}
+.status-site {
+  padding-block: 1rem;
+  border-block-end: 1px solid var(--line);
+}
+.status-site-heading {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.status-site-heading h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 1rem;
+}
+.status-spark {
+  inline-size: 7.5rem;
+  block-size: 2rem;
+  color: var(--text);
+}
+.status-spark polyline {
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+}
+.status-filters {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-block: 1rem;
+}
+.status-filters [aria-pressed="true"] {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+.status-filmstrip {
+  display: flex;
+  gap: 0.75rem;
+  overflow-x: auto;
+  padding: 0.5rem;
+  margin-block-start: 0.5rem;
+}
+.status-tile {
+  flex: 0 0 11rem;
+  display: flex;
+  flex-direction: column;
+  white-space: normal;
+  min-height: 6rem;
+}
+.status-tile img {
+  width: 100%;
+  height: 7rem;
+  object-fit: cover;
+}
+.status-tile span {
+  max-height: 8rem;
+  overflow: auto;
+}
+.status-dialog {
+  max-width: min(60rem, 94vw);
+  max-height: 90dvh;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+}
+.status-pair {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.status-pair figure {
+  flex: 1 1 16rem;
+  margin: 1rem 0;
+}
+.status-pair img {
+  max-width: 100%;
+  max-height: 65dvh;
+  object-fit: contain;
+}
+.status-pair p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.status-notice {
+  padding: 0.75rem;
+  border-inline-start: 3px solid currentColor;
+}
+.status-page :focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+
+.status-row-value {
+  display: flex;
+  flex-direction: column;
+  align-items: end;
+  font-variant-numeric: tabular-nums;
+}
+.status-row-value small {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.status-refresh {
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+
+.status-refresh[aria-busy="true"] wa-icon {
+  animation: status-refresh-spin 0.8s linear infinite;
+}
+
+@keyframes status-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-refresh[aria-busy="true"] wa-icon {
+    animation: none;
+    opacity: 0.5;
+  }
+}

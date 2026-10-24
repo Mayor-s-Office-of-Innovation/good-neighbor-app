@@ -228,7 +228,7 @@
   border: 0;
   border-radius: var(--radius-pill);
   background: var(--surface-2);
-  color: #424554;
+  color: var(--text-secondary);
   cursor: pointer;
   font: inherit;
   font-weight: 500;

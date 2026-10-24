@@ -1,6 +1,7 @@
 import {
   BatchGetCommand,
   GetCommand,
+  PutCommand,
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -183,6 +184,9 @@ describe("analysis amendments (check/artifact-addressed)", () => {
 
   it("reject resolves by key, passes the reason through, and retires its open task", async () => {
     send.mockResolvedValueOnce({ Item: analysisItem() });
+    send.mockResolvedValueOnce({});
+    send.mockResolvedValueOnce({});
+    send.mockResolvedValueOnce({});
     send.mockResolvedValueOnce({
       Items: [
         {
@@ -213,12 +217,12 @@ describe("analysis amendments (check/artifact-addressed)", () => {
       "chk_01-art_1-001-litter",
       expect.objectContaining({ reason: { key: "not_a_problem" } }),
     );
-    const query = send.mock.calls[1][0];
+    const query = send.mock.calls[4][0];
     expect(query.input.ExpressionAttributeValues).toMatchObject({
       ":worklist": "SITE#site-1#TASK#open",
       ":conditionId": "chk_01-art_1-001-litter",
     });
-    const transaction = send.mock.calls[2][0];
+    const transaction = send.mock.calls[5][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
     expect(transaction.input.TransactItems[0].Put.Item).toMatchObject({
       taskId: "task-1",
@@ -237,6 +241,8 @@ describe("analysis amendments (check/artifact-addressed)", () => {
       }),
     );
     send.mockResolvedValueOnce({ Item: analysisItem() });
+    send.mockResolvedValueOnce({});
+    send.mockResolvedValueOnce({});
     send.mockResolvedValueOnce({
       Items: [
         {
@@ -257,12 +263,17 @@ describe("analysis amendments (check/artifact-addressed)", () => {
     const res = await invoke(amendEvent({}), rejectAnalysisCondition);
 
     expect(res.statusCode).toBe(200);
+    expect(
+      send.mock.calls
+        .filter(([command]) => command instanceof PutCommand)
+        .map(([command]) => command.input.Item),
+    ).toEqual([expect.objectContaining({ state: "pending" })]);
     expect(JSON.parse(res.body)).toMatchObject({
       already_rejected: true,
       rejected_condition_id: "chk_01-art_1-001-litter",
     });
-    expect(send.mock.calls[2][0]).toBeInstanceOf(TransactWriteCommand);
-    expect(send.mock.calls[2][0].input.TransactItems[0].Put.Item).toMatchObject(
+    expect(send.mock.calls[4][0]).toBeInstanceOf(TransactWriteCommand);
+    expect(send.mock.calls[4][0].input.TransactItems[0].Put.Item).toMatchObject(
       {
         taskId: "task-1",
         status: "superseded",
@@ -285,6 +296,9 @@ describe("analysis amendments (check/artifact-addressed)", () => {
     };
     send
       .mockResolvedValueOnce({ Item: analysisItem() })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
       .mockResolvedValueOnce({ Item: task })
       .mockResolvedValueOnce({
         Item: {
@@ -307,13 +321,13 @@ describe("analysis amendments (check/artifact-addressed)", () => {
     );
 
     expect(res.statusCode).toBe(200);
-    expect(send.mock.calls[1][0]).toMatchObject({
+    expect(send.mock.calls[4][0]).toMatchObject({
       input: {
         Key: { pk: "SITE#site-1", sk: "TASK#task-fresh" },
         ConsistentRead: true,
       },
     });
-    expect(send.mock.calls[2][0]).toMatchObject({
+    expect(send.mock.calls[5][0]).toMatchObject({
       input: {
         Key: {
           pk: "SITE#site-1",
@@ -322,11 +336,91 @@ describe("analysis amendments (check/artifact-addressed)", () => {
         ConsistentRead: true,
       },
     });
-    expect(send.mock.calls[3][0]).toBeInstanceOf(BatchGetCommand);
-    expect(send.mock.calls[4][0]).toBeInstanceOf(TransactWriteCommand);
-    expect(send.mock.calls[4][0].input.TransactItems[0].Put.Item).toMatchObject(
+    expect(send.mock.calls[6][0]).toBeInstanceOf(BatchGetCommand);
+    expect(send.mock.calls[7][0]).toBeInstanceOf(TransactWriteCommand);
+    expect(send.mock.calls[7][0].input.TransactItems[0].Put.Item).toMatchObject(
       { taskId: "task-fresh", status: "superseded" },
     );
+  });
+
+  it("preserves confirmed category and upstream time across a failed cleanup and next-day retry", async () => {
+    /** @type {any} */ let receipt;
+    let failCleanup = true;
+    let failConfirmation = true;
+    send.mockImplementation(async (command) => {
+      if (command instanceof GetCommand) {
+        if (command.input.Key?.sk.includes("#ANALYSIS#")) {
+          expect(command.input.ProjectionExpression).toContain("concerns");
+          return {
+            Item: {
+              ...analysisItem(),
+              concerns: [
+                { conditionId: "chk_01-art_1-001-litter", category: "Litter" },
+              ],
+            },
+          };
+        }
+        return { Item: receipt };
+      }
+      if (command instanceof PutCommand) {
+        if (command.input.Item?.deletedAt && failConfirmation) {
+          failConfirmation = false;
+          throw new Error("transient confirmation failure");
+        }
+        receipt = command.input.Item;
+        return {};
+      }
+      if (failCleanup) {
+        failCleanup = false;
+        throw new Error("cleanup failed");
+      }
+      return { Items: [] };
+    });
+    analyzeReject.mockResolvedValue({
+      rejection: { created_at: "2026-10-23T15:00:00Z" },
+    });
+    await expect(
+      invoke(amendEvent({}), rejectAnalysisCondition),
+    ).rejects.toThrow("cleanup failed");
+    expect(receipt).toMatchObject({
+      state: "confirmed",
+      category: "Litter",
+      deletedAt: "2026-10-23T15:00:00.000Z",
+    });
+    await invoke(amendEvent({}), rejectAnalysisCondition);
+    expect(analyzeReject).toHaveBeenCalledTimes(1);
+    expect(receipt.deletedAt).toBe("2026-10-23T15:00:00.000Z");
+  });
+
+  it("retains an ambiguous attempt without inventing a deletion after confirmation write failure", async () => {
+    /** @type {any} */ let receipt;
+    send.mockImplementation(async (command) => {
+      if (command instanceof GetCommand)
+        return {
+          Item: command.input.Key?.sk.includes("#ANALYSIS#")
+            ? analysisItem()
+            : receipt,
+        };
+      if (command instanceof PutCommand) {
+        if (command.input.Item?.deletedAt)
+          throw new Error("confirmation write failed");
+        receipt = command.input.Item;
+      }
+      return { Items: [] };
+    });
+    await expect(
+      invoke(amendEvent({}), rejectAnalysisCondition),
+    ).rejects.toThrow("confirmation write failed");
+    const attemptedAt = receipt.attemptedAt;
+    analyzeReject.mockRejectedValue(
+      new AnalyzerError("Unknown condition", {
+        status: 404,
+        code: "unknown_condition",
+      }),
+    );
+    await invoke(amendEvent({}), rejectAnalysisCondition);
+    expect(receipt).toMatchObject({ state: "pending", attemptedAt });
+    expect(receipt).not.toHaveProperty("deletedAt");
   });
 
   it("404s when the artifact has no ANALYSIS# item (not yet analyzed)", async () => {

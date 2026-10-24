@@ -613,7 +613,7 @@ html.wa-dark .skeleton-line {
   border-bottom: 3px solid transparent;
   border-radius: 0;
   background: transparent;
-  color: #545868;
+  color: var(--text-secondary);
   cursor: pointer;
   font: inherit;
   font-size: var(--wa-font-size-m, 1rem);

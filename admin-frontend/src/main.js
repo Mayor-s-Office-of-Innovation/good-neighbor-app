@@ -1,3 +1,4 @@
+import "./system-status.js";
 import { peopleDirectory } from "./people-directory.js";
 import {
   providerManagerPath,
@@ -442,6 +443,18 @@ class AdminApp extends HTMLElement {
 
   async openRoute() {
     const route = currentRoute();
+    if (route.name === "system-status") {
+      if (!this.state.capabilities.manageAdminUsers)
+        return navigate("/sites", { replace: true });
+      this.state.provider =
+        this.state.program =
+        this.state.site =
+        this.state.siteManager =
+          null;
+      this.render();
+      this.querySelector("#status-title")?.focus();
+      return;
+    }
     if (
       route.name === "provider-manager" ||
       route.name === "provider-managers"
@@ -4903,21 +4916,25 @@ class AdminApp extends HTMLElement {
             "manager",
             "provider-manager",
           ].includes(route.name)
-            ? route.name === "profile"
-              ? myProfileView(this.state)
-              : route.name === "administrators"
-                ? administratorView(this.state.adminUsers, this.state)
-                : route.name === "site-import"
-                  ? siteImportView(this.state)
-                  : route.name === "site-new"
-                    ? newSiteFlowView(this.state)
-                    : route.name === "provider-new"
-                      ? newProviderView()
-                      : route.name === "program-new"
-                        ? newProgramView(this.state)
-                        : route.name === "manager-new"
-                          ? siteManagerEditorView(this.state, null)
-                          : directoryView(this.state, route)
+            ? route.name === "system-status"
+              ? this.state.capabilities.manageAdminUsers
+                ? `<system-status-view view="${escapeHtml(route.id)}"></system-status-view>`
+                : ""
+              : route.name === "profile"
+                ? myProfileView(this.state)
+                : route.name === "administrators"
+                  ? administratorView(this.state.adminUsers, this.state)
+                  : route.name === "site-import"
+                    ? siteImportView(this.state)
+                    : route.name === "site-new"
+                      ? newSiteFlowView(this.state)
+                      : route.name === "provider-new"
+                        ? newProviderView()
+                        : route.name === "program-new"
+                          ? newProgramView(this.state)
+                          : route.name === "manager-new"
+                            ? siteManagerEditorView(this.state, null)
+                            : directoryView(this.state, route)
             : ""
         }
         ${provider ? providerView(this.state) : ""}
@@ -5055,6 +5072,7 @@ function adminSettingsMenu(canManageUsers, canImportSites) {
       <a href="/profile" data-route role="menuitem"><wa-icon name="user" aria-hidden="true"></wa-icon><span>${escapeHtml(t("admin.profile.title"))}</span></a>
       ${canManageUsers ? '<a href="/administrators" data-route role="menuitem"><wa-icon name="people-group" aria-hidden="true"></wa-icon><span>User management</span></a>' : ""}
       ${canImportSites ? '<a href="/sites/import" data-route role="menuitem"><wa-icon name="file-import" aria-hidden="true"></wa-icon><span>Import</span></a>' : ""}
+      ${canManageUsers ? `<a href="/system-status" data-route role="menuitem"><span>${escapeHtml(t("admin.status.menu"))}</span></a>` : ""}
       <button id="clear-token" type="button" role="menuitem"><wa-icon name="arrow-right-from-bracket" aria-hidden="true"></wa-icon><span>Sign out</span></button>
     </div>
   </div>`;

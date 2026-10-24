@@ -57,6 +57,19 @@ async function adminFetch(path, init = {}) {
 }
 
 export const adminApi = {
+  getSystemStatus: () => adminFetch("/admin/v1/system-status"),
+  getStatusEntries: (site, kind, cursor) =>
+    adminFetch(
+      `/admin/v1/system-status/${encodeURIComponent(site)}/${kind}${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+    ),
+  getStatusMedia: (site, check, artifact, thumbnail = false) =>
+    adminFetch(
+      `/admin/v1/system-status/${encodeURIComponent(site)}/media/${encodeURIComponent(check)}/${encodeURIComponent(artifact)}${thumbnail ? "?thumbnail=true" : ""}`,
+    ),
+  getStatusDuplicate: (site, task, entry) =>
+    adminFetch(
+      `/admin/v1/system-status/${encodeURIComponent(site)}/duplicates/${encodeURIComponent(task)}?entry=${encodeURIComponent(entry)}`,
+    ),
   revokeManagerDevices: (programId, userId, confirmation) =>
     adminFetch(
       `/admin/v1/programs/${encodeURIComponent(programId)}/users/${encodeURIComponent(userId)}/devices:revoke`,

@@ -166,7 +166,7 @@
 
 .duplicate-detail .btn-outline {
   border-color: var(--wa-color-neutral-on-normal);
-  color: var(--wa-color-neutral-on-quiet);
+  color: var(--text-secondary);
   font-weight: 500;
 }
 .duplicate-detail__original > span {

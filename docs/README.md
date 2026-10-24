@@ -47,6 +47,8 @@
 
 ## Operations
 
+- **[System status](./runbooks/system-status.md)** — supervisor dashboard metric definitions, reporting projections, initialization, and verification.
+
 - **[People migration](./runbooks/people-migration.md)** — deployment gate, conflict recovery, and manual verification for historical contact links.
 - **[Completion guidance migration](./runbooks/check-completion-guidance.md)** — atomic completion records, bounded capture-title counts, and historical backfill.
 - **[dev-commands.md](./dev-commands.md)** — developer command reference (setup, CI checks,
