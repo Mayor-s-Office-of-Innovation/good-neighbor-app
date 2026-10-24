@@ -120,7 +120,7 @@ automatic renewal.
 
 After deployment, verify `https://goodneighbor-compliance.sf.gov/` and
 `/auth/callback` serve the dashboard over HTTPS, HTTP redirects to HTTPS, and
-unauthenticated `/admin/v1/sites` returns a JSON authorization error. Complete a
+unauthenticated `/admin/v1/session` returns a JSON authorization error. Complete a
 Cognito login/logout and an evidence upload with an authorized test account;
 verify the existing DEV dashboard URL still works. The custom hostname inherits
 the admin distribution's WAF, TLS 1.2 minimum, CSP, and HSTS policy.
@@ -129,6 +129,9 @@ DNSSEC completion is a separate DT handoff: publish the exact current
 `admin_dnssec_ds_record` as a DS record for `goodneighbor-compliance.sf.gov` in
 the parent `sf.gov` zone. Check that public DS resolution matches the active
 Route 53 KSK; signing in Route 53 alone does not establish the parent trust.
+End-to-end validation also requires `sf.gov` to be signed and its DS record to
+be published in `.gov`. Coordinate that prerequisite with DT; child DS records
+alone cannot complete an otherwise unsigned parent chain.
 
 The earlier `gn.sf.gov` hosted zone and its DNS controls remain in the DEV
 account pending a separately reviewed retirement. They are deliberately absent
