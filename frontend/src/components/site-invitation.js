@@ -20,7 +20,7 @@ export function readInvitation(view) {
     String(/** @type {any} */ (view.querySelector(id))?.value || "").trim();
   return {
     label: value("#staff-device-label"),
-    accessLevel: view._canInviteManagers
+    accessLevel: view.querySelector("#invitation-role")
       ? value("#invitation-role")
       : "general",
     firstName: value("#invitation-first-name"),
@@ -31,7 +31,6 @@ export function readInvitation(view) {
 
 /** @param {any} view */
 export function syncInvitation(view) {
-  if (!view._canInviteManagers) return;
   const invitation = readInvitation(view);
   const manager = invitation.accessLevel === "manager";
   const contact = /** @type {HTMLElement | null} */ (

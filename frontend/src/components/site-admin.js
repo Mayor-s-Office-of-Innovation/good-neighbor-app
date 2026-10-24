@@ -203,16 +203,21 @@ class SiteAccessView extends HTMLElement {
 
   async _load() {
     try {
-      const [devices, currentGrant, deviceView] = await Promise.all([
-        listManagerDeviceBindings(),
-        getCurrentStaffEnrollmentGrant(),
-        import("./site-access-devices.js"),
-      ]);
+      const [devices, currentGrant, deviceView, accessState] =
+        await Promise.all([
+          listManagerDeviceBindings(),
+          getCurrentStaffEnrollmentGrant(),
+          import("./site-access-devices.js"),
+          import("./site-access-state.js"),
+        ]);
       if (!this.isConnected) return;
+      this._canManageAccess = currentGrant.canManageAccess !== false;
       this._canInviteManagers = currentGrant.canInviteManagers === true;
       if (this._canInviteManagers)
         this._invitationControls = await import("./site-access-roles.js");
       this._deviceView = deviceView;
+      this._accessState = accessState;
+      this._stopAccessRefresh ||= accessState.observeAccess(this);
       this._bindings = devices.bindings || [];
       const localGrants = new Map(
         this._grants.map((grant) => [grant.grantId, grant]),
@@ -237,6 +242,8 @@ class SiteAccessView extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._stopAccessRefresh?.();
+    this._stopAccessRefresh = null;
     clearInterval(this._countdownTimer);
     this._grants = [];
     this.querySelector("#staff-grant-result")?.replaceChildren();
@@ -276,7 +283,7 @@ class SiteAccessView extends HTMLElement {
                 autocomplete="off"
                 required
               ></wa-input>
-              ${this._canInviteManagers
+              ${this._invitationControls
                 ? html`
                     <wa-radio-group
                       id="invitation-role"
@@ -459,16 +466,17 @@ class SiteAccessView extends HTMLElement {
         .querySelector("[data-cancel-staff-grant]")
         ?.addEventListener("click", () => void this._cancelGrant(grant));
     });
+    this._syncInvitation();
     this._startCountdown();
   }
 
   _syncInvitation() {
-    this._invitationControls?.syncInvitation(this);
+    this._accessState.syncAccess(this);
   }
 
   async _createGrant(event) {
     event.preventDefault();
-    if (this._creatingInvitation) return;
+    if (this._creatingInvitation || this._canManageAccess === false) return;
     const form = /** @type {HTMLFormElement} */ (event.currentTarget);
     const label = String(
       /** @type {any} */ (form.querySelector("#staff-device-label"))?.value ||
@@ -476,8 +484,9 @@ class SiteAccessView extends HTMLElement {
     ).trim();
     const invitation = this._invitationControls?.readInvitation(this);
     if (
-      this._canInviteManagers &&
-      !this._invitationControls.validInvitation(invitation)
+      (invitation?.accessLevel === "manager" && !this._canInviteManagers) ||
+      (this._canInviteManagers &&
+        !this._invitationControls.validInvitation(invitation))
     ) {
       this._syncInvitation();
       return;
@@ -513,10 +522,9 @@ class SiteAccessView extends HTMLElement {
         enrollmentUrl: result.enrollmentUrl,
       });
       this._render();
-    } catch {
-      if (error) {
-        error.textContent = t("access.createError");
-      }
+    } catch (failure) {
+      const message = await this._accessState.invitationError(this, failure);
+      if (error) error.textContent = t(message);
       button?.removeAttribute("disabled");
     } finally {
       this._creatingInvitation = false;
@@ -539,44 +547,11 @@ class SiteAccessView extends HTMLElement {
 
   _startCountdown() {
     clearInterval(this._countdownTimer);
-    if (!this._grants.length) return;
     this._countdownTimer = setInterval(() => void this._refreshGrants(), 5000);
   }
 
   async _refreshGrants() {
-    if (this._refreshing) return;
-    this._refreshing = true;
-    const checked = new Set(this._grants.map((grant) => grant.grantId));
-    try {
-      const current = await getCurrentStaffEnrollmentGrant();
-      if (!this.isConnected) return;
-      const pending = new Set(
-        (current.grants || [])
-          .filter((grant) => grant.status === "pending")
-          .map((grant) => grant.grantId),
-      );
-      if ([...checked].some((id) => !pending.has(id)))
-        await this._deviceView.refreshDevices(this);
-      this._grants = this._grants.filter(
-        (grant) =>
-          (!checked.has(grant.grantId) || pending.has(grant.grantId)) &&
-          Date.parse(grant.expiresAt) > Date.now(),
-      );
-      this.querySelectorAll("[data-grant-id]").forEach((card) => {
-        const grant = this._grants.find(
-          (item) => item.grantId === card.getAttribute("data-grant-id"),
-        );
-        if (!grant) card.remove();
-        else
-          card.querySelector("[data-grant-countdown]").textContent =
-            formatCountdown(Date.parse(grant.expiresAt) - Date.now());
-      });
-      if (!this._grants.length) clearInterval(this._countdownTimer);
-    } catch {
-      /* Keep links until their status can be confirmed. */
-    } finally {
-      this._refreshing = false;
-    }
+    await this._accessState?.refreshGrants(this);
   }
 
   async _shareGrant(grant) {

@@ -27,7 +27,13 @@ const SITE_HOURLY_LIMIT = 40;
 export const createStaffGrant = async (event) => {
   for (let attempt = 0; attempt < 5; attempt++) {
     const response = await createStaffGrantAttempt(event);
-    if (response.statusCode !== 409 || attempt === 4) return response;
+    if (
+      response.statusCode !== 409 ||
+      JSON.parse(String(response.body)).error !==
+        "staff_grant_create_conflict" ||
+      attempt === 4
+    )
+      return response;
     // Contention is not a rate-limit decision. Re-read the rolling window
     // after a competing transaction wins, with bounded jittered backoff.
     await new Promise((resolve) =>
@@ -332,6 +338,16 @@ const createStaffGrantAttempt = async (event) => {
       const reasons =
         /** @type {{CancellationReasons?: Array<{Code?: string}>}} */ (error)
           .CancellationReasons || [];
+      const emailIndex = assignmentWrites.findIndex(
+        (write) =>
+          write.Put?.Item?.sk.startsWith("MANAGER_EMAIL#") &&
+          write.Put?.Item?.pk === `SITE#${siteId}`,
+      );
+      if (
+        emailIndex >= 0 &&
+        reasons[1 + emailIndex]?.Code === "ConditionalCheckFailed"
+      )
+        return jsonResponse(409, { error: "manager_email_already_assigned" });
       if (
         reasons[2 + assignmentWrites.length]?.Code === "ConditionalCheckFailed"
       ) {
@@ -376,9 +392,26 @@ export const getCurrentStaffGrant = async (event) => {
   const issuer = (
     await get(tableName, `SITE#${siteId}`, `DEVICE_BINDING#${issuerBindingId}`)
   )?.Item;
+  const site = (await get(tableName, `SITE#${siteId}`, "#META"))?.Item;
+  const providerAuthority =
+    issuer?.authorityScope === "provider"
+      ? await providerInvitationAuthority(
+          tableName,
+          { ...site, siteId },
+          issuer,
+        )
+      : null;
+  const canManageAccess =
+    issuer?.authorityScope === "provider"
+      ? Boolean(providerAuthority)
+      : issuer?.status === "active" &&
+        issuer?.accessLevel === "manager" &&
+        (!issuer.absoluteExpiresAt ||
+          issuer.absoluteExpiresAt > new Date().toISOString()) &&
+        site?.status === "active";
   return jsonResponse(200, {
-    canInviteManagers:
-      issuer?.status === "active" && issuer?.authorityScope === "provider",
+    canInviteManagers: Boolean(providerAuthority),
+    canManageAccess: Boolean(canManageAccess),
     grants: grants.map((grant) => publicGrant(grant)),
   });
 };

@@ -7,6 +7,7 @@
   "access.deviceLabel": "Đặt tên cho thiết bị",
   "access.devicePlaceholder": "iPhone của Amisha",
   "access.devices": "Thiết bị của nhóm",
+  "access.duplicateEmail": "Email này đã được gán cho một quản lý tại địa điểm này. Hãy dùng email khác hoặc quản lý phân công hiện có.",
   "access.duration.days.one": "{count} ngày",
   "access.duration.days.other": "{count} ngày",
   "access.duration.hours.one": "{count} giờ",

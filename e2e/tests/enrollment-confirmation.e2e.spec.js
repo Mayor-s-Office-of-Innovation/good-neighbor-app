@@ -114,11 +114,12 @@ test("enrollment button has a generous stable target and visible pressed feedbac
   const button = page.locator("#confirm-enrollment");
   await expect(button).toBeVisible();
   const before = await button.boundingBox();
+  if (!before) throw new Error("Enrollment button has no bounding box");
   expect(before.width).toBeGreaterThanOrEqual(300);
   expect(before.width).toBeLessThan(358);
   expect(before.height).toBeGreaterThanOrEqual(72);
   const background = await button.evaluate(
-    (el) => getComputedStyle(el).backgroundColor,
+    (el) => window.getComputedStyle(el).backgroundColor,
   );
   await page.mouse.move(
     before.x + before.width / 2,
@@ -128,7 +129,9 @@ test("enrollment button has a generous stable target and visible pressed feedbac
   const pressed = await button.boundingBox();
   expect(pressed).toEqual(before);
   await expect
-    .poll(() => button.evaluate((el) => getComputedStyle(el).backgroundColor))
+    .poll(() =>
+      button.evaluate((el) => window.getComputedStyle(el).backgroundColor),
+    )
     .not.toBe(background);
   await page.screenshot({
     path: test.info().outputPath("enrollment-pressed.png"),

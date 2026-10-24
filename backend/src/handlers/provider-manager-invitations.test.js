@@ -412,3 +412,78 @@ it("does not resolve a target outside the current site", async () => {
   expect((await call(revokeGeneralBinding, request)).statusCode).toBe(404);
   expect(transactions).toHaveLength(0);
 });
+
+it("returns a duplicate-email conflict without retrying the transaction", async () => {
+  const original = send.getMockImplementation();
+  let attempts = 0;
+  send.mockImplementation(async (command) => {
+    if (command instanceof TransactWriteCommand) {
+      attempts++;
+      const index = (command.input.TransactItems || []).findIndex(
+        (write) =>
+          write.Put?.Item?.sk.startsWith("MANAGER_EMAIL#") &&
+          write.Put?.Item?.pk === "SITE#site-1",
+      );
+      const reasons = (command.input.TransactItems || []).map((_, i) => ({
+        Code: i === index ? "ConditionalCheckFailed" : "None",
+      }));
+      throw Object.assign(new Error("duplicate"), {
+        name: "TransactionCanceledException",
+        CancellationReasons: reasons,
+      });
+    }
+    if (!original) throw new Error("Missing implementation");
+    return original(command);
+  });
+  const response = await issue("manager", {
+    firstName: "New",
+    lastName: "Manager",
+    email: "existing@example.org",
+  });
+  expect(response.statusCode).toBe(409);
+  expect(data(response).error).toBe("manager_email_already_assigned");
+  expect(attempts).toBe(1);
+});
+
+it.each(["guard", "transaction"])(
+  "retries genuine %s contention and succeeds",
+  async (kind) => {
+    const original = send.getMockImplementation();
+    let attempts = 0;
+    send.mockImplementation(async (command) => {
+      if (command instanceof TransactWriteCommand && ++attempts === 1) {
+        const reasons = (command.input.TransactItems || []).map((write) => ({
+          Code:
+            kind === "transaction"
+              ? "TransactionConflict"
+              : write.Put?.Item?.entityType === "STAFF_GRANT_ISSUANCE_VERSION"
+                ? "ConditionalCheckFailed"
+                : "None",
+        }));
+        throw Object.assign(new Error("contention"), {
+          name: "TransactionCanceledException",
+          CancellationReasons: reasons,
+        });
+      }
+      if (!original) throw new Error("Missing implementation");
+      return original(command);
+    });
+    expect((await issue()).statusCode).toBe(201);
+    expect(attempts).toBe(2);
+  },
+);
+
+it.each(["membership", "generation", "ownership", "expiry"])(
+  "capabilities reject stale provider %s",
+  async (reason) => {
+    if (reason === "membership") providerMember().status = "revoked";
+    if (reason === "generation") providerMember().generation++;
+    if (reason === "ownership") site().providerId = "other-provider";
+    if (reason === "expiry")
+      issuer().absoluteExpiresAt = "2000-01-01T00:00:00Z";
+    expect(data(await call(getCurrentStaffGrant, event()))).toMatchObject({
+      canInviteManagers: false,
+      canManageAccess: false,
+    });
+  },
+);

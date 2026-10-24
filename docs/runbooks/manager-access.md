@@ -176,3 +176,5 @@ A duplicate manager email assignment is a conflict, never a replacement. Use the
 existing named assignment's administrative enrollment/recovery flow in that case.
 
 Team Devices lists both Site Managers and Site Team Members. Provider Managers can revoke either site role’s device; Site Managers can revoke only Site Team Member devices. Provider Manager device authority is managed separately. Device revocation invalidates that binding and its tokens without removing the person’s named manager assignment or other devices. Manager-device revocation validates the acting Provider Manager’s current membership and site authority in the same transaction as revocation.
+
+Manage access refreshes capabilities while visible, including after returning to the page and when no enrollment links remain. Losing authority disables protected actions without clearing the invitation draft or changing its selected role. A duplicate manager email returns a specific conflict message without retrying; only issuance-guard contention and transaction conflicts receive bounded retries.

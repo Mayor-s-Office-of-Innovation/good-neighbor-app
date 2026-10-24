@@ -65,6 +65,11 @@
       "name": "site devices js",
       "path": "dist/assets/site-access-devices-*.js",
       "limit": "1.5 kB"
+    },
+    {
+      "name": "site access state js",
+      "path": "dist/assets/site-access-state-*.js",
+      "limit": "2 kB"
     }
   ],
   "dependencies": {

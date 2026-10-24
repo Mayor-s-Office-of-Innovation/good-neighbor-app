@@ -253,3 +253,79 @@ test("site managers cannot revoke manager devices", async ({ page }) => {
       .locator("button"),
   ).toHaveCount(1);
 });
+
+test("capability refresh disables manager actions without downgrading or clearing the draft", async ({
+  page,
+}) => {
+  await accessView(page, true);
+  await page.locator("#staff-device-label input").fill("Draft phone");
+  await page.locator('wa-radio[value="manager"]').click();
+  await page.locator("#invitation-first-name input").fill("Jane");
+  await page.locator("#invitation-last-name input").fill("Smith");
+  await page.locator("#invitation-email input").fill("jane@example.org");
+  const create = page.locator('#staff-grant-form button[type="submit"]');
+  await expect(create).toBeEnabled();
+  await page.route("**/app/v1/manager/staff-grants/current", (route) =>
+    route.fulfill({
+      json: { canInviteManagers: false, canManageAccess: false, grants: [] },
+    }),
+  );
+  await page.evaluate(async () => {
+    const view = /** @type {any} */ (
+      document.querySelector("site-access-view")
+    );
+    await view._refreshGrants();
+  });
+  await expect(create).toBeDisabled();
+  await expect(page.locator("#staff-device-label input")).toHaveValue(
+    "Draft phone",
+  );
+  await expect(page.locator("#invitation-email input")).toHaveValue(
+    "jane@example.org",
+  );
+  expect(
+    await page
+      .locator("#invitation-role")
+      .evaluate((el) => /** @type {any} */ (el).value),
+  ).toBe("manager");
+  await expect(page.locator("#invitation-manager-contact")).toBeVisible();
+  await page.route("**/app/v1/manager/staff-grants/current", (route) =>
+    route.fulfill({
+      json: { canInviteManagers: true, canManageAccess: true, grants: [] },
+    }),
+  );
+  await page.evaluate(() => window.dispatchEvent(new window.Event("focus")));
+  await expect(create).toBeEnabled();
+  await expect(page.locator("#invitation-email input")).toHaveValue(
+    "jane@example.org",
+  );
+  await page.route("**/app/v1/manager/staff-grants", (route) =>
+    route.fulfill({
+      status: 409,
+      json: { error: "manager_email_already_assigned" },
+    }),
+  );
+  await create.click();
+  await expect(page.locator("#staff-grant-error")).toHaveText(
+    t("access.duplicateEmail"),
+  );
+  await expect(page.locator("#invitation-email input")).toHaveValue(
+    "jane@example.org",
+  );
+});
+
+test("capability polling continues when no invitations remain", async ({
+  page,
+}) => {
+  await accessView(page, true);
+  await page.locator('wa-radio[value="manager"]').click();
+  let reads = 0;
+  await page.route("**/app/v1/manager/staff-grants/current", (route) => {
+    reads++;
+    return route.fulfill({
+      json: { canInviteManagers: false, canManageAccess: false, grants: [] },
+    });
+  });
+  await expect.poll(() => reads, { timeout: 10000 }).toBeGreaterThan(0);
+  await expect(page.locator("#staff-device-label input")).toBeDisabled();
+});

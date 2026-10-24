@@ -7,6 +7,7 @@
   "access.deviceLabel": "Asigne un nombre al dispositivo",
   "access.devicePlaceholder": "iPhone de Amisha",
   "access.devices": "Dispositivos del equipo",
+  "access.duplicateEmail": "Este correo ya está asignado a un administrador de este sitio. Use otro correo o gestione la asignación existente.",
   "access.duration.days.one": "{count} día",
   "access.duration.days.other": "{count} días",
   "access.duration.hours.one": "{count} hora",

@@ -7,6 +7,7 @@
   "access.deviceLabel": "Pangalanan ang device",
   "access.devicePlaceholder": "iPhone ni Amisha",
   "access.devices": "Mga device ng team",
+  "access.duplicateEmail": "Nakatalaga na ang email na ito sa isang Site Manager sa site na ito. Gumamit ng ibang email o pamahalaan ang kasalukuyang pagtatalaga.",
   "access.duration.days.one": "{count} araw",
   "access.duration.days.other": "{count} araw",
   "access.duration.hours.one": "{count} oras",

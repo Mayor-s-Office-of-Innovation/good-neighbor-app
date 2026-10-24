@@ -7,6 +7,7 @@
   "access.deviceLabel": "Give the device a name",
   "access.devicePlaceholder": "Amisha's iPhone",
   "access.devices": "Team devices",
+  "access.duplicateEmail": "This email is already assigned to a Site Manager at this site. Use a different email or manage the existing assignment.",
   "access.duration.days.one": "{count} day",
   "access.duration.days.other": "{count} days",
   "access.duration.hours.one": "{count} hour",

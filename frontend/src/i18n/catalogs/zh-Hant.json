@@ -7,6 +7,7 @@
   "access.deviceLabel": "為裝置命名",
   "access.devicePlaceholder": "Amisha 的 iPhone",
   "access.devices": "團隊裝置",
+  "access.duplicateEmail": "此電子郵件已指派給此地點的管理員。請使用其他電子郵件或管理現有指派。",
   "access.duration.days.one": "{count} 天",
   "access.duration.days.other": "{count} 天",
   "access.duration.hours.one": "{count} 小時",
