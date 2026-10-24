@@ -70,6 +70,7 @@ module "app" {
   s3_bucket_name_prefix   = "gnp-prod"
   data_classification     = var.data_classification
   bedrock_model_id        = var.bedrock_model_id
+  analyzer_base_url       = "https://xvcwo6m20a.execute-api.us-east-1.amazonaws.com/prod"
   alarm_emails            = var.alarm_emails
   tags                    = local.common_tags
   sf311_media_domain_name = "media.${local.frontend_domain_name}"
