@@ -117,6 +117,7 @@ export function taskUpdateTimeline({
       [
         "task_completed",
         "presence_resolved",
+        "issue_resolved",
         "additional_action_resolved",
         "311_ticket_filed",
       ].includes(update.type),
@@ -222,31 +223,10 @@ export function taskUpdateTimeline({
           </p>`
         : ""}
     </section>
-    ${task.presencePromptDue
-      ? html`<section class="task-update__prompt">
-          <h3>${translatedText("taskUpdate.presence.title")}</h3>
-          <div class="task-update__actions">
-            <button
-              type="button"
-              class="btn-theme wa-success wa-accent wa-pill"
-              data-presence="presence_resolved"
-            >
-              ${translatedText("taskUpdate.outcome.resolved")}
-            </button>
-            <button
-              type="button"
-              class="btn-theme wa-neutral wa-filled wa-pill"
-              data-presence="presence_still_present"
-            >
-              ${translatedText("taskUpdate.outcome.stillThere")}
-            </button>
-          </div>
-        </section>`
-      : ""}
     ${task.status === "in_progress"
       ? html`<section class="task-update__section">
           <h3>${translatedText("taskUpdate.updates.title")}</h3>
-          ${taskUpdateActions(task.presencePromptDue)}
+          ${taskUpdateActions()}
         </section>`
       : html`<h3 class="task-update__updates-title">
           ${translatedText("taskUpdate.updates.title")}

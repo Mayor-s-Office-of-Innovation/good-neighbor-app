@@ -98,7 +98,15 @@ export function buildTaskUpdateTransition(task, input, context) {
   let photoKeys = [];
   let text;
 
-  if (type === "presence_still_present" || type === "presence_resolved") {
+  if (type === "issue_resolved") {
+    resolved = true;
+    label = TASK_UPDATE_LABELS.resolved;
+    timelineLabel = TASK_UPDATE_LABELS.siteTeamResolved;
+    documentationState = "open_for_documentation";
+  } else if (
+    type === "presence_still_present" ||
+    type === "presence_resolved"
+  ) {
     period = presencePeriod(task.inProgressAt, nowDate);
     if (period < 1 || Number(task.lastAnsweredPresencePeriod || 0) >= period)
       return { error: "Presence prompt is not due", statusCode: 409 };

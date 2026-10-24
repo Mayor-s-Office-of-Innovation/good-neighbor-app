@@ -1125,6 +1125,7 @@
   "taskUpdate.fallbackTitle": "問題更新",
   "taskUpdate.loadError": "我們無法載入此問題。請再試一次。",
   "taskUpdate.loading": "正在載入更新…",
+  "taskUpdate.markResolved": "標記為已解決",
   "taskUpdate.metadata.agency": "機構：",
   "taskUpdate.metadata.notified": "已通知：",
   "taskUpdate.metadata.responseExpected": "預計回應期限：",

@@ -467,3 +467,23 @@ it("uses the identical shared ticker and shows City closure details in the timel
   expect(markup).toContain("Field Work Completed");
   expect(markup).not.toContain("task-update__route");
 });
+
+it.each([true, false])(
+  "always offers resolution and never the periodic prompt (due=%s)",
+  (presencePromptDue) => {
+    const markup = taskUpdateTimeline({
+      task: { status: "in_progress", presencePromptDue },
+      updates: [],
+      issueOrigin: "single-problem",
+      originalMediaUrl: "",
+      mediaUrls: new Map(),
+    });
+    expect(markup).toContain('data-mode="resolve"');
+    expect(markup).toContain(t("taskUpdate.markResolved"));
+    expect(markup).not.toContain("data-presence=");
+    expect(markup).not.toContain(t("taskUpdate.presence.title"));
+    expect(markup.indexOf('data-mode="action"')).toBeLessThan(
+      markup.indexOf('data-mode="notes"'),
+    );
+  },
+);

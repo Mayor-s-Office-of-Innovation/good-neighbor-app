@@ -15,6 +15,7 @@ export function taskUpdateTimelineTone(type) {
     return "still-there";
   if (
     type === "task_completed" ||
+    type === "issue_resolved" ||
     type === "presence_resolved" ||
     type === "additional_action_resolved"
   )
@@ -22,22 +23,29 @@ export function taskUpdateTimelineTone(type) {
   return "general";
 }
 
-/** @param {boolean} [outline] */
-export function taskUpdateActions(outline = false) {
+/** Medium actions for an in-progress issue. */
+export function taskUpdateActions() {
   return html`<div class="task-update__actions">
     <button
       type="button"
-      class="${outline ? "btn-outline btn-outline--sm" : "btn-ink btn-ink--sm"}"
+      class="btn-blue issue-update-button"
+      data-mode="action"
+    >
+      ${escapeHtml(t("taskUpdate.updates.recordAction"))}
+    </button>
+    <button
+      type="button"
+      class="btn-outline issue-update-button"
       data-mode="notes"
     >
       ${escapeHtml(t("taskUpdate.updates.addNote"))}
     </button>
     <button
       type="button"
-      class="${outline ? "btn-outline btn-outline--sm" : "btn-ink btn-ink--sm"}"
-      data-mode="action"
+      class="btn-outline issue-update-button"
+      data-mode="resolve"
     >
-      ${escapeHtml(t("taskUpdate.updates.recordAction"))}
+      ${escapeHtml(t("taskUpdate.markResolved"))}
     </button>
   </div>`;
 }
