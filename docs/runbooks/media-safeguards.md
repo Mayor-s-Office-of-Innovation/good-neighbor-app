@@ -154,3 +154,32 @@ the Application tag is active and compare attributed cost with Cost Explorer aft
 billing data arrives; zero reported cost alone does not prove the filter works.
 No console configuration changes are required. Existing global quota rows can expire
 normally; the cost warning uses billing data, not those counters.
+
+
+## Diagnosing photo upload validation failures
+
+The API Lambda logs `UploadValidationRejected` when the check-artifact presign
+endpoint rejects input with HTTP 400. The public response is unchanged. Fields
+include the API Gateway `requestId`, `siteId`, `reason`, `declaredBytes`, and
+`maxBytes`. No request body, photo, credentials, or raw content-type value is logged.
+`declaredBytes` is null when unavailable or not a finite number; it is the client's
+declaration, not an independently measured S3 object size.
+
+Reasons distinguish `photo_too_large`, `non_positive_content_length` (zero or
+negative), `invalid_content_length` (missing, wrong type, or fractional),
+`unsupported_content_type`, `invalid_json`, and `missing_check_id`.
+
+In AWS Console, select the environment's API Lambda log group in CloudWatch Logs
+Insights, choose the incident time window, and run:
+
+```sql
+fields @timestamp, requestId, siteId, reason, declaredBytes, maxBytes
+| filter marker = "UploadValidationRejected"
+| sort @timestamp asc
+| limit 200
+```
+
+Match `requestId` to the HTTP 400 in the API Gateway access log. These records
+become available after deployment; they cannot explain historical rejections
+retroactively. Quota rejections (429) retain their existing `MediaQuotaExceeded`
+marker and are separate from this input-validation diagnostic.

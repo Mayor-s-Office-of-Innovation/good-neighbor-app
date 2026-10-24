@@ -72,14 +72,40 @@ export const presignUpload = async (event) => {
   const { uploadBucket } = getConfig();
   const siteId = deriveSiteId(event);
 
+  // Log only diagnostic scalars, never request bodies, media, or credentials.
+  // Keep the public responses stable while distinguishing size failures in logs.
+  /**
+   * @param {string} error
+   * @param {string} reason
+   * @param {unknown} [contentLength]
+   * @returns {import("aws-lambda").APIGatewayProxyResult} Unchanged validation response.
+   */
+  const rejectUpload = (error, reason, contentLength) => {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        marker: "UploadValidationRejected",
+        requestId: event.requestContext?.requestId,
+        siteId,
+        reason,
+        declaredBytes:
+          typeof contentLength === "number" && Number.isFinite(contentLength)
+            ? contentLength
+            : null,
+        maxBytes: MAX_OBJECT_BYTES,
+      }),
+    );
+    return jsonResponse(400, { error });
+  };
+
   const checkId = event.pathParameters?.checkId;
-  if (!checkId) return jsonResponse(400, { error: "Missing checkId" });
+  if (!checkId) return rejectUpload("Missing checkId", "missing_check_id");
 
   let body;
   try {
     body = readJsonBody(event);
   } catch {
-    return jsonResponse(400, { error: "Invalid JSON body" });
+    return rejectUpload("Invalid JSON body", "invalid_json");
   }
   const { contentType, contentLength } =
     /** @type {{ contentType?: unknown, contentLength?: unknown }} */ (
@@ -90,14 +116,23 @@ export const presignUpload = async (event) => {
     typeof contentType !== "string" ||
     !ALLOWED_CONTENT_TYPES.has(contentType)
   ) {
-    return jsonResponse(400, { error: "Unsupported or missing contentType" });
+    return rejectUpload(
+      "Unsupported or missing contentType",
+      "unsupported_content_type",
+      contentLength,
+    );
   }
   if (
     !Number.isInteger(contentLength) ||
     Number(contentLength) <= 0 ||
     Number(contentLength) > MAX_OBJECT_BYTES
   ) {
-    return jsonResponse(400, { error: "invalid_content_length" });
+    const reason = !Number.isInteger(contentLength)
+      ? "invalid_content_length"
+      : Number(contentLength) <= 0
+        ? "non_positive_content_length"
+        : "photo_too_large";
+    return rejectUpload("invalid_content_length", reason, contentLength);
   }
 
   const artifactId = randomUUID();

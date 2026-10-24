@@ -88,6 +88,72 @@ beforeEach(() => {
 });
 
 describe("presignUpload", () => {
+  it.each([
+    [10 * 1024 * 1024 + 1, "photo_too_large"],
+    [0, "non_positive_content_length"],
+    [-1, "non_positive_content_length"],
+    [1.5, "invalid_content_length"],
+    [undefined, "invalid_content_length"],
+    ["private-value", "invalid_content_length"],
+  ])("logs a safe reason for rejected byte count %s", async (bytes, reason) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const event = artifactEvent({
+        checkId: "chk_01",
+        siteClaim: "site-1",
+        body: {
+          contentType: "image/jpeg",
+          contentLength: bytes,
+          photo: "private-photo",
+          token: "private-token",
+        },
+      });
+      event.requestContext.requestId = "gateway-request-1";
+      const res = await callPresign(event);
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body)).toEqual({ error: "invalid_content_length" });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(warn.mock.calls[0][0])).toEqual({
+        level: "warn",
+        marker: "UploadValidationRejected",
+        requestId: "gateway-request-1",
+        siteId: "site-1",
+        reason,
+        declaredBytes: typeof bytes === "number" ? bytes : null,
+        maxBytes: 10 * 1024 * 1024,
+      });
+      expect(ddbSend).not.toHaveBeenCalled();
+      expect(presignPut).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it.each(["missing_check_id", "invalid_json", "unsupported_content_type"])(
+    "logs %s without including rejected input",
+    async (reason) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const event = artifactEvent({
+          checkId: reason === "missing_check_id" ? undefined : "chk_01",
+          siteClaim: "site-1",
+          body: { contentType: "private-value", contentLength: 123 },
+        });
+        if (reason === "invalid_json") event.body = "private-malformed-json";
+        expect((await callPresign(event)).statusCode).toBe(400);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(JSON.parse(warn.mock.calls[0][0])).toMatchObject({
+          marker: "UploadValidationRejected",
+          reason,
+        });
+        expect(warn.mock.calls[0][0]).not.toContain("private-");
+        expect(presignPut).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
+    },
+  );
+
   it("mints an artifactId + tenant-scoped key and presigns a PUT", async () => {
     presignPut.mockResolvedValueOnce("https://signed.example/put");
 
