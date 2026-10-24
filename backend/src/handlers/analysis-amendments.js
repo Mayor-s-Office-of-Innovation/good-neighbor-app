@@ -1,3 +1,5 @@
+import { statusConditionId } from "../domain/system-status.js";
+import { PutCommand } from "@aws-sdk/lib-dynamodb";
 import { getConfig } from "../config.js";
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
@@ -90,7 +92,7 @@ function requestId(body, fallback) {
  * @param {string} opts.siteId
  * @param {string} opts.checkId
  * @param {string} opts.artifactId
- * @returns {Promise<{ analysisId: string, checkId: string, artifactId: string } | null>}
+ * @returns {Promise<{ analysisId: string, checkId: string, artifactId: string, concerns: any[] } | null>}
  *   Null when the artifact has no ANALYSIS# item (not yet analyzed) or the item
  *   is a failed marker (no analysisId) — callers map null to 404.
  */
@@ -100,7 +102,7 @@ async function findAnalysisContext({ tableName, siteId, checkId, artifactId }) {
       TableName: tableName,
       Key: analysisKey(siteId, checkId, artifactId),
       ConsistentRead: true,
-      ProjectionExpression: "checkId, artifactId, analysisId",
+      ProjectionExpression: "checkId, artifactId, analysisId, concerns",
     }),
   );
   const item = result.Item;
@@ -113,6 +115,7 @@ async function findAnalysisContext({ tableName, siteId, checkId, artifactId }) {
     return null;
   }
   return {
+    concerns: item.concerns || [],
     analysisId: item.analysisId,
     checkId: item.checkId,
     artifactId: item.artifactId,
@@ -246,37 +249,132 @@ export async function rejectAnalysisCondition(event) {
     if (!context) {
       return jsonResponse(404, { error: "Analysis not found" });
     }
-    const client = await analyzerClient();
-    let result;
-    try {
-      result = await client.rejectCondition(context.analysisId, conditionId, {
-        ...(reason ? { reason } : {}),
-        appId: APP_ID,
-        requestId: requestId(
-          body,
-          `${context.analysisId}#${conditionId}#reject`,
-        ),
-      });
-    } catch (err) {
-      // A task can outlive an analyzer condition that was already rejected or
-      // removed upstream. The user's delete intent is still valid, so retire
-      // its open worklist task rather than turning this into a local-only hide.
-      if (
-        !(err instanceof AnalyzerError) ||
-        err.status !== 404 ||
-        err.code !== "unknown_condition"
-      ) {
-        throw err;
-      }
-      result = {
-        analysis_id: context.analysisId,
-        rejected_condition_id: conditionId,
-        already_rejected: true,
+    const key = {
+      pk: `SITE#${siteId}`,
+      sk: `ISSUE_DELETION#${context.checkId}:${context.artifactId}:${conditionId}`,
+    };
+    const knownConcern = context.concerns.find(
+      (/** @type {any} */ c, /** @type {number} */ index) =>
+        statusConditionId(context.artifactId, c, index) === conditionId,
+    );
+    let receipt = (
+      await ddb.send(
+        new GetCommand({
+          TableName: dynamoTable,
+          Key: key,
+          ConsistentRead: true,
+        }),
+      )
+    ).Item;
+    if (!receipt) {
+      // Persist identity and attempt time before the external, non-transactional call.
+      receipt = {
+        ...key,
+        state: "pending",
+        attemptedAt: new Date().toISOString(),
+        category: knownConcern?.category || "unknown",
       };
+      try {
+        await ddb.send(
+          new PutCommand({
+            TableName: dynamoTable,
+            Item: receipt,
+            ConditionExpression: "attribute_not_exists(sk)",
+          }),
+        );
+      } catch (error) {
+        if (
+          !(error instanceof Error) ||
+          error.name !== "ConditionalCheckFailedException"
+        )
+          throw error;
+        receipt = (
+          await ddb.send(
+            new GetCommand({
+              TableName: dynamoTable,
+              Key: key,
+              ConsistentRead: true,
+            }),
+          )
+        ).Item;
+        if (!receipt)
+          throw new Error("Missing rejection attempt after concurrent write");
+      }
     }
-    // Rejecting an analyzer condition retires its linked open work only after
-    // the analyzer accepted the rejection. This makes deletion durable for
-    // persisted worklist cards that do not have a local capture session.
+    let result = receipt.result || {
+      analysis_id: context.analysisId,
+      rejected_condition_id: conditionId,
+      already_rejected: true,
+    };
+    if (!receipt.deletedAt) {
+      const client = await analyzerClient();
+      let accepted = false;
+      try {
+        result = await client.rejectCondition(context.analysisId, conditionId, {
+          ...(reason ? { reason } : {}),
+          appId: APP_ID,
+          requestId: requestId(
+            body,
+            `${context.analysisId}#${conditionId}#reject`,
+          ),
+        });
+        accepted = true;
+      } catch (err) {
+        if (
+          !(err instanceof AnalyzerError) ||
+          err.status !== 404 ||
+          err.code !== "unknown_condition"
+        )
+          throw err;
+        // Absence is not proof of a rejection today. Keep the pending attempt
+        // for reconciliation; cleanup below is still valid and retryable.
+      }
+      if (accepted) {
+        const upstreamTime = result?.rejection?.created_at;
+        const deletedAt =
+          typeof upstreamTime === "string" &&
+          Number.isFinite(Date.parse(upstreamTime))
+            ? new Date(upstreamTime).toISOString()
+            : new Date().toISOString();
+        // Confirm before cleanup. A later cleanup failure reuses this durable
+        // receipt and timestamp without calling the analyzer again.
+        const confirmation = new PutCommand({
+          TableName: dynamoTable,
+          Item: {
+            ...receipt,
+            state: "confirmed",
+            deletedAt,
+            category: knownConcern?.category || receipt.category,
+            result: {
+              analysis_id: context.analysisId,
+              rejected_condition_id: conditionId,
+              already_rejected: true,
+            },
+          },
+          ConditionExpression: "attribute_not_exists(deletedAt)",
+        });
+        // Keep the accepted timestamp in memory across transient persistence
+        // failures; never repeat the upstream rejection to retry this write.
+        for (let attempt = 0; ; attempt++) {
+          try {
+            await ddb.send(confirmation);
+            break;
+          } catch (error) {
+            if (
+              error instanceof Error &&
+              error.name === "ConditionalCheckFailedException"
+            )
+              break;
+            if (attempt >= 2) throw error;
+            await new Promise((resolve) =>
+              setTimeout(resolve, 50 * 2 ** attempt),
+            );
+          }
+        }
+      }
+    }
+    // Cleanup is safe after acceptance or an already-missing condition. Only
+    // a confirmed receipt above contributes to deletion reporting.
     await supersedeOpenTasksForCondition({
       tableName: dynamoTable,
       siteId,

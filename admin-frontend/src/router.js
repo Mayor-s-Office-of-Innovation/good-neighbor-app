@@ -1,4 +1,8 @@
 const ROUTES = [
+  [
+    "system-status",
+    /^\/system-status(?:\/(network|analysis|submissions|checks|issues|actions|deletions|duplicates))?\/?$/,
+  ],
   ["provider-manager", /^\/provider-managers\/([^/]+)\/([^/]+)\/?$/],
   ["provider-managers", /^\/provider-managers\/?$/],
   ["profile", /^\/profile\/?$/],

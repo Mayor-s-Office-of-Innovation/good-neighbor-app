@@ -396,7 +396,9 @@ resource "aws_lambda_event_source_mapping" "worker" {
 }
 
 # Revocation and compliance-letter requests are committed with durable outbox
-# entries. This filtered stream mapping forwards them to the worker queue.
+# entries. This stream mapping forwards them to the worker queue and projects
+# site activity into the supervisor status read model. Projection keys do not
+# match the filter, so reporting writes cannot trigger a feedback loop.
 resource "aws_lambda_event_source_mapping" "revocation_outbox" {
   event_source_arn = aws_dynamodb_table.app.stream_arn
   function_name    = aws_lambda_function.worker.arn
@@ -409,14 +411,10 @@ resource "aws_lambda_event_source_mapping" "revocation_outbox" {
 
   filter_criteria {
     filter {
-      pattern = jsonencode({
-        eventName = ["INSERT"]
-        dynamodb = {
-          NewImage = {
-            entityType = { S = ["REVOCATION_OUTBOX", "COMPLIANCE_LETTER_OUTBOX"] }
-          }
-        }
-      })
+      pattern = jsonencode({ eventName = ["INSERT", "MODIFY"], dynamodb = { NewImage = { pk = { S = [{ prefix = "SITE#" }] } } } })
+    }
+    filter {
+      pattern = jsonencode({ eventName = ["INSERT"], dynamodb = { NewImage = { entityType = { S = ["REVOCATION_OUTBOX", "COMPLIANCE_LETTER_OUTBOX"] } } } })
     }
   }
 

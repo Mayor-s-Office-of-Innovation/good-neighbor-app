@@ -1,3 +1,4 @@
+import { projectStatus } from "../domain/system-status.js";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
@@ -7,7 +8,7 @@ import { ddb } from "../db.js";
 const sqs = new SQSClient({});
 
 /**
- * Forward durable outbox inserts to SQS. DynamoDB Streams retries failures,
+ * Project system-status events and forward durable outbox inserts to SQS. DynamoDB Streams retries failures,
  * closing the API's former commit-then-send crash window. Duplicate delivery is
  * safe because reconciliation verifies already-revoked projections.
  * @type {import("aws-lambda").DynamoDBStreamHandler}
@@ -15,7 +16,7 @@ const sqs = new SQSClient({});
 export const handler = async (event) => {
   for (const record of event.Records) {
     const image = record.dynamodb?.NewImage;
-    if (record.eventName !== "INSERT" || !image) continue;
+    if (!image) continue;
     const item = /** @type {Record<string, any>} */ (
       unmarshall(
         /** @type {Record<string, import("@aws-sdk/client-dynamodb").AttributeValue>} */ (
@@ -23,6 +24,8 @@ export const handler = async (event) => {
         ),
       )
     );
+    await projectStatus(item);
+    if (record.eventName !== "INSERT") continue;
     if (
       !["REVOCATION_OUTBOX", "COMPLIANCE_LETTER_OUTBOX"].includes(
         item.entityType,
