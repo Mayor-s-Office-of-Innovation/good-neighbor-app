@@ -856,7 +856,8 @@ describe("deferred In-progress / History lists", () => {
         setAttribute: vi.fn(),
         removeAttribute: vi.fn(),
       };
-      let finishFiling = (_result) => {};
+      /** @type {(value: unknown) => void} */
+      let finishFiling = () => {};
       const response = new Promise((resolve) => {
         finishFiling = resolve;
       });
@@ -865,7 +866,8 @@ describe("deferred In-progress / History lists", () => {
         requireSubmitted311: true,
         onSuccess,
       });
-      let finishWorklist = (_result) => {};
+      /** @type {(value: unknown) => void} */
+      let finishWorklist = () => {};
       const worklist = new Promise((resolve) => {
         finishWorklist = resolve;
       });
@@ -906,6 +908,99 @@ describe("deferred In-progress / History lists", () => {
         );
         expect(view._busyCards.has(task.taskId)).toBe(false);
         expect(onSuccess).not.toHaveBeenCalled();
+        expect(getToasts()).toHaveLength(1);
+      } finally {
+        getToasts().forEach((toast) => toast.close());
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "preserves a duplicate after failed shared filing with original in worklist: %s",
+    async (hasOriginal) => {
+      freezeClock();
+      setDuplicateUiSite({ featureFlags: { duplicateDetection: true } });
+      const { getToasts } = await import("../state/toasts.js");
+      getToasts().forEach((toast) => toast.close());
+      const view = liveView("?filter=todo");
+      view._watchDuplicates = vi.fn();
+      const original = {
+        ...openTask,
+        status: "completing",
+        description: "Original evidence",
+        appActions: [{ code: "create_311_ticket" }],
+      };
+      const duplicate = {
+        ...openTask,
+        taskId: "duplicate-1",
+        checkId: "duplicate-check",
+        description: "Duplicate evidence",
+        thumbnailUrl: "duplicate-thumbnail",
+      };
+      const sibling = { ...duplicate, taskId: "duplicate-2" };
+      view._homeModel = {
+        tasks: [duplicate, sibling, ...(hasOriginal ? [original] : [])],
+        checks: [],
+      };
+      view._duplicateLinks = new Map(
+        [duplicate, sibling].map((task) => [
+          task.taskId,
+          {
+            state: "matched",
+            original,
+          },
+        ]),
+      );
+      expect(
+        view
+          ._homeTasks(view._homeModel.tasks)
+          .map((entry) => entry.task.taskId),
+      ).not.toContain(duplicate.taskId);
+      const card = {
+        isConnected: false,
+        querySelector: () => null,
+        querySelectorAll: () => [],
+        getAttribute: () => duplicate.taskId,
+        setAttribute: vi.fn(),
+        removeAttribute: vi.fn(),
+      };
+      const failed = {
+        ...original,
+        status: "open",
+        appActionResults: [{ code: "create_311_ticket", status: "failed" }],
+      };
+      try {
+        await view._run(card, async () => ({ task: failed }), {
+          requireSubmitted311: true,
+        });
+        expect(
+          view._homeModel.tasks.filter(
+            (task) => task.taskId === original.taskId,
+          ),
+        ).toEqual([failed]);
+        expect(
+          view._homeModel.tasks.find(
+            (task) => task.taskId === duplicate.taskId,
+          ),
+        ).toEqual(duplicate);
+        for (const observation of [duplicate, sibling]) {
+          const entry = view
+            ._homeTasks(view._homeModel.tasks)
+            .find((entry) => entry.task.taskId === observation.taskId);
+          expect(entry.homeStatus).toBe("needs_action");
+          expect(entry.task.description).toBe(observation.description);
+          expect(entry.task.thumbnailUrl).toBe(observation.thumbnailUrl);
+          expect(view._taskCardEntry(entry, false).markup).toContain(
+            'data-action="file311"',
+          );
+          expect(
+            view._duplicateLinks.get(observation.taskId).original.status,
+          ).toBe("open");
+        }
+        expect(view._watchDuplicates).toHaveBeenCalledWith(
+          view._homeModel.tasks,
+        );
+        expect(view._busyCards.size).toBe(0);
         expect(getToasts()).toHaveLength(1);
       } finally {
         getToasts().forEach((toast) => toast.close());

@@ -2348,6 +2348,9 @@ class TodayView extends HTMLElement {
   _applyTaskResult(taskId, task) {
     const model = this._homeModel;
     if (!model || !taskId || !task) return;
+    // Shared duplicate actions return the original task, not the clicked
+    // observation. Never merge its identity or evidence into that observation.
+    taskId = task.taskId || taskId;
     const known = model.tasks.some((entry) => entry.taskId === taskId);
     const tasks = known
       ? model.tasks.map((entry) =>
@@ -2355,6 +2358,16 @@ class TodayView extends HTMLElement {
         )
       : [...model.tasks, task];
     this._homeModel = { ...model, tasks };
+    // Duplicate projections prefer the original cached on their link over
+    // the worklist record. Keep every linked observation on the same state.
+    this._duplicateLinks = new Map(
+      [...this._duplicateLinks].map(([sourceId, link]) => [
+        sourceId,
+        link.original?.taskId === taskId
+          ? { ...link, original: { ...link.original, ...task } }
+          : link,
+      ]),
+    );
   }
 
   /**
@@ -2469,6 +2482,10 @@ class TodayView extends HTMLElement {
           this._applyTaskResult(taskId, task);
           this._expireRemainingLists();
           if (this._remainingStatus === "pending") this._startRemainingLoad();
+          if (task.taskId && task.taskId !== taskId && this._homeModel) {
+            // Cancel duplicate reads started before the failed shared action.
+            this._watchDuplicates(this._homeModel.tasks);
+          }
         }
         restore();
         if (requireSubmitted311) show311ErrorToast();
