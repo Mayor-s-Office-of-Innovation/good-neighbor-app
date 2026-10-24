@@ -472,8 +472,8 @@ it("asks before discarding a results draft on close, then seals without it", asy
   expect(dialog._uploadFile).not.toHaveBeenCalled();
 });
 
-it.each([undefined, "Followed up"])(
-  "records presence or action before documentation: %s",
+it.each(["Followed up"])(
+  "records action before documentation: %s",
   async (text) => {
     const { TaskUpdateDialog } = await import("./task-update-dialog.js");
     const dialog = /** @type {any} */ (new TaskUpdateDialog());
@@ -484,14 +484,14 @@ it.each([undefined, "Followed up"])(
       task: dialog._task,
       update: { updateId: "update-1" },
     });
-    const type = text ? "additional_action_resolved" : "presence_resolved";
+    const type = "additional_action_resolved";
     await dialog._recordOutcome({ querySelectorAll: () => [] }, type, text);
     expect(api.createTaskUpdate).toHaveBeenCalledWith("task-1", {
       type,
-      ...(text ? { text } : {}),
+      text,
     });
     expect(dialog._pendingEvent.updateId).toBe("update-1");
-    expect(dialog._mode).toBe(text ? "action-photos" : "notes");
+    expect(dialog._mode).toBe("action-photos");
   },
 );
 
@@ -774,5 +774,65 @@ describe("City status in issue timeline", () => {
     expect(dialog._state).toBe("ready");
     expect(dialog._task.ticketStatus).toBe("On hold");
     expect(dialog._detail.updates[0].text).toBe("Local activity");
+  });
+});
+
+it("starts resolution and documentation together and updates the card before documentation closes", async () => {
+  const { TaskUpdateDialog } = await import("./task-update-dialog.js");
+  const dialog = new TaskUpdateDialog();
+  /** @type {(value: any) => void} */
+  let finish = () => {};
+  api.createTaskUpdate.mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  dialog.openResults = vi.fn();
+  dialog._notifyUpdated = vi.fn();
+  api.getTaskUpdates.mockResolvedValueOnce({ task: { canUploadPhotos: true } });
+  const task = { taskId: "resolve-now", status: "in_progress" };
+  dialog.markResolved(task);
+  dialog.markResolved(task);
+  expect(api.createTaskUpdate).toHaveBeenLastCalledWith("resolve-now", {
+    type: "issue_resolved",
+  });
+  expect(dialog.openResults).toHaveBeenCalledTimes(1);
+  const completion = vi.mocked(dialog.openResults).mock.calls[0][1];
+  expect(dialog._notifyUpdated).not.toHaveBeenCalled();
+  finish({
+    task: { ...task, status: "completed" },
+    update: { updateId: "resolved-event" },
+  });
+  await expect(completion).resolves.toMatchObject({
+    task: { status: "completed", latestUpdateId: "resolved-event" },
+  });
+  expect(dialog._notifyUpdated).toHaveBeenCalledOnce();
+});
+
+it("identifies a dismissed resolution prompt so its controller is not reused during background saves", async () => {
+  const { TaskUpdateDialog } = await import("./task-update-dialog.js");
+  const dialog = new TaskUpdateDialog();
+  dialog._results = true;
+  dialog._resetDraft = vi.fn();
+  dialog.querySelector = vi.fn(() => null);
+  dialog.dispatchEvent = vi.fn();
+  dialog._dismiss();
+  const closed = vi.mocked(dialog.dispatchEvent).mock.calls[0][0];
+  expect(closed.type).toBe("taskupdateclosed");
+  expect(/** @type {CustomEvent} */ (closed).detail).toEqual({ results: true });
+});
+
+it("includes the confirmed task in update notifications", async () => {
+  const { TaskUpdateDialog } = await import("./task-update-dialog.js");
+  const dialog = new TaskUpdateDialog();
+  dialog._task = { taskId: "resolved", status: "completed" };
+  dialog.dispatchEvent = vi.fn();
+  dialog._notifyUpdated();
+  expect(
+    /** @type {CustomEvent} */ (
+      vi.mocked(dialog.dispatchEvent).mock.calls[0][0]
+    ).detail,
+  ).toEqual({
+    task: dialog._task,
   });
 });

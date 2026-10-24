@@ -17,6 +17,8 @@ import "./ticket-detail-dialog.js";
  * @property {() => Element | null} container where the dialogs mount
  * @property {(task: Record<string, any>) => Record<string, any>} [resolveTask]
  *   the freshest copy of a task to hand a sheet (default: the task given)
+ * @property {(task: Record<string, any>) => void} [onTaskUpdated]
+ *   apply a confirmed task before reloading the host
  * @property {() => Promise<unknown> | void} [reload] re-render the host
  *   after the updates sheet saved or closed; focus is restored afterwards
  * @property {() => HTMLElement | null} [fallbackFocus] focus target when
@@ -89,10 +91,18 @@ export class TaskSheets {
     await import("./task-update-dialog.js");
     if (!this._updateDialog) {
       const dialog = document.createElement("task-update-dialog");
-      dialog.addEventListener("taskupdated", () => {
+      dialog.addEventListener("taskupdated", (event) => {
+        const task = /** @type {CustomEvent} */ (event).detail?.task;
+        if (task) this._options.onTaskUpdated?.(task);
         void this._options.reload?.();
       });
-      dialog.addEventListener("taskupdateclosed", () => {
+      dialog.addEventListener("taskupdateclosed", (event) => {
+        // Resolution documentation may still be saving after dismissal.
+        // Keep that controller single-use so another card cannot replace its state.
+        if (/** @type {CustomEvent} */ (event).detail?.results) {
+          this._updateDialog.remove();
+          this._updateDialog = null;
+        }
         const returnFocus = this._updateReturnFocus;
         this._updateReturnFocus = null;
         void Promise.resolve(this._options.reload?.()).then(() => {

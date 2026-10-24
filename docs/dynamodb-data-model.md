@@ -269,8 +269,10 @@ and no separate ticket item.
   checks.
 
 **In-progress tasks** also carry `inProgressAt`, `notifiedAt`, an agency snapshot,
-`latestUpdateId`, `latestUpdateLabel`, and `lastAnsweredPresencePeriod`. Four-hour
-presence periods are always counted from `inProgressAt`, which never changes. Task-update
+`latestUpdateId` and `latestUpdateLabel`. Legacy presence responses may also carry
+`lastAnsweredPresencePeriod`; the UI no longer prompts periodically. The permanent
+resolution action appends an `issue_resolved` event with an optional documentation
+window and sets `completionMethod: "site_team_resolved"`. Task-update
 photos reuse ART rows with `purpose: "task_update"`. Registering them skips the SQS and
 analyzer path on purpose. The update event stores the artifact IDs so the media route can
 authorize reads.

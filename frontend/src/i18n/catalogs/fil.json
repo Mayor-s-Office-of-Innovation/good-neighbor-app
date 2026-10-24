@@ -1214,6 +1214,7 @@
   "taskUpdate.fallbackTitle": "Update sa problema",
   "taskUpdate.loadError": "Hindi namin ma-load ang problemang ito. Pakisubukan ulit.",
   "taskUpdate.loading": "Naglo-load ng mga update…",
+  "taskUpdate.markResolved": "Markahan bilang nalutas",
   "taskUpdate.metadata.agency": "Ahensya:",
   "taskUpdate.metadata.notified": "Naabisuhan:",
   "taskUpdate.metadata.responseExpected": "Inaasahang tugon bago ang:",

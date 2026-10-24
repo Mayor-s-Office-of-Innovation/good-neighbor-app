@@ -237,8 +237,11 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   are committed in one transaction. History timelines derive this entry from
   `completedAt` for older direct completions without an event, once all event
   pages are loaded. Routing never depends on user-facing button text.
-  The issue timeline derives non-stacking presence prompts from fixed four-hour
-  periods beginning at `inProgressAt`. Resolving normally moves the task
+  Every in-progress card and its issue timeline offer a permanent "Mark as resolved"
+  action (`issue_resolved`), including while awaiting a City response. This replaces
+  periodic presence prompts. Optional resolution documentation opens immediately;
+  the status change, timeline event, and history refresh proceed independently.
+  Resolving normally moves the task
   irreversibly to `completed`; when an app-owned informational 311 ticket must
   be closed first, a lease-protected `resolving` state checkpoints successful
   closures and returns incomplete attempts to `in_progress` for retry. Notes,

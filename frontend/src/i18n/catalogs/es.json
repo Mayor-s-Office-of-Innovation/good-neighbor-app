@@ -1214,6 +1214,7 @@
   "taskUpdate.fallbackTitle": "Actualización del problema",
   "taskUpdate.loadError": "No pudimos cargar este problema. Inténtelo de nuevo.",
   "taskUpdate.loading": "Cargando actualizaciones…",
+  "taskUpdate.markResolved": "Marcar como resuelto",
   "taskUpdate.metadata.agency": "Agencia:",
   "taskUpdate.metadata.notified": "Notificado:",
   "taskUpdate.metadata.responseExpected": "Respuesta esperada antes del:",

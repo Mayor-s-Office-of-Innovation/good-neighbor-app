@@ -1214,6 +1214,7 @@
   "taskUpdate.fallbackTitle": "Cập nhật vấn đề",
   "taskUpdate.loadError": "Chúng tôi không tải được vấn đề này. Vui lòng thử lại.",
   "taskUpdate.loading": "Đang tải các cập nhật…",
+  "taskUpdate.markResolved": "Đánh dấu đã giải quyết",
   "taskUpdate.metadata.agency": "Cơ quan:",
   "taskUpdate.metadata.notified": "Đã thông báo:",
   "taskUpdate.metadata.responseExpected": "Dự kiến phản hồi trước:",

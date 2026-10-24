@@ -1214,6 +1214,7 @@
   "taskUpdate.fallbackTitle": "Issue update",
   "taskUpdate.loadError": "We couldn't load this issue. Please try again.",
   "taskUpdate.loading": "Loading updates…",
+  "taskUpdate.markResolved": "Mark as resolved",
   "taskUpdate.metadata.agency": "Agency:",
   "taskUpdate.metadata.notified": "Notified:",
   "taskUpdate.metadata.responseExpected": "Response expected by:",
