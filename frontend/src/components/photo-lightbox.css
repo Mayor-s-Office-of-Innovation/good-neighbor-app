@@ -8,7 +8,7 @@
   border-radius: var(--radius-lg, 1.5rem);
   overflow: hidden;
   background: var(--surface, #fff);
-  color: var(--text, #16181f);
+  color: var(--text, #171717);
   box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 35%);
 }
 
@@ -68,7 +68,7 @@
   border: 0;
   border-radius: 50%;
   background: color-mix(in srgb, var(--surface, #fff) 88%, transparent);
-  color: var(--text, #16181f);
+  color: var(--text, #171717);
   font: inherit;
   font-size: 1.5rem;
   cursor: pointer;
@@ -80,7 +80,7 @@
   margin: 0;
   padding: 0.75rem 1.25rem 1rem;
   text-align: center;
-  color: var(--text-secondary, #555b66);
+  color: var(--text-secondary, #4a4a4a);
   font-size: 0.875rem;
 }
 

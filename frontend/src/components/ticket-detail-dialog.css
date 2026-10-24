@@ -12,7 +12,7 @@
   border: 0;
   border-radius: var(--radius, 1rem);
   padding: 0;
-  color: var(--text, #17202a);
+  color: var(--text, #171717);
 }
 .ticket-detail::backdrop {
   background: rgb(0 0 0 / 0.5);
