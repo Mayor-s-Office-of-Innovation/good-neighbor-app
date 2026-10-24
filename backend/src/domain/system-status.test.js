@@ -6,6 +6,16 @@ vi.mock("../config.js", () => ({ getDynamoTableName: () => "table" }));
 beforeEach(() => send.mockReset());
 const base = { pk: "SITE#one" };
 describe("system status reporting", () => {
+  it("does not count unconfirmed deletion attempts", () => {
+    expect(
+      statusRecords({
+        ...base,
+        sk: "ISSUE_DELETION#c:a:issue",
+        state: "pending",
+        attemptedAt: "2026-10-24T18:00:00Z",
+      }),
+    ).toEqual([]);
+  });
   it("uses unrounded thresholds and a neutral empty state", () => {
     expect(health(0, 0, 90, 75).state).toBe("gray");
     expect(health(749, 1000, 75, 25).state).toBe("orange");

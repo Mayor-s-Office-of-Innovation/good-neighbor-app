@@ -193,3 +193,123 @@ test("health indicators explain their thresholds on hover and focus", async ({
     );
   }
 });
+
+test("renews cached thumbnail URLs without discarding loaded submissions", async ({
+  page,
+}) => {
+  await setup(page);
+  let lists = 0;
+  await page.route("**/one/submissions", (route) => {
+    lists++;
+    return route.fulfill({
+      json: {
+        entries: [
+          {
+            id: "photo",
+            checkId: "c",
+            artifactId: "a",
+            at: summary.now,
+            url: "/old-thumbnail.svg",
+            urlExpiresAt: new Date(Date.now() + 30000).toISOString(),
+          },
+        ],
+        cursor: null,
+      },
+    });
+  });
+  await page.route("**/*thumbnail.svg", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>',
+    }),
+  );
+  await page.route("**/media/c/a?thumbnail=true", (route) =>
+    route.fulfill({
+      json: {
+        url: "/renewed-thumbnail.svg",
+        urlExpiresAt: new Date(Date.now() + 300000).toISOString(),
+        checkId: "c",
+        artifactId: "a",
+      },
+    }),
+  );
+  await page.goto("/system-status/submissions");
+  await expect(page.locator(".status-tile img")).toHaveAttribute(
+    "src",
+    "/old-thumbnail.svg",
+  );
+  await page.locator("#status-refresh").click();
+  await expect(page.locator(".status-tile img")).toHaveAttribute(
+    "src",
+    "/renewed-thumbnail.svg",
+  );
+  expect(lists).toBe(1);
+});
+
+for (const obsoleteFails of [false, true]) {
+  test(`refresh ignores obsolete entry ${obsoleteFails ? "errors" : "responses"}`, async ({
+    page,
+  }) => {
+    await setup(page);
+    let refreshes = 0;
+    await page.route("**/admin/v1/system-status", (route) =>
+      route.fulfill({
+        json: {
+          ...summary,
+          sites: [
+            {
+              ...sampleSite,
+              counts: {
+                ...sampleSite.counts,
+                submissions: ++refreshes === 1 ? 2 : 3,
+              },
+            },
+          ],
+        },
+      }),
+    );
+    let release = () => {};
+    const gate = new Promise((resolve) => {
+      release = () => resolve(undefined);
+    });
+    let lists = 0;
+    await page.route("**/one/submissions", async (route) => {
+      const first = ++lists === 1;
+      if (first) await gate;
+      if (first && obsoleteFails)
+        return route.fulfill({ status: 500, json: { error: "old failure" } });
+      return route.fulfill({
+        json: {
+          entries: [
+            {
+              id: first ? "old" : "new",
+              at: summary.now,
+              text: first ? "Stale submission" : "Fresh submission",
+            },
+          ],
+          cursor: null,
+        },
+      });
+    });
+    await page.goto("/system-status/submissions");
+    await expect.poll(() => lists).toBe(1);
+    await page.locator("#status-refresh").click();
+    await expect(page.locator(".status-filmstrip")).toContainText(
+      "Fresh submission",
+    );
+    release();
+    // Wait for the obsolete request to settle, then check that no stale cache
+    // or error can replace the new generation's content.
+    await page.waitForResponse((response) =>
+      response.url().endsWith("/one/submissions"),
+    );
+    await page.locator("#status-refresh").click();
+    await expect(page.locator(".status-filmstrip")).toContainText(
+      "Fresh submission",
+    );
+    await expect(page.locator(".status-filmstrip")).not.toContainText(
+      "Stale submission",
+    );
+    await expect(page.locator("[data-load]")).toHaveCount(0);
+  });
+}

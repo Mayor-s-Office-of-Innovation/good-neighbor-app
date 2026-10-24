@@ -54,7 +54,8 @@ class SystemStatus extends HTMLElement {
   filter = "all";
   sort = "name";
   pages = new Map();
-  busySites = new Set();
+  busySites = new Map();
+  generations = new Map();
   error = "";
   loading = false;
   previewSequence = 0;
@@ -130,6 +131,11 @@ class SystemStatus extends HTMLElement {
     button?.setAttribute("aria-busy", String(this.loading));
     button?.setAttribute("aria-disabled", String(this.loading));
   }
+  invalidateSite(siteId) {
+    this.generations.set(siteId, (this.generations.get(siteId) || 0) + 1);
+    this.pages.delete(siteId);
+    this.busySites.delete(siteId);
+  }
   async refresh() {
     if (this.loading) return;
     this.loading = true;
@@ -138,13 +144,39 @@ class SystemStatus extends HTMLElement {
     try {
       const next = await adminApi.getSystemStatus();
       if (!this.isConnected) return;
-      if (this.data?.start !== next.start) this.pages.clear();
+      if (this.data?.start !== next.start)
+        for (const siteId of new Set([
+          ...this.pages.keys(),
+          ...this.busySites.keys(),
+        ]))
+          this.invalidateSite(siteId);
       else
         for (const site of next.sites) {
           const prior = this.data?.sites.find((s) => s.siteId === site.siteId);
           if (prior && prior.counts[this.kind] !== site.counts[this.kind])
-            this.pages.delete(site.siteId);
+            this.invalidateSite(site.siteId);
         }
+      // Renew expiring URLs without discarding pagination or scroll position.
+      for (const site of next.sites) {
+        const page = this.pages.get(site.siteId);
+        for (const entry of page?.entries || []) {
+          if (!entry.url || Date.parse(entry.urlExpiresAt) > Date.now() + 60000)
+            continue;
+          const generation = this.generations.get(site.siteId) || 0;
+          const media = await adminApi.getStatusMedia(
+            site.siteId,
+            entry.checkId,
+            entry.artifactId,
+            true,
+          );
+          if (!this.isConnected) return;
+          if (generation === (this.generations.get(site.siteId) || 0)) {
+            delete entry.url;
+            delete entry.urlExpiresAt;
+            Object.assign(entry, media);
+          }
+        }
+      }
       this.data = next;
       this.error = "";
     } catch {
@@ -159,14 +191,19 @@ class SystemStatus extends HTMLElement {
   async loadSite(siteId) {
     const prior = this.pages.get(siteId);
     if (this.busySites.has(siteId) || prior?.complete) return;
-    this.busySites.add(siteId);
+    const generation = this.generations.get(siteId) || 0;
+    this.busySites.set(siteId, generation);
     try {
       const page = await adminApi.getStatusEntries(
         siteId,
         this.kind,
         prior?.cursor,
       );
-      if (!this.isConnected) return;
+      if (
+        !this.isConnected ||
+        generation !== (this.generations.get(siteId) || 0)
+      )
+        return;
       const entries = [...(prior?.entries || []), ...page.entries];
       this.pages.set(siteId, {
         entries: [...new Map(entries.map((row) => [row.id, row])).values()],
@@ -174,9 +211,11 @@ class SystemStatus extends HTMLElement {
         complete: !page.cursor,
       });
     } catch {
-      this.pages.set(siteId, { ...prior, error: true });
+      if (generation === (this.generations.get(siteId) || 0))
+        this.pages.set(siteId, { ...prior, error: true });
     } finally {
-      this.busySites.delete(siteId);
+      if (this.busySites.get(siteId) === generation)
+        this.busySites.delete(siteId);
       if (this.isConnected && !this.querySelector("dialog[open]"))
         this.render();
     }

@@ -62,9 +62,9 @@ export const adminApi = {
     adminFetch(
       `/admin/v1/system-status/${encodeURIComponent(site)}/${kind}${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
     ),
-  getStatusMedia: (site, check, artifact) =>
+  getStatusMedia: (site, check, artifact, thumbnail = false) =>
     adminFetch(
-      `/admin/v1/system-status/${encodeURIComponent(site)}/media/${encodeURIComponent(check)}/${encodeURIComponent(artifact)}`,
+      `/admin/v1/system-status/${encodeURIComponent(site)}/media/${encodeURIComponent(check)}/${encodeURIComponent(artifact)}${thumbnail ? "?thumbnail=true" : ""}`,
     ),
   getStatusDuplicate: (site, task, entry) =>
     adminFetch(

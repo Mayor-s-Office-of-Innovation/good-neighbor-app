@@ -198,7 +198,14 @@ async function media(siteId, checkId, artifactId, full = false) {
   return {
     text: artifact.text || "",
     ...(key
-      ? { url: await presignGet({ bucket: getConfig().uploadBucket, key }) }
+      ? {
+          url: await presignGet({
+            bucket: getConfig().uploadBucket,
+            key,
+            expiresIn: 300,
+          }),
+          urlExpiresAt: new Date(Date.now() + 300000).toISOString(),
+        }
       : {}),
     checkId,
     artifactId,
@@ -232,25 +239,35 @@ export const getStatusEntries = (event) =>
     } catch {
       return jsonResponse(400, { error: "invalid_cursor" });
     }
-    const page = await ddb.send(
-      new QueryCommand({
-        TableName: getDynamoTableName(),
-        ConsistentRead: true,
-        KeyConditionExpression: "pk = :pk AND sk BETWEEN :from AND :to",
-        FilterExpression: "kind = :kind",
-        ExpressionAttributeValues: {
-          ":pk": `STATUS#${siteId}`,
-          ":from": start,
-          ":to": `${now}~`,
-          ":kind": kind,
-        },
-        Limit: 30,
-        ScanIndexForward: false,
-        ExclusiveStartKey: cursor,
-      }),
-    );
+    const rows = [];
+    /** @type {Record<string, any> | undefined} */
+    let nextCursor = cursor;
+    // Bound read work even when the kind filter rejects every evaluated item.
+    for (let queries = 0; queries < 5 && rows.length < 30; queries++) {
+      /** @type {import("@aws-sdk/lib-dynamodb").QueryCommandOutput} */
+      const page = await ddb.send(
+        new QueryCommand({
+          TableName: getDynamoTableName(),
+          ConsistentRead: true,
+          KeyConditionExpression: "pk = :pk AND sk BETWEEN :from AND :to",
+          FilterExpression: "kind = :kind",
+          ExpressionAttributeValues: {
+            ":pk": `STATUS#${siteId}`,
+            ":from": start,
+            ":to": `${now}~`,
+            ":kind": kind,
+          },
+          Limit: 30 - rows.length,
+          ScanIndexForward: false,
+          ExclusiveStartKey: nextCursor,
+        }),
+      );
+      rows.push(...(page.Items || []));
+      nextCursor = page.LastEvaluatedKey;
+      if (!nextCursor) break;
+    }
     const entries = [];
-    for (const row of page.Items || []) {
+    for (const row of rows) {
       if (kind === "submissions")
         entries.push({
           id: row.sk,
@@ -268,10 +285,8 @@ export const getStatusEntries = (event) =>
     }
     return jsonResponse(200, {
       entries,
-      cursor: page.LastEvaluatedKey
-        ? Buffer.from(JSON.stringify(page.LastEvaluatedKey)).toString(
-            "base64url",
-          )
+      cursor: nextCursor
+        ? Buffer.from(JSON.stringify(nextCursor)).toString("base64url")
         : null,
     });
   });
@@ -284,7 +299,15 @@ export const getStatusMedia = (event) =>
       checkId = "",
       artifactId = "",
     } = event.pathParameters || {};
-    return jsonResponse(200, await media(siteId, checkId, artifactId, true));
+    return jsonResponse(
+      200,
+      await media(
+        siteId,
+        checkId,
+        artifactId,
+        event.queryStringParameters?.thumbnail !== "true",
+      ),
+    );
   });
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */

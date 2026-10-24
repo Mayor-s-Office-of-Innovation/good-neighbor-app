@@ -40,7 +40,20 @@ Snapshots have 30-day `expiresAt`; they are not an alternate media archive.
 `SEEN#issues#<identity>` and `SEEN#duplicates#<identity>` in the same partition
 are identifier-only deduplication guards, atomically written with the first event.
 `SITE#<siteId> / ISSUE_DELETION#<checkId>:<artifactId>:<conditionId>` is the explicit rejection
-receipt. No new GSI is needed.
+journal. A `pending` record preserves attempt identity and `attemptedAt` before
+calling the analyzer. Only a confirmed record with `deletedAt` becomes a reporting
+event; confirmation uses the analyzer's rejection timestamp when supplied and is
+written before local task cleanup. Retries reuse confirmed receipts. No new GSI
+is needed.
+
+A 404 `unknown_condition` permits local task cleanup but does not prove when or
+whether a rejection occurred. The upstream API has no rejection-history read
+endpoint. If acceptance succeeded but its confirmation write failed, the pending
+journal remains uncounted. Reconcile such attempts against the analyzer's stored
+rejection records/logs using the analysis/condition identity; only confirm with
+verified rejection evidence and its original timestamp, never retry time. Pending
+attempts alone are not evidence of deletion. This is an explicit limitation of the
+non-transactional upstream API.
 
 The existing outbox DynamoDB Stream consumer also projects relevant site records.
 This retains the existing two stream consumers rather than adding a third reader.
@@ -55,7 +68,11 @@ Overview reads include all directory/query pages, use bounded concurrency, and f
 instead of publishing partial totals on a read error. Analysis outcomes are read
 from current source records, so a successful retry replaces its prior failure.
 Submission/duplicate lists page through bounded queries and load as they enter the
-viewport. Media URLs are short-lived and only minted after supervisor authorization.
+viewport. Each entries request reads at most five DynamoDB pages, returns at most
+30 matching entries, and preserves a continuation cursor when its budget is reached.
+Frontend generation tokens discard obsolete entry responses and errors. Cached
+thumbnail URLs are renewed within a minute of expiration without resetting pagination.
+Media URLs are short-lived and only minted after supervisor authorization.
 Deleted/expired media shows an unavailable message; counts remain intact. Duplicate
 previews read the retained detection event, not a potentially changed current link,
 and label subsequent human separation. Disabling detection does not erase history.

@@ -79,7 +79,7 @@ export function statusRecords(item) {
       });
     }
   }
-  if (sk.startsWith("ISSUE_DELETION#"))
+  if (sk.startsWith("ISSUE_DELETION#") && item.deletedAt)
     add("deletions", item.deletedAt, sk, {
       category: item.category || "unknown",
     });

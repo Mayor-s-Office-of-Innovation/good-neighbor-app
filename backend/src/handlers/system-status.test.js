@@ -115,6 +115,76 @@ describe("supervisor system status", () => {
     expect(result.sites[1].counts.submissions).toBe(1);
     expect(result.sites[1].submissionHours[0]).toBe(1);
   });
+  it("continues past empty filtered pages and preserves the final cursor", async () => {
+    const at = new Date().toISOString();
+    send
+      .mockResolvedValueOnce({ Item: { siteId: "one" } })
+      .mockResolvedValueOnce({
+        Items: [],
+        LastEvaluatedKey: { pk: "STATUS#one", sk: at + "#actions#a" },
+      })
+      .mockResolvedValueOnce({
+        Items: [{ sk: at + "#duplicates#d", at, taskId: "d" }],
+      });
+    const result = JSON.parse(
+      (
+        await invoke(
+          getStatusEntries,
+          event(undefined, {
+            pathParameters: { siteId: "one", kind: "duplicates" },
+          }),
+        )
+      ).body,
+    );
+    expect(result.entries).toHaveLength(1);
+    expect(result.cursor).toBeNull();
+    expect(send.mock.calls[2][0].input.ExclusiveStartKey.sk).toBe(
+      at + "#actions#a",
+    );
+  });
+  it("bounds sparse-page reads and returns a resumable cursor", async () => {
+    const cursor = {
+      pk: "STATUS#one",
+      sk: new Date().toISOString() + "#actions#a",
+    };
+    send
+      .mockResolvedValueOnce({ Item: { siteId: "one" } })
+      .mockResolvedValue({ Items: [], LastEvaluatedKey: cursor });
+    const result = JSON.parse(
+      (
+        await invoke(
+          getStatusEntries,
+          event(undefined, {
+            pathParameters: { siteId: "one", kind: "duplicates" },
+          }),
+        )
+      ).body,
+    );
+    expect(send).toHaveBeenCalledTimes(6);
+    expect(result.entries).toEqual([]);
+    expect(
+      JSON.parse(Buffer.from(result.cursor, "base64url").toString()),
+    ).toEqual(cursor);
+  });
+  it("returns media expiry so cached thumbnails can be renewed", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-24T18:00:00Z"));
+    send.mockResolvedValue({
+      Item: { thumbS3Key: "thumb", s3Key: "original" },
+    });
+    const result = JSON.parse(
+      (
+        await invoke(
+          getStatusMedia,
+          event(undefined, {
+            pathParameters: { siteId: "one", checkId: "c", artifactId: "a" },
+            queryStringParameters: { thumbnail: "true" },
+          }),
+        )
+      ).body,
+    );
+    expect(result.urlExpiresAt).toBe("2026-10-24T18:05:00.000Z");
+  });
   it("rejects pagination cursors crossing sites", async () => {
     send.mockResolvedValue({ Item: { siteId: "one" } });
     const cursor = Buffer.from(
