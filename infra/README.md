@@ -100,9 +100,35 @@ reports both outputs.
 
 For the admin app, use the equivalent `admin_dns_name_servers` and
 `admin_dnssec_ds_record` outputs reported by its workflow. This bootstrap creates
-only the delegated `goodneighbor-compliance.sf.gov` zone and its DNS controls;
-the ACM certificate, CloudFront alias, and application records are added only
-after DT delegation resolves publicly.
+only the delegated `goodneighbor-compliance.sf.gov` zone and its DNS controls.
+Once DT delegation resolves publicly, the normal production deployment manages
+the dashboard hostname through `admin-hostname.tf`: a DNS-validated ACM
+certificate in `us-east-1`, CAA authorization for Amazon (wildcard issuance
+disabled), and A/AAAA aliases to the existing admin CloudFront distribution.
+The production module inputs also add the hostname to Cognito callback/logout
+URLs and evidence-bucket CORS origins. The frontend uses `location.origin` for
+OAuth redirects and same-origin API calls, so no separate frontend URL setting
+is needed. DEV retains its existing CloudFront dashboard URL and configuration.
+
+Deploy this configuration through **Deploy** (`deploy.yml`, environment `prod`)
+from the reviewed `main` commit, or through the normal production release.
+The DNS bootstrap workflow does not deploy the hostname. Review the CI plan for
+the certificate and validation record, CAA and A/AAAA records, admin CloudFront
+alias/certificate, Cognito callbacks/logout URLs, and S3 CORS additions. It must
+not replace the hosted zone or DNSSEC keys. Keep the ACM validation record for
+automatic renewal.
+
+After deployment, verify `https://goodneighbor-compliance.sf.gov/` and
+`/auth/callback` serve the dashboard over HTTPS, HTTP redirects to HTTPS, and
+unauthenticated `/admin/v1/sites` returns a JSON authorization error. Complete a
+Cognito login/logout and an evidence upload with an authorized test account;
+verify the existing DEV dashboard URL still works. The custom hostname inherits
+the admin distribution's WAF, TLS 1.2 minimum, CSP, and HSTS policy.
+
+DNSSEC completion is a separate DT handoff: publish the exact current
+`admin_dnssec_ds_record` as a DS record for `goodneighbor-compliance.sf.gov` in
+the parent `sf.gov` zone. Check that public DS resolution matches the active
+Route 53 KSK; signing in Route 53 alone does not establish the parent trust.
 
 The earlier `gn.sf.gov` hosted zone and its DNS controls remain in the DEV
 account pending a separately reviewed retirement. They are deliberately absent

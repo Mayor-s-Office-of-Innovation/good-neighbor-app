@@ -52,7 +52,9 @@ module "app" {
   source                                 = "../../modules/app"
   setup_code_email_identity_arn          = aws_sesv2_email_identity.setup_codes.arn
   provider_app_url                       = "https://${local.frontend_domain_name}/"
-  cognito_admin_app_url                  = "https://goodneighbor-compliance.sf.gov/"
+  cognito_admin_app_url                  = "https://${local.admin_domain_name}/"
+  admin_domain_names                     = [local.admin_domain_name]
+  admin_certificate_arn                  = aws_acm_certificate_validation.admin.certificate_arn
 
   # Both SMTP secrets are populated out-of-band before enabling delivery.
   provision_city_smtp_relay_foundation = true
