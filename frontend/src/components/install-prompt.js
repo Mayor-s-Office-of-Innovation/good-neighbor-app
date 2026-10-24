@@ -46,13 +46,13 @@ export class InstallPrompt extends HTMLElement {
       if (this.querySelector(".install-banner")) this._render(true);
     };
     window.addEventListener("localechange", this._onLocaleChange);
-    // The iOS copy promises the sign-in carries over only once the handoff
-    // manifest is actually installed (services/session-handoff.js).
+    // Wait for the sign-in handoff before giving iOS installation instructions.
+    // A slow or failed preparation must not offer an unauthenticated install.
     this._unsubHandoff = onHandoffPrepared(() => {
-      if (this.querySelector(".install-banner")) this._render(true);
+      if (this._method === "ios") this._render(true);
     });
     if (this._method === "ios") {
-      this._render();
+      if (isHandoffPrepared()) this._render();
     } else if (this._method === "prompt") {
       // Render only once the browser has actually handed us a prompt.
       this._unsubAvailable = onInstallAvailable(() => {

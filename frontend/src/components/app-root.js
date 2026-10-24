@@ -418,7 +418,7 @@ export class AppRoot extends HTMLElement {
     this._maybeOfferInstall();
     // iOS Safari only, and only while not yet standalone: keep a handoff grant
     // in the manifest so an Add to Home Screen from any route carries the
-    // session over. Off the critical path; a failure costs nothing visible.
+    // session over. Off the critical path; the iOS install offer waits for it.
     void ensureHandoffManifest({ site: this._site }).catch((err) =>
       console.error("handoff manifest failed", err),
     );
