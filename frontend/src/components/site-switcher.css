@@ -27,7 +27,7 @@ site-switcher {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  color: var(--wa-color-neutral-on-quiet);
+  color: var(--text-secondary);
   cursor: pointer;
   font-weight: var(--wa-form-control-label-font-weight);
   line-height: 120%;
@@ -111,7 +111,7 @@ site-switcher {
   border: 0;
   background: transparent;
   box-shadow: none;
-  color: var(--wa-color-neutral-on-quiet);
+  color: var(--text-secondary);
   cursor: pointer;
   font: inherit;
   margin: 0 1rem 0.5rem;

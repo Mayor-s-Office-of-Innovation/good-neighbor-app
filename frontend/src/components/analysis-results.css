@@ -201,7 +201,7 @@ html.wa-dark .analysis-tray--history {
 
 .analysis-card__clear-title h3 {
   margin: 0;
-  color: var(--wa-color-neutral-fill-loud, #2f323f);
+  color: var(--text);
   font-family: var(--wa-font-family-body, var(--font-sans));
   font-size: var(--wa-font-size-xl, 1.5625rem);
   font-weight: var(--wa-font-weight-bold, 600);
@@ -210,7 +210,7 @@ html.wa-dark .analysis-tray--history {
 
 .analysis-card__clear-copy {
   margin: 0;
-  color: #424554;
+  color: var(--text-secondary);
   font-size: var(--wa-font-size-s, 0.875rem);
   line-height: 1.6;
 }
@@ -464,13 +464,13 @@ html.wa-dark .analysis-card__clear-copy a {
   min-height: 2.6875rem;
   border-radius: var(--radius-pill);
   background: var(--wa-color-neutral-fill-quiet, #f1f2f3);
-  color: var(--wa-color-neutral-on-normal, #424554);
+  color: var(--text-secondary);
   padding: 0;
 }
 
 .analysis-card__icon--danger {
   background: var(--wa-color-neutral-fill-quiet, #f1f2f3);
-  color: var(--wa-color-neutral-on-normal, #424554);
+  color: var(--text-secondary);
 }
 
 .btn-icon wa-icon,
