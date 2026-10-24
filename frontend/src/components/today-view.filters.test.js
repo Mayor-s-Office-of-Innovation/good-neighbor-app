@@ -833,6 +833,86 @@ describe("deferred In-progress / History lists", () => {
     return view;
   }
 
+  it.each([false, true])(
+    "keeps failed 311 filing available to retry when the worklist lands after failure: %s",
+    async (loadAfterFailure) => {
+      freezeClock();
+      const { getToasts } = await import("../state/toasts.js");
+      getToasts().forEach((toast) => toast.close());
+      const view = liveView("?filter=todo");
+      view._siteId = "site-1";
+      view._watchDuplicates = vi.fn();
+      const task = {
+        ...openTask,
+        appActions: [{ code: "create_311_ticket" }],
+      };
+      view._homeModel = { tasks: [task], checks: [] };
+      const button = { disabled: false };
+      const card = {
+        isConnected: false,
+        querySelector: () => null,
+        querySelectorAll: () => [button],
+        getAttribute: () => task.taskId,
+        setAttribute: vi.fn(),
+        removeAttribute: vi.fn(),
+      };
+      let finishFiling = (_result) => {};
+      const response = new Promise((resolve) => {
+        finishFiling = resolve;
+      });
+      const onSuccess = vi.fn();
+      const filing = view._run(card, () => response, {
+        requireSubmitted311: true,
+        onSuccess,
+      });
+      let finishWorklist = (_result) => {};
+      const worklist = new Promise((resolve) => {
+        finishWorklist = resolve;
+      });
+      catalog.listTasks.mockImplementation(async ({ status }) =>
+        status === "completing" ? worklist : { tasks: [] },
+      );
+      view._remainingStatus = "pending";
+      const loading = view._loadRemainingTasks();
+      const completeWorklist = async () => {
+        finishWorklist({ tasks: [{ ...task, status: "completing" }] });
+        await loading;
+      };
+      if (!loadAfterFailure) {
+        await completeWorklist();
+        expect(view._homeTasks(view._homeModel.tasks)[0].homeStatus).toBe(
+          "in_progress",
+        );
+      }
+      // Any replacement read starts after the failed attempt has reopened.
+      catalog.listTasks.mockResolvedValue({ tasks: [] });
+      finishFiling({
+        task: {
+          ...task,
+          appActionResults: [{ code: "create_311_ticket", status: "failed" }],
+        },
+      });
+      try {
+        await filing;
+        if (loadAfterFailure) {
+          await completeWorklist();
+          await view._remainingLoad;
+        }
+        const [entry] = view._homeTasks(view._homeModel.tasks);
+        expect(entry.task.status).toBe("open");
+        expect(entry.homeStatus).toBe("needs_action");
+        expect(view._taskCardEntry(entry, false).markup).toContain(
+          'data-action="file311"',
+        );
+        expect(view._busyCards.has(task.taskId)).toBe(false);
+        expect(onSuccess).not.toHaveBeenCalled();
+        expect(getToasts()).toHaveLength(1);
+      } finally {
+        getToasts().forEach((toast) => toast.close());
+      }
+    },
+  );
+
   it("paints from the open list alone, then fetches the rest and reveals counts", async () => {
     freezeClock();
     let release = () => {};

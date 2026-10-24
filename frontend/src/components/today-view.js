@@ -2462,6 +2462,14 @@ class TodayView extends HTMLElement {
             "We couldn't file this ticket right now. Please try again."
           : appActionFailureMessage(task);
       if (failure) {
+        // A worklist read during filing can replace the open task with its
+        // temporary `completing` record. Restore the authoritative failure
+        // response before repainting, and discard reads from that attempt.
+        if (task && taskId) {
+          this._applyTaskResult(taskId, task);
+          this._expireRemainingLists();
+          if (this._remainingStatus === "pending") this._startRemainingLoad();
+        }
         restore();
         if (requireSubmitted311) show311ErrorToast();
         else showActionSaveErrorToast();
