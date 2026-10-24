@@ -28,6 +28,7 @@
     "test:status:e2e": "playwright test -c e2e/system-status.config.js"
   },
   "devDependencies": {
+    "js-yaml": "4.3.2",
     "prettier": "3.3.3"
   },
   "overrides": {
