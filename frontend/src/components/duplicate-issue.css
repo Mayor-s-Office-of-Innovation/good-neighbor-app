@@ -159,9 +159,9 @@
 .analysis-tray__counts {
   margin: -8px 10px 4px;
   text-align: center;
-  /* --text-secondary, not WA text-quiet: quiet lands at 4.22:1 on the dark
-     tray fill (fails 1.4.3 AA); secondary is 5.36:1 there and AA in light. */
-  color: var(--text-secondary);
+  /* AAA-rated quiet text (7:1+ on the tray fills in both themes); WA
+     text-quiet failed AA in dark and --text-secondary stops at ~5:1. */
+  color: var(--text-secondary-aaa);
   font-size: var(--wa-font-size-m, 1rem);
   line-height: 1.6;
 }

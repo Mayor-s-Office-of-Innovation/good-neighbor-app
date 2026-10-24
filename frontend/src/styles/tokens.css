@@ -60,6 +60,9 @@
   /* Text */
   --text: #171717; /* ~16:1 on --surface */
   --text-secondary: #666666; /* >=5:1 on every surface above */
+  /* AAA (1.4.6, 7:1) quiet text on the tray fills: 7.3:1 on --group-grey
+     #e9eaea and 7.4:1 on the blue tray #dfebfd. */
+  --text-secondary-aaa: #4a4a4a;
   --text-faint: #767676; /* decorative/reinforcing only */
 
   /* ---- Back-compat aliases (existing components reference these names) ---- */
@@ -110,6 +113,7 @@ html.wa-dark {
 
   --text: #ededed; /* ~14:1 on --surface */
   --text-secondary: #a8a8a8; /* ~6:1 on --surface */
+  --text-secondary-aaa: #c4c4c4; /* 7.3:1 on the dark tray fill #2f323f */
   --text-faint: #8f8f8f;
 
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
