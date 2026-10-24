@@ -1,4 +1,10 @@
 import {
+  getSystemStatus,
+  getStatusEntries,
+  getStatusMedia,
+  getStatusDuplicate,
+} from "../handlers/system-status.js";
+import {
   listPeople,
   createPerson,
   updatePerson,
@@ -305,6 +311,12 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   // served by the separate intake Lambda (lambda/intake.js) so a slow PostHog
   // forward can never hold this function's reserved executions.
   "GET /admin/v1/providers": listProviders,
+  "GET /admin/v1/system-status": getSystemStatus,
+  "GET /admin/v1/system-status/{siteId}/{kind}": getStatusEntries,
+  "GET /admin/v1/system-status/{siteId}/media/{checkId}/{artifactId}":
+    getStatusMedia,
+  "GET /admin/v1/system-status/{siteId}/duplicates/{taskId}":
+    getStatusDuplicate,
   "GET /admin/v1/session": getAdminSession,
   "GET /admin/v1/profile": getMyProfile,
   "PUT /admin/v1/profile": updateMyProfile,

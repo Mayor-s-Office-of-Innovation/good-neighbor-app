@@ -1,3 +1,5 @@
+import { statusConditionId } from "../domain/system-status.js";
+import { PutCommand } from "@aws-sdk/lib-dynamodb";
 import { getConfig } from "../config.js";
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
@@ -90,7 +92,7 @@ function requestId(body, fallback) {
  * @param {string} opts.siteId
  * @param {string} opts.checkId
  * @param {string} opts.artifactId
- * @returns {Promise<{ analysisId: string, checkId: string, artifactId: string } | null>}
+ * @returns {Promise<{ analysisId: string, checkId: string, artifactId: string, concerns: any[] } | null>}
  *   Null when the artifact has no ANALYSIS# item (not yet analyzed) or the item
  *   is a failed marker (no analysisId) — callers map null to 404.
  */
@@ -113,6 +115,7 @@ async function findAnalysisContext({ tableName, siteId, checkId, artifactId }) {
     return null;
   }
   return {
+    concerns: item.concerns || [],
     analysisId: item.analysisId,
     checkId: item.checkId,
     artifactId: item.artifactId,
@@ -248,6 +251,7 @@ export async function rejectAnalysisCondition(event) {
     }
     const client = await analyzerClient();
     let result;
+    let upstreamMissing = false;
     try {
       result = await client.rejectCondition(context.analysisId, conditionId, {
         ...(reason ? { reason } : {}),
@@ -268,6 +272,7 @@ export async function rejectAnalysisCondition(event) {
       ) {
         throw err;
       }
+      upstreamMissing = true;
       result = {
         analysis_id: context.analysisId,
         rejected_condition_id: conditionId,
@@ -277,7 +282,7 @@ export async function rejectAnalysisCondition(event) {
     // Rejecting an analyzer condition retires its linked open work only after
     // the analyzer accepted the rejection. This makes deletion durable for
     // persisted worklist cards that do not have a local capture session.
-    await supersedeOpenTasksForCondition({
+    const retirement = await supersedeOpenTasksForCondition({
       tableName: dynamoTable,
       siteId,
       checkId: context.checkId,
@@ -289,6 +294,39 @@ export async function rejectAnalysisCondition(event) {
         : {}),
       reason: "analysis_condition_rejected",
     });
+    const knownConcern = context.concerns.find(
+      (/** @type {any} */ c, /** @type {number} */ index) =>
+        statusConditionId(context.artifactId, c, index) === conditionId,
+    );
+    // An arbitrary unknown condition is an idempotent API no-op, not a deletion.
+    if (
+      upstreamMissing &&
+      !knownConcern &&
+      !retirement.supersededTaskIds.length
+    )
+      return jsonResponse(200, result);
+    // A stable, immutable receipt also covers rejection before guidance creates
+    // a task. Retry after a partial failure cannot count the deletion twice.
+    try {
+      await ddb.send(
+        new PutCommand({
+          TableName: dynamoTable,
+          Item: {
+            pk: `SITE#${siteId}`,
+            sk: `ISSUE_DELETION#${context.checkId}:${context.artifactId}:${conditionId}`,
+            deletedAt: new Date().toISOString(),
+            category: knownConcern?.category || "unknown",
+          },
+          ConditionExpression: "attribute_not_exists(sk)",
+        }),
+      );
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        error.name !== "ConditionalCheckFailedException"
+      )
+        throw error;
+    }
     return jsonResponse(200, result);
   } catch (err) {
     return errorResponse(err);

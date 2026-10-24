@@ -24,7 +24,8 @@
     "dev:admin": "vite --config admin-frontend/vite.config.js --host 127.0.0.1 --port 5175",
     "build:admin": "vite build --config admin-frontend/vite.config.js",
     "terraform:fmt": "terraform -chdir=infra fmt -recursive -check",
-    "terraform:validate": "terraform -chdir=infra/environments/dev init -backend=false && terraform -chdir=infra/environments/dev validate"
+    "terraform:validate": "terraform -chdir=infra/environments/dev init -backend=false && terraform -chdir=infra/environments/dev validate",
+    "test:status:e2e": "playwright test -c e2e/system-status.config.js"
   },
   "devDependencies": {
     "prettier": "3.3.3"

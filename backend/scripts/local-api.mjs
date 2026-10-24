@@ -218,6 +218,12 @@ import {
   previewSiteImport,
 } from "../src/handlers/admin-site-imports.js";
 import {
+  getSystemStatus,
+  getStatusEntries,
+  getStatusMedia,
+  getStatusDuplicate,
+} from "../src/handlers/system-status.js";
+import {
   listAnalyticsQueries,
   runAnalyticsCatalogQuery,
   runAnalyticsQuery,
@@ -403,6 +409,18 @@ const routes = [
   route("POST", "/v1/feedback", feedbackHandler),
   route("GET", "/admin/v1/providers", listProviders),
   route("GET", "/admin/v1/session", getAdminSession),
+  route("GET", "/admin/v1/system-status", getSystemStatus),
+  route("GET", "/admin/v1/system-status/{siteId}/{kind}", getStatusEntries),
+  route(
+    "GET",
+    "/admin/v1/system-status/{siteId}/media/{checkId}/{artifactId}",
+    getStatusMedia,
+  ),
+  route(
+    "GET",
+    "/admin/v1/system-status/{siteId}/duplicates/{taskId}",
+    getStatusDuplicate,
+  ),
   route("GET", "/admin/v1/profile", getMyProfile),
   route("PUT", "/admin/v1/profile", updateMyProfile),
   route("GET", "/admin/v1/admin-users", listAdminUsers),

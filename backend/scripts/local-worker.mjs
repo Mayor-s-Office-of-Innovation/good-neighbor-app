@@ -1,3 +1,5 @@
+import { projectStatus, statusRecords } from "../src/domain/system-status.js";
+import { PutCommand } from "@aws-sdk/lib-dynamodb";
 import { expireComplianceTerms } from "../src/workers/expire-compliance-terms.js";
 // SQS → worker pump — the local stand-in for the Lambda event source mapping.
 // Long-polls ElasticMQ, wraps each message in an SQSEvent, invokes the SAME
@@ -112,6 +114,54 @@ function toSqsEvent(msg) {
  * items and pass them through the same dispatcher used by the deployed Stream
  * event source so local async workflows reach SQS too.
  */
+const statusSeen = new Map();
+let statusInitialized = false;
+async function projectLocalStatus() {
+  const endpoint = new URL(
+    process.env.AWS_ENDPOINT_URL_DYNAMODB || "http://invalid",
+  );
+  if (!["localhost", "127.0.0.1", "[::1]"].includes(endpoint.hostname))
+    throw new Error(
+      "Local status projection requires a loopback DynamoDB endpoint",
+    );
+  let cursor;
+  do {
+    const page = await ddb.send(
+      new ScanCommand({
+        TableName: getConfig().dynamoTable,
+        ExclusiveStartKey: cursor,
+      }),
+    );
+    for (const item of page.Items || []) {
+      if (!statusRecords(item).length) continue;
+      const key = JSON.stringify([item.pk, item.sk]),
+        value = JSON.stringify(item);
+      if (statusSeen.get(key) === value) continue;
+      await projectStatus(item);
+      statusSeen.set(key, value);
+    }
+    cursor = page.LastEvaluatedKey;
+  } while (cursor);
+  if (!statusInitialized) {
+    try {
+      await ddb.send(
+        new PutCommand({
+          TableName: getConfig().dynamoTable,
+          Item: {
+            pk: "SYSTEM#STATUS",
+            sk: "#META",
+            ready: true,
+            trackingSince: new Date().toISOString(),
+          },
+          ConditionExpression: "attribute_not_exists(pk)",
+        }),
+      );
+    } catch (error) {
+      if (error.name !== "ConditionalCheckFailedException") throw error;
+    }
+    statusInitialized = true;
+  }
+}
 async function dispatchPendingOutbox() {
   let lastEvaluatedKey;
   do {
@@ -160,6 +210,7 @@ async function poll(queueUrl) {
         await expireComplianceTerms();
         lastExpirySweep = Date.now();
       }
+      await projectLocalStatus();
       await dispatchPendingOutbox();
     } catch (err) {
       console.error(
