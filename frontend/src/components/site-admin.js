@@ -1,7 +1,6 @@
 import "./site-admin.css";
 import "@awesome.me/webawesome/dist/components/input/input.js";
 import { getSite, hasAdminAccess, saveSiteSettings } from "../db.js";
-import { formatDateTime } from "../i18n/dates.js";
 import { t } from "../i18n/i18n.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
 import {
@@ -204,11 +203,16 @@ class SiteAccessView extends HTMLElement {
 
   async _load() {
     try {
-      const [devices, currentGrant] = await Promise.all([
+      const [devices, currentGrant, deviceView] = await Promise.all([
         listManagerDeviceBindings(),
         getCurrentStaffEnrollmentGrant(),
+        import("./site-access-devices.js"),
       ]);
       if (!this.isConnected) return;
+      this._canInviteManagers = currentGrant.canInviteManagers === true;
+      if (this._canInviteManagers)
+        this._invitationControls = await import("./site-access-roles.js");
+      this._deviceView = deviceView;
       this._bindings = devices.bindings || [];
       const localGrants = new Map(
         this._grants.map((grant) => [grant.grantId, grant]),
@@ -254,7 +258,11 @@ class SiteAccessView extends HTMLElement {
             aria-labelledby="enroll-team-title"
           >
             <h2 id="enroll-team-title">
-              ${escapeHtml(t("access.enrollTitle"))}
+              ${escapeHtml(
+                t("access.siteHeading", {
+                  site: this._site.name || t("access.site"),
+                }),
+              )}
             </h2>
             <form
               class="site-admin-card site-access-form"
@@ -262,22 +270,68 @@ class SiteAccessView extends HTMLElement {
             >
               <wa-input
                 id="staff-device-label"
-                name="label"
                 label="${escapeHtml(t("access.deviceLabel"))}"
+                placeholder="${escapeAttr(t("access.devicePlaceholder"))}"
                 maxlength="100"
                 autocomplete="off"
                 required
-                style="--wa-form-control-required-content: ''"
               ></wa-input>
-              <p class="site-access-help">${escapeHtml(t("access.help"))}</p>
+              ${this._canInviteManagers
+                ? html`
+                    <wa-radio-group
+                      id="invitation-role"
+                      label="${escapeAttr(t("access.invitationRole"))}"
+                      name="invitation-role"
+                      required
+                    >
+                      <wa-radio value="manager"
+                        >${escapeHtml(t("access.role.manager"))}</wa-radio
+                      >
+                      <wa-radio value="general"
+                        >${escapeHtml(t("access.role.general"))}</wa-radio
+                      >
+                    </wa-radio-group>
+                    <div id="invitation-manager-contact" hidden>
+                      ${field(
+                        "invitation-first-name",
+                        t("siteAdmin.field.firstName"),
+                        "",
+                        "given-name",
+                        "text",
+                        false,
+                      )}
+                      ${field(
+                        "invitation-last-name",
+                        t("siteAdmin.field.lastName"),
+                        "",
+                        "family-name",
+                        "text",
+                        false,
+                      )}
+                      ${field(
+                        "invitation-email",
+                        t("siteAdmin.field.email"),
+                        "",
+                        "email",
+                        "email",
+                        false,
+                      )}
+                    </div>
+                  `
+                : ""}
               <p
                 class="site-admin-form-error"
                 id="staff-grant-error"
                 role="alert"
               ></p>
-              <button class="btn-ink" type="submit">
+              <button
+                class="btn-ink"
+                type="submit"
+                ${this._canInviteManagers ? "disabled" : ""}
+              >
                 ${escapeHtml(t("access.create"))}
               </button>
+              <p class="site-access-help">${escapeHtml(t("access.help"))}</p>
             </form>
             <div
               class="site-access-grant"
@@ -296,7 +350,14 @@ class SiteAccessView extends HTMLElement {
             <h2 id="team-devices-title">${escapeHtml(t("access.devices"))}</h2>
             <div class="site-admin-card site-access-list">
               ${this._bindings.length
-                ? this._bindings.map(deviceRow).join("")
+                ? this._bindings
+                    .map((binding) =>
+                      this._deviceView.deviceRow(
+                        binding,
+                        this._canInviteManagers,
+                      ),
+                    )
+                    .join("")
                 : html`<p class="site-admin-empty">
                     ${escapeHtml(t("access.empty"))}
                   </p>`}
@@ -352,15 +413,23 @@ class SiteAccessView extends HTMLElement {
       "submit",
       (event) => void this._createGrant(event),
     );
-    this.querySelectorAll("[data-revoke-team-device]").forEach((button) => {
-      button.addEventListener("click", () =>
-        this._openRevokeDialog(
-          button.getAttribute("data-revoke-team-device") || "",
-          button.getAttribute("data-revoke-team-device-label") ||
-            t("access.device"),
-        ),
-      );
-    });
+    const invitationForm = this.querySelector("#staff-grant-form");
+    invitationForm?.addEventListener("input", () => this._syncInvitation());
+    invitationForm?.addEventListener("change", () => this._syncInvitation());
+    this.querySelector(".site-access-list")?.addEventListener(
+      "click",
+      (event) => {
+        const button = /** @type {Element} */ (event.target).closest(
+          "[data-revoke-team-device]",
+        );
+        if (button)
+          this._openRevokeDialog(
+            button.getAttribute("data-revoke-team-device") || "",
+            button.getAttribute("data-revoke-team-device-label") ||
+              t("access.device"),
+          );
+      },
+    );
     this.querySelector("[data-confirm-device-revoke]")?.addEventListener(
       "click",
       () => void this._confirmRevoke(),
@@ -393,23 +462,51 @@ class SiteAccessView extends HTMLElement {
     this._startCountdown();
   }
 
+  _syncInvitation() {
+    this._invitationControls?.syncInvitation(this);
+  }
+
   async _createGrant(event) {
     event.preventDefault();
+    if (this._creatingInvitation) return;
     const form = /** @type {HTMLFormElement} */ (event.currentTarget);
     const label = String(
       /** @type {any} */ (form.querySelector("#staff-device-label"))?.value ||
         "",
     ).trim();
+    const invitation = this._invitationControls?.readInvitation(this);
+    if (
+      this._canInviteManagers &&
+      !this._invitationControls.validInvitation(invitation)
+    ) {
+      this._syncInvitation();
+      return;
+    }
     const error = this.querySelector("#staff-grant-error");
     if (!label) {
       if (error) error.textContent = t("access.labelError");
       return;
     }
     const button = form.querySelector("button[type=submit]");
+    this._creatingInvitation = true;
     button?.setAttribute("disabled", "");
     if (error) error.textContent = "";
     try {
-      const result = await createStaffEnrollmentGrant(label);
+      const result = await createStaffEnrollmentGrant(
+        label,
+        this._canInviteManagers
+          ? {
+              accessLevel: invitation.accessLevel,
+              ...(invitation.accessLevel === "manager"
+                ? {
+                    firstName: invitation.firstName,
+                    lastName: invitation.lastName,
+                    email: invitation.email,
+                  }
+                : {}),
+            }
+          : {},
+      );
       if (!this.isConnected) return;
       this._grants.unshift({
         ...result.grant,
@@ -421,6 +518,9 @@ class SiteAccessView extends HTMLElement {
         error.textContent = t("access.createError");
       }
       button?.removeAttribute("disabled");
+    } finally {
+      this._creatingInvitation = false;
+      this._syncInvitation();
     }
   }
 
@@ -455,6 +555,8 @@ class SiteAccessView extends HTMLElement {
           .filter((grant) => grant.status === "pending")
           .map((grant) => grant.grantId),
       );
+      if ([...checked].some((id) => !pending.has(id)))
+        await this._deviceView.refreshDevices(this);
       this._grants = this._grants.filter(
         (grant) =>
           (!checked.has(grant.grantId) || pending.has(grant.grantId)) &&
@@ -1012,32 +1114,6 @@ function field(id, label, value, autocomplete, type, required = true) {
   ></wa-input>`;
 }
 
-/** @param {Record<string, any>} binding */
-function deviceRow(binding) {
-  return html`<article class="site-access-device">
-    <div>
-      <h3>${escapeHtml(binding.label || t("access.device"))}</h3>
-      <p>
-        ${escapeHtml(binding.status || "active")} ·
-        ${escapeHtml(t("access.lastSeen"))}
-        ${escapeHtml(formatTimestamp(binding.lastSeenAt))}
-      </p>
-    </div>
-    ${binding.status === "active"
-      ? html`<button
-          class="btn-outline"
-          type="button"
-          data-revoke-team-device="${escapeAttr(binding.bindingId)}"
-          data-revoke-team-device-label="${escapeAttr(
-            binding.label || t("access.device"),
-          )}"
-        >
-          ${escapeHtml(t("access.revoke"))}
-        </button>`
-      : ""}
-  </article>`;
-}
-
 /** @param {Record<string, any>} grant @param {boolean} expanded */
 function activeGrantView(grant, expanded) {
   return html`<details
@@ -1075,16 +1151,6 @@ async function renderEnrollmentQr(container, value) {
   await import("@awesome.me/webawesome/dist/components/qr-code/qr-code.js");
   const qrCode = /** @type {any} */ (container.querySelector("wa-qr-code"));
   if (qrCode?.isConnected) qrCode.value = value;
-}
-
-/** @param {unknown} value */
-function formatTimestamp(value) {
-  const date = new Date(String(value || ""));
-  if (Number.isNaN(date.getTime())) return EMPTY;
-  return formatDateTime(date, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
 }
 
 customElements.define("site-admin-view", SiteAdminView);

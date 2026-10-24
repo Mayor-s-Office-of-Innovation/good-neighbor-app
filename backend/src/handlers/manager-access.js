@@ -1,3 +1,7 @@
+import { providerInvitationAuthority } from "../lib/provider-invitation-authority.js";
+import { personRecord, personPut } from "../lib/people.js";
+import { sitePrimaryContactChange } from "../lib/site-primary-contact.js";
+import { emailHash, normalizeEmail } from "./setup-codes.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { URLSearchParams } from "node:url";
 import {
@@ -94,6 +98,124 @@ const createStaffGrantAttempt = async (event) => {
     return jsonResponse(429, { error: "manager_grant_rate_limited" });
   }
 
+  const accessLevel = body.accessLevel ?? "general";
+  if (!["general", "manager"].includes(String(accessLevel)))
+    return jsonResponse(400, { error: "invalid_invitation_role" });
+  const providerAuthority =
+    issuer.authorityScope === "provider"
+      ? await providerInvitationAuthority(
+          tableName,
+          { ...site, siteId },
+          issuer,
+        )
+      : null;
+  if (issuer.authorityScope === "provider" && !providerAuthority)
+    return jsonResponse(403, { error: "manager_access_required" });
+  if (accessLevel === "manager" && !providerAuthority)
+    return jsonResponse(403, { error: "provider_manager_required" });
+  const firstName = String(body.firstName ?? "").trim();
+  const lastName = String(body.lastName ?? "").trim();
+  const name = `${firstName} ${lastName}`;
+  const email = normalizeEmail(String(body.email ?? ""));
+  if (
+    accessLevel === "manager" &&
+    (!firstName ||
+      !lastName ||
+      firstName.length > 100 ||
+      lastName.length > 100 ||
+      email.length > 320 ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+  )
+    return jsonResponse(400, { error: "invalid_manager_contact" });
+  const assignmentWrites = [];
+  let membership;
+  let primaryChange;
+  if (accessLevel === "manager") {
+    const membershipId = randomUUID();
+    const verifier = await emailHash(email);
+    const person = personRecord({
+      firstName,
+      lastName,
+      email,
+      siteManager: true,
+    });
+    membership = {
+      pk: `SITE#${siteId}`,
+      sk: `MANAGER_MEMBERSHIP#${membershipId}`,
+      type: "managerMembership",
+      entityType: "MANAGER_MEMBERSHIP",
+      membershipId,
+      siteId,
+      personId: person.personId,
+      firstName: person.firstName,
+      lastName: person.lastName,
+      name,
+      email,
+      emailHash: verifier,
+      role: "manager",
+      status: "active",
+      generation: 1,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      createdBy: `binding:${issuerBindingId}`,
+      updatedBy: `binding:${issuerBindingId}`,
+    };
+    person.sources = [{ pk: membership.pk, sk: membership.sk }];
+    assignmentWrites.push(
+      personPut(person),
+      put(tableName, membership),
+      put(tableName, {
+        pk: `SITE#${siteId}`,
+        sk: `MANAGER_PERSON#${person.personId}`,
+        membershipId,
+        personId: person.personId,
+      }),
+      put(tableName, {
+        pk: `SITE#${siteId}`,
+        sk: `MANAGER_EMAIL#${verifier}`,
+        type: "managerMembershipEmail",
+        membershipId,
+        siteId,
+        createdAt: nowIso,
+      }),
+      put(tableName, {
+        pk: `MANAGER_EMAIL#${verifier}`,
+        sk: `SITE#${siteId}#MEMBERSHIP#${membershipId}`,
+        type: "managerMembershipDirectory",
+        membershipId,
+        siteId,
+        status: "active",
+        createdAt: nowIso,
+      }),
+      put(tableName, {
+        pk: `SITE#${siteId}`,
+        sk: `AUDIT#${nowIso}#${randomUUID()}`,
+        type: "siteAuditEvent",
+        eventType: "manager_membership_created",
+        siteId,
+        membershipId,
+        actor: `binding:${issuerBindingId}`,
+        createdAt: nowIso,
+      }),
+    );
+    const primary = await sitePrimaryContactChange(tableName, siteId, nowIso, {
+      add: membership,
+    });
+    const check = providerAuthority?.siteCheck;
+    if (!check)
+      return jsonResponse(403, { error: "provider_manager_required" });
+    primaryChange = {
+      Update: {
+        ...primary.Update,
+        ConditionExpression: `${primary.Update.ConditionExpression} AND (${check.ConditionExpression})`,
+        ExpressionAttributeNames: check.ExpressionAttributeNames,
+        ExpressionAttributeValues: {
+          ...primary.Update.ExpressionAttributeValues,
+          ...check.ExpressionAttributeValues,
+        },
+      },
+    };
+  }
   const grantId = randomUUID();
   const token = randomBytes(32).toString("base64url");
   const tokenHash = createHash("sha256").update(token).digest("hex");
@@ -105,14 +227,27 @@ const createStaffGrantAttempt = async (event) => {
     entityType: "ENROLLMENT_GRANT",
     grantId,
     siteId,
-    accessLevel: "general",
+    accessLevel,
+    ...(membership
+      ? {
+          membershipId: membership.membershipId,
+          membershipGeneration: 1,
+          issuedTo: email,
+        }
+      : {}),
+    ...(providerAuthority?.snapshot || {}),
     label,
     tokenHash,
     status: "pending",
     issuedBy: `binding:${issuerBindingId}`,
     issuedByBindingId: issuerBindingId,
-    issuerMembershipId: issuer.membershipId,
-    issuerMembershipGeneration: Number(issuer.membershipGeneration ?? 0),
+    ...(!providerAuthority
+      ? {
+          issuerAuthorityScope: "site",
+          issuerMembershipId: issuer.membershipId,
+          issuerMembershipGeneration: Number(issuer.membershipGeneration ?? 0),
+        }
+      : {}),
     createdAt: nowIso,
     expiresAt,
   };
@@ -121,6 +256,7 @@ const createStaffGrantAttempt = async (event) => {
       new TransactWriteCommand({
         TransactItems: [
           put(tableName, grant),
+          ...assignmentWrites,
           put(tableName, {
             pk: `ENROLLMENT_TOKEN#${tokenHash}`,
             sk: "#META",
@@ -131,19 +267,21 @@ const createStaffGrantAttempt = async (event) => {
             siteId,
             expiresAt,
           }),
-          {
-            ConditionCheck: {
-              TableName: tableName,
-              Key: { pk: issuer.pk, sk: issuer.sk },
-              ConditionExpression:
-                "#status = :active AND accessLevel = :manager",
-              ExpressionAttributeNames: { "#status": "status" },
-              ExpressionAttributeValues: {
-                ":active": "active",
-                ":manager": "manager",
+          providerAuthority
+            ? providerAuthority.checks[0]
+            : {
+                ConditionCheck: {
+                  TableName: tableName,
+                  Key: { pk: issuer.pk, sk: issuer.sk },
+                  ConditionExpression:
+                    "#status = :active AND accessLevel = :manager",
+                  ExpressionAttributeNames: { "#status": "status" },
+                  ExpressionAttributeValues: {
+                    ":active": "active",
+                    ":manager": "manager",
+                  },
+                },
               },
-            },
-          },
           {
             Put: {
               TableName: tableName,
@@ -175,6 +313,14 @@ const createStaffGrantAttempt = async (event) => {
             actor: `binding:${issuerBindingId}`,
             createdAt: nowIso,
           }),
+          ...(providerAuthority
+            ? [
+                ...providerAuthority.checks.slice(1),
+                primaryChange || {
+                  ConditionCheck: providerAuthority.siteCheck,
+                },
+              ]
+            : []),
         ],
       }),
     );
@@ -186,16 +332,21 @@ const createStaffGrantAttempt = async (event) => {
       const reasons =
         /** @type {{CancellationReasons?: Array<{Code?: string}>}} */ (error)
           .CancellationReasons || [];
-      if (reasons[2]?.Code === "ConditionalCheckFailed") {
+      if (
+        reasons[2 + assignmentWrites.length]?.Code === "ConditionalCheckFailed"
+      ) {
         return jsonResponse(403, { error: "manager_access_required" });
       }
       if (
-        reasons[3]?.Code === "ConditionalCheckFailed" ||
+        reasons[3 + assignmentWrites.length]?.Code ===
+          "ConditionalCheckFailed" ||
         reasons.some((reason) => reason.Code === "TransactionConflict")
       ) {
         return jsonResponse(409, { error: "staff_grant_create_conflict" });
       }
     }
+    if (error instanceof Error && error.name === "TransactionCanceledException")
+      return jsonResponse(409, { error: "invitation_creation_conflict" });
     throw error;
   }
 
@@ -222,7 +373,12 @@ export const getCurrentStaffGrant = async (event) => {
   const issuerBindingId = deriveActorId(event);
   const tableName = getDynamoTableName();
   const grants = await issuerGrants(tableName, siteId, issuerBindingId);
+  const issuer = (
+    await get(tableName, `SITE#${siteId}`, `DEVICE_BINDING#${issuerBindingId}`)
+  )?.Item;
   return jsonResponse(200, {
+    canInviteManagers:
+      issuer?.status === "active" && issuer?.authorityScope === "provider",
     grants: grants.map((grant) => publicGrant(grant)),
   });
 };
@@ -302,7 +458,7 @@ export const cancelStaffGrant = async (event) => {
   });
 };
 
-/** List general-access bindings at the Manager's current Site. */
+/** List manager and general-access bindings at the Manager's current Site. */
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer} */
 export const listGeneralBindings = async (event) => {
   if (deriveAccessLevel(event) !== "manager") {
@@ -321,12 +477,12 @@ export const listGeneralBindings = async (event) => {
   );
   return jsonResponse(200, {
     bindings: (result.Items ?? [])
-      .filter((item) => item.accessLevel === "general")
+      .filter((item) => ["general", "manager"].includes(item.accessLevel))
       .map(publicBinding),
   });
 };
 
-/** Revoke one general-access binding at the Manager's current Site. */
+/** Revoke a team binding, or a site manager binding with Provider Manager authority. */
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer} */
 export const revokeGeneralBinding = async (event) => {
   if (deriveAccessLevel(event) !== "manager") {
@@ -341,8 +497,30 @@ export const revokeGeneralBinding = async (event) => {
   ]);
   const binding = result.Item;
   const device = deviceResult.Item;
-  if (!binding || binding.accessLevel !== "general") {
+  if (!binding || !["general", "manager"].includes(binding.accessLevel)) {
     return jsonResponse(404, { error: "general_binding_not_found" });
+  }
+  let providerAuthority;
+  if (binding.accessLevel === "manager") {
+    if (binding.authorityScope === "provider")
+      return jsonResponse(403, {
+        error: "provider_device_revocation_not_allowed",
+      });
+    const [issuerResult, siteResult] = await Promise.all([
+      get(
+        tableName,
+        `SITE#${siteId}`,
+        `DEVICE_BINDING#${deriveActorId(event)}`,
+      ),
+      get(tableName, `SITE#${siteId}`, "#META"),
+    ]);
+    providerAuthority = await providerInvitationAuthority(
+      tableName,
+      siteResult.Item || {},
+      issuerResult.Item,
+    );
+    if (!providerAuthority)
+      return jsonResponse(403, { error: "provider_manager_access_required" });
   }
   if (binding.status === "revoked") {
     return jsonResponse(200, { binding: publicBinding(binding) });
@@ -355,6 +533,12 @@ export const revokeGeneralBinding = async (event) => {
     await ddb.send(
       new TransactWriteCommand({
         TransactItems: [
+          ...(providerAuthority
+            ? [
+                ...providerAuthority.checks,
+                { ConditionCheck: providerAuthority.siteCheck },
+              ]
+            : []),
           revokeUpdate(tableName, binding.pk, binding.sk, binding, now),
           revokeUpdate(
             tableName,
@@ -380,7 +564,7 @@ export const revokeGeneralBinding = async (event) => {
             pk: `SITE#${siteId}`,
             sk: `AUDIT#${now}#${randomUUID()}`,
             type: "siteAuditEvent",
-            eventType: "general_binding_revoked",
+            eventType: `${binding.accessLevel}_binding_revoked`,
             siteId,
             bindingId,
             physicalDeviceId: binding.physicalDeviceId,
@@ -429,8 +613,8 @@ function put(tableName, Item) {
 function publicGrant(item, now = new Date().toISOString()) {
   return {
     grantId: item.grantId,
+    accessLevel: item.accessLevel || "general",
     label: item.label,
-    accessLevel: "general",
     status:
       item.status === "pending" && item.expiresAt <= now
         ? "expired"
@@ -446,7 +630,8 @@ function publicBinding(item) {
     bindingId: item.bindingId,
     physicalDeviceId: item.physicalDeviceId,
     label: item.label,
-    accessLevel: "general",
+    accessLevel: item.accessLevel,
+    authorityScope: item.authorityScope,
     status: item.status,
     enrolledAt: item.enrolledAt,
     lastSeenAt: item.lastSeenAt,

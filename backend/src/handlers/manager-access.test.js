@@ -115,7 +115,9 @@ describe("manager staff enrollment", () => {
       event({ pathParameters: { grantId: "staff-1" } }),
     );
     expect(cancelled.statusCode).toBe(200);
-    const transaction = send.mock.calls[2][0];
+    const transaction = send.mock.calls.filter(
+      ([command]) => command instanceof TransactWriteCommand,
+    )[0][0];
     expect(transaction.input.TransactItems).toHaveLength(3);
     expect(transaction.input.TransactItems[1].Delete.Key).toEqual({
       pk: "ENROLLMENT_TOKEN#token-hash",
@@ -123,7 +125,7 @@ describe("manager staff enrollment", () => {
     });
   });
 
-  it("lists only general bindings", async () => {
+  it("lists both site roles with their actual access levels", async () => {
     send.mockResolvedValueOnce({
       Items: [
         { bindingId: "general-1", accessLevel: "general", status: "active" },
@@ -137,6 +139,10 @@ describe("manager staff enrollment", () => {
       expect.objectContaining({
         bindingId: "general-1",
         accessLevel: "general",
+      }),
+      expect.objectContaining({
+        bindingId: "manager-2",
+        accessLevel: "manager",
       }),
     ]);
   });
