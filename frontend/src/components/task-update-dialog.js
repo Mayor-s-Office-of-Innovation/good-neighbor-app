@@ -409,13 +409,6 @@ export class TaskUpdateDialog extends HTMLElement {
         this._render();
       });
     });
-    root.querySelectorAll("[data-presence]").forEach((element) => {
-      const button = /** @type {HTMLButtonElement} */ (element);
-      button.addEventListener(
-        "click",
-        () => void this._recordOutcome(root, button.dataset.presence || ""),
-      );
-    });
     root.querySelector("[data-load-older]")?.addEventListener("click", () => {
       if (this._nextToken) void this._load(this._nextToken);
     });
@@ -666,22 +659,20 @@ export class TaskUpdateDialog extends HTMLElement {
 
   /** @param {HTMLElement} root @param {string} type @param {string} [text] */
   async _recordOutcome(root, type, text) {
-    const action = text !== undefined;
-    if (!this._task || (action && !text)) return;
+    if (!this._task || !text) return;
     const response = await this._runMutation(
       root,
-      action ? "[data-action-outcome]" : "[data-presence]",
+      "[data-action-outcome]",
       () =>
         createTaskUpdate(this._task.taskId, {
           type,
-          ...(action ? { text } : {}),
+          text,
         }),
-      !action,
     );
     if (!response) return;
     this._pendingEvent = response.update;
     this._task = response.task;
-    this._mode = action ? "action-photos" : "notes";
+    this._mode = "action-photos";
     this._resetFiles();
     this._noteDrafts = emptyTaskUpdateNotes();
     this._render();
@@ -740,9 +731,8 @@ export class TaskUpdateDialog extends HTMLElement {
    * @param {HTMLElement} root
    * @param {string} buttonSelector
    * @param {() => Promise<any>} action
-   * @param {boolean} [reloadOnConflict]
    */
-  async _runMutation(root, buttonSelector, action, reloadOnConflict = false) {
+  async _runMutation(root, buttonSelector, action) {
     if (this._busy) return null;
     this._busy = true;
     const buttons = /** @type {NodeListOf<HTMLButtonElement>} */ (
@@ -752,14 +742,6 @@ export class TaskUpdateDialog extends HTMLElement {
     try {
       return await action();
     } catch (caught) {
-      if (
-        reloadOnConflict &&
-        caught instanceof ApiError &&
-        caught.status === 409
-      ) {
-        await this._load();
-        return null;
-      }
       showTaskUpdateErrorToast(caught);
       return null;
     } finally {
@@ -853,7 +835,12 @@ export class TaskUpdateDialog extends HTMLElement {
   }
 
   _notifyUpdated() {
-    this.dispatchEvent(new CustomEvent("taskupdated", { bubbles: true }));
+    this.dispatchEvent(
+      new CustomEvent("taskupdated", {
+        bubbles: true,
+        detail: { task: this._task },
+      }),
+    );
   }
 }
 
