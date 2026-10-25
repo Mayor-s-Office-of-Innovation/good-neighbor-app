@@ -72,7 +72,9 @@ New here? Get your bearings in this order:
   `InternetExposure`, `AssetCriticality`, and `Compliance`.
 - Prefer managed services and least-privilege IAM.
 - Public-facing web surfaces must use TLS 1.2 minimum, HSTS, CSP, secure headers, CAA records, CloudFront, WAF, and rate limits.
-- Pin GitHub Actions to immutable commit SHAs when productionizing workflows. This starter uses named versions for readability and should be pinned before go-live.
+- Pin external GitHub Actions to full commit SHAs with release-version comments.
+  CI enforces this with `node scripts/check-action-pins.mjs`; weekly Dependabot
+  action updates are reviewed through `dev` before production promotion.
 
 ## Skills
 
