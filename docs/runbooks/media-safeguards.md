@@ -183,3 +183,64 @@ Match `requestId` to the HTTP 400 in the API Gateway access log. These records
 become available after deployment; they cannot explain historical rejections
 retroactively. Quota rejections (429) retain their existing `MediaQuotaExceeded`
 marker and are separate from this input-validation diagnostic.
+
+## Assessment evaluation size and WAF blocks
+
+`POST /v1/assessments:evaluate` accepts up to 65,536 decoded UTF-8 JSON bytes.
+This accommodates AI-generated descriptions and translations sent back by the browser.
+The handler returns JSON `413 {"error":"assessment_too_large","maxBytes":65536}`
+above that limit, before parsing or writing data. Photo upload limits are unchanged.
+Each evaluation attempt reaching the handler emits `AssessmentEvaluationRequestSize`
+with `requestId`, `siteId`, `requestBytes`, `maxBytes`, and `sizeRejected`; it does not
+log the assessment text. `sizeRejected: false` means only that the size check passed,
+not that evaluation succeeded.
+
+In Terraform (`infra/modules/app/main.tf`), only the Common Rule Set's
+`SizeRestrictions_BODY` action is changed to Count. A subsequent label rule restores
+its block except for the exact POST evaluation route. Other managed rules and rate
+limits remain active. CloudFront's WAF inspection window is 64 KiB to cover accepted
+payloads; inspection above the default 16 KiB incurs additional WAF charges.
+
+`infra/modules/app/waf-logging.tf` enables BLOCK-only logs in **us-east-1** under
+`aws-waf-logs-good-neighbor-app-dev` (or the corresponding production prefix),
+retained for 14 days. Authorization, Cookie, X-API-Key, Referer, and query strings are
+redacted. Logs still contain IP addresses, paths, request identifiers, and other
+headers; keep access restricted. Logging redaction does not apply to the existing
+WAF sampled-requests view. Allowed requests, including size-rule Count matches that
+ultimately pass WAF, are dropped from these logs.
+
+Deploy the handler and Terraform through CI. The deployment role needs permission
+to configure WAF logging and CloudWatch log delivery/resource policies; WAF manages
+the delivery policy. Do not run Terraform plan/apply or AWS CLI locally.
+
+In CloudWatch Console Logs Insights, select the WAF log group in us-east-1 and the
+incident time range:
+
+```sql
+fields @timestamp, httpRequest.httpMethod, httpRequest.uri,
+       httpRequest.requestId, terminatingRuleId, ruleGroupList,
+       requestBodySize, requestBodySizeInspectedByWAF, labels
+| filter action = "BLOCK"
+| sort @timestamp desc
+| limit 200
+```
+
+For managed-rule blocks, expand `ruleGroupList` to find the inner terminating rule.
+For size blocks outside evaluation, the top-level rule is
+`BodySizeRestrictionsOutsideAssessmentEvaluation`. WAF's CloudFront request ID is
+not the API Gateway request ID; correlate with time, route, and available identifiers.
+
+In the API Lambda log group (app region), measure assessment sizes:
+
+```sql
+fields @timestamp, requestId, siteId, requestBytes, maxBytes, sizeRejected
+| filter eventType = "AssessmentEvaluationRequestSize"
+| sort @timestamp desc
+| limit 200
+```
+
+After deployment, use an authenticated dev test site to verify a valid evaluation
+above 8 KiB succeeds, one above 64 KiB returns the JSON 413, and another route still
+blocks above 8 KiB with a WAF log entry. Terraform validation and handler tests do
+not prove deployed WAF behavior. Logging begins at deployment and cannot recover
+historical blocked requests.
