@@ -1160,6 +1160,16 @@ html.wa-dark .analysis-card__clear-copy a {
   .analysis-card .analysis-card__edit {
     align-self: flex-start;
   }
+
+  /* Failed cards have no panel/layout wrapper. Keep their copy and actions
+     together instead of flattening them into a clipped horizontal row. */
+  .analysis-card--failed {
+    flex-direction: column;
+  }
+  .analysis-card.analysis-card--failed .analysis-card__content {
+    display: block;
+    width: 100%;
+  }
 }
 
 /* Responsive display type: headings step down one size on phones (discrete
