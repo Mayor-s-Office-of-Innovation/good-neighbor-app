@@ -22,6 +22,7 @@ import {
 } from "../task-updates/task-update-store.js";
 
 const MAX_ASSESSMENT_CONDITIONS = 49;
+const MAX_ASSESSMENT_BYTES = 64 * 1024;
 
 /**
  * @param {unknown} body
@@ -243,6 +244,28 @@ async function enqueueConditionTranslations({
 export const evaluateAssessment = async (event) => {
   const { dynamoTable, queueUrl } = getConfig();
   const siteId = deriveSiteId(event);
+
+  // Measure the decoded JSON bytes, not Content-Length or base64 transport size.
+  const requestBytes = event.isBase64Encoded
+    ? Buffer.from(event.body || "", "base64").length
+    : Buffer.byteLength(event.body || "", "utf8");
+  const oversized = requestBytes > MAX_ASSESSMENT_BYTES;
+  console.info(
+    JSON.stringify({
+      eventType: "AssessmentEvaluationRequestSize",
+      requestId: event.requestContext.requestId,
+      siteId,
+      requestBytes,
+      maxBytes: MAX_ASSESSMENT_BYTES,
+      sizeRejected: oversized,
+    }),
+  );
+  if (oversized) {
+    return jsonResponse(413, {
+      error: "assessment_too_large",
+      maxBytes: MAX_ASSESSMENT_BYTES,
+    });
+  }
 
   let body;
   try {
