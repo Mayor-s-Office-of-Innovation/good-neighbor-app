@@ -32,15 +32,12 @@ function feedback(over = {}) {
 
 /** Config with survey IDs set (the configured-for-egress state). */
 const config = {
-  uploadBucket: "b",
-  queueUrl: "q",
-  dynamoTable: "t",
   posthogFeedbackSurveyId: "survey-uuid",
   posthogFeedbackQuestionId: "question-uuid",
 };
 
 /** Config without survey IDs (the pre-config / kill-switch state). */
-const configNoSurvey = { uploadBucket: "b", queueUrl: "q", dynamoTable: "t" };
+const configNoSurvey = {};
 
 describe("forwardFeedback", () => {
   afterEach(() => {

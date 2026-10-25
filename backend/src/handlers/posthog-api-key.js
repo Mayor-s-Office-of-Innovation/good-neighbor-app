@@ -14,7 +14,7 @@ import {
   SecretsManagerClient,
   GetSecretValueCommand,
 } from "@aws-sdk/client-secrets-manager";
-import { getConfig } from "../config.js";
+import { getPosthogConfig } from "../config.js";
 
 /** @type {SecretsManagerClient | undefined} */
 let secretsClient;
@@ -29,11 +29,11 @@ const cache = new Map();
 const EMPTY = "\u0000empty";
 
 /**
- * @param {import("../config.js").AppConfig} [config]
+ * @param {import("../config.js").PosthogConfig} [config]
  * @returns {Promise<string | undefined>} the ingest key, or undefined in
  *   log-only mode (no env key, no secret ARN, or empty container)
  */
-export async function getPosthogApiKey(config = getConfig()) {
+export async function getPosthogApiKey(config = getPosthogConfig()) {
   if (config.posthogProjectApiKey) return config.posthogProjectApiKey;
 
   const secretArn = config.posthogApiKeySecretArn;

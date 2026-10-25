@@ -20,12 +20,28 @@ const { getPosthogApiKey, resetPosthogApiKeyCache } = await import(
   "./posthog-api-key.js"
 );
 
-const infra = { uploadBucket: "b", queueUrl: "q", dynamoTable: "t" };
+const infra = {};
 
 describe("posthog api key resolution", () => {
   afterEach(() => {
+    vi.unstubAllEnvs();
     resetPosthogApiKeyCache();
     send.mockReset();
+  });
+
+  it("resolves its default config in the standalone intake environment", async () => {
+    for (const key of [
+      "S3_UPLOAD_BUCKET",
+      "SQS_QUEUE_URL",
+      "DYNAMO_TABLE",
+      "POSTHOG_PROJECT_API_KEY",
+    ]) {
+      vi.stubEnv(key, undefined);
+    }
+    vi.stubEnv("POSTHOG_API_KEY_SECRET_ARN", "arn:secret:intake");
+    send.mockResolvedValueOnce({ SecretString: "test-ingest-key" });
+    await expect(getPosthogApiKey()).resolves.toBe("test-ingest-key");
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
   it("prefers the direct env/config key over Secrets Manager", async () => {

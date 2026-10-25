@@ -85,6 +85,27 @@ If `ClientEventLogOnly` dominates, the key was never put in Secrets Manager and 
 reached PostHog. In PostHog, the events appear under Activity with `$lib = gnp-client-events`;
 `$pageview` feeds the Web Analytics views directly.
 
+### Intake configuration failures
+
+The standalone intake Lambda reads only PostHog key settings and optional feedback
+survey identifiers through `getPosthogConfig()`. It does not require the main API's
+`S3_UPLOAD_BUCKET`, `SQS_QUEUE_URL`, or `DYNAMO_TABLE`. Keep these dependencies
+separate rather than adding unrelated infrastructure settings to the intake Lambda.
+
+A forwarding warning with `reason = "secret_fetch_failed"` and a message such as
+`Missing required environment variable for uploadBucket` indicates the old shared
+configuration dependency failed before Secrets Manager was called. Deploy the
+intake configuration fix; this message alone does not indicate a bad PostHog key
+or missing Secrets Manager permission.
+
+After deployment, generate a dev analytics event, client error, and feedback submission
+(with feedback survey IDs configured). Check the intake logs for
+`ClientEventForwarded` and `ClientErrorForwarded`, then verify all three events
+in PostHog. Feedback has no success log marker; confirm its `survey sent` event
+in PostHog and check for `FeedbackForwardFailed` or `FeedbackLogOnly` in CloudWatch. A 204 intake response alone is not confirmation:
+the handlers also return 204 in log-only mode and on forwarding failures.
+Previously failed beacons are not automatically replayed.
+
 ## Local development
 
 `npm run dev` (backend harness) serves `POST /v1/client-events` and the Vite proxy forwards it,

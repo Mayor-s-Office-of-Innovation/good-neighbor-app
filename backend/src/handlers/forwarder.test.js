@@ -31,8 +31,8 @@ function report(over = {}) {
   };
 }
 
-/** Minimal config so getConfig() never runs in forwarder unit tests. */
-const config = { uploadBucket: "b", queueUrl: "q", dynamoTable: "t" };
+/** Minimal config so getPosthogConfig() never runs in forwarder unit tests. */
+const config = {};
 
 describe("forwardClientError", () => {
   afterEach(() => {
