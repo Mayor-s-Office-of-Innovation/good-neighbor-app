@@ -203,7 +203,7 @@ payloads; inspection above the default 16 KiB incurs additional WAF charges.
 
 `infra/modules/app/waf-logging.tf` enables BLOCK-only logs in **us-east-1** under
 `aws-waf-logs-good-neighbor-app-dev` (or the corresponding production prefix),
-retained for 14 days. Authorization, Cookie, X-API-Key, Referer, and query strings are
+retained for 365 days and encrypted with a dedicated, rotating KMS key in us-east-1. Authorization, Cookie, X-API-Key, Referer, and query strings are
 redacted. Logs still contain IP addresses, paths, request identifiers, and other
 headers; keep access restricted. Logging redaction does not apply to the existing
 WAF sampled-requests view. Allowed requests, including size-rule Count matches that
