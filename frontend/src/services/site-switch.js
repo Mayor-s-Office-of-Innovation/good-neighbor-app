@@ -41,8 +41,13 @@ export async function switchToBoundSite({
   destination = "/today",
 }) {
   if (!siteId || siteId === currentSiteId) return "same";
+  // Provider enrollment stores sibling binding metadata without tokens. The
+  // server authorizes that binding and issues its session when selected.
   const bound = boundSites.find(
-    (site) => site.siteId === siteId && site.token && site.refreshToken,
+    (site) =>
+      site.siteId === siteId &&
+      ((site.bindingId && site.physicalDeviceId) ||
+        (site.token && site.refreshToken)),
   );
   if (!bound) return "needs-binding";
   const active = getCurrentCheck();

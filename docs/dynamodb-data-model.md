@@ -181,7 +181,7 @@ as task update events and every GSI sort key.
 | Manager enrollment grant | `SITE#<siteId>` | `MANAGER_GRANT#<createdAt>#<grantId>` | 24-hour, single-use, single-Site Manager enrollment grant with grant-email and post-redemption security-notification delivery evidence. Stores only the link token's SHA-256 verifier or the six-character code's keyed HMAC verifier; list APIs omit it. |
 | Current Manager enrollment grant guard | `SITE#<siteId>` | `MANAGER_GRANT_CURRENT#<membershipId>` | Conditional singleton for one unexpired Manager grant per membership. Creation replaces only the grant observed by the request; redemption or cancellation deletes the matching pointer atomically. |
 | Current Manager recovery grant guard | `SITE#<siteId>` | `MANAGER_RECOVERY_GRANT_CURRENT#<membershipId>` | Conditional singleton for one unexpired self-service recovery grant per membership. Recovery links replace only earlier recovery links, so an unredeemed administrator-issued invitation remains valid. |
-| Staff enrollment grant | `SITE#<siteId>` | `STAFF_GRANT#<createdAt>#<grantId>` | Eight-hour, single-use general-access grant issued by an active Manager binding. Stores its intended device label, issuing binding/membership generations, status, and only the token verifier. |
+| Staff enrollment grant | `SITE#<siteId>` | `STAFF_GRANT#<createdAt>#<grantId>` | Eight-hour, single-use Site invitation issued by an active Manager binding. Site Managers issue general-access grants; Provider Managers can also issue manager grants linked to a new named Site membership. Stores the intended device label, target role, issuing authority snapshots, status, and only the token verifier. Provider snapshots include membership ID/generation, Provider ID, Site credential generation, and provider-access generation, all revalidated transactionally at redemption. |
 | Staff grant issuance version | `SITE#<siteId>` | `STAFF_GRANT_ISSUANCE#VERSION` | Site-wide optimistic concurrency guard. Read strongly before counting the rolling hour; conditionally replace its opaque version in every grant creation transaction. No credentials or authorization are stored here. |
 | Enrollment-token lookup | `ENROLLMENT_TOKEN#<tokenHash>` | `#META` | Opaque lookup from a presented 256-bit link token or six-character manual enrollment code to its grant. Raw credentials are never stored. Successful redemption atomically adds `redeemedAt` and a numeric `expiresAt` TTL 30 days later, retaining a replay diagnostic tombstone. Cancellation removes the lookup. |
 | Physical device | `PHYSICAL_DEVICE#<physicalDeviceId>` | `#META` | Stable browser/device identity shared by one or more Site bindings. Stores label, lifecycle status, and enrollment timestamps; no Site authorization is inferred from this item alone. A revoked physical identity cannot redeem another enrollment grant. |
@@ -269,8 +269,10 @@ and no separate ticket item.
   checks.
 
 **In-progress tasks** also carry `inProgressAt`, `notifiedAt`, an agency snapshot,
-`latestUpdateId`, `latestUpdateLabel`, and `lastAnsweredPresencePeriod`. Four-hour
-presence periods are always counted from `inProgressAt`, which never changes. Task-update
+`latestUpdateId` and `latestUpdateLabel`. Legacy presence responses may also carry
+`lastAnsweredPresencePeriod`; the UI no longer prompts periodically. The permanent
+resolution action appends an `issue_resolved` event with an optional documentation
+window and sets `completionMethod: "site_team_resolved"`. Task-update
 photos reuse ART rows with `purpose: "task_update"`. Registering them skips the SQS and
 analyzer path on purpose. The update event stores the artifact IDs so the media route can
 authorize reads.

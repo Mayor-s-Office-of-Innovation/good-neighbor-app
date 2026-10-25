@@ -157,3 +157,24 @@ and a `ShortCodeThrottled` log event without credentials. During an attack, the 
 cap can temporarily prevent all code logins until the window resets; full-token
 invitations remain outside that application cap. Investigate sustained throttling
 before raising limits. Storage failures fail closed before code resolution.
+
+## Invitations created in Manage access
+
+Deploy the additive backend changes before the frontend.
+
+Provider Managers must choose Site Manager or Site Team Member under the device
+nickname. Site Manager invitations require first name, last name, and email and create an additional
+named assignment on the selected Site. Site Managers see their existing team-only
+form. Both shared links expire after eight hours; no email is sent automatically.
+Cancelling a link or letting it expire does not remove a named manager assignment.
+
+A Provider Manager's invitation is rejected if the issuing binding, Provider
+membership, Site ownership, or access generations changed before redemption.
+Older provider-issued team invitations lacking authority snapshots cannot be repaired
+by retrying them; create and share a fresh invitation after the fix is deployed.
+A duplicate manager email assignment is a conflict, never a replacement. Use the
+existing named assignment's administrative enrollment/recovery flow in that case.
+
+Team Devices lists both Site Managers and Site Team Members. Provider Managers can revoke either site role’s device; Site Managers can revoke only Site Team Member devices. Provider Manager device authority is managed separately. Device revocation invalidates that binding and its tokens without removing the person’s named manager assignment or other devices. Manager-device revocation validates the acting Provider Manager’s current membership and site authority in the same transaction as revocation.
+
+Manage access refreshes capabilities while visible, including after returning to the page and when no enrollment links remain. Losing authority disables protected actions without clearing the invitation draft or changing its selected role. A duplicate manager email returns a specific conflict message without retrying; only issuance-guard contention and transaction conflicts receive bounded retries.

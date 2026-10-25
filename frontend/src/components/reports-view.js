@@ -698,6 +698,8 @@ class ReportsDayView extends ReportsScreen {
         if (!button || !task) return;
         const action = button.getAttribute("data-action");
         if (action === "view311") this._sheets?.open311(task, button);
+        else if (action === "mark-resolved")
+          void this._sheets?.openUpdates(task, button, "resolve");
         else if (action === "update")
           void this._sheets?.openUpdates(task, button);
       },
@@ -925,6 +927,8 @@ class ReportsTypeView extends ReportsScreen {
         if (!button || !task) return;
         const action = button.getAttribute("data-action");
         if (action === "view311") this._sheets?.open311(task, button);
+        else if (action === "mark-resolved")
+          void this._sheets?.openUpdates(task, button, "resolve");
         else if (action === "update")
           void this._sheets?.openUpdates(task, button);
       },

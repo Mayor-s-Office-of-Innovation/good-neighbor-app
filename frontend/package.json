@@ -55,6 +55,21 @@
       "name": "reports css",
       "path": "dist/assets/reports-view-*.css",
       "limit": "3 kB"
+    },
+    {
+      "name": "invitation roles js",
+      "path": "dist/assets/site-access-roles-*.js",
+      "limit": "4 kB"
+    },
+    {
+      "name": "site devices js",
+      "path": "dist/assets/site-access-devices-*.js",
+      "limit": "1.5 kB"
+    },
+    {
+      "name": "site access state js",
+      "path": "dist/assets/site-access-state-*.js",
+      "limit": "2 kB"
     }
   ],
   "dependencies": {

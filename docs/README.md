@@ -45,6 +45,8 @@
 
 - **[ADR 0017](adr/0017-independent-people-and-site-affiliations.md)** — stable people, independent affiliations, site assignments, provider transfers, and migration.
 
+- **[ADR 0018](./adr/0018-provider-issued-site-invitations.md)** — Provider Manager invitations for named Site Managers and Site Team Members, with Site-scoped authority checks.
+
 ## Operations
 
 - **[System status](./runbooks/system-status.md)** — supervisor dashboard metric definitions, reporting projections, initialization, and verification.

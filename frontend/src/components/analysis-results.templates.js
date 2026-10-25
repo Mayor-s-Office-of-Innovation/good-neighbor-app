@@ -1028,6 +1028,15 @@ function completedEvidenceCard(
                   ><span>${escapeHtml(t("card.editDetails"))}</span>
                 </button>`
               : ""}
+            ${tickerTask?.status === "in_progress"
+              ? html`<button
+                  type="button"
+                  class="btn-outline issue-update-button analysis-card__resolve"
+                  data-action="mark-resolved"
+                >
+                  ${escapeHtml(t("taskUpdate.markResolved"))}
+                </button>`
+              : ""}
             <p class="actioncard__error" role="alert" hidden></p>
           </div>
           ${evidencePreview(item, mediaPlaceholder)}

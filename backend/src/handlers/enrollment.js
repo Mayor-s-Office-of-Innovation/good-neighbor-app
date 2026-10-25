@@ -1,3 +1,4 @@
+import { providerInvitationAuthority } from "../lib/provider-invitation-authority.js";
 import { checkCodeAttemptLimit } from "./code-attempt-limit.js";
 import { enrollmentCodeVerifier } from "./enrollment-codes.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -150,8 +151,34 @@ export const redeemEnrollmentGrant = async (event) => {
   const site = siteResult.Item;
   const authority = authorityResult.Item;
   const physical = physicalResult.Item;
+  const providerIssued = grant.issuerAuthorityScope === "provider";
+  const issuerBinding =
+    providerIssued && accessLevel === "manager"
+      ? (
+          await ddb.send(
+            new GetCommand({
+              TableName: tableName,
+              Key: {
+                pk: `SITE#${siteId}`,
+                sk: `DEVICE_BINDING#${grant.issuedByBindingId}`,
+              },
+              ConsistentRead: true,
+            }),
+          )
+        ).Item
+      : authority;
+  const providerAuthority = providerIssued
+    ? await providerInvitationAuthority(
+        tableName,
+        { ...site, siteId },
+        issuerBinding,
+        grant,
+      )
+    : null;
+  if (providerIssued && !providerAuthority)
+    return rejectEnrollment(event, "access_unavailable", 403, grant);
   const issuerMembership =
-    accessLevel === "general" && grant.issuerMembershipId
+    accessLevel === "general" && !providerIssued && grant.issuerMembershipId
       ? (
           await ddb.send(
             new GetCommand({
@@ -169,8 +196,13 @@ export const redeemEnrollmentGrant = async (event) => {
     site.status === "inactive" ||
     !authority ||
     authority.status !== "active" ||
+    (accessLevel === "manager" &&
+      grant.membershipGeneration !== undefined &&
+      Number(authority.generation ?? 0) !==
+        Number(grant.membershipGeneration)) ||
     (accessLevel === "general" && authority.accessLevel !== "manager") ||
     (accessLevel === "general" &&
+      !providerIssued &&
       (!issuerMembership ||
         issuerMembership.status !== "active" ||
         Number(issuerMembership.generation ?? 0) !==
@@ -335,25 +367,37 @@ export const redeemEnrollmentGrant = async (event) => {
                 },
               ]
             : []),
-          {
-            ConditionCheck: {
-              TableName: tableName,
-              Key: { pk: authority.pk, sk: authority.sk },
-              ConditionExpression:
-                accessLevel === "manager"
-                  ? "#status = :active AND generation = :generation"
-                  : "#status = :active AND accessLevel = :manager",
-              ExpressionAttributeNames: { "#status": "status" },
-              ExpressionAttributeValues: {
-                ":active": "active",
-                ...(accessLevel === "manager"
-                  ? { ":generation": membershipGeneration }
-                  : {}),
-                ...(accessLevel === "general" ? { ":manager": "manager" } : {}),
-              },
-            },
-          },
-          ...(accessLevel === "general"
+          ...(providerIssued && accessLevel === "general"
+            ? []
+            : [
+                {
+                  ConditionCheck: {
+                    TableName: tableName,
+                    Key: { pk: authority.pk, sk: authority.sk },
+                    ConditionExpression:
+                      accessLevel === "manager"
+                        ? "#status = :active AND generation = :generation"
+                        : "#status = :active AND accessLevel = :manager",
+                    ExpressionAttributeNames: { "#status": "status" },
+                    ExpressionAttributeValues: {
+                      ":active": "active",
+                      ...(accessLevel === "manager"
+                        ? { ":generation": membershipGeneration }
+                        : {}),
+                      ...(accessLevel === "general"
+                        ? { ":manager": "manager" }
+                        : {}),
+                    },
+                  },
+                },
+              ]),
+          ...(providerAuthority
+            ? [
+                ...providerAuthority.checks,
+                { ConditionCheck: providerAuthority.siteCheck },
+              ]
+            : []),
+          ...(accessLevel === "general" && !providerIssued
             ? [
                 {
                   ConditionCheck: {

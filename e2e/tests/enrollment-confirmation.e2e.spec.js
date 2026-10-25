@@ -105,3 +105,37 @@ for (const manager of [true, false]) {
     expect(redemptions).toBe(1);
   });
 }
+
+test("enrollment button has a generous stable target and visible pressed feedback", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/#enrollment_grant=visual-test&enrollment_token=synthetic");
+  const button = page.locator("#confirm-enrollment");
+  await expect(button).toBeVisible();
+  const before = await button.boundingBox();
+  if (!before) throw new Error("Enrollment button has no bounding box");
+  expect(before.width).toBeGreaterThanOrEqual(300);
+  expect(before.width).toBeLessThan(358);
+  expect(before.height).toBeGreaterThanOrEqual(72);
+  const background = await button.evaluate(
+    (el) => window.getComputedStyle(el).backgroundColor,
+  );
+  await page.mouse.move(
+    before.x + before.width / 2,
+    before.y + before.height / 2,
+  );
+  await page.mouse.down();
+  const pressed = await button.boundingBox();
+  expect(pressed).toEqual(before);
+  await expect
+    .poll(() =>
+      button.evaluate((el) => window.getComputedStyle(el).backgroundColor),
+    )
+    .not.toBe(background);
+  await page.screenshot({
+    path: test.info().outputPath("enrollment-pressed.png"),
+  });
+  await page.mouse.move(0, 0);
+  await page.mouse.up();
+});

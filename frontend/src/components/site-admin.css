@@ -340,6 +340,9 @@
   display: grid;
   gap: 1rem;
 }
+.site-access-grant:not(:empty) {
+  margin-block-start: var(--wa-space-l, 24px);
+}
 .site-access-ready summary {
   cursor: pointer;
   font-weight: var(--wa-font-weight-semibold);
@@ -352,4 +355,18 @@
 .site-access-ready wa-qr-code {
   display: block;
   margin-block: 1rem;
+}
+
+#invitation-manager-contact:not([hidden]) {
+  display: grid;
+  gap: var(--wa-space-m, 16px);
+}
+
+#staff-device-label {
+  --wa-form-control-required-content: "";
+}
+
+.site-access-form wa-input::part(form-control-label),
+.site-access-form wa-radio-group::part(form-control-label) {
+  font-size: var(--wa-font-size-m);
 }

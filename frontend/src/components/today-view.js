@@ -187,6 +187,7 @@ function stashHomeState(view) {
         homeFilter: view._homeFilter,
         historyGrouping: view._historyGrouping,
         taskOverrides: view._taskOverrides,
+        confirmedTasks: new Map(view._confirmedTasks),
         hasPerimeterDraft: view._hasPerimeterDraft,
         site: view._site,
         siteId: view._siteId,
@@ -391,6 +392,7 @@ class TodayView extends HTMLElement {
     if (previousSiteId && previousSiteId !== this._siteId) {
       this._stopDuplicates?.();
       this._duplicateLinks = new Map();
+      this._confirmedTasks = new Map();
     }
     // First arrival with nothing to show yet: paint the chrome and placeholder
     // cards from the stored site record now, so first contentful paint does
@@ -624,9 +626,13 @@ class TodayView extends HTMLElement {
       return;
     }
     if (!stillCurrent()) return;
+    this._reconcileConfirmedTasks(
+      results.flatMap((result) => result.tasks || []),
+      true,
+    );
     const model = this._homeModel;
-    // The model holds only the open list (possibly hydrated); the fresh
-    // lists are the other statuses, so there is nothing to reconcile.
+    // Merge the fresh status lists with the first-tier model. _renderHome
+    // retains confirmed completions while any index entries are still stale.
     const tasks = uniqueTasks([
       ...results.flatMap((result) => result.tasks || []),
       ...model.tasks,
@@ -691,6 +697,7 @@ class TodayView extends HTMLElement {
     }
     this._historyGrouping = snapshot.historyGrouping;
     this._taskOverrides = snapshot.taskOverrides;
+    this._confirmedTasks = new Map(snapshot.confirmedTasks);
     this._hasPerimeterDraft = snapshot.hasPerimeterDraft;
     this._site = snapshot.site;
     this._siteId = snapshot.siteId;
@@ -708,6 +715,8 @@ class TodayView extends HTMLElement {
   }
 
   _renderHome(model) {
+    if (this._confirmedTasks?.size)
+      model = { ...model, tasks: this._reconcileConfirmedTasks(model.tasks) };
     this._homeModel = model;
     // Keep the native dialog and its action buttons mounted while a location
     // decision is pending. A background location update can otherwise replace
@@ -1200,6 +1209,14 @@ class TodayView extends HTMLElement {
         host: this,
         container: () => this.querySelector(":scope > .home"),
         resolveTask: (task) => this._tasksById.get(task.taskId) || task,
+        onTaskUpdated: (task) => {
+          if (task.status === "completed") {
+            this._confirmedTasks ??= new Map();
+            this._confirmedTasks.set(task.taskId, task);
+          }
+          this._applyTaskResult(task.taskId, task);
+          if (this._homeModel) this._renderHome(this._homeModel);
+        },
         reload: () => this.connectedCallback(),
         fallbackFocus: () => this.querySelector(".home-tabs__tab--active"),
       });
@@ -2290,6 +2307,8 @@ class TodayView extends HTMLElement {
         onOriginal: (original, trigger) =>
           void this._openTaskUpdate(original, trigger),
       });
+    } else if (action === "mark-resolved") {
+      void this._taskSheets().openUpdates(task, btn, "resolve");
     } else if (action === "update") {
       void this._openTaskUpdate(task, btn);
     } else if (action === "view311") {
@@ -2339,6 +2358,32 @@ class TodayView extends HTMLElement {
     }
   }
 
+  /** Keep confirmed completions through missing or stale status-index reads.
+   * @param {Record<string, any>[]} tasks
+   * @param {boolean} [acknowledge] only a full status-list read can retire entries
+   */
+  _reconcileConfirmedTasks(tasks, acknowledge = false) {
+    const confirmed = this._confirmedTasks;
+    if (!confirmed?.size) return tasks;
+    if (acknowledge) {
+      for (const [id, task] of confirmed) {
+        const matches = tasks.filter((entry) => entry.taskId === id);
+        if (
+          matches.length &&
+          matches.every(
+            (entry) =>
+              entry.status === task.status && entry.updatedAt >= task.updatedAt,
+          )
+        )
+          confirmed.delete(id);
+      }
+    }
+    const merged = new Map(tasks.map((task) => [task.taskId, task]));
+    for (const [id, task] of confirmed)
+      merged.set(id, { ...merged.get(id), ...task });
+    return [...merged.values()];
+  }
+
   /**
    * Fold a completion response into the model so the card changes tabs on
    * the next paint instead of after a full reload. The server record is
@@ -2348,6 +2393,9 @@ class TodayView extends HTMLElement {
   _applyTaskResult(taskId, task) {
     const model = this._homeModel;
     if (!model || !taskId || !task) return;
+    // Shared duplicate actions return the original task, not the clicked
+    // observation. Never merge its identity or evidence into that observation.
+    taskId = task.taskId || taskId;
     const known = model.tasks.some((entry) => entry.taskId === taskId);
     const tasks = known
       ? model.tasks.map((entry) =>
@@ -2355,6 +2403,16 @@ class TodayView extends HTMLElement {
         )
       : [...model.tasks, task];
     this._homeModel = { ...model, tasks };
+    // Duplicate projections prefer the original cached on their link over
+    // the worklist record. Keep every linked observation on the same state.
+    this._duplicateLinks = new Map(
+      [...this._duplicateLinks].map(([sourceId, link]) => [
+        sourceId,
+        link.original?.taskId === taskId
+          ? { ...link, original: { ...link.original, ...task } }
+          : link,
+      ]),
+    );
   }
 
   /**
@@ -2462,6 +2520,18 @@ class TodayView extends HTMLElement {
             "We couldn't file this ticket right now. Please try again."
           : appActionFailureMessage(task);
       if (failure) {
+        // A worklist read during filing can replace the open task with its
+        // temporary `completing` record. Restore the authoritative failure
+        // response before repainting, and discard reads from that attempt.
+        if (task && taskId) {
+          this._applyTaskResult(taskId, task);
+          this._expireRemainingLists();
+          if (this._remainingStatus === "pending") this._startRemainingLoad();
+          if (task.taskId && task.taskId !== taskId && this._homeModel) {
+            // Cancel duplicate reads started before the failed shared action.
+            this._watchDuplicates(this._homeModel.tasks);
+          }
+        }
         restore();
         if (requireSubmitted311) show311ErrorToast();
         else showActionSaveErrorToast();

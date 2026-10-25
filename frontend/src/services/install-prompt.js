@@ -25,7 +25,7 @@ export const STORAGE_KEY = "install-prompt";
 export const SNOOZE_MS = 14 * 24 * 60 * 60 * 1000;
 export const MAX_DISMISSALS = 2;
 
-/** @typedef {{ dismissedAt?: number, dismissals?: number, installed?: boolean }} InstallState */
+/** @typedef {{ dismissedAt?: number, dismissals?: number, installed?: boolean, firstCheckCompleted?: boolean }} InstallState */
 /** @typedef {Event & { prompt: () => Promise<void>, userChoice: Promise<{ outcome: "accepted" | "dismissed" }> }} BeforeInstallPromptEvent */
 
 /** @type {BeforeInstallPromptEvent | null} */
@@ -35,6 +35,8 @@ const availableListeners = new Set();
 /** @type {Set<() => void>} */
 const installedListeners = new Set();
 let captured = false;
+let firstCheckCompleted = false;
+const checkCompletedListeners = new Set();
 
 const win = () => (typeof window !== "undefined" ? window : undefined);
 const nav = () => (typeof navigator !== "undefined" ? navigator : undefined);
@@ -86,6 +88,8 @@ export function resetInstallPrompt() {
   availableListeners.clear();
   installedListeners.clear();
   captured = false;
+  firstCheckCompleted = false;
+  checkCompletedListeners.clear();
 }
 
 /**
@@ -109,6 +113,19 @@ export function onInstallAvailable(fn) {
 export function onAppInstalled(fn) {
   installedListeners.add(fn);
   return () => installedListeners.delete(fn);
+}
+
+/** Stop install offers after the first completed perimeter check on this device. */
+export function completeFirstPerimeterCheck() {
+  firstCheckCompleted = true;
+  writeState({ ...readState(), firstCheckCompleted: true });
+  for (const fn of checkCompletedListeners) fn();
+}
+
+/** @param {() => void} fn */
+export function onFirstPerimeterCheckCompleted(fn) {
+  checkCompletedListeners.add(fn);
+  return () => checkCompletedListeners.delete(fn);
 }
 
 /** @returns {boolean} the page runs as an installed app already. */
@@ -198,7 +215,15 @@ export function shouldOfferInstall({
   standalone = isStandalone(),
   webview = isInAppBrowser(),
 } = {}) {
-  if (!method || standalone || webview || state.installed) return false;
+  if (
+    !method ||
+    standalone ||
+    webview ||
+    state.installed ||
+    state.firstCheckCompleted ||
+    firstCheckCompleted
+  )
+    return false;
   const dismissals = state.dismissals ?? 0;
   if (dismissals >= MAX_DISMISSALS) return false;
   if (state.dismissedAt && now - state.dismissedAt < SNOOZE_MS) return false;

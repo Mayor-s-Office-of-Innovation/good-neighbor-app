@@ -709,3 +709,90 @@ describe("live ticker refresh", () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 });
+
+it("retains confirmed resolution through delayed and missing index results", async () => {
+  await import("./today-view.js");
+  const View = /** @type {any} */ (
+    vi
+      .mocked(customElements.define)
+      .mock.calls.find(([name]) => name === "today-view")[1]
+  );
+  const view = new View();
+  const task = {
+    taskId: "a",
+    status: "completed",
+    updatedAt: "2026-10-23T12:00:00Z",
+  };
+  view._confirmedTasks = new Map([["a", task]]);
+  const stale = {
+    taskId: "a",
+    status: "in_progress",
+    updatedAt: "2026-10-23T11:00:00Z",
+    thumbnailUrl: "photo",
+  };
+  expect(view._reconcileConfirmedTasks([stale], true)).toEqual([
+    { ...stale, ...task },
+  ]);
+  expect(view._reconcileConfirmedTasks([], true)).toEqual([task]);
+  expect(view._confirmedTasks.size).toBe(1);
+  // Seeing completion in one list must not retire it while another is stale.
+  expect(view._reconcileConfirmedTasks([stale, task], true)[0].status).toBe(
+    "completed",
+  );
+  expect(view._confirmedTasks.size).toBe(1);
+  expect(view._reconcileConfirmedTasks([task], true)).toEqual([task]);
+  expect(view._confirmedTasks.size).toBe(0);
+});
+
+it("reconciles TaskSheets updates before reloading, including after dismissal", async () => {
+  await import("./today-view.js");
+  const View = /** @type {any} */ (
+    vi
+      .mocked(customElements.define)
+      .mock.calls.find(([name]) => name === "today-view")[1]
+  );
+  const view = new View();
+  view._homeModel = { tasks: [{ taskId: "a", status: "in_progress" }] };
+  // Hold rendering at the model update; the open sheet normally remains mounted.
+  view.querySelector = () => ({ open: true });
+  view._tasksById = new Map();
+  const sheets = view._taskSheets();
+  sheets._focusCard = vi.fn();
+  const listeners = new Map();
+  const dialog = {
+    addEventListener: (name, handler) => listeners.set(name, handler),
+    open: vi.fn(),
+    remove: vi.fn(),
+  };
+  const originalCreate = document.createElement;
+  document.createElement = /** @type {any} */ (vi.fn(() => dialog));
+  sheets.mount = vi.fn();
+  const reload = vi.fn();
+  sheets._options.reload = reload;
+  try {
+    await sheets.openUpdates(
+      { taskId: "a", status: "in_progress" },
+      null,
+      "resolve",
+    );
+    listeners.get("taskupdateclosed")({ detail: { results: true } });
+    expect(sheets._updateDialog).toBeNull();
+    reload.mockClear();
+    const task = {
+      taskId: "a",
+      status: "completed",
+      updatedAt: "2026-10-23T12:00:00Z",
+    };
+    reload.mockImplementation(() => {
+      expect(view._homeModel.tasks[0].status).toBe("completed");
+    });
+    listeners.get("taskupdated")({ detail: { task } });
+    expect(reload).toHaveBeenCalledOnce();
+    view._renderHome({ tasks: [{ taskId: "a", status: "in_progress" }] });
+    expect(view._homeModel.tasks).toEqual([task]);
+    view._renderHome({ tasks: [] });
+    expect(view._homeModel.tasks).toEqual([task]);
+  } finally {
+    document.createElement = originalCreate;
+  }
+});

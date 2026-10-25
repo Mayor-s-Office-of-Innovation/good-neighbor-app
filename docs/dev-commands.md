@@ -22,6 +22,28 @@ frontend, tests, lint, and typecheck do **not** need Java.
 | `npm test` | Vitest across workspaces |
 | `npm run build` | Build all workspaces |
 | `npm run typecheck -w backend` | `tsc` JSDoc typecheck (backend) |
+| `node --test scripts/check-action-pins.test.mjs && node scripts/check-action-pins.mjs` | Test the workflow pinning guard and reject mutable external action references |
+
+### Updating GitHub Actions
+
+External `uses:` references in `.github/workflows/` use full commit SHAs with
+release-version comments. Local reusable workflows keep their `./` references;
+Docker actions must use SHA-256 image digests. The App checks job validates this
+policy, including on Dependabot PRs.
+
+Weekly GitHub Actions Dependabot updates target the repository's default branch,
+`dev`. Review each proposed SHA against its official upstream repository and
+release, keep repeated references consistent, and run CI before merging. Verify
+the normal dev deployment before promoting to `main`; production deployment
+still uses the existing release/manual trigger and environment approval. Do not
+rerun one-time bootstrap or migration workflows just to test action updates.
+
+The pinning guard checks reference format, not upstream provenance or whether a
+release is safe. Pinning does not freeze hosted runner images, tool downloads,
+container tags outside `uses:`, or dependencies fetched by actions at runtime.
+Those require separate dependency controls. See
+[GitHub's secure-use guidance](https://docs.github.com/en/actions/reference/security/secure-use)
+and [Dependabot's version-comment support](https://github.blog/changelog/2022-10-31-dependabot-now-updates-comments-in-github-actions-workflows-referencing-action-versions/).
 
 ## Frontend
 

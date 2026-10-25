@@ -106,3 +106,29 @@ it.each([
   expect(result.task).not.toHaveProperty("resolvedAt");
   expect(result.task).not.toHaveProperty("completedAt");
 });
+
+it("resolves before the first presence prompt without consuming a presence period", () => {
+  const result = buildTaskUpdateTransition(
+    { status: "in_progress", inProgressAt: "2026-10-23T12:00:00Z" },
+    { type: "issue_resolved" },
+    {
+      taskId: "task",
+      updateId: "update",
+      actorId: "actor",
+      now: new Date("2026-10-23T12:01:00Z"),
+    },
+  );
+  expect(result).not.toHaveProperty("error");
+  if ("error" in result) throw new Error(result.error);
+  expect(result.task).toMatchObject({
+    status: "completed",
+    completionMethod: "site_team_resolved",
+    latestUpdateId: "update",
+  });
+  expect(result.task.resolvedAt).toBe("2026-10-23T12:01:00.000Z");
+  expect(result.update).toMatchObject({
+    type: "issue_resolved",
+    documentationState: "open_for_documentation",
+  });
+  expect(result.task).not.toHaveProperty("lastAnsweredPresencePeriod");
+});

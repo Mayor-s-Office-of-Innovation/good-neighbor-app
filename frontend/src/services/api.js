@@ -471,10 +471,10 @@ export function retireSessionHandoff() {
   return request("DELETE", "/app/v1/session-handoff");
 }
 
-/** @param {string} label */
-export function createStaffEnrollmentGrant(label) {
+/** @param {string} label @param {{accessLevel?: string, firstName?: string, lastName?: string, email?: string}} [invitation] */
+export function createStaffEnrollmentGrant(label, invitation = {}) {
   return request("POST", "/app/v1/manager/staff-grants", {
-    body: { label },
+    body: { label, ...invitation },
   });
 }
 

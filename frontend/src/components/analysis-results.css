@@ -1214,3 +1214,9 @@ html.wa-dark .analysis-card__clear-copy a {
 .analysis-card .card-description > summary::after {
   display: none;
 }
+
+.analysis-card__resolve {
+  align-self: flex-start;
+  width: max-content;
+  margin-block-start: var(--wa-space-l, 24px);
+}

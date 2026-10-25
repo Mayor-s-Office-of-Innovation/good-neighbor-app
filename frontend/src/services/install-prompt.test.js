@@ -222,3 +222,45 @@ describe("captureInstallPrompt / promptInstall", () => {
     ).toBe(false);
   });
 });
+
+it("permanently stops offers after a completed perimeter check and notifies the mounted banner", () => {
+  const storage = memoryStorage();
+  vi.stubGlobal("window", { localStorage: storage });
+  const remove = vi.fn();
+  const unsubscribe = mod.onFirstPerimeterCheckCompleted(remove);
+  mod.completeFirstPerimeterCheck();
+  expect(remove).toHaveBeenCalledTimes(1);
+  expect(mod.readState()).toMatchObject({ firstCheckCompleted: true });
+  expect(
+    mod.shouldOfferInstall({
+      method: "ios",
+      standalone: false,
+      webview: false,
+    }),
+  ).toBe(false);
+  mod.resetInstallPrompt();
+  expect(
+    mod.shouldOfferInstall({
+      method: "ios",
+      standalone: false,
+      webview: false,
+    }),
+  ).toBe(false);
+  unsubscribe();
+});
+it("stops offers for this session even if browser storage is blocked", () => {
+  vi.stubGlobal("window", {
+    get localStorage() {
+      throw new Error("blocked");
+    },
+  });
+  mod.completeFirstPerimeterCheck();
+  expect(
+    mod.shouldOfferInstall({
+      method: "ios",
+      state: {},
+      standalone: false,
+      webview: false,
+    }),
+  ).toBe(false);
+});
