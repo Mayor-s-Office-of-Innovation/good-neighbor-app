@@ -68,26 +68,7 @@ export function getConfig(env = process.env) {
     config.analyzerApiKeySecretArn = env.ANALYZER_API_KEY_SECRET_ARN;
   }
 
-  // PostHog forwarder wiring is likewise optional at load time: unset/empty
-  // means the client-error forwarder runs in log-only mode (validate + log,
-  // no egress) — the governance-gate default. See handlers/posthog-api-key.js.
-  if (env.POSTHOG_PROJECT_API_KEY) {
-    config.posthogProjectApiKey = env.POSTHOG_PROJECT_API_KEY;
-  }
-  if (env.POSTHOG_API_KEY_SECRET_ARN) {
-    config.posthogApiKeySecretArn = env.POSTHOG_API_KEY_SECRET_ARN;
-  }
-
-  // Feedback survey wiring is optional at load time: with either ID unset the
-  // feedback forwarder stays in log-only mode (validate + log, no egress) —
-  // the pre-config default and the kill switch. Plain identifiers, not
-  // secrets. See handlers/feedback-forwarder.js.
-  if (env.FEEDBACK_SURVEY_ID) {
-    config.posthogFeedbackSurveyId = env.FEEDBACK_SURVEY_ID;
-  }
-  if (env.FEEDBACK_QUESTION_ID) {
-    config.posthogFeedbackQuestionId = env.FEEDBACK_QUESTION_ID;
-  }
+  Object.assign(config, getPosthogConfig(env));
 
   if (env.SF311_MEDIA_BASE_URL)
     config.sf311MediaBaseUrl = env.SF311_MEDIA_BASE_URL;
@@ -159,4 +140,38 @@ export function getDynamoTableName(env = process.env) {
     throw new Error("Missing required environment variable for dynamoTable");
   }
   return env.DYNAMO_TABLE;
+}
+
+/**
+ * Configuration for the standalone intake Lambda. It deliberately has no
+ * dependency on the API's storage, queue, or database environment variables.
+ * @typedef {Pick<AppConfig, "posthogProjectApiKey" | "posthogApiKeySecretArn" | "posthogFeedbackSurveyId" | "posthogFeedbackQuestionId">} PosthogConfig
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {PosthogConfig}
+ */
+export function getPosthogConfig(env = process.env) {
+  /** @type {PosthogConfig} */
+  const config = {};
+  // PostHog forwarder wiring is likewise optional at load time: unset/empty
+  // means the client-error forwarder runs in log-only mode (validate + log,
+  // no egress) — the governance-gate default. See handlers/posthog-api-key.js.
+  if (env.POSTHOG_PROJECT_API_KEY) {
+    config.posthogProjectApiKey = env.POSTHOG_PROJECT_API_KEY;
+  }
+  if (env.POSTHOG_API_KEY_SECRET_ARN) {
+    config.posthogApiKeySecretArn = env.POSTHOG_API_KEY_SECRET_ARN;
+  }
+
+  // Feedback survey wiring is optional at load time: with either ID unset the
+  // feedback forwarder stays in log-only mode (validate + log, no egress) —
+  // the pre-config default and the kill switch. Plain identifiers, not
+  // secrets. See handlers/feedback-forwarder.js.
+  if (env.FEEDBACK_SURVEY_ID) {
+    config.posthogFeedbackSurveyId = env.FEEDBACK_SURVEY_ID;
+  }
+  if (env.FEEDBACK_QUESTION_ID) {
+    config.posthogFeedbackQuestionId = env.FEEDBACK_QUESTION_ID;
+  }
+
+  return config;
 }

@@ -15,7 +15,7 @@
 // here (V8 + Firefox line formats) so exceptions group into issues and
 // symbolicate against the uploaded source maps.
 
-import { getConfig } from "../config.js";
+import { getPosthogConfig } from "../config.js";
 import { getPosthogApiKey } from "./posthog-api-key.js";
 
 const DEFAULT_HOST = "https://us.i.posthog.com";
@@ -102,14 +102,14 @@ export function parseStackFrames(stack) {
  * @param {{ userAgent?: string }} ctx best taken from the API Gateway event
  *   headers server-side; the client never sends it
  * @param {{ fetchImpl?: typeof fetch, host?: string, now?: () => number,
- *   config?: import("../config.js").AppConfig }} [deps] test seams; `config`
- *   defaults to getConfig() (the Lambda env)
+ *   config?: import("../config.js").PosthogConfig }} [deps] test seams; `config`
+ *   defaults to getPosthogConfig() (the Lambda env)
  * @returns {Promise<"forwarded" | "log-only" | "failed">}
  */
 export async function forwardClientError(report, ctx, deps = {}) {
   let apiKey;
   try {
-    apiKey = await getPosthogApiKey(deps.config ?? getConfig());
+    apiKey = await getPosthogApiKey(deps.config ?? getPosthogConfig());
   } catch (err) {
     warnForwardFailed("secret_fetch_failed", err, report);
     return "failed";
