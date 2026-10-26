@@ -242,11 +242,44 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   periodic presence prompts. Optional resolution documentation opens immediately;
   the status change, timeline event, and history refresh proceed independently.
   Resolving normally moves the task
-  irreversibly to `completed`; when an app-owned informational 311 ticket must
-  be closed first, a lease-protected `resolving` state checkpoints successful
-  closures and returns incomplete attempts to `in_progress` for retry. Notes,
+  irreversibly to `completed`; automatic closure of app-owned informational 311
+  tickets runs in the background and does not delay or undo that resolution. Notes,
   actions, and update photos append to the timeline. Update-photo registration
   reuses the private artifact/S3 read path but does not enqueue analyzer work.
+- **Automatic 311 work:** task creation (including clarification answers and action
+  overrides) and resolution atomically write an `SF311_OUTBOX` item with
+  the task change. DynamoDB Streams dispatches it to the background worker queue;
+  the local harness polls the same outbox. Classification, ticket creation,
+  attachment uploads, and automatic closure never gate these HTTP responses.
+  `SF311_LOCK#<taskId>` stores a separate expiring worker lease and durable
+  integration results, so foreground task replacements cannot erase checkpoints.
+  Workers merge integration fields into the latest task without replacing user
+  status or notes. Transient failures retry through SQS and its existing DLQ,
+  using 30-second exponential backoff capped at 15 minutes. Lease contention
+  waits at least until the active six-minute lease expires. This per-message
+  delay leaves the queue's default processing visibility timeout unchanged.
+  Definitive `missing_location` and `insufficient_classifier_information` failures
+  are saved with job status `failed` and acknowledged rather than retried. A separately queued new
+  job can try again after its input is corrected; existing action-selection guards
+  still apply when durable worker results exist. Uncertain City outcomes are never classified as
+  permanent validation failures.
+  Ticket creation checkpoints an intent before the City request and the returned
+  SR number before attachments. An uncertain creation outcome is not blindly
+  retried: operators must reconcile the stored SourceRequestID with City records
+  before redrive, supplying the confirmed ticket or clearing the pending intent
+  only after confirming no ticket exists. Attachments likewise checkpoint each
+  pending intent (a SHA-256 hash of the media URL, not its bearer token) and each
+  accepted result. On retry, an exact attachment URL match in City updates confirms
+  acceptance; missing or unavailable evidence leaves the attachment pending for
+  reconciliation instead of resending. Operators must confirm acceptance or
+  non-submission before correcting the durable checkpoint and redriving the job.
+  Closure retries reconcile City state.
+  Action-selection overrides atomically check the worker lock and refuse changes
+  while it is claimed or holds durable results. Progress updates compare integration
+  results as well as task state and retry once from a fresh read on conflict.
+  Explicit user-confirmed filing and City-help-note actions retain their existing
+  confirmation semantics. The clarification UI shows “Updating issue” only while
+  saving the answer, then renders the returned issue before refreshing metadata.
 - Endpoints: `POST /v1/assessments:evaluate`, `GET /v1/assessments/{id}/guidance`,
   `POST /v1/assessments/{id}/conditions/{id}/answers`, `POST /v1/tasks/{id}/complete`,
   `GET /v1/tasks/{id}/details`, `PATCH /v1/tasks/{id}/action`,

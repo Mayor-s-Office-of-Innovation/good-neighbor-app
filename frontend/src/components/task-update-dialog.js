@@ -33,6 +33,8 @@ import {
 } from "./task-update-dialog.templates.js";
 
 export class TaskUpdateDialog extends HTMLElement {
+  /** @type {boolean | undefined} */
+  readOnly;
   constructor() {
     super();
     /** @type {Record<string, any> | null} */
@@ -326,6 +328,7 @@ export class TaskUpdateDialog extends HTMLElement {
       originalFullMediaUrl: task.mediaUrl || "",
       mediaUrls: this._mediaUrls,
       nextToken: this._nextToken,
+      readOnly: this.readOnly,
     });
   }
 

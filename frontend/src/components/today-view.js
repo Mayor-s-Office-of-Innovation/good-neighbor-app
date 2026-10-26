@@ -352,6 +352,14 @@ class TodayView extends HTMLElement {
         if (session?.status === "in-progress") {
           return;
         }
+        // A clarification response already updated the local assessment.
+        // Paint it before refreshing unrelated worklist and site metadata.
+        if (
+          this._answeringConditionIds.size &&
+          this._homeModel?.pendingSession?.id === session?.id
+        ) {
+          this._renderHome({ ...this._homeModel, pendingSession: session });
+        }
         this.connectedCallback();
       });
     }
@@ -1038,6 +1046,10 @@ class TodayView extends HTMLElement {
     );
     this._wireCards();
     this._applyBusyCards();
+    for (const conditionId of this._answeringConditionIds) {
+      setQuestionAnswerBusy(this, conditionId, true);
+    }
+
     this._restoreFocusAfterRender();
     const requestedIssue = new URLSearchParams(window.location.search).get(
       "issue",

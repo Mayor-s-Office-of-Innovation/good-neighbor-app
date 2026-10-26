@@ -1,8 +1,4 @@
-import {
-  GetCommand,
-  TransactWriteCommand,
-  UpdateCommand,
-} from "@aws-sdk/lib-dynamodb";
+import { GetCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { send, headObject, setObjectTags } = vi.hoisted(() => ({
@@ -391,6 +387,55 @@ describe("task update handlers", () => {
     },
   );
 
+  it("retries a progress update from fresh state when filing finishes between read and write", async () => {
+    const task = {
+      pk: "SITE#site-1",
+      sk: "TASK#task-1",
+      taskId: "task-1",
+      status: "in_progress",
+      updatedAt: "2026-09-30T16:00:00.000Z",
+      appActionResults: [],
+    };
+    const results = [
+      {
+        code: "create_311_ticket",
+        status: "submitted",
+        payload: { tickets: [{ srNum: "123", responsibleAgency: "76" }] },
+      },
+    ];
+    send
+      .mockResolvedValueOnce({ Item: task })
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(
+        Object.assign(new Error("integration changed"), {
+          name: "TransactionCanceledException",
+        }),
+      )
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Item: { ...task, appActionResults: results } })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+    const response = await createTaskUpdate(
+      event({ type: "additional_action_still_present", text: "Swept" }),
+    );
+    expect(response.statusCode).toBe(201);
+    const writes = send.mock.calls
+      .map(([cmd]) => cmd)
+      .filter((cmd) => cmd instanceof TransactWriteCommand);
+    const first = /** @type {any} */ (
+      writes[0].input.TransactItems?.at(-1)?.Put
+    );
+    const retry = /** @type {any} */ (
+      writes[1].input.TransactItems?.at(-1)?.Put
+    );
+    expect(first.ConditionExpression).toContain(
+      "appActionResults = :priorResults",
+    );
+    expect(first.ExpressionAttributeValues[":priorResults"]).toEqual([]);
+    expect(retry.Item.appActionResults).toEqual(results);
+    expect(retry.ExpressionAttributeValues[":priorResults"]).toEqual(results);
+  });
+
   it("scans legacy history only after a conflicting pointerless retry", async () => {
     const conflict = new Error("conflict");
     conflict.name = "TransactionCanceledException";
@@ -428,266 +473,62 @@ describe("task update handlers", () => {
     );
   });
 
-  it("claims a silent-ticket resolution before calling the non-idempotent 311 API", async () => {
-    process.env.GNP_311_SUBMISSION_ENABLED = "true";
-    process.env.SF311_UPDATESR_URL = "https://hub.example.test/updatesr";
-    process.env.SF311_CREATESR_URL = "https://hub.example.test/createsr";
-    process.env.SF311_AGENCY_LOOKUP_URL = "https://hub.example.test/lookup";
-    process.env.SF311_BASIC_AUTH_USER = "user";
-    process.env.SF311_BASIC_AUTH_PASS = "pass";
-    /** @type {string[]} */
-    const order = [];
-    send
-      .mockImplementationOnce(async () => ({
-        Item: {
-          taskId: "task-1",
-          status: "in_progress",
-          kind: "non_actionable_escalation",
-          severity: 4,
-          inProgressAt: "2026-10-01T16:00:00.000Z",
-          updatedAt: "2026-10-01T16:00:00.000Z",
-          appActionResults: [
-            {
-              code: "create_311_ticket",
-              status: "submitted",
-              payload: {
-                tickets: [
-                  {
-                    serviceCode: "1.1.4.7.20.0",
-                    responsibleAgency: "76",
-                    srNum: "2000008106",
-                  },
-                ],
+  it.each(["in_progress", "resolving"])(
+    "queues silent closure without waiting for City when resolving %s",
+    async (status) => {
+      process.env.GNP_311_SUBMISSION_ENABLED = "true";
+      send
+        .mockResolvedValueOnce({
+          Item: {
+            taskId: "task-1",
+            status,
+            kind: "non_actionable_escalation",
+            severity: 4,
+            updatedAt: "2026-10-01T16:00:00.000Z",
+            inProgressAt: "2026-10-01T16:00:00.000Z",
+            resolutionLeaseExpiresAt: "2020-01-01T00:00:00.000Z",
+            appActionResults: [
+              {
+                code: "create_311_ticket",
+                status: "submitted",
+                payload: {
+                  tickets: [
+                    {
+                      serviceCode: "1.1.4.7.20.0",
+                      responsibleAgency: "76",
+                      srNum: "2000008106",
+                    },
+                  ],
+                },
               },
-            },
-          ],
-        },
-      }))
-      .mockImplementationOnce(async () => ({}))
-      .mockImplementationOnce(async () => {
-        order.push("claim");
-        return { Attributes: { status: "resolving" } };
-      })
-      .mockImplementationOnce(async () => {
-        order.push("checkpoint");
-        return {};
-      })
-      .mockImplementationOnce(async () => ({}));
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        order.push("311");
-        return new Response(
-          JSON.stringify({ UpdateID: 4321, return_code: 0 }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
-      }),
-    );
-
-    const response = await /** @type {any} */ (
-      createTaskUpdate(
-        event({
-          type: "additional_action_resolved",
-          text: "The issue is resolved.",
-        }),
-      )
-    );
-
-    expect(order, response.body).toEqual(["claim", "311", "checkpoint"]);
-    expect(response.statusCode, response.body).toBe(201);
-    const finalWrite = send.mock.calls[4][0].input.TransactItems[2].Put;
-    expect(finalWrite.ConditionExpression).toBe(
-      "#status = :expected AND #lease = :lease",
-    );
-    expect(finalWrite.ExpressionAttributeValues[":expected"]).toBe("resolving");
-  });
-
-  it("returns a failed silent-ticket closure to in progress for retry", async () => {
-    process.env.GNP_311_SUBMISSION_ENABLED = "true";
-    process.env.SF311_UPDATESR_URL = "https://hub.example.test/updatesr";
-    process.env.SF311_CREATESR_URL = "https://hub.example.test/createsr";
-    process.env.SF311_AGENCY_LOOKUP_URL = "https://hub.example.test/lookup";
-    process.env.SF311_BASIC_AUTH_USER = "user";
-    process.env.SF311_BASIC_AUTH_PASS = "pass";
-    send
-      .mockResolvedValueOnce({
-        Item: {
-          taskId: "task-1",
-          status: "in_progress",
-          kind: "non_actionable_escalation",
-          severity: 4,
-          inProgressAt: "2026-10-01T16:00:00.000Z",
-          updatedAt: "2026-10-01T16:00:00.000Z",
-          appActionResults: [
-            {
-              code: "create_311_ticket",
-              status: "submitted",
-              payload: {
-                tickets: [
-                  {
-                    serviceCode: "1.1.4.7.20.0",
-                    responsibleAgency: "76",
-                    srNum: "2000008106",
-                  },
-                ],
-              },
-            },
-          ],
-        },
-      })
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({ Attributes: { status: "resolving" } })
-      .mockResolvedValueOnce({ Attributes: { status: "in_progress" } });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        Promise.resolve(new Response("service unavailable", { status: 503 })),
-      ),
-    );
-
-    const response = await /** @type {any} */ (
-      createTaskUpdate(
-        event({
-          type: "additional_action_resolved",
-          text: "The issue is resolved.",
-        }),
-      )
-    );
-
-    expect(response.statusCode).toBe(502);
-    expect(JSON.parse(response.body)).toMatchObject({
-      error: "311 ticket closure incomplete",
-      retryable: true,
-      task: { status: "in_progress" },
-    });
-    expect(send.mock.calls[3][0]).toBeInstanceOf(UpdateCommand);
-    expect(send.mock.calls[3][0].input.UpdateExpression).toContain(
-      "#status = :inProgress",
-    );
-  });
-
-  it("reconciles HUB state before recovering an expired resolution lease", async () => {
-    process.env.GNP_311_SUBMISSION_ENABLED = "true";
-    process.env.SF311_UPDATESR_URL = "https://hub.example.test/updatesr";
-    process.env.SF311_CREATESR_URL = "https://hub.example.test/createsr";
-    process.env.SF311_AGENCY_LOOKUP_URL = "https://hub.example.test/lookup";
-    process.env.SF311_LATEST_UPDATES_URL =
-      "https://hub.example.test/latest/{agencyID}";
-    process.env.SF311_BASIC_AUTH_USER = "user";
-    process.env.SF311_BASIC_AUTH_PASS = "pass";
-    /** @type {string[]} */
-    const order = [];
-    send
-      .mockResolvedValueOnce({
-        Item: {
-          taskId: "task-1",
-          status: "resolving",
-          resolutionLeaseExpiresAt: "2020-01-01T00:00:00.000Z",
-          kind: "non_actionable_escalation",
-          severity: 4,
-          inProgressAt: "2026-10-01T16:00:00.000Z",
-          updatedAt: "2026-10-01T16:00:00.000Z",
-          appActionResults: [
-            {
-              code: "create_311_ticket",
-              status: "submitted",
-              payload: {
-                tickets: [
-                  {
-                    serviceCode: "1.1.4.7.20.0",
-                    responsibleAgency: "76",
-                    srNum: "2000008106",
-                  },
-                ],
-              },
-            },
-          ],
-        },
-      })
-      .mockResolvedValueOnce({})
-      .mockImplementationOnce(async () => {
-        order.push("claim");
-        return { Attributes: { status: "resolving" } };
-      })
-      .mockImplementationOnce(async () => {
-        order.push("checkpoint");
-        return {};
-      })
-      .mockResolvedValueOnce({});
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_url, init) => {
-        order.push(String(init?.method));
-        return new Response(
-          JSON.stringify({
-            requests: [{ SRNum: "2000008106", Status: "4" }],
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
-      }),
-    );
-
-    const response = await /** @type {any} */ (
-      createTaskUpdate(
-        event({
-          type: "additional_action_resolved",
-          text: "The issue is resolved.",
-        }),
-      )
-    );
-
-    expect(response.statusCode, response.body).toBe(201);
-    expect(order).toEqual(["claim", "GET", "checkpoint"]);
-  });
-
-  it("does not call 311 when another resolution request wins the claim", async () => {
-    process.env.GNP_311_SUBMISSION_ENABLED = "true";
-    const conflict = new Error("claim lost");
-    conflict.name = "ConditionalCheckFailedException";
-    send
-      .mockResolvedValueOnce({
-        Item: {
-          taskId: "task-1",
-          status: "in_progress",
-          kind: "non_actionable_escalation",
-          severity: 4,
-          inProgressAt: "2026-10-01T16:00:00.000Z",
-          updatedAt: "2026-10-01T16:00:00.000Z",
-          appActionResults: [
-            {
-              code: "create_311_ticket",
-              status: "submitted",
-              payload: {
-                tickets: [
-                  {
-                    serviceCode: "1.1.4.7.20.0",
-                    responsibleAgency: "76",
-                    srNum: "2000008106",
-                  },
-                ],
-              },
-            },
-          ],
-        },
-      })
-      .mockResolvedValueOnce({})
-      .mockRejectedValueOnce(conflict);
-    const fetchImpl = vi.fn();
-    vi.stubGlobal("fetch", fetchImpl);
-
-    const response = await /** @type {any} */ (
-      createTaskUpdate(
-        event({
-          type: "additional_action_resolved",
-          text: "The issue is resolved.",
-        }),
-      )
-    );
-
-    expect(response.statusCode).toBe(409);
-    expect(JSON.parse(response.body)).toEqual({
-      error: "Task resolution in progress",
-    });
-    expect(fetchImpl).not.toHaveBeenCalled();
-  });
+            ],
+          },
+        })
+        .mockResolvedValueOnce({})
+        .mockResolvedValue({});
+      const fetch = vi.fn(() => new Promise(() => {}));
+      vi.stubGlobal("fetch", fetch);
+      const response = await /** @type {any} */ (
+        createTaskUpdate(
+          event({ type: "additional_action_resolved", text: "Resolved." }),
+        )
+      );
+      expect(response.statusCode, response.body).toBe(201);
+      expect(fetch).not.toHaveBeenCalled();
+      const writes = send.mock.calls[2][0].input.TransactItems;
+      expect(
+        writes.some(
+          (/** @type {any} */ row) =>
+            row.Put?.Item.entityType === "SF311_OUTBOX",
+        ),
+      ).toBe(true);
+      const taskWrite = writes.find(
+        (/** @type {any} */ row) => row.Put?.Item.status === "completed",
+      ).Put;
+      expect(taskWrite.ExpressionAttributeValues[":expected"]).toBe(status);
+      expect(taskWrite.Item.appActionResults[0].payload.tickets[0].srNum).toBe(
+        "2000008106",
+      );
+    },
+  );
 });

@@ -414,7 +414,7 @@ resource "aws_lambda_event_source_mapping" "revocation_outbox" {
       pattern = jsonencode({ eventName = ["INSERT", "MODIFY"], dynamodb = { NewImage = { pk = { S = [{ prefix = "SITE#" }] } } } })
     }
     filter {
-      pattern = jsonencode({ eventName = ["INSERT"], dynamodb = { NewImage = { entityType = { S = ["REVOCATION_OUTBOX", "COMPLIANCE_LETTER_OUTBOX"] } } } })
+      pattern = jsonencode({ eventName = ["INSERT"], dynamodb = { NewImage = { entityType = { S = ["REVOCATION_OUTBOX", "COMPLIANCE_LETTER_OUTBOX", "SF311_OUTBOX"] } } } })
     }
   }
 

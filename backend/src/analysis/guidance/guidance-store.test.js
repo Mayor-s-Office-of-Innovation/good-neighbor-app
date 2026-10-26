@@ -245,7 +245,7 @@ describe("storeEvaluatedAssessment", () => {
     );
   });
 
-  it("records and logs failed task-created 311 actions", async () => {
+  it("queues automatic 311 work atomically without waiting for external calls", async () => {
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     mockTaskShortIdAllocation({
       providerShortCode: "GUB",
@@ -275,46 +275,20 @@ describe("storeEvaluatedAssessment", () => {
       },
     );
 
-    expect(send).toHaveBeenCalledTimes(4);
-    const task = result.taskItems[0];
-    expect(task).toMatchObject({
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(result.taskItems[0]).toMatchObject({
       taskId: "task-silent",
       shortId: "GUB-STJ-001",
       kind: "action",
-      appActionStatus: "failed",
-      appActionResults: [
-        {
-          code: "create_311_ticket",
-          status: "failed",
-          payload: {
-            serviceCodeOrAction: "1.1.4.7.20.0",
-            responsibleAgencyCode: "76",
-            executionTrigger: "task_created",
-          },
-        },
-      ],
     });
-
-    const update = send.mock.calls[3][0];
-    expect(update).toBeInstanceOf(UpdateCommand);
-    expect(update.input).toMatchObject({
-      Key: { pk: "SITE#site-1", sk: "TASK#task-silent" },
-      ConditionExpression: "attribute_exists(sk)",
-      ReturnValues: "ALL_NEW",
-      ExpressionAttributeValues: {
-        ":actionStatus": "failed",
-      },
-    });
-    expect(errorLog).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(errorLog.mock.calls[0][0])).toMatchObject({
-      level: "ERROR",
-      route: "task app-action create_311_ticket",
-      eventType: "311_app_action_failed",
-      taskId: "task-silent",
-      siteId: "site-1",
-      ruleId: "LITTER-1",
-      trigger: "task_created",
-    });
+    const tx = send.mock.calls[2][0].input.TransactItems;
+    expect(
+      tx.some(
+        /** @param {any} entry */ (entry) =>
+          entry.Put?.Item?.entityType === "SF311_OUTBOX",
+      ),
+    ).toBe(true);
+    expect(errorLog).not.toHaveBeenCalled();
     errorLog.mockRestore();
   });
 
@@ -872,7 +846,7 @@ describe("completeTaskWithAppActions", () => {
     });
   });
 
-  it("closes an agency-76 ticket when completing with the done path", async () => {
+  it("queues silent ticket closure in the task completion transaction", async () => {
     send.mockResolvedValueOnce({
       Item: {
         pk: "SITE#site-1",
@@ -940,44 +914,22 @@ describe("completeTaskWithAppActions", () => {
         now: new Date("2026-08-18T12:02:00.000Z"),
       });
 
-      expect(task).toMatchObject({
-        status: "completed",
-        completionMethod: "manual",
-        appActionStatus: "submitted",
-        appActionResults: [
-          {
-            code: "create_311_ticket",
-            status: "submitted",
-            externalId: "2000008106",
-          },
-          {
-            code: "close_311_ticket",
-            status: "submitted",
-            payload: {
-              closures: [
-                {
-                  serviceCode: "1.1.4.7.20.0",
-                  srNum: "2000008106",
-                  status: "closed",
-                  updateId: "4321",
-                },
-              ],
-            },
-          },
-        ],
-      });
-      const closeCall = fetchMock.mock.calls[0];
-      expect(JSON.parse(closeCall[1].body)).toMatchObject({
-        SRnum: "2000008106",
-        UpdateType: "11",
-        NumericSubType: "1",
-      });
+      expect(task.status).toBe("completed");
+      expect(task.appActionResults).toHaveLength(1);
+      expect(fetchMock).not.toHaveBeenCalled();
+      const tx = send.mock.calls.at(-1)?.[0].input.TransactItems;
+      expect(
+        tx.some(
+          /** @param {any} entry */ (entry) =>
+            entry.Put?.Item?.entityType === "SF311_OUTBOX",
+        ),
+      ).toBe(true);
     } finally {
       vi.unstubAllGlobals();
     }
   });
 
-  it("still completes the task when 311 closure fails", async () => {
+  it("completes immediately even when City closure would fail", async () => {
     send.mockResolvedValueOnce({
       Item: {
         pk: "SITE#site-1",
@@ -1048,22 +1000,16 @@ describe("completeTaskWithAppActions", () => {
         now: new Date("2026-08-18T12:02:00.000Z"),
       });
 
-      expect(task).toMatchObject({
-        status: "completed",
-        appActionStatus: "partial",
-        appActionResults: [
-          { code: "create_311_ticket", status: "submitted" },
-          {
-            code: "close_311_ticket",
-            status: "failed",
-            payload: {
-              closures: [
-                { srNum: "2000008106", status: "failed", reason: "26" },
-              ],
-            },
-          },
-        ],
-      });
+      expect(task.status).toBe("completed");
+      expect(task.appActionResults).toHaveLength(1);
+      expect(fetchMock).not.toHaveBeenCalled();
+      const tx = send.mock.calls.at(-1)?.[0].input.TransactItems;
+      expect(
+        tx.some(
+          /** @param {any} entry */ (entry) =>
+            entry.Put?.Item?.entityType === "SF311_OUTBOX",
+        ),
+      ).toBe(true);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -1221,7 +1167,7 @@ describe("completeTaskWithAppActions", () => {
     ).toBe(false);
   });
 
-  it("final write merges prior results with the closure result", async () => {
+  it("retains the existing ticket while queuing closure", async () => {
     // Regression guard for the mid-completion checkpoint design: the final
     // completion write must carry BOTH the persisted create result (closure
     // eligibility on any later retry) and the fresh closure result. Replacing
@@ -1289,16 +1235,12 @@ describe("completeTaskWithAppActions", () => {
       const finalTx = send.mock.calls.at(-1)?.[0];
       const persisted = /** @type {any} */ (finalTx?.input?.TransactItems?.[0])
         ?.Put?.Item?.appActionResults;
-      expect(persisted).toMatchObject([
-        { code: "create_311_ticket", status: "submitted" },
-        {
-          code: "close_311_ticket",
-          status: "submitted",
-          payload: {
-            closures: [{ srNum: "2000008106", status: "closed" }],
-          },
-        },
-      ]);
+      expect(persisted).toHaveLength(1);
+      expect(persisted[0]).toMatchObject({
+        code: "create_311_ticket",
+        status: "submitted",
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
     }

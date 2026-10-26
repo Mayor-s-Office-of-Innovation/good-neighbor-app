@@ -217,6 +217,8 @@ as task update events and every GSI sort key.
 | Current Provider Manager grant guard | `PROVIDER#<providerId>` | `PROVIDER_MANAGER_GRANT_CURRENT#<membershipId>` | Conditional singleton for one unexpired provider grant per membership. Redemption, cancellation, or replacement removes or changes the matching pointer atomically. |
 | Provider Manager enrollment | `PROVIDER#<providerId>` | `PROVIDER_MANAGER_ENROLLMENT#<enrollmentId>` | Directly addressable root lifecycle record for one physical device's all-or-nothing provider redemption. Stores the membership generation and up to 21 Site/binding pointers so a Supervisor can revoke every still-active projection in one transaction. List responses derive active/partial/revoked state from the authoritative physical-device and binding rows. |
 | Perimeter-check compliance period | `SITE#<siteId>` | `COMPLIANCE_TERMS#<effectiveStart>#<versionId>` | Immutable effective-dated period containing one or more reason codes, integer checks/day (1–8), a snapshotted `underEnhancedMonitoring` boolean (reason 6 only), and a snapshot of the selected Site manager plus the authenticated generator. The generator—not a client-nominated manager—appears as sender; Compliance managers must be assigned to the Site while supervisors may generate for any Site. Generator phone is required. Start is the server's current Pacific date; the user-facing end date is inclusive and is stored with an exclusive boundary. Reasons 1 or 6 require an end date. Missing expiry means indefinite. |
+| SF311 job | `SITE#<siteId>` | `SF311_JOB#<taskId>#<phase>` | `SF311_OUTBOX`, committed with task creation, action override, or resolution. Streams dispatches to SQS; status tracks pending/dispatched/retry/complete/failed and results retain ticket checkpoints. |
+| SF311 worker state | `SITE#<siteId>` | `SF311_LOCK#<taskId>` | Expiring worker lease plus durable integration results shared across jobs. Separate from task snapshots so foreground updates cannot erase a filing checkpoint. |
 | Compliance-letter generation job | `SITE#<siteId>` | `LETTER_JOB#<createdAt>#<jobId>` | Transactional outbox item (`COMPLIANCE_LETTER_OUTBOX`) created with a perimeter-check period. DynamoDB Streams dispatches it to SQS; the worker renders the PDF, stores it in S3, and advances the Site letter state idempotently. |
 | Requirement-ended notice | `SITE#<siteId>` | `LETTER_JOB#ended-<termsVersionId>` | `COMPLIANCE_LETTER_OUTBOX`, `noticeOnly: true`; created atomically with manual cancellation or scheduled expiry. Copies the period's original email To/CC snapshot. Uses the existing delivery claim/receipt safeguards without a PDF or letter-history counter. |
 | System-status site directory | `STATUS_SITES` | `<siteId>` | All Sites, including inactive Sites; versioned name/status projection for supervisor-only reporting. |
@@ -419,6 +421,42 @@ Every pattern is a single query. There are no scans.
 | AP36 | Suspend one Site binding | Consistently read the canonical binding, then atomically advance its token generation and mark the canonical, compatibility, and physical-pointer projections suspended with a bounded reason plus a Site audit event. A bounded legacy fallback updates the legacy Device row. Re-enrollment consumes a new single-Site grant and creates a new binding; it never reactivates the suspended row. |
 | AP37 | Manage oversight dropdown directories | Query the bounded `ADMIN_DIRECTORY#OVERSIGHT` partition. Supervisors conditionally create normalized department/system rows. Compliance-manager identities live in `ADMIN_DIRECTORY#PROGRAM_MANAGERS` in every environment so CSV imports can precede Cognito provisioning and later link by normalized email. |
 | AP38 | Manage and enroll Provider Managers | A Compliance Supervisor queries `PROVIDER_MANAGER#`, `PROVIDER_MANAGER_GRANT#`, and `PROVIDER_MANAGER_ENROLLMENT#` rows in one Provider partition. Grant issuance rejects more than 21 active `SITE#` relationships. Redemption re-queries active Sites and uses one transaction to consume the link, recheck Provider/membership/Site authority, and create every canonical, compatibility, and physical-pointer projection. Authorization and refresh recheck both the membership generation and each Site's current `providerId`. |
+
+The manager Checks UI uses recorded counts rather than compliance status: 3+,
+1–2, or zero completed check records per day (including single-issue reports).
+AP27 retains its compliance fields for other consumers and adds compact per-check
+rows (`checkId`, `startedAt`, `photoCount`) for the day cards. Raw headers stay
+server-side. Issues use the task report's non-superseded tasks. “Issues resolved”
+requires `status = completed` and both creation and completion timestamps inside
+the selected Pacific period; calls, 311 filings, and “can't do” do not count as
+resolution. The summary links retain the period and the resolved filter. Report
+issue cards open the shared timeline in read-only mode. No operating-day schedule
+is currently stored, so absence of a compliance obligation alone does not label
+a day “not operating.”
+
+The Issues chart partitions reports created in the period into resolved within
+that period and unresolved within that period. Median resolution time uses only
+qualifying completed reports, from creation to completion (missing or invalid
+durations are excluded). Overview and type metrics filter their full read-only issue-card lists while
+keeping the chart and summary totals scoped to the entire selected period.
+CSV exports the active list filter (and selected type on the type screen). Current-period trends compare elapsed
+Pacific calendar days, including today, with the same number of prior-period
+days, capped at that period's end. Completed periods compare full periods.
+A zero prior count is described without a percentage. Bar charts have integer
+y-axis scales: issue counts for Issues and recorded check totals per Sunday-start
+week for the Checks quarter chart. Partial boundary weeks include only checks
+inside the selected quarter. Bars start at zero, the current week is darker blue,
+and zero-check weeks have no bar. Day-count color bands remain on the calendars.
+
+AP27 task reports include `asOf`: now for current periods, or the last instant
+of a completed period. Attention counts cover only reports created in the
+selected period. Aging means strictly more than 72 hours unresolved at `asOf`.
+Notes and photos alone are not actions: dated action/status events and task
+action timestamps determine whether any action occurred by the cutoff. Awaiting
+City response means a submitted 311 ticket not closed at the cutoff, using the
+City's dated ticket events; updates alone do not close a ticket. Unavailable
+statuses or undated historical closures must not be represented as confirmed
+open tickets. Attention groups can overlap and are not additive.
 
 ### Who owns a task
 

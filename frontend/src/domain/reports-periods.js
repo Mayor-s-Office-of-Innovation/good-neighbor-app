@@ -16,10 +16,12 @@ import { formatDateTime, formatMonthDay } from "../i18n/dates.js";
  * @typedef {object} DaySummary the backend's per-day record (AP27)
  * @property {string} date
  * @property {"complete" | "partial" | "missed" | "pending" | "upcoming" | "exempt"} status
+ * @property {boolean} [operating] explicit site operating-day information, when available
  * @property {number} required
  * @property {number} completed
  * @property {number} reports
  * @property {number} issueCount
+ * @property {Array<{checkId: string, startedAt: string, photoCount: number, issueCount?: number, resolvedCount?: number}>} [checks]
  * @property {string[]} checkIds
  */
 

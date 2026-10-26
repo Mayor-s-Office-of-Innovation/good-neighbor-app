@@ -20,6 +20,7 @@ import { t } from "../i18n/i18n.js";
 
 /**
  * @typedef {object} TaskSheetsOptions
+ * @property {boolean} [readOnly] informational timeline without mutation controls
  * @property {HTMLElement} host the view; cards are looked up inside it
  * @property {() => Element | null} container where the dialogs mount
  * @property {(task: Record<string, any>) => Record<string, any>} [resolveTask]
@@ -99,6 +100,7 @@ export class TaskSheets {
    * @param {string} [mode]
    */
   async openUpdates(task, trigger, mode = "timeline") {
+    if (this._options.readOnly) mode = "timeline";
     const completion =
       mode === "resolve" ? this._startResolution(task, trigger) : null;
     if (mode === "resolve" && !completion) return;
@@ -174,6 +176,7 @@ export class TaskSheets {
       });
       this._updateDialog = dialog;
     }
+    this._updateDialog.readOnly = this._options.readOnly === true;
     this._updateDialog._finishResolution = finish;
     this.mount();
     if (completion || mode === "results")

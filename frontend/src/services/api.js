@@ -924,7 +924,7 @@ export function getChecksReport({ period, start } = {}) {
 /**
  * GET /app/v1/manager/reports/tasks — every task created in the period.
  * @param {ReportQuery} [query]
- * @returns {Promise<{ period: ReportPeriod, today: string, tasks: any[], previous: ReportPeriod & { count: number } }>}
+ * @returns {Promise<{ period: ReportPeriod, today: string, asOf: string, tasks: any[], previous: ReportPeriod & { count: number, byType: Record<string, number> } }>}
  */
 export function getTasksReport({ period, start } = {}) {
   return request(

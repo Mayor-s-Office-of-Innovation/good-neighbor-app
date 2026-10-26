@@ -145,3 +145,19 @@ it("preserves another form's unsaved work and offers documentation-only recovery
     t("taskUpdate.finishCurrentForm"),
   );
 });
+
+it.each(["timeline", "resolve", "results"])(
+  "opens read-only reports in timeline mode even when %s is requested",
+  async (mode) => {
+    const f = fixture();
+    f.sheets._options.readOnly = true;
+    vi.spyOn(f.sheets, "_loadUpdates").mockResolvedValue(
+      /** @type {any} */ ({}),
+    );
+    await f.sheets.openUpdates(task, f.button, mode);
+    expect(save).not.toHaveBeenCalled();
+    expect(f.dialog.openResults).not.toHaveBeenCalled();
+    expect(f.dialog.open).toHaveBeenCalledWith(task, "timeline");
+    expect(f.sheets._updateDialog.readOnly).toBe(true);
+  },
+);
