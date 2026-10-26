@@ -107,11 +107,14 @@ Stream/SQS delivery is at least once, so event totals may include retries.
 
 Completed searches return no match only when no candidate qualifies and the
 condition has no failed comparisons. Otherwise unmatched conditions return
-unavailable. Internally, each
-condition records `assessmentOutcome` and `failedCandidateCount`.
-`no_match_with_failures` emits `DuplicateIncompleteNoMatchIssues`, separately from
-`assessed_no_match` / `DuplicateNoMatchIssues`. These diagnostic distinctions do
-not create automatic retries or leave the UI pending. A high-confidence match
+unavailable. The result endpoint returns `processingState: incomplete` and
+`possibleDuplicate: null` for affected unmatched conditions, preserving any independently
+verified positives. Failed candidates remain in `unassessedCandidateIds` as well as
+`failedCandidateIds`, so attempted coverage cannot be confused with assessed coverage.
+Internally, each condition records `assessmentOutcome` and `failedCandidateCount`.
+`incomplete` (historically `no_match_with_failures`) emits `DuplicateIncompleteNoMatchIssues`, separately from
+`assessed_no_match` / `DuplicateNoMatchIssues`. Historical failed-negative records are normalized on read without a backfill.
+These distinctions do not create automatic retries or leave the UI pending. A high-confidence match
 remains a match even if a different candidate failed. Only candidate failures
 with the source condition's category count against that condition.
 

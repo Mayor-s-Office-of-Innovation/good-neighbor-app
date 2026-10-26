@@ -95,33 +95,53 @@ it("returns pending before dispatch, never a fabricated negative", async () => {
     ),
   ).toBe(true);
 });
-it("returns a validated issue positive while another issue is pending, and revokes resolved targets", async () => {
-  put({
-    pk: "SITE#site",
-    sk: `DUP_ISSUE#check:photo#${revision}#s1`,
-    conditionId: "s1",
-    status: "evaluated",
-    possibleDuplicate: true,
-    duplicateOf: {
-      observationId: "target:photo",
-      conditionId: "t1",
-      revision: targetRevision,
-    },
-    matchStrength: "strong",
-    targetProjectionKey: { pk: targetProjection.pk, sk: targetProjection.sk },
-    targetAnalysisKey: { pk: target.pk, sk: target.sk },
-    targetArtifactKey: { pk: "SITE#site", sk: "CHECK#target#ART#photo" },
-    updatedAt: "2026-10-15T10:01:00Z",
-  });
-  const r = await read();
-  expect(r.processingState).toBe("partial");
-  expect(r.conditionResults[0].possibleDuplicate).toBe(true);
-  expect(r.conditionResults[1].possibleDuplicate).toBeNull();
-  put({ ...targetProjection, resolvedAt: "2026-10-15T10:02:00Z" });
-  const stale = await read();
-  expect(stale.possibleDuplicate).toBeNull();
-  expect(stale.processingState).toBe("pending");
-});
+it.each(["pending", "incomplete"])(
+  "retains a positive alongside %s issues and revokes resolved targets",
+  async (state) => {
+    put({
+      pk: "SITE#site",
+      sk: `DUP_ISSUE#check:photo#${revision}#s1`,
+      conditionId: "s1",
+      status: "evaluated",
+      possibleDuplicate: true,
+      duplicateOf: {
+        observationId: "target:photo",
+        conditionId: "t1",
+        revision: targetRevision,
+      },
+      matchStrength: "strong",
+      targetProjectionKey: { pk: targetProjection.pk, sk: targetProjection.sk },
+      targetAnalysisKey: { pk: target.pk, sk: target.sk },
+      targetArtifactKey: { pk: "SITE#site", sk: "CHECK#target#ART#photo" },
+      updatedAt: "2026-10-15T10:01:00Z",
+    });
+    if (state === "incomplete")
+      put({
+        pk: "SITE#site",
+        sk: `DUP_RESULT#check:photo#${revision}`,
+        status: "incomplete",
+        conditionResults: [
+          {
+            conditionId: "s2",
+            status: "insufficient_evidence",
+            assessmentOutcome: "incomplete",
+            possibleDuplicate: null,
+            failedCandidateCount: 3,
+          },
+        ],
+      });
+    const r = await read();
+    expect(r.processingState).toBe(
+      state === "pending" ? "partial" : "incomplete",
+    );
+    expect(r.conditionResults[0].possibleDuplicate).toBe(true);
+    expect(r.conditionResults[1].possibleDuplicate).toBeNull();
+    put({ ...targetProjection, resolvedAt: "2026-10-15T10:02:00Z" });
+    const stale = await read();
+    expect(stale.possibleDuplicate).toBeNull();
+    expect(stale.processingState).toBe("pending");
+  },
+);
 it("does not expose another sites artifact", async () => {
   state.site = "other";
   const r = await getDuplicateResult(
@@ -145,3 +165,35 @@ it("does not leave a resolved source pending forever", async () => {
   expect(r.reason).toBe("source_resolved");
   expect(r.possibleDuplicate).toBeNull();
 });
+
+it.each(["no_match_with_failures", "incomplete"])(
+  "exposes %s results as incomplete without a false negative",
+  async (assessmentOutcome) => {
+    put({
+      pk: "SITE#site",
+      sk: `DUP_RESULT#check:photo#${revision}`,
+      status: "evaluated",
+      processingState: "complete",
+      conditionResults: source.concerns.map((c) => ({
+        conditionId: c.conditionId,
+        status: "evaluated",
+        possibleDuplicate: false,
+        duplicateOf: null,
+        matchStrength: null,
+        assessmentOutcome,
+        failedCandidateCount: 3,
+      })),
+    });
+    const result = await read();
+    expect(result.processingState).toBe("incomplete");
+    expect(result.possibleDuplicate).toBeNull();
+    expect(result.conditionResults).toHaveLength(2);
+    for (const row of result.conditionResults)
+      expect(row).toMatchObject({
+        possibleDuplicate: null,
+        status: "insufficient_evidence",
+        assessmentOutcome: "incomplete",
+        failedCandidateCount: 3,
+      });
+  },
+);

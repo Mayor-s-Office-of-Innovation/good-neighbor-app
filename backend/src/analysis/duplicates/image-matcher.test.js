@@ -104,9 +104,10 @@ describe("image-first backend matcher", () => {
     expect(progress[0].conditionResults[1].status).toBe("pending");
     expect(result.conditionResults[0].possibleDuplicate).toBe(true);
     expect(result.conditionResults[0].assessmentOutcome).toBe("matched");
-    expect(result.conditionResults[1].possibleDuplicate).toBe(false);
+    expect(result.conditionResults[1].possibleDuplicate).toBeNull();
+    expect(result.conditionResults[1].assessmentOutcome).toBe("incomplete");
     expect(result.possibleDuplicate).toBe(true);
-    expect(result.status).toBe("evaluated");
+    expect(result.status).toBe("incomplete");
     expect(result.latency.firstPositiveMs).not.toBeNull();
   });
   it("rejects cross-category model mappings even when both categories exist in the photo", async () => {
@@ -133,8 +134,8 @@ describe("image-first backend matcher", () => {
         return value;
       },
     });
-    expect(result.status).toBe("evaluated");
-    expect(result.possibleDuplicate).toBe(false);
+    expect(result.status).toBe("incomplete");
+    expect(result.possibleDuplicate).toBeNull();
   });
   it("excludes categories before any model call and leaves missing categories unknown", async () => {
     const source = observation("s", {
@@ -360,7 +361,7 @@ describe("image-first backend matcher", () => {
     expect(result.calls).toBe(9);
     expect(result.possibleDuplicate).toBe(false);
   });
-  it("returns no qualifying match after failed or malformed attempts", async () => {
+  it("keeps failed or malformed assessments incomplete instead of publishing a negative", async () => {
     const source = observation("s");
     const result = await matchImages({
       source,
@@ -369,10 +370,13 @@ describe("image-first backend matcher", () => {
         throw new Error("down");
       },
     });
-    expect(result.status).toBe("evaluated");
-    expect(result.possibleDuplicate).toBe(false);
+    expect(result.status).toBe("incomplete");
+    expect(result.possibleDuplicate).toBeNull();
+    expect(result.unassessedCandidateIds).toEqual(["c"]);
     expect(result.conditionResults[0]).toMatchObject({
-      assessmentOutcome: "no_match_with_failures",
+      assessmentOutcome: "incomplete",
+      status: "insufficient_evidence",
+      possibleDuplicate: null,
       failedCandidateCount: 1,
     });
     const malformed = await matchImages({
@@ -384,10 +388,8 @@ describe("image-first backend matcher", () => {
         comparisons: [],
       }),
     });
-    expect(malformed.status).toBe("evaluated");
-    expect(malformed.conditionResults[0].assessmentOutcome).toBe(
-      "no_match_with_failures",
-    );
+    expect(malformed.status).toBe("incomplete");
+    expect(malformed.conditionResults[0].assessmentOutcome).toBe("incomplete");
     const negative = await matchImages({
       source,
       candidates: [observation("c")],
@@ -428,7 +430,8 @@ describe("image-first backend matcher", () => {
       },
     });
     expect(calls).toEqual(["image", "context"]);
-    expect(result.status).toBe("evaluated");
+    expect(result.status).toBe("incomplete");
+    expect(result.possibleDuplicate).toBeNull();
   });
   it("rejects non-TLS remote comparison endpoints", () => {
     expect(() =>
@@ -706,4 +709,92 @@ it("does not expose source issues with no same-category target in the batch", as
       return response(request);
     },
   });
+});
+
+it("continues a 12-candidate search after a failed three-candidate batch and recovers on a fresh evaluation", async () => {
+  const source = observation("s");
+  const candidates = Array.from({ length: 12 }, (_, i) => observation(`c${i}`));
+  let requests = 0;
+  const incomplete = await runMatcher({
+    source,
+    candidates,
+    strategy: "combined",
+    compare: async (request) => {
+      requests++;
+      if (requests === 2) throw new Error("Comparison HTTP 422");
+      return response(request, "different_issue");
+    },
+  });
+  expect(requests).toBe(4);
+  expect(incomplete).toMatchObject({
+    status: "incomplete",
+    possibleDuplicate: null,
+    candidateCount: 12,
+    assessedCandidateCount: 9,
+    calls: 4,
+  });
+  expect(incomplete.failedCandidateIds).toHaveLength(3);
+  const shortlisted = markUnassessedCandidates(incomplete, candidates);
+  expect(shortlisted.status).toBe("incomplete");
+  expect(shortlisted.unassessedCandidateIds).toHaveLength(3);
+  expect([...incomplete.unassessedCandidateIds].sort()).toEqual(
+    [...incomplete.failedCandidateIds].sort(),
+  );
+  expect(incomplete.conditionResults[0]).toMatchObject({
+    assessmentOutcome: "incomplete",
+    possibleDuplicate: null,
+    failedCandidateCount: 3,
+  });
+  const recovered = await runMatcher({
+    source,
+    candidates,
+    strategy: "combined",
+    compare: async (request) => response(request, "different_issue"),
+  });
+  expect(recovered).toMatchObject({
+    status: "evaluated",
+    possibleDuplicate: false,
+    candidateCount: 12,
+    assessedCandidateCount: 12,
+  });
+  expect(recovered.failedCandidateIds).toEqual([]);
+  expect(recovered.unassessedCandidateIds).toEqual([]);
+});
+
+it("limits incomplete coverage to conditions in the failed candidate's category", async () => {
+  const result = await matchImages({
+    source: observation("s", {
+      conditions: [
+        { id: "litter", description: "cup", category: "Litter" },
+        { id: "graffiti", description: "tag", category: "Graffiti" },
+      ],
+    }),
+    candidates: [
+      observation("failed", {
+        conditions: [{ id: "cup", description: "cup", category: "Litter" }],
+      }),
+      observation("assessed", {
+        conditions: [{ id: "tag", description: "tag", category: "Graffiti" }],
+      }),
+    ],
+    compare: async (request) => {
+      if (request.candidates[0].id === "failed")
+        throw new Error("Comparison HTTP 422");
+      return response(request, "different_issue");
+    },
+  });
+  expect(result.conditionResults).toMatchObject([
+    {
+      conditionId: "litter",
+      possibleDuplicate: null,
+      assessmentOutcome: "incomplete",
+      failedCandidateCount: 1,
+    },
+    {
+      conditionId: "graffiti",
+      possibleDuplicate: false,
+      assessmentOutcome: "assessed_no_match",
+      failedCandidateCount: 0,
+    },
+  ]);
 });

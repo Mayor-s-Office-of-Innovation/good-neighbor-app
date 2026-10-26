@@ -323,16 +323,19 @@ it("never publishes a direct match outside the generation-time window", async ()
   );
 });
 
-it("does not describe failed candidate assessments as a clean no-match", async () => {
-  const { task, ref } = issue("incomplete", "2026-10-15T10:00:00Z");
-  const result = state.items.get(
-    `SITE#site|DUP_RESULT#incomplete:photo#${ref.revision}`,
-  );
-  result.conditionResults[0].assessmentOutcome = "no_match_with_failures";
-  expect((await duplicateForTask("test", "site", task)).state).toBe(
-    "unavailable",
-  );
-});
+it.each(["no_match_with_failures", "incomplete"])(
+  "does not describe %s assessments as a clean no-match",
+  async (assessmentOutcome) => {
+    const { task, ref } = issue("incomplete", "2026-10-15T10:00:00Z");
+    const result = state.items.get(
+      `SITE#site|DUP_RESULT#incomplete:photo#${ref.revision}`,
+    );
+    result.conditionResults[0].assessmentOutcome = assessmentOutcome;
+    expect((await duplicateForTask("test", "site", task)).state).toBe(
+      "unavailable",
+    );
+  },
+);
 
 it("uses fresh revision timing before projection exists, not the old task's age", async () => {
   const { task, ref } = issue("requeued", "2026-10-15T10:00:00Z");
@@ -404,4 +407,21 @@ it("uses fixed analysis readiness without a result and honors explicit recovery 
       Date.parse(now) + 900000,
     ),
   ).toBe("unavailable");
+});
+
+it("keeps an assessed condition complete when another condition makes the source incomplete", async () => {
+  const { task, ref } = issue("mixed", "2026-10-15T10:00:00Z");
+  const result = state.items.get(
+    `SITE#site|DUP_RESULT#mixed:photo#${ref.revision}`,
+  );
+  result.status = "incomplete";
+  result.processingState = "incomplete";
+  result.conditionResults.push({
+    conditionId: "another",
+    status: "insufficient_evidence",
+    possibleDuplicate: null,
+    assessmentOutcome: "incomplete",
+    failedCandidateCount: 3,
+  });
+  expect((await duplicateForTask("test", "site", task)).state).toBe("complete");
 });

@@ -1,3 +1,4 @@
+import { processingState } from "../analysis/duplicates/result-state.js";
 import { createComparisonPacer } from "../analysis/duplicates/request-pacing.js";
 import { preparedRetention } from "../analysis/duplicates/prepared-retention.js";
 import { duplicateEvent } from "../analysis/duplicates/monitoring.js";
@@ -882,8 +883,7 @@ export const handler = async (event) => {
                 Item: {
                   ...resultKey,
                   ...result,
-                  processingState:
-                    result.status === "failed" ? "retrying" : "complete",
+                  processingState: processingState(result),
                   latency: timing.snapshot(),
                   candidateRevisions: loaded.map(
                     (
@@ -922,11 +922,11 @@ export const handler = async (event) => {
             outcome:
               issue.possibleDuplicate === true
                 ? "matched"
-                : issue.possibleDuplicate === false
-                  ? issue.assessmentOutcome === "no_match_with_failures"
-                    ? "no_match_with_failures"
-                    : "no_match"
-                  : "pending",
+                : issue.assessmentOutcome === "incomplete"
+                  ? "incomplete"
+                  : issue.possibleDuplicate === false
+                    ? "no_match"
+                    : "pending",
             failedCandidates: issue.failedCandidateCount ?? 0,
             confidence: issue.possibleDuplicate === true ? "high" : undefined,
           },
@@ -935,11 +935,11 @@ export const handler = async (event) => {
               name:
                 issue.possibleDuplicate === true
                   ? "DuplicateMatchedIssues"
-                  : issue.possibleDuplicate === false
-                    ? issue.assessmentOutcome === "no_match_with_failures"
-                      ? "DuplicateIncompleteNoMatchIssues"
-                      : "DuplicateNoMatchIssues"
-                    : "DuplicatePendingIssues",
+                  : issue.assessmentOutcome === "incomplete"
+                    ? "DuplicateIncompleteNoMatchIssues"
+                    : issue.possibleDuplicate === false
+                      ? "DuplicateNoMatchIssues"
+                      : "DuplicatePendingIssues",
               value: 1,
             },
           ],
@@ -952,7 +952,7 @@ export const handler = async (event) => {
           observationId: id,
           matcherVersion: IMAGE_MATCHER_VERSION,
           modelId,
-          outcome: "complete",
+          outcome: processingState(result),
           totalMs: snapshot.totalMs,
           failedCandidates: result.failedCandidateIds.length,
           candidateCount: loaded.length,
