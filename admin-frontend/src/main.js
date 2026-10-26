@@ -1414,6 +1414,11 @@ class AdminApp extends HTMLElement {
       const programId = formValue(data, "lead-program-id");
       const addressParts = addressPartsFromForm(data);
       const address = formatAddressParts(addressParts);
+      const expectedManagerId = formValue(data, "site-manager-user-id");
+      // Navigation can replace newSiteUsers while the save is pending.
+      const staff = this.state.newSiteUsers.find(
+        (user) => user.userId === expectedManagerId,
+      );
       const result = await adminApi.createSite(providerId, {
         name: formValue(data, "site-name"),
         address,
@@ -1430,7 +1435,6 @@ class AdminApp extends HTMLElement {
       feedback.changed();
       const siteId = result.site.siteId;
       let savedSite = result.site;
-      const expectedManagerId = formValue(data, "site-manager-user-id");
       if (
         !result.site.addressParts ||
         !result.site.publicContact ||
@@ -1457,23 +1461,25 @@ class AdminApp extends HTMLElement {
         }
         savedSite = repaired.site;
       }
-      const staff = this.state.newSiteUsers.find(
-        (user) => user.userId === expectedManagerId,
-      );
       if (staff) {
         const existing = await adminApi.listManagerMemberships(siteId);
+        const memberships = existing.memberships || [];
         if (
-          !(existing.memberships || []).some(
-            (member) => member.userId === expectedManagerId,
-          )
-        )
-          await adminApi.createManagerMembership(
+          !memberships.some((member) => member.userId === expectedManagerId)
+        ) {
+          const created = await adminApi.createManagerMembership(
             siteId,
             `${staff.firstName} ${staff.lastName}`.trim(),
             staff.email,
             programId,
             expectedManagerId,
           );
+          memberships.push(created.membership);
+        }
+        savedSite = {
+          ...savedSite,
+          managerMemberships: siteManagerRoster([], memberships),
+        };
       }
       feedback.success();
       this.state.sites = upsertRecord(this.state.sites, savedSite, "siteId");
@@ -1487,7 +1493,10 @@ class AdminApp extends HTMLElement {
       this.render();
       this.querySelector("[data-site-loading]")?.focus();
     } catch (error) {
-      feedback.failure(error);
+      feedback.failure(error, {
+        inlineAvailable: form.isConnected,
+        message: siteSaveErrorMessage(error),
+      });
       throw error;
     }
   }
@@ -3609,8 +3618,10 @@ class AdminApp extends HTMLElement {
         const form = asForm(event.currentTarget);
         void withSaveFeedback(form, () => this.createSiteFromFlow(form), {
           savingLabel: t("siteAdmin.edit.saving"),
-          onError: (error) =>
-            showFormSaveError(form, siteSaveErrorMessage(error)),
+          onError: (error) => {
+            if (form.isConnected)
+              showFormSaveError(form, siteSaveErrorMessage(error));
+          },
         });
       },
     );
@@ -5046,7 +5057,7 @@ function myProfileView(state) {
       (site.complianceManagerIds || []).includes(profile.directoryUserId),
   );
   return `<section class="site-page" aria-labelledby="profile-title">
-    <a class="site-back-link" href="/sites" data-route><span aria-hidden="true">‹</span> ${escapeHtml(t("admin.profile.back"))}</a>
+    <a class="site-back-link" href="/sites" data-route><wa-icon name="chevron-left" aria-hidden="true"></wa-icon> ${escapeHtml(t("admin.profile.back"))}</a>
     <h1 id="profile-title" tabindex="-1">${escapeHtml(t("admin.profile.title"))}</h1>
     <p>${escapeHtml(t(profile.role === "compliance-supervisor" ? "admin.profile.supervisor" : "admin.profile.manager"))}</p>
     <form id="my-profile-form" class="site-details-form" data-dirty-form>
@@ -5090,7 +5101,7 @@ function administratorView(users, state) {
   );
   const departments = uniqueNamedOptions(state.oversightOptions.departments);
   return `<section class="panel" aria-labelledby="administrators-title">
-    <a class="site-back-link" href="/sites" data-route><span aria-hidden="true">‹</span> ${escapeHtml(t("admin.breadcrumb.admin"))}</a>
+    <a class="site-back-link" href="/sites" data-route><wa-icon name="chevron-left" aria-hidden="true"></wa-icon> ${escapeHtml(t("admin.breadcrumb.admin"))}</a>
     <div class="panel__head"><div><h1 id="administrators-title" tabindex="-1">Manage users</h1><p class="muted">Invite, suspend, reinstate, or manage user access.</p></div></div>
     ${directoryMode === "local" ? '<p class="admin-local-directory" role="note"><strong>Local test directory.</strong> Changes reset when the backend restarts, and no emails are sent.</p>' : ""}
     ${message ? `<p class="success admin-user-toast" role="status">${escapeHtml(message)}</p>` : ""}
@@ -5939,7 +5950,7 @@ function siteImportView(state) {
       ${state.importBusy ? '<div class="import-progress" role="status" aria-live="polite"><wa-spinner aria-hidden="true"></wa-spinner><span>Importing records…</span></div>' : ""}
     </section>`;
   return `<section class="directory" aria-labelledby="import-title">
-    <a class="site-back-link" href="/sites" data-route><span aria-hidden="true">‹</span> ${escapeHtml(t("admin.breadcrumb.admin"))}</a>
+    <a class="site-back-link" href="/sites" data-route><wa-icon name="chevron-left" aria-hidden="true"></wa-icon> ${escapeHtml(t("admin.breadcrumb.admin"))}</a>
     <div class="page-head"><div><h1 id="import-title" tabindex="-1">Import sites</h1><p class="muted">Upload a CSV file of sites, providers, programs, and contact details.</p></div></div>
     ${
       state.importNotice
@@ -6119,7 +6130,7 @@ function newProviderView() {
   const inSiteFlow =
     new URLSearchParams(window.location.search).get("returnTo") === "site-new";
   return `<section class="creation-page" aria-labelledby="new-provider-title">
-    <a href="${inSiteFlow ? "/sites/new" : "/providers"}" data-route class="site-back-link"><span aria-hidden="true">‹</span> ${inSiteFlow ? "Add new site" : "Providers"}</a>
+    <a href="${inSiteFlow ? "/sites/new" : "/providers"}" data-route class="site-back-link"><wa-icon name="chevron-left" aria-hidden="true"></wa-icon> ${inSiteFlow ? "Add new site" : "Providers"}</a>
     <div><h1 id="new-provider-title" tabindex="-1">Add new provider</h1><p class="muted">Create the provider record. ${inSiteFlow ? "You’ll return to the new Site flow afterward." : ""}</p></div>
     <form id="provider-form" class="site-details-form">
       ${formInput("provider-name", "Provider name", "", { required: true, autocomplete: "organization" })}
@@ -6134,7 +6145,7 @@ function newProgramView(state) {
   const inProviderFlow = params.get("returnTo") === "provider";
   const providerId = params.get("providerId") || "";
   return `<section class="creation-page" aria-labelledby="new-program-title">
-    <a href="${inSiteFlow ? `/sites/new${providerId ? `?providerId=${encodeURIComponent(providerId)}` : ""}` : inProviderFlow && providerId ? `/providers/${encodeURIComponent(providerId)}` : "/programs"}" data-route class="site-back-link"><span aria-hidden="true">‹</span> ${inSiteFlow ? "Add new site" : inProviderFlow ? "Provider" : escapeHtml(t("admin.breadcrumb.admin"))}</a>
+    <a href="${inSiteFlow ? `/sites/new${providerId ? `?providerId=${encodeURIComponent(providerId)}` : ""}` : inProviderFlow && providerId ? `/providers/${encodeURIComponent(providerId)}` : "/programs"}" data-route class="site-back-link"><wa-icon name="chevron-left" aria-hidden="true"></wa-icon> ${inSiteFlow ? "Add new site" : inProviderFlow ? "Provider" : escapeHtml(t("admin.breadcrumb.admin"))}</a>
     <div><h1 id="new-program-title" tabindex="-1">Add new program</h1><p class="muted">Create the Program and its first staff member. ${inSiteFlow ? "You’ll return to the new Site flow afterward." : inProviderFlow ? "You’ll return to the provider afterward." : ""}</p></div>
     <form id="program-form" class="site-details-form">
       <fieldset><legend>Program</legend><div class="form-grid form-grid--one">
@@ -6182,7 +6193,7 @@ function newSiteFlowView(state) {
   const program = programs.find((item) => item.programId === programId);
   const step = !provider ? 1 : !program ? 2 : 3;
   return `<section class="creation-page" aria-labelledby="new-site-title">
-    <a href="/sites" data-route class="site-back-link"><span aria-hidden="true">‹</span> ${escapeHtml(t("admin.breadcrumb.admin"))}</a>
+    <a href="/sites" data-route class="site-back-link"><wa-icon name="chevron-left" aria-hidden="true"></wa-icon> ${escapeHtml(t("admin.breadcrumb.admin"))}</a>
     <div><h1 id="new-site-title" tabindex="-1">Add new site</h1><p class="muted">Step ${step} of 3</p></div>
     <ol class="flow-steps" aria-label="New Site progress">
       <li ${step === 1 ? 'aria-current="step"' : ""}>Provider</li>
@@ -6319,7 +6330,7 @@ function siteManagerEditorView(state, manager) {
     ? "Add new manager"
     : `${manager.firstName} ${manager.lastName}`.trim();
   return `<section class="site-page manager-record" aria-labelledby="manager-record-title">
-    ${isNew ? `<a class="site-back-link" href="${returnSite ? `/sites/${encodeURIComponent(returnSite)}?section=details` : "/managers"}" data-route><span aria-hidden="true">‹</span> ${escapeHtml(t("common.back"))}</a>` : ""}
+    ${isNew ? `<a class="site-back-link" href="${returnSite ? `/sites/${encodeURIComponent(returnSite)}?section=details` : "/managers"}" data-route><wa-icon name="chevron-left" aria-hidden="true"></wa-icon> ${escapeHtml(t("common.back"))}</a>` : ""}
     ${entityBreadcrumb("manager", manager || {}, state.programs, state.providers)}
     <div class="panel__head">
       <h1 id="manager-record-title" tabindex="-1">${escapeHtml(title)}</h1>

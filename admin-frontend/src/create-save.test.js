@@ -1,3 +1,4 @@
+import { siteManagerRoster } from "./site-managers.js";
 import { adminErrorMessage } from "./admin-error-messages.js";
 import { createActionFeedback } from "./action-feedback-core.js";
 import test from "node:test";
@@ -150,7 +151,13 @@ for (const [staff, disabled] of [
   });
 }
 
-for (const scenario of ["success", "repair", "failure", "navigated away"]) {
+for (const scenario of [
+  "success",
+  "repair",
+  "failure",
+  "navigated away",
+  "existing membership",
+]) {
   test(`site creation navigates without directory reloads: ${scenario}`, async () => {
     const source = readFileSync(new URL("./main.js", import.meta.url), "utf8");
     const start = source.indexOf("  async createSiteFromFlow(form)");
@@ -164,7 +171,15 @@ for (const scenario of ["success", "repair", "failure", "navigated away"]) {
       publicContact: { email: "test@example.org" },
       primaryContactUserId: "staff",
     };
+    const membership = {
+      membershipId: "confirmed",
+      userId: "staff",
+      name: "Sam Lee",
+      status: "active",
+    };
     const Subject = vm.runInNewContext(`(class{${source.slice(start, end)}})`, {
+      siteManagerRoster,
+      siteSaveErrorMessage: () => "Save failed",
       location,
       upsertRecord,
       FormData: class {},
@@ -185,7 +200,10 @@ for (const scenario of ["success", "repair", "failure", "navigated away"]) {
       adminApi: {
         async createSite() {
           if (scenario === "failure") throw new Error("save_failed");
-          if (scenario === "navigated away") location.pathname = "/providers";
+          if (scenario === "navigated away") {
+            location.pathname = "/providers";
+            app.state.newSiteUsers = [];
+          }
           return {
             site:
               scenario === "repair" ? { siteId: savedSite.siteId } : savedSite,
@@ -199,10 +217,13 @@ for (const scenario of ["success", "repair", "failure", "navigated away"]) {
           return { site: savedSite };
         },
         async listManagerMemberships() {
-          return { memberships: [] };
+          return {
+            memberships: scenario === "existing membership" ? [membership] : [],
+          };
         },
         async createManagerMembership() {
           events.push("membership saved");
+          return { membership };
         },
       },
       navigate(path) {
@@ -233,9 +254,13 @@ for (const scenario of ["success", "repair", "failure", "navigated away"]) {
     }
     await app.createSiteFromFlow({});
     assert.equal(app.state.sites[0], existing);
-    assert.equal(app.state.sites[1], savedSite);
+    assert.equal(app.state.sites[1].siteId, savedSite.siteId);
+    assert.deepEqual(app.state.sites[1].managerMemberships, [membership]);
     assert.equal(app.state.managerDirectoryLoaded, false);
-    assert.ok(events.indexOf("membership saved") < events.indexOf("success"));
+    if (scenario === "existing membership")
+      assert.ok(!events.includes("membership saved"));
+    else
+      assert.ok(events.indexOf("membership saved") < events.indexOf("success"));
     if (scenario === "navigated away") {
       assert.deepEqual(events, ["membership saved", "success"]);
     } else {
@@ -247,4 +272,64 @@ for (const scenario of ["success", "repair", "failure", "navigated away"]) {
       assert.equal(app.state.site, null);
     }
   });
+}
+
+for (const detached of [false, true]) {
+  for (const [status, code] of [
+    [400, "invalid_public_contact"],
+    [422, "invalid_public_contact"],
+    [409, "site_already_exists"],
+    [500, "internal_error"],
+  ]) {
+    test(`pending site failure ${status} with detached=${detached} has visible feedback once`, async () => {
+      const source = readFileSync(
+        new URL("./main.js", import.meta.url),
+        "utf8",
+      );
+      const start = source.indexOf("  async createSiteFromFlow(form)");
+      const end = source.indexOf("\n  }", start) + 4;
+      const notices = [];
+      const feedback = createActionFeedback(
+        "admin.toast.siteCreated",
+        (notice) => notices.push(notice),
+        t,
+      );
+      let rejectSave;
+      const pending = new Promise((_, reject) => {
+        rejectSave = reject;
+      });
+      const Subject = vm.runInNewContext(
+        `(class{${source.slice(start, end)}})`,
+        {
+          location: { pathname: "/sites/new", search: "" },
+          FormData: class {},
+          formValue: () => "staff",
+          controlValue: () => "test",
+          addressPartsFromForm: () => ({}),
+          formatAddressParts: () => "Main",
+          actionFeedback: () => feedback,
+          siteSaveErrorMessage: () => t("admin.errors.staffContact"),
+          adminApi: { createSite: () => pending },
+        },
+      );
+      const app = new Subject();
+      app.state = { newSiteUsers: [] };
+      const form = { isConnected: true };
+      const saved = app.createSiteFromFlow(form);
+      form.isConnected = !detached;
+      const error = Object.assign(new Error(code), { status });
+      rejectSave(error);
+      await assert.rejects(saved, error);
+      // The operation owns the toast; repeated reporting cannot duplicate it.
+      feedback.failure(error);
+      assert.equal(
+        notices.length,
+        detached || ![400, 422].includes(status) ? 1 : 0,
+      );
+      if (detached && (status === 400 || status === 422))
+        assert.equal(notices[0].message, t("admin.errors.staffContact"));
+      if (status === 409)
+        assert.equal(notices[0].title, t("admin.errors.siteExistsTitle"));
+    });
+  }
 }

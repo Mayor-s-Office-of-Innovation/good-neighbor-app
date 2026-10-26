@@ -85,6 +85,7 @@ test("saving assignments to several Sites serializes the shared staff count chan
   };
   const context = vm.createContext({
     upsertRecord,
+    siteManagerRoster,
     location: { pathname: "/managers/u1", search: "" },
     navigate: (path) => destinations.push(path),
     createAndAssignManager,
@@ -254,6 +255,7 @@ test("new site flow invalidates a pending manager load without waiting for it", 
   };
   const context = vm.createContext({
     upsertRecord,
+    siteManagerRoster,
     location: { pathname: "/sites/new", search: "" },
     FormData: class {},
     formValue: (_data, name) => values[name] || "",
@@ -277,7 +279,9 @@ test("new site flow invalidates a pending manager load without waiting for it", 
         },
       }),
       listManagerMemberships: async () => ({ memberships: [] }),
-      createManagerMembership: async () => ({}),
+      createManagerMembership: async () => ({
+        membership: { userId: "u1", name: "Sam Lee", status: "active" },
+      }),
     },
   });
   const Subject = vm.runInContext(
