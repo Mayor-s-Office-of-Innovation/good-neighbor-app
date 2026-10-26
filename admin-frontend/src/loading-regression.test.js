@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
+import { siteManagerRoster } from "./site-managers.js";
 import { upsertRecord } from "./save-feedback.js";
 const source = readFileSync(new URL("./main.js", import.meta.url), "utf8");
 function subject(name, globals) {
@@ -23,6 +24,8 @@ for (const failure of ["create", "membership", "none"]) {
     const app = subject("createSiteFromFlow", {
       location: { pathname: "/sites/new", search: "" },
       upsertRecord,
+      siteManagerRoster,
+      siteSaveErrorMessage: (error) => error.message,
       FormData: class {},
       formValue: () => "manager",
       controlValue: () => "",

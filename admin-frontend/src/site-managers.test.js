@@ -85,6 +85,7 @@ test("saving assignments to several Sites serializes the shared staff count chan
   };
   const context = vm.createContext({
     upsertRecord,
+    siteManagerRoster,
     location: { pathname: "/managers/u1", search: "" },
     navigate: (path) => destinations.push(path),
     createAndAssignManager,
@@ -256,6 +257,7 @@ test("new site flow invalidates a pending manager directory without waiting for 
     location: { pathname: "/sites/new", search: "" },
     upsertRecord: (records, record) => [...records, record],
     syncDirtyForm() {},
+    siteManagerRoster,
     FormData: class {},
     formValue: (_data, name) => values[name] || "",
     addressPartsFromForm: () => ({ city: "SF" }),
@@ -278,7 +280,9 @@ test("new site flow invalidates a pending manager directory without waiting for 
         },
       }),
       listManagerMemberships: async () => ({ memberships: [] }),
-      createManagerMembership: async () => ({}),
+      createManagerMembership: async () => ({
+        membership: { userId: "u1", name: "Sam Lee", status: "active" },
+      }),
     },
   });
   const Subject = vm.runInContext(
@@ -286,6 +290,9 @@ test("new site flow invalidates a pending manager directory without waiting for 
     context,
   );
   const subject = new Subject();
+  subject.render = () => {};
+  subject.querySelector = () => null;
+  subject.managerDirectoryLoader = loader;
   subject.state = {
     sites: [],
     managerDirectoryLoaded: true,
@@ -307,6 +314,9 @@ test("new site flow invalidates a pending manager directory without waiting for 
   const created = subject.createSiteFromFlow({ dataset: {} });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(loads, 1);
+  assert.equal(subject.managerDirectoryLoader, null);
+  assert.equal(subject.managerDirectoryVersion, 1);
+  assert.equal(subject.state.managerDirectoryLoaded, false);
   release();
   await Promise.all([old, created]);
   assert.equal(loads, 1);

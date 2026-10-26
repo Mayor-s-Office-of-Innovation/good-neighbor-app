@@ -160,13 +160,49 @@ describe("City program manager administration", () => {
 });
 
 describe("provider and site management", () => {
+  it.each(["provider", "site"])(
+    "reports %s uniqueness conflicts without hiding other failures",
+    async (kind) => {
+      for (const index of [0, 1]) {
+        send.mockReset();
+        const failure = Object.assign(new Error("cancelled"), {
+          name: "TransactionCanceledException",
+          CancellationReasons: [0, 1].map((i) => ({
+            Code: i === index ? "ConditionalCheckFailed" : "None",
+          })),
+        });
+        send.mockImplementation(async (command) => {
+          if (command instanceof TransactWriteCommand) throw failure;
+          return { Item: { name: "Provider", status: "active" } };
+        });
+        const request = call(
+          kind === "provider" ? createProvider : createSite,
+          event(
+            { name: "Existing", address: "1 Main St, San Francisco, CA" },
+            "compliance-supervisor",
+            { providerId: "provider" },
+          ),
+        );
+        if (index === 0) {
+          const response = await request;
+          expect(response.statusCode).toBe(409);
+          expect(JSON.parse(response.body).error).toBe(
+            `${kind}_already_exists`,
+          );
+        } else await expect(request).rejects.toBe(failure);
+        expect(
+          send.mock.calls.filter(([command]) => command instanceof PutCommand),
+        ).toHaveLength(0);
+      }
+    },
+  );
   it("creates providers", async () => {
     send.mockResolvedValue({});
 
     const res = await call(createProvider, event({ name: "Provider One" }));
 
     expect(res.statusCode).toBe(201);
-    expect(send.mock.calls[0][0]).toBeInstanceOf(PutCommand);
+    expect(send.mock.calls[0][0]).toBeInstanceOf(TransactWriteCommand);
     expect(JSON.parse(res.body).provider).toMatchObject({
       providerId: "provider-one",
       name: "Provider One",

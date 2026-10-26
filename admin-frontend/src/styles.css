@@ -509,16 +509,18 @@ h3 {
 }
 
 .site-back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   width: fit-content;
   color: var(--text);
   font-weight: 650;
   text-decoration: none;
 }
 
-.site-back-link span {
-  margin-right: 5px;
-  font-size: 1.4rem;
-  vertical-align: -0.05em;
+.site-back-link wa-icon {
+  font-size: 1rem;
+  flex-shrink: 0;
 }
 
 .site-page .site-details-form fieldset {

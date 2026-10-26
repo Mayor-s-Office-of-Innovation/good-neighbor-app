@@ -259,8 +259,8 @@ test("site details opens at the top on fresh and cached navigation", async ({
   });
   expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
   await page.evaluate(() => {
-    history.pushState({}, "", "/sites/s?section=details");
-    window.dispatchEvent(new PopStateEvent("popstate"));
+    window.history.pushState({}, "", "/sites/s?section=details");
+    window.dispatchEvent(new window.PopStateEvent("popstate"));
   });
   await expect(heading).toBeFocused();
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);

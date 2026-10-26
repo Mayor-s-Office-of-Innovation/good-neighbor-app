@@ -222,16 +222,31 @@ export const createProvider = (event) =>
       createdAt: now,
       updatedAt: now,
     };
-    await Promise.all([
-      ddb.send(
-        new PutCommand({
-          TableName: getDynamoTableName(),
-          Item: item,
-          ConditionExpression: "attribute_not_exists(pk)",
+    try {
+      await ddb.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            {
+              Put: {
+                TableName: getDynamoTableName(),
+                Item: item,
+                ConditionExpression: "attribute_not_exists(pk)",
+              },
+            },
+            {
+              Put: {
+                TableName: getDynamoTableName(),
+                Item: providerSearchItem(providerId, name, now),
+              },
+            },
+          ],
         }),
-      ),
-      putProviderSearch(providerId, name, now),
-    ]);
+      );
+    } catch (error) {
+      if (creationConflict(error))
+        return jsonResponse(409, { error: "provider_already_exists" });
+      throw error;
+    }
     return jsonResponse(201, { provider: item });
   });
 
@@ -560,11 +575,15 @@ export const createSite = (event) =>
     }
     if (primaryContact?.personId)
       transactItems.push(...(await registerPeopleChanges(transactItems)));
-    await ddb.send(
-      new TransactWriteCommand({
-        TransactItems: transactItems,
-      }),
-    );
+    try {
+      await ddb.send(
+        new TransactWriteCommand({ TransactItems: transactItems }),
+      );
+    } catch (error) {
+      if (creationConflict(error))
+        return jsonResponse(409, { error: "site_already_exists" });
+      throw error;
+    }
     return jsonResponse(201, { site });
   });
 
@@ -2161,16 +2180,7 @@ function putProviderSearch(providerId, name, now) {
   return ddb.send(
     new PutCommand({
       TableName: getDynamoTableName(),
-      Item: {
-        pk: "PROVIDER_SEARCH#ACTIVE",
-        sk: providerId,
-        type: "providerSearch",
-        providerId,
-        name,
-        searchText: name.toLowerCase(),
-        status: "active",
-        updatedAt: now,
-      },
+      Item: providerSearchItem(providerId, name, now),
     }),
   );
 }
@@ -2196,4 +2206,32 @@ async function queryAll(input) {
     exclusiveStartKey = res.LastEvaluatedKey;
   } while (exclusiveStartKey);
   return items;
+}
+
+/** @param {string} providerId @param {string} name @param {string} now */
+function providerSearchItem(providerId, name, now) {
+  return {
+    pk: "PROVIDER_SEARCH#ACTIVE",
+    sk: providerId,
+    type: "providerSearch",
+    providerId,
+    name,
+    searchText: name.toLowerCase(),
+    status: "active",
+    updatedAt: now,
+  };
+}
+
+/** Only the first transaction item is the entity uniqueness guard.
+ * @param {unknown} error
+ */
+function creationConflict(error) {
+  const failure =
+    /** @type {{name?:string, CancellationReasons?: {Code?:string}[]}} */ (
+      error
+    );
+  return (
+    failure?.name === "TransactionCanceledException" &&
+    failure.CancellationReasons?.[0]?.Code === "ConditionalCheckFailed"
+  );
 }
