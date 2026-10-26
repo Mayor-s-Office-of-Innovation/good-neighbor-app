@@ -250,3 +250,39 @@ Verify search-complete events, new prepared objects, and settled result states.
 Investigate any `duplicate_worker_failed` events before retrying further. Keep the
 DLQ messages for incident evidence until recovery is verified; do not blindly
 redrive the shared DLQ, which can also contain stream-dispatch failure envelopes.
+
+
+## Shared comparison pacing and throttling recovery
+
+Dev configures `duplicate_comparison_requests_per_second = 3`, below its dedicated
+analyzer comparison usage-plan rate of 4/s (burst 8). This is an aggregate attempt
+rate across workers sharing the app table and normalized endpoint, not a per-worker
+rate. Every HTTP attempt, including retries, obtains a conditional DynamoDB permit.
+Cache hits consume no permit. The gate serializes HTTP starts under a unique-owner
+lease, then records the cooldown after starting the fetch. The response remains
+concurrent with other requests. It does not reserve a long future queue or use
+periodic batches. Contention waits have small jitter; DynamoDB failures fail closed.
+A crashed owner blocks starts for at most its remaining lease (one pacing interval
+plus five seconds). A delayed claim acknowledgement with less than one interval
+remaining cannot start a request; it must reacquire. Cooldown writes are conditional
+on owner identity so a stale owner cannot release or overwrite a newer lease.
+Other applications, tools and API keys are not coordinated by this table's gate;
+include their traffic when setting limits. Lambda clocks/network latency can also
+vary, so pacing does not replace retry handling or gateway enforcement.
+
+Only HTTP 429 responses retry: at most four total HTTP attempts, with exponential
+250/500/1000ms backoff plus up to 250ms jitter. `Retry-After` seconds and HTTP dates
+are honored as a minimum delay. Every comparison has one 60-second deadline covering
+pacing, backoff, fetch and response-body consumption; each HTTP attempt retains its
+27-second timeout. A long retry header expires the deadline instead of retrying early.
+Non-429 errors, exhausted retries, deadlines and invalid responses remain failures;
+they never become negative matches. The matcher still validates every success.
+
+The module's default pacing rate is zero to preserve existing production configuration;
+only dev opts in on this branch. Before production enablement, choose a measured rate
+below that stage's effective limit and configure it explicitly. Do not copy dev's 3/s
+setting into a production endpoint still limited to 1/s. Roll out through CI, then
+verify queue age, comparison failures, gateway 429s and first-match/full-search latency.
+The worker needs `UpdateItem` on the `DUP_COMPARISON_PACER` partition only; existing
+`GetItem` permission supports consistent reads after a permit collision. No new table,
+index, secret or cache-version change is required.

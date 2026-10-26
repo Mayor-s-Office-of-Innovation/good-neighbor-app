@@ -1,3 +1,12 @@
+variable "duplicate_comparison_requests_per_second" {
+  type        = number
+  default     = 0
+  description = "Aggregate comparison attempt rate across workers; zero preserves existing pacing. Configure only after endpoint capacity validation."
+  validation {
+    condition     = var.duplicate_comparison_requests_per_second == 0 || (var.duplicate_comparison_requests_per_second >= 0.1 && var.duplicate_comparison_requests_per_second <= 32)
+    error_message = "Comparison pacing must be zero (disabled) or between 0.1 and 32 requests per second."
+  }
+}
 # Isolated duplicate evaluation and reversible product links. No existing analysis handler or queue changes.
 variable "enable_duplicate_detection" {
   type        = bool
@@ -76,6 +85,9 @@ resource "aws_iam_role_policy" "duplicate_worker" {
   policy = jsonencode({ Version = "2012-10-17", Statement = [
     { Effect = "Allow", Action = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"], Resource = "*" },
     { Effect = "Allow", Action = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:ConditionCheckItem"], Resource = aws_dynamodb_table.app.arn },
+    { Effect    = "Allow", Action = ["dynamodb:UpdateItem"], Resource = aws_dynamodb_table.app.arn,
+      Condition = { "ForAllValues:StringEquals" = { "dynamodb:LeadingKeys" = ["DUP_COMPARISON_PACER"] } }
+    },
     { Effect = "Allow", Action = ["sqs:SendMessage"], Resource = aws_sqs_queue.duplicates_dlq.arn },
     # S3 requires bucket listing permission to return NoSuchKey for a cache miss.
     # Without it, an absent prepared image returns AccessDenied and cannot be built.
@@ -123,13 +135,14 @@ resource "aws_lambda_function" "duplicate_worker" {
   tracing_config { mode = "Active" }
   dead_letter_config { target_arn = aws_sqs_queue.duplicates_dlq.arn }
   environment { variables = {
-    METRICS_NAMESPACE                     = "${local.name_prefix}-duplicates"
-    DYNAMO_TABLE                          = aws_dynamodb_table.app.name
-    S3_UPLOAD_BUCKET                      = aws_s3_bucket.uploads.bucket
-    DUPLICATE_QUEUE_URL                   = aws_sqs_queue.duplicates.url
-    DUPLICATE_ANALYZER_BASE_URL           = var.duplicate_analyzer_base_url != "" ? var.duplicate_analyzer_base_url : var.analyzer_base_url
-    DUPLICATE_ANALYZER_API_KEY_SECRET_ARN = aws_secretsmanager_secret.duplicate_analyzer_key.arn
-    DUPLICATE_COMPARISON_CACHE_VERSION    = "image-comparison-v1"
+    METRICS_NAMESPACE                        = "${local.name_prefix}-duplicates"
+    DYNAMO_TABLE                             = aws_dynamodb_table.app.name
+    S3_UPLOAD_BUCKET                         = aws_s3_bucket.uploads.bucket
+    DUPLICATE_QUEUE_URL                      = aws_sqs_queue.duplicates.url
+    DUPLICATE_ANALYZER_BASE_URL              = var.duplicate_analyzer_base_url != "" ? var.duplicate_analyzer_base_url : var.analyzer_base_url
+    DUPLICATE_ANALYZER_API_KEY_SECRET_ARN    = aws_secretsmanager_secret.duplicate_analyzer_key.arn
+    DUPLICATE_COMPARISON_CACHE_VERSION       = "image-comparison-v1"
+    DUPLICATE_COMPARISON_REQUESTS_PER_SECOND = tostring(var.duplicate_comparison_requests_per_second)
   } }
   depends_on = [aws_iam_role_policy.duplicate_worker, aws_cloudwatch_log_group.duplicates]
   tags       = var.tags

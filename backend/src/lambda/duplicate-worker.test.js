@@ -6,6 +6,8 @@ import {
 
 const state = vi.hoisted(() => ({
   readImage: vi.fn(),
+  clientOptions:
+    /** @type {Parameters<typeof import("../analysis/duplicates/image-matcher.js").createComparisonClient>[0][]} */ ([]),
   records: new Map(),
   writes:
     /** @type {(import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput | import("@aws-sdk/lib-dynamodb").PutCommandInput)[]} */ ([]),
@@ -76,7 +78,12 @@ vi.mock("../analysis/duplicates/image-features.js", () => ({
 }));
 vi.mock("../analysis/duplicates/image-matcher.js", async (importOriginal) => ({
   ...(await importOriginal()),
-  createComparisonClient: () => state.compare,
+  createComparisonClient: (
+    /** @type {Parameters<typeof import("../analysis/duplicates/image-matcher.js").createComparisonClient>[0]} */ options,
+  ) => {
+    state.clientOptions.push(options);
+    return state.compare;
+  },
 }));
 vi.mock("@aws-sdk/client-sqs", () => ({
   SQSClient: class {
@@ -101,6 +108,8 @@ beforeEach(() => {
   state.writes = [];
   state.sends = [];
   state.compare.mockReset();
+  state.clientOptions = [];
+  delete process.env.DUPLICATE_COMPARISON_REQUESTS_PER_SECOND;
   process.env.DYNAMO_TABLE = "test";
   process.env.S3_UPLOAD_BUCKET = "uploads";
   process.env.DUPLICATE_QUEUE_URL = "queue";
@@ -472,5 +481,21 @@ it("keeps lifecycle timing stable across redelivery", async () => {
       state.records.get(`DUP_RESULT#target:photo#${projection.revision}`)
         .queuedAt,
     ).toBe(enqueuedAt);
+  }
+});
+
+it("wires configured aggregate pacing into uncached worker comparisons", async () => {
+  const { event } = setup();
+  process.env.DUPLICATE_COMPARISON_REQUESTS_PER_SECOND = "3";
+  try {
+    await handler(
+      /** @type {import("aws-lambda").SQSEvent} */ (event),
+      /** @type {import("aws-lambda").Context} */ ({}),
+      () => {},
+    );
+    expect(state.clientOptions).toHaveLength(1);
+    expect(state.clientOptions[0].pace).toBeTypeOf("function");
+  } finally {
+    delete process.env.DUPLICATE_COMPARISON_REQUESTS_PER_SECOND;
   }
 });

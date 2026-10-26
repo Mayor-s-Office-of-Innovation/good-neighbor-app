@@ -765,31 +765,4 @@ export async function matchImages({
   };
 }
 
-/**
- * @param {{baseUrl:string,apiKey:string,fetchImpl?:typeof fetch}} options
- * @returns {Compare}
- */
-export function createComparisonClient({ baseUrl, apiKey, fetchImpl = fetch }) {
-  const endpoint = new URL(
-    "v1/image-comparisons",
-    baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`,
-  );
-  if (
-    endpoint.protocol !== "https:" &&
-    !(
-      endpoint.protocol === "http:" &&
-      ["127.0.0.1", "localhost"].includes(endpoint.hostname)
-    )
-  )
-    throw new Error("Comparison endpoint must use TLS or loopback");
-  return async (request) => {
-    const response = await fetchImpl(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": apiKey },
-      body: JSON.stringify(request),
-      signal: globalThis.AbortSignal.timeout(27000),
-    });
-    if (!response.ok) throw new Error(`Comparison HTTP ${response.status}`);
-    return response.json();
-  };
-}
+export { createComparisonClient } from "./comparison-client.js";

@@ -634,7 +634,7 @@ succeeds. An analyzer amendment on its own no longer retires tasks.
 
 ### Duplicate issue records (feature-gated)
 
-All keys below use the authenticated `pk=SITE#<siteId>` partition. No new GSI or
+The Site records below use the authenticated `pk=SITE#<siteId>` partition. No new GSI or
 media bytes are stored in these records. Issue identity is
 `(checkId, artifactId, conditionId, analysisRevision)`; readable short IDs are
 resolved from current guidance/tasks rather than treated as identity.
@@ -648,6 +648,16 @@ resolved from current guidance/tasks rather than treated as identity.
 | `DUP_COMPARISON#<requestDigest>` | Comparison response cache, including matcher/request version; five-day TTL and no image bytes. |
 | `DUP_LINK#<taskId>` | Idempotently materialized original-task link and its duplicate-detection timeline event ID. |
 | `DUP_OVERRIDE#<JSON check/artifact/condition tuple>` | Durable human separation, actor/time and original-task reference; prevents automatic relinking of that observation. |
+
+The internal request-pacing record uses `pk=DUP_COMPARISON_PACER` and
+`sk=sha256(normalized comparison endpoint URL)`, shared across Sites and workers
+in one application table. Conditional updates of `nextAllowedAt` (epoch milliseconds)
+pace every HTTP attempt, including 429 retries. A unique `owner` and millisecond
+`leaseUntil` protect each HTTP start; the owner sets the next cooldown after starting
+the fetch and conditionally releases the lease. Expired or nearly expired lease
+acknowledgements must reacquire. Numeric `expiresAt` is a one-day housekeeping TTL;
+TTL deletion is never needed to grant a permit. It contains
+no credentials, media, issue IDs or narratives and is not part of Site APIs.
 
 Duplicate detections and separations use existing `TASK#…#UPDATE#…` timeline keys
 with `duplicate_detected` / `duplicate_separated` types. UI copy comes from the
