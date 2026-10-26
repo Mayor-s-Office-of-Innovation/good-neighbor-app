@@ -18,6 +18,15 @@ variable "duplicate_analyzer_base_url" {
   default     = ""
   description = "Separate comparison service base URL; empty uses the existing analyzer base URL."
 }
+variable "duplicate_worker_maximum_concurrency" {
+  type        = number
+  default     = 2
+  description = "Maximum SQS duplicate workers; size from measured fanout and latency while preserving the shared comparison attempt rate."
+  validation {
+    condition     = var.duplicate_worker_maximum_concurrency >= 2 && var.duplicate_worker_maximum_concurrency <= 1000 && floor(var.duplicate_worker_maximum_concurrency) == var.duplicate_worker_maximum_concurrency
+    error_message = "Duplicate worker concurrency must be an integer from 2 to 1000."
+  }
+}
 resource "aws_secretsmanager_secret" "duplicate_analyzer_key" {
   #checkov:skip=CKV2_AWS_57:Analyzer key rotation is coordinated manually out-of-band with the comparison service, matching the existing analyzer credential policy.
   name        = "${local.name_prefix}-duplicate-analyzer-key"
@@ -101,7 +110,7 @@ resource "aws_iam_role_policy" "duplicate_worker" {
   ] })
 }
 resource "aws_lambda_function" "duplicate_dispatch" {
-  #checkov:skip=CKV_AWS_115:DynamoDB stream retry/record-age controls bound dispatcher failures, while the downstream SQS event-source maximum_concurrency=2 bounds expensive comparison work; reserved concurrency here would only throttle stream draining and increase iterator age.
+  #checkov:skip=CKV_AWS_115:DynamoDB stream retry/record-age controls bound dispatcher failures, while the downstream SQS event-source maximum_concurrency bounds expensive comparison work; reserved concurrency here would only throttle stream draining and increase iterator age.
   #checkov:skip=CKV_AWS_117:No VPC; requires public analyzer/AWS API egress, matching the existing analysis worker.
   #checkov:skip=CKV_AWS_272:Code signing is not yet configured for this application, matching existing Lambdas.
   function_name    = "${local.name_prefix}-duplicate-dispatch"
@@ -120,7 +129,7 @@ resource "aws_lambda_function" "duplicate_dispatch" {
   tags       = var.tags
 }
 resource "aws_lambda_function" "duplicate_worker" {
-  #checkov:skip=CKV_AWS_115:SQS event-source maximum_concurrency=2 bounds comparisons independently; reserved concurrency can throttle queue deliveries into the DLQ.
+  #checkov:skip=CKV_AWS_115:SQS event-source maximum_concurrency bounds comparisons independently; reserved concurrency can throttle queue deliveries into the DLQ.
   #checkov:skip=CKV_AWS_117:No VPC; requires public analyzer/AWS API egress, matching the existing analysis worker.
   #checkov:skip=CKV_AWS_272:Code signing is not yet configured for this application, matching existing Lambdas.
   function_name    = "${local.name_prefix}-duplicate-worker"
@@ -177,7 +186,7 @@ resource "aws_lambda_event_source_mapping" "duplicate_queue" {
   enabled                 = var.enable_duplicate_detection
   batch_size              = 1
   function_response_types = ["ReportBatchItemFailures"]
-  scaling_config { maximum_concurrency = 2 }
+  scaling_config { maximum_concurrency = var.duplicate_worker_maximum_concurrency }
 }
 resource "aws_cloudwatch_metric_alarm" "duplicate_dead_letters" {
   alarm_name          = "${local.name_prefix}-duplicate-dead-letters"
