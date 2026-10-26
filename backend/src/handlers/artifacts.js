@@ -223,11 +223,32 @@ export const presignUpload = async (event) => {
         "ConditionalCheckFailedException",
       ].includes(error.name)
     ) {
+      const reasons =
+        /** @type {{ CancellationReasons?: Array<{ Code?: string }> }} */ (
+          error
+        ).CancellationReasons;
       console.warn(
         JSON.stringify({
+          // Retain the existing metric marker and public response. The marker
+          // alone does not prove a quota was exhausted: cancellations can also
+          // be conflicts. Log codes by transaction position, never Item/Message.
           marker: "MediaQuotaExceeded",
           siteId,
           checkId,
+          errorName: error.name,
+          cancellationReasons: Array.isArray(reasons)
+            ? reasons.map((reason, index) => ({
+                operation:
+                  [
+                    "check_state",
+                    "check_quota",
+                    "device_quota",
+                    "site_quota",
+                    "upload_reservation",
+                  ][index] ?? "unknown",
+                code: reason?.Code ?? "Unknown",
+              }))
+            : null,
         }),
       );
       return jsonResponse(429, { error: "media_quota_exceeded" });
