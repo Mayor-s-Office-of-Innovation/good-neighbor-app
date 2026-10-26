@@ -20,7 +20,7 @@ async function setup(page) {
       '<main id="fixture"><article class="analysis-card" data-condition-id="c"><div class="analysis-card__question-actions"><button id="yes" data-analysis-action="answer" data-condition-id="c" data-answer-value="true">Yes</button><button id="no" data-analysis-action="answer" data-condition-id="c" data-answer-value="false">No</button></div></article><button id="elsewhere">Other</button></main>';
     const root = document.querySelector("#fixture");
     const button = document.querySelector("#no");
-    if (!(root instanceof HTMLElement) || !button)
+    if (!(root instanceof window.HTMLElement) || !button)
       throw new Error("Answer fixture did not render");
     /** @type {AnswerFixtureWindow} */ (window).answerFixture = {
       setQuestionAnswerBusy,
@@ -45,7 +45,7 @@ test("answer progress preserves keyboard focus through rerenders and successful 
     ).answerFixture;
     const card = root.querySelector("article");
     if (!card) throw new Error("Answer card is missing");
-    card.outerHTML = card.outerHTML;
+    card.replaceWith(card.cloneNode(true));
     setQuestionAnswerBusy(root, "c", true);
   });
   await expect(page.locator('[role="status"]')).toBeFocused();
