@@ -1,3 +1,4 @@
+import { adminErrorMessage } from "./admin-error-messages.js";
 import "./system-status.js";
 import { peopleDirectory } from "./people-directory.js";
 import {
@@ -1119,7 +1120,10 @@ class AdminApp extends HTMLElement {
         this.state.managerDirectoryLoaded = false;
       } catch (error) {
         feedback.failure(error);
-        showFormSaveError(form, t("admin.programs.staffSaveError"));
+        showFormSaveError(
+          form,
+          adminErrorMessage(error, t, t("admin.programs.staffSaveError")),
+        );
         delete form.dataset.saving;
         if (submit) submit.disabled = false;
         return;
@@ -1404,11 +1408,17 @@ class AdminApp extends HTMLElement {
   async createSiteFromFlow(form) {
     const feedback = actionFeedback("admin.toast.siteCreated");
     try {
+      const origin = location.pathname + location.search;
       const data = new FormData(form);
       const providerId = formValue(data, "provider-id");
       const programId = formValue(data, "lead-program-id");
       const addressParts = addressPartsFromForm(data);
       const address = formatAddressParts(addressParts);
+      const expectedManagerId = formValue(data, "site-manager-user-id");
+      // Navigation can replace newSiteUsers while the save is pending.
+      const staff = this.state.newSiteUsers.find(
+        (user) => user.userId === expectedManagerId,
+      );
       const result = await adminApi.createSite(providerId, {
         name: formValue(data, "site-name"),
         address,
@@ -1424,7 +1434,7 @@ class AdminApp extends HTMLElement {
       });
       feedback.changed();
       const siteId = result.site.siteId;
-      const expectedManagerId = formValue(data, "site-manager-user-id");
+      let savedSite = result.site;
       if (
         !result.site.addressParts ||
         !result.site.publicContact ||
@@ -1449,38 +1459,44 @@ class AdminApp extends HTMLElement {
         ) {
           throw new Error("site_creation_incomplete");
         }
+        savedSite = repaired.site;
       }
-      const staff = this.state.newSiteUsers.find(
-        (user) => user.userId === expectedManagerId,
-      );
       if (staff) {
         const existing = await adminApi.listManagerMemberships(siteId);
+        const memberships = existing.memberships || [];
         if (
-          !(existing.memberships || []).some(
-            (member) => member.userId === expectedManagerId,
-          )
-        )
-          await adminApi.createManagerMembership(
+          !memberships.some((member) => member.userId === expectedManagerId)
+        ) {
+          const created = await adminApi.createManagerMembership(
             siteId,
             `${staff.firstName} ${staff.lastName}`.trim(),
             staff.email,
             programId,
             expectedManagerId,
           );
+          memberships.push(created.membership);
+        }
+        savedSite = {
+          ...savedSite,
+          managerMemberships: siteManagerRoster([], memberships),
+        };
       }
       feedback.success();
+      this.state.sites = upsertRecord(this.state.sites, savedSite, "siteId");
+      this.managerDirectoryVersion = (this.managerDirectoryVersion || 0) + 1;
+      this.managerDirectoryLoader = null;
       this.state.managerDirectoryLoaded = false;
-      await this.loadDirectory();
-      try {
-        await this.loadSiteManagers(true);
-      } catch (error) {
-        feedback.failure(error);
-        this.state.managerDirectoryLoaded = false;
-        this.state.managerSearchFailed = true;
-      }
+      if (location.pathname + location.search !== origin) return;
+      this.state.site = null;
+      this.state.error = "";
       navigate(`/sites/${encodeURIComponent(siteId)}`);
+      this.render();
+      this.querySelector("[data-site-loading]")?.focus();
     } catch (error) {
-      feedback.failure(error);
+      feedback.failure(error, {
+        inlineAvailable: form.isConnected,
+        message: siteSaveErrorMessage(error),
+      });
       throw error;
     }
   }
@@ -2246,11 +2262,9 @@ class AdminApp extends HTMLElement {
         feedback.failure(error);
         showFormSaveError(
           form,
-          t(
-            form.dataset.createdUser
-              ? "admin.siteManagers.assignmentError"
-              : "admin.programs.staffSaveError",
-          ),
+          form.dataset.createdUser
+            ? t("admin.siteManagers.assignmentError")
+            : adminErrorMessage(error, t, t("admin.programs.staffSaveError")),
         );
         delete form.dataset.saving;
         save.disabled = false;
@@ -2305,13 +2319,7 @@ class AdminApp extends HTMLElement {
   async saveWithFeedback(form, save) {
     return withSaveFeedback(form, save, {
       savingLabel: t("siteAdmin.edit.saving"),
-      onError: (error) =>
-        showFormSaveError(
-          form,
-          error.message === "staff_source_changed"
-            ? t("admin.programs.staffSourceChanged")
-            : error.message,
-        ),
+      onError: (error) => showFormSaveError(form, adminErrorMessage(error, t)),
     });
   }
 
@@ -3607,9 +3615,13 @@ class AdminApp extends HTMLElement {
       "submit",
       (event) => {
         event.preventDefault();
-        this.createSiteFromFlow(asForm(event.currentTarget)).catch((error) => {
-          this.state.error = siteSaveErrorMessage(error);
-          this.render();
+        const form = asForm(event.currentTarget);
+        void withSaveFeedback(form, () => this.createSiteFromFlow(form), {
+          savingLabel: t("siteAdmin.edit.saving"),
+          onError: (error) => {
+            if (form.isConnected)
+              showFormSaveError(form, siteSaveErrorMessage(error));
+          },
         });
       },
     );
@@ -4941,6 +4953,7 @@ class AdminApp extends HTMLElement {
         ${route.name === "provider-manager" && this.state.provider?.providerId === route.id ? providerManagerDetailView(this.state, route.membershipId) : ""}
         ${program ? programView(program, this.state.capabilities.createEntities === true) : ""}
         ${siteManager ? siteManagerEditorView(this.state, siteManager) : ""}
+        ${this.state.hasToken && route.name === "site" && !site && !this.state.error ? `<p data-site-loading role="status" tabindex="-1">${escapeHtml(t("common.loading"))}</p>` : ""}
         ${
           site
             ? `
@@ -5044,7 +5057,7 @@ function myProfileView(state) {
       (site.complianceManagerIds || []).includes(profile.directoryUserId),
   );
   return `<section class="site-page" aria-labelledby="profile-title">
-    <a class="site-back-link" href="/sites" data-route><span aria-hidden="true">‹</span> ${escapeHtml(t("admin.profile.back"))}</a>
+    <a class="site-back-link" href="/sites" data-route><wa-icon name="chevron-left" aria-hidden="true"></wa-icon> ${escapeHtml(t("admin.profile.back"))}</a>
     <h1 id="profile-title" tabindex="-1">${escapeHtml(t("admin.profile.title"))}</h1>
     <p>${escapeHtml(t(profile.role === "compliance-supervisor" ? "admin.profile.supervisor" : "admin.profile.manager"))}</p>
     <form id="my-profile-form" class="site-details-form" data-dirty-form>
@@ -5072,7 +5085,7 @@ function adminSettingsMenu(canManageUsers, canImportSites) {
       <a href="/profile" data-route role="menuitem"><wa-icon name="user" aria-hidden="true"></wa-icon><span>${escapeHtml(t("admin.profile.title"))}</span></a>
       ${canManageUsers ? '<a href="/administrators" data-route role="menuitem"><wa-icon name="people-group" aria-hidden="true"></wa-icon><span>User management</span></a>' : ""}
       ${canImportSites ? '<a href="/sites/import" data-route role="menuitem"><wa-icon name="file-import" aria-hidden="true"></wa-icon><span>Import</span></a>' : ""}
-      ${canManageUsers ? `<a href="/system-status" data-route role="menuitem"><span>${escapeHtml(t("admin.status.menu"))}</span></a>` : ""}
+      ${canManageUsers ? `<a href="/system-status" data-route role="menuitem"><wa-icon name="heart-pulse" aria-hidden="true"></wa-icon><span>${escapeHtml(t("admin.status.menu"))}</span></a>` : ""}
       <button id="clear-token" type="button" role="menuitem"><wa-icon name="arrow-right-from-bracket" aria-hidden="true"></wa-icon><span>Sign out</span></button>
     </div>
   </div>`;
@@ -5088,7 +5101,7 @@ function administratorView(users, state) {
   );
   const departments = uniqueNamedOptions(state.oversightOptions.departments);
   return `<section class="panel" aria-labelledby="administrators-title">
-    <a class="site-back-link" href="/sites" data-route><span aria-hidden="true">‹</span> ${escapeHtml(t("admin.breadcrumb.admin"))}</a>
+    <a class="site-back-link" href="/sites" data-route><wa-icon name="chevron-left" aria-hidden="true"></wa-icon> ${escapeHtml(t("admin.breadcrumb.admin"))}</a>
     <div class="panel__head"><div><h1 id="administrators-title" tabindex="-1">Manage users</h1><p class="muted">Invite, suspend, reinstate, or manage user access.</p></div></div>
     ${directoryMode === "local" ? '<p class="admin-local-directory" role="note"><strong>Local test directory.</strong> Changes reset when the backend restarts, and no emails are sent.</p>' : ""}
     ${message ? `<p class="success admin-user-toast" role="status">${escapeHtml(message)}</p>` : ""}
@@ -5937,7 +5950,7 @@ function siteImportView(state) {
       ${state.importBusy ? '<div class="import-progress" role="status" aria-live="polite"><wa-spinner aria-hidden="true"></wa-spinner><span>Importing records…</span></div>' : ""}
     </section>`;
   return `<section class="directory" aria-labelledby="import-title">
-    <a class="site-back-link" href="/sites" data-route><span aria-hidden="true">‹</span> ${escapeHtml(t("admin.breadcrumb.admin"))}</a>
+    <a class="site-back-link" href="/sites" data-route><wa-icon name="chevron-left" aria-hidden="true"></wa-icon> ${escapeHtml(t("admin.breadcrumb.admin"))}</a>
     <div class="page-head"><div><h1 id="import-title" tabindex="-1">Import sites</h1><p class="muted">Upload a CSV file of sites, providers, programs, and contact details.</p></div></div>
     ${
       state.importNotice
@@ -6117,7 +6130,7 @@ function newProviderView() {
   const inSiteFlow =
     new URLSearchParams(window.location.search).get("returnTo") === "site-new";
   return `<section class="creation-page" aria-labelledby="new-provider-title">
-    <a href="${inSiteFlow ? "/sites/new" : "/providers"}" data-route class="site-back-link"><span aria-hidden="true">‹</span> ${inSiteFlow ? "Add new site" : "Providers"}</a>
+    <a href="${inSiteFlow ? "/sites/new" : "/providers"}" data-route class="site-back-link"><wa-icon name="chevron-left" aria-hidden="true"></wa-icon> ${inSiteFlow ? "Add new site" : "Providers"}</a>
     <div><h1 id="new-provider-title" tabindex="-1">Add new provider</h1><p class="muted">Create the provider record. ${inSiteFlow ? "You’ll return to the new Site flow afterward." : ""}</p></div>
     <form id="provider-form" class="site-details-form">
       ${formInput("provider-name", "Provider name", "", { required: true, autocomplete: "organization" })}
@@ -6132,7 +6145,7 @@ function newProgramView(state) {
   const inProviderFlow = params.get("returnTo") === "provider";
   const providerId = params.get("providerId") || "";
   return `<section class="creation-page" aria-labelledby="new-program-title">
-    <a href="${inSiteFlow ? `/sites/new${providerId ? `?providerId=${encodeURIComponent(providerId)}` : ""}` : inProviderFlow && providerId ? `/providers/${encodeURIComponent(providerId)}` : "/programs"}" data-route class="site-back-link"><span aria-hidden="true">‹</span> ${inSiteFlow ? "Add new site" : inProviderFlow ? "Provider" : escapeHtml(t("admin.breadcrumb.admin"))}</a>
+    <a href="${inSiteFlow ? `/sites/new${providerId ? `?providerId=${encodeURIComponent(providerId)}` : ""}` : inProviderFlow && providerId ? `/providers/${encodeURIComponent(providerId)}` : "/programs"}" data-route class="site-back-link"><wa-icon name="chevron-left" aria-hidden="true"></wa-icon> ${inSiteFlow ? "Add new site" : inProviderFlow ? "Provider" : escapeHtml(t("admin.breadcrumb.admin"))}</a>
     <div><h1 id="new-program-title" tabindex="-1">Add new program</h1><p class="muted">Create the Program and its first staff member. ${inSiteFlow ? "You’ll return to the new Site flow afterward." : inProviderFlow ? "You’ll return to the provider afterward." : ""}</p></div>
     <form id="program-form" class="site-details-form">
       <fieldset><legend>Program</legend><div class="form-grid form-grid--one">
@@ -6180,7 +6193,7 @@ function newSiteFlowView(state) {
   const program = programs.find((item) => item.programId === programId);
   const step = !provider ? 1 : !program ? 2 : 3;
   return `<section class="creation-page" aria-labelledby="new-site-title">
-    <a href="/sites" data-route class="site-back-link"><span aria-hidden="true">‹</span> ${escapeHtml(t("admin.breadcrumb.admin"))}</a>
+    <a href="/sites" data-route class="site-back-link"><wa-icon name="chevron-left" aria-hidden="true"></wa-icon> ${escapeHtml(t("admin.breadcrumb.admin"))}</a>
     <div><h1 id="new-site-title" tabindex="-1">Add new site</h1><p class="muted">Step ${step} of 3</p></div>
     <ol class="flow-steps" aria-label="New Site progress">
       <li ${step === 1 ? 'aria-current="step"' : ""}>Provider</li>
@@ -6317,6 +6330,7 @@ function siteManagerEditorView(state, manager) {
     ? "Add new manager"
     : `${manager.firstName} ${manager.lastName}`.trim();
   return `<section class="site-page manager-record" aria-labelledby="manager-record-title">
+    ${isNew ? `<a class="site-back-link" href="${returnSite ? `/sites/${encodeURIComponent(returnSite)}?section=details` : "/managers"}" data-route><wa-icon name="chevron-left" aria-hidden="true"></wa-icon> ${escapeHtml(t("common.back"))}</a>` : ""}
     ${entityBreadcrumb("manager", manager || {}, state.programs, state.providers)}
     <div class="panel__head">
       <h1 id="manager-record-title" tabindex="-1">${escapeHtml(title)}</h1>
@@ -7602,7 +7616,7 @@ function siteSaveErrorMessage(error) {
   if (code === "site_update_conflict") {
     return "Someone else updated this site. Reload it before saving your changes.";
   }
-  return "The site couldn't be saved. Try again.";
+  return adminErrorMessage(error, t, t("admin.toast.requestFailed"));
 }
 
 function compliancePeriodErrorMessage(error) {

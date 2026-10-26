@@ -1,3 +1,7 @@
+import {
+  adminErrorMessage,
+  creationConflictTitle,
+} from "./admin-error-messages.js";
 const reported = new WeakSet();
 
 /** Notifications belong to user operations, not individual API requests. */
@@ -25,7 +29,7 @@ export function createActionFeedback(successKey, showToast, t) {
         duration: tone === "success" ? 3500 : 8000,
       });
     },
-    failure(error) {
+    failure(error, { inlineAvailable = true, message } = {}) {
       if (failed) return;
       failed = true;
       if (error && typeof error === "object") {
@@ -34,6 +38,7 @@ export function createActionFeedback(successKey, showToast, t) {
       }
       // Correctable form/API validation stays beside the affected controls.
       if (
+        inlineAvailable &&
         !changed &&
         !completed &&
         ([400, 422].includes(error?.status) ||
@@ -46,6 +51,16 @@ export function createActionFeedback(successKey, showToast, t) {
       )
         return;
       notification?.close();
+      if (!changed && !completed && creationConflictTitle(error)) {
+        showToast({
+          title: t(creationConflictTitle(error)),
+          message: adminErrorMessage(error, t),
+          tone: "error",
+          icon: "circle-xmark",
+          duration: 8000,
+        });
+        return;
+      }
       const key = completed
         ? "admin.toast.refreshFailed"
         : changed
@@ -53,13 +68,16 @@ export function createActionFeedback(successKey, showToast, t) {
           : "admin.toast.failed";
       showToast({
         title: t(key),
-        message: t(
-          completed
-            ? "admin.toast.refreshHelp"
-            : changed
-              ? "admin.toast.partialHelp"
-              : "admin.toast.failureHelp",
-        ),
+        message:
+          !changed && !completed && !inlineAvailable
+            ? message || adminErrorMessage(error, t)
+            : t(
+                completed
+                  ? "admin.toast.refreshHelp"
+                  : changed
+                    ? "admin.toast.partialHelp"
+                    : "admin.toast.failureHelp",
+              ),
         tone: completed || changed ? "info" : "error",
         icon: completed || changed ? "circle-info" : "circle-xmark",
         duration: 8000,

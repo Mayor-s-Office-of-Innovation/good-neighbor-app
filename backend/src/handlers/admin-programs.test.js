@@ -44,6 +44,65 @@ beforeEach(() => {
 });
 
 describe("program administration", () => {
+  it.each([0, 1, 2])(
+    "reports a duplicate program after %s staff source guards",
+    async (guards) => {
+      send.mockImplementation(async (command) => {
+        if (command instanceof TransactWriteCommand) {
+          const items = command.input.TransactItems ?? [];
+          expect(items[guards]?.Put?.Item?.sk).toBe("#META");
+          throw Object.assign(new Error("Transaction cancelled"), {
+            name: "TransactionCanceledException",
+            CancellationReasons: items.map((_, index) => ({
+              Code: index === guards ? "ConditionalCheckFailed" : "None",
+            })),
+          });
+        }
+        return {
+          Item: {
+            providerId: "provider-1",
+            name: "Provider",
+            status: "active",
+            firstName: "Sam",
+            lastName: "Lee",
+            email: "sam@example.org",
+          },
+        };
+      });
+      const response = await call(
+        createProgram,
+        event({
+          name: "Existing program",
+          providerId: "provider-1",
+          ...(guards === 1
+            ? { existingStaff: { providerManagerId: "staff" } }
+            : guards === 2
+              ? { existingStaff: { programId: "source", userId: "staff" } }
+              : {}),
+        }),
+      );
+      expect(response.statusCode).toBe(409);
+      expect(JSON.parse(String(response.body))).toEqual({
+        error: "program_already_exists",
+      });
+    },
+  );
+
+  it("does not mislabel unrelated transaction failures as duplicate programs", async () => {
+    const error = Object.assign(new Error("Transaction cancelled"), {
+      name: "TransactionCanceledException",
+      CancellationReasons: [
+        { Code: "None" },
+        { Code: "ConditionalCheckFailed" },
+      ],
+    });
+    send
+      .mockResolvedValueOnce({ Item: { name: "Provider", status: "active" } })
+      .mockRejectedValueOnce(error);
+    await expect(
+      call(createProgram, event({ name: "New", providerId: "provider-1" })),
+    ).rejects.toBe(error);
+  });
   it("lists active program search rows", async () => {
     send.mockResolvedValueOnce({ Items: [{ programId: "p-1" }] });
     const response = await call(listPrograms, event());
@@ -1024,7 +1083,7 @@ async function call(handler, request) {
 }
 
 it.each([true, false])(
-  "handles only failed staff-source conditions (source failure: %s)",
+  "distinguishes staff-source conflicts from duplicate programs (source failure: %s)",
   async (sourceFailure) => {
     const failure = Object.assign(new Error("canceled"), {
       name: "TransactionCanceledException",
@@ -1053,13 +1112,11 @@ it.each([true, false])(
         existingStaff: { providerManagerId: "staff" },
       }),
     );
-    if (sourceFailure) {
-      const response = await request;
-      expect(response.statusCode).toBe(409);
-      expect(JSON.parse(String(response.body)).error).toBe(
-        "staff_source_changed",
-      );
-    } else await expect(request).rejects.toBe(failure);
+    const response = await request;
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(String(response.body)).error).toBe(
+      sourceFailure ? "staff_source_changed" : "program_already_exists",
+    );
   },
 );
 

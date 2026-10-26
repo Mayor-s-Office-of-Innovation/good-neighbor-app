@@ -256,6 +256,15 @@ export const createProgram = (event) =>
       ) {
         return jsonResponse(409, { error: "staff_source_changed" });
       }
+      // The program insert follows the source guards. Only its uniqueness
+      // failure means a duplicate; unrelated transaction failures must surface.
+      if (
+        cancellation.name === "TransactionCanceledException" &&
+        cancellation.CancellationReasons?.[sourceChecks.length]?.Code ===
+          "ConditionalCheckFailed"
+      ) {
+        return jsonResponse(409, { error: "program_already_exists" });
+      }
       throw error;
     }
     return jsonResponse(201, { program, ...(user ? { user } : {}) });
