@@ -13,7 +13,7 @@
   the wanted period (default: today). Each response carries the resolved
   period and the previous period's totals so the views can show deltas.
 
-  The checks report returns day summaries only (never raw headers): a
+  The checks report returns day summaries and compact check rows (never raw headers): a
   quarter of headers is hundreds of KB that the chart does not need. The
   day detail screen reads AP7 per check instead.
 */
@@ -23,6 +23,7 @@ import { getDynamoTableName } from "../config.js";
 import { jsonResponse } from "../http.js";
 import { deriveAccessLevel, deriveSiteId } from "../lib/principal.js";
 import {
+  addDays,
   dayKeysBetween,
   isDayKey,
   isPeriodKind,
@@ -264,11 +265,24 @@ export const getChecksReport = async (event) => {
     resolveRequired,
   });
 
+  const checksById = new Map(
+    currentChecks.map((check) => [check.checkId, check]),
+  );
   return jsonResponse(200, {
     period,
     today,
     requirement,
-    days: current.days,
+    days: current.days.map((day) => ({
+      ...day,
+      checks: day.checkIds.map((checkId) => {
+        const header = checksById.get(checkId);
+        return {
+          checkId,
+          startedAt: header?.startedAt || header?.completedAt || "",
+          photoCount: Number(header?.photoCount) || 0,
+        };
+      }),
+    })),
     totals: current.totals,
     previous: { ...previous, totals: prior.totals },
   });
@@ -284,6 +298,18 @@ export const getTasksReport = async (event) => {
   if ("response" in ctx) return ctx.response;
   const { siteId, tableName, period, today } = ctx;
   const previous = previousPeriod(period);
+  // Compare current calendar days with the same number of prior-period days.
+  if (today >= period.start && today < period.endExclusive) {
+    const elapsed = dayKeysBetween(period.start, addDays(today, 1)).length;
+    const cutoff = addDays(previous.start, elapsed);
+    if (cutoff < previous.endExclusive) previous.endExclusive = cutoff;
+  }
+  const asOf = new Date(
+    Math.min(
+      Date.now(),
+      Date.parse(pacificDayStartIso(period.endExclusive)) - 1,
+    ),
+  ).toISOString();
   const partition = taskTimelinePk(siteId);
   const [tasks, previousTasks] = await Promise.all([
     queryTimeline({
@@ -315,6 +341,7 @@ export const getTasksReport = async (event) => {
     period,
     today,
     tasks,
+    asOf,
     previous: { ...previous, count: previousIssues.length, byType },
   });
 };

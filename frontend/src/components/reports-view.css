@@ -22,8 +22,7 @@
 .reports-timeline__item,
 .reports-timeline__photos li,
 .reports-timeline__tasks li,
-.reports-types__item,
-.reports-responses__item {
+.reports-types__item {
   margin: 0;
 }
 
@@ -243,12 +242,12 @@
 /* Checks done on days that owed none: the ring color of the calendar's
    neutral cell, so it reads as "recorded" without claiming compliance. */
 .reports-chart__bar--recorded {
-  fill: var(--text-faint);
+  fill: var(--wa-color-brand-60, #3e96ff);
 }
 
 .reports-legend__dot--recorded {
-  background: var(--text-faint);
-  border-color: var(--text-faint);
+  background: var(--wa-color-brand-60, #3e96ff);
+  border-color: var(--wa-color-brand-60, #3e96ff);
 }
 
 .reports__headline-note {
@@ -670,25 +669,24 @@
    hairline color (which vanishes on a white card); the responded share is
    drawn over it in green. */
 .reports-chart__bar--found {
-  fill: var(--text-faint);
+  fill: var(--wa-color-brand-60, #3e96ff);
 }
 
 .reports-chart__bar--responded {
-  fill: var(--c-ok);
+  fill: var(--wa-color-brand-40, #0053c0);
 }
 
 .reports-legend__dot--found {
-  background: var(--text-faint);
-  border-color: var(--text-faint);
+  background: var(--wa-color-brand-60, #3e96ff);
+  border-color: var(--wa-color-brand-60, #3e96ff);
 }
 
 .reports-legend__dot--responded {
-  background: var(--c-ok);
-  border-color: var(--c-ok);
+  background: var(--wa-color-brand-40, #0053c0);
+  border-color: var(--wa-color-brand-40, #0053c0);
 }
 
-.reports-types,
-.reports-responses {
+.reports-types {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
@@ -776,42 +774,6 @@
   font-weight: 400;
 }
 
-.reports-responses__item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.reports-responses__dot {
-  flex: 0 0 auto;
-  width: 0.65rem;
-  height: 0.65rem;
-  border-radius: 50%;
-  border: 1px solid var(--c-line);
-  background: var(--surface-3);
-}
-
-.reports-responses__item--onSite .reports-responses__dot {
-  background: var(--c-ok);
-  border-color: var(--c-ok);
-}
-
-.reports-responses__item--sr311 .reports-responses__dot {
-  background: var(--brand-blue);
-  border-color: var(--brand-blue);
-}
-
-.reports-responses__item--call .reports-responses__dot,
-.reports-responses__item--emergencyCall .reports-responses__dot {
-  background: var(--c-flag);
-  border-color: var(--c-flag);
-}
-
-.reports-responses__item--cannotDo .reports-responses__dot {
-  background: var(--c-hazard);
-  border-color: var(--c-hazard);
-}
-
 .reports-pill--onSite {
   background: var(--c-ok-bg);
   color: var(--c-ok);
@@ -831,4 +793,382 @@
 .reports-pill--cannotDo {
   background: var(--c-hazard-bg);
   color: var(--c-hazard);
+}
+
+/* Recorded checks use count bands, independently of compliance targets. */
+.reports-counts {
+  --report-many: #3e96ff;
+  --report-few: #d1e8ff;
+  --report-none: var(--surface);
+  --report-closed: var(--surface-3);
+}
+.reports-counts .reports-calendar__day--complete,
+.reports-counts .reports-legend__dot--complete {
+  background: var(--report-many);
+  color: #10233f;
+  border-color: transparent;
+}
+.reports-counts .reports-calendar__day--partial,
+.reports-counts .reports-legend__dot--partial {
+  background: var(--report-few);
+  color: #1b1d26;
+  border-color: transparent;
+}
+.reports-counts .reports-calendar__day--missed,
+.reports-counts .reports-legend__dot--missed {
+  background: var(--report-none);
+  color: var(--text);
+  border-color: var(--c-line);
+}
+.reports-counts .reports-calendar__day--exempt,
+.reports-counts .reports-legend__dot--exempt {
+  background: var(--report-closed);
+  color: var(--text-secondary);
+}
+.reports-counts .reports-chart__bar--current {
+  fill: var(--wa-color-brand-40, #0053c0);
+}
+.reports-counts .reports-chart__bar--complete {
+  fill: var(--report-many);
+}
+.reports-counts .reports-chart__bar--partial {
+  fill: var(--report-few);
+}
+.reports-counts .reports-chart__bar--missed {
+  fill: var(--report-none);
+  stroke: var(--c-line);
+  stroke-width: 0.2;
+}
+.reports-counts .reports-chart__bar--open {
+  fill: var(--report-closed);
+}
+.reports-counts .reports-calendar__day {
+  font-size: 1rem;
+}
+.reports-counts .reports-calendar__number {
+  font-weight: 400;
+}
+.reports-counts .reports-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem 1rem;
+  font-size: 0.875rem;
+}
+.reports-counts .reports-legend__dot {
+  width: 1rem;
+  height: 1rem;
+}
+.reports__metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+.reports__metric {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius-xl, 1.5rem);
+  padding: 1.25rem;
+  text-decoration: none;
+  color: var(--text);
+}
+.reports__metric > span:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+.reports__metric strong {
+  font-size: 1.5625rem;
+  line-height: 1.2;
+}
+.reports__metric span span {
+  color: var(--text-secondary);
+}
+.reports__metric-caret {
+  display: grid;
+  place-items: center;
+  flex: 0 0 2.6875rem;
+  height: 2.6875rem;
+  border-radius: 50%;
+  background: var(--surface-3);
+}
+.reports__record:has(.reports__record-link) {
+  padding: 0;
+}
+.reports__record-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1.25rem 1.5rem;
+  color: var(--text);
+  text-decoration: none;
+  border-radius: inherit;
+}
+.reports__record-link > div {
+  min-width: 0;
+}
+.reports__record-title {
+  margin: 0 0 0.75rem;
+  font-size: 1.25rem;
+}
+.reports__check-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+.reports__check-rows li {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.125rem 0.5rem;
+}
+.reports__check-rows span {
+  color: var(--text-secondary);
+}
+.reports__record-link:focus-visible,
+.reports__metric:focus-visible {
+  outline: 3px solid var(--wa-color-focus);
+  outline-offset: 3px;
+}
+.reports-day:not(.reports-type) {
+  max-width: 33rem;
+}
+.reports-day .reports-timeline__item {
+  padding: 0;
+  margin-block-end: 3rem;
+}
+.reports-day .reports-timeline__item::after {
+  display: none;
+}
+.reports-day .reports-timeline__time {
+  font-size: 1.5625rem;
+}
+.reports-day .reports-timeline__photo {
+  width: 12.5rem;
+  height: 12.5rem;
+  border-radius: 1rem;
+}
+.reports-day .reports-timeline__photos li {
+  flex-shrink: 0;
+}
+@media (max-width: 24rem) {
+  .reports__metric {
+    padding: 1rem 0.75rem;
+  }
+  .reports__metric-caret {
+    flex-basis: 1.75rem;
+    height: 1.75rem;
+  }
+  .reports__record-link {
+    padding: 1rem;
+  }
+}
+
+.reports-counts {
+  border-radius: 1.5rem;
+  padding: 1.25rem 1.5rem;
+  gap: 1.5rem;
+  box-shadow: none;
+}
+.reports-counts .reports-calendar {
+  row-gap: 0.5rem;
+  justify-items: center;
+}
+.reports-counts .reports-calendar__day {
+  width: min(100%, 2.625rem);
+  min-height: 0;
+}
+.reports-counts .reports-calendar__day--missed {
+  border-color: transparent;
+}
+.reports-counts .reports-calendar__weekday {
+  width: 100%;
+  font-size: 1rem;
+  font-weight: 400;
+}
+.reports__metric {
+  background: var(--surface);
+}
+.reports__record:has(.reports__record-link) {
+  border-radius: 1.5rem;
+}
+
+.reports-day:not(.reports-type) > .topbar {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2rem;
+}
+.reports-day:not(.reports-type) .topbar__title {
+  font-size: 2rem;
+}
+.reports-day .analysis-card__media--placeholder {
+  color: var(--text-faint);
+}
+
+.reports-types__link {
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius-xl, 1.5rem);
+  padding: 1.25rem 1.5rem;
+}
+.reports-types__name {
+  flex-direction: column;
+  gap: 0.125rem;
+  font-size: 1.25rem;
+}
+.reports-types__count {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  margin-bottom: 0.5rem;
+}
+.reports-type__header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1.5rem;
+}
+.reports-type__median {
+  grid-column: 1 / -1;
+}
+.reports-type__attention {
+  display: grid;
+  gap: 0.75rem;
+}
+button.reports__metric {
+  background: var(--surface);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+button.reports__metric[aria-pressed="true"],
+.reports__issue-filters [aria-pressed="true"] {
+  outline: 2px solid var(--wa-color-brand-40, #0053c0);
+}
+button.reports__metric:focus-visible {
+  outline: 3px solid var(--wa-color-focus, #0064d8);
+  outline-offset: 3px;
+}
+
+.reports-type {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 540px;
+  padding-top: 1rem;
+}
+button.reports__metric {
+  height: auto;
+  min-height: 7rem;
+  border-radius: var(--radius-xl, 1.5rem);
+  padding: 1.25rem;
+  white-space: normal;
+  line-height: 1.5;
+}
+.reports-type__attention .reports__metric {
+  min-height: 6rem;
+}
+
+.reports-type__header .topbar__title {
+  font-size: 2rem;
+}
+.reports-type__headline {
+  font-size: 1.5625rem;
+}
+.reports__card:has(.reports-chart__bar--found) {
+  padding: 1.25rem 1.5rem;
+  border-radius: var(--radius-xl, 1.5rem);
+}
+.reports-chart:has(.reports-chart__bar--found) {
+  height: 13.125rem;
+  max-height: none;
+}
+
+/* Keep the darker resolved series visible against the dark card surface. */
+html.wa-dark .reports-chart__bar--responded {
+  fill: var(--wa-color-brand-50, #0073ff);
+}
+html.wa-dark .reports-legend__dot--responded {
+  background: var(--wa-color-brand-50, #0073ff);
+  border-color: var(--wa-color-brand-50, #0073ff);
+}
+
+.reports-types-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.reports-types-section__title {
+  margin: 0;
+  padding-inline: 0.25rem;
+  font-size: var(--wa-font-size-xl, 1.5625rem);
+  font-weight: 600;
+  line-height: 1.2;
+}
+.reports-chart__unit {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+.reports-chart__plot {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  column-gap: 0.5rem;
+}
+.reports-chart__scale {
+  position: relative;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+.reports-chart__scale span {
+  position: absolute;
+  right: 0;
+  transform: translateY(50%);
+}
+.reports-chart__plot .reports-chart {
+  height: 13.125rem;
+  max-height: none;
+}
+.reports-chart__grid {
+  stroke: var(--c-line);
+  stroke-width: 1;
+}
+.reports-chart__plot + .reports-chart__labels {
+  margin-left: 2.5rem;
+}
+
+.reports-legend--issues {
+  display: flex;
+  justify-content: center;
+  gap: 1.5rem;
+}
+
+.reports__records:has(> .reports__issue-filters) {
+  gap: 1rem;
+}
+
+.reports__records-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.reports__filter-note {
+  margin: 0;
+}
+
+.reports__issue-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.reports-counts .reports-legend__dot--current {
+  background: var(--wa-color-brand-40, #0053c0);
+  border-color: var(--wa-color-brand-40, #0053c0);
 }

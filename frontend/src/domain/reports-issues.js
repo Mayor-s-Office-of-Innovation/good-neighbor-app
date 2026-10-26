@@ -13,6 +13,7 @@
     open          nothing recorded yet
   Superseded tasks (replaced after an amendment) are not issues.
 */
+import { submitted311Ticket } from "./home-tasks.js";
 import { t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
 import {
@@ -209,7 +210,7 @@ export function summarizeIssues(tasks) {
  * @param {string[]} dayKeys the period's days, ascending
  * @returns {Array<{ date: string, found: number, responded: number }>}
  */
-export function issuesByDay(tasks, dayKeys) {
+export function issuesByDay(tasks, dayKeys, period = null) {
   const byDay = new Map(
     dayKeys.map((date) => [date, { date, found: 0, responded: 0 }]),
   );
@@ -217,7 +218,12 @@ export function issuesByDay(tasks, dayKeys) {
     const bucket = byDay.get(pacificDateKey(task.createdAt || ""));
     if (!bucket) continue;
     bucket.found += 1;
-    if (responseFor(task).kind !== "open") bucket.responded += 1;
+    if (
+      period
+        ? resolvedInPeriod(task, period)
+        : responseFor(task).kind !== "open"
+    )
+      bucket.responded += 1;
   }
   return [...byDay.values()];
 }
@@ -293,4 +299,143 @@ export function issuesToCsv(tasks) {
   return (
     [header, ...rows].map((row) => row.map(cell).join(",")).join("\n") + "\n"
   );
+}
+
+/**
+ * User-completed issues both found and completed within the selected Pacific period.
+ * @param {any} task
+ * @param {import("./reports-periods.js").Period} period
+ */
+export function resolvedInPeriod(task, period) {
+  const found = pacificDateKey(task.createdAt || "");
+  const completed = pacificDateKey(task.completedAt || task.resolvedAt || "");
+  return (
+    isIssue(task) &&
+    task.status === "completed" &&
+    found >= period.start &&
+    found < period.endExclusive &&
+    completed >= period.start &&
+    completed < period.endExclusive
+  );
+}
+
+/**
+ * Percentage change; a zero denominator never produces an invented percentage.
+ * @param {number} current @param {number} previous @param {string} kind
+ */
+export function issueTrend(current, previous, kind) {
+  const label = t(`reports.period.previous.${kind}`);
+  if (!previous) return t("reports.issues.trend.none", { previous: label });
+  const percent = Math.round((Math.abs(current - previous) / previous) * 100);
+  return t(
+    current === previous
+      ? "reports.delta.sameCount"
+      : current > previous
+        ? "reports.issues.trend.more"
+        : "reports.issues.trend.less",
+    { percent, previous: label },
+  );
+}
+
+/** @param {any[]} tasks @param {import("./reports-periods.js").Period} period */
+export function resolutionSummary(tasks, period) {
+  const resolved = tasks.filter((task) => resolvedInPeriod(task, period));
+  const times = resolved
+    .map(
+      (task) =>
+        Date.parse(task.completedAt || task.resolvedAt) -
+        Date.parse(task.createdAt),
+    )
+    .filter((ms) => Number.isFinite(ms) && ms >= 0)
+    .sort((a, b) => a - b);
+  const middle = Math.floor(times.length / 2);
+  const median = times.length
+    ? (times[middle] + times[Math.floor((times.length - 1) / 2)]) / 2
+    : null;
+  return {
+    resolved: resolved.length,
+    unresolved: tasks.length - resolved.length,
+    median,
+  };
+}
+
+/** @param {number | null} ms */
+export function resolutionTime(ms) {
+  if (ms === null) return t("reports.issues.median.none");
+  const unit = ms < 3600000 ? "minutes" : ms < 86400000 ? "hours" : "days";
+  const count = Math.max(
+    1,
+    Math.round(
+      ms / (unit === "minutes" ? 60000 : unit === "hours" ? 3600000 : 86400000),
+    ),
+  );
+  return t(`reports.issues.duration.${unit}`, { count });
+}
+
+/**
+ * Historical attention uses dated actions. A non-open snapshot updated before
+ * the cutoff also proves a status change; notes/photos alone never do.
+ * @param {any} task @param {any} report
+ */
+export function attentionFlags(task, report) {
+  const cutoff = Date.parse(report.asOf || new Date().toISOString());
+  const before = (value) =>
+    Number.isFinite(Date.parse(value)) && Date.parse(value) <= cutoff;
+  const unresolved = !resolvedInPeriod(task, report.period);
+  const action =
+    (task.status && task.status !== "open" && before(task.updatedAt)) ||
+    [
+      task.inProgressAt,
+      task.completedAt,
+      task.resolvedAt,
+      task.cannotDo?.at,
+      task.cannotDo?.recordedAt,
+      ...(task.appActionResults || []).map((result) => result.recordedAt),
+    ].some(before) ||
+    (report.updates || []).some(
+      (update) =>
+        update.taskId === task.taskId &&
+        before(update.occurredAt) &&
+        !["note", "note_photo_update", "photo", "task_created"].includes(
+          update.type,
+        ),
+    );
+  const ticket = submitted311Ticket(task);
+  const request = task.report311;
+  const submitted =
+    request?.submittedAt || ticket?.submittedAt || task.inProgressAt;
+  const closed = request?.events?.some(
+    (event) =>
+      before(event.occurredAt) &&
+      (event.kind === "resolved" ||
+        (event.kind === "statusChanged" && event.value === "Closed")),
+  );
+  const historical = report.period.endExclusive <= report.today;
+  const waiting = Boolean(
+    ticket &&
+      request &&
+      before(submitted) &&
+      !closed &&
+      (request.status !== "Closed" ||
+        (historical &&
+          request.events?.some(
+            (event) =>
+              event.kind === "resolved" &&
+              Date.parse(event.occurredAt) > cutoff,
+          ))),
+  );
+  return {
+    unresolved,
+    resolved: !unresolved,
+    aged: unresolved && cutoff - Date.parse(task.createdAt) > 3 * 86400000,
+    awaiting: waiting,
+    noAction: unresolved && !action,
+  };
+}
+
+/** @param {any[]} tasks @param {any} report @param {string} filter */
+export function filterReportIssues(tasks, report, filter) {
+  return filter
+    ? tasks.filter((task) => attentionFlags(task, report)[filter])
+    : tasks;
 }

@@ -5,6 +5,8 @@ import { escapeHtml } from "../lib/html.js";
 import { periodLabel } from "../domain/reports-periods.js";
 import {
   calendarGrid,
+  checkCountBand,
+  reportTaskCard,
   checksTab,
   dayDetail,
   issuesChart,
@@ -34,7 +36,17 @@ const day = (date, status, completed = 0, extra = {}) => ({
   completed,
   reports: 0,
   issueCount: 0,
-  checkIds: [],
+  checkIds: Array.from(
+    { length: completed + (extra.reports || 0) },
+    (_, i) => `${date}-${i}`,
+  ),
+  checks: Array.from({ length: completed + (extra.reports || 0) }, (_, i) => ({
+    checkId: `${date}-${i}`,
+    startedAt: `${date}T16:04:00Z`,
+    photoCount: 5,
+    issueCount: 2,
+    resolvedCount: 1,
+  })),
   ...extra,
 });
 
@@ -139,47 +151,30 @@ describe("checksTab", () => {
   it("shows the headline, totals, calendar, legend, and records for a week", () => {
     const markup = checksTab({ report, filters: "", shown: 10 });
     expect(markup).toContain(
-      escapeHtml(t("reports.checks.headline", { completed: 5, possible: 12 })),
+      escapeHtml(t("reports.checks.recorded", { count: 5 })),
     );
-    expect(markup).toContain(
-      escapeHtml(t("reports.totals.completed", { count: 5 })),
-    );
-    expect(markup).toContain(
-      escapeHtml(t("reports.totals.missed", { count: 5 })),
-    );
-    // The week is still running: counts show elapsed days, not deltas.
-    expect(
-      markup.match(
-        new RegExp(
-          escapeHtml(t("reports.totals.inProgress", { elapsed: 4, total: 7 })),
-          "g",
-        ),
-      ),
-    ).toHaveLength(1);
-    const finished = checksTab({
-      report: { ...report, today: "2026-10-20" },
-      filters: "",
-      shown: 10,
-    });
-    expect(finished).toContain(
-      escapeHtml(
-        t("reports.delta.more", {
-          count: 2,
-          previous: t("reports.period.previous.week"),
-        }),
-      ),
+    expect(markup).toContain(escapeHtml(t("reports.metrics.found")));
+    expect(markup).toContain(escapeHtml(t("reports.metrics.resolved")));
+    expect(markup).toContain("status=resolved");
+    expect(markup).not.toContain("reports-pill");
+    expect(markup).not.toContain(
+      escapeHtml(t("reports.checks.assumedCadence")),
     );
     expect(markup).toContain('class="reports-calendar"');
     expect(markup).not.toContain('class="reports-chart"');
-    expect(markup).toContain(escapeHtml(t("reports.legend.missed")));
+    expect(markup).toContain(escapeHtml(t("reports.counts.missed")));
     // Newest record first; future days are not records.
     const first = markup.indexOf('data-day="2026-09-30"');
     const last = markup.indexOf('data-day="2026-09-27"');
     expect(first).toBeGreaterThan(-1);
     expect(first).toBeLessThan(last);
     expect(markup).not.toContain('data-day="2026-10-01"');
-    expect(markup).toContain('href="/reports/checks/2026-09-30"');
-    expect(markup).toContain(escapeHtml(t("reports.day.issues", { count: 1 })));
+    expect(markup).toContain(
+      'href="/reports/checks/2026-09-30?period=week&amp;start=2026-09-27"',
+    );
+    expect(markup).toContain(
+      escapeHtml(t("reports.check.photos", { count: 5 })),
+    );
   });
 
   it("switches to the week chart for a quarter and says when nothing was owed", () => {
@@ -199,16 +194,17 @@ describe("checksTab", () => {
       filters: "",
       shown: 10,
     });
-    expect(none).toContain(escapeHtml(t("reports.checks.noRequirement")));
+    expect(none).not.toContain(escapeHtml(t("reports.checks.noRequirement")));
   });
 });
 
 describe("weekChart", () => {
-  it("draws one stacked bar per week with a hidden data table", () => {
+  it("draws weekly check totals with a hidden data table", () => {
     const markup = weekChart(days);
-    expect(markup.match(/<rect/g)).toHaveLength(4); // 1 complete, 1 partial, 1 missed, 1 open
+    expect(markup.match(/<rect/g)).toHaveLength(1);
+    expect(markup).toContain("<td>5</td>");
     expect(markup).toContain(
-      'class="reports-chart__bar reports-chart__bar--missed"',
+      'class="reports-chart__bar reports-chart__bar--complete"',
     );
     expect(markup).toContain('<table class="visually-hidden">');
     expect(markup).toContain(
@@ -226,7 +222,7 @@ describe("weekChart", () => {
       escapeHtml(t("reports.checks.week", { date: "Sep 27" })),
     );
     // The rects stay inside their week's group, alongside the title.
-    const groups = markup.match(/<g>[\s\S]*?<\/g>/g) ?? [];
+    const groups = markup.match(/<g\s*>[\s\S]*?<\/g>/g) ?? [];
     expect(groups).toHaveLength(1);
     expect(groups[0]).toContain('class="reports-chart__bar');
   });
@@ -296,7 +292,7 @@ describe("issuesWeekChart", () => {
     expect(markup).toContain(">Oct</span");
     // The hidden table only rows the weeks that had issues.
     expect(markup).toContain(escapeHtml(t("reports.issues.weekChartTable")));
-    expect(markup).toContain("<td>5</td>");
+    expect(markup).toContain("<td>3</td>");
     expect(markup).toContain("<td>8</td>");
     expect(markup.match(/<tr>/g) ?? []).toHaveLength(3); // header + 2 found weeks
   });
@@ -306,20 +302,20 @@ describe("calendarGrid", () => {
   it("labels every cell with its date, count, and status in text", () => {
     const markup = calendarGrid(days);
     expect(markup).toContain(
-      escapeHtml(
-        t("reports.checks.dayCell", {
-          date: "Sep 29",
-          completed: 0,
-          required: 3,
-          status: t("reports.status.missed"),
-        }),
-      ),
+      escapeHtml(`Sep 29: ${t("reports.checks.recorded", { count: 0 })}`),
     );
     expect(markup).toContain("reports-calendar__day--complete");
-    expect(markup).toContain(">3/3<");
-    // Only days that were owed carry a count: the missed day shows 0/3, the
-    // three upcoming days show nothing.
-    expect(markup.match(/>0\/3</g)).toHaveLength(1);
+    expect(markup).not.toContain(">3/3<");
+    expect(
+      checkCountBand(day("2026-09-29", "complete", 1, { required: 1 })),
+    ).toBe("partial");
+    expect(
+      checkCountBand(day("2026-09-29", "exempt", 3, { operating: false })),
+    ).toBe("complete");
+    expect(
+      checkCountBand(day("2026-09-29", "exempt", 0, { operating: false })),
+    ).toBe("exempt");
+    expect(checkCountBand(day("2026-09-29", "exempt", 0))).toBe("missed");
   });
 });
 
@@ -375,7 +371,7 @@ describe("statusPill", () => {
 });
 
 describe("dayDetail", () => {
-  it("lists each completed check and a missing entry per check still owed", () => {
+  it("lists recorded checks and informational issue cards without missing entries", () => {
     const markup = dayDetail({
       day: day("2026-09-29", "partial", 2, { issueCount: 4 }),
       today: "2026-09-30",
@@ -426,13 +422,11 @@ describe("dayDetail", () => {
     });
     expect(markup).toContain('href="/reports"');
     expect(markup).toContain(
-      escapeHtml(
-        t("reports.day.requiredCompletedOf", { completed: 2, required: 3 }),
-      ),
+      escapeHtml(t("reports.checks.recorded", { count: 2 })),
     );
     expect(markup.match(/reports-timeline__item--done/g)).toHaveLength(2);
-    expect(markup.match(/reports-timeline__item--missed/g)).toHaveLength(1);
-    expect(markup).toContain(escapeHtml(t("reports.check.missing")));
+    expect(markup).not.toContain("reports-timeline__item--missed");
+    expect(markup).not.toContain(escapeHtml(t("reports.check.missing")));
     expect(markup).toContain("9:04 AM");
     expect(markup).toContain('data-full-src="https://media/p1"');
     expect(markup).toContain("reports-timeline__photo--placeholder");
@@ -443,9 +437,9 @@ describe("dayDetail", () => {
     expect(markup).toContain(escapeHtml(t("reports.day.issues", { count: 2 })));
     expect(markup.match(/class="analysis-card /g)).toHaveLength(2);
     expect(markup).toContain('data-task-id="t1"');
-    expect(markup).toContain('data-action="view311"');
+    expect(markup).not.toContain('data-action="view311"');
     expect(markup).toContain('data-action="update"');
-    expect(markup).toContain(escapeHtml(t("card.viewUpdates")));
+    expect(markup).toContain(escapeHtml(t("reports.viewTimeline")));
     expect(markup).toContain("GUB-STJ-001");
     expect(markup).toContain("GUB-STJ-002");
     expect(markup).not.toContain("analysis-card__dismiss");
@@ -453,14 +447,14 @@ describe("dayDetail", () => {
     expect(markup).not.toContain('data-action="done"');
   });
 
-  it("calls a missing check on today 'still due' rather than missed", () => {
+  it("does not synthesize pending checks for today", () => {
     const markup = dayDetail({
       day: day("2026-09-30", "pending", 0),
       today: "2026-09-30",
       checks: [],
     });
-    expect(markup.match(/reports-timeline__item--due/g)).toHaveLength(3);
-    expect(markup).toContain(escapeHtml(t("reports.check.due")));
+    expect(markup).not.toContain("reports-timeline__item--due");
+    expect(markup).not.toContain(escapeHtml(t("reports.check.due")));
     expect(markup).not.toContain(escapeHtml(t("reports.check.missing")));
   });
 });
@@ -604,7 +598,12 @@ describe("issuesTab", () => {
       escapeHtml(t("reports.issues.headline", { count: 4 })),
     );
     expect(markup).toContain(
-      escapeHtml(t("reports.issues.respondedLine", { count: 3 })),
+      escapeHtml(
+        t("reports.issues.trend.more", {
+          percent: 100,
+          previous: t("reports.period.previous.week"),
+        }),
+      ),
     );
     expect(markup).toContain(
       escapeHtml(t("reports.issues.byType.count", { count: 2 })),
@@ -614,16 +613,16 @@ describe("issuesTab", () => {
       'href="/reports/issues/Litter?period=week&amp;start=2026-09-27"',
     );
     expect(markup).toContain(
-      escapeHtml(t("reports.issues.types.open", { type: "Litter" })),
+      escapeHtml(t("reports.issues.typeStatus", { open: 2, resolved: 0 })),
     );
     expect(markup).not.toContain('id="reports-types-all"');
-    expect(markup).toContain(
+    expect(markup).not.toContain(
       escapeHtml(t("reports.issues.responses.sr311", { count: 1 })),
     );
-    expect(markup).toContain(
+    expect(markup).not.toContain(
       escapeHtml(t("reports.issues.responses.emergencyCall", { count: 1 })),
     );
-    expect(markup).toContain(
+    expect(markup).not.toContain(
       escapeHtml(t("reports.issues.responses.open", { count: 1 })),
     );
     const first = markup.indexOf('data-task-id="t4"');
@@ -631,18 +630,18 @@ describe("issuesTab", () => {
     expect(first).toBeGreaterThan(-1);
     expect(first).toBeLessThan(last);
     expect(markup).not.toContain('data-task-id="old"');
-    expect(markup).toContain("reports-pill--sr311");
-    expect(markup).toContain(escapeHtml(t("reports.issues.kind.sr311")));
+    expect(markup).not.toContain("reports-pill--sr311");
+    expect(markup).toContain('class="reports-type__cards"');
+    expect(markup).toContain('data-action="update"');
+    expect(markup).not.toContain('data-action="mark-resolved"');
     expect(markup).toContain(
       escapeHtml(
-        t("reports.issues.response.label", {
-          response: t("reports.issues.response.open"),
-        }),
+        t("reports.issues.periodTitle", { period: periodLabel(period) }),
       ),
     );
     expect(markup).toContain('class="reports-chart"');
-    // The week is still running, so no count delta against last week.
-    expect(markup).not.toContain(escapeHtml(t("reports.period.previous.week")));
+    // Current periods compare matching elapsed days.
+    expect(markup).toContain(escapeHtml(t("reports.period.previous.week")));
   });
 
   it("says when nothing was found", () => {
@@ -679,23 +678,14 @@ describe("a site without a configured cadence", () => {
   it("still shows its checks instead of an empty report", () => {
     const markup = checksTab({ report, filters: "", shown: 10 });
     expect(markup).toContain(
-      escapeHtml(t("reports.totals.completed", { count: 3 })),
+      escapeHtml(t("reports.checks.recorded", { count: 4 })),
     );
-    expect(markup).toContain(escapeHtml(t("reports.checks.noRequirement")));
+    expect(markup).not.toContain(escapeHtml(t("reports.checks.noRequirement")));
     expect(markup).toContain('data-day="2026-09-29"');
     expect(markup).toContain('data-day="2026-09-27"');
-    expect(markup).not.toContain('data-day="2026-09-28"');
-    // A day with only a single-issue report is still a record with a link.
     expect(markup).toContain('data-day="2026-09-26"');
-    expect(markup).toContain(
-      escapeHtml(t("reports.day.reportsOnly", { count: 1 })),
-    );
-    expect(markup).toContain(escapeHtml(t("reports.status.exempt")));
-    expect(markup).toContain(
-      escapeHtml(t("reports.totals.completed", { count: 2 })),
-    );
-    expect(markup).not.toContain(escapeHtml(t("reports.records.empty")));
-    expect(markup).toContain(escapeHtml(t("reports.legend.recorded")));
+    expect(markup).not.toContain('data-day="2026-09-28"');
+    expect(markup).not.toContain("reports-pill");
     const quarter = checksTab({
       report: {
         ...report,
@@ -708,7 +698,10 @@ describe("a site without a configured cadence", () => {
       filters: "",
       shown: 10,
     });
-    expect(quarter).toContain("reports-chart__bar--recorded");
+    expect(quarter).toContain("reports-chart__bar--complete");
+    expect(quarter).toContain('class="reports-legend"');
+    expect(quarter).toContain(t("reports.checks.legend.recorded"));
+    expect(quarter).toContain(t("reports.checks.legend.current"));
     // Axis labels are HTML text under the chart, never SVG <text>.
     expect(quarter).toContain('class="reports-chart__tick"');
     expect(quarter).not.toContain("<text");
@@ -727,7 +720,9 @@ describe("a site without a configured cadence", () => {
       filters: "",
       shown: 10,
     });
-    expect(withNote).toContain(escapeHtml(t("reports.checks.assumedCadence")));
+    expect(withNote).not.toContain(
+      escapeHtml(t("reports.checks.assumedCadence")),
+    );
     const configured = checksTab({
       report: { period, today: "2026-09-30", days, totals, previous },
       filters: "",
@@ -811,6 +806,12 @@ describe("typeScreen", () => {
 
   it("heads with the type, the count, the delta, and lists its cards newest first", () => {
     const markup = typeScreen({ report, key: "Litter", shown: 10 });
+    expect(markup.indexOf('id="reports-metric-unresolved"')).toBeGreaterThan(
+      markup.indexOf('id="reports-type-title"'),
+    );
+    expect(markup.indexOf("reports-type__median")).toBeLessThan(
+      markup.indexOf('id="reports-type-title"'),
+    );
     expect(markup).toContain(
       'href="/reports?tab=issues&amp;period=week&amp;start=2026-09-20"',
     );
@@ -831,7 +832,7 @@ describe("typeScreen", () => {
     );
     expect(markup).not.toContain('data-task-id="t3"');
     expect(markup).not.toContain('data-task-id="t4"');
-    expect(markup).toContain('data-action="view311"');
+    expect(markup).not.toContain('data-action="view311"');
     expect(markup).toContain('data-action="update"');
     expect(markup).not.toContain('id="reports-show-more"');
   });
@@ -841,9 +842,97 @@ describe("typeScreen", () => {
     expect(paged.match(/class="analysis-card /g)).toHaveLength(1);
     expect(paged).toContain('id="reports-show-more"');
     const none = typeScreen({ report, key: "Needles", shown: 10 });
-    expect(none).toContain(escapeHtml(t("reports.type.notFound")));
+    expect(none).toContain(
+      escapeHtml(t("reports.issues.byType.count", { count: 0 })),
+    );
     expect(none).toContain(
       'href="/reports?tab=issues&amp;period=week&amp;start=2026-09-20"',
     );
+  });
+});
+
+it("never offers resolution or editing from a report card", () => {
+  const markup = reportTaskCard(
+    { taskId: "test", status: "in_progress", kind: "action" },
+    "Site",
+  );
+  expect(markup).toContain(t("reports.viewTimeline"));
+  expect(markup).not.toContain('data-action="mark-resolved"');
+  expect(markup).not.toContain('data-analysis-action="edit"');
+});
+
+describe("overview issue cards and count scales", () => {
+  const period = {
+    kind: /** @type {const} */ ("month"),
+    start: "2026-10-01",
+    endExclusive: "2026-11-01",
+  };
+  const tasks = [
+    {
+      taskId: "open",
+      category: "Litter",
+      status: "open",
+      createdAt: "2026-10-02T12:00:00Z",
+    },
+    {
+      taskId: "done",
+      category: "Litter",
+      status: "completed",
+      createdAt: "2026-10-01T12:00:00Z",
+      completedAt: "2026-10-01T13:00:00Z",
+    },
+  ];
+  it("keeps overview totals while filtering the full issue-card list", () => {
+    const markup = issuesTab({
+      report: { period, today: "2026-10-26", tasks, previous: { count: 1 } },
+      filters: "",
+      shown: 10,
+      filter: "resolved",
+    });
+    expect(markup).toContain(t("reports.issues.headline", { count: 2 }));
+    expect(markup).toContain('id="reports-metric-unresolved"');
+    expect(markup).toContain('id="reports-metric-resolved"');
+    expect(markup.indexOf('id="reports-metric-unresolved"')).toBeGreaterThan(
+      markup.indexOf('id="reports-issues-title"'),
+    );
+    expect(markup).not.toContain("Comparing matching elapsed days");
+    expect(markup).toContain(t("reports.issues.duration.hours", { count: 1 }));
+    expect(markup).toContain('data-task-id="done"');
+    expect(markup).not.toContain('data-task-id="open"');
+    expect(markup).toContain('id="reports-clear-filter"');
+    expect(markup).toContain('data-action="update"');
+    expect(markup).not.toContain('data-action="mark-resolved"');
+  });
+  it("renders integer scales for daily and weekly issue counts, including empty data", () => {
+    for (const markup of [
+      issuesChart([{ date: "2026-10-01", found: 6, responded: 2 }]),
+      issuesWeekChart([{ start: "2026-10-01", found: 6, responded: 2 }]),
+      issuesChart([]),
+    ]) {
+      expect(markup).toContain('class="reports-chart__scale"');
+      expect(markup).toContain(t("reports.axis.issues"));
+      expect(markup).toContain('class="reports-legend reports-legend--issues"');
+      expect(markup).toContain(t("reports.issues.legend.unresolved"));
+      expect(markup).toContain(t("reports.issues.legend.resolved"));
+      expect(markup).not.toContain("NaN");
+      expect(markup).toContain("bottom: 0%");
+      expect(markup).toContain("bottom: 100%");
+    }
+  });
+  it("scales weekly totals from zero and includes unscheduled checks", () => {
+    const markup = weekChart(
+      [
+        day("2026-10-01", "complete", 3, { reports: 2 }),
+        day("2026-10-04", "complete", 10),
+        day("2026-10-11", "upcoming", 0),
+      ],
+      "2026-10-04",
+    );
+    expect(markup).toContain(t("reports.axis.checks"));
+    expect(markup).toContain('height="30.00"');
+    expect(markup).toContain('height="60.00"');
+    expect(markup).toContain("reports-chart__bar--current");
+    expect(markup.match(/<rect/g)).toHaveLength(2);
+    expect(markup).toContain("<td>0</td>");
   });
 });

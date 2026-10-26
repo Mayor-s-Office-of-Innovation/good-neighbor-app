@@ -13,6 +13,7 @@ import "./ticket-detail-dialog.js";
 
 /**
  * @typedef {object} TaskSheetsOptions
+ * @property {boolean} [readOnly] informational timeline without mutation controls
  * @property {HTMLElement} host the view; cards are looked up inside it
  * @property {() => Element | null} container where the dialogs mount
  * @property {(task: Record<string, any>) => Record<string, any>} [resolveTask]
@@ -116,7 +117,11 @@ export class TaskSheets {
       this._updateDialog = dialog;
     }
     this.mount();
-    await this._updateDialog.open(this._resolve(task), mode);
+    this._updateDialog.readOnly = this._options.readOnly === true;
+    await this._updateDialog.open(
+      this._resolve(task),
+      this._options.readOnly ? "timeline" : mode,
+    );
   }
 
   /** @param {Record<string, any>} task */

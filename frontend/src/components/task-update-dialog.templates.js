@@ -78,7 +78,7 @@ export function taskUpdateDialogShell({ mode, state, content }) {
     </dialog>`;
 }
 
-/** @param {{ task: Record<string, any>, updates: Record<string, any>[], issueOrigin: string, originalMediaUrl: string, originalFullMediaUrl?: string, mediaUrls: Map<string, string>, nextToken?: string | null, now?: Date }} view */
+/** @param {{ task: Record<string, any>, updates: Record<string, any>[], issueOrigin: string, originalMediaUrl: string, originalFullMediaUrl?: string, mediaUrls: Map<string, string>, nextToken?: string | null, readOnly?: boolean, now?: Date }} view */
 export function taskUpdateTimeline({
   task,
   updates,
@@ -88,6 +88,7 @@ export function taskUpdateTimeline({
   mediaUrls,
   nextToken,
   now = new Date(),
+  readOnly,
 }) {
   const address =
     task.georeferencedAddress || task.siteAddress || task.address || "";
@@ -223,14 +224,10 @@ export function taskUpdateTimeline({
           </p>`
         : ""}
     </section>
-    ${task.status === "in_progress"
-      ? html`<section class="task-update__section">
-          <h3>${translatedText("taskUpdate.updates.title")}</h3>
-          ${taskUpdateActions()}
-        </section>`
-      : html`<h3 class="task-update__updates-title">
-          ${translatedText("taskUpdate.updates.title")}
-        </h3>`}
+    <section class="task-update__section">
+      <h3>${translatedText("taskUpdate.updates.title")}</h3>
+      ${task.status === "in_progress" && !readOnly ? taskUpdateActions() : ""}
+    </section>
     <ol class="ticket-timeline task-update__timeline">
       ${timeline
         .map((update) => taskUpdateTimelineItem(update, task, mediaUrls, title))

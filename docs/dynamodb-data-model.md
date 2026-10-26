@@ -420,6 +420,42 @@ Every pattern is a single query. There are no scans.
 | AP37 | Manage oversight dropdown directories | Query the bounded `ADMIN_DIRECTORY#OVERSIGHT` partition. Supervisors conditionally create normalized department/system rows. Compliance-manager identities live in `ADMIN_DIRECTORY#PROGRAM_MANAGERS` in every environment so CSV imports can precede Cognito provisioning and later link by normalized email. |
 | AP38 | Manage and enroll Provider Managers | A Compliance Supervisor queries `PROVIDER_MANAGER#`, `PROVIDER_MANAGER_GRANT#`, and `PROVIDER_MANAGER_ENROLLMENT#` rows in one Provider partition. Grant issuance rejects more than 21 active `SITE#` relationships. Redemption re-queries active Sites and uses one transaction to consume the link, recheck Provider/membership/Site authority, and create every canonical, compatibility, and physical-pointer projection. Authorization and refresh recheck both the membership generation and each Site's current `providerId`. |
 
+The manager Checks UI uses recorded counts rather than compliance status: 3+,
+1–2, or zero completed check records per day (including single-issue reports).
+AP27 retains its compliance fields for other consumers and adds compact per-check
+rows (`checkId`, `startedAt`, `photoCount`) for the day cards. Raw headers stay
+server-side. Issues use the task report's non-superseded tasks. “Issues resolved”
+requires `status = completed` and both creation and completion timestamps inside
+the selected Pacific period; calls, 311 filings, and “can't do” do not count as
+resolution. The summary links retain the period and the resolved filter. Report
+issue cards open the shared timeline in read-only mode. No operating-day schedule
+is currently stored, so absence of a compliance obligation alone does not label
+a day “not operating.”
+
+The Issues chart partitions reports created in the period into resolved within
+that period and unresolved within that period. Median resolution time uses only
+qualifying completed reports, from creation to completion (missing or invalid
+durations are excluded). Overview and type metrics filter their full read-only issue-card lists while
+keeping the chart and summary totals scoped to the entire selected period.
+CSV exports the active list filter (and selected type on the type screen). Current-period trends compare elapsed
+Pacific calendar days, including today, with the same number of prior-period
+days, capped at that period's end. Completed periods compare full periods.
+A zero prior count is described without a percentage. Bar charts have integer
+y-axis scales: issue counts for Issues and recorded check totals per Sunday-start
+week for the Checks quarter chart. Partial boundary weeks include only checks
+inside the selected quarter. Bars start at zero, the current week is darker blue,
+and zero-check weeks have no bar. Day-count color bands remain on the calendars.
+
+AP27 task reports include `asOf`: now for current periods, or the last instant
+of a completed period. Attention counts cover only reports created in the
+selected period. Aging means strictly more than 72 hours unresolved at `asOf`.
+Notes and photos alone are not actions: dated action/status events and task
+action timestamps determine whether any action occurred by the cutoff. Awaiting
+City response means a submitted 311 ticket not closed at the cutoff, using the
+City's dated ticket events; updates alone do not close a ticket. Unavailable
+statuses or undated historical closures must not be represented as confirmed
+open tickets. Attention groups can overlap and are not additive.
+
 ### Who owns a task
 
 Decided 2026-08-12. App code in this repo decides who owns each task, not the analyzer.
