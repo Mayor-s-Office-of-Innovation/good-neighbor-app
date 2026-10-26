@@ -9,6 +9,27 @@ data "aws_route53_zone" "frontend_root" {
   private_zone = false
 }
 
+# Match the compliance dashboard's policy. Subdomains (including media and
+# the delegated dev domain) inherit this policy unless they publish their own.
+resource "aws_route53_record" "frontend_caa" {
+  for_each = {
+    canonical = {
+      zone_id = aws_route53_zone.goodneighbor.zone_id
+      name    = local.frontend_domain_name
+    }
+    legacy = {
+      zone_id = data.aws_route53_zone.frontend_root.zone_id
+      name    = local.legacy_frontend_domain_name
+    }
+  }
+
+  zone_id = each.value.zone_id
+  name    = each.value.name
+  type    = "CAA"
+  ttl     = 300
+  records = ["0 issue \"amazon.com\"", "0 issuewild \";\""]
+}
+
 resource "aws_route53_record" "frontend_subdomain_delegation" {
   zone_id = data.aws_route53_zone.frontend_root.zone_id
   name    = "dev.${local.legacy_frontend_domain_name}"
@@ -26,6 +47,8 @@ resource "aws_acm_certificate" "frontend" {
   lifecycle {
     create_before_destroy = true
   }
+
+  depends_on = [aws_route53_record.frontend_caa]
 }
 
 resource "aws_route53_record" "frontend_certificate_validation" {
