@@ -1261,13 +1261,7 @@ export async function answerCondition(opts) {
 
     if (taskItem)
       tx.push(
-        ...sf311Job(
-          opts.tableName,
-          opts.siteId,
-          taskItem,
-          "created",
-          opts.env,
-        ),
+        ...sf311Job(opts.tableName, opts.siteId, taskItem, "created", opts.env),
       );
     try {
       await ddb.send(new TransactWriteCommand({ TransactItems: tx }));
