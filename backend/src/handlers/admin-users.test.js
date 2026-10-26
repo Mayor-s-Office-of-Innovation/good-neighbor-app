@@ -38,6 +38,7 @@ vi.mock("@aws-sdk/client-cognito-identity-provider", async (importOriginal) => {
 vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
 
 const {
+  loadAdminDirectory,
   getAdminSession,
   getMyProfile,
   updateMyProfile,
@@ -805,3 +806,56 @@ it.each([undefined, "999"])(
     expect(directory.phoneExtension).toBe(extension || "0042");
   },
 );
+
+it("loads paginated account lifecycle statuses by group without per-user lookups", async () => {
+  cognitoSend.mockImplementation(async (command) => {
+    expect(command).toBeInstanceOf(ListUsersInGroupCommand);
+    if (command.input.GroupName !== "compliance-manager") return { Users: [] };
+    if (command.input.NextToken)
+      return {
+        Users: [
+          {
+            Username: "suspended",
+            Enabled: false,
+            UserStatus: "FORCE_CHANGE_PASSWORD",
+            Attributes: [],
+          },
+        ],
+      };
+    return {
+      Users: [
+        {
+          Username: "invited",
+          Enabled: true,
+          UserStatus: "FORCE_CHANGE_PASSWORD",
+          Attributes: [],
+        },
+        {
+          Username: "unconfirmed",
+          Enabled: true,
+          UserStatus: "UNCONFIRMED",
+          Attributes: [],
+        },
+        {
+          Username: "active",
+          Enabled: true,
+          UserStatus: "CONFIRMED",
+          Attributes: [],
+        },
+      ],
+      NextToken: "page-2",
+    };
+  });
+  const users = await loadAdminDirectory();
+  expect(
+    Object.fromEntries(
+      users.map((user) => [user.username, user.lifecycleStatus]),
+    ),
+  ).toEqual({
+    active: "active",
+    invited: "invited",
+    suspended: "suspended",
+    unconfirmed: "invited",
+  });
+  expect(cognitoSend).toHaveBeenCalledTimes(4);
+});

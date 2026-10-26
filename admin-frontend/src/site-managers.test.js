@@ -229,7 +229,7 @@ test("creating a Site manager retries assignment without duplicating staff", asy
   assert.equal(subject.state.managerDirectoryLoaded, false);
 });
 
-test("new site flow forces a fresh manager directory even when a stale load is pending", async () => {
+test("new site flow invalidates a pending manager directory without waiting for a rebuild", async () => {
   const { readFileSync } = await import("node:fs");
   const vm = await import("node:vm");
   const { createDirectoryLoader } = await import("./manager-directory.js");
@@ -253,6 +253,9 @@ test("new site flow forces a fresh manager directory even when a stale load is p
     "site-manager-user-id": "u1",
   };
   const context = vm.createContext({
+    location: { pathname: "/sites/new", search: "" },
+    upsertRecord: (records, record) => [...records, record],
+    syncDirtyForm() {},
     FormData: class {},
     formValue: (_data, name) => values[name] || "",
     addressPartsFromForm: () => ({ city: "SF" }),
@@ -284,6 +287,7 @@ test("new site flow forces a fresh manager directory even when a stale load is p
   );
   const subject = new Subject();
   subject.state = {
+    sites: [],
     managerDirectoryLoaded: true,
     newSiteUsers: [
       {
@@ -300,11 +304,13 @@ test("new site flow forces a fresh manager directory even when a stale load is p
     assert.equal(force, true);
     return loader.load(force);
   };
-  const created = subject.createSiteFromFlow({});
+  const created = subject.createSiteFromFlow({ dataset: {} });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(loads, 1);
   release();
   await Promise.all([old, created]);
-  assert.equal(loads, 2);
+  assert.equal(loads, 1);
+  assert.equal(subject.state.managerDirectoryLoaded, false);
+  assert.equal(subject.managerDirectoryVersion, 1);
   assert.deepEqual(destinations, ["/sites/s1"]);
 });

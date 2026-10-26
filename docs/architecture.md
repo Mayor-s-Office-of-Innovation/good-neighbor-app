@@ -426,3 +426,40 @@ handlers also return security headers on direct-origin success and error
 responses. Local development sets a reachable API or tunnel origin, with
 `S3_PUBLIC_PRESIGN_ENDPOINT` pointing at the public MinIO proxy for redirects. Existing URLs already sent to 311 retain their original expiry.
 Do not log bearer tokens, full lease URLs, or redirect URLs.
+
+### Compliance dashboard reads and navigation
+
+The dashboard bootstraps authentication and capabilities separately from entity
+catalogs. Manage users and System Status do not load providers or sites. Entity
+screens load their catalogs on demand; directories request
+`GET /admin/v1/providers?directory=1`, which returns site metadata and roster
+summaries without reading compliance history or signing document URLs. The
+backend follows DynamoDB pagination and limits directory work to three workers.
+This reduces HTTP fan-out; it is not a materialized directory index, and database
+read cost still grows with the number of sites.
+
+Site reads support `view=details|oversight|access|compliance|status|letters` on the
+existing authenticated site route. The default response remains compatible with
+older clients. Each section fetches its required data; recently loaded sections
+of the same site can be reused for 30 seconds. Writes invalidate affected section
+state, and access operations reread membership, grant, and device state. Cached UI
+permissions never authorize a write: backend authorization remains authoritative.
+
+Letter polling uses status-only responses, backs off, skips hidden-tab reads,
+and never retries the send. Document links are signed when the letters section
+is expanded. Email history loads in pages of 20 using a cursor scoped to the site.
+Search results, import progress, and letter updates preserve unrelated form DOM.
+System Status is loaded as a separate module and retains its loaded pages between
+subviews, invalidating them when summary counts or the reporting window change.
+
+Concurrent identical reads can share a request, but writes invalidate pending
+read sharing both before dispatch and after completion. Explicitly fresh status
+reads and cancellable requests bypass sharing. Network requests are bounded at
+60 seconds for GETs and 120 seconds for other methods, with no automatic mutation
+retry. Navigation guards discard obsolete responses; Analytics cancels superseded
+queries and caches up to ten recent parameterized results for 60 seconds. Its Run
+button always requests a fresh result.
+
+Regression checks include `npm run test:admin`, backend tests, and
+`npm run test:status:e2e` (dashboard loading/navigation and System Status browser
+tests). Request counts are a diagnostic, not a production latency guarantee.
