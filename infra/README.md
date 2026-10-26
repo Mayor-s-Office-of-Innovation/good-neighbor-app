@@ -151,6 +151,17 @@ hosted zone also continues to own the `dev.goodneighborsf.org` delegation and
 the SES DKIM records for `codes@goodneighborsf.org`; do not remove that zone when
 the legacy production web alias is eventually retired.
 
+Production Terraform declares CAA records at `goodneighbor.sf.gov` and
+`goodneighborsf.org`, matching the compliance dashboard's policy: permit
+`amazon.com` for non-wildcard certificate issuance and deny wildcard issuance.
+The provider certificate depends on these records. Media subdomains and the
+delegated `dev.goodneighborsf.org` domain inherit the policy unless they publish
+their own CAA records; their current app and media certificates use Amazon and
+are non-wildcard. Before introducing another certificate authority or a wildcard
+certificate, review the applicable CAA policy. Deploy CAA changes through the
+normal production CI plan and approval, then verify public DNS for both roots
+and check inherited coverage for their active subdomains.
+
 The DNSSEC key uses `ECC_NIST_P256` / `SIGN_VERIFY`, as required by Route 53.
 KMS automatic rotation is unsupported for this asymmetric key (the resource's
 single Checkov rotation exception documents this limitation). Rotate using a
