@@ -255,8 +255,7 @@ export function markUnassessedCandidates(result, allCandidates) {
   const unassessed = allCandidates
     .filter(
       (candidate) =>
-        !result.comparisons.some((row) => row.candidate_id === candidate.id) &&
-        !result.failedCandidateIds.includes(candidate.id),
+        !result.comparisons.some((row) => row.candidate_id === candidate.id),
     )
     .map((candidate) => candidate.id);
   if (!unassessed.length) return result;
@@ -277,12 +276,11 @@ export function markUnassessedCandidates(result, allCandidates) {
     ...result,
     candidateCount: allCandidates.length,
     unassessedCandidateIds: unassessed,
-    status:
-      result.status === "failed"
-        ? "failed"
-        : completePositive
-          ? "evaluated"
-          : "insufficient_evidence",
+    status: ["failed", "incomplete"].includes(result.status)
+      ? result.status
+      : completePositive
+        ? "evaluated"
+        : "insufficient_evidence",
     possibleDuplicate:
       result.possibleDuplicate === false ? null : result.possibleDuplicate,
     conditionResults,
@@ -292,7 +290,8 @@ export function markUnassessedCandidates(result, allCandidates) {
 /**
  * Shared by the SQS worker and the local real-image runner. All candidates are
  * assessed youngest first until each issue has a high-confidence match.
- * Failures are recorded diagnostically; no qualifying match returns false.
+ * Failed assessments keep unmatched conditions unknown; only a completed,
+ * fully assessed search can establish a negative.
  * @param {{source:ImageObservation,candidates:ImageObservation[],compare:Compare,onBatch?:(response:ComparisonResponse,mode:string)=>Promise<void>,onProgress?:(progress:{conditionResults:ConditionOutcome[],comparisons:Comparison[],elapsedMs:number,phase?:string})=>Promise<void>,exhaustive?:boolean,strategy?:"combined"|"legacy",fastOnly?:boolean}} input
  * @returns {Promise<{matcherVersion:string,sourceId:string,sourceRevision:string,status:string,possibleDuplicate:boolean|null,suggestions:Comparison[],comparisons:Comparison[],failedCandidateIds:string[],candidateCount:number,assessedCandidateCount:number,unassessedCandidateIds:string[],calls:number,executions:{mode:string,comparisonVersion:string,modelId:string}[],conditionSuggestions:{source_condition_id:string,candidate_condition_id:string,candidateId:string}[],conditionResults:ConditionOutcome[],latency:{totalMs:number,comparisonMs:number,firstPositiveMs:number|null,fastPhaseMs:number|null},fastCandidateIds:string[],metadataDeferredCandidateIds:string[]}>}
  */
@@ -666,8 +665,8 @@ export async function matchImages({
           item.match.confidence === "high",
       );
     const candidate = candidates.find((c) => c.id === target?.row.candidate_id);
-    // A completed search means no qualifying suggestion, including attempts
-    // that failed or remained uncertain. Retain diagnostics separately.
+    // A failed assessment cannot establish a negative. Keep confirmed positives
+    // usable while distinguishing incomplete coverage from assessed negatives.
     const remaining = candidates.some(
       (candidate) =>
         candidate.conditions?.some((c) => c.category === condition.category) &&
@@ -681,17 +680,18 @@ export async function matchImages({
     ).length;
     const completedNoMatch =
       !remaining &&
+      failedCandidateCount === 0 &&
       typeof condition.category === "string" &&
       !!condition.category.trim();
     return {
       conditionId: condition.id,
       assessmentOutcome: target
         ? "matched"
-        : completedNoMatch
-          ? failedCandidateCount
-            ? "no_match_with_failures"
-            : "assessed_no_match"
-          : "unassessed",
+        : failedCandidateCount
+          ? "incomplete"
+          : completedNoMatch
+            ? "assessed_no_match"
+            : "unassessed",
       failedCandidateCount,
       status:
         target || completedNoMatch
@@ -732,7 +732,9 @@ export async function matchImages({
         ? "evaluated"
         : conditionResults.some((c) => c.status === "pending")
           ? "pending"
-          : "insufficient_evidence",
+          : conditionResults.some((c) => c.assessmentOutcome === "incomplete")
+            ? "incomplete"
+            : "insufficient_evidence",
     possibleDuplicate: conditionResults.some(
       (c) => c.possibleDuplicate === true,
     )
@@ -747,11 +749,7 @@ export async function matchImages({
     candidateCount: candidates.length,
     assessedCandidateCount: rows.length,
     unassessedCandidateIds: candidates
-      .filter(
-        (c) =>
-          !rows.some((row) => row.candidate_id === c.id) &&
-          !failures.includes(c.id),
-      )
+      .filter((c) => !rows.some((row) => row.candidate_id === c.id))
       .map((c) => c.id),
     calls,
     executions,

@@ -107,11 +107,14 @@ Stream/SQS delivery is at least once, so event totals may include retries.
 
 Completed searches return no match only when no candidate qualifies and the
 condition has no failed comparisons. Otherwise unmatched conditions return
-unavailable. Internally, each
-condition records `assessmentOutcome` and `failedCandidateCount`.
-`no_match_with_failures` emits `DuplicateIncompleteNoMatchIssues`, separately from
-`assessed_no_match` / `DuplicateNoMatchIssues`. These diagnostic distinctions do
-not create automatic retries or leave the UI pending. A high-confidence match
+unavailable. The result endpoint returns `processingState: incomplete` and
+`possibleDuplicate: null` for affected unmatched conditions, preserving any independently
+verified positives. Failed candidates remain in `unassessedCandidateIds` as well as
+`failedCandidateIds`, so attempted coverage cannot be confused with assessed coverage.
+Internally, each condition records `assessmentOutcome` and `failedCandidateCount`.
+`incomplete` (historically `no_match_with_failures`) emits `DuplicateIncompleteNoMatchIssues`, separately from
+`assessed_no_match` / `DuplicateNoMatchIssues`. Historical failed-negative records are normalized on read without a backfill.
+These distinctions do not create automatic retries or leave the UI pending. A high-confidence match
 remains a match even if a different candidate failed. Only candidate failures
 with the source condition's category count against that condition.
 
@@ -243,8 +246,10 @@ analyses older than thirty days, and sends fresh jobs. It never resets results,
 links, overrides or the DLQ. After enqueueing, it conditionally records
 `recoveryRequestedAt` without overwriting concurrently completed results. The worker independently checks authoritative media
 retention and current revisions. Jobs are at-least-once; avoid repeated recovery
-runs while a prior run is processing. This targeted recovery includes incomplete
-completed searches that a DLQ redrive would miss.
+runs while a prior run is processing. This targeted recovery includes `incomplete` aggregate statuses and condition
+outcomes as well as historical `no_match_with_failures` results, which a DLQ
+redrive would miss. The local evaluator uses the same processing-state helper for
+its persisted progress and review report.
 
 Verify search-complete events, new prepared objects, and settled result states.
 Investigate any `duplicate_worker_failed` events before retrying further. Keep the

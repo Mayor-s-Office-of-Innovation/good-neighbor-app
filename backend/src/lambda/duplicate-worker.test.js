@@ -380,7 +380,7 @@ it("prepares newly registered uploads independently before any analysis exists",
   expect(state.writes).toHaveLength(0);
 });
 
-it("completes failed comparisons as frontend no-match with separate diagnostics", async () => {
+it("acknowledges a terminal incomplete search without publishing a negative or retrying the queue", async () => {
   const { event, current } = setup();
   state.compare.mockRejectedValue(new Error("temporary outage"));
   const result = await handler(
@@ -392,10 +392,13 @@ it("completes failed comparisons as frontend no-match with separate diagnostics"
   const saved = state.records.get(
     `DUP_RESULT#source:photo#${analysisRevision(current)}`,
   );
-  expect(saved.processingState).toBe("complete");
+  expect(saved.processingState).toBe("incomplete");
+  expect(saved.status).toBe("incomplete");
+  expect(saved.possibleDuplicate).toBeNull();
+  expect(saved.unassessedCandidateIds).toEqual(saved.failedCandidateIds);
   expect(saved.conditionResults[0]).toMatchObject({
-    possibleDuplicate: false,
-    assessmentOutcome: "no_match_with_failures",
+    possibleDuplicate: null,
+    assessmentOutcome: "incomplete",
     failedCandidateCount: 1,
   });
 });

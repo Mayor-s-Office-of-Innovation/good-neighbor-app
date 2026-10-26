@@ -35,7 +35,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
-async function run(apply, updateError = null) {
+async function run(apply, updateError = null, recoveryCase = null, ageMs = 0) {
   state.updates = [];
   state.updateError = updateError;
   vi.resetModules();
@@ -52,7 +52,7 @@ async function run(apply, updateError = null) {
   state.analysis = {
     status: "analyzed",
     analysisId: "a",
-    analyzedAt: new Date().toISOString(),
+    analyzedAt: new Date(Date.now() - ageMs).toISOString(),
     concerns: [],
   };
   const sk = `DUP_RESULT#check:photo#${analysisRevision(state.analysis)}`;
@@ -70,6 +70,11 @@ async function run(apply, updateError = null) {
     },
     { sk: "DUP_RESULT#check:photo#old-revision", status: "pending" },
   ];
+  if (recoveryCase)
+    state.rows = [
+      { sk, ...recoveryCase },
+      { sk: "DUP_RESULT#check:photo#old-revision", ...recoveryCase },
+    ];
   const log = vi.spyOn(console, "log").mockImplementation(() => {});
   await import("./recover-duplicate-checks.mjs");
   return log;
@@ -114,4 +119,38 @@ it("leaves concurrent completed results untouched", async () => {
     }),
   );
   expect(state.send).toHaveBeenCalledTimes(2);
+});
+
+it.each([
+  { status: "incomplete" },
+  {
+    status: "evaluated",
+    conditionResults: [{ assessmentOutcome: "incomplete" }],
+  },
+])(
+  "dry-runs and applies new incomplete recovery markers: %j",
+  async (recoveryCase) => {
+    const log = await run(false, null, recoveryCase);
+    expect(JSON.parse(log.mock.calls.at(-1)[0])).toEqual({
+      selected: 1,
+      skipped: 1,
+      applied: false,
+    });
+    expect(state.send).not.toHaveBeenCalled();
+    await run(true, null, recoveryCase);
+    expect(state.send).toHaveBeenCalledTimes(1);
+    expect(state.updates).toHaveLength(1);
+    expect(state.updates[0].ExpressionAttributeValues[":status"]).toBe(
+      recoveryCase.status,
+    );
+  },
+);
+it("does not revive expired incomplete evidence", async () => {
+  const log = await run(false, null, { status: "incomplete" }, 31 * 86400000);
+  expect(JSON.parse(log.mock.calls.at(-1)[0])).toEqual({
+    selected: 0,
+    skipped: 2,
+    applied: false,
+  });
+  expect(state.send).not.toHaveBeenCalled();
 });
