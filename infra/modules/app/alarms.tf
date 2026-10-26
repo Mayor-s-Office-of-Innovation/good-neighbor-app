@@ -8,7 +8,7 @@
 # touching the filters).
 
 variable "alarm_emails" {
-  description = "Email addresses subscribed to the error-alarm SNS topic (optional; alarm recipients are an open question in the error-tracking plan)."
+  description = "Email addresses subscribed to both regional alarm topics and daily cost warnings. Each SNS subscription requires confirmation."
   type        = list(string)
   default     = []
 }
