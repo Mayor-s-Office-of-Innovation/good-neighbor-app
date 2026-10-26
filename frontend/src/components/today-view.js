@@ -810,23 +810,13 @@ class TodayView extends HTMLElement {
       this._renderHome(this._homeModel);
     });
     this.querySelector("#settings-feedback")?.addEventListener("click", () => {
-      this._settingsMenuOpen = false;
-      this.querySelector(".home-settings-menu")?.remove();
-      this.querySelector("#home-settings")?.setAttribute(
-        "aria-expanded",
-        "false",
-      );
+      this._removeSettingsMenu();
       feedbackDialog?.open();
     });
     this.querySelector("#settings-attributions")?.addEventListener(
       "click",
       () => {
-        this._settingsMenuOpen = false;
-        this.querySelector(".home-settings-menu")?.remove();
-        this.querySelector("#home-settings")?.setAttribute(
-          "aria-expanded",
-          "false",
-        );
+        this._removeSettingsMenu();
         this._attributionsDialogOpen = true;
         openOverlayDialog(
           /** @type {HTMLDialogElement} */ (this._attributionsDialog),
@@ -835,12 +825,7 @@ class TodayView extends HTMLElement {
       },
     );
     this.querySelector("#settings-language")?.addEventListener("click", () => {
-      this._settingsMenuOpen = false;
-      this.querySelector(".home-settings-menu")?.remove();
-      this.querySelector("#home-settings")?.setAttribute(
-        "aria-expanded",
-        "false",
-      );
+      this._removeSettingsMenu();
       this._languageDialogOpen = true;
       openOverlayDialog(
         /** @type {HTMLDialogElement} */ (this._languageDialog),
@@ -1219,6 +1204,19 @@ class TodayView extends HTMLElement {
       logoutError: this._logoutError,
       logoutPending: this._logoutPending,
     });
+  }
+
+  // Close in place so the dialog about to open keeps its mounted element.
+  // This DOM edit invalidates the last rendered markup, even if opening the
+  // menu again would produce exactly the same string as the previous render.
+  _removeSettingsMenu() {
+    this._settingsMenuOpen = false;
+    this._homeMarkup = null;
+    this.querySelector(".home-settings-menu")?.remove();
+    this.querySelector("#home-settings")?.setAttribute(
+      "aria-expanded",
+      "false",
+    );
   }
 
   _toggleSettingsMenu() {
