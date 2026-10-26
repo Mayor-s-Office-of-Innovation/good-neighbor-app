@@ -140,10 +140,29 @@
 .complaint-compose__intro h1 {
   margin: 0;
   color: var(--text);
-  font-size: 1.875rem;
-  font-weight: 700;
+  font-size: var(--wa-font-size-2xl, 2rem);
+  font-weight: var(--wa-font-weight-heading, 600);
   line-height: 1.2;
   outline: none;
+}
+
+/* Page header: Header 2XL (the list topbar's h1 previously had no rule at
+   all and rendered browser-default heading styles). Steps down to XL on
+   phones with the other page headers. */
+.topbar__title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--wa-font-size-2xl, 2rem);
+  font-weight: var(--wa-font-weight-heading, 600);
+  line-height: 1.2;
+  outline: none;
+}
+
+@media (max-width: 520px) {
+  .topbar__title,
+  .complaint-compose__intro h1 {
+    font-size: var(--wa-font-size-xl, 1.5625rem);
+  }
 }
 
 .complaint-compose__intro p {
