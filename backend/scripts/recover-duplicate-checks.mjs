@@ -34,9 +34,9 @@ do {
   );
   for (const result of page.Items ?? []) {
     if (
-      !["pending", "failed"].includes(result.status) &&
-      !result.conditionResults?.some(
-        (c) => c.assessmentOutcome === "no_match_with_failures",
+      !["pending", "failed", "incomplete"].includes(result.status) &&
+      !result.conditionResults?.some((c) =>
+        ["no_match_with_failures", "incomplete"].includes(c.assessmentOutcome),
       )
     )
       continue;
