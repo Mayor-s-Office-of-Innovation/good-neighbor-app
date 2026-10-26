@@ -144,7 +144,7 @@ test("clearing a manager search before loading finishes refreshes the restored d
     renders = 0;
     async loadSiteManagers() { this.state.managerDirectoryLoaded = true; }
     querySelector() { return input; }
-    render() { this.renders++; }
+    renderDirectoryResults() { this.renders++; }
   })`,
     context,
   );

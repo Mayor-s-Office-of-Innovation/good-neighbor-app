@@ -11,6 +11,7 @@ function subject(name, api, notices) {
     params ? JSON.stringify({ key, ...params }) : key;
   return vm.runInNewContext(`(class { ${source.slice(start, end)} })`, {
     adminApi: api,
+    currentRoute: () => ({ name: "site-import" }),
     t,
     actionFeedback: (key) =>
       createActionFeedback(
@@ -50,6 +51,7 @@ test("partial import summary and prior history survive a history read failure", 
   const history = [{ importId: "old" }];
   app.state = { importPreview: { importId: "new" }, importHistory: history };
   app.render = () => {};
+  app.querySelector = () => null;
   await app.applySiteImport();
   assert.equal(app.state.importHistory, history);
   assert.match(app.state.importNotice.message, /"applied":2,"failed":2/);
@@ -76,6 +78,7 @@ test("legacy membership remains reconciled when grant request fails", async () =
     managerMemberships: [{ membershipId: "legacy", legacyAssignment: true }],
   };
   app.render = () => {};
+  app.querySelector = () => null;
   await assert.rejects(app.issueManagerGrant("legacy"));
   assert.equal(app.state.managerMemberships[0], linked);
   assert.equal(notices[0].title, "admin.toast.partial");

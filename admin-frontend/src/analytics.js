@@ -51,6 +51,11 @@ class AdminAnalytics extends HTMLElement {
     if (this.state.hasToken) await this.load();
   }
 
+  disconnectedCallback() {
+    this.queryGeneration = (this.queryGeneration || 0) + 1;
+    this.queryController?.abort();
+  }
+
   /**
    * Load the catalog, then the freshness query (proves the pipeline end to
    * end) and the site list (feeds the site picker).
@@ -71,7 +76,7 @@ class AdminAnalytics extends HTMLElement {
     }
     this.state.loading = false;
     this.render();
-    await Promise.all([this.loadSites(), this.select(FRESHNESS_QUERY)]);
+    await this.select(FRESHNESS_QUERY);
   }
 
   /** @returns {Promise<void>} */
@@ -100,6 +105,9 @@ class AdminAnalytics extends HTMLElement {
    * @returns {Promise<void>}
    */
   async select(id) {
+    this.queryController?.abort();
+    this.queryGeneration = (this.queryGeneration || 0) + 1;
+    this.state.busy = false;
     const query = this.state.catalog.find((q) => q.id === id);
     if (!query) return;
     this.state.selectedId = id;
@@ -110,29 +118,58 @@ class AdminAnalytics extends HTMLElement {
     const missing = query.params.some(
       (p) => p.required && !this.state.params[p.name],
     );
-    if (!missing) await this.run();
+    if (query.params.some((p) => p.name === "siteId") && !this.sitesLoaded) {
+      this.sitesLoaded = true;
+      void this.loadSites();
+    }
+    if (!missing) await this.run(true);
   }
 
   /**
    * Run the selected query with the current parameters.
    * @returns {Promise<void>}
    */
-  async run() {
+  async run(useCache = false) {
     const query = this.state.catalog.find(
       (q) => q.id === this.state.selectedId,
     );
     if (!query) return;
+    this.queryController?.abort();
+    const controller = (this.queryController = new AbortController());
+    const generation = (this.queryGeneration = (this.queryGeneration || 0) + 1);
     this.state.busy = true;
     this.state.resultError = "";
     this.render();
     try {
-      const result = await adminApi.analyticsRun(query.id, this.state.params);
+      const key = JSON.stringify([query.id, this.state.params]);
+      this.queryResults ||= new Map();
+      const cached = this.queryResults.get(key);
+      const result =
+        useCache && cached && Date.now() - cached.at < 60000
+          ? cached.result
+          : await adminApi.analyticsRun(
+              query.id,
+              this.state.params,
+              controller.signal,
+            );
+      if (generation !== this.queryGeneration) return;
+      if (this.queryResults.size >= 10)
+        this.queryResults.delete(this.queryResults.keys().next().value);
+      this.queryResults.set(key, {
+        result,
+        at:
+          useCache && cached && cached.result === result
+            ? cached.at
+            : Date.now(),
+      });
       this.state.result = result;
       this.state.resultTitle = query.title;
       this.state.ranSql = query.sql;
       this.state.advancedSql = query.sql;
       this.state.asOf = result.asOf ?? this.state.asOf;
     } catch (err) {
+      if (generation !== this.queryGeneration || controller.signal.aborted)
+        return;
       this.state.resultError = errorMessage(err);
     }
     this.state.busy = false;
@@ -148,16 +185,22 @@ class AdminAnalytics extends HTMLElement {
     if (!sql.trim()) return;
     this.state.advancedSql = sql;
     this.state.advancedOpen = true;
+    this.queryController?.abort();
+    const controller = (this.queryController = new AbortController());
+    const generation = (this.queryGeneration = (this.queryGeneration || 0) + 1);
     this.state.busy = true;
     this.state.resultError = "";
     this.render();
     try {
-      const result = await adminApi.analyticsQuery(sql);
+      const result = await adminApi.analyticsQuery(sql, controller.signal);
+      if (generation !== this.queryGeneration) return;
       this.state.result = result;
       this.state.resultTitle = "Custom SQL";
       this.state.ranSql = sql;
       this.state.asOf = result.asOf ?? this.state.asOf;
     } catch (err) {
+      if (generation !== this.queryGeneration || controller.signal.aborted)
+        return;
       this.state.resultError = errorMessage(err);
     }
     this.state.busy = false;

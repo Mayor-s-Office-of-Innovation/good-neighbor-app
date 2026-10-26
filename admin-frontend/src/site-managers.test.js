@@ -230,7 +230,7 @@ test("creating a Site manager retries assignment without duplicating staff", asy
   assert.equal(subject.state.managerDirectoryLoaded, false);
 });
 
-test("new site flow invalidates a pending manager load without waiting for it", async () => {
+test("new site flow invalidates a pending manager directory without waiting for a rebuild", async () => {
   const { readFileSync } = await import("node:fs");
   const vm = await import("node:vm");
   const { createDirectoryLoader } = await import("./manager-directory.js");
@@ -254,9 +254,10 @@ test("new site flow invalidates a pending manager load without waiting for it", 
     "site-manager-user-id": "u1",
   };
   const context = vm.createContext({
-    upsertRecord,
-    siteManagerRoster,
     location: { pathname: "/sites/new", search: "" },
+    upsertRecord: (records, record) => [...records, record],
+    syncDirtyForm() {},
+    siteManagerRoster,
     FormData: class {},
     formValue: (_data, name) => values[name] || "",
     addressPartsFromForm: () => ({ city: "SF" }),
@@ -310,13 +311,16 @@ test("new site flow invalidates a pending manager load without waiting for it", 
     assert.equal(force, true);
     return loader.load(force);
   };
-  await subject.createSiteFromFlow({});
+  const created = subject.createSiteFromFlow({ dataset: {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(loads, 1);
   assert.equal(subject.managerDirectoryLoader, null);
   assert.equal(subject.managerDirectoryVersion, 1);
   assert.equal(subject.state.managerDirectoryLoaded, false);
   release();
-  await old;
+  await Promise.all([old, created]);
   assert.equal(loads, 1);
+  assert.equal(subject.state.managerDirectoryLoaded, false);
+  assert.equal(subject.managerDirectoryVersion, 1);
   assert.deepEqual(destinations, ["/sites/s1"]);
 });

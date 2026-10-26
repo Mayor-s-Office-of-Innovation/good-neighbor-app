@@ -6,7 +6,7 @@ export async function withSaveFeedback(form, save, { savingLabel, onError }) {
   const buttons = [
     ...form.querySelectorAll('button[type="submit"], button[data-save-button]'),
   ];
-  const cancel = form.querySelector("[data-close-dialog]");
+  const cancel = form.querySelector("[data-close-dialog], [data-save-cancel]");
   const cancelDisabled = cancel?.disabled;
   if (cancel) cancel.disabled = true;
   const previous = buttons.map((button) => ({

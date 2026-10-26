@@ -69,7 +69,7 @@ test("cadence accepts the endpoints 1 and 8 and rejects fractional or larger val
 
 test("successful setup expands letters after reloading the site", async () => {
   const start = source.indexOf("  async createSiteTerms(");
-  const end = source.indexOf("  async refreshPendingComplianceLetter(", start);
+  const end = source.indexOf("\n  }", start) + 4;
   const actions = vm.runInNewContext(`({${source.slice(start, end)}})`, {
     t,
     actionFeedback: () => ({
@@ -89,6 +89,7 @@ test("successful setup expands letters after reloading the site", async () => {
       this.state.expandedLettersSiteId = null;
     },
     render() {},
+    loadSiteLetters() {},
     refreshPendingComplianceLetter() {},
     refreshLetterEmails() {},
   };

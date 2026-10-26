@@ -179,6 +179,7 @@ for (const scenario of [
     };
     const Subject = vm.runInNewContext(`(class{${source.slice(start, end)}})`, {
       siteManagerRoster,
+      syncDirtyForm() {},
       siteSaveErrorMessage: () => "Save failed",
       location,
       upsertRecord,
@@ -247,12 +248,15 @@ for (const scenario of [
       throw new Error("Unexpected global reload");
     };
     if (scenario === "failure") {
-      await assert.rejects(app.createSiteFromFlow({}), /save_failed/);
+      await assert.rejects(
+        app.createSiteFromFlow({ dataset: {} }),
+        /save_failed/,
+      );
       assert.deepEqual(events, ["failure"]);
       assert.equal(app.state.sites.length, 1);
       return;
     }
-    await app.createSiteFromFlow({});
+    await app.createSiteFromFlow({ dataset: {} });
     assert.equal(app.state.sites[0], existing);
     assert.equal(app.state.sites[1].siteId, savedSite.siteId);
     assert.deepEqual(app.state.sites[1].managerMemberships, [membership]);
@@ -264,11 +268,9 @@ for (const scenario of [
     if (scenario === "navigated away") {
       assert.deepEqual(events, ["membership saved", "success"]);
     } else {
-      assert.deepEqual(events.slice(-3), [
-        "/sites/new%2Fsite",
-        "render destination loading",
-        "focus loading",
-      ]);
+      // navigate dispatches routeChanged, which renders the destination loading state.
+      assert.equal(events.at(-1), "/sites/new%2Fsite");
+      assert.ok(!events.includes("render destination loading"));
       assert.equal(app.state.site, null);
     }
   });

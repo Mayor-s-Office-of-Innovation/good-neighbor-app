@@ -250,34 +250,44 @@ export const listAdminUsers = (event) =>
   supervisorOnly(event, async () => {
     const pool = configuredPool();
     if (!pool) return unavailable();
-    const [managers, supervisors, legacyManagers] = await Promise.all([
-      usersInGroup(pool, ADMIN_GROUPS.manager),
-      usersInGroup(pool, ADMIN_GROUPS.supervisor),
-      usersInGroup(pool, ADMIN_GROUPS.legacyManager),
-    ]);
-    const users = new Map();
-    /** @type {Array<[string, import("@aws-sdk/client-cognito-identity-provider").UserType[]]>} */
-    const byRole = [
-      [ADMIN_GROUPS.manager, [...legacyManagers, ...managers]],
-      [ADMIN_GROUPS.supervisor, supervisors],
-    ];
-    for (const [role, entries] of byRole) {
-      for (const user of entries) {
-        const current = users.get(user.Username);
-        users.set(
-          user.Username,
-          publicUser(
-            user,
-            current?.role === ADMIN_GROUPS.supervisor ? current.role : role,
-          ),
-        );
-      }
-    }
     return jsonResponse(200, {
-      users: [...users.values()].sort((a, b) => a.email.localeCompare(b.email)),
+      users: await loadAdminDirectory(pool),
       directoryMode: localDirectory ? "local" : "cognito",
     });
   });
+
+/** Read each admin group once (paginated), rather than fetching every account separately.
+ * @param {string} [pool]
+ */
+export async function loadAdminDirectory(pool = configuredPool()) {
+  // Domain directories remain usable without optional account enrichment.
+  // configuredPool also supplies the local development directory when enabled.
+  if (!pool) return [];
+  const [managers, supervisors, legacyManagers] = await Promise.all([
+    usersInGroup(pool, ADMIN_GROUPS.manager),
+    usersInGroup(pool, ADMIN_GROUPS.supervisor),
+    usersInGroup(pool, ADMIN_GROUPS.legacyManager),
+  ]);
+  const users = new Map();
+  /** @type {Array<[string, import("@aws-sdk/client-cognito-identity-provider").UserType[]]>} */
+  const byRole = [
+    [ADMIN_GROUPS.manager, [...legacyManagers, ...managers]],
+    [ADMIN_GROUPS.supervisor, supervisors],
+  ];
+  for (const [role, entries] of byRole) {
+    for (const user of entries) {
+      const current = users.get(user.Username);
+      users.set(
+        user.Username,
+        publicUser(
+          user,
+          current?.role === ADMIN_GROUPS.supervisor ? current.role : role,
+        ),
+      );
+    }
+  }
+  return [...users.values()].sort((a, b) => a.email.localeCompare(b.email));
+}
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const inviteAdminUser = (event) =>
@@ -745,7 +755,7 @@ function publicUser(user, role) {
   const lifecycleStatus =
     user.Enabled === false
       ? "suspended"
-      : user.UserStatus === "FORCE_CHANGE_PASSWORD"
+      : ["FORCE_CHANGE_PASSWORD", "UNCONFIRMED"].includes(user.UserStatus)
         ? "invited"
         : "active";
   return {

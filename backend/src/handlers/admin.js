@@ -1,3 +1,5 @@
+import { readSiteParts, boundedReads } from "../lib/admin-site-reads.js";
+import { loadAdminDirectory } from "./admin-users.js";
 import { registerPeopleChanges } from "../lib/people.js";
 import { queryAllItems } from "../lib/query-all-items.js";
 import { contactRevisionChange } from "../lib/staff-contact-guard.js";
@@ -52,10 +54,27 @@ export const listCityProgramManagers = (event) =>
         ":pk": "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
       },
     });
+    const accounts = await loadAdminDirectory();
+    const bySubject = new Map(
+      accounts.map((account) => [account.subject, account]),
+    );
+    const byEmail = new Map(
+      accounts.map((account) => [account.email.toLowerCase(), account]),
+    );
     return jsonResponse(200, {
       programManagers: items
         .filter((item) => item.status !== "inactive")
-        .map(publicProgramManager),
+        .map((item) => {
+          const account = item.cognitoSubject
+            ? bySubject.get(item.cognitoSubject)
+            : byEmail.get(String(item.email || "").toLowerCase());
+          return {
+            ...publicProgramManager(item),
+            accountStatus:
+              account?.lifecycleStatus ||
+              (item.cognitoSubject ? "" : "not-invited"),
+          };
+        }),
     });
   });
 
@@ -149,6 +168,36 @@ export const listProviders = (event) =>
       ExpressionAttributeValues: { ":pk": "PROVIDER_SEARCH#ACTIVE" },
       Limit: 100,
     });
+    if (event.queryStringParameters?.directory === "1") {
+      const memberships = await boundedReads(providers, (provider) =>
+        queryAll({
+          KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+          ExpressionAttributeValues: {
+            ":pk": `PROVIDER#${provider.providerId}`,
+            ":prefix": "SITE#",
+          },
+        }),
+      );
+      const ids = [
+        ...new Set(memberships.flat().map((site) => String(site.siteId))),
+      ];
+      const sites = await boundedReads(ids, async (id) => {
+        const items = await readSiteParts(id, [
+          "ASSIGNED_USER#",
+          "MANAGER_MEMBERSHIP#",
+          "COMPLIANCE_MANAGER#",
+        ]);
+        return {
+          items: items.map((item) => {
+            if (item.sk !== "#META") return item;
+            const summary = { ...item };
+            delete summary.complianceLetters;
+            return summary;
+          }),
+        };
+      });
+      return jsonResponse(200, { providers, sites });
+    }
     return jsonResponse(200, { providers });
   });
 
@@ -569,16 +618,83 @@ export const getAdminSite = (event) =>
       );
       return jsonResponse(200, { items: [site, ...batches.flat()] });
     }
-    const res = await ddb.send(
-      new QueryCommand({
-        TableName: getDynamoTableName(),
-        KeyConditionExpression: "pk = :pk",
-        ExpressionAttributeValues: { ":pk": `SITE#${siteId}` },
-      }),
-    );
+    const view = event.queryStringParameters?.view;
+    /** @type {Record<string, string[]>} */
+    const prefixes = {
+      details: ["ASSIGNED_USER#", "MANAGER_MEMBERSHIP#", "COMPLIANCE_MANAGER#"],
+      oversight: ["COMPLIANCE_MANAGER#"],
+      access: ["ASSIGNED_USER#", "MANAGER_MEMBERSHIP#", "COMPLIANCE_MANAGER#"],
+      compliance: [
+        "ASSIGNED_USER#",
+        "MANAGER_MEMBERSHIP#",
+        "COMPLIANCE_MANAGER#",
+        "COMPLIANCE_TERMS#",
+        "LETTER_JOB#",
+      ],
+      status: ["LETTER_EMAIL#", "LETTER_JOB#"],
+      letters: ["COMPLIANCE_TERMS#", "LETTER_JOB#"],
+    };
+    const res = {
+      Items:
+        view && prefixes[view]
+          ? await readSiteParts(siteId, prefixes[view])
+          : await queryAll({
+              KeyConditionExpression: "pk = :pk",
+              ExpressionAttributeValues: { ":pk": `SITE#${siteId}` },
+            }),
+    };
+    let nextCursor = "";
+    if (view === "letters" && res.Items.length) {
+      const cursor = event.queryStringParameters?.cursor;
+      if (cursor && !cursor.startsWith("LETTER_EMAIL#"))
+        return jsonResponse(400, { error: "invalid_cursor" });
+      const page = await ddb.send(
+        new QueryCommand({
+          TableName: getDynamoTableName(),
+          KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+          ExpressionAttributeValues: {
+            ":pk": `SITE#${siteId}`,
+            ":prefix": "LETTER_EMAIL#",
+          },
+          Limit: 20,
+          ScanIndexForward: false,
+          ...(cursor
+            ? { ExclusiveStartKey: { pk: `SITE#${siteId}`, sk: cursor } }
+            : {}),
+        }),
+      );
+      res.Items.push(...(page.Items || []));
+      nextCursor = String(page.LastEvaluatedKey?.sk || "");
+    }
     if (!res.Items?.length) return jsonResponse(404, { error: "not_found" });
     const items = await Promise.all(
       res.Items.map(async (item) => {
+        if (view === "status")
+          return item.sk === "#META"
+            ? {
+                sk: item.sk,
+                siteId,
+                letterState: item.letterState,
+                letterJobId: item.letterJobId,
+                deliveryState: item.deliveryState,
+              }
+            : {
+                type: item.type,
+                sk: item.sk,
+                letterJobId: item.letterJobId,
+                deliveryState: item.deliveryState,
+                provider: item.provider,
+              };
+        if (
+          view &&
+          view !== "letters" &&
+          view !== "compliance" &&
+          item.sk === "#META"
+        ) {
+          const summary = { ...item };
+          delete summary.complianceLetters;
+          item = summary;
+        }
         if (item.sk === "#META" && item.oversight) {
           item = {
             ...item,
@@ -615,7 +731,12 @@ export const getAdminSite = (event) =>
             },
           };
         }
-        if (item.sk !== "#META" || !item.complianceLetters) return item;
+        if (
+          view === "compliance" ||
+          item.sk !== "#META" ||
+          !item.complianceLetters
+        )
+          return item;
         /** @param {Record<string, any> | null | undefined} letter */
         const link = async (letter) => {
           if (!letter?.s3Key) return letter;
@@ -648,7 +769,13 @@ export const getAdminSite = (event) =>
     );
     return jsonResponse(200, {
       items,
-      permissions: { canEdit: !(await authorizeSiteChanges(event, [siteId])) },
+      ...(view === "letters" ? { nextCursor } : {}),
+      permissions: {
+        canEdit:
+          view === "status"
+            ? false
+            : !(await authorizeSiteChanges(event, [siteId])),
+      },
     });
   });
 
@@ -1818,7 +1945,7 @@ function publicProgramManager(item) {
     phoneExtension: cleanText(item.phoneExtension),
     departmentId: cleanText(item.departmentId),
     departmentName: cleanText(item.departmentName),
-    accountStatus: cleanText(item.cognitoSubject) ? "linked" : "not-invited",
+    accountStatus: cleanText(item.cognitoSubject) ? "" : "not-invited",
   };
 }
 
