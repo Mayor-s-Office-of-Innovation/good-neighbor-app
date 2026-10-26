@@ -10,6 +10,9 @@
   focus falls back to when the card is gone.
 */
 import "./ticket-detail-dialog.js";
+import { createTaskUpdate } from "../services/api.js";
+import { showToast, showTaskUpdateErrorToast } from "../state/toasts.js";
+import { t } from "../i18n/i18n.js";
 
 /**
  * @typedef {object} TaskSheetsOptions
@@ -29,6 +32,10 @@ export class TaskSheets {
   /** @param {TaskSheetsOptions} options */
   constructor(options) {
     this._options = options;
+    /** @type {Map<string, Promise<{task: Record<string, any> | null}>>} */
+    this._resolutions = new Map();
+    /** Stable across uncertain HTTP retries. @type {Map<string, ReturnType<typeof crypto.randomUUID>>} */
+    this._resolutionIds = new Map();
     /** @type {Record<string, any> | null} the bound site, for the 311 sheet */
     this.site = null;
     /** @type {any} */
@@ -49,7 +56,7 @@ export class TaskSheets {
    * the updates sheet's chunk so the first tap does not wait on it.
    */
   mount() {
-    void import("./task-update-dialog.js");
+    void this._loadUpdates().catch(() => {});
     const container = this._options.container();
     if (!container) return;
     if (this._ticketDialog) {
@@ -87,8 +94,24 @@ export class TaskSheets {
    * @param {string} [mode]
    */
   async openUpdates(task, trigger, mode = "timeline") {
+    const completion =
+      mode === "resolve" ? this._startResolution(task, trigger) : null;
+    if (mode === "resolve" && !completion) return;
     this._updateReturnFocus = { taskId: task.taskId, trigger };
-    await import("./task-update-dialog.js");
+    try {
+      await this._loadUpdates();
+    } catch {
+      await this._formUnavailable(task, trigger, mode, completion);
+      return;
+    }
+    if (
+      this._updateDialog?._open &&
+      (this._updateDialog._hasUnsavedDraft() ||
+        this._updateDialog._task?.taskId !== task.taskId)
+    ) {
+      await this._formUnavailable(task, trigger, mode, completion, true);
+      return;
+    }
     if (!this._updateDialog) {
       const dialog = document.createElement("task-update-dialog");
       dialog.addEventListener("taskupdated", (event) => {
@@ -116,7 +139,98 @@ export class TaskSheets {
       this._updateDialog = dialog;
     }
     this.mount();
-    await this._updateDialog.open(this._resolve(task), mode);
+    if (completion || mode === "results")
+      this._updateDialog.openResults(task, completion);
+    else await this._updateDialog.open(this._resolve(task), mode);
+  }
+
+  /** Keep recovery local: no page reload and no discarded form drafts.
+   * @param {Record<string, any>} task @param {HTMLElement | null} trigger
+   * @param {string} mode @param {Promise<{task: Record<string, any> | null}> | null} completion
+   * @param {boolean} [busy]
+   */
+  async _formUnavailable(task, trigger, mode, completion, busy = false) {
+    const saved = completion ? (await completion).task : null;
+    if (completion && !saved) return;
+    showToast({
+      title: t(
+        busy
+          ? "taskUpdate.finishCurrentForm"
+          : saved || mode === "results"
+            ? "taskUpdate.formUnavailableResolved"
+            : "taskUpdate.formUnavailable",
+      ),
+      message: t("taskUpdate.formUnavailableHelp"),
+      icon: "triangle-exclamation",
+      tone: "error",
+      duration: 0,
+      action: {
+        label: t("common.retry"),
+        run: () => {
+          void this.openUpdates(
+            saved || task,
+            trigger,
+            saved ? "results" : mode,
+          );
+        },
+      },
+    });
+  }
+
+  _loadUpdates() {
+    return import("./task-update-dialog.js");
+  }
+
+  /** Save independently of the optional dialog, with visible pending feedback.
+   * @param {Record<string, any>} task @param {HTMLElement | null} trigger
+   */
+  _startResolution(task, trigger) {
+    if (this._resolutions.has(task.taskId)) return null;
+    const original = trigger?.textContent || "";
+    const button = trigger instanceof HTMLButtonElement ? trigger : null;
+    if (button) {
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+      button.textContent = t("taskUpdate.resolving");
+    }
+    const id = this._resolutionIds.get(task.taskId) || crypto.randomUUID();
+    this._resolutionIds.set(task.taskId, id);
+    const completion = createTaskUpdate(
+      task.taskId,
+      { type: "issue_resolved" },
+      id,
+    )
+      .then((response) => {
+        const saved = {
+          ...task,
+          ...response.task,
+          latestUpdateId: response.update.updateId,
+        };
+        this._options.onTaskUpdated?.(saved);
+        showToast({
+          title: t("taskUpdate.siteResolved"),
+          message: "",
+          icon: "circle-check",
+          tone: "success",
+        });
+        return { task: saved };
+      })
+      .catch((error) => {
+        showTaskUpdateErrorToast(error, () => {
+          void this.openUpdates(task, trigger, "resolve");
+        });
+        return { task: null };
+      })
+      .finally(() => {
+        this._resolutions.delete(task.taskId);
+        if (button) {
+          button.disabled = false;
+          button.removeAttribute("aria-busy");
+          button.textContent = original;
+        }
+      });
+    this._resolutions.set(task.taskId, completion);
+    return completion;
   }
 
   /** @param {Record<string, any>} task */

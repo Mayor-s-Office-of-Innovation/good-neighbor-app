@@ -762,6 +762,7 @@ it("reconciles TaskSheets updates before reloading, including after dismissal", 
   const dialog = {
     addEventListener: (name, handler) => listeners.set(name, handler),
     open: vi.fn(),
+    openResults: vi.fn(),
     remove: vi.fn(),
   };
   const originalCreate = document.createElement;
@@ -773,7 +774,7 @@ it("reconciles TaskSheets updates before reloading, including after dismissal", 
     await sheets.openUpdates(
       { taskId: "a", status: "in_progress" },
       null,
-      "resolve",
+      "results",
     );
     listeners.get("taskupdateclosed")({ detail: { results: true } });
     expect(sheets._updateDialog).toBeNull();

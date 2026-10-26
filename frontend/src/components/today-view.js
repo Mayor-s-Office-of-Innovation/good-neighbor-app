@@ -1925,7 +1925,14 @@ class TodayView extends HTMLElement {
   _onAnalysisAction(card, task, btn) {
     const action = btn.getAttribute("data-analysis-action");
     const problem = this._problemFromCard(card, task);
-    if (action === "view311" && task) {
+    if (action === "mark-resolved") {
+      const current =
+        task ||
+        this._sessionItem(problem)?.analysis?.tasks?.find(
+          (candidate) => candidate.taskId === problem.taskId,
+        );
+      if (current) void this._taskSheets().openUpdates(current, btn, "resolve");
+    } else if (action === "view311" && task) {
       void this._open311Detail(task, btn);
     } else if (action === "delete") {
       this._openDeleteProblem(problem);
