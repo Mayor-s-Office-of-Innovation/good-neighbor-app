@@ -20,6 +20,9 @@ const sqs = new SQSClient({});
 const permanentReasons = new Set([
   "missing_location",
   "insufficient_classifier_information",
+  "missing_service_code",
+  "no_service_codes",
+  "responsible_agency_not_found",
 ]);
 
 /** @param {string | undefined} receiveCount
