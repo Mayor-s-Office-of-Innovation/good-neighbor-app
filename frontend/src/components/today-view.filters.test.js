@@ -1028,7 +1028,8 @@ describe("deferred In-progress / History lists", () => {
           : { tasks: [] },
     );
     const view = liveView("?filter=todo");
-    await view.connectedCallback();
+    const loading = view.connectedCallback();
+    await vi.waitFor(() => expect(catalog.listTasks).toHaveBeenCalledTimes(5));
 
     const statuses = catalog.listTasks.mock.calls.map(([{ status }]) => status);
     expect(statuses[0]).toBe("open");
@@ -1054,7 +1055,7 @@ describe("deferred In-progress / History lists", () => {
     expect(pendingMarkup).not.toContain(escapeHtml(t("today.empty.history")));
 
     release();
-    await view._remainingLoad;
+    await loading;
     expect(view._remainingStatus).toBe("loaded");
     expect(view._homeModel.tasks.map((t) => t.taskId).sort()).toEqual([
       "done-1",
@@ -1149,8 +1150,7 @@ describe("deferred In-progress / History lists", () => {
     catalog.listTasks.mockClear();
     // Seconds old, same instance: an action on this screen caused the reload.
     await view.connectedCallback();
-    expect(view._remainingStatus).toBe("pending");
-    await view._remainingLoad;
+    expect(view._remainingStatus).toBe("loaded");
     expect(
       catalog.listTasks.mock.calls.map(([{ status }]) => status).sort(),
     ).toEqual(
@@ -1171,7 +1171,8 @@ describe("deferred In-progress / History lists", () => {
     );
 
     const view = routeReturn(previous);
-    await view.connectedCallback();
+    const loading = view.connectedCallback();
+    await vi.waitFor(() => expect(view._remainingStatus).toBe("pending"));
     // The previous completed task is gone, counts hidden, one placeholder.
     expect(view._remainingStatus).toBe("pending");
     expect(view._homeModel.tasks.map((t) => t.taskId)).toEqual(["open-1"]);
@@ -1182,7 +1183,7 @@ describe("deferred In-progress / History lists", () => {
     expect(pendingMarkup).toContain('aria-busy="true"');
 
     release();
-    await view._remainingLoad;
+    await loading;
     expect(view._remainingStatus).toBe("loaded");
     expect(view._homeModel.tasks.map((t) => t.taskId).sort()).toEqual([
       "done-1",
@@ -1200,8 +1201,7 @@ describe("deferred In-progress / History lists", () => {
 
     const view = routeReturn(previous);
     await view.connectedCallback();
-    expect(view._remainingStatus).toBe("pending");
-    await view._remainingLoad;
+    expect(view._remainingStatus).toBe("loaded");
     expect(
       catalog.listTasks.mock.calls.map(([{ status }]) => status).sort(),
     ).toEqual(
@@ -1227,12 +1227,13 @@ describe("deferred In-progress / History lists", () => {
     catalog.listTasks.mockImplementation(async ({ status }) =>
       status === "open" ? { tasks: [] } : held,
     );
-    await view.connectedCallback();
+    const loading = view.connectedCallback();
+    await vi.waitFor(() => expect(view._remainingStatus).toBe("pending"));
     expect(view._siteId).toBe("site-2");
     expect(view._homeModel.tasks).toEqual([]);
     expect(view._remainingStatus).toBe("pending");
     release();
-    await view._remainingLoad;
+    await loading;
   });
 
   it("keeps keyboard focus on the current tab when retrying a failed load", async () => {
@@ -1254,11 +1255,12 @@ describe("deferred In-progress / History lists", () => {
       status === "open" ? { tasks: [] } : held,
     );
     const view = liveView("?filter=todo");
-    await view.connectedCallback();
+    const loading = view.connectedCallback();
+    await vi.waitFor(() => expect(view._remainingStatus).toBe("pending"));
     const renders = view._renderHome.mock.calls.length;
     view._siteId = "another-site";
     release();
-    await view._remainingLoad;
+    await loading;
     expect(view._renderHome.mock.calls.length).toBe(renders);
     expect(view._homeModel.tasks).toEqual([]);
   });
@@ -1378,5 +1380,92 @@ it("paints a saved clarification before the background worklist refresh complete
   );
   view._renderHome.mockClear();
   listener({ ...updated, id: "different-check" });
+  expect(view._renderHome).not.toHaveBeenCalled();
+});
+
+it("repaints photo progress without refetching lists, but refreshes new analysis", async () => {
+  const view = await mount("?filter=todo");
+  const listener = subscribeSession.mock.calls.at(-1)[0];
+  const pending = {
+    id: "progress-check",
+    status: "capture-complete",
+    items: [{ id: "photo", analysis: { status: "queued" } }],
+  };
+  listener(pending);
+  await view._homeRefresh;
+  view._homeModel = { tasks: [], pendingSession: pending };
+  catalog.listTasks.mockClear();
+  catalog.listProviderSites.mockClear();
+  view._renderHome.mockClear();
+  for (const status of ["uploading", "analyzing", "analyzing", "failed"]) {
+    pending.items[0].analysis.status = status;
+    listener(pending);
+  }
+  expect(view._renderHome).toHaveBeenCalledTimes(4);
+  expect(catalog.listTasks).not.toHaveBeenCalled();
+  expect(catalog.listProviderSites).not.toHaveBeenCalled();
+  pending.items[0].analysis.status = "analyzed";
+  listener(pending);
+  await view._homeRefresh;
+  expect(catalog.listTasks).toHaveBeenCalledTimes(5);
+  expect(catalog.listProviderSites).toHaveBeenCalledOnce();
+});
+
+it("coalesces refresh triggers through the secondary lists and retains a trailing refresh", async () => {
+  const view = await mount("?filter=todo");
+  view.isConnected = true;
+  view.querySelector = () => null;
+  view.querySelectorAll = () => [];
+  view._renderHome = vi.fn((model) => {
+    view._homeModel = model;
+  });
+  view._hydrate311CardStatuses = vi.fn();
+  let release = () => {};
+  const held = new Promise((resolve) => {
+    release = () => resolve({ tasks: [] });
+  });
+  catalog.listTasks.mockClear();
+  catalog.listProviderSites.mockClear();
+  catalog.listTasks.mockImplementation(({ status }) =>
+    status === "completed" ? held : Promise.resolve({ tasks: [] }),
+  );
+  const loading = view.connectedCallback();
+  await vi.waitFor(() => expect(catalog.listTasks).toHaveBeenCalledTimes(5));
+  for (let i = 0; i < 20; i++) expect(view.connectedCallback()).toBe(loading);
+  expect(catalog.listProviderSites).toHaveBeenCalledOnce();
+  expect(catalog.listTasks).toHaveBeenCalledTimes(5);
+  // This server change arrives while the first refresh is in flight.
+  catalog.listTasks.mockResolvedValue({
+    tasks: [{ taskId: "late-task", status: "open" }],
+  });
+  release();
+  await loading;
+  expect(catalog.listProviderSites).toHaveBeenCalledTimes(2);
+  expect(catalog.listTasks).toHaveBeenCalledTimes(10);
+  expect(view._homeModel.tasks).toContainEqual({
+    taskId: "late-task",
+    status: "open",
+  });
+});
+
+it("discards a disconnected refresh and its queued work after reconnecting to another site", async () => {
+  const view = await mount("?filter=todo");
+  let release = () => {};
+  catalog.listProviderSites.mockReturnValueOnce(
+    new Promise((resolve) => {
+      release = () => resolve({ sites: [], providerName: "old-provider" });
+    }),
+  );
+  const old = view.connectedCallback();
+  await vi.waitFor(() => expect(view._providerSitesStatus).toBe("loading"));
+  view.connectedCallback();
+  view.disconnectedCallback();
+  siteRead.mockResolvedValue({ siteId: "site-2" });
+  await view.connectedCallback();
+  view._renderHome.mockClear();
+  release();
+  await old;
+  expect(view._siteId).toBe("site-2");
+  expect(view._providerName).not.toBe("old-provider");
   expect(view._renderHome).not.toHaveBeenCalled();
 });
