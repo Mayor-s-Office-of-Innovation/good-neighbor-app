@@ -25,6 +25,7 @@ import {
   issuesByWeek,
   issuesOfType,
   issueTypeTitle,
+  isKnownIssueType,
   lastReportedLabel,
   summarizeIssues,
   isIssue,
@@ -133,6 +134,7 @@ export function reportTabs({ activeId, tabs = REPORT_TABS }) {
                 : ""}"
               type="button"
               aria-pressed="${tab.id === activeId ? "true" : "false"}"
+              id="reports-tab-${escapeAttr(tab.id)}"
               data-report-tab="${escapeAttr(tab.id)}"
             >
               ${escapeHtml(t(tab.labelKey))}
@@ -291,6 +293,9 @@ export function weekChart(days, today = "") {
       )
       .reduce((sum, day) => sum + day.completed + (day.reports || 0), 0),
   }));
+  const currentWeek = weeks.find(
+    (week) => today >= week.start && today < addDays(week.start, 7),
+  );
   const barWidth = 10;
   const gap = 0.7;
   const height = 60;
@@ -308,6 +313,7 @@ export function weekChart(days, today = "") {
             }),
           )}:
           ${escapeHtml(t("reports.checks.recorded", { count: week.count }))}
+          ${current ? escapeHtml(t("reports.checks.legend.current")) : ""}
         </title>
         ${week.count
           ? html`<rect
@@ -336,6 +342,16 @@ export function weekChart(days, today = "") {
       t("reports.checks.chartAria", { weeks: weeks.length }),
     )}
     ${chartLabelRow(monthTicks(weeks))}
+    ${currentWeek
+      ? html`<p class="reports-legend">
+          ${escapeHtml(t("reports.checks.legend.current"))}:
+          ${escapeHtml(
+            t("reports.checks.week", {
+              date: formatMonthDay(dayInstant(currentWeek.start)),
+            }),
+          )}
+        </p>`
+      : ""}
     <ul class="reports-legend">
       <li class="reports-legend__item">
         <span
@@ -352,34 +368,39 @@ export function weekChart(days, today = "") {
         ${escapeHtml(t("reports.checks.legend.current"))}
       </li>
     </ul>
-    <table class="visually-hidden">
-      <caption>
-        ${escapeHtml(t("reports.checks.chartTable"))}
-      </caption>
-      <thead>
-        <tr>
-          <th scope="col">${escapeHtml(t("reports.filters.period"))}</th>
-          <th scope="col">${escapeHtml(t("reports.axis.checks"))}</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${weeks
-          .map(
-            (week) =>
-              html`<tr>
-                <th scope="row">
-                  ${escapeHtml(
-                    t("reports.checks.week", {
-                      date: formatMonthDay(dayInstant(week.start)),
-                    }),
-                  )}
-                </th>
-                <td>${week.count}</td>
-              </tr>`,
-          )
-          .join("")}
-      </tbody>
-    </table>`;
+    <div class="visually-hidden">
+      <table>
+        <caption>
+          ${escapeHtml(t("reports.checks.chartTable"))}
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">${escapeHtml(t("reports.filters.period"))}</th>
+            <th scope="col">${escapeHtml(t("reports.axis.checks"))}</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${weeks
+            .map(
+              (week) =>
+                html`<tr>
+                  <th scope="row">
+                    ${escapeHtml(
+                      t("reports.checks.week", {
+                        date: formatMonthDay(dayInstant(week.start)),
+                      }),
+                    )}
+                    ${week === currentWeek
+                      ? escapeHtml(t("reports.checks.legend.current"))
+                      : ""}
+                  </th>
+                  <td>${week.count}</td>
+                </tr>`,
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>`;
 }
 
 /**
@@ -467,7 +488,8 @@ export function calendarGrid(days) {
 /** @param {DaySummary} day */
 function dayCell(day) {
   const count = day.completed + (day.reports || 0);
-  const label = `${formatMonthDay(dayInstant(day.date))}: ${t("reports.checks.recorded", { count })}`;
+  const band = checkCountBand(day);
+  const label = `${formatMonthDay(dayInstant(day.date))}: ${count ? t("reports.checks.recorded", { count }) : t(`reports.counts.${band}`)}`;
   return html`<li
     class="reports-calendar__day reports-calendar__day--${checkCountBand(day)}"
     aria-label="${escapeAttr(label)}"
@@ -476,6 +498,11 @@ function dayCell(day) {
     <span class="reports-calendar__number" aria-hidden="true"
       >${Number(day.date.slice(-2))}</span
     >
+    ${!count
+      ? html`<span class="reports-calendar__count" aria-hidden="true"
+          >${band === "exempt" ? "—" : "∅"}</span
+        >`
+      : ""}
     <span class="visually-hidden">${escapeHtml(label)}</span>
   </li>`;
 }
@@ -489,7 +516,7 @@ export function legend() {
             <span
               class="reports-legend__dot reports-legend__dot--${band}"
               aria-hidden="true"
-            ></span
+              >${band === "exempt" ? "—" : band === "missed" ? "∅" : ""}</span
             >${escapeHtml(t(`reports.counts.${band}`))}
           </li>`,
       )
@@ -980,6 +1007,8 @@ export function typeScreen({
   filter = "",
 }) {
   const { period } = report;
+  if (!isKnownIssueType(key, report.tasks || []))
+    return typeNotFound(issuesTabHref(period));
   const tasks = issuesOfType(report.tasks || [], key);
   const title = issueTypeTitle(tasks, key);
   const summary = resolutionSummary(tasks, period);
@@ -1250,39 +1279,41 @@ export function issuesWeekChart(
         ${escapeHtml(t("reports.issues.legend.resolved"))}
       </li>
     </ul>
-    <table class="visually-hidden">
-      <caption>
-        ${escapeHtml(t("reports.issues.weekChartTable"))}
-      </caption>
-      <thead>
-        <tr>
-          <th scope="col">${escapeHtml(t("reports.filters.period"))}</th>
-          <th scope="col">
-            ${escapeHtml(t("reports.issues.chart.unresolved"))}
-          </th>
-          <th scope="col">${escapeHtml(t("reports.metrics.resolved"))}</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${weeks
-          .filter((week) => week.found)
-          .map(
-            (week) =>
-              html`<tr>
-                <th scope="row">
-                  ${escapeHtml(
-                    t("reports.checks.week", {
-                      date: formatMonthDay(dayInstant(week.start)),
-                    }),
-                  )}
-                </th>
-                <td>${week.found - week.responded}</td>
-                <td>${week.responded}</td>
-              </tr>`,
-          )
-          .join("")}
-      </tbody>
-    </table>
+    <div class="visually-hidden">
+      <table>
+        <caption>
+          ${escapeHtml(t("reports.issues.weekChartTable"))}
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">${escapeHtml(t("reports.filters.period"))}</th>
+            <th scope="col">
+              ${escapeHtml(t("reports.issues.chart.unresolved"))}
+            </th>
+            <th scope="col">${escapeHtml(t("reports.metrics.resolved"))}</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${weeks
+            .filter((week) => week.found)
+            .map(
+              (week) =>
+                html`<tr>
+                  <th scope="row">
+                    ${escapeHtml(
+                      t("reports.checks.week", {
+                        date: formatMonthDay(dayInstant(week.start)),
+                      }),
+                    )}
+                  </th>
+                  <td>${week.found - week.responded}</td>
+                  <td>${week.responded}</td>
+                </tr>`,
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
   `;
 }
 
@@ -1357,35 +1388,37 @@ export function issuesChart(
         ${escapeHtml(t("reports.issues.legend.resolved"))}
       </li>
     </ul>
-    <table class="visually-hidden">
-      <caption>
-        ${escapeHtml(t("reports.issues.chartTable"))}
-      </caption>
-      <thead>
-        <tr>
-          <th scope="col">${escapeHtml(t("reports.filters.period"))}</th>
-          <th scope="col">
-            ${escapeHtml(t("reports.issues.chart.unresolved"))}
-          </th>
-          <th scope="col">${escapeHtml(t("reports.metrics.resolved"))}</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${days
-          .filter((day) => day.found)
-          .map(
-            (day) =>
-              html`<tr>
-                <th scope="row">
-                  ${escapeHtml(formatMonthDay(dayInstant(day.date)))}
-                </th>
-                <td>${day.found - day.responded}</td>
-                <td>${day.responded}</td>
-              </tr>`,
-          )
-          .join("")}
-      </tbody>
-    </table>
+    <div class="visually-hidden">
+      <table>
+        <caption>
+          ${escapeHtml(t("reports.issues.chartTable"))}
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">${escapeHtml(t("reports.filters.period"))}</th>
+            <th scope="col">
+              ${escapeHtml(t("reports.issues.chart.unresolved"))}
+            </th>
+            <th scope="col">${escapeHtml(t("reports.metrics.resolved"))}</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${days
+            .filter((day) => day.found)
+            .map(
+              (day) =>
+                html`<tr>
+                  <th scope="row">
+                    ${escapeHtml(formatMonthDay(dayInstant(day.date)))}
+                  </th>
+                  <td>${day.found - day.responded}</td>
+                  <td>${day.responded}</td>
+                </tr>`,
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
   `;
 }
 

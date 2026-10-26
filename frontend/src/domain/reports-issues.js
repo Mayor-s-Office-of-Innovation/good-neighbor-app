@@ -15,7 +15,7 @@
 */
 import { submitted311Ticket } from "./home-tasks.js";
 import { t } from "../i18n/i18n.js";
-import { rulebookText } from "../i18n/rulebook.js";
+import { rulebookText, rulebookKey } from "../i18n/rulebook.js";
 import {
   formatDateTime,
   formatMonthDay,
@@ -117,6 +117,21 @@ export function issueTypeKey(task) {
     String(task?.category || "").trim() ||
     String(task?.userFriendlyLabel || "").trim() ||
     "other"
+  );
+}
+
+/** Known rulebook categories remain valid when a selected period is empty.
+ * Legacy label-based keys are accepted when backed by returned records.
+ * @param {string} key
+ * @param {any[]} [tasks]
+ */
+export function isKnownIssueType(key, tasks = []) {
+  return (
+    key === "other" ||
+    Boolean(
+      rulebookKey(key, "rulebook.category.")?.startsWith("rulebook.category."),
+    ) ||
+    tasks.some((task) => isIssue(task) && issueTypeKey(task) === key)
   );
 }
 

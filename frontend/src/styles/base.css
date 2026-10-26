@@ -153,7 +153,8 @@ html[data-route-transition="pop"]::view-transition-new(root) {
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
-  *::after {
+  *::after,
+  dialog::backdrop {
     animation-duration: 0.001ms !important;
     animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
@@ -205,7 +206,7 @@ html[data-route-transition="pop"]::view-transition-new(root) {
 }
 
 [data-photo-lightbox]:focus-visible {
-  outline: 3px solid var(--focus-ring, var(--wa-color-primary-60));
+  outline: 3px solid var(--focus-ring, var(--brand-blue));
   outline-offset: -3px;
 }
 

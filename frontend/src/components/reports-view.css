@@ -372,7 +372,11 @@
   gap: 0.4rem;
 }
 
+/* Center the non-color symbols for zero-check and non-operating days. */
 .reports-legend__dot {
+  display: inline-grid;
+  place-items: center;
+  font-size: 0.65rem;
   flex: 0 0 auto;
   width: 0.65rem;
   height: 0.65rem;

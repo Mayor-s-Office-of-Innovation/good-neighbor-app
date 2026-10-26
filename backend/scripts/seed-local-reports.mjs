@@ -1,9 +1,10 @@
 // Local-only, additive reporting fixtures. Run from backend with:
 // node --env-file=../.env.local scripts/seed-local-reports.mjs <siteId>
 // Stable IDs make reruns safe: existing items (including edited fixtures) are skipped.
+import { putSeedPhoto } from "./lib/report-seed-photo.mjs";
 import { readFile } from "node:fs/promises";
 import { GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client } from "@aws-sdk/client-s3";
 import { ddb } from "../src/db.js";
 import { assertLocalSeedTarget } from "./lib/site-admin-seed.mjs";
 import {
@@ -104,20 +105,12 @@ for (const [date, count] of schedule) {
       const artifactId = `synthetic-photo-${n + 1}`;
       artifacts.push(artifactId);
       const s3Key = `checks/${siteId}/${checkId}/${artifactId}.jpg`;
-      try {
-        await s3.send(
-          new PutObjectCommand({
-            Bucket,
-            Key: s3Key,
-            Body: photos[n % photos.length],
-            ContentType: "image/jpeg",
-            IfNoneMatch: "*",
-            Metadata: { seed: seedId },
-          }),
-        );
-      } catch (error) {
-        if (error.$metadata?.httpStatusCode !== 412) throw error;
-      }
+      await putSeedPhoto(s3, {
+        Bucket,
+        Key: s3Key,
+        Body: photos[n % photos.length],
+        seedId,
+      });
       await put({
         ...artifactKey(siteId, checkId, artifactId),
         artifactId,
@@ -168,6 +161,7 @@ for (const [date, count] of schedule) {
         updatedAt,
         ...(status === "completed"
           ? {
+              latestUpdateId: `${taskId}-completed`,
               completedAt: resolvedAt,
               resolvedAt,
               completionMethod: "manual",
@@ -213,7 +207,8 @@ for (const [date, count] of schedule) {
           taskId,
           checkId,
           actorId: "synthetic-local-user",
-          documentationState: "complete",
+          // These fixtures already include their documentation.
+          documentationState: "closed",
           ...update,
         });
       }

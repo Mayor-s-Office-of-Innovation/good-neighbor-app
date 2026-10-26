@@ -166,7 +166,7 @@ matrix(
         await stubReports(page);
         await page.goto("/reports?tab=issues");
         await expect(
-          page.locator('.reports__record[data-task-id="t1"]'),
+          page.locator('.analysis-card[data-task-id="t1"]'),
         ).toBeVisible();
         await a11y.check("report issues");
       },
@@ -185,17 +185,17 @@ matrix(
     );
 
     boundA11y(
-      "a11y: report day 311 sheet",
+      "a11y: report day timeline",
       async (/** @type {BoundA11yFixtures} */ { page, a11y }) => {
         await stubReports(page);
         await page.goto(`/reports/checks/${REPORT_DAY}`);
         await page
-          .locator('.analysis-card[data-task-id="t1"] [data-action="view311"]')
+          .locator('.analysis-card[data-task-id="t1"] [data-action="update"]')
           .click();
         await expect(
-          page.locator("#ticket-detail-dialog[open] #ticket-detail-title"),
+          page.locator("dialog.task-update[open] .task-update__timeline"),
         ).toBeVisible();
-        await a11y.check("report day 311 sheet");
+        await a11y.check("report day timeline");
       },
     );
 

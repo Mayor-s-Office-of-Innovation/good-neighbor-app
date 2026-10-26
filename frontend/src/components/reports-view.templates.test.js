@@ -199,6 +199,14 @@ describe("checksTab", () => {
 });
 
 describe("weekChart", () => {
+  it("labels the current week even when it has no checks", () => {
+    const markup = weekChart([day("2026-09-27", "missed")], "2026-09-30");
+    expect(markup).toContain('<p class="reports-legend">');
+    expect(
+      markup.match(new RegExp(t("reports.checks.legend.current"), "g")),
+    ).toHaveLength(4);
+  });
+
   it("draws weekly check totals with a hidden data table", () => {
     const markup = weekChart(days);
     expect(markup.match(/<rect/g)).toHaveLength(1);
@@ -206,7 +214,7 @@ describe("weekChart", () => {
     expect(markup).toContain(
       'class="reports-chart__bar reports-chart__bar--complete"',
     );
-    expect(markup).toContain('<table class="visually-hidden">');
+    expect(markup).toContain('<div class="visually-hidden">');
     expect(markup).toContain(
       escapeHtml(t("reports.checks.week", { date: "Sep 27" })),
     );
@@ -302,8 +310,16 @@ describe("calendarGrid", () => {
   it("labels every cell with its date, count, and status in text", () => {
     const markup = calendarGrid(days);
     expect(markup).toContain(
-      escapeHtml(`Sep 29: ${t("reports.checks.recorded", { count: 0 })}`),
+      escapeHtml(`Sep 29: ${t("reports.counts.missed")}`),
     );
+    const closed = calendarGrid([
+      day("2026-09-29", "exempt", 0, { operating: false }),
+    ]);
+    expect(closed).toContain(
+      escapeHtml(`Sep 29: ${t("reports.counts.exempt")}`),
+    );
+    expect(closed).toContain("—");
+    expect(markup).toContain("∅");
     expect(markup).toContain("reports-calendar__day--complete");
     expect(markup).not.toContain(">3/3<");
     expect(
@@ -835,6 +851,16 @@ describe("typeScreen", () => {
     expect(markup).not.toContain('data-action="view311"');
     expect(markup).toContain('data-action="update"');
     expect(markup).not.toContain('id="reports-show-more"');
+  });
+
+  it("rejects unknown types while retaining empty reports for known categories", () => {
+    const empty = { ...report, tasks: [] };
+    expect(
+      typeScreen({ report: empty, key: "Litter", shown: 10 }),
+    ).not.toContain(t("reports.type.notFound"));
+    expect(
+      typeScreen({ report: empty, key: "not-a-real-type", shown: 10 }),
+    ).toContain(t("reports.type.notFound"));
   });
 
   it("pages the cards and says when the type has no reports", () => {
