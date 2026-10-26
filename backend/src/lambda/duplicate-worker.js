@@ -1,3 +1,4 @@
+import { createComparisonPacer } from "../analysis/duplicates/request-pacing.js";
 import { preparedRetention } from "../analysis/duplicates/prepared-retention.js";
 import { duplicateEvent } from "../analysis/duplicates/monitoring.js";
 import { ensureDuplicateHistory } from "../analysis/duplicates/history.js";
@@ -553,6 +554,19 @@ export const handler = async (event) => {
           comparisonClient = createComparisonClient({
             baseUrl: process.env.DUPLICATE_ANALYZER_BASE_URL ?? "",
             apiKey: key,
+            pace:
+              Number(
+                process.env.DUPLICATE_COMPARISON_REQUESTS_PER_SECOND ?? 0,
+              ) === 0
+                ? undefined
+                : createComparisonPacer({
+                    ddb,
+                    table,
+                    baseUrl: process.env.DUPLICATE_ANALYZER_BASE_URL ?? "",
+                    requestsPerSecond: Number(
+                      process.env.DUPLICATE_COMPARISON_REQUESTS_PER_SECOND,
+                    ),
+                  }),
           });
         }
         const response = await comparisonClient(request);
