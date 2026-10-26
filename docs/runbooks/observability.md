@@ -10,17 +10,90 @@ reporting and trails live data by about 6 hours.
 ## Who gets paged
 
 Both SNS topics subscribe the same `alarm_emails` list, set per environment in
-`infra/environments/<env>/main.tf`. Every address gets one confirmation email **per
+`infra/environments/<env>/variables.tf` and passed through `main.tf`. Every address gets one confirmation email **per
 topic** (two in total) and is silent until confirmed.
 
 | Topic | Region | Why it exists |
 |---|---|---|
-| `gnp-<env>-alarms` | us-west-2 | every code-marker alarm (`alarms.tf`) and every platform alarm (`platform-alarms.tf`) |
-| `gnp-<env>-alarms-us-east-1` | us-east-1 | metrics that only exist there: the Route53 uptime check and the CloudFront-scoped WAF rule |
+| `good-neighbor-app-<env>-alarms` | us-west-2 | every code-marker alarm (`alarms.tf`) and every platform alarm (`platform-alarms.tf`) |
+| `good-neighbor-app-<env>-alarms-us-east-1` | us-east-1 | metrics that only exist there: the Route53 uptime check and the CloudFront-scoped WAF rule |
+
+Production response ownership is:
+
+| Responsibility | Responder |
+|---|---|
+| Primary: acknowledge, diagnose, coordinate recovery | `aaron.hans@sf.gov` |
+| Secondary: cover the primary and assist recovery | `beaudry.kock@sfgov.org` |
+
+SNS emails both people simultaneously. It does not wait for the primary, track
+acknowledgment, or escalate automatically. Record the incident owner and
+acknowledgment in the incident issue; do not treat this as a staffed 24-hour
+paging service without agreed coverage and response times. DEV retains its own
+recipient configuration.
+
+## Confirming production subscriptions and testing delivery
+
+Deploy the production configuration through reviewed CI first. The expected plan
+adds the secondary's two subscriptions and two isolated `TEST-alarm-delivery`
+alarms, and changes the daily budget limit and ACTUAL threshold to USD 50.
+Existing service alarms remain active. Both responders must confirm **both** SNS
+subscriptions from their email. `PendingConfirmation` is not a working delivery
+route. If a confirmation email is missing/expired, request another confirmation
+through SNS for that same endpoint; do not invent confirmation tokens or
+unsubscribe a working recipient. Reinspect AWS afterward.
+
+From the repository root, with the approved production AWS login and the verified
+account ID in `AWS_ACCOUNT_ID`, inspect without sending:
+
+```sh
+node scripts/test-alarm-delivery.mjs --account-id "$AWS_ACCOUNT_ID"
+```
+
+The script checks the AWS identity, both regional subscription inventories, and
+the exact synthetic alarm configuration. It refuses mutations if either
+responder is unconfirmed on either topic. The read-only output can be attached
+to the incident/cutover issue; it contains no tokens or message bodies.
+
+Arrange a test window with both responders, wait until both test alarms are OK,
+then exercise CloudWatch → encrypted SNS → inbox:
+
+```sh
+node scripts/test-alarm-delivery.mjs --account-id "$AWS_ACCOUNT_ID" --send
+```
+
+Only the dimensionless `AlarmDeliveryTest` metric in the
+`good-neighbor-app-prod-operations` namespace is published, once per region.
+The test alarm names include `TEST`; no service alarm is forced into ALARM and
+no queue message or application data is created. Each alarm evaluates at a
+one-minute period. Allow several minutes for evaluation and delivery. An AWS
+publish success or an alarm transition does **not** prove an email arrived.
+
+Record the drill ID, start time, each region's ALARM transition, and the email
+receipt/acknowledgment time from each responder (four acknowledgments total).
+If a region fails to publish after the other succeeds, inspect both before
+retrying; delivery is not an atomic cross-region operation.
+
+After seeing the ALARM notification, reset the synthetic metrics:
+
+```sh
+node scripts/test-alarm-delivery.mjs --account-id "$AWS_ACCOUNT_ID" --reset
+```
+
+Wait for both test alarms to return to OK and confirm the recovery emails. The
+Maximum statistic means a reset in the same minute as the trigger does not erase
+the earlier breach. Missing data is non-breaching, so a one-off test also clears
+naturally. The two small test alarms remain managed by Terraform for future
+drills; do not delete them manually. The script reports `receiptVerified: false`
+because only recipients can provide delivery evidence.
+
+If a notification is missing, inspect confirmation status, spam/quarantine,
+CloudWatch alarm history/action errors, the topic policy, and the regional KMS
+key's CloudWatch-service permissions. An unconfirmed subscription cannot be
+fixed by repeatedly sending test metrics.
 
 ## The dashboard (`infra/modules/app/dashboard.tf`)
 
-CloudWatch → Dashboards → `gnp-<env>-ops`, opening on the last 24 hours. Rows, top to
+CloudWatch → Dashboards → `good-neighbor-app-<env>-ops`, opening on the last 24 hours. Rows, top to
 bottom: alarm status for every home-region alarm · activity (checks started vs completed,
 completed perimeter checks by evidence, analyses by kind) · analyzer (latency p50/p95,
 failed/retried/duplicate, failure rate) · pipeline (queue depth, in flight, dead-lettered,
@@ -43,7 +116,7 @@ alarm-status widget, which is same-region only; their metrics are the bottom row
 | `dynamodb-throttles` | any read/write throttle on the app table | a hot `SITE#` partition; Contributor Insights or the api logs at that minute. |
 | `app-health-check` | `/health` unreachable from Route53 for 3 min (missing data counts) | CloudFront → API Gateway → api Lambda, in that order. |
 
-## Business metrics (namespace `gnp-<env>-app`)
+## Business metrics (namespace `good-neighbor-app-<env>-app`)
 
 Emitted as CloudWatch Embedded Metric Format lines by `backend/src/lib/metrics.js`;
 each line is also a normal log event with `marker` and ids, so Logs Insights answers
@@ -80,8 +153,9 @@ Local dev and tests print the same lines without the `_aws` envelope
 ## Verifying after a deploy
 
 1. Run one photo check and one description check against the environment.
-2. CloudWatch → Metrics → `gnp-<env>-app`: `AnalysisCompleted` shows both `Kind`
+2. CloudWatch → Metrics → `good-neighbor-app-<env>-app`: `AnalysisCompleted` shows both `Kind`
    values and `CheckCompleted` shows the matching `EvidenceKind` within a minute.
-3. Alarms → all `gnp-<env>-*` alarms are `OK` or `Insufficient data`, none `ALARM`.
-4. To test paging in dev: send any message to the DLQ from the SQS console; the
-   `submissions-dlq-not-empty` email arrives within 5 minutes; purge the DLQ after.
+3. Alarms → all `good-neighbor-app-<env>-*` alarms are `OK` or `Insufficient data`, none `ALARM`.
+4. Use the isolated production delivery drill above to verify notification routing.
+   Use the [recovery runbook](recovery.md) for a synthetic dev DLQ rehearsal.
+   Never purge a shared queue as a test-cleanup shortcut.

@@ -63,6 +63,13 @@ year. Care-work processing never enqueues analyzer jobs or retags check/task ima
 Complaint evidence remains in its separate one-year bucket.
 
 
+Database PITR does not restore S3 media. Upload/complaint bucket versioning is
+intentionally suspended to avoid retaining sensitive media beyond its approved
+expiry. A recovered database may reference expired or deleted images; keep the
+existing unavailable-media behavior and never extend retention as a recovery
+shortcut. See [recovery.md](recovery.md) for the database restore procedure.
+
+
 ## 311 attachment leases
 
 Silent and manual 311 filings snapshot each image into `sf311-media/` in the
@@ -95,10 +102,15 @@ response diagnostics before persistence. Local tunnel access also requires
 
 ## Daily cost warning
 
-Terraform creates a warning-only AWS COST budget of USD 100 per UTC day. It sends
-an ACTUAL-cost notification when attributed daily spending is greater than $100
-to `alarm_emails` (currently `aaron.hans@sf.gov` in both environments). It has no
-budget actions and cannot stop uploads, revoke permissions, or throttle processing.
+Terraform creates a warning-only AWS COST budget per UTC day: **USD 50 in PROD**
+and **USD 100 in DEV**. The shared module's `daily_cost_warning_usd` input controls
+both the budget amount and the absolute ACTUAL-cost notification threshold.
+PROD explicitly sets 50; DEV retains the default of 100. Notifications go to
+`alarm_emails`: `aaron.hans@sf.gov` (primary) and `beaudry.kock@sfgov.org` (secondary)
+in PROD, and the independently configured DEV list. Budget notifications are
+configured directly as email subscribers, separately from the two SNS topic
+confirmations. It has no budget actions and cannot stop uploads, revoke
+permissions, or throttle processing.
 
 The filter is `user:Application$Good-Neighbor-App` (using `var.application`), across
 all regions in the deployment account. Dev and prod have separate accounts and
@@ -138,7 +150,7 @@ are linked accounts, so their application Terraform cannot own activation.
 CI relinquishes only `module.app.aws_ce_cost_allocation_tag.application`
 (including its indexed form) using locked `terraform state rm` before planning.
 This forgets Terraform ownership without deactivating the actual tag; S3 backend
-versioning retains earlier state versions. The step is idempotent, DEV-only, and
+versioning retains earlier state versions. The step is idempotent in both environments and
 fails the deployment if state migration fails. A plan guard rejects any later
 cost-tag create/update/delete in either environment. Do not re-import the entry or
 re-enable local activation there. Activation belongs in the billing management
@@ -149,7 +161,8 @@ Billing ingestion and budget evaluation are delayed (typically 8–12 hours betw
 so this is not a real-time spend guard and can notify after the threshold was crossed.
 
 After the normal CI deployment, inspect the budget in the Billing Console: verify
-DAILY, USD 100, ACTUAL > 100, the Application filter, and the recipient list. Verify
+DAILY, USD 50 and ACTUAL > 50 in PROD (USD 100 and ACTUAL > 100 in DEV),
+the Application filter, and the recipient list. Verify
 the Application tag is active and compare attributed cost with Cost Explorer after
 billing data arrives; zero reported cost alone does not prove the filter works.
 No console configuration changes are required. Existing global quota rows can expire

@@ -260,3 +260,20 @@ variable "manage_application_cost_allocation_tag" {
   type        = bool
   default     = true
 }
+
+variable "daily_cost_warning_usd" {
+  description = "Daily attributed application-cost warning in USD; notification only, not a spending cap."
+  type        = number
+  default     = 100
+
+  validation {
+    condition     = var.daily_cost_warning_usd > 0
+    error_message = "The daily cost warning must be greater than zero USD."
+  }
+}
+
+variable "enable_alarm_delivery_drills" {
+  description = "Provision isolated test alarms in both regions for controlled notification delivery drills."
+  type        = bool
+  default     = false
+}

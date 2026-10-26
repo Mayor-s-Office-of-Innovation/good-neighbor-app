@@ -67,16 +67,18 @@ module "app" {
     aws.us_east_1 = aws.us_east_1
   }
 
-  application             = var.application
-  environment             = var.environment
-  s3_bucket_name_prefix   = "gnp-prod"
-  data_classification     = var.data_classification
-  bedrock_model_id        = var.bedrock_model_id
-  analyzer_base_url       = "https://xvcwo6m20a.execute-api.us-east-1.amazonaws.com/prod"
-  alarm_emails            = var.alarm_emails
-  tags                    = local.common_tags
-  sf311_media_domain_name = "media.${local.frontend_domain_name}"
-  sf311_media_zone_id     = aws_route53_zone.goodneighbor.zone_id
+  application                  = var.application
+  environment                  = var.environment
+  s3_bucket_name_prefix        = "gnp-prod"
+  data_classification          = var.data_classification
+  bedrock_model_id             = var.bedrock_model_id
+  analyzer_base_url            = "https://xvcwo6m20a.execute-api.us-east-1.amazonaws.com/prod"
+  alarm_emails                 = var.alarm_emails
+  daily_cost_warning_usd       = 50
+  enable_alarm_delivery_drills = true
+  tags                         = local.common_tags
+  sf311_media_domain_name      = "media.${local.frontend_domain_name}"
+  sf311_media_zone_id          = aws_route53_zone.goodneighbor.zone_id
 
   frontend_domain_names    = local.frontend_domain_names
   frontend_certificate_arn = aws_acm_certificate_validation.frontend.certificate_arn

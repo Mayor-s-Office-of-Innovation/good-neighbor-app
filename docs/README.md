@@ -49,6 +49,9 @@
 
 ## Operations
 
+- **[Alert delivery](./runbooks/observability.md)** — production responders, both regional SNS confirmations, isolated alarm-delivery drills, and diagnosis.
+- **[Recovery drills](./runbooks/recovery.md)** — controlled DLQ diagnosis/redrive, isolated DynamoDB PITR restore, recovery limits, and cleanup.
+
 - **[System status](./runbooks/system-status.md)** — supervisor dashboard metric definitions, reporting projections, initialization, and verification.
 
 - **[People migration](./runbooks/people-migration.md)** — deployment gate, conflict recovery, and manual verification for historical contact links.
