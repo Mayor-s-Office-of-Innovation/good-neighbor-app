@@ -1,3 +1,4 @@
+import { sf311Job } from "../analysis/guidance/sf311-job.js";
 import {
   GetCommand,
   QueryCommand,
@@ -234,7 +235,7 @@ export async function releaseTaskResolution(input) {
 
 /**
  * Atomically append an update and replace its task snapshot.
- * @param {{ tableName: string, siteId: string, taskId: string, occurredAt: string, update: Record<string, any>, task: Record<string, any>, expectedStatus: string, expectedUpdatedAt?: string, expectedLease?: { attribute: string, value: string } }} input
+ * @param {{ tableName: string, siteId: string, taskId: string, occurredAt: string, update: Record<string, any>, task: Record<string, any>, expectedStatus: string, expectedUpdatedAt?: string, expectedAppActionResults?: unknown, expectedLease?: { attribute: string, value: string } }} input
  */
 export async function writeTaskTransition(input) {
   const statusOnly =
@@ -248,6 +249,15 @@ export async function writeTaskTransition(input) {
   await ddb.send(
     new TransactWriteCommand({
       TransactItems: [
+        ...(input.task.status === "completed" &&
+        input.task.completionMethod !== "311_filed"
+          ? sf311Job(
+              input.tableName,
+              input.siteId,
+              input.task,
+              `resolved-${input.update.updateId}`,
+            )
+          : []),
         {
           Put: {
             TableName: input.tableName,
@@ -295,11 +305,17 @@ export async function writeTaskTransition(input) {
                 input.taskId,
               ),
             },
-            ConditionExpression: input.expectedLease
-              ? "#status = :expected AND #lease = :lease"
-              : statusOnly
-                ? "#status = :expected"
-                : "#status = :expected AND updatedAt = :prior",
+            ConditionExpression:
+              (input.expectedLease
+                ? "#status = :expected AND #lease = :lease"
+                : statusOnly
+                  ? "#status = :expected"
+                  : "#status = :expected AND updatedAt = :prior") +
+              (Object.hasOwn(input, "expectedAppActionResults")
+                ? input.expectedAppActionResults
+                  ? " AND appActionResults = :priorResults"
+                  : " AND attribute_not_exists(appActionResults)"
+                : ""),
             ExpressionAttributeNames: {
               "#status": "status",
               ...(input.expectedLease
@@ -308,6 +324,9 @@ export async function writeTaskTransition(input) {
             },
             ExpressionAttributeValues: {
               ":expected": input.expectedStatus,
+              ...(input.expectedAppActionResults
+                ? { ":priorResults": input.expectedAppActionResults }
+                : {}),
               ...(input.expectedLease
                 ? { ":lease": input.expectedLease.value }
                 : statusOnly

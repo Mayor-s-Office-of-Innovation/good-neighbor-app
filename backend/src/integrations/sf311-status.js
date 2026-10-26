@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 /** @type {Record<string, string>} */
 // Display text in this module is also exported for the frontend's translation
 // catalog generator (frontend/scripts/i18n-rulebook.mjs); the API keeps sending
@@ -484,4 +485,25 @@ export function normalizeSf311Detail({
     events,
     refreshedAt: now.toISOString(),
   };
+}
+
+/** Match only positive City evidence for the exact media URL sent previously.
+ * Missing updates are not proof that an attachment was rejected.
+ * @param {unknown} body @param {string} srNum @param {string} urlHash
+ */
+export function hasServiceRequestAttachment(body, srNum, urlHash) {
+  const record = findServiceRequest(body, srNum);
+  return (
+    !!record &&
+    requestUpdates(record).some((value) => {
+      if (!value || typeof value !== "object") return false;
+      const update = /** @type {Record<string, unknown>} */ (value);
+      const url = first(update, "TextSubType", "text_sub_type");
+      return (
+        first(update, "UpdateType", "update_type") === "8" &&
+        !!url &&
+        createHash("sha256").update(url).digest("hex") === urlHash
+      );
+    })
+  );
 }

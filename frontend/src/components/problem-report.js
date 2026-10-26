@@ -388,6 +388,9 @@ class ProblemReport extends HTMLElement {
           )
         : "";
     this._wireAnalysisCards();
+    for (const conditionId of this._answeringConditionIds) {
+      setQuestionAnswerBusy(this, conditionId, true);
+    }
   }
 
   /** @returns {void} */
