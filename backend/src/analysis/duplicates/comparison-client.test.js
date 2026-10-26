@@ -50,7 +50,7 @@ it("retries only 429s, paces every attempt and preserves the request and final r
       ? new Response("throttled", { status: 429 })
       : Response.json(body);
   });
-  const pace = vi.fn(async () => {});
+  const pace = vi.fn(async (_signal, start) => ({ pending: start() }));
   const pending = client(fetchImpl, { pace })(request);
   await vi.advanceTimersByTimeAsync(2000);
   expect(await pending).toEqual(body);
@@ -136,7 +136,10 @@ it("includes pacing in the deadline and never fetches after it expires", async (
   const pending = expect(
     client(fetchImpl, {
       deadlineMs: 1000,
-      pace: (signal) => comparisonWait(2000, signal),
+      pace: async (signal, start) => {
+        await comparisonWait(2000, signal);
+        return { pending: start() };
+      },
     })(request),
   ).rejects.toThrow("deadline");
   await vi.advanceTimersByTimeAsync(1000);
@@ -178,24 +181,54 @@ it("keeps the per-attempt timeout through response body consumption", async () =
 
 /**
  * A shared atomic conditional-write store represents independent Lambda clients.
+ * Delays before commit and after commit model different DynamoDB failure paths.
+ * @param {{claimDelays?:number[],claimResponseDelays?:number[],releaseDelays?:number[],releaseResponseDelays?:number[]}} [delays]
  * @returns {{ddb:import("@aws-sdk/lib-dynamodb").DynamoDBDocumentClient,starts:number[],send:import("vitest").Mock}}
  */
-function permitStore() {
-  let nextAllowedAt = 0;
+function permitStore(delays = {}) {
+  /** @type {Map<string,{nextAllowedAt?:number,leaseUntil?:number,owner?:string}>} */
+  const records = new Map();
   /** @type {number[]} */ const starts = [];
-  const send = vi.fn(async (command) => {
+  let claims = 0,
+    releases = 0;
+  const send = vi.fn(async (command, { abortSignal }) => {
     const input = command.input;
-    if (input.UpdateExpression) {
-      const now = input.ExpressionAttributeValues[":now"];
-      if (nextAllowedAt > now)
-        throw Object.assign(new Error(), {
+    const key = JSON.stringify(input.Key);
+    const values = input.ExpressionAttributeValues;
+    if (!input.UpdateExpression) return { Item: { ...records.get(key) } };
+    const claim = values[":lease"] !== undefined;
+    const i = claim ? claims++ : releases++;
+    const commitDelay =
+      (claim ? delays.claimDelays : delays.releaseDelays)?.[i] ?? 0;
+    if (commitDelay) await comparisonWait(commitDelay, abortSignal);
+    const record = records.get(key) ?? {};
+    if (claim) {
+      if (
+        (record.nextAllowedAt ?? 0) > values[":now"] ||
+        (record.leaseUntil ?? 0) > values[":now"]
+      )
+        throw Object.assign(new Error("conditional"), {
           name: "ConditionalCheckFailedException",
         });
-      nextAllowedAt = input.ExpressionAttributeValues[":next"];
-      starts.push(now);
-      return {};
+      record.owner = values[":owner"];
+      record.leaseUntil = values[":lease"];
+      starts.push(Date.now());
+    } else {
+      if (record.owner !== values[":owner"])
+        throw Object.assign(new Error("conditional"), {
+          name: "ConditionalCheckFailedException",
+        });
+      record.nextAllowedAt = values[":next"];
+      delete record.owner;
+      delete record.leaseUntil;
     }
-    return { Item: { nextAllowedAt } };
+    records.set(key, record);
+    const responseDelay =
+      (claim ? delays.claimResponseDelays : delays.releaseResponseDelays)?.[
+        i
+      ] ?? 0;
+    if (responseDelay) await comparisonWait(responseDelay, abortSignal);
+    return {};
   });
   return {
     ddb: /** @type {import("@aws-sdk/lib-dynamodb").DynamoDBDocumentClient} */ (
@@ -206,16 +239,32 @@ function permitStore() {
   };
 }
 
+/**
+ * @param {ReturnType<typeof permitStore>} store
+ * @param {number} [rate]
+ * @returns {NonNullable<Parameters<typeof createComparisonClient>[0]["pace"]>}
+ */
+function pacer(store, rate = 1) {
+  return createComparisonPacer({
+    ddb: store.ddb,
+    table: "test",
+    baseUrl: "https://example.test/dev",
+    requestsPerSecond: rate,
+  });
+}
+
 it("paces multiple independent clients and their retries through one shared gate", async () => {
   const store = permitStore();
+  /** @type {number[]} */ const fetchStarts = [];
   const clients = Array.from({ length: 8 }, () => {
     let calls = 0;
     return client(
-      vi.fn(async () =>
-        ++calls === 1
+      vi.fn(async () => {
+        fetchStarts.push(Date.now());
+        return ++calls === 1
           ? new Response(null, { status: 429 })
-          : Response.json(body),
-      ),
+          : Response.json(body);
+      }),
       {
         pace: createComparisonPacer({
           ddb: store.ddb,
@@ -231,7 +280,7 @@ it("paces multiple independent clients and their retries through one shared gate
   expect(await pending).toHaveLength(8);
   expect(store.starts).toHaveLength(16);
   expect(
-    store.starts.slice(1).every((start, i) => start - store.starts[i] >= 334),
+    fetchStarts.slice(1).every((start, i) => start - fetchStarts[i] >= 334),
   ).toBe(true);
   const writes = store.send.mock.calls.filter(
     ([command]) => command.input.UpdateExpression,
@@ -274,3 +323,112 @@ it.each([0, -1, NaN, 33])(
     ).toThrow("Invalid comparison pacing");
   },
 );
+
+it.each([100, 1300, 6500])(
+  "spaces actual HTTP starts after a %sms delayed claim acknowledgement",
+  async (delay) => {
+    const store = permitStore({ claimResponseDelays: [delay] });
+    /** @type {number[]} */ const starts = [];
+    const compare = () =>
+      client(
+        vi.fn(async () => {
+          starts.push(Date.now());
+          return Response.json(body);
+        }),
+        { pace: pacer(store) },
+      );
+    const first = compare()(request);
+    await vi.advanceTimersByTimeAsync(1000);
+    const second = compare()(request);
+    const pending = Promise.all([first, second]);
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(await pending).toHaveLength(2);
+    expect(starts).toHaveLength(2);
+    expect(starts[1] - starts[0]).toBeGreaterThanOrEqual(1000);
+    if (delay > 5000) expect(store.starts.length).toBeGreaterThan(2);
+  },
+);
+
+it("does not let a delayed claim commit overwrite a newer cooldown", async () => {
+  const store = permitStore({ claimDelays: [1500] });
+  /** @type {number[]} */ const starts = [];
+  const compare = () =>
+    client(
+      vi.fn(async () => {
+        starts.push(Date.now());
+        return Response.json(body);
+      }),
+      { pace: pacer(store) },
+    );
+  const first = compare()(request);
+  await vi.advanceTimersByTimeAsync(1000);
+  const second = compare()(request);
+  await vi.advanceTimersByTimeAsync(5000);
+  await Promise.all([first, second]);
+  expect(starts[1] - starts[0]).toBeGreaterThanOrEqual(1000);
+});
+
+it("fences an expired owner's delayed cooldown write without allowing a burst", async () => {
+  const store = permitStore({ releaseDelays: [7500] });
+  /** @type {number[]} */ const starts = [];
+  const compare = () =>
+    client(
+      vi.fn(async () => {
+        starts.push(Date.now());
+        return Response.json(body);
+      }),
+      { pace: pacer(store) },
+    );
+  const pending = Promise.allSettled([
+    compare()(request),
+    compare()(request),
+    compare()(request),
+  ]);
+  await vi.advanceTimersByTimeAsync(7501);
+  const results = await pending;
+  expect(results.filter((result) => result.status === "rejected")).toHaveLength(
+    1,
+  );
+  const fourth = compare()(request);
+  await vi.advanceTimersByTimeAsync(3000);
+  await fourth;
+  expect(starts).toHaveLength(4);
+  expect(starts.slice(1).every((start, i) => start - starts[i] >= 1000)).toBe(
+    true,
+  );
+});
+
+it("releases the start lease without waiting for the model response", async () => {
+  const store = permitStore();
+  /** @type {number[]} */ const starts = [];
+  const compare = () =>
+    client(
+      vi.fn(async (_url, options) => {
+        starts.push(Date.now());
+        await comparisonWait(
+          5000,
+          /** @type {globalThis.AbortSignal} */ (options?.signal),
+        );
+        return Response.json(body);
+      }),
+      { pace: pacer(store) },
+    );
+  const pending = Promise.all([compare()(request), compare()(request)]);
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(starts).toHaveLength(2);
+  expect(starts[1] - starts[0]).toBeGreaterThanOrEqual(1000);
+  expect(starts[1] - starts[0]).toBeLessThan(3000);
+  await vi.advanceTimersByTimeAsync(5000);
+  await pending;
+});
+
+it("never fetches when a delayed claim acknowledgement exceeds the comparison deadline", async () => {
+  const store = permitStore({ claimResponseDelays: [2000] });
+  const fetchImpl = vi.fn(async () => Response.json(body));
+  const pending = expect(
+    client(fetchImpl, { pace: pacer(store), deadlineMs: 500 })(request),
+  ).rejects.toThrow("deadline");
+  await vi.advanceTimersByTimeAsync(500);
+  await pending;
+  expect(fetchImpl).not.toHaveBeenCalled();
+});

@@ -258,9 +258,14 @@ Dev configures `duplicate_comparison_requests_per_second = 3`, below its dedicat
 analyzer comparison usage-plan rate of 4/s (burst 8). This is an aggregate attempt
 rate across workers sharing the app table and normalized endpoint, not a per-worker
 rate. Every HTTP attempt, including retries, obtains a conditional DynamoDB permit.
-Cache hits consume no permit. The gate does not reserve a long future queue or use
-periodic batches: an available permit is granted immediately. Contention waits have
-small jitter; DynamoDB failures fail closed. A crash wastes at most one permit.
+Cache hits consume no permit. The gate serializes HTTP starts under a unique-owner
+lease, then records the cooldown after starting the fetch. The response remains
+concurrent with other requests. It does not reserve a long future queue or use
+periodic batches. Contention waits have small jitter; DynamoDB failures fail closed.
+A crashed owner blocks starts for at most its remaining lease (one pacing interval
+plus five seconds). A delayed claim acknowledgement with less than one interval
+remaining cannot start a request; it must reacquire. Cooldown writes are conditional
+on owner identity so a stale owner cannot release or overwrite a newer lease.
 Other applications, tools and API keys are not coordinated by this table's gate;
 include their traffic when setting limits. Lambda clocks/network latency can also
 vary, so pacing does not replace retry handling or gateway enforcement.

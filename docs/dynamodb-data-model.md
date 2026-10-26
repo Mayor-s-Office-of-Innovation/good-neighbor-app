@@ -652,8 +652,11 @@ resolved from current guidance/tasks rather than treated as identity.
 The internal request-pacing record uses `pk=DUP_COMPARISON_PACER` and
 `sk=sha256(normalized comparison endpoint URL)`, shared across Sites and workers
 in one application table. Conditional updates of `nextAllowedAt` (epoch milliseconds)
-serialize permits for every HTTP attempt, including 429 retries. Numeric `expiresAt`
-is a one-day housekeeping TTL; expiry is never used to grant a permit. It contains
+pace every HTTP attempt, including 429 retries. A unique `owner` and millisecond
+`leaseUntil` protect each HTTP start; the owner sets the next cooldown after starting
+the fetch and conditionally releases the lease. Expired or nearly expired lease
+acknowledgements must reacquire. Numeric `expiresAt` is a one-day housekeeping TTL;
+TTL deletion is never needed to grant a permit. It contains
 no credentials, media, issue IDs or narratives and is not part of Site APIs.
 
 Duplicate detections and separations use existing `TASK#…#UPDATE#…` timeline keys

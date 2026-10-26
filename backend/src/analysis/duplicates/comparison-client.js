@@ -1,14 +1,14 @@
 import { comparisonWait } from "./request-pacing.js";
 
 /**
- * @param {{baseUrl:string,apiKey:string,fetchImpl?:typeof fetch,pace?:(signal:globalThis.AbortSignal)=>Promise<void>,deadlineMs?:number,attemptTimeoutMs?:number}} options
+ * @param {{baseUrl:string,apiKey:string,fetchImpl?:typeof fetch,pace?:(signal:globalThis.AbortSignal,start:()=>Promise<Response>)=>Promise<{pending:Promise<Response>}>,deadlineMs?:number,attemptTimeoutMs?:number}} options
  * @returns {import("./image-matcher.js").Compare}
  */
 export function createComparisonClient({
   baseUrl,
   apiKey,
   fetchImpl = fetch,
-  pace = async () => {},
+  pace = async (_signal, start) => ({ pending: start() }),
   deadlineMs = 60000,
   attemptTimeoutMs = 27000,
 }) {
@@ -36,18 +36,23 @@ export function createComparisonClient({
     const body = JSON.stringify(request);
     for (let attempt = 0; attempt < 4; attempt++) {
       deadline.throwIfAborted();
-      await pace(deadline);
-      deadline.throwIfAborted();
-      const signal = globalThis.AbortSignal.any([
-        deadline,
-        globalThis.AbortSignal.timeout(attemptTimeoutMs),
-      ]);
-      const response = await fetchImpl(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": apiKey },
-        body,
-        signal,
+      // Create each HTTP timeout at actual start, after any pacing wait.
+      let signal = deadline;
+      const { pending } = await pace(deadline, () => {
+        deadline.throwIfAborted();
+        signal = globalThis.AbortSignal.any([
+          deadline,
+          globalThis.AbortSignal.timeout(attemptTimeoutMs),
+        ]);
+        return fetchImpl(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-api-key": apiKey },
+          body,
+          signal,
+        });
       });
+      const response = await pending;
+      signal.throwIfAborted();
       if (response.ok) {
         const result = await response.json();
         signal.throwIfAborted();
