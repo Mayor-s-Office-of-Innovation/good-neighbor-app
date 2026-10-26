@@ -210,6 +210,42 @@ describe("analysis result summaries", () => {
     expect(cards[0]).not.toContain(">Litter</h3>");
   });
 
+  it.each(["Litter", "Trash beside the sidewalk"])(
+    "renders analyzer fallback label %s without framing and retains evidence",
+    (label) => {
+      const cards = analysisCards(
+        {
+          id: "optional-photo",
+          kind: "photo",
+          dataUrl: "https://example.test/evidence.jpg",
+          analysis: {
+            status: "analyzed",
+            artifactId: "artifact-optional",
+            sourceAnalysis: {},
+            conditions: [],
+            tasks: [
+              {
+                taskId: "task-optional",
+                conditionId: "condition-optional",
+                category: "Litter",
+                userFriendlyLabel: label,
+                label: "File a 311 ticket",
+                guidance: "Report this issue.",
+                kind: "escalation",
+              },
+            ],
+          },
+        },
+        "check-optional",
+      );
+      expect(cards).toHaveLength(1);
+      expect(cards[0]).toContain(escapeHtml(label));
+      expect(cards[0]).toContain("https://example.test/evidence.jpg");
+      expect(cards[0]).toContain("task-optional");
+      expect(cards[0]).not.toContain("analysis-card--failed");
+    },
+  );
+
   it("keeps category titles as a fallback for legacy cards", () => {
     const card = taskAnalysisCard({
       task: { taskId: "task_1", category: "Litter" },
