@@ -29,10 +29,7 @@ test.describe("site manager reports", () => {
     const { totals } = CHECKS_REPORT;
     await expect(
       page.getByRole("heading", {
-        name: t("reports.checks.headline", {
-          completed: totals.completed,
-          possible: totals.possible,
-        }),
+        name: t("reports.checks.recorded", { count: totals.recorded }),
       }),
     ).toBeVisible();
 
@@ -43,22 +40,15 @@ test.describe("site manager reports", () => {
     await expect(calendar).toBeVisible();
     await expect(
       calendar.getByLabel(
-        t("reports.checks.dayCell", {
-          date: "Sep 28",
-          completed: 1,
-          required: 3,
-          status: t("reports.status.partial"),
-        }),
+        `Sep 28: ${t("reports.checks.recorded", { count: 1 })}`,
       ),
     ).toBeVisible();
 
-    // Records: owed days only, newest first, with the status word.
+    // Only days with recorded checks appear, newest first.
     const records = page.locator(".reports__record");
     await expect(records).toHaveCount(4);
-    await expect(records.first()).toContainText(t("reports.status.pending"));
-    await expect(records.first()).toContainText(
-      t("reports.day.today", { date: "Sep 30" }),
-    );
+    await expect(records.first().locator(".reports-pill")).toHaveCount(0);
+    await expect(records.first()).toContainText("Sep 30");
 
     // The period type select is labelled and keyboard operable; choosing
     // Quarter requests that period (the stub answers with the same week, so
@@ -87,17 +77,19 @@ test.describe("site manager reports", () => {
     ).toBeFocused();
 
     // A record's title links to the day detail.
-    const dayTitle = t("reports.day.yesterday", { date: "Sep 29" });
-    await page
-      .getByRole("link", { name: t("reports.day.open", { title: dayTitle }) })
-      .click();
-    await expect(page).toHaveURL(new RegExp(`/reports/checks/${REPORT_DAY}$`));
+    const dayTitle = "Sep 29";
+    await page.locator(`.reports__record[data-day="${REPORT_DAY}"] a`).click();
+    await expect(page).toHaveURL(
+      new RegExp(
+        `/reports/checks/${REPORT_DAY}\\?period=week&start=2026-09-27$`,
+      ),
+    );
     await expect(page.getByRole("heading", { level: 1 })).toContainText(
       dayTitle,
     );
     await expect(page.locator(".reports-timeline__item--done")).toHaveCount(2);
     await expect(page.locator(".reports-timeline__item--missed")).toHaveCount(
-      1,
+      0,
     );
     // Each issue is the home hub's card, read-only but for its updates row,
     // with the street and thumbnail hydrated from the check.
@@ -107,14 +99,19 @@ test.describe("site manager reports", () => {
     await expect(card311.locator("img")).toHaveCount(1);
     await expect(card311.locator("[data-analysis-action]")).toHaveCount(0);
 
-    // A 311 request opens the request sheet; closing it returns focus.
-    const view311 = card311.locator('[data-action="view311"]');
-    await view311.click();
-    const sheet = page.locator("#ticket-detail-dialog[open]");
-    await expect(sheet.locator("#ticket-detail-title")).toBeVisible();
+    // Filed tickets use the same read-only timeline as other report issues.
+    const viewTimeline = card311.getByRole("button", {
+      name: t("reports.viewTimeline"),
+    });
+    await viewTimeline.click();
+    const sheet = page.locator("dialog.task-update[open]");
+    await expect(sheet.locator(".task-update__timeline")).toBeVisible();
+    await expect(
+      sheet.locator("[data-add-note], [data-add-photo], [data-resolve]"),
+    ).toHaveCount(0);
     await page.keyboard.press("Escape");
     await expect(sheet).toHaveCount(0);
-    await expect(view311).toBeFocused();
+    await expect(viewTimeline).toBeFocused();
 
     // Any other issue opens the updates timeline.
     const cardPlain = page.locator('.analysis-card[data-task-id="t2"]');
@@ -165,30 +162,22 @@ test.describe("site manager reports", () => {
         name: t("reports.issues.headline", { count: 2 }),
       }),
     ).toBeVisible();
-    const row = page.locator('.reports__record[data-task-id="t1"]');
+    const row = page.locator('.analysis-card[data-task-id="t1"]');
     await expect(row).toContainText("GUB-STJ-041");
-    await expect(row).toContainText(
-      t("reports.issues.response.label", {
-        response: t("reports.issues.response.sr311"),
-      }),
-    );
     await expect(
-      page.locator('.reports__record[data-task-id="t2"]'),
-    ).toContainText(
-      t("reports.issues.response.label", {
-        response: t("reports.issues.response.onSite"),
-      }),
-    );
+      row.getByRole("button", { name: t("reports.viewTimeline") }),
+    ).toBeVisible();
+    await expect(
+      page.locator('.analysis-card[data-task-id="t2"]'),
+    ).toContainText("GUB-STJ-042");
     await expect(
       page.getByRole("button", { name: t("reports.tab.issues") }),
     ).toBeFocused();
 
     // A type row drills into that type's screen: the period travels with
-    // it, the cards are the home hub's, and the 311 sheet opens from one.
+    // it, the cards are the home hub's, and the read-only timeline opens from one.
     await page
-      .getByRole("link", {
-        name: t("reports.issues.types.open", { type: "Litter" }),
-      })
+      .locator('.reports-types__link[href^="/reports/issues/Litter?"]')
       .click();
     await expect(page).toHaveURL(
       /\/reports\/issues\/Litter\?period=week&start=2026-09-27$/,
@@ -200,16 +189,18 @@ test.describe("site manager reports", () => {
     await expect(page.locator('.analysis-card[data-task-id="t2"]')).toHaveCount(
       0,
     );
-    await typeCard.locator('[data-action="view311"]').click();
+    await typeCard
+      .getByRole("button", { name: t("reports.viewTimeline") })
+      .click();
     await expect(
-      page.locator("#ticket-detail-dialog[open] #ticket-detail-title"),
+      page.locator("dialog.task-update[open] .task-update__timeline"),
     ).toBeVisible();
     await page.keyboard.press("Escape");
-    await expect(typeCard.locator('[data-action="view311"]')).toBeFocused();
+    await expect(typeCard.locator('[data-action="update"]')).toBeFocused();
     await page.getByRole("link", { name: t("reports.type.back") }).click();
     await expect(page).toHaveURL(/tab=issues&period=week&start=2026-09-27/);
     await expect(
-      page.locator('.reports__record[data-task-id="t1"]'),
+      page.locator('.analysis-card[data-task-id="t1"]'),
     ).toBeVisible();
     await page.getByRole("button", { name: t("reports.tab.issues") }).focus();
     // Arrow keys move between tabs.
@@ -218,10 +209,27 @@ test.describe("site manager reports", () => {
     await expect(page.locator(".reports__records")).toBeVisible();
   });
 
+  test("unknown issue types show not-found while known empty types keep their report", async ({
+    page,
+  }) => {
+    await page.goto(
+      "/reports/issues/not-a-real-type?period=week&start=2026-09-27",
+    );
+    await expect(page.getByRole("status")).toHaveText(
+      t("reports.type.notFound"),
+    );
+    await page.goto("/reports/issues/Needles?period=week&start=2026-09-27");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Needles");
+    await expect(page.locator(".reports__records-sub")).toHaveText(
+      t("reports.issues.byType.count", { count: 0 }),
+    );
+    await expect(page.locator("#reports-kind")).toBeVisible();
+  });
+
   test("a direct deep link to a day works", async ({ page }) => {
     await page.goto(`/reports/checks/${REPORT_DAY}`);
     await expect(page.getByRole("heading", { level: 1 })).toContainText(
-      t("reports.day.yesterday", { date: "Sep 29" }),
+      "Sep 29",
     );
   });
 });

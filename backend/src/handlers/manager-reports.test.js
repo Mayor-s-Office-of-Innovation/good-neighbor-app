@@ -98,7 +98,11 @@ describe("getChecksReport", () => {
         return Promise.resolve({
           Items: [
             // Sunday Sep 27: complete.
-            header("a", "2026-09-27T15:00:00.000Z", 2),
+            {
+              ...header("a", "2026-09-27T15:00:00.000Z", 2),
+              photoCount: 5,
+              privateField: "not exposed",
+            },
             header("b", "2026-09-27T19:00:00.000Z"),
             header("c", "2026-09-28T05:00:00.000Z"), // 22:00 PDT Sep 27
             // Monday Sep 28: partial. Tuesday Sep 29: missed.
@@ -136,6 +140,12 @@ describe("getChecksReport", () => {
       endExclusive: "2026-10-04",
     });
     expect(body.today).toBe("2026-09-30");
+    expect(body.days[0].checks[0]).toEqual({
+      checkId: "a",
+      startedAt: "2026-09-27T15:00:00.000Z",
+      photoCount: 5,
+    });
+    expect(body.days[0].checks[0]).not.toHaveProperty("privateField");
     expect(body.requirement).toEqual({
       requiredPerDay: 3,
       required: true,
@@ -172,7 +182,7 @@ describe("getChecksReport", () => {
     });
 
     // Raw headers never leave the handler.
-    expect(res.body).not.toContain('"startedAt"');
+    expect(res.body).not.toContain('"privateField"');
 
     const [current, previous, terms] = queries();
     expect(current.input.IndexName).toBe("GSI1");
@@ -415,6 +425,66 @@ describe("getTasksReport", () => {
   it("refuses general devices", async () => {
     const res = await call(getTasksReport, event({ accessLevel: "general" }));
     expect(res.statusCode).toBe(403);
+  });
+});
+
+describe("elapsed-period comparisons", () => {
+  it.each([
+    [
+      "month",
+      "2026-10-01",
+      "2026-09-01T07:00:00.000Z",
+      "2026-09-27T07:00:00.000Z",
+    ],
+    [
+      "week",
+      "2026-10-25",
+      "2026-10-18T07:00:00.000Z",
+      "2026-10-20T07:00:00.000Z",
+    ],
+    [
+      "quarter",
+      "2026-10-01",
+      "2026-07-01T07:00:00.000Z",
+      "2026-07-27T07:00:00.000Z",
+    ],
+  ])(
+    "compares matching elapsed days for %s",
+    async (period, start, from, to) => {
+      vi.setSystemTime(new Date("2026-10-26T18:00:00Z"));
+      send.mockResolvedValue({ Items: [] });
+      const res = await call(
+        getTasksReport,
+        event({ query: { period, start } }),
+      );
+      const body = JSON.parse(res.body);
+      expect(body.asOf).toBe("2026-10-26T18:00:00.000Z");
+      expect(queries()[1].input.ExpressionAttributeValues).toMatchObject({
+        ":from": from,
+        ":to": to,
+      });
+    },
+  );
+
+  it("uses the full previous period for a completed month and caps shorter months", async () => {
+    vi.setSystemTime(new Date("2026-10-31T18:00:00Z"));
+    send.mockResolvedValue({ Items: [] });
+    const res = await call(
+      getTasksReport,
+      event({ query: { period: "month", start: "2026-09-01" } }),
+    );
+    expect(JSON.parse(res.body).asOf).toBe("2026-10-01T06:59:59.999Z");
+    expect(queries()[1].input.ExpressionAttributeValues[":to"]).toBe(
+      "2026-09-01T07:00:00.000Z",
+    );
+    send.mockClear();
+    await call(
+      getTasksReport,
+      event({ query: { period: "month", start: "2026-10-01" } }),
+    );
+    expect(queries()[1].input.ExpressionAttributeValues[":to"]).toBe(
+      "2026-10-01T07:00:00.000Z",
+    );
   });
 });
 
