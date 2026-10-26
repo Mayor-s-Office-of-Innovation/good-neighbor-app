@@ -64,7 +64,8 @@ for (const screen of ["today-view", "perimeter-check", "problem-report"]) {
                 action: { kind: "update", label: "Updates" },
               })
             : analysisCards(item, check.id).join("");
-        const proto = /** @type {any} */ (customElements.get(screen)).prototype;
+        const proto = /** @type {any} */ (window.customElements.get(screen))
+          .prototype;
         host._problemFromCard = problemFromCard;
         if (screen === "today-view") {
           const sheets = new TaskSheets({
