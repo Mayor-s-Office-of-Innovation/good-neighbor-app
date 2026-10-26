@@ -482,17 +482,21 @@ class AdminApp extends HTMLElement {
         await Promise.all([
           adminApi.listProviders(includeSites),
           adminApi.listPrograms(),
-          adminApi.listOversightOptions(),
+          adminApi.listOversightOptions().catch((error) => {
+            if ([401, 403].includes(error.status)) throw error;
+            return null;
+          }),
           adminApi.listCityProgramManagers(),
         ]);
       this.state.providers = providers.providers || [];
       this.state.programs = programs.programs || [];
       this.state.programManagers = programManagers.programManagers || [];
       this.programManagersStale = false;
-      this.state.oversightOptions = {
-        departments: oversightOptions.departments || [],
-        systemsOfCare: oversightOptions.systemsOfCare || [],
-      };
+      if (oversightOptions)
+        this.state.oversightOptions = {
+          departments: oversightOptions.departments || [],
+          systemsOfCare: oversightOptions.systemsOfCare || [],
+        };
       if (includeSites)
         this.state.sites = (providers.sites || [])
           .map(({ items }) => {
@@ -528,7 +532,8 @@ class AdminApp extends HTMLElement {
             );
           })
           .filter(Boolean);
-      this.catalogsLoaded = true;
+      // Keep usable records, but retry the missing optional lookup on navigation.
+      this.catalogsLoaded = Boolean(oversightOptions);
       if (includeSites) this.directoryLoaded = true;
     })();
     try {
@@ -2023,6 +2028,11 @@ class AdminApp extends HTMLElement {
       Date.now() - (this.siteSectionLoads.get(section) || 0) < 30000
     ) {
       this.render();
+      if (
+        section === "compliance" &&
+        this.state.expandedLettersSiteId === siteId
+      )
+        void this.loadSiteLetters(siteId);
       queueMicrotask(() => {
         const heading = this.querySelector("h1");
         heading?.focus({ preventScroll: true });
@@ -2182,7 +2192,14 @@ class AdminApp extends HTMLElement {
     this.state.perimeterMessage = "";
     this.state.perimeterError = "";
     this.siteSectionLoads.set(section, Date.now());
-    if (renderNow) this.render();
+    if (renderNow) {
+      this.render();
+      if (
+        section === "compliance" &&
+        this.state.expandedLettersSiteId === siteId
+      )
+        void this.loadSiteLetters(siteId);
+    }
     if (renderNow)
       queueMicrotask(() => {
         const heading = this.querySelector("h1");
@@ -2246,31 +2263,44 @@ class AdminApp extends HTMLElement {
   }
 
   async loadSiteLetters(siteId, more = false) {
-    if (this.lettersLoading) return;
-    this.lettersLoading = true;
+    const generation = this.siteLoadGeneration;
+    const path = location.pathname + location.search;
+    if (
+      this.lettersLoading?.siteId === siteId &&
+      this.lettersLoading.generation === generation &&
+      this.lettersLoading.path === path
+    )
+      return;
+    const request = { siteId, generation, path };
+    this.lettersLoading = request;
+    const isCurrent = () =>
+      this.lettersLoading === request &&
+      this.siteLoadGeneration === generation &&
+      location.pathname + location.search === path &&
+      this.state.site?.siteId === siteId &&
+      currentRoute().name === "site";
     try {
       const result = await adminApi.getSiteLetters(
         siteId,
         more ? this.state.letterHistoryCursor || "" : "",
       );
-      if (this.state.site?.siteId !== siteId || currentRoute().name !== "site")
-        return;
+      if (!isCurrent()) return;
       const latest = result.items.find((item) => item.sk === "#META");
       this.state.site = { ...this.state.site, ...latest };
       this.state.letterEmailHistory = [
         ...(more ? this.state.letterEmailHistory : []),
         ...result.items.filter((item) => item.type === "complianceLetterEmail"),
       ];
-      this.state.letterEmailUncertain = result.items.some(
-        (item) => item.deliveryState === "uncertain",
-      );
+      this.state.letterEmailUncertain = [
+        ...this.state.letterEmailHistory,
+        ...result.items.filter((item) => item.type !== "complianceLetterEmail"),
+      ].some((item) => item.deliveryState === "uncertain");
       this.state.letterHistoryCursor = result.nextCursor;
       this.renderLetterStatus();
     } catch (error) {
-      if (this.state.site?.siteId === siteId)
-        actionFeedback("admin.toast.failed").failure(error);
+      if (isCurrent()) actionFeedback("admin.toast.failed").failure(error);
     } finally {
-      this.lettersLoading = false;
+      if (this.lettersLoading === request) this.lettersLoading = null;
     }
   }
 
@@ -2945,10 +2975,19 @@ class AdminApp extends HTMLElement {
     }
     for (const [siteId, membership] of existing) {
       if (selected.includes(siteId)) continue;
-      await adminApi.deactivateManagerMembership(
-        siteId,
-        membership.membershipId,
-      );
+      try {
+        await adminApi.deactivateManagerMembership(
+          siteId,
+          membership.membershipId,
+        );
+      } catch (error) {
+        // Another editor may already have completed this exact removal.
+        if (
+          error.status !== 404 ||
+          error.message !== "manager_membership_not_found"
+        )
+          throw error;
+      }
       existing.delete(siteId);
     }
     this.managerDirectoryVersion = (this.managerDirectoryVersion || 0) + 1;

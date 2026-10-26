@@ -300,3 +300,63 @@ for (const [code, key] of [
     await expect(page.locator("body")).not.toContainText(code);
   });
 }
+
+test("Sites stays usable when optional oversight options fail and retries on navigation", async ({
+  page,
+}) => {
+  await setup(page);
+  let attempts = 0;
+  await page.route("**/admin/v1/oversight-options", async (route) => {
+    attempts++;
+    await route.fulfill({
+      status: attempts === 1 ? 503 : 200,
+      json:
+        attempts === 1
+          ? { error: "unavailable" }
+          : { departments: [], systemsOfCare: [] },
+    });
+  });
+  await page.goto("/sites");
+  await expect(page.locator("#directory-results")).toContainText(
+    "Example Site",
+  );
+  await page.locator('a[href="/sites/s"]').first().click();
+  await expect(page.locator(".site-record h1")).toHaveText("Example Site");
+  expect(attempts).toBe(2);
+});
+
+test("an expanded Letters panel renews its links after compliance metadata refreshes", async ({
+  page,
+}) => {
+  await setup(page);
+  let reads = 0;
+  await page.route("**/admin/v1/sites/s?view=letters*", async (route) => {
+    reads++;
+    await route.fulfill({
+      json: {
+        items: [
+          {
+            ...site,
+            complianceLetters: {
+              current: { url: `/letter-${reads}.pdf`, fileName: "Letter.pdf" },
+              past: [],
+            },
+          },
+        ],
+      },
+    });
+  });
+  await page.goto("/sites/s?section=compliance");
+  await page.locator("[data-site-letters] summary").click();
+  await expect(
+    page.locator('[data-site-letters] a[href="/letter-1.pdf"]'),
+  ).toBeVisible();
+  await page.evaluate(async () => {
+    const app = /** @type {any} */ (document.querySelector("admin-app"));
+    await app.openSite("s", false, true);
+  });
+  await expect(
+    page.locator('[data-site-letters] a[href="/letter-2.pdf"]'),
+  ).toBeVisible();
+  expect(reads).toBe(2);
+});

@@ -260,7 +260,9 @@ export const listAdminUsers = (event) =>
  * @param {string} [pool]
  */
 export async function loadAdminDirectory(pool = configuredPool()) {
-  if (!pool) throw new Error("admin_directory_unavailable");
+  // Domain directories remain usable without optional account enrichment.
+  // configuredPool also supplies the local development directory when enabled.
+  if (!pool) return [];
   const [managers, supervisors, legacyManagers] = await Promise.all([
     usersInGroup(pool, ADMIN_GROUPS.manager),
     usersInGroup(pool, ADMIN_GROUPS.supervisor),

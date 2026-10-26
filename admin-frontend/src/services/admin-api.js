@@ -330,6 +330,7 @@ export const adminApi = {
   getSiteLetters: (siteId, cursor = "") =>
     adminFetch(
       `/admin/v1/sites/${encodeURIComponent(siteId)}?view=letters${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+      { cache: "no-store" },
     ),
   updateSite: (siteId, values) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}`, {

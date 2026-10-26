@@ -859,3 +859,14 @@ it("loads paginated account lifecycle statuses by group without per-user lookups
   });
   expect(cognitoSend).toHaveBeenCalledTimes(4);
 });
+
+it("skips account enrichment without a configured pool", async () => {
+  vi.stubEnv("COGNITO_USER_POOL_ID", "");
+  expect(await loadAdminDirectory()).toEqual([]);
+  expect(cognitoSend).not.toHaveBeenCalled();
+});
+
+it("does not hide a configured pool's directory failures", async () => {
+  cognitoSend.mockRejectedValue(new Error("directory unavailable"));
+  await expect(loadAdminDirectory()).rejects.toThrow("directory unavailable");
+});

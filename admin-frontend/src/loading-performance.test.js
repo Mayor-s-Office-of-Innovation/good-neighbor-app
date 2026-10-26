@@ -184,3 +184,135 @@ test("a failed assignment retry retains confirmed assignments and does not repea
   assert.equal(creates, 1);
   assert.equal(app.state.siteManager.assignedSites.length, 2);
 });
+
+test("optional oversight failures preserve directory data and retry on the next load", async () => {
+  let fail = true;
+  const { app } = fixture({
+    listProviders: async () => ({
+      providers: [{ providerId: "p" }],
+      sites: [],
+    }),
+    listPrograms: async () => ({ programs: [] }),
+    listCityProgramManagers: async () => ({ programManagers: [] }),
+    listOversightOptions: async () => {
+      if (fail) throw Error("unavailable");
+      return { departments: [{ name: "Recovered" }], systemsOfCare: [] };
+    },
+  });
+  app.state.oversightOptions = {
+    departments: [{ name: "Existing" }],
+    systemsOfCare: [],
+  };
+  await app.loadDirectory(false);
+  assert.equal(app.state.providers.length, 1);
+  assert.equal(app.state.oversightOptions.departments[0].name, "Existing");
+  assert.equal(app.catalogsLoaded, false);
+  fail = false;
+  await app.loadDirectory(false);
+  assert.equal(app.state.oversightOptions.departments[0].name, "Recovered");
+  assert.equal(app.catalogsLoaded, true);
+});
+
+test("letter loads follow navigation and ignore stale responses even after returning to a site", async () => {
+  const pending = [];
+  const { app, location } = fixture({
+    getSiteLetters: (id) =>
+      new Promise((resolve) => pending.push({ id, resolve })),
+  });
+  app.renderLetterStatus = () => {};
+  app.state.site = { siteId: "a" };
+  app.siteLoadGeneration = 1;
+  const first = app.loadSiteLetters("a");
+  app.state.site = { siteId: "b" };
+  app.siteLoadGeneration++;
+  location.pathname = "/sites/b";
+  const second = app.loadSiteLetters("b");
+  assert.equal(pending.length, 2);
+  pending[0].resolve({ items: [{ sk: "#META", siteId: "a" }] });
+  await first;
+  assert.equal(app.lettersLoading.siteId, "b");
+  app.state.site = { siteId: "a" };
+  app.siteLoadGeneration++;
+  location.pathname = "/sites/a";
+  const third = app.loadSiteLetters("a");
+  pending[2].resolve({
+    items: [{ sk: "#META", siteId: "a", name: "current" }],
+  });
+  await third;
+  pending[1].resolve({
+    items: [{ sk: "#META", siteId: "b", name: "obsolete" }],
+  });
+  await second;
+  assert.equal(app.state.site.name, "current");
+});
+
+test("letter pagination retains uncertainty from history and jobs; fresh history can clear it", async () => {
+  let items = [{ type: "complianceLetterEmail", deliveryState: "uncertain" }];
+  const { app } = fixture({ getSiteLetters: async () => ({ items }) });
+  app.state.site = { siteId: "s" };
+  app.renderLetterStatus = () => {};
+  await app.loadSiteLetters("s");
+  items = [{ type: "complianceLetterEmail", deliveryState: "sent" }];
+  await app.loadSiteLetters("s", true);
+  assert.equal(app.state.letterEmailHistory.length, 2);
+  assert.equal(app.state.letterEmailUncertain, true);
+  await app.loadSiteLetters("s");
+  assert.equal(app.state.letterEmailUncertain, false);
+  items = [{ type: "complianceLetterJob", deliveryState: "uncertain" }];
+  await app.loadSiteLetters("s");
+  assert.equal(app.state.letterEmailUncertain, true);
+});
+
+test("refreshing compliance reloads links only when Letters is expanded", async () => {
+  const { api } = siteApi();
+  const { app, location } = fixture(api);
+  location.search = "?section=compliance";
+  app.state.site = { siteId: "s" };
+  app.state.expandedLettersSiteId = "s";
+  const loads = [];
+  app.loadSiteLetters = async (id) => loads.push(id);
+  await app.openSite("s", false);
+  assert.deepEqual(loads, ["s"]);
+  app.state.expandedLettersSiteId = null;
+  await app.openSite("s", false);
+  assert.deepEqual(loads, ["s"]);
+});
+
+for (const [status, message, succeeds] of [
+  [404, "manager_membership_not_found", true],
+  [404, "site_not_found", false],
+  [403, "manager_membership_not_found", false],
+  [500, "failed", false],
+]) {
+  test(`manager removal handles ${status} ${message} without hiding other failures`, async () => {
+    const person = { personId: "p", name: "Person" };
+    const { app } = fixture(
+      {
+        updatePerson: async () => ({ person }),
+        deactivateManagerMembership: async () => {
+          throw Object.assign(Error(message), { status });
+        },
+      },
+      "/managers/p",
+      [],
+    );
+    app.state.capabilities.createEntities = true;
+    const current = {
+      ...person,
+      assignedSites: [{ siteId: "s", membershipId: "m" }],
+    };
+    const form = { dataset: {} };
+    const save = app.persistPersonManager(form, current, {
+      changed() {},
+      success() {},
+    });
+    if (succeeds) {
+      await save;
+      assert.equal(app.state.siteManager.assignedSites.length, 0);
+      assert.equal(form.confirmedAssignments.size, 0);
+    } else {
+      await assert.rejects(save, new RegExp(message));
+      assert.equal(form.confirmedAssignments.size, 1);
+    }
+  });
+}
