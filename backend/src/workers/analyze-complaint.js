@@ -23,6 +23,12 @@ const validatedResult = (body) => {
     throw new Error("invalid complaint response");
   const result = {};
   for (const field of OUTPUT_FIELDS) {
+    // Optional extraction details can be absent when the source did not
+    // provide them. Persist empty strings without inventing information.
+    if (field !== "label" && field !== "detail" && value[field] === undefined) {
+      result[field] = "";
+      continue;
+    }
     if (typeof value[field] !== "string")
       throw new Error(`invalid complaint ${field}`);
     result[field] = value[field].trim();
