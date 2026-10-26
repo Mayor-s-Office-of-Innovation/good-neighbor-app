@@ -250,14 +250,31 @@ export const updateTaskAction = async (event) => {
           ...shared.duplicateChecks,
           ...automatic311Job(dynamoTable, siteId, updated, `edited-${now}`),
           {
+            ConditionCheck: {
+              TableName: dynamoTable,
+              Key: { pk: `SITE#${siteId}`, sk: `AUTO311_LOCK#${task.taskId}` },
+              // The worker claims this item before reading the action selection.
+              // Durable results also block edits after an uncertain external call.
+              ConditionExpression:
+                "attribute_not_exists(auto311Lease) AND attribute_not_exists(results)",
+            },
+          },
+          {
             Put: {
               TableName: dynamoTable,
               Item: updated,
-              ConditionExpression: "#status = :open AND updatedAt = :updated",
+              ConditionExpression:
+                "#status = :open AND updatedAt = :updated AND " +
+                (task.appActionResults
+                  ? "appActionResults = :results"
+                  : "attribute_not_exists(appActionResults)"),
               ExpressionAttributeNames: { "#status": "status" },
               ExpressionAttributeValues: {
                 ":open": "open",
                 ":updated": task.updatedAt,
+                ...(task.appActionResults
+                  ? { ":results": task.appActionResults }
+                  : {}),
               },
             },
           },
@@ -374,11 +391,18 @@ export const recordCustomTaskAction = async (event) => {
             Put: {
               TableName: dynamoTable,
               Item: updated,
-              ConditionExpression: "#status = :open AND updatedAt = :updated",
+              ConditionExpression:
+                "#status = :open AND updatedAt = :updated AND " +
+                (task.appActionResults
+                  ? "appActionResults = :results"
+                  : "attribute_not_exists(appActionResults)"),
               ExpressionAttributeNames: { "#status": "status" },
               ExpressionAttributeValues: {
                 ":open": "open",
                 ":updated": task.updatedAt,
+                ...(task.appActionResults
+                  ? { ":results": task.appActionResults }
+                  : {}),
               },
             },
           },

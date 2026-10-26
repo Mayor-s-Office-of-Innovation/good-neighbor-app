@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../../db.js";
 import { getObjectBytes } from "../../s3.js";
@@ -21,6 +22,7 @@ import {
   serviceCodesForClassifierLabels,
 } from "../../integrations/sf311-service-codes.js";
 import {
+  hasServiceRequestAttachment,
   serviceRequestClosureReason,
   serviceRequestClosureState,
 } from "../../integrations/sf311-status.js";
@@ -465,15 +467,17 @@ async function imageArtifactsForTask({ tableName, siteId, task }) {
  * @param {Array<{ artifactId: string, s3Key: string }>} opts.artifacts
  * @param {unknown} [opts.priorAttachments]
  * @param {Date} opts.nowDate
+ * @param {(attachments: Array<Record<string, unknown>>) => Promise<void>} [opts.onCheckpoint]
  * @returns {Promise<Array<Record<string, unknown>>>}
  */
-async function attachImagesToServiceRequest({
+export async function attachImagesToServiceRequest({
   sf311,
   config,
   srNum,
   artifacts,
   priorAttachments,
   nowDate,
+  onCheckpoint,
 }) {
   const submittedPriorAttachments = submittedAttachmentsByKey(priorAttachments);
   if (!srNum) {
@@ -484,41 +488,88 @@ async function attachImagesToServiceRequest({
     }));
   }
 
-  const attachments = [];
+  const prior = Array.isArray(priorAttachments) ? priorAttachments : [];
+  const attachments = [...prior];
+  /** @param {Record<string, unknown>} entry */
+  const save = async (entry) => {
+    const index = attachments.findIndex(
+      (item) => attachmentKey(item) === attachmentKey(entry),
+    );
+    if (index < 0) attachments.push(entry);
+    else attachments[index] = entry;
+    if (onCheckpoint) await onCheckpoint([...attachments]);
+  };
   for (const artifact of artifacts) {
     const priorAttachment =
       submittedPriorAttachments.get(attachmentKey(artifact)) ??
       submittedPriorAttachments.get(artifact.s3Key);
-    if (priorAttachment) {
-      attachments.push(priorAttachment);
+    if (priorAttachment) continue;
+    const pending = prior.find(
+      (item) =>
+        attachmentKey(item) === attachmentKey(artifact) &&
+        item.status === "pending",
+    );
+    if (pending) {
+      let accepted = false;
+      try {
+        accepted = hasServiceRequestAttachment(
+          await sf311.getLatestUpdatesBySourceAgency(),
+          srNum,
+          String(pending.urlHash),
+        );
+      } catch {
+        /* Unavailable evidence must never cause a blind resend. */
+      }
+      await save({
+        ...pending,
+        ...(accepted
+          ? { status: "submitted", reconciled: true }
+          : { reason: "sf311_attachment_uncertain_requires_reconciliation" }),
+      });
       continue;
     }
+    let imageUrl;
     try {
-      const imageUrl = await create311MediaLink({
-        config,
-        key: artifact.s3Key,
-      });
-      const payload = buildAttachmentUpdatePayload({
-        srNum,
-        imageUrl,
-        now: nowDate,
-      });
-      const response = await sf311.updateServiceRequest(payload);
-      attachments.push({
-        ...artifact,
-        status: "submitted",
-        updateId: response.updateId,
-      });
+      imageUrl = await create311MediaLink({ config, key: artifact.s3Key });
     } catch (error) {
-      attachments.push({
+      await save({
         ...artifact,
         status: "failed",
         reason: appActionErrorReason(error),
-        ...(appActionErrorDiagnostics(error)
+      });
+      continue;
+    }
+    // Persist intent before sending. Keep a hash, never the bearer media URL.
+    const intent = {
+      ...artifact,
+      status: "pending",
+      urlHash: createHash("sha256").update(imageUrl).digest("hex"),
+    };
+    if (onCheckpoint) await save(intent);
+    let outcome;
+    try {
+      const response = await sf311.updateServiceRequest(
+        buildAttachmentUpdatePayload({ srNum, imageUrl, now: nowDate }),
+      );
+      outcome = {
+        ...artifact,
+        status: "submitted",
+        updateId: response.updateId,
+      };
+    } catch (error) {
+      outcome = {
+        ...(onCheckpoint ? intent : artifact),
+        status: onCheckpoint ? "pending" : "failed",
+        reason: onCheckpoint
+          ? "sf311_attachment_uncertain_requires_reconciliation"
+          : appActionErrorReason(error),
+        ...(!onCheckpoint && appActionErrorDiagnostics(error)
           ? { diagnostics: appActionErrorDiagnostics(error) }
           : {}),
-      });
+      };
     }
+    // A failed durable write must abort rather than advance to the next image.
+    await save(outcome);
   }
   return attachments;
 }
@@ -640,6 +691,7 @@ async function execute311Action({
     siteId,
     task,
   });
+  /** @type {Array<Record<string, unknown>>} */
   const tickets = [];
   for (const serviceCode of serviceCodes) {
     const priorTicket = priorTickets.get(serviceCode);
@@ -651,6 +703,18 @@ async function execute311Action({
         artifacts: imageArtifacts,
         priorAttachments: priorTicket.attachments,
         nowDate,
+        onCheckpoint: onCheckpoint
+          ? (attachments) =>
+              onCheckpoint(
+                build311ActionResult({
+                  action,
+                  status: "partial",
+                  reason: "attachments_pending",
+                  recordedAt: now,
+                  tickets: [...tickets, { ...priorTicket, attachments }],
+                }),
+              )
+          : undefined,
       });
       tickets.push({ ...priorTicket, attachments });
       continue;
@@ -728,6 +792,27 @@ async function execute311Action({
         srNum: response.srNum,
         artifacts: imageArtifacts,
         nowDate,
+        onCheckpoint: onCheckpoint
+          ? (attachments) =>
+              onCheckpoint(
+                build311ActionResult({
+                  action,
+                  status: "partial",
+                  reason: "attachments_pending",
+                  recordedAt: now,
+                  tickets: [
+                    ...tickets,
+                    {
+                      serviceCode,
+                      responsibleAgency,
+                      sourceRequestId: payload.SourceRequestID,
+                      srNum: response.srNum,
+                      attachments,
+                    },
+                  ],
+                }),
+              )
+          : undefined,
       });
       tickets.push({
         serviceCode,

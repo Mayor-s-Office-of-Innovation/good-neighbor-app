@@ -289,3 +289,32 @@ describe("City closure timeline completeness", () => {
     expect(normalize({ Status: "9" }).events).toEqual([]);
   });
 });
+
+describe("attachment reconciliation", () => {
+  it("requires the same ticket, attachment type, and exact media URL", async () => {
+    const { hasServiceRequestAttachment } = await import("./sf311-status.js");
+    const { createHash } = await import("node:crypto");
+    const url = "https://media.example/photo?token=one";
+    const hash = createHash("sha256").update(url).digest("hex");
+    const body = {
+      SRNum: "123",
+      Updates: [{ UpdateType: "8", TextSubType: url }],
+    };
+    expect(hasServiceRequestAttachment(body, "123", hash)).toBe(true);
+    expect(hasServiceRequestAttachment(body, "456", hash)).toBe(false);
+    expect(
+      hasServiceRequestAttachment(
+        { ...body, Updates: [{ UpdateType: "14", TextSubType: url }] },
+        "123",
+        hash,
+      ),
+    ).toBe(false);
+    expect(
+      hasServiceRequestAttachment(
+        { ...body, Updates: [{ UpdateType: "8", TextSubType: url + "other" }] },
+        "123",
+        hash,
+      ),
+    ).toBe(false);
+  });
+});

@@ -125,8 +125,12 @@ export const getTaskUpdates = async (event) => {
   });
 };
 
-/** POST /v1/tasks/{taskId}/updates @param {any} event */
-export const createTaskUpdate = async (event) => {
+/** POST /v1/tasks/{taskId}/updates
+ * @param {any} event
+ * @param {boolean} [retry]
+ * @returns {Promise<ReturnType<typeof jsonResponse>>}
+ */
+export const createTaskUpdate = async (event, retry = true) => {
   const input = bodyOf(event);
   if (!input) return jsonResponse(400, { error: "Invalid JSON body" });
   const { dynamoTable } = getConfig();
@@ -226,6 +230,7 @@ export const createTaskUpdate = async (event) => {
       task: updated,
       expectedStatus: resolutionLeaseExpired ? "resolving" : "in_progress",
       expectedUpdatedAt: task.updatedAt,
+      expectedAppActionResults: task.appActionResults,
     });
   } catch (error) {
     if (
@@ -250,6 +255,9 @@ export const createTaskUpdate = async (event) => {
           update: legacyRetry,
         });
       }
+      // Rebuild validation and the transition from a fresh snapshot once. No
+      // City request has been sent by this attempt before the transaction.
+      if (retry) return createTaskUpdate(event, false);
       return jsonResponse(409, { error: "Task update conflict" });
     }
     throw error;

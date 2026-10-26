@@ -387,6 +387,55 @@ describe("task update handlers", () => {
     },
   );
 
+  it("retries a progress update from fresh state when filing finishes between read and write", async () => {
+    const task = {
+      pk: "SITE#site-1",
+      sk: "TASK#task-1",
+      taskId: "task-1",
+      status: "in_progress",
+      updatedAt: "2026-09-30T16:00:00.000Z",
+      appActionResults: [],
+    };
+    const results = [
+      {
+        code: "create_311_ticket",
+        status: "submitted",
+        payload: { tickets: [{ srNum: "123", responsibleAgency: "76" }] },
+      },
+    ];
+    send
+      .mockResolvedValueOnce({ Item: task })
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(
+        Object.assign(new Error("integration changed"), {
+          name: "TransactionCanceledException",
+        }),
+      )
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({ Item: { ...task, appActionResults: results } })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+    const response = await createTaskUpdate(
+      event({ type: "additional_action_still_present", text: "Swept" }),
+    );
+    expect(response.statusCode).toBe(201);
+    const writes = send.mock.calls
+      .map(([cmd]) => cmd)
+      .filter((cmd) => cmd instanceof TransactWriteCommand);
+    const first = /** @type {any} */ (
+      writes[0].input.TransactItems?.at(-1)?.Put
+    );
+    const retry = /** @type {any} */ (
+      writes[1].input.TransactItems?.at(-1)?.Put
+    );
+    expect(first.ConditionExpression).toContain(
+      "appActionResults = :priorResults",
+    );
+    expect(first.ExpressionAttributeValues[":priorResults"]).toEqual([]);
+    expect(retry.Item.appActionResults).toEqual(results);
+    expect(retry.ExpressionAttributeValues[":priorResults"]).toEqual(results);
+  });
+
   it("scans legacy history only after a conflicting pointerless retry", async () => {
     const conflict = new Error("conflict");
     conflict.name = "TransactionCanceledException";

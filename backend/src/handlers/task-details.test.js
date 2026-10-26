@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({
   completions: [],
   taskCreatedRuns: [],
   transactionError: null,
+  beforeTransaction: null,
 }));
 
 vi.mock("../db.js", () => ({
@@ -27,7 +28,19 @@ vi.mock("../db.js", () => ({
           ),
         };
       }
+      state.beforeTransaction?.(input.TransactItems);
       if (state.transactionError) throw state.transactionError;
+      for (const entry of input.TransactItems ?? []) {
+        const guard = entry.ConditionCheck;
+        if (guard?.Key.sk.startsWith("AUTO311_LOCK#")) {
+          const lock = state.items.get(`${guard.Key.pk}|${guard.Key.sk}`);
+          if (lock?.auto311Lease || lock?.results)
+            throw Object.assign(new Error("worker won"), {
+              name: "TransactionCanceledException",
+              CancellationReasons: [{ Code: "ConditionalCheckFailed" }],
+            });
+        }
+      }
       state.transactions.push(input.TransactItems);
       for (const entry of input.TransactItems ?? []) {
         if (entry.Put) {
@@ -108,6 +121,7 @@ function event(taskId, body) {
 }
 
 beforeEach(() => {
+  state.beforeTransaction = null;
   state.items.clear();
   state.transactions.length = 0;
   state.completions.length = 0;
@@ -249,3 +263,41 @@ it("uses the guarded completion flow for a resolved custom action", async () => 
     timelineText: "Asked a neighbor to help",
   });
 });
+
+it.each(["lease", "checkpoint", "finalized"])(
+  "rejects an override when worker %s appears after its read",
+  async (phase) => {
+    state.beforeTransaction = (entries) => {
+      const guard = entries.find(
+        (e) => e.ConditionCheck?.Key.sk === "AUTO311_LOCK#root",
+      ).ConditionCheck;
+      expect(guard.ConditionExpression).toBe(
+        "attribute_not_exists(auto311Lease) AND attribute_not_exists(results)",
+      );
+      const taskWrite = entries.find((e) => e.Put?.Item.sk === "TASK#root").Put;
+      expect(taskWrite.ConditionExpression).toContain(
+        "attribute_not_exists(appActionResults)",
+      );
+      put({
+        pk: "SITE#site",
+        sk: "AUTO311_LOCK#root",
+        ...(phase === "lease"
+          ? { auto311Lease: "worker" }
+          : { results: [{ code: "create_311_ticket" }] }),
+      });
+      if (phase === "finalized")
+        put(
+          task("root", {
+            appActionResults: [
+              { code: "create_311_ticket", status: "submitted" },
+            ],
+          }),
+        );
+    };
+    const response = await updateTaskAction(
+      event("duplicate", { ruleId: "LITTER-2" }),
+    );
+    expect(response.statusCode).toBe(409);
+    expect(state.transactions).toHaveLength(0);
+  },
+);

@@ -259,7 +259,16 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   SR number before attachments. An uncertain creation outcome is not blindly
   retried: operators must reconcile the stored SourceRequestID with City records
   before redrive, supplying the confirmed ticket or clearing the pending intent
-  only after confirming no ticket exists. Closure retries reconcile City state.
+  only after confirming no ticket exists. Attachments likewise checkpoint each
+  pending intent (a SHA-256 hash of the media URL, not its bearer token) and each
+  accepted result. On retry, an exact attachment URL match in City updates confirms
+  acceptance; missing or unavailable evidence leaves the attachment pending for
+  reconciliation instead of resending. Operators must confirm acceptance or
+  non-submission before correcting the durable checkpoint and redriving the job.
+  Closure retries reconcile City state.
+  Action-selection overrides atomically check the worker lock and refuse changes
+  while it is claimed or holds durable results. Progress updates compare integration
+  results as well as task state and retry once from a fresh read on conflict.
   Explicit user-confirmed filing and City-help-note actions retain their existing
   confirmation semantics. The clarification UI shows “Updating issue” only while
   saving the answer, then renders the returned issue before refreshing metadata.
