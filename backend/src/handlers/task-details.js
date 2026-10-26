@@ -1,3 +1,4 @@
+import { automatic311Job } from "../analysis/guidance/automatic-311-job.js";
 import {
   GetCommand,
   QueryCommand,
@@ -5,10 +6,7 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "node:crypto";
 import { catalogForPolicyVersion } from "../analysis/guidance/catalog-registry.js";
-import {
-  completeTaskWithAppActions,
-  executeTaskCreatedAppActions,
-} from "../analysis/guidance/guidance-store.js";
+import { completeTaskWithAppActions } from "../analysis/guidance/guidance-store.js";
 import { summarizeAppActionResults } from "../analysis/guidance/app-actions.js";
 import { sharedActionTarget } from "../analysis/duplicates/links.js";
 import { getConfig } from "../config.js";
@@ -250,6 +248,7 @@ export const updateTaskAction = async (event) => {
       new TransactWriteCommand({
         TransactItems: [
           ...shared.duplicateChecks,
+          ...automatic311Job(dynamoTable, siteId, updated, `edited-${now}`),
           {
             Put: {
               TableName: dynamoTable,
@@ -270,12 +269,7 @@ export const updateTaskAction = async (event) => {
       return jsonResponse(409, { error: "Task changed while editing" });
     throw error;
   }
-  const [executed] = await executeTaskCreatedAppActions({
-    tableName: dynamoTable,
-    siteId,
-    taskItems: [updated],
-  });
-  return jsonResponse(200, { task: executed });
+  return jsonResponse(200, { task: updated });
 };
 
 /** POST /v1/tasks/{taskId}/custom-action @param {any} event */

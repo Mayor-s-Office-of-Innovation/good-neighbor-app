@@ -170,10 +170,8 @@ it("persists a complete rule override without replacing the evaluated rule id", 
   });
   expect(body.task.buttons).toEqual(["File 311 ticket"]);
   expect(body.task.canBeInProgress).toBe(true);
-  expect(state.taskCreatedRuns[0].taskItems[0].ruleId).toBe("LITTER-1");
-  expect(state.taskCreatedRuns[0].taskItems[0].actionOverride.ruleId).toBe(
-    "LITTER-2",
-  );
+  expect(state.taskCreatedRuns).toHaveLength(0);
+  expect(body.task.actionOverride.ruleId).toBe("LITTER-2");
 });
 
 it("rejects action switching after an app action has executed", async () => {

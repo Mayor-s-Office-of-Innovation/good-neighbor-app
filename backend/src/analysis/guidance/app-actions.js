@@ -207,6 +207,7 @@ export function mergeAppActionResults(priorResults, result) {
  * the write to that exact lease so a stale executor cannot checkpoint after its
  * lease was reclaimed.
  * @param {object} opts
+ * @param {(result: AppActionResult) => Promise<void>} [opts.onCheckpoint]
  * @param {string} opts.tableName
  * @param {string} opts.siteId
  * @param {string} opts.taskId
@@ -226,7 +227,9 @@ async function checkpoint311ActionResult({
   completionLeaseExpiresAt,
   executionLease,
   updatedAt,
+  onCheckpoint,
 }) {
+  if (onCheckpoint) return onCheckpoint(result);
   if (!tableName || !siteId || !taskId) return;
   const lease =
     executionLease ??
@@ -531,6 +534,7 @@ async function attachImagesToServiceRequest({
  * @param {AppActionResult[]} opts.priorResults
  * @param {"task_created" | "user_confirmed" | undefined} opts.trigger
  * @param {string} [opts.completionLeaseExpiresAt]
+ * @param {(result: AppActionResult) => Promise<void>} [opts.onCheckpoint]
  * @returns {Promise<AppActionResult>}
  */
 async function execute311Action({
@@ -542,6 +546,7 @@ async function execute311Action({
   env,
   priorResults,
   trigger,
+  onCheckpoint,
   completionLeaseExpiresAt = "",
 }) {
   const now = nowDate.toISOString();
@@ -668,7 +673,55 @@ async function execute311Action({
         location,
         now: nowDate,
       });
+      if (onCheckpoint) {
+        const uncertain = priorResults
+          .flatMap(ticketsFromActionResult)
+          .some(
+            (ticket) =>
+              ticket.serviceCode === serviceCode &&
+              !ticket.srNum &&
+              ticket.creationState === "pending",
+          );
+        if (uncertain)
+          throw new Error("sf311_creation_uncertain_requires_reconciliation");
+        await onCheckpoint(
+          build311ActionResult({
+            action,
+            status: "partial",
+            reason: "creation_pending",
+            recordedAt: now,
+            tickets: [
+              ...tickets,
+              {
+                serviceCode,
+                responsibleAgency,
+                sourceRequestId: payload.SourceRequestID,
+                creationState: "pending",
+              },
+            ],
+          }),
+        );
+      }
       const response = await sf311.createServiceRequest(payload);
+      if (onCheckpoint)
+        await onCheckpoint(
+          build311ActionResult({
+            action,
+            status: "partial",
+            reason: "attachments_pending",
+            recordedAt: now,
+            tickets: [
+              ...tickets,
+              {
+                serviceCode,
+                responsibleAgency,
+                sourceRequestId: payload.SourceRequestID,
+                srNum: response.srNum,
+                attachments: [],
+              },
+            ],
+          }),
+        );
       const attachments = await attachImagesToServiceRequest({
         sf311,
         config,
@@ -683,7 +736,7 @@ async function execute311Action({
         srNum: response.srNum,
         attachments,
       });
-      if (trigger === "user_confirmed") {
+      if (trigger === "user_confirmed" || onCheckpoint) {
         await checkpoint311ActionResult({
           tableName,
           siteId,
@@ -697,6 +750,7 @@ async function execute311Action({
           }),
           priorResults,
           completionLeaseExpiresAt: completionLeaseExpiresAt,
+          onCheckpoint,
           updatedAt: now,
         });
       }
@@ -808,6 +862,7 @@ function buildCloseActionResult({
  * @param {string} [opts.completionLeaseExpiresAt]
  * @param {{ status: string, attribute: string, value: string }} [opts.executionLease]
  * @param {boolean} [opts.reconcile311Closures]
+ * @param {(result: AppActionResult) => Promise<void>} [opts.onCheckpoint]
  * @returns {Promise<AppActionResult>}
  */
 async function execute311ClosureAction({
@@ -821,6 +876,7 @@ async function execute311ClosureAction({
   completionLeaseExpiresAt = "",
   executionLease,
   reconcile311Closures = false,
+  onCheckpoint,
 }) {
   const now = nowDate.toISOString();
   const priorClosuresByServiceCode =
@@ -875,6 +931,7 @@ async function execute311ClosureAction({
         taskId,
         completionLeaseExpiresAt,
         executionLease,
+        onCheckpoint,
         result: buildCloseActionResult({
           action,
           status: closures.every((closure) => closure.status === "closed")
@@ -1105,6 +1162,7 @@ function actionsForTrigger(appActions, trigger) {
  * @param {string} [opts.completionLeaseExpiresAt]
  * @param {{ status: string, attribute: string, value: string }} [opts.executionLease]
  * @param {boolean} [opts.reconcile311Closures]
+ * @param {(result: AppActionResult) => Promise<void>} [opts.onCheckpoint]
  * @returns {Promise<AppActionResult[]>}
  */
 export async function executeAppActions(appActions, opts = {}) {
@@ -1138,6 +1196,7 @@ export async function executeAppActions(appActions, opts = {}) {
               env,
               priorResults,
               trigger: opts.trigger,
+              onCheckpoint: opts.onCheckpoint,
               completionLeaseExpiresAt: opts.completionLeaseExpiresAt ?? "",
             }),
           );
@@ -1193,6 +1252,7 @@ export async function executeAppActions(appActions, opts = {}) {
               completionLeaseExpiresAt: opts.completionLeaseExpiresAt ?? "",
               executionLease: opts.executionLease,
               reconcile311Closures: opts.reconcile311Closures,
+              onCheckpoint: opts.onCheckpoint,
             }),
           );
         } catch (error) {

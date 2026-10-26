@@ -454,6 +454,7 @@
   "analysis.missingCondition.noCoordinates.deleted": "This result is missing its original evidence coordinates, so it cannot be deleted. Take a new photo and try again.",
   "analysis.missingCondition.noCoordinates.edited": "This result is missing its original evidence coordinates, so it cannot be edited. Take a new photo and try again.",
   "analysis.progressDialog.title": "Filing ticket...",
+  "analysis.question.updating": "Updating issue",
   "analysis.successDialog.resolved": "marked as resolved.",
   "analysis.successDialog.text": "We've recorded your action. This item is now {resolved}",
   "analysis.successDialog.title": "Great work!",

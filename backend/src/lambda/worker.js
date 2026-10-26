@@ -1,3 +1,4 @@
+import { handler as automatic311 } from "../workers/automatic-311.js";
 import { expireComplianceTerms } from "../workers/expire-compliance-terms.js";
 // Event-source entrypoint for the async worker. The demo /submissions, artifact
 // analysis uses a dedicated SQS queue and Lambda; background jobs use the
@@ -28,6 +29,7 @@ import { logServerError } from "../lib/log-server-error.js";
 function pickHandler(body) {
   try {
     const msg = JSON.parse(body ?? "");
+    if (msg?.type === "automatic_311") return automatic311;
     if (msg?.type === "reconcile_site_revocation") {
       return reconcileSiteRevocation;
     }

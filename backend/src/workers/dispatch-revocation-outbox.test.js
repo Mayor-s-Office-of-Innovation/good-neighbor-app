@@ -57,6 +57,31 @@ describe("revocation outbox dispatch", () => {
     expect(ddbSend).toHaveBeenCalledTimes(1);
   });
 
+  it("dispatches automatic 311 work to the background queue", async () => {
+    ddbSend
+      .mockResolvedValueOnce({ Item: { status: "pending" } })
+      .mockResolvedValueOnce({});
+    await handler(
+      event({
+        pk: "SITE#site-1",
+        sk: "AUTO311_JOB#task-1#created",
+        entityType: "AUTOMATIC_311_OUTBOX",
+        status: "pending",
+        siteId: "site-1",
+        taskId: "task-1",
+      }),
+      /** @type {any} */ ({}),
+      () => {},
+    );
+    expect(JSON.parse(sqsSend.mock.calls[0][0].input.MessageBody)).toEqual({
+      type: "automatic_311",
+      siteId: "site-1",
+      taskId: "task-1",
+      jobPk: "SITE#site-1",
+      jobSk: "AUTO311_JOB#task-1#created",
+    });
+  });
+
   it("dispatches a compliance-letter outbox entry", async () => {
     ddbSend
       .mockResolvedValueOnce({ Item: { status: "pending" } })

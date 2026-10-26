@@ -1,3 +1,4 @@
+import { handler as automatic311 } from "../src/workers/automatic-311.js";
 import { projectStatus, statusRecords } from "../src/domain/system-status.js";
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
 import { expireComplianceTerms } from "../src/workers/expire-compliance-terms.js";
@@ -63,6 +64,7 @@ function summarizeError(err) {
 function pickHandler(body) {
   try {
     const msg = JSON.parse(body ?? "");
+    if (msg?.type === "automatic_311") return automatic311;
     if (msg?.type === "reconcile_site_revocation") {
       return reconcileSiteRevocation;
     }
@@ -169,7 +171,7 @@ async function dispatchPendingOutbox() {
       new ScanCommand({
         TableName: getConfig().dynamoTable,
         FilterExpression:
-          "#status = :pending AND (#entityType = :revocation OR #entityType = :letter)",
+          "#status = :pending AND (#entityType = :revocation OR #entityType = :letter OR #entityType = :auto311)",
         ExpressionAttributeNames: {
           "#status": "status",
           "#entityType": "entityType",
@@ -178,6 +180,7 @@ async function dispatchPendingOutbox() {
           ":pending": "pending",
           ":revocation": "REVOCATION_OUTBOX",
           ":letter": "COMPLIANCE_LETTER_OUTBOX",
+          ":auto311": "AUTOMATIC_311_OUTBOX",
         },
         ExclusiveStartKey: lastEvaluatedKey,
       }),

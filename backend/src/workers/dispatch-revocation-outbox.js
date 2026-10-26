@@ -27,9 +27,11 @@ export const handler = async (event) => {
     await projectStatus(item);
     if (record.eventName !== "INSERT") continue;
     if (
-      !["REVOCATION_OUTBOX", "COMPLIANCE_LETTER_OUTBOX"].includes(
-        item.entityType,
-      ) ||
+      ![
+        "REVOCATION_OUTBOX",
+        "COMPLIANCE_LETTER_OUTBOX",
+        "AUTOMATIC_311_OUTBOX",
+      ].includes(item.entityType) ||
       item.status !== "pending"
     ) {
       continue;
@@ -47,22 +49,30 @@ export const handler = async (event) => {
       new SendMessageCommand({
         QueueUrl: config.queueUrl,
         MessageBody: JSON.stringify(
-          item.entityType === "COMPLIANCE_LETTER_OUTBOX"
+          item.entityType === "AUTOMATIC_311_OUTBOX"
             ? {
-                type: "generate_compliance_letter",
+                type: "automatic_311",
                 siteId: item.siteId,
+                taskId: item.taskId,
                 jobPk: item.pk,
                 jobSk: item.sk,
-                previousLetters: item.previousLetters || [],
               }
-            : {
-                type: "reconcile_site_revocation",
-                operationId: item.operationId,
-                operationPk: item.operationPk,
-                siteId: item.siteId,
-                startedAt: item.startedAt,
-                actor: item.actor,
-              },
+            : item.entityType === "COMPLIANCE_LETTER_OUTBOX"
+              ? {
+                  type: "generate_compliance_letter",
+                  siteId: item.siteId,
+                  jobPk: item.pk,
+                  jobSk: item.sk,
+                  previousLetters: item.previousLetters || [],
+                }
+              : {
+                  type: "reconcile_site_revocation",
+                  operationId: item.operationId,
+                  operationPk: item.operationPk,
+                  siteId: item.siteId,
+                  startedAt: item.startedAt,
+                  actor: item.actor,
+                },
         ),
       }),
     );

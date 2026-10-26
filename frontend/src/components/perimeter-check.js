@@ -776,6 +776,9 @@ class PerimeterCheck extends HTMLElement {
         }),
       );
     }
+    for (const conditionId of this._answeringConditionIds) {
+      setQuestionAnswerBusy(this, conditionId, true);
+    }
     this._startElapsedTicker();
   }
 

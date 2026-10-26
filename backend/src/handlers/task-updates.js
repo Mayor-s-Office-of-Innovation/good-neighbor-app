@@ -9,13 +9,7 @@ import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveActorId, deriveSiteId } from "../lib/principal.js";
 import { headObject, setObjectTags } from "../s3.js";
-import {
-  eligibleTicketsForClosure,
-  executeAppActions,
-  is311SubmissionEnabled,
-  mergeAppActionResults,
-  summarizeAppActionResults,
-} from "../analysis/guidance/app-actions.js";
+import { is311SubmissionEnabled } from "../analysis/guidance/app-actions.js";
 import {
   buildTaskUpdateTransition,
   presencePeriod,
@@ -24,14 +18,12 @@ import {
 } from "../domain/task-updates.js";
 import {
   readCheckHeader,
-  claimTaskResolution,
   readLegacyUpdateById,
   readTask,
   readTaskUpdateMediaRegistration,
   readTimeline,
   readUpdateById,
   readUpdatePointer,
-  releaseTaskResolution,
   writeDocumentedUpdate,
   writeTaskTransition,
   writeTaskUpdateMedia,
@@ -41,7 +33,6 @@ const MAX_PHOTOS = 6;
 const MAX_NOTES = 3;
 const MAX_TEXT = 4000;
 const MAX_OBJECT_BYTES = 10 * 1024 * 1024;
-const RESOLUTION_LEASE_MS = 5 * 60 * 1000;
 const ALLOWED_CONTENT_TYPES = new Set([
   "image/jpeg",
   "image/png",
@@ -222,102 +213,9 @@ export const createTaskUpdate = async (event) => {
       }
     }
   }
-  let resolutionLeaseExpiresAt = "";
-  if (updated.status === "completed" && is311SubmissionEnabled(process.env)) {
-    let priorResults = Array.isArray(task.appActionResults)
-      ? task.appActionResults
-      : [];
-    if (eligibleTicketsForClosure(priorResults).size > 0) {
-      resolutionLeaseExpiresAt = new Date(
-        new Date(now).getTime() + RESOLUTION_LEASE_MS,
-      ).toISOString();
-      let claimed;
-      try {
-        claimed = await claimTaskResolution({
-          tableName: dynamoTable,
-          siteId,
-          task,
-          updateId,
-          now,
-          leaseExpiresAt: resolutionLeaseExpiresAt,
-        });
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          error.name === "ConditionalCheckFailedException"
-        ) {
-          return jsonResponse(409, { error: "Task resolution in progress" });
-        }
-        throw error;
-      }
-      priorResults = Array.isArray(claimed?.appActionResults)
-        ? claimed.appActionResults
-        : priorResults;
-      const closureResults = await executeAppActions(
-        [{ code: "close_311_ticket", payload: {} }],
-        {
-          env: process.env,
-          now: new Date(now),
-          taskId,
-          tableName: dynamoTable,
-          siteId,
-          task: claimed ?? updated,
-          priorResults,
-          trigger: "user_confirmed",
-          executionLease: {
-            status: "resolving",
-            attribute: "resolutionLeaseExpiresAt",
-            value: resolutionLeaseExpiresAt,
-          },
-          // An expired lease can mean HUB accepted a close before the prior
-          // executor persisted its checkpoint. Reconcile remote state before
-          // retrying the non-idempotent update.
-          reconcile311Closures: resolutionLeaseExpired,
-        },
-      );
-      updated.appActionResults = closureResults.reduce(
-        (results, result) => mergeAppActionResults(results, result),
-        priorResults,
-      );
-      updated.appActionStatus = summarizeAppActionResults(
-        updated.appActionResults,
-      );
-      const closureSucceeded = closureResults.every(
-        (result) => result.status === "submitted",
-      );
-      if (!closureSucceeded) {
-        let released;
-        try {
-          released = await releaseTaskResolution({
-            tableName: dynamoTable,
-            siteId,
-            taskId,
-            task: claimed ?? task,
-            leaseExpiresAt: resolutionLeaseExpiresAt,
-            appActionResults: updated.appActionResults,
-            appActionStatus: updated.appActionStatus,
-            now,
-          });
-        } catch (error) {
-          if (
-            error instanceof Error &&
-            error.name === "ConditionalCheckFailedException"
-          ) {
-            return jsonResponse(409, { error: "Task resolution in progress" });
-          }
-          throw error;
-        }
-        return jsonResponse(502, {
-          error: "311 ticket closure incomplete",
-          retryable: true,
-          task: released,
-        });
-      }
-      delete updated.resolutionUpdateId;
-      delete updated.resolutionStartedAt;
-      delete updated.resolutionLeaseExpiresAt;
-    }
-  }
+  delete updated.resolutionUpdateId;
+  delete updated.resolutionStartedAt;
+  delete updated.resolutionLeaseExpiresAt;
   try {
     await writeTaskTransition({
       tableName: dynamoTable,
@@ -326,15 +224,8 @@ export const createTaskUpdate = async (event) => {
       occurredAt: now,
       update,
       task: updated,
-      expectedStatus: resolutionLeaseExpiresAt ? "resolving" : "in_progress",
-      ...(resolutionLeaseExpiresAt
-        ? {
-            expectedLease: {
-              attribute: "resolutionLeaseExpiresAt",
-              value: resolutionLeaseExpiresAt,
-            },
-          }
-        : { expectedUpdatedAt: task.updatedAt }),
+      expectedStatus: resolutionLeaseExpired ? "resolving" : "in_progress",
+      expectedUpdatedAt: task.updatedAt,
     });
   } catch (error) {
     if (

@@ -35,6 +35,12 @@ const todayTitle = (iso) =>
   escapeHtml(t("analysis.checkTitle.today", { time: formatTime(iso) }));
 
 const session = vi.hoisted(() => ({ current: null }));
+const subscribeSession = vi.hoisted(() =>
+  vi.fn((listener) => {
+    void listener;
+    return () => {};
+  }),
+);
 const devicePosition = vi.hoisted(() => ({ current: null, listener: null }));
 vi.mock("../services/device-location.js", () => ({
   getSiteCheckDeviceLocation: async () => devicePosition.current,
@@ -80,7 +86,7 @@ vi.mock("../state/check-session.js", () => ({
   getCurrentCheck: () => session.current,
   hasDraft: async () => Boolean(session.current),
   loadSubmitted: async () => null,
-  onCheckSessionChange: () => () => {},
+  onCheckSessionChange: subscribeSession,
   discardInMemorySession: logout.discardInMemorySession,
 }));
 vi.mock("../router.js", () => ({
@@ -1351,4 +1357,26 @@ describe("restored duplicate links", () => {
       view.disconnectedCallback();
     },
   );
+});
+
+it("paints a saved clarification before the background worklist refresh completes", async () => {
+  const view = await mount("?filter=todo");
+  const updated = { id: "check-one", status: "capture-complete", items: [] };
+  view._homeModel = { tasks: [], pendingSession: { id: "check-one" } };
+  view._answeringConditionIds.add("condition-one");
+  view._renderHome.mockClear();
+  view.connectedCallback = vi.fn(() => new Promise(() => {}));
+  const listener = subscribeSession.mock.calls.at(-1)[0];
+  listener(updated);
+  expect(view._renderHome).toHaveBeenCalledWith({
+    tasks: [],
+    pendingSession: updated,
+  });
+  expect(view.connectedCallback).toHaveBeenCalledOnce();
+  expect(view._renderHome.mock.invocationCallOrder[0]).toBeLessThan(
+    view.connectedCallback.mock.invocationCallOrder[0],
+  );
+  view._renderHome.mockClear();
+  listener({ ...updated, id: "different-check" });
+  expect(view._renderHome).not.toHaveBeenCalled();
 });

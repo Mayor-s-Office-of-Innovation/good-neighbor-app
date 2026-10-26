@@ -1230,3 +1230,14 @@ html.wa-dark .analysis-card__clear-copy a {
   width: max-content;
   margin-block-start: var(--wa-space-l, 24px);
 }
+
+.analysis-card__question-actions button[hidden] {
+  display: none;
+}
+
+.analysis-card__answer-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+}

@@ -1,3 +1,4 @@
+import { automatic311Job } from "../analysis/guidance/automatic-311-job.js";
 import {
   GetCommand,
   QueryCommand,
@@ -248,6 +249,15 @@ export async function writeTaskTransition(input) {
   await ddb.send(
     new TransactWriteCommand({
       TransactItems: [
+        ...(input.task.status === "completed" &&
+        input.task.completionMethod !== "311_filed"
+          ? automatic311Job(
+              input.tableName,
+              input.siteId,
+              input.task,
+              `resolved-${input.update.updateId}`,
+            )
+          : []),
         {
           Put: {
             TableName: input.tableName,
