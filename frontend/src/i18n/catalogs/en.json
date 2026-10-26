@@ -406,7 +406,7 @@
   "admin.users.invalidRole": "Choose Manager or Supervisor.",
   "admin.users.invite": "Invite administrator",
   "admin.users.nameRequired": "Enter both a first and last name.",
-  "admin.users.profileConflict": "An existing staff profile has different contact details. Check that profile before inviting this person.",
+  "admin.users.profileConflict": "This email is already associated with a City program manager, but the name, phone number, or department you entered does not match their existing details. Check those details and try again.",
   "admin.users.role": "Role",
   "admin.users.roleHelp": "Learn about user roles",
   "admin.users.send": "Send invitation",

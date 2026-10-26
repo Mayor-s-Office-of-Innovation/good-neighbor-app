@@ -406,7 +406,7 @@
   "admin.users.invalidRole": "Chọn Người quản lý hoặc Người giám sát.",
   "admin.users.invite": "Mời quản trị viên",
   "admin.users.nameRequired": "Nhập cả tên và họ.",
-  "admin.users.profileConflict": "Hồ sơ nhân viên hiện có chứa thông tin liên hệ khác. Kiểm tra hồ sơ đó trước khi mời người này.",
+  "admin.users.profileConflict": "Email này đã được liên kết với một người quản lý chương trình của Thành phố, nhưng tên, số điện thoại hoặc phòng ban bạn nhập không khớp với thông tin hiện có của họ. Hãy kiểm tra thông tin đó và thử lại.",
   "admin.users.role": "Vai trò",
   "admin.users.roleHelp": "Tìm hiểu về vai trò người dùng",
   "admin.users.send": "Gửi lời mời",

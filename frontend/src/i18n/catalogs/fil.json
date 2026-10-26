@@ -406,7 +406,7 @@
   "admin.users.invalidRole": "Pumili ng Manager o Supervisor.",
   "admin.users.invite": "Mag-imbita ng administrator",
   "admin.users.nameRequired": "Ilagay ang pangalan at apelyido.",
-  "admin.users.profileConflict": "May ibang impormasyon sa pakikipag-ugnayan ang isang kasalukuyang profile ng kawani. Suriin ang profile bago imbitahan ang taong ito.",
+  "admin.users.profileConflict": "Naka-ugnay na ang email na ito sa isang City program manager, pero hindi tugma ang inilagay mong pangalan, numero ng telepono, o departamento sa kasalukuyang impormasyon niya. Suriin ang impormasyong iyon at subukan muli.",
   "admin.users.role": "Tungkulin",
   "admin.users.roleHelp": "Alamin ang mga tungkulin ng user",
   "admin.users.send": "Ipadala ang imbitasyon",

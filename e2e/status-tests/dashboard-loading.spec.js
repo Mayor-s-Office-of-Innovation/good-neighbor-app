@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { t } from "../helpers/i18n.js";
 
 const site = {
   sk: "#META",
@@ -240,3 +241,62 @@ test("a failed page read can be retried without replaying a mutation", async ({
   await expect(page.locator("main > .error")).toHaveCount(0);
   expect(reads).toBe(2);
 });
+
+test("site details opens at the top on fresh and cached navigation", async ({
+  page,
+}) => {
+  await setup(page);
+  await page.setViewportSize({ width: 1100, height: 600 });
+  await page.goto("/sites/s");
+  const heading = page.locator(".site-record h1");
+  await expect(heading).toBeFocused();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+
+  // Simulate returning to a recently read section from a scrolled record.
+  // Dispatch navigation without a click that would itself scroll a tab into view.
+  await page.evaluate(() => {
+    window.scrollTo(0, document.documentElement.scrollHeight);
+  });
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  await page.evaluate(() => {
+    history.pushState({}, "", "/sites/s?section=details");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  await expect(heading).toBeFocused();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+});
+
+for (const [code, key] of [
+  ["compliance_profile_conflict", "admin.users.profileConflict"],
+  ["admin_user_exists", "admin.users.exists"],
+]) {
+  test(`administrator invitation explains ${code} and preserves the draft`, async ({
+    page,
+  }) => {
+    await setup(page);
+    await page.route("**/admin/v1/admin-users", async (route) => {
+      await route.fulfill({ status: 409, json: { error: code } });
+    });
+    await page.goto("/administrators/new");
+    const form = page.locator("#admin-user-form");
+    for (const [name, value] of Object.entries({
+      firstName: "Test",
+      lastName: "Manager",
+      email: "test@example.com",
+      phone: "4155550116",
+    })) {
+      await form.locator(`wa-input[name="${name}"] input`).fill(value);
+    }
+    await form.locator('button[type="submit"]').click();
+    await expect(form.locator("[data-form-save-error]")).toHaveText(t(key));
+    await expect(form.locator('wa-input[name="email"] input')).toHaveValue(
+      "test@example.com",
+    );
+    await expect(form.locator('wa-input[name="firstName"] input')).toHaveValue(
+      "Test",
+    );
+    await expect(form.locator('button[type="submit"]')).toBeEnabled();
+    await expect(page).toHaveURL(/administrators\/new$/);
+    await expect(page.locator("body")).not.toContainText(code);
+  });
+}

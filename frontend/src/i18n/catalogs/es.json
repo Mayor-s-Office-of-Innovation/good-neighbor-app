@@ -406,7 +406,7 @@
   "admin.users.invalidRole": "Elija Gerente o Supervisor.",
   "admin.users.invite": "Invitar administrador",
   "admin.users.nameRequired": "Introduzca el nombre y el apellido.",
-  "admin.users.profileConflict": "Un perfil de personal existente tiene datos de contacto diferentes. Revise ese perfil antes de invitar a esta persona.",
+  "admin.users.profileConflict": "Este correo ya está asociado con un administrador de programas de la Ciudad, pero el nombre, teléfono o departamento que ingresó no coincide con sus datos existentes. Revise esos datos e inténtelo de nuevo.",
   "admin.users.role": "Rol",
   "admin.users.roleHelp": "Conocer los roles de usuario",
   "admin.users.send": "Enviar invitación",

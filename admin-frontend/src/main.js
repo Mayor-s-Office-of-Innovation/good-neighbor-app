@@ -2007,6 +2007,15 @@ class AdminApp extends HTMLElement {
       Date.now() - (this.siteSectionLoads.get(section) || 0) < 30000
     ) {
       this.render();
+      queueMicrotask(() => {
+        const heading = this.querySelector("h1");
+        heading?.focus({ preventScroll: true });
+        heading?.ownerDocument.defaultView?.scrollTo({
+          top: 0,
+          left: 0,
+          behavior: "instant",
+        });
+      });
       return;
     }
     if (!sameSite) {
@@ -2158,7 +2167,18 @@ class AdminApp extends HTMLElement {
     this.state.perimeterError = "";
     this.siteSectionLoads.set(section, Date.now());
     if (renderNow) this.render();
-    queueMicrotask(() => this.querySelector("h1")?.focus());
+    if (renderNow)
+      queueMicrotask(() => {
+        const heading = this.querySelector("h1");
+        heading?.focus({ preventScroll: true });
+        // Navigation starts at the page top, independently of the heading's position.
+        if (!refresh)
+          heading?.ownerDocument.defaultView?.scrollTo({
+            top: 0,
+            left: 0,
+            behavior: "instant",
+          });
+      });
   }
 
   async createSiteTerms(form) {
@@ -5552,7 +5572,7 @@ function administratorView(users, state) {
 function newAdministratorView(state) {
   const departments = uniqueNamedOptions(state.oversightOptions.departments);
   return `<section class="creation-page" aria-labelledby="new-admin-user-title">
-    <a class="site-back-link" href="/administrators" data-route><wa-icon name="chevron-left" aria-hidden="true"></wa-icon> ${escapeHtml(t("common.back"))}</a>
+    <a class="site-back-link btn-icon" href="/administrators" data-route aria-label="${escapeHtml(t("common.back"))}"><wa-icon name="chevron-left" aria-hidden="true"></wa-icon></a>
     <h1 id="new-admin-user-title" tabindex="-1">${escapeHtml(t("admin.users.add"))}</h1>
     <p class="muted">${escapeHtml(t("admin.users.help"))}</p>
     <form id="admin-user-form" class="site-details-form" data-dirty-form>
@@ -5573,8 +5593,10 @@ function newAdministratorView(state) {
             <button class="btn-icon" id="show-admin-role-help" type="button" aria-label="${escapeHtml(t("admin.users.roleHelp"))}"><wa-icon name="circle-info" aria-hidden="true"></wa-icon></button>
           </div>
         </div>
-        <button class="btn-primary admin-invite-submit" type="submit">${escapeHtml(t("admin.users.send"))}</button>
-        <button class="btn-secondary" type="button" data-save-cancel data-navigate="/administrators">${escapeHtml(t("common.cancel"))}</button>
+        <div class="admin-invite-actions">
+          <button class="btn-primary" type="submit">${escapeHtml(t("admin.users.send"))}</button>
+          <button class="btn-secondary" type="button" data-save-cancel data-navigate="/administrators">${escapeHtml(t("common.cancel"))}</button>
+        </div>
       </fieldset>
     </form>
     ${adminRoleHelpDialog()}

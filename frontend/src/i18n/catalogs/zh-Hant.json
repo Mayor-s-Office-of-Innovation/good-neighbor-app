@@ -406,7 +406,7 @@
   "admin.users.invalidRole": "請選擇管理員或主管。",
   "admin.users.invite": "邀請管理員",
   "admin.users.nameRequired": "請輸入名字和姓氏。",
-  "admin.users.profileConflict": "現有員工個人資料的聯絡資料不同。邀請此人前，請先檢查該個人資料。",
+  "admin.users.profileConflict": "此電子郵件已與一位市府計畫經理關聯，但您輸入的姓名、電話號碼或部門與其現有資料不符。請檢查這些資料後再試一次。",
   "admin.users.role": "角色",
   "admin.users.roleHelp": "瞭解使用者角色",
   "admin.users.send": "傳送邀請",
