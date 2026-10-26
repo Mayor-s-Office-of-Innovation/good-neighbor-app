@@ -519,7 +519,7 @@ describe("task update handlers", () => {
       expect(
         writes.some(
           (/** @type {any} */ row) =>
-            row.Put?.Item.entityType === "AUTOMATIC_311_OUTBOX",
+            row.Put?.Item.entityType === "SF311_OUTBOX",
         ),
       ).toBe(true);
       const taskWrite = writes.find(

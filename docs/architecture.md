@@ -247,14 +247,22 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   actions, and update photos append to the timeline. Update-photo registration
   reuses the private artifact/S3 read path but does not enqueue analyzer work.
 - **Automatic 311 work:** task creation (including clarification answers and action
-  overrides) and resolution atomically write an `AUTOMATIC_311_OUTBOX` item with
+  overrides) and resolution atomically write an `SF311_OUTBOX` item with
   the task change. DynamoDB Streams dispatches it to the background worker queue;
   the local harness polls the same outbox. Classification, ticket creation,
   attachment uploads, and automatic closure never gate these HTTP responses.
-  `AUTO311_LOCK#<taskId>` stores a separate expiring worker lease and durable
+  `SF311_LOCK#<taskId>` stores a separate expiring worker lease and durable
   integration results, so foreground task replacements cannot erase checkpoints.
   Workers merge integration fields into the latest task without replacing user
-  status or notes. Failed work retries through SQS and its existing DLQ.
+  status or notes. Transient failures retry through SQS and its existing DLQ,
+  using 30-second exponential backoff capped at 15 minutes. Lease contention
+  waits at least until the active six-minute lease expires. This per-message
+  delay leaves the queue's default processing visibility timeout unchanged.
+  Definitive `missing_location` and `insufficient_classifier_information` failures
+  are saved with job status `failed` and acknowledged rather than retried. A separately queued new
+  job can try again after its input is corrected; existing action-selection guards
+  still apply when durable worker results exist. Uncertain City outcomes are never classified as
+  permanent validation failures.
   Ticket creation checkpoints an intent before the City request and the returned
   SR number before attachments. An uncertain creation outcome is not blindly
   retried: operators must reconcile the stored SourceRequestID with City records

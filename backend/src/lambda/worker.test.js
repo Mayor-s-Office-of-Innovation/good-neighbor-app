@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Mock the underlying workers so we assert only which one the dispatcher routes
 // a message to, by its shape — not what the worker itself does.
 const {
-  automatic311,
+  sf311Job,
   processSubmission,
   analyzeArtifact,
   reconcileSiteRevocation,
@@ -17,7 +17,7 @@ const {
   generateComplianceLetter,
   translateArtifact,
 } = vi.hoisted(() => ({
-  automatic311: vi.fn(async () => {}),
+  sf311Job: vi.fn(async () => {}),
   processSubmission: vi.fn(async () => {}),
   analyzeArtifact: vi.fn(async () => {}),
   reconcileSiteRevocation: vi.fn(async () => {}),
@@ -42,7 +42,7 @@ vi.mock("../workers/translate-artifact.js", () => ({
   handler: translateArtifact,
 }));
 
-vi.mock("../workers/automatic-311.js", () => ({ handler: automatic311 }));
+vi.mock("../workers/sf311-job.js", () => ({ handler: sf311Job }));
 
 const { handler } = await import("./worker.js");
 
@@ -69,15 +69,15 @@ describe("worker dispatch (pickHandler)", () => {
   it("routes automatic 311 messages to the background worker", async () => {
     await handler(
       event({
-        type: "automatic_311",
+        type: "sf311_job",
         siteId: "s",
         taskId: "t",
         jobPk: "SITE#s",
-        jobSk: "AUTO311_JOB#t#created",
+        jobSk: "SF311_JOB#t#created",
       }),
       /** @type {any} */ ({}),
     );
-    expect(automatic311).toHaveBeenCalledOnce();
+    expect(sf311Job).toHaveBeenCalledOnce();
     expect(processSubmission).not.toHaveBeenCalled();
   });
 

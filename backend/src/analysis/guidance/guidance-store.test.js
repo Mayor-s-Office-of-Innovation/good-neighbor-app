@@ -285,7 +285,7 @@ describe("storeEvaluatedAssessment", () => {
     expect(
       tx.some(
         /** @param {any} entry */ (entry) =>
-          entry.Put?.Item?.entityType === "AUTOMATIC_311_OUTBOX",
+          entry.Put?.Item?.entityType === "SF311_OUTBOX",
       ),
     ).toBe(true);
     expect(errorLog).not.toHaveBeenCalled();
@@ -921,7 +921,7 @@ describe("completeTaskWithAppActions", () => {
       expect(
         tx.some(
           /** @param {any} entry */ (entry) =>
-            entry.Put?.Item?.entityType === "AUTOMATIC_311_OUTBOX",
+            entry.Put?.Item?.entityType === "SF311_OUTBOX",
         ),
       ).toBe(true);
     } finally {
@@ -1007,7 +1007,7 @@ describe("completeTaskWithAppActions", () => {
       expect(
         tx.some(
           /** @param {any} entry */ (entry) =>
-            entry.Put?.Item?.entityType === "AUTOMATIC_311_OUTBOX",
+            entry.Put?.Item?.entityType === "SF311_OUTBOX",
         ),
       ).toBe(true);
     } finally {

@@ -491,6 +491,13 @@ data "aws_iam_policy_document" "worker" {
   }
 
   statement {
+    sid       = "BackoffSf311Jobs"
+    effect    = "Allow"
+    actions   = ["sqs:ChangeMessageVisibility"]
+    resources = [aws_sqs_queue.submissions.arn]
+  }
+
+  statement {
     sid       = "EnqueueRevocationReconciliation"
     effect    = "Allow"
     actions   = ["sqs:SendMessage"]

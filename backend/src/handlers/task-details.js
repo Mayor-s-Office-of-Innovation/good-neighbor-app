@@ -1,4 +1,4 @@
-import { automatic311Job } from "../analysis/guidance/automatic-311-job.js";
+import { sf311Job } from "../analysis/guidance/sf311-job.js";
 import {
   GetCommand,
   QueryCommand,
@@ -248,15 +248,15 @@ export const updateTaskAction = async (event) => {
       new TransactWriteCommand({
         TransactItems: [
           ...shared.duplicateChecks,
-          ...automatic311Job(dynamoTable, siteId, updated, `edited-${now}`),
+          ...sf311Job(dynamoTable, siteId, updated, `edited-${now}`),
           {
             ConditionCheck: {
               TableName: dynamoTable,
-              Key: { pk: `SITE#${siteId}`, sk: `AUTO311_LOCK#${task.taskId}` },
+              Key: { pk: `SITE#${siteId}`, sk: `SF311_LOCK#${task.taskId}` },
               // The worker claims this item before reading the action selection.
               // Durable results also block edits after an uncertain external call.
               ConditionExpression:
-                "attribute_not_exists(auto311Lease) AND attribute_not_exists(results)",
+                "attribute_not_exists(sf311Lease) AND attribute_not_exists(results)",
             },
           },
           {

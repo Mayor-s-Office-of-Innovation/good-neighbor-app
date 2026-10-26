@@ -64,8 +64,8 @@ describe("revocation outbox dispatch", () => {
     await handler(
       event({
         pk: "SITE#site-1",
-        sk: "AUTO311_JOB#task-1#created",
-        entityType: "AUTOMATIC_311_OUTBOX",
+        sk: "SF311_JOB#task-1#created",
+        entityType: "SF311_OUTBOX",
         status: "pending",
         siteId: "site-1",
         taskId: "task-1",
@@ -74,11 +74,11 @@ describe("revocation outbox dispatch", () => {
       () => {},
     );
     expect(JSON.parse(sqsSend.mock.calls[0][0].input.MessageBody)).toEqual({
-      type: "automatic_311",
+      type: "sf311_job",
       siteId: "site-1",
       taskId: "task-1",
       jobPk: "SITE#site-1",
-      jobSk: "AUTO311_JOB#task-1#created",
+      jobSk: "SF311_JOB#task-1#created",
     });
   });
 

@@ -32,9 +32,9 @@ vi.mock("../db.js", () => ({
       if (state.transactionError) throw state.transactionError;
       for (const entry of input.TransactItems ?? []) {
         const guard = entry.ConditionCheck;
-        if (guard?.Key.sk.startsWith("AUTO311_LOCK#")) {
+        if (guard?.Key.sk.startsWith("SF311_LOCK#")) {
           const lock = state.items.get(`${guard.Key.pk}|${guard.Key.sk}`);
-          if (lock?.auto311Lease || lock?.results)
+          if (lock?.sf311Lease || lock?.results)
             throw Object.assign(new Error("worker won"), {
               name: "TransactionCanceledException",
               CancellationReasons: [{ Code: "ConditionalCheckFailed" }],
@@ -269,10 +269,10 @@ it.each(["lease", "checkpoint", "finalized"])(
   async (phase) => {
     state.beforeTransaction = (entries) => {
       const guard = entries.find(
-        (e) => e.ConditionCheck?.Key.sk === "AUTO311_LOCK#root",
+        (e) => e.ConditionCheck?.Key.sk === "SF311_LOCK#root",
       ).ConditionCheck;
       expect(guard.ConditionExpression).toBe(
-        "attribute_not_exists(auto311Lease) AND attribute_not_exists(results)",
+        "attribute_not_exists(sf311Lease) AND attribute_not_exists(results)",
       );
       const taskWrite = entries.find((e) => e.Put?.Item.sk === "TASK#root").Put;
       expect(taskWrite.ConditionExpression).toContain(
@@ -280,9 +280,9 @@ it.each(["lease", "checkpoint", "finalized"])(
       );
       put({
         pk: "SITE#site",
-        sk: "AUTO311_LOCK#root",
+        sk: "SF311_LOCK#root",
         ...(phase === "lease"
-          ? { auto311Lease: "worker" }
+          ? { sf311Lease: "worker" }
           : { results: [{ code: "create_311_ticket" }] }),
       });
       if (phase === "finalized")

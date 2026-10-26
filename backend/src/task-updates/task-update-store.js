@@ -1,4 +1,4 @@
-import { automatic311Job } from "../analysis/guidance/automatic-311-job.js";
+import { sf311Job } from "../analysis/guidance/sf311-job.js";
 import {
   GetCommand,
   QueryCommand,
@@ -251,7 +251,7 @@ export async function writeTaskTransition(input) {
       TransactItems: [
         ...(input.task.status === "completed" &&
         input.task.completionMethod !== "311_filed"
-          ? automatic311Job(
+          ? sf311Job(
               input.tableName,
               input.siteId,
               input.task,

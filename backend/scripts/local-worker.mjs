@@ -1,4 +1,4 @@
-import { handler as automatic311 } from "../src/workers/automatic-311.js";
+import { handler as sf311Job } from "../src/workers/sf311-job.js";
 import { projectStatus, statusRecords } from "../src/domain/system-status.js";
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
 import { expireComplianceTerms } from "../src/workers/expire-compliance-terms.js";
@@ -64,7 +64,7 @@ function summarizeError(err) {
 function pickHandler(body) {
   try {
     const msg = JSON.parse(body ?? "");
-    if (msg?.type === "automatic_311") return automatic311;
+    if (msg?.type === "sf311_job") return sf311Job;
     if (msg?.type === "reconcile_site_revocation") {
       return reconcileSiteRevocation;
     }
@@ -101,7 +101,9 @@ function toSqsEvent(msg) {
         messageId: msg.MessageId,
         receiptHandle: msg.ReceiptHandle,
         body: msg.Body ?? "",
-        attributes: {},
+        attributes: /** @type {import("aws-lambda").SQSRecordAttributes} */ (
+          msg.Attributes || {}
+        ),
         messageAttributes: {},
         md5OfBody: msg.MD5OfBody,
         eventSource: "aws:sqs",
@@ -171,7 +173,7 @@ async function dispatchPendingOutbox() {
       new ScanCommand({
         TableName: getConfig().dynamoTable,
         FilterExpression:
-          "#status = :pending AND (#entityType = :revocation OR #entityType = :letter OR #entityType = :auto311)",
+          "#status = :pending AND (#entityType = :revocation OR #entityType = :letter OR #entityType = :sf311)",
         ExpressionAttributeNames: {
           "#status": "status",
           "#entityType": "entityType",
@@ -180,7 +182,7 @@ async function dispatchPendingOutbox() {
           ":pending": "pending",
           ":revocation": "REVOCATION_OUTBOX",
           ":letter": "COMPLIANCE_LETTER_OUTBOX",
-          ":auto311": "AUTOMATIC_311_OUTBOX",
+          ":sf311": "SF311_OUTBOX",
         },
         ExclusiveStartKey: lastEvaluatedKey,
       }),
@@ -226,6 +228,7 @@ async function poll(queueUrl) {
         new ReceiveMessageCommand({
           QueueUrl: queueUrl,
           MaxNumberOfMessages: 10,
+          MessageSystemAttributeNames: ["ApproximateReceiveCount"],
           WaitTimeSeconds: 20, // long-poll (SQS max)
         }),
       );

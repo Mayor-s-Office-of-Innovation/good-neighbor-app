@@ -30,7 +30,7 @@ export const handler = async (event) => {
       ![
         "REVOCATION_OUTBOX",
         "COMPLIANCE_LETTER_OUTBOX",
-        "AUTOMATIC_311_OUTBOX",
+        "SF311_OUTBOX",
       ].includes(item.entityType) ||
       item.status !== "pending"
     ) {
@@ -49,9 +49,9 @@ export const handler = async (event) => {
       new SendMessageCommand({
         QueueUrl: config.queueUrl,
         MessageBody: JSON.stringify(
-          item.entityType === "AUTOMATIC_311_OUTBOX"
+          item.entityType === "SF311_OUTBOX"
             ? {
-                type: "automatic_311",
+                type: "sf311_job",
                 siteId: item.siteId,
                 taskId: item.taskId,
                 jobPk: item.pk,

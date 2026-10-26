@@ -1,4 +1,4 @@
-import { automatic311Job } from "./automatic-311-job.js";
+import { sf311Job } from "./sf311-job.js";
 import {
   BatchGetCommand,
   GetCommand,
@@ -922,7 +922,7 @@ export async function storeEvaluatedAssessment(input, options) {
   }
   for (const task of newTaskItems) {
     transactItems.push(
-      ...automatic311Job(
+      ...sf311Job(
         options.tableName,
         input.siteId,
         task,
@@ -1261,7 +1261,7 @@ export async function answerCondition(opts) {
 
     if (taskItem)
       tx.push(
-        ...automatic311Job(
+        ...sf311Job(
           opts.tableName,
           opts.siteId,
           taskItem,
@@ -1567,7 +1567,7 @@ export async function completeTaskWithAppActions(opts) {
         ...(updated.status === "completed" &&
         updated.completionMethod !== "311_filed" &&
         actionUpdateId
-          ? automatic311Job(
+          ? sf311Job(
               opts.tableName,
               opts.siteId,
               updated,

@@ -11,13 +11,7 @@ import {
  * @param {Record<string, string | undefined>} [env]
  * @returns {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>}
  */
-export function automatic311Job(
-  tableName,
-  siteId,
-  task,
-  phase,
-  env = process.env,
-) {
+export function sf311Job(tableName, siteId, task, phase, env = process.env) {
   if (!is311SubmissionEnabled(env)) return [];
   const automatic = /** @type {import("./app-actions.js").AppAction[]} */ (
     task.appActions || []
@@ -40,8 +34,8 @@ export function automatic311Job(
         TableName: tableName,
         Item: {
           pk: `SITE#${siteId}`,
-          sk: `AUTO311_JOB#${task.taskId}#${phase}`,
-          entityType: "AUTOMATIC_311_OUTBOX",
+          sk: `SF311_JOB#${task.taskId}#${phase}`,
+          entityType: "SF311_OUTBOX",
           status: "pending",
           siteId,
           taskId: task.taskId,

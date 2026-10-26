@@ -1,3 +1,4 @@
+import { ChangeMessageVisibilityCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { randomUUID } from "node:crypto";
 import {
   GetCommand,
@@ -14,6 +15,22 @@ import {
   mergeAppActionResults,
   summarizeAppActionResults,
 } from "../analysis/guidance/app-actions.js";
+
+const sqs = new SQSClient({});
+const permanentReasons = new Set([
+  "missing_location",
+  "insufficient_classifier_information",
+]);
+
+/** @param {string | undefined} receiveCount
+ * @param {number} [leaseWaitSeconds]
+ */
+export function retryDelaySeconds(receiveCount, leaseWaitSeconds = 0) {
+  const count = Number(receiveCount);
+  const attempt = Number.isSafeInteger(count) && count > 0 ? count : 1;
+  const backoff = Math.min(900, 30 * 2 ** Math.min(attempt - 1, 5));
+  return Math.min(900, Math.max(backoff, leaseWaitSeconds));
+}
 
 /** Keep durable ticket/closure checkpoints even when a later operation fails.
  * @param {import("../analysis/guidance/app-actions.js").AppActionResult[]} prior
@@ -43,7 +60,28 @@ export function mergeBackgroundResult(prior, result) {
 
 /** @type {import("aws-lambda").SQSHandler} */
 export const handler = async (event) => {
-  for (const record of event.Records) await runJob(JSON.parse(record.body));
+  for (const record of event.Records) {
+    try {
+      await runJob(JSON.parse(record.body));
+    } catch (error) {
+      // The dispatcher invokes us with one record and reports this rejection as
+      // a partial batch failure. Never acknowledge a failed visibility update.
+      const { queueUrl } = getConfig();
+      const leaseWait = /** @type {{retryAfterSeconds?: number}} */ (error)
+        ?.retryAfterSeconds;
+      await sqs.send(
+        new ChangeMessageVisibilityCommand({
+          QueueUrl: queueUrl,
+          ReceiptHandle: record.receiptHandle,
+          VisibilityTimeout: retryDelaySeconds(
+            record.attributes.ApproximateReceiveCount,
+            leaseWait,
+          ),
+        }),
+      );
+      throw error;
+    }
+  }
 };
 
 /** @param {{siteId: string, taskId: string, jobPk: string, jobSk: string}} message */
@@ -52,9 +90,9 @@ export async function runJob(message) {
   const jobKey = { pk: message.jobPk, sk: message.jobSk };
   if (
     jobKey.pk !== `SITE#${message.siteId}` ||
-    !jobKey.sk.startsWith(`AUTO311_JOB#${message.taskId}#`)
+    !jobKey.sk.startsWith(`SF311_JOB#${message.taskId}#`)
   )
-    throw new Error("Invalid automatic 311 job");
+    throw new Error("Invalid SF311 job");
   /** @param {{pk: string, sk: string}} Key */
   const read = async (Key) =>
     (
@@ -63,32 +101,42 @@ export async function runJob(message) {
       )
     ).Item;
   const job = await read(jobKey);
-  if (!job || job.status === "complete") return;
+  if (!job || ["complete", "failed"].includes(job.status)) return;
   if (!is311SubmissionEnabled())
-    throw new Error("Automatic 311 processing is disabled");
+    throw new Error("SF311 processing is disabled");
   const key = taskKey(message.siteId, message.taskId);
-  const lockKey = { pk: jobKey.pk, sk: `AUTO311_LOCK#${message.taskId}` };
+  const lockKey = { pk: jobKey.pk, sk: `SF311_LOCK#${message.taskId}` };
   const token = randomUUID();
   const now = new Date();
   // Longer than the worker's 300-second maximum runtime. Independent of task
   // status so a user's completion can still proceed while City requests run.
   const expires = new Date(now.getTime() + 360_000).toISOString();
-  const claimed = await ddb.send(
-    new UpdateCommand({
-      TableName: tableName,
-      Key: lockKey,
-      UpdateExpression:
-        "SET auto311Lease = :token, auto311LeaseExpiresAt = :expires",
-      ConditionExpression:
-        "attribute_not_exists(auto311Lease) OR auto311LeaseExpiresAt < :now",
-      ExpressionAttributeValues: {
-        ":token": token,
-        ":expires": expires,
-        ":now": now.toISOString(),
-      },
-      ReturnValues: "ALL_NEW",
-    }),
-  );
+  const claimed = await ddb
+    .send(
+      new UpdateCommand({
+        TableName: tableName,
+        Key: lockKey,
+        UpdateExpression:
+          "SET sf311Lease = :token, sf311LeaseExpiresAt = :expires",
+        ConditionExpression:
+          "attribute_not_exists(sf311Lease) OR sf311LeaseExpiresAt < :now",
+        ExpressionAttributeValues: {
+          ":token": token,
+          ":expires": expires,
+          ":now": now.toISOString(),
+        },
+        ReturnValues: "ALL_NEW",
+      }),
+    )
+    .catch(async (error) => {
+      if (error?.name === "ConditionalCheckFailedException") {
+        const lock = await read(lockKey);
+        const remaining = Date.parse(lock?.sf311LeaseExpiresAt) - Date.now();
+        if (Number.isFinite(remaining) && remaining > 0)
+          error.retryAfterSeconds = Math.ceil(remaining / 1000) + 1;
+      }
+      throw error;
+    });
   let results =
     /** @type {import("../analysis/guidance/app-actions.js").AppActionResult[]} */ ([]);
   /** @param {import("../analysis/guidance/app-actions.js").AppActionResult} result */
@@ -102,7 +150,7 @@ export async function runJob(message) {
               TableName: tableName,
               Key: lockKey,
               UpdateExpression: "SET results = :results",
-              ConditionExpression: "auto311Lease = :token",
+              ConditionExpression: "sf311Lease = :token",
               ExpressionAttributeValues: { ":token": token, ":results": next },
             },
           },
@@ -122,7 +170,7 @@ export async function runJob(message) {
   try {
     let task = await read(key);
     if (!task || task.status === "completing" || task.status === "resolving")
-      throw new Error("Automatic 311 task unavailable");
+      throw new Error("SF311 task unavailable");
     for (const result of [
       ...(task.appActionResults || []),
       ...(job.results || []),
@@ -148,7 +196,7 @@ export async function runJob(message) {
     // A user may have finished the work while the City filing was underway.
     task = await read(key);
     if (!task || task.status === "completing")
-      throw new Error("Automatic 311 task changed; retry after completion");
+      throw new Error("SF311 task changed; retry after completion");
     if (
       task.status === "completed" &&
       task.completionMethod !== "311_filed" &&
@@ -172,13 +220,23 @@ export async function runJob(message) {
     // a task whose status/notes were concurrently changed by its user.
     task = await read(key);
     if (!task || task.status === "completing")
-      throw new Error("Automatic 311 task changed; retry after completion");
+      throw new Error("SF311 task changed; retry after completion");
     let merged = task.appActionResults || [];
     for (const result of results)
       merged = mergeBackgroundResult(merged, result);
-    const failed = results.some((result) =>
+    const failures = results.filter((result) =>
       ["failed", "partial"].includes(result.status),
     );
+    // Only definitive validation failures are terminal. Partial/uncertain City
+    // outcomes retain their checkpoints and continue through retry/reconciliation.
+    const terminal =
+      failures.length > 0 &&
+      failures.every(
+        (result) =>
+          result.status === "failed" &&
+          permanentReasons.has(result.reason || ""),
+      );
+    const retry = failures.length > 0 && !terminal;
     await ddb.send(
       new TransactWriteCommand({
         TransactItems: [
@@ -186,7 +244,7 @@ export async function runJob(message) {
             ConditionCheck: {
               TableName: tableName,
               Key: lockKey,
-              ConditionExpression: "auto311Lease = :token",
+              ConditionExpression: "sf311Lease = :token",
               ExpressionAttributeValues: { ":token": token },
             },
           },
@@ -219,7 +277,7 @@ export async function runJob(message) {
               UpdateExpression: "SET #status = :status, results = :results",
               ExpressionAttributeNames: { "#status": "status" },
               ExpressionAttributeValues: {
-                ":status": failed ? "retry" : "complete",
+                ":status": terminal ? "failed" : retry ? "retry" : "complete",
                 ":results": results,
               },
             },
@@ -227,18 +285,16 @@ export async function runJob(message) {
         ],
       }),
     );
-    if (failed)
-      throw new Error(
-        "Automatic 311 action failed; retry from durable checkpoint",
-      );
+    if (retry)
+      throw new Error("SF311 action failed; retry from durable checkpoint");
   } finally {
     try {
       await ddb.send(
         new UpdateCommand({
           TableName: tableName,
           Key: lockKey,
-          UpdateExpression: "REMOVE auto311Lease, auto311LeaseExpiresAt",
-          ConditionExpression: "auto311Lease = :token",
+          UpdateExpression: "REMOVE sf311Lease, sf311LeaseExpiresAt",
+          ConditionExpression: "sf311Lease = :token",
           ExpressionAttributeValues: { ":token": token },
         }),
       );
@@ -247,7 +303,7 @@ export async function runJob(message) {
         !(error instanceof Error) ||
         error.name !== "ConditionalCheckFailedException"
       )
-        console.error("Automatic 311 lease release failed; lease will expire", {
+        console.error("SF311 lease release failed; lease will expire", {
           name: error instanceof Error ? error.name : "UnknownError",
         });
     }
