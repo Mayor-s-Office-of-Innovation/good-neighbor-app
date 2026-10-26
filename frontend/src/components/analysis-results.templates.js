@@ -1039,7 +1039,7 @@ function completedEvidenceCard(
               ? html`<button
                   type="button"
                   class="btn-outline issue-update-button analysis-card__resolve"
-                  data-action="mark-resolved"
+                  ${actionAttribute}="mark-resolved"
                 >
                   ${escapeHtml(t("taskUpdate.markResolved"))}
                 </button>`

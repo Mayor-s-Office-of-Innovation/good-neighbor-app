@@ -2,7 +2,7 @@ import {
   map311StatusResponse,
   taskWith311Status,
 } from "../domain/task-311-status.js";
-import { openOverlayDialog } from "../dialog-history.js";
+import { openOverlayDialog, onBackdropDismiss } from "../dialog-history.js";
 import "./timeline.css";
 import "./task-update-dialog.css";
 import {
@@ -98,19 +98,25 @@ export class TaskUpdateDialog extends HTMLElement {
   /** Resolve immediately; documentation never holds the status update. */
   markResolved(task = this._task) {
     if (!task || task.status !== "in_progress" || this._resolving) return;
+    if (
+      this.dispatchEvent(
+        new CustomEvent("taskresolve", {
+          cancelable: true,
+          detail: task,
+        }),
+      ) === false
+    )
+      return;
     this._resolving = true;
     const completion = createTaskUpdate(task.taskId, { type: "issue_resolved" })
-      .then(async (response) => {
-        this._task = { ...task, ...response.task };
-        this._notifyUpdated();
-        const detail = await getTaskUpdates(task.taskId).catch(() => null);
-        return {
-          task: {
-            ...this._task,
-            ...detail?.task,
-            latestUpdateId: response.update.updateId,
-          },
+      .then((response) => {
+        this._task = {
+          ...task,
+          ...response.task,
+          latestUpdateId: response.update.updateId,
         };
+        this._notifyUpdated();
+        return { task: this._task };
       })
       .catch((error) => {
         showTaskUpdateErrorToast(error);
@@ -347,9 +353,7 @@ export class TaskUpdateDialog extends HTMLElement {
       event.preventDefault();
       void this._close();
     });
-    dialog.addEventListener("click", (event) => {
-      if (event.target === dialog) void this._close();
-    });
+    onBackdropDismiss(dialog, () => void this._close());
     const discardDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector("[data-discard-dialog]")
     );

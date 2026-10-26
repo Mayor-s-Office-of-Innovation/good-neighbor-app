@@ -1,4 +1,5 @@
 // @ts-nocheck -- lenient migration baseline (checkJs).
+import { resolveSessionTask } from "./session-task-resolution.js";
 import { openSessionDuplicate } from "./duplicate-issue-launcher.js";
 import { captureGuidance } from "../domain/capture-guidance.js";
 import { loadStartingGuidance } from "../services/capture-guidance.js";
@@ -337,7 +338,9 @@ class PerimeterCheck extends HTMLElement {
     const card = button.closest(".analysis-card");
     if (!card) return;
     const problem = this._problemFromCard(card);
-    if (action === "delete") {
+    if (action === "mark-resolved" && button instanceof HTMLElement) {
+      resolveSessionTask(this, problem, button);
+    } else if (action === "delete") {
       this._openDeleteProblem(problem);
     } else if (action === "edit") {
       this._openEditProblem(problem);

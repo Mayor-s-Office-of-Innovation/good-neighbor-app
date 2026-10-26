@@ -762,6 +762,7 @@ it("reconciles TaskSheets updates before reloading, including after dismissal", 
   const dialog = {
     addEventListener: (name, handler) => listeners.set(name, handler),
     open: vi.fn(),
+    openResults: vi.fn(),
     remove: vi.fn(),
   };
   const originalCreate = document.createElement;
@@ -773,7 +774,7 @@ it("reconciles TaskSheets updates before reloading, including after dismissal", 
     await sheets.openUpdates(
       { taskId: "a", status: "in_progress" },
       null,
-      "resolve",
+      "results",
     );
     listeners.get("taskupdateclosed")({ detail: { results: true } });
     expect(sheets._updateDialog).toBeNull();
@@ -795,4 +796,58 @@ it("reconciles TaskSheets updates before reloading, including after dismissal", 
   } finally {
     document.createElement = originalCreate;
   }
+});
+
+it("retains hydrated evidence on refresh without retaining stale task status", async () => {
+  await import("./today-view.js");
+  const View = /** @type {any} */ (
+    vi
+      .mocked(customElements.define)
+      .mock.calls.find(([name]) => name === "today-view")[1]
+  );
+  const view = new View();
+  view._homeModel = {
+    tasks: [
+      {
+        taskId: "a",
+        checkId: "check",
+        status: "open",
+        evidence: { text: "Evidence" },
+        thumbnailUrl: "photo",
+      },
+    ],
+  };
+  view.querySelector = (selector) =>
+    selector === ":scope > .home dialog[open]" ? {} : null;
+  view._renderHome({
+    tasks: [{ taskId: "a", checkId: "check", status: "completed" }],
+  });
+  expect(view._homeModel.tasks[0]).toMatchObject({
+    status: "completed",
+    evidence: { text: "Evidence" },
+    thumbnailUrl: "photo",
+  });
+  view._renderHome({
+    tasks: [{ taskId: "a", checkId: "different", status: "completed" }],
+  });
+  expect(view._homeModel.tasks[0].thumbnailUrl).toBeUndefined();
+});
+
+it("keeps the existing DOM when a background update does not change the rendered worklist", async () => {
+  await import("./today-view.js");
+  const View = /** @type {any} */ (
+    vi
+      .mocked(customElements.define)
+      .mock.calls.find(([name]) => name === "today-view")[1]
+  );
+  const view = new View();
+  view._homeMarkup = "same content";
+  view._render = () => "same content";
+  view.querySelector = (selector) =>
+    selector === ":scope > .home" ? {} : null;
+  const replace = vi.fn();
+  Object.defineProperty(view, "innerHTML", { set: replace });
+  view._renderHome({ tasks: [{ taskId: "a", status: "open" }] });
+  expect(replace).not.toHaveBeenCalled();
+  expect(view._tasksById.get("a").status).toBe("open");
 });

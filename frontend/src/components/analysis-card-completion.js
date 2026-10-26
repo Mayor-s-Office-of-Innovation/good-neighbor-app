@@ -13,6 +13,13 @@ export function isCompletingAnalysisCard(host) {
   );
 }
 
+/** Hold the card through optional documentation and its exit animation. */
+export function holdCompletionCard(host, card) {
+  const key = card || {};
+  pending.set(key, { host });
+  return () => pending.delete(key);
+}
+
 /**
  * Record the checklist action the moment it is tapped, then animate a
  * confirmed save. `task` is the card's backend record when known; it lets

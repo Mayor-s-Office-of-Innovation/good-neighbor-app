@@ -107,3 +107,18 @@ function ensurePopListener() {
     dialog?.close();
   });
 }
+
+/** Only dismiss for a gesture that started and ended on the same backdrop.
+ * Rebuilding a dialog mid-gesture must not turn an interior tap into a close.
+ * @param {HTMLDialogElement} dialog @param {() => void} close
+ */
+export function onBackdropDismiss(dialog, close) {
+  let backdrop = false;
+  dialog.addEventListener("pointerdown", (event) => {
+    backdrop = event.target === dialog;
+  });
+  dialog.addEventListener("click", (event) => {
+    if (backdrop && event.target === dialog) close();
+    backdrop = false;
+  });
+}

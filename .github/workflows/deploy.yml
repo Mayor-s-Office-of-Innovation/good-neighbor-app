@@ -295,11 +295,11 @@ jobs:
       # PostHog (uploaded above) and only there.
       - name: Publish frontend to S3
         working-directory: ${{ github.workspace }}
-        run: aws s3 sync frontend/dist "s3://${{ steps.tf.outputs.bucket }}" --delete --exclude "*.map"
+        run: bash scripts/publish-web-assets.sh frontend/dist "s3://${{ steps.tf.outputs.bucket }}"
 
       - name: Publish admin frontend to S3
         working-directory: ${{ github.workspace }}
-        run: aws s3 sync admin-frontend/dist "s3://${{ steps.tf.outputs.admin_bucket }}" --delete
+        run: bash scripts/publish-web-assets.sh admin-frontend/dist "s3://${{ steps.tf.outputs.admin_bucket }}"
 
       # Env-scoped: only this environment's distribution is invalidated.
       - name: Invalidate CloudFront

@@ -350,6 +350,25 @@ partition, never a body-supplied one. (Demo/test data remains disposable; see
 
 ## Edge routing contract (SPA fallback vs API routes)
 
+Frontend publication uses `scripts/publish-web-assets.sh` for both the provider
+and admin builds. Hashed assets upload first with immutable caching, other
+resources next, and entry HTML last with revalidation. Publication retains old
+assets so already-open clients can still load their original lazy modules; it
+never runs `s3 sync --delete`. Source maps remain excluded from public uploads.
+Removing retained assets requires a separate retention decision, not routine deploy
+cleanup. A failed resource upload prevents publication of the new HTML.
+
+Issue-card resolution starts its API request before loading the optional
+notes-and-photos dialog. The card shows a pending state and confirms the saved
+result independently of dialog loading. A failed form load offers a local retry
+without repeating resolution or refreshing the page; another open form's unsaved
+draft is preserved. Uncertain save retries reuse the same idempotency key.
+The card stays mounted through the results prompt: Done or Skip closes the prompt,
+then a confirmed completion uses the same slide-and-collapse animation on To-do
+and In-progress before the card moves to History. Notes and photos save in the
+background. Worklist refreshes preserve hydrated evidence and leave open sheets
+and unchanged card markup mounted, avoiding refresh flicker.
+
 The provider frontend's CloudFront distribution has **no error-page mapping**. SPA deep links
 (`/check`, `/today`, …) resolve via a viewer-request function (`aws_cloudfront_function.frontend_spa_rewrite`,
 `infra/modules/app/cloudfront.tf`) that rewrites dot-less, non-API URIs to `/index.html`

@@ -50,6 +50,17 @@ test.describe("site admin access", () => {
     await expect(feedback).toBeVisible();
     await feedback.getByRole("button", { name: t("common.cancel") }).click();
 
+    // Closing these settings sheets removes the menu without a home render.
+    // Reopening must not mistake cached markup for a menu still in the DOM.
+    await page.locator("#home-settings").click();
+    await expect(menu).toBeVisible();
+    await menu
+      .getByRole("menuitem", { name: t("today.settings.language") })
+      .click();
+    const language = page.locator("#language-dialog");
+    await expect(language).toBeVisible();
+    await language.getByRole("button", { name: t("common.close") }).click();
+
     await page.locator("#home-settings").click();
     await page
       .getByRole("menuitem", { name: t("today.settings.siteAdmin") })
