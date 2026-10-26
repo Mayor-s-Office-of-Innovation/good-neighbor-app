@@ -1,3 +1,4 @@
+import { adminErrorMessage } from "./admin-error-messages.js";
 import "./system-status.js";
 import { peopleDirectory } from "./people-directory.js";
 import {
@@ -1119,7 +1120,10 @@ class AdminApp extends HTMLElement {
         this.state.managerDirectoryLoaded = false;
       } catch (error) {
         feedback.failure(error);
-        showFormSaveError(form, t("admin.programs.staffSaveError"));
+        showFormSaveError(
+          form,
+          adminErrorMessage(error, t, t("admin.programs.staffSaveError")),
+        );
         delete form.dataset.saving;
         if (submit) submit.disabled = false;
         return;
@@ -1404,6 +1408,7 @@ class AdminApp extends HTMLElement {
   async createSiteFromFlow(form) {
     const feedback = actionFeedback("admin.toast.siteCreated");
     try {
+      const origin = location.pathname + location.search;
       const data = new FormData(form);
       const providerId = formValue(data, "provider-id");
       const programId = formValue(data, "lead-program-id");
@@ -1424,6 +1429,7 @@ class AdminApp extends HTMLElement {
       });
       feedback.changed();
       const siteId = result.site.siteId;
+      let savedSite = result.site;
       const expectedManagerId = formValue(data, "site-manager-user-id");
       if (
         !result.site.addressParts ||
@@ -1449,6 +1455,7 @@ class AdminApp extends HTMLElement {
         ) {
           throw new Error("site_creation_incomplete");
         }
+        savedSite = repaired.site;
       }
       const staff = this.state.newSiteUsers.find(
         (user) => user.userId === expectedManagerId,
@@ -1469,16 +1476,16 @@ class AdminApp extends HTMLElement {
           );
       }
       feedback.success();
+      this.state.sites = upsertRecord(this.state.sites, savedSite, "siteId");
+      this.managerDirectoryVersion = (this.managerDirectoryVersion || 0) + 1;
+      this.managerDirectoryLoader = null;
       this.state.managerDirectoryLoaded = false;
-      await this.loadDirectory();
-      try {
-        await this.loadSiteManagers(true);
-      } catch (error) {
-        feedback.failure(error);
-        this.state.managerDirectoryLoaded = false;
-        this.state.managerSearchFailed = true;
-      }
+      if (location.pathname + location.search !== origin) return;
+      this.state.site = null;
+      this.state.error = "";
       navigate(`/sites/${encodeURIComponent(siteId)}`);
+      this.render();
+      this.querySelector("[data-site-loading]")?.focus();
     } catch (error) {
       feedback.failure(error);
       throw error;
@@ -2246,11 +2253,9 @@ class AdminApp extends HTMLElement {
         feedback.failure(error);
         showFormSaveError(
           form,
-          t(
-            form.dataset.createdUser
-              ? "admin.siteManagers.assignmentError"
-              : "admin.programs.staffSaveError",
-          ),
+          form.dataset.createdUser
+            ? t("admin.siteManagers.assignmentError")
+            : adminErrorMessage(error, t, t("admin.programs.staffSaveError")),
         );
         delete form.dataset.saving;
         save.disabled = false;
@@ -2305,13 +2310,7 @@ class AdminApp extends HTMLElement {
   async saveWithFeedback(form, save) {
     return withSaveFeedback(form, save, {
       savingLabel: t("siteAdmin.edit.saving"),
-      onError: (error) =>
-        showFormSaveError(
-          form,
-          error.message === "staff_source_changed"
-            ? t("admin.programs.staffSourceChanged")
-            : error.message,
-        ),
+      onError: (error) => showFormSaveError(form, adminErrorMessage(error, t)),
     });
   }
 
@@ -3607,9 +3606,11 @@ class AdminApp extends HTMLElement {
       "submit",
       (event) => {
         event.preventDefault();
-        this.createSiteFromFlow(asForm(event.currentTarget)).catch((error) => {
-          this.state.error = siteSaveErrorMessage(error);
-          this.render();
+        const form = asForm(event.currentTarget);
+        void withSaveFeedback(form, () => this.createSiteFromFlow(form), {
+          savingLabel: t("siteAdmin.edit.saving"),
+          onError: (error) =>
+            showFormSaveError(form, siteSaveErrorMessage(error)),
         });
       },
     );
@@ -4941,6 +4942,7 @@ class AdminApp extends HTMLElement {
         ${route.name === "provider-manager" && this.state.provider?.providerId === route.id ? providerManagerDetailView(this.state, route.membershipId) : ""}
         ${program ? programView(program, this.state.capabilities.createEntities === true) : ""}
         ${siteManager ? siteManagerEditorView(this.state, siteManager) : ""}
+        ${this.state.hasToken && route.name === "site" && !site && !this.state.error ? `<p data-site-loading role="status" tabindex="-1">${escapeHtml(t("common.loading"))}</p>` : ""}
         ${
           site
             ? `
@@ -5072,7 +5074,7 @@ function adminSettingsMenu(canManageUsers, canImportSites) {
       <a href="/profile" data-route role="menuitem"><wa-icon name="user" aria-hidden="true"></wa-icon><span>${escapeHtml(t("admin.profile.title"))}</span></a>
       ${canManageUsers ? '<a href="/administrators" data-route role="menuitem"><wa-icon name="people-group" aria-hidden="true"></wa-icon><span>User management</span></a>' : ""}
       ${canImportSites ? '<a href="/sites/import" data-route role="menuitem"><wa-icon name="file-import" aria-hidden="true"></wa-icon><span>Import</span></a>' : ""}
-      ${canManageUsers ? `<a href="/system-status" data-route role="menuitem"><span>${escapeHtml(t("admin.status.menu"))}</span></a>` : ""}
+      ${canManageUsers ? `<a href="/system-status" data-route role="menuitem"><wa-icon name="heart-pulse" aria-hidden="true"></wa-icon><span>${escapeHtml(t("admin.status.menu"))}</span></a>` : ""}
       <button id="clear-token" type="button" role="menuitem"><wa-icon name="arrow-right-from-bracket" aria-hidden="true"></wa-icon><span>Sign out</span></button>
     </div>
   </div>`;
@@ -6317,6 +6319,7 @@ function siteManagerEditorView(state, manager) {
     ? "Add new manager"
     : `${manager.firstName} ${manager.lastName}`.trim();
   return `<section class="site-page manager-record" aria-labelledby="manager-record-title">
+    ${isNew ? `<a class="site-back-link" href="${returnSite ? `/sites/${encodeURIComponent(returnSite)}?section=details` : "/managers"}" data-route><span aria-hidden="true">‹</span> ${escapeHtml(t("common.back"))}</a>` : ""}
     ${entityBreadcrumb("manager", manager || {}, state.programs, state.providers)}
     <div class="panel__head">
       <h1 id="manager-record-title" tabindex="-1">${escapeHtml(title)}</h1>
@@ -7602,7 +7605,7 @@ function siteSaveErrorMessage(error) {
   if (code === "site_update_conflict") {
     return "Someone else updated this site. Reload it before saving your changes.";
   }
-  return "The site couldn't be saved. Try again.";
+  return adminErrorMessage(error, t, t("admin.toast.requestFailed"));
 }
 
 function compliancePeriodErrorMessage(error) {

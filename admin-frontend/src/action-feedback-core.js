@@ -1,3 +1,7 @@
+import {
+  adminErrorMessage,
+  creationConflictTitle,
+} from "./admin-error-messages.js";
 const reported = new WeakSet();
 
 /** Notifications belong to user operations, not individual API requests. */
@@ -46,6 +50,16 @@ export function createActionFeedback(successKey, showToast, t) {
       )
         return;
       notification?.close();
+      if (!changed && !completed && creationConflictTitle(error)) {
+        showToast({
+          title: t(creationConflictTitle(error)),
+          message: adminErrorMessage(error, t),
+          tone: "error",
+          icon: "circle-xmark",
+          duration: 8000,
+        });
+        return;
+      }
       const key = completed
         ? "admin.toast.refreshFailed"
         : changed

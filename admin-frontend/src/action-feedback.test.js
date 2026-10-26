@@ -1,6 +1,32 @@
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createActionFeedback } from "./action-feedback-core.js";
+const en = JSON.parse(
+  readFileSync(
+    new URL("../../frontend/src/i18n/catalogs/en.json", import.meta.url),
+    "utf8",
+  ),
+);
+const t = (key) => en[key] ?? key;
+
+test("duplicate programs explain the conflict and recovery in one toast", () => {
+  const notices = [];
+  const feedback = createActionFeedback(
+    "admin.toast.programCreated",
+    (notice) => notices.push(notice),
+    t,
+  );
+  const error = Object.assign(new Error("program_already_exists"), {
+    status: 409,
+  });
+  feedback.failure(error);
+  feedback.failure(error);
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].title, t("admin.programs.duplicateTitle"));
+  assert.equal(notices[0].message, t("admin.programs.duplicateHelp"));
+  assert.equal(notices[0].tone, "error");
+});
 
 function setup() {
   const notices = [];

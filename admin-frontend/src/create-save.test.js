@@ -1,9 +1,55 @@
+import { adminErrorMessage } from "./admin-error-messages.js";
 import { createActionFeedback } from "./action-feedback-core.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { upsertRecord } from "./save-feedback.js";
+const en = JSON.parse(
+  readFileSync(
+    new URL("../../frontend/src/i18n/catalogs/en.json", import.meta.url),
+    "utf8",
+  ),
+);
+const t = (key) => en[key] ?? key;
+
+test("form errors explain duplicate programs and hide generic API codes", async () => {
+  const source = readFileSync(new URL("./main.js", import.meta.url), "utf8");
+  const start = source.indexOf("  async saveWithFeedback(form, save)");
+  const end = source.indexOf("\n  }", start) + 4;
+  for (const [code, key] of [
+    ["program_already_exists", "admin.programs.duplicateHelp"],
+    ["provider_already_exists", "admin.errors.providerExists"],
+    ["site_already_exists", "admin.errors.siteExists"],
+    ["provider_manager_already_assigned", "admin.errors.staffAssigned"],
+    ["valid_email_required", "admin.errors.emailRequired"],
+    ["admin_request_failed", "admin.toast.requestFailed"],
+    ["staff_source_changed", "admin.programs.staffSourceChanged"],
+  ]) {
+    let message;
+    const form = {};
+    const Subject = vm.runInNewContext(`(class{${source.slice(start, end)}})`, {
+      t,
+      adminErrorMessage,
+      withSaveFeedback: async (actualForm, save, { onError }) => {
+        assert.equal(actualForm, form);
+        try {
+          await save();
+        } catch (error) {
+          onError(error);
+        }
+      },
+      showFormSaveError: (actualForm, text) => {
+        assert.equal(actualForm, form);
+        message = text;
+      },
+    });
+    await new Subject().saveWithFeedback(form, async () => {
+      throw new Error(code);
+    });
+    assert.equal(message, t(key));
+  }
+});
 
 for (const kind of ["Provider", "Program"]) {
   test(`${kind} creation uses its confirmed response without a directory reload`, async () => {
@@ -101,5 +147,104 @@ for (const [staff, disabled] of [
       /admin.programs.chooseStaff/,
     );
     assert.equal(calls, 0);
+  });
+}
+
+for (const scenario of ["success", "repair", "failure", "navigated away"]) {
+  test(`site creation navigates without directory reloads: ${scenario}`, async () => {
+    const source = readFileSync(new URL("./main.js", import.meta.url), "utf8");
+    const start = source.indexOf("  async createSiteFromFlow(form)");
+    const end = source.indexOf("\n  }", start) + 4;
+    const events = [];
+    const location = { pathname: "/sites/new", search: "?programId=program" };
+    const savedSite = {
+      siteId: "new/site",
+      name: "New site",
+      addressParts: { street: "Main" },
+      publicContact: { email: "test@example.org" },
+      primaryContactUserId: "staff",
+    };
+    const Subject = vm.runInNewContext(`(class{${source.slice(start, end)}})`, {
+      location,
+      upsertRecord,
+      FormData: class {},
+      formValue: (_, name) =>
+        ({ "site-manager-user-id": "staff" })[name] || name,
+      controlValue: () => "test",
+      addressPartsFromForm: () => savedSite.addressParts,
+      formatAddressParts: () => "Main",
+      actionFeedback: () => ({
+        changed() {},
+        success() {
+          events.push("success");
+        },
+        failure() {
+          events.push("failure");
+        },
+      }),
+      adminApi: {
+        async createSite() {
+          if (scenario === "failure") throw new Error("save_failed");
+          if (scenario === "navigated away") location.pathname = "/providers";
+          return {
+            site:
+              scenario === "repair" ? { siteId: savedSite.siteId } : savedSite,
+          };
+        },
+        async assignSiteUser() {
+          events.push("repair assignment");
+        },
+        async updateSite() {
+          events.push("repair details");
+          return { site: savedSite };
+        },
+        async listManagerMemberships() {
+          return { memberships: [] };
+        },
+        async createManagerMembership() {
+          events.push("membership saved");
+        },
+      },
+      navigate(path) {
+        events.push(path);
+      },
+    });
+    const app = new Subject();
+    const existing = { siteId: "existing" };
+    app.state = {
+      sites: [existing],
+      newSiteUsers: [{ userId: "staff", firstName: "Sam", lastName: "Lee" }],
+      managerDirectoryLoaded: true,
+    };
+    app.render = () => events.push("render destination loading");
+    app.querySelector = () => ({
+      focus() {
+        events.push("focus loading");
+      },
+    });
+    app.loadDirectory = app.loadSiteManagers = () => {
+      throw new Error("Unexpected global reload");
+    };
+    if (scenario === "failure") {
+      await assert.rejects(app.createSiteFromFlow({}), /save_failed/);
+      assert.deepEqual(events, ["failure"]);
+      assert.equal(app.state.sites.length, 1);
+      return;
+    }
+    await app.createSiteFromFlow({});
+    assert.equal(app.state.sites[0], existing);
+    assert.equal(app.state.sites[1], savedSite);
+    assert.equal(app.state.managerDirectoryLoaded, false);
+    assert.ok(events.indexOf("membership saved") < events.indexOf("success"));
+    if (scenario === "navigated away") {
+      assert.deepEqual(events, ["membership saved", "success"]);
+    } else {
+      assert.deepEqual(events.slice(-3), [
+        "/sites/new%2Fsite",
+        "render destination loading",
+        "focus loading",
+      ]);
+      assert.equal(app.state.site, null);
+    }
   });
 }
