@@ -286,3 +286,66 @@ verify queue age, comparison failures, gateway 429s and first-match/full-search 
 The worker needs `UpdateItem` on the `DUP_COMPARISON_PACER` partition only; existing
 `GetItem` permission supports consistent reads after a permit collision. No new table,
 index, secret or cache-version change is required.
+
+## Candidate fanout and worker sizing
+
+One source photo is not one comparison request. The combined matcher sends up to
+three candidate observations per request. With a three-candidate shortlist and
+75 eligible observations in the same category over the preceding 72 hours, the
+tested complete no-match search needed 25 requests. A smaller initial shortlist
+can add a batch, and retries add attempts. A warm, qualifying match in the initial
+three-candidate shortlist can stop after one. Cold history without visual hashes can defer a matching observation
+until the last batch. Preserve full coverage and strict evidence checks when sizing
+capacity; do not improve apparent throughput by silently truncating the history.
+
+`duplicate_worker_maximum_concurrency` bounds simultaneous SQS workers independently
+of the shared HTTP attempt gate. The module default remains two, preserving the
+production setting. More workers overlap inference and reduce head-of-line queue
+wait, but do not raise the configured three-attempts/second dev budget or parallelize
+one source's sequential batches. Retries also consume that budget. A completed
+worker result with failed candidates is not a successful full-search capacity test.
+
+Size concurrency using measured request duration and complete source-search fanout,
+then verify both queue-to-first-match and queue-to-completion latency. Higher
+parallelism can increase permit contention, so retain the per-comparison deadline
+and bounded retries. Test cold and warm histories, full no-match searches, and
+mixed bursts; distinguish direct parallel Lambda tests from actual SQS delivery.
+Only CI changes the deployed event-source mapping. Recheck queue age, worker and
+analyzer errors, gateway 429 recovery, and DLQ growth after deployment.
+
+The rollout planning range is 500 Sites × 3–5 checks/day × 3–5 photos/check, or
+4,500–12,500 source photos/day before separate issue reports. At 12,500 photos/day,
+25 requests/photo would require 312,500 successful comparisons/day before retries.
+A three-attempts/second gate permits at most 86,400 attempts over eight hours,
+or 259,200 over 24 hours. Over an eight-hour arrival window, the upper photo volume
+therefore needs an average below 6.9 attempts/photo even before allowing headroom.
+These are scenarios, not measured arrival distributions or a rollout guarantee.
+Worker concurrency alone cannot remove a sustained request-rate deficit. Measure
+actual category-filtered fanout, first-match frequency, cache benefit and retry/token
+amplification before selecting production limits or enabling production detection.
+
+Dev selects `duplicate_worker_maximum_concurrency = 20` with the existing 3/s
+attempt gate. A controlled deployed-worker comparison of 8, 16, 20 and 32 parallel
+workers found middle-80%-of-starts throughput of approximately 1.18, 2.43, 2.82 and
+2.83 attempts/second respectively. Twenty workers used the available gate about
+as well as 32 while avoiding the latter's additional contention. Whole-run rates
+were lower because they include startup and drain. Each sizing job had twelve
+same-category candidates (four sequential requests); the higher-concurrency tests
+invoked the deployed Lambda directly and did not change the live SQS mapping.
+After CI deploys the dev mapping, repeat the burst test through real SQS delivery.
+
+The separate 75-candidate real-SQS controls observed one request and about eight
+seconds of processing for a warm early match, versus 25 requests and about
+160–165 seconds for full searches. With the old two-worker mapping, the late-match
+control waited another 173 seconds before processing. These repeated-photo controls
+establish request fanout and timing, not field accuracy or a full-rollout guarantee.
+Initial calls used fresh comparison-cache keys; prepared images could be reused.
+
+Two quality/reliability observations remain separate rollout gates: unexpected
+high-confidence positives occurred in negative controls, and one three-candidate
+batch failed schema validation in the 32-worker cohort after both analyzer
+assessments. The worker retained failed-candidate diagnostics; treat this as an
+incomplete search rather than a clean negative. The observation does not establish
+that concurrency caused the model failure. Raising concurrency does not remediate
+either issue. Keep production detection disabled until the matching
+controls and incomplete-batch behavior have been investigated and validated.
