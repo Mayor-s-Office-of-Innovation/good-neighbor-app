@@ -10,6 +10,10 @@
   focus falls back to when the card is gone.
 */
 import "./ticket-detail-dialog.js";
+import {
+  holdCompletionCard,
+  slideCompletedCard,
+} from "./analysis-card-completion.js";
 import { createTaskUpdate } from "../services/api.js";
 import { showToast, showTaskUpdateErrorToast } from "../state/toasts.js";
 import { t } from "../i18n/i18n.js";
@@ -63,7 +67,8 @@ export class TaskSheets {
       this._ticketDialog.site = this.site;
       container.append(this._ticketDialog);
     }
-    if (this._updateDialog) container.append(this._updateDialog);
+    if (this._updateDialog && this._updateDialog.parentElement !== container)
+      container.append(this._updateDialog);
   }
 
   /** Hand the 311 sheet a fresher copy of its task (after hydration). */
@@ -97,10 +102,29 @@ export class TaskSheets {
     const completion =
       mode === "resolve" ? this._startResolution(task, trigger) : null;
     if (mode === "resolve" && !completion) return;
+    const card = trigger?.closest?.(".analysis-card");
+    const release = completion
+      ? holdCompletionCard(this._options.host, card)
+      : null;
+    const finish = async (animate = false) => {
+      if (!completion) return;
+      try {
+        const { task: saved } = await completion;
+        if (saved) {
+          if (animate && card?.isConnected) await slideCompletedCard(card);
+          release?.();
+          this._options.onTaskUpdated?.(saved);
+        }
+      } finally {
+        release?.();
+      }
+    };
     this._updateReturnFocus = { taskId: task.taskId, trigger };
     try {
       await this._loadUpdates();
     } catch {
+      await finish();
+      if (completion) void this._options.reload?.();
       await this._formUnavailable(task, trigger, mode, completion);
       return;
     }
@@ -109,25 +133,37 @@ export class TaskSheets {
       (this._updateDialog._hasUnsavedDraft() ||
         this._updateDialog._task?.taskId !== task.taskId)
     ) {
+      await finish();
       await this._formUnavailable(task, trigger, mode, completion, true);
       return;
     }
     if (!this._updateDialog) {
-      const dialog = document.createElement("task-update-dialog");
+      const dialog = /** @type {any} */ (
+        document.createElement("task-update-dialog")
+      );
+      dialog.addEventListener("taskresolve", (event) => {
+        event.preventDefault();
+        void this.openUpdates(
+          event.detail,
+          this._updateReturnFocus?.trigger || null,
+          "resolve",
+        );
+      });
       dialog.addEventListener("taskupdated", (event) => {
         const task = /** @type {CustomEvent} */ (event).detail?.task;
         if (task) this._options.onTaskUpdated?.(task);
         void this._options.reload?.();
       });
-      dialog.addEventListener("taskupdateclosed", (event) => {
+      dialog.addEventListener("taskupdateclosed", async (event) => {
         // Resolution documentation may still be saving after dismissal.
         // Keep that controller single-use so another card cannot replace its state.
         if (/** @type {CustomEvent} */ (event).detail?.results) {
-          this._updateDialog.remove();
-          this._updateDialog = null;
+          dialog.remove();
+          if (this._updateDialog === dialog) this._updateDialog = null;
         }
         const returnFocus = this._updateReturnFocus;
         this._updateReturnFocus = null;
+        await dialog._finishResolution?.(true);
         void Promise.resolve(this._options.reload?.()).then(() => {
           this._focusCard(
             returnFocus?.taskId || "",
@@ -138,6 +174,7 @@ export class TaskSheets {
       });
       this._updateDialog = dialog;
     }
+    this._updateDialog._finishResolution = finish;
     this.mount();
     if (completion || mode === "results")
       this._updateDialog.openResults(task, completion);
@@ -206,7 +243,6 @@ export class TaskSheets {
           ...response.task,
           latestUpdateId: response.update.updateId,
         };
-        this._options.onTaskUpdated?.(saved);
         showToast({
           title: t("taskUpdate.siteResolved"),
           message: "",

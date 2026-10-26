@@ -789,8 +789,8 @@ it("starts resolution and documentation together and updates the card before doc
   );
   dialog.openResults = vi.fn();
   dialog._notifyUpdated = vi.fn();
-  api.getTaskUpdates.mockResolvedValueOnce({ task: { canUploadPhotos: true } });
   const task = { taskId: "resolve-now", status: "in_progress" };
+  dialog.dispatchEvent ||= vi.fn();
   dialog.markResolved(task);
   dialog.markResolved(task);
   expect(api.createTaskUpdate).toHaveBeenLastCalledWith("resolve-now", {
@@ -835,4 +835,21 @@ it("includes the confirmed task in update notifications", async () => {
   ).toEqual({
     task: dialog._task,
   });
+});
+
+it("lets the worklist own timeline resolution and its card exit lifecycle", async () => {
+  const { TaskUpdateDialog } = await import("./task-update-dialog.js");
+  const dialog = new TaskUpdateDialog();
+  const task = { taskId: "timeline", status: "in_progress" };
+  dialog.dispatchEvent = vi.fn(() => false);
+  const calls = api.createTaskUpdate.mock.calls.length;
+  dialog.markResolved(task);
+  expect(dialog.dispatchEvent).toHaveBeenCalledWith(
+    expect.objectContaining({
+      type: "taskresolve",
+      cancelable: true,
+      detail: task,
+    }),
+  );
+  expect(api.createTaskUpdate.mock.calls.length).toBe(calls);
 });

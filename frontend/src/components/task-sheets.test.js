@@ -5,6 +5,10 @@ const { save, toast, errorToast } = vi.hoisted(() => ({
   errorToast: vi.fn(),
 }));
 vi.mock("./ticket-detail-dialog.js", () => ({}));
+vi.mock("./analysis-card-completion.js", () => ({
+  holdCompletionCard: () => vi.fn(),
+  slideCompletedCard: vi.fn(),
+}));
 vi.mock("../services/api.js", () => ({ createTaskUpdate: save }));
 vi.mock("../state/toasts.js", () => ({
   showToast: toast,
@@ -40,11 +44,13 @@ function fixture() {
       onTaskUpdated,
     }),
   );
+  sheets._focusCard = vi.fn();
   const button = /** @type {any} */ (new Button());
   const dialog = {
     addEventListener: vi.fn(),
     openResults: vi.fn(),
     open: vi.fn(),
+    remove: vi.fn(),
   };
   vi.stubGlobal("document", { createElement: () => dialog });
   return { sheets, button, dialog, onTaskUpdated };
@@ -70,18 +76,20 @@ it("starts saving before the dialog module loads and shows immediate pending fee
   await f.sheets.openUpdates(task, f.button, "resolve");
   expect(save).toHaveBeenCalledOnce();
   response.resolve(saved);
-  await vi.waitFor(() =>
-    expect(f.onTaskUpdated).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: "completed",
-        latestUpdateId: "update",
-      }),
-    ),
-  );
+  await Promise.resolve();
+  expect(f.onTaskUpdated).not.toHaveBeenCalled();
   expect(f.dialog.openResults).not.toHaveBeenCalled();
   module.resolve({});
   await opening;
   expect(f.dialog.openResults).toHaveBeenCalledOnce();
+  expect(f.onTaskUpdated).not.toHaveBeenCalled();
+  const close = f.dialog.addEventListener.mock.calls.find(
+    ([name]) => name === "taskupdateclosed",
+  )[1];
+  await close({ detail: { results: true } });
+  expect(f.onTaskUpdated).toHaveBeenCalledWith(
+    expect.objectContaining({ status: "completed", latestUpdateId: "update" }),
+  );
 });
 it("reports successful resolution despite a missing module and retries only documentation", async () => {
   const f = fixture();

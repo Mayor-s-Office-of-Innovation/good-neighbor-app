@@ -717,6 +717,25 @@ class TodayView extends HTMLElement {
   _renderHome(model) {
     if (this._confirmedTasks?.size)
       model = { ...model, tasks: this._reconcileConfirmedTasks(model.tasks) };
+    // Worklist rows omit hydrated evidence; do not blank photos on each refresh.
+    const previous = new Map(
+      (this._homeModel?.tasks || []).map((task) => [task.taskId, task]),
+    );
+    const tasks = model.tasks.map((task) => {
+      const old = previous.get(task.taskId);
+      if (
+        !old ||
+        old.checkId !== task.checkId ||
+        taskArtifactIds(old).join() !== taskArtifactIds(task).join()
+      )
+        return task;
+      const cached = {};
+      for (const key of ["evidence", "mediaUrl", "thumbnailUrl"])
+        if (!task[key] && old[key]) cached[key] = old[key];
+      return Object.keys(cached).length ? { ...task, ...cached } : task;
+    });
+    if (tasks.some((task, index) => task !== model.tasks[index]))
+      model = { ...model, tasks };
     this._homeModel = model;
     // Keep the native dialog and its action buttons mounted while a location
     // decision is pending. A background location update can otherwise replace
@@ -729,7 +748,7 @@ class TodayView extends HTMLElement {
     // edit): the innerHTML swap would remove it unseen, orphaning its overlay
     // history entry and any close handler. The paint resumes on its `close`
     // (wired below) with whatever model arrived meanwhile.
-    if (this.querySelector(":scope > .home > dialog[open]")) {
+    if (this.querySelector(":scope > .home dialog[open]")) {
       this._pendingDialogRender = true;
       return;
     }
@@ -740,7 +759,11 @@ class TodayView extends HTMLElement {
     // Index tasks by id so card action handlers can read the task (e.g. its
     // action metadata) at click time.
     this._tasksById = new Map(model.tasks.map((t) => [t.taskId, t]));
-    this.innerHTML = this._render(model);
+    const markup = this._render(model);
+    if (markup === this._homeMarkup && this.querySelector(":scope > .home"))
+      return;
+    this._homeMarkup = markup;
+    this.innerHTML = markup;
 
     // Hand the bound site id to the feedback sheet so submissions carry it as
     // optional context (the server treats it as advisory, pattern-checked).
@@ -1923,6 +1946,7 @@ class TodayView extends HTMLElement {
   }
 
   _onAnalysisAction(card, task, btn) {
+    task = this._tasksById?.get(card.getAttribute("data-task-id")) || task;
     const action = btn.getAttribute("data-analysis-action");
     const problem = this._problemFromCard(card, task);
     if (action === "mark-resolved") {
@@ -2299,6 +2323,7 @@ class TodayView extends HTMLElement {
   }
 
   _onAction(card, task, btn) {
+    task = this._tasksById?.get(task.taskId) || task;
     const action = btn.getAttribute("data-action");
     if (action === "duplicate") {
       const decorated = projectDuplicateTasks(
