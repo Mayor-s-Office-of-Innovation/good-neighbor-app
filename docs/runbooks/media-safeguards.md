@@ -60,7 +60,8 @@ analyzed before thumbnails existed can be filled in with
 thumbnail gets its own 30-day clock, so the script skips photos older than 25 days
 rather than create a thumbnail that would outlive its original.
 
-Card and history photos renew their signed URLs before the five-minute expiry.
+Card and history photos renew their signed URLs before the one-hour expiry (capped
+to the photo's remaining 30-day retention; upload URLs stay at five minutes).
 Hidden/offscreen photos wait until visible to renew. Concurrent requests for the
 same artifact share one signer request. Transient signing failures back off and stop after three consecutive failed
 attempts; returning to the view can retry again. An image-load failure gets one fresh signing attempt, then falls

@@ -29,7 +29,16 @@ const ALLOWED_CONTENT_TYPES = new Set([
   "image/webp",
 ]);
 
-const PRESIGN_EXPIRY_SECONDS = 300;
+// Upload URLs are write-capable and carry a quota reservation, so they stay
+// short; the client PUTs immediately after presigning. Read URLs last an hour
+// so the card/history photo renewal (<artifact-photo>) rarely has to re-sign.
+// Lambda's temporary credentials bound how long a presigned URL can be
+// honoured, so do not raise MEDIA_PRESIGN_EXPIRY_SECONDS past an hour.
+const UPLOAD_PRESIGN_EXPIRY_SECONDS = 300;
+const MEDIA_PRESIGN_EXPIRY_SECONDS = 3600;
+// Every check/task photo leaves the bucket 30 days after upload (bucket
+// lifecycle rule). A read URL must not outlive that boundary.
+const MEDIA_RETENTION_SECONDS = 30 * 24 * 60 * 60;
 const MAX_ARTIFACT_TEXT_LENGTH = 4000;
 // The Street Conditions analysis service rejects text media under 5 characters
 // as an invalid request (permanent, non-retryable) — reject it here instead so
@@ -249,7 +258,7 @@ export const presignUpload = async (event) => {
     contentType,
     contentLength: bytes,
     tagging: "state=pending",
-    expiresIn: PRESIGN_EXPIRY_SECONDS,
+    expiresIn: UPLOAD_PRESIGN_EXPIRY_SECONDS,
   });
 
   return jsonResponse(200, {
@@ -265,7 +274,7 @@ export const presignUpload = async (event) => {
       "if-none-match": "*",
     },
     uploadUrl,
-    expiresIn: PRESIGN_EXPIRY_SECONDS,
+    expiresIn: UPLOAD_PRESIGN_EXPIRY_SECONDS,
   });
 };
 
@@ -635,12 +644,28 @@ export const presignMedia = async (event) => {
     return jsonResponse(404, { error: "Artifact not found" });
   }
 
+  // Cap the URL at the bucket's 30-day retention boundary, measured from the
+  // row's upload time. Rows without a parseable timestamp (legacy fixtures)
+  // get the full TTL. A photo already past retention still gets a short URL:
+  // S3 answers 404 and the client shows its "unavailable" placeholder, the same
+  // path as today, rather than a new error shape.
+  const uploadedAt = Date.parse(artifact.receivedAt || artifact.capturedAt);
+  const remaining = Number.isFinite(uploadedAt)
+    ? Math.floor(
+        (uploadedAt + MEDIA_RETENTION_SECONDS * 1000 - Date.now()) / 1000,
+      )
+    : MEDIA_PRESIGN_EXPIRY_SECONDS;
+  const expiresIn = Math.max(
+    60,
+    Math.min(MEDIA_PRESIGN_EXPIRY_SECONDS, remaining),
+  );
+
   /** @param {string} key */
   const sign = (key) =>
     presignGet({
       bucket: uploadBucket,
       key,
-      expiresIn: PRESIGN_EXPIRY_SECONDS,
+      expiresIn,
     });
   // The worker stores a small card variant beside the original (see
   // media/thumbnail.js) and records its key on the row. Sign it under the same
@@ -662,7 +687,7 @@ export const presignMedia = async (event) => {
     s3Key: artifact.s3Key,
     downloadUrl,
     thumbnailUrl,
-    expiresIn: PRESIGN_EXPIRY_SECONDS,
+    expiresIn,
   });
 };
 

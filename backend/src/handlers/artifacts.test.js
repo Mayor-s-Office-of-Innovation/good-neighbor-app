@@ -799,6 +799,63 @@ describe("deleteArtifact", () => {
 });
 
 describe("presignMedia", () => {
+  it("caps the read URL at the photo's remaining 30-day retention", async () => {
+    const twentyNineDaysAgo = new Date(
+      Date.now() - (29 * 24 * 60 * 60 + 23 * 60 * 60) * 1000,
+    ).toISOString();
+    ddbSend.mockResolvedValueOnce({
+      Items: [
+        {
+          sk: "CHECK#chk_01#ART#art_1",
+          artifactId: "art_1",
+          s3Key: "checks/site-1/chk_01/art_1",
+          receivedAt: twentyNineDaysAgo,
+        },
+      ],
+    });
+    presignGet.mockResolvedValueOnce("https://signed.example/get");
+
+    const res = await callMedia(
+      mediaEvent({
+        checkId: "chk_01",
+        artifactId: "art_1",
+        siteClaim: "site-1",
+      }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    const { expiresIn } = presignGet.mock.calls[0][0];
+    // About an hour remains; never the full TTL, never below the floor.
+    expect(expiresIn).toBeGreaterThanOrEqual(60);
+    expect(expiresIn).toBeLessThanOrEqual(3600);
+    expect(JSON.parse(res.body).expiresIn).toBe(expiresIn);
+  });
+
+  it("keeps a short floor for a photo already past retention", async () => {
+    ddbSend.mockResolvedValueOnce({
+      Items: [
+        {
+          sk: "CHECK#chk_01#ART#art_1",
+          artifactId: "art_1",
+          s3Key: "checks/site-1/chk_01/art_1",
+          receivedAt: "2020-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    presignGet.mockResolvedValueOnce("https://signed.example/get");
+
+    const res = await callMedia(
+      mediaEvent({
+        checkId: "chk_01",
+        artifactId: "art_1",
+        siteClaim: "site-1",
+      }),
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(presignGet.mock.calls[0][0].expiresIn).toBe(60);
+  });
+
   it("finds a pre-Phase-2 artifact by id (retired place segment in its key) and presigns a GET", async () => {
     ddbSend.mockResolvedValueOnce({
       Items: [
@@ -833,8 +890,9 @@ describe("presignMedia", () => {
     expect(presignGet).toHaveBeenCalledWith({
       bucket: "bucket",
       key: "checks/site-1/chk_01/place-north/art_1",
-      expiresIn: 300,
+      expiresIn: 3600,
     });
+    expect(JSON.parse(res.body).expiresIn).toBe(3600);
   });
 
   it("also signs the recorded card thumbnail", async () => {
@@ -968,7 +1026,7 @@ describe("presignMedia", () => {
     expect(presignGet).toHaveBeenCalledWith({
       bucket: "bucket",
       key: "checks/site-1/chk_01/art_1",
-      expiresIn: 300,
+      expiresIn: 3600,
     });
   });
 
