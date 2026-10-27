@@ -1,4 +1,5 @@
 import { duplicateUiEnabled } from "../services/feature-flags.js";
+import { animatedEllipsis } from "../lib/ellipsis.js";
 import {
   projectDuplicateTasks,
   duplicateCounts,
@@ -2568,7 +2569,12 @@ class TodayView extends HTMLElement {
     const button = action
       ? card.querySelector(`[data-action="${action}"]`)
       : null;
-    if (button && label) button.textContent = label;
+    if (button && label) {
+      // Label as text (it's translated copy), animated dots as trusted
+      // presentation markup; restore() resets textContent, dropping the span.
+      button.textContent = label;
+      button.insertAdjacentHTML("beforeend", animatedEllipsis());
+    }
     // Busy goes on the triggering button, not the card: the card-level hook
     // styles the checklist box as a spinner, which is wrong for a filing.
     (button || card).setAttribute("aria-busy", "true");
