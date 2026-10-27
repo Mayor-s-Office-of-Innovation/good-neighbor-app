@@ -1284,7 +1284,10 @@ export async function waitForAnalyses(
  * @param {{originSiteId?: string, signal?: AbortSignal}} [options]
  */
 export function getDuplicateLinks(taskIds, options = {}) {
-  return request("POST", "/v1/duplicates:batch", { ...options, body: { taskIds } });
+  return request("POST", "/v1/duplicates:batch", {
+    ...options,
+    body: { taskIds },
+  });
 }
 /** @param {string} taskId @param {{sourceRevision:string,originalTaskId:string}} expected */
 export async function separateDuplicate(taskId, expected) {
