@@ -145,11 +145,12 @@ it.each([
         siteName: "Site",
         siteAddress: "Address",
         siteManagerName: "Sample Contact009",
-        siteManagerFirstName: "Paul",
+        siteManagerFirstName: "Sample",
         providerManagerNames,
       },
     }).toString();
     const text = svg.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
+    expect(text).toContain("Dear Sample,");
     expect(text).toContain(names);
     expect(text).toContain(`${cadence} times per day`);
     expect(text).toContain(`${cadence} perimeter checks per day`);
