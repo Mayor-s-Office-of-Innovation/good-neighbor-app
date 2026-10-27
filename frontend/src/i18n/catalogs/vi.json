@@ -481,6 +481,7 @@
   "card.editDetails": "Chỉnh sửa chi tiết",
   "card.evidence.alt": "Bằng chứng từ {place}",
   "card.evidence.siteFallback": "địa điểm",
+  "card.evidence.unavailable": "Không có hình ảnh",
   "card.failed.analysisTitle": "Phân tích chưa hoàn tất",
   "card.failed.meta": "KHÔNG HOÀN TẤT ĐƯỢC",
   "card.failed.reason.analyzeBackend": "Dịch vụ phân tích không xử lý được mục này.",

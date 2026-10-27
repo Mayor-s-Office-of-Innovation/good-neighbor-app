@@ -481,6 +481,7 @@
   "card.editDetails": "編輯詳情",
   "card.evidence.alt": "來自 {place} 的證據",
   "card.evidence.siteFallback": "站點",
+  "card.evidence.unavailable": "圖片無法顯示",
   "card.failed.analysisTitle": "分析未完成",
   "card.failed.meta": "未能完成",
   "card.failed.reason.analyzeBackend": "分析服務無法處理此項目。",

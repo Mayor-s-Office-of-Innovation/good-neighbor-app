@@ -28,6 +28,7 @@
 // evaluation time, so exceptions while loading Web Awesome or any later import
 // are still captured. No-ops under tests and when `gnp:errors=off`.
 import "./services/error-report.js";
+import "./components/artifact-photo.js";
 
 // Hold the browser's install prompt (beforeinstallprompt fires once, early)
 // so <install-prompt> can offer it later — see services/install-prompt.js.

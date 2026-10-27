@@ -1,3 +1,5 @@
+import { artifactPhoto } from "./artifact-photo.templates.js";
+import { taskArtifactIds } from "../domain/home-tasks.js";
 import {
   cityHelpQuestion,
   taskUpdateTextCard,
@@ -178,7 +180,7 @@ export function taskUpdateTimeline({
       <p class="task-update__description">
         ${escapeHtml(task.description || "")}
       </p>
-      ${originalMediaUrl
+      ${originalMediaUrl || task.evidence?.kind === "photo"
         ? html`<button
             class="task-update__photo-trigger"
             type="button"
@@ -192,11 +194,14 @@ export function taskUpdateTimeline({
               task.createdAt || task.created_at || task.notifiedAt || "",
             )}"
           >
-            <img
-              class="task-update__photo task-update__photo--original"
-              src="${escapeAttr(originalMediaUrl)}"
-              alt="${escapeAttr(t("taskUpdate.photo.evidenceAlt", { title }))}"
-            />
+            ${artifactPhoto({
+              className: "task-update__photo task-update__photo--original",
+              src: originalMediaUrl,
+              original: originalFullMediaUrl,
+              checkId: task.checkId,
+              artifactId: taskArtifactIds(task)[0],
+              alt: t("taskUpdate.photo.evidenceAlt", { title }),
+            })}
           </button>`
         : ""}
       ${showAgencyMetadata
@@ -328,11 +333,13 @@ function captureTaskIdentity(task) {
   const reference = displayTaskId(task);
   return html`<p class="task-update__capture-task">
     ${mediaUrl
-      ? html`<img
-          class="task-update__capture-thumb"
-          src="${escapeAttr(mediaUrl)}"
-          alt=""
-        />`
+      ? artifactPhoto({
+          className: "task-update__capture-thumb",
+          src: mediaUrl,
+          original: task.mediaUrl,
+          checkId: task.checkId,
+          artifactId: taskArtifactIds(task)[0],
+        })
       : ""}
     <span class="task-update__capture-task-text"
       ><strong>${escapeHtml(taskCardTitle(task))}</strong>

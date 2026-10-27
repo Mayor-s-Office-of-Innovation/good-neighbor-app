@@ -60,6 +60,16 @@ analyzed before thumbnails existed can be filled in with
 thumbnail gets its own 30-day clock, so the script skips photos older than 25 days
 rather than create a thumbnail that would outlive its original.
 
+Card and history photos renew their signed URLs before the five-minute expiry.
+Hidden/offscreen photos wait until visible to renew. Concurrent requests for the
+same artifact share one signer request. Transient signing failures back off and stop after three consecutive failed
+attempts; returning to the view can retry again. An image-load failure gets one fresh signing attempt, then falls
+back from the thumbnail to the original. Missing originals show a gray
+image-slash placeholder with an accessible “Image unavailable” label, not a
+broken image or a working lightbox button. Missing-media results are cached for
+one minute to prevent repeated requests on rerender. Old history metadata may
+remain after S3's 30-day photo expiry; refreshing a URL cannot restore that photo.
+
 Proactive care photos share this bucket under the isolated `care-work/` prefix. Their
 source uploads retain the one-day pending tag; validated, EXIF-stripped JPEGs use the
 active tag. The API refuses photo access after 30 days even if lifecycle deletion has

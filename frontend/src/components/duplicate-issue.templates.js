@@ -1,3 +1,5 @@
+import { artifactPhoto } from "./artifact-photo.templates.js";
+import { taskArtifactIds } from "../domain/home-tasks.js";
 import { statusTickerMarkup } from "./status-ticker.js";
 import { duplicateUiEnabled } from "../services/feature-flags.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
@@ -41,12 +43,15 @@ export function duplicateCard(task) {
       data-action="duplicate"
       data-analysis-action="duplicate"
     >
-      ${image
-        ? html`<img
-            class="duplicate-card__image"
-            src="${escapeAttr(image)}"
-            alt="${escapeAttr(duplicateTitle(task))}"
-          />`
+      ${image || task.evidence?.kind === "photo"
+        ? artifactPhoto({
+            className: "duplicate-card__image",
+            src: image,
+            original: task.mediaUrl,
+            checkId: task.checkId,
+            artifactId: taskArtifactIds(task)[0],
+            alt: duplicateTitle(task),
+          })
         : html`<span class="duplicate-card__image duplicate-card__placeholder"
             ><wa-icon name="image" aria-hidden="true"></wa-icon
           ></span>`}
@@ -122,12 +127,15 @@ export function duplicateDetail(task, image, busy, error) {
         <h2 id="duplicate-title">${escapeHtml(duplicateTitle(task))}</h2>
         <p>${escapeHtml(formatMonthDayTime(task.createdAt))}</p>
       </header>
-      ${image
-        ? html`<img
-            class="duplicate-detail__image"
-            src="${escapeAttr(image)}"
-            alt="${escapeAttr(duplicateTitle(task))}"
-          />`
+      ${image || task.evidence?.kind === "photo"
+        ? artifactPhoto({
+            className: "duplicate-detail__image",
+            src: image,
+            original: task.mediaUrl,
+            checkId: task.checkId,
+            artifactId: taskArtifactIds(task)[0],
+            alt: duplicateTitle(task),
+          })
         : ""}
       <p class="duplicate-detail__description">
         ${escapeHtml(

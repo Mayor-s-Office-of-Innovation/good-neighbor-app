@@ -1,3 +1,4 @@
+import { artifactPhoto } from "./artifact-photo.templates.js";
 import { cardDescription } from "./card-description.js";
 import { statusTickerMarkup } from "./status-ticker.js";
 import { duplicateUiEnabled } from "../services/feature-flags.js";
@@ -1208,15 +1209,15 @@ function imagePreview(item) {
         data-photo-address="${escapeAttr(address)}"
         data-photo-time="${escapeAttr(capturedAt)}"
       >
-        <img
-          src="${escapeAttr(item.dataUrl)}"
-          alt="${escapeAttr(
-            t("card.evidence.alt", {
-              place: placeName || t("card.evidence.siteFallback"),
-            }),
-          )}"
-          decoding="async"
-        />
+        ${artifactPhoto({
+          src: item.dataUrl,
+          original: item.fullDataUrl,
+          checkId: item.checkId,
+          artifactId: item.analysis?.artifactId,
+          alt: t("card.evidence.alt", {
+            place: placeName || t("card.evidence.siteFallback"),
+          }),
+        })}
       </button>
     </div>
   `;
@@ -1501,8 +1502,13 @@ function historyCard(task) {
       data-action="update"
     >
       <span class="history-card__photo"
-        >${media
-          ? html`<img src="${escapeAttr(media)}" alt="" loading="lazy" />`
+        >${media || task.evidence?.kind === "photo"
+          ? artifactPhoto({
+              src: media,
+              original: task.mediaUrl,
+              checkId: task.checkId,
+              artifactId: taskArtifactId(task),
+            })
           : html`<wa-icon name="image" aria-hidden="true"></wa-icon>`}</span
       >
       <span class="history-card__copy"

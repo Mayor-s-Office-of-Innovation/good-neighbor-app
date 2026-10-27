@@ -1,3 +1,4 @@
+import { artifactPhoto } from "./artifact-photo.templates.js";
 import {
   taskUpdateActions,
   taskUpdateTimelineItem,
@@ -154,18 +155,19 @@ export function ticketDetailDialog({ detail, state }) {
                     data-photo-address="${escapeAttr(detail.location || "")}"
                     data-photo-time="${escapeAttr(detail.submittedAt || "")}"
                   >
-                    <img
-                      class="ticket-detail__photo"
-                      src="${escapeAttr(detail.mediaUrl)}"
-                      alt="${escapeAttr(
-                        t("taskUpdate.photo.evidenceAlt", {
-                          title:
-                            detail.title ||
-                            detail.problemType ||
-                            t("ticket.photo.fallbackSubject"),
-                        }),
-                      )}"
-                    />
+                    ${artifactPhoto({
+                      className: "ticket-detail__photo",
+                      src: detail.mediaUrl,
+                      original: detail.fullMediaUrl,
+                      checkId: detail.checkId,
+                      artifactId: detail.artifactId,
+                      alt: t("taskUpdate.photo.evidenceAlt", {
+                        title:
+                          detail.title ||
+                          detail.problemType ||
+                          t("ticket.photo.fallbackSubject"),
+                      }),
+                    })}
                   </button>`
                 : html`<div
                     class="ticket-detail__photo photo-placeholder"

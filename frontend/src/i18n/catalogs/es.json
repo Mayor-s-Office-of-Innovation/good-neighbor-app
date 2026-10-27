@@ -481,6 +481,7 @@
   "card.editDetails": "Editar detalles",
   "card.evidence.alt": "Evidencia de {place}",
   "card.evidence.siteFallback": "el sitio",
+  "card.evidence.unavailable": "Imagen no disponible",
   "card.failed.analysisTitle": "El análisis no terminó",
   "card.failed.meta": "NO SE PUDO COMPLETAR",
   "card.failed.reason.analyzeBackend": "El servicio de análisis no pudo procesar este elemento.",

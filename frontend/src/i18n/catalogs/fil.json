@@ -481,6 +481,7 @@
   "card.editDetails": "I-edit ang mga detalye",
   "card.evidence.alt": "Ebidensya mula sa {place}",
   "card.evidence.siteFallback": "ang site",
+  "card.evidence.unavailable": "Hindi available ang larawan",
   "card.failed.analysisTitle": "Hindi natapos ang pagsusuri",
   "card.failed.meta": "HINDI NATAPOS",
   "card.failed.reason.analyzeBackend": "Hindi naproseso ng serbisyo ng pagsusuri ang isang ito.",
