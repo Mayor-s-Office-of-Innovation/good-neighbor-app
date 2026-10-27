@@ -5,7 +5,7 @@
   "basis": "FAQ v2 and product-owner clarifications in the support-chat task; guide entries reviewed against the following code.",
   "behaviorFiles": {
     "frontend/src/domain/check-completion.js": "20904aa114ec5b198400ba98e56bec58140dc3c9ba4068021d4f505175c46e66",
-    "frontend/src/components/today-view.templates.js": "35e13dfa662a7a9497ba232936e6fec2f25509d6898afb25812326c9c2b6e0dc"
+    "frontend/src/components/today-view.templates.js": "0c61712706db4d64a4c406a0fc8ba7fe670f1328b1b770efcf3e57165b1fae84"
   },
   "guideEvidence": {
     "GUIDE-01": [

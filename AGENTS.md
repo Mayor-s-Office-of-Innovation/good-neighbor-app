@@ -60,6 +60,29 @@ New here? Get your bearings in this order:
 ## Agent Rules
 
 - **Never push or commit code.** The human pushes and commits code changes themselves; agents stop after code changes and say what's ready to review.
+- **Review for public disclosure before handing off changes.** Do this automatically,
+  without waiting for the human to ask whether changes are safe to publish:
+  - Review the task's staged and unstaged changes and new files intended for inclusion.
+    Account for untracked files; a tracked-file diff alone is not sufficient. State the
+    scope reviewed and identify any unrelated changes that were not reviewed.
+  - Check for credentials, API keys, private keys, tokens, signed URLs, connection
+    strings containing secrets, and accidentally included environment or Terraform
+    state files. Run the configured Gitleaks scanner when available, with redacted
+    output and a scope that includes the proposed changes, not just committed history.
+    If the scanner is unavailable or cannot cover that scope, disclose the limitation.
+  - Review for personal or confidential information in code, docs, fixtures, logs,
+    exports, screenshots, images, and other new artifacts. Distinguish intentional
+    public contact information and synthetic examples from private information about
+    real people; do not assume a secret scanner detects PII.
+  - Remove or replace sensitive material introduced by the task with synthetic data
+    or secret-store references. Do not silently edit unrelated work or add broad
+    scanner allowlists to make findings pass. Report findings by file and location
+    without reproducing sensitive values. Flag any exposed credential for revocation
+    or rotation; deleting it from the current diff does not invalidate it.
+  - Include a concise result in the handoff: scope, checks performed, findings, and
+    any unreviewed artifacts or limitations. Say "no findings within the reviewed
+    scope" when appropriate; do not promise that publication is risk-free. Surface
+    unresolved findings before describing changes as ready to publish.
 
 ## SDLC Rules
 

@@ -719,6 +719,7 @@
   "feedback.send": "Send",
   "feedback.textarea.label": "Your feedback",
   "feedback.textarea.placeholder": "Share an idea, a bug, or a frustration…",
+  "home.checkingUpdates": "Checking for updates…",
   "home.issueCount.one": "{count} issue found",
   "home.issueCount.other": "{count} issues found",
   "home.lastLog.allHandled": "All issues handled",

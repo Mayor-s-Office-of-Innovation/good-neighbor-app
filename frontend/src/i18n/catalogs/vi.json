@@ -719,6 +719,7 @@
   "feedback.send": "Gửi",
   "feedback.textarea.label": "Góp ý của bạn",
   "feedback.textarea.placeholder": "Chia sẻ một ý tưởng, một lỗi, hoặc một điều khiến bạn khó chịu…",
+  "home.checkingUpdates": "Đang kiểm tra cập nhật…",
   "home.issueCount.one": "Tìm thấy {count} vấn đề",
   "home.issueCount.other": "Tìm thấy {count} vấn đề",
   "home.lastLog.allHandled": "Tất cả vấn đề đã được xử lý",

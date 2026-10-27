@@ -851,3 +851,262 @@ it("keeps the existing DOM when a background update does not change the rendered
   expect(replace).not.toHaveBeenCalled();
   expect(view._tasksById.get("a").status).toBe("open");
 });
+
+describe("return-to-app task freshness", () => {
+  async function fixture() {
+    await import("./today-view.js");
+    const View = /** @type {any} */ (
+      vi
+        .mocked(customElements.define)
+        .mock.calls.find(([name]) => name === "today-view")[1]
+    );
+    const view = new View();
+    view.isConnected = true;
+    view._siteId = "site";
+    view._homeFilter = "todo";
+    view._homeModel = {
+      tasks: [
+        { taskId: "old", status: "open" },
+        { taskId: "history", status: "completed" },
+      ],
+    };
+    view._renderHome = vi.fn((model) => {
+      view._homeModel = model;
+    });
+    view._watchDuplicates = vi.fn();
+    view._hydrateVisibleHomeTasks = vi.fn();
+    view.querySelector = () => null;
+    vi.stubGlobal("document", {
+      visibilityState: "visible",
+      querySelector: () => null,
+    });
+    const api = await import("../services/api.js");
+    return { view, api };
+  }
+
+  it("shares focus/visibility reads, fetches only open tasks, and waits five minutes", async () => {
+    const { view, api } = await fixture();
+    /** @type {(value: any) => void} */
+    let resolve = () => {};
+    const fetch = vi.spyOn(api, "listTasks").mockImplementation(
+      () =>
+        new Promise((r) => {
+          resolve = r;
+        }),
+    );
+    try {
+      const first = view._refreshActiveTab();
+      const second = view._refreshActiveTab();
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+      expect(fetch).toHaveBeenCalledWith({ status: "open", limit: 50 });
+      resolve({ tasks: [{ taskId: "new", status: "open" }] });
+      await Promise.all([first, second]);
+      expect(view._homeModel.tasks.map((task) => task.taskId)).toEqual([
+        "history",
+        "new",
+      ]);
+      await view._refreshActiveTab();
+      expect(fetch).toHaveBeenCalledTimes(1);
+      view._taskListFreshness.set("open", Date.now() - 5 * 60 * 1000);
+      fetch.mockResolvedValue({ tasks: [] });
+      await view._refreshActiveTab();
+      expect(fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it("keeps failures stale and ignores responses superseded by a full refresh", async () => {
+    const { view, api } = await fixture();
+    const original = view._homeModel;
+    const fetch = vi
+      .spyOn(api, "listTasks")
+      .mockRejectedValue(new Error("offline"));
+    try {
+      await view._refreshActiveTab();
+      expect(view._homeModel).toBe(original);
+      expect(view._taskListFreshness.has("open")).toBe(false);
+      /** @type {(value: any) => void} */
+      let resolve = () => {};
+      fetch.mockImplementation(
+        () =>
+          new Promise((r) => {
+            resolve = r;
+          }),
+      );
+      const pending = view._refreshActiveTab();
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+      view._tabRefreshEpoch++;
+      resolve({ tasks: [] });
+      await pending;
+      expect(view._homeModel).toBe(original);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it("does no freshness work while hidden or while a full load is active", async () => {
+    const { view, api } = await fixture();
+    const fetch = vi.spyOn(api, "listTasks");
+    try {
+      vi.stubGlobal("document", { visibilityState: "hidden" });
+      await view._refreshActiveTab();
+      vi.stubGlobal("document", { visibilityState: "visible" });
+      view._homeRefresh = Promise.resolve();
+      await view._refreshActiveTab();
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+  it("fetches only stale statuses needed by In-progress and defers History-only data", async () => {
+    const { view, api } = await fixture();
+    view._homeFilter = "in_progress";
+    view._taskListFreshness.set("completed", Date.now());
+    const fetch = vi.spyOn(api, "listTasks").mockResolvedValue({ tasks: [] });
+    try {
+      await view._refreshActiveTab();
+      expect(
+        fetch.mock.calls.map(([options]) => options.status).sort(),
+      ).toEqual(["completing", "in_progress"]);
+      fetch.mockClear();
+      view._homeFilter = "history";
+      await view._refreshActiveTab();
+      expect(
+        fetch.mock.calls.map(([options]) => options.status).sort(),
+      ).toEqual(["cannot_do", "open"]);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it("shows polite refresh text only after a delay and clears it after completion", async () => {
+    const { view, api } = await fixture();
+    const { refreshActiveTab } = await import(
+      "../services/home-task-freshness.js"
+    );
+    const status = { textContent: "" };
+    view.querySelector = () => status;
+    /** @type {(value: any) => void} */
+    let resolve = () => {};
+    const fetch = vi.spyOn(api, "listTasks").mockImplementation(
+      () =>
+        new Promise((r) => {
+          resolve = r;
+        }),
+    );
+    vi.useFakeTimers();
+    try {
+      const pending = refreshActiveTab(view);
+      await vi.advanceTimersByTimeAsync(299);
+      expect(status.textContent).toBe("");
+      await vi.advanceTimersByTimeAsync(1);
+      expect(status.textContent).toBe(t("home.checkingUpdates"));
+      resolve({ tasks: [] });
+      await pending;
+      expect(status.textContent).toBe("");
+    } finally {
+      vi.useRealTimers();
+      fetch.mockRestore();
+    }
+  });
+  it("retires a confirmed override only when a saved or newer server version arrives", async () => {
+    const { view, api } = await fixture();
+    view._homeFilter = "in_progress";
+    const confirmed = {
+      taskId: "a",
+      status: "completed",
+      updatedAt: "2026-10-27T10:00:00Z",
+    };
+    view._confirmedTasks = new Map([["a", confirmed]]);
+    const stale = {
+      ...confirmed,
+      status: "in_progress",
+      updatedAt: "2026-10-27T09:00:00Z",
+    };
+    const newer = { ...stale, updatedAt: "2026-10-27T11:00:00Z" };
+    const fetch = vi
+      .spyOn(api, "listTasks")
+      .mockImplementation(async ({ status }) => ({
+        tasks: status === "in_progress" ? [stale] : [],
+      }));
+    try {
+      await view._refreshActiveTab();
+      expect(view._confirmedTasks.has("a")).toBe(true);
+      expect(
+        view._homeModel.tasks.find((task) => task.taskId === "a"),
+      ).toMatchObject(confirmed);
+      view._taskListFreshness.clear();
+      fetch.mockImplementation(async ({ status }) => ({
+        tasks:
+          status === "in_progress"
+            ? [newer]
+            : status === "completed"
+              ? [confirmed]
+              : [],
+      }));
+      await view._refreshActiveTab();
+      expect(view._confirmedTasks.has("a")).toBe(false);
+      expect(
+        view._homeModel.tasks.find((task) => task.taskId === "a"),
+      ).toMatchObject(newer);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it("recovers the active tab without claiming unfetched History data is loaded", async () => {
+    const { view, api } = await fixture();
+    view._homeFilter = "in_progress";
+    view._remainingStatus = "error";
+    const fetch = vi.spyOn(api, "listTasks").mockResolvedValue({ tasks: [] });
+    try {
+      await view._refreshActiveTab();
+      expect(view._tabListStatus()).toBe("loaded");
+      expect(view._remainingStatus).toBe("error");
+      expect(view._taskListFreshness.has("cannot_do")).toBe(false);
+      view._homeFilter = "history";
+      expect(view._tabListStatus()).toBe("error");
+      await view._refreshActiveTab();
+      expect(view._remainingStatus).toBe("loaded");
+      expect(view._tabListStatus()).toBe("loaded");
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it("publishes successful lists once after all responses, retaining a failed list", async () => {
+    const { view, api } = await fixture();
+    view._homeFilter = "in_progress";
+    const pending = new Map();
+    const fetch = vi
+      .spyOn(api, "listTasks")
+      .mockImplementation(
+        ({ status }) =>
+          new Promise((resolve, reject) =>
+            pending.set(status, { resolve, reject }),
+          ),
+      );
+    try {
+      const first = view._refreshActiveTab();
+      const second = view._refreshActiveTab();
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+      pending
+        .get("in_progress")
+        .resolve({ tasks: [{ taskId: "new", status: "in_progress" }] });
+      pending.get("completing").resolve({ tasks: [] });
+      await Promise.resolve();
+      expect(view._renderHome).not.toHaveBeenCalled();
+      pending.get("completed").reject(new Error("offline"));
+      await Promise.all([first, second]);
+      expect(view._renderHome).toHaveBeenCalledOnce();
+      expect(view._watchDuplicates).toHaveBeenCalledOnce();
+      expect(view._homeModel.tasks.map((task) => task.taskId)).toContain(
+        "history",
+      );
+      expect(view._taskListFreshness.has("completed")).toBe(false);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+});

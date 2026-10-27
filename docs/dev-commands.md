@@ -1,6 +1,8 @@
 # Developer command reference
 
-**Prereqs:** Node 24 LTS+, npm 11+. Terraform 1.9+ and pre-commit for infra work; AWS access is
+**Prereqs:** Node 24 LTS+, npm 11+, and pre-commit for all local development
+(`brew install pre-commit` on macOS, or `pipx install pre-commit`). Terraform 1.9+ is
+required for infra work; AWS access is
 for approved operators only — developers work through Git and CI. The backend local harness also
 needs **JRE 17+** (DynamoDB Local + ElasticMQ are Java jars) — install with
 `brew install --cask temurin` (not `java.com`'s Java 8), confirm `java -version` reports 17+. The
@@ -10,8 +12,17 @@ frontend, tests, lint, and typecheck do **not** need Java.
 
 | Command | Does |
 |---|---|
-| `npm install` | Install all workspace deps (run from repo root) |
+| `npm install` | Install all workspace deps and Git hooks (run from repo root) |
+| `npm run setup:hooks` | Install or repair the pre-commit hook and download its configured environments |
 | `cp .env.example .env.local` | Local backend env (git-ignored) — required by `npm run dev -w backend`. Dummies work out of the box; for the analyzer leg, set a real `ANALYZER_API_KEY` (see [Local S3 (MinIO)](#local-s3-minio)) |
+
+Local `npm install` and `npm ci` run `pre-commit install --install-hooks` through
+the root `postinstall` script. Missing pre-commit or failed hook setup fails the
+installation command; fix the reported problem and rerun `npm run setup:hooks`.
+The first run needs network access to download hook environments. CI explicitly
+skips hook setup when `CI=true` or `CI=1`; CI security scans still run separately.
+Using `--ignore-scripts` bypasses this setup, so run `npm run setup:hooks` afterward.
+Do not set `CI=true` in your local shell to suppress setup failures.
 
 ## Repo-wide checks (what CI runs)
 

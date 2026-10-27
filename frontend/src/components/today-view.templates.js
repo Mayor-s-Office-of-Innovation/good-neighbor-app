@@ -698,6 +698,7 @@ export function taskTabs({ activeId, tabs = HOME_TABS, counts = {} }) {
         )
         .join("")}
     </div>
+    <span data-task-refresh-status role="status"></span>
   `;
 }
 

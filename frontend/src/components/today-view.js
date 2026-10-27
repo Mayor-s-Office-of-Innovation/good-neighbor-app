@@ -260,6 +260,13 @@ class TodayView extends HTMLElement {
     this._homeModel = null;
     /** @type {Promise<void> | null} */
     this._homeRefresh = null;
+    this._taskListFreshness = new Map();
+    this._tabRefreshes = new Map();
+    /** @type {(() => void) | null} */
+    this._tabRefreshStatus = null;
+    /** @type {(() => "pending" | "loaded" | "error") | null} */
+    this._tabListStatus = null;
+    this._tabRefreshEpoch = 0;
     this._homeRefreshQueued = false;
     this._homeRefreshGeneration = 0;
     /** @type {Promise<void> | null} */
@@ -305,9 +312,13 @@ class TodayView extends HTMLElement {
     /** @type {Map<string, import("../domain/task-311-status.js").Ticket311State>} */
     this._311StatusByTaskId = new Map();
     this._311StatusGeneration = 0;
-    this._refresh311OnReturn = () => this._refresh311Statuses();
+    this._refresh311OnReturn = () => {
+      this._refresh311Statuses();
+      void this._refreshActiveTab();
+    };
     this._duplicateLinks = new Map();
     this._duplicateCloseHandler = () => {
+      if (!document.querySelector("dialog[open]")) this._flushDialogRender();
       if (
         this._duplicatesNeedRender &&
         this.isConnected &&
@@ -321,6 +332,8 @@ class TodayView extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._tabRefreshEpoch++;
+    this._tabRefreshes.clear();
     this._remainingRefresh = null;
     this._remainingRefreshQueued = false;
     this._homeRefreshGeneration++;
@@ -388,6 +401,9 @@ class TodayView extends HTMLElement {
 
   /** @param {number} generation */
   async _loadHome(generation) {
+    this._taskListFreshness.clear();
+    this._tabRefreshEpoch++;
+    this._tabRefreshes.clear();
     window.addEventListener("focus", this._refresh311OnReturn);
     document.addEventListener("visibilitychange", this._refresh311OnReturn);
     document.addEventListener("close", this._duplicateCloseHandler, true);
@@ -563,8 +579,17 @@ class TodayView extends HTMLElement {
             (task) => task.status && task.status !== "open",
           )
         : [];
+      this._taskListFreshness.set("open", Date.now());
       tasks = uniqueTasks([...(openTasksResult.tasks || []), ...reused]);
       if (!reuseRemaining) this._remainingStatus = "pending";
+      else
+        for (const status of [
+          "in_progress",
+          "completing",
+          "completed",
+          "cannot_do",
+        ])
+          this._taskListFreshness.set(status, this._remainingLoadedAt);
       submitted = (checks || [])
         .map((h) => adaptCheckHeader(h))
         .filter((c) => c.status === "submitted")
@@ -780,10 +805,23 @@ class TodayView extends HTMLElement {
     ]);
     this._remainingStatus = "loaded";
     this._remainingLoadedAt = Date.now();
+    for (const status of [
+      "in_progress",
+      "completing",
+      "completed",
+      "cannot_do",
+    ])
+      this._taskListFreshness.set(status, Date.now());
     this._renderHome({ ...model, tasks });
     this._watchDuplicates(tasks);
     void this._hydrate311CardStatuses(tasks);
     void this._hydrateVisibleHomeTasks();
+  }
+
+  _refreshActiveTab() {
+    return import("../services/home-task-freshness.js")
+      .then(({ refreshActiveTab }) => refreshActiveTab(this))
+      .catch(() => {});
   }
 
   _refresh311Statuses() {
@@ -913,6 +951,7 @@ class TodayView extends HTMLElement {
       return;
     this._homeMarkup = markup;
     this.innerHTML = markup;
+    this._tabRefreshStatus?.();
 
     // Hand the bound site id to the feedback sheet so submissions carry it as
     // optional context (the server treats it as advisory, pattern-checked).
@@ -1483,7 +1522,7 @@ class TodayView extends HTMLElement {
       homeFilter: this._homeFilter,
       // Counts only once every list is in — a partial count would be wrong.
       tabCounts: remainingStatus === "loaded" ? tabCounts : {},
-      remainingStatus,
+      remainingStatus: this._tabListStatus?.() || remainingStatus,
       siteName: this._site?.name || "",
       siteAddress: this._site?.address || "",
       pendingSessionId: pendingSession?.id || "",
@@ -1927,6 +1966,7 @@ class TodayView extends HTMLElement {
       this._renderHome(this._homeModel);
       void this._hydrateVisibleHomeTasks();
       this._refresh311Statuses();
+      void this._refreshActiveTab();
     }
   }
 
