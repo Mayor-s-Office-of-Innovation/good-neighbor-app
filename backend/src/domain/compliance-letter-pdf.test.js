@@ -1,10 +1,56 @@
 import { describe, expect, it } from "vitest";
+import { PDFDocument, PDFName } from "pdf-lib";
 import {
   generateComplianceLetterPdf,
   generateComplianceLetterPreviewSvg,
 } from "./compliance-letter-pdf.js";
 
 describe("compliance letter PDF", () => {
+  it.each([
+    ["DPH", "Department of Public Health (DPH)"],
+    ["HSH", "Department of Homelessness and Supportive Housing (HSH)"],
+  ])(
+    "uses the %s sender letterhead in the PDF and preview",
+    async (shortName, fullName) => {
+      const period = {
+        effectiveStart: "2026-10-27",
+        requiredChecksPerDay: 3,
+        letterInputs: {
+          departmentName: shortName,
+          programManagerName: "Sender Name",
+        },
+      };
+      const svg = generateComplianceLetterPreviewSvg(period).toString();
+      const image = svg.match(/href="(data:image\/png;base64,[^"]+)"/)?.[1];
+      expect(image).toBeTruthy();
+      const fullNameSvg = generateComplianceLetterPreviewSvg({
+        ...period,
+        letterInputs: { ...period.letterInputs, departmentName: fullName },
+      }).toString();
+      expect(fullNameSvg).toContain(`href="${image}"`);
+      const otherSvg = generateComplianceLetterPreviewSvg({
+        ...period,
+        letterInputs: { departmentName: shortName === "DPH" ? "HSH" : "DPH" },
+      }).toString();
+      expect(otherSvg).not.toContain(`href="${image}"`);
+      expect(svg).toContain("Sender Name");
+      const positions = [...svg.matchAll(/<text x="[^"]+" y="([^"]+)"/g)].map(
+        (match) => Number(match[1]),
+      );
+      expect(Math.min(...positions)).toBeGreaterThanOrEqual(152);
+      expect(Math.max(...positions)).toBeLessThanOrEqual(692);
+      const pdf = await PDFDocument.load(
+        await generateComplianceLetterPdf(period),
+      );
+      expect(pdf.getPageCount()).toBe(1);
+      // The vector letterhead must actually be drawn onto the page, not just
+      // included in the browser preview or shipped as an unused PDF resource.
+      expect(
+        pdf.getPage(0).node.Resources()?.get(PDFName.of("XObject")),
+      ).toBeDefined();
+    },
+  );
+
   it("creates a one-page PDF with selected reasons and mapped fields", async () => {
     const pdf = await generateComplianceLetterPdf({
       effectiveStart: "2026-10-08",
