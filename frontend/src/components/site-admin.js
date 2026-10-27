@@ -475,7 +475,10 @@ class SiteAccessView extends HTMLElement {
         void renderEnrollmentQr(card, grant.enrollmentUrl);
       card
         .querySelector("[data-share-grant]")
-        ?.addEventListener("click", () => void this._accessState.shareGrant(grant));
+        ?.addEventListener(
+          "click",
+          () => void this._accessState.shareGrant(grant),
+        );
       card
         .querySelector("[data-cancel-staff-grant]")
         ?.addEventListener("click", () => void this._cancelGrant(grant));
