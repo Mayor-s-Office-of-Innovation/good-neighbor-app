@@ -7,6 +7,8 @@
 
 ## Core reference
 
+- **[today-load-requests.md](./today-load-requests.md)** — initial Today page request
+  totals, asset/API sequence diagram, DynamoDB fanout, third-party calls and duplicate polling.
 - **[architecture.md](./architecture.md)** — the built system: container view, async analyze
   flow, the guidance workflow (rule-driven tasks), single-table pointer, security boundaries,
   idempotency/offline posture.
