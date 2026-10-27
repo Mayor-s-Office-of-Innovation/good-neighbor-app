@@ -992,8 +992,14 @@ export const handler = async (event) => {
         timing.add("analysisToResultPublishedMs", Date.now() - analyzedAt);
       if (result.status === "failed")
         throw new Error("Duplicate comparison failed");
-      // Reconcile peers arriving concurrently or late. Each peer is revisited only
-      // when its evaluation did not include this revision; no circular requeue loop.
+      // Fan out once per source revision, independently of comparison retries and
+      // result replacement. Missing candidateRevisions is not an invalidation
+      // token: ineligible observations are legitimately absent forever.
+      const peerCheckpoint = {
+        pk: projection.pk,
+        sk: `DUP_PEER_RECONCILIATION#${id}#${job.revision}`,
+      };
+      if (await get(table, peerCheckpoint)) continue;
       const peers = await query(
         table,
         job.siteId,
@@ -1006,6 +1012,16 @@ export const handler = async (event) => {
       const sqs = new SQSClient({});
       for (const peer of peers) {
         if (peer.id === id || !process.env.DUPLICATE_QUEUE_URL) continue;
+        if (
+          !eligibleImages(
+            /** @type {Omit<import("../analysis/duplicates/image-matcher.js").ImageObservation,"image">} */ ({
+              ...peer,
+              availableAt: new Date().toISOString(),
+            }),
+            [source],
+          ).length
+        )
+          continue;
         const previous = await get(table, {
           pk: projection.pk,
           sk: `DUP_RESULT#${peer.id}#${peer.revision}`,
@@ -1037,6 +1053,16 @@ export const handler = async (event) => {
           }),
         );
       }
+      // Write only after every send succeeds. Partial sends can be repeated on
+      // retry (SQS is at-least-once), but successful revisions cannot cascade
+      // again. A separate item survives concurrent result/projection rewrites.
+      if (process.env.DUPLICATE_QUEUE_URL)
+        await ddb.send(
+          new PutCommand({
+            TableName: table,
+            Item: { ...peerCheckpoint, completedAt: new Date().toISOString() },
+          }),
+        );
     } catch (error) {
       duplicateEvent("worker_failed", {
         siteId: job?.siteId,

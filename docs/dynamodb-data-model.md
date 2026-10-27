@@ -682,6 +682,7 @@ resolved from current guidance/tasks rather than treated as identity.
 | `DUP_OBSERVATION#<generatedAt>#<checkId>:<artifactId>` | Current revision, condition/category descriptions, immutable media reference and optional derived hashes. Generation time, not capture time, indexes the 72-hour lookup. |
 | `DUP_COVERAGE` | Earliest completely indexed generation time for this Site. |
 | `DUP_RESULT#<observationId>#<revision>` | Pending/final evaluation, per-condition results, safe timing diagnostics and target revisions. |
+| `DUP_PEER_RECONCILIATION#<observationId>#<revision>` | Successful peer-notification checkpoint (`completedAt`). Written after all eligible peer sends succeed; retained across result/projection rewrites so redeliveries cannot repeat fanout. |
 | `DUP_ISSUE#<observationId>#<revision>#<conditionId>` | Incrementally published high-confidence explicit link with revision/lifecycle validation keys. |
 | `DUP_COMPARISON#<requestDigest>` | Comparison response cache, including matcher/request version; five-day TTL and no image bytes. |
 | `DUP_LINK#<taskId>` | Idempotently materialized original-task link and its duplicate-detection timeline event ID. |

@@ -9,6 +9,7 @@ const state = vi.hoisted(() => ({
   clientOptions:
     /** @type {Parameters<typeof import("../analysis/duplicates/image-matcher.js").createComparisonClient>[0][]} */ ([]),
   records: new Map(),
+  beforeSend: vi.fn(),
   writes:
     /** @type {(import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput | import("@aws-sdk/lib-dynamodb").PutCommandInput)[]} */ ([]),
   sends: /** @type {object[]} */ ([]),
@@ -88,6 +89,7 @@ vi.mock("../analysis/duplicates/image-matcher.js", async (importOriginal) => ({
 vi.mock("@aws-sdk/client-sqs", () => ({
   SQSClient: class {
     async send(/** @type {{input:object}} */ command) {
+      await state.beforeSend();
       state.sends.push(command.input);
       return {};
     }
@@ -107,6 +109,7 @@ beforeEach(() => {
   state.records.clear();
   state.writes = [];
   state.sends = [];
+  state.beforeSend.mockReset();
   state.compare.mockReset();
   state.clientOptions = [];
   delete process.env.DUPLICATE_COMPARISON_REQUESTS_PER_SECOND;
@@ -501,4 +504,160 @@ it("wires configured aggregate pacing into uncached worker comparisons", async (
   } finally {
     delete process.env.DUPLICATE_COMPARISON_REQUESTS_PER_SECOND;
   }
+});
+
+/** @param {string} name @param {string} observedAt @param {string} category */
+function addPeer(name, observedAt, category = "test-category") {
+  const analysis = {
+    pk: "SITE#site",
+    sk: `CHECK#${name}#ANALYSIS#photo`,
+    status: "analyzed",
+    analysisId: `${name}-analysis`,
+    checkId: name,
+    artifactId: "photo",
+    analyzedAt: observedAt,
+    concerns: [
+      {
+        conditionId: `${name}-issue`,
+        category,
+        rating: 2,
+        explanation: "pile",
+      },
+    ],
+  };
+  const peer = {
+    ...projectionKey("site", observedAt, `${name}:photo`),
+    id: `${name}:photo`,
+    sourceId: `${name}:photo`,
+    siteId: "site",
+    checkId: name,
+    artifactId: "photo",
+    revision: analysisRevision(analysis),
+    observedAt,
+    availableAt: observedAt,
+    conditions: [{ id: `${name}-issue`, category, description: "pile" }],
+  };
+  state.records.set(analysis.sk, analysis);
+  state.records.set(`CHECK#${name}#ART#photo`, {});
+  state.records.set(peer.sk, peer);
+  state.records.set(`DUP_RESULT#${peer.id}#${peer.revision}`, {
+    status: "evaluated",
+    evaluatedAt: observedAt,
+    candidateRevisions: [],
+  });
+  return peer;
+}
+
+/** @param {{Records:{messageId:string,body:string}[]}} event */
+async function runJob(event) {
+  return handler(
+    /** @type {import("aws-lambda").SQSEvent} */ (event),
+    /** @type {import("aws-lambda").Context} */ ({}),
+    () => {},
+  );
+}
+
+it("does not fan out again when a completed source job is redelivered and peers omit it", async () => {
+  const { event } = setup();
+  addPeer("newer", "2026-10-14T11:00:00.000Z");
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(state.sends).toHaveLength(1);
+  // The peer has not run yet; its candidate list still omits this source.
+  for (let i = 0; i < 4; i++)
+    expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(state.sends).toHaveLength(1);
+});
+
+it("does not enqueue peers for excluded categories, shared sources, or the 72-hour boundary", async () => {
+  const { event } = setup();
+  addPeer("other-category", "2026-10-14T11:00:00.000Z", "other-category");
+  addPeer("boundary", "2026-10-17T10:01:00.000Z");
+  const missing = addPeer("missing-category", "2026-10-14T12:00:00.000Z");
+  missing.conditions = [];
+  const sameSource = addPeer("same-source", "2026-10-14T13:00:00.000Z");
+  sameSource.sourceId = "source:photo";
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(state.sends).toHaveLength(0);
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(state.sends).toHaveLength(0);
+});
+
+it("still schedules an eligible late-available source missing from an evaluated peer", async () => {
+  const { event, current } = setup();
+  current.generatedAt = "2026-10-14T10:00:00.000Z";
+  current.analyzedAt = "2026-10-14T13:00:00.000Z";
+  event.Records[0].body = JSON.stringify({
+    siteId: "site",
+    checkId: "source",
+    artifactId: "photo",
+    revision: analysisRevision(current),
+  });
+  const peer = addPeer("newer", "2026-10-14T11:00:00.000Z");
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(state.sends).toEqual([
+    {
+      QueueUrl: "queue",
+      MessageBody: JSON.stringify({
+        siteId: "site",
+        checkId: peer.checkId,
+        artifactId: peer.artifactId,
+        revision: peer.revision,
+      }),
+    },
+  ]);
+});
+
+it("a new source revision gets its own peer reconciliation pass", async () => {
+  const { event, current } = setup();
+  addPeer("newer", "2026-10-14T11:00:00.000Z");
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  current.analysisId = "amended-analysis";
+  event.Records[0].body = JSON.stringify({
+    siteId: "site",
+    checkId: "source",
+    artifactId: "photo",
+    revision: analysisRevision(current),
+  });
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(state.sends).toHaveLength(2);
+});
+
+it("retries partial peer sends before checkpointing, then stops fanout on redelivery", async () => {
+  const { event, current } = setup();
+  addPeer("newer-one", "2026-10-14T11:00:00.000Z");
+  addPeer("newer-two", "2026-10-14T12:00:00.000Z");
+  state.beforeSend
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(new Error("SQS unavailable"));
+  expect(await runJob(event)).toEqual({
+    batchItemFailures: [{ itemIdentifier: "message" }],
+  });
+  const checkpoint = `DUP_PEER_RECONCILIATION#source:photo#${analysisRevision(current)}`;
+  expect(state.records.has(checkpoint)).toBe(false);
+  expect(state.sends).toHaveLength(1);
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(state.sends).toHaveLength(3);
+  expect(state.records.has(checkpoint)).toBe(true);
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(state.sends).toHaveLength(3);
+});
+
+it("does not cascade when queued peer jobs themselves are repeatedly delivered", async () => {
+  const { event } = setup();
+  addPeer("newer-one", "2026-10-14T11:00:00.000Z");
+  addPeer("newer-two", "2026-10-14T12:00:00.000Z");
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  // Simulate SQS redelivery of every generated job, including jobs generated
+  // during the drain. A missing-candidate-only guard repeatedly schedules peers.
+  let consumed = 0;
+  while (consumed < state.sends.length && consumed < 20) {
+    const sent = /** @type {{MessageBody:string}} */ (state.sends[consumed++]);
+    const job = {
+      Records: [{ messageId: `peer-${consumed}`, body: sent.MessageBody }],
+    };
+    for (let i = 0; i < 3; i++)
+      expect(await runJob(job)).toEqual({ batchItemFailures: [] });
+  }
+  expect(consumed).toBe(state.sends.length);
+  expect(state.sends.length).toBeLessThanOrEqual(3);
 });
