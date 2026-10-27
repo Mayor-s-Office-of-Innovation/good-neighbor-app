@@ -1,3 +1,4 @@
+import { invalidateDuplicateIssues } from "../services/duplicate-issues.js";
 import "@awesome.me/webawesome/dist/components/select/select.js";
 import "@awesome.me/webawesome/dist/components/option/option.js";
 import "./task-details-dialog.css";
@@ -334,6 +335,7 @@ export class TaskDetailsDialog extends HTMLElement {
         sourceRevision: member.sourceRevision,
         originalTaskId: this._details.rootTaskId,
       });
+      invalidateDuplicateIssues();
       this._onChanged();
       if (taskId === this._clicked.taskId) {
         const details = await getTaskDetails(result.taskId);

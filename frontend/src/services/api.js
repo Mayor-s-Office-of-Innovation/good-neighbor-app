@@ -1278,9 +1278,12 @@ export async function waitForAnalyses(
   }
 }
 
-/** @param {string[]} taskIds */
-export function getDuplicateLinks(taskIds) {
-  return request("POST", "/v1/duplicates:batch", { body: { taskIds } });
+/**
+ * @param {string[]} taskIds
+ * @param {{originSiteId?: string, signal?: AbortSignal}} [options]
+ */
+export function getDuplicateLinks(taskIds, options = {}) {
+  return request("POST", "/v1/duplicates:batch", { ...options, body: { taskIds } });
 }
 /** @param {string} taskId @param {{sourceRevision:string,originalTaskId:string}} expected */
 export function separateDuplicate(taskId, expected) {
