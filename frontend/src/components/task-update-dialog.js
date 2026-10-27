@@ -228,6 +228,8 @@ export class TaskUpdateDialog extends HTMLElement {
         : page;
       this._nextToken = page.nextToken;
       this._task = { ...this._task, ...this._detail.task };
+      if (this._task.canRequestCityHelp === false)
+        this._cityHelpNeeded = undefined;
       this._state = "ready";
       this._render();
       void this._loadCityUpdates(generation);
@@ -1025,7 +1027,11 @@ export class TaskUpdateDialog extends HTMLElement {
 
   _resetDraft() {
     this._cityHelpNeeded =
-      !this._results && submitted311Ticket(this._task) ? null : undefined;
+      !this._results &&
+      (this._task?.canRequestCityHelp ??
+        Boolean(submitted311Ticket(this._task)))
+        ? null
+        : undefined;
     this._requests.clear();
     this._resetFiles();
     this._noteDrafts = emptyTaskUpdateNotes();

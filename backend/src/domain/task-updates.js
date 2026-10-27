@@ -1,3 +1,5 @@
+import { openFiledTicketNumbers } from "./open-filed-tickets.js";
+
 const FOUR_HOURS_MS = 4 * 60 * 60 * 1000;
 
 /**
@@ -200,27 +202,14 @@ export function canUpdateTask(task, now = Date.now()) {
   if (task.status === "in_progress") return true;
   if (task.status === "resolving")
     return Date.parse(task.resolutionLeaseExpiresAt || "") <= now;
-  /** @type {Record<string, any>[]} */
-  const results = task.appActionResults || [];
-  const filing = results.filter(
-    (result) => result.code === "create_311_ticket",
-  );
+  const hasOpenTicket = openFiledTicketNumbers(task).length > 0;
   if (task.status === "completing")
     return (
-      Date.parse(task.completionLeaseExpiresAt || "") <= now &&
-      filing.some((result) =>
-        result.payload?.tickets?.some(
-          (/** @type {Record<string, any>} */ ticket) => ticket.srNum,
-        ),
-      )
+      Date.parse(task.completionLeaseExpiresAt || "") <= now && hasOpenTicket
     );
   return (
     task.status === "completed" &&
     task.completionMethod === "311_filed" &&
-    !filing.some((result) =>
-      ["closed", "completed", "resolved"].includes(
-        String(result.status || "").toLowerCase(),
-      ),
-    )
+    hasOpenTicket
   );
 }

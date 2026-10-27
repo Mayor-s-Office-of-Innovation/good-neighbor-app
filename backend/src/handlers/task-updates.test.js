@@ -55,6 +55,56 @@ describe("task update handlers", () => {
     delete process.env.SF311_BASIC_AUTH_PASS;
   });
 
+  it.each(["missing", "closed", "in_progress"])(
+    "publishes and enforces ticket eligibility: %s",
+    async (scenario) => {
+      const task = {
+        taskId: "task-1",
+        status: scenario === "in_progress" ? "in_progress" : "completed",
+        completionMethod: "311_filed",
+        appActionResults:
+          scenario === "missing"
+            ? []
+            : [
+                {
+                  code: "create_311_ticket",
+                  payload: { tickets: [{ srNum: "123" }] },
+                },
+                {
+                  code: "close_311_ticket",
+                  payload: { closures: [{ srNum: "123", status: "closed" }] },
+                },
+              ],
+      };
+      send
+        .mockResolvedValueOnce({ Item: task })
+        .mockResolvedValueOnce({ Items: [] });
+      const detail = JSON.parse((await getTaskUpdates(event({}))).body);
+      expect(detail.task.canUpdate).toBe(scenario === "in_progress");
+      expect(detail.task.canRequestCityHelp).toBe(false);
+      send
+        .mockReset()
+        .mockResolvedValue({})
+        .mockResolvedValueOnce({ Item: task });
+      const fetch = vi.fn();
+      vi.stubGlobal("fetch", fetch);
+      const response = await createTaskUpdate(
+        event({
+          type: "note_photo_update",
+          notes: ["Local update"],
+          photoKeys: [],
+        }),
+      );
+      expect(response.statusCode).toBe(scenario === "in_progress" ? 201 : 409);
+      expect(fetch).not.toHaveBeenCalled();
+      expect(
+        send.mock.calls.some(
+          ([command]) => command instanceof TransactWriteCommand,
+        ),
+      ).toBe(scenario === "in_progress");
+    },
+  );
+
   it.each([
     [false, true],
     [false, false],

@@ -86,6 +86,7 @@ function detail(task, updates) {
     task: {
       ...task,
       canUpdate: canUpdateTask(task),
+      canRequestCityHelp: Boolean(cityHelpTicket(task)),
       responseExpectedAt: responseExpectedAt(task),
       presencePeriod: presencePeriod(task.inProgressAt),
       presencePromptDue: presencePromptDue(task),

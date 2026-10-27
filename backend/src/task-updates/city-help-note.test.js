@@ -260,3 +260,24 @@ it.each(["configuration", "claim", "reconciliation", "checkpoint"])(
     }
   },
 );
+
+it("targets an open ticket after a partial closure and none after all close", () => {
+  const task = {
+    appActionResults: [
+      {
+        code: "create_311_ticket",
+        payload: { tickets: [{ srNum: "123" }, { srNum: "456" }] },
+      },
+      {
+        code: "close_311_ticket",
+        payload: { closures: [{ srNum: "123", status: "closed" }] },
+      },
+    ],
+  };
+  expect(cityHelpTicket(task)).toBe("456");
+  task.appActionResults.push({
+    code: "close_311_ticket",
+    payload: { closures: [{ srNum: "456", status: "closed" }] },
+  });
+  expect(cityHelpTicket(task)).toBe("");
+});

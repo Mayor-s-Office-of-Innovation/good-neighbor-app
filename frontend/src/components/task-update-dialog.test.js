@@ -1172,3 +1172,29 @@ it("times out an unresponsive save and retries with the same update identity", a
     vi.useRealTimers();
   }
 });
+
+it("allows local updates without a City-help choice when the API reports only closed tickets", async () => {
+  const { TaskUpdateDialog } = await import("./task-update-dialog.js");
+  const dialog = new TaskUpdateDialog();
+  dialog._render = vi.fn();
+  dialog._loadCityUpdates = vi.fn();
+  dialog._loadTimelinePhotos = vi.fn();
+  api.getTaskUpdates.mockResolvedValueOnce({
+    task: { canUpdate: true, canRequestCityHelp: false },
+    updates: [],
+  });
+  await dialog.open(
+    {
+      taskId: "closed-city-ticket",
+      status: "in_progress",
+      appActionResults: [
+        { code: "create_311_ticket", payload: { tickets: [{ srNum: "123" }] } },
+      ],
+    },
+    "notes",
+  );
+  expect(dialog._cityHelpNeeded).toBeUndefined();
+  expect(dialog._content()).not.toContain("data-city-help");
+  dialog._resetDraft();
+  expect(dialog._cityHelpNeeded).toBeUndefined();
+});
