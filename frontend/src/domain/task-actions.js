@@ -1,8 +1,83 @@
 /**
  * @typedef {{ code?: string, status?: string, reason?: string, payload?: {tickets?: Array<{srNum?: string}>} }} AppActionResult
- * @typedef {{ status?: string, appActionResults?: AppActionResult[] }} TaskActionState
+ * @typedef {{ status?: string, appActionStatus?: string, inProgressActionKind?: string, appActionResults?: AppActionResult[] }} TaskActionState
  */
 import { t } from "../i18n/i18n.js";
+
+/** Failures another try can't fix; matches the SF311 job worker's list. */
+const PERMANENT_311_REASONS = new Set([
+  "missing_location",
+  "insufficient_classifier_information",
+  "missing_service_code",
+  "no_service_codes",
+  "responsible_agency_not_found",
+]);
+
+/**
+ * Where a background "File 311 ticket" tap stands: "queued"
+ * while the worker files it, "failed" once it gave up, "" otherwise
+ * (including filings that ran inside the request).
+ * @param {TaskActionState | null | undefined} task
+ * @returns {"queued" | "failed" | ""}
+ */
+export function filing311State(task) {
+  if (
+    task?.status !== "in_progress" ||
+    task.inProgressActionKind !== "311_filed"
+  )
+    return "";
+  if (task.appActionStatus === "queued") return "queued";
+  if (task.appActionStatus === "failed" && !hasSubmitted311Ticket(task))
+    return "failed";
+  return "";
+}
+
+/**
+ * A failed background filing that another tap could fix.
+ * @param {TaskActionState | null | undefined} task
+ * @returns {boolean}
+ */
+export function canRetry311Filing(task) {
+  if (filing311State(task) !== "failed") return false;
+  const reason = create311Result(task)?.reason || "";
+  return (
+    !PERMANENT_311_REASONS.has(reason) &&
+    !reason.endsWith("_requires_reconciliation")
+  );
+}
+
+/**
+ * Why a background filing failed, in words for the card.
+ * @param {TaskActionState | null | undefined} task
+ * @returns {string}
+ */
+export function filing311FailureMessage(task) {
+  if (filing311State(task) !== "failed") return "";
+  const reason = create311Result(task)?.reason || "";
+  if (reason.endsWith("_requires_reconciliation"))
+    return t("taskAction.failure.creationUncertain");
+  if (reason === "attachment_submission_failed")
+    return t("taskAction.failure.photosFailed");
+  if (reason === "missing_location")
+    return t("taskAction.failure.missingLocation");
+  // The other shared messages end in "try again"; these can't be retried.
+  if (PERMANENT_311_REASONS.has(reason))
+    return t("taskAction.failure.cannotFile");
+  return (
+    appActionFailureMessage(task, { includeUnsubmitted311: true }) ||
+    t("taskAction.failure.default")
+  );
+}
+
+/**
+ * @param {TaskActionState | null | undefined} task
+ * @returns {AppActionResult | undefined}
+ */
+function create311Result(task) {
+  return (
+    Array.isArray(task?.appActionResults) ? task.appActionResults : []
+  ).find((result) => result?.code === "create_311_ticket");
+}
 
 /**
  * @param {TaskActionState | null | undefined} task
@@ -27,6 +102,16 @@ export function isFiled311Completion(task) {
     ["in_progress", "completed"].includes(task?.status || "") &&
     hasSubmitted311Ticket(task)
   );
+}
+
+/**
+ * A "File 311 ticket" tap the server accepted: filed in the request, or
+ * queued for the background worker.
+ * @param {TaskActionState | null | undefined} task
+ * @returns {boolean}
+ */
+export function isAccepted311Filing(task) {
+  return isFiled311Completion(task) || filing311State(task) === "queued";
 }
 
 /**

@@ -57,13 +57,44 @@ export function careList(items, loading = false) {
                               <button
                                 type="button"
                                 class="btn-care care-row"
-                                data-work="${a(item.workId)}"
+                                ${item.status
+                                  ? "disabled"
+                                  : `data-work="${a(item.workId)}"`}
                               >
                                 <strong>${e(careTitle(item))}</strong
                                 ><time datetime="${a(item.createdAt)}"
                                   >${e(formatTime(item.createdAt))}</time
                                 >
                               </button>
+                              ${item.status
+                                ? html`<p role="status">
+                                    ${e(
+                                      t(
+                                        item.status === "failed"
+                                          ? "care.needsRetry"
+                                          : "care.saving",
+                                      ),
+                                    )}
+                                  </p>`
+                                : ""}
+                              ${item.status === "failed"
+                                ? html`<button
+                                    type="button"
+                                    class="btn-outline"
+                                    data-retry-work="${a(item.workId)}"
+                                  >
+                                    ${e(t("care.retry"))}
+                                  </button>`
+                                : ""}
+                              ${item.status === "failed" && item.editable
+                                ? html`<button
+                                    type="button"
+                                    class="btn-outline"
+                                    data-edit-work="${a(item.workId)}"
+                                  >
+                                    ${e(t("care.editRetry"))}
+                                  </button>`
+                                : ""}
                             </li>`,
                         )
                         .join("")}
@@ -142,7 +173,7 @@ export function carePhotoPicker(files, busy = false) {
                 aria-label="${a(t("care.photo.remove", { index: i + 1 }))}"
                 ${busy ? "disabled" : ""}
               >
-                <wa-icon name="xmark" aria-hidden="true"></wa-icon>
+                <wa-icon name="trash" aria-hidden="true"></wa-icon>
               </button>
             </li>`,
         )

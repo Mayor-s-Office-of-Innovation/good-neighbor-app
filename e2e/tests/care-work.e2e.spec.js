@@ -35,12 +35,12 @@ async function choose(page, kind) {
 /**
  * @param {import("@playwright/test").Page} page
  */
-async function save(page) {
+async function save(page, retry = false) {
   const response = page.waitForResponse(
     (res) =>
       res.url().endsWith("/v1/care-work") && res.request().method() === "POST",
   );
-  await page.locator("[data-save]").click();
+  await page.locator(retry ? "[data-retry-work]" : "[data-save]").click();
   const result = await response;
   expect(result.ok(), await result.text()).toBe(true);
   const { work } = await result.json();
@@ -135,8 +135,8 @@ test.describe("proactive care", () => {
       return route.fallback();
     });
     await page.locator("[data-save]").click();
-    await expect(page.locator("[data-error]")).toHaveText(t("care.saveError"));
-    await save(page);
+    await expect(page.locator("[data-retry-work]")).toBeVisible();
+    await save(page, true);
     expect(submissions).toHaveLength(2);
     expect(submissions[0]).toEqual(submissions[1]);
     await expect(
@@ -213,7 +213,8 @@ test("proactive care lets the user remove an invalid photo after validation fail
     buffer: Buffer.from("not an image"),
   });
   await page.locator("[data-save]").click();
-  await expect(page.locator("[data-error]")).toHaveText(t("care.saveError"));
+  await expect(page.locator("[data-retry-work]")).toBeVisible();
+  await page.locator("[data-edit-work]").click();
   await expect(page.locator("[data-remove]")).toBeEnabled();
   await page.locator("[data-remove]").click();
   const work = await save(page);
@@ -249,7 +250,7 @@ test("proactive care groups all pages by Pacific date with capitalized headings 
     }),
   );
   await openLogs(page);
-  expect(pages).toBe(1);
+  await expect.poll(() => pages).toBe(1);
   const groups = page.locator(".care-day");
   await expect(groups).toHaveCount(2);
   await expect(groups.nth(0).locator("h2")).toHaveText(
@@ -405,10 +406,10 @@ test("proactive care reuses a photo UUID after six lost presign responses", asyn
     return route.fallback();
   });
   for (let i = 0; i < 6; i++) {
-    await page.locator("[data-save]").click();
-    await expect(page.locator("[data-error]")).toHaveText(t("care.saveError"));
+    await page.locator(i === 0 ? "[data-save]" : "[data-retry-work]").click();
+    await expect(page.locator("[data-retry-work]")).toBeVisible();
   }
-  const work = await save(page);
+  const work = await save(page, true);
   expect(work.photoCount).toBe(1);
   expect(ids.size).toBe(1);
   expect([...ids][0]).toMatch(/^[0-9a-f-]{36}$/);
@@ -435,8 +436,16 @@ test("proactive care replaces five expired uploads without waiting for quota TTL
     }
     return route.fallback();
   });
+  const saved = page.waitForResponse(
+    (res) =>
+      res.url().endsWith("/v1/care-work") &&
+      res.request().method() === "POST" &&
+      res.ok(),
+  );
   await page.locator("[data-save]").click();
   await expect(page).toHaveURL(/\/care-work$/, { timeout: 30000 });
+  const { work } = await (await saved).json();
+  await expect(page.locator(`[data-work="${work.workId}"]`)).toBeVisible();
   const last = submissions[submissions.length - 1];
   expect(last.photoIds).toHaveLength(5);
   expect(last.workId).toBe(submissions[0].workId);
@@ -470,9 +479,9 @@ test("proactive care replays an uncertain saved payload even after its reservati
     return route.fallback();
   });
   await page.locator("[data-save]").click();
-  await expect(page.locator("[data-error]")).toHaveText(t("care.saveError"));
-  await expect(page.locator("[data-remove]")).toBeDisabled();
-  await save(page);
+  await expect(page.locator("[data-retry-work]")).toBeVisible();
+  await expect(page.locator("[data-edit-work]")).toHaveCount(0);
+  await save(page, true);
   expect(submissions).toHaveLength(2);
   expect(submissions[1]).toEqual(submissions[0]);
 });
@@ -497,10 +506,64 @@ test("proactive care renews an expired reservation after an interrupted PUT", as
     return route.fallback();
   });
   await page.locator("[data-save]").click();
-  await expect(page.locator("[data-error]")).toHaveText(t("care.saveError"));
+  await expect(page.locator("[data-retry-work]")).toBeVisible();
   expect(await expireCareReservations(workId)).toBe(1);
   interrupt = false;
-  const work = await save(page);
+  const work = await save(page, true);
   expect(work.photoCount).toBe(1);
   expect(ids.size).toBe(2);
+});
+
+test("care submission returns immediately and recovers photos after reload", async ({
+  page,
+}) => {
+  await openLogs(page);
+  await choose(page, "power_washed");
+  await page.locator("#care-photo-input").setInputFiles(PHOTO_CLEAR);
+  /** @type {() => void} */
+  let release = () => {};
+  const hold = new Promise((resolve) => {
+    release = () => resolve(undefined);
+  });
+  await page.route("**/photos:presign", async (route) => {
+    await hold;
+    await route.fallback().catch(() => {});
+  });
+  await page.locator("[data-save]").click();
+  await expect(page).toHaveURL(/\/care-work$/);
+  await expect(page.locator(".care-days [role=status]")).toHaveText(
+    t("care.saving"),
+  );
+  await page.reload();
+  await expect(page.locator(".care-days [role=status]")).toHaveText(
+    t("care.saving"),
+  );
+  const saved = page.waitForResponse(
+    (res) =>
+      res.url().endsWith("/v1/care-work") &&
+      res.request().method() === "POST" &&
+      res.ok(),
+  );
+  release();
+  const { work } = await (await saved).json();
+  const row = page.locator(`[data-work="${work.workId}"]`);
+  await expect(row).toBeVisible();
+  await row.click();
+  await expect(page.locator(".care-detail-photos img")).toHaveCount(1);
+});
+
+test("failed care screen download provides reload recovery", async ({
+  page,
+}) => {
+  await page.route("**/components/care-work-view.js*", (route) =>
+    route.abort("failed"),
+  );
+  await page.locator("#home-action-menu-trigger").click();
+  await page.locator("#view-care-work").click();
+  await expect(page.locator("#view [role=alert]")).toHaveText(
+    t("route.loadError"),
+  );
+  await page.unroute("**/components/care-work-view.js*");
+  await page.locator("[data-route-reload]").click();
+  await expect(page.locator("care-work-view h1")).toHaveText(t("care.title"));
 });

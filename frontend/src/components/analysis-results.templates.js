@@ -16,6 +16,7 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { formatPacificUpdated } from "../domain/task-updates.js";
 import { taskMediaUrl } from "../domain/task-media.js";
 import { taskCardTitle } from "../domain/task-title.js";
+import { filing311FailureMessage } from "../domain/task-actions.js";
 import { t } from "../i18n/i18n.js";
 import { rulebookOptionLabel, rulebookText } from "../i18n/rulebook.js";
 import {
@@ -672,6 +673,7 @@ export function taskAnalysisCard({
         : "",
     mediaPlaceholder: (readOnly || action?.kind === "view311") && !mediaUrl,
     shortId: taskDisplayReference(task),
+    filingNote: readOnly ? "" : filing311FailureMessage(task),
   });
 }
 
@@ -937,6 +939,7 @@ function completedEvidenceCard(
     shortId = "",
     footerTimeLabel = "",
     mediaPlaceholder = false,
+    filingNote = "",
   },
 ) {
   const callNumber =
@@ -1044,6 +1047,11 @@ function completedEvidenceCard(
                 >
                   ${escapeHtml(t("taskUpdate.markResolved"))}
                 </button>`
+              : ""}
+            ${filingNote
+              ? html`<p class="analysis-card__filing-note">
+                  ${escapeHtml(filingNote)}
+                </p>`
               : ""}
             <p class="actioncard__error" role="alert" hidden></p>
           </div>

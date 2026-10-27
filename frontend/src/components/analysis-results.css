@@ -780,8 +780,10 @@ html.wa-dark .analysis-card__clear-copy a {
   }
 }
 
-/* Inline, non-destructive failure notice on a card (task action failed). */
-.actioncard__error {
+/* Inline, non-destructive failure notice on a card (task action failed, or
+   a background 311 filing that gave up). */
+.actioncard__error,
+.analysis-card__filing-note {
   margin: 0.6rem 0 0;
   color: var(--danger, #b42318);
   font-size: 0.9rem;

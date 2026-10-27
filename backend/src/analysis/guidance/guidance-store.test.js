@@ -8,8 +8,12 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { activeCatalog } from "./catalog-registry.js";
 
-const { send } = vi.hoisted(() => ({ send: vi.fn() }));
+const { send, queue311Filing } = vi.hoisted(() => ({
+  send: vi.fn(),
+  queue311Filing: vi.fn(),
+}));
 vi.mock("../../db.js", () => ({ ddb: { send } }));
+vi.mock("./sf311-filing-queue.js", () => ({ queue311Filing }));
 
 const {
   answerCondition,
@@ -1301,6 +1305,99 @@ describe("completeTaskWithAppActions", () => {
       gsi2pk: "SITE#site-1#TASK#completed",
     });
     expect(task).toMatchObject({ status: "completed" });
+  });
+});
+
+describe("completeTaskWithAppActions with async 311 filing", () => {
+  const now = new Date("2026-08-18T12:02:00.000Z");
+  const env = {
+    GNP_311_ASYNC_FILING: "true",
+    GNP_311_SUBMISSION_ENABLED: "true",
+  };
+  /** @param {Record<string, unknown>} [overrides] */
+  function task(overrides = {}) {
+    return {
+      pk: "SITE#site-1",
+      sk: "TASK#task-1",
+      taskId: "task-1",
+      status: "open",
+      kind: "escalation",
+      severity: 3,
+      appActions: [
+        {
+          code: "create_311_ticket",
+          payload: {
+            serviceCodeOrAction: "1.1.4.7.20.0",
+            executionTrigger: "user_confirmed",
+          },
+        },
+      ],
+      ...overrides,
+    };
+  }
+  /** @param {Record<string, unknown>} [overrides] */
+  function file(overrides = {}) {
+    return completeTaskWithAppActions({
+      tableName: "table",
+      siteId: "site-1",
+      taskId: "task-1",
+      completionMethod: "311_filed",
+      actorId: "user-1",
+      env,
+      now,
+      ...overrides,
+    });
+  }
+
+  beforeEach(() => {
+    send.mockReset();
+    send.mockResolvedValue({});
+    queue311Filing.mockReset();
+  });
+
+  it("hands the tap to the queue instead of filing inline", async () => {
+    const existing = task();
+    send.mockResolvedValueOnce({ Item: existing });
+    queue311Filing.mockResolvedValueOnce({ status: "in_progress" });
+
+    await expect(file()).resolves.toEqual({ status: "in_progress" });
+    expect(queue311Filing).toHaveBeenCalledWith({
+      tableName: "table",
+      siteId: "site-1",
+      taskId: "task-1",
+      task: existing,
+      actorId: "user-1",
+      duplicateChecks: undefined,
+      now,
+    });
+    // Only the task read: no claim, no HUB call, no final write.
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the in-request path while 311 submission is off", async () => {
+    send.mockResolvedValueOnce({ Item: task() });
+
+    const result = await file({
+      env: {
+        GNP_311_ASYNC_FILING: "true",
+        GNP_311_SUBMISSION_ENABLED: "false",
+      },
+    });
+
+    expect(queue311Filing).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      status: "open",
+      appActionStatus: "skipped",
+    });
+  });
+
+  it("still rejects a task with no user-confirmed 311 action", async () => {
+    send.mockResolvedValueOnce({ Item: task({ appActions: [] }) });
+
+    await expect(file()).rejects.toMatchObject({
+      name: "InvalidCompletionMethod",
+    });
+    expect(queue311Filing).not.toHaveBeenCalled();
   });
 });
 

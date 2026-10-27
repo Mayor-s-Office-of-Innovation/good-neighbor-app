@@ -219,6 +219,7 @@ Then start the local API with these env overrides:
 
 ```bash
 GNP_311_SUBMISSION_ENABLED=true \
+GNP_311_ASYNC_FILING=true \
 SF311_CREATESR_URL=http://127.0.0.1:3999/createsr \
 SF311_UPDATESR_URL=http://127.0.0.1:3999/updatesr \
 SF311_AGENCY_LOOKUP_URL=http://127.0.0.1:3999/lookup \

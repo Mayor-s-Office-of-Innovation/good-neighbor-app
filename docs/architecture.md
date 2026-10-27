@@ -274,6 +274,16 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   reconciliation instead of resending. Operators must confirm acceptance or
   non-submission before correcting the durable checkpoint and redriving the job.
   Closure retries reconcile City state.
+- **Tapped 311 filing (`GNP_311_ASYNC_FILING`, on in dev, off by default):** a "File 311
+  ticket" tap makes no HUB call. One transaction moves the task to `in_progress` with
+  `appActionStatus: "queued"` and writes an `SF311_OUTBOX` job with phase `filed-<id>`
+  and `trigger: "user_confirmed"`. The same worker, lease and
+  checkpoints run the task's user-confirmed actions. When filed, it writes the "311 ticket
+  filed" timeline entry and completes tasks that cannot be in progress, as the in-request
+  path did. Transient failures go back to `queued` and retry with the same backoff;
+  permanent failures, outcomes that need reconciliation, and the fifth delivery mark the
+  filing `failed`, leaving the task `in_progress`. A repeat tap returns the task; a tap on a
+  failed filing queues a new job.
   Action-selection overrides atomically check the worker lock and refuse changes
   while it is claimed or holds durable results. Progress updates compare integration
   results as well as task state and retry once from a fresh read on conflict.
@@ -438,7 +448,19 @@ normalized orphan JPEGs, bounded by the same 30-day bucket backstop.
 Logs retain their text and photo-expiry metadata for one year. Photo access ends
 30 days after reservation even if S3 lifecycle deletion is delayed; signed URL
 lifetimes are capped at that boundary. The detail view explains expired photos
-while continuing to display the log. No offline submission queue is introduced.
+while continuing to display the log.
+
+Submitting care work first commits the submission and photo blobs to IndexedDB,
+then returns to the care list without waiting for uploads. The app owns the upload
+operation independently of the form. Pending submissions resume when the app
+reopens or connectivity returns; failed attempts remain in the list with a retry
+action. Definitive validation failures also offer editing before retry. This is a
+care-specific durable queue, not a service worker: transfers pause when the browser
+closes and resume after reopening. Records are bound to the original Site and
+device session, and API calls enforce the originating Site. Successful receipts
+retain the server result until it appears in the list, then are removed; photo
+blobs are released as soon as the save is confirmed. Explicit sign-out/reset clears
+the local queue with other on-device artifacts.
 
 Care photo UUIDs are allocated by the client before the first presign request.
 Matching retries reuse the reservation without charging quota again, including

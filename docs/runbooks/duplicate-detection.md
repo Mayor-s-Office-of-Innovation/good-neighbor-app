@@ -45,6 +45,41 @@ that observation automatically. The original's completed action remains intact.
 condition-level diagnostics. Product grouping uses the batch endpoint's validated
 condition-to-task mapping, including the earliest valid original's short ID.
 
+## Distinctive match evidence
+
+A model's `same_issue` verdict and `strong` strength are insufficient for a
+confirmed duplicate. Candidate evidence and each issue mapping must contain
+issue-identifying support. The app rejects known generic category/scene-only
+feature lists (for example, “litter on the sidewalk”) from high confidence,
+including responses from an older analyzer. It continues searching later
+candidates rather than stopping on those unsupported positives. The lexical
+guard is deliberately narrow: unknown vocabulary does not by itself prove or
+disprove identity, and field accuracy still requires human review.
+
+Before publishing an image-backed high-confidence mapping, the combined matcher
+compares each proposed condition pair independently in reversed photo roles,
+using `purpose: visual_verification`. Only the two target descriptions and IDs
+travel as locator hints; earlier verdicts, evidence and other context are omitted.
+The analyzer must locate each intended target in its own image and return a
+strong, visually grounded mapping for that exact reversed pair. Agreement on a
+different issue in the same photos cannot confirm the target. Each mapping is
+verified separately; successful corroboration never approves other mappings.
+Rejected or uncertain corroboration is not a confirmed duplicate; a failed
+request leaves the search incomplete rather than publishing a negative. The worker
+reuses prepared images and its normal pacing/retry/cache path. Only pairs needed
+to confirm still-unmatched source issues get an extra request. Budget one context
+request plus one request per image-backed condition pair requiring verification;
+negative searches do not pay this extra cost. Explicit markings such as `A-12`
+are retained by the lexical guard; bare numbers, dates and generic counts do not
+establish distinctive evidence.
+
+Matcher version `issue-structured-v14` gives these comparisons a new cache digest,
+so earlier comparison-cache responses cannot bypass the updated policy. Deploy
+the analyzer's `issue-structured-v13` contract/prompt changes before the app;
+an older analyzer rejects the new purpose and leaves the affected search incomplete.
+No automatic re-evaluation of existing settled results occurs; any historical
+recovery must be scoped and reviewed separately.
+
 ## Comparison key rotation
 
 Rotate the comparison key manually in coordination with the analyzer service,
