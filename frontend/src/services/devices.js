@@ -15,6 +15,7 @@ import {
   InvalidHandoffGrantError,
   InvalidSiteCodeError,
 } from "./api-error.js";
+import { isStandalone } from "./install-prompt.js";
 
 // Same-origin everywhere (shared strategy with services/api.js): in dev the
 // Vite proxy forwards `/v1/*` → the local API; in production the SPA and API
@@ -51,6 +52,7 @@ export async function registerDevice(code, opts = {}) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       code,
+      ...(isStandalone() ? { sessionKind: "home_screen" } : {}),
       ...(opts.deviceId ? { deviceId: opts.deviceId } : {}),
       ...(opts.label ? { label: opts.label } : {}),
     }),
@@ -80,6 +82,7 @@ export async function redeemEnrollmentGrant(grantId, token, opts = {}) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       ...(opts.code ? { code: opts.code } : { grantId, token }),
+      ...(isStandalone() ? { sessionKind: "home_screen" } : {}),
       ...(opts.physicalDeviceId
         ? { physicalDeviceId: opts.physicalDeviceId }
         : {}),
@@ -110,11 +113,11 @@ export async function redeemEnrollmentGrant(grantId, token, opts = {}) {
 
 /**
  * Redeem a Home Screen handoff grant (services/session-handoff.js) for a
- * fresh session on the device it was issued for. Open route: the installed
- * app has no session yet. The secret travels only in the JSON body; the
- * caller strips it from the launch URL before awaiting this.
- * @param {string} grantId
- * @param {string} token
+ * fresh independent installation. Without arguments the HttpOnly bootstrap
+ * cookie is used; older launch URLs supply fragment credentials in the body.
+ * The caller strips fragment credentials before awaiting this.
+ * @param {string} [grantId] absent for the HttpOnly installation cookie
+ * @param {string} [token]
  * @returns {Promise<DeviceSession>}
  * @throws {InvalidHandoffGrantError} on 401, else a network/5xx failure
  */
@@ -144,8 +147,9 @@ export async function redeemHandoffGrant(grantId, token) {
 
 /**
  * POST /v1/devices/token:refresh — exchange the stored single-use refresh
- * token for a fresh session pair. The old refresh token is dead after this
- * call; the caller must persist the new one before doing anything else.
+ * token for a fresh session pair. With an attemptId, interrupted callers can
+ * recover the same pair for five minutes. Legacy calls remain single-use.
+ * The caller must commit the replacement pair before clearing its attempt.
  *
  * Errors carry their HTTP status so the auth layer can distinguish a fatal
  * rejection (401 — expired/revoked/replayed: the stored session is unusable
@@ -153,18 +157,22 @@ export async function redeemHandoffGrant(grantId, token) {
  * failure — the session may be fine, trying again later is correct). Mapping
  * every failure to "re-auth required" would log users out on a blip.
  * @param {string} refreshToken
+ * @param {string} [attemptId] durable identifier for retryable rotation
  * @returns {Promise<DeviceSession>}
  * @throws {ApiError} status 401 ("refresh rejected — expired, revoked, or
  *   replayed"), 0 (transport failure), or the backend's 5xx status
  */
-export async function refreshDeviceToken(refreshToken) {
+export async function refreshDeviceToken(refreshToken, attemptId) {
   /** @type {Response} */
   let res;
   try {
     res = await fetch(`${BASE}/v1/devices/token:refresh`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ refreshToken }),
+      body: JSON.stringify({
+        refreshToken,
+        ...(attemptId ? { attemptId } : {}),
+      }),
     });
   } catch (err) {
     // fetch only rejects on a transport failure (offline, DNS, CORS, abort).

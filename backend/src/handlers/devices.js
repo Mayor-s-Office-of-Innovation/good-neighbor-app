@@ -1,18 +1,13 @@
-// Device registration + token refresh (Option 4 device auth — see
-// docs/adr/0010-device-token-auth.md). The device is the shared front-desk
-// tablet; it registers ONCE against the site code and must never need the code
-// again — the code-holder (a manager) may be unavailable while workers use the
-// device daily. So registration mints a long-lived session (30-day access +
-// 180-day rotating refresh), and the client refreshes silently thereafter.
-//
-// Tenant invariant: both routes resolve siteId server-side from the
-// `SITE_CODE#<code>` item or the verified refresh token — the body never
-// asserts a site. Revocation = `tokenGeneration` bump (or device delete) on the
-// DEVICE# item; the authorizer compares a token's `ver` claim to it, and the
-// refresh path additionally pins rotation to the item's current `refreshJti`
-// with a conditional write (compare-and-swap), so two concurrent refreshes
-// with the same token cannot both rotate — exactly one wins.
+// Device registration and refresh. Tokens are scoped to a Site and managed
+// device; optional sid selects an independent browser-container session.
+// Legacy refresh is single-use. A durable attempt ID enables bounded recovery
+// of the same rotation after a lost response or failed local save (ADR 0020).
+// Parent liveness and Site/membership authority apply to both paths.
 
+import {
+  retryableRefresh,
+  validRefreshAttempt,
+} from "../lib/refresh-recovery.js";
 import { randomUUID } from "node:crypto";
 import {
   GetCommand,
@@ -29,6 +24,11 @@ import {
   validateSetupCode,
 } from "./setup-codes.js";
 import { deviceLivenessProblem } from "../lib/device-liveness.js";
+import {
+  contextSession,
+  contextSessionWrite,
+  deviceSessionMatches,
+} from "../lib/device-context-sessions.js";
 import {
   canonicalAccessLevel,
   DeviceTokenError,
@@ -62,6 +62,8 @@ import {
  * @property {number} [membershipGeneration]
  * @property {number} [siteCredentialGeneration]
  * @property {string} [handoffGrantId] the pending Home Screen handoff grant (handlers/session-handoff.js)
+ * @property {Record<string, any>} [sessions]
+ * @property {string} [primarySessionStatus]
  */
 
 /**
@@ -79,7 +81,7 @@ export const registerDevice = async (event) => {
     return jsonResponse(400, { error: "invalid_json" });
   }
   const raw =
-    /** @type {{ code?: unknown, deviceId?: unknown, label?: unknown }} */ (
+    /** @type {{ code?: unknown, deviceId?: unknown, label?: unknown, sessionKind?: unknown }} */ (
       body ?? {}
     );
   const code = typeof raw.code === "string" ? raw.code : "";
@@ -132,6 +134,8 @@ export const registerDevice = async (event) => {
     lastSeenAt: now,
     tokenGeneration: generation,
     refreshJti: refresh.jti,
+    primarySessionKind:
+      raw.sessionKind === "home_screen" ? "home_screen" : "browser",
     siteCredentialGeneration: Number(validCode.siteCredentialGeneration ?? 0),
   });
 
@@ -194,7 +198,9 @@ export const registerDevice = async (event) => {
  * single-use: it must match the DEVICE# item's current `refreshJti`, and each
  * successful refresh bumps `tokenGeneration` (invalidating the previous access
  * token immediately) and stores the new jti. A replayed refresh token fails the
- * jti comparison; a revoked device fails the generation comparison.
+ * jti comparison; a revoked device fails the generation comparison. With a
+ * durable attemptId, a matching spent token may recover its still-current
+ * replacement for five minutes; live authority is checked again (ADR 0020).
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
  */
 export const refreshDeviceToken = async (event) => {
@@ -204,11 +210,14 @@ export const refreshDeviceToken = async (event) => {
   } catch {
     return jsonResponse(400, { error: "invalid_json" });
   }
-  const { refreshToken } = /** @type {{ refreshToken?: unknown }} */ (
-    body ?? {}
-  );
+  const { refreshToken, attemptId } =
+    /** @type {{ refreshToken?: unknown, attemptId?: unknown }} */ (body ?? {});
   if (typeof refreshToken !== "string" || !refreshToken) {
     return jsonResponse(400, { error: "missing_refresh_token" });
+  }
+
+  if (attemptId !== undefined && !validRefreshAttempt(attemptId)) {
+    return jsonResponse(400, { error: "invalid_refresh_attempt" });
   }
 
   let claims;
@@ -235,18 +244,40 @@ export const refreshDeviceToken = async (event) => {
     new GetCommand({
       TableName: dynamoTable,
       Key: { ...deviceKey(siteId, deviceId) },
+      ConsistentRead: true,
     }),
   );
   const device = /** @type {DeviceItem | undefined} */ (res.Item);
   const now = new Date();
   const canonicalRole = canonicalAccessLevel(device?.accessLevel);
+  if (typeof attemptId === "string") {
+    return retryableRefresh({
+      tableName: dynamoTable,
+      device,
+      claims,
+      refreshToken,
+      attemptId,
+      isLive: async (current) =>
+        !deviceLivenessProblem(current, new Date()) &&
+        canonicalAccessLevel(current.accessLevel) === claims.accessLevel &&
+        (await bindingLifecycleValid(
+          /** @type {DeviceItem} */ (current),
+          canonicalAccessLevel(current.accessLevel),
+          undefined,
+          true,
+        )),
+    });
+  }
+
   if (
     !device ||
     deviceLivenessProblem(device, now) || // revoked, suspended, expired, idle
-    device.tokenGeneration !== claims.ver || // revoked (generation bumped)
+    !deviceSessionMatches(device, claims) ||
     canonicalRole !== claims.accessLevel ||
     !claims.jti ||
-    device.refreshJti !== claims.jti // already used / superseded
+    (claims.sid
+      ? device.sessions?.[claims.sid]?.refreshJti
+      : device.refreshJti) !== claims.jti // already used / superseded
   ) {
     return jsonResponse(401, {
       error: "invalid_refresh_token",
@@ -262,6 +293,58 @@ export const refreshDeviceToken = async (event) => {
     });
   }
   const nowIso = now.toISOString();
+  if (claims.sid) {
+    const generation = claims.ver + 1;
+    const subject = {
+      siteId,
+      deviceId,
+      tokenGeneration: generation,
+      accessLevel: canonicalRole,
+      sessionId: claims.sid,
+    };
+    const [access, refresh] = await Promise.all([
+      mintAccessToken(subject),
+      mintRefreshToken(subject),
+    ]);
+    const slot = contextSession(
+      device,
+      claims.sid,
+      refresh.jti,
+      generation,
+      nowIso,
+    );
+    const write = contextSessionWrite(
+      dynamoTable,
+      device,
+      claims.sid,
+      slot,
+      claims.jti,
+    );
+    if (!write) return jsonResponse(401, { error: "invalid_refresh_token" });
+    try {
+      await ddb.send(new TransactWriteCommand({ TransactItems: [write] }));
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.name === "TransactionCanceledException"
+      )
+        return jsonResponse(401, {
+          error: "invalid_refresh_token",
+          reason: "revoked_or_replayed",
+        });
+      throw error;
+    }
+    return jsonResponse(200, {
+      deviceId,
+      site: { siteId, name: device.siteName },
+      accessLevel: canonicalRole,
+      token: access.token,
+      refreshToken: refresh.token,
+      expiresIn: access.expiresIn,
+      refreshExpiresIn: refresh.expiresIn,
+      tokenGeneration: generation,
+    });
+  }
   // Conditional write: rotation applies ONLY from the observed generation +
   // jti. A concurrent refresh with the same token loses the swap here (one
   // winner) instead of both succeeding via last-write-wins.
@@ -300,9 +383,15 @@ export const refreshDeviceToken = async (event) => {
  * @param {DeviceItem & Record<string, any>} device
  * @param {"general"|"manager"} role
  * @param {Record<string, any> | undefined} [prefetchedSite] the SITE#META row, when the caller has it
+ * @param {boolean} [consistentRead] use strongly consistent authority reads for recovery
  * @returns {Promise<boolean>}
  */
-export async function bindingLifecycleValid(device, role, prefetchedSite) {
+export async function bindingLifecycleValid(
+  device,
+  role,
+  prefetchedSite,
+  consistentRead = false,
+) {
   const tableName = getDynamoTableName();
   const site =
     prefetchedSite ??
@@ -311,6 +400,7 @@ export async function bindingLifecycleValid(device, role, prefetchedSite) {
         new GetCommand({
           TableName: tableName,
           Key: { pk: `SITE#${device.siteId}`, sk: "#META" },
+          ConsistentRead: consistentRead,
         }),
       )
     ).Item;
@@ -335,6 +425,7 @@ export async function bindingLifecycleValid(device, role, prefetchedSite) {
       tableName,
       String(device.providerId),
       String(device.providerMembershipId),
+      consistentRead,
     );
     return Boolean(
       membership?.status === "active" &&
@@ -350,6 +441,7 @@ export async function bindingLifecycleValid(device, role, prefetchedSite) {
         pk: `SITE#${device.siteId}`,
         sk: `MANAGER_MEMBERSHIP#${device.membershipId}`,
       },
+      ConsistentRead: consistentRead,
     }),
   );
   const membership = membershipResult.Item;
@@ -360,11 +452,17 @@ export async function bindingLifecycleValid(device, role, prefetchedSite) {
   );
 }
 
-/** @param {string} tableName @param {string} providerId @param {string} membershipId */
-async function findProviderManager(tableName, providerId, membershipId) {
+/** @param {string} tableName @param {string} providerId @param {string} membershipId @param {boolean} [consistentRead] */
+async function findProviderManager(
+  tableName,
+  providerId,
+  membershipId,
+  consistentRead = false,
+) {
   const result = await ddb.send(
     new QueryCommand({
       TableName: tableName,
+      ConsistentRead: consistentRead,
       KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
       ExpressionAttributeValues: {
         ":pk": `PROVIDER#${providerId}`,
@@ -428,7 +526,7 @@ async function mintSession({
         TableName: dynamoTable,
         Key: { ...deviceKey(siteId, deviceId) },
         UpdateExpression:
-          "SET tokenGeneration = :g, refreshJti = :jti, lastSeenAt = :seen, accessLevel = :accessLevel",
+          "SET tokenGeneration = :g, refreshJti = :jti, lastSeenAt = :seen, primaryLastSeenAt = :seen, accessLevel = :accessLevel",
         ...(conditional && {
           ConditionExpression: "tokenGeneration = :eg AND refreshJti = :ej",
         }),

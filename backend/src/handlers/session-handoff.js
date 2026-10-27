@@ -1,23 +1,10 @@
-// Session handoff for Home Screen installs (notes/pwa-session-handoff-plan.md).
-//
-// An iOS Home Screen web app runs in its own storage container, so the device
-// session a person established in Safari is absent on the first standalone
-// launch and they were asked for the setup code again. The fix: while a bound
-// device runs in Safari it mints a short-lived, single-use handoff grant for
-// its OWN binding (issue, authorized) and puts it in the manifest's start_url
-// fragment; the installed app finds it on first launch, with no session in
-// IndexedDB, and redeems it (redeem, open route) for a fresh token pair on the
-// SAME device record. The generation bump kills the Safari copy's tokens —
-// the same rotation /device-bindings/select performs.
-//
-// The grant carries no authority of its own: no access level, no site name.
-// The session is minted from the device record as it stands at redeem time,
-// through the same liveness checks the authorizer and refresh apply, so a
-// suspension, site credential rotation, or membership removal between issue
-// and redeem is honored. Only the token's sha256 is stored (constant-time
-// compare on redeem); the token itself travels in a URL fragment and a JSON
-// body only, never a query string, header, or log line. Keep it that way: do
-// not log the parsed body on any path.
+// Home Screen session bootstrap (docs/adr/0019-home-screen-session-continuity.md).
+// A single-use grant is copied into the installed app through a Secure,
+// HttpOnly, SameSite=Strict cookie. The manifest fragment remains a fallback.
+// Redemption adds an independent session slot to the existing device. Safari's
+// generation/JTI and every managed binding and enrollment identity stay intact.
+// Only the grant hash is stored server-side. Never log tokens, request bodies,
+// Cookie or Set-Cookie headers.
 //
 // One pending grant per device is enforced by a pointer, not by status
 // writes: `handoffGrantId` on the DEVICE# row names the only redeemable
@@ -44,13 +31,21 @@ import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deviceLivenessProblem } from "../lib/device-liveness.js";
-import { sessionRotationItem } from "../lib/device-session.js";
+import { handoffCookie, readHandoffCookie } from "../lib/handoff-cookie.js";
+import {
+  contextSession,
+  contextSessionWrite,
+} from "../lib/device-context-sessions.js";
 import {
   canonicalAccessLevel,
   mintAccessToken,
   mintRefreshToken,
 } from "../lib/device-token.js";
-import { deriveActorId, deriveSiteId } from "../lib/principal.js";
+import {
+  deriveActorId,
+  deriveSiteId,
+  deriveSessionId,
+} from "../lib/principal.js";
 import { bindingLifecycleValid } from "./devices.js";
 import { deviceKey, sitePk } from "./keys.js";
 
@@ -102,11 +97,58 @@ export const issueSessionHandoff = async (event) => {
   const nowIso = now.toISOString();
 
   const deviceResult = await ddb.send(
-    new GetCommand({ TableName: tableName, Key: deviceKey(siteId, deviceId) }),
+    new GetCommand({
+      TableName: tableName,
+      Key: deviceKey(siteId, deviceId),
+      ConsistentRead: true,
+    }),
   );
   const device = deviceResult.Item;
-  if (!device || deviceLivenessProblem(device, now)) {
+  const sourceSessionId = deriveSessionId(event);
+  const sourceSession = sourceSessionId
+    ? device?.sessions?.[sourceSessionId]
+    : null;
+  if (
+    !device ||
+    deviceLivenessProblem(device, now) ||
+    (sourceSessionId
+      ? sourceSession?.status !== "active" ||
+        Date.parse(sourceSession.expiresAt) <= now.getTime()
+      : device.primarySessionStatus === "signed_out")
+  ) {
     return jsonResponse(401, INVALID_DEVICE);
+  }
+
+  // Reinstall a cached pending grant's HttpOnly cookie on a returning Safari
+  // page. Never replace a still-pending grant merely because the tab reopened.
+  let input;
+  try {
+    input = /** @type {Record<string, unknown>} */ (readJsonBody(event) ?? {});
+  } catch {
+    return jsonResponse(400, { error: "invalid_json" });
+  }
+  const cachedId = clean(input.grantId);
+  const cachedToken = clean(input.token);
+  if (cachedId && cachedToken && device.handoffGrantId === cachedId) {
+    const cached = (
+      await ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: grantKey(cachedId),
+          ConsistentRead: true,
+        }),
+      )
+    ).Item;
+    if (
+      cached?.status === "pending" &&
+      cached.siteId === siteId &&
+      cached.deviceId === deviceId &&
+      (cached.sourceSessionId ?? "") === sourceSessionId &&
+      Number(cached.expiresAt) > Math.floor(now.getTime() / 1000) + 86400 &&
+      hashMatches(String(cached.tokenHash ?? ""), cachedToken)
+    ) {
+      return issuedResponse(cachedId, cachedToken, Number(cached.expiresAt));
+    }
   }
 
   const grantId = randomUUID();
@@ -130,6 +172,7 @@ export const issueSessionHandoff = async (event) => {
                 grantId,
                 siteId,
                 deviceId,
+                ...(sourceSessionId ? { sourceSessionId } : {}),
                 ...(device.bindingId ? { bindingId: device.bindingId } : {}),
                 tokenHash: sha256(token),
                 status: "pending",
@@ -148,13 +191,14 @@ export const issueSessionHandoff = async (event) => {
               // condition makes concurrent issues fail closed instead of
               // leaving an untracked pending grant behind.
               ConditionExpression:
-                "attribute_exists(pk) AND (attribute_not_exists(#status) OR #status = :active) AND " +
+                "attribute_exists(pk) AND tokenGeneration = :generation AND (attribute_not_exists(#status) OR #status = :active) AND " +
                 (previousGrantId
                   ? "handoffGrantId = :previous"
                   : "attribute_not_exists(handoffGrantId)"),
               ExpressionAttributeNames: { "#status": "status" },
               ExpressionAttributeValues: {
                 ":grantId": grantId,
+                ":generation": device.tokenGeneration,
                 ":active": "active",
                 ...(previousGrantId ? { ":previous": previousGrantId } : {}),
               },
@@ -180,17 +224,12 @@ export const issueSessionHandoff = async (event) => {
     throw error;
   }
 
-  return jsonResponse(200, {
-    grantId,
-    token,
-    expiresAt: new Date(expiresAt * 1000).toISOString(),
-    startUrl: handoffStartUrl(grantId, token),
-  });
+  return issuedResponse(grantId, token, expiresAt);
 };
 
 /**
  * POST /app/v1/session-handoff/redeem — exchange a pending grant for a fresh
- * session on the device it was issued for. Open route: every failure is the
+ * installation for the device it was issued for. Open route: grant rejection is the
  * same 401 so the response never distinguishes unknown, expired, replayed,
  * superseded, and revoked.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
@@ -203,8 +242,9 @@ export const redeemSessionHandoff = async (event) => {
     return jsonResponse(400, { error: "invalid_json" });
   }
   const input = /** @type {Record<string, unknown>} */ (body ?? {});
-  const grantId = clean(input.grantId);
-  const token = clean(input.token);
+  const cookie = readHandoffCookie(event);
+  const grantId = clean(input.grantId ?? cookie.grantId);
+  const token = clean(input.token ?? cookie.token);
   if (!grantId || !token) return jsonResponse(401, INVALID_GRANT);
 
   const tableName = getDynamoTableName();
@@ -213,7 +253,11 @@ export const redeemSessionHandoff = async (event) => {
   const nowSeconds = Math.floor(now.getTime() / 1000);
 
   const grantResult = await ddb.send(
-    new GetCommand({ TableName: tableName, Key: grantKey(grantId) }),
+    new GetCommand({
+      TableName: tableName,
+      Key: grantKey(grantId),
+      ConsistentRead: true,
+    }),
   );
   const grant = grantResult.Item;
   if (
@@ -233,6 +277,7 @@ export const redeemSessionHandoff = async (event) => {
       new GetCommand({
         TableName: tableName,
         Key: deviceKey(siteId, deviceId),
+        ConsistentRead: true,
       }),
     ),
     bindingId
@@ -240,6 +285,7 @@ export const redeemSessionHandoff = async (event) => {
           new GetCommand({
             TableName: tableName,
             Key: { pk: sitePk(siteId), sk: `DEVICE_BINDING#${bindingId}` },
+            ConsistentRead: true,
           }),
         )
       : Promise.resolve({ Item: undefined }),
@@ -247,6 +293,7 @@ export const redeemSessionHandoff = async (event) => {
       new GetCommand({
         TableName: tableName,
         Key: { pk: sitePk(siteId), sk: "#META" },
+        ConsistentRead: true,
       }),
     ),
   ]);
@@ -259,7 +306,12 @@ export const redeemSessionHandoff = async (event) => {
     !device ||
     deviceLivenessProblem(device, now) ||
     device.handoffGrantId !== grantId || // superseded by a newer issue
-    (bindingId && binding?.status !== "active")
+    (bindingId && binding?.status !== "active") ||
+    (grant.sourceSessionId
+      ? device.sessions?.[grant.sourceSessionId]?.status !== "active" ||
+        Date.parse(device.sessions?.[grant.sourceSessionId]?.expiresAt) <=
+          now.getTime()
+      : device.primarySessionStatus === "signed_out")
   ) {
     return jsonResponse(401, INVALID_GRANT);
   }
@@ -276,10 +328,12 @@ export const redeemSessionHandoff = async (event) => {
     return jsonResponse(401, INVALID_GRANT);
   }
 
-  const generation = Number(device.tokenGeneration ?? 0) + 1;
+  const sessionId = randomUUID();
+  const generation = 1;
   const subject = {
     siteId,
     deviceId,
+    sessionId,
     tokenGeneration: generation,
     accessLevel,
   };
@@ -287,19 +341,36 @@ export const redeemSessionHandoff = async (event) => {
     mintAccessToken(subject, { expiresIn: ACCESS_TTL_SECONDS }),
     mintRefreshToken(subject, { expiresIn: REFRESH_TTL_SECONDS }),
   ]);
-  const rotation = { generation, refreshJti: refresh.jti, now: nowIso };
+  const slot = contextSession(
+    device,
+    sessionId,
+    refresh.jti,
+    generation,
+    nowIso,
+  );
+  const write = contextSessionWrite(tableName, device, sessionId, slot);
+  if (!write) return jsonResponse(409, { error: "handoff_session_limit" });
+  write.Update.UpdateExpression += " REMOVE handoffGrantId";
+  write.Update.ConditionExpression += " AND handoffGrantId = :grant";
+  write.Update.ExpressionAttributeValues[":grant"] = grantId;
 
   try {
     await ddb.send(
       new TransactWriteCommand({
         TransactItems: [
-          sessionRotationItem(tableName, device, {
-            ...rotation,
-            expectHandoffGrantId: grantId,
-            clearHandoffGrant: true,
-          }),
+          write,
           ...(binding
-            ? [sessionRotationItem(tableName, binding, rotation)]
+            ? [
+                {
+                  ConditionCheck: {
+                    TableName: tableName,
+                    Key: { pk: binding.pk, sk: binding.sk },
+                    ConditionExpression: "#status = :active",
+                    ExpressionAttributeNames: { "#status": "status" },
+                    ExpressionAttributeValues: { ":active": "active" },
+                  },
+                },
+              ]
             : []),
           {
             Update: {
@@ -322,7 +393,7 @@ export const redeemSessionHandoff = async (event) => {
             deviceId,
             ...(bindingId ? { bindingId } : {}),
             grantId,
-            previousTokenGeneration: Number(device.tokenGeneration ?? 0),
+            sessionId,
             tokenGeneration: generation,
           }),
         ],
@@ -340,7 +411,7 @@ export const redeemSessionHandoff = async (event) => {
     throw error;
   }
 
-  return jsonResponse(200, {
+  const response = jsonResponse(200, {
     deviceId,
     ...(bindingId ? { bindingId } : {}),
     ...(device.physicalDeviceId
@@ -357,6 +428,8 @@ export const redeemSessionHandoff = async (event) => {
       ? { absoluteExpiresAt: device.absoluteExpiresAt }
       : {}),
   });
+  response.headers = { ...response.headers, "set-cookie": handoffCookie() };
+  return response;
 };
 
 /**
@@ -380,9 +453,71 @@ export const retireSessionHandoff = async (event) => {
     new GetCommand({ TableName: tableName, Key: deviceKey(siteId, deviceId) }),
   );
   const device = deviceResult.Item;
+  let retirement;
+  try {
+    retirement = /** @type {Record<string, unknown>} */ (
+      readJsonBody(event) ?? {}
+    );
+  } catch {
+    return jsonResponse(400, { error: "invalid_json" });
+  }
+  if (retirement.endSession === true && device) {
+    const sessionId = deriveSessionId(event);
+    let update;
+    if (sessionId) {
+      const slot = device.sessions?.[sessionId];
+      if (!slot || slot.status !== "active") return retiredResponse(false);
+      update = contextSessionWrite(tableName, device, sessionId, {
+        ...slot,
+        status: "signed_out",
+        refreshJti: "",
+        tokenGeneration: slot.tokenGeneration + 1,
+      });
+    } else {
+      update = {
+        Update: {
+          TableName: tableName,
+          Key: deviceKey(siteId, deviceId),
+          UpdateExpression:
+            "SET tokenGeneration = :next, primarySessionStatus = :signedOut REMOVE handoffGrantId",
+          ConditionExpression:
+            "attribute_exists(pk) AND tokenGeneration = :current",
+          ExpressionAttributeValues: {
+            ":next": Number(device.tokenGeneration ?? 0) + 1,
+            ":current": device.tokenGeneration,
+            ":signedOut": "signed_out",
+          },
+        },
+      };
+    }
+    if (!update) return retiredResponse(false);
+    try {
+      await ddb.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            update,
+            auditItem(tableName, siteId, nowIso, {
+              eventType: "device_session_signed_out",
+              deviceId,
+              ...(sessionId ? { sessionId } : {}),
+            }),
+          ],
+        }),
+      );
+    } catch (error) {
+      if (
+        !(
+          error instanceof Error &&
+          error.name === "TransactionCanceledException"
+        )
+      )
+        throw error;
+    }
+    return retiredResponse(!sessionId && Boolean(device.handoffGrantId));
+  }
   const grantId =
     typeof device?.handoffGrantId === "string" ? device.handoffGrantId : "";
-  if (!device || !grantId) return jsonResponse(200, { retired: false });
+  if (!device || !grantId) return retiredResponse(false);
 
   try {
     await ddb.send(
@@ -413,7 +548,7 @@ export const retireSessionHandoff = async (event) => {
       error instanceof Error &&
       error.name === "TransactionCanceledException"
     ) {
-      return jsonResponse(200, { retired: false });
+      return retiredResponse(false);
     }
     throw error;
   }
@@ -444,8 +579,33 @@ export const retireSessionHandoff = async (event) => {
       throw error;
     }
   }
-  return jsonResponse(200, { retired: true });
+  return retiredResponse(true);
 };
+
+/** @param {string} grantId @param {string} token @param {number} expiresAt */
+function issuedResponse(grantId, token, expiresAt) {
+  const response = jsonResponse(200, {
+    grantId,
+    token,
+    expiresAt: new Date(expiresAt * 1000).toISOString(),
+    startUrl: handoffStartUrl(grantId, token),
+  });
+  response.headers = {
+    ...response.headers,
+    "set-cookie": handoffCookie(
+      `${grantId}.${token}`,
+      Math.max(0, expiresAt - Math.floor(Date.now() / 1000)),
+    ),
+  };
+  return response;
+}
+
+/** @param {boolean} retired */
+function retiredResponse(retired) {
+  const response = jsonResponse(200, { retired });
+  response.headers = { ...response.headers, "set-cookie": handoffCookie() };
+  return response;
+}
 
 /**
  * A site audit event item, same shape as `device_binding_selected`.

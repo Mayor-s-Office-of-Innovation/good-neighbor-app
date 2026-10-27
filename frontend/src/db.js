@@ -356,6 +356,8 @@ export async function saveSiteSettings(
       }
       const current = stored || { id: "current", name: "Your site" };
       const incoming = { ...settings };
+      // Refresh intent belongs only to the local credential transaction.
+      delete incoming.refreshAttempt;
       for (const key of SITE_BINDING_FIELDS) {
         const bound = /** @type {Record<string, unknown>} */ (current)[key];
         if (bound !== undefined && bound !== null && bound !== "") {
@@ -397,20 +399,55 @@ export async function clearSiteSession() {
 }
 
 /**
+ * Commit the attempt before sending any refresh request. Reloads and tabs
+ * without Web Locks must reuse it until the replacement is committed.
+ * @param {string} siteId
+ * @param {string} refreshToken
+ * @returns {Promise<string | null>}
+ */
+export async function prepareRefreshAttempt(siteId, refreshToken) {
+  return tx("site", "readwrite", (os) =>
+    reqToPromise(os.get("current")).then((current) => {
+      if (
+        !current ||
+        current.siteId !== siteId ||
+        current.refreshToken !== refreshToken
+      )
+        return null;
+      if (current.refreshAttempt?.refreshToken === refreshToken)
+        return current.refreshAttempt.id;
+      const refreshAttempt = { id: crypto.randomUUID(), refreshToken };
+      os.put({ ...current, refreshAttempt });
+      os.put({ ...current, refreshAttempt, id: bindingKey(siteId) });
+      return refreshAttempt.id;
+    }),
+  );
+}
+
+/**
  * Persist a refreshed device session onto the existing site record (Option 4
  * device auth). Merge-only: identity fields (id/name/boundAt) stay untouched;
  * only the token fields are replaced. Returns the updated record.
  * @param {{ deviceId: string, token: string, refreshToken: string, expiresIn: number, tokenGeneration: number, accessLevel?: "general"|"manager" }} session
+ * @param {string} expectedSiteId
+ * @param {string} [expectedRefreshToken] reject late writes after re-enrollment or another rotation
  */
 export async function updateSiteSession(
   { deviceId, token, refreshToken, expiresIn, tokenGeneration, accessLevel },
   expectedSiteId,
+  expectedRefreshToken,
 ) {
   // Read and write in one transaction: a site switch must not let a late
   // refresh overwrite the newly selected site's credentials.
   return tx("site", "readwrite", (os) =>
     reqToPromise(os.get("current")).then((current) => {
-      if (!current || current.siteId !== expectedSiteId) return null;
+      if (
+        !current ||
+        current.siteId !== expectedSiteId ||
+        (expectedRefreshToken !== undefined &&
+          current.refreshToken !== expectedRefreshToken)
+      )
+        return null;
       const record = {
         ...current,
         deviceId,
@@ -420,6 +457,7 @@ export async function updateSiteSession(
         accessLevel: accessLevel || current.accessLevel || "general",
         tokenExpiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
       };
+      delete record.refreshAttempt;
       os.put(record);
       os.put({ ...record, id: bindingKey(expectedSiteId) });
       return record;

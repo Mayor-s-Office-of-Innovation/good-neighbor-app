@@ -13,19 +13,25 @@
   line-height: var(--wa-line-height-normal);
 }
 
+/* The page header owns the safe area; avoid the shell adding it twice. */
+.app--chromeless .app__main:has(.site-admin-page) {
+  padding-top: 0;
+}
+
 .site-admin-header {
   position: sticky;
-  /* Match the chromeless shell's safe-area inset so only page content scrolls. */
-  top: max(1rem, env(safe-area-inset-top));
+  top: 0;
   z-index: 4;
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr) 44px;
   align-items: center;
-  min-height: 72px;
-  padding: 0.25rem max(1rem, env(safe-area-inset-left));
+  box-sizing: border-box;
+  min-height: calc(72px + env(safe-area-inset-top, 0px));
+  padding: max(0.25rem, env(safe-area-inset-top))
+    max(1rem, env(safe-area-inset-right)) 0.25rem
+    max(1rem, env(safe-area-inset-left));
   border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
-  backdrop-filter: blur(12px);
+  background: var(--surface);
 }
 
 .site-admin-header h1 {
@@ -201,12 +207,31 @@
 }
 
 .site-access-ready wa-qr-code {
-  justify-self: center;
-  max-width: 100%;
+  box-sizing: border-box;
+  width: min(100%, 244px);
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 1rem auto 0;
   padding: 0.75rem;
   border-radius: 0.5rem;
   background: white;
-  color: var(--text);
+  /* QR modules and finder corners must remain black in both themes. */
+  color: #000;
+  --corner-color: #000;
+}
+
+.site-access-sessions summary {
+  cursor: pointer;
+  padding-block: 0.5rem;
+}
+.site-access-sessions ul {
+  padding-inline-start: 1.25rem;
+  margin-block: 0.5rem;
+}
+.site-access-sessions li + li {
+  margin-block-start: 0.75rem;
 }
 
 .site-access-list {
@@ -214,12 +239,18 @@
 }
 
 .site-access-device {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  overflow-wrap: anywhere;
   padding-block: 1rem;
   border-bottom: 1px solid var(--border);
+}
+
+.site-access-device > button {
+  justify-self: start;
+  max-width: 100%;
+  white-space: normal;
 }
 
 .site-access-device:last-child {
@@ -341,6 +372,9 @@
   gap: 1rem;
 }
 .site-access-grant:not(:empty) {
+  /* Leave enough scroll range to align a new invitation below the header. */
+  min-height: calc(100svh - 72px - env(safe-area-inset-top, 0px) - 0.5rem);
+  align-content: start;
   margin-block-start: var(--wa-space-l, 24px);
 }
 .site-access-ready summary {
@@ -352,9 +386,13 @@
   outline: 2px solid currentColor;
   outline-offset: 3px;
 }
-.site-access-ready wa-qr-code {
-  display: block;
-  margin-block: 1rem;
+.site-access-ready wa-qr-code::part(qr-code) {
+  /* Override the component's inline minimum so narrow cards retain a quiet zone. */
+  min-width: 0 !important;
+  min-height: 0 !important;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
 }
 
 #invitation-manager-contact:not([hidden]) {
@@ -369,4 +407,21 @@
 .site-access-form wa-input::part(form-control-label),
 .site-access-form wa-radio-group::part(form-control-label) {
   font-size: var(--wa-font-size-m);
+}
+
+.site-access-actions {
+  margin-block-start: 1rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.5rem;
+}
+.site-access-cancel {
+  color: var(--wa-color-danger-on-quiet, #b30532);
+  border-color: currentColor;
+}
+
+.site-access-actions > button {
+  min-width: 0;
+  white-space: normal;
+  padding-inline: 1rem;
 }
