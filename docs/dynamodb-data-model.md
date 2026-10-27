@@ -202,7 +202,7 @@ as task update events and every GSI sort key.
 | Task update pointer | `SITE#<siteId>` | `TASK#<taskId>#UPDATE_ID#<updateId>` | finds an update by ID alone, for documentation and safe retries. Stores the event's full sort key. |
 | Task update media | `SITE#<siteId>` | `TASK#<taskId>#MEDIA#<artifactId>` | photos attached to an update. Not analyzer input. A `CHECK#<checkId>#UPDATE_MEDIA#<artifactId>` pointer lets the normal media route serve them. |
 | Upload reservation | `SITE#<siteId>` | `UPLOAD_RESERVATION#<checkId>#<artifactId>` | 24-hour record created before issuing a media PUT; binds key, type, and declared bytes. |
-| Daily check/device/Site media quota | `SITE#<siteId>` | `MEDIA_QUOTA#<yyyy-mm-dd>#CHECK#<checkId>`, `...#DEVICE#<actorId>`, or `...#SITE` | conservative reserved byte and artifact counts; expires after the quota day so abandoned upload URLs cannot permanently exhaust a Check. |
+| Daily check/device media quota | `SITE#<siteId>` | `MEDIA_QUOTA#<yyyy-mm-dd>#CHECK#<checkId>`, `...#DEVICE#<actorId>` | Conservative reserved byte and artifact counts; expires after the quota day so abandoned upload URLs cannot permanently exhaust a Check. Legacy `...#SITE` rows are no longer read or written and expire via TTL. |
 | Task display ID counter | `SITE#<siteId>` | `COUNTER#task-display-id` | `nextTaskDisplayNumber`, a counter that only goes up. Used to mint task `shortId` values. |
 | Provider config | `PROVIDER#<providerId>` | `#META` | managed by central admin: name, `status`, timestamps |
 | Program config | `PROGRAM#<programId>` | `#META` | managed by central admin: Provider relationship, name, required contact, optional Program Manager reference, migration-placeholder/review flags, status, timestamps |
@@ -682,6 +682,7 @@ resolved from current guidance/tasks rather than treated as identity.
 | `DUP_OBSERVATION#<generatedAt>#<checkId>:<artifactId>` | Current revision, condition/category descriptions, immutable media reference and optional derived hashes. Generation time, not capture time, indexes the 72-hour lookup. |
 | `DUP_COVERAGE` | Earliest completely indexed generation time for this Site. |
 | `DUP_RESULT#<observationId>#<revision>` | Pending/final evaluation, per-condition results, safe timing diagnostics and target revisions. |
+| `DUP_PEER_RECONCILIATION#<observationId>#<revision>` | Peer fanout claim (`owner`, `leaseUntil` in epoch milliseconds) and durable completion checkpoint (`completedAt`). `lastPeerKey` records successful sends in ascending observation-projection key order. Each acknowledged send checkpoints progress and renews the 60-second lease; retries resume after that key. Conditional writes fence acquisition/progress/completion/release by owner and cursor; expired claims are retryable. Completion suppresses future job fanout, while dependent-link reconciliation still runs after recovery. |
 | `DUP_ISSUE#<observationId>#<revision>#<conditionId>` | Incrementally published high-confidence explicit link with revision/lifecycle validation keys. |
 | `DUP_COMPARISON#<requestDigest>` | Comparison response cache, including matcher/request version; five-day TTL and no image bytes. |
 | `DUP_LINK#<taskId>` | Idempotently materialized original-task link and its duplicate-detection timeline event ID. |
@@ -716,7 +717,7 @@ the same create/read access. There are no mutation routes after submission.
 |---|---|---|---|
 | Work log | `SITE#<siteId>` | `CARE_WORK#<workId>` | `type: careWork`, `kind`, `note`, `createdAt`, `createdBy`, payload `fingerprint`, `photos` containing IDs, server-owned S3 keys and photo expiry; `expiresAt` is submission + 365 days. |
 | Upload reservation | `SITE#<siteId>` | `CARE_UPLOAD#<workId>#<photoId>` | `type: careUpload`, creator, declared type/bytes, creation time and one-day TTL. Used only to authorize submission. |
-| Per-log upload budget | `SITE#<siteId>` | `CARE_QUOTA#<workId>` | Live reservation IDs with byte counts and expiry timestamps, optimistic revision, and one-day TTL. Expired slots are reclaimed before asynchronous TTL deletion; device/Site daily media budgets remain charged and are shared with existing uploads. |
+| Per-log upload budget | `SITE#<siteId>` | `CARE_QUOTA#<workId>` | Live reservation IDs with byte counts and expiry timestamps, optimistic revision, and one-day TTL. Expired slots are reclaimed before asynchronous TTL deletion; device daily media budgets remain charged and are shared with existing uploads. |
 
 Work logs project `gsi1pk = SITE#<siteId>#CARE_WORK` and
 `gsi1sk = <createdAt>#<workId>` onto GSI1. `GET /v1/care-work` returns newest-first

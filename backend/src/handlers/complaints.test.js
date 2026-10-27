@@ -89,7 +89,7 @@ beforeEach(() => {
 });
 
 describe("complaint upload lifecycle", () => {
-  it("creates a draft and reserves complaint/device/site quota before presigning", async () => {
+  it("creates a draft and reserves complaint/device quota before presigning", async () => {
     ddbSend.mockResolvedValueOnce({});
 
     const response = await presignComplaintArtifact(
@@ -101,7 +101,7 @@ describe("complaint upload lifecycle", () => {
     expect(response.statusCode).toBe(200);
     const transaction = ddbSend.mock.calls[0][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(4);
+    expect(transaction.input.TransactItems).toHaveLength(3);
     expect(
       /** @type {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>} */ (
         transaction.input.TransactItems

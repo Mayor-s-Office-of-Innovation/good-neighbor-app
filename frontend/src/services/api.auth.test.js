@@ -16,7 +16,8 @@ let site;
  */
 function stubFetch(list) {
   let i = 0;
-  return vi.fn(() => {
+  return vi.fn((...args) => {
+    void args;
     const r = list[Math.min(i, list.length - 1)];
     i += 1;
     if ("reject" in r) return Promise.reject(r.reject);
@@ -581,4 +582,129 @@ describe("pre-flight refresh on a known-expiring token", () => {
     await expect(listChecks()).rejects.toBeInstanceOf(ReauthRequiredError);
     expect(fetch).not.toHaveBeenCalled();
   });
+});
+
+describe("uncertain manual completion", () => {
+  it("reconciles a lost response and replays only a confirmed same-method completion", async () => {
+    const fetch = stubFetch([
+      { reject: new TypeError("connection lost") },
+      {
+        status: 200,
+        body: { task: { status: "completed", completionMethod: "manual" } },
+      },
+      {
+        status: 200,
+        body: { task: { status: "completed" }, resultsPending: true },
+      },
+    ]);
+    vi.stubGlobal("fetch", fetch);
+    await expect(
+      completeTask("task", { completionMethod: "manual" }),
+    ).resolves.toMatchObject({ resultsPending: true });
+    expect(fetch.mock.calls.map((call) => call[1].method)).toEqual([
+      "POST",
+      "GET",
+      "POST",
+    ]);
+  });
+
+  it.each(["open", "superseded", "deleted"])(
+    "does not replay an uncertain save when task is %s",
+    async (status) => {
+      const fetch = stubFetch([
+        { status: 500 },
+        { status: 200, body: { task: { status, completionMethod: "manual" } } },
+      ]);
+      vi.stubGlobal("fetch", fetch);
+      await expect(
+        completeTask("task", { completionMethod: "manual" }),
+      ).rejects.toMatchObject({ status: 500 });
+      expect(fetch).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("does not claim a completion performed with a different method", async () => {
+    const fetch = stubFetch([
+      { status: 409 },
+      {
+        status: 200,
+        body: { task: { status: "completed", completionMethod: "311_filed" } },
+      },
+    ]);
+    vi.stubGlobal("fetch", fetch);
+    await expect(
+      completeTask("task", { completionMethod: "manual" }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("polls an overlapping completion with a bounded wait", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetch = stubFetch([
+        { status: 409 },
+        { status: 200, body: { task: { status: "completing" } } },
+      ]);
+      vi.stubGlobal("fetch", fetch);
+      const result = expect(
+        completeTask("task", { completionMethod: "manual" }),
+      ).rejects.toMatchObject({ status: 409 });
+      await vi.runAllTimersAsync();
+      await result;
+      expect(fetch).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not reconcile explicit City submissions", async () => {
+    const fetch = stubFetch([{ status: 500 }]);
+    vi.stubGlobal("fetch", fetch);
+    await expect(
+      completeTask("task", { completionMethod: "311_filed" }),
+    ).rejects.toMatchObject({ status: 500 });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+});
+
+it("keeps reconciliation bound to the site where the action started", async () => {
+  const fetch = vi.fn(async () => {
+    site = { ...site, siteId: "different-site" };
+    throw new TypeError("connection lost after saving");
+  });
+  vi.stubGlobal("fetch", fetch);
+  await expect(
+    completeTask("task", { completionMethod: "manual" }),
+  ).rejects.toBeInstanceOf(ApiError);
+  expect(fetch).toHaveBeenCalledOnce();
+});
+
+it("recovers an overlapping completion once the matching result is confirmed", async () => {
+  vi.useFakeTimers();
+  try {
+    const fetch = stubFetch([
+      { status: 409 },
+      { status: 200, body: { task: { status: "completing" } } },
+      {
+        status: 200,
+        body: { task: { status: "completed", completionMethod: "manual" } },
+      },
+      {
+        status: 200,
+        body: { task: { status: "completed" }, resultsPending: false },
+      },
+    ]);
+    vi.stubGlobal("fetch", fetch);
+    const result = completeTask("task", { completionMethod: "manual" });
+    await vi.runAllTimersAsync();
+    await expect(result).resolves.toMatchObject({ resultsPending: false });
+    expect(fetch.mock.calls.map((call) => call[1].method)).toEqual([
+      "POST",
+      "GET",
+      "GET",
+      "POST",
+    ]);
+  } finally {
+    vi.useRealTimers();
+  }
 });

@@ -1,3 +1,12 @@
+variable "duplicate_comparison_cache_version" {
+  type        = string
+  default     = "image-comparison-v1"
+  description = "Comparison response cache namespace; coordinate changes with analyzer rollout. Does not invalidate prepared images or completed results."
+  validation {
+    condition     = length(trimspace(var.duplicate_comparison_cache_version)) > 0 && length(var.duplicate_comparison_cache_version) <= 128
+    error_message = "Comparison cache namespace must be nonempty and at most 128 characters."
+  }
+}
 variable "duplicate_comparison_requests_per_second" {
   type        = number
   default     = 0
@@ -150,7 +159,7 @@ resource "aws_lambda_function" "duplicate_worker" {
     DUPLICATE_QUEUE_URL                      = aws_sqs_queue.duplicates.url
     DUPLICATE_ANALYZER_BASE_URL              = var.duplicate_analyzer_base_url != "" ? var.duplicate_analyzer_base_url : var.analyzer_base_url
     DUPLICATE_ANALYZER_API_KEY_SECRET_ARN    = aws_secretsmanager_secret.duplicate_analyzer_key.arn
-    DUPLICATE_COMPARISON_CACHE_VERSION       = "image-comparison-v1"
+    DUPLICATE_COMPARISON_CACHE_VERSION       = var.duplicate_comparison_cache_version
     DUPLICATE_COMPARISON_REQUESTS_PER_SECOND = tostring(var.duplicate_comparison_requests_per_second)
   } }
   depends_on = [aws_iam_role_policy.duplicate_worker, aws_cloudwatch_log_group.duplicates]

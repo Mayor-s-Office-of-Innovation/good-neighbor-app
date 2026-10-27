@@ -5,7 +5,8 @@ import {
   isCompletingAnalysisCard,
 } from "./analysis-card-completion.js";
 import { completeTask } from "../services/api.js";
-import { showActionSaveErrorToast } from "../state/toasts.js";
+import { getSite } from "../db.js";
+import { showActionSaveErrorToast, showToast } from "../state/toasts.js";
 vi.mock("../services/phone-completion.js", () => ({
   savePhoneCompletion: (taskId) =>
     completeTask(taskId, { completionMethod: "manual" }).catch((error) => {
@@ -14,8 +15,14 @@ vi.mock("../services/phone-completion.js", () => ({
     }),
 }));
 vi.mock("./task-update-dialog.js", () => ({}));
+vi.mock("../db.js", () => ({
+  getSite: vi.fn(async () => ({ siteId: "site" })),
+}));
 vi.mock("../services/api.js", () => ({ completeTask: vi.fn() }));
-vi.mock("../state/toasts.js", () => ({ showActionSaveErrorToast: vi.fn() }));
+vi.mock("../state/toasts.js", () => ({
+  showActionSaveErrorToast: vi.fn(),
+  showToast: vi.fn(),
+}));
 let host, card, button, callbacks, shell, animation;
 beforeEach(() => {
   vi.useFakeTimers();
@@ -60,18 +67,33 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 it("sends the request on the first tap and ignores a second tap while it is in flight", async () => {
-  vi.mocked(completeTask).mockReturnValue(new Promise(() => {}));
+  let finish = (_value) => {
+    void _value;
+  };
+  vi.mocked(completeTask).mockReturnValue(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
   toggleCardCompletion(host, card, button, callbacks);
   expect(button.getAttribute("aria-checked")).toBe("true");
   expect(button.disabled).toBe(true);
   expect(card.setAttribute).toHaveBeenCalledWith("aria-busy", "true");
-  expect(completeTask).toHaveBeenCalledExactlyOnceWith("task", {
-    completionMethod: "manual",
-  });
+  await Promise.resolve();
+  expect(completeTask).toHaveBeenCalledExactlyOnceWith(
+    "task",
+    {
+      completionMethod: "manual",
+    },
+    { originSiteId: "site" },
+  );
   toggleCardCompletion(host, card, button, callbacks);
+  await Promise.resolve();
   expect(completeTask).toHaveBeenCalledTimes(1);
   expect(button.getAttribute("aria-checked")).toBe("true");
   expect(isCompletingAnalysisCard(host)).toBe(true);
+  finish({ task: { status: "completed" } });
+  await vi.advanceTimersByTimeAsync(0);
 });
 it("waits for a confirmed save and animation before updating the list", async () => {
   let resolveSave = (value) => {
@@ -88,6 +110,7 @@ it("waits for a confirmed save and animation before updating the list", async ()
   });
   toggleCardCompletion(host, card, button, callbacks);
   toggleCardCompletion(host, card, button, callbacks);
+  await Promise.resolve();
   expect(completeTask).toHaveBeenCalledTimes(1);
   expect(card.before).not.toHaveBeenCalled();
   resolveSave({ task: { status: "in_progress" } });
@@ -330,7 +353,10 @@ it("shows results prompts one at a time, in tap order", async () => {
     activeElement: button,
     body: { append: vi.fn() },
   });
-  vi.mocked(completeTask).mockReturnValue(new Promise(() => {}));
+  vi.mocked(completeTask).mockResolvedValue({
+    task: { status: "completed" },
+    resultsPending: true,
+  });
   const tasks = [
     { taskId: "first", canBeInProgress: false },
     { taskId: "second", canBeInProgress: false },
@@ -374,7 +400,10 @@ it("reports a queued card's failure without waiting for the open prompt", async 
     { taskId: "first", canBeInProgress: false },
     { taskId: "second", canBeInProgress: false },
   ];
-  vi.mocked(completeTask).mockReturnValueOnce(new Promise(() => {}));
+  vi.mocked(completeTask).mockResolvedValueOnce({
+    task: { status: "completed" },
+    resultsPending: true,
+  });
   void completeCardAction(
     "first",
     { completionMethod: "manual" },
@@ -412,4 +441,96 @@ it("skips the prompt for actions the backend never documents", async () => {
     { task: { taskId: "task", canBeInProgress: false } },
   );
   expect(create).not.toHaveBeenCalled();
+});
+
+it("keeps a successful save when opening results fails and retries only the prompt", async () => {
+  const task = {
+    taskId: "recover",
+    status: "completed",
+    latestUpdateId: "event",
+  };
+  vi.mocked(completeTask).mockResolvedValue({ task, resultsPending: true });
+  const dialog = resultsDialogStub();
+  dialog.openResults.mockImplementationOnce(() => {
+    throw new Error("render failed");
+  });
+  vi.stubGlobal("document", {
+    createElement: () => dialog,
+    body: { append: vi.fn() },
+  });
+  await expect(
+    completeCardAction("recover", { completionMethod: "manual" }),
+  ).resolves.toEqual({ task, resultsPending: true });
+  expect(dialog.remove).toHaveBeenCalledOnce();
+  expect(showActionSaveErrorToast).not.toHaveBeenCalled();
+  const retry = vi.mocked(showToast).mock.calls[0][0].action.run();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(dialog.openResults).toHaveBeenLastCalledWith(task, null);
+  dialog.close();
+  await retry;
+  expect(completeTask).toHaveBeenCalledOnce();
+});
+
+it("deduplicates requests and prompts for the same task across card instances", async () => {
+  const task = { taskId: "shared", canBeInProgress: false };
+  vi.mocked(completeTask).mockResolvedValue({ task, resultsPending: true });
+  const dialog = resultsDialogStub();
+  vi.stubGlobal("document", {
+    createElement: () => dialog,
+    body: { append: vi.fn() },
+  });
+  const first = completeCardAction(
+    "shared",
+    { completionMethod: "manual" },
+    { task },
+  );
+  const second = completeCardAction(
+    "shared",
+    { completionMethod: "manual" },
+    { task: { ...task } },
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  expect(completeTask).toHaveBeenCalledOnce();
+  expect(dialog.openResults).toHaveBeenCalledOnce();
+  dialog.close();
+  expect(await first).toEqual(await second);
+});
+
+it("does not share completion requests across sites", async () => {
+  vi.mocked(getSite)
+    .mockResolvedValueOnce({ siteId: "one" })
+    .mockResolvedValueOnce({ siteId: "two" });
+  await Promise.all([
+    completeCardAction("same", { completionMethod: "manual" }),
+    completeCardAction("same", { completionMethod: "manual" }),
+  ]);
+  expect(completeTask).toHaveBeenCalledTimes(2);
+  expect(completeTask).toHaveBeenCalledWith(
+    "same",
+    { completionMethod: "manual" },
+    { originSiteId: "one" },
+  );
+  expect(completeTask).toHaveBeenCalledWith(
+    "same",
+    { completionMethod: "manual" },
+    { originSiteId: "two" },
+  );
+});
+
+it("does not hide a real save failure when the prompt also fails", async () => {
+  vi.mocked(completeTask).mockRejectedValue(new Error("save failed"));
+  vi.stubGlobal("document", {
+    createElement: () => {
+      throw new Error("module unavailable");
+    },
+  });
+  await expect(
+    completeCardAction(
+      "failed",
+      { completionMethod: "manual" },
+      { task: { canBeInProgress: false } },
+    ),
+  ).rejects.toThrow("save failed");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(showToast).not.toHaveBeenCalled();
 });

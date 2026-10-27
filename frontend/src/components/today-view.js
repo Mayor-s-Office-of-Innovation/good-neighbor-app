@@ -223,6 +223,24 @@ if (typeof window !== "undefined") {
   });
 }
 
+/** Server-relevant session changes; progress and duplicate projections stay local.
+ * @param {any} session
+ */
+function sessionRefreshKey(session) {
+  return JSON.stringify([
+    session?.id,
+    session?.status,
+    (session?.items || []).map((item) => [
+      item.id,
+      item.analysis?.status === "analyzed"
+        ? item.analysis?.sourceAnalysis?.analysisId || "analyzed"
+        : null,
+      item.analysis?.assessment?.assessmentId,
+      item.analysis?.assessment?.assessmentRevision,
+    ]),
+  ]);
+}
+
 class TodayView extends HTMLElement {
   constructor() {
     super();
@@ -235,6 +253,13 @@ class TodayView extends HTMLElement {
     };
     this._focusAfterRender = null;
     this._homeModel = null;
+    /** @type {Promise<void> | null} */
+    this._homeRefresh = null;
+    this._homeRefreshQueued = false;
+    this._homeRefreshGeneration = 0;
+    /** @type {Promise<void> | null} */
+    this._remainingRefresh = null;
+    this._remainingRefreshQueued = false;
     /**
      * Cards with a non-checklist action in flight (the 311 filing, 5–20 s),
      * by task id: `_applyBusyCards` restores their busy state after any
@@ -298,6 +323,12 @@ class TodayView extends HTMLElement {
   disconnectedCallback() {
     clearInterval(this._checksRefreshTimer);
     this._checksRefreshTimer = null;
+    this._remainingRefresh = null;
+    this._remainingRefreshQueued = false;
+    this._homeRefreshGeneration++;
+    this._homeRefreshQueued = false;
+    this._homeRefresh = null;
+    this._remainingGeneration = (this._remainingGeneration || 0) + 1;
     window.removeEventListener("focus", this._refresh311OnReturn);
     document.removeEventListener("visibilitychange", this._refresh311OnReturn);
     this._stopDuplicates?.();
@@ -323,10 +354,43 @@ class TodayView extends HTMLElement {
     stashHomeState(this);
   }
 
-  async connectedCallback() {
+  connectedCallback() {
     this._checksRefreshTimer ??= setInterval(() => {
       void this._refreshChecks();
     }, 30_000);
+    if (this._homeRefresh) {
+      this._homeRefreshQueued = true;
+      return this._homeRefresh;
+    }
+    const generation = this._homeRefreshGeneration;
+    const run = async () => {
+      do {
+        this._homeRefreshQueued = false;
+        try {
+          await this._loadHome(generation);
+        } catch (error) {
+          // An already-requested refresh may recover from a failed local read.
+          // Do not retry on our own, or discard that explicit queued request.
+          if (
+            !this._homeRefreshQueued ||
+            generation !== this._homeRefreshGeneration
+          )
+            throw error;
+        }
+      } while (
+        this._homeRefreshQueued &&
+        generation === this._homeRefreshGeneration
+      );
+    };
+    const pending = run().finally(() => {
+      if (this._homeRefresh === pending) this._homeRefresh = null;
+    });
+    this._homeRefresh = pending;
+    return pending;
+  }
+
+  /** @param {number} generation */
+  async _loadHome(generation) {
     window.addEventListener("focus", this._refresh311OnReturn);
     document.addEventListener("visibilitychange", this._refresh311OnReturn);
     document.addEventListener("close", this._duplicateCloseHandler, true);
@@ -358,19 +422,19 @@ class TodayView extends HTMLElement {
       void refreshGrantedDeviceLocation();
     }
     if (!this._sessionUnsub) {
+      let refreshKey = sessionRefreshKey(getCurrentCheck());
       this._sessionUnsub = onCheckSessionChange((session) => {
-        if (session?.status === "in-progress") {
-          return;
-        }
-        // A clarification response already updated the local assessment.
-        // Paint it before refreshing unrelated worklist and site metadata.
+        if (session?.status === "in-progress") return;
         if (
-          this._answeringConditionIds.size &&
-          this._homeModel?.pendingSession?.id === session?.id
+          this._homeModel &&
+          this._homeModel.pendingSession?.id === session?.id
         ) {
           this._renderHome({ ...this._homeModel, pendingSession: session });
         }
-        this.connectedCallback();
+        const nextKey = sessionRefreshKey(session);
+        if (nextKey === refreshKey) return;
+        refreshKey = nextKey;
+        void this.connectedCallback();
       });
     }
     if (!this._settingsDocumentClick) {
@@ -404,7 +468,9 @@ class TodayView extends HTMLElement {
         requestedFilter,
       );
     const previousSiteId = this._siteId;
-    this._site = await getSite();
+    const site = await getSite();
+    if (generation !== this._homeRefreshGeneration) return;
+    this._site = site;
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
     if (previousSiteId && previousSiteId !== this._siteId) {
@@ -472,6 +538,7 @@ class TodayView extends HTMLElement {
           listChecks({ limit: 30 }),
           listTasks({ status: "open", limit: 50 }),
         ]);
+      if (generation !== this._homeRefreshGeneration) return;
       this._providerSitesStatus = catalog ? "loaded" : "error";
       this._providerSites = catalog?.sites || [];
       this._providerName =
@@ -511,6 +578,7 @@ class TodayView extends HTMLElement {
           (b.submittedAt || "").localeCompare(a.submittedAt || ""),
         );
     } catch (err) {
+      if (generation !== this._homeRefreshGeneration) return;
       console.error("listChecks/listTasks failed", err);
       this._renderError();
       return;
@@ -533,11 +601,13 @@ class TodayView extends HTMLElement {
       });
     }
 
+    if (generation !== this._homeRefreshGeneration) return;
     this._taskOverrides = readTaskStatusOverrides();
     this._homeFilter =
       this._homeFilter || normalizedHomeTab(requestedFilter || "");
     this._activeProblem = null;
     this._hasPerimeterDraft = await hasDraft("perimeter");
+    if (generation !== this._homeRefreshGeneration) return;
     if (!duplicateUiEnabled()) this._duplicateLinks = new Map();
     this._renderHome({
       last,
@@ -574,9 +644,29 @@ class TodayView extends HTMLElement {
   }
 
   _startRemainingLoad() {
-    this._remainingLoad = this._loadRemainingTasks().catch((err) =>
-      console.error("remaining worklist failed", err),
-    );
+    if (this._remainingRefresh) {
+      this._remainingRefreshQueued = true;
+      // The active response predates the latest open-worklist refresh.
+      this._remainingGeneration = (this._remainingGeneration || 0) + 1;
+      return;
+    }
+    const generation = this._homeRefreshGeneration;
+    const run = async () => {
+      do {
+        this._remainingRefreshQueued = false;
+        await this._loadRemainingTasks().catch((err) =>
+          console.error("remaining worklist failed", err),
+        );
+      } while (
+        this._remainingRefreshQueued &&
+        generation === this._homeRefreshGeneration
+      );
+    };
+    const pending = run().finally(() => {
+      if (this._remainingRefresh === pending) this._remainingRefresh = null;
+    });
+    this._remainingRefresh = pending;
+    this._remainingLoad = pending;
   }
 
   /** The retry button on a failed In-progress / History load. */

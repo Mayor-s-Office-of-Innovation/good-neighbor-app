@@ -33,8 +33,6 @@ import {
 import {
   MAX_DEVICE_DAILY_ARTIFACTS,
   MAX_DEVICE_DAILY_BYTES,
-  MAX_SITE_DAILY_ARTIFACTS,
-  MAX_SITE_DAILY_BYTES,
   quotaUpdate,
 } from "./artifacts.js";
 
@@ -179,15 +177,6 @@ export async function presignComplaintArtifact(event) {
             maxBytes: MAX_DEVICE_DAILY_BYTES,
             countField: "reservedCount",
             maxCount: MAX_DEVICE_DAILY_ARTIFACTS,
-            expiresAt,
-          }),
-          quotaUpdate({
-            tableName,
-            key: { pk: sitePk(siteId), sk: `MEDIA_QUOTA#${day}#SITE` },
-            bytes,
-            maxBytes: MAX_SITE_DAILY_BYTES,
-            countField: "reservedCount",
-            maxCount: MAX_SITE_DAILY_ARTIFACTS,
             expiresAt,
           }),
         ],

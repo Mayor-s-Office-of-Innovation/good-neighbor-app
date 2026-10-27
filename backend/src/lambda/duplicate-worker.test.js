@@ -1,4 +1,4 @@
-import { beforeEach, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, it, expect, vi } from "vitest";
 import {
   analysisRevision,
   projectionKey,
@@ -9,6 +9,7 @@ const state = vi.hoisted(() => ({
   clientOptions:
     /** @type {Parameters<typeof import("../analysis/duplicates/image-matcher.js").createComparisonClient>[0][]} */ ([]),
   records: new Map(),
+  beforeSend: vi.fn(),
   writes:
     /** @type {(import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput | import("@aws-sdk/lib-dynamodb").PutCommandInput)[]} */ ([]),
   sends: /** @type {object[]} */ ([]),
@@ -23,6 +24,38 @@ vi.mock("../db.js", () => ({
       /** @type {import("@aws-sdk/lib-dynamodb").GetCommand | import("@aws-sdk/lib-dynamodb").PutCommand | import("@aws-sdk/lib-dynamodb").QueryCommand | import("@aws-sdk/lib-dynamodb").TransactWriteCommand} */ command,
     ) => {
       const input = command.input;
+      if (
+        "Item" in input &&
+        input.Item?.sk.startsWith("DUP_PEER_RECONCILIATION#")
+      ) {
+        const row = state.records.get(input.Item.sk) ?? {};
+        const v = input.ExpressionAttributeValues ?? {};
+        const acquire = (input.ConditionExpression ?? "").includes(
+          "attribute_not_exists(completedAt)",
+        );
+        const cursorMatches = (input.ConditionExpression ?? "").includes(
+          "lastPeerKey = :cursor",
+        )
+          ? row.lastPeerKey === v[":cursor"]
+          : !(input.ConditionExpression ?? "").includes(
+              "attribute_not_exists(lastPeerKey)",
+            ) || row.lastPeerKey === undefined;
+        if (
+          !cursorMatches ||
+          (acquire
+            ? row.completedAt || (row.leaseUntil ?? 0) > v[":now"]
+            : row.owner !== v[":owner"] ||
+              ((input.ConditionExpression ?? "").includes(
+                "leaseUntil > :now",
+              ) &&
+                row.leaseUntil <= v[":now"]))
+        )
+          throw Object.assign(new Error("Condition failed"), {
+            name: "ConditionalCheckFailedException",
+          });
+        state.records.set(input.Item.sk, input.Item);
+        return {};
+      }
       if ("Key" in input) return { Item: state.records.get(input.Key?.sk) };
       if ("KeyConditionExpression" in input) {
         const values = input.ExpressionAttributeValues;
@@ -88,6 +121,7 @@ vi.mock("../analysis/duplicates/image-matcher.js", async (importOriginal) => ({
 vi.mock("@aws-sdk/client-sqs", () => ({
   SQSClient: class {
     async send(/** @type {{input:object}} */ command) {
+      await state.beforeSend();
       state.sends.push(command.input);
       return {};
     }
@@ -100,6 +134,8 @@ vi.mock("@aws-sdk/client-sqs", () => ({
 }));
 import { handler } from "./duplicate-worker.js";
 
+afterEach(() => vi.useRealTimers());
+
 beforeEach(() => {
   state.readImage
     .mockReset()
@@ -107,6 +143,7 @@ beforeEach(() => {
   state.records.clear();
   state.writes = [];
   state.sends = [];
+  state.beforeSend.mockReset();
   state.compare.mockReset();
   state.clientOptions = [];
   delete process.env.DUPLICATE_COMPARISON_REQUESTS_PER_SECOND;
@@ -501,4 +538,300 @@ it("wires configured aggregate pacing into uncached worker comparisons", async (
   } finally {
     delete process.env.DUPLICATE_COMPARISON_REQUESTS_PER_SECOND;
   }
+});
+
+/** @param {string} name @param {string} observedAt @param {string} category */
+function addPeer(name, observedAt, category = "test-category") {
+  const analysis = {
+    pk: "SITE#site",
+    sk: `CHECK#${name}#ANALYSIS#photo`,
+    status: "analyzed",
+    analysisId: `${name}-analysis`,
+    checkId: name,
+    artifactId: "photo",
+    analyzedAt: observedAt,
+    concerns: [
+      {
+        conditionId: `${name}-issue`,
+        category,
+        rating: 2,
+        explanation: "pile",
+      },
+    ],
+  };
+  const peer = {
+    ...projectionKey("site", observedAt, `${name}:photo`),
+    id: `${name}:photo`,
+    sourceId: `${name}:photo`,
+    siteId: "site",
+    checkId: name,
+    artifactId: "photo",
+    revision: analysisRevision(analysis),
+    observedAt,
+    availableAt: observedAt,
+    conditions: [{ id: `${name}-issue`, category, description: "pile" }],
+  };
+  state.records.set(analysis.sk, analysis);
+  state.records.set(`CHECK#${name}#ART#photo`, {});
+  state.records.set(peer.sk, peer);
+  state.records.set(`DUP_RESULT#${peer.id}#${peer.revision}`, {
+    status: "evaluated",
+    evaluatedAt: observedAt,
+    candidateRevisions: [],
+  });
+  return peer;
+}
+
+/** @param {{Records:{messageId:string,body:string}[]}} event */
+async function runJob(event) {
+  return handler(
+    /** @type {import("aws-lambda").SQSEvent} */ (event),
+    /** @type {import("aws-lambda").Context} */ ({}),
+    () => {},
+  );
+}
+
+it("does not fan out again when a completed source job is redelivered and peers omit it", async () => {
+  const { event } = setup();
+  addPeer("newer", "2026-10-14T11:00:00.000Z");
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(state.sends).toHaveLength(1);
+  // The peer has not run yet; its candidate list still omits this source.
+  for (let i = 0; i < 4; i++)
+    expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(state.sends).toHaveLength(1);
+});
+
+it("does not enqueue peers for excluded categories, shared sources, or the 72-hour boundary", async () => {
+  const { event } = setup();
+  addPeer("other-category", "2026-10-14T11:00:00.000Z", "other-category");
+  addPeer("boundary", "2026-10-17T10:01:00.000Z");
+  const missing = addPeer("missing-category", "2026-10-14T12:00:00.000Z");
+  missing.conditions = [];
+  const sameSource = addPeer("same-source", "2026-10-14T13:00:00.000Z");
+  sameSource.sourceId = "source:photo";
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(state.sends).toHaveLength(0);
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(state.sends).toHaveLength(0);
+});
+
+it("still schedules an eligible late-available source missing from an evaluated peer", async () => {
+  const { event, current } = setup();
+  current.generatedAt = "2026-10-14T10:00:00.000Z";
+  current.analyzedAt = "2026-10-14T13:00:00.000Z";
+  event.Records[0].body = JSON.stringify({
+    siteId: "site",
+    checkId: "source",
+    artifactId: "photo",
+    revision: analysisRevision(current),
+  });
+  const peer = addPeer("newer", "2026-10-14T11:00:00.000Z");
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(state.sends).toEqual([
+    {
+      QueueUrl: "queue",
+      MessageBody: JSON.stringify({
+        siteId: "site",
+        checkId: peer.checkId,
+        artifactId: peer.artifactId,
+        revision: peer.revision,
+      }),
+    },
+  ]);
+});
+
+it("a new source revision gets its own peer reconciliation pass", async () => {
+  const { event, current } = setup();
+  addPeer("newer", "2026-10-14T11:00:00.000Z");
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  current.analysisId = "amended-analysis";
+  event.Records[0].body = JSON.stringify({
+    siteId: "site",
+    checkId: "source",
+    artifactId: "photo",
+    revision: analysisRevision(current),
+  });
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(state.sends).toHaveLength(2);
+});
+
+it("retries partial peer sends before checkpointing, then stops fanout on redelivery", async () => {
+  const { event, current } = setup();
+  addPeer("newer-one", "2026-10-14T11:00:00.000Z");
+  addPeer("newer-two", "2026-10-14T12:00:00.000Z");
+  state.beforeSend
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(new Error("SQS unavailable"));
+  expect(await runJob(event)).toEqual({
+    batchItemFailures: [{ itemIdentifier: "message" }],
+  });
+  const checkpoint = `DUP_PEER_RECONCILIATION#source:photo#${analysisRevision(current)}`;
+  expect(state.records.get(checkpoint)?.completedAt).toBeUndefined();
+  expect(state.sends).toHaveLength(1);
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(state.sends).toHaveLength(2);
+  expect(state.records.has(checkpoint)).toBe(true);
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(state.sends).toHaveLength(2);
+});
+
+it("does not cascade when queued peer jobs themselves are repeatedly delivered", async () => {
+  const { event } = setup();
+  addPeer("newer-one", "2026-10-14T11:00:00.000Z");
+  addPeer("newer-two", "2026-10-14T12:00:00.000Z");
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  // Simulate SQS redelivery of every generated job, including jobs generated
+  // during the drain. A missing-candidate-only guard repeatedly schedules peers.
+  let consumed = 0;
+  while (consumed < state.sends.length && consumed < 20) {
+    const sent = /** @type {{MessageBody:string}} */ (state.sends[consumed++]);
+    const job = {
+      Records: [{ messageId: `peer-${consumed}`, body: sent.MessageBody }],
+    };
+    for (let i = 0; i < 3; i++)
+      expect(await runJob(job)).toEqual({ batchItemFailures: [] });
+  }
+  expect(consumed).toBe(state.sends.length);
+  expect(state.sends.length).toBeLessThanOrEqual(3);
+});
+
+it("reconciles a peer's pending original link after same-revision recovery without restarting fanout", async () => {
+  const { event, current, target } = setup();
+  const peer = addPeer("newer", "2026-10-14T11:00:00.000Z");
+  const sourceRevision = analysisRevision(current);
+  const sourceRef = {
+    observationId: "source:photo",
+    conditionId: "s1",
+    revision: sourceRevision,
+  };
+  const peerResult = state.records.get(
+    `DUP_RESULT#${peer.id}#${peer.revision}`,
+  );
+  Object.assign(peerResult, {
+    candidateRevisions: [{ id: "source:photo", revision: sourceRevision }],
+    conditionResults: [
+      {
+        conditionId: "newer-issue",
+        possibleDuplicate: true,
+        matchStrength: "strong",
+        duplicateOf: sourceRef,
+      },
+    ],
+  });
+  // Real guidance/task records allow the worker's actual reconciliation code
+  // to publish a link once the source's previously incomplete chain recovers.
+  for (const [name, conditionId] of [
+    ["source", "s1"],
+    ["target", "t1"],
+    ["newer", "newer-issue"],
+  ]) {
+    const task = {
+      pk: "SITE#site",
+      sk: `TASK#${name}`,
+      taskId: name,
+      checkId: name,
+      assessmentId: name,
+      conditionId,
+      sourceArtifactIds: ["photo"],
+      status: "open",
+      createdAt: "2026-10-14T09:00:00Z",
+      updatedAt: "2026-10-14T09:00:00Z",
+      shortId: name,
+    };
+    state.records.set(task.sk, task);
+    state.records.set(`GUIDANCE_CURRENT#${JSON.stringify([name, "photo"])}`, {
+      assessmentId: name,
+    });
+    state.records.set(`ASSESSMENT#${name}#COND#${conditionId}`, {
+      taskIds: [name],
+    });
+  }
+  state.records.set(`DUP_RESULT#target:photo#${analysisRevision(target)}`, {
+    status: "evaluated",
+    conditionResults: [
+      { conditionId: "t1", possibleDuplicate: false, status: "evaluated" },
+    ],
+  });
+  const compare = state.compare.getMockImplementation();
+  state.compare.mockRejectedValue(new Error("temporary outage"));
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(
+    state.records.get(`DUP_RESULT#source:photo#${sourceRevision}`).status,
+  ).toBe("incomplete");
+  expect(state.records.get("DUP_LINK#newer")).toBeUndefined();
+  const checkpoint = state.records.get(
+    `DUP_PEER_RECONCILIATION#source:photo#${sourceRevision}`,
+  );
+  expect(checkpoint.completedAt).toBeDefined();
+  expect(state.sends).toHaveLength(0);
+  if (!compare) throw new Error("Missing comparison stub");
+  state.compare.mockImplementation(compare);
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(state.records.get("DUP_LINK#newer")).toMatchObject({
+    originalTaskId: "target",
+    matchedObservationId: "source:photo",
+  });
+  expect(state.sends).toHaveLength(0);
+  expect(
+    state.records.get(`DUP_PEER_RECONCILIATION#source:photo#${sourceRevision}`)
+      .completedAt,
+  ).toBe(checkpoint.completedAt);
+});
+
+it("overlapping worker deliveries retry the contender and send peers only once", async () => {
+  const { event } = setup();
+  addPeer("newer", "2026-10-14T11:00:00.000Z");
+  let release = () => {};
+  const gate = new Promise((resolve) => {
+    release = () => resolve(undefined);
+  });
+  state.beforeSend.mockImplementationOnce(async () => {
+    await gate;
+  });
+  const first = runJob(event);
+  await vi.waitFor(() => expect(state.beforeSend).toHaveBeenCalledTimes(1));
+  expect(await runJob(event)).toEqual({
+    batchItemFailures: [{ itemIdentifier: "message" }],
+  });
+  release();
+  expect(await first).toEqual({ batchItemFailures: [] });
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(state.sends).toHaveLength(1);
+});
+
+it("delivers every peer when sequential SQS sends take longer than the original lease", async () => {
+  vi.useFakeTimers();
+  const { event, current } = setup();
+  // Insert peers backwards to verify that saved progress uses stable sorted
+  // projection keys, rather than query/array order.
+  for (let i = 8; i >= 1; i--)
+    addPeer(`peer-${i}`, `2026-10-14T11:0${i}:00.000Z`);
+  state.beforeSend.mockImplementation(async () => {
+    await vi.advanceTimersByTimeAsync(12_000);
+  });
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(
+    state.sends.map(
+      (sent) =>
+        JSON.parse(/** @type {{MessageBody:string}} */ (sent).MessageBody)
+          .checkId,
+    ),
+  ).toEqual([
+    "peer-1",
+    "peer-2",
+    "peer-3",
+    "peer-4",
+    "peer-5",
+    "peer-6",
+    "peer-7",
+    "peer-8",
+  ]);
+  const checkpoint = state.records.get(
+    `DUP_PEER_RECONCILIATION#source:photo#${analysisRevision(current)}`,
+  );
+  expect(checkpoint.completedAt).toBeDefined();
+  expect(checkpoint.lastPeerKey).toContain("peer-8:photo");
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(state.sends).toHaveLength(8);
 });

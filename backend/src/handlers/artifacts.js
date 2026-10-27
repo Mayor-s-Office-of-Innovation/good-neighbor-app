@@ -39,9 +39,7 @@ const MAX_OBJECT_BYTES = 10 * 1024 * 1024;
 const MAX_CHECK_ARTIFACTS = 20;
 const MAX_CHECK_BYTES = 50 * 1024 * 1024;
 export const MAX_DEVICE_DAILY_BYTES = 100 * 1024 * 1024;
-export const MAX_SITE_DAILY_BYTES = 1024 * 1024 * 1024;
 export const MAX_DEVICE_DAILY_ARTIFACTS = 50;
-export const MAX_SITE_DAILY_ARTIFACTS = 1000;
 
 /**
  * S3 layout for a check's media. Server-owned and tenant-prefixed, so a
@@ -183,15 +181,6 @@ export const presignUpload = async (event) => {
             maxCount: MAX_DEVICE_DAILY_ARTIFACTS,
             expiresAt,
           }),
-          quotaUpdate({
-            tableName,
-            key: { pk: sitePk(siteId), sk: `MEDIA_QUOTA#${day}#SITE` },
-            bytes,
-            maxBytes: MAX_SITE_DAILY_BYTES,
-            countField: "reservedCount",
-            maxCount: MAX_SITE_DAILY_ARTIFACTS,
-            expiresAt,
-          }),
           {
             Put: {
               TableName: tableName,
@@ -243,7 +232,6 @@ export const presignUpload = async (event) => {
                     "check_state",
                     "check_quota",
                     "device_quota",
-                    "site_quota",
                     "upload_reservation",
                   ][index] ?? "unknown",
                 code: reason?.Code ?? "Unknown",
