@@ -1,3 +1,4 @@
+import { invalidateDuplicateIssues } from "./duplicate-invalidation.js";
 /*
   api.js — the field app's thin online client for the GNP backend.
 
@@ -1283,17 +1284,25 @@ export async function waitForAnalyses(
   );
 }
 
-/** @param {string[]} taskIds */
-export function getDuplicateLinks(taskIds) {
-  return request("POST", "/v1/duplicates:batch", { body: { taskIds } });
+/**
+ * @param {string[]} taskIds
+ * @param {{originSiteId?: string, signal?: AbortSignal}} [options]
+ */
+export function getDuplicateLinks(taskIds, options = {}) {
+  return request("POST", "/v1/duplicates:batch", {
+    ...options,
+    body: { taskIds },
+  });
 }
 /** @param {string} taskId @param {{sourceRevision:string,originalTaskId:string}} expected */
-export function separateDuplicate(taskId, expected) {
-  return request(
+export async function separateDuplicate(taskId, expected) {
+  const result = await request(
     "POST",
     `/v1/tasks/${encodeURIComponent(taskId)}/duplicate:separate`,
     { body: expected },
   );
+  invalidateDuplicateIssues();
+  return result;
 }
 
 /** @param {string} taskId */

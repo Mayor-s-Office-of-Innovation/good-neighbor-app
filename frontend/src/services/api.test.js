@@ -436,3 +436,33 @@ describe("get311RequestDetails", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 });
+
+describe("duplicate separation invalidation", () => {
+  it("notifies pollers only after a successful separation", async () => {
+    const { separateDuplicate } = await import("./api.js");
+    const { onDuplicateInvalidation } = await import(
+      "./duplicate-invalidation.js"
+    );
+    const changed = vi.fn();
+    const stop = onDuplicateInvalidation(changed);
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("{}", { status: 409 }))
+      .mockResolvedValueOnce(new Response('{"taskId":"one"}', { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+    try {
+      const expected = { sourceRevision: "r1", originalTaskId: "old" };
+      await expect(separateDuplicate("one", expected)).rejects.toBeInstanceOf(
+        ApiError,
+      );
+      expect(changed).not.toHaveBeenCalled();
+      await expect(separateDuplicate("one", expected)).resolves.toEqual({
+        taskId: "one",
+      });
+      expect(changed).toHaveBeenCalledOnce();
+    } finally {
+      stop();
+      vi.unstubAllGlobals();
+    }
+  });
+});
