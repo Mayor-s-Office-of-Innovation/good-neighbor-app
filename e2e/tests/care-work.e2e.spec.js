@@ -250,7 +250,7 @@ test("proactive care groups all pages by Pacific date with capitalized headings 
     }),
   );
   await openLogs(page);
-  expect(pages).toBe(1);
+  await expect.poll(() => pages).toBe(1);
   const groups = page.locator(".care-day");
   await expect(groups).toHaveCount(2);
   await expect(groups.nth(0).locator("h2")).toHaveText(
@@ -436,9 +436,16 @@ test("proactive care replaces five expired uploads without waiting for quota TTL
     }
     return route.fallback();
   });
+  const saved = page.waitForResponse(
+    (res) =>
+      res.url().endsWith("/v1/care-work") &&
+      res.request().method() === "POST" &&
+      res.ok(),
+  );
   await page.locator("[data-save]").click();
   await expect(page).toHaveURL(/\/care-work$/, { timeout: 30000 });
-  await expect(page.locator("[data-work]")).toBeVisible();
+  const { work } = await (await saved).json();
+  await expect(page.locator(`[data-work="${work.workId}"]`)).toBeVisible();
   const last = submissions[submissions.length - 1];
   expect(last.photoIds).toHaveLength(5);
   expect(last.workId).toBe(submissions[0].workId);
@@ -531,9 +538,17 @@ test("care submission returns immediately and recovers photos after reload", asy
   await expect(page.locator(".care-days [role=status]")).toHaveText(
     t("care.saving"),
   );
+  const saved = page.waitForResponse(
+    (res) =>
+      res.url().endsWith("/v1/care-work") &&
+      res.request().method() === "POST" &&
+      res.ok(),
+  );
   release();
-  await expect(page.locator("[data-work]")).toBeVisible();
-  await page.locator("[data-work]").click();
+  const { work } = await (await saved).json();
+  const row = page.locator(`[data-work="${work.workId}"]`);
+  await expect(row).toBeVisible();
+  await row.click();
   await expect(page.locator(".care-detail-photos img")).toHaveCount(1);
 });
 
