@@ -31,8 +31,11 @@ import { evaluateCondition } from "./evaluator.js";
 import {
   executeAppActions,
   initialAppActionStatus,
+  is311AsyncFilingEnabled,
+  is311SubmissionEnabled,
   summarizeAppActionResults,
 } from "./app-actions.js";
+import { queue311Filing } from "./sf311-filing-queue.js";
 import { activeCatalog, catalogForPolicyVersion } from "./catalog-registry.js";
 import { logServerError } from "../../lib/log-server-error.js";
 import { shortCodePart } from "../../lib/short-codes.js";
@@ -1336,6 +1339,27 @@ export async function completeTaskWithAppActions(opts) {
     !isExpiredLease(existing.Item.completionLeaseExpiresAt, nowDate)
   ) {
     throw namedError("TaskCompletionInProgress", "Task completion in progress");
+  }
+  if (
+    opts.completionMethod === "311_filed" &&
+    is311AsyncFilingEnabled(opts.env ?? process.env) &&
+    is311SubmissionEnabled(opts.env ?? process.env)
+  ) {
+    if (!hasUserConfirmed311Action(existing.Item)) {
+      throw namedError(
+        "InvalidCompletionMethod",
+        "Task has no executable 311 filing action",
+      );
+    }
+    return queue311Filing({
+      tableName: opts.tableName,
+      siteId: opts.siteId,
+      taskId: opts.taskId,
+      task: existing.Item,
+      actorId: opts.actorId,
+      duplicateChecks: opts.duplicateChecks,
+      now: nowDate,
+    });
   }
   if (
     existing.Item.status !== "open" &&

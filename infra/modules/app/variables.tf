@@ -41,6 +41,12 @@ variable "enable_311_submission" {
   default     = false
 }
 
+variable "enable_311_async_filing" {
+  description = "File user-confirmed 311 tickets in the background SF311 job worker instead of inside the API request (issue #596). Keep off until the frontend shows queued/failed filing states."
+  type        = bool
+  default     = false
+}
+
 variable "sf311_createsr_url" {
   description = "SF311 HUB CreateSR endpoint URL."
   type        = string

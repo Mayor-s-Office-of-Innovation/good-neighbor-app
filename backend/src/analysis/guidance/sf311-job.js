@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   is311SubmissionEnabled,
   eligibleTicketsForClosure,
@@ -45,4 +46,37 @@ export function sf311Job(tableName, siteId, task, phase, env = process.env) {
       },
     },
   ];
+}
+
+/**
+ * Job row for a "File 311 ticket" tap (issue #596). Unlike the silent jobs
+ * above, it runs the task's user-confirmed actions and records the outcome on
+ * the task. Each tap (or retry tap) gets its own phase, so a retry is a fresh
+ * INSERT the stream dispatcher picks up.
+ * @param {object} opts
+ * @param {string} opts.tableName
+ * @param {string} opts.siteId
+ * @param {string} opts.taskId
+ * @param {string} opts.actorId
+ * @param {string} opts.now
+ * @returns {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>[number]}
+ */
+export function sf311FilingJob({ tableName, siteId, taskId, actorId, now }) {
+  return {
+    Put: {
+      TableName: tableName,
+      Item: {
+        pk: `SITE#${siteId}`,
+        sk: `SF311_JOB#${taskId}#filed-${randomUUID()}`,
+        entityType: "SF311_OUTBOX",
+        status: "pending",
+        siteId,
+        taskId,
+        trigger: "user_confirmed",
+        actorId,
+        createdAt: now,
+      },
+      ConditionExpression: "attribute_not_exists(pk)",
+    },
+  };
 }
