@@ -1191,7 +1191,7 @@
   "setup.enrollment.failed": "Chúng tôi không thể liên kết thiết bị này. Hãy kiểm tra kết nối và thử lại.",
   "setup.enrollment.invalid": "Lời mời này không hợp lệ. Hãy kiểm tra mã hoặc yêu cầu quản trị viên gửi lời mời mới.",
   "setup.enrollment.limited": "Đã thử mã quá nhiều lần. Vui lòng đợi trước khi thử lại.",
-  "setup.enrollment.openApp": "Mở ứng dụng mà không liên kết thiết bị",
+  "setup.enrollment.openApp": "Đã liên kết thiết bị? Nhấp để đăng nhập",
   "setup.enrollment.submit": "Liên kết thiết bị này",
   "setup.enrollment.supportReference": "Mã tham chiếu hỗ trợ: {reference}",
   "setup.enrollment.title": "Liên kết thiết bị này",

@@ -1191,7 +1191,7 @@
   "setup.enrollment.failed": "無法連結此裝置。請檢查網路連線後再試一次。",
   "setup.enrollment.invalid": "此邀請無效。請檢查代碼，或向管理員索取新邀請。",
   "setup.enrollment.limited": "嘗試代碼的次數過多。請稍候再試。",
-  "setup.enrollment.openApp": "開啟應用程式而不連結裝置",
+  "setup.enrollment.openApp": "已連結裝置？點擊登入",
   "setup.enrollment.submit": "連結此裝置",
   "setup.enrollment.supportReference": "支援參考編號：{reference}",
   "setup.enrollment.title": "連結此裝置",

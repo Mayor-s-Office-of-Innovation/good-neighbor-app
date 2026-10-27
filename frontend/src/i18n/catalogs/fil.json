@@ -1191,7 +1191,7 @@
   "setup.enrollment.failed": "Hindi namin maiugnay ang device na ito. Suriin ang iyong koneksyon at subukan muli.",
   "setup.enrollment.invalid": "Hindi valid ang imbitasyong ito. Suriin ang code o humingi ng bagong imbitasyon sa iyong administrator.",
   "setup.enrollment.limited": "Masyadong maraming pagsubok ng code. Maghintay bago subukang muli.",
-  "setup.enrollment.openApp": "Buksan ang app nang hindi iniuugnay ang device",
+  "setup.enrollment.openApp": "Naiugnay na ang device? Mag-click para mag-log in",
   "setup.enrollment.submit": "Iugnay ang device na ito",
   "setup.enrollment.supportReference": "Sanggunian para sa suporta: {reference}",
   "setup.enrollment.title": "Iugnay ang device na ito",
