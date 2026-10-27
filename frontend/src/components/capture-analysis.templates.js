@@ -1,4 +1,5 @@
 import { html, escapeHtml } from "../lib/html.js";
+import { animatedEllipsis } from "../lib/ellipsis.js";
 import { t } from "../i18n/i18n.js";
 import { visibleProblemSelection } from "./analysis-results.templates.js";
 import "./capture-analysis.css";
@@ -107,7 +108,7 @@ export function captureLabels(items) {
     (items.some(isPending)
       ? html` <div class="capture-label capture-label--pending">
           <wa-icon name="sparkles" aria-hidden="true"></wa-icon>
-          <span class="capture-label__skeleton" aria-hidden="true"></span>
+          ${animatedEllipsis()}
           <span class="visually-hidden"
             >${escapeHtml(t("card.pending.title"))}</span
           >

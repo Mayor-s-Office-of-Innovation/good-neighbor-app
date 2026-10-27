@@ -1,6 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const setup = vi.hoisted(() => ({
+  currentRoute: vi.fn(() => "/today"),
   backOrNavigate: vi.fn(),
   clearSite: vi.fn(),
   getSite: vi.fn(),
@@ -64,7 +65,7 @@ vi.mock("../services/device-location.js", () => ({
   requestLocationPermissionEarly: vi.fn(),
 }));
 vi.mock("../router.js", () => ({
-  currentRoute: () => "/today",
+  currentRoute: setup.currentRoute,
   navigate: vi.fn(),
   backOrNavigate: setup.backOrNavigate,
   onRouteChange: vi.fn(),
@@ -91,6 +92,10 @@ vi.mock("../state/toasts.js", () => ({
   showSiteSwitchSuccessToast: vi.fn(),
 }));
 
+vi.mock("./perimeter-check.js", () => ({ screen: "perimeter-check" }));
+vi.mock("./problem-report.js", () => ({ screen: "problem-report" }));
+vi.mock("./describe-instead.js", () => ({ screen: "describe-instead" }));
+
 let AppRoot;
 
 beforeAll(async () => {
@@ -115,6 +120,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  setup.currentRoute.mockReset().mockReturnValue("/today");
   setup.clearSite.mockReset().mockResolvedValue(undefined);
   setup.getSite.mockReset();
   setup.getSiteSettings.mockReset();
@@ -492,4 +498,35 @@ it("shows recovery controls when a route module fails instead of leaving a blank
   handlers["[data-route-back]"]();
   expect(setup.backOrNavigate).toHaveBeenCalledWith("/today");
   log.mockRestore();
+});
+
+it.each([
+  ["/check", "perimeter-check"],
+  ["/problem", "problem-report"],
+  ["/check/describe", "describe-instead"],
+  ["/problem/describe", "describe-instead"],
+])(
+  "loads the capture screen for a direct visit to %s",
+  async (route, screen) => {
+    setup.currentRoute.mockReturnValue(route);
+    const root = component();
+    root._loadRoute = vi.fn();
+    AppRoot.prototype._renderView.call(root);
+    expect(root._loadRoute).toHaveBeenCalledOnce();
+    const [requestedRoute, load] = root._loadRoute.mock.calls[0];
+    expect(requestedRoute).toBe(route);
+    expect((await load()).screen).toBe(screen);
+  },
+);
+
+it("does not render a capture screen after navigation changes during loading", async () => {
+  setup.currentRoute.mockReturnValue("/check");
+  const root = component();
+  root._view = { innerHTML: "" };
+  const pending = deferred();
+  root._loadRoute("/check", () => pending.promise);
+  setup.currentRoute.mockReturnValue("/today");
+  pending.resolve(undefined);
+  await flush();
+  expect(root._renderView).not.toHaveBeenCalled();
 });

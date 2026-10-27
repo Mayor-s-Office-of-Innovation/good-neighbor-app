@@ -1,5 +1,6 @@
 import { artifactPhoto } from "./artifact-photo.templates.js";
 import { cardDescription } from "./card-description.js";
+import { animatedEllipsis } from "../lib/ellipsis.js";
 import { statusTickerMarkup } from "./status-ticker.js";
 import { duplicateUiEnabled } from "../services/feature-flags.js";
 import {
@@ -738,7 +739,7 @@ function pendingCard(item) {
             <p class="analysis-card__place">
               ${escapeHtml(place || t("card.place.placeholder"))}
             </p>
-            <h3>${escapeHtml(t("card.pending.title"))}</h3>
+            <h3>${escapeHtml(t("card.pending.title"))}${animatedEllipsis()}</h3>
             <div class="analysis-card__skeleton-copy" aria-hidden="true">
               <span
                 class="analysis-card__skeleton analysis-card__skeleton--wide"
@@ -1430,7 +1431,7 @@ export const analysisDialogs = () => html`
   >
     <div class="analysis-dialog__card analysis-dialog__card--progress">
       <h2 class="analysis-dialog__title" id="analysis-progress-title">
-        ${escapeHtml(t("analysis.progressDialog.title"))}
+        ${escapeHtml(t("analysis.progressDialog.title"))}${animatedEllipsis()}
       </h2>
       <div class="analysis-progress-ring" aria-hidden="true"></div>
       <button

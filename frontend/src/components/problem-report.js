@@ -10,6 +10,8 @@ import {
   problem-report — a single-problem capture flow. Each captured photo analyzes
   immediately and renders through the same live result cards as perimeter check.
 */
+// Shared capture layout must load even when this route opens before /check.
+import "./perimeter-check.css";
 import "./problem-report.css";
 import {
   show311FilingToast,
