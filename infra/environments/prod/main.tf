@@ -74,8 +74,8 @@ module "app" {
   bedrock_model_id            = var.bedrock_model_id
   analyzer_base_url           = "https://xvcwo6m20a.execute-api.us-east-1.amazonaws.com/prod"
   duplicate_analyzer_base_url = "https://xvcwo6m20a.execute-api.us-east-1.amazonaws.com/prod"
-  # Prepare the measured dev baseline; enable only after production preflight and pilot approval.
-  enable_duplicate_detection               = false
+  # Production cutover enabled after deployed dev validation and comparison-key provisioning.
+  enable_duplicate_detection               = true
   duplicate_worker_maximum_concurrency     = 20
   duplicate_comparison_requests_per_second = 3
   duplicate_comparison_cache_version       = "image-comparison-v2"
