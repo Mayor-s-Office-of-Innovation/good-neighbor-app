@@ -32,21 +32,6 @@ import {
   taskUpdateTimeline,
 } from "./task-update-dialog.templates.js";
 
-/** Bound timeline reads without letting late responses replace newer state.
- * @template T
- * @param {Promise<T>} request
- * @returns {Promise<T>}
- */
-function timelineRead(request) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error("Timeline request timed out")),
-      15_000,
-    );
-    request.then(resolve, reject).finally(() => clearTimeout(timer));
-  });
-}
-
 export class TaskUpdateDialog extends HTMLElement {
   /** @type {boolean | undefined} */
   readOnly;
@@ -65,6 +50,10 @@ export class TaskUpdateDialog extends HTMLElement {
     this._requests = new Map();
     this._cityUpdates = [];
     this._loadGeneration = 0;
+    /** @type {Set<AbortController>} */
+    this._timelineReads = new Set();
+    this._timelineFrame = null;
+    this._retryToken = "";
     /** @type {Record<string, any> | null} */
     this._pendingEvent = null;
     /**
@@ -156,6 +145,7 @@ export class TaskUpdateDialog extends HTMLElement {
    */
   openResults(task, completion = null) {
     ++this._loadGeneration;
+    this._cancelTimelineReads();
     this._task = task;
     this._results = true;
     this._editorOnly = false;
@@ -210,11 +200,13 @@ export class TaskUpdateDialog extends HTMLElement {
   async _load(nextToken = "") {
     if (!this._task) return;
     const generation = ++this._loadGeneration;
+    this._cancelTimelineReads();
+    this._retryToken = nextToken;
     this._state = "loading";
     this._render();
     try {
-      const page = await timelineRead(
-        getTaskUpdates(this._task.taskId, nextToken || undefined),
+      const page = await this._timelineRead((signal) =>
+        getTaskUpdates(this._task.taskId, nextToken || undefined, { signal }),
       );
       if (generation !== this._loadGeneration) return;
       this._detail = nextToken
@@ -243,10 +235,11 @@ export class TaskUpdateDialog extends HTMLElement {
     const ticket = submitted311Ticket(this._task);
     if (ticket) {
       try {
-        const response = await timelineRead(
-          get311RequestDetails([
-            { taskId: this._task.taskId, srNum: ticket.srNum },
-          ]),
+        const response = await this._timelineRead((signal) =>
+          get311RequestDetails(
+            [{ taskId: this._task.taskId, srNum: ticket.srNum }],
+            { signal },
+          ),
         );
         if (generation !== this._loadGeneration) return;
         this._task = taskWith311Status(
@@ -303,9 +296,14 @@ export class TaskUpdateDialog extends HTMLElement {
     await Promise.all(
       photoIds.map(async (artifactId) => {
         try {
-          const media = await timelineRead(getMediaUrl(checkId, artifactId));
+          const media = await this._timelineRead((signal) =>
+            getMediaUrl(checkId, artifactId, { signal }),
+          );
           if (generation !== this._loadGeneration) return;
-          if (media.downloadUrl) {
+          if (
+            media.downloadUrl &&
+            this._mediaUrls.get(artifactId) !== media.downloadUrl
+          ) {
             this._mediaUrls.set(artifactId, media.downloadUrl);
             this._refreshTimeline();
           }
@@ -316,7 +314,43 @@ export class TaskUpdateDialog extends HTMLElement {
     );
   }
 
+  /** @template T @param {(signal: AbortSignal) => Promise<T>} read */
+  async _timelineRead(read) {
+    const controller = new AbortController();
+    this._timelineReads.add(controller);
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    let onAbort;
+    const aborted = new Promise((_, reject) => {
+      onAbort = () =>
+        reject(new DOMException("Timeline read cancelled", "AbortError"));
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      return await Promise.race([read(controller.signal), aborted]);
+    } finally {
+      clearTimeout(timer);
+      controller.signal.removeEventListener("abort", onAbort);
+      this._timelineReads.delete(controller);
+    }
+  }
+
+  _cancelTimelineReads() {
+    for (const controller of this._timelineReads) controller.abort();
+    this._timelineReads.clear();
+    if (this._timelineFrame !== null) cancelAnimationFrame(this._timelineFrame);
+    this._timelineFrame = null;
+  }
+
   _refreshTimeline() {
+    if (this._timelineFrame !== null) return;
+    const generation = this._loadGeneration;
+    this._timelineFrame = requestAnimationFrame(() => {
+      this._timelineFrame = null;
+      if (generation === this._loadGeneration) this._renderTimeline();
+    });
+  }
+
+  _renderTimeline() {
     // Background enrichment must not replace an editor or reopen a closed sheet.
     if (!this._open || this._mode !== "timeline" || this._state !== "ready")
       return;
@@ -325,7 +359,9 @@ export class TaskUpdateDialog extends HTMLElement {
     const focused = globalThis.document?.activeElement;
     const marker =
       focused && dialog?.contains(focused)
-        ? focused.getAttributeNames().find((name) => name.startsWith("data-"))
+        ? focused.hasAttribute("data-timeline-focus")
+          ? "data-timeline-focus"
+          : focused.getAttributeNames().find((name) => name.startsWith("data-"))
         : null;
     const selector = marker
       ? `[${marker}="${CSS.escape(focused.getAttribute(marker))}"]`
@@ -448,7 +484,7 @@ export class TaskUpdateDialog extends HTMLElement {
   _wire(root) {
     root
       .querySelector("[data-retry-timeline]")
-      ?.addEventListener("click", () => void this._load());
+      ?.addEventListener("click", () => void this._load(this._retryToken));
     root.querySelectorAll("[data-city-help]").forEach((element) => {
       const button = /** @type {HTMLButtonElement} */ (element);
       button.addEventListener("click", () => {
@@ -861,6 +897,7 @@ export class TaskUpdateDialog extends HTMLElement {
   _dismiss() {
     const results = this._results;
     ++this._loadGeneration;
+    this._cancelTimelineReads();
     this._resetDraft();
     this._completion = null;
     this._results = false;

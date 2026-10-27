@@ -24,6 +24,8 @@ vi.mock("../state/toasts.js", () => toasts);
 
 beforeAll(() => {
   vi.stubGlobal("HTMLElement", class {});
+  vi.stubGlobal("requestAnimationFrame", (callback) => setTimeout(callback, 0));
+  vi.stubGlobal("cancelAnimationFrame", (id) => clearTimeout(id));
   vi.stubGlobal("customElements", { define: vi.fn() });
 });
 
@@ -739,7 +741,7 @@ describe("City status in issue timeline", () => {
       ],
     });
     await dialog.open({ ...task, ticketStatus: "On hold" });
-    expect(dialog._task.ticketStatus).toBe("Closed");
+    await vi.waitFor(() => expect(dialog._task.ticketStatus).toBe("Closed"));
     expect(dialog._task.ticketClosedReason).toBe("8");
     expect(dialog._cityUpdates).toHaveLength(1);
     expect(dialog._content()).toContain('data-status-ticker="cityClosed"');
@@ -985,5 +987,103 @@ describe("timeline loading resilience", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(dialog._task.taskId).toBe("new");
     expect(dialog._cityUpdates).toEqual([]);
+  });
+  it("retries the failed older page without discarding loaded pages", async () => {
+    const dialog = await makeDialog();
+    api.getTaskUpdates.mockResolvedValueOnce({
+      task: { taskId: "pages" },
+      updates: [{ updateId: "one" }],
+      nextToken: "page2",
+    });
+    await dialog.open({ taskId: "pages" });
+    api.getTaskUpdates.mockResolvedValueOnce({
+      task: { taskId: "pages" },
+      updates: [{ updateId: "two" }],
+      nextToken: "page3",
+    });
+    await dialog._load(dialog._nextToken);
+    api.getTaskUpdates.mockRejectedValueOnce(new Error("offline"));
+    await dialog._load(dialog._nextToken);
+    expect(dialog._state).toBe("error");
+    expect(dialog._retryToken).toBe("page3");
+    api.getTaskUpdates.mockResolvedValueOnce({
+      task: { taskId: "pages" },
+      updates: [{ updateId: "three" }],
+      nextToken: null,
+    });
+    await dialog._load(dialog._retryToken);
+    expect(dialog._detail.updates.map((u) => u.updateId)).toEqual([
+      "one",
+      "two",
+      "three",
+    ]);
+  });
+
+  it("aborts stalled core reads on timeout and when switching issues", async () => {
+    vi.useFakeTimers();
+    try {
+      const dialog = await makeDialog();
+      api.getTaskUpdates.mockImplementation(() => new Promise(() => {}));
+      const first = dialog.open({ taskId: "first" });
+      const signal = api.getTaskUpdates.mock.calls.at(-1)[2].signal;
+      await vi.advanceTimersByTimeAsync(15000);
+      await first;
+      expect(signal.aborted).toBe(true);
+      const second = dialog._load();
+      const secondSignal = api.getTaskUpdates.mock.calls.at(-1)[2].signal;
+      api.getTaskUpdates.mockResolvedValueOnce({
+        task: { taskId: "new" },
+        updates: [],
+      });
+      await dialog.open({ taskId: "new" });
+      await second;
+      expect(secondSignal.aborted).toBe(true);
+      expect(dialog._task.taskId).toBe("new");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("aborts optional reads and cancels queued rendering on dismissal", async () => {
+    const dialog = await makeDialog();
+    api.getTaskUpdates.mockResolvedValueOnce({
+      task,
+      updates: [{ photoKeys: ["pending"] }],
+    });
+    api.get311RequestDetails.mockImplementationOnce(
+      () => new Promise(() => {}),
+    );
+    api.getMediaUrl.mockImplementationOnce(() => new Promise(() => {}));
+    await dialog.open(task);
+    const citySignal = api.get311RequestDetails.mock.calls.at(-1)[1].signal;
+    const photoSignal = api.getMediaUrl.mock.calls.at(-1)[2].signal;
+    dialog._refreshTimeline();
+    dialog.querySelector = () => null;
+    dialog.dispatchEvent = vi.fn();
+    dialog._dismiss();
+    expect(citySignal.aborted).toBe(true);
+    expect(photoSignal.aborted).toBe(true);
+    expect(dialog._timelineFrame).toBeNull();
+  });
+
+  it("coalesces enrichment paints and skips unchanged photo URLs", async () => {
+    vi.useFakeTimers();
+    try {
+      const dialog = await makeDialog();
+      dialog._renderTimeline = vi.fn();
+      dialog._refreshTimeline();
+      dialog._refreshTimeline();
+      dialog._refreshTimeline();
+      await vi.advanceTimersByTimeAsync(20);
+      expect(dialog._renderTimeline).toHaveBeenCalledTimes(1);
+      dialog._task = { checkId: "check" };
+      dialog._detail = { updates: [{ photoKeys: ["same"] }] };
+      dialog._mediaUrls.set("same", "url");
+      api.getMediaUrl.mockResolvedValueOnce({ downloadUrl: "url" });
+      await dialog._loadTimelinePhotos(dialog._loadGeneration);
+      expect(dialog._timelineFrame).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

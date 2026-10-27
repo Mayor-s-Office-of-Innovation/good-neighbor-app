@@ -183,6 +183,7 @@ export function taskUpdateTimeline({
             class="task-update__photo-trigger"
             type="button"
             data-photo-lightbox
+            data-timeline-focus="original-photo"
             data-full-src="${escapeAttr(
               originalFullMediaUrl || originalMediaUrl,
             )}"
@@ -370,6 +371,7 @@ function photoPicker(previews, kind, files = [], allowed = true) {
             class="task-update__photo-trigger"
             type="button"
             data-photo-lightbox
+            data-timeline-focus="original-photo"
             data-photo-time="${escapeAttr(
               files[index]?.lastModified
                 ? new Date(files[index].lastModified).toISOString()
