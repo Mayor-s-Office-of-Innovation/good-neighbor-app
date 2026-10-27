@@ -17,6 +17,7 @@
   The item API stays kind-agnostic on purpose ({kind:'photo', dataUrl} /
   {kind:'text', text}) so post-MVP capture kinds don't require a reshaping.
 */
+import { cancelCheckPolling } from "../services/check-polling.js";
 import { completeFirstPerimeterCheck } from "../services/install-prompt.js";
 import {
   newId,
@@ -122,6 +123,9 @@ export function startProblemReport(siteId) {
 }
 
 function startFlow(siteId, flowType) {
+  // Submitted checks still need their background scorecard finalized, even
+  // when the user starts another capture before analysis finishes.
+  if (current?.status === "in-progress") cancelCheckPolling(current.id);
   current = {
     id: newId(),
     siteId,
@@ -374,6 +378,7 @@ export async function clearSubmittedSession() {
  * submit/discard and on the review screen's Continue.
  */
 export function clearCheck() {
+  if (current) cancelCheckPolling(current.id);
   const flowType = current?.flowType;
   const siteId = current?.siteId;
   current = null;
@@ -389,11 +394,13 @@ export function clearCheck() {
  * sign-out recovery after clearSiteSession() clears all local records.
  */
 export function discardInMemorySession() {
+  if (current) cancelCheckPolling(current.id);
   current = null;
   emit();
 }
 
 export async function pauseCheck() {
+  if (current) cancelCheckPolling(current.id);
   if (current?.status === "in-progress") {
     await saveDraft(current);
   } else {
