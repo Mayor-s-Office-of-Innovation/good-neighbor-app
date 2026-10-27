@@ -426,7 +426,7 @@ principal. Listing uses a dedicated GSI1 partition, bounded pages, and Site-boun
 cursors; the UI combines pages before computing Pacific-date groups and counts.
 
 Photos use a distinct `care-work/<siteId>/<workId>/<photoId>` prefix in the existing
-30-day uploads bucket. Upload reservations share device/Site media quotas,
+30-day uploads bucket. Upload reservations share device media quotas,
 with five images, 10 MiB per image, and 25 MiB per log. Submission checks the
 reservation owner, signed byte metadata, actual size and decoded image format,
 then uses the existing image normalizer to strip EXIF and produce a JPEG under a
@@ -446,7 +446,7 @@ concurrent retries. Explicit reservation-expiry responses identify the affected
 photo so the client can re-reserve and upload its retained file; uncertain log
 submissions replay their original payload before any recovery. Per-log quotas
 count live reservations using conditional revision updates, independent of
-DynamoDB TTL cleanup. Daily device/Site quotas are not refunded.
+DynamoDB TTL cleanup. Daily device quotas are not refunded.
 
 ### 311 attachment image leases
 
