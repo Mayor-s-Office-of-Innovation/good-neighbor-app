@@ -214,3 +214,36 @@ describe("resolution evidence shared by ticker and expiration", () => {
     },
   );
 });
+
+describe("background 311 filing", () => {
+  const tapped = (appActionStatus, reason = "sf311_timeout") => ({
+    status: "in_progress",
+    inProgressActionKind: "311_filed",
+    appActionStatus,
+    appActionResults:
+      appActionStatus === "failed"
+        ? [{ code: "create_311_ticket", status: "failed", reason }]
+        : [],
+  });
+
+  it("shows a spinner while the filing is queued", () => {
+    expect(ticker(tapped("queued"))).toMatchObject({
+      key: "filing",
+      tone: "progress",
+      icon: "spinner",
+    });
+  });
+
+  it("warns when the filing failed", () => {
+    expect(ticker(tapped("failed"))).toMatchObject({
+      key: "filingFailed",
+      tone: "warning",
+    });
+  });
+
+  it("shows the filed ticket once the worker files it", () => {
+    expect(ticker({ ...filed, inProgressActionKind: "311_filed" }).key).toBe(
+      "filed",
+    );
+  });
+});

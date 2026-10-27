@@ -274,6 +274,16 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   reconciliation instead of resending. Operators must confirm acceptance or
   non-submission before correcting the durable checkpoint and redriving the job.
   Closure retries reconcile City state.
+- **Tapped 311 filing (`GNP_311_ASYNC_FILING`, on in dev, off by default):** a "File 311
+  ticket" tap makes no HUB call. One transaction moves the task to `in_progress` with
+  `appActionStatus: "queued"` and writes an `SF311_OUTBOX` job with phase `filed-<id>`
+  and `trigger: "user_confirmed"`. The same worker, lease and
+  checkpoints run the task's user-confirmed actions. When filed, it writes the "311 ticket
+  filed" timeline entry and completes tasks that cannot be in progress, as the in-request
+  path did. Transient failures go back to `queued` and retry with the same backoff;
+  permanent failures, outcomes that need reconciliation, and the fifth delivery mark the
+  filing `failed`, leaving the task `in_progress`. A repeat tap returns the task; a tap on a
+  failed filing queues a new job.
   Action-selection overrides atomically check the worker lock and refuse changes
   while it is claimed or holds durable results. Progress updates compare integration
   results as well as task state and retry once from a fresh read on conflict.
