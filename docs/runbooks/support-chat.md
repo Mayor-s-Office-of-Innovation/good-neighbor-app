@@ -128,3 +128,55 @@ output tokens and alarms on repeated unavailability or Lambda throttles. Inspect
 model permissions, regional logging configuration and quotas when unavailable;
 do not enable transcript logging to troubleshoot. Review shared-IP false positives
 before changing the rate limit. Email support remains the handoff for every failure.
+
+## Origin token rotation
+
+The origin token is copied into CloudFront's origin header and the support
+Lambda's environment by Terraform. Rotating only the Secrets Manager value
+would leave both consumers using the old token, so automatic standalone secret
+rotation is not configured (`CKV2_AWS_57` exception). Rotation is coordinated by
+an operator through the CI Terraform deployment workflow:
+
+1. Disable support answers with `enable_support_chat = false` and deploy.
+2. Request replacement of `module.app.aws_secretsmanager_secret_version.support_origin`
+   in the CI plan/apply run. This generates a new token and updates both consumers;
+   `ignore_changes` otherwise intentionally keeps the existing token stable.
+   Do not print or copy token values into logs, commands, or source files.
+3. Wait for the CloudFront distribution to finish deploying and confirm the
+   Lambda configuration update has completed before re-enabling support.
+4. Re-enable support through CI. Verify an authorized frontend request succeeds
+   and a direct request without the origin header is rejected. If propagation
+   fails, leave support disabled and complete the coordinated update.
+
+Rotate immediately on suspected exposure, and include this secret in the regular
+credential review. The dedicated encryption key has automatic KMS key rotation
+and an explicit account-administration policy; runtime support has no access to
+read the origin secret from Secrets Manager.
+
+## Signing dependency and local credentials
+
+`@smithy/signature-v4` supplies AWS Signature Version 4 canonicalization and
+request signing for direct Bedrock HTTPS calls. Native `fetch` and cryptographic
+primitives do not implement that AWS protocol. Using AWS's maintained signer
+avoids maintaining a custom signing implementation; hashing still uses Node's
+native crypto. The package was already present transitively and is declared as
+a direct dependency because support imports it directly.
+
+The installed AWS SDK's `defaultProvider({ profile })` skips environment
+credentials when an explicit profile is supplied. Support uses that option for
+`SUPPORT_AWS_PROFILE`, leaving the emulator credentials unchanged. The offline
+credential regression test uses temporary fake profile files and the actual SDK
+provider and signer to verify this behavior, including when another global
+`AWS_PROFILE` is present. Keep that regression check when updating the SDK.
+
+## Resource tagging coverage
+
+All tag-capable support resources use the seven CCSF tags through `var.tags`.
+The installed AWS provider schema does not accept `tags` for
+`aws_apigatewayv2_integration`, `aws_apigatewayv2_route`, `aws_lambda_permission`,
+or `aws_cloudwatch_log_metric_filter`. Adding that argument would fail Terraform
+validation. These child resources are associated with the tagged HTTP API,
+support Lambda, or support log group; the metric alarms are separately tagged.
+Record this provider limitation in resource-inventory reviews rather than
+claiming those child objects are directly tagged. This documents technical
+coverage, not a separate compliance approval.

@@ -14,7 +14,7 @@ test.beforeEach(async ({ page }) => {
   );
   await page.goto("/__support_test");
   await page.evaluate(async () => {
-    await customElements.whenDefined("today-view");
+    await window.customElements.whenDefined("today-view");
     const dbPath = "/src/db.js";
     const { setSite } = await import(dbPath);
     await setSite("Support test site", {
@@ -86,7 +86,7 @@ test("responses cite sources, collapse, delete and clear", async ({ page }) => {
       const summary = el.getBoundingClientRect();
       return {
         inset: summary.left - source.left,
-        padding: parseFloat(getComputedStyle(el).paddingLeft),
+        padding: parseFloat(window.getComputedStyle(el).paddingLeft),
         fits: summary.right <= source.right,
       };
     });

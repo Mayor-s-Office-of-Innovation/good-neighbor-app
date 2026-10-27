@@ -27,10 +27,23 @@ resource "aws_kms_key" "support_origin" {
   description             = "Encrypt the support origin-verification token"
   enable_key_rotation     = true
   deletion_window_in_days = 30
-  tags                    = var.tags
+  # Explicit standard account-administration policy: enables IAM delegation
+  # and recovery without introducing a dependency on the distribution.
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "EnableIamUserPermissions"
+      Effect    = "Allow"
+      Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+      Action    = "kms:*"
+      Resource  = "*"
+    }]
+  })
+  tags = var.tags
 }
 
 resource "aws_secretsmanager_secret" "support_origin" {
+  #checkov:skip=CKV2_AWS_57:Origin token rotation must coordinate CloudFront and Lambda via CI; standalone secret rotation would not update either consumer. See docs/runbooks/support-chat.md for the manual rotation procedure.
   name                    = "${local.name_prefix}-support-origin"
   kms_key_id              = aws_kms_key.support_origin.arn
   recovery_window_in_days = 30
@@ -118,6 +131,9 @@ resource "aws_lambda_function" "support" {
   tags       = var.tags
 }
 
+# The AWS provider does not support tags on API integrations/routes, Lambda
+# permissions, or log metric filters below. Their API, function and log-group
+# parents carry var.tags. See the support runbook's resource tagging coverage.
 resource "aws_apigatewayv2_integration" "support" {
   api_id                 = aws_apigatewayv2_api.http.id
   integration_type       = "AWS_PROXY"

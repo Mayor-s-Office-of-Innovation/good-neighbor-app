@@ -1,5 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
 import { defaultProvider } from "@aws-sdk/credential-provider-node";
+// Native crypto supplies hashes/HMAC, but not AWS SigV4 canonicalization and
+// request signing. Use AWS's maintained signer for direct Bedrock HTTPS calls.
 import { SignatureV4 } from "@smithy/signature-v4";
 
 /** Native SHA-256 adapter for the AWS-maintained SigV4 signer. */
