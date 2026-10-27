@@ -221,6 +221,25 @@ describe("refresh conflict reconciliation", () => {
       }),
     );
   });
+
+  it("drops the analyzer's 0,0 placeholder coordinates", async () => {
+    vi.mocked(evaluateAssessment).mockResolvedValue({
+      assessment: { assessmentId: "next" },
+      conditions: [],
+      tasks: [],
+    });
+
+    await refreshEvidenceAnalysis("item", {
+      assessment: {
+        metadata: { latitude: 0, longitude: 0 },
+        identified_conditions_of_concern: [{ category: "Litter", severity: 3 }],
+      },
+    });
+
+    expect(vi.mocked(evaluateAssessment).mock.calls[0][0]).not.toHaveProperty(
+      "assessment",
+    );
+  });
 });
 
 it("does not let a delayed answer restore a replaced assessment", async () => {
