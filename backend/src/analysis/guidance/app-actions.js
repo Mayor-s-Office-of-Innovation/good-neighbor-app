@@ -283,7 +283,7 @@ export function is311SubmissionEnabled(env = process.env) {
 
 /**
  * When on, a "File 311 ticket" tap queues the filing for the background
- * worker instead of calling HUB inside the API request (issue #596).
+ * worker instead of calling HUB inside the API request.
  * @param {NodeJS.ProcessEnv | Record<string, string | undefined>} env
  * @returns {boolean}
  */

@@ -4,8 +4,7 @@ import { taskKey, taskWorklistDateGsi } from "../../handlers/keys.js";
 import { sf311FilingJob } from "./sf311-job.js";
 
 /**
- * Queue a "File 311 ticket" tap for the background SF311 job worker
- * (issue #596).
+ * Queue a "File 311 ticket" tap for the background SF311 job worker.
  *
  * One transaction moves the task to `in_progress` with
  * `appActionStatus: "queued"` and writes an `SF311_OUTBOX` job row; the

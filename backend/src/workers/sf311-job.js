@@ -349,9 +349,9 @@ export async function runJob(message, delivery = {}) {
 }
 
 /**
- * A "File 311 ticket" tap queued by `analysis/guidance/sf311-filing-queue.js`
- * (issue #596). Runs the task's user-confirmed actions, then records the
- * outcome on the task the way the old in-request path did:
+ * A "File 311 ticket" tap queued by `analysis/guidance/sf311-filing-queue.js`.
+ * Runs the task's user-confirmed actions, then records the outcome on the
+ * task the way the old in-request path did:
  * - filed: timeline entry, and tasks that cannot be in progress complete
  *   with `completionMethod: "311_filed"`;
  * - retryable failure: back to `queued`, and the throw makes the handler
