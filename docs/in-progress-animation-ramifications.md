@@ -5,9 +5,13 @@ the development team — what changed beyond the visuals.
 
 ## i18n: trailing ellipsis moved from copy to markup
 
-- `card.pending.title` ("Analyzing...") and `analysis.progressDialog.title`
-  ("Filing ticket...") lost their trailing ellipsis in **all five catalogs**
-  (en, es, fil, vi, zh-Hant; zh-Hant used `…`).
+- `card.pending.title` ("Analyzing..."), `analysis.progressDialog.title`
+  ("Filing ticket...") and `today.action.filing` ("Filing…") lost their
+  trailing ellipsis in **all five catalogs** (en, es, fil, vi, zh-Hant;
+  zh-Hant used `…`).
+- `today.action.filing` is applied at runtime (`_setCardBusy` in
+  today-view.js): label via textContent, dots appended as markup; the
+  restore path resets textContent, which drops the span by design.
 - The dots are now presentation: `animatedEllipsis()` in
   `frontend/src/lib/ellipsis.js` renders three always-present, `aria-hidden`
   dots animated by `.ellipsis-dots` in `base.css` (opacity/transform only, no
