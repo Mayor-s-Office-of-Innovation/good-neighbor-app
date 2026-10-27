@@ -22,6 +22,7 @@ describe("homeActions", () => {
 
     expect(markup).toContain('<wa-icon name="bullhorn"');
     expect(markup).toContain('<wa-icon name="flag"');
+    expect(markup).not.toContain(t("support.title"));
   });
 });
 
@@ -30,6 +31,9 @@ describe("settingsMenu", () => {
     expect(settingsMenu({ open: false })).not.toContain('role="menu"');
     const open = settingsMenu({ open: true, adminAccess: true });
     expect(open).toContain('aria-expanded="true"');
+    expect(open).toContain('id="settings-help"');
+    expect(open).toContain('<wa-icon name="circle-question"');
+    expect(open).toContain(t("support.title"));
     expect(open).toContain('id="settings-feedback"');
     expect(open).toContain('id="settings-site-admin"');
     expect(open).toContain('id="settings-reports"');

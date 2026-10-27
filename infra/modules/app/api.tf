@@ -370,6 +370,12 @@ resource "aws_apigatewayv2_stage" "default" {
     })
   }
 
+  route_settings {
+    route_key              = "POST /v1/support"
+    throttling_burst_limit = 5
+    throttling_rate_limit  = 2
+  }
+
   default_route_settings {
     throttling_burst_limit = 100
     throttling_rate_limit  = 200

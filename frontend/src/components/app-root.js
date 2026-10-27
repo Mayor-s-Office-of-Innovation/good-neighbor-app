@@ -75,6 +75,7 @@ import { escapeHtml } from "../lib/html.js";
 import { ready as i18nReady, t } from "../i18n/i18n.js";
 
 const ROUTE_VIEW = [
+  ["/help", "support-view"],
   ["/care-work", "care-work-view"],
   ["/complaints", "complaint-view"],
   ["/reports/checks/", "reports-day-view"],
@@ -525,6 +526,7 @@ export class AppRoot extends HTMLElement {
       return;
     }
     const lazy = [
+      [route === "/help", "support-view", () => import("./support-view.js")],
       [
         route.startsWith("/site-admin") || route.startsWith("/manage-access"),
         "site-admin-view",

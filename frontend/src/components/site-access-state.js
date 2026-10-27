@@ -123,3 +123,17 @@ export function observeAccess(view) {
     document.removeEventListener("visibilitychange", refresh);
   };
 }
+
+/** @param {{ enrollmentUrl: string }} grant */
+export async function shareGrant(grant) {
+  if (navigator.share) {
+    try {
+      await navigator.share({
+        title: t("access.title"),
+        url: grant.enrollmentUrl,
+      });
+    } catch {
+      /* Dismissing the share sheet keeps the link available. */
+    }
+  } else await navigator.clipboard.writeText(grant.enrollmentUrl);
+}

@@ -958,6 +958,10 @@ class TodayView extends HTMLElement {
       this._logoutDialogOpen = true;
       this._renderHome(this._homeModel);
     });
+    this.querySelector("#settings-help")?.addEventListener("click", () => {
+      this._settingsMenuOpen = false;
+      navigate("/help");
+    });
     this.querySelector("#settings-feedback")?.addEventListener("click", () => {
       this._removeSettingsMenu();
       feedbackDialog?.open();
