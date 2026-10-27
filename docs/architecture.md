@@ -398,10 +398,24 @@ as anything but JSON.
 
 Perimeter checks are idempotent by design: the client mints the `checkId` (a ULID) and
 sends it as the `idempotency-key`, and artifact/analysis writes are conditional, so a
-replayed request can never create a duplicate. For the MVP there is **no active service
-worker** — full offline queue-and-replay is deferred (tracked on the issue
-tracker) —
-but the idempotency contract is already in place for when it lands.
+replayed request can never create a duplicate. Check submissions have **no offline queue
+yet** (tracked on the issue tracker), but the idempotency contract is already in place for
+when it lands.
+
+A Workbox service worker (`offlineShell` in `frontend/vite.config.js`) precaches the
+built app, so it opens, reloads, and loads lazy screens with no network. It ships in every
+`vite build` bundle, so both deployed environments (dev and prod) have it; the local Vite
+dev server and the e2e suite never do; `npm run dev:offline` builds and previews it
+locally, and `npm run test:offline:e2e` tests it there. It never intercepts API calls:
+write queues live in the app, because Workbox background sync does not run on iOS.
+
+The HTML page is network first: a launch waits up to 3 seconds for the network, then
+falls back to the precached `index.html` (instantly when there is no signal), so every
+online launch opens the latest release. API routes and paths with a file extension are
+never answered with the page, mirroring the CloudFront SPA rewrite. Hashed JS, CSS, and
+icons are served cache first from the precache. A new worker takes over as soon as it
+installs; an open page keeps its loaded code, and older lazy chunks still come from S3,
+which keeps previous assets.
 
 ### Duplicate issue links (feature-gated; not yet deployed)
 
@@ -455,7 +469,7 @@ then returns to the care list without waiting for uploads. The app owns the uplo
 operation independently of the form. Pending submissions resume when the app
 reopens or connectivity returns; failed attempts remain in the list with a retry
 action. Definitive validation failures also offer editing before retry. This is a
-care-specific durable queue, not a service worker: transfers pause when the browser
+care-specific durable queue, not service worker background sync: transfers pause when the browser
 closes and resume after reopening. Records are bound to the original Site and
 device session, and API calls enforce the originating Site. Successful receipts
 retain the server result until it appears in the list, then are removed; photo

@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv } from "vite";
+import { VitePWA } from "vite-plugin-pwa";
 import { remoteApiPlugin } from "./scripts/vite-remote-api.mjs";
 
 const releaseSha =
@@ -13,12 +14,10 @@ const releaseSha =
   paths to /index.html before the S3 origin (infra/modules/app/cloudfront.tf);
   Vite's dev/preview server serves the same SPA fallback locally.
 
-  TODO(offline pass): the service worker is intentionally OFF for the MVP —
-  none is generated or registered while we finalize screens. The installable
-  half of the PWA does ship: public/manifest.webmanifest (static, linked from
-  index.html) plus the icon set that scripts/make-pwa-icons.mjs derives from
-  public/img/gn-logo.png, and the Add-to-Home-Screen offer in
-  src/services/install-prompt.js.
+  PWA: public/manifest.webmanifest (static, linked from index.html) plus the
+  icon set that scripts/make-pwa-icons.mjs derives from public/img/gn-logo.png,
+  and the Add-to-Home-Screen offer in src/services/install-prompt.js. The
+  service worker (see `offlineShell` below) only makes the app open offline.
 
   A service worker is NOT needed for install (researched 2026-10-20, written
   up in ../notes/pwa-install-plan.md). Chromium's installability evaluator
@@ -35,16 +34,99 @@ const releaseSha =
   maybe not from the prompt. Under 1% of Play devices combined as of Jan 2026.
   Third-party pages that still say "fetch handler required" are stale.
 
-  What the missing worker DOES cost is the offline launch: an installed app
-  opened with no network gets the browser's generic offline page instead of
-  the shell. That is the offline pass. When we do it, re-wire vite-plugin-pwa
-  here (it's already in devDependencies) with `manifest: false` so the static
-  manifest stays the source of truth, and a workbox precache of the built js,
-  css, html, woff2, png, and svg assets + the write-queue/sync. Register the
-  worker from a module, not an inline script: the CSP hash for the inline
-  theme script is set in infra — see the script-src note in
-  infra/modules/app/main.tf; regenerate it there if that script changes.
+  What a worker DOES buy is the offline launch: without one, an app opened or
+  reloaded with no network gets the browser's generic offline page instead of
+  the shell.
 */
+
+/*
+  Offline launch (issue #109). A Workbox precache of the built shell so the app
+  opens, reloads, and loads its lazy screens with no network. It caches files
+  only: API calls are never intercepted, and queuing writes stays in the app
+  (services/care-submissions.js) rather than Workbox background sync, which
+  iOS does not support.
+
+  - `manifest: false`: the static public/manifest.webmanifest stays the source
+    of truth.
+  - `injectRegister: false`: src/services/service-worker.js registers it from a
+    module, not an inline script — the CSP hash for the inline theme script is
+    set in infra (see the script-src note in infra/modules/app/main.tf).
+    worker-src falls back to script-src 'self', which already covers /sw.js.
+  - Built into every `vite build` bundle, so the deployed dev and prod
+    environments both get it; the local Vite dev server (and e2e) never do.
+  - The HTML page is network first, so every online launch gets the latest
+    release. A navigation waits up to 3 s for the network, then falls back to
+    the precached index.html; with no signal at all the fallback is instant.
+    It does not keep its own per-URL copies: after a deploy those could point
+    at hashed files the precache has already dropped. The precached page always
+    matches the precached files. API routes and paths with a file extension
+    are never answered with the page, mirroring the CloudFront SPA rewrite
+    (infra/modules/app/cloudfront.tf). `directoryIndex: null` keeps the
+    precache from answering "/" itself.
+  - JS, CSS, and icons are cache first through the precache: their hashed
+    names never go stale.
+  - skipWaiting + clientsClaim: a new worker takes over as soon as it installs.
+    An open page keeps running the code it loaded; a lazy chunk it still needs
+    from the previous release falls through to the network, where
+    scripts/publish-web-assets.sh keeps old assets.
+  - Category artwork (~2 MB, light + dark) is cached as it is shown rather than
+    downloaded up front. Source maps are never cached (or published).
+*/
+const offlineShell = VitePWA({
+  manifest: false,
+  injectRegister: false,
+  workbox: {
+    globPatterns: [
+      "**/*.{js,css,html,svg,ico,webp,webmanifest}",
+      "{img,icons}/*.png",
+    ],
+    navigateFallback: null,
+    directoryIndex: null,
+    runtimeCaching: [
+      {
+        // Serialized into sw.js: keep it self-contained (no outer references).
+        urlPattern: ({ request, sameOrigin, url }) =>
+          request.mode === "navigate" &&
+          sameOrigin &&
+          !/^\/(?:v1|app\/v1|site-code|submissions|health)(?:\/|$)/.test(
+            url.pathname,
+          ) &&
+          !/\.[^/]*$/.test(url.pathname),
+        handler: "NetworkFirst",
+        options: {
+          cacheName: "pages",
+          networkTimeoutSeconds: 3,
+          plugins: [
+            {
+              // Don't save each page we fetch: after a deploy, an offline
+              // launch from a saved copy would ask for the old release's JS
+              // files, which the precache has already deleted. When the
+              // network fails, serve the precached page, which always matches
+              // the precached files.
+              cacheWillUpdate: async () => null,
+              handlerDidError: async () =>
+                (await caches.match("/index.html", { ignoreSearch: true })) ??
+                Response.error(),
+            },
+          ],
+        },
+      },
+      {
+        urlPattern: ({ sameOrigin, url }) =>
+          sameOrigin && url.pathname.startsWith("/category-icons/"),
+        handler: "StaleWhileRevalidate",
+        options: {
+          cacheName: "category-icons",
+          expiration: { maxEntries: 60 },
+        },
+      },
+    ],
+    cleanupOutdatedCaches: true,
+    skipWaiting: true,
+    clientsClaim: true,
+    sourcemap: false,
+  },
+});
 export default defineConfig(({ mode, command }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const localMinioApiPort = env.LOCAL_MINIO_API_PORT || "9000";
@@ -89,7 +171,10 @@ export default defineConfig(({ mode, command }) => {
         },
       ],
     },
-    plugins: remoteApi ? [remoteApiPlugin({ target: apiProxyTarget })] : [],
+    plugins: [
+      offlineShell,
+      ...(remoteApi ? [remoteApiPlugin({ target: apiProxyTarget })] : []),
+    ],
     define: {
       // Release stamp for error reports (services/error-report.js reads
       // __RELEASE__) and the key for the CI sourcemap upload. CI sets RELEASE_SHA
