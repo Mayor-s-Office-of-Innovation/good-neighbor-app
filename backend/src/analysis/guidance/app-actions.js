@@ -794,15 +794,26 @@ async function execute311Action({
       try {
         response = await sf311.createServiceRequest(payload);
       } catch (error) {
-        // HUB answered and created nothing. Replacing the pending checkpoint
-        // lets the next attempt file again instead of asking for reconciliation.
-        if (onCheckpoint && isCreateSrRejection(error))
+        // HUB answered and created nothing. Durably replacing the pending
+        // checkpoint before rethrowing lets the next attempt file again, even
+        // if this run stops before the caller records its result.
+        if (onCheckpoint && isCreateSrRejection(error)) {
           tickets.push({
             serviceCode,
             responsibleAgency,
             sourceRequestId: payload.SourceRequestID,
             creationState: "rejected",
           });
+          await onCheckpoint(
+            build311ActionResult({
+              action,
+              status: "partial",
+              reason: "creation_rejected",
+              recordedAt: now,
+              tickets,
+            }),
+          );
+        }
         throw error;
       }
       if (onCheckpoint)

@@ -266,10 +266,16 @@ describe("app action execution", () => {
         reason: "4001",
         payload: { tickets: [{ creationState: "rejected" }] },
       });
-      // The worker merges the rejection over the pending checkpoint.
+      // Retry from the last durable checkpoint, as if the run stopped before
+      // the worker recorded the returned result.
+      const saved = checkpoints.at(-1);
+      expect(saved).toMatchObject({
+        reason: "creation_rejected",
+        payload: { tickets: [{ creationState: "rejected" }] },
+      });
       const [serverError] = await executeAppActions(actions, {
         ...options,
-        priorResults: [rejected],
+        priorResults: saved ? [saved] : [],
       });
       expect(fetchImpl).toHaveBeenCalledTimes(2);
       expect(serverError.payload?.tickets).toEqual([]);
