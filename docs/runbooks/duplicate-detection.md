@@ -57,19 +57,26 @@ guard is deliberately narrow: unknown vocabulary does not by itself prove or
 disprove identity, and field accuracy still requires human review.
 
 Before publishing an image-backed high-confidence mapping, the combined matcher
-also compares the two photos independently in reversed roles, with no descriptions
-or earlier verdict. It requires strong, distinctive visual agreement. This guards
-against a context model copying candidate descriptions into the source. Rejected
-or uncertain corroboration is not a confirmed duplicate; a failed corroboration
+compares each proposed condition pair independently in reversed photo roles,
+using `purpose: visual_verification`. Only the two target descriptions and IDs
+travel as locator hints; earlier verdicts, evidence and other context are omitted.
+The analyzer must locate each intended target in its own image and return a
+strong, visually grounded mapping for that exact reversed pair. Agreement on a
+different issue in the same photos cannot confirm the target. Each mapping is
+verified separately; successful corroboration never approves other mappings.
+Rejected or uncertain corroboration is not a confirmed duplicate; a failed
 request leaves the search incomplete rather than publishing a negative. The worker
-reuses prepared images and its normal pacing/retry/cache path. Only candidates
-needed to confirm still-unmatched source issues get this extra model request.
-Budget at least two requests for a first image-backed positive, rather than the
-previous single context request; negative searches do not pay this extra cost.
+reuses prepared images and its normal pacing/retry/cache path. Only pairs needed
+to confirm still-unmatched source issues get an extra request. Budget one context
+request plus one request per image-backed condition pair requiring verification;
+negative searches do not pay this extra cost. Explicit markings such as `A-12`
+are retained by the lexical guard; bare numbers, dates and generic counts do not
+establish distinctive evidence.
 
-Matcher version `issue-structured-v13` gives these comparisons a new cache digest,
+Matcher version `issue-structured-v14` gives these comparisons a new cache digest,
 so earlier comparison-cache responses cannot bypass the updated policy. Deploy
-the analyzer's `issue-structured-v12` evidence/prompt changes before the app.
+the analyzer's `issue-structured-v13` contract/prompt changes before the app;
+an older analyzer rejects the new purpose and leaves the affected search incomplete.
 No automatic re-evaluation of existing settled results occurs; any historical
 recovery must be scoped and reviewed separately.
 

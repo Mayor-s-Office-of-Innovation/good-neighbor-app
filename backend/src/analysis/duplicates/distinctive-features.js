@@ -79,9 +79,20 @@ const generic = new Set([
  * @returns {boolean}
  */
 export function hasDistinctiveFeatures(features) {
-  return features.some((feature) =>
-    (feature.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).some(
+  return features.some((feature) => {
+    // A code occupying the whole entry is a marking, not a generic count/date.
+    // Pure numbers need an explicit marking label; bare quantities stay rejected.
+    const value = feature.trim();
+    if (
+      /^(?=[\p{L}\p{N}-]*\p{L})(?=[\p{L}\p{N}-]*\p{N})[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*$/u.test(
+        value,
+      )
+    )
+      return true;
+    if (/^(?:marking|code|serial|identifier)\s*[:#]\s*[0-9]{3,}$/iu.test(value))
+      return true;
+    return (value.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).some(
       (word) => /\p{L}/u.test(word) && !generic.has(word),
-    ),
-  );
+    );
+  });
 }

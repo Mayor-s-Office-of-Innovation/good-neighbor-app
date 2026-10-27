@@ -283,7 +283,8 @@ it("matches late-available prior captures without waiting for client guidance; w
   expect(result).toEqual({ batchItemFailures: [] });
   expect(state.compare).toHaveBeenCalledTimes(2);
   const verification = state.compare.mock.calls[1][0];
-  expect(verification.mode).toBe("image");
+  expect(verification.mode).toBe("context");
+  expect(verification.purpose).toBe("visual_verification");
   expect(verification.source.id).toBe("target:photo");
   expect(verification.candidates[0].id).toBe("source:photo");
   expect(verification.source.image?.base64).toBeTruthy();
