@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 import { actionsEscalationsV2Catalog } from "./actions-escalations-v2.js";
 import { actionsEscalationsV3Catalog } from "./actions-escalations-v3.js";
 import { actionsEscalationsV4Catalog } from "./actions-escalations-v4.js";
+import { actionsEscalationsV5Catalog } from "./actions-escalations-v5.js";
+import { actionsEscalationsV6Catalog } from "./actions-escalations-v6.js";
+import { actionsEscalationsV7Catalog } from "./actions-escalations-v7.js";
 import {
   buildCatalog,
   parsePredicate,
@@ -230,6 +233,29 @@ describe("actions/escalations v2 catalog", () => {
         },
       },
     ]);
+  });
+
+  // The SF311 worker keys results by action code and treats a ticket filed
+  // for a service code as done, so one task can't mix an automatic 311 action
+  // with a tapped one.
+  it.each([
+    actionsEscalationsV2Catalog,
+    actionsEscalationsV3Catalog,
+    actionsEscalationsV4Catalog,
+    actionsEscalationsV5Catalog,
+    actionsEscalationsV6Catalog,
+    actionsEscalationsV7Catalog,
+    actionsEscalationsV8Catalog,
+  ])("gives each $policyVersion rule one 311 trigger", (catalog) => {
+    const mixed = catalog.rules.filter(
+      (rule) =>
+        new Set(
+          rule.outcome.appActions
+            .filter((action) => action.code === "create_311_ticket")
+            .map((action) => action.payload.executionTrigger),
+        ).size > 1,
+    );
+    expect(mixed.map((rule) => rule.ruleId)).toEqual([]);
   });
 
   it("resolves analyzer category aliases to canonical rule categories", () => {

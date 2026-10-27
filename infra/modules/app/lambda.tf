@@ -9,6 +9,7 @@ locals {
   sf311_lambda_environment = {
     SF311_MEDIA_BASE_URL              = "https://${var.sf311_media_domain_name}"
     GNP_311_SUBMISSION_ENABLED        = tostring(var.enable_311_submission)
+    GNP_311_ASYNC_FILING              = tostring(var.enable_311_async_filing)
     SF311_CREATESR_URL                = var.sf311_createsr_url
     SF311_UPDATESR_URL                = var.sf311_updatesr_url
     SF311_AGENCY_LOOKUP_URL           = var.sf311_agency_lookup_url
@@ -369,7 +370,8 @@ resource "aws_sqs_queue_redrive_policy" "submissions" {
 
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.submissions_dlq.arn
-    maxReceiveCount     = 5
+    # Keep in sync with MAX_FILING_ATTEMPTS in backend/src/workers/sf311-job.js.
+    maxReceiveCount = 5
   })
 }
 

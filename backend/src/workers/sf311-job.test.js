@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   GetCommand,
   UpdateCommand,
@@ -328,4 +328,184 @@ it("backs off a final transaction conflict and retains the durable ticket", asyn
   expect(lock.results[0].payload.tickets[0].srNum).toBe("123");
   expect(sendSqs.mock.calls[0][0].input.VisibilityTimeout).toBe(60);
   expect(job.status).toBe("dispatched");
+});
+
+describe("tapped filing jobs (trigger: user_confirmed)", () => {
+  const filedMessage = { ...message, jobSk: "SF311_JOB#task#filed-1" };
+  /** @param {Record<string, unknown>} result */
+  const filing = (result) => ({
+    code: "create_311_ticket",
+    recordedAt: "2026-10-26T12:00:00Z",
+    payload: {},
+    ...result,
+  });
+  /**
+   * The worker's final transaction.
+   * @returns {any[]}
+   */
+  const finalTransaction = () =>
+    /** @type {any} */ (
+      send.mock.calls
+        .map(([command]) => command)
+        .filter((command) => command instanceof TransactWriteCommand)
+        .at(-1)
+    ).input.TransactItems;
+  /** Attribute → value from a SET built with #aN/:aN placeholders. */
+  const taskSet = () => {
+    const update = finalWrites.at(-1);
+    /** @type {Record<string, unknown>} */
+    const set = {};
+    for (const [name, attribute] of Object.entries(
+      update.ExpressionAttributeNames,
+    )) {
+      const value = update.ExpressionAttributeValues[name.replace("#", ":")];
+      if (name.startsWith("#a")) set[/** @type {string} */ (attribute)] = value;
+    }
+    return set;
+  };
+
+  beforeEach(() => {
+    job = {
+      status: "dispatched",
+      trigger: "user_confirmed",
+      actorId: "user-1",
+    };
+    task = {
+      ...task,
+      status: "in_progress",
+      kind: "escalation",
+      severity: 3,
+      canBeInProgress: false,
+      inProgressActionKind: "311_filed",
+      appActionStatus: "queued",
+      appActions: [
+        {
+          code: "create_311_ticket",
+          payload: { executionTrigger: "user_confirmed" },
+        },
+      ],
+    };
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  it("runs the user-confirmed actions and completes the task once filed", async () => {
+    await runJob(filedMessage);
+
+    expect(execute.mock.calls[0][1]).toMatchObject({
+      trigger: "user_confirmed",
+    });
+    expect(taskSet()).toMatchObject({
+      status: "completed",
+      completionMethod: "311_filed",
+      appActionStatus: "submitted",
+      latestUpdateLabel: "311 ticket filed",
+      gsi2pk: "SITE#site#TASK#completed",
+    });
+    expect(finalWrites.at(-1).ConditionExpression).toContain(
+      "appActionStatus = :queued",
+    );
+    const timeline = /** @type {any} */ (
+      finalTransaction().find(
+        (entry) => entry.Put?.Item.entityType === "task_update",
+      )
+    );
+    expect(timeline.Put.Item).toMatchObject({
+      type: "311_ticket_filed",
+      actorId: "user-1",
+      documentationState: "open_for_documentation",
+    });
+    expect(job.status).toBe("complete");
+  });
+
+  it("keeps a task that can be in progress in progress once filed", async () => {
+    task.canBeInProgress = true;
+
+    await runJob(filedMessage);
+
+    expect(taskSet()).not.toHaveProperty("status");
+    expect(taskSet()).toMatchObject({ appActionStatus: "submitted" });
+  });
+
+  it("goes back to queued and throws for a retryable failure", async () => {
+    execute.mockResolvedValueOnce([
+      filing({ status: "failed", reason: "sf311_timeout" }),
+    ]);
+
+    await expect(runJob(filedMessage, { receiveCount: 2 })).rejects.toThrow(
+      "retry",
+    );
+    expect(taskSet()).toMatchObject({ appActionStatus: "queued" });
+    expect(job.status).toBe("retry");
+  });
+
+  it("marks the filing failed on the last delivery", async () => {
+    execute.mockResolvedValueOnce([
+      filing({ status: "failed", reason: "sf311_timeout" }),
+    ]);
+
+    await runJob(filedMessage, { receiveCount: 5 });
+
+    expect(taskSet()).toMatchObject({ appActionStatus: "failed" });
+    expect(taskSet()).not.toHaveProperty("status");
+    expect(job.status).toBe("failed");
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('"eventType":"311_app_action_failed"'),
+    );
+  });
+
+  it.each([
+    "missing_location",
+    "sf311_creation_uncertain_requires_reconciliation",
+  ])("does not retry %s", async (reason) => {
+    execute.mockResolvedValueOnce([filing({ status: "failed", reason })]);
+
+    await runJob(filedMessage, { receiveCount: 1 });
+
+    expect(taskSet()).toMatchObject({ appActionStatus: "failed" });
+    expect(job.status).toBe("failed");
+  });
+
+  it("skips a task that is no longer waiting to file", async () => {
+    task.status = "completed";
+
+    await runJob(filedMessage);
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(finalWrites).toEqual([]);
+    const abandon = /** @type {any} */ (
+      send.mock.calls
+        .map(([command]) => command)
+        .find(
+          (command) =>
+            command instanceof UpdateCommand &&
+            command.input.Key?.sk === filedMessage.jobSk,
+        )
+    );
+    expect(abandon.input.ExpressionAttributeValues[":status"]).toBe(
+      "abandoned",
+    );
+  });
+
+  it("passes the SQS receive count through the handler", async () => {
+    execute.mockResolvedValueOnce([
+      filing({ status: "failed", reason: "sf311_timeout" }),
+    ]);
+
+    await handler(
+      /** @type {any} */ ({
+        Records: [
+          {
+            body: JSON.stringify(filedMessage),
+            receiptHandle: "rh",
+            attributes: { ApproximateReceiveCount: "5" },
+          },
+        ],
+      }),
+      /** @type {any} */ ({}),
+      () => {},
+    );
+
+    expect(job.status).toBe("failed");
+    expect(sendSqs).not.toHaveBeenCalled();
+  });
 });
