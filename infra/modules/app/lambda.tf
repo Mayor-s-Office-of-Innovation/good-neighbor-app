@@ -235,11 +235,11 @@ resource "aws_lambda_function" "intake" {
   # the function never needs the gateway's full 29 s.
   timeout     = 10
   kms_key_arn = aws_kms_key.app.arn
-  # Honest traffic is one page view per route change plus a few events per
-  # check across a pilot's worth of devices; 3 concurrent at ≤1 s each is
-  # thousands of events a minute. The reservation — not the WAF — is what
-  # stops a flood (or a slow PostHog) from reaching the rest of the account.
-  reserved_concurrent_executions = 3
+  # Initial headroom for telemetry bursts from 100 concurrent perimeter checks;
+  # validate this sizing with distributed load tests and throttle metrics.
+  # Keep a ceiling so anonymous traffic or slow PostHog calls cannot consume
+  # the rest of the account's concurrency.
+  reserved_concurrent_executions = 50
 
   tracing_config {
     mode = "Active"
