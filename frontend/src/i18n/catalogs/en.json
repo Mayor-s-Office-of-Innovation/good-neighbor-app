@@ -1331,7 +1331,6 @@
   "taskUpdate.capture.title": "Add a photo or note to this issue",
   "taskUpdate.capture.unattached": "These results could not be attached to the issue. Your draft has not been saved. Copy any notes you want to keep before closing.",
   "taskUpdate.cityHelp.no": "No",
-  "taskUpdate.cityHelp.notice": "We'll send an update to the City on your behalf",
   "taskUpdate.cityHelp.title": "Do you still need help from the City?",
   "taskUpdate.cityHelp.yes": "Yes",
   "taskUpdate.created.perimeter": "Issue added during a perimeter check",

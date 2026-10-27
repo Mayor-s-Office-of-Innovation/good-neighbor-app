@@ -418,3 +418,21 @@ snapshots were introduced must be regenerated before they can be emailed.
 Deployment includes the resend API route and worker mail permissions/environment.
 Ending a check period moves the current letter into history and clears the current
 terms pointer so queued generation cannot restore it.
+
+### Issue update dialog recovery tests
+
+Run `npm run test:updates:ui` for the isolated Chromium and WebKit suite. It
+starts Vite on port 5179 and mocks all API requests; it does not need the local
+backend or change live data. Playwright browser binaries must already be
+available (the CI Playwright image includes both). To use installed Google Chrome
+locally, set `UPDATE_TEST_CHROME=1`.
+
+The suite covers the timeline action controls, preserving the native modal when
+selecting a photo, keyboard dismissal and accessibility, cancelling a stalled
+upload, and retrying an uncertain save. Controller tests also advance the
+120-second foreground-save deadline and check that late upload results cannot
+save a cancelled draft.
+
+The lazy task-update bundle has a 6.8 kB Brotli budget, including cancellation,
+progress feedback, and stable native-dialog rendering. No new runtime dependency
+is required for this flow.

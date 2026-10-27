@@ -811,11 +811,11 @@ export function putMediaWithProgress(
  * @param {{ contentType: string, contentLength: number }} body
  * @returns {Promise<{ artifactId: string, s3Key: string, contentType: string, contentLength: number, uploadHeaders: Record<string, string>, uploadUrl: string, expiresIn: number }>}
  */
-export function presignArtifact(checkId, body) {
+export function presignArtifact(checkId, body, { signal = undefined } = {}) {
   return request(
     "POST",
     `/v1/checks/${encodeURIComponent(checkId)}/artifacts:presign`,
-    { body },
+    { body, signal },
   );
 }
 
@@ -863,6 +863,7 @@ export function deleteArtifact(checkId, artifactId) {
  * @param {Blob} blob
  * @param {string} contentType
  * @param {Record<string, string>} [uploadHeaders]
+ * @param {AbortSignal} [signal]
  * @returns {Promise<void>}
  */
 export async function putMedia(
@@ -870,6 +871,7 @@ export async function putMedia(
   blob,
   contentType,
   uploadHeaders = {},
+  signal = undefined,
 ) {
   /** @type {Response} */
   let res;
@@ -878,6 +880,7 @@ export async function putMedia(
       method: "PUT",
       headers: { "content-type": contentType, ...uploadHeaders },
       body: blob,
+      signal,
     });
   } catch (err) {
     throw new ApiError(`Network error uploading media: ${err}`, { status: 0 });
@@ -974,26 +977,37 @@ export function createTaskUpdate(
   taskId,
   body,
   requestId = crypto.randomUUID(),
+  { signal = AbortSignal.timeout(30_000) } = {},
 ) {
   return request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/updates`, {
     body,
     headers: { "idempotency-key": requestId },
+    signal,
   });
 }
 
-export function documentTaskUpdate(taskId, updateId, body = {}) {
+export function documentTaskUpdate(
+  taskId,
+  updateId,
+  body = {},
+  { signal = AbortSignal.timeout(30_000) } = {},
+) {
   return request(
     "POST",
     `/v1/tasks/${encodeURIComponent(taskId)}/updates/${encodeURIComponent(updateId)}/document`,
-    { body },
+    { body, signal },
   );
 }
 
-export function registerTaskUpdateMedia(taskId, body) {
+export function registerTaskUpdateMedia(
+  taskId,
+  body,
+  { signal = AbortSignal.timeout(30_000) } = {},
+) {
   return request(
     "POST",
     `/v1/tasks/${encodeURIComponent(taskId)}/update-media`,
-    { body },
+    { body, signal },
   );
 }
 
@@ -1201,8 +1215,14 @@ export async function uploadArtifact(
  * @param {string} taskId
  * @param {string} checkId
  * @param {{ file: File, capturedAt?: string }} item
+ * @param {{ signal?: AbortSignal, onProgress?: (progress: number) => void }} [options]
  */
-export async function uploadTaskUpdatePhoto(taskId, checkId, item) {
+export async function uploadTaskUpdatePhoto(
+  taskId,
+  checkId,
+  item,
+  { signal = AbortSignal.timeout(120_000), onProgress } = {},
+) {
   const blob = item.file;
   const contentType = blob.type || "application/octet-stream";
   const { artifactId, s3Key, uploadUrl, uploadHeaders } = await presignArtifact(
@@ -1211,16 +1231,29 @@ export async function uploadTaskUpdatePhoto(taskId, checkId, item) {
       contentType,
       contentLength: blob.size,
     },
+    { signal },
   );
-  await putMedia(uploadUrl, blob, contentType, uploadHeaders);
-  await registerTaskUpdateMedia(taskId, {
-    checkId,
-    artifactId,
-    s3Key,
-    contentType,
-    contentLength: blob.size,
-    ...(item.capturedAt ? { capturedAt: item.capturedAt } : {}),
-  });
+  if (onProgress)
+    await putMediaWithProgress(
+      uploadUrl,
+      blob,
+      { "content-type": contentType, ...uploadHeaders },
+      onProgress,
+      signal,
+    );
+  else await putMedia(uploadUrl, blob, contentType, uploadHeaders, signal);
+  await registerTaskUpdateMedia(
+    taskId,
+    {
+      checkId,
+      artifactId,
+      s3Key,
+      contentType,
+      contentLength: blob.size,
+      ...(item.capturedAt ? { capturedAt: item.capturedAt } : {}),
+    },
+    { signal },
+  );
   return { artifactId, s3Key };
 }
 

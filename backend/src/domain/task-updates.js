@@ -186,3 +186,41 @@ export function buildTaskUpdateTransition(task, input, context) {
     },
   };
 }
+
+/**
+ * Update eligibility is independent of whether the initial action filed a City
+ * request. Recover only expired claims with recorded external effects; never
+ * retry filing here or claim that a partial filing succeeded.
+ * @param {Record<string, any>} task
+ * @param {number} [now]
+ */
+export function canUpdateTask(task, now = Date.now()) {
+  const created = Date.parse(task.createdAt || task.created_at || "");
+  if (Number.isFinite(created) && now - created >= 14 * 86400000) return false;
+  if (task.status === "in_progress") return true;
+  if (task.status === "resolving")
+    return Date.parse(task.resolutionLeaseExpiresAt || "") <= now;
+  /** @type {Record<string, any>[]} */
+  const results = task.appActionResults || [];
+  const filing = results.filter(
+    (result) => result.code === "create_311_ticket",
+  );
+  if (task.status === "completing")
+    return (
+      Date.parse(task.completionLeaseExpiresAt || "") <= now &&
+      filing.some((result) =>
+        result.payload?.tickets?.some(
+          (/** @type {Record<string, any>} */ ticket) => ticket.srNum,
+        ),
+      )
+    );
+  return (
+    task.status === "completed" &&
+    task.completionMethod === "311_filed" &&
+    !filing.some((result) =>
+      ["closed", "completed", "resolved"].includes(
+        String(result.status || "").toLowerCase(),
+      ),
+    )
+  );
+}

@@ -1,3 +1,4 @@
+import { t } from "../i18n/i18n.js";
 import {
   map311StatusResponse,
   taskWith311Status,
@@ -41,7 +42,9 @@ export class TaskUpdateDialog extends HTMLElement {
     this._task = null;
     /** @type {Record<string, any> | null} */
     this._detail = null;
-    this._savingNotes = false;
+    this._saveController = null;
+    this._activeSave = null;
+    this._boundDialogs = new WeakSet();
     this._results = false;
     this._mode = "timeline";
     this._editorOnly = false;
@@ -104,7 +107,12 @@ export class TaskUpdateDialog extends HTMLElement {
 
   /** Resolve immediately; documentation never holds the status update. */
   markResolved(task = this._task) {
-    if (!task || task.status !== "in_progress" || this._resolving) return;
+    if (
+      !task ||
+      !(task.canUpdate ?? task.status === "in_progress") ||
+      this._resolving
+    )
+      return;
     if (
       this.dispatchEvent(
         new CustomEvent("taskresolve", {
@@ -422,11 +430,26 @@ export class TaskUpdateDialog extends HTMLElement {
   }
 
   _render() {
-    this.innerHTML = taskUpdateDialogShell({
+    const markup = taskUpdateDialogShell({
       mode: this._mode,
       state: this._state,
       content: this._state === "ready" ? this._content() : "",
     });
+    const existing = this.querySelector("dialog.task-update");
+    if (existing) {
+      // Preserve the native modal/top-layer identity when returning from the
+      // mobile photo picker or switching editor modes.
+      const template = document.createElement("template");
+      template.innerHTML = markup;
+      existing.replaceChildren(
+        ...template.content.querySelector("dialog.task-update").childNodes,
+      );
+      const discard = this.querySelector("[data-discard-dialog]");
+      if (discard)
+        discard.replaceChildren(
+          ...template.content.querySelector("[data-discard-dialog]").childNodes,
+        );
+    } else this.innerHTML = markup;
     const dialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector("dialog.task-update")
     );
@@ -438,11 +461,14 @@ export class TaskUpdateDialog extends HTMLElement {
       this._mode = this._mode === "note-text" ? "notes" : "action";
       this._render();
     });
-    dialog.addEventListener("cancel", (event) => {
-      event.preventDefault();
-      void this._close();
-    });
-    onBackdropDismiss(dialog, () => void this._close());
+    if (!this._boundDialogs.has(dialog)) {
+      this._boundDialogs.add(dialog);
+      dialog.addEventListener("cancel", (event) => {
+        event.preventDefault();
+        void this._close();
+      });
+      onBackdropDismiss(dialog, () => void this._close());
+    }
     const discardDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector("[data-discard-dialog]")
     );
@@ -456,7 +482,12 @@ export class TaskUpdateDialog extends HTMLElement {
       ?.querySelector("[data-continue-editing]")
       ?.addEventListener("click", () => discardDialog.close());
     this._wire(dialog);
+    if (this._busy) this._setSaveFeedback(dialog, t("care.saving"));
     if (this._open) {
+      // Reattaching after a host render can retain `open` while losing the
+      // browser's modal top layer. Restore it without firing a close event.
+      if (dialog.open && !dialog.matches(":modal"))
+        dialog.removeAttribute("open");
       if (this._editorOnly)
         openOverlayDialog(
           dialog,
@@ -482,6 +513,9 @@ export class TaskUpdateDialog extends HTMLElement {
 
   /** @param {HTMLDialogElement} root */
   _wire(root) {
+    root
+      .querySelector("[data-cancel-save]")
+      ?.addEventListener("click", () => this._saveController?.abort());
     root
       .querySelector("[data-retry-timeline]")
       ?.addEventListener("click", () => void this._load(this._retryToken));
@@ -601,18 +635,8 @@ export class TaskUpdateDialog extends HTMLElement {
 
   /** @returns {Promise<string[] | null>} */
   async _uploadFiles() {
-    this._busy = true;
-    try {
-      if (!this._task) return null;
-      return await Promise.all(
-        this._files.map((file) => this._uploadFile(file)),
-      );
-    } catch {
-      showTaskUpdateErrorToast();
-      return null;
-    } finally {
-      this._busy = false;
-    }
+    if (!this._task) return null;
+    return Promise.all(this._files.map((file) => this._uploadFile(file)));
   }
 
   /**
@@ -623,15 +647,34 @@ export class TaskUpdateDialog extends HTMLElement {
   _uploadFile(file, task = this._task) {
     const cached = this._fileUploads.get(file);
     if (cached) return cached;
-    const upload = uploadTaskUpdatePhoto(task.taskId, task.checkId, {
-      file,
-      capturedAt: new Date().toISOString(),
-    })
+    const signal = this._saveController?.signal;
+    const forget = () => {
+      if (this._fileUploads.get(file) === upload)
+        this._fileUploads.delete(file);
+    };
+    const upload = uploadTaskUpdatePhoto(
+      task.taskId,
+      task.checkId,
+      {
+        file,
+        capturedAt: new Date().toISOString(),
+      },
+      {
+        signal,
+        onProgress: (progress) => {
+          const root = this.querySelector?.("dialog.task-update");
+          if (root && this._busy && this._saveController?.signal === signal)
+            this._setSaveFeedback(root, t("care.uploading", { progress }));
+        },
+      },
+    )
       .then((uploaded) => uploaded.artifactId)
       .catch((error) => {
-        this._fileUploads.delete(file);
+        forget();
         throw error;
-      });
+      })
+      .finally(() => signal?.removeEventListener("abort", forget));
+    signal?.addEventListener("abort", forget, { once: true });
     this._fileUploads.set(file, upload);
     return upload;
   }
@@ -648,7 +691,6 @@ export class TaskUpdateDialog extends HTMLElement {
     if (
       !this._task ||
       this._busy ||
-      this._savingNotes ||
       this._cityHelpNeeded === null ||
       (this._results && !this._pendingEvent)
     )
@@ -658,30 +700,31 @@ export class TaskUpdateDialog extends HTMLElement {
       this._finishResults(notes, this._files);
       return;
     }
-    this._savingNotes = true;
-    root.inert = true;
-    try {
-      const photos = await this._uploadFiles();
-      if (!photos || (!this._pendingEvent && !notes.length && !photos.length))
-        return;
-      if (this._pendingEvent)
-        await this._finishDocumentation(root, notes, photos);
-      else {
-        const response = await this._runMutation(
-          root,
-          "[data-save-notes]",
-          () =>
-            this._createUpdate({
-              type: "note_photo_update",
-              notes,
-              photoKeys: photos,
-            }),
-        );
-        if (response) await this._finishSave();
-      }
-    } finally {
-      this._savingNotes = false;
-      root.inert = false;
+    const response = await this._runMutation(
+      root,
+      "[data-save-notes]",
+      async (signal) => {
+        const photos = await this._uploadFiles();
+        signal.throwIfAborted();
+        if (!photos || (!this._pendingEvent && !notes.length && !photos.length))
+          return null;
+        if (this._pendingEvent)
+          return documentTaskUpdate(
+            this._task.taskId,
+            this._pendingEvent.updateId,
+            { notes, photoKeys: photos },
+            { signal: this._saveController?.signal },
+          );
+        return this._createUpdate({
+          type: "note_photo_update",
+          notes,
+          photoKeys: photos,
+        });
+      },
+    );
+    if (response) {
+      this._pendingEvent = null;
+      await this._finishSave();
     }
   }
 
@@ -744,10 +787,15 @@ export class TaskUpdateDialog extends HTMLElement {
       root,
       "[data-save-notes], [data-skip], [data-save-action], [data-skip-action]",
       () =>
-        documentTaskUpdate(this._task.taskId, this._pendingEvent.updateId, {
-          notes,
-          photoKeys: photos,
-        }),
+        documentTaskUpdate(
+          this._task.taskId,
+          this._pendingEvent.updateId,
+          {
+            notes,
+            photoKeys: photos,
+          },
+          { signal: this._saveController?.signal },
+        ),
     );
     if (!response) return;
     this._pendingEvent = null;
@@ -762,11 +810,7 @@ export class TaskUpdateDialog extends HTMLElement {
     const response = await this._runMutation(
       root,
       "[data-action-outcome]",
-      () =>
-        createTaskUpdate(this._task.taskId, {
-          type,
-          text,
-        }),
+      () => this._createUpdate({ type, text }),
     );
     if (!response) return;
     this._pendingEvent = response.update;
@@ -781,24 +825,31 @@ export class TaskUpdateDialog extends HTMLElement {
   /** @param {HTMLElement} root @param {boolean} [skipPhotos] */
   async _saveAction(root, skipPhotos = false) {
     if (!this._task || this._busy || this._cityHelpNeeded === null) return;
-    const photos = skipPhotos ? [] : await this._uploadFiles();
-    if (!photos) return;
-    if (this._pendingEvent) {
-      await this._finishDocumentation(root, [], photos);
-      if (!this._pendingEvent) this._notifyUpdated();
-      return;
-    }
     const response = await this._runMutation(
       root,
       "[data-save-action], [data-skip-action]",
-      () =>
-        this._createUpdate({
+      async (signal) => {
+        const photos = skipPhotos ? [] : await this._uploadFiles();
+        signal.throwIfAborted();
+        if (!photos) return null;
+        if (this._pendingEvent)
+          return documentTaskUpdate(
+            this._task.taskId,
+            this._pendingEvent.updateId,
+            { notes: [], photoKeys: photos },
+            { signal: this._saveController?.signal },
+          );
+        return this._createUpdate({
           type: "additional_action",
           text: this._actionText.trim(),
           photoKeys: photos,
-        }),
+        });
+      },
     );
-    if (response) await this._finishSave();
+    if (response) {
+      this._pendingEvent = null;
+      await this._finishSave();
+    }
   }
 
   /**
@@ -810,7 +861,9 @@ export class TaskUpdateDialog extends HTMLElement {
       body.cityHelpNeeded = this._cityHelpNeeded;
     const key = JSON.stringify(body);
     if (!this._requests.has(key)) this._requests.set(key, crypto.randomUUID());
-    return createTaskUpdate(this._task.taskId, body, this._requests.get(key));
+    return createTaskUpdate(this._task.taskId, body, this._requests.get(key), {
+      signal: this._saveController?.signal,
+    });
   }
 
   async _finishSave() {
@@ -829,24 +882,61 @@ export class TaskUpdateDialog extends HTMLElement {
    * Run one dialog mutation with consistent busy and retry feedback.
    * @param {HTMLElement} root
    * @param {string} buttonSelector
-   * @param {() => Promise<any>} action
+   * @param {(signal: AbortSignal) => Promise<any>} action
    */
   async _runMutation(root, buttonSelector, action) {
     if (this._busy) return null;
     this._busy = true;
-    const buttons = /** @type {NodeListOf<HTMLButtonElement>} */ (
-      root.querySelectorAll(buttonSelector)
+    const controller = new AbortController();
+    this._saveController = controller;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 120_000);
+    this._setSaveFeedback(root, t("care.saving"));
+    let onAbort;
+    const cancelled = new Promise((_, reject) => {
+      onAbort = () => reject(new DOMException("Save cancelled", "AbortError"));
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+    });
+    this._activeSave = Promise.race([
+      Promise.resolve().then(() => {
+        controller.signal.throwIfAborted();
+        return action(controller.signal);
+      }),
+      cancelled,
+    ])
+      .catch((error) => {
+        if (!controller.signal.aborted || timedOut)
+          showTaskUpdateErrorToast(error);
+        return null;
+      })
+      .finally(() => {
+        clearTimeout(timer);
+        controller.signal.removeEventListener("abort", onAbort);
+        controller.abort(); // Also stop sibling uploads when one leg fails.
+        this._busy = false;
+        this._saveController = null;
+        this._activeSave = null;
+        this._setSaveFeedback(root, "");
+      });
+    return this._activeSave;
+  }
+
+  /** Keep the close/cancel controls outside the inert editor. */
+  _setSaveFeedback(root, message) {
+    const editor = root.querySelector?.(
+      ".task-update__capture, .task-update__action",
     );
-    buttons.forEach((button) => (button.disabled = true));
-    try {
-      return await action();
-    } catch (caught) {
-      showTaskUpdateErrorToast(caught);
-      return null;
-    } finally {
-      this._busy = false;
-      buttons.forEach((button) => (button.disabled = false));
-    }
+    if (editor) editor.inert = Boolean(message);
+    const status = root.querySelector?.("[data-save-status]");
+    if (status) status.textContent = message;
+    const cancel = root.querySelector?.("[data-cancel-save]");
+    if (cancel) cancel.hidden = !message;
+    root.querySelectorAll?.("[data-back]").forEach((button) => {
+      button.disabled = Boolean(message);
+    });
   }
 
   _hasUnsavedDraft() {
@@ -870,7 +960,11 @@ export class TaskUpdateDialog extends HTMLElement {
 
   /** @param {boolean} [discardConfirmed] */
   async _close(discardConfirmed = false) {
-    if (this._busy || (this._savingNotes && !discardConfirmed)) return;
+    if (this._saveController) {
+      this._saveController.abort();
+      await this._activeSave;
+    }
+    if (this._busy) return;
     if (!discardConfirmed && this._hasUnsavedDraft()) {
       this._showDiscard();
       return;
@@ -917,10 +1011,15 @@ export class TaskUpdateDialog extends HTMLElement {
 
   async _sealPendingEvent() {
     if (!this._pendingEvent || !this._task) return;
-    await documentTaskUpdate(this._task.taskId, this._pendingEvent.updateId, {
-      notes: [],
-      photoKeys: [],
-    }).catch(() => {});
+    await documentTaskUpdate(
+      this._task.taskId,
+      this._pendingEvent.updateId,
+      {
+        notes: [],
+        photoKeys: [],
+      },
+      { signal: AbortSignal.timeout(15_000) },
+    ).catch(() => {});
     this._pendingEvent = null;
   }
 

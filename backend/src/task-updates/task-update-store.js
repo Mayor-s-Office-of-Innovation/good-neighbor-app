@@ -307,7 +307,10 @@ export async function writeTaskTransition(input) {
             },
             ConditionExpression:
               (input.expectedLease
-                ? "#status = :expected AND #lease = :lease"
+                ? "#status = :expected AND #lease = :lease" +
+                  (input.expectedUpdatedAt === undefined
+                    ? ""
+                    : " AND updatedAt = :prior")
                 : statusOnly
                   ? "#status = :expected"
                   : "#status = :expected AND updatedAt = :prior") +
@@ -328,7 +331,12 @@ export async function writeTaskTransition(input) {
                 ? { ":priorResults": input.expectedAppActionResults }
                 : {}),
               ...(input.expectedLease
-                ? { ":lease": input.expectedLease.value }
+                ? {
+                    ":lease": input.expectedLease.value,
+                    ...(input.expectedUpdatedAt === undefined
+                      ? {}
+                      : { ":prior": input.expectedUpdatedAt }),
+                  }
                 : statusOnly
                   ? {}
                   : { ":prior": input.expectedUpdatedAt }),

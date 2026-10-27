@@ -12,6 +12,7 @@ import { headObject, setObjectTags } from "../s3.js";
 import { is311SubmissionEnabled } from "../analysis/guidance/app-actions.js";
 import {
   buildTaskUpdateTransition,
+  canUpdateTask,
   presencePeriod,
   presencePromptDue,
   responseExpectedAt,
@@ -84,6 +85,7 @@ function detail(task, updates) {
   return {
     task: {
       ...task,
+      canUpdate: canUpdateTask(task),
       responseExpectedAt: responseExpectedAt(task),
       presencePeriod: presencePeriod(task.inProgressAt),
       presencePromptDue: presencePromptDue(task),
@@ -157,11 +159,7 @@ export const createTaskUpdate = async (event, retry = true) => {
       update: priorUpdate,
     });
   }
-  const resolutionLeaseExpired =
-    task.status === "resolving" &&
-    new Date(String(task.resolutionLeaseExpiresAt ?? "")).getTime() <=
-      Date.now();
-  if (task.status !== "in_progress" && !resolutionLeaseExpired) {
+  if (!canUpdateTask(task)) {
     const legacyRetry = await readLegacyUpdateById(
       dynamoTable,
       siteId,
@@ -217,6 +215,17 @@ export const createTaskUpdate = async (event, retry = true) => {
       }
     }
   }
+  // The compare-and-swap below prevents a late worker or another user from
+  // overwriting recovery. Preserve all ticket references and filing failures.
+  if (task.status !== "in_progress") {
+    updated.inProgressAt ||= task.notifiedAt || task.updatedAt || now;
+    if (updated.status === "in_progress") {
+      delete updated.completedAt;
+      delete updated.resolvedAt;
+      delete updated.completionMethod;
+    }
+  }
+  delete updated.completionLeaseExpiresAt;
   delete updated.resolutionUpdateId;
   delete updated.resolutionStartedAt;
   delete updated.resolutionLeaseExpiresAt;
@@ -228,7 +237,21 @@ export const createTaskUpdate = async (event, retry = true) => {
       occurredAt: now,
       update,
       task: updated,
-      expectedStatus: resolutionLeaseExpired ? "resolving" : "in_progress",
+      expectedStatus: task.status,
+      ...(["completing", "resolving"].includes(task.status)
+        ? {
+            expectedLease: {
+              attribute:
+                task.status === "completing"
+                  ? "completionLeaseExpiresAt"
+                  : "resolutionLeaseExpiresAt",
+              value:
+                task.status === "completing"
+                  ? task.completionLeaseExpiresAt
+                  : task.resolutionLeaseExpiresAt,
+            },
+          }
+        : {}),
       expectedUpdatedAt: task.updatedAt,
       expectedAppActionResults: task.appActionResults,
     });
@@ -339,7 +362,7 @@ export const registerTaskUpdateMedia = async (event) => {
   const taskId = String(event.pathParameters?.taskId || "");
   const task = await readTask(dynamoTable, siteId, taskId);
   if (!task) return jsonResponse(404, { error: "Task not found" });
-  if (!["in_progress", "completed"].includes(task.status))
+  if (!canUpdateTask(task) && task.status !== "completed")
     return jsonResponse(409, { error: "Task cannot accept update media" });
   const artifactId = String(input.artifactId || "");
   const checkId = String(input.checkId || "");
