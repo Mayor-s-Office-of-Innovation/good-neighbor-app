@@ -1,15 +1,16 @@
+import { hasDistinctiveFeatures } from "./distinctive-features.js";
 import { metadataMismatch, visualPriority } from "./candidate-priority.js";
 import { performance } from "node:perf_hooks";
 import { createHash } from "node:crypto";
 
-export const IMAGE_MATCHER_VERSION = "issue-structured-v12";
+export const IMAGE_MATCHER_VERSION = "issue-structured-v13";
 export const LOOKBACK_MS = 72 * 60 * 60 * 1000;
 
 /** @typedef {{id:string,description:string,category?:string,label?:string}} Condition */
 /** @typedef {{id:string,s3Key?:string,siteId?:string,observedAt?:string,availableAt?:string,capturedAt?:string,resolvedAt?:string,supersededAt?:string,sourceId?:string,revision:string,image?:{content_type:string,base64:string},conditions?:Condition[],description?:string,location?:object,fingerprint?:string,perceptualHash?:string}} ImageObservation */
 /** @typedef {{identity_basis?:string,text_identity?:string,visual_identity:string,issue_mapping:string,matching_features:string[],visible_differences:string[],contradictions:string[],description_conflict:string,continuity_concern:string}} IssueEvidence */
 /** @typedef {{source_condition_id:string,candidate_condition_id:string,evidence:IssueEvidence,confidence?:string,confidenceReasons?:string[]}} IssueMatch */
-/** @typedef {{candidate_id:string,verdict:string,evidence_strength:string,reason:string,source_region:string,candidate_region:string,condition_matches:IssueMatch[],evidence:IssueEvidence,confidence?:string,confidenceReasons?:string[],stageDisagreement?:boolean,stage?:string}} Comparison */
+/** @typedef {{candidate_id:string,verdict:string,evidence_strength:string,reason:string,source_region:string,candidate_region:string,condition_matches:IssueMatch[],evidence:IssueEvidence,confidence?:string,confidenceReasons?:string[],stageDisagreement?:boolean,stage?:string,visualVerification?:{verdict:string,evidence_strength:string,evidence:IssueEvidence}}} Comparison */
 /** @typedef {{conditionId:string,status:string,possibleDuplicate:boolean|null,duplicateOf:{observationId:string,conditionId:string,revision:string}|null,matchStrength:string|null,originalIssue?:{observationId:string,conditionId:string,revision:string}|null,originalLookupState?:string,assessmentOutcome?:string,failedCandidateCount?:number}} ConditionOutcome */
 /** @typedef {{comparisons:Comparison[],comparison_version:string,model:{model_id:string}}} ComparisonResponse */
 /** @typedef {{id:string,image?:{content_type:string,base64:string},context?:{conditions:Condition[],description?:string,observedAt?:string,generatedAt?:string,capturedAt?:string,location?:object,visualAssessment?:Comparison}}} Evidence */
@@ -161,6 +162,11 @@ export function assessConfidence(
   const reasons = [];
   if (disagreement) reasons.push("Image-only and contextual stages disagree");
   if (verdict === "uncertain") reasons.push("Identity remains uncertain");
+  if (
+    verdict === "same_issue" &&
+    !hasDistinctiveFeatures(evidence.matching_features)
+  )
+    reasons.push("No distinctive issue-identifying features recorded");
   const textOnly = evidence.identity_basis === "text";
   if (
     (textOnly || (requiresTextGrounding && verdict === "same_issue")) &&
@@ -397,17 +403,15 @@ export async function matchImages({
     let publishing = false;
     try {
       calls++;
-      const response = validated(
-        await compare({
-          mode: strategy === "combined" ? "context" : "image",
-          ...(strategy === "combined"
-            ? { output: /** @type {const} */ ("compact") }
-            : {}),
-          source: evidence(comparisonSource, strategy === "combined"),
-          candidates: batch.map((c) => evidence(c, strategy === "combined")),
-        }),
-        batch,
-      );
+      const comparisonRequest = {
+        mode: strategy === "combined" ? "context" : "image",
+        ...(strategy === "combined"
+          ? { output: /** @type {const} */ ("compact") }
+          : {}),
+        source: evidence(comparisonSource, strategy === "combined"),
+        candidates: batch.map((c) => evidence(c, strategy === "combined")),
+      };
+      const response = validated(await compare(comparisonRequest), batch);
       executions.push({
         mode: strategy === "combined" ? "context" : "image",
         comparisonVersion: response.comparison_version,
@@ -568,6 +572,102 @@ export async function matchImages({
         if (row.evidence_strength !== "strong" && row.confidence === "high") {
           row.confidence = "medium";
           row.confidenceReasons?.push("Model reports tentative evidence");
+        }
+      }
+      // Context batches can copy one candidate's description into the source.
+      // Before publishing an image-backed positive, independently compare just
+      // these two images in reverse roles, without descriptions or prior verdicts.
+      // Reuse images prepared by compare(), not the original lazy placeholders.
+      if (strategy === "combined") {
+        const corroborated = new Set(matched);
+        for (const row of assessments) {
+          if (
+            row.verdict !== "same_issue" ||
+            row.confidence !== "high" ||
+            !row.condition_matches.some((m) => m.confidence === "high")
+          )
+            continue;
+          if (
+            row.condition_matches
+              .filter((m) => m.confidence === "high")
+              .every((m) => corroborated.has(m.source_condition_id))
+          ) {
+            row.confidence = "medium";
+            row.confidenceReasons = [
+              ...(row.confidenceReasons ?? []),
+              "Identity not independently verified",
+            ];
+            for (const match of row.condition_matches) {
+              match.confidence = "medium";
+              match.confidenceReasons = [
+                ...(match.confidenceReasons ?? []),
+                "Identity not independently verified",
+              ];
+            }
+            continue;
+          }
+          const prepared = comparisonRequest.candidates.find(
+            (c) => c.id === row.candidate_id,
+          );
+          if (!comparisonRequest.source.image || !prepared?.image) continue;
+          calls++;
+          const verification = validated(
+            await compare({
+              mode: "image",
+              output: "compact",
+              source: { id: prepared.id, image: prepared.image },
+              candidates: [
+                {
+                  id: comparisonRequest.source.id,
+                  image: comparisonRequest.source.image,
+                },
+              ],
+            }),
+            [comparisonSource],
+          );
+          executions.push({
+            mode: "image",
+            comparisonVersion: verification.comparison_version,
+            modelId: verification.model.model_id,
+          });
+          if (onBatch) await onBatch(verification, "image");
+          const check = verification.comparisons[0];
+          row.visualVerification = {
+            verdict: check.verdict,
+            evidence_strength: check.evidence_strength,
+            evidence: check.evidence,
+          };
+          const supported =
+            check.verdict === "same_issue" &&
+            check.evidence_strength === "strong" &&
+            check.condition_matches.length === 0 &&
+            check.evidence.issue_mapping === "none" &&
+            check.evidence.identity_basis !== "text" &&
+            check.evidence.visual_identity === "clear" &&
+            hasDistinctiveFeatures(check.evidence.matching_features) &&
+            !check.evidence.contradictions.length &&
+            check.evidence.description_conflict !== "unresolved" &&
+            check.evidence.continuity_concern !==
+              "possible_resolution_or_recurrence";
+          if (supported) {
+            for (const match of row.condition_matches)
+              if (match.confidence === "high")
+                corroborated.add(match.source_condition_id);
+          } else {
+            row.stageDisagreement = true;
+            row.confidence = "low";
+            row.confidenceReasons = [
+              ...(row.confidenceReasons ?? []),
+              "Independent image comparison did not confirm identity",
+            ];
+            for (const match of row.condition_matches) {
+              match.confidence = "low";
+              match.confidenceReasons = [
+                ...(match.confidenceReasons ?? []),
+                "Independent image comparison did not confirm identity",
+              ];
+            }
+          }
         }
       }
       rows.push(...assessments);

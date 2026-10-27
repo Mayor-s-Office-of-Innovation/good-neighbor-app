@@ -510,7 +510,10 @@ export const handler = async (event) => {
       ) => {
         await Promise.all(
           request.candidates.map(async (item) => {
-            const candidate = loaded.find((c) => c.id === item.id);
+            const candidate =
+              item.id === source.id
+                ? source
+                : loaded.find((c) => c.id === item.id);
             if (!candidate) throw new Error("Unknown preparation target");
             if (candidate.s3Key && !candidate.image?.base64) {
               const preparationStarted = Date.now();

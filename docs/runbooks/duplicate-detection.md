@@ -45,6 +45,34 @@ that observation automatically. The original's completed action remains intact.
 condition-level diagnostics. Product grouping uses the batch endpoint's validated
 condition-to-task mapping, including the earliest valid original's short ID.
 
+## Distinctive match evidence
+
+A model's `same_issue` verdict and `strong` strength are insufficient for a
+confirmed duplicate. Candidate evidence and each issue mapping must contain
+issue-identifying support. The app rejects known generic category/scene-only
+feature lists (for example, “litter on the sidewalk”) from high confidence,
+including responses from an older analyzer. It continues searching later
+candidates rather than stopping on those unsupported positives. The lexical
+guard is deliberately narrow: unknown vocabulary does not by itself prove or
+disprove identity, and field accuracy still requires human review.
+
+Before publishing an image-backed high-confidence mapping, the combined matcher
+also compares the two photos independently in reversed roles, with no descriptions
+or earlier verdict. It requires strong, distinctive visual agreement. This guards
+against a context model copying candidate descriptions into the source. Rejected
+or uncertain corroboration is not a confirmed duplicate; a failed corroboration
+request leaves the search incomplete rather than publishing a negative. The worker
+reuses prepared images and its normal pacing/retry/cache path. Only candidates
+needed to confirm still-unmatched source issues get this extra model request.
+Budget at least two requests for a first image-backed positive, rather than the
+previous single context request; negative searches do not pay this extra cost.
+
+Matcher version `issue-structured-v13` gives these comparisons a new cache digest,
+so earlier comparison-cache responses cannot bypass the updated policy. Deploy
+the analyzer's `issue-structured-v12` evidence/prompt changes before the app.
+No automatic re-evaluation of existing settled results occurs; any historical
+recovery must be scoped and reviewed separately.
+
 ## Comparison key rotation
 
 Rotate the comparison key manually in coordination with the analyzer service,
