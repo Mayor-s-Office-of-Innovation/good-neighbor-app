@@ -5,6 +5,7 @@ const api = vi.hoisted(() => ({
   documentTaskUpdate: vi.fn(),
   createTaskUpdate: vi.fn(),
   getTaskUpdates: vi.fn(),
+  getMediaUrl: vi.fn(),
   get311RequestDetails: vi.fn(),
 }));
 const toasts = vi.hoisted(() => ({
@@ -14,7 +15,7 @@ vi.mock("../services/api.js", () => ({
   ApiError: class ApiError extends Error {},
   createTaskUpdate: api.createTaskUpdate,
   documentTaskUpdate: api.documentTaskUpdate,
-  getMediaUrl: vi.fn(),
+  getMediaUrl: api.getMediaUrl,
   getTaskUpdates: api.getTaskUpdates,
   get311RequestDetails: api.get311RequestDetails,
   uploadTaskUpdatePhoto: api.uploadTaskUpdatePhoto,
@@ -852,4 +853,137 @@ it("lets the worklist own timeline resolution and its card exit lifecycle", asyn
     }),
   );
   expect(api.createTaskUpdate.mock.calls.length).toBe(calls);
+});
+
+describe("timeline loading resilience", () => {
+  async function makeDialog() {
+    await import("./task-update-dialog.js");
+    const Dialog = /** @type {any} */ (
+      vi
+        .mocked(customElements.define)
+        .mock.calls.find(([name]) => name === "task-update-dialog")[1]
+    );
+    const dialog = new Dialog();
+    dialog._render = vi.fn();
+    return dialog;
+  }
+  const task = {
+    taskId: "history-resilience",
+    checkId: "check",
+    status: "completed",
+    appActionResults: [
+      { code: "create_311_ticket", payload: { tickets: [{ srNum: "local" }] } },
+    ],
+  };
+
+  it("shows core activity and available photos while City and other photos are stalled", async () => {
+    vi.useFakeTimers();
+    try {
+      const dialog = await makeDialog();
+      api.getTaskUpdates.mockResolvedValue({
+        task,
+        updates: [{ text: "Saved activity", photoKeys: ["slow", "ready"] }],
+      });
+      api.get311RequestDetails.mockImplementation(() => new Promise(() => {}));
+      api.getMediaUrl.mockImplementation((_check, id) =>
+        id === "slow"
+          ? new Promise(() => {})
+          : Promise.resolve({ downloadUrl: "https://example.com/photo.jpg" }),
+      );
+      await dialog.open(task);
+      expect(dialog._state).toBe("ready");
+      expect(dialog._detail.updates[0].text).toBe("Saved activity");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(dialog._mediaUrls.get("ready")).toBe(
+        "https://example.com/photo.jpg",
+      );
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(dialog._state).toBe("ready");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("times out a core read and retries without accepting the late original response", async () => {
+    vi.useFakeTimers();
+    try {
+      const dialog = await makeDialog();
+      /** @type {(value: any) => void} */
+      let finish = () => {};
+      api.getTaskUpdates.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      const opening = dialog.open({ taskId: "old" });
+      expect(dialog._state).toBe("loading");
+      await vi.advanceTimersByTimeAsync(15_000);
+      await opening;
+      expect(dialog._state).toBe("error");
+      api.getTaskUpdates.mockResolvedValueOnce({
+        task: { taskId: "old" },
+        updates: [{ text: "Retry succeeded" }],
+      });
+      await dialog._load();
+      finish({ task: { taskId: "old" }, updates: [{ text: "Stale" }] });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(dialog._state).toBe("ready");
+      expect(dialog._detail.updates[0].text).toBe("Retry succeeded");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not replace an editor when optional photos arrive", async () => {
+    const dialog = await makeDialog();
+    /** @type {(value: any) => void} */
+    let finish = () => {};
+    api.getTaskUpdates.mockResolvedValueOnce({
+      task: { taskId: "editor", checkId: "check" },
+      updates: [{ photoKeys: ["photo"] }],
+    });
+    api.getMediaUrl.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await dialog.open({ taskId: "editor" });
+    dialog._mode = "note-text";
+    dialog._render.mockClear();
+    finish({ downloadUrl: "https://example.com/photo.jpg" });
+    await vi.waitFor(() => expect(dialog._mediaUrls.has("photo")).toBe(true));
+    expect(dialog._render).not.toHaveBeenCalled();
+  });
+
+  it("ignores optional responses from a previously opened issue", async () => {
+    const dialog = await makeDialog();
+    /** @type {(value: any) => void} */
+    let finish = () => {};
+    api.getTaskUpdates.mockResolvedValueOnce({ task, updates: [] });
+    api.get311RequestDetails.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await dialog.open(task);
+    api.getTaskUpdates.mockResolvedValueOnce({
+      task: { taskId: "new" },
+      updates: [],
+    });
+    await dialog.open({ taskId: "new" });
+    finish({
+      requests: [
+        {
+          taskId: task.taskId,
+          request: { status: "Closed", events: [{ kind: "resolved" }] },
+        },
+      ],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(dialog._task.taskId).toBe("new");
+    expect(dialog._cityUpdates).toEqual([]);
+  });
 });

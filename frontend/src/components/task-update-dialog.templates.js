@@ -47,9 +47,10 @@ export function taskUpdateDialogShell({ mode, state, content }) {
         ${state === "loading"
           ? html`<p role="status">${translatedText("taskUpdate.loading")}</p>`
           : state === "error"
-            ? html`<p role="alert">
-                ${translatedText("taskUpdate.loadError")}
-              </p>`
+            ? html`<p role="alert">${translatedText("taskUpdate.loadError")}</p>
+                <button type="button" class="btn-outline" data-retry-timeline>
+                  ${translatedText("common.retry")}
+                </button>`
             : content}
       </div>
     </dialog>

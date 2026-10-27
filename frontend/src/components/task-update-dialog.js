@@ -32,6 +32,21 @@ import {
   taskUpdateTimeline,
 } from "./task-update-dialog.templates.js";
 
+/** Bound timeline reads without letting late responses replace newer state.
+ * @template T
+ * @param {Promise<T>} request
+ * @returns {Promise<T>}
+ */
+function timelineRead(request) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error("Timeline request timed out")),
+      15_000,
+    );
+    request.then(resolve, reject).finally(() => clearTimeout(timer));
+  });
+}
+
 export class TaskUpdateDialog extends HTMLElement {
   /** @type {boolean | undefined} */
   readOnly;
@@ -86,6 +101,9 @@ export class TaskUpdateDialog extends HTMLElement {
     }
     this._task = task;
     this._cityUpdates = [];
+    this._detail = null;
+    this._nextToken = null;
+    this._mediaUrls.clear();
     this._results = false;
     this._pendingEvent = null;
     this._open = true;
@@ -195,9 +213,8 @@ export class TaskUpdateDialog extends HTMLElement {
     this._state = "loading";
     this._render();
     try {
-      const page = await getTaskUpdates(
-        this._task.taskId,
-        nextToken || undefined,
+      const page = await timelineRead(
+        getTaskUpdates(this._task.taskId, nextToken || undefined),
       );
       if (generation !== this._loadGeneration) return;
       this._detail = nextToken
@@ -211,79 +228,115 @@ export class TaskUpdateDialog extends HTMLElement {
         : page;
       this._nextToken = page.nextToken;
       this._task = { ...this._task, ...this._detail.task };
-      const ticket = submitted311Ticket(this._task);
-      if (ticket) {
-        try {
-          const response = await get311RequestDetails([
-            { taskId: this._task.taskId, srNum: ticket.srNum },
-          ]);
-          if (generation !== this._loadGeneration) return;
-          this._task = taskWith311Status(
-            this._task,
-            map311StatusResponse(response),
-          );
-          const request = response.requests.find(
-            (item) => item.taskId === this._task.taskId,
-          )?.request;
-          const seen = new Set();
-          this._cityUpdates = (request?.events || [])
-            .filter((event) => {
-              if (event.kind === "submitted") return false;
-              const key = JSON.stringify([
-                event.kind,
-                event.occurredAt,
-                event.value,
-                event.closureReason,
-                event.notes,
-                event.description,
-              ]);
-              if (seen.has(key)) return false;
-              seen.add(key);
-              return true;
-            })
-            .map((event) => ({
-              ...event,
-              type: "city_status",
-              label: event.title,
-            }));
-        } catch {
-          // A City feed failure must not prevent access to the app's own timeline.
-        }
-      } else this._cityUpdates = [];
-
-      const photoIds = [
-        ...new Set(
-          [
-            this._task.evidence?.artifactId || taskArtifactIds(this._task)[0],
-            ...(this._detail.updates || []).flatMap(
-              (update) => update.photoKeys || [],
-            ),
-          ].filter(Boolean),
-        ),
-      ];
-      const mediaUrls = new Map(
-        await Promise.all(
-          photoIds.map((artifactId) =>
-            getMediaUrl(this._task.checkId, artifactId)
-              .then(
-                (media) =>
-                  /** @type {[string, string]} */ ([
-                    artifactId,
-                    media.downloadUrl || "",
-                  ]),
-              )
-              .catch(() => /** @type {[string, string]} */ ([artifactId, ""])),
-          ),
-        ),
-      );
-      if (generation !== this._loadGeneration) return;
-      this._mediaUrls = mediaUrls;
       this._state = "ready";
+      this._render();
+      void this._loadCityUpdates(generation);
+      void this._loadTimelinePhotos(generation);
     } catch {
       if (generation !== this._loadGeneration) return;
       this._state = "error";
+      this._render();
     }
+  }
+
+  async _loadCityUpdates(generation) {
+    const ticket = submitted311Ticket(this._task);
+    if (ticket) {
+      try {
+        const response = await timelineRead(
+          get311RequestDetails([
+            { taskId: this._task.taskId, srNum: ticket.srNum },
+          ]),
+        );
+        if (generation !== this._loadGeneration) return;
+        this._task = taskWith311Status(
+          this._task,
+          map311StatusResponse(response),
+        );
+        const request = response.requests.find(
+          (item) => item.taskId === this._task.taskId,
+        )?.request;
+        const seen = new Set();
+        this._cityUpdates = (request?.events || [])
+          .filter((event) => {
+            if (event.kind === "submitted") return false;
+            const key = JSON.stringify([
+              event.kind,
+              event.occurredAt,
+              event.value,
+              event.closureReason,
+              event.notes,
+              event.description,
+            ]);
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          })
+          .map((event) => ({
+            ...event,
+            type: "city_status",
+            label: event.title,
+          }));
+      } catch {
+        // A City feed failure must not prevent access to the app's own timeline.
+      }
+    } else {
+      this._cityUpdates = [];
+      return;
+    }
+
+    if (generation === this._loadGeneration) this._refreshTimeline();
+  }
+
+  async _loadTimelinePhotos(generation) {
+    const checkId = this._task.checkId;
+    const photoIds = [
+      ...new Set(
+        [
+          this._task.evidence?.artifactId || taskArtifactIds(this._task)[0],
+          ...(this._detail.updates || []).flatMap(
+            (update) => update.photoKeys || [],
+          ),
+        ].filter(Boolean),
+      ),
+    ];
+    await Promise.all(
+      photoIds.map(async (artifactId) => {
+        try {
+          const media = await timelineRead(getMediaUrl(checkId, artifactId));
+          if (generation !== this._loadGeneration) return;
+          if (media.downloadUrl) {
+            this._mediaUrls.set(artifactId, media.downloadUrl);
+            this._refreshTimeline();
+          }
+        } catch {
+          // Optional evidence must never block the issue's activity timeline.
+        }
+      }),
+    );
+  }
+
+  _refreshTimeline() {
+    // Background enrichment must not replace an editor or reopen a closed sheet.
+    if (!this._open || this._mode !== "timeline" || this._state !== "ready")
+      return;
+    const dialog = this.querySelector?.("dialog.task-update");
+    const scrollTop = dialog?.scrollTop || 0;
+    const focused = globalThis.document?.activeElement;
+    const marker =
+      focused && dialog?.contains(focused)
+        ? focused.getAttributeNames().find((name) => name.startsWith("data-"))
+        : null;
+    const selector = marker
+      ? `[${marker}="${CSS.escape(focused.getAttribute(marker))}"]`
+      : null;
     this._render();
+    if (selector)
+      /** @type {HTMLElement | null} */ (this.querySelector(selector))?.focus({
+        preventScroll: true,
+      });
+    const replacement = this.querySelector?.("dialog.task-update");
+    if (replacement) replacement.scrollTop = scrollTop;
   }
 
   _content() {
@@ -393,6 +446,9 @@ export class TaskUpdateDialog extends HTMLElement {
 
   /** @param {HTMLDialogElement} root */
   _wire(root) {
+    root
+      .querySelector("[data-retry-timeline]")
+      ?.addEventListener("click", () => void this._load());
     root.querySelectorAll("[data-city-help]").forEach((element) => {
       const button = /** @type {HTMLButtonElement} */ (element);
       button.addEventListener("click", () => {
