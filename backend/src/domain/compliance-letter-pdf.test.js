@@ -65,7 +65,7 @@ describe("compliance letter PDF", () => {
         siteManagerName: "Sam Lee",
         siteAddress: "1 Main St, San Francisco, CA",
         departmentName: "Department of Public Health",
-        programManagerName: "Rob Hoffman",
+        programManagerName: "Sample Contact002",
         programManagerPhone: "415-555-0100",
         programManagerEmail: "rob@sfgov.org",
       },
@@ -108,7 +108,7 @@ describe("compliance letter PDF", () => {
         siteManagerName: "Sam Lee",
         siteAddress: "1 Main St",
         departmentName: "DPH",
-        programManagerName: "Rob Hoffman",
+        programManagerName: "Sample Contact002",
         programManagerPhone: "415-555-0100",
         programManagerEmail: "rob@sfgov.org",
       },
@@ -127,14 +127,14 @@ describe("compliance letter PDF", () => {
 });
 
 it.each([
-  [["Morgan Lee"], "Paul Newman and Morgan Lee oversee", 4, "four (4)"],
+  [["Morgan Lee"], "Sample Contact009 and Morgan Lee oversee", 4, "four (4)"],
   [
     ["Morgan Lee", "Jordan Smith"],
-    "Paul Newman, Morgan Lee, and Jordan Smith oversee",
+    "Sample Contact009, Morgan Lee, and Jordan Smith oversee",
     21,
     "twenty-one (21)",
   ],
-  [[], "Paul Newman oversees", 100, "one hundred (100)"],
+  [[], "Sample Contact009 oversees", 100, "one hundred (100)"],
 ])(
   "formats manager lists and daily cadence",
   (providerManagerNames, names, requiredChecksPerDay, cadence) => {
@@ -144,7 +144,7 @@ it.each([
       letterInputs: {
         siteName: "Site",
         siteAddress: "Address",
-        siteManagerName: "Paul Newman",
+        siteManagerName: "Sample Contact009",
         siteManagerFirstName: "Paul",
         providerManagerNames,
       },

@@ -58,7 +58,7 @@ export const devSiteCodeSeeds = [
       oversight: {
         managingCityDepartment: "Department of Public Health",
         managingSystemOfCare: "BHS-PBH",
-        cityProgramManager: "Rob Hoffman",
+        cityProgramManager: "Sample Contact002",
       },
       compliance: {
         underEnhancedMonitoring: true,
