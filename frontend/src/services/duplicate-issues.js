@@ -1,3 +1,4 @@
+import { onDuplicateInvalidation } from "./duplicate-invalidation.js";
 import { duplicateUiEnabled, onDuplicateUiChange } from "./feature-flags.js";
 import { getDuplicateLinks } from "./api.js";
 import { getSite } from "../db.js";
@@ -10,9 +11,12 @@ const subscribers = new Set();
 const tasks = new Map();
 let timer;
 let running = false;
+/** @type {AbortController | undefined} */
+let activeController;
 let generation = 0;
 let siteId;
 let unsubscribe;
+let unsubscribeInvalidation;
 
 function stop(subscriber) {
   if (!subscribers.delete(subscriber)) return;
@@ -22,10 +26,13 @@ function stop(subscriber) {
   if (!subscribers.size) {
     generation++;
     clearTimeout(timer);
+    activeController?.abort();
     running = false;
     siteId = undefined;
     unsubscribe?.();
     unsubscribe = undefined;
+    unsubscribeInvalidation?.();
+    unsubscribeInvalidation = undefined;
   }
 }
 
@@ -38,8 +45,9 @@ function clear() {
 
 function publish(subscriber, expired = false) {
   if (!subscribers.has(subscriber)) return;
-  // A failed first request has no result to publish or clear.
-  if (!subscriber.ids.some((id) => Object.hasOwn(tasks.get(id) || {}, "row")))
+  // Callers replace their entire map: publish only once every requested ID
+  // has a result, including an explicit missing row from a successful batch.
+  if (!subscriber.ids.every((id) => Object.hasOwn(tasks.get(id) || {}, "row")))
     return;
   const rows = subscriber.ids.flatMap((id) => {
     const row = tasks.get(id)?.row;
@@ -156,6 +164,10 @@ export function watchDuplicateIssues(taskIds, onChange) {
     unsubscribe = onDuplicateUiChange(() => {
       if (!duplicateUiEnabled()) clear();
     });
+  if (!unsubscribeInvalidation)
+    unsubscribeInvalidation = onDuplicateInvalidation(
+      invalidateDuplicateIssues,
+    );
   // Publish cached rows asynchronously so callers can install their stop handle.
   const activeGeneration = generation;
   void getSite()
@@ -174,7 +186,7 @@ export function watchDuplicateIssues(taskIds, onChange) {
 }
 
 /** Discard cached matches and pre-mutation responses after a successful separation. */
-export function invalidateDuplicateIssues() {
+function invalidateDuplicateIssues() {
   for (const id of tasks.keys()) {
     // Replacing the record also invalidates batches holding the old object.
     tasks.set(id, {
@@ -194,15 +206,20 @@ export function invalidateDuplicateIssues() {
  */
 async function bounded(work) {
   const controller = new AbortController();
+  activeController = controller;
   let timeout;
   try {
     return await Promise.race([
       work(controller.signal),
       new Promise(
         /** @param {(value: T) => void} _ */ (_, reject) => {
+          controller.signal.addEventListener(
+            "abort",
+            () => reject(controller.signal.reason),
+            { once: true },
+          );
           timeout = setTimeout(() => {
-            controller.abort();
-            reject(
+            controller.abort(
               new DOMException("Duplicate polling timed out", "TimeoutError"),
             );
           }, 10000);
@@ -211,5 +228,6 @@ async function bounded(work) {
     ]);
   } finally {
     clearTimeout(timeout);
+    if (activeController === controller) activeController = undefined;
   }
 }

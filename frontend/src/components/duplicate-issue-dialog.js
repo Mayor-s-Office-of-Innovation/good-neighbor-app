@@ -1,4 +1,3 @@
-import { invalidateDuplicateIssues } from "../services/duplicate-issues.js";
 import {
   duplicateUiEnabled,
   onDuplicateUiChange,
@@ -68,7 +67,6 @@ export class DuplicateIssueDialog extends HTMLElement {
               sourceRevision: task.duplicate.sourceRevision,
               originalTaskId: task.duplicate.original.taskId,
             });
-            invalidateDuplicateIssues();
             dialog.close();
             onSeparated(result.task);
           } catch {

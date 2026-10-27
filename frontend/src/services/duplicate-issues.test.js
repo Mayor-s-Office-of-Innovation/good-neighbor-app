@@ -1,3 +1,4 @@
+import { invalidateDuplicateIssues } from "./duplicate-invalidation.js";
 import { setDuplicateUiSite } from "./feature-flags.js";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 const api = vi.hoisted(() => ({ getDuplicateLinks: vi.fn() }));
@@ -5,10 +6,7 @@ vi.mock("./api.js", () => api);
 vi.mock("../db.js", () => ({
   getSite: vi.fn(async () => ({ siteId: "site-1" })),
 }));
-import {
-  watchDuplicateIssues,
-  invalidateDuplicateIssues,
-} from "./duplicate-issues.js";
+import { watchDuplicateIssues } from "./duplicate-issues.js";
 beforeEach(() => {
   vi.useFakeTimers();
   vi.stubGlobal("document", { hidden: false });
@@ -143,9 +141,10 @@ it("shares overlapping home and photo subscriptions and keeps cancellation indep
   expect([...photo.mock.calls[0][0].keys()]).toEqual(["two", "three"]);
   stopHome();
   await vi.advanceTimersByTimeAsync(2000);
-  expect(api.getDuplicateLinks).toHaveBeenLastCalledWith(["two", "three"], {
-    originSiteId: "site-1",
-  });
+  expect(api.getDuplicateLinks).toHaveBeenLastCalledWith(
+    ["two", "three"],
+    expect.objectContaining({ originSiteId: "site-1" }),
+  );
   expect(home).toHaveBeenCalledOnce();
   stopPhoto();
 });
@@ -354,4 +353,73 @@ it("expires on time while a request is pending", async () => {
   await vi.advanceTimersByTimeAsync(30000);
   expect(api.getDuplicateLinks).toHaveBeenCalledTimes(calls);
   stop();
+});
+
+it("preserves the displayed map until all requested batches have results", async () => {
+  const ids = Array.from({ length: 51 }, (_, i) => String(i));
+  const matched = {
+    taskId: "50",
+    state: "matched",
+    original: { taskId: "old" },
+  };
+  let displayed = new Map([["50", matched]]);
+  const changed = vi.fn((links) => {
+    displayed = links;
+  });
+  api.getDuplicateLinks
+    .mockResolvedValueOnce({
+      enabled: true,
+      issues: ids.slice(0, 50).map((taskId) => ({ taskId, state: "pending" })),
+    })
+    .mockRejectedValueOnce(new Error("second batch failed"))
+    .mockImplementation(async (batch) => ({
+      enabled: true,
+      issues: batch.map((taskId) =>
+        taskId === "50" ? matched : { taskId, state: "pending" },
+      ),
+    }));
+  const stop = watchDuplicateIssues(ids, changed);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(changed).not.toHaveBeenCalled();
+  expect(displayed.get("50")).toEqual(matched);
+  await vi.advanceTimersByTimeAsync(15000);
+  expect(changed).toHaveBeenCalled();
+  expect(displayed.size).toBe(51);
+  expect(displayed.get("50")).toEqual(matched);
+  stop();
+});
+
+it("aborts the last watcher's request before its replacement starts", async () => {
+  let inFlight = 0;
+  let maximum = 0;
+  api.getDuplicateLinks.mockImplementation(
+    (ids, { signal }) =>
+      new Promise((resolve, reject) => {
+        inFlight++;
+        maximum = Math.max(maximum, inFlight);
+        signal.addEventListener(
+          "abort",
+          () => {
+            inFlight--;
+            reject(signal.reason);
+          },
+          { once: true },
+        );
+      }),
+  );
+  const old = vi.fn(),
+    replacement = vi.fn();
+  const stopOld = watchDuplicateIssues(["one"], old);
+  await vi.advanceTimersByTimeAsync(0);
+  const oldSignal = api.getDuplicateLinks.mock.calls[0][1].signal;
+  stopOld();
+  expect(oldSignal.aborted).toBe(true);
+  const stopReplacement = watchDuplicateIssues(["one"], replacement);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(api.getDuplicateLinks).toHaveBeenCalledTimes(2);
+  expect(maximum).toBe(1);
+  expect(old).not.toHaveBeenCalled();
+  expect(replacement).not.toHaveBeenCalled();
+  stopReplacement();
+  expect(inFlight).toBe(0);
 });
