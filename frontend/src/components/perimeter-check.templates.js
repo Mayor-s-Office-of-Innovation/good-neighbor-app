@@ -8,6 +8,7 @@
   analyzed independently as soon as it is captured.
 */
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
+import { animatedEllipsis } from "../lib/ellipsis.js";
 import { t } from "../i18n/i18n.js";
 import {
   analysisDialogs,
@@ -210,7 +211,7 @@ export function footer({
             type="button"
             aria-expanded="${analyzingOpen ? "true" : "false"}"
           >
-            ${escapeHtml(problemLabel)}
+            ${escapeHtml(problemLabel)}${active ? animatedEllipsis() : ""}
             <span
               class="check-timeline__analyzing-caret ${analyzingOpen
                 ? "check-timeline__analyzing-caret--up"
