@@ -1191,7 +1191,7 @@
   "setup.enrollment.failed": "No pudimos vincular este dispositivo. Revise su conexión e inténtelo de nuevo.",
   "setup.enrollment.invalid": "Esta invitación no es válida. Revise el código o pida una nueva invitación a su administrador.",
   "setup.enrollment.limited": "Demasiados intentos de ingresar códigos. Espere antes de volver a intentarlo.",
-  "setup.enrollment.openApp": "Abrir la aplicación sin vincular el dispositivo",
+  "setup.enrollment.openApp": "¿Ya vinculó este dispositivo? Haga clic para iniciar sesión",
   "setup.enrollment.submit": "Vincular este dispositivo",
   "setup.enrollment.supportReference": "Referencia para asistencia: {reference}",
   "setup.enrollment.title": "Vincular este dispositivo",
