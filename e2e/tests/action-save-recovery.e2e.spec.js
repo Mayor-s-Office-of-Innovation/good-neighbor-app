@@ -25,7 +25,7 @@ for (const knownTask of [true, false]) {
     await page.goto("/");
     const result = await page.evaluate(async (known) => {
       const load = (/** @type {string} */ path) => import(path);
-      await customElements.whenDefined("app-toasts");
+      await window.customElements.whenDefined("app-toasts");
       const { completeCardAction } = await load(
         "/src/components/analysis-card-completion.js",
       );
