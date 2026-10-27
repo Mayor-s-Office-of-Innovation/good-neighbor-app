@@ -178,7 +178,7 @@ describe("presignUpload", () => {
     );
     expect(ddbSend.mock.calls[0][0]).toBeInstanceOf(TransactWriteCommand);
     const reservation = ddbSend.mock.calls[0][0].input.TransactItems;
-    expect(reservation).toHaveLength(5);
+    expect(reservation).toHaveLength(4);
     expect(
       /** @type {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>} */ (
         reservation
@@ -252,7 +252,6 @@ describe("presignUpload", () => {
       const codes = [
         "None",
         "ConditionalCheckFailed",
-        "None",
         "TransactionConflict",
         "None",
       ];
@@ -282,8 +281,7 @@ describe("presignUpload", () => {
         cancellationReasons: [
           { operation: "check_state", code: "None" },
           { operation: "check_quota", code: "ConditionalCheckFailed" },
-          { operation: "device_quota", code: "None" },
-          { operation: "site_quota", code: "TransactionConflict" },
+          { operation: "device_quota", code: "TransactionConflict" },
           { operation: "upload_reservation", code: "None" },
         ],
       });

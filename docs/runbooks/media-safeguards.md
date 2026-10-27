@@ -10,16 +10,19 @@ strips metadata and applies orientation while enforcing byte, pixel, edge, and s
 - one object: 10 MiB
 - one check: 20 artifacts and 50 MiB
 - one device per UTC day: 50 artifacts and 100 MiB
-- one Site per UTC day: 1,000 artifacts and 1 GiB
 
 Reservations are deliberately conservative: issuing a PUT URL consumes quota even if the client
-abandons the upload. Reservation records and check/device/Site daily counters expire after
+abandons the upload. Reservation records and check/device daily counters expire after
 24 hours, so an abandoned URL cannot permanently block its Check. Do not manually lower counters during an active incident—doing so weakens the cost
 control and can race in-flight uploads.
 
-There is no global daily upload quota. Upload reservations do not update a shared
-cross-site counter. Existing global counter rows are unused and expire through their
-existing DynamoDB TTL; no counter deletion or migration is required.
+There is no Site-wide or global daily upload quota. Upload reservations do not
+update shared Site or global counters: these counters made independent checks
+compete for the same DynamoDB item and could reject valid uploads. Per-file,
+check/complaint/care-work, and device safeguards remain enforced. Existing Site
+and global counter rows are unused and expire through their existing DynamoDB
+TTL; no counter deletion or migration is required. There is no aggregate daily
+ceiling across devices at a Site.
 
 ## Alarms
 
@@ -29,7 +32,9 @@ into tickets or chat. A single rejection is normally bad camera/upload data. A c
 from one Site or device may indicate abuse or a broken client release.
 
 `MediaQuotaExceeded` alarms after five rejected reservations in five minutes. Determine which
-counter is near its conditional limit from the Site's `MEDIA_QUOTA#` rows.
+check or device counter is near its conditional limit from the Site's
+`MEDIA_QUOTA#` rows. Inspect cancellation reasons as well: this marker also covers
+transaction conflicts and does not by itself prove quota exhaustion.
 Confirm whether traffic is expected before changing a limit in code. The public response
 intentionally does not reveal which budget was exhausted.
 
@@ -165,7 +170,7 @@ DAILY, USD 50 and ACTUAL > 50 in PROD (USD 100 and ACTUAL > 100 in DEV),
 the Application filter, and the recipient list. Verify
 the Application tag is active and compare attributed cost with Cost Explorer after
 billing data arrives; zero reported cost alone does not prove the filter works.
-No console configuration changes are required. Existing global quota rows can expire
+No console configuration changes are required. Existing Site and global quota rows can expire
 normally; the cost warning uses billing data, not those counters.
 
 
