@@ -19,12 +19,12 @@
     {
       "name": "main js",
       "path": "dist/assets/index-*.js",
-      "limit": "77 kB"
+      "limit": "76.8 kB"
     },
     {
       "name": "site admin js",
       "path": "dist/assets/site-admin-*.js",
-      "limit": "9 kB"
+      "limit": "9.1 kB"
     },
     {
       "name": "main css",
@@ -34,7 +34,7 @@
     {
       "name": "task update js",
       "path": "dist/assets/task-update-dialog-*.js",
-      "limit": "6.3 kB"
+      "limit": "6.4 kB"
     },
     {
       "name": "task update css",
@@ -70,6 +70,16 @@
       "name": "site access state js",
       "path": "dist/assets/site-access-state-*.js",
       "limit": "2 kB"
+    },
+    {
+      "name": "artifact photo js",
+      "path": "dist/assets/artifact-photo-*.js",
+      "limit": "1.5 kB"
+    },
+    {
+      "name": "artifact photo css",
+      "path": "dist/assets/artifact-photo-*.css",
+      "limit": "200 B"
     }
   ],
   "dependencies": {

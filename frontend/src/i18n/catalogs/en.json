@@ -481,6 +481,7 @@
   "card.editDetails": "Edit details",
   "card.evidence.alt": "Evidence from {place}",
   "card.evidence.siteFallback": "the site",
+  "card.evidence.unavailable": "Image unavailable",
   "card.failed.analysisTitle": "Analysis didn't finish",
   "card.failed.meta": "COULDN'T FINISH",
   "card.failed.reason.analyzeBackend": "The analysis service couldn't process this one.",

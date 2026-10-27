@@ -1,0 +1,9 @@
+artifact-photo {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  background: var(--wa-color-neutral-90);
+}
+artifact-photo[data-unavailable] img {
+  display: none;
+}
