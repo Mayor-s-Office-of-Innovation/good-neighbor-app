@@ -1354,9 +1354,14 @@ export async function separateDuplicate(taskId, expected) {
   return result;
 }
 
-/** @param {string} taskId */
-export function getTaskDetails(taskId) {
-  return request("GET", `/v1/tasks/${encodeURIComponent(taskId)}/details`);
+/**
+ * @param {string} taskId
+ * @param {{ signal?: AbortSignal }} [options]
+ */
+export function getTaskDetails(taskId, { signal } = {}) {
+  return request("GET", `/v1/tasks/${encodeURIComponent(taskId)}/details`, {
+    signal,
+  });
 }
 
 /** @param {string} taskId @param {string} ruleId */
