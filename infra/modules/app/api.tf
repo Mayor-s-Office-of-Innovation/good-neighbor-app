@@ -370,6 +370,13 @@ resource "aws_apigatewayv2_stage" "default" {
     })
   }
 
+  route_settings {
+    # API Gateway requires the route to exist before accepting its settings.
+    route_key              = aws_apigatewayv2_route.support.route_key
+    throttling_burst_limit = 5
+    throttling_rate_limit  = 2
+  }
+
   default_route_settings {
     throttling_burst_limit = 100
     throttling_rate_limit  = 200

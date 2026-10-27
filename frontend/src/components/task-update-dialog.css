@@ -85,6 +85,8 @@
 
 .task-update__photo-trigger:has(.task-update__photo--original) {
   margin-block: 1rem;
+  width: min(100%, 20rem);
+  aspect-ratio: 4 / 3;
 }
 .task-update__metadata div {
   display: flex;

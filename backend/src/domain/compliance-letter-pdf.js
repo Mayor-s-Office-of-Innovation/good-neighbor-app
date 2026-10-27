@@ -2,6 +2,20 @@ import fontkit from "@pdf-lib/fontkit";
 import { PDFDocument } from "pdf-lib";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { letterheadArtwork } from "./compliance-letterhead-artwork.js";
+
+/** Use the sender department already snapshotted on the compliance terms.
+ * Historical records without a department retain the plain letter layout.
+ * @param {Record<string, any>} period
+ */
+function letterhead(period) {
+  const department = String(period.letterInputs?.departmentName || "").trim();
+  if (/\bHSH\b|homelessness and supportive housing/i.test(department))
+    return letterheadArtwork.hsh;
+  if (/\bDPH\b|department of public health/i.test(department))
+    return letterheadArtwork.dph;
+  return null;
+}
 
 const REASONS = {
   1: "Recurring or unresolved Good Neighbor (GN) concerns have been identified at this site.",
@@ -63,14 +77,16 @@ function letterLayout(period) {
   const input = period.letterInputs || {};
   /** @type {{text: string, x: number, y: number, size: number, bold: boolean}[]} */
   const lines = [];
-  let y = 750;
+  const top = letterhead(period) ? 640 : 750;
+  const bottom = letterhead(period) ? 100 : 42;
+  let y = top;
   /** @param {string} value @param {number} [size] @param {boolean} [bold] */
   const paragraph = (value, size = 9, bold = false) => {
     for (const line of wrap(value, Math.floor(504 / (size * 0.52)))) {
       lines.push({ text: line, x: 54, y, size, bold });
-      y -= size + 3;
+      y -= size + 2;
     }
-    y -= 6;
+    y -= 4;
   };
   const count = Number(period.requiredChecksPerDay);
   const cadence =
@@ -83,15 +99,15 @@ function letterLayout(period) {
     input.siteManagerName,
     ...(input.providerManagerNames || []),
   ].filter(Boolean);
-  paragraph(input.departmentName || "", 12, true);
   paragraph(formatDate(input.confirmedOn));
   paragraph(`Attn: ${managers.join(", ")}`);
-  paragraph(`Re: ${input.siteName}: ${input.siteAddress}`);
+  paragraph(`Re: ${input.siteAddress}`);
   paragraph(
     "Re: Required Documented Perimeter Checks — Good Neighbor Policy",
     10,
     true,
   );
+  y -= 11;
   paragraph(`Dear ${input.siteManagerFirstName},`);
   paragraph(
     `This letter is to notify you that, in accordance with the Good Neighbor Policy (GNP), the City has determined that ${input.siteName} at ${input.siteAddress} is required to conduct and document perimeter checks at least ${cadence} ${count === 1 ? "time" : "times"} per day, effective ${start}. ${input.leadProgramName ? `Based on our records, the GNP primary operator for this address is ${input.leadProgramName}. ` : ""}City records reflect ${new Intl.ListFormat("en-US", { style: "long", type: "conjunction" }).format(managers)} ${managers.length > 1 ? "oversee" : "oversees"} GNP compliance for this address.`,
@@ -105,6 +121,7 @@ function letterLayout(period) {
       8.5,
     );
   }
+  y -= 11;
   paragraph(
     `Beginning ${start}${end ? ` through ${end}` : ", until further notice"}, your site must:`,
   );
@@ -115,17 +132,20 @@ function letterLayout(period) {
   paragraph(
     "3. Continue to follow all other applicable GN required activities.",
   );
+  y -= 11;
   paragraph(
     "If you have questions about this notice or need support meeting this requirement, please contact me.",
   );
+  y -= 11;
   paragraph("Sincerely,");
+  y -= 11;
   paragraph(input.programManagerName || "");
   paragraph(input.departmentName || "");
   // Long names/addresses retain all text; scale the entire layout to fit.
-  if (y < 42) {
-    const scale = (750 - 42) / (750 - y);
+  if (y < bottom) {
+    const scale = (top - bottom) / (top - y);
     for (const line of lines) {
-      line.y = 750 - (750 - line.y) * scale;
+      line.y = top - (top - line.y) * scale;
       line.size *= scale;
     }
   }
@@ -138,6 +158,14 @@ export async function generateComplianceLetterPdf(period) {
   document.registerFontkit(fontkit);
   const fonts = await embedFonts(document);
   const page = document.addPage([612, 792]);
+  const artwork = letterhead(period);
+  if (artwork) {
+    const [background] = await document.embedPdf(
+      Buffer.from(artwork.pdf, "base64"),
+      [0],
+    );
+    page.drawPage(background, { x: 0, y: 0, width: 612, height: 792 });
+  }
   for (const line of letterLayout(period)) {
     drawUnicodeText(
       page,
@@ -155,6 +183,12 @@ export async function generateComplianceLetterPdf(period) {
 /** @param {Record<string, any>} period @returns {Buffer} */
 export function generateComplianceLetterPreviewSvg(period) {
   const elements = ['<rect width="612" height="792" fill="white"/>'];
+  const artwork = letterhead(period);
+  if (artwork) {
+    elements.push(
+      `<image x="0" y="0" width="612" height="792" href="data:image/png;base64,${artwork.png}"/>`,
+    );
+  }
   for (const line of letterLayout(period)) {
     elements.push(
       `<text x="${line.x}" y="${792 - line.y}" font-family="Arial, Helvetica, sans-serif" font-size="${line.size}"${line.bold ? ' font-weight="700"' : ""} fill="#111">${xmlText(line.text)}</text>`,

@@ -75,6 +75,7 @@ import { escapeHtml } from "../lib/html.js";
 import { ready as i18nReady, t } from "../i18n/i18n.js";
 
 const ROUTE_VIEW = [
+  ["/help", "support-view"],
   ["/care-work", "care-work-view"],
   ["/complaints", "complaint-view"],
   ["/reports/checks/", "reports-day-view"],
@@ -527,6 +528,7 @@ export class AppRoot extends HTMLElement {
     const match = ROUTE_VIEW.find(([prefix]) => route.startsWith(prefix));
     const tag = match ? match[1] : "today-view";
     const lazy = [
+      [route === "/help", "support-view", () => import("./support-view.js")],
       [
         tag === "describe-instead",
         "describe-instead",

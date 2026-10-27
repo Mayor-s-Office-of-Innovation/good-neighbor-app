@@ -1,8 +1,9 @@
+import { artifactPhoto } from "./artifact-photo.templates.js";
 import "@awesome.me/webawesome/dist/components/select/select.js";
 import "@awesome.me/webawesome/dist/components/option/option.js";
 import "./task-details-dialog.css";
 import { openOverlayDialog } from "../dialog-history.js";
-import { taskMediaUrl } from "../domain/task-media.js";
+import { taskMediaUrl, taskMediaArtifactId } from "../domain/task-media.js";
 import { formatMonthDayTime } from "../i18n/dates.js";
 import { t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
@@ -48,12 +49,15 @@ function memberRow(member) {
     class="task-details__member"
     data-member-id="${escapeAttr(member.taskId)}"
   >
-    ${image
-      ? html`<img
-          class="task-details__thumbnail"
-          src="${escapeAttr(image)}"
-          alt="${escapeAttr(title)}"
-        />`
+    ${image || member.evidence?.kind === "photo"
+      ? artifactPhoto({
+          className: "task-details__thumbnail",
+          src: image,
+          original: member.mediaUrl,
+          checkId: member.checkId,
+          artifactId: taskMediaArtifactId(member),
+          alt: title,
+        })
       : html`<span class="task-details__thumbnail task-details__placeholder"
           ><wa-icon name="image" aria-hidden="true"></wa-icon
         ></span>`}

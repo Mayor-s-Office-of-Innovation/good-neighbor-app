@@ -872,7 +872,14 @@ class TodayView extends HTMLElement {
       )
         return task;
       const cached = {};
-      for (const key of ["evidence", "mediaUrl", "thumbnailUrl"])
+      for (const key of [
+        "evidence",
+        "mediaUrl",
+        "thumbnailUrl",
+        "mediaExpiresAt",
+        "mediaState",
+        "mediaRetryAt",
+      ])
         if (!task[key] && old[key]) cached[key] = old[key];
       return Object.keys(cached).length ? { ...task, ...cached } : task;
     });
@@ -951,6 +958,10 @@ class TodayView extends HTMLElement {
       this._settingsMenuOpen = false;
       this._logoutDialogOpen = true;
       this._renderHome(this._homeModel);
+    });
+    this.querySelector("#settings-help")?.addEventListener("click", () => {
+      this._settingsMenuOpen = false;
+      navigate("/help");
     });
     this.querySelector("#settings-feedback")?.addEventListener("click", () => {
       this._removeSettingsMenu();

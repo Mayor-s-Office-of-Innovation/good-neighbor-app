@@ -1,3 +1,4 @@
+import { artifactPhoto } from "./artifact-photo.templates.js";
 import { cardDescription } from "./card-description.js";
 import { animatedEllipsis } from "../lib/ellipsis.js";
 import { statusTickerMarkup } from "./status-ticker.js";
@@ -14,7 +15,7 @@ import "./analysis-results.css";
 import { pendingDeletedConditionIds } from "../state/pending-deletions.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { formatPacificUpdated } from "../domain/task-updates.js";
-import { taskMediaUrl } from "../domain/task-media.js";
+import { taskMediaUrl, taskMediaArtifactId } from "../domain/task-media.js";
 import { taskCardTitle } from "../domain/task-title.js";
 import { filing311FailureMessage } from "../domain/task-actions.js";
 import { t } from "../i18n/i18n.js";
@@ -624,7 +625,7 @@ export function taskAnalysisCard({
     createdAt: task.createdAt || task.created_at || task.updatedAt || "",
     checkId: task.checkId || "",
     analysis: {
-      artifactId: taskArtifactId(task),
+      artifactId: taskMediaArtifactId(task),
       assessment: {},
       sourceAnalysis: {},
     },
@@ -1213,19 +1214,20 @@ function imagePreview(item) {
       <button
         type="button"
         data-photo-lightbox
+        disabled
         data-full-src="${escapeAttr(item.fullDataUrl || item.dataUrl)}"
         data-photo-address="${escapeAttr(address)}"
         data-photo-time="${escapeAttr(capturedAt)}"
       >
-        <img
-          src="${escapeAttr(item.dataUrl)}"
-          alt="${escapeAttr(
-            t("card.evidence.alt", {
-              place: placeName || t("card.evidence.siteFallback"),
-            }),
-          )}"
-          decoding="async"
-        />
+        ${artifactPhoto({
+          src: item.dataUrl,
+          original: item.fullDataUrl,
+          checkId: item.checkId,
+          artifactId: item.analysis?.artifactId,
+          alt: t("card.evidence.alt", {
+            place: placeName || t("card.evidence.siteFallback"),
+          }),
+        })}
       </button>
     </div>
   `;
@@ -1272,18 +1274,6 @@ function actionLabel(kind) {
   if (kind === "escalation") return t("card.action.escalate");
   if (kind === "action") return t("card.action.logAction");
   return "";
-}
-
-function taskArtifactId(task) {
-  if (task.evidence?.artifactId) return task.evidence.artifactId;
-  if (Array.isArray(task.sourceArtifactIds) && task.sourceArtifactIds[0]) {
-    return task.sourceArtifactIds[0];
-  }
-  const uuidPair =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(
-      String(task.assessmentId || ""),
-    );
-  return uuidPair?.[1] || "";
 }
 
 /**
@@ -1510,8 +1500,13 @@ function historyCard(task) {
       data-action="update"
     >
       <span class="history-card__photo"
-        >${media
-          ? html`<img src="${escapeAttr(media)}" alt="" loading="lazy" />`
+        >${media || task.evidence?.kind === "photo"
+          ? artifactPhoto({
+              src: media,
+              original: task.mediaUrl,
+              checkId: task.checkId,
+              artifactId: taskMediaArtifactId(task),
+            })
           : html`<wa-icon name="image" aria-hidden="true"></wa-icon>`}</span
       >
       <span class="history-card__copy"
