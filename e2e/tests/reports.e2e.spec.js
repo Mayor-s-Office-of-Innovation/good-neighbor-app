@@ -133,6 +133,7 @@ test.describe("site manager reports", () => {
       t("access.title"),
       t("today.settings.siteAdmin"),
       t("today.settings.reports"),
+      t("support.title"),
       t("today.settings.feedback"),
       t("today.settings.language"),
       t("today.settings.attributions"),

@@ -10,6 +10,8 @@
     "e2e"
   ],
   "scripts": {
+    "postinstall": "npm run setup:hooks",
+    "setup:hooks": "node scripts/setup-hooks.mjs",
     "build": "npm run build --workspaces --if-present",
     "format": "prettier . --write",
     "format:check": "prettier . --check",
@@ -25,7 +27,8 @@
     "build:admin": "vite build --config admin-frontend/vite.config.js",
     "terraform:fmt": "terraform -chdir=infra fmt -recursive -check",
     "terraform:validate": "terraform -chdir=infra/environments/dev init -backend=false && terraform -chdir=infra/environments/dev validate",
-    "test:status:e2e": "playwright test -c e2e/system-status.config.js"
+    "test:status:e2e": "playwright test -c e2e/system-status.config.js",
+    "test:support:ui": "playwright test -c e2e/support.config.js"
   },
   "devDependencies": {
     "js-yaml": "4.3.2",

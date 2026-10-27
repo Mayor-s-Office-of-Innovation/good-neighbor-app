@@ -109,12 +109,19 @@ export function taskUpdateTimelineItem(update, task, mediaUrls, title) {
         .map((note) => html`<p>${escapeHtml(note)}</p>`)
         .join("")}
       ${(update.photoKeys || [])
-        .map((artifactId) =>
+        .map((artifactId, photoIndex) =>
           mediaUrls.get(artifactId)
             ? html`<button
                 class="task-update__photo-trigger"
                 type="button"
                 data-photo-lightbox
+                data-timeline-focus="${escapeAttr(
+                  JSON.stringify([
+                    update.updateId || update.occurredAt,
+                    artifactId,
+                    photoIndex,
+                  ]),
+                )}"
                 data-photo-address="${escapeAttr(
                   task.georeferencedAddress ||
                     task.siteAddress ||

@@ -37,11 +37,13 @@ const saved = {
 };
 function fixture() {
   const onTaskUpdated = vi.fn();
+  const reload = vi.fn();
   const sheets = new TaskSheets(
     /** @type {any} */ ({
       host: {},
       container: () => ({ append() {} }),
       onTaskUpdated,
+      reload,
     }),
   );
   sheets._focusCard = vi.fn();
@@ -53,7 +55,7 @@ function fixture() {
     remove: vi.fn(),
   };
   vi.stubGlobal("document", { createElement: () => dialog });
-  return { sheets, button, dialog, onTaskUpdated };
+  return { sheets, button, dialog, onTaskUpdated, reload };
 }
 beforeEach(() => {
   vi.clearAllMocks();
@@ -161,3 +163,53 @@ it.each(["timeline", "resolve", "results"])(
     expect(f.sheets._updateDialog.readOnly).toBe(true);
   },
 );
+
+function listener(dialog, name) {
+  return dialog.addEventListener.mock.calls.find(([type]) => type === name)[1];
+}
+
+it("closes unchanged history without reloading and restores focus", async () => {
+  const f = fixture();
+  vi.spyOn(f.sheets, "_loadUpdates").mockResolvedValue(/** @type {any} */ ({}));
+  await f.sheets.openUpdates(task, f.button);
+  await listener(f.dialog, "taskupdateclosed")({ detail: { results: false } });
+  expect(f.reload).not.toHaveBeenCalled();
+  expect(f.sheets._focusCard).toHaveBeenCalledWith(
+    task.taskId,
+    "update",
+    f.button,
+  );
+});
+
+it("joins the save refresh on close and restores focus after it finishes", async () => {
+  const f = fixture();
+  const pending = deferred();
+  f.reload.mockReturnValue(pending.promise);
+  vi.spyOn(f.sheets, "_loadUpdates").mockResolvedValue(/** @type {any} */ ({}));
+  await f.sheets.openUpdates(task, f.button);
+  listener(f.dialog, "taskupdated")({ detail: { task: saved.task } });
+  await listener(f.dialog, "taskupdateclosed")({ detail: { results: false } });
+  expect(f.reload).toHaveBeenCalledOnce();
+  expect(f.sheets._focusCard).not.toHaveBeenCalled();
+  pending.resolve(undefined);
+  await vi.waitFor(() => expect(f.sheets._focusCard).toHaveBeenCalledOnce());
+});
+
+it("waits for a dismissed resolution to save before reloading", async () => {
+  const f = fixture();
+  const pending = deferred();
+  save.mockReturnValue(pending.promise);
+  vi.spyOn(f.sheets, "_loadUpdates").mockResolvedValue(/** @type {any} */ ({}));
+  await f.sheets.openUpdates(task, f.button, "resolve");
+  const closing = listener(
+    f.dialog,
+    "taskupdateclosed",
+  )({ detail: { results: true } });
+  expect(f.reload).not.toHaveBeenCalled();
+  pending.resolve(saved);
+  await closing;
+  expect(f.onTaskUpdated).toHaveBeenCalledWith(
+    expect.objectContaining({ status: "completed" }),
+  );
+  expect(f.reload).toHaveBeenCalledOnce();
+});

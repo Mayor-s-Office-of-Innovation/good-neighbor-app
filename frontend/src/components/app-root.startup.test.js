@@ -1,6 +1,8 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const setup = vi.hoisted(() => ({
+  currentRoute: vi.fn(() => "/today"),
+  backOrNavigate: vi.fn(),
   clearSite: vi.fn(),
   getSite: vi.fn(),
   getSiteSettings: vi.fn(),
@@ -63,8 +65,9 @@ vi.mock("../services/device-location.js", () => ({
   requestLocationPermissionEarly: vi.fn(),
 }));
 vi.mock("../router.js", () => ({
-  currentRoute: () => "/today",
+  currentRoute: setup.currentRoute,
   navigate: vi.fn(),
+  backOrNavigate: setup.backOrNavigate,
   onRouteChange: vi.fn(),
 }));
 vi.mock("./app-root.templates.js", () => ({
@@ -88,6 +91,10 @@ vi.mock("../state/toasts.js", () => ({
   showQueuedSiteSwitchSuccessToast: vi.fn(),
   showSiteSwitchSuccessToast: vi.fn(),
 }));
+
+vi.mock("./perimeter-check.js", () => ({ screen: "perimeter-check" }));
+vi.mock("./problem-report.js", () => ({ screen: "problem-report" }));
+vi.mock("./describe-instead.js", () => ({ screen: "describe-instead" }));
 
 let AppRoot;
 
@@ -113,6 +120,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  setup.currentRoute.mockReset().mockReturnValue("/today");
   setup.clearSite.mockReset().mockResolvedValue(undefined);
   setup.getSite.mockReset();
   setup.getSiteSettings.mockReset();
@@ -467,4 +475,58 @@ describe("Home Screen session handoff at startup", () => {
     expect(root._renderSetup).toHaveBeenCalledOnce();
     expect(root._renderSetup).toHaveBeenCalledWith();
   });
+});
+
+it("shows recovery controls when a route module fails instead of leaving a blank page", async () => {
+  const root = new AppRoot();
+  const handlers = {};
+  root._view = {
+    innerHTML: "",
+    querySelector: (selector) => ({
+      addEventListener: (_, fn) => {
+        handlers[selector] = fn;
+      },
+    }),
+  };
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  root._loadRoute("/today", () => Promise.reject(new Error("chunk missing")));
+  expect(root._view.innerHTML).toContain('role="status"');
+  await flush();
+  expect(root._view.innerHTML).toContain('role="alert"');
+  expect(handlers["[data-route-reload]"]).toBeTypeOf("function");
+  expect(handlers["[data-route-back]"]).toBeTypeOf("function");
+  handlers["[data-route-back]"]();
+  expect(setup.backOrNavigate).toHaveBeenCalledWith("/today");
+  log.mockRestore();
+});
+
+it.each([
+  ["/check", "perimeter-check"],
+  ["/problem", "problem-report"],
+  ["/check/describe", "describe-instead"],
+  ["/problem/describe", "describe-instead"],
+])(
+  "loads the capture screen for a direct visit to %s",
+  async (route, screen) => {
+    setup.currentRoute.mockReturnValue(route);
+    const root = component();
+    root._loadRoute = vi.fn();
+    AppRoot.prototype._renderView.call(root);
+    expect(root._loadRoute).toHaveBeenCalledOnce();
+    const [requestedRoute, load] = root._loadRoute.mock.calls[0];
+    expect(requestedRoute).toBe(route);
+    expect((await load()).screen).toBe(screen);
+  },
+);
+
+it("does not render a capture screen after navigation changes during loading", async () => {
+  setup.currentRoute.mockReturnValue("/check");
+  const root = component();
+  root._view = { innerHTML: "" };
+  const pending = deferred();
+  root._loadRoute("/check", () => pending.promise);
+  setup.currentRoute.mockReturnValue("/today");
+  pending.resolve(undefined);
+  await flush();
+  expect(root._renderView).not.toHaveBeenCalled();
 });

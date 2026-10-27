@@ -6,7 +6,7 @@ import { startPhoneCompletionRecovery } from "../services/phone-completion.js";
 
   Routes → views: /today → today-view, /check → perimeter-check, /problem →
   problem-report, /check/describe + /problem/describe → describe-instead,
-  /site-admin* and /reports* → lazily loaded manager-only screens.
+  Capture flows and manager-only screens load their modules on navigation.
   Setup (device→site binding) is retained and gates everything. There is no
   per-site places setup any more (docs/plan-remove-places.md): a bound device
   lands straight on home.
@@ -41,6 +41,7 @@ import {
 } from "../services/backend-health.js";
 import {
   currentRoute,
+  backOrNavigate,
   navigate,
   onRouteChange,
   replaceRoute,
@@ -70,9 +71,11 @@ import {
   hasEnrollmentCredentials,
   isFatalSessionError,
 } from "../services/startup-auth.js";
-import { ready as i18nReady } from "../i18n/i18n.js";
+import { escapeHtml } from "../lib/html.js";
+import { ready as i18nReady, t } from "../i18n/i18n.js";
 
 const ROUTE_VIEW = [
+  ["/help", "support-view"],
   ["/care-work", "care-work-view"],
   ["/complaints", "complaint-view"],
   ["/reports/checks/", "reports-day-view"],
@@ -482,7 +485,31 @@ export class AppRoot extends HTMLElement {
     replaceRoute(restore.route);
   }
 
+  _loadRoute(route, load) {
+    const request = (this._routeLoad = {});
+    this._view.innerHTML = `<p role="status">${escapeHtml(t("care.loading"))}</p>`;
+    Promise.resolve()
+      .then(load)
+      .then(() => {
+        if (this._routeLoad === request && currentRoute() === route)
+          this._renderView();
+      })
+      .catch((error) => {
+        if (this._routeLoad !== request || currentRoute() !== route) return;
+        console.error("Route module failed to load", error);
+        this._view.innerHTML = `<p role="alert">${escapeHtml(t("route.loadError"))}</p><button type="button" class="btn-ink" data-route-reload>${escapeHtml(t("route.reload"))}</button><button type="button" class="btn-outline" data-route-back>${escapeHtml(t("common.back"))}</button>`;
+        // Reload obtains the current asset manifest and clears cached import failures.
+        this._view
+          .querySelector("[data-route-reload]")
+          .addEventListener("click", () => location.reload());
+        this._view
+          .querySelector("[data-route-back]")
+          .addEventListener("click", () => backOrNavigate("/today"));
+      });
+  }
+
   _renderView() {
+    this._routeLoad = null;
     const route = currentRoute();
     if (this._isDevResetRoute(route)) {
       void this._resetFirstLaunch();
@@ -498,49 +525,50 @@ export class AppRoot extends HTMLElement {
       navigate("/today");
       return;
     }
-    if (
-      (route.startsWith("/site-admin") || route.startsWith("/manage-access")) &&
-      !customElements.get("site-admin-view")
-    ) {
-      this._view.replaceChildren();
-      void import("./site-admin.js").then(() => {
-        if (
-          currentRoute().startsWith("/site-admin") ||
-          currentRoute().startsWith("/manage-access")
-        )
-          this._renderView();
-      });
-      return;
-    }
-    if (
-      route.startsWith("/care-work") &&
-      !customElements.get("care-work-view")
-    ) {
-      this._view.replaceChildren();
-      void import("./care-work-view.js").then(() => {
-        if (currentRoute().startsWith("/care-work")) this._renderView();
-      });
-      return;
-    }
-    if (
-      route.startsWith("/complaints") &&
-      !customElements.get("complaint-view")
-    ) {
-      this._view.replaceChildren();
-      void import("./complaint-view.js").then(() => {
-        if (currentRoute().startsWith("/complaints")) this._renderView();
-      });
-      return;
-    }
-    if (route.startsWith("/reports") && !customElements.get("reports-view")) {
-      this._view.replaceChildren();
-      void import("./reports-view.js").then(() => {
-        if (currentRoute().startsWith("/reports")) this._renderView();
-      });
-      return;
-    }
     const match = ROUTE_VIEW.find(([prefix]) => route.startsWith(prefix));
     const tag = match ? match[1] : "today-view";
+    const lazy = [
+      [route === "/help", "support-view", () => import("./support-view.js")],
+      [
+        tag === "describe-instead",
+        "describe-instead",
+        () => import("./describe-instead.js"),
+      ],
+      [
+        tag === "perimeter-check",
+        "perimeter-check",
+        () => import("./perimeter-check.js"),
+      ],
+      [
+        tag === "problem-report",
+        "problem-report",
+        () => import("./problem-report.js"),
+      ],
+      [
+        route.startsWith("/site-admin") || route.startsWith("/manage-access"),
+        "site-admin-view",
+        () => import("./site-admin.js"),
+      ],
+      [
+        route.startsWith("/care-work"),
+        "care-work-view",
+        () => import("./care-work-view.js"),
+      ],
+      [
+        route.startsWith("/complaints"),
+        "complaint-view",
+        () => import("./complaint-view.js"),
+      ],
+      [
+        route.startsWith("/reports"),
+        "reports-view",
+        () => import("./reports-view.js"),
+      ],
+    ].find(([matches, tag]) => matches && !customElements.get(tag));
+    if (lazy) {
+      this._loadRoute(route, lazy[2]);
+      return;
+    }
     // Every screen owns its own header now (design port): the home hub has its
     // site header, and each flow screen has a .topbar. So the shell chrome stays
     // hidden throughout — the shell is just the routing container.
@@ -551,6 +579,7 @@ export class AppRoot extends HTMLElement {
     const swap = () => {
       // Always mount a fresh element (each screen reads current state on
       // connect).
+      if (currentRoute() !== route) return;
       this._swappedRoute = route;
       this._view.replaceChildren(document.createElement(tag));
       this._restateScreenFocus();

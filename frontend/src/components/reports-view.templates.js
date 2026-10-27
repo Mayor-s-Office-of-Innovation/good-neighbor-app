@@ -1,3 +1,4 @@
+import { artifactPhoto } from "./artifact-photo.templates.js";
 /*
   Presentational templates for <reports-view> and <reports-day-view>, the
   site manager's Checks report. Pure (data) → HTML string; state, fetching,
@@ -687,27 +688,22 @@ function checkTimelineItem({ check, evidence, tasks }, siteName) {
             .map(
               (photo, i) =>
                 html`<li>
-                  ${photo.url
-                    ? html`<button
-                        type="button"
-                        class="reports-timeline__photo"
-                        data-photo-lightbox
-                        data-full-src="${escapeAttr(photo.url)}"
-                        data-photo-time="${escapeAttr(when)}"
-                      >
-                        <img
-                          src="${escapeAttr(photo.thumbnailUrl || photo.url)}"
-                          alt="${escapeAttr(
-                            t("reports.check.photoAlt", { index: i + 1 }),
-                          )}"
-                          loading="lazy"
-                        />
-                      </button>`
-                    : html`<span
-                        class="reports-timeline__photo reports-timeline__photo--placeholder"
-                        aria-hidden="true"
-                        ><wa-icon name="image"></wa-icon
-                      ></span>`}
+                  <button
+                    type="button"
+                    class="reports-timeline__photo"
+                    data-photo-lightbox
+                    disabled
+                    data-full-src="${escapeAttr(photo.url || "")}"
+                    data-photo-time="${escapeAttr(when)}"
+                  >
+                    ${artifactPhoto({
+                      src: photo.thumbnailUrl || photo.url,
+                      original: photo.url,
+                      checkId: check.checkId,
+                      artifactId: photo.artifactId,
+                      alt: t("reports.check.photoAlt", { index: i + 1 }),
+                    })}
+                  </button>
                 </li>`,
             )
             .join("")}

@@ -4,6 +4,8 @@ import {
   dataUrlToBlob,
   editAnalysisCondition,
   getSiteSettings,
+  getMediaUrl,
+  getTaskUpdates,
   get311RequestDetails,
   getCaptureGuidance,
   rejectAnalysisCondition,
@@ -463,6 +465,33 @@ describe("duplicate separation invalidation", () => {
     } finally {
       stop();
       vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("timeline read cancellation", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("passes the caller signal to core, media, and every City batch fetch", async () => {
+    const controller = new AbortController();
+    const fetch = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(new Response('{"requests":[]}', { status: 200 })),
+      );
+    vi.stubGlobal("fetch", fetch);
+    await getTaskUpdates("task", undefined, { signal: controller.signal });
+    await getMediaUrl("check", "photo", { signal: controller.signal });
+    await get311RequestDetails(
+      Array.from({ length: 51 }, (_, i) => ({
+        taskId: `t${i}`,
+        srNum: `s${i}`,
+      })),
+      { signal: controller.signal },
+    );
+    expect(fetch).toHaveBeenCalledTimes(4);
+    for (const [, options] of fetch.mock.calls) {
+      expect(options.signal).toBe(controller.signal);
     }
   });
 });

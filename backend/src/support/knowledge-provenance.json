@@ -1,0 +1,30 @@
+{
+  "sourceDocument": "Good Neighbor FAQ v2.docx",
+  "sourceSha256": "13db8b74dfaa3047adcc213d2c0281c419ccc2de0d39102bef8a558bae5236a4",
+  "reviewedOn": "2026-10-27",
+  "basis": "FAQ v2 and product-owner clarifications in the support-chat task; guide entries reviewed against the following code.",
+  "behaviorFiles": {
+    "frontend/src/domain/check-completion.js": "20904aa114ec5b198400ba98e56bec58140dc3c9ba4068021d4f505175c46e66",
+    "frontend/src/components/today-view.templates.js": "0c61712706db4d64a4c406a0fc8ba7fe670f1328b1b770efcf3e57165b1fae84"
+  },
+  "guideEvidence": {
+    "GUIDE-01": [
+      "frontend/src/domain/check-completion.js",
+      "frontend/src/domain/check-completion.test.js"
+    ],
+    "GUIDE-02": [
+      "frontend/src/components/today-view.templates.js",
+      "frontend/src/components/support-view.js"
+    ]
+  },
+  "policyDocument": {
+    "filename": "Good_Neighbor_Policy_FINAL_08.19.2026.pdf",
+    "sha256": "3cbc9b4bb487f0b4c488226b5eaab3d5640c8a84b26766158dfb7aa31d69a319",
+    "pages": 13,
+    "sourceIds": "POLICY-01 through POLICY-13",
+    "extraction": "Full page text, with page footer removed; page numbers retained in citation titles.",
+    "ambiguities": [
+      "Page 4 makes GN-app documentation of community concerns optional; page 8 requires it. Refer applicability questions to the funding department."
+    ]
+  }
+}

@@ -668,7 +668,8 @@ html.wa-dark .analysis-card__clear-copy a {
   background: var(--surface-2);
 }
 
-.analysis-card__media img {
+.analysis-card__media img,
+artifact-photo img {
   width: 100%;
   height: 100%;
   display: block;
@@ -677,6 +678,7 @@ html.wa-dark .analysis-card__clear-copy a {
 }
 
 .analysis-card__media [data-photo-lightbox] {
+  opacity: 1;
   width: 100%;
   height: 100%;
   border-radius: inherit;
@@ -688,7 +690,7 @@ html.wa-dark .analysis-card__clear-copy a {
   outline-offset: -0.1875rem;
 }
 
-.analysis-card__media span {
+.analysis-card__media span:not(.photo-placeholder) {
   position: absolute;
   top: 0.5rem;
   right: 0.5rem;
@@ -719,7 +721,7 @@ html.wa-dark .analysis-card__clear-copy a {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--wa-color-neutral-80, #c7c9d0);
+  color: var(--text-secondary);
   font-size: var(--wa-font-size-xl, 1.5625rem);
 }
 
@@ -780,8 +782,10 @@ html.wa-dark .analysis-card__clear-copy a {
   }
 }
 
-/* Inline, non-destructive failure notice on a card (task action failed). */
-.actioncard__error {
+/* Inline, non-destructive failure notice on a card (task action failed, or
+   a background 311 filing that gave up). */
+.actioncard__error,
+.analysis-card__filing-note {
   margin: 0.6rem 0 0;
   color: var(--danger, #b42318);
   font-size: 0.9rem;

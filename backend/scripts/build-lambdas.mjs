@@ -54,6 +54,7 @@ const shared = {
 };
 
 const entries = [
+  { name: "support", entry: resolve(backendRoot, "src/lambda/support.js") },
   {
     name: "duplicate-dispatch",
     entry: resolve(backendRoot, "src/lambda/duplicate-dispatch.js"),

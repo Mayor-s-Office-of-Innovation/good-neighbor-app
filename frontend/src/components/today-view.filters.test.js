@@ -83,6 +83,13 @@ vi.mock("../services/api.js", () => ({
   listChecks: catalog.listChecks,
   listTasks: catalog.listTasks,
 }));
+const queued311 = vi.hoisted(() => ({
+  stop: vi.fn(),
+  watch: vi.fn(),
+}));
+vi.mock("../services/queued-311-filings.js", () => ({
+  watchQueued311Filings: queued311.watch,
+}));
 vi.mock("../state/check-session.js", () => ({
   getCurrentCheck: () => session.current,
   hasDraft: async () => Boolean(session.current),
@@ -990,6 +997,136 @@ describe("deferred In-progress / History lists", () => {
       }
     },
   );
+
+  describe("background 311 filing", () => {
+    const tapped = (appActionStatus, reason = "sf311_timeout") => ({
+      ...openTask,
+      status: "in_progress",
+      inProgressActionKind: "311_filed",
+      appActionStatus,
+      appActions: [{ code: "create_311_ticket" }],
+      appActionResults:
+        appActionStatus === "failed"
+          ? [{ code: "create_311_ticket", status: "failed", reason }]
+          : [],
+    });
+    const idleCard = (taskId) => ({
+      isConnected: false,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      getAttribute: () => taskId,
+      setAttribute: vi.fn(),
+      removeAttribute: vi.fn(),
+    });
+    beforeEach(() => {
+      queued311.watch.mockReset().mockReturnValue(queued311.stop);
+      queued311.stop.mockReset();
+    });
+
+    it("counts a queued filing as accepted", async () => {
+      freezeClock();
+      const { getToasts } = await import("../state/toasts.js");
+      getToasts().forEach((toast) => toast.close());
+      const view = liveView("?filter=todo");
+      view._homeModel = { tasks: [openTask], checks: [] };
+      const onSuccess = vi.fn();
+      try {
+        const result = await view._run(
+          idleCard(openTask.taskId),
+          async () => ({ task: tapped("queued") }),
+          { requireSubmitted311: true, onSuccess },
+        );
+        expect(result).toMatchObject({ task: { appActionStatus: "queued" } });
+        expect(onSuccess).toHaveBeenCalledTimes(1);
+        expect(getToasts()).toHaveLength(0);
+      } finally {
+        getToasts().forEach((toast) => toast.close());
+      }
+    });
+
+    it("offers a retry on a failed filing only when it can help", () => {
+      freezeClock();
+      const view = liveView("?filter=inprogress");
+      const entryFor = (task) => {
+        view._homeModel = { tasks: [task], checks: [] };
+        return view._homeTasks(view._homeModel.tasks)[0];
+      };
+
+      const retryable = view._taskCardEntry(
+        entryFor(tapped("failed")),
+        false,
+      ).markup;
+      expect(retryable).toContain('data-action="file311"');
+      expect(retryable).toContain(escapeHtml(t("today.action.retryFiling")));
+      expect(retryable).toContain(
+        escapeHtml(t("taskAction.failure.sf311Timeout")),
+      );
+      expect(retryable).toContain('data-status-ticker="filingFailed"');
+
+      const uncertain = view._taskCardEntry(
+        entryFor(
+          tapped("failed", "sf311_creation_uncertain_requires_reconciliation"),
+        ),
+        false,
+      ).markup;
+      expect(uncertain).not.toContain('data-action="file311"');
+      expect(uncertain).toContain(
+        escapeHtml(t("taskAction.failure.creationUncertain")),
+      );
+
+      const queued = view._taskCardEntry(
+        entryFor(tapped("queued")),
+        false,
+      ).markup;
+      expect(queued).toContain('data-status-ticker="filing"');
+      expect(queued).not.toContain('data-action="file311"');
+      expect(queued).not.toContain("analysis-card__filing-note");
+    });
+
+    it("watches queued filings and applies the outcome", async () => {
+      freezeClock();
+      const { getToasts } = await import("../state/toasts.js");
+      getToasts().forEach((toast) => toast.close());
+      const view = liveView("?filter=inprogress");
+      view._siteId = "site-1";
+      view._refreshAfterAction = vi.fn();
+      const queued = tapped("queued");
+      view._homeModel = { tasks: [queued, doneTask], checks: [] };
+
+      view._watchQueued311(view._homeModel.tasks);
+      view._watchQueued311(view._homeModel.tasks);
+      expect(queued311.watch).toHaveBeenCalledTimes(1);
+      const [ids, onSettled] = queued311.watch.mock.calls[0];
+      expect(ids).toEqual([queued.taskId]);
+
+      const filedTask = {
+        ...queued,
+        appActionStatus: "submitted",
+        appActionResults: [
+          {
+            code: "create_311_ticket",
+            status: "submitted",
+            payload: { tickets: [{ srNum: "SR-9" }] },
+          },
+        ],
+      };
+      try {
+        onSettled(filedTask);
+        expect(
+          view._homeModel.tasks.find((task) => task.taskId === queued.taskId),
+        ).toMatchObject({ appActionStatus: "submitted" });
+        expect(view._confirmedTasks.get(queued.taskId)).toBe(filedTask);
+        expect(getToasts()).toHaveLength(1);
+        expect(view._refreshAfterAction).toHaveBeenCalled();
+
+        view._watchQueued311([filedTask]);
+        expect(queued311.stop).toHaveBeenCalledTimes(1);
+        expect(queued311.watch).toHaveBeenCalledTimes(1);
+      } finally {
+        getToasts().forEach((toast) => toast.close());
+      }
+    });
+  });
 
   it("paints from the open list alone, then fetches the rest and reveals counts", async () => {
     freezeClock();

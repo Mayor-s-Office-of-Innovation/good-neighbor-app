@@ -7,7 +7,14 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
-import { taskKey } from "../handlers/keys.js";
+import {
+  taskKey,
+  taskUpdateKey,
+  taskUpdatePointerKey,
+  taskUpdateTimelineGsi,
+  taskWorklistDateGsi,
+} from "../handlers/keys.js";
+import { logServerError } from "../lib/log-server-error.js";
 import {
   executeAppActions,
   eligibleTicketsForClosure,
@@ -24,6 +31,13 @@ const permanentReasons = new Set([
   "no_service_codes",
   "responsible_agency_not_found",
 ]);
+/**
+ * A tapped filing gives up on the queue's last delivery, so the task ends
+ * `failed` (and the card offers retry) instead of the message reaching the
+ * DLQ with the task stuck `queued`. Keep in sync with the submissions
+ * queue's `maxReceiveCount` in infra/modules/app/lambda.tf.
+ */
+const MAX_FILING_ATTEMPTS = 5;
 
 /** @param {string | undefined} receiveCount
  * @param {number} [leaseWaitSeconds]
@@ -65,7 +79,9 @@ export function mergeBackgroundResult(prior, result) {
 export const handler = async (event) => {
   for (const record of event.Records) {
     try {
-      await runJob(JSON.parse(record.body));
+      await runJob(JSON.parse(record.body), {
+        receiveCount: Number(record.attributes?.ApproximateReceiveCount) || 1,
+      });
     } catch (error) {
       // The dispatcher invokes us with one record and reports this rejection as
       // a partial batch failure. Never acknowledge a failed visibility update.
@@ -87,8 +103,11 @@ export const handler = async (event) => {
   }
 };
 
-/** @param {{siteId: string, taskId: string, jobPk: string, jobSk: string}} message */
-export async function runJob(message) {
+/**
+ * @param {{siteId: string, taskId: string, jobPk: string, jobSk: string}} message
+ * @param {{ receiveCount?: number }} [delivery]
+ */
+export async function runJob(message, delivery = {}) {
   const { dynamoTable: tableName } = getConfig();
   const jobKey = { pk: message.jobPk, sk: message.jobSk };
   if (
@@ -180,6 +199,22 @@ export async function runJob(message) {
       ...(claimed.Attributes?.results || []),
     ])
       results = mergeBackgroundResult(results, result);
+    if (job.trigger === "user_confirmed") {
+      await fileUserConfirmed({
+        tableName,
+        message,
+        jobKey,
+        lockKey,
+        token,
+        job,
+        task,
+        results,
+        checkpoint,
+        read,
+        attempt: delivery.receiveCount ?? 1,
+      });
+      return;
+    }
     const alreadyFiled = results.some(
       (result) =>
         result.code === "create_311_ticket" && result.status === "submitted",
@@ -311,4 +346,236 @@ export async function runJob(message) {
         });
     }
   }
+}
+
+/**
+ * A "File 311 ticket" tap queued by `analysis/guidance/sf311-filing-queue.js`.
+ * Runs the task's user-confirmed actions, then records the outcome on the
+ * task the way the old in-request path did:
+ * - filed: timeline entry, and tasks that cannot be in progress complete
+ *   with `completionMethod: "311_filed"`;
+ * - retryable failure: back to `queued`, and the throw makes the handler
+ *   back off and let SQS redeliver;
+ * - permanent failure or last try: `failed`. The task stays `in_progress` so
+ *   the card can offer a retry tap, which queues a new job.
+ * @param {object} ctx
+ * @param {string} ctx.tableName
+ * @param {{siteId: string, taskId: string}} ctx.message
+ * @param {{pk: string, sk: string}} ctx.jobKey
+ * @param {{pk: string, sk: string}} ctx.lockKey
+ * @param {string} ctx.token
+ * @param {Record<string, any>} ctx.job
+ * @param {Record<string, any>} ctx.task
+ * @param {import("../analysis/guidance/app-actions.js").AppActionResult[]} ctx.results
+ * @param {(result: import("../analysis/guidance/app-actions.js").AppActionResult) => Promise<void>} ctx.checkpoint
+ * @param {(key: {pk: string, sk: string}) => Promise<Record<string, any> | undefined>} ctx.read
+ * @param {number} ctx.attempt
+ * @returns {Promise<void>}
+ */
+async function fileUserConfirmed(ctx) {
+  const { tableName, message, jobKey, task } = ctx;
+  const { siteId, taskId } = message;
+  const key = taskKey(siteId, taskId);
+  /** @param {Record<string, any> | undefined} item */
+  const waiting = (item) =>
+    item?.status === "in_progress" &&
+    item.inProgressActionKind === "311_filed" &&
+    item.appActionStatus === "queued";
+  /** @param {string} status */
+  const finishJob = (status) =>
+    ddb.send(
+      new UpdateCommand({
+        TableName: tableName,
+        Key: jobKey,
+        UpdateExpression: "SET #status = :status",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: { ":status": status },
+      }),
+    );
+  // The task moved on (resolved, or filed by an earlier job): nothing to do.
+  if (!waiting(task)) return void (await finishJob("abandoned"));
+
+  const executed = await executeAppActions(task.appActions || [], {
+    tableName,
+    siteId,
+    taskId,
+    task,
+    priorResults: ctx.results,
+    trigger: "user_confirmed",
+    onCheckpoint: ctx.checkpoint,
+  });
+  for (const result of executed) await ctx.checkpoint(result);
+  const filing = executed.find((result) => result.code === "create_311_ticket");
+  const filed = filing?.status === "submitted";
+  const retry =
+    !filed &&
+    filing?.status === "failed" &&
+    !permanentReasons.has(filing.reason || "") &&
+    // A City outcome we can't confirm needs an operator, not another try.
+    !(filing.reason || "").endsWith("_requires_reconciliation") &&
+    ctx.attempt < MAX_FILING_ATTEMPTS;
+
+  // Re-read after the remote calls; the checkpoints above keep any filed
+  // ticket even if the task changed meanwhile.
+  const current = await ctx.read(key);
+  if (!waiting(current)) return void (await finishJob("abandoned"));
+  let merged = current?.appActionResults || [];
+  for (const result of executed) merged = mergeBackgroundResult(merged, result);
+
+  const now = new Date().toISOString();
+  const updateId = randomUUID();
+  const completes = filed && current?.canBeInProgress !== true;
+  /** @type {Record<string, unknown>} */
+  const set = {
+    appActionResults: merged,
+    appActionStatus: filed
+      ? summarizeAppActionResults(merged)
+      : retry
+        ? "queued"
+        : "failed",
+    updatedAt: now,
+    ...(filed
+      ? {
+          notifiedAt: now,
+          latestUpdateId: updateId,
+          latestUpdateLabel: "311 ticket filed",
+        }
+      : {}),
+    ...(completes
+      ? {
+          status: "completed",
+          completedAt: now,
+          resolvedAt: now,
+          completionMethod: "311_filed",
+          ...taskWorklistDateGsi(
+            siteId,
+            "completed",
+            String(current?.kind),
+            Number(current?.severity ?? 0),
+            now,
+            taskId,
+          ),
+        }
+      : {}),
+  };
+  /** @type {Record<string, string>} */
+  const names = { "#status": "status" };
+  /** @type {Record<string, unknown>} */
+  const values = {
+    ":inProgress": "in_progress",
+    ":queued": "queued",
+    ...(current?.appActionResults
+      ? { ":prior": current.appActionResults }
+      : {}),
+  };
+  const assignments = Object.entries(set).map(([attribute, value], index) => {
+    names[`#a${index}`] = attribute;
+    values[`:a${index}`] = value;
+    return `#a${index} = :a${index}`;
+  });
+  await ddb.send(
+    new TransactWriteCommand({
+      TransactItems: [
+        {
+          ConditionCheck: {
+            TableName: tableName,
+            Key: ctx.lockKey,
+            ConditionExpression: "sf311Lease = :token",
+            ExpressionAttributeValues: { ":token": ctx.token },
+          },
+        },
+        {
+          Update: {
+            TableName: tableName,
+            Key: key,
+            UpdateExpression: `SET ${assignments.join(", ")}`,
+            ConditionExpression:
+              "#status = :inProgress AND appActionStatus = :queued AND " +
+              (current?.appActionResults
+                ? "appActionResults = :prior"
+                : "attribute_not_exists(appActionResults)"),
+            ExpressionAttributeNames: names,
+            ExpressionAttributeValues: values,
+          },
+        },
+        {
+          Update: {
+            TableName: tableName,
+            Key: jobKey,
+            UpdateExpression: "SET #status = :status, results = :results",
+            ExpressionAttributeNames: { "#status": "status" },
+            ExpressionAttributeValues: {
+              ":status": filed ? "complete" : retry ? "retry" : "failed",
+              ":results": executed,
+            },
+          },
+        },
+        ...(filed
+          ? [
+              {
+                Put: {
+                  TableName: tableName,
+                  Item: {
+                    ...taskUpdateKey(siteId, taskId, now, updateId),
+                    ...taskUpdateTimelineGsi(siteId, now, updateId),
+                    entityType: "task_update",
+                    taskId,
+                    updateId,
+                    type: "311_ticket_filed",
+                    label: "311 ticket filed",
+                    occurredAt: now,
+                    actorId: String(ctx.job.actorId ?? "site-team"),
+                    documentationState:
+                      current?.canBeInProgress === false
+                        ? "open_for_documentation"
+                        : "closed",
+                  },
+                  ConditionExpression: "attribute_not_exists(pk)",
+                },
+              },
+              {
+                Put: {
+                  TableName: tableName,
+                  Item: {
+                    ...taskUpdatePointerKey(siteId, taskId, updateId),
+                    entityType: "task_update_pointer",
+                    taskId,
+                    updateId,
+                    updateSk: taskUpdateKey(siteId, taskId, now, updateId).sk,
+                  },
+                  ConditionExpression: "attribute_not_exists(pk)",
+                },
+              },
+            ]
+          : []),
+      ],
+    }),
+  );
+  if (!filed) {
+    // Logged on every failed attempt, retried or not, so the reason HUB gave
+    // is visible next to the worker's generic retry error.
+    logServerError(
+      "task app-action create_311_ticket",
+      new Error(String(filing?.reason ?? "app action failed")),
+      {
+        extra: {
+          eventType: "311_app_action_failed",
+          taskId,
+          siteId,
+          ruleId: String(current?.ruleId ?? ""),
+          trigger: "user_confirmed",
+          completionMethod: "311_filed",
+          attempt: ctx.attempt,
+          willRetry: retry,
+          ...(filing?.diagnostics?.status
+            ? { sf311Status: filing.diagnostics.status }
+            : {}),
+          ...(filing?.diagnostics?.code
+            ? { sf311Code: filing.diagnostics.code }
+            : {}),
+        },
+      },
+    );
+  }
+  if (retry) throw new Error("SF311 filing failed; retry from checkpoint");
 }

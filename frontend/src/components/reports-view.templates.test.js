@@ -445,7 +445,9 @@ describe("dayDetail", () => {
     expect(markup).not.toContain(escapeHtml(t("reports.check.missing")));
     expect(markup).toContain("9:04 AM");
     expect(markup).toContain('data-full-src="https://media/p1"');
-    expect(markup).toContain("reports-timeline__photo--placeholder");
+    // A failed initial URL lookup remains a renewable photo, not a permanent blank.
+    expect(markup).toContain('data-artifact-id="p2"');
+    expect(markup).not.toContain("reports-timeline__photo--placeholder");
     expect(markup).toContain(escapeHtml(t("reports.check.description")));
     // Tasks render as the home hub's card, read-only but for the updates
     // row: a 311 request opens the request sheet, anything else the

@@ -3,6 +3,7 @@ import {
   submitted311Ticket,
   taskResolution,
 } from "./home-tasks.js";
+import { filing311State } from "./task-actions.js";
 import { duplicateUiEnabled } from "../services/feature-flags.js";
 
 /** A single ordered decision table for every issue-card surface.
@@ -55,6 +56,9 @@ export function statusTicker(task, { history = false, now = Date.now() } = {}) {
       urgent ? "circle-exclamation" : "dot",
     );
   }
+  const filing = filing311State(task);
+  if (filing === "queued") return state("filing", "progress", "spinner");
+  if (filing === "failed") return state("filingFailed", "warning");
   const filed = Boolean(submitted311Ticket(task));
   if (filed && task.ticketStatus === "Closed")
     return state("cityClosed", "warning");

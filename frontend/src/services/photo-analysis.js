@@ -265,8 +265,10 @@ function assessmentFromAnalysis({ checkId, artifactId, analysis }) {
   };
 }
 
+// 0,0 is the analyzer's placeholder for a photo without device location.
 function hasCoordinates(value) {
   return (
+    !(value?.latitude === 0 && value?.longitude === 0) &&
     Number.isFinite(value?.latitude) &&
     Number.isFinite(value?.longitude) &&
     value.latitude >= -90 &&

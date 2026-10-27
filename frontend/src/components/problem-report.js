@@ -10,9 +10,11 @@ import {
   problem-report — a single-problem capture flow. Each captured photo analyzes
   immediately and renders through the same live result cards as perimeter check.
 */
+// Shared capture layout must load even when this route opens before /check.
+import "./perimeter-check.css";
 import "./problem-report.css";
 import {
-  show311SuccessToast,
+  show311FilingToast,
   show311ErrorToast,
   showActionSaveErrorToast,
   showAnswerSaveErrorToast,
@@ -53,10 +55,7 @@ import {
   expectedArtifactCountForCheck,
   finalizeCaptureScorecardInBackground,
 } from "../services/submit-check.js";
-import {
-  isFiled311Completion,
-  submitted311ServiceRequestNumber,
-} from "../domain/task-actions.js";
+import { isAccepted311Filing } from "../domain/task-actions.js";
 import { hasEvidence, hasLiveEvidence } from "../domain/check-completion.js";
 import {
   ensureProblemReport,
@@ -664,12 +663,12 @@ class ProblemReport extends HTMLElement {
           completionMethod: "311_filed",
         });
         this._analysisProgressDialog?.close();
-        if (!isFiled311Completion(result?.task)) {
+        if (!isAccepted311Filing(result?.task)) {
           show311ErrorToast();
           return;
         }
         this._markProblemResolved(problem);
-        show311SuccessToast(submitted311ServiceRequestNumber(result.task));
+        show311FilingToast(result.task);
       } catch (err) {
         console.error("escalation failed", err);
         this._analysisProgressDialog?.close();

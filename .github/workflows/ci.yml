@@ -57,6 +57,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Check support knowledge provenance
+        run: npm run support:check --workspace backend
+
       - name: Validate guidance policy
         run: npm run policy:validate --workspace backend
 
@@ -91,6 +94,9 @@ jobs:
 
       - name: Install
         run: npm ci
+
+      - name: Test support dialog accessibility
+        run: npm run test:support:ui
 
       # Browsers and their OS dependencies are in the image. The host runner's
       # Java installation is not available inside the job container.

@@ -9,6 +9,7 @@ locals {
   sf311_lambda_environment = {
     SF311_MEDIA_BASE_URL              = "https://${var.sf311_media_domain_name}"
     GNP_311_SUBMISSION_ENABLED        = tostring(var.enable_311_submission)
+    GNP_311_ASYNC_FILING              = tostring(var.enable_311_async_filing)
     SF311_CREATESR_URL                = var.sf311_createsr_url
     SF311_UPDATESR_URL                = var.sf311_updatesr_url
     SF311_AGENCY_LOOKUP_URL           = var.sf311_agency_lookup_url
@@ -160,7 +161,7 @@ resource "aws_lambda_permission" "cognito_email_sender" {
 }
 
 resource "aws_lambda_function" "api" {
-  #checkov:skip=CKV_AWS_115:Intentional use of account unreserved concurrency for synchronized perimeter checks across 400 sites; the former cap of 10 rejected normal result reads. API Gateway and WAF rate limits remain in place, with API Lambda throttle alarms for capacity monitoring.
+  #checkov:skip=CKV_AWS_115:Intentional use of account unreserved concurrency for synchronized perimeter checks across 400 sites; the former cap of 10 rejected normal result reads. API Gateway matches regional account quotas; WAF rate limits and API Lambda throttle alarms remain in place.
   #checkov:skip=CKV_AWS_116:Sync API-Gateway-invoked function; failures return to the caller, so a Lambda DLQ is N/A (the worker keeps a real DLQ).
   #checkov:skip=CKV_AWS_117:No VPC — the function needs public AWS-API egress and holds no VPC-only data; revisit with VPC + endpoints.
   #checkov:skip=CKV_AWS_272:Code signing not set up for this app yet; tracked follow-up.
@@ -369,7 +370,8 @@ resource "aws_sqs_queue_redrive_policy" "submissions" {
 
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.submissions_dlq.arn
-    maxReceiveCount     = 5
+    # Keep in sync with MAX_FILING_ATTEMPTS in backend/src/workers/sf311-job.js.
+    maxReceiveCount = 5
   })
 }
 

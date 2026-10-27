@@ -2,15 +2,16 @@
   task-evidence — hydrate home worklist tasks with their source artifact
   (place name, georeferenced address, and a signed media URL).
 
-  Both lookups are memoised per page load: check artifacts by checkId, media
-  URLs by checkId:artifactId. A failed lookup is evicted so the next render
-  retries.
+  Check artifacts are memoised per page load. Signed media URLs are shared
+  by checkId:artifactId only until their renewal deadline. Failures use a short
+  backoff; failed hydration remains eligible for later retry.
 */
 import { getCheck, getMediaUrl } from "./api.js";
 import { taskArtifactIds } from "../domain/home-tasks.js";
 
 const CHECK_ARTIFACTS_CACHE = new Map();
 const MEDIA_URL_CACHE = new Map();
+const MEDIA_FAILURES = new Map();
 
 export async function hydrateTaskEvidence(tasks) {
   const checkIds = [
@@ -62,26 +63,38 @@ async function hydrateTaskFromArtifacts(task, artifacts) {
     placeName: artifact.placeName || task.placeName || task.location || "",
     georeferencedAddress: artifact.georeferencedAddress || "",
     text: artifact.text || "",
+    kind: artifact.contentType?.startsWith?.("image/") ? "photo" : "text",
   };
   if (artifact.s3Key && artifact.contentType?.startsWith?.("image/")) {
     try {
-      const { downloadUrl, thumbnailUrl } = await cachedMediaUrls(
+      const { downloadUrl, thumbnailUrl, expiresAt } = await cachedMediaUrls(
         task.checkId,
         artifact.artifactId,
       );
       // `taskMediaUrl` picks the thumbnail for cards when the worker has
       // stored one and falls back to the original; the original is always
       // the lightbox source.
-      return { ...task, evidence, mediaUrl: downloadUrl, thumbnailUrl };
-    } catch (err) {
-      console.warn("Could not hydrate task media", {
-        checkId: task.checkId,
-        artifactId: artifact.artifactId,
-        err,
-      });
+      return {
+        ...task,
+        evidence,
+        mediaUrl: downloadUrl,
+        thumbnailUrl,
+        mediaExpiresAt: expiresAt,
+        mediaState: "ready",
+        mediaRetryAt: undefined,
+      };
+    } catch {
+      return {
+        ...task,
+        evidence,
+        mediaUrl: undefined,
+        thumbnailUrl: undefined,
+        mediaState: "retry",
+        mediaRetryAt: Date.now() + 5000,
+      };
     }
   }
-  return { ...task, evidence };
+  return { ...task, evidence, mediaState: "none" };
 }
 
 /**
@@ -119,7 +132,7 @@ async function cachedCheckArtifacts(checkId) {
 }
 
 /**
- * @typedef {{ downloadUrl: string, thumbnailUrl?: string }} MediaUrls
+ * @typedef {{ downloadUrl: string, thumbnailUrl?: string, expiresAt:number }} MediaUrls
  *   `downloadUrl` is the original; `thumbnailUrl` the small card variant when
  *   the backend has one for this photo.
  */
@@ -131,21 +144,68 @@ async function cachedCheckArtifacts(checkId) {
  */
 export async function cachedMediaUrls(checkId, artifactId) {
   const key = `${checkId}:${artifactId}`;
-  if (!MEDIA_URL_CACHE.has(key)) {
-    MEDIA_URL_CACHE.set(
-      key,
-      getMediaUrl(checkId, artifactId)
-        .then(({ downloadUrl, thumbnailUrl }) => ({
-          downloadUrl,
-          thumbnailUrl,
-        }))
-        .catch((err) => {
-          MEDIA_URL_CACHE.delete(key);
-          throw err;
-        }),
-    );
-  }
-  return MEDIA_URL_CACHE.get(key);
+  const failure = MEDIA_FAILURES.get(key);
+  if (failure?.retryAt > Date.now()) throw failure.error;
+  const cached = MEDIA_URL_CACHE.get(key);
+  if (cached && (cached.pending || cached.expiresAt > Date.now()))
+    return cached.promise;
+  const started = Date.now();
+  const entry = {
+    pending: true,
+    expiresAt: 0,
+    diagnosticStatus: failure?.diagnosticStatus,
+    promise: /** @type {Promise<MediaUrls>} */ (null),
+  };
+  entry.promise = getMediaUrl(checkId, artifactId)
+    .then(({ downloadUrl, thumbnailUrl, expiresIn }) => {
+      // Start the clock before the request and renew 30 seconds before expiry.
+      // Short TTLs keep a proportional margin instead of becoming instantly stale.
+      const ttl =
+        Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn * 1000 : 300000;
+      entry.expiresAt = started + ttl - Math.min(30000, ttl / 10);
+      entry.pending = false;
+      if (MEDIA_URL_CACHE.get(key) === entry) MEDIA_FAILURES.delete(key);
+      return { downloadUrl, thumbnailUrl, expiresAt: entry.expiresAt };
+    })
+    .catch((error) => {
+      if (MEDIA_URL_CACHE.get(key) === entry) {
+        MEDIA_URL_CACHE.delete(key);
+        const status = Number.isInteger(error?.status) ? error.status : 0;
+        // One diagnostic per artifact/status until a successful signing resets it.
+        // Never include raw errors: network messages can contain signed URLs.
+        if (entry.diagnosticStatus !== status)
+          console.warn("Photo signing failed", { checkId, artifactId, status });
+        MEDIA_FAILURES.set(key, {
+          error,
+          retryAt: Date.now() + 5000,
+          diagnosticStatus: status,
+        });
+      }
+      throw error;
+    });
+  MEDIA_URL_CACHE.set(key, entry);
+  return entry.promise;
+}
+
+/** Invalidate one failed image, never another artifact or an in-flight signer.
+ * @param {string} checkId @param {string} artifactId
+ */
+export function invalidateMediaUrls(checkId, artifactId) {
+  const key = `${checkId}:${artifactId}`;
+  if (!MEDIA_URL_CACHE.get(key)?.pending) MEDIA_URL_CACHE.delete(key);
+}
+
+/** Avoid repeating doomed requests on each card rerender. Missing media may be
+ * restored, so this negative result expires rather than becoming permanent.
+ * @param {string} checkId @param {string} artifactId
+ */
+export function markMediaUnavailable(checkId, artifactId) {
+  const key = `${checkId}:${artifactId}`;
+  MEDIA_URL_CACHE.delete(key);
+  MEDIA_FAILURES.set(key, {
+    error: Object.assign(new Error("Image unavailable"), { status: 404 }),
+    retryAt: Date.now() + 60000,
+  });
 }
 
 function firstTaskArtifact(task, artifacts) {
@@ -158,13 +218,18 @@ function firstTaskArtifact(task, artifacts) {
 }
 
 export function needsTaskEvidenceHydration(task) {
-  return Boolean(
-    task?.checkId &&
-      taskArtifactIds(task).length &&
-      !task?.evidence?.artifactId &&
-      !task?.mediaUrl &&
-      !task?.thumbnailUrl,
-  );
+  if (
+    !task?.checkId ||
+    !taskArtifactIds(task).length ||
+    task.mediaState === "none"
+  )
+    return false;
+  if (task.mediaRetryAt > Date.now()) return false;
+  if (task.mediaUrl || task.thumbnailUrl)
+    return (
+      Number.isFinite(task.mediaExpiresAt) && task.mediaExpiresAt <= Date.now()
+    );
+  return task.evidence?.kind !== "text";
 }
 
 export function mergeHydratedTasks(tasks, hydratedTasks) {
