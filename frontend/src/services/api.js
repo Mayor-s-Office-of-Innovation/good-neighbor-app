@@ -895,12 +895,14 @@ export async function putMedia(
  * when present, is the worker's small WebP card variant.
  * @param {string} checkId
  * @param {string} artifactId
+ * @param {{signal?: AbortSignal}} [options]
  * @returns {Promise<{ artifactId: string, s3Key: string, downloadUrl: string, thumbnailUrl?: string, expiresIn: number }>}
  */
-export function getMediaUrl(checkId, artifactId) {
+export function getMediaUrl(checkId, artifactId, { signal } = {}) {
   return request(
     "GET",
     `/v1/checks/${encodeURIComponent(checkId)}/artifacts/${encodeURIComponent(artifactId)}/media`,
+    { signal },
   );
 }
 
@@ -959,10 +961,12 @@ export function listTasks({ status, limit } = {}) {
   return request("GET", `/v1/tasks${qs({ status, limit })}`);
 }
 
-export function getTaskUpdates(taskId, nextToken) {
+/** @param {string} taskId @param {string} [nextToken] @param {{signal?: AbortSignal}} [options] */
+export function getTaskUpdates(taskId, nextToken, { signal } = {}) {
   return request(
     "GET",
     `/v1/tasks/${encodeURIComponent(taskId)}/updates${qs({ nextToken })}`,
+    { signal },
   );
 }
 
@@ -1010,16 +1014,20 @@ export const MAX_311_BATCH_SIZE = 50;
  * parallel and merged. A batch that fails is dropped so the others still
  * hydrate their cards; the call rejects only when every batch failed.
  * @param {Array<{ taskId: string, srNum: string }>} requests
+ * @param {{signal?: AbortSignal}} [options]
  * @returns {Promise<{ requests: Array<{ taskId: string, request: Record<string, any> }> }>}
  */
-export async function get311RequestDetails(requests) {
+export async function get311RequestDetails(requests, { signal } = {}) {
   const batches = [];
   for (let i = 0; i < requests.length; i += MAX_311_BATCH_SIZE) {
     batches.push(requests.slice(i, i + MAX_311_BATCH_SIZE));
   }
   const settled = await Promise.allSettled(
     batches.map((batch) =>
-      request("POST", "/v1/311-requests:batch", { body: { requests: batch } }),
+      request("POST", "/v1/311-requests:batch", {
+        body: { requests: batch },
+        signal,
+      }),
     ),
   );
   const fulfilled = settled.filter((r) => r.status === "fulfilled");
