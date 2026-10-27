@@ -341,6 +341,17 @@ resource "aws_cloudwatch_log_group" "api_gw" {
   tags              = var.tags
 }
 
+# Read each environment's regional account quotas; do not request increases.
+data "aws_servicequotas_service_quota" "api_gateway_rate" {
+  service_code = "apigateway"
+  quota_name   = "Throttle rate"
+}
+
+data "aws_servicequotas_service_quota" "api_gateway_burst" {
+  service_code = "apigateway"
+  quota_name   = "Throttle burst rate"
+}
+
 resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.http.id
   name        = "$default"
@@ -371,8 +382,12 @@ resource "aws_apigatewayv2_stage" "default" {
   }
 
   default_route_settings {
-    throttling_burst_limit = 100
-    throttling_rate_limit  = 200
+    # Match account capacity instead of imposing a lower application ceiling.
+    # Keep explicit values: removing this block can retain old settings, while
+    # omitting its limits can send zero and reject all requests (provider #30373).
+    # Account quota changes are picked up on the next Terraform deployment.
+    throttling_burst_limit = data.aws_servicequotas_service_quota.api_gateway_burst.value
+    throttling_rate_limit  = data.aws_servicequotas_service_quota.api_gateway_rate.value
   }
 
   tags = var.tags
