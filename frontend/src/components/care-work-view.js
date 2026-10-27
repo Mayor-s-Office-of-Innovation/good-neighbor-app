@@ -64,7 +64,13 @@ export class CareWorkView extends HTMLElement {
     this._route = currentRoute();
     this.classList.add("care-work");
     this.innerHTML = `${careHeader(t("care.title"), true)}<p role="status">${escapeHtml(t("care.loading"))}</p>`;
-    const site = await getSite();
+    let site;
+    try {
+      site = await getSite();
+    } catch {
+      if (this.isConnected) this._loadError(() => this.connectedCallback());
+      return;
+    }
     if (!this.isConnected) return;
     this._siteId = site?.siteId || "";
     if (draft && draft.siteId !== this._siteId) clearDraft();
@@ -142,6 +148,7 @@ export class CareWorkView extends HTMLElement {
         clearDraft();
         draft = {
           ...record,
+          editing: true,
           error: "",
           payload: null,
           files: record.files.map((entry) => ({
@@ -170,19 +177,36 @@ export class CareWorkView extends HTMLElement {
     const items = new Map();
     const remoteIds = new Set();
     let failed = false;
+    let storageFailed = false;
     const render = async () => {
-      for (const record of await listCareSubmissions(this._siteId)) {
-        if (record.status === "saved" && remoteIds.has(record.workId)) {
-          await deleteCareSubmission(this._siteId, record.workId);
-        } else
-          items.set(record.workId, record.work || { ...record, photos: [] });
+      try {
+        for (const record of await listCareSubmissions(this._siteId)) {
+          if (record.status === "saved" && remoteIds.has(record.workId)) {
+            try {
+              await deleteCareSubmission(this._siteId, record.workId);
+            } catch {
+              storageFailed = true;
+            }
+          } else
+            items.set(record.workId, record.work || { ...record, photos: [] });
+        }
+      } catch {
+        storageFailed = true;
       }
       if (!this.isConnected || version !== this._listVersion) return;
       this.innerHTML = careList([...items.values()]);
-      if (failed)
+      if (failed || storageFailed)
         this.insertAdjacentHTML(
           "beforeend",
-          `<p role="alert">${escapeHtml(t("care.loadError"))}</p><button class="btn-outline" data-retry>${escapeHtml(t("care.retry"))}</button>`,
+          `${[
+            storageFailed && "care.queueLoadError",
+            failed && "care.loadError",
+          ]
+            .filter(Boolean)
+            .map((key) => `<p role="alert">${escapeHtml(t(key))}</p>`)
+            .join(
+              "",
+            )}<button type="button" class="btn-outline" data-retry>${escapeHtml(t("care.retry"))}</button>`,
         );
       this._bindList();
       this.querySelector("[data-retry]")?.addEventListener(
@@ -287,8 +311,12 @@ export class CareWorkView extends HTMLElement {
       this._busy = false;
       if (returnToList) returnToList();
       else replaceRoute("/care-work");
-    } catch {
-      saving.error = t("care.saveError");
+    } catch (error) {
+      saving.error = t(
+        error?.code === "care_conflict"
+          ? "care.editConflict"
+          : "care.saveError",
+      );
       this._busy = false;
       if (this.isConnected) this._renderCompose();
     }

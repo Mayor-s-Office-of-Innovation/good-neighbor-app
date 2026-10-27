@@ -41,6 +41,7 @@ import {
 } from "../services/backend-health.js";
 import {
   currentRoute,
+  backOrNavigate,
   navigate,
   onRouteChange,
   replaceRoute,
@@ -502,7 +503,7 @@ export class AppRoot extends HTMLElement {
           .addEventListener("click", () => location.reload());
         this._view
           .querySelector("[data-route-back]")
-          .addEventListener("click", () => navigate("/today"));
+          .addEventListener("click", () => backOrNavigate("/today"));
       });
   }
 

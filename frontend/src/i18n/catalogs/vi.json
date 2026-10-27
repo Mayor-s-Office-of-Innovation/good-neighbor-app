@@ -559,6 +559,8 @@
   "care.kind.pickedUpNeedles": "Thu gom kim tiêm",
   "care.kind.powerWashed": "Rửa vỉa hè bằng vòi áp lực",
   "care.kind.referredNonClient": "Giới thiệu dịch vụ cho người không phải khách hàng",
+  "care.queueLoadError": "Một số mục đang chờ tải lên có thể không xuất hiện trong danh sách này. Vui lòng thử lại.",
+  "care.editConflict": "Nhật ký này đã thay đổi trong tab khác. Hãy quay lại danh sách để xem trạng thái mới nhất trước khi chỉnh sửa tiếp.",
   "care.loadError": "Không thể tải nhật ký. Vui lòng thử lại.",
   "care.loading": "Đang tải nhật ký…",
   "care.menu": "Nhật ký chủ động chăm sóc",

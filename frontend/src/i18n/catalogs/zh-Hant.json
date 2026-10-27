@@ -559,6 +559,8 @@
   "care.kind.pickedUpNeedles": "撿拾針頭",
   "care.kind.powerWashed": "用高壓水槍清洗人行道",
   "care.kind.referredNonClient": "為非服務對象轉介服務",
+  "care.queueLoadError": "此清單可能缺少部分待上傳的項目。請重試。",
+  "care.editConflict": "此紀錄已在另一個分頁中變更。請返回清單查看最新狀態，再進行編輯。",
   "care.loadError": "無法載入工作紀錄。請重試。",
   "care.loading": "正在載入工作紀錄…",
   "care.menu": "主動維護工作紀錄",

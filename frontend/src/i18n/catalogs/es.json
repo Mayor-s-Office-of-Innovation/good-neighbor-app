@@ -559,6 +559,8 @@
   "care.kind.pickedUpNeedles": "Recogí agujas",
   "care.kind.powerWashed": "Lavé la acera a presión",
   "care.kind.referredNonClient": "Derivé a alguien que no es cliente",
+  "care.queueLoadError": "Es posible que falten algunas subidas pendientes en esta lista. Vuelve a intentarlo.",
+  "care.editConflict": "Este registro cambió en otra pestaña. Vuelve a la lista para ver su estado más reciente antes de editarlo de nuevo.",
   "care.loadError": "No se pudieron cargar los registros. Inténtalo de nuevo.",
   "care.loading": "Cargando registros…",
   "care.menu": "Registros de cuidado proactivo",

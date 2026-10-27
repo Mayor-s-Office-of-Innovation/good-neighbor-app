@@ -23,6 +23,7 @@ export async function enqueueCareSubmission(draft) {
     createdAt: new Date().toISOString(),
     status: "pending",
     payload: null,
+    revision: draft.revision,
     files: draft.files.map(({ file, photoId }) => ({
       file,
       photoId,
@@ -30,9 +31,17 @@ export async function enqueueCareSubmission(draft) {
     })),
   };
   // Only return to the list once the blobs and submission are durably committed.
-  await saveCareSubmission(record);
+  await withWorkLock(site.siteId, record.workId, () =>
+    saveCareSubmission(record, draft.editing ? "edit" : "insert", site),
+  );
   changed();
   void retryCareSubmission(record.workId);
+}
+
+function withWorkLock(siteId, workId, run) {
+  return globalThis.navigator?.locks
+    ? navigator.locks.request(`care:${siteId}:${workId}`, run)
+    : run();
 }
 
 export async function retryCareSubmission(workId) {
@@ -53,11 +62,7 @@ export async function retryCareSubmission(workId) {
     await submit(record);
   };
   // Serialize across tabs as well as inside one app instance.
-  const promise = (
-    globalThis.navigator?.locks
-      ? navigator.locks.request(`care:${key}`, run)
-      : run()
-  )
+  const promise = withWorkLock(site.siteId, workId, run)
     .catch(() => {
       /* Durable record remains available for recovery. */
     })
@@ -72,7 +77,7 @@ async function submit(record) {
     signal: AbortSignal.timeout(120000),
   };
   record.status = "pending";
-  await saveCareSubmission(record, true);
+  await saveCareSubmission(record, "update");
   changed();
   try {
     for (let recovery = 0; ; recovery++) {
@@ -105,7 +110,7 @@ async function submit(record) {
               if (error?.status !== 412) throw error;
             }
             entry.uploaded = true;
-            await saveCareSubmission(record, true);
+            await saveCareSubmission(record, "update");
           }
           record.payload = {
             workId: record.workId,
@@ -113,13 +118,13 @@ async function submit(record) {
             note: record.note,
             photoIds: record.files.map((entry) => entry.photoId),
           };
-          await saveCareSubmission(record, true);
+          await saveCareSubmission(record, "update");
         }
         const result = await createCareWork(record.payload, options);
         record.work = result.work;
         record.status = "saved";
         record.files = [];
-        await saveCareSubmission(record, true);
+        await saveCareSubmission(record, "update");
         if ((await getSite())?.siteId === record.siteId)
           showToast({ title: t("care.success"), message: "", icon: "check" });
         break;
@@ -135,7 +140,7 @@ async function submit(record) {
           expired.photoId = crypto.randomUUID();
           expired.uploaded = false;
           record.payload = null;
-          await saveCareSubmission(record, true);
+          await saveCareSubmission(record, "update");
           continue;
         }
         throw error;
@@ -145,7 +150,7 @@ async function submit(record) {
     record.editable = [400, 422].includes(error?.status);
     if (record.editable) record.payload = null;
     record.status = "failed";
-    await saveCareSubmission(record, true);
+    await saveCareSubmission(record, "update");
   } finally {
     changed();
   }

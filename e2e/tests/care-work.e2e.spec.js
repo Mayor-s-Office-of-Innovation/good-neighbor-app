@@ -134,7 +134,7 @@ test.describe("proactive care", () => {
       }
       return route.fallback();
     });
-    await page.locator(i === 0 ? "[data-save]" : "[data-retry-work]").click();
+    await page.locator("[data-save]").click();
     await expect(page.locator("[data-retry-work]")).toBeVisible();
     await save(page, true);
     expect(submissions).toHaveLength(2);
@@ -513,9 +513,10 @@ test("care submission returns immediately and recovers photos after reload", asy
   await openLogs(page);
   await choose(page, "power_washed");
   await page.locator("#care-photo-input").setInputFiles(PHOTO_CLEAR);
-  let release;
+  /** @type {() => void} */
+  let release = () => {};
   const hold = new Promise((resolve) => {
-    release = resolve;
+    release = () => resolve(undefined);
   });
   await page.route("**/photos:presign", async (route) => {
     await hold;

@@ -31,15 +31,31 @@ beforeEach(async () => {
   vi.clearAllMocks();
   records = new Map();
   vi.stubGlobal("window", { dispatchEvent: vi.fn() });
+  vi.stubGlobal("navigator", {});
   vi.mocked(getSite).mockResolvedValue({ siteId: "site", deviceId: "device" });
   vi.mocked(listCareSubmissions).mockImplementation(async (site) =>
     [...records.values()]
       .filter((r) => r.siteId === site)
       .map((r) => structuredClone(r)),
   );
-  vi.mocked(saveCareSubmission).mockImplementation(async (r) => {
-    records.set(r.workId, structuredClone(r));
-  });
+  vi.mocked(saveCareSubmission).mockImplementation(
+    async (r, mode = "insert") => {
+      const current = records.get(r.workId);
+      if (
+        mode === "insert"
+          ? Boolean(current)
+          : !current ||
+            (current.revision || 0) !== (r.revision || 0) ||
+            (mode === "edit" &&
+              (current.status !== "failed" || !current.editable))
+      )
+        throw Object.assign(new Error("Care submission changed"), {
+          code: "care_conflict",
+        });
+      r.revision = (current?.revision || 0) + 1;
+      records.set(r.workId, structuredClone(r));
+    },
+  );
   vi.mocked(presignCarePhoto).mockResolvedValue({
     photoId: "photo",
     uploadUrl: "https://upload",
@@ -148,4 +164,101 @@ it("keeps the form's submission unaccepted when local storage fails", async () =
   vi.mocked(saveCareSubmission).mockRejectedValueOnce(new Error("quota"));
   await expect(service.enqueueCareSubmission(draft())).rejects.toThrow("quota");
   expect(presignCarePhoto).not.toHaveBeenCalled();
+});
+
+it("rejects a stale edit while a retry is uploading without Web Locks", async () => {
+  const record = {
+    ...draft(),
+    deviceId: "device",
+    status: "failed",
+    editable: true,
+    revision: 4,
+  };
+  records.set("work", record);
+  let finish = () => {};
+  vi.mocked(putMediaWithProgress).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = () => resolve(undefined);
+      }),
+  );
+  const retry = service.retryCareSubmission("work");
+  await vi.waitFor(() => expect(putMediaWithProgress).toHaveBeenCalledOnce());
+  await expect(
+    service.enqueueCareSubmission({ ...record, editing: true, note: "new" }),
+  ).rejects.toMatchObject({ code: "care_conflict" });
+  finish();
+  await retry;
+  expect(records.get("work").status).toBe("saved");
+});
+
+it("rejects an edit whose receipt was already deleted", async () => {
+  await expect(
+    service.enqueueCareSubmission({ ...draft(), editing: true, revision: 4 }),
+  ).rejects.toMatchObject({ code: "care_conflict" });
+  expect(createCareWork).not.toHaveBeenCalled();
+});
+
+it("submits an unchanged editable failure with its new content", async () => {
+  const record = {
+    ...draft(),
+    deviceId: "device",
+    status: "failed",
+    editable: true,
+    revision: 4,
+  };
+  records.set("work", record);
+  await service.enqueueCareSubmission({
+    ...record,
+    editing: true,
+    note: "corrected",
+  });
+  await service.retryCareSubmission("work");
+  expect(createCareWork).toHaveBeenCalledWith(
+    expect.objectContaining({ note: "corrected" }),
+    expect.anything(),
+  );
+});
+
+it("coordinates edits with an in-flight retry using the same Web Lock", async () => {
+  let tail = Promise.resolve();
+  const request = vi.fn((_, run) => {
+    const next = tail.then(run);
+    tail = next.catch(() => {});
+    return next;
+  });
+  vi.stubGlobal("navigator", { locks: { request } });
+  const record = {
+    ...draft(),
+    deviceId: "device",
+    status: "failed",
+    editable: true,
+    revision: 4,
+  };
+  records.set("work", record);
+  let finish = () => {};
+  vi.mocked(putMediaWithProgress).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = () => resolve(undefined);
+      }),
+  );
+  const retry = service.retryCareSubmission("work");
+  await vi.waitFor(() => expect(putMediaWithProgress).toHaveBeenCalledOnce());
+  const editing = service.enqueueCareSubmission({
+    ...record,
+    editing: true,
+    note: "changed",
+  });
+  const rejected = expect(editing).rejects.toMatchObject({
+    code: "care_conflict",
+  });
+  finish();
+  await retry;
+  await rejected;
+  expect(request.mock.calls.map((call) => call[0])).toEqual([
+    "care:site:work",
+    "care:site:work",
+  ]);
+  expect(records.get("work").status).toBe("saved");
 });

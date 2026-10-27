@@ -559,6 +559,8 @@
   "care.kind.pickedUpNeedles": "Namulot ng mga karayom",
   "care.kind.powerWashed": "Nilinis ang bangketa gamit ang pressure washer",
   "care.kind.referredNonClient": "Nag-refer ng taong hindi kliyente",
+  "care.queueLoadError": "Maaaring may mga nakabinbing upload na hindi lumalabas sa listahang ito. Pakisubukang muli.",
+  "care.editConflict": "Nagbago ang talang ito sa ibang tab. Bumalik sa listahan upang makita ang pinakabagong katayuan nito bago muling mag-edit.",
   "care.loadError": "Hindi ma-load ang mga tala. Pakisubukan muli.",
   "care.loading": "Nilo-load ang mga tala…",
   "care.menu": "Mga tala ng maagap na pangangalaga",

@@ -84,21 +84,23 @@ function tx(store, mode, fn) {
     (db) =>
       new Promise((resolve, reject) => {
         const t = db.transaction(store, mode);
-        const os = t.objectStore(store);
+        const os = t.objectStore(Array.isArray(store) ? store[0] : store);
         let result;
-        Promise.resolve(fn(os)).then(
-          (r) => {
-            result = r;
-          },
-          (error) => {
-            reject(error);
-            try {
-              t.abort();
-            } catch {
-              /* The request may already have aborted it. */
-            }
-          },
-        );
+        Promise.resolve()
+          .then(() => fn(os, t))
+          .then(
+            (r) => {
+              result = r;
+            },
+            (error) => {
+              reject(error);
+              try {
+                t.abort();
+              } catch {
+                /* The request may already have aborted it. */
+              }
+            },
+          );
         t.oncomplete = () => resolve(result);
         t.onerror = () => reject(t.error);
         t.onabort = () => reject(t.error);
@@ -204,6 +206,7 @@ export async function setSite(name, meta = {}) {
     id: "current",
     name: name.trim(),
     boundAt: new Date().toISOString(),
+    localSessionId: crypto.randomUUID(),
   };
   await tx("site", "readwrite", async (os) => {
     const previous = await reqToPromise(os.get("current"));
@@ -253,6 +256,7 @@ export async function saveDiscoveredBindings(bindings, physicalDeviceId) {
  * (e.g. the demo fallback) rewrote `siteId` and orphaned the device.
  */
 const SITE_BINDING_FIELDS = [
+  "localSessionId",
   "id",
   "siteId",
   "providerSiteId",
@@ -524,24 +528,57 @@ export async function clearReview(owningSiteId) {
 }
 
 export async function resetLocalAppState() {
-  await Promise.all([
-    tx("site", "readwrite", (os) => os.clear()),
-    tx("draft", "readwrite", (os) => os.clear()),
-    tx("review", "readwrite", (os) => os.clear()),
-  ]);
-}
-
-// Durable care submissions share the review store, with a separate key namespace.
-export function saveCareSubmission(record, existingOnly = false) {
-  const key = `care:${record.siteId}:${record.workId}`;
-  return tx("review", "readwrite", async (os) => {
-    // A sign-out/reset may have removed the queue while an upload was in flight.
-    // Never recreate that user's local photos or receipt after it was cleared.
-    if (existingOnly && !(await reqToPromise(os.get(key))))
-      throw new Error("Care submission was cleared");
-    return reqToPromise(os.put({ ...record, careSubmission: true }, key));
+  await tx(["site", "draft", "review"], "readwrite", (_, transaction) => {
+    for (const store of ["site", "draft", "review"])
+      transaction.objectStore(store).clear();
   });
 }
+
+// Every write validates identity and revision in the same transaction as the put.
+// Revision zero supports queued records created before versioning was introduced.
+export async function saveCareSubmission(
+  record,
+  mode = "insert",
+  binding = null,
+) {
+  const key = `care:${record.siteId}:${record.workId}`;
+  const revision = await tx(
+    ["site", "review"],
+    "readwrite",
+    async (siteStore, transaction) => {
+      const site = await reqToPromise(siteStore.get("current"));
+      if (
+        !site ||
+        site.siteId !== record.siteId ||
+        site.deviceId !== record.deviceId ||
+        (binding && site.localSessionId !== binding.localSessionId)
+      )
+        throw new Error("Care submission session changed");
+      const os = transaction.objectStore("review");
+      const current = await reqToPromise(os.get(key));
+      if (
+        mode === "insert"
+          ? Boolean(current)
+          : !current ||
+            (current.revision || 0) !== (record.revision || 0) ||
+            current.deviceId !== record.deviceId ||
+            (mode === "edit" &&
+              (current.status !== "failed" || !current.editable))
+      ) {
+        throw Object.assign(new Error("Care submission changed"), {
+          code: "care_conflict",
+        });
+      }
+      const next = (current?.revision || 0) + 1;
+      await reqToPromise(
+        os.put({ ...record, revision: next, careSubmission: true }, key),
+      );
+      return next;
+    },
+  );
+  record.revision = revision;
+}
+
 export async function listCareSubmissions(siteId) {
   const records = await tx("review", "readonly", (os) =>
     reqToPromise(os.getAll()),

@@ -1,6 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const setup = vi.hoisted(() => ({
+  backOrNavigate: vi.fn(),
   clearSite: vi.fn(),
   getSite: vi.fn(),
   getSiteSettings: vi.fn(),
@@ -65,6 +66,7 @@ vi.mock("../services/device-location.js", () => ({
 vi.mock("../router.js", () => ({
   currentRoute: () => "/today",
   navigate: vi.fn(),
+  backOrNavigate: setup.backOrNavigate,
   onRouteChange: vi.fn(),
 }));
 vi.mock("./app-root.templates.js", () => ({
@@ -487,5 +489,7 @@ it("shows recovery controls when a route module fails instead of leaving a blank
   expect(root._view.innerHTML).toContain('role="alert"');
   expect(handlers["[data-route-reload]"]).toBeTypeOf("function");
   expect(handlers["[data-route-back]"]).toBeTypeOf("function");
+  handlers["[data-route-back]"]();
+  expect(setup.backOrNavigate).toHaveBeenCalledWith("/today");
   log.mockRestore();
 });
