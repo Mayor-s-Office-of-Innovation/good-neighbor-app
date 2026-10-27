@@ -9,12 +9,22 @@ function store() {
     const i = command.input;
     if (!i.Item) return { Item: { ...row } };
     const v = i.ExpressionAttributeValues;
-    const acquire = !!i.Item.owner;
-    const complete = !!i.Item.completedAt;
+    const acquire = i.ConditionExpression.includes(
+      "attribute_not_exists(completedAt)",
+    );
+    const cursorMatches = i.ConditionExpression.includes(
+      "lastPeerKey = :cursor",
+    )
+      ? row.lastPeerKey === v[":cursor"]
+      : !i.ConditionExpression.includes("attribute_not_exists(lastPeerKey)") ||
+        row.lastPeerKey === undefined;
     if (
-      acquire
+      !cursorMatches ||
+      (acquire
         ? row.completedAt || (row.leaseUntil ?? 0) > v[":now"]
-        : row.owner !== v[":owner"] || (complete && row.leaseUntil <= v[":now"])
+        : row.owner !== v[":owner"] ||
+          (i.ConditionExpression.includes("leaseUntil > :now") &&
+            row.leaseUntil <= v[":now"]))
     )
       throw Object.assign(new Error("Condition failed"), {
         name: "ConditionalCheckFailedException",
@@ -23,7 +33,7 @@ function store() {
     Object.assign(row, i.Item);
     return {};
   });
-  const run = (/** @type {(assertLease:()=>void)=>Promise<void>} */ work) =>
+  const run = (/** @type {Parameters<typeof peerFanout>[0]["work"]} */ work) =>
     peerFanout({
       ddb: /** @type {import("@aws-sdk/lib-dynamodb").DynamoDBDocumentClient} */ (
         /** @type {unknown} */ ({ send })
@@ -121,9 +131,13 @@ it("does not send when the acquire acknowledgement arrives after expiry", async 
   vi.useFakeTimers();
   const { run, send, row } = store();
   const original = send.getMockImplementation();
-  send.mockImplementationOnce(async (command) => {
+  let delayed = false;
+  send.mockImplementation(async (command) => {
     const result = await original?.(command);
-    await vi.advanceTimersByTimeAsync(60_001);
+    if (command.input.Item?.owner && !delayed) {
+      delayed = true;
+      await vi.advanceTimersByTimeAsync(60_001);
+    }
     return result ?? {};
   });
   const work = vi.fn(async () => {});
@@ -168,5 +182,188 @@ it("fences a completion write that arrives after a replacement worker acquires t
   expect(row.completedAt).toBeUndefined();
   finishNew();
   await replacement;
+  expect(row.completedAt).toBeDefined();
+});
+
+it("renews the lease and reaches every peer when total send time exceeds one lease", async () => {
+  vi.useFakeTimers();
+  const { run, row } = store();
+  const started = Date.now();
+  /** @type {string[]} */
+  const delivered = [];
+  await run(async (_assertLease, sendPeer) => {
+    for (const key of ["a", "b", "c", "d", "e", "f", "g", "h"]) {
+      await sendPeer(key, async () => {
+        await vi.advanceTimersByTimeAsync(12_000);
+        delivered.push(key);
+      });
+    }
+  });
+  expect(Date.now() - started).toBe(96_000);
+  expect(delivered).toEqual(["a", "b", "c", "d", "e", "f", "g", "h"]);
+  expect(row.lastPeerKey).toBe("h");
+  expect(row.completedAt).toBeDefined();
+});
+
+it("resumes a stable peer-key cursor after interruption even when the pending list changes", async () => {
+  const { run, row } = store();
+  /** @type {string[]} */
+  const delivered = [];
+  await expect(
+    run(async (_assertLease, sendPeer) => {
+      for (const key of ["a", "b", "c", "d"]) {
+        await sendPeer(key, async () => {
+          if (key === "c") throw new Error("interrupted");
+          delivered.push(key);
+        });
+      }
+    }),
+  ).rejects.toThrow("interrupted");
+  expect(row.lastPeerKey).toBe("b");
+  expect(row.completedAt).toBeUndefined();
+  await run(async (_assertLease, sendPeer) => {
+    // "a" disappeared because its own worker completed meanwhile. Array-index
+    // progress would skip "c"; a stable key still resumes correctly.
+    for (const key of ["b", "c", "d"])
+      await sendPeer(key, async () => {
+        delivered.push(key);
+      });
+  });
+  expect(delivered).toEqual(["a", "b", "c", "d"]);
+  expect(row.completedAt).toBeDefined();
+});
+
+it("preserves progress when a successful checkpoint write loses its acknowledgement", async () => {
+  const { run, send, row } = store();
+  const original = send.getMockImplementation();
+  let failed = false;
+  send.mockImplementation(async (command) => {
+    const result = await original?.(command);
+    if (
+      command.input.Item?.lastPeerKey === "a" &&
+      command.input.Item.owner &&
+      !failed
+    ) {
+      failed = true;
+      throw new Error("checkpoint acknowledgement lost");
+    }
+    return result ?? {};
+  });
+  /** @type {string[]} */
+  const delivered = [];
+  const work = async (
+    /** @type {()=>void} */ _assertLease,
+    /** @type {(key:string,send:()=>Promise<unknown>)=>Promise<void>} */ sendPeer,
+  ) => {
+    for (const key of ["a", "b"])
+      await sendPeer(key, async () => {
+        delivered.push(key);
+      });
+  };
+  await expect(run(work)).rejects.toThrow("acknowledgement lost");
+  expect(row.lastPeerKey).toBe("a");
+  await run(work);
+  expect(delivered).toEqual(["a", "b"]);
+});
+
+it("fences a delayed renewal from a stale owner without losing replacement progress", async () => {
+  vi.useFakeTimers();
+  const { run, send, row } = store();
+  const original = send.getMockImplementation();
+  let unblock = () => {};
+  let waiting = false;
+  send.mockImplementation(async (command) => {
+    if (
+      command.input.Item?.lastPeerKey === "a" &&
+      command.input.Item.owner &&
+      !waiting
+    ) {
+      waiting = true;
+      await new Promise((resolve) => {
+        unblock = () => resolve(undefined);
+      });
+    }
+    return (await original?.(command)) ?? {};
+  });
+  const old = run(async (_assertLease, sendPeer) => {
+    await sendPeer("a", async () => {});
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(waiting).toBe(true);
+  await vi.advanceTimersByTimeAsync(60_001);
+  let finishNew = () => {};
+  const replacement = run(async (_assertLease, sendPeer) => {
+    await sendPeer("b", async () => {});
+    await new Promise((resolve) => {
+      finishNew = () => resolve(undefined);
+    });
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  const newOwner = row.owner;
+  expect(row.lastPeerKey).toBe("b");
+  const rejected = expect(old).rejects.toMatchObject({
+    name: "ConditionalCheckFailedException",
+  });
+  unblock();
+  await rejected;
+  expect(row.owner).toBe(newOwner);
+  expect(row.lastPeerKey).toBe("b");
+  finishNew();
+  await replacement;
+  expect(row.completedAt).toBeDefined();
+});
+
+it("a delayed claimant cannot erase progress made and released by another owner", async () => {
+  const { run, send, row } = store();
+  row.lastPeerKey = "a";
+  const original = send.getMockImplementation();
+  let unblock = () => {};
+  let waiting = false;
+  send.mockImplementation(async (command) => {
+    if (
+      command.input.ConditionExpression?.includes(
+        "attribute_not_exists(completedAt)",
+      ) &&
+      !waiting
+    ) {
+      waiting = true;
+      await new Promise((resolve) => {
+        unblock = () => resolve(undefined);
+      });
+    }
+    return (await original?.(command)) ?? {};
+  });
+  const work = vi.fn(async () => {});
+  const delayed = run(work);
+  await vi.waitFor(() => expect(waiting).toBe(true));
+  await expect(
+    run(async (_assertLease, sendPeer) => {
+      await sendPeer("b", async () => {});
+      throw new Error("interrupted after b");
+    }),
+  ).rejects.toThrow("interrupted after b");
+  expect(row.lastPeerKey).toBe("b");
+  expect(row.owner).toBeUndefined();
+  const rejected = expect(delayed).rejects.toThrow("advanced");
+  unblock();
+  await rejected;
+  expect(work).not.toHaveBeenCalled();
+  expect(row.lastPeerKey).toBe("b");
+});
+
+it("renews a nearly expired claim before starting the next send", async () => {
+  vi.useFakeTimers();
+  const { run, row } = store();
+  let sent = false;
+  await run(async (_assertLease, sendPeer) => {
+    await vi.advanceTimersByTimeAsync(50_000);
+    await sendPeer("a", async () => {
+      expect(row.leaseUntil - Date.now()).toBe(60_000);
+      await vi.advanceTimersByTimeAsync(12_000);
+      sent = true;
+    });
+  });
+  expect(sent).toBe(true);
+  expect(row.lastPeerKey).toBe("a");
   expect(row.completedAt).toBeDefined();
 });

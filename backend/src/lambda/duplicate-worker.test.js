@@ -1,4 +1,4 @@
-import { beforeEach, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, it, expect, vi } from "vitest";
 import {
   analysisRevision,
   projectionKey,
@@ -30,13 +30,25 @@ vi.mock("../db.js", () => ({
       ) {
         const row = state.records.get(input.Item.sk) ?? {};
         const v = input.ExpressionAttributeValues ?? {};
-        const acquiring = !!input.Item.owner;
-        const completing = !!input.Item.completedAt;
+        const acquire = (input.ConditionExpression ?? "").includes(
+          "attribute_not_exists(completedAt)",
+        );
+        const cursorMatches = (input.ConditionExpression ?? "").includes(
+          "lastPeerKey = :cursor",
+        )
+          ? row.lastPeerKey === v[":cursor"]
+          : !(input.ConditionExpression ?? "").includes(
+              "attribute_not_exists(lastPeerKey)",
+            ) || row.lastPeerKey === undefined;
         if (
-          acquiring
+          !cursorMatches ||
+          (acquire
             ? row.completedAt || (row.leaseUntil ?? 0) > v[":now"]
             : row.owner !== v[":owner"] ||
-              (completing && row.leaseUntil <= v[":now"])
+              ((input.ConditionExpression ?? "").includes(
+                "leaseUntil > :now",
+              ) &&
+                row.leaseUntil <= v[":now"]))
         )
           throw Object.assign(new Error("Condition failed"), {
             name: "ConditionalCheckFailedException",
@@ -121,6 +133,8 @@ vi.mock("@aws-sdk/client-sqs", () => ({
   },
 }));
 import { handler } from "./duplicate-worker.js";
+
+afterEach(() => vi.useRealTimers());
 
 beforeEach(() => {
   state.readImage
@@ -656,10 +670,10 @@ it("retries partial peer sends before checkpointing, then stops fanout on redeli
   expect(state.records.get(checkpoint)?.completedAt).toBeUndefined();
   expect(state.sends).toHaveLength(1);
   expect(await runJob(event)).toEqual({ batchItemFailures: [] });
-  expect(state.sends).toHaveLength(3);
+  expect(state.sends).toHaveLength(2);
   expect(state.records.has(checkpoint)).toBe(true);
   expect(await runJob(event)).toEqual({ batchItemFailures: [] });
-  expect(state.sends).toHaveLength(3);
+  expect(state.sends).toHaveLength(2);
 });
 
 it("does not cascade when queued peer jobs themselves are repeatedly delivered", async () => {
@@ -784,4 +798,40 @@ it("overlapping worker deliveries retry the contender and send peers only once",
   expect(await first).toEqual({ batchItemFailures: [] });
   expect(await runJob(event)).toEqual({ batchItemFailures: [] });
   expect(state.sends).toHaveLength(1);
+});
+
+it("delivers every peer when sequential SQS sends take longer than the original lease", async () => {
+  vi.useFakeTimers();
+  const { event, current } = setup();
+  // Insert peers backwards to verify that saved progress uses stable sorted
+  // projection keys, rather than query/array order.
+  for (let i = 8; i >= 1; i--)
+    addPeer(`peer-${i}`, `2026-10-14T11:0${i}:00.000Z`);
+  state.beforeSend.mockImplementation(async () => {
+    await vi.advanceTimersByTimeAsync(12_000);
+  });
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(
+    state.sends.map(
+      (sent) =>
+        JSON.parse(/** @type {{MessageBody:string}} */ (sent).MessageBody)
+          .checkId,
+    ),
+  ).toEqual([
+    "peer-1",
+    "peer-2",
+    "peer-3",
+    "peer-4",
+    "peer-5",
+    "peer-6",
+    "peer-7",
+    "peer-8",
+  ]);
+  const checkpoint = state.records.get(
+    `DUP_PEER_RECONCILIATION#source:photo#${analysisRevision(current)}`,
+  );
+  expect(checkpoint.completedAt).toBeDefined();
+  expect(checkpoint.lastPeerKey).toContain("peer-8:photo");
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(state.sends).toHaveLength(8);
 });

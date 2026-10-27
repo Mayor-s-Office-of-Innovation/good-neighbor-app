@@ -1050,19 +1050,27 @@ export const handler = async (event) => {
         ddb,
         table,
         key: peerCheckpoint,
-        work: async (assertLease) => {
+        // Projection keys order peers by generation time and observation ID.
+        // Rebuilding/filtering the pending list must not shift the saved cursor.
+        work: async (assertLease, sendPeer) => {
+          pendingPeers.sort((a, b) => (a.sk < b.sk ? -1 : a.sk > b.sk ? 1 : 0));
           for (const peer of pendingPeers) {
             assertLease();
-            await sqs.send(
-              new SendMessageCommand({
-                QueueUrl: process.env.DUPLICATE_QUEUE_URL,
-                MessageBody: JSON.stringify({
-                  siteId: job.siteId,
-                  checkId: peer.checkId,
-                  artifactId: peer.artifactId,
-                  revision: peer.revision,
+            await sendPeer(peer.sk, () =>
+              sqs.send(
+                new SendMessageCommand({
+                  QueueUrl: process.env.DUPLICATE_QUEUE_URL,
+                  MessageBody: JSON.stringify({
+                    siteId: job.siteId,
+                    checkId: peer.checkId,
+                    artifactId: peer.artifactId,
+                    revision: peer.revision,
+                  }),
                 }),
-              }),
+                // A stalled send cannot consume the entire lease. Delivery may
+                // still be ambiguous after abort, so checkpoint only on success.
+                { abortSignal: globalThis.AbortSignal.timeout(15_000) },
+              ),
             );
           }
         },
