@@ -475,7 +475,7 @@ class SiteAccessView extends HTMLElement {
         void renderEnrollmentQr(card, grant.enrollmentUrl);
       card
         .querySelector("[data-share-grant]")
-        ?.addEventListener("click", () => void this._shareGrant(grant));
+        ?.addEventListener("click", () => void this._accessState.shareGrant(grant));
       card
         .querySelector("[data-cancel-staff-grant]")
         ?.addEventListener("click", () => void this._cancelGrant(grant));
@@ -566,19 +566,6 @@ class SiteAccessView extends HTMLElement {
 
   async _refreshGrants() {
     await this._accessState?.refreshGrants(this);
-  }
-
-  async _shareGrant(grant) {
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: t("access.title"),
-          url: grant.enrollmentUrl,
-        });
-      } catch {
-        /* Dismissing the share sheet keeps the link available. */
-      }
-    } else await navigator.clipboard.writeText(grant.enrollmentUrl);
   }
 
   _openRevokeDialog(bindingId, label) {
