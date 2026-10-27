@@ -91,3 +91,6 @@ import "./components/app-root.js";
 import { currentRoute, onRouteChange } from "./router.js";
 import { startPageViewTracking } from "./services/analytics.js";
 startPageViewTracking({ currentRoute, onRouteChange });
+
+import { startCareSubmissionRecovery } from "./services/care-submissions.js";
+startCareSubmissionRecovery();

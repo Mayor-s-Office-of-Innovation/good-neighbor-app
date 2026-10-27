@@ -18,7 +18,8 @@
   Submitted checks live in the backend (DynamoDB), written on submit and read on
   load via services/api.js — the app is online-only for the submit/review path
   (docs/archive/frontend-api-wiring-plan.md). There is no local `checks` cache, no
-  `synced` flag, and no sync queue, because offline is deferred to post-MVP.
+  `synced` flag for checks. Care submissions use separately namespaced review
+  records to persist pending uploads and retries; no service worker is involved.
 */
 
 const DB_NAME = "conditions-reporter";
@@ -85,9 +86,19 @@ function tx(store, mode, fn) {
         const t = db.transaction(store, mode);
         const os = t.objectStore(store);
         let result;
-        Promise.resolve(fn(os)).then((r) => {
-          result = r;
-        });
+        Promise.resolve(fn(os)).then(
+          (r) => {
+            result = r;
+          },
+          (error) => {
+            reject(error);
+            try {
+              t.abort();
+            } catch {
+              /* The request may already have aborted it. */
+            }
+          },
+        );
         t.oncomplete = () => resolve(result);
         t.onerror = () => reject(t.error);
         t.onabort = () => reject(t.error);
@@ -518,4 +529,29 @@ export async function resetLocalAppState() {
     tx("draft", "readwrite", (os) => os.clear()),
     tx("review", "readwrite", (os) => os.clear()),
   ]);
+}
+
+// Durable care submissions share the review store, with a separate key namespace.
+export function saveCareSubmission(record, existingOnly = false) {
+  const key = `care:${record.siteId}:${record.workId}`;
+  return tx("review", "readwrite", async (os) => {
+    // A sign-out/reset may have removed the queue while an upload was in flight.
+    // Never recreate that user's local photos or receipt after it was cleared.
+    if (existingOnly && !(await reqToPromise(os.get(key))))
+      throw new Error("Care submission was cleared");
+    return reqToPromise(os.put({ ...record, careSubmission: true }, key));
+  });
+}
+export async function listCareSubmissions(siteId) {
+  const records = await tx("review", "readonly", (os) =>
+    reqToPromise(os.getAll()),
+  );
+  return records.filter(
+    (record) => record?.careSubmission && record.siteId === siteId,
+  );
+}
+export function deleteCareSubmission(siteId, workId) {
+  return tx("review", "readwrite", (os) =>
+    os.delete(`care:${siteId}:${workId}`),
+  );
 }

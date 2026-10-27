@@ -468,3 +468,24 @@ describe("Home Screen session handoff at startup", () => {
     expect(root._renderSetup).toHaveBeenCalledWith();
   });
 });
+
+it("shows recovery controls when a route module fails instead of leaving a blank page", async () => {
+  const root = new AppRoot();
+  const handlers = {};
+  root._view = {
+    innerHTML: "",
+    querySelector: (selector) => ({
+      addEventListener: (_, fn) => {
+        handlers[selector] = fn;
+      },
+    }),
+  };
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  root._loadRoute("/today", () => Promise.reject(new Error("chunk missing")));
+  expect(root._view.innerHTML).toContain('role="status"');
+  await flush();
+  expect(root._view.innerHTML).toContain('role="alert"');
+  expect(handlers["[data-route-reload]"]).toBeTypeOf("function");
+  expect(handlers["[data-route-back]"]).toBeTypeOf("function");
+  log.mockRestore();
+});
