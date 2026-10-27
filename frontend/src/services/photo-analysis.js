@@ -1,3 +1,4 @@
+import { pollCheck } from "./check-polling.js";
 import { watchDuplicateIssues } from "./duplicate-issues.js";
 import { projectDuplicateTasks } from "../domain/duplicate-issues.js";
 // @ts-nocheck -- matches the surrounding frontend migration baseline.
@@ -121,10 +122,6 @@ function checkDuplicates(itemId, tasks, analysisId) {
  * @property {Record<string, unknown> | null} [evaluation] Rulebase evaluation returned by the backend.
  */
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function slugify(value) {
   return String(value || "")
     .toLowerCase()
@@ -191,20 +188,23 @@ async function waitForArtifactAnalysis(
   { timeoutMs = POLL_TIMEOUT_MS, intervalMs = POLL_INTERVAL_MS } = {},
 ) {
   const deadline = Date.now() + timeoutMs;
-  let last = await getCheck(checkId);
-  while (true) {
-    const analysis = (last.analyses || []).find(
-      (item) => item.artifactId === artifactId,
-    );
-    if (analysis) return analysis;
-    if (Date.now() >= deadline) {
-      throw new ApiError(`Analysis still processing for ${artifactId}`, {
-        body: { code: "analyses_pending", artifactId },
-      });
-    }
-    await sleep(intervalMs);
-    last = await getCheck(checkId);
-  }
+  return pollCheck(
+    checkId,
+    getCheck,
+    (last) => {
+      const analysis = (last.analyses || []).find(
+        (item) => item.artifactId === artifactId,
+      );
+      if (analysis) return analysis;
+      if (Date.now() >= deadline) {
+        throw new ApiError(`Analysis still processing for ${artifactId}`, {
+          body: { code: "analyses_pending", artifactId },
+        });
+      }
+      return undefined;
+    },
+    { intervalMs },
+  );
 }
 
 function conditionId(artifactId, concern, index) {

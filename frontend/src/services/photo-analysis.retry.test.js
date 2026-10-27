@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./api.js", () => ({
   createCheck: vi.fn(),
@@ -41,6 +41,11 @@ import {
 import { retryEvidenceItem } from "./photo-analysis.js";
 
 beforeEach(() => vi.resetAllMocks());
+afterEach(async () => {
+  const { cancelCheckPolling } = await import("./check-polling.js");
+  cancelCheckPolling("check");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
 
 // Unique item id per test: photo-analysis dedupes concurrent runs on the item
 // id, and a previous test's still-pending poll would swallow the next test's
@@ -83,7 +88,10 @@ describe("retryEvidenceItem", () => {
     retryEvidenceItem(item.id);
     await vi.waitFor(() => {
       // The poll looks at the backend before its first sleep.
-      expect(getCheck).toHaveBeenCalledWith("check");
+      expect(getCheck).toHaveBeenCalledWith(
+        "check",
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
     });
 
     // Straight back to polling; no re-upload.
