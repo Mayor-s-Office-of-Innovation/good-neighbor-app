@@ -890,6 +890,8 @@ async function run(itemId) {
     }
     await evaluateArtifact(check.id, itemId, artifactId);
   } catch (err) {
+    // Pausing or leaving a check stops its poll; it is not an analysis failure.
+    if (err?.name === "AbortError") return;
     console.error("analyzeEvidenceItem failed", err);
     const failure = describeFailure(err);
     const latestItem = sessionItem(getCurrentCheck(), itemId);

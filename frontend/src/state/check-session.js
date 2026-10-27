@@ -123,7 +123,9 @@ export function startProblemReport(siteId) {
 }
 
 function startFlow(siteId, flowType) {
-  if (current) cancelCheckPolling(current.id);
+  // Submitted checks still need their background scorecard finalized, even
+  // when the user starts another capture before analysis finishes.
+  if (current?.status === "in-progress") cancelCheckPolling(current.id);
   current = {
     id: newId(),
     siteId,
