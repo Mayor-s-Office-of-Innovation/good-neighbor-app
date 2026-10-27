@@ -9,6 +9,10 @@
 
 - **[today-load-requests.md](./today-load-requests.md)** — initial Today page request
   totals, asset/API sequence diagram, DynamoDB fanout, third-party calls and duplicate polling.
+- **[home-activity-requests.md](./home-activity-requests.md)** — tab switches, task
+  close-out, history dialogs, and the data refreshes those actions cause.
+- **[perimeter-check-requests.md](./perimeter-check-requests.md)** — five-photo capture,
+  uploads, background analysis, database costs, and polling before Finish Check.
 - **[architecture.md](./architecture.md)** — the built system: container view, async analyze
   flow, the guidance workflow (rule-driven tasks), single-table pointer, security boundaries,
   idempotency/offline posture.

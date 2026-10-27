@@ -1,5 +1,8 @@
 # Today: requests on page load
 
+For the next step, see [five photos in a perimeter check, then wait for results](./perimeter-check-requests.md).
+For tab switches and task close-out, see [Home activity requests](./home-activity-requests.md).
+
 ## Request totals
 
 This example has **5 To-do tasks, 5 In-progress tasks, and 20 History tasks**.
