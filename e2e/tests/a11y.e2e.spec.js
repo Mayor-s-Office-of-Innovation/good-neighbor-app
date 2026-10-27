@@ -4,7 +4,12 @@ import { t } from "../helpers/i18n.js";
 import { expect, boundPage } from "../helpers/harness.js";
 import { addPhoto, startCheck, openHistoryWithTrays } from "../helpers/app.js";
 import { PHOTO_CLEAR } from "../helpers/fixtures.js";
-import { REPORT_DAY, openReports, stubReports } from "../helpers/reports.js";
+import {
+  REPORT_DAY,
+  TASKS_REPORT,
+  openReports,
+  stubReports,
+} from "../helpers/reports.js";
 
 /*
   Automated accessibility scans via ramp-check inside the existing e2e suite.
@@ -95,7 +100,51 @@ matrix(
     boundA11y(
       "a11y: bound home",
       async (/** @type {BoundA11yFixtures} */ { page, a11y }) => {
+        // Always include two photo cards, even when this spec runs alone on
+        // an empty table. This exercises offscreen lightbox keyboard stops.
+        await stubReports(page);
+        await page.route("**/v1/tasks?*", (route) =>
+          route.fulfill({
+            json: {
+              tasks: TASKS_REPORT.tasks.map((task) => ({
+                ...task,
+                status: "open",
+                createdAt: new Date().toISOString(),
+                appActionResults: [],
+                completionMethod: undefined,
+                latestUpdateLabel: undefined,
+              })),
+            },
+          }),
+        );
+        await page.reload();
         await expect(page.locator("#start-check")).toBeVisible();
+        await expect(page.locator(".analysis-card")).toHaveCount(2);
+        // Evidence loads on intersection, enabling its lightbox button. Visit
+        // offscreen photos before ramp-check inventories keyboard stops so
+        // Tab scrolling doesn't introduce new controls midway through its audit.
+        await expect(
+          page.locator(".analysis-card__media--placeholder"),
+        ).toHaveCount(0);
+        await expect(page.locator("artifact-photo")).toHaveCount(2);
+        for (const photo of await page.locator("artifact-photo").all()) {
+          await photo.scrollIntoViewIfNeeded();
+          await expect
+            .poll(() =>
+              photo.evaluate((el) => {
+                const img = el.querySelector("img");
+                return (
+                  el.hasAttribute("data-unavailable") ||
+                  Boolean(img?.getAttribute("src") && img.complete)
+                );
+              }),
+            )
+            .toBe(true);
+        }
+        await expect(page.locator("[data-photo-lightbox]:enabled")).toHaveCount(
+          2,
+        );
+        await page.locator("#start-check").scrollIntoViewIfNeeded();
         await a11y.check("bound home");
       },
     );
