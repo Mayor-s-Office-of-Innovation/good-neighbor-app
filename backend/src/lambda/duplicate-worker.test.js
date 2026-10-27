@@ -24,6 +24,26 @@ vi.mock("../db.js", () => ({
       /** @type {import("@aws-sdk/lib-dynamodb").GetCommand | import("@aws-sdk/lib-dynamodb").PutCommand | import("@aws-sdk/lib-dynamodb").QueryCommand | import("@aws-sdk/lib-dynamodb").TransactWriteCommand} */ command,
     ) => {
       const input = command.input;
+      if (
+        "Item" in input &&
+        input.Item?.sk.startsWith("DUP_PEER_RECONCILIATION#")
+      ) {
+        const row = state.records.get(input.Item.sk) ?? {};
+        const v = input.ExpressionAttributeValues ?? {};
+        const acquiring = !!input.Item.owner;
+        const completing = !!input.Item.completedAt;
+        if (
+          acquiring
+            ? row.completedAt || (row.leaseUntil ?? 0) > v[":now"]
+            : row.owner !== v[":owner"] ||
+              (completing && row.leaseUntil <= v[":now"])
+        )
+          throw Object.assign(new Error("Condition failed"), {
+            name: "ConditionalCheckFailedException",
+          });
+        state.records.set(input.Item.sk, input.Item);
+        return {};
+      }
       if ("Key" in input) return { Item: state.records.get(input.Key?.sk) };
       if ("KeyConditionExpression" in input) {
         const values = input.ExpressionAttributeValues;
@@ -633,7 +653,7 @@ it("retries partial peer sends before checkpointing, then stops fanout on redeli
     batchItemFailures: [{ itemIdentifier: "message" }],
   });
   const checkpoint = `DUP_PEER_RECONCILIATION#source:photo#${analysisRevision(current)}`;
-  expect(state.records.has(checkpoint)).toBe(false);
+  expect(state.records.get(checkpoint)?.completedAt).toBeUndefined();
   expect(state.sends).toHaveLength(1);
   expect(await runJob(event)).toEqual({ batchItemFailures: [] });
   expect(state.sends).toHaveLength(3);
@@ -660,4 +680,108 @@ it("does not cascade when queued peer jobs themselves are repeatedly delivered",
   }
   expect(consumed).toBe(state.sends.length);
   expect(state.sends.length).toBeLessThanOrEqual(3);
+});
+
+it("reconciles a peer's pending original link after same-revision recovery without restarting fanout", async () => {
+  const { event, current, target } = setup();
+  const peer = addPeer("newer", "2026-10-14T11:00:00.000Z");
+  const sourceRevision = analysisRevision(current);
+  const sourceRef = {
+    observationId: "source:photo",
+    conditionId: "s1",
+    revision: sourceRevision,
+  };
+  const peerResult = state.records.get(
+    `DUP_RESULT#${peer.id}#${peer.revision}`,
+  );
+  Object.assign(peerResult, {
+    candidateRevisions: [{ id: "source:photo", revision: sourceRevision }],
+    conditionResults: [
+      {
+        conditionId: "newer-issue",
+        possibleDuplicate: true,
+        matchStrength: "strong",
+        duplicateOf: sourceRef,
+      },
+    ],
+  });
+  // Real guidance/task records allow the worker's actual reconciliation code
+  // to publish a link once the source's previously incomplete chain recovers.
+  for (const [name, conditionId] of [
+    ["source", "s1"],
+    ["target", "t1"],
+    ["newer", "newer-issue"],
+  ]) {
+    const task = {
+      pk: "SITE#site",
+      sk: `TASK#${name}`,
+      taskId: name,
+      checkId: name,
+      assessmentId: name,
+      conditionId,
+      sourceArtifactIds: ["photo"],
+      status: "open",
+      createdAt: "2026-10-14T09:00:00Z",
+      updatedAt: "2026-10-14T09:00:00Z",
+      shortId: name,
+    };
+    state.records.set(task.sk, task);
+    state.records.set(`GUIDANCE_CURRENT#${JSON.stringify([name, "photo"])}`, {
+      assessmentId: name,
+    });
+    state.records.set(`ASSESSMENT#${name}#COND#${conditionId}`, {
+      taskIds: [name],
+    });
+  }
+  state.records.set(`DUP_RESULT#target:photo#${analysisRevision(target)}`, {
+    status: "evaluated",
+    conditionResults: [
+      { conditionId: "t1", possibleDuplicate: false, status: "evaluated" },
+    ],
+  });
+  const compare = state.compare.getMockImplementation();
+  state.compare.mockRejectedValue(new Error("temporary outage"));
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(
+    state.records.get(`DUP_RESULT#source:photo#${sourceRevision}`).status,
+  ).toBe("incomplete");
+  expect(state.records.get("DUP_LINK#newer")).toBeUndefined();
+  const checkpoint = state.records.get(
+    `DUP_PEER_RECONCILIATION#source:photo#${sourceRevision}`,
+  );
+  expect(checkpoint.completedAt).toBeDefined();
+  expect(state.sends).toHaveLength(0);
+  if (!compare) throw new Error("Missing comparison stub");
+  state.compare.mockImplementation(compare);
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(state.records.get("DUP_LINK#newer")).toMatchObject({
+    originalTaskId: "target",
+    matchedObservationId: "source:photo",
+  });
+  expect(state.sends).toHaveLength(0);
+  expect(
+    state.records.get(`DUP_PEER_RECONCILIATION#source:photo#${sourceRevision}`)
+      .completedAt,
+  ).toBe(checkpoint.completedAt);
+});
+
+it("overlapping worker deliveries retry the contender and send peers only once", async () => {
+  const { event } = setup();
+  addPeer("newer", "2026-10-14T11:00:00.000Z");
+  let release = () => {};
+  const gate = new Promise((resolve) => {
+    release = () => resolve(undefined);
+  });
+  state.beforeSend.mockImplementationOnce(async () => {
+    await gate;
+  });
+  const first = runJob(event);
+  await vi.waitFor(() => expect(state.beforeSend).toHaveBeenCalledTimes(1));
+  expect(await runJob(event)).toEqual({
+    batchItemFailures: [{ itemIdentifier: "message" }],
+  });
+  release();
+  expect(await first).toEqual({ batchItemFailures: [] });
+  expect(await runJob(event)).toEqual({ batchItemFailures: [] });
+  expect(state.sends).toHaveLength(1);
 });

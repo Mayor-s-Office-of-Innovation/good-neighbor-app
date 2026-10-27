@@ -1,3 +1,4 @@
+import { peerFanout } from "../analysis/duplicates/peer-fanout.js";
 import { processingState } from "../analysis/duplicates/result-state.js";
 import { createComparisonPacer } from "../analysis/duplicates/request-pacing.js";
 import { preparedRetention } from "../analysis/duplicates/prepared-retention.js";
@@ -992,14 +993,13 @@ export const handler = async (event) => {
         timing.add("analysisToResultPublishedMs", Date.now() - analyzedAt);
       if (result.status === "failed")
         throw new Error("Duplicate comparison failed");
-      // Fan out once per source revision, independently of comparison retries and
-      // result replacement. Missing candidateRevisions is not an invalidation
-      // token: ineligible observations are legitimately absent forever.
+      // Always reconcile existing dependents after result replacement/recovery.
+      // The checkpoint suppresses job sends only, not link reconciliation.
+      // Missing candidateRevisions alone is not an invalidation token.
       const peerCheckpoint = {
         pk: projection.pk,
         sk: `DUP_PEER_RECONCILIATION#${id}#${job.revision}`,
       };
-      if (await get(table, peerCheckpoint)) continue;
       const peers = await query(
         table,
         job.siteId,
@@ -1010,18 +1010,10 @@ export const handler = async (event) => {
         "@aws-sdk/client-sqs"
       );
       const sqs = new SQSClient({});
+      /** @type {typeof peers} */
+      const pendingPeers = [];
       for (const peer of peers) {
-        if (peer.id === id || !process.env.DUPLICATE_QUEUE_URL) continue;
-        if (
-          !eligibleImages(
-            /** @type {Omit<import("../analysis/duplicates/image-matcher.js").ImageObservation,"image">} */ ({
-              ...peer,
-              availableAt: new Date().toISOString(),
-            }),
-            [source],
-          ).length
-        )
-          continue;
+        if (peer.id === id) continue;
         const previous = await get(table, {
           pk: projection.pk,
           sk: `DUP_RESULT#${peer.id}#${peer.revision}`,
@@ -1041,28 +1033,40 @@ export const handler = async (event) => {
           );
           continue;
         }
-        await sqs.send(
-          new SendMessageCommand({
-            QueueUrl: process.env.DUPLICATE_QUEUE_URL,
-            MessageBody: JSON.stringify({
-              siteId: job.siteId,
-              checkId: peer.checkId,
-              artifactId: peer.artifactId,
-              revision: peer.revision,
+        if (
+          !eligibleImages(
+            /** @type {Omit<import("../analysis/duplicates/image-matcher.js").ImageObservation,"image">} */ ({
+              ...peer,
+              availableAt: new Date().toISOString(),
             }),
-          }),
-        );
+            [source],
+          ).length
+        )
+          continue;
+        pendingPeers.push(peer);
       }
-      // Write only after every send succeeds. Partial sends can be repeated on
-      // retry (SQS is at-least-once), but successful revisions cannot cascade
-      // again. A separate item survives concurrent result/projection rewrites.
-      if (process.env.DUPLICATE_QUEUE_URL)
-        await ddb.send(
-          new PutCommand({
-            TableName: table,
-            Item: { ...peerCheckpoint, completedAt: new Date().toISOString() },
-          }),
-        );
+      if (!process.env.DUPLICATE_QUEUE_URL) continue;
+      await peerFanout({
+        ddb,
+        table,
+        key: peerCheckpoint,
+        work: async (assertLease) => {
+          for (const peer of pendingPeers) {
+            assertLease();
+            await sqs.send(
+              new SendMessageCommand({
+                QueueUrl: process.env.DUPLICATE_QUEUE_URL,
+                MessageBody: JSON.stringify({
+                  siteId: job.siteId,
+                  checkId: peer.checkId,
+                  artifactId: peer.artifactId,
+                  revision: peer.revision,
+                }),
+              }),
+            );
+          }
+        },
+      });
     } catch (error) {
       duplicateEvent("worker_failed", {
         siteId: job?.siteId,
