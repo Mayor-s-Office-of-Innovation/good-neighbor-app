@@ -146,7 +146,6 @@ export async function cachedMediaUrls(checkId, artifactId) {
   const key = `${checkId}:${artifactId}`;
   const failure = MEDIA_FAILURES.get(key);
   if (failure?.retryAt > Date.now()) throw failure.error;
-  MEDIA_FAILURES.delete(key);
   const cached = MEDIA_URL_CACHE.get(key);
   if (cached && (cached.pending || cached.expiresAt > Date.now()))
     return cached.promise;
@@ -154,6 +153,7 @@ export async function cachedMediaUrls(checkId, artifactId) {
   const entry = {
     pending: true,
     expiresAt: 0,
+    diagnosticStatus: failure?.diagnosticStatus,
     promise: /** @type {Promise<MediaUrls>} */ (null),
   };
   entry.promise = getMediaUrl(checkId, artifactId)
@@ -164,12 +164,22 @@ export async function cachedMediaUrls(checkId, artifactId) {
         Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn * 1000 : 300000;
       entry.expiresAt = started + ttl - Math.min(30000, ttl / 10);
       entry.pending = false;
+      if (MEDIA_URL_CACHE.get(key) === entry) MEDIA_FAILURES.delete(key);
       return { downloadUrl, thumbnailUrl, expiresAt: entry.expiresAt };
     })
     .catch((error) => {
       if (MEDIA_URL_CACHE.get(key) === entry) {
         MEDIA_URL_CACHE.delete(key);
-        MEDIA_FAILURES.set(key, { error, retryAt: Date.now() + 5000 });
+        const status = Number.isInteger(error?.status) ? error.status : 0;
+        // One diagnostic per artifact/status until a successful signing resets it.
+        // Never include raw errors: network messages can contain signed URLs.
+        if (entry.diagnosticStatus !== status)
+          console.warn("Photo signing failed", { checkId, artifactId, status });
+        MEDIA_FAILURES.set(key, {
+          error,
+          retryAt: Date.now() + 5000,
+          diagnosticStatus: status,
+        });
       }
       throw error;
     });

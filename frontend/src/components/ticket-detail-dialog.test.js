@@ -230,3 +230,24 @@ it.each(["notes", "action"])(
     vi.doUnmock("./task-update-dialog.js");
   },
 );
+
+it("keeps hydrated media paired with its artifact through ticket detail updates", async () => {
+  const { buildTicketDetail, TicketDetailDialog } = await import(
+    "./ticket-detail-dialog.js"
+  );
+  const task = {
+    taskId: "multi",
+    checkId: "check",
+    sourceArtifactIds: ["wrong", "selected"],
+    evidence: { artifactId: "selected" },
+    mediaUrl: "selected.jpg",
+  };
+  expect(buildTicketDetail(task, {}, {}).artifactId).toBe("selected");
+  vi.stubGlobal("document", { querySelector: () => null });
+  const dialog = new TicketDetailDialog();
+  dialog._detail = {};
+  dialog._task = task;
+  dialog.updateTask(task);
+  expect(dialog._detail.artifactId).toBe("selected");
+  expect(dialog._detail.mediaUrl).toBe("selected.jpg");
+});

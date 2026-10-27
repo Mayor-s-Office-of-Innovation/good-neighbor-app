@@ -176,3 +176,52 @@ it("does not let an obsolete signing failure shorten a newer unavailable backoff
   });
   expect(getMediaUrl).toHaveBeenCalledTimes(1);
 });
+
+it("deduplicates sanitized signing diagnostics until recovery", async () => {
+  vi.useFakeTimers();
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const error = Object.assign(new Error("private https://signed?secret=yes"), {
+    status: 503,
+  });
+  getMediaUrl.mockRejectedValue(error);
+  await Promise.allSettled([
+    cachedMediaUrls("diagnostic", "p"),
+    cachedMediaUrls("diagnostic", "p"),
+  ]);
+  vi.advanceTimersByTime(6000);
+  await expect(cachedMediaUrls("diagnostic", "p")).rejects.toBe(error);
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(warn).toHaveBeenCalledWith("Photo signing failed", {
+    checkId: "diagnostic",
+    artifactId: "p",
+    status: 503,
+  });
+  expect(JSON.stringify(warn.mock.calls)).not.toContain("secret");
+  vi.advanceTimersByTime(6000);
+  getMediaUrl.mockResolvedValueOnce({
+    downloadUrl: "recovered",
+    expiresIn: 300,
+  });
+  await cachedMediaUrls("diagnostic", "p");
+  invalidateMediaUrls("diagnostic", "p");
+  await expect(cachedMediaUrls("diagnostic", "p")).rejects.toBe(error);
+  expect(warn).toHaveBeenCalledTimes(2);
+  warn.mockRestore();
+});
+
+it("does not let an obsolete signing success erase a newer missing-image backoff", async () => {
+  /** @type {(value:object)=>void} */ let resolveSigning = () => {};
+  getMediaUrl.mockReturnValueOnce(
+    new Promise((resolve) => {
+      resolveSigning = resolve;
+    }),
+  );
+  const pending = cachedMediaUrls("obsolete-success", "photo");
+  markMediaUnavailable("obsolete-success", "photo");
+  resolveSigning({ downloadUrl: "obsolete", expiresIn: 300 });
+  await pending;
+  await expect(
+    cachedMediaUrls("obsolete-success", "photo"),
+  ).rejects.toMatchObject({ status: 404 });
+  expect(getMediaUrl).toHaveBeenCalledTimes(1);
+});

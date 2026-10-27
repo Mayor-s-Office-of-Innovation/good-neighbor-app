@@ -113,6 +113,9 @@ export function openPhotoLightbox(host, trigger, screen = trigger) {
     return;
   const image = trigger.querySelector("img");
   if (!(image instanceof HTMLImageElement)) return;
+  const src =
+    trigger.dataset.fullSrc || image.currentSrc || image.getAttribute("src");
+  if (!src) return;
   const existing = host.querySelector("photo-lightbox");
   const lightbox =
     existing instanceof PhotoLightbox
@@ -123,7 +126,7 @@ export function openPhotoLightbox(host, trigger, screen = trigger) {
     host.append(lightbox);
   }
   lightbox.open({
-    src: trigger.dataset.fullSrc || image.currentSrc || image.src,
+    src,
     alt: image.alt,
     address: trigger.dataset.photoAddress || "",
     capturedAt: trigger.dataset.photoTime || "",

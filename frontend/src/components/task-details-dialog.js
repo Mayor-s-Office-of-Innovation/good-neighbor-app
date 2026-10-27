@@ -1,10 +1,9 @@
 import { artifactPhoto } from "./artifact-photo.templates.js";
-import { taskArtifactIds } from "../domain/home-tasks.js";
 import "@awesome.me/webawesome/dist/components/select/select.js";
 import "@awesome.me/webawesome/dist/components/option/option.js";
 import "./task-details-dialog.css";
 import { openOverlayDialog } from "../dialog-history.js";
-import { taskMediaUrl } from "../domain/task-media.js";
+import { taskMediaUrl, taskMediaArtifactId } from "../domain/task-media.js";
 import { formatMonthDayTime } from "../i18n/dates.js";
 import { t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
@@ -56,7 +55,7 @@ function memberRow(member) {
           src: image,
           original: member.mediaUrl,
           checkId: member.checkId,
-          artifactId: taskArtifactIds(member)[0],
+          artifactId: taskMediaArtifactId(member),
           alt: title,
         })
       : html`<span class="task-details__thumbnail task-details__placeholder"

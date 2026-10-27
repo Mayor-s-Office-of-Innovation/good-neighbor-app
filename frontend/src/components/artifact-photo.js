@@ -3,6 +3,7 @@ import {
   invalidateMediaUrls,
   markMediaUnavailable,
 } from "../services/task-evidence.js";
+import { escapeAttr } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
 import "./artifact-photo.css";
 
@@ -17,6 +18,8 @@ export class ArtifactPhoto extends HTMLElement {
   connectedCallback() {
     this._generation = (this._generation || 0) + 1;
     this._busy = false;
+    this._trigger = this.closest("[data-photo-lightbox]");
+    this._setTrigger("");
     const generation = this._generation;
     this._attempts = 0;
     this._visible = !globalThis.IntersectionObserver;
@@ -100,11 +103,7 @@ export class ArtifactPhoto extends HTMLElement {
     }
     this.removeAttribute("data-unavailable");
     this._placeholder?.remove();
-    const trigger = this.closest("[data-photo-lightbox]");
-    if (trigger) {
-      trigger.setAttribute("data-full-src", original);
-      if (trigger instanceof HTMLButtonElement) trigger.disabled = false;
-    }
+    this._setTrigger(original || src);
     if (this._image.getAttribute("src") !== src) this._image.src = src;
   }
   async _recover() {
@@ -136,21 +135,19 @@ export class ArtifactPhoto extends HTMLElement {
   _missing() {
     this.setAttribute("data-unavailable", "");
     if (!this._placeholder?.isConnected) {
-      this._placeholder = document.createElement("span");
-      this._placeholder.className = "photo-placeholder";
-      this._placeholder.setAttribute("role", "img");
-      this._placeholder.setAttribute(
-        "aria-label",
-        t("card.evidence.unavailable"),
+      this.insertAdjacentHTML(
+        "beforeend",
+        `<span class="photo-placeholder" role="img" aria-label="${escapeAttr(t("card.evidence.unavailable"))}"><wa-icon name="image-slash" aria-hidden="true"></wa-icon></span>`,
       );
-      const icon = document.createElement("wa-icon");
-      icon.setAttribute("name", "image-slash");
-      icon.setAttribute("aria-hidden", "true");
-      this._placeholder.append(icon);
-      this.append(this._placeholder);
+      this._placeholder = this.lastElementChild;
     }
-    const trigger = this.closest("[data-photo-lightbox]");
-    if (trigger instanceof HTMLButtonElement) trigger.disabled = true;
+    this._setTrigger("");
+  }
+  _setTrigger(src) {
+    if (!this._trigger) return;
+    this._trigger.setAttribute("data-full-src", src);
+    if (this._trigger instanceof HTMLButtonElement)
+      this._trigger.disabled = !src;
   }
 }
 customElements.define("artifact-photo", ArtifactPhoto);

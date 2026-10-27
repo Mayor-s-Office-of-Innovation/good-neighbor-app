@@ -1,5 +1,4 @@
 import { artifactPhoto } from "./artifact-photo.templates.js";
-import { taskArtifactIds } from "../domain/home-tasks.js";
 import {
   cityHelpQuestion,
   taskUpdateTextCard,
@@ -9,7 +8,7 @@ import {
 export { taskUpdateTimelineTone } from "./issue-updates.templates.js";
 import { localizedAnalyzerText } from "../i18n/analyzer.js";
 import { statusTickerMarkup } from "./status-ticker.js";
-import { taskMediaUrl } from "../domain/task-media.js";
+import { taskMediaUrl, taskMediaArtifactId } from "../domain/task-media.js";
 import { taskCardTitle } from "../domain/task-title.js";
 import { displayTaskId, unresolvedExpiryAt } from "../domain/home-tasks.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
@@ -185,6 +184,7 @@ export function taskUpdateTimeline({
             class="task-update__photo-trigger"
             type="button"
             data-photo-lightbox
+            disabled
             data-timeline-focus="original-photo"
             data-full-src="${escapeAttr(
               originalFullMediaUrl || originalMediaUrl,
@@ -199,7 +199,7 @@ export function taskUpdateTimeline({
               src: originalMediaUrl,
               original: originalFullMediaUrl,
               checkId: task.checkId,
-              artifactId: taskArtifactIds(task)[0],
+              artifactId: taskMediaArtifactId(task),
               alt: t("taskUpdate.photo.evidenceAlt", { title }),
             })}
           </button>`
@@ -338,7 +338,7 @@ function captureTaskIdentity(task) {
           src: mediaUrl,
           original: task.mediaUrl,
           checkId: task.checkId,
-          artifactId: taskArtifactIds(task)[0],
+          artifactId: taskMediaArtifactId(task),
         })
       : ""}
     <span class="task-update__capture-task-text"

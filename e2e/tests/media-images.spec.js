@@ -292,3 +292,149 @@ test("reattaching a photo during signing cannot strand it or duplicate the reque
   );
   expect(calls).toBe(1);
 });
+
+test("report lightbox stays disabled during delayed signing and enables with a valid source", async ({
+  page,
+}) => {
+  /** @type {()=>void} */ let release = () => {};
+  let calls = 0;
+  await page.route("**/report.svg", (route) =>
+    route.fulfill({ contentType: "image/svg+xml", body: svg }),
+  );
+  await open(page, (route) => {
+    calls++;
+    return new Promise((resolve) => {
+      release = () => {
+        void route
+          .fulfill({ json: { downloadUrl: "/report.svg", expiresIn: 300 } })
+          .then(resolve);
+      };
+    });
+  });
+  await page.evaluate(async () => {
+    const path = "/src/components/reports-view.templates.js";
+    const { dayDetail } = await import(path);
+    document.body.innerHTML = dayDetail({
+      day: { date: "2026-10-27" },
+      checks: [
+        {
+          check: { checkId: "check", startedAt: "2026-10-27T12:00:00Z" },
+          evidence: [{ kind: "photo", artifactId: "photo" }],
+          tasks: [],
+        },
+      ],
+    });
+    const css = "/src/components/reports-view.css";
+    await import(css);
+  });
+  await expect.poll(() => calls).toBe(1);
+  const trigger = page.locator("[data-photo-lightbox]");
+  await expect(trigger).toBeDisabled();
+  // A synthetic click must also be harmless if a caller bypasses native disabled handling.
+  await page.evaluate(async () => {
+    const path = "/src/components/photo-lightbox.js";
+    const { openPhotoLightbox } = await import(path);
+    const trigger = document.querySelector("[data-photo-lightbox]");
+    openPhotoLightbox(document.body, trigger);
+  });
+  await expect(page.locator("photo-lightbox")).toHaveCount(0);
+  release();
+  await expect(trigger).toBeEnabled();
+  await expect(trigger).toHaveAttribute("data-full-src", "/report.svg");
+  await page.evaluate(async () => {
+    const path = "/src/components/photo-lightbox.js";
+    const { openPhotoLightbox } = await import(path);
+    openPhotoLightbox(
+      document.body,
+      document.querySelector("[data-photo-lightbox]"),
+    );
+  });
+  await expect(page.locator("photo-lightbox img")).toHaveAttribute(
+    "src",
+    "/report.svg",
+  );
+});
+
+test("real task-update dialog loads the hydrated artifact despite differing source order", async ({
+  page,
+}) => {
+  let calls = 0;
+  await page.route("**/selected.svg", (route) =>
+    route.fulfill({ contentType: "image/svg+xml", body: svg }),
+  );
+  await open(
+    page,
+    (route) => {
+      calls++;
+      return route.fulfill({
+        json: { downloadUrl: "/selected.svg", expiresIn: 300 },
+      });
+    },
+    fixture.replace('data-check-id="check" data-artifact-id="photo"', ""),
+  );
+  await page.evaluate(async () => {
+    const service = "/src/services/task-evidence.js";
+    const { hydrateTaskEvidenceFromCheck } = await import(service);
+    const [task] = await hydrateTaskEvidenceFromCheck(
+      [
+        {
+          taskId: "task",
+          checkId: "check",
+          sourceArtifactIds: ["wrong", "photo"],
+          createdAt: "2026-10-27T12:00:00Z",
+        },
+      ],
+      {
+        artifacts: [
+          { artifactId: "photo", contentType: "image/jpeg", s3Key: "photo" },
+          { artifactId: "wrong", contentType: "image/jpeg", s3Key: "wrong" },
+        ],
+      },
+    );
+    const path = "/src/components/task-update-dialog.templates.js";
+    const { taskUpdateTimeline, taskUpdateDialogShell } = await import(path);
+    const css = "/src/components/task-update-dialog.css";
+    await import(css);
+    document.body.innerHTML = taskUpdateDialogShell({
+      mode: "timeline",
+      state: "ready",
+      content: taskUpdateTimeline({
+        task,
+        updates: [],
+        issueOrigin: "single-problem",
+        originalMediaUrl: task.mediaUrl,
+        mediaUrls: new Map(),
+      }),
+    });
+    document.querySelector("dialog")?.showModal();
+  });
+  const photo = page.locator(".task-update__photo--original");
+  await expect(photo).toHaveAttribute("data-artifact-id", "photo");
+  await expect(photo.locator("img")).toHaveAttribute("src", "/selected.svg");
+  await expect(page.locator("[data-photo-lightbox]")).toBeEnabled();
+  const box = await photo.boundingBox();
+  expect(box?.width ?? 0).toBeGreaterThan(100);
+  expect(box?.height ?? 0).toBeGreaterThan(100);
+  expect(calls).toBe(1);
+});
+
+test("photos with neither a URL nor an artifact identity remain unavailable and disabled", async ({
+  page,
+}) => {
+  let calls = 0;
+  await open(
+    page,
+    (route) => {
+      calls++;
+      return route.fulfill({ status: 404 });
+    },
+    fixture
+      .replace('data-check-id="check" data-artifact-id="photo"', "")
+      .replace('data-src="/old.svg"', ""),
+  );
+  await expect(page.locator("[data-photo-lightbox]")).toBeDisabled();
+  await expect(
+    page.getByRole("img", { name: "Image unavailable" }),
+  ).toBeVisible();
+  expect(calls).toBe(0);
+});

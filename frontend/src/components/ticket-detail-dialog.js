@@ -20,10 +20,9 @@ import {
   getTaskUpdates,
   getMediaUrl,
 } from "../services/api.js";
-import { taskArtifactIds } from "../domain/home-tasks.js";
 import { submitted311Ticket } from "../domain/home-tasks.js";
 import { ticketDetailLocation } from "../domain/ticket-detail.js";
-import { taskMediaUrl } from "../domain/task-media.js";
+import { taskMediaUrl, taskMediaArtifactId } from "../domain/task-media.js";
 import { showTaskUpdateErrorToast } from "../state/toasts.js";
 import { ticketDetailDialog } from "./ticket-detail-dialog.templates.js";
 
@@ -55,7 +54,7 @@ export function buildTicketDetail(task, site, request) {
     ),
     location: ticketDetailLocation(task, site || {}, request),
     checkId: task.checkId,
-    artifactId: taskArtifactIds(task)[0],
+    artifactId: taskMediaArtifactId(task),
     mediaUrl: taskMediaUrl(task),
     fullMediaUrl: task.mediaUrl || taskMediaUrl(task),
   };
@@ -123,7 +122,7 @@ class TicketDetailDialog extends HTMLElement {
         ...this._detail,
         task,
         checkId: task.checkId,
-        artifactId: taskArtifactIds(task)[0],
+        artifactId: taskMediaArtifactId(task),
         mediaUrl: taskMediaUrl(task),
         fullMediaUrl: task.mediaUrl || taskMediaUrl(task),
       };

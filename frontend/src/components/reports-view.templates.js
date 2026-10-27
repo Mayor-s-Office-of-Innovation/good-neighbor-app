@@ -692,6 +692,7 @@ function checkTimelineItem({ check, evidence, tasks }, siteName) {
                     type="button"
                     class="reports-timeline__photo"
                     data-photo-lightbox
+                    disabled
                     data-full-src="${escapeAttr(photo.url || "")}"
                     data-photo-time="${escapeAttr(when)}"
                   >
