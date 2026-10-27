@@ -8,7 +8,7 @@
 # touching the filters).
 
 variable "alarm_emails" {
-  description = "Email addresses subscribed to the error-alarm SNS topic (optional; alarm recipients are an open question in the error-tracking plan)."
+  description = "Email addresses subscribed to both regional alarm topics and daily cost warnings. Each SNS subscription requires confirmation."
   type        = list(string)
   default     = []
 }
@@ -370,7 +370,7 @@ resource "aws_cloudwatch_log_metric_filter" "media_quota_exceeded" {
 
 resource "aws_cloudwatch_metric_alarm" "media_quota_exceeded" {
   alarm_name          = "${local.name_prefix}-media-quota-exceeded"
-  alarm_description   = "A device, check, or Site media quota is repeatedly exhausted. Follow docs/runbooks/media-safeguards.md."
+  alarm_description   = "Media reservations are repeatedly rejected. Inspect cancellation reasons to distinguish transaction conflicts from check or device limits; this marker alone does not prove quota exhaustion. Follow docs/runbooks/media-safeguards.md."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
   datapoints_to_alarm = 1

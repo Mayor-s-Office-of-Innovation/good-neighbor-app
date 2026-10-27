@@ -177,6 +177,7 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.webp";
  * @property {boolean} [ticketResponseOverdue]
  * @property {string} [ticketUpdatedAt]
  * @property {string} [status]
+ * @property {string} [completedAt]
  * @property {string} [updatedAt]
  * @property {string} [latestUpdateLabel]
  */
@@ -574,6 +575,7 @@ function conditionEvidenceCard(item, sessionCheckId, condition) {
  * @param {string} params.statusLabel
  * @param {boolean} [params.history]
  * @param {boolean} [params.isNew]
+ * @param {boolean} [params.readOnly]
  * @param {boolean} [params.includeControls]
  * @param {string} [params.siteName] caption when the task's evidence has no place name
  * @returns {string}
@@ -584,6 +586,7 @@ export function taskAnalysisCard({
   statusLabel,
   isNew = false,
   includeControls = true,
+  readOnly = false,
   siteName = "",
   history = false,
 }) {
@@ -607,7 +610,7 @@ export function taskAnalysisCard({
   const evidenceText = task.evidence?.text || task.text || "";
   const pseudoItem = {
     id: task.taskId || "",
-    kind: mediaUrl || action?.kind === "view311" ? "photo" : "text",
+    kind: mediaUrl || readOnly || action?.kind === "view311" ? "photo" : "text",
     dataUrl: mediaUrl,
     fullDataUrl: task.mediaUrl || mediaUrl,
     text: evidenceText,
@@ -656,14 +659,17 @@ export function taskAnalysisCard({
     actionAttribute: "data-action",
     actionValue: action?.kind || "done",
     includeEditDelete: includeControls,
+    readOnly,
     isNew,
     tickerTask: task,
     createdAt: task.createdAt || task.created_at || "",
-    footerTimeLabel:
-      task.status === "in_progress" && (task.updatedAt || task.ticketUpdatedAt)
+    footerTimeLabel: readOnly
+      ? updatedCardTime(task.updatedAt || task.completedAt || task.createdAt)
+      : task.status === "in_progress" &&
+          (task.updatedAt || task.ticketUpdatedAt)
         ? updatedCardTime(task.updatedAt || task.ticketUpdatedAt)
         : "",
-    mediaPlaceholder: action?.kind === "view311" && !mediaUrl,
+    mediaPlaceholder: (readOnly || action?.kind === "view311") && !mediaUrl,
     shortId: taskDisplayReference(task),
   });
 }
@@ -922,6 +928,7 @@ function completedEvidenceCard(
     actionAttribute = "data-analysis-action",
     actionValue = "resolve",
     includeEditDelete = true,
+    readOnly = false,
     includeDelete = includeEditDelete,
     isNew = true,
     tickerTask = null,
@@ -1028,11 +1035,11 @@ function completedEvidenceCard(
                   ><span>${escapeHtml(t("card.editDetails"))}</span>
                 </button>`
               : ""}
-            ${tickerTask?.status === "in_progress"
+            ${!readOnly && tickerTask?.status === "in_progress"
               ? html`<button
                   type="button"
                   class="btn-outline issue-update-button analysis-card__resolve"
-                  data-action="mark-resolved"
+                  ${actionAttribute}="mark-resolved"
                 >
                   ${escapeHtml(t("taskUpdate.markResolved"))}
                 </button>`
@@ -1050,10 +1057,9 @@ function completedEvidenceCard(
                   type="button"
                   ${actionAttribute}="${escapeAttr(actionValue)}"
                 >
-                  ${escapeHtml(t("card.viewUpdates"))}<wa-icon
-                    name="chevron-right"
-                    aria-hidden="true"
-                  ></wa-icon>
+                  ${escapeHtml(
+                    readOnly ? action : t("card.viewUpdates"),
+                  )}<wa-icon name="chevron-right" aria-hidden="true"></wa-icon>
                 </button>`
               : actionKind !== "escalation" &&
                   ["done", "resolve"].includes(actionValue)

@@ -1,3 +1,4 @@
+import { resolveSessionTask } from "./session-task-resolution.js";
 import { openSessionDuplicate } from "./duplicate-issue-launcher.js";
 import { captureLabels } from "./capture-analysis.templates.js";
 import {
@@ -388,6 +389,9 @@ class ProblemReport extends HTMLElement {
           )
         : "";
     this._wireAnalysisCards();
+    for (const conditionId of this._answeringConditionIds) {
+      setQuestionAnswerBusy(this, conditionId, true);
+    }
   }
 
   /** @returns {void} */
@@ -466,7 +470,9 @@ class ProblemReport extends HTMLElement {
           openSessionDuplicate(target, this);
           return;
         }
-        if (action === "delete") {
+        if (action === "mark-resolved" && target instanceof HTMLElement) {
+          resolveSessionTask(this, problem, target);
+        } else if (action === "delete") {
           this._openDeleteProblem(problem);
         } else if (action === "edit") {
           this._openEditProblem(problem);

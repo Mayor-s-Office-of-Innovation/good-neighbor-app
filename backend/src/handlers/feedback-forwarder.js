@@ -11,7 +11,7 @@
 // behavior, and the kill switch (unset a survey ID to revoke). See
 // posthog-api-key.js for key resolution semantics.
 
-import { getConfig } from "../config.js";
+import { getPosthogConfig } from "../config.js";
 import { getPosthogApiKey } from "./posthog-api-key.js";
 
 const DEFAULT_HOST = "https://us.i.posthog.com";
@@ -34,12 +34,12 @@ const FALLBACK_DISTINCT_ID = "feedback-anonymous";
  * @param {{ userAgent?: string }} ctx best taken from the API Gateway event
  *   headers server-side; the client never sends it
  * @param {{ fetchImpl?: typeof fetch, host?: string, now?: () => number,
- *   config?: import("../config.js").AppConfig }} [deps] test seams; `config`
- *   defaults to getConfig() (the Lambda env)
+ *   config?: import("../config.js").PosthogConfig }} [deps] test seams; `config`
+ *   defaults to getPosthogConfig() (the Lambda env)
  * @returns {Promise<"forwarded" | "log-only" | "failed">}
  */
 export async function forwardFeedback(feedback, ctx, deps = {}) {
-  const config = deps.config ?? getConfig();
+  const config = deps.config ?? getPosthogConfig();
 
   // Survey IDs are plain identifiers (not secrets) but are required together:
   // without both, the response event can't be shaped — quiet log-only.

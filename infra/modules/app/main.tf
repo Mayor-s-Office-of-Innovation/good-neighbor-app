@@ -1310,6 +1310,16 @@ resource "aws_cloudfront_response_headers_policy" "admin_security" {
 }
 
 resource "aws_wafv2_web_acl" "web" {
+  # Inspect the entire body accepted by the evaluation handler. AWS bills
+  # additional inspection for requests above the default 16 KiB window.
+  association_config {
+    request_body {
+      cloudfront {
+        default_size_inspection_limit = "KB_64"
+      }
+    }
+  }
+
   custom_response_body {
     key          = "code-attempts-limited"
     content      = jsonencode({ error = "code_attempts_limited" })
@@ -1338,12 +1348,83 @@ resource "aws_wafv2_web_acl" "web" {
       managed_rule_group_statement {
         name        = "AWSManagedRulesCommonRuleSet"
         vendor_name = "AWS"
+
+        # Keep detection/labels, then restore blocking outside the exact
+        # evaluation route below. All other managed rules still enforce.
+        rule_action_override {
+          name = "SizeRestrictions_BODY"
+          action_to_use {
+            count {}
+          }
+        }
       }
     }
 
     visibility_config {
       cloudwatch_metrics_enabled = true
       metric_name                = "${local.name_prefix}-common-rules"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  # AI assessments can exceed 8 KiB. The handler enforces a decoded 64 KiB
+  # limit and returns JSON errors; do not exempt any other method or route.
+  rule {
+    name     = "BodySizeRestrictionsOutsideAssessmentEvaluation"
+    priority = 10
+
+    action {
+      block {}
+    }
+
+    statement {
+      and_statement {
+        statement {
+          label_match_statement {
+            scope = "LABEL"
+            key   = "awswaf:managed:aws:core-rule-set:SizeRestrictions_Body"
+          }
+        }
+        statement {
+          not_statement {
+            statement {
+              and_statement {
+                statement {
+                  byte_match_statement {
+                    positional_constraint = "EXACTLY"
+                    search_string         = "/v1/assessments:evaluate"
+                    field_to_match {
+                      uri_path {}
+                    }
+                    text_transformation {
+                      priority = 0
+                      type     = "NONE"
+                    }
+                  }
+                }
+                statement {
+                  byte_match_statement {
+                    positional_constraint = "EXACTLY"
+                    search_string         = "POST"
+                    field_to_match {
+                      method {}
+                    }
+                    text_transformation {
+                      priority = 0
+                      type     = "NONE"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name_prefix}-body-size-outside-evaluation"
       sampled_requests_enabled   = true
     }
   }

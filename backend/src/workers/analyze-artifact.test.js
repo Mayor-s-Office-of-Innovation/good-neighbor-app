@@ -230,6 +230,45 @@ describe("analyze-artifact worker", () => {
     }
   });
 
+  it.each(["Litter", "Trash beside the sidewalk"])(
+    "completes without framing and preserves fallback label %s and evidence",
+    async (label) => {
+      getObjectBytes.mockResolvedValueOnce({
+        bytes: Buffer.from("img-bytes"),
+        contentType: "image/jpeg",
+      });
+      const response = globalThis.structuredClone(singleLowConcernResponse);
+      response.media_manifest = [{ index: 0, type: "image" }];
+      response.assessment.identified_conditions_of_concern[0].user_friendly_label =
+        label;
+      analyze.mockResolvedValueOnce(response);
+      ddbSend.mockResolvedValue({});
+      await invoke(baseMsg);
+      const write = ddbSend.mock.calls.find(
+        ([command]) => command instanceof PutCommand,
+      );
+      if (!write) throw new Error("Expected a persisted analysis");
+      const stored = write[0].input.Item;
+      expect(stored).not.toHaveProperty("shotType");
+      expect(stored).not.toMatchObject({ status: "failed" });
+      expect(stored).toMatchObject({
+        checkId: baseMsg.checkId,
+        artifactId: baseMsg.artifactId,
+        concerns: [
+          {
+            category: "Litter",
+            rating: 2,
+            userFriendlyLabel: label,
+            evidenceIndices: [0],
+          },
+        ],
+      });
+      expect(stored.concerns[0].explanation).toBe(
+        response.assessment.identified_conditions_of_concern[0].description,
+      );
+    },
+  );
+
   it("analyzes a photo, stores the ANALYSIS#, and bumps header counters", async () => {
     getObjectBytes.mockResolvedValueOnce({
       bytes: Buffer.from("img-bytes"),

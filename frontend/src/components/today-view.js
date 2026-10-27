@@ -223,6 +223,24 @@ if (typeof window !== "undefined") {
   });
 }
 
+/** Server-relevant session changes; progress and duplicate projections stay local.
+ * @param {any} session
+ */
+function sessionRefreshKey(session) {
+  return JSON.stringify([
+    session?.id,
+    session?.status,
+    (session?.items || []).map((item) => [
+      item.id,
+      item.analysis?.status === "analyzed"
+        ? item.analysis?.sourceAnalysis?.analysisId || "analyzed"
+        : null,
+      item.analysis?.assessment?.assessmentId,
+      item.analysis?.assessment?.assessmentRevision,
+    ]),
+  ]);
+}
+
 class TodayView extends HTMLElement {
   constructor() {
     super();
@@ -235,6 +253,13 @@ class TodayView extends HTMLElement {
     };
     this._focusAfterRender = null;
     this._homeModel = null;
+    /** @type {Promise<void> | null} */
+    this._homeRefresh = null;
+    this._homeRefreshQueued = false;
+    this._homeRefreshGeneration = 0;
+    /** @type {Promise<void> | null} */
+    this._remainingRefresh = null;
+    this._remainingRefreshQueued = false;
     /**
      * Cards with a non-checklist action in flight (the 311 filing, 5–20 s),
      * by task id: `_applyBusyCards` restores their busy state after any
@@ -291,6 +316,12 @@ class TodayView extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._remainingRefresh = null;
+    this._remainingRefreshQueued = false;
+    this._homeRefreshGeneration++;
+    this._homeRefreshQueued = false;
+    this._homeRefresh = null;
+    this._remainingGeneration = (this._remainingGeneration || 0) + 1;
     window.removeEventListener("focus", this._refresh311OnReturn);
     document.removeEventListener("visibilitychange", this._refresh311OnReturn);
     this._stopDuplicates?.();
@@ -316,7 +347,40 @@ class TodayView extends HTMLElement {
     stashHomeState(this);
   }
 
-  async connectedCallback() {
+  connectedCallback() {
+    if (this._homeRefresh) {
+      this._homeRefreshQueued = true;
+      return this._homeRefresh;
+    }
+    const generation = this._homeRefreshGeneration;
+    const run = async () => {
+      do {
+        this._homeRefreshQueued = false;
+        try {
+          await this._loadHome(generation);
+        } catch (error) {
+          // An already-requested refresh may recover from a failed local read.
+          // Do not retry on our own, or discard that explicit queued request.
+          if (
+            !this._homeRefreshQueued ||
+            generation !== this._homeRefreshGeneration
+          )
+            throw error;
+        }
+      } while (
+        this._homeRefreshQueued &&
+        generation === this._homeRefreshGeneration
+      );
+    };
+    const pending = run().finally(() => {
+      if (this._homeRefresh === pending) this._homeRefresh = null;
+    });
+    this._homeRefresh = pending;
+    return pending;
+  }
+
+  /** @param {number} generation */
+  async _loadHome(generation) {
     window.addEventListener("focus", this._refresh311OnReturn);
     document.addEventListener("visibilitychange", this._refresh311OnReturn);
     document.addEventListener("close", this._duplicateCloseHandler, true);
@@ -348,11 +412,19 @@ class TodayView extends HTMLElement {
       void refreshGrantedDeviceLocation();
     }
     if (!this._sessionUnsub) {
+      let refreshKey = sessionRefreshKey(getCurrentCheck());
       this._sessionUnsub = onCheckSessionChange((session) => {
-        if (session?.status === "in-progress") {
-          return;
+        if (session?.status === "in-progress") return;
+        if (
+          this._homeModel &&
+          this._homeModel.pendingSession?.id === session?.id
+        ) {
+          this._renderHome({ ...this._homeModel, pendingSession: session });
         }
-        this.connectedCallback();
+        const nextKey = sessionRefreshKey(session);
+        if (nextKey === refreshKey) return;
+        refreshKey = nextKey;
+        void this.connectedCallback();
       });
     }
     if (!this._settingsDocumentClick) {
@@ -386,7 +458,9 @@ class TodayView extends HTMLElement {
         requestedFilter,
       );
     const previousSiteId = this._siteId;
-    this._site = await getSite();
+    const site = await getSite();
+    if (generation !== this._homeRefreshGeneration) return;
+    this._site = site;
     this._siteId =
       this._site.siteId || this._site.providerSiteId || this._site.id;
     if (previousSiteId && previousSiteId !== this._siteId) {
@@ -454,6 +528,7 @@ class TodayView extends HTMLElement {
           listChecks({ limit: 30 }),
           listTasks({ status: "open", limit: 50 }),
         ]);
+      if (generation !== this._homeRefreshGeneration) return;
       this._providerSitesStatus = catalog ? "loaded" : "error";
       this._providerSites = catalog?.sites || [];
       this._providerName =
@@ -488,6 +563,7 @@ class TodayView extends HTMLElement {
           (b.submittedAt || "").localeCompare(a.submittedAt || ""),
         );
     } catch (err) {
+      if (generation !== this._homeRefreshGeneration) return;
       console.error("listChecks/listTasks failed", err);
       this._renderError();
       return;
@@ -510,11 +586,13 @@ class TodayView extends HTMLElement {
       });
     }
 
+    if (generation !== this._homeRefreshGeneration) return;
     this._taskOverrides = readTaskStatusOverrides();
     this._homeFilter =
       this._homeFilter || normalizedHomeTab(requestedFilter || "");
     this._activeProblem = null;
     this._hasPerimeterDraft = await hasDraft("perimeter");
+    if (generation !== this._homeRefreshGeneration) return;
     if (!duplicateUiEnabled()) this._duplicateLinks = new Map();
     this._renderHome({
       last,
@@ -550,9 +628,29 @@ class TodayView extends HTMLElement {
   }
 
   _startRemainingLoad() {
-    this._remainingLoad = this._loadRemainingTasks().catch((err) =>
-      console.error("remaining worklist failed", err),
-    );
+    if (this._remainingRefresh) {
+      this._remainingRefreshQueued = true;
+      // The active response predates the latest open-worklist refresh.
+      this._remainingGeneration = (this._remainingGeneration || 0) + 1;
+      return;
+    }
+    const generation = this._homeRefreshGeneration;
+    const run = async () => {
+      do {
+        this._remainingRefreshQueued = false;
+        await this._loadRemainingTasks().catch((err) =>
+          console.error("remaining worklist failed", err),
+        );
+      } while (
+        this._remainingRefreshQueued &&
+        generation === this._homeRefreshGeneration
+      );
+    };
+    const pending = run().finally(() => {
+      if (this._remainingRefresh === pending) this._remainingRefresh = null;
+    });
+    this._remainingRefresh = pending;
+    this._remainingLoad = pending;
   }
 
   /** The retry button on a failed In-progress / History load. */
@@ -717,6 +815,25 @@ class TodayView extends HTMLElement {
   _renderHome(model) {
     if (this._confirmedTasks?.size)
       model = { ...model, tasks: this._reconcileConfirmedTasks(model.tasks) };
+    // Worklist rows omit hydrated evidence; do not blank photos on each refresh.
+    const previous = new Map(
+      (this._homeModel?.tasks || []).map((task) => [task.taskId, task]),
+    );
+    const tasks = model.tasks.map((task) => {
+      const old = previous.get(task.taskId);
+      if (
+        !old ||
+        old.checkId !== task.checkId ||
+        taskArtifactIds(old).join() !== taskArtifactIds(task).join()
+      )
+        return task;
+      const cached = {};
+      for (const key of ["evidence", "mediaUrl", "thumbnailUrl"])
+        if (!task[key] && old[key]) cached[key] = old[key];
+      return Object.keys(cached).length ? { ...task, ...cached } : task;
+    });
+    if (tasks.some((task, index) => task !== model.tasks[index]))
+      model = { ...model, tasks };
     this._homeModel = model;
     // Keep the native dialog and its action buttons mounted while a location
     // decision is pending. A background location update can otherwise replace
@@ -729,7 +846,7 @@ class TodayView extends HTMLElement {
     // edit): the innerHTML swap would remove it unseen, orphaning its overlay
     // history entry and any close handler. The paint resumes on its `close`
     // (wired below) with whatever model arrived meanwhile.
-    if (this.querySelector(":scope > .home > dialog[open]")) {
+    if (this.querySelector(":scope > .home dialog[open]")) {
       this._pendingDialogRender = true;
       return;
     }
@@ -740,7 +857,11 @@ class TodayView extends HTMLElement {
     // Index tasks by id so card action handlers can read the task (e.g. its
     // action metadata) at click time.
     this._tasksById = new Map(model.tasks.map((t) => [t.taskId, t]));
-    this.innerHTML = this._render(model);
+    const markup = this._render(model);
+    if (markup === this._homeMarkup && this.querySelector(":scope > .home"))
+      return;
+    this._homeMarkup = markup;
+    this.innerHTML = markup;
 
     // Hand the bound site id to the feedback sheet so submissions carry it as
     // optional context (the server treats it as advisory, pattern-checked).
@@ -787,23 +908,13 @@ class TodayView extends HTMLElement {
       this._renderHome(this._homeModel);
     });
     this.querySelector("#settings-feedback")?.addEventListener("click", () => {
-      this._settingsMenuOpen = false;
-      this.querySelector(".home-settings-menu")?.remove();
-      this.querySelector("#home-settings")?.setAttribute(
-        "aria-expanded",
-        "false",
-      );
+      this._removeSettingsMenu();
       feedbackDialog?.open();
     });
     this.querySelector("#settings-attributions")?.addEventListener(
       "click",
       () => {
-        this._settingsMenuOpen = false;
-        this.querySelector(".home-settings-menu")?.remove();
-        this.querySelector("#home-settings")?.setAttribute(
-          "aria-expanded",
-          "false",
-        );
+        this._removeSettingsMenu();
         this._attributionsDialogOpen = true;
         openOverlayDialog(
           /** @type {HTMLDialogElement} */ (this._attributionsDialog),
@@ -812,12 +923,7 @@ class TodayView extends HTMLElement {
       },
     );
     this.querySelector("#settings-language")?.addEventListener("click", () => {
-      this._settingsMenuOpen = false;
-      this.querySelector(".home-settings-menu")?.remove();
-      this.querySelector("#home-settings")?.setAttribute(
-        "aria-expanded",
-        "false",
-      );
+      this._removeSettingsMenu();
       this._languageDialogOpen = true;
       openOverlayDialog(
         /** @type {HTMLDialogElement} */ (this._languageDialog),
@@ -1030,6 +1136,10 @@ class TodayView extends HTMLElement {
     );
     this._wireCards();
     this._applyBusyCards();
+    for (const conditionId of this._answeringConditionIds) {
+      setQuestionAnswerBusy(this, conditionId, true);
+    }
+
     this._restoreFocusAfterRender();
     const requestedIssue = new URLSearchParams(window.location.search).get(
       "issue",
@@ -1196,6 +1306,19 @@ class TodayView extends HTMLElement {
       logoutError: this._logoutError,
       logoutPending: this._logoutPending,
     });
+  }
+
+  // Close in place so the dialog about to open keeps its mounted element.
+  // This DOM edit invalidates the last rendered markup, even if opening the
+  // menu again would produce exactly the same string as the previous render.
+  _removeSettingsMenu() {
+    this._settingsMenuOpen = false;
+    this._homeMarkup = null;
+    this.querySelector(".home-settings-menu")?.remove();
+    this.querySelector("#home-settings")?.setAttribute(
+      "aria-expanded",
+      "false",
+    );
   }
 
   _toggleSettingsMenu() {
@@ -1923,9 +2046,17 @@ class TodayView extends HTMLElement {
   }
 
   _onAnalysisAction(card, task, btn) {
+    task = this._tasksById?.get(card.getAttribute("data-task-id")) || task;
     const action = btn.getAttribute("data-analysis-action");
     const problem = this._problemFromCard(card, task);
-    if (action === "view311" && task) {
+    if (action === "mark-resolved") {
+      const current =
+        task ||
+        this._sessionItem(problem)?.analysis?.tasks?.find(
+          (candidate) => candidate.taskId === problem.taskId,
+        );
+      if (current) void this._taskSheets().openUpdates(current, btn, "resolve");
+    } else if (action === "view311" && task) {
       void this._open311Detail(task, btn);
     } else if (action === "delete") {
       this._openDeleteProblem(problem);
@@ -2292,6 +2423,7 @@ class TodayView extends HTMLElement {
   }
 
   _onAction(card, task, btn) {
+    task = this._tasksById?.get(task.taskId) || task;
     const action = btn.getAttribute("data-action");
     if (action === "duplicate") {
       const decorated = projectDuplicateTasks(

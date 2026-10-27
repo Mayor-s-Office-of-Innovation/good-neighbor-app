@@ -10,7 +10,7 @@
 // the same properties, so the device picture is available in CloudWatch even
 // while the forwarder is log-only.
 
-import { getConfig } from "../config.js";
+import { getPosthogConfig } from "../config.js";
 import { parseUserAgent } from "../lib/user-agent.js";
 import { getPosthogApiKey } from "./posthog-api-key.js";
 import { toIso, withTimeout } from "./forwarder.js";
@@ -76,7 +76,7 @@ export function toPosthogEvent(report, ctx) {
  * @param {import("./scrub-client-event.js").ScrubbedClientEvent} report
  * @param {{ userAgent?: string }} ctx
  * @param {{ fetchImpl?: typeof fetch, host?: string, now?: () => number,
- *   config?: import("../config.js").AppConfig }} [deps]
+ *   config?: import("../config.js").PosthogConfig }} [deps]
  * @returns {Promise<"forwarded" | "log-only" | "failed">}
  */
 export async function forwardClientEvent(report, ctx, deps = {}) {
@@ -88,7 +88,7 @@ export async function forwardClientEvent(report, ctx, deps = {}) {
 
   let apiKey;
   try {
-    apiKey = await getPosthogApiKey(deps.config ?? getConfig());
+    apiKey = await getPosthogApiKey(deps.config ?? getPosthogConfig());
   } catch (err) {
     warnForwardFailed("secret_fetch_failed", err, logFields);
     return "failed";

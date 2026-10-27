@@ -1,3 +1,4 @@
+import { mapWithConcurrency } from "./concurrency.js";
 import { navigate } from "./router.js";
 import { rulebookText } from "../../frontend/src/i18n/rulebook.js";
 import { adminApi } from "./services/admin-api.js";
@@ -59,6 +60,19 @@ class SystemStatus extends HTMLElement {
   error = "";
   loading = false;
   previewSequence = 0;
+
+  viewPages = new Map();
+  showView(kind = "") {
+    if (this.kind === kind) return;
+    this.viewPages.set(this.kind, this.pages);
+    for (const siteId of this.busySites.keys()) this.invalidateSite(siteId);
+    this.kind = kind;
+    this.setAttribute("view", kind);
+    this.pages = this.viewPages.get(kind) || new Map();
+    this.filter = "all";
+    this.render();
+    this.querySelector("#status-title")?.focus();
+  }
 
   connectedCallback() {
     this.kind = this.getAttribute("view") || "";
@@ -144,6 +158,7 @@ class SystemStatus extends HTMLElement {
     try {
       const next = await adminApi.getSystemStatus();
       if (!this.isConnected) return;
+      if (this.data?.start !== next.start) this.viewPages.clear();
       if (this.data?.start !== next.start)
         for (const siteId of new Set([
           ...this.pages.keys(),
@@ -156,27 +171,47 @@ class SystemStatus extends HTMLElement {
           if (prior && prior.counts[this.kind] !== site.counts[this.kind])
             this.invalidateSite(site.siteId);
         }
-      // Renew expiring URLs without discarding pagination or scroll position.
       for (const site of next.sites) {
-        const page = this.pages.get(site.siteId);
-        for (const entry of page?.entries || []) {
-          if (!entry.url || Date.parse(entry.urlExpiresAt) > Date.now() + 60000)
-            continue;
-          const generation = this.generations.get(site.siteId) || 0;
+        const previous = this.data?.sites.find((s) => s.siteId === site.siteId);
+        for (const [kind, pages] of this.viewPages) {
+          if (previous?.counts[kind] !== site.counts[kind])
+            pages.delete(site.siteId);
+        }
+      }
+      // Renew expiring URLs without discarding pagination or scroll position.
+      const renewals = next.sites.flatMap((site) =>
+        (this.pages.get(site.siteId)?.entries || [])
+          .filter(
+            (entry) =>
+              entry.url && Date.parse(entry.urlExpiresAt) <= Date.now() + 60000,
+          )
+          .map((entry) => ({
+            site,
+            entry,
+            generation: this.generations.get(site.siteId) || 0,
+          })),
+      );
+      await mapWithConcurrency(
+        renewals,
+        3,
+        async ({ site, entry, generation }) => {
           const media = await adminApi.getStatusMedia(
             site.siteId,
             entry.checkId,
             entry.artifactId,
             true,
           );
-          if (!this.isConnected) return;
-          if (generation === (this.generations.get(site.siteId) || 0)) {
+          if (
+            this.isConnected &&
+            generation === (this.generations.get(site.siteId) || 0)
+          ) {
             delete entry.url;
             delete entry.urlExpiresAt;
             Object.assign(entry, media);
           }
-        }
-      }
+        },
+      );
+      if (!this.isConnected) return;
       this.data = next;
       this.error = "";
     } catch {

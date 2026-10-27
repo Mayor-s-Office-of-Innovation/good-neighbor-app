@@ -178,7 +178,7 @@ describe("presignUpload", () => {
     );
     expect(ddbSend.mock.calls[0][0]).toBeInstanceOf(TransactWriteCommand);
     const reservation = ddbSend.mock.calls[0][0].input.TransactItems;
-    expect(reservation).toHaveLength(5);
+    expect(reservation).toHaveLength(4);
     expect(
       /** @type {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>} */ (
         reservation
@@ -244,6 +244,75 @@ describe("presignUpload", () => {
     expect(res.statusCode).toBe(429);
     expect(JSON.parse(res.body)).toEqual({ error: "media_quota_exceeded" });
     expect(presignPut).not.toHaveBeenCalled();
+  });
+
+  it("logs cancellation codes by operation without private error data", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const codes = [
+        "None",
+        "ConditionalCheckFailed",
+        "TransactionConflict",
+        "None",
+      ];
+      ddbSend.mockRejectedValueOnce(
+        Object.assign(new Error("private error"), {
+          name: "TransactionCanceledException",
+          CancellationReasons: codes.map((Code) => ({
+            Code,
+            Message: "private detail",
+            Item: { privateField: "private value" },
+          })),
+        }),
+      );
+      await callPresign(
+        artifactEvent({
+          checkId: "chk_01",
+          siteClaim: "site-1",
+          body: { contentType: "image/jpeg", contentLength: 1024 },
+        }),
+      );
+      const log = JSON.parse(warn.mock.calls[0][0]);
+      expect(log).toEqual({
+        marker: "MediaQuotaExceeded",
+        siteId: "site-1",
+        checkId: "chk_01",
+        errorName: "TransactionCanceledException",
+        cancellationReasons: [
+          { operation: "check_state", code: "None" },
+          { operation: "check_quota", code: "ConditionalCheckFailed" },
+          { operation: "device_quota", code: "TransactionConflict" },
+          { operation: "upload_reservation", code: "None" },
+        ],
+      });
+      expect(ddbSend).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("logs unavailable cancellation reasons without failing", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      ddbSend.mockRejectedValueOnce(
+        Object.assign(new Error("rejected"), {
+          name: "TransactionCanceledException",
+        }),
+      );
+      await callPresign(
+        artifactEvent({
+          checkId: "chk_01",
+          siteClaim: "site-1",
+          body: { contentType: "image/jpeg", contentLength: 1024 },
+        }),
+      );
+      expect(JSON.parse(warn.mock.calls[0][0])).toMatchObject({
+        errorName: "TransactionCanceledException",
+        cancellationReasons: null,
+      });
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("ignores legacy placeId / placeName fields from pre-Phase-2 clients", async () => {

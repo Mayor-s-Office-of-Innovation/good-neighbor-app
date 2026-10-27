@@ -99,7 +99,11 @@ test("site revocation sends the site ID and confirmation to the API", async () =
     },
   });
   await actions.revokeAllSiteDevices.call(
-    { state: { site: { siteId: "s" } }, async openSite() {}, render() {} },
+    {
+      state: { site: { siteId: "s" } },
+      async refreshSiteAccess() {},
+      render() {},
+    },
     { confirmation: "Site One" },
   );
   assert.deepEqual(calls, [["s", "Site One"]]);

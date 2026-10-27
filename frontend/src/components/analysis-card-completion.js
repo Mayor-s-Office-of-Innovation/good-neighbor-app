@@ -1,8 +1,12 @@
 import { savePhoneCompletion } from "../services/phone-completion.js";
+import { getSite } from "../db.js";
+import { t } from "../i18n/i18n.js";
 import { completeTask } from "../services/api.js";
-import { showActionSaveErrorToast } from "../state/toasts.js";
+import { showActionSaveErrorToast, showToast } from "../state/toasts.js";
 
 const pending = new Map();
+/** One save and results prompt per site/task, independent of card elements. */
+const operations = new Map();
 /** Results prompts open one at a time, in tap order. */
 let dialogQueue = Promise.resolve();
 
@@ -11,6 +15,13 @@ export function isCompletingAnalysisCard(host) {
   return [...pending.values()].some(
     (state) => state.host === host || host.contains(state.host),
   );
+}
+
+/** Hold the card through optional documentation and its exit animation. */
+export function holdCompletionCard(host, card) {
+  const key = card || {};
+  pending.set(key, { host });
+  return () => pending.delete(key);
 }
 
 /**
@@ -145,7 +156,20 @@ export function expectsCompletionResults(task, body) {
  * are pending.
  */
 export async function completeCardAction(taskId, body, { task = null } = {}) {
-  const request = completeTask(taskId, body);
+  const siteId = (await getSite())?.siteId || "";
+  const key = JSON.stringify([siteId, taskId]);
+  if (operations.has(key)) return operations.get(key);
+  const operation = completeAction(taskId, body, task, siteId);
+  operations.set(key, operation);
+  try {
+    return await operation;
+  } finally {
+    operations.delete(key);
+  }
+}
+
+async function completeAction(taskId, body, task, siteId) {
+  const request = completeTask(taskId, body, { originSiteId: siteId });
   if (task && expectsCompletionResults(task, body)) {
     const completion = request.then(
       (result) => ({ task: result?.resultsPending ? result.task : null }),
@@ -159,6 +183,9 @@ export async function completeCardAction(taskId, body, { task = null } = {}) {
     const turn = showResultsDialog(task, completion, () => {
       if (state === "queued") state = "opened";
       return state === "opened";
+    }).catch(async () => {
+      const result = await request;
+      if (result.resultsPending) offerResultsRetry(result.task, siteId);
     });
     const early = await Promise.race([turn.then(() => null), completion]);
     if (early && !early.task && state === "queued") state = "skipped";
@@ -166,8 +193,40 @@ export async function completeCardAction(taskId, body, { task = null } = {}) {
     return request;
   }
   const result = await request;
-  if (result.resultsPending) await showResultsDialog(result.task, null);
+  if (result.resultsPending) {
+    try {
+      await showResultsDialog(result.task, null);
+    } catch {
+      offerResultsRetry(result.task, siteId);
+    }
+  }
   return result;
+}
+
+function offerResultsRetry(task, siteId) {
+  let retrying = false;
+  showToast({
+    title: t("taskUpdate.formUnavailableResolved"),
+    message: t("taskUpdate.formUnavailableHelp"),
+    icon: "triangle-exclamation",
+    tone: "error",
+    duration: 0,
+    action: {
+      label: t("common.retry"),
+      run: async () => {
+        if (retrying) return;
+        retrying = true;
+        try {
+          if (((await getSite())?.siteId || "") !== siteId) return;
+          await showResultsDialog(task, null);
+        } catch {
+          offerResultsRetry(task, siteId);
+        } finally {
+          retrying = false;
+        }
+      },
+    },
+  });
 }
 
 /** @param {() => boolean} [open] asked at the turn; false skips the prompt */
@@ -194,7 +253,12 @@ async function openResultsDialog(task, completion) {
       },
       { once: true },
     );
-    document.body.append(dialog);
-    dialog.openResults(task, completion);
+    try {
+      document.body.append(dialog);
+      dialog.openResults(task, completion);
+    } catch (error) {
+      dialog.remove();
+      throw error;
+    }
   });
 }

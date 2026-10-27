@@ -40,7 +40,7 @@ for (const kind of ["Manager", "ProviderManager"]) {
         provider: { providerId: "provider" },
         managerMemberships: [],
       };
-      app.openSite = app.openProvider = async () => {
+      app.refreshSiteAccess = app.refreshProviderAccess = async () => {
         assert.equal(toasts.length, 1);
       };
       app.render = () => {};

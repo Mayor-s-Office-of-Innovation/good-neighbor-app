@@ -14,12 +14,48 @@ export function pendingConditions(conditions) {
   }));
 }
 /**
+ * @param {Partial<ConditionOutcome>|undefined} row
+ * @returns {boolean}
+ */
+export function isIncompleteCondition(row) {
+  return (
+    row?.possibleDuplicate !== true &&
+    (row?.assessmentOutcome === "incomplete" ||
+      row?.assessmentOutcome === "no_match_with_failures" ||
+      (row?.failedCandidateCount ?? 0) > 0)
+  );
+}
+
+/**
+ * Normalize historical failed negatives without rewriting stored results.
+ * @param {ConditionOutcome} row
+ * @returns {ConditionOutcome}
+ */
+export function normalizeConditionOutcome(row) {
+  return isIncompleteCondition(row)
+    ? {
+        ...row,
+        status: "insufficient_evidence",
+        possibleDuplicate: null,
+        duplicateOf: null,
+        matchStrength: null,
+        assessmentOutcome: "incomplete",
+      }
+    : row;
+}
+
+/**
  * @param {{status?:string,conditionResults?:ConditionOutcome[]}|undefined} result
- * @returns {"pending"|"retrying"|"complete"}
+ * @returns {"pending"|"retrying"|"incomplete"|"complete"}
  */
 export function processingState(result) {
   if (!result || result.status === "pending") return "pending";
   if (result.status === "failed") return "retrying";
+  if (
+    result.status === "incomplete" ||
+    result.conditionResults?.some(isIncompleteCondition)
+  )
+    return "incomplete";
   return "complete";
 }
 

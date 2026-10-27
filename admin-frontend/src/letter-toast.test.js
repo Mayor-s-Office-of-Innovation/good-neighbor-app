@@ -23,6 +23,8 @@ for (const uncertain of [false, true]) {
     const Subject = vm.runInNewContext(
       `(class { ${source.slice(start, end)} })`,
       {
+        document: { hidden: false },
+        document: { hidden: false },
         setTimeout: (callback) => callback(),
         adminApi: { getSite: async () => ({ items }) },
         letterEmailProgress,
@@ -31,6 +33,7 @@ for (const uncertain of [false, true]) {
       },
     );
     const app = new Subject();
+    app.readLetterStatus = async () => ({ items });
     app.state = { site: { siteId: "another-site" }, letterEmailHistory: [] };
     app.render = () => assert.fail("Do not rerender another site");
     await app.refreshLetterEmails("original-site", "job");
@@ -51,6 +54,7 @@ test("background polling is bounded and concurrent calls share one poller", asyn
   const Subject = vm.runInNewContext(
     `(class { ${source.slice(start, end)} })`,
     {
+      document: { hidden: false },
       setTimeout: (callback, delay) => {
         delays.push(delay);
         callback();
@@ -68,6 +72,10 @@ test("background polling is bounded and concurrent calls share one poller", asyn
   );
   const app = new Subject();
   app.state = { site: { siteId: "elsewhere" } };
+  app.readLetterStatus = async () => {
+    reads++;
+    return { items: [] };
+  };
   app.render = () => assert.fail("Do not render a different site");
   await Promise.all([
     app.refreshLetterEmails("site", "job"),

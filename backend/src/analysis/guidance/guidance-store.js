@@ -1,3 +1,4 @@
+import { sf311Job } from "./sf311-job.js";
 import {
   BatchGetCommand,
   GetCommand,
@@ -28,10 +29,8 @@ import {
 } from "../../handlers/keys.js";
 import { evaluateCondition } from "./evaluator.js";
 import {
-  eligibleTicketsForClosure,
   executeAppActions,
   initialAppActionStatus,
-  is311SubmissionEnabled,
   summarizeAppActionResults,
 } from "./app-actions.js";
 import { activeCatalog, catalogForPolicyVersion } from "./catalog-registry.js";
@@ -177,16 +176,6 @@ function isEmergencyTask(task) {
     task.guidance,
     .../** @type {unknown[]} */ (task.buttons ?? []),
   ].some((value) => /\b911\b/.test(String(value ?? "")));
-}
-
-/**
- * @param {Record<string, unknown>} task
- * @returns {boolean}
- */
-function hasTaskCreatedAppAction(task) {
-  return /** @type {{ payload?: { executionTrigger?: unknown } }[]} */ (
-    task.appActions ?? []
-  ).some((action) => action.payload?.executionTrigger === "task_created");
 }
 
 /**
@@ -931,6 +920,17 @@ export async function storeEvaluatedAssessment(input, options) {
       },
     });
   }
+  for (const task of newTaskItems) {
+    transactItems.push(
+      ...sf311Job(
+        options.tableName,
+        input.siteId,
+        task,
+        "created",
+        options.env,
+      ),
+    );
+  }
   if (transactItems.length > MAX_TRANSACTION_ITEMS) {
     throw namedError(
       "TransactionTooLarge",
@@ -961,106 +961,11 @@ export async function storeEvaluatedAssessment(input, options) {
     throw err;
   }
 
-  const updatedTaskItems = await executeTaskCreatedAppActions({
-    tableName: options.tableName,
-    siteId: input.siteId,
-    taskItems: newTaskItems,
-    env: options.env,
-    now: options.now,
-  });
-
   return {
     assessmentItem,
     conditionItems,
-    taskItems: [...retainedTasks, ...updatedTaskItems],
+    taskItems: [...retainedTasks, ...newTaskItems],
   };
-}
-
-/**
- * @param {object} opts
- * @param {string} opts.tableName
- * @param {string} opts.siteId
- * @param {Record<string, unknown>[]} opts.taskItems
- * @param {Record<string, string | undefined>} [opts.env]
- * @param {Date} [opts.now]
- * @returns {Promise<Record<string, unknown>[]>}
- */
-export async function executeTaskCreatedAppActions({
-  tableName,
-  siteId,
-  taskItems,
-  env = process.env,
-  now,
-}) {
-  if (!is311SubmissionEnabled(env)) return taskItems;
-  const updatedTasks = [];
-  for (const task of taskItems) {
-    if (!hasTaskCreatedAppAction(task)) {
-      updatedTasks.push(task);
-      continue;
-    }
-    const appActions = /** @type {import("./app-actions.js").AppAction[]} */ (
-      task.appActions ?? []
-    );
-    const appActionResults = await executeAppActions(appActions, {
-      env,
-      now,
-      tableName,
-      siteId,
-      task,
-      taskId: String(task.taskId ?? ""),
-      priorResults:
-        /** @type {import("./app-actions.js").AppActionResult[]} */ (
-          task.appActionResults ?? []
-        ),
-      trigger: "task_created",
-    });
-    for (const result of appActionResults) {
-      if (result.status !== "failed" || result.code !== "create_311_ticket") {
-        continue;
-      }
-      logServerError(
-        `task app-action ${result.code}`,
-        new Error(String(result.reason ?? "app action failed")),
-        {
-          extra: {
-            eventType: "311_app_action_failed",
-            taskId: String(task.taskId ?? ""),
-            siteId,
-            ruleId: String(task.ruleId ?? ""),
-            trigger: "task_created",
-          },
-        },
-      );
-    }
-    if (appActionResults.length === 0) {
-      updatedTasks.push(task);
-      continue;
-    }
-    const updatedTask = {
-      ...task,
-      appActionResults,
-      appActionStatus: summarizeAppActionResults(appActionResults),
-      updatedAt: (now ?? new Date()).toISOString(),
-    };
-    const persisted = await ddb.send(
-      new UpdateCommand({
-        TableName: tableName,
-        Key: taskKey(siteId, String(task.taskId ?? "")),
-        UpdateExpression:
-          "SET appActionResults = :results, appActionStatus = :actionStatus, updatedAt = :updatedAt",
-        ConditionExpression: "attribute_exists(sk)",
-        ExpressionAttributeValues: {
-          ":results": appActionResults,
-          ":actionStatus": updatedTask.appActionStatus,
-          ":updatedAt": updatedTask.updatedAt,
-        },
-        ReturnValues: "ALL_NEW",
-      }),
-    );
-    updatedTasks.push(persisted.Attributes || updatedTask);
-  }
-  return updatedTasks;
 }
 
 /**
@@ -1354,21 +1259,16 @@ export async function answerCondition(opts) {
       });
     }
 
+    if (taskItem)
+      tx.push(
+        ...sf311Job(opts.tableName, opts.siteId, taskItem, "created", opts.env),
+      );
     try {
       await ddb.send(new TransactWriteCommand({ TransactItems: tx }));
-      const [updatedTaskItem = null] = taskItem
-        ? await executeTaskCreatedAppActions({
-            tableName: opts.tableName,
-            siteId: opts.siteId,
-            taskItems: [taskItem],
-            env: opts.env,
-            now: opts.now,
-          })
-        : [];
       return {
         assessmentItem: updatedAssessment,
         conditionItem: updatedCondition,
-        taskItem: updatedTaskItem,
+        taskItem,
         evaluation,
       };
     } catch (err) {
@@ -1528,38 +1428,7 @@ export async function completeTaskWithAppActions(opts) {
       ? false
       : existing.Item.canBeInProgress === true;
 
-  // Informational 311 tickets we filed under our own agency (76) are closed
-  // when the site owner marks the underlying work done. The prior filing
-  // result is always carried forward — closure rides on top of it, never
-  // replaces it. Only work-done completions; never the 311_filed path (the
-  // city manages those cases).
-  let closureResult = null;
-  if (
-    opts.completionMethod !== "311_filed" &&
-    !canBeInProgress &&
-    is311SubmissionEnabled(opts.env ?? process.env) &&
-    eligibleTicketsForClosure(priorResults).size > 0
-  ) {
-    const closureResults = await executeAppActions(
-      [{ code: "close_311_ticket", payload: {} }],
-      {
-        env: opts.env,
-        now: nowDate,
-        taskId: opts.taskId,
-        tableName: opts.tableName,
-        siteId: opts.siteId,
-        task: claimed,
-        priorResults,
-        trigger: "user_confirmed",
-        // Mid-execution closure checkpoints pin their writes to this lease so
-        // a reclaimed executor cannot persist stale results; the value is the
-        // exact attribute the final completion write conditions on.
-        completionLeaseExpiresAt: leaseExpiresAt,
-      },
-    );
-    closureResult = closureResults[0] ?? null;
-  }
-
+  // Silent City notifications and their closure run on the durable background queue.
   const appActionResults = [...executedAppActionResults];
   if (
     !executedAppActionResults.some(
@@ -1570,7 +1439,10 @@ export async function completeTaskWithAppActions(opts) {
       ...priorResults.filter((result) => result.code === "create_311_ticket"),
     );
   }
-  if (closureResult) appActionResults.push(closureResult);
+  for (const prior of priorResults) {
+    if (!appActionResults.some((result) => result.code === prior.code))
+      appActionResults.push(prior);
+  }
   const appActionStatus = summarizeAppActionResults(appActionResults);
   // Whether THIS completion attempt failed — judged only on the actions it ran
   // for this trigger, NOT on the merged history. A completion for a trigger with
@@ -1686,6 +1558,17 @@ export async function completeTaskWithAppActions(opts) {
             },
           },
         },
+        ...(updated.status === "completed" &&
+        updated.completionMethod !== "311_filed" &&
+        actionUpdateId
+          ? sf311Job(
+              opts.tableName,
+              opts.siteId,
+              updated,
+              `resolved-${actionUpdateId}`,
+              opts.env,
+            )
+          : []),
         ...(actionUpdateId
           ? [
               {

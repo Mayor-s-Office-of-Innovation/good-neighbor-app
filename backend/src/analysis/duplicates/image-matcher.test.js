@@ -44,7 +44,7 @@ const response = (request, verdict = "same_issue", strength = "strong") => ({
     evidence: {
       visual_identity: "clear",
       issue_mapping: request.mode === "context" ? "clear" : "none",
-      matching_features: ["Distinctive object"],
+      matching_features: ["Blue crate with broken left handle"],
       visible_differences: ["Different object"],
       contradictions: [],
       description_conflict: "none",
@@ -57,7 +57,7 @@ const response = (request, verdict = "same_issue", strength = "strong") => ({
               evidence: {
                 visual_identity: "clear",
                 issue_mapping: "clear",
-                matching_features: ["Distinctive object"],
+                matching_features: ["Blue crate with broken left handle"],
                 visible_differences: [],
                 contradictions: [],
                 description_conflict: "none",
@@ -104,9 +104,10 @@ describe("image-first backend matcher", () => {
     expect(progress[0].conditionResults[1].status).toBe("pending");
     expect(result.conditionResults[0].possibleDuplicate).toBe(true);
     expect(result.conditionResults[0].assessmentOutcome).toBe("matched");
-    expect(result.conditionResults[1].possibleDuplicate).toBe(false);
+    expect(result.conditionResults[1].possibleDuplicate).toBeNull();
+    expect(result.conditionResults[1].assessmentOutcome).toBe("incomplete");
     expect(result.possibleDuplicate).toBe(true);
-    expect(result.status).toBe("evaluated");
+    expect(result.status).toBe("incomplete");
     expect(result.latency.firstPositiveMs).not.toBeNull();
   });
   it("rejects cross-category model mappings even when both categories exist in the photo", async () => {
@@ -133,8 +134,8 @@ describe("image-first backend matcher", () => {
         return value;
       },
     });
-    expect(result.status).toBe("evaluated");
-    expect(result.possibleDuplicate).toBe(false);
+    expect(result.status).toBe("incomplete");
+    expect(result.possibleDuplicate).toBeNull();
   });
   it("excludes categories before any model call and leaves missing categories unknown", async () => {
     const source = observation("s", {
@@ -360,7 +361,7 @@ describe("image-first backend matcher", () => {
     expect(result.calls).toBe(9);
     expect(result.possibleDuplicate).toBe(false);
   });
-  it("returns no qualifying match after failed or malformed attempts", async () => {
+  it("keeps failed or malformed assessments incomplete instead of publishing a negative", async () => {
     const source = observation("s");
     const result = await matchImages({
       source,
@@ -369,10 +370,13 @@ describe("image-first backend matcher", () => {
         throw new Error("down");
       },
     });
-    expect(result.status).toBe("evaluated");
-    expect(result.possibleDuplicate).toBe(false);
+    expect(result.status).toBe("incomplete");
+    expect(result.possibleDuplicate).toBeNull();
+    expect(result.unassessedCandidateIds).toEqual(["c"]);
     expect(result.conditionResults[0]).toMatchObject({
-      assessmentOutcome: "no_match_with_failures",
+      assessmentOutcome: "incomplete",
+      status: "insufficient_evidence",
+      possibleDuplicate: null,
       failedCandidateCount: 1,
     });
     const malformed = await matchImages({
@@ -384,10 +388,8 @@ describe("image-first backend matcher", () => {
         comparisons: [],
       }),
     });
-    expect(malformed.status).toBe("evaluated");
-    expect(malformed.conditionResults[0].assessmentOutcome).toBe(
-      "no_match_with_failures",
-    );
+    expect(malformed.status).toBe("incomplete");
+    expect(malformed.conditionResults[0].assessmentOutcome).toBe("incomplete");
     const negative = await matchImages({
       source,
       candidates: [observation("c")],
@@ -428,7 +430,8 @@ describe("image-first backend matcher", () => {
       },
     });
     expect(calls).toEqual(["image", "context"]);
-    expect(result.status).toBe("evaluated");
+    expect(result.status).toBe("incomplete");
+    expect(result.possibleDuplicate).toBeNull();
   });
   it("rejects non-TLS remote comparison endpoints", () => {
     expect(() =>
@@ -527,18 +530,23 @@ it("propagates publication errors so persistence failures retry", async () => {
   ).rejects.toThrow("database unavailable");
 });
 
-it("combined verification maps explicit issue IDs in one call and retains safeguards", async () => {
+it("combined verification confirms image-backed issue IDs with an independent image pass", async () => {
   const result = await runMatcher({
     source: observation("s"),
     candidates: [observation("c")],
     compare: async (request) => {
-      expect(request.mode).toBe("context");
       expect(request.output).toBe("compact");
-      expect(request.source.context?.conditions).toHaveLength(1);
+      if (request.mode === "context")
+        expect(request.source.context?.conditions).toHaveLength(1);
+      else {
+        expect(request.source.context).toBeUndefined();
+        expect(request.source.id).toBe("c");
+        expect(request.candidates[0].id).toBe("s");
+      }
       return response(request);
     },
   });
-  expect(result.calls).toBe(1);
+  expect(result.calls).toBe(2);
   expect(result.possibleDuplicate).toBe(true);
   const uncertain = await runMatcher({
     source: observation("s", { observedAt: undefined }),
@@ -566,6 +574,7 @@ it("fast-only misses remain pending, and background can recover a metadata misma
   /** @type {string[][]} */ const batches = [];
   /** @type {import('./image-matcher.js').Compare} */
   const compare = async (r) => {
+    if (r.mode === "image" || r.purpose) return response(r);
     batches.push(r.candidates.map((c) => c.id));
     const value = response(r, "different_issue");
     const index = r.candidates.findIndex((c) => c.id === "deferred");
@@ -604,7 +613,8 @@ it("combined batches continue unmatched issues without re-assessing confirmed ID
     source,
     candidates,
     compare: async (r) => {
-      ids.push(r.source.context?.conditions.map((c) => c.id));
+      if (r.mode === "context" && !r.purpose)
+        ids.push(r.source.context?.conditions.map((c) => c.id));
       return response(r);
     },
   });
@@ -669,7 +679,7 @@ it("retains recurrence safeguards while allowing unknown lifecycle history", () 
   const evidence = {
     visual_identity: "clear",
     issue_mapping: "clear",
-    matching_features: ["Distinctive markings and arrangement"],
+    matching_features: ["Matching blue stripes and broken left handle"],
     visible_differences: [],
     contradictions: [],
     description_conflict: "none",
@@ -706,4 +716,449 @@ it("does not expose source issues with no same-category target in the batch", as
       return response(request);
     },
   });
+});
+
+it("continues a 12-candidate search after a failed three-candidate batch and recovers on a fresh evaluation", async () => {
+  const source = observation("s");
+  const candidates = Array.from({ length: 12 }, (_, i) => observation(`c${i}`));
+  let requests = 0;
+  const incomplete = await runMatcher({
+    source,
+    candidates,
+    strategy: "combined",
+    compare: async (request) => {
+      requests++;
+      if (requests === 2) throw new Error("Comparison HTTP 422");
+      return response(request, "different_issue");
+    },
+  });
+  expect(requests).toBe(4);
+  expect(incomplete).toMatchObject({
+    status: "incomplete",
+    possibleDuplicate: null,
+    candidateCount: 12,
+    assessedCandidateCount: 9,
+    calls: 4,
+  });
+  expect(incomplete.failedCandidateIds).toHaveLength(3);
+  const shortlisted = markUnassessedCandidates(incomplete, candidates);
+  expect(shortlisted.status).toBe("incomplete");
+  expect(shortlisted.unassessedCandidateIds).toHaveLength(3);
+  expect([...incomplete.unassessedCandidateIds].sort()).toEqual(
+    [...incomplete.failedCandidateIds].sort(),
+  );
+  expect(incomplete.conditionResults[0]).toMatchObject({
+    assessmentOutcome: "incomplete",
+    possibleDuplicate: null,
+    failedCandidateCount: 3,
+  });
+  const recovered = await runMatcher({
+    source,
+    candidates,
+    strategy: "combined",
+    compare: async (request) => response(request, "different_issue"),
+  });
+  expect(recovered).toMatchObject({
+    status: "evaluated",
+    possibleDuplicate: false,
+    candidateCount: 12,
+    assessedCandidateCount: 12,
+  });
+  expect(recovered.failedCandidateIds).toEqual([]);
+  expect(recovered.unassessedCandidateIds).toEqual([]);
+});
+
+it("limits incomplete coverage to conditions in the failed candidate's category", async () => {
+  const result = await matchImages({
+    source: observation("s", {
+      conditions: [
+        { id: "litter", description: "cup", category: "Litter" },
+        { id: "graffiti", description: "tag", category: "Graffiti" },
+      ],
+    }),
+    candidates: [
+      observation("failed", {
+        conditions: [{ id: "cup", description: "cup", category: "Litter" }],
+      }),
+      observation("assessed", {
+        conditions: [{ id: "tag", description: "tag", category: "Graffiti" }],
+      }),
+    ],
+    compare: async (request) => {
+      if (request.candidates[0].id === "failed")
+        throw new Error("Comparison HTTP 422");
+      return response(request, "different_issue");
+    },
+  });
+  expect(result.conditionResults).toMatchObject([
+    {
+      conditionId: "litter",
+      possibleDuplicate: null,
+      assessmentOutcome: "incomplete",
+      failedCandidateCount: 1,
+    },
+    {
+      conditionId: "graffiti",
+      possibleDuplicate: false,
+      assessmentOutcome: "assessed_no_match",
+      failedCandidateCount: 0,
+    },
+  ]);
+});
+
+describe("distinctive evidence required for a confirmed duplicate", () => {
+  for (const generic of [
+    "Litter on the sidewalk",
+    "Scattered litter on the sidewalk",
+    "SAME GRAFFITI ON THE BUILDING!",
+    "Distinctive object",
+  ]) {
+    it(`does not promote generic support: ${generic}`, () => {
+      const evidence = response({
+        mode: "context",
+        source: { id: "s" },
+        candidates: [{ id: "c" }],
+      }).comparisons[0].evidence;
+      expect(
+        assessConfidence("same_issue", {
+          ...evidence,
+          matching_features: [generic],
+        }).confidence,
+      ).toBe("low");
+    });
+  }
+
+  it("continues searching after a batch of generic positives and publishes only the grounded match", async () => {
+    const source = observation("source");
+    const candidates = [
+      "generic-0",
+      "generic-1",
+      "generic-2",
+      "positive-last",
+    ].map((id) => observation(id));
+    /** @type {import("./image-matcher.js").ConditionOutcome[][]} */
+    const publications = [];
+    let calls = 0;
+    const result = await runMatcher({
+      source,
+      candidates,
+      strategy: "combined",
+      compare: async (request) => {
+        calls++;
+        const result = response(request);
+        for (const row of result.comparisons) {
+          const features = row.candidate_id.startsWith("generic")
+            ? ["Both images show litter on the sidewalk"]
+            : ["Blue crate with broken left handle"];
+          row.evidence.matching_features = features;
+          for (const pair of row.condition_matches)
+            pair.evidence.matching_features = features;
+        }
+        return result;
+      },
+      onProgress: async (progress) => {
+        publications.push(progress.conditionResults);
+      },
+    });
+    expect(calls).toBe(3);
+    expect(result.possibleDuplicate).toBe(true);
+    expect(result.conditionResults[0].duplicateOf?.observationId).toBe(
+      "positive-last",
+    );
+    expect(publications[0].every((row) => row.possibleDuplicate !== true)).toBe(
+      true,
+    );
+  });
+
+  it("requires distinctive support on the issue mapping as well as the candidate", async () => {
+    const source = observation("source");
+    const result = await runMatcher({
+      source,
+      candidates: [observation("candidate")],
+      compare: async (request) => {
+        const result = response(request);
+        for (const row of result.comparisons)
+          for (const pair of row.condition_matches)
+            pair.evidence.matching_features = [
+              "Scattered litter on the sidewalk",
+            ];
+        return result;
+      },
+    });
+    expect(result.possibleDuplicate).toBe(false);
+    expect(result.conditionResults[0].duplicateOf).toBeNull();
+  });
+
+  it("retains genuine identifying evidence alongside generic context", () => {
+    const evidence = response({
+      mode: "context",
+      source: { id: "s" },
+      candidates: [{ id: "c" }],
+    }).comparisons[0].evidence;
+    expect(
+      assessConfidence("same_issue", {
+        ...evidence,
+        matching_features: [
+          "Litter on the sidewalk",
+          "Blue crate with broken left handle beside gate G7",
+        ],
+      }).confidence,
+    ).toBe("high");
+  });
+});
+
+it("does not publish a description-copying positive rejected by the independent images", async () => {
+  /** @type {import("./image-matcher.js").ComparisonRequest[]} */
+  const requests = [];
+  /** @type {import("./image-matcher.js").ConditionOutcome[]} */
+  const published = [];
+  const result = await runMatcher({
+    source: observation("source"),
+    candidates: [observation("candidate")],
+    compare: async (request) => {
+      requests.push(request);
+      const value = response(
+        request,
+        request.purpose === "visual_verification"
+          ? "different_issue"
+          : "same_issue",
+      );
+      if (!request.purpose) {
+        value.comparisons[0].evidence.matching_features = [
+          "Green beverage bottle upright beside the curb",
+        ];
+        value.comparisons[0].condition_matches[0].evidence.matching_features = [
+          "Green beverage bottle upright beside the curb",
+        ];
+      }
+      return value;
+    },
+    onProgress: async (progress) => {
+      published.push(
+        ...progress.conditionResults.filter(
+          (row) => row.possibleDuplicate === true,
+        ),
+      );
+    },
+  });
+  expect(requests.map((r) => r.mode)).toEqual(["context", "context"]);
+  expect(requests[1].source.id).toBe("candidate");
+  expect(requests[1].candidates[0].id).toBe("source");
+  expect(requests[1].purpose).toBe("visual_verification");
+  expect(Object.keys(requests[1].source.context ?? {})).toEqual(["conditions"]);
+  expect(requests[1].source.context?.conditions).toHaveLength(1);
+  expect(requests[1].candidates[0].context?.conditions).toHaveLength(1);
+  expect(result.possibleDuplicate).toBe(false);
+  expect(result.comparisons[0].stageDisagreement).toBe(true);
+  expect(result.comparisons[0].visualVerifications?.[0].verdict).toBe(
+    "different_issue",
+  );
+  expect(published).toHaveLength(0);
+});
+
+it("keeps a failed independent image check incomplete instead of publishing a positive or a negative", async () => {
+  const result = await runMatcher({
+    source: observation("source"),
+    candidates: [observation("candidate")],
+    compare: async (request) => {
+      if (request.purpose === "visual_verification")
+        throw new Error("verification unavailable");
+      return response(request);
+    },
+  });
+  expect(result.status).toBe("incomplete");
+  expect(result.possibleDuplicate).toBeNull();
+  expect(result.failedCandidateIds).toEqual(["candidate"]);
+});
+
+it("corroborates only the required positive instead of verifying every same-condition suggestion", async () => {
+  /** @type {string[]} */
+  const modes = [];
+  const result = await runMatcher({
+    source: observation("source"),
+    candidates: [observation("a"), observation("b"), observation("c")],
+    compare: async (request) => {
+      modes.push(request.mode);
+      return response(request);
+    },
+  });
+  expect(result.possibleDuplicate).toBe(true);
+  expect(modes).toEqual(["context", "context"]);
+  expect(
+    result.comparisons.filter((row) => row.confidence === "high"),
+  ).toHaveLength(1);
+});
+
+it("keeps searching after a failed visual corroboration and finds a later real match", async () => {
+  /** @type {(string|undefined)[]} */
+  const published = [];
+  const result = await runMatcher({
+    source: observation("source"),
+    candidates: ["a-false", "b-no", "c-no", "d-real"].map((id) =>
+      observation(id),
+    ),
+    compare: async (request) => {
+      if (request.purpose === "visual_verification")
+        return response(
+          request,
+          request.source.id === "a-false" ? "different_issue" : "same_issue",
+        );
+      const value = response(request, "different_issue");
+      for (let i = 0; i < request.candidates.length; i++)
+        if (["a-false", "d-real"].includes(request.candidates[i].id))
+          value.comparisons[i] = response({
+            ...request,
+            candidates: [request.candidates[i]],
+          }).comparisons[0];
+      return value;
+    },
+    onProgress: async (progress) => {
+      published.push(
+        ...progress.conditionResults
+          .filter((r) => r.possibleDuplicate === true)
+          .map((r) => r.duplicateOf?.observationId),
+      );
+    },
+  });
+  expect(result.calls).toBe(4);
+  expect(result.conditionResults[0].duplicateOf?.observationId).toBe("d-real");
+  expect(published).toEqual(["d-real"]);
+});
+
+it.each([
+  "no-mapping",
+  "wrong-pair",
+  "unrelated-only",
+  "weak-mapping",
+  "uncertain",
+])(
+  "does not corroborate the target issue from unrelated visual agreement: %s",
+  async (kind) => {
+    /** @type {import("./image-matcher.js").ConditionOutcome[]} */
+    const publications = [];
+    const result = await runMatcher({
+      source: observation("source"),
+      candidates: [observation("candidate")],
+      compare: async (request) => {
+        const value = response(request);
+        if (request.purpose) {
+          if (kind === "uncertain") return response(request, "uncertain");
+          const row = value.comparisons[0];
+          row.evidence.matching_features = ["Blue graffiti tag on gate"];
+          if (kind === "no-mapping") {
+            row.condition_matches = [];
+            row.evidence.issue_mapping = "none";
+          }
+          if (kind === "wrong-pair")
+            row.condition_matches[0].source_condition_id =
+              "other-shared-graffiti";
+          if (kind === "unrelated-only")
+            row.condition_matches[0].evidence.issue_mapping = "ambiguous";
+          if (kind === "weak-mapping")
+            row.condition_matches[0].evidence.matching_features = [
+              "Litter on sidewalk",
+            ];
+        }
+        return value;
+      },
+      onProgress: async (p) => {
+        publications.push(
+          ...p.conditionResults.filter((c) => c.possibleDuplicate === true),
+        );
+      },
+    });
+    expect(result.possibleDuplicate).not.toBe(true);
+    expect(publications).toHaveLength(0);
+  },
+);
+
+it("corroborates each condition pair independently and does not promote other mappings in the same photo", async () => {
+  const source = observation("source", {
+    conditions: [
+      { id: "s1", description: "Blue crate" },
+      { id: "s2", description: "Paper cup" },
+    ],
+  });
+  const target = observation("candidate", {
+    conditions: [
+      { id: "t1", description: "Blue crate" },
+      { id: "t2", description: "Paper cup" },
+    ],
+  });
+  /** @type {import("./image-matcher.js").ComparisonRequest[]} */
+  const requests = [];
+  const result = await runMatcher({
+    source,
+    candidates: [target],
+    compare: async (request) => {
+      const value = response(request);
+      if (request.purpose) {
+        requests.push(request);
+        if (request.source.context?.conditions[0].id === "t2")
+          return response(request, "different_issue");
+      } else {
+        const row = value.comparisons[0];
+        row.condition_matches = [
+          {
+            ...row.condition_matches[0],
+            source_condition_id: "s1",
+            candidate_condition_id: "t1",
+          },
+          {
+            ...row.condition_matches[0],
+            source_condition_id: "s2",
+            candidate_condition_id: "t2",
+          },
+        ];
+      }
+      return value;
+    },
+  });
+  expect(requests).toHaveLength(2);
+  expect(
+    requests.map((r) => r.source.context?.conditions.map((c) => c.id)),
+  ).toEqual([["t1"], ["t2"]]);
+  expect(
+    requests.map((r) => r.candidates[0].context?.conditions.map((c) => c.id)),
+  ).toEqual([["s1"], ["s2"]]);
+  expect(
+    result.conditionResults.find((c) => c.conditionId === "s1")
+      ?.possibleDuplicate,
+  ).toBe(true);
+  expect(
+    result.conditionResults.find((c) => c.conditionId === "s2")
+      ?.possibleDuplicate,
+  ).toBe(false);
+  expect(result.comparisons[0].visualVerifications).toHaveLength(2);
+});
+
+it.each(["A-12", "G7", "Identifier: 12345"])(
+  "retains explicit physical marking %s as identifying evidence",
+  (marking) => {
+    const e = response({
+      mode: "context",
+      source: { id: "s" },
+      candidates: [{ id: "c" }],
+    }).comparisons[0].evidence;
+    expect(
+      assessConfidence("same_issue", { ...e, matching_features: [marking] })
+        .confidence,
+    ).toBe("high");
+  },
+);
+it.each([
+  "12345",
+  "2026-10-27",
+  "3 scattered paper items",
+  "Litter on sidewalk",
+])("does not use generic quantities or dates as identity: %s", (feature) => {
+  const e = response({
+    mode: "context",
+    source: { id: "s" },
+    candidates: [{ id: "c" }],
+  }).comparisons[0].evidence;
+  expect(
+    assessConfidence("same_issue", { ...e, matching_features: [feature] })
+      .confidence,
+  ).toBe("low");
 });

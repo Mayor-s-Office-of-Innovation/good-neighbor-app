@@ -90,6 +90,75 @@ describe("guidance handlers", () => {
     delete process.env.GNP_311_SUBMISSION_ENABLED;
   });
 
+  it.each([false, true])(
+    "accepts 64 KiB of JSON (base64: %s)",
+    async (encoded) => {
+      send.mockResolvedValue({});
+      const ev = event({
+        body: {
+          assessmentId: "large",
+          conditions: [],
+          rawAssessment: { summary: "" },
+        },
+      });
+      const payload = JSON.parse(ev.body);
+      payload.rawAssessment.summary = "x".repeat(
+        65536 - Buffer.byteLength(ev.body),
+      );
+      const raw = JSON.stringify(payload);
+      ev.body = encoded ? Buffer.from(raw).toString("base64") : raw;
+      ev.isBase64Encoded = encoded;
+      const res = await invoke(evaluateAssessment, ev);
+      expect(res.statusCode).toBe(201);
+      expect(send).toHaveBeenCalled();
+    },
+  );
+
+  it.each([false, true])(
+    "rejects oversized UTF-8 JSON before storage (base64: %s)",
+    async (encoded) => {
+      const ev = event({
+        body: {
+          assessmentId: "large",
+          conditions: [],
+          rawAssessment: { summary: "界".repeat(22000) },
+        },
+      });
+      const requestBytes = Buffer.byteLength(ev.body);
+      expect(ev.body.length).toBeLessThan(65536);
+      ev.isBase64Encoded = encoded;
+      if (encoded) ev.body = Buffer.from(ev.body).toString("base64");
+      const log = vi.spyOn(console, "info").mockImplementation(() => {});
+      try {
+        const res = await invoke(evaluateAssessment, ev);
+        expect(res.statusCode).toBe(413);
+        expect(parse(res)).toEqual({
+          error: "assessment_too_large",
+          maxBytes: 65536,
+        });
+        expect(send).not.toHaveBeenCalled();
+        expect(enqueueTranslateArtifact).not.toHaveBeenCalled();
+        expect(JSON.parse(log.mock.calls[0][0])).toEqual({
+          eventType: "AssessmentEvaluationRequestSize",
+          siteId: "site-1",
+          requestBytes,
+          maxBytes: 65536,
+          sizeRejected: true,
+        });
+      } finally {
+        log.mockRestore();
+      }
+    },
+  );
+
+  it("rejects one byte over the limit before parsing JSON", async () => {
+    const ev = event();
+    ev.body = " ".repeat(65537);
+    const res = await invoke(evaluateAssessment, ev);
+    expect(res.statusCode).toBe(413);
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("evaluates an analyzer-style assessment and persists guidance records", async () => {
     mockTaskShortIdAllocation();
     send.mockResolvedValueOnce({});

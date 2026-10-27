@@ -238,3 +238,61 @@ it("regenerates evidence URLs on redelivery after a retrieval failure", async ()
     ),
   ).toBe(true);
 });
+
+describe("optional complaint extraction fields", () => {
+  /** @param {Record<string, unknown>} complaint */
+  function prepare(complaint) {
+    ddbSend
+      .mockResolvedValueOnce({
+        Item: {
+          status: "analyzing",
+          analysisAttemptId: "attempt-1",
+          description: "Noise",
+        },
+      })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValue({});
+    extractComplaint.mockResolvedValueOnce({ complaint });
+  }
+  it.each([{}, { what: "", where: "", when: "", notes: "" }])(
+    "stores a ready complaint with optional fields %j",
+    async (optional) => {
+      prepare({
+        label: "Noise complaint",
+        detail: "Noise was reported.",
+        ...optional,
+      });
+      await handler(event());
+      const update = ddbSend.mock.calls[2][0].input;
+      expect(update.ExpressionAttributeValues).toMatchObject({
+        ":ready": "ready",
+        ":label": "Noise complaint",
+        ":detail": "Noise was reported.",
+        ":what": "",
+        ":where": "",
+        ":when": "",
+        ":notes": "",
+        ":attempt": "attempt-1",
+      });
+      expect(update.Key).toEqual({
+        pk: "SITE#site-1",
+        sk: "COMPLAINT#complaint-1",
+      });
+      expect(update.ConditionExpression).toContain(
+        "analysisAttemptId = :attempt",
+      );
+    },
+  );
+  it.each([{ label: "" }, { detail: "" }, { notes: [] }, { what: 123 }])(
+    "still rejects invalid substantive fields or types %j",
+    async (invalid) => {
+      prepare({
+        label: "Noise complaint",
+        detail: "Noise was reported.",
+        ...invalid,
+      });
+      await expect(handler(event())).rejects.toThrow(/invalid complaint/);
+      expect(ddbSend).toHaveBeenCalledTimes(2);
+    },
+  );
+});

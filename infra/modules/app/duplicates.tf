@@ -1,3 +1,21 @@
+variable "duplicate_comparison_cache_version" {
+  type        = string
+  default     = "image-comparison-v1"
+  description = "Comparison response cache namespace; coordinate changes with analyzer rollout. Does not invalidate prepared images or completed results."
+  validation {
+    condition     = length(trimspace(var.duplicate_comparison_cache_version)) > 0 && length(var.duplicate_comparison_cache_version) <= 128
+    error_message = "Comparison cache namespace must be nonempty and at most 128 characters."
+  }
+}
+variable "duplicate_comparison_requests_per_second" {
+  type        = number
+  default     = 0
+  description = "Aggregate comparison attempt rate across workers; zero preserves existing pacing. Configure only after endpoint capacity validation."
+  validation {
+    condition     = var.duplicate_comparison_requests_per_second == 0 || (var.duplicate_comparison_requests_per_second >= 0.1 && var.duplicate_comparison_requests_per_second <= 32)
+    error_message = "Comparison pacing must be zero (disabled) or between 0.1 and 32 requests per second."
+  }
+}
 # Isolated duplicate evaluation and reversible product links. No existing analysis handler or queue changes.
 variable "enable_duplicate_detection" {
   type        = bool
@@ -8,6 +26,15 @@ variable "duplicate_analyzer_base_url" {
   type        = string
   default     = ""
   description = "Separate comparison service base URL; empty uses the existing analyzer base URL."
+}
+variable "duplicate_worker_maximum_concurrency" {
+  type        = number
+  default     = 2
+  description = "Maximum SQS duplicate workers; size from measured fanout and latency while preserving the shared comparison attempt rate."
+  validation {
+    condition     = var.duplicate_worker_maximum_concurrency >= 2 && var.duplicate_worker_maximum_concurrency <= 1000 && floor(var.duplicate_worker_maximum_concurrency) == var.duplicate_worker_maximum_concurrency
+    error_message = "Duplicate worker concurrency must be an integer from 2 to 1000."
+  }
 }
 resource "aws_secretsmanager_secret" "duplicate_analyzer_key" {
   #checkov:skip=CKV2_AWS_57:Analyzer key rotation is coordinated manually out-of-band with the comparison service, matching the existing analyzer credential policy.
@@ -76,6 +103,9 @@ resource "aws_iam_role_policy" "duplicate_worker" {
   policy = jsonencode({ Version = "2012-10-17", Statement = [
     { Effect = "Allow", Action = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"], Resource = "*" },
     { Effect = "Allow", Action = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:ConditionCheckItem"], Resource = aws_dynamodb_table.app.arn },
+    { Effect    = "Allow", Action = ["dynamodb:UpdateItem"], Resource = aws_dynamodb_table.app.arn,
+      Condition = { "ForAllValues:StringEquals" = { "dynamodb:LeadingKeys" = ["DUP_COMPARISON_PACER"] } }
+    },
     { Effect = "Allow", Action = ["sqs:SendMessage"], Resource = aws_sqs_queue.duplicates_dlq.arn },
     # S3 requires bucket listing permission to return NoSuchKey for a cache miss.
     # Without it, an absent prepared image returns AccessDenied and cannot be built.
@@ -89,7 +119,7 @@ resource "aws_iam_role_policy" "duplicate_worker" {
   ] })
 }
 resource "aws_lambda_function" "duplicate_dispatch" {
-  #checkov:skip=CKV_AWS_115:DynamoDB stream retry/record-age controls bound dispatcher failures, while the downstream SQS event-source maximum_concurrency=2 bounds expensive comparison work; reserved concurrency here would only throttle stream draining and increase iterator age.
+  #checkov:skip=CKV_AWS_115:DynamoDB stream retry/record-age controls bound dispatcher failures, while the downstream SQS event-source maximum_concurrency bounds expensive comparison work; reserved concurrency here would only throttle stream draining and increase iterator age.
   #checkov:skip=CKV_AWS_117:No VPC; requires public analyzer/AWS API egress, matching the existing analysis worker.
   #checkov:skip=CKV_AWS_272:Code signing is not yet configured for this application, matching existing Lambdas.
   function_name    = "${local.name_prefix}-duplicate-dispatch"
@@ -108,7 +138,7 @@ resource "aws_lambda_function" "duplicate_dispatch" {
   tags       = var.tags
 }
 resource "aws_lambda_function" "duplicate_worker" {
-  #checkov:skip=CKV_AWS_115:SQS event-source maximum_concurrency=2 bounds comparisons independently; reserved concurrency can throttle queue deliveries into the DLQ.
+  #checkov:skip=CKV_AWS_115:SQS event-source maximum_concurrency bounds comparisons independently; reserved concurrency can throttle queue deliveries into the DLQ.
   #checkov:skip=CKV_AWS_117:No VPC; requires public analyzer/AWS API egress, matching the existing analysis worker.
   #checkov:skip=CKV_AWS_272:Code signing is not yet configured for this application, matching existing Lambdas.
   function_name    = "${local.name_prefix}-duplicate-worker"
@@ -123,13 +153,14 @@ resource "aws_lambda_function" "duplicate_worker" {
   tracing_config { mode = "Active" }
   dead_letter_config { target_arn = aws_sqs_queue.duplicates_dlq.arn }
   environment { variables = {
-    METRICS_NAMESPACE                     = "${local.name_prefix}-duplicates"
-    DYNAMO_TABLE                          = aws_dynamodb_table.app.name
-    S3_UPLOAD_BUCKET                      = aws_s3_bucket.uploads.bucket
-    DUPLICATE_QUEUE_URL                   = aws_sqs_queue.duplicates.url
-    DUPLICATE_ANALYZER_BASE_URL           = var.duplicate_analyzer_base_url != "" ? var.duplicate_analyzer_base_url : var.analyzer_base_url
-    DUPLICATE_ANALYZER_API_KEY_SECRET_ARN = aws_secretsmanager_secret.duplicate_analyzer_key.arn
-    DUPLICATE_COMPARISON_CACHE_VERSION    = "image-comparison-v1"
+    METRICS_NAMESPACE                        = "${local.name_prefix}-duplicates"
+    DYNAMO_TABLE                             = aws_dynamodb_table.app.name
+    S3_UPLOAD_BUCKET                         = aws_s3_bucket.uploads.bucket
+    DUPLICATE_QUEUE_URL                      = aws_sqs_queue.duplicates.url
+    DUPLICATE_ANALYZER_BASE_URL              = var.duplicate_analyzer_base_url != "" ? var.duplicate_analyzer_base_url : var.analyzer_base_url
+    DUPLICATE_ANALYZER_API_KEY_SECRET_ARN    = aws_secretsmanager_secret.duplicate_analyzer_key.arn
+    DUPLICATE_COMPARISON_CACHE_VERSION       = var.duplicate_comparison_cache_version
+    DUPLICATE_COMPARISON_REQUESTS_PER_SECOND = tostring(var.duplicate_comparison_requests_per_second)
   } }
   depends_on = [aws_iam_role_policy.duplicate_worker, aws_cloudwatch_log_group.duplicates]
   tags       = var.tags
@@ -164,7 +195,7 @@ resource "aws_lambda_event_source_mapping" "duplicate_queue" {
   enabled                 = var.enable_duplicate_detection
   batch_size              = 1
   function_response_types = ["ReportBatchItemFailures"]
-  scaling_config { maximum_concurrency = 2 }
+  scaling_config { maximum_concurrency = var.duplicate_worker_maximum_concurrency }
 }
 resource "aws_cloudwatch_metric_alarm" "duplicate_dead_letters" {
   alarm_name          = "${local.name_prefix}-duplicate-dead-letters"

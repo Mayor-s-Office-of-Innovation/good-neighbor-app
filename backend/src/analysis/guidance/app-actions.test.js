@@ -57,6 +57,72 @@ const SUBMITTED_311_RESULT = {
 describe("app action execution", () => {
   const now = new Date("2026-08-18T12:00:00.000Z");
 
+  it("checkpoints automatic creation before and after City acceptance and refuses uncertain retries", async () => {
+    const env = {
+      GNP_311_SUBMISSION_ENABLED: "true",
+      DYNAMO_TABLE: "table",
+      S3_UPLOAD_BUCKET: "bucket",
+      SQS_QUEUE_URL: "queue",
+      SF311_CREATESR_URL: "https://hub.example/createsr",
+      SF311_BASIC_AUTH_USER: "user",
+      SF311_BASIC_AUTH_PASS: "pass",
+    };
+    /** @type {import("./app-actions.js").AppActionResult[]} */
+    const checkpoints = [];
+    const fetchImpl = vi.fn(async () => {
+      expect(checkpoints[0].reason).toBe("creation_pending");
+      return new Response(
+        JSON.stringify({ data: { return_code: "0", SRNum: "2000008106" } }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    const actions = [
+      {
+        code: "create_311_ticket",
+        payload: {
+          executionTrigger: "task_created",
+          serviceCodeOrAction: "1.1.4.7.20.0",
+          responsibleAgencyCode: "76",
+        },
+      },
+    ];
+    const options = {
+      env,
+      tableName: "table",
+      siteId: "site",
+      now,
+      trigger: /** @type {const} */ ("task_created"),
+      task: { taskId: "task", location: { latitude: 37.7, longitude: -122.4 } },
+      onCheckpoint: async (
+        /** @type {import("./app-actions.js").AppActionResult} */ result,
+      ) => {
+        checkpoints.push(result);
+      },
+    };
+    try {
+      const results = await executeAppActions(actions, options);
+      expect(results[0].status).toBe("submitted");
+      expect(checkpoints[1]).toMatchObject({
+        reason: "attachments_pending",
+        payload: { tickets: [{ srNum: "2000008106" }] },
+      });
+      const uncertain = await executeAppActions(actions, {
+        ...options,
+        priorResults: [checkpoints[0]],
+      });
+      expect(uncertain[0].status).toBe("failed");
+      expect(fetchImpl).toHaveBeenCalledOnce();
+      await executeAppActions(actions, {
+        ...options,
+        priorResults: [checkpoints[1]],
+      });
+      expect(fetchImpl).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("records legacy phone actions without routing to a phone app", async () => {
     expect(
       await executeAppActions(

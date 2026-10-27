@@ -1,7 +1,9 @@
+import { createReadRequests } from "./read-requests.js";
 import { localRoleHeaders } from "../local-role.js";
 import { getFreshAdminToken, startAdminLogin } from "./admin-auth.js";
 import { getAdminConfig } from "../config.js";
 
+const reads = createReadRequests();
 let loginRedirect = null;
 
 function redirectToLogin() {
@@ -27,8 +29,15 @@ async function authenticatedFetch(path, init = {}) {
   if (loginRedirect) return loginRedirect;
   const token = await getFreshAdminToken();
   if (!config.localDebugAdmin && !token) return redirectToLogin();
+  const timeout = AbortSignal.timeout(
+    init.method && init.method !== "GET" ? 120000 : 60000,
+  );
+  const signal = init.signal
+    ? AbortSignal.any([init.signal, timeout])
+    : timeout;
   const res = await fetch(`${config.apiBase}${path}`, {
     ...init,
+    signal,
     headers: {
       "content-type": "application/json",
       ...(token ? { authorization: `Bearer ${token}` } : {}),
@@ -41,9 +50,32 @@ async function authenticatedFetch(path, init = {}) {
 }
 
 /** @param {string} path @param {RequestInit} [init] */
-async function adminFetch(path, init = {}) {
+function adminFetch(path, init = {}) {
+  const read = !init.method || init.method === "GET";
+  if (!read) reads.invalidate();
+  const request = () =>
+    parseAdminResponse(path, init).catch(async (error) => {
+      if (error.name === "TimeoutError") {
+        const { t } = await import("../../../frontend/src/i18n/i18n.js");
+        throw new Error(t("admin.errors.requestTimeout"));
+      }
+      throw error;
+    });
+  if (!read) return request().finally(() => reads.invalidate());
+  if (init.signal || init.cache === "no-store") return request();
+  const config = getAdminConfig();
+  const identity =
+    localStorage.getItem("good-neighbor-admin-session") ||
+    JSON.stringify(localRoleHeaders(config));
+  return reads.run(`${config.apiBase}:${identity}:${path}`, request);
+}
+
+async function parseAdminResponse(path, init) {
   const res = await authenticatedFetch(path, init);
-  const body = await res.json().catch(() => ({}));
+  const body = await res.json().catch((error) => {
+    if (["AbortError", "TimeoutError"].includes(error.name)) throw error;
+    return {};
+  });
   if (!res.ok) {
     const err = new Error(body.error || "admin_request_failed");
     /** @type {any} */ (err).status = res.status;
@@ -61,6 +93,7 @@ export const adminApi = {
   getStatusEntries: (site, kind, cursor) =>
     adminFetch(
       `/admin/v1/system-status/${encodeURIComponent(site)}/${kind}${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+      { cache: "no-store" },
     ),
   getStatusMedia: (site, check, artifact, thumbnail = false) =>
     adminFetch(
@@ -123,7 +156,8 @@ export const adminApi = {
       body: JSON.stringify({ query }),
       signal,
     }),
-  listProviders: () => adminFetch("/admin/v1/providers"),
+  listProviders: (directory = false) =>
+    adminFetch(`/admin/v1/providers${directory ? "?directory=1" : ""}`),
   listPeople: () => adminFetch("/admin/v1/people"),
   createPerson: (values) =>
     adminFetch("/admin/v1/people", {
@@ -288,9 +322,15 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify(values),
     }),
-  getSite: (siteId, rosterOnly = false) =>
+  getSite: (siteId, rosterOnly = false, view = "", signal = undefined) =>
     adminFetch(
-      `/admin/v1/sites/${encodeURIComponent(siteId)}${rosterOnly ? "?roster=1" : ""}`,
+      `/admin/v1/sites/${encodeURIComponent(siteId)}${rosterOnly ? "?roster=1" : view ? `?view=${encodeURIComponent(view)}` : ""}`,
+      { signal },
+    ),
+  getSiteLetters: (siteId, cursor = "") =>
+    adminFetch(
+      `/admin/v1/sites/${encodeURIComponent(siteId)}?view=letters${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+      { cache: "no-store" },
     ),
   updateSite: (siteId, values) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}`, {
@@ -493,19 +533,21 @@ export const adminApi = {
    * @param {Record<string, string | number>} params
    * @returns {Promise<{ columns: string[], rows: unknown[][], truncated: boolean, elapsedMs: number, asOf: string | null }>}
    */
-  analyticsRun: (queryId, params) =>
+  analyticsRun: (queryId, params, signal = undefined) =>
     adminFetch(`/admin/v1/analytics/queries/${encodeURIComponent(queryId)}`, {
       method: "POST",
       body: JSON.stringify({ params }),
+      signal,
     }),
   /**
    * Run raw read-only SQL (the advanced panel).
    * @param {string} sql
    * @returns {Promise<{ columns: string[], rows: unknown[][], truncated: boolean, elapsedMs: number, asOf: string | null }>}
    */
-  analyticsQuery: (sql) =>
+  analyticsQuery: (sql, signal = undefined) =>
     adminFetch("/admin/v1/analytics/query", {
       method: "POST",
       body: JSON.stringify({ sql }),
+      signal,
     }),
 };

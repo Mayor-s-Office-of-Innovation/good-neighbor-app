@@ -186,3 +186,162 @@ describe("summarizeIssues and issuesByDay", () => {
     expect(csv).toContain('"Could not do: Too much, ""really"""');
   });
 });
+
+describe("resolvedInPeriod", () => {
+  /** @type {import("./reports-periods.js").Period} */
+  const period = {
+    kind: "month",
+    start: "2026-10-01",
+    endExclusive: "2026-11-01",
+  };
+  it("requires user completion and both timestamps within Pacific period boundaries", async () => {
+    const { resolvedInPeriod } = await import("./reports-issues.js");
+    const task = {
+      taskId: "t",
+      status: "completed",
+      createdAt: "2026-10-01T07:00:00Z",
+      completedAt: "2026-11-01T06:59:59Z",
+    };
+    expect(resolvedInPeriod(task, period)).toBe(true);
+    expect(
+      resolvedInPeriod(
+        { ...task, completedAt: "2026-11-01T07:00:00Z" },
+        period,
+      ),
+    ).toBe(false);
+    expect(
+      resolvedInPeriod({ ...task, createdAt: "2026-10-01T06:59:59Z" }, period),
+    ).toBe(false);
+    expect(
+      resolvedInPeriod(
+        { ...task, status: "in_progress", completionMethod: "311_filed" },
+        period,
+      ),
+    ).toBe(false);
+    expect(resolvedInPeriod({ ...task, status: "cannot_do" }, period)).toBe(
+      false,
+    );
+    expect(resolvedInPeriod({ ...task, completedAt: undefined }, period)).toBe(
+      false,
+    );
+  });
+});
+
+describe("issue reporting metrics", () => {
+  const period = {
+    kind: /** @type {const} */ ("month"),
+    start: "2026-09-01",
+    endExclusive: "2026-10-01",
+  };
+  const report = {
+    period,
+    today: "2026-10-26",
+    asOf: "2026-10-01T06:59:59.999Z",
+    updates: [],
+  };
+  const issue = {
+    taskId: "a",
+    createdAt: "2026-09-20T16:00:00Z",
+    status: "open",
+  };
+
+  it("splits all reports into disjoint resolved and unresolved groups and uses the median", async () => {
+    const { resolutionSummary } = await import("./reports-issues.js");
+    const tasks = [1, 2, 10, 20].map((hours) => ({
+      ...issue,
+      status: "completed",
+      completedAt: new Date(
+        Date.parse(issue.createdAt) + hours * 3600000,
+      ).toISOString(),
+    }));
+    tasks.push({
+      ...issue,
+      status: "completed",
+      completedAt: "2026-10-02T12:00:00Z",
+    });
+    expect(resolutionSummary(tasks, period)).toEqual({
+      resolved: 4,
+      unresolved: 1,
+      median: 6 * 3600000,
+    });
+    expect(resolutionSummary([issue], period).median).toBe(null);
+    const chart = issuesByDay(tasks, ["2026-09-20"], period);
+    expect(chart[0]).toMatchObject({ found: 5, responded: 4 });
+  });
+
+  it("does not count notes/photos as actions and assesses age at the historical cutoff", async () => {
+    const { attentionFlags } = await import("./reports-issues.js");
+    const updates = [
+      {
+        taskId: "a",
+        type: "note_photo_update",
+        occurredAt: "2026-09-25T12:00:00Z",
+      },
+    ];
+    expect(attentionFlags(issue, { ...report, updates })).toMatchObject({
+      noAction: true,
+      aged: true,
+    });
+    expect(
+      attentionFlags({ ...issue, inProgressAt: "2026-10-02T12:00:00Z" }, report)
+        .noAction,
+    ).toBe(true);
+    expect(
+      attentionFlags({ ...issue, inProgressAt: "2026-09-25T12:00:00Z" }, report)
+        .noAction,
+    ).toBe(false);
+    expect(
+      attentionFlags({ ...issue, createdAt: "2026-09-30T12:00:00Z" }, report)
+        .aged,
+    ).toBe(false);
+  });
+
+  it("counts open City tickets despite updates, and uses dated closures for historical periods", async () => {
+    const { attentionFlags } = await import("./reports-issues.js");
+    const task = {
+      ...issue,
+      appActionResults: [
+        { code: "create_311_ticket", payload: { tickets: [{ srNum: "123" }] } },
+      ],
+      report311: {
+        status: "Open",
+        submittedAt: issue.createdAt,
+        events: [
+          {
+            kind: "statusChanged",
+            value: "In progress",
+            occurredAt: "2026-09-25T12:00:00Z",
+          },
+        ],
+      },
+    };
+    expect(attentionFlags(task, report).awaiting).toBe(true);
+    task.report311.status = "Closed";
+    task.report311.events = [
+      { kind: "resolved", value: "", occurredAt: "2026-10-02T12:00:00Z" },
+    ];
+    expect(attentionFlags(task, report).awaiting).toBe(true);
+    task.report311.events[0].occurredAt = "2026-09-25T12:00:00Z";
+    expect(attentionFlags(task, report).awaiting).toBe(false);
+    expect(
+      attentionFlags({ ...task, report311: undefined }, report).awaiting,
+    ).toBe(false);
+  });
+
+  it("formats zero denominators, increases, decreases, and equal counts", async () => {
+    const { issueTrend } = await import("./reports-issues.js");
+    const previous = t("reports.period.previous.month");
+    expect(issueTrend(12, 8, "month")).toBe(
+      t("reports.issues.trend.more", { percent: 50, previous }),
+    );
+    expect(issueTrend(0, 8, "month")).toBe(
+      t("reports.issues.trend.less", { percent: 100, previous }),
+    );
+    expect(issueTrend(8, 8, "month")).toBe(
+      t("reports.delta.sameCount", { previous }),
+    );
+    expect(issueTrend(8, 0, "month")).toBe(
+      t("reports.issues.trend.none", { previous }),
+    );
+  });
+});

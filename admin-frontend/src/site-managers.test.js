@@ -85,6 +85,7 @@ test("saving assignments to several Sites serializes the shared staff count chan
   };
   const context = vm.createContext({
     upsertRecord,
+    siteManagerRoster,
     location: { pathname: "/managers/u1", search: "" },
     navigate: (path) => destinations.push(path),
     createAndAssignManager,
@@ -229,7 +230,7 @@ test("creating a Site manager retries assignment without duplicating staff", asy
   assert.equal(subject.state.managerDirectoryLoaded, false);
 });
 
-test("new site flow forces a fresh manager directory even when a stale load is pending", async () => {
+test("new site flow invalidates a pending manager directory without waiting for a rebuild", async () => {
   const { readFileSync } = await import("node:fs");
   const vm = await import("node:vm");
   const { createDirectoryLoader } = await import("./manager-directory.js");
@@ -253,6 +254,10 @@ test("new site flow forces a fresh manager directory even when a stale load is p
     "site-manager-user-id": "u1",
   };
   const context = vm.createContext({
+    location: { pathname: "/sites/new", search: "" },
+    upsertRecord: (records, record) => [...records, record],
+    syncDirtyForm() {},
+    siteManagerRoster,
     FormData: class {},
     formValue: (_data, name) => values[name] || "",
     addressPartsFromForm: () => ({ city: "SF" }),
@@ -275,7 +280,9 @@ test("new site flow forces a fresh manager directory even when a stale load is p
         },
       }),
       listManagerMemberships: async () => ({ memberships: [] }),
-      createManagerMembership: async () => ({}),
+      createManagerMembership: async () => ({
+        membership: { userId: "u1", name: "Sam Lee", status: "active" },
+      }),
     },
   });
   const Subject = vm.runInContext(
@@ -283,7 +290,11 @@ test("new site flow forces a fresh manager directory even when a stale load is p
     context,
   );
   const subject = new Subject();
+  subject.render = () => {};
+  subject.querySelector = () => null;
+  subject.managerDirectoryLoader = loader;
   subject.state = {
+    sites: [],
     managerDirectoryLoaded: true,
     newSiteUsers: [
       {
@@ -300,11 +311,16 @@ test("new site flow forces a fresh manager directory even when a stale load is p
     assert.equal(force, true);
     return loader.load(force);
   };
-  const created = subject.createSiteFromFlow({});
+  const created = subject.createSiteFromFlow({ dataset: {} });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(loads, 1);
+  assert.equal(subject.managerDirectoryLoader, null);
+  assert.equal(subject.managerDirectoryVersion, 1);
+  assert.equal(subject.state.managerDirectoryLoaded, false);
   release();
   await Promise.all([old, created]);
-  assert.equal(loads, 2);
+  assert.equal(loads, 1);
+  assert.equal(subject.state.managerDirectoryLoaded, false);
+  assert.equal(subject.managerDirectoryVersion, 1);
   assert.deepEqual(destinations, ["/sites/s1"]);
 });

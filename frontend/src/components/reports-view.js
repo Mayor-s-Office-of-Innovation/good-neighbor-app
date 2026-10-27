@@ -32,6 +32,7 @@ import {
   getCheck,
   getChecksReport,
   getTasksReport,
+  getTaskUpdatesReport,
 } from "../services/api.js";
 import { fetchProviderSites } from "../services/provider-sites.js";
 import { switchToBoundSite } from "../services/site-switch.js";
@@ -59,7 +60,13 @@ import {
   periodEnd,
   periodOptions,
 } from "../domain/reports-periods.js";
-import { issuesOfType, issuesToCsv } from "../domain/reports-issues.js";
+import {
+  filterReportIssues,
+  isIssue,
+  resolvedInPeriod,
+  issuesOfType,
+  issuesToCsv,
+} from "../domain/reports-issues.js";
 import {
   REPORT_TABS,
   TYPE_ROWS,
@@ -75,7 +82,6 @@ import {
 } from "./reports-view.templates.js";
 
 const RECORD_PAGE = 10;
-const MAX_PHOTOS_PER_CHECK = 6;
 
 /** Today's Pacific day key, from the report when we have one. */
 function todayFrom(report) {
@@ -188,6 +194,11 @@ class ReportsView extends ReportsScreen {
     super();
     /** @type {"checks" | "issues"} */
     this._tab = "checks";
+    this._resolvedOnly = false;
+    this._issueFilter = "";
+    this._cardHydrated = new Set();
+    /** @type {TaskSheets | null} */
+    this._issueSheets = null;
     /** @type {"week" | "month" | "quarter"} */
     this._kind = "month";
     this._start = "";
@@ -221,6 +232,12 @@ class ReportsView extends ReportsScreen {
     if (!(await this._requireManager())) return;
     document.addEventListener("click", this._onDocumentClick);
     const params = new URLSearchParams(window.location.search);
+    this._issueFilter = ["resolved", "unresolved"].includes(
+      params.get("status"),
+    )
+      ? params.get("status")
+      : "";
+    this._resolvedOnly = this._issueFilter === "resolved";
     const tab = params.get("tab");
     if (tab === "issues" || tab === "checks") this._tab = tab;
     const kind = params.get("period");
@@ -239,12 +256,30 @@ class ReportsView extends ReportsScreen {
     this._render();
     try {
       const query = { period: this._kind, start: this._start || undefined };
-      const report =
-        this._tab === "issues"
-          ? await getTasksReport(query)
-          : await getChecksReport(query);
+      const [tasksReport, checksReport] = await Promise.all([
+        getTasksReport(query),
+        this._tab === "checks" ? getChecksReport(query) : null,
+      ]);
+      /** @type {any} */
+      const report = checksReport
+        ? { ...checksReport, tasks: tasksReport.tasks }
+        : tasksReport;
+      if (this._tab === "checks") {
+        for (const day of report.days) {
+          for (const check of day.checks || []) {
+            const issues = report.tasks.filter(
+              (task) => isIssue(task) && task.checkId === check.checkId,
+            );
+            check.issueCount = issues.length;
+            check.resolvedCount = issues.filter((task) =>
+              resolvedInPeriod(task, report.period),
+            ).length;
+          }
+        }
+      }
       if (generation !== this._generation || !this.isConnected) return;
       this._report = report;
+      this._cardHydrated.clear();
       // The server resolves the period; mirror it so the URL and the pickers
       // always describe what is on screen.
       this._kind = report.period.kind;
@@ -257,11 +292,15 @@ class ReportsView extends ReportsScreen {
       this._status = "error";
     }
     this._render();
+    if (this._status === "loaded") await this._hydrateIssueCards();
   }
 
   _syncUrl() {
     const url = new URL(window.location.href);
     url.searchParams.set("tab", this._tab);
+    if (this._issueFilter && this._tab === "issues")
+      url.searchParams.set("status", this._issueFilter);
+    else url.searchParams.delete("status");
     url.searchParams.set("period", this._kind);
     url.searchParams.set("start", this._start);
     window.history.replaceState(window.history.state, "", url);
@@ -274,6 +313,8 @@ class ReportsView extends ReportsScreen {
       : "checks";
     if (tab === this._tab) return;
     this._tab = tab;
+    this._resolvedOnly = false;
+    this._issueFilter = "";
     this._report = null;
     this._shown = RECORD_PAGE;
     this._shownTypes = TYPE_ROWS;
@@ -304,6 +345,8 @@ class ReportsView extends ReportsScreen {
         filters,
         shown: this._shown,
         shownTypes: this._shownTypes,
+        filter: this._issueFilter,
+        siteName: this._site?.name || "",
       });
     else
       body = checksTab({
@@ -323,6 +366,8 @@ class ReportsView extends ReportsScreen {
     this._mountSiteSwitcher("/reports");
     this._wire();
     this._wireSettings();
+    if (this._tab === "issues" && this._status === "loaded")
+      this._mountIssueCards();
     this._restoreFocus();
   }
 
@@ -501,6 +546,7 @@ class ReportsView extends ReportsScreen {
       this._shown = next || this._shown + RECORD_PAGE;
       this._refocus = "reports-show-more";
       this._render();
+      void this._hydrateIssueCards();
     });
     this.querySelector("#reports-export")?.addEventListener("click", () =>
       this._exportCsv(),
@@ -510,6 +556,104 @@ class ReportsView extends ReportsScreen {
       this._refocus = "reports-types-first-extra";
       this._render();
     });
+  }
+
+  _issueTasks() {
+    return filterReportIssues(
+      (this._report?.tasks || []).filter(isIssue),
+      this._report,
+      this._issueFilter,
+    )
+      .slice()
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  }
+
+  async _hydrateIssueCards() {
+    if (this._tab !== "issues" || !this._report) return;
+    const generation = this._generation;
+    const pending = this._issueTasks()
+      .slice(0, this._shown)
+      .filter((task) => !this._cardHydrated.has(task.taskId));
+    if (!pending.length) return;
+    try {
+      const requests = submitted311Requests(pending);
+      const [hydrated, statuses] = await Promise.all([
+        hydrateTaskEvidence(
+          pending.map((task) => ({
+            ...task,
+            siteAddress: task.siteAddress || this._site?.address || "",
+          })),
+        ),
+        requests.length
+          ? get311RequestDetails(requests)
+              .then(map311StatusResponse)
+              .catch(() => new Map())
+          : new Map(),
+      ]);
+      if (generation !== this._generation || !this.isConnected) return;
+      const replacements = new Map(
+        hydrated.map((task) => [
+          task.taskId,
+          taskWith311Status(task, statuses),
+        ]),
+      );
+      this._report.tasks = this._report.tasks.map(
+        (task) => replacements.get(task.taskId) || task,
+      );
+      for (const task of pending) this._cardHydrated.add(task.taskId);
+      const active = document.activeElement;
+      if (active && this.contains(active) && active.id)
+        this._refocus = active.id;
+      this._render();
+    } catch (error) {
+      console.error("report evidence failed", error);
+    }
+  }
+
+  _mountIssueCards() {
+    const resolveTask = (task) =>
+      this._report?.tasks.find((row) => row.taskId === task.taskId) || task;
+    if (!this._issueSheets)
+      this._issueSheets = new TaskSheets({
+        host: this,
+        readOnly: true,
+        container: () => this.querySelector(":scope > .reports"),
+        resolveTask,
+        reload: () => this._loadReport(),
+        fallbackFocus: () => this.querySelector("[data-screen-focus]"),
+      });
+    this._issueSheets.site = this._site;
+    this._issueSheets.mount();
+    this.querySelectorAll("[data-issue-filter]").forEach((button) =>
+      button.addEventListener("click", () => {
+        this._issueFilter = button.getAttribute("data-issue-filter") || "";
+        this._resolvedOnly = this._issueFilter === "resolved";
+        this._shown = RECORD_PAGE;
+        this._refocus = this._issueFilter
+          ? button.id
+          : "reports-metric-unresolved";
+        this._syncUrl();
+        this._render();
+        void this._hydrateIssueCards();
+      }),
+    );
+    this.querySelector(".reports-type__cards")?.addEventListener(
+      "click",
+      (event) => {
+        const button = /** @type {HTMLElement} */ (event.target).closest?.(
+          "[data-action]",
+        );
+        const taskId = button
+          ?.closest("[data-task-id]")
+          ?.getAttribute("data-task-id");
+        const task = this._report.tasks.find((row) => row.taskId === taskId);
+        if (!(button instanceof HTMLElement) || !task) return;
+        if (button.getAttribute("data-action") === "view311")
+          this._issueSheets?.open311(task, button);
+        else if (button.getAttribute("data-action") === "update")
+          void this._issueSheets?.openUpdates(task, button);
+      },
+    );
   }
 
   async _restoreFocus() {
@@ -535,7 +679,7 @@ class ReportsView extends ReportsScreen {
     if (!report) return;
     const csv =
       this._tab === "issues"
-        ? issuesToCsv(report.tasks || [])
+        ? issuesToCsv(this._issueTasks())
         : daysToCsv(report.days);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -637,6 +781,15 @@ class ReportsDayView extends ReportsScreen {
       // render of the screen announces its heading.
       if (!this._rendered) announceScreenHeading(this, "[data-screen-focus]");
       this._rendered = true;
+      const params = new URLSearchParams(window.location.search);
+      const kind = params.get("period");
+      const start = params.get("start");
+      if (isPeriodKind(kind) && isDayKey(start)) {
+        this.querySelector(".reports-day__back")?.setAttribute(
+          "href",
+          `/reports?tab=checks&period=${kind}&start=${start}`,
+        );
+      }
       this._mountSheets();
       this._wireCards();
     } catch (error) {
@@ -673,6 +826,7 @@ class ReportsDayView extends ReportsScreen {
     if (!this._sheets) {
       this._sheets = new TaskSheets({
         host: this,
+        readOnly: true,
         container: () => this.querySelector(":scope > .reports-day"),
         resolveTask: (task) => this._tasksById.get(task.taskId) || task,
         reload: () => this._refresh(),
@@ -707,10 +861,9 @@ class ReportsDayView extends ReportsScreen {
   }
 
   /**
-   * One check's header, its evidence (signed photo URLs, bounded), and the
-   * tasks it produced, hydrated with their place, street, and thumbnail
-   * from the same check detail. A check that fails to load is dropped, not
-   * fatal. Superseded tasks were replaced by an amendment and are not
+   * One check's header, all capture photos, and the tasks it produced,
+   * hydrated with their place, street, and thumbnail from the same detail.
+   * A failed check read fails the view rather than silently omitting a record. Superseded tasks were replaced by an amendment and are not
    * issues in their own right (same rule as the Issues tab).
    * @param {string} checkId
    * @param {any[]} tasks
@@ -721,16 +874,14 @@ class ReportsDayView extends ReportsScreen {
       detail = await getCheck(checkId);
     } catch (error) {
       console.warn("check detail failed", { checkId, error });
-      return null;
+      throw error;
     }
     const artifacts = (detail.artifacts || []).filter(
       (a) => a.artifactId && !a.purpose,
     );
-    const photos = artifacts
-      .filter(
-        (a) => a.s3Key && String(a.contentType || "").startsWith("image/"),
-      )
-      .slice(0, MAX_PHOTOS_PER_CHECK);
+    const photos = artifacts.filter(
+      (a) => a.s3Key && String(a.contentType || "").startsWith("image/"),
+    );
     const checkTasks = tasks
       .filter(
         (task) => task.checkId === checkId && task.status !== "superseded",
@@ -771,6 +922,8 @@ class ReportsTypeView extends ReportsScreen {
   constructor() {
     super();
     this._key = "";
+    this._filter = "";
+    this._requests = new Map();
     /** @type {"week" | "month" | "quarter"} */
     this._kind = "month";
     this._start = "";
@@ -796,6 +949,16 @@ class ReportsTypeView extends ReportsScreen {
     const route = currentRoute();
     this._key = decodeURIComponent(route.split("/").pop() || "");
     const params = new URLSearchParams(window.location.search);
+    this._filter =
+      params.get("status") === "resolved"
+        ? "resolved"
+        : params.get("filter") || "";
+    if (
+      !["", "resolved", "unresolved", "aged", "awaiting", "noAction"].includes(
+        this._filter,
+      )
+    )
+      this._filter = "";
     const kind = params.get("period");
     if (isPeriodKind(kind)) this._kind = kind;
     const start = params.get("start");
@@ -808,14 +971,51 @@ class ReportsTypeView extends ReportsScreen {
   async _load() {
     const generation = ++this._generation;
     try {
+      /** @type {any} */
       const report = await getTasksReport({
         period: this._kind,
         start: this._start || undefined,
       });
       if (generation !== this._generation || !this.isConnected) return;
+      const [updates, tickets] = await Promise.all([
+        getTaskUpdatesReport({
+          period: report.period.kind,
+          start: report.period.start,
+        }),
+        submitted311Requests(issuesOfType(report.tasks, this._key)).length
+          ? get311RequestDetails(
+              submitted311Requests(issuesOfType(report.tasks, this._key)),
+            ).catch(() => null)
+          : { requests: [] },
+      ]);
+      if (generation !== this._generation || !this.isConnected) return;
+      report.updates = updates.updates;
+      report.ticketStatusUnavailable =
+        tickets === null ||
+        (tickets.requests || []).length <
+          submitted311Requests(issuesOfType(report.tasks, this._key)).length ||
+        (tickets.requests || []).some(
+          ({ request }) =>
+            !request?.status ||
+            (report.period.endExclusive <= report.today &&
+              request.status === "Closed" &&
+              !(request.events || []).some(
+                (event) =>
+                  event.occurredAt &&
+                  (event.kind === "resolved" ||
+                    (event.kind === "statusChanged" &&
+                      event.value === "Closed")),
+              )),
+        );
+      this._requests = new Map(
+        (tickets?.requests || []).map((entry) => [entry.taskId, entry.request]),
+      );
+      this._statuses = map311StatusResponse(tickets);
+      this._hydrated.clear();
       this._report = report;
       this._kind = report.period.kind;
       this._start = report.period.start;
+      this._syncUrl();
       this._render();
       await this._hydrateVisible(generation);
     } catch (error) {
@@ -828,14 +1028,18 @@ class ReportsTypeView extends ReportsScreen {
     }
   }
 
-  /** The type's issues, newest first, with hydration and 311 status folded in. */
+  /**
+   * The type's issues, newest first, with hydration and 311 status folded in.
+   * @returns {any[]}
+   */
   _tasks() {
-    return issuesOfType(this._report?.tasks || [], this._key).map((task) =>
-      taskWith311Status(
+    return issuesOfType(this._report?.tasks || [], this._key).map((task) => ({
+      ...taskWith311Status(
         this._hydrated.get(task.taskId) || task,
         this._statuses,
       ),
-    );
+      report311: this._requests.get(task.taskId),
+    }));
   }
 
   _render() {
@@ -844,6 +1048,8 @@ class ReportsTypeView extends ReportsScreen {
     this._tasksById = new Map(tasks.map((task) => [task.taskId, task]));
     this.innerHTML = typeScreen({
       report: { ...this._report, tasks },
+      filter: this._filter,
+      filters: this._filters(),
       key: this._key,
       shown: this._shown,
       siteName: this._site?.name || "",
@@ -860,14 +1066,16 @@ class ReportsTypeView extends ReportsScreen {
    * @param {number} generation
    */
   async _hydrateVisible(generation) {
-    const visible = this._tasks().slice(0, this._shown);
+    const visible = filterReportIssues(
+      this._tasks(),
+      this._report,
+      this._filter,
+    ).slice(0, this._shown);
     const pending = visible.filter(
       (task) =>
         needsTaskEvidenceHydration(task) && !this._hydrated.has(task.taskId),
     );
-    const requests = submitted311Requests(visible).filter(
-      ({ taskId }) => !this._statuses.has(taskId),
-    );
+    const requests = [];
     if (!pending.length && !requests.length) return;
     const [hydrated, statuses] = await Promise.all([
       pending.length
@@ -887,6 +1095,8 @@ class ReportsTypeView extends ReportsScreen {
     if (generation !== this._generation || !this.isConnected) return;
     for (const task of hydrated) this._hydrated.set(task.taskId, task);
     for (const [taskId, state] of statuses) this._statuses.set(taskId, state);
+    const active = document.activeElement;
+    if (active && this.contains(active) && active.id) this._refocus = active.id;
     this._render();
   }
 
@@ -894,6 +1104,7 @@ class ReportsTypeView extends ReportsScreen {
     if (!this._sheets) {
       this._sheets = new TaskSheets({
         host: this,
+        readOnly: true,
         container: () => this.querySelector(":scope > .reports-type"),
         resolveTask: (task) => this._tasksById.get(task.taskId) || task,
         reload: () => this._load(),
@@ -904,7 +1115,78 @@ class ReportsTypeView extends ReportsScreen {
     this._sheets.mount();
   }
 
+  _filters() {
+    const selected = this._report.period;
+    const options = periodOptions(this._kind, todayFrom(this._report));
+    if (!options.some((period) => period.start === selected.start))
+      options.push(selected);
+    return periodFilters({
+      kind: this._kind,
+      options,
+      selectedStart: selected.start,
+    });
+  }
+
+  _syncUrl() {
+    const url = new URL(window.location.href);
+    url.searchParams.set("period", this._kind);
+    url.searchParams.set("start", this._start);
+    url.searchParams.delete("status");
+    if (this._filter) url.searchParams.set("filter", this._filter);
+    else url.searchParams.delete("filter");
+    window.history.replaceState(window.history.state, "", url);
+  }
+
+  _exportCsv() {
+    const tasks = filterReportIssues(this._tasks(), this._report, this._filter);
+    const url = URL.createObjectURL(
+      new Blob([issuesToCsv(tasks)], { type: "text/csv;charset=utf-8" }),
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = t("reports.export.issuesFilename", {
+      start: this._start,
+      end: periodEnd(this._report.period),
+    });
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   _wire() {
+    const kindSelect = /** @type {any} */ (this.querySelector("#reports-kind"));
+    const periodSelect = /** @type {any} */ (
+      this.querySelector("#reports-period")
+    );
+    kindSelect?.addEventListener("change", () => {
+      if (!isPeriodKind(kindSelect.value) || kindSelect.value === this._kind)
+        return;
+      this._kind = kindSelect.value;
+      this._start = "";
+      this._shown = RECORD_PAGE;
+      this._refocus = "reports-kind";
+      void this._load();
+    });
+    periodSelect?.addEventListener("change", () => {
+      if (!isDayKey(periodSelect.value) || periodSelect.value === this._start)
+        return;
+      this._start = periodSelect.value;
+      this._shown = RECORD_PAGE;
+      this._refocus = "reports-period";
+      void this._load();
+    });
+    this.querySelector("#reports-export")?.addEventListener("click", () =>
+      this._exportCsv(),
+    );
+    this.querySelectorAll("[data-issue-filter]").forEach((button) =>
+      button.addEventListener("click", () => {
+        this._filter = button.getAttribute("data-issue-filter") || "";
+        this._shown = RECORD_PAGE;
+        this._refocus = this._filter ? button.id : "reports-metric-unresolved";
+        this._syncUrl();
+        this._render();
+        void this._hydrateVisible(this._generation);
+      }),
+    );
     this.querySelector("#reports-show-more")?.addEventListener("click", (e) => {
       const next = Number(
         /** @type {HTMLElement} */ (e.currentTarget).getAttribute("data-next"),
@@ -939,17 +1221,19 @@ class ReportsTypeView extends ReportsScreen {
    * After Show more: the button if it is still there, else the first newly
    * revealed card's updates row.
    */
-  _restoreFocus() {
+  async _restoreFocus() {
     const id = this._refocus;
     if (!id) return;
     this._refocus = null;
-    const target = /** @type {HTMLElement | null} */ (
+    const target = /** @type {any} */ (
       this.querySelector(`#${id}`) ||
         this.querySelectorAll(".reports-type__cards > li")[
           this._shown - RECORD_PAGE
         ]?.querySelector("[data-action]")
     );
-    target?.focus({ preventScroll: true });
+    if (!target) return;
+    await target.updateComplete;
+    if (target.isConnected) target.focus({ preventScroll: true });
   }
 }
 

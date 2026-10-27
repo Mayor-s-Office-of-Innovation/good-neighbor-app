@@ -1,3 +1,4 @@
+import { invalidateDuplicateIssues } from "./duplicate-invalidation.js";
 /*
   api.js — the field app's thin online client for the GNP backend.
 
@@ -14,6 +15,7 @@
     - media bytes go straight to S3 via a presigned PUT — they never transit this API.
 */
 
+import { pollCheck } from "./check-polling.js";
 import { mark, span } from "./instrument.js";
 import { getSite, updateSiteSession } from "../db.js";
 import { refreshDeviceToken } from "./devices.js";
@@ -637,10 +639,11 @@ export function getCaptureGuidance({ startedAt, checkId, signal, siteId }) {
  * GET /v1/checks/{checkId} — one check with its artifacts + analyses, in a single
  * base-table query. 404 → ApiError(status 404).
  * @param {string} checkId
+ * @param {{signal?: AbortSignal, originSiteId?: string}} [options]
  * @returns {Promise<{ check: any, artifacts: any[], analyses: any[] }>}
  */
-export function getCheck(checkId) {
-  return request("GET", `/v1/checks/${encodeURIComponent(checkId)}`);
+export function getCheck(checkId, options = {}) {
+  return request("GET", `/v1/checks/${encodeURIComponent(checkId)}`, options);
 }
 
 // ── Public complaints ──────────────────────────────────────────────────────
@@ -924,7 +927,7 @@ export function getChecksReport({ period, start } = {}) {
 /**
  * GET /app/v1/manager/reports/tasks — every task created in the period.
  * @param {ReportQuery} [query]
- * @returns {Promise<{ period: ReportPeriod, today: string, tasks: any[], previous: ReportPeriod & { count: number } }>}
+ * @returns {Promise<{ period: ReportPeriod, today: string, asOf: string, tasks: any[], previous: ReportPeriod & { count: number, byType: Record<string, number> } }>}
  */
 export function getTasksReport({ period, start } = {}) {
   return request(
@@ -1036,11 +1039,52 @@ export async function get311RequestDetails(requests) {
  * @param {{originSiteId?: string, signal?: AbortSignal}} [options]
  * @returns {Promise<{ task: any, resultsPending?: boolean }>}
  */
-export function completeTask(taskId, body = {}, options = {}) {
-  return request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/complete`, {
-    ...options,
-    body,
-  });
+export async function completeTask(taskId, body = {}, options = {}) {
+  const originSiteId = options.originSiteId || (await getSite())?.siteId || "";
+  const bound = { ...options, originSiteId };
+  const submit = () =>
+    request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/complete`, {
+      ...bound,
+      body,
+    });
+  try {
+    return await submit();
+  } catch (error) {
+    // Only reconcile uncertain manual saves. Validation/auth failures and City
+    // submissions retain their existing error behavior; never blindly replay.
+    if (
+      body.completionMethod !== "manual" ||
+      !(error instanceof ApiError) ||
+      !(error.status === 0 || error.status === 409 || error.status >= 500)
+    )
+      throw error;
+    for (const delay of [0, 250, 750]) {
+      if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+      let detail;
+      try {
+        detail = await request(
+          "GET",
+          `/v1/tasks/${encodeURIComponent(taskId)}/updates`,
+          bound,
+        );
+      } catch {
+        throw error;
+      }
+      const task = detail?.task;
+      if (
+        task?.completionMethod === "manual" &&
+        (task.status === "completed" ||
+          (task.status === "in_progress" &&
+            task.kind === "non_actionable_escalation"))
+      ) {
+        // The backend's same-method replay returns authoritative documentation
+        // eligibility for this actor, rather than guessing from a timeline.
+        return submit();
+      }
+      if (task?.status !== "completing") break;
+    }
+    throw error;
+  }
 }
 
 // ── Composed helpers ─────────────────────────────────────────────────────────
@@ -1239,56 +1283,67 @@ export async function waitForAnalyses(
   /** first-seen offset per artifactId, so we can see the landing cadence */
   const seen = new Set();
   let poll = 0;
-  /** @type {{ check: any, artifacts: any[], analyses: any[] }} */
-  let last = await getCheck(checkId);
-  const wanted = expected ?? last.artifacts.length;
-  while (true) {
-    poll += 1;
-    const analyzedIds = new Set(last.analyses.map((a) => a.artifactId));
-    // Log any analyses that landed since the previous poll — this is the
-    // response-cadence signal: do they arrive together or one at a time?
-    const fresh = [...analyzedIds].filter((id) => !seen.has(id));
-    for (const id of fresh) seen.add(id);
-    mark(`wait:poll#${poll}`, {
-      analyzed: `${analyzedIds.size}/${wanted}`,
-      artifacts: last.artifacts.length,
-      landed: fresh.length ? fresh.join(",") : "-",
-    });
-    const covered =
-      last.artifacts.length >= wanted &&
-      last.artifacts.every((a) => analyzedIds.has(a.artifactId));
-    if (wanted === 0 || covered) {
-      mark("wait:done", { analyzed: `${analyzedIds.size}/${wanted}`, poll });
-      return last;
-    }
-    if (Date.now() >= deadline) {
-      throw new ApiError(
-        `Analyses still processing (${analyzedIds.size}/${wanted}) after ${timeoutMs}ms`,
-        {
-          body: {
-            code: "analyses_pending",
-            expected: wanted,
-            analyzed: analyzedIds.size,
+  let wanted = expected;
+  return pollCheck(
+    checkId,
+    getCheck,
+    (last) => {
+      wanted ??= last.artifacts.length;
+      poll += 1;
+      const analyzedIds = new Set(last.analyses.map((a) => a.artifactId));
+      // Log any analyses that landed since the previous poll — this is the
+      // response-cadence signal: do they arrive together or one at a time?
+      const fresh = [...analyzedIds].filter((id) => !seen.has(id));
+      for (const id of fresh) seen.add(id);
+      mark(`wait:poll#${poll}`, {
+        analyzed: `${analyzedIds.size}/${wanted}`,
+        artifacts: last.artifacts.length,
+        landed: fresh.length ? fresh.join(",") : "-",
+      });
+      const covered =
+        last.artifacts.length >= wanted &&
+        last.artifacts.every((a) => analyzedIds.has(a.artifactId));
+      if (wanted === 0 || covered) {
+        mark("wait:done", { analyzed: `${analyzedIds.size}/${wanted}`, poll });
+        return last;
+      }
+      if (Date.now() >= deadline) {
+        throw new ApiError(
+          `Analyses still processing (${analyzedIds.size}/${wanted}) after ${timeoutMs}ms`,
+          {
+            body: {
+              code: "analyses_pending",
+              expected: wanted,
+              analyzed: analyzedIds.size,
+            },
           },
-        },
-      );
-    }
-    await new Promise((r) => setTimeout(r, intervalMs));
-    last = await getCheck(checkId);
-  }
+        );
+      }
+      return undefined;
+    },
+    { intervalMs },
+  );
 }
 
-/** @param {string[]} taskIds */
-export function getDuplicateLinks(taskIds) {
-  return request("POST", "/v1/duplicates:batch", { body: { taskIds } });
+/**
+ * @param {string[]} taskIds
+ * @param {{originSiteId?: string, signal?: AbortSignal}} [options]
+ */
+export function getDuplicateLinks(taskIds, options = {}) {
+  return request("POST", "/v1/duplicates:batch", {
+    ...options,
+    body: { taskIds },
+  });
 }
 /** @param {string} taskId @param {{sourceRevision:string,originalTaskId:string}} expected */
-export function separateDuplicate(taskId, expected) {
-  return request(
+export async function separateDuplicate(taskId, expected) {
+  const result = await request(
     "POST",
     `/v1/tasks/${encodeURIComponent(taskId)}/duplicate:separate`,
     { body: expected },
   );
+  invalidateDuplicateIssues();
+  return result;
 }
 
 /** @param {string} taskId */

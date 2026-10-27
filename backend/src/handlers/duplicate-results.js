@@ -9,6 +9,7 @@ import {
   projectionKey,
 } from "../analysis/duplicates/jobs.js";
 import {
+  normalizeConditionOutcome,
   pendingConditions,
   processingState,
 } from "../analysis/duplicates/result-state.js";
@@ -124,6 +125,7 @@ export const getDuplicateResult = async (event) => {
       )
         row = pending;
     }
+    row = normalizeConditionOutcome(row);
     const original =
       row.possibleDuplicate === true && row.duplicateOf
         ? await findOriginalIssue({
@@ -141,6 +143,8 @@ export const getDuplicateResult = async (event) => {
       ...original,
       conditionId: row.conditionId,
       status: row.status,
+      assessmentOutcome: row.assessmentOutcome,
+      failedCandidateCount: row.failedCandidateCount,
       possibleDuplicate: row.possibleDuplicate,
       duplicateOf: row.duplicateOf,
       matchStrength: row.matchStrength,
@@ -149,7 +153,8 @@ export const getDuplicateResult = async (event) => {
   const hasPositive = conditions.some((c) => c.possibleDuplicate === true);
   const state = processingState(result);
   const stale =
-    state === "complete" && conditions.some((c) => c.status === "pending");
+    (state === "complete" || state === "incomplete") &&
+    conditions.some((c) => c.status === "pending");
   return jsonResponse(200, {
     sourceRevision: revision,
     processingState: stale

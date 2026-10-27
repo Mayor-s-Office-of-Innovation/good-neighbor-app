@@ -797,6 +797,7 @@ html.wa-dark .analysis-card__clear-copy a {
   font: inherit;
   cursor: pointer;
 }
+.analysis-card__answer-progress:focus-visible,
 .btn-card:focus-visible,
 .analysis-card__dismiss:focus-visible {
   outline: 2px solid var(--text);
@@ -1160,6 +1161,16 @@ html.wa-dark .analysis-card__clear-copy a {
   .analysis-card .analysis-card__edit {
     align-self: flex-start;
   }
+
+  /* Failed cards have no panel/layout wrapper. Keep their copy and actions
+     together instead of flattening them into a clipped horizontal row. */
+  .analysis-card--failed {
+    flex-direction: column;
+  }
+  .analysis-card.analysis-card--failed .analysis-card__content {
+    display: block;
+    width: 100%;
+  }
 }
 
 /* Responsive display type: headings step down one size on phones (discrete
@@ -1219,4 +1230,15 @@ html.wa-dark .analysis-card__clear-copy a {
   align-self: flex-start;
   width: max-content;
   margin-block-start: var(--wa-space-l, 24px);
+}
+
+.analysis-card__question-actions button[hidden] {
+  display: none;
+}
+
+.analysis-card__answer-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
 }

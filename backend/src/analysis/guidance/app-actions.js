@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../../db.js";
 import { getObjectBytes } from "../../s3.js";
@@ -21,6 +22,7 @@ import {
   serviceCodesForClassifierLabels,
 } from "../../integrations/sf311-service-codes.js";
 import {
+  hasServiceRequestAttachment,
   serviceRequestClosureReason,
   serviceRequestClosureState,
 } from "../../integrations/sf311-status.js";
@@ -207,6 +209,7 @@ export function mergeAppActionResults(priorResults, result) {
  * the write to that exact lease so a stale executor cannot checkpoint after its
  * lease was reclaimed.
  * @param {object} opts
+ * @param {(result: AppActionResult) => Promise<void>} [opts.onCheckpoint]
  * @param {string} opts.tableName
  * @param {string} opts.siteId
  * @param {string} opts.taskId
@@ -226,7 +229,9 @@ async function checkpoint311ActionResult({
   completionLeaseExpiresAt,
   executionLease,
   updatedAt,
+  onCheckpoint,
 }) {
+  if (onCheckpoint) return onCheckpoint(result);
   if (!tableName || !siteId || !taskId) return;
   const lease =
     executionLease ??
@@ -462,15 +467,17 @@ async function imageArtifactsForTask({ tableName, siteId, task }) {
  * @param {Array<{ artifactId: string, s3Key: string }>} opts.artifacts
  * @param {unknown} [opts.priorAttachments]
  * @param {Date} opts.nowDate
+ * @param {(attachments: Array<Record<string, unknown>>) => Promise<void>} [opts.onCheckpoint]
  * @returns {Promise<Array<Record<string, unknown>>>}
  */
-async function attachImagesToServiceRequest({
+export async function attachImagesToServiceRequest({
   sf311,
   config,
   srNum,
   artifacts,
   priorAttachments,
   nowDate,
+  onCheckpoint,
 }) {
   const submittedPriorAttachments = submittedAttachmentsByKey(priorAttachments);
   if (!srNum) {
@@ -481,41 +488,88 @@ async function attachImagesToServiceRequest({
     }));
   }
 
-  const attachments = [];
+  const prior = Array.isArray(priorAttachments) ? priorAttachments : [];
+  const attachments = [...prior];
+  /** @param {Record<string, unknown>} entry */
+  const save = async (entry) => {
+    const index = attachments.findIndex(
+      (item) => attachmentKey(item) === attachmentKey(entry),
+    );
+    if (index < 0) attachments.push(entry);
+    else attachments[index] = entry;
+    if (onCheckpoint) await onCheckpoint([...attachments]);
+  };
   for (const artifact of artifacts) {
     const priorAttachment =
       submittedPriorAttachments.get(attachmentKey(artifact)) ??
       submittedPriorAttachments.get(artifact.s3Key);
-    if (priorAttachment) {
-      attachments.push(priorAttachment);
+    if (priorAttachment) continue;
+    const pending = prior.find(
+      (item) =>
+        attachmentKey(item) === attachmentKey(artifact) &&
+        item.status === "pending",
+    );
+    if (pending) {
+      let accepted = false;
+      try {
+        accepted = hasServiceRequestAttachment(
+          await sf311.getLatestUpdatesBySourceAgency(),
+          srNum,
+          String(pending.urlHash),
+        );
+      } catch {
+        /* Unavailable evidence must never cause a blind resend. */
+      }
+      await save({
+        ...pending,
+        ...(accepted
+          ? { status: "submitted", reconciled: true }
+          : { reason: "sf311_attachment_uncertain_requires_reconciliation" }),
+      });
       continue;
     }
+    let imageUrl;
     try {
-      const imageUrl = await create311MediaLink({
-        config,
-        key: artifact.s3Key,
-      });
-      const payload = buildAttachmentUpdatePayload({
-        srNum,
-        imageUrl,
-        now: nowDate,
-      });
-      const response = await sf311.updateServiceRequest(payload);
-      attachments.push({
-        ...artifact,
-        status: "submitted",
-        updateId: response.updateId,
-      });
+      imageUrl = await create311MediaLink({ config, key: artifact.s3Key });
     } catch (error) {
-      attachments.push({
+      await save({
         ...artifact,
         status: "failed",
         reason: appActionErrorReason(error),
-        ...(appActionErrorDiagnostics(error)
+      });
+      continue;
+    }
+    // Persist intent before sending. Keep a hash, never the bearer media URL.
+    const intent = {
+      ...artifact,
+      status: "pending",
+      urlHash: createHash("sha256").update(imageUrl).digest("hex"),
+    };
+    if (onCheckpoint) await save(intent);
+    let outcome;
+    try {
+      const response = await sf311.updateServiceRequest(
+        buildAttachmentUpdatePayload({ srNum, imageUrl, now: nowDate }),
+      );
+      outcome = {
+        ...artifact,
+        status: "submitted",
+        updateId: response.updateId,
+      };
+    } catch (error) {
+      outcome = {
+        ...(onCheckpoint ? intent : artifact),
+        status: onCheckpoint ? "pending" : "failed",
+        reason: onCheckpoint
+          ? "sf311_attachment_uncertain_requires_reconciliation"
+          : appActionErrorReason(error),
+        ...(!onCheckpoint && appActionErrorDiagnostics(error)
           ? { diagnostics: appActionErrorDiagnostics(error) }
           : {}),
-      });
+      };
     }
+    // A failed durable write must abort rather than advance to the next image.
+    await save(outcome);
   }
   return attachments;
 }
@@ -531,6 +585,7 @@ async function attachImagesToServiceRequest({
  * @param {AppActionResult[]} opts.priorResults
  * @param {"task_created" | "user_confirmed" | undefined} opts.trigger
  * @param {string} [opts.completionLeaseExpiresAt]
+ * @param {(result: AppActionResult) => Promise<void>} [opts.onCheckpoint]
  * @returns {Promise<AppActionResult>}
  */
 async function execute311Action({
@@ -542,6 +597,7 @@ async function execute311Action({
   env,
   priorResults,
   trigger,
+  onCheckpoint,
   completionLeaseExpiresAt = "",
 }) {
   const now = nowDate.toISOString();
@@ -635,6 +691,7 @@ async function execute311Action({
     siteId,
     task,
   });
+  /** @type {Array<Record<string, unknown>>} */
   const tickets = [];
   for (const serviceCode of serviceCodes) {
     const priorTicket = priorTickets.get(serviceCode);
@@ -646,6 +703,18 @@ async function execute311Action({
         artifacts: imageArtifacts,
         priorAttachments: priorTicket.attachments,
         nowDate,
+        onCheckpoint: onCheckpoint
+          ? (attachments) =>
+              onCheckpoint(
+                build311ActionResult({
+                  action,
+                  status: "partial",
+                  reason: "attachments_pending",
+                  recordedAt: now,
+                  tickets: [...tickets, { ...priorTicket, attachments }],
+                }),
+              )
+          : undefined,
       });
       tickets.push({ ...priorTicket, attachments });
       continue;
@@ -668,13 +737,82 @@ async function execute311Action({
         location,
         now: nowDate,
       });
+      if (onCheckpoint) {
+        const uncertain = priorResults
+          .flatMap(ticketsFromActionResult)
+          .some(
+            (ticket) =>
+              ticket.serviceCode === serviceCode &&
+              !ticket.srNum &&
+              ticket.creationState === "pending",
+          );
+        if (uncertain)
+          throw new Error("sf311_creation_uncertain_requires_reconciliation");
+        await onCheckpoint(
+          build311ActionResult({
+            action,
+            status: "partial",
+            reason: "creation_pending",
+            recordedAt: now,
+            tickets: [
+              ...tickets,
+              {
+                serviceCode,
+                responsibleAgency,
+                sourceRequestId: payload.SourceRequestID,
+                creationState: "pending",
+              },
+            ],
+          }),
+        );
+      }
       const response = await sf311.createServiceRequest(payload);
+      if (onCheckpoint)
+        await onCheckpoint(
+          build311ActionResult({
+            action,
+            status: "partial",
+            reason: "attachments_pending",
+            recordedAt: now,
+            tickets: [
+              ...tickets,
+              {
+                serviceCode,
+                responsibleAgency,
+                sourceRequestId: payload.SourceRequestID,
+                srNum: response.srNum,
+                attachments: [],
+              },
+            ],
+          }),
+        );
       const attachments = await attachImagesToServiceRequest({
         sf311,
         config,
         srNum: response.srNum,
         artifacts: imageArtifacts,
         nowDate,
+        onCheckpoint: onCheckpoint
+          ? (attachments) =>
+              onCheckpoint(
+                build311ActionResult({
+                  action,
+                  status: "partial",
+                  reason: "attachments_pending",
+                  recordedAt: now,
+                  tickets: [
+                    ...tickets,
+                    {
+                      serviceCode,
+                      responsibleAgency,
+                      sourceRequestId: payload.SourceRequestID,
+                      srNum: response.srNum,
+                      attachments,
+                    },
+                  ],
+                }),
+              )
+          : undefined,
       });
       tickets.push({
         serviceCode,
@@ -683,7 +821,7 @@ async function execute311Action({
         srNum: response.srNum,
         attachments,
       });
-      if (trigger === "user_confirmed") {
+      if (trigger === "user_confirmed" || onCheckpoint) {
         await checkpoint311ActionResult({
           tableName,
           siteId,
@@ -697,6 +835,7 @@ async function execute311Action({
           }),
           priorResults,
           completionLeaseExpiresAt: completionLeaseExpiresAt,
+          onCheckpoint,
           updatedAt: now,
         });
       }
@@ -808,6 +947,7 @@ function buildCloseActionResult({
  * @param {string} [opts.completionLeaseExpiresAt]
  * @param {{ status: string, attribute: string, value: string }} [opts.executionLease]
  * @param {boolean} [opts.reconcile311Closures]
+ * @param {(result: AppActionResult) => Promise<void>} [opts.onCheckpoint]
  * @returns {Promise<AppActionResult>}
  */
 async function execute311ClosureAction({
@@ -821,6 +961,7 @@ async function execute311ClosureAction({
   completionLeaseExpiresAt = "",
   executionLease,
   reconcile311Closures = false,
+  onCheckpoint,
 }) {
   const now = nowDate.toISOString();
   const priorClosuresByServiceCode =
@@ -875,6 +1016,7 @@ async function execute311ClosureAction({
         taskId,
         completionLeaseExpiresAt,
         executionLease,
+        onCheckpoint,
         result: buildCloseActionResult({
           action,
           status: closures.every((closure) => closure.status === "closed")
@@ -1105,6 +1247,7 @@ function actionsForTrigger(appActions, trigger) {
  * @param {string} [opts.completionLeaseExpiresAt]
  * @param {{ status: string, attribute: string, value: string }} [opts.executionLease]
  * @param {boolean} [opts.reconcile311Closures]
+ * @param {(result: AppActionResult) => Promise<void>} [opts.onCheckpoint]
  * @returns {Promise<AppActionResult[]>}
  */
 export async function executeAppActions(appActions, opts = {}) {
@@ -1138,6 +1281,7 @@ export async function executeAppActions(appActions, opts = {}) {
               env,
               priorResults,
               trigger: opts.trigger,
+              onCheckpoint: opts.onCheckpoint,
               completionLeaseExpiresAt: opts.completionLeaseExpiresAt ?? "",
             }),
           );
@@ -1193,6 +1337,7 @@ export async function executeAppActions(appActions, opts = {}) {
               completionLeaseExpiresAt: opts.completionLeaseExpiresAt ?? "",
               executionLease: opts.executionLease,
               reconcile311Closures: opts.reconcile311Closures,
+              onCheckpoint: opts.onCheckpoint,
             }),
           );
         } catch (error) {

@@ -487,3 +487,20 @@ it.each([true, false])(
     );
   },
 );
+
+it("keeps timeline history and pagination but removes mutation controls in read-only mode", () => {
+  const view = {
+    task: { status: "in_progress" },
+    updates: [],
+    issueOrigin: "perimeter",
+    originalMediaUrl: "",
+    mediaUrls: new Map(),
+    nextToken: "older",
+  };
+  const editable = taskUpdateTimeline(view);
+  const readonly = taskUpdateTimeline({ ...view, readOnly: true });
+  expect(editable).toContain("data-mode=");
+  expect(readonly).not.toContain("data-mode=");
+  expect(readonly).toContain("data-load-older");
+  expect(readonly).toContain("task-update__timeline");
+});

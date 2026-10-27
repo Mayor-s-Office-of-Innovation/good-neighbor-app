@@ -45,8 +45,14 @@ jobs:
       - name: Format
         run: npm run format:check
 
+      - name: Test alarm delivery preflight guards
+        run: node --test scripts/test-alarm-delivery.test.mjs
+
       - name: Lint
         run: npm run lint
+
+      - name: Test frontend asset publication
+        run: node --test scripts/publish-web-assets.test.mjs
 
       - name: Typecheck
         run: npm run typecheck

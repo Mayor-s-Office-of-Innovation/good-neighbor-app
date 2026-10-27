@@ -202,7 +202,7 @@ as task update events and every GSI sort key.
 | Task update pointer | `SITE#<siteId>` | `TASK#<taskId>#UPDATE_ID#<updateId>` | finds an update by ID alone, for documentation and safe retries. Stores the event's full sort key. |
 | Task update media | `SITE#<siteId>` | `TASK#<taskId>#MEDIA#<artifactId>` | photos attached to an update. Not analyzer input. A `CHECK#<checkId>#UPDATE_MEDIA#<artifactId>` pointer lets the normal media route serve them. |
 | Upload reservation | `SITE#<siteId>` | `UPLOAD_RESERVATION#<checkId>#<artifactId>` | 24-hour record created before issuing a media PUT; binds key, type, and declared bytes. |
-| Daily check/device/Site media quota | `SITE#<siteId>` | `MEDIA_QUOTA#<yyyy-mm-dd>#CHECK#<checkId>`, `...#DEVICE#<actorId>`, or `...#SITE` | conservative reserved byte and artifact counts; expires after the quota day so abandoned upload URLs cannot permanently exhaust a Check. |
+| Daily check/device media quota | `SITE#<siteId>` | `MEDIA_QUOTA#<yyyy-mm-dd>#CHECK#<checkId>`, `...#DEVICE#<actorId>` | Conservative reserved byte and artifact counts; expires after the quota day so abandoned upload URLs cannot permanently exhaust a Check. Legacy `...#SITE` rows are no longer read or written and expire via TTL. |
 | Task display ID counter | `SITE#<siteId>` | `COUNTER#task-display-id` | `nextTaskDisplayNumber`, a counter that only goes up. Used to mint task `shortId` values. |
 | Provider config | `PROVIDER#<providerId>` | `#META` | managed by central admin: name, `status`, timestamps |
 | Program config | `PROGRAM#<programId>` | `#META` | managed by central admin: Provider relationship, name, required contact, optional Program Manager reference, migration-placeholder/review flags, status, timestamps |
@@ -217,6 +217,8 @@ as task update events and every GSI sort key.
 | Current Provider Manager grant guard | `PROVIDER#<providerId>` | `PROVIDER_MANAGER_GRANT_CURRENT#<membershipId>` | Conditional singleton for one unexpired provider grant per membership. Redemption, cancellation, or replacement removes or changes the matching pointer atomically. |
 | Provider Manager enrollment | `PROVIDER#<providerId>` | `PROVIDER_MANAGER_ENROLLMENT#<enrollmentId>` | Directly addressable root lifecycle record for one physical device's all-or-nothing provider redemption. Stores the membership generation and up to 21 Site/binding pointers so a Supervisor can revoke every still-active projection in one transaction. List responses derive active/partial/revoked state from the authoritative physical-device and binding rows. |
 | Perimeter-check compliance period | `SITE#<siteId>` | `COMPLIANCE_TERMS#<effectiveStart>#<versionId>` | Immutable effective-dated period containing one or more reason codes, integer checks/day (1–8), a snapshotted `underEnhancedMonitoring` boolean (reason 6 only), and a snapshot of the selected Site manager plus the authenticated generator. The generator—not a client-nominated manager—appears as sender; Compliance managers must be assigned to the Site while supervisors may generate for any Site. Generator phone is required. Start is the server's current Pacific date; the user-facing end date is inclusive and is stored with an exclusive boundary. Reasons 1 or 6 require an end date. Missing expiry means indefinite. |
+| SF311 job | `SITE#<siteId>` | `SF311_JOB#<taskId>#<phase>` | `SF311_OUTBOX`, committed with task creation, action override, or resolution. Streams dispatches to SQS; status tracks pending/dispatched/retry/complete/failed and results retain ticket checkpoints. |
+| SF311 worker state | `SITE#<siteId>` | `SF311_LOCK#<taskId>` | Expiring worker lease plus durable integration results shared across jobs. Separate from task snapshots so foreground updates cannot erase a filing checkpoint. |
 | Compliance-letter generation job | `SITE#<siteId>` | `LETTER_JOB#<createdAt>#<jobId>` | Transactional outbox item (`COMPLIANCE_LETTER_OUTBOX`) created with a perimeter-check period. DynamoDB Streams dispatches it to SQS; the worker renders the PDF, stores it in S3, and advances the Site letter state idempotently. |
 | Requirement-ended notice | `SITE#<siteId>` | `LETTER_JOB#ended-<termsVersionId>` | `COMPLIANCE_LETTER_OUTBOX`, `noticeOnly: true`; created atomically with manual cancellation or scheduled expiry. Copies the period's original email To/CC snapshot. Uses the existing delivery claim/receipt safeguards without a PDF or letter-history counter. |
 | System-status site directory | `STATUS_SITES` | `<siteId>` | All Sites, including inactive Sites; versioned name/status projection for supervisor-only reporting. |
@@ -419,6 +421,42 @@ Every pattern is a single query. There are no scans.
 | AP36 | Suspend one Site binding | Consistently read the canonical binding, then atomically advance its token generation and mark the canonical, compatibility, and physical-pointer projections suspended with a bounded reason plus a Site audit event. A bounded legacy fallback updates the legacy Device row. Re-enrollment consumes a new single-Site grant and creates a new binding; it never reactivates the suspended row. |
 | AP37 | Manage oversight dropdown directories | Query the bounded `ADMIN_DIRECTORY#OVERSIGHT` partition. Supervisors conditionally create normalized department/system rows. Compliance-manager identities live in `ADMIN_DIRECTORY#PROGRAM_MANAGERS` in every environment so CSV imports can precede Cognito provisioning and later link by normalized email. |
 | AP38 | Manage and enroll Provider Managers | A Compliance Supervisor queries `PROVIDER_MANAGER#`, `PROVIDER_MANAGER_GRANT#`, and `PROVIDER_MANAGER_ENROLLMENT#` rows in one Provider partition. Grant issuance rejects more than 21 active `SITE#` relationships. Redemption re-queries active Sites and uses one transaction to consume the link, recheck Provider/membership/Site authority, and create every canonical, compatibility, and physical-pointer projection. Authorization and refresh recheck both the membership generation and each Site's current `providerId`. |
+
+The manager Checks UI uses recorded counts rather than compliance status: 3+,
+1–2, or zero completed check records per day (including single-issue reports).
+AP27 retains its compliance fields for other consumers and adds compact per-check
+rows (`checkId`, `startedAt`, `photoCount`) for the day cards. Raw headers stay
+server-side. Issues use the task report's non-superseded tasks. “Issues resolved”
+requires `status = completed` and both creation and completion timestamps inside
+the selected Pacific period; calls, 311 filings, and “can't do” do not count as
+resolution. The summary links retain the period and the resolved filter. Report
+issue cards open the shared timeline in read-only mode. No operating-day schedule
+is currently stored, so absence of a compliance obligation alone does not label
+a day “not operating.”
+
+The Issues chart partitions reports created in the period into resolved within
+that period and unresolved within that period. Median resolution time uses only
+qualifying completed reports, from creation to completion (missing or invalid
+durations are excluded). Overview and type metrics filter their full read-only issue-card lists while
+keeping the chart and summary totals scoped to the entire selected period.
+CSV exports the active list filter (and selected type on the type screen). Current-period trends compare elapsed
+Pacific calendar days, including today, with the same number of prior-period
+days, capped at that period's end. Completed periods compare full periods.
+A zero prior count is described without a percentage. Bar charts have integer
+y-axis scales: issue counts for Issues and recorded check totals per Sunday-start
+week for the Checks quarter chart. Partial boundary weeks include only checks
+inside the selected quarter. Bars start at zero, the current week is darker blue,
+and zero-check weeks have no bar. Day-count color bands remain on the calendars.
+
+AP27 task reports include `asOf`: now for current periods, or the last instant
+of a completed period. Attention counts cover only reports created in the
+selected period. Aging means strictly more than 72 hours unresolved at `asOf`.
+Notes and photos alone are not actions: dated action/status events and task
+action timestamps determine whether any action occurred by the cutoff. Awaiting
+City response means a submitted 311 ticket not closed at the cutoff, using the
+City's dated ticket events; updates alone do not close a ticket. Unavailable
+statuses or undated historical closures must not be represented as confirmed
+open tickets. Attention groups can overlap and are not additive.
 
 ### Who owns a task
 
@@ -634,7 +672,7 @@ succeeds. An analyzer amendment on its own no longer retires tasks.
 
 ### Duplicate issue records (feature-gated)
 
-All keys below use the authenticated `pk=SITE#<siteId>` partition. No new GSI or
+The Site records below use the authenticated `pk=SITE#<siteId>` partition. No new GSI or
 media bytes are stored in these records. Issue identity is
 `(checkId, artifactId, conditionId, analysisRevision)`; readable short IDs are
 resolved from current guidance/tasks rather than treated as identity.
@@ -644,10 +682,21 @@ resolved from current guidance/tasks rather than treated as identity.
 | `DUP_OBSERVATION#<generatedAt>#<checkId>:<artifactId>` | Current revision, condition/category descriptions, immutable media reference and optional derived hashes. Generation time, not capture time, indexes the 72-hour lookup. |
 | `DUP_COVERAGE` | Earliest completely indexed generation time for this Site. |
 | `DUP_RESULT#<observationId>#<revision>` | Pending/final evaluation, per-condition results, safe timing diagnostics and target revisions. |
+| `DUP_PEER_RECONCILIATION#<observationId>#<revision>` | Peer fanout claim (`owner`, `leaseUntil` in epoch milliseconds) and durable completion checkpoint (`completedAt`). `lastPeerKey` records successful sends in ascending observation-projection key order. Each acknowledged send checkpoints progress and renews the 60-second lease; retries resume after that key. Conditional writes fence acquisition/progress/completion/release by owner and cursor; expired claims are retryable. Completion suppresses future job fanout, while dependent-link reconciliation still runs after recovery. |
 | `DUP_ISSUE#<observationId>#<revision>#<conditionId>` | Incrementally published high-confidence explicit link with revision/lifecycle validation keys. |
 | `DUP_COMPARISON#<requestDigest>` | Comparison response cache, including matcher/request version; five-day TTL and no image bytes. |
 | `DUP_LINK#<taskId>` | Idempotently materialized original-task link and its duplicate-detection timeline event ID. |
 | `DUP_OVERRIDE#<JSON check/artifact/condition tuple>` | Durable human separation, actor/time and original-task reference; prevents automatic relinking of that observation. |
+
+The internal request-pacing record uses `pk=DUP_COMPARISON_PACER` and
+`sk=sha256(normalized comparison endpoint URL)`, shared across Sites and workers
+in one application table. Conditional updates of `nextAllowedAt` (epoch milliseconds)
+pace every HTTP attempt, including 429 retries. A unique `owner` and millisecond
+`leaseUntil` protect each HTTP start; the owner sets the next cooldown after starting
+the fetch and conditionally releases the lease. Expired or nearly expired lease
+acknowledgements must reacquire. Numeric `expiresAt` is a one-day housekeeping TTL;
+TTL deletion is never needed to grant a permit. It contains
+no credentials, media, issue IDs or narratives and is not part of Site APIs.
 
 Duplicate detections and separations use existing `TASK#…#UPDATE#…` timeline keys
 with `duplicate_detected` / `duplicate_separated` types. UI copy comes from the
@@ -668,7 +717,7 @@ the same create/read access. There are no mutation routes after submission.
 |---|---|---|---|
 | Work log | `SITE#<siteId>` | `CARE_WORK#<workId>` | `type: careWork`, `kind`, `note`, `createdAt`, `createdBy`, payload `fingerprint`, `photos` containing IDs, server-owned S3 keys and photo expiry; `expiresAt` is submission + 365 days. |
 | Upload reservation | `SITE#<siteId>` | `CARE_UPLOAD#<workId>#<photoId>` | `type: careUpload`, creator, declared type/bytes, creation time and one-day TTL. Used only to authorize submission. |
-| Per-log upload budget | `SITE#<siteId>` | `CARE_QUOTA#<workId>` | Live reservation IDs with byte counts and expiry timestamps, optimistic revision, and one-day TTL. Expired slots are reclaimed before asynchronous TTL deletion; device/Site daily media budgets remain charged and are shared with existing uploads. |
+| Per-log upload budget | `SITE#<siteId>` | `CARE_QUOTA#<workId>` | Live reservation IDs with byte counts and expiry timestamps, optimistic revision, and one-day TTL. Expired slots are reclaimed before asynchronous TTL deletion; device daily media budgets remain charged and are shared with existing uploads. |
 
 Work logs project `gsi1pk = SITE#<siteId>#CARE_WORK` and
 `gsi1sk = <createdAt>#<workId>` onto GSI1. `GET /v1/care-work` returns newest-first

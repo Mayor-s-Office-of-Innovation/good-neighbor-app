@@ -1,3 +1,4 @@
+import { sf311Job } from "../analysis/guidance/sf311-job.js";
 import {
   GetCommand,
   QueryCommand,
@@ -5,10 +6,7 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "node:crypto";
 import { catalogForPolicyVersion } from "../analysis/guidance/catalog-registry.js";
-import {
-  completeTaskWithAppActions,
-  executeTaskCreatedAppActions,
-} from "../analysis/guidance/guidance-store.js";
+import { completeTaskWithAppActions } from "../analysis/guidance/guidance-store.js";
 import { summarizeAppActionResults } from "../analysis/guidance/app-actions.js";
 import { sharedActionTarget } from "../analysis/duplicates/links.js";
 import { getConfig } from "../config.js";
@@ -250,15 +248,33 @@ export const updateTaskAction = async (event) => {
       new TransactWriteCommand({
         TransactItems: [
           ...shared.duplicateChecks,
+          ...sf311Job(dynamoTable, siteId, updated, `edited-${now}`),
+          {
+            ConditionCheck: {
+              TableName: dynamoTable,
+              Key: { pk: `SITE#${siteId}`, sk: `SF311_LOCK#${task.taskId}` },
+              // The worker claims this item before reading the action selection.
+              // Durable results also block edits after an uncertain external call.
+              ConditionExpression:
+                "attribute_not_exists(sf311Lease) AND attribute_not_exists(results)",
+            },
+          },
           {
             Put: {
               TableName: dynamoTable,
               Item: updated,
-              ConditionExpression: "#status = :open AND updatedAt = :updated",
+              ConditionExpression:
+                "#status = :open AND updatedAt = :updated AND " +
+                (task.appActionResults
+                  ? "appActionResults = :results"
+                  : "attribute_not_exists(appActionResults)"),
               ExpressionAttributeNames: { "#status": "status" },
               ExpressionAttributeValues: {
                 ":open": "open",
                 ":updated": task.updatedAt,
+                ...(task.appActionResults
+                  ? { ":results": task.appActionResults }
+                  : {}),
               },
             },
           },
@@ -270,12 +286,7 @@ export const updateTaskAction = async (event) => {
       return jsonResponse(409, { error: "Task changed while editing" });
     throw error;
   }
-  const [executed] = await executeTaskCreatedAppActions({
-    tableName: dynamoTable,
-    siteId,
-    taskItems: [updated],
-  });
-  return jsonResponse(200, { task: executed });
+  return jsonResponse(200, { task: updated });
 };
 
 /** POST /v1/tasks/{taskId}/custom-action @param {any} event */
@@ -380,11 +391,18 @@ export const recordCustomTaskAction = async (event) => {
             Put: {
               TableName: dynamoTable,
               Item: updated,
-              ConditionExpression: "#status = :open AND updatedAt = :updated",
+              ConditionExpression:
+                "#status = :open AND updatedAt = :updated AND " +
+                (task.appActionResults
+                  ? "appActionResults = :results"
+                  : "attribute_not_exists(appActionResults)"),
               ExpressionAttributeNames: { "#status": "status" },
               ExpressionAttributeValues: {
                 ":open": "open",
                 ":updated": task.updatedAt,
+                ...(task.appActionResults
+                  ? { ":results": task.appActionResults }
+                  : {}),
               },
             },
           },

@@ -1,3 +1,4 @@
+import { isIncompleteCondition } from "./result-state.js";
 import { LOOKBACK_MS } from "./image-matcher.js";
 import { createHash } from "node:crypto";
 import { GetCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
@@ -154,9 +155,11 @@ export async function duplicateForTask(table, site, task, reader) {
         result?.recoveryRequestedAt &&
         (!result.evaluatedAt || result.recoveryRequestedAt > result.evaluatedAt)
           ? "pending"
-          : row?.assessmentOutcome === "no_match_with_failures"
+          : isIncompleteCondition(row)
             ? "unavailable"
-            : result?.processingState === "complete" ||
+            : (row?.status === "evaluated" &&
+                  row.possibleDuplicate === false) ||
+                result?.processingState === "complete" ||
                 result?.status === "evaluated"
               ? "complete"
               : "pending",

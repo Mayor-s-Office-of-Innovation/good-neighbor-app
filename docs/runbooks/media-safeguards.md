@@ -10,16 +10,19 @@ strips metadata and applies orientation while enforcing byte, pixel, edge, and s
 - one object: 10 MiB
 - one check: 20 artifacts and 50 MiB
 - one device per UTC day: 50 artifacts and 100 MiB
-- one Site per UTC day: 1,000 artifacts and 1 GiB
 
 Reservations are deliberately conservative: issuing a PUT URL consumes quota even if the client
-abandons the upload. Reservation records and check/device/Site daily counters expire after
+abandons the upload. Reservation records and check/device daily counters expire after
 24 hours, so an abandoned URL cannot permanently block its Check. Do not manually lower counters during an active incident—doing so weakens the cost
 control and can race in-flight uploads.
 
-There is no global daily upload quota. Upload reservations do not update a shared
-cross-site counter. Existing global counter rows are unused and expire through their
-existing DynamoDB TTL; no counter deletion or migration is required.
+There is no Site-wide or global daily upload quota. Upload reservations do not
+update shared Site or global counters: these counters made independent checks
+compete for the same DynamoDB item and could reject valid uploads. Per-file,
+check/complaint/care-work, and device safeguards remain enforced. Existing Site
+and global counter rows are unused and expire through their existing DynamoDB
+TTL; no counter deletion or migration is required. There is no aggregate daily
+ceiling across devices at a Site.
 
 ## Alarms
 
@@ -29,7 +32,9 @@ into tickets or chat. A single rejection is normally bad camera/upload data. A c
 from one Site or device may indicate abuse or a broken client release.
 
 `MediaQuotaExceeded` alarms after five rejected reservations in five minutes. Determine which
-counter is near its conditional limit from the Site's `MEDIA_QUOTA#` rows.
+check or device counter is near its conditional limit from the Site's
+`MEDIA_QUOTA#` rows. Inspect cancellation reasons as well: this marker also covers
+transaction conflicts and does not by itself prove quota exhaustion.
 Confirm whether traffic is expected before changing a limit in code. The public response
 intentionally does not reveal which budget was exhausted.
 
@@ -61,6 +66,13 @@ active tag. The API refuses photo access after 30 days even if lifecycle deletio
 not yet run. Their underlying work logs retain text and photo-expiry metadata for one
 year. Care-work processing never enqueues analyzer jobs or retags check/task images.
 Complaint evidence remains in its separate one-year bucket.
+
+
+Database PITR does not restore S3 media. Upload/complaint bucket versioning is
+intentionally suspended to avoid retaining sensitive media beyond its approved
+expiry. A recovered database may reference expired or deleted images; keep the
+existing unavailable-media behavior and never extend retention as a recovery
+shortcut. See [recovery.md](recovery.md) for the database restore procedure.
 
 
 ## 311 attachment leases
@@ -95,10 +107,15 @@ response diagnostics before persistence. Local tunnel access also requires
 
 ## Daily cost warning
 
-Terraform creates a warning-only AWS COST budget of USD 100 per UTC day. It sends
-an ACTUAL-cost notification when attributed daily spending is greater than $100
-to `alarm_emails` (currently `aaron.hans@sf.gov` in both environments). It has no
-budget actions and cannot stop uploads, revoke permissions, or throttle processing.
+Terraform creates a warning-only AWS COST budget per UTC day: **USD 50 in PROD**
+and **USD 100 in DEV**. The shared module's `daily_cost_warning_usd` input controls
+both the budget amount and the absolute ACTUAL-cost notification threshold.
+PROD explicitly sets 50; DEV retains the default of 100. Notifications go to
+`alarm_emails`: `aaron.hans@sf.gov` (primary) and `beaudry.kock@sfgov.org` (secondary)
+in PROD, and the independently configured DEV list. Budget notifications are
+configured directly as email subscribers, separately from the two SNS topic
+confirmations. It has no budget actions and cannot stop uploads, revoke
+permissions, or throttle processing.
 
 The filter is `user:Application$Good-Neighbor-App` (using `var.application`), across
 all regions in the deployment account. Dev and prod have separate accounts and
@@ -138,7 +155,7 @@ are linked accounts, so their application Terraform cannot own activation.
 CI relinquishes only `module.app.aws_ce_cost_allocation_tag.application`
 (including its indexed form) using locked `terraform state rm` before planning.
 This forgets Terraform ownership without deactivating the actual tag; S3 backend
-versioning retains earlier state versions. The step is idempotent, DEV-only, and
+versioning retains earlier state versions. The step is idempotent in both environments and
 fails the deployment if state migration fails. A plan guard rejects any later
 cost-tag create/update/delete in either environment. Do not re-import the entry or
 re-enable local activation there. Activation belongs in the billing management
@@ -149,10 +166,11 @@ Billing ingestion and budget evaluation are delayed (typically 8–12 hours betw
 so this is not a real-time spend guard and can notify after the threshold was crossed.
 
 After the normal CI deployment, inspect the budget in the Billing Console: verify
-DAILY, USD 100, ACTUAL > 100, the Application filter, and the recipient list. Verify
+DAILY, USD 50 and ACTUAL > 50 in PROD (USD 100 and ACTUAL > 100 in DEV),
+the Application filter, and the recipient list. Verify
 the Application tag is active and compare attributed cost with Cost Explorer after
 billing data arrives; zero reported cost alone does not prove the filter works.
-No console configuration changes are required. Existing global quota rows can expire
+No console configuration changes are required. Existing Site and global quota rows can expire
 normally; the cost warning uses billing data, not those counters.
 
 
@@ -183,3 +201,64 @@ Match `requestId` to the HTTP 400 in the API Gateway access log. These records
 become available after deployment; they cannot explain historical rejections
 retroactively. Quota rejections (429) retain their existing `MediaQuotaExceeded`
 marker and are separate from this input-validation diagnostic.
+
+## Assessment evaluation size and WAF blocks
+
+`POST /v1/assessments:evaluate` accepts up to 65,536 decoded UTF-8 JSON bytes.
+This accommodates AI-generated descriptions and translations sent back by the browser.
+The handler returns JSON `413 {"error":"assessment_too_large","maxBytes":65536}`
+above that limit, before parsing or writing data. Photo upload limits are unchanged.
+Each evaluation attempt reaching the handler emits `AssessmentEvaluationRequestSize`
+with `requestId`, `siteId`, `requestBytes`, `maxBytes`, and `sizeRejected`; it does not
+log the assessment text. `sizeRejected: false` means only that the size check passed,
+not that evaluation succeeded.
+
+In Terraform (`infra/modules/app/main.tf`), only the Common Rule Set's
+`SizeRestrictions_BODY` action is changed to Count. A subsequent label rule restores
+its block except for the exact POST evaluation route. Other managed rules and rate
+limits remain active. CloudFront's WAF inspection window is 64 KiB to cover accepted
+payloads; inspection above the default 16 KiB incurs additional WAF charges.
+
+`infra/modules/app/waf-logging.tf` enables BLOCK-only logs in **us-east-1** under
+`aws-waf-logs-good-neighbor-app-dev` (or the corresponding production prefix),
+retained for 365 days and encrypted with a dedicated, rotating KMS key in us-east-1. Authorization, Cookie, X-API-Key, Referer, and query strings are
+redacted. Logs still contain IP addresses, paths, request identifiers, and other
+headers; keep access restricted. Logging redaction does not apply to the existing
+WAF sampled-requests view. Allowed requests, including size-rule Count matches that
+ultimately pass WAF, are dropped from these logs.
+
+Deploy the handler and Terraform through CI. The deployment role needs permission
+to configure WAF logging and CloudWatch log delivery/resource policies; WAF manages
+the delivery policy. Do not run Terraform plan/apply or AWS CLI locally.
+
+In CloudWatch Console Logs Insights, select the WAF log group in us-east-1 and the
+incident time range:
+
+```sql
+fields @timestamp, httpRequest.httpMethod, httpRequest.uri,
+       httpRequest.requestId, terminatingRuleId, ruleGroupList,
+       requestBodySize, requestBodySizeInspectedByWAF, labels
+| filter action = "BLOCK"
+| sort @timestamp desc
+| limit 200
+```
+
+For managed-rule blocks, expand `ruleGroupList` to find the inner terminating rule.
+For size blocks outside evaluation, the top-level rule is
+`BodySizeRestrictionsOutsideAssessmentEvaluation`. WAF's CloudFront request ID is
+not the API Gateway request ID; correlate with time, route, and available identifiers.
+
+In the API Lambda log group (app region), measure assessment sizes:
+
+```sql
+fields @timestamp, requestId, siteId, requestBytes, maxBytes, sizeRejected
+| filter eventType = "AssessmentEvaluationRequestSize"
+| sort @timestamp desc
+| limit 200
+```
+
+After deployment, use an authenticated dev test site to verify a valid evaluation
+above 8 KiB succeeds, one above 64 KiB returns the JSON 413, and another route still
+blocks above 8 KiB with a WAF log entry. Terraform validation and handler tests do
+not prove deployed WAF behavior. Logging begins at deployment and cannot recover
+historical blocked requests.

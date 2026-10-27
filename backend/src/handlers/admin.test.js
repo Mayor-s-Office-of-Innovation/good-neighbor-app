@@ -9,6 +9,7 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
+  loadAdminDirectory,
   send,
   deleteObject,
   geocodeAddress,
@@ -17,6 +18,7 @@ const {
   presignGet,
   setObjectTags,
 } = vi.hoisted(() => ({
+  loadAdminDirectory: vi.fn(),
   send: vi.fn(),
   deleteObject: vi.fn(),
   geocodeAddress: vi.fn(),
@@ -25,6 +27,7 @@ const {
   presignGet: vi.fn(),
   setObjectTags: vi.fn(),
 }));
+vi.mock("./admin-users.js", () => ({ loadAdminDirectory }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 vi.mock("../integrations/census-geocoder.js", () => ({
   GeocodingError: class GeocodingError extends Error {
@@ -45,6 +48,7 @@ vi.mock("../s3.js", () => ({
 }));
 
 const {
+  listCityProgramManagers,
   getAdminSite,
   createCityProgramManager,
   createProvider,
@@ -61,6 +65,8 @@ const {
 } = await import("./admin.js");
 
 beforeEach(() => {
+  loadAdminDirectory.mockReset();
+  loadAdminDirectory.mockResolvedValue([]);
   send.mockReset();
   deleteObject.mockReset();
   geocodeAddress.mockReset();
@@ -154,13 +160,49 @@ describe("City program manager administration", () => {
 });
 
 describe("provider and site management", () => {
+  it.each(["provider", "site"])(
+    "reports %s uniqueness conflicts without hiding other failures",
+    async (kind) => {
+      for (const index of [0, 1]) {
+        send.mockReset();
+        const failure = Object.assign(new Error("cancelled"), {
+          name: "TransactionCanceledException",
+          CancellationReasons: [0, 1].map((i) => ({
+            Code: i === index ? "ConditionalCheckFailed" : "None",
+          })),
+        });
+        send.mockImplementation(async (command) => {
+          if (command instanceof TransactWriteCommand) throw failure;
+          return { Item: { name: "Provider", status: "active" } };
+        });
+        const request = call(
+          kind === "provider" ? createProvider : createSite,
+          event(
+            { name: "Existing", address: "1 Main St, San Francisco, CA" },
+            "compliance-supervisor",
+            { providerId: "provider" },
+          ),
+        );
+        if (index === 0) {
+          const response = await request;
+          expect(response.statusCode).toBe(409);
+          expect(JSON.parse(response.body).error).toBe(
+            `${kind}_already_exists`,
+          );
+        } else await expect(request).rejects.toBe(failure);
+        expect(
+          send.mock.calls.filter(([command]) => command instanceof PutCommand),
+        ).toHaveLength(0);
+      }
+    },
+  );
   it("creates providers", async () => {
     send.mockResolvedValue({});
 
     const res = await call(createProvider, event({ name: "Provider One" }));
 
     expect(res.statusCode).toBe(201);
-    expect(send.mock.calls[0][0]).toBeInstanceOf(PutCommand);
+    expect(send.mock.calls[0][0]).toBeInstanceOf(TransactWriteCommand);
     expect(JSON.parse(res.body).provider).toMatchObject({
       providerId: "provider-one",
       name: "Provider One",
@@ -1505,4 +1547,161 @@ it("does not allow manual site primary contact changes", async () => {
     ([command]) => command instanceof TransactWriteCommand,
   )?.[0].input.TransactItems;
   expect(tx[0].Update.UpdateExpression).not.toContain("primaryContact");
+});
+
+describe("City program manager account status", () => {
+  it("includes invited, active and suspended users without leaking account fields", async () => {
+    send.mockResolvedValue({
+      Items: [
+        ...["invited", "active", "suspended"].map((status) => ({
+          userId: status,
+          email: `${status}@example.org`,
+          cognitoSubject: status,
+          status: "active",
+        })),
+        { userId: "unlinked", email: "new@example.org", status: "active" },
+        { userId: "no-account", status: "active" },
+        { userId: "removed", status: "inactive" },
+      ],
+    });
+    loadAdminDirectory.mockResolvedValue([
+      ...["invited", "active", "suspended"].map((status) => ({
+        subject: status,
+        email: `${status}@example.org`,
+        lifecycleStatus: status,
+        username: "private",
+      })),
+      { subject: "new", email: "new@example.org", lifecycleStatus: "invited" },
+    ]);
+    const response = await call(
+      listCityProgramManagers,
+      event({}, "compliance-manager"),
+    );
+    const managers = /** @type {any[]} */ (
+      JSON.parse(response.body).programManagers
+    );
+    expect(managers.map((manager) => manager.accountStatus)).toEqual([
+      "invited",
+      "active",
+      "suspended",
+      "invited",
+      "not-invited",
+    ]);
+    expect(
+      managers.every((manager) => !manager.username && !manager.subject),
+    ).toBe(true);
+    expect(loadAdminDirectory).toHaveBeenCalledTimes(1);
+  });
+  it("does not match a recreated account to a stale subject", async () => {
+    send.mockResolvedValue({
+      Items: [
+        {
+          userId: "old",
+          cognitoSubject: "old",
+          email: "same@example.org",
+          status: "active",
+        },
+      ],
+    });
+    loadAdminDirectory.mockResolvedValue([
+      { subject: "new", email: "same@example.org", lifecycleStatus: "active" },
+    ]);
+    const response = await call(listCityProgramManagers, event({}));
+    expect(JSON.parse(response.body).programManagers[0].accountStatus).toBe("");
+  });
+});
+
+it("directory summaries paginate provider memberships and exclude document signing", async () => {
+  presignGet.mockClear();
+  send.mockImplementation(async (command) => {
+    const input = command.input;
+    if (command instanceof GetCommand)
+      return {
+        Item: {
+          sk: "#META",
+          siteId: "s",
+          complianceLetters: { current: { s3Key: "private.pdf" } },
+        },
+      };
+    const pk = input.ExpressionAttributeValues?.[":pk"];
+    const prefix = input.ExpressionAttributeValues?.[":prefix"];
+    if (pk === "PROVIDER_SEARCH#ACTIVE")
+      return { Items: [{ providerId: "p" }] };
+    if (pk === "PROVIDER#p" && !input.ExclusiveStartKey)
+      return { Items: [], LastEvaluatedKey: { pk, sk: "SITE#first" } };
+    if (pk === "PROVIDER#p") return { Items: [{ siteId: "s" }] };
+    if (prefix === "MANAGER_MEMBERSHIP#")
+      return {
+        Items: [
+          { type: "managerMembership", status: "active", membershipId: "m" },
+        ],
+      };
+    return { Items: [] };
+  });
+  const request = { ...event(), queryStringParameters: { directory: "1" } };
+  const response = await call(listProviders, request);
+  const body = JSON.parse(response.body);
+  expect(body.sites).toHaveLength(1);
+  expect(body.sites[0].items[0].complianceLetters).toBeUndefined();
+  expect(body.sites[0].items[1].membershipId).toBe("m");
+  expect(presignGet).not.toHaveBeenCalled();
+});
+
+it.each(["details", "oversight", "access", "status"])(
+  "lightweight %s site reads omit document signing and unrelated partitions",
+  async (view) => {
+    presignGet.mockClear();
+    send.mockImplementation(async (command) => {
+      if (command instanceof GetCommand)
+        return {
+          Item: {
+            sk: "#META",
+            siteId: "s",
+            letterState: "ready",
+            complianceLetters: { current: { s3Key: "private.pdf" } },
+          },
+        };
+      return { Items: [] };
+    });
+    const response = await call(getAdminSite, {
+      ...event(undefined, "compliance-supervisor", { siteId: "s" }),
+      queryStringParameters: { view },
+    });
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body);
+    expect(body.items[0].complianceLetters).toBeUndefined();
+    expect(body.permissions.canEdit).toBe(view !== "status");
+    expect(presignGet).not.toHaveBeenCalled();
+    const prefixes = send.mock.calls
+      .filter(([c]) => c instanceof QueryCommand)
+      .map(([c]) => c.input.ExpressionAttributeValues[":prefix"]);
+    expect(prefixes).not.toContain("COMPLIANCE_TERMS#");
+    if (view === "status") expect(prefixes).toContain("LETTER_JOB#");
+  },
+);
+
+it("letter history scopes pagination to the requested site and returns its next cursor", async () => {
+  send.mockImplementation(async (command) => {
+    if (command instanceof GetCommand)
+      return { Item: { sk: "#META", siteId: "s" } };
+    if (
+      command.input.ExpressionAttributeValues?.[":prefix"] === "LETTER_EMAIL#"
+    ) {
+      expect(command.input.ExclusiveStartKey).toEqual({
+        pk: "SITE#s",
+        sk: "LETTER_EMAIL#last",
+      });
+      expect(command.input.Limit).toBe(20);
+      return {
+        Items: [],
+        LastEvaluatedKey: { pk: "SITE#s", sk: "LETTER_EMAIL#next" },
+      };
+    }
+    return { Items: [] };
+  });
+  const response = await call(getAdminSite, {
+    ...event(undefined, "compliance-supervisor", { siteId: "s" }),
+    queryStringParameters: { view: "letters", cursor: "LETTER_EMAIL#last" },
+  });
+  expect(JSON.parse(response.body).nextCursor).toBe("LETTER_EMAIL#next");
 });

@@ -1,3 +1,6 @@
+import { peerFanout } from "../analysis/duplicates/peer-fanout.js";
+import { processingState } from "../analysis/duplicates/result-state.js";
+import { createComparisonPacer } from "../analysis/duplicates/request-pacing.js";
 import { preparedRetention } from "../analysis/duplicates/prepared-retention.js";
 import { duplicateEvent } from "../analysis/duplicates/monitoring.js";
 import { ensureDuplicateHistory } from "../analysis/duplicates/history.js";
@@ -507,7 +510,10 @@ export const handler = async (event) => {
       ) => {
         await Promise.all(
           request.candidates.map(async (item) => {
-            const candidate = loaded.find((c) => c.id === item.id);
+            const candidate =
+              item.id === source.id
+                ? source
+                : loaded.find((c) => c.id === item.id);
             if (!candidate) throw new Error("Unknown preparation target");
             if (candidate.s3Key && !candidate.image?.base64) {
               const preparationStarted = Date.now();
@@ -553,6 +559,19 @@ export const handler = async (event) => {
           comparisonClient = createComparisonClient({
             baseUrl: process.env.DUPLICATE_ANALYZER_BASE_URL ?? "",
             apiKey: key,
+            pace:
+              Number(
+                process.env.DUPLICATE_COMPARISON_REQUESTS_PER_SECOND ?? 0,
+              ) === 0
+                ? undefined
+                : createComparisonPacer({
+                    ddb,
+                    table,
+                    baseUrl: process.env.DUPLICATE_ANALYZER_BASE_URL ?? "",
+                    requestsPerSecond: Number(
+                      process.env.DUPLICATE_COMPARISON_REQUESTS_PER_SECOND,
+                    ),
+                  }),
           });
         }
         const response = await comparisonClient(request);
@@ -868,8 +887,7 @@ export const handler = async (event) => {
                 Item: {
                   ...resultKey,
                   ...result,
-                  processingState:
-                    result.status === "failed" ? "retrying" : "complete",
+                  processingState: processingState(result),
                   latency: timing.snapshot(),
                   candidateRevisions: loaded.map(
                     (
@@ -908,11 +926,11 @@ export const handler = async (event) => {
             outcome:
               issue.possibleDuplicate === true
                 ? "matched"
-                : issue.possibleDuplicate === false
-                  ? issue.assessmentOutcome === "no_match_with_failures"
-                    ? "no_match_with_failures"
-                    : "no_match"
-                  : "pending",
+                : issue.assessmentOutcome === "incomplete"
+                  ? "incomplete"
+                  : issue.possibleDuplicate === false
+                    ? "no_match"
+                    : "pending",
             failedCandidates: issue.failedCandidateCount ?? 0,
             confidence: issue.possibleDuplicate === true ? "high" : undefined,
           },
@@ -921,11 +939,11 @@ export const handler = async (event) => {
               name:
                 issue.possibleDuplicate === true
                   ? "DuplicateMatchedIssues"
-                  : issue.possibleDuplicate === false
-                    ? issue.assessmentOutcome === "no_match_with_failures"
-                      ? "DuplicateIncompleteNoMatchIssues"
-                      : "DuplicateNoMatchIssues"
-                    : "DuplicatePendingIssues",
+                  : issue.assessmentOutcome === "incomplete"
+                    ? "DuplicateIncompleteNoMatchIssues"
+                    : issue.possibleDuplicate === false
+                      ? "DuplicateNoMatchIssues"
+                      : "DuplicatePendingIssues",
               value: 1,
             },
           ],
@@ -938,7 +956,7 @@ export const handler = async (event) => {
           observationId: id,
           matcherVersion: IMAGE_MATCHER_VERSION,
           modelId,
-          outcome: "complete",
+          outcome: processingState(result),
           totalMs: snapshot.totalMs,
           failedCandidates: result.failedCandidateIds.length,
           candidateCount: loaded.length,
@@ -978,8 +996,13 @@ export const handler = async (event) => {
         timing.add("analysisToResultPublishedMs", Date.now() - analyzedAt);
       if (result.status === "failed")
         throw new Error("Duplicate comparison failed");
-      // Reconcile peers arriving concurrently or late. Each peer is revisited only
-      // when its evaluation did not include this revision; no circular requeue loop.
+      // Always reconcile existing dependents after result replacement/recovery.
+      // The checkpoint suppresses job sends only, not link reconciliation.
+      // Missing candidateRevisions alone is not an invalidation token.
+      const peerCheckpoint = {
+        pk: projection.pk,
+        sk: `DUP_PEER_RECONCILIATION#${id}#${job.revision}`,
+      };
       const peers = await query(
         table,
         job.siteId,
@@ -990,8 +1013,10 @@ export const handler = async (event) => {
         "@aws-sdk/client-sqs"
       );
       const sqs = new SQSClient({});
+      /** @type {typeof peers} */
+      const pendingPeers = [];
       for (const peer of peers) {
-        if (peer.id === id || !process.env.DUPLICATE_QUEUE_URL) continue;
+        if (peer.id === id) continue;
         const previous = await get(table, {
           pk: projection.pk,
           sk: `DUP_RESULT#${peer.id}#${peer.revision}`,
@@ -1011,18 +1036,48 @@ export const handler = async (event) => {
           );
           continue;
         }
-        await sqs.send(
-          new SendMessageCommand({
-            QueueUrl: process.env.DUPLICATE_QUEUE_URL,
-            MessageBody: JSON.stringify({
-              siteId: job.siteId,
-              checkId: peer.checkId,
-              artifactId: peer.artifactId,
-              revision: peer.revision,
+        if (
+          !eligibleImages(
+            /** @type {Omit<import("../analysis/duplicates/image-matcher.js").ImageObservation,"image">} */ ({
+              ...peer,
+              availableAt: new Date().toISOString(),
             }),
-          }),
-        );
+            [source],
+          ).length
+        )
+          continue;
+        pendingPeers.push(peer);
       }
+      if (!process.env.DUPLICATE_QUEUE_URL) continue;
+      await peerFanout({
+        ddb,
+        table,
+        key: peerCheckpoint,
+        // Projection keys order peers by generation time and observation ID.
+        // Rebuilding/filtering the pending list must not shift the saved cursor.
+        work: async (assertLease, sendPeer) => {
+          pendingPeers.sort((a, b) => (a.sk < b.sk ? -1 : a.sk > b.sk ? 1 : 0));
+          for (const peer of pendingPeers) {
+            assertLease();
+            await sendPeer(peer.sk, () =>
+              sqs.send(
+                new SendMessageCommand({
+                  QueueUrl: process.env.DUPLICATE_QUEUE_URL,
+                  MessageBody: JSON.stringify({
+                    siteId: job.siteId,
+                    checkId: peer.checkId,
+                    artifactId: peer.artifactId,
+                    revision: peer.revision,
+                  }),
+                }),
+                // A stalled send cannot consume the entire lease. Delivery may
+                // still be ambiguous after abort, so checkpoint only on success.
+                { abortSignal: globalThis.AbortSignal.timeout(15_000) },
+              ),
+            );
+          }
+        },
+      });
     } catch (error) {
       duplicateEvent("worker_failed", {
         siteId: job?.siteId,

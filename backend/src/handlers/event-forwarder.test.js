@@ -37,7 +37,7 @@ function report(over = {}) {
   };
 }
 
-const config = { uploadBucket: "b", queueUrl: "q", dynamoTable: "t" };
+const config = {};
 
 /**
  * Minimal fetch Response stand-in.
