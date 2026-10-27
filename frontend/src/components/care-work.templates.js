@@ -173,7 +173,7 @@ export function carePhotoPicker(files, busy = false) {
                 aria-label="${a(t("care.photo.remove", { index: i + 1 }))}"
                 ${busy ? "disabled" : ""}
               >
-                <wa-icon name="xmark" aria-hidden="true"></wa-icon>
+                <wa-icon name="trash" aria-hidden="true"></wa-icon>
               </button>
             </li>`,
         )
