@@ -719,6 +719,7 @@
   "feedback.send": "送出",
   "feedback.textarea.label": "您的意見",
   "feedback.textarea.placeholder": "分享您的想法、發現的錯誤或遇到的困擾……",
+  "home.checkingUpdates": "正在檢查更新…",
   "home.issueCount.one": "發現 {count} 個問題",
   "home.issueCount.other": "發現 {count} 個問題",
   "home.lastLog.allHandled": "所有問題已處理",

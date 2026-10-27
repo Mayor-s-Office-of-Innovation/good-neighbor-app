@@ -719,6 +719,7 @@
   "feedback.send": "Ipadala",
   "feedback.textarea.label": "Ang inyong feedback",
   "feedback.textarea.placeholder": "Magbahagi ng ideya, bug, o ikinakainis…",
+  "home.checkingUpdates": "Tinitingnan kung may mga update…",
   "home.issueCount.one": "{count} problemang nakita",
   "home.issueCount.other": "{count} problemang nakita",
   "home.lastLog.allHandled": "Naasikaso na ang lahat ng problema",
