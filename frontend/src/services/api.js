@@ -1385,17 +1385,18 @@ export function listCareWork(nextToken = "") {
 export function getCareWork(workId) {
   return request("GET", `/v1/care-work/${encodeURIComponent(workId)}`);
 }
-export function createCareWork(body) {
+export function createCareWork(body, options = {}) {
   return request("POST", "/v1/care-work", {
+    ...options,
     body,
     headers: { "idempotency-key": body.workId },
   });
 }
-export function presignCarePhoto(workId, body) {
+export function presignCarePhoto(workId, body, options = {}) {
   return request(
     "POST",
     `/v1/care-work/${encodeURIComponent(workId)}/photos:presign`,
-    { body },
+    { ...options, body },
   );
 }
 export function getCarePhoto(workId, photoId) {
