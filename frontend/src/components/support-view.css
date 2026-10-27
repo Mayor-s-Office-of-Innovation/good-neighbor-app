@@ -1,0 +1,132 @@
+support-view {
+  display: block;
+  min-height: 100%;
+}
+.support__panel {
+  box-sizing: border-box;
+  width: min(100%, 44rem);
+  margin-inline: auto;
+  padding: 1.5rem;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+.support__back-row {
+  display: flex;
+  margin-bottom: 1.125rem;
+}
+.support__back {
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text);
+}
+.support__back wa-icon {
+  font-size: 1.25rem;
+}
+.support__title {
+  margin: 0;
+  font-size: var(--wa-font-size-2xl);
+  line-height: var(--wa-line-height-condensed);
+}
+.support__privacy {
+  color: var(--text-secondary);
+}
+.support wa-textarea {
+  width: 100%;
+  --wa-form-control-required-content: "";
+  --wa-form-control-required-content-offset: 0;
+}
+.support form [data-send] {
+  margin-top: 1rem;
+}
+.support form + .support__privacy {
+  margin-top: 2rem;
+}
+.support__turn {
+  position: relative;
+  margin-block: 1rem;
+  padding: 1rem;
+  background: var(--surface-2);
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius);
+  overflow-wrap: anywhere;
+}
+.support__turn h3 {
+  display: inline;
+  font-size: 1rem;
+  margin-top: 0;
+}
+.support__small {
+  font-size: 0.875rem;
+  padding: 0.35rem 0.7rem;
+  min-height: 2rem;
+}
+.support__small[hidden] {
+  display: none;
+}
+.support [data-clear] {
+  margin-block: 0.5rem 1.5rem;
+}
+.support__delete {
+  position: absolute;
+  inset-block-start: 1.5rem;
+  inset-inline-start: 1rem;
+  width: 2rem;
+  height: 2rem;
+  min-width: 2rem;
+  min-height: 2rem;
+  padding: 0;
+}
+.support__delete wa-icon {
+  font-size: 1rem;
+}
+.support__turn p {
+  white-space: pre-wrap;
+}
+.support summary {
+  cursor: pointer;
+  padding: 0.75rem 1rem;
+  margin: 0;
+  gap: 1rem;
+  line-height: 1.5;
+}
+/* Native details styles apply negative margins to every nested summary when
+   an ancestor is open. Keep each disclosure's spacing local to its own box. */
+.support details,
+.support details[open] {
+  padding: 0;
+}
+.support__response {
+  border: 0;
+  background: transparent;
+}
+.support__response > summary {
+  padding-inline: 2.75rem 0;
+}
+.support summary::after {
+  flex-shrink: 0;
+  rotate: 0deg;
+}
+.support details[open] > summary::after {
+  rotate: 90deg;
+}
+.support__source {
+  margin-block: 0.75rem;
+}
+.support__source > p {
+  margin: 0;
+  padding: 0 1rem 1rem;
+}
+.support__turn h3 {
+  margin: 0;
+  min-width: 0;
+}
+.support__handoff {
+  margin-block: 1rem;
+}
+.support summary:focus-visible,
+.support__email:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 3px;
+}

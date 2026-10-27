@@ -49,6 +49,8 @@
 
 ## Operations
 
+- **[Support chat](./runbooks/support-chat.md)** — FAQ sources, isolated model access, privacy, evaluation and rollout.
+
 - **[Alert delivery](./runbooks/observability.md)** — production responders, both regional SNS confirmations, isolated alarm-delivery drills, and diagnosis.
 - **[Recovery drills](./runbooks/recovery.md)** — controlled DLQ diagnosis/redrive, isolated DynamoDB PITR restore, recovery limits, and cleanup.
 

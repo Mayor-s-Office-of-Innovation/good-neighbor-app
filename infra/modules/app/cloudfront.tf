@@ -111,6 +111,11 @@ resource "aws_cloudfront_distribution" "frontend" {
     domain_name = replace(aws_apigatewayv2_api.http.api_endpoint, "https://", "")
     origin_id   = "api-gateway"
 
+    custom_header {
+      name  = "x-support-origin"
+      value = aws_secretsmanager_secret_version.support_origin.secret_string
+    }
+
     custom_origin_config {
       http_port              = 80
       https_port             = 443

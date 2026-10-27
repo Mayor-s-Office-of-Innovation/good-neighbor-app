@@ -197,6 +197,10 @@ export function settingsMenu({ open, adminAccess = false, disabled = false }) {
                     ${escapeHtml(t("today.settings.reports"))}
                   </button>`
               : ""}
+            <button id="settings-help" type="button" role="menuitem">
+              <wa-icon name="circle-question" aria-hidden="true"></wa-icon>
+              ${escapeHtml(t("support.title"))}
+            </button>
             <button id="settings-feedback" type="button" role="menuitem">
               <wa-icon name="comment" aria-hidden="true"></wa-icon>
               ${escapeHtml(t("today.settings.feedback"))}

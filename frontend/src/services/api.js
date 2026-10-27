@@ -1405,3 +1405,10 @@ export function getCarePhoto(workId, photoId) {
     `/v1/care-work/${encodeURIComponent(workId)}/photos/${encodeURIComponent(photoId)}/media`,
   );
 }
+
+/** General help only. Never include site records or conversation history.
+ * @param {{question:string, locale:string, signal?:AbortSignal}} input
+ */
+export function askSupport({ question, locale, signal }) {
+  return request("POST", "/v1/support", { body: { question, locale }, signal });
+}
