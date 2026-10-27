@@ -2,13 +2,12 @@
 
 ## Deployment status and order
 
-The code is ready for dev validation, but has not been deployed by the agent.
 Use the repositories' CI pipelines; do not run Terraform plan/apply locally.
 
 1. Deploy the analyzer comparison handler/contract and infrastructure first. Its
    dev stage selects `us.amazon.nova-lite-v1:0`, the inference profile used for the
    latest full Gubbio evaluation. Normal AnalyzeFn model selection is unchanged.
-   Other stages retain the comparison construct's default unless explicitly configured.
+   Both checked-in stages explicitly select that comparison model.
 2. Deploy app infrastructure with `enable_duplicate_detection=false`. Provision
    the dedicated comparison API key into the app's `duplicate-analyzer-key` Secrets
    Manager secret out of band. Never put the key into Git, Terraform variables,
@@ -354,3 +353,52 @@ incomplete search rather than a clean negative. The observation does not establi
 that concurrency caused the model failure. Raising concurrency does not remediate
 either issue. Keep production detection disabled until the matching
 controls and incomplete-batch behavior have been investigated and validated.
+
+
+## Production configuration and activation
+
+The production app configuration explicitly sets the comparison URL to
+`https://xvcwo6m20a.execute-api.us-east-1.amazonaws.com/prod`, 20 SQS workers,
+and a shared gate of three comparison attempts/second. These are the measured dev
+baseline for a controlled pilot, not a full-rollout capacity guarantee. The analyzer
+production stage prepares 128 comparison Lambda slots and a four-request/second,
+burst-eight dedicated comparison usage plan. Normal analysis controls are separate.
+Account/model quotas and Lambda reservation headroom remain deployment prerequisites.
+
+`enable_duplicate_detection = false` remains explicit in production. No Site flags
+are changed by this configuration. Promotion can install the prepared configuration
+without starting duplicate jobs. Do not raise traffic or enable detection until the
+representative dev load tests and controlled fanout/recovery checks,
+matching-quality review and production permission/quota checks are accepted.
+
+The comparison cache namespace is scoped to production through
+`duplicate_comparison_cache_version = "image-comparison-v2"`. Dev and the shared
+module default keep `image-comparison-v1`. The new namespace prevents reuse of old
+comparison responses in production; it does not delete rows, invalidate prepared
+images or re-evaluate completed results. Use site-scoped recovery for any completed
+incomplete results that need a fresh evaluation. Reverting the namespace can expose
+older cached responses again; normally keep v2 even when disabling detection.
+
+Deployment and activation order:
+
+1. Promote/deploy the analyzer through its production pipeline. Before applying,
+   verify available Lambda reservation headroom (including dev reservations) and
+   account-specific Nova cross-region request/token quotas. After deployment, verify
+   the production comparison model, IAM, dedicated usage plan and endpoint.
+2. Obtain the dedicated production `ComparisonCallerApiKeyId` from the analyzer's
+   production stack. Securely populate the app production `duplicate-analyzer-key`
+   secret out of band with that key's value. Do not use the normal analyzer key or
+   the dev comparison key. Terraform creates the encrypted secret container only;
+   no secret value belongs in source, tfvars, state, logs or command-line arguments.
+3. Promote/deploy this app configuration with detection still disabled. Verify
+   the effective URL, secret access, cache namespace, 20-worker mapping and 3/s gate.
+   An inactive mapping cannot establish end-to-end readiness by itself.
+4. Once release gates are accepted, change the production backend flag through CI
+   and begin with selected pilot Sites. Confirm same-site/category history coverage;
+   use the history bootstrap only deliberately, since it can enqueue historical work.
+   Then set each pilot Site's `featureFlags.duplicateDetection` to true while preserving
+   all other flags. Polling, recovery and separate/unlink behavior must be verified.
+5. Monitor first-match/full-search latency, queue age, comparison/model failures,
+   429 amplification and DLQ growth before expanding. The site flag rolls back
+   presentation; disabling the backend flag through CI stops new matching work.
+   Neither action purges queues, deletes links or reverses completed user actions.
