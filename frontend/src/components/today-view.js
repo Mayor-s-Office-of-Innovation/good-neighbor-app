@@ -236,6 +236,7 @@ function sessionRefreshKey(session) {
         ? item.analysis?.sourceAnalysis?.analysisId || "analyzed"
         : null,
       item.analysis?.assessment?.assessmentId,
+      item.analysis?.assessment?.assessmentRevision,
     ]),
   ]);
 }
@@ -256,6 +257,9 @@ class TodayView extends HTMLElement {
     this._homeRefresh = null;
     this._homeRefreshQueued = false;
     this._homeRefreshGeneration = 0;
+    /** @type {Promise<void> | null} */
+    this._remainingRefresh = null;
+    this._remainingRefreshQueued = false;
     /**
      * Cards with a non-checklist action in flight (the 311 filing, 5–20 s),
      * by task id: `_applyBusyCards` restores their busy state after any
@@ -312,6 +316,8 @@ class TodayView extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._remainingRefresh = null;
+    this._remainingRefreshQueued = false;
     this._homeRefreshGeneration++;
     this._homeRefreshQueued = false;
     this._homeRefresh = null;
@@ -350,8 +356,17 @@ class TodayView extends HTMLElement {
     const run = async () => {
       do {
         this._homeRefreshQueued = false;
-        await this._loadHome(generation);
-        await this._remainingLoad;
+        try {
+          await this._loadHome(generation);
+        } catch (error) {
+          // An already-requested refresh may recover from a failed local read.
+          // Do not retry on our own, or discard that explicit queued request.
+          if (
+            !this._homeRefreshQueued ||
+            generation !== this._homeRefreshGeneration
+          )
+            throw error;
+        }
       } while (
         this._homeRefreshQueued &&
         generation === this._homeRefreshGeneration
@@ -613,9 +628,29 @@ class TodayView extends HTMLElement {
   }
 
   _startRemainingLoad() {
-    this._remainingLoad = this._loadRemainingTasks().catch((err) =>
-      console.error("remaining worklist failed", err),
-    );
+    if (this._remainingRefresh) {
+      this._remainingRefreshQueued = true;
+      // The active response predates the latest open-worklist refresh.
+      this._remainingGeneration = (this._remainingGeneration || 0) + 1;
+      return;
+    }
+    const generation = this._homeRefreshGeneration;
+    const run = async () => {
+      do {
+        this._remainingRefreshQueued = false;
+        await this._loadRemainingTasks().catch((err) =>
+          console.error("remaining worklist failed", err),
+        );
+      } while (
+        this._remainingRefreshQueued &&
+        generation === this._homeRefreshGeneration
+      );
+    };
+    const pending = run().finally(() => {
+      if (this._remainingRefresh === pending) this._remainingRefresh = null;
+    });
+    this._remainingRefresh = pending;
+    this._remainingLoad = pending;
   }
 
   /** The retry button on a failed In-progress / History load. */
