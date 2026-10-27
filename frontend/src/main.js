@@ -28,7 +28,16 @@
 // evaluation time, so exceptions while loading Web Awesome or any later import
 // are still captured. No-ops under tests and when `gnp:errors=off`.
 import "./services/error-report.js";
-import "./components/artifact-photo.js";
+// Load photo renewal and its styles only when a screen renders a photo.
+// Observe until the first instance; defining the element upgrades all instances.
+const photoObserver = new MutationObserver(loadArtifactPhotos);
+function loadArtifactPhotos() {
+  if (!document.querySelector("artifact-photo")) return;
+  photoObserver.disconnect();
+  void import("./components/artifact-photo.js");
+}
+photoObserver.observe(document.body, { childList: true, subtree: true });
+loadArtifactPhotos();
 
 // Hold the browser's install prompt (beforeinstallprompt fires once, early)
 // so <install-prompt> can offer it later — see services/install-prompt.js.
