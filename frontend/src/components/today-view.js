@@ -264,6 +264,8 @@ class TodayView extends HTMLElement {
     this._tabRefreshes = new Map();
     /** @type {(() => void) | null} */
     this._tabRefreshStatus = null;
+    /** @type {(() => "pending" | "loaded" | "error") | null} */
+    this._tabListStatus = null;
     this._tabRefreshEpoch = 0;
     this._homeRefreshQueued = false;
     this._homeRefreshGeneration = 0;
@@ -399,6 +401,7 @@ class TodayView extends HTMLElement {
 
   /** @param {number} generation */
   async _loadHome(generation) {
+    this._taskListFreshness.clear();
     this._tabRefreshEpoch++;
     this._tabRefreshes.clear();
     window.addEventListener("focus", this._refresh311OnReturn);
@@ -579,6 +582,14 @@ class TodayView extends HTMLElement {
       this._taskListFreshness.set("open", Date.now());
       tasks = uniqueTasks([...(openTasksResult.tasks || []), ...reused]);
       if (!reuseRemaining) this._remainingStatus = "pending";
+      else
+        for (const status of [
+          "in_progress",
+          "completing",
+          "completed",
+          "cannot_do",
+        ])
+          this._taskListFreshness.set(status, this._remainingLoadedAt);
       submitted = (checks || [])
         .map((h) => adaptCheckHeader(h))
         .filter((c) => c.status === "submitted")
@@ -1511,7 +1522,7 @@ class TodayView extends HTMLElement {
       homeFilter: this._homeFilter,
       // Counts only once every list is in — a partial count would be wrong.
       tabCounts: remainingStatus === "loaded" ? tabCounts : {},
-      remainingStatus,
+      remainingStatus: this._tabListStatus?.() || remainingStatus,
       siteName: this._site?.name || "",
       siteAddress: this._site?.address || "",
       pendingSessionId: pendingSession?.id || "",

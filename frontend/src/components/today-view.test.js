@@ -1010,4 +1010,103 @@ describe("return-to-app task freshness", () => {
       fetch.mockRestore();
     }
   });
+  it("retires a confirmed override only when a saved or newer server version arrives", async () => {
+    const { view, api } = await fixture();
+    view._homeFilter = "in_progress";
+    const confirmed = {
+      taskId: "a",
+      status: "completed",
+      updatedAt: "2026-10-27T10:00:00Z",
+    };
+    view._confirmedTasks = new Map([["a", confirmed]]);
+    const stale = {
+      ...confirmed,
+      status: "in_progress",
+      updatedAt: "2026-10-27T09:00:00Z",
+    };
+    const newer = { ...stale, updatedAt: "2026-10-27T11:00:00Z" };
+    const fetch = vi
+      .spyOn(api, "listTasks")
+      .mockImplementation(async ({ status }) => ({
+        tasks: status === "in_progress" ? [stale] : [],
+      }));
+    try {
+      await view._refreshActiveTab();
+      expect(view._confirmedTasks.has("a")).toBe(true);
+      expect(
+        view._homeModel.tasks.find((task) => task.taskId === "a"),
+      ).toMatchObject(confirmed);
+      view._taskListFreshness.clear();
+      fetch.mockImplementation(async ({ status }) => ({
+        tasks:
+          status === "in_progress"
+            ? [newer]
+            : status === "completed"
+              ? [confirmed]
+              : [],
+      }));
+      await view._refreshActiveTab();
+      expect(view._confirmedTasks.has("a")).toBe(false);
+      expect(
+        view._homeModel.tasks.find((task) => task.taskId === "a"),
+      ).toMatchObject(newer);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it("recovers the active tab without claiming unfetched History data is loaded", async () => {
+    const { view, api } = await fixture();
+    view._homeFilter = "in_progress";
+    view._remainingStatus = "error";
+    const fetch = vi.spyOn(api, "listTasks").mockResolvedValue({ tasks: [] });
+    try {
+      await view._refreshActiveTab();
+      expect(view._tabListStatus()).toBe("loaded");
+      expect(view._remainingStatus).toBe("error");
+      expect(view._taskListFreshness.has("cannot_do")).toBe(false);
+      view._homeFilter = "history";
+      expect(view._tabListStatus()).toBe("error");
+      await view._refreshActiveTab();
+      expect(view._remainingStatus).toBe("loaded");
+      expect(view._tabListStatus()).toBe("loaded");
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it("publishes successful lists once after all responses, retaining a failed list", async () => {
+    const { view, api } = await fixture();
+    view._homeFilter = "in_progress";
+    const pending = new Map();
+    const fetch = vi
+      .spyOn(api, "listTasks")
+      .mockImplementation(
+        ({ status }) =>
+          new Promise((resolve, reject) =>
+            pending.set(status, { resolve, reject }),
+          ),
+      );
+    try {
+      const first = view._refreshActiveTab();
+      const second = view._refreshActiveTab();
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+      pending
+        .get("in_progress")
+        .resolve({ tasks: [{ taskId: "new", status: "in_progress" }] });
+      pending.get("completing").resolve({ tasks: [] });
+      await Promise.resolve();
+      expect(view._renderHome).not.toHaveBeenCalled();
+      pending.get("completed").reject(new Error("offline"));
+      await Promise.all([first, second]);
+      expect(view._renderHome).toHaveBeenCalledOnce();
+      expect(view._watchDuplicates).toHaveBeenCalledOnce();
+      expect(view._homeModel.tasks.map((task) => task.taskId)).toContain(
+        "history",
+      );
+      expect(view._taskListFreshness.has("completed")).toBe(false);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
 });
