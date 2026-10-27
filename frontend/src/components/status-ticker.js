@@ -6,6 +6,7 @@ import "./status-ticker.css";
 /** @param {Record<string, any>} task @param {{history?:boolean, now?:number}} [options] */
 export function statusTickerMarkup(task, options) {
   const ticker = statusTicker(task, options);
+  if (!ticker.key) return "";
   return html`<span
     class="status-ticker status-ticker--${escapeAttr(ticker.tone)}"
     data-status-ticker="${escapeAttr(ticker.key)}"

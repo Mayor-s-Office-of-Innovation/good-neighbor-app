@@ -532,7 +532,7 @@
   "card.ticker.duplicate": "重複項目",
   "card.ticker.filed": "已提交申請",
   "card.ticker.needsAction": "需要採取行動",
-  "card.ticker.old": "已超過 14 天",
+  "card.ticker.old": "已超過 7 天",
   "card.ticker.onHold": "市府暫緩處理",
   "card.ticker.overdue": "市府回應已逾期",
   "card.ticker.resolved": "問題已解決",

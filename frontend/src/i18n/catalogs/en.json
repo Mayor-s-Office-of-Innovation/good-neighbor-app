@@ -532,7 +532,7 @@
   "card.ticker.duplicate": "Duplicate",
   "card.ticker.filed": "Request filed",
   "card.ticker.needsAction": "Needs action",
-  "card.ticker.old": "Older than 14 days",
+  "card.ticker.old": "Older than 7 days",
   "card.ticker.onHold": "On hold by the City",
   "card.ticker.overdue": "City response is overdue",
   "card.ticker.resolved": "Issue resolved",

@@ -532,7 +532,7 @@
   "card.ticker.duplicate": "Trùng lặp",
   "card.ticker.filed": "Đã gửi yêu cầu",
   "card.ticker.needsAction": "Cần hành động",
-  "card.ticker.old": "Đã hơn 14 ngày",
+  "card.ticker.old": "Đã hơn 7 ngày",
   "card.ticker.onHold": "Thành phố đang tạm hoãn",
   "card.ticker.overdue": "Phản hồi của Thành phố đã quá hạn",
   "card.ticker.resolved": "Đã giải quyết vấn đề",
