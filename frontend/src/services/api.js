@@ -1039,11 +1039,52 @@ export async function get311RequestDetails(requests) {
  * @param {{originSiteId?: string, signal?: AbortSignal}} [options]
  * @returns {Promise<{ task: any, resultsPending?: boolean }>}
  */
-export function completeTask(taskId, body = {}, options = {}) {
-  return request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/complete`, {
-    ...options,
-    body,
-  });
+export async function completeTask(taskId, body = {}, options = {}) {
+  const originSiteId = options.originSiteId || (await getSite())?.siteId || "";
+  const bound = { ...options, originSiteId };
+  const submit = () =>
+    request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/complete`, {
+      ...bound,
+      body,
+    });
+  try {
+    return await submit();
+  } catch (error) {
+    // Only reconcile uncertain manual saves. Validation/auth failures and City
+    // submissions retain their existing error behavior; never blindly replay.
+    if (
+      body.completionMethod !== "manual" ||
+      !(error instanceof ApiError) ||
+      !(error.status === 0 || error.status === 409 || error.status >= 500)
+    )
+      throw error;
+    for (const delay of [0, 250, 750]) {
+      if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+      let detail;
+      try {
+        detail = await request(
+          "GET",
+          `/v1/tasks/${encodeURIComponent(taskId)}/updates`,
+          bound,
+        );
+      } catch {
+        throw error;
+      }
+      const task = detail?.task;
+      if (
+        task?.completionMethod === "manual" &&
+        (task.status === "completed" ||
+          (task.status === "in_progress" &&
+            task.kind === "non_actionable_escalation"))
+      ) {
+        // The backend's same-method replay returns authoritative documentation
+        // eligibility for this actor, rather than guessing from a timeline.
+        return submit();
+      }
+      if (task?.status !== "completing") break;
+    }
+    throw error;
+  }
 }
 
 // ── Composed helpers ─────────────────────────────────────────────────────────
