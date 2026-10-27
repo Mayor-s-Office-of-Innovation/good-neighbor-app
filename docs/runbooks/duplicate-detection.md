@@ -360,7 +360,7 @@ controls and incomplete-batch behavior have been investigated and validated.
 The production app configuration explicitly sets the comparison URL to
 `https://xvcwo6m20a.execute-api.us-east-1.amazonaws.com/prod`, 20 SQS workers,
 and a shared gate of three comparison attempts/second. These are the measured dev
-baseline for a controlled pilot, not a full-rollout capacity guarantee. The analyzer
+baseline for validation, not a full-rollout capacity guarantee. The analyzer
 production stage prepares 128 comparison Lambda slots and a four-request/second,
 burst-eight dedicated comparison usage plan. Normal analysis controls are separate.
 Account/model quotas and Lambda reservation headroom remain deployment prerequisites.
@@ -370,6 +370,11 @@ are changed by this configuration. Promotion can install the prepared configurat
 without starting duplicate jobs. Do not raise traffic or enable detection until the
 representative dev load tests and controlled fanout/recovery checks,
 matching-quality review and production permission/quota checks are accepted.
+Backend activation applies to every Site: the dispatcher and worker do not enforce
+an allowlist. Selected Site flags limit presentation only, so a UI pilot still
+requires capacity approval for all Sites' backend processing. A pilot that limits
+backend workload requires an enforced Site allowlist before activation; the
+presentation flag cannot provide that isolation.
 
 The comparison cache namespace is scoped to production through
 `duplicate_comparison_cache_version = "image-comparison-v2"`. Dev and the shared
@@ -393,12 +398,20 @@ Deployment and activation order:
 3. Promote/deploy this app configuration with detection still disabled. Verify
    the effective URL, secret access, cache namespace, 20-worker mapping and 3/s gate.
    An inactive mapping cannot establish end-to-end readiness by itself.
-4. Once release gates are accepted, change the production backend flag through CI
-   and begin with selected pilot Sites. Confirm same-site/category history coverage;
-   use the history bootstrap only deliberately, since it can enqueue historical work.
-   Then set each pilot Site's `featureFlags.duplicateDetection` to true while preserving
-   all other flags. Polling, recovery and separate/unlink behavior must be verified.
-5. Monitor first-match/full-search latency, queue age, comparison/model failures,
+4. Before backend activation, decide which Sites need the optional history bootstrap
+   and confirm same-site/category history coverage for the intended rollout. When
+   bootstrap is needed, run `bootstrap-duplicate-observations.mjs --site SITE_ID`
+   while both the stream dispatcher and SQS worker event-source mappings are disabled.
+   Confirm each site-scoped run succeeds, including its coverage marker, before
+   proceeding. Bootstrap can enqueue historical comparisons, so include that work in
+   the activation capacity assessment. Do not run it concurrently with live workers.
+5. Once release gates and capacity approval for all Sites' backend processing are
+   accepted, enable the production backend flag through CI. Qualifying records from
+   all Sites can then enter comparison processing, including Sites with UI flags off.
+   For a selected-Site UI pilot, set each selected Site's
+   `featureFlags.duplicateDetection` to true while preserving all other flags.
+   Verify polling, recovery and separate/unlink behavior before expanding presentation.
+6. Monitor first-match/full-search latency, queue age, comparison/model failures,
    429 amplification and DLQ growth before expanding. The site flag rolls back
    presentation; disabling the backend flag through CI stops new matching work.
    Neither action purges queues, deletes links or reverses completed user actions.
