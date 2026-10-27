@@ -80,6 +80,11 @@
       "name": "artifact photo css",
       "path": "dist/assets/artifact-photo-*.css",
       "limit": "200 B"
+    },
+    {
+      "name": "feedback submission js",
+      "path": "dist/assets/feedback-*.js",
+      "limit": "1 kB"
     }
   ],
   "dependencies": {
