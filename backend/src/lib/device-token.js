@@ -72,6 +72,7 @@ export function resetDeviceTokenSecretCache() {
  * @property {string} deviceId
  * @property {number} tokenGeneration
  * @property {"general"|"manager"|"admin"} [accessLevel]
+ * @property {string} [sessionId] browser-container session under this device
  */
 
 /**
@@ -87,7 +88,7 @@ export function resetDeviceTokenSecretCache() {
  * @returns {Promise<MintedToken>}
  */
 export async function mintAccessToken(
-  { siteId, deviceId, tokenGeneration, accessLevel },
+  { siteId, deviceId, tokenGeneration, accessLevel, sessionId },
   opts = {},
 ) {
   const now = opts.now ?? Math.floor(Date.now() / 1000);
@@ -97,6 +98,7 @@ export async function mintAccessToken(
       sub: deviceId,
       "custom:siteId": siteId,
       ver: tokenGeneration,
+      ...(sessionId ? { sid: sessionId } : {}),
       accessLevel: canonicalAccessLevel(accessLevel),
       typ: "access",
       iat: now,
@@ -114,7 +116,7 @@ export async function mintAccessToken(
  * @returns {Promise<MintedToken & { jti: string }>}
  */
 export async function mintRefreshToken(
-  { siteId, deviceId, tokenGeneration, accessLevel },
+  { siteId, deviceId, tokenGeneration, accessLevel, sessionId },
   opts = {},
 ) {
   const now = opts.now ?? Math.floor(Date.now() / 1000);
@@ -125,6 +127,7 @@ export async function mintRefreshToken(
       sub: deviceId,
       "custom:siteId": siteId,
       ver: tokenGeneration,
+      ...(sessionId ? { sid: sessionId } : {}),
       accessLevel: canonicalAccessLevel(accessLevel),
       typ: "refresh",
       jti,
@@ -149,6 +152,7 @@ export async function mintRefreshToken(
  * @property {number} exp
  * @property {"general"|"manager"} accessLevel
  * @property {string} [jti]         refresh tokens only
+ * @property {string} [sid]         independent browser-container session
  */
 
 /**
@@ -206,6 +210,13 @@ export async function verifyDeviceToken(token, opts = {}) {
   }
   if (claims.typ !== "access" && claims.typ !== "refresh") {
     throw new DeviceTokenError("malformed", "unknown token type");
+  }
+  if (
+    claims.sid !== undefined &&
+    (typeof claims.sid !== "string" ||
+      !/^[A-Za-z0-9_-]{1,100}$/.test(claims.sid))
+  ) {
+    throw new DeviceTokenError("malformed", "invalid session id");
   }
   // Compatibility bridge for sessions minted before access-level claims were
   // introduced. A missing claim is always least-privilege general access; an

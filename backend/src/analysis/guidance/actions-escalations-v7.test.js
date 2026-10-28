@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { catalogForPolicyVersion } from "./catalog-registry.js";
@@ -34,6 +34,22 @@ it("activates all 39 supplied rules without changing their fields", () => {
   expect(catalogForPolicyVersion("actions-escalations-v5").rules).toHaveLength(
     36,
   );
+});
+
+it("rejects the retired 20-column import format", () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(
+        new URL("../../../scripts/policy-import.mjs", import.meta.url),
+      ),
+      fileURLToPath(new URL("./sources/GNP-rules-v6.csv", import.meta.url)),
+      "legacy-import",
+    ],
+    { encoding: "utf8" },
+  );
+  expect(result.status).not.toBe(0);
+  expect(result.stderr).toContain("Expected the 18-column GNP rulebase");
 });
 
 it.each([
@@ -112,7 +128,6 @@ it("derives filing triggers from action type and preserves explicit phone number
             : "task_created",
       },
     });
-    expect(rule.outcome.cannotDoReasons).toEqual([]);
     if (rule.outcome.kind === "non_actionable_escalation") {
       expect(rule.outcome.phoneNumber).toBeTruthy();
       expect(rule.canBeInProgress).toBe(true);

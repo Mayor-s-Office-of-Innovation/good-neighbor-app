@@ -1,9 +1,9 @@
 // The session rotation on a DEVICE# or DEVICE_BINDING# row: bump the
 // generation, store the new refresh jti, touch lastSeenAt — conditioned on the
 // generation observed in the read so two concurrent rotations cannot both
-// win. Shared by /device-bindings/select and the Home Screen handoff redeem
-// (handlers/session-handoff.js); the refresh path keeps its own UpdateCommand
-// in handlers/devices.js `mintSession` because it also pins the refresh jti.
+// win. Shared by binding selection and retryable primary refresh (ADR 0020).
+// The latter adds its old-JTI guard and encrypted receipt to the same update.
+// Legacy refresh retains its own UpdateCommand in devices.js `mintSession`.
 //
 // A missing `status` is accepted: legacy setup-code devices never had one,
 // and the authorizer treats absence as active (lib/device-liveness.js).
@@ -42,7 +42,10 @@ export function sessionRotationItem(
       TableName: tableName,
       Key: { pk: item.pk, sk: item.sk },
       UpdateExpression:
-        "SET tokenGeneration = :next, refreshJti = :jti, lastSeenAt = :now" +
+        "SET tokenGeneration = :next, refreshJti = :jti, lastSeenAt = :now, primaryLastSeenAt = :now, primarySessionStatus = :active" +
+        (item.primarySessionStatus === "signed_out"
+          ? ", sessionStartGeneration = :next"
+          : "") +
         (clearHandoffGrant ? " REMOVE handoffGrantId" : ""),
       ConditionExpression: conditions.join(" AND "),
       ExpressionAttributeNames: { "#status": "status" },

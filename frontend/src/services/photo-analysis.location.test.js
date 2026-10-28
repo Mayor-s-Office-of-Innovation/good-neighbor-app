@@ -18,6 +18,8 @@ vi.mock("./device-location.js", () => ({
   getCaptureDeviceLocation: vi.fn(),
 }));
 vi.mock("../state/check-session.js", () => ({
+  findCheckForItem: vi.fn(() => null),
+  getCheck: vi.fn(() => null),
   addItem: vi.fn(),
   getCurrentCheck: vi.fn(),
   updateItem: vi.fn(),

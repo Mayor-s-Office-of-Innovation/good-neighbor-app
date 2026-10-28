@@ -56,7 +56,7 @@ const schedule = [
   ["2026-10-26", 1],
 ];
 const times = ["09:04:00", "14:07:00", "19:02:00"];
-const statuses = ["completed", "in_progress", "open", "cannot_do"];
+const statuses = ["completed", "in_progress", "open"];
 const categories = ["Litter", "Graffiti", "Illegal dumping"];
 const summary = {
   site: site.Item.name,
@@ -174,9 +174,6 @@ for (const [date, count] of schedule) {
               latestUpdateLabel:
                 "Synthetic response recorded; issue remains open.",
             }
-          : {}),
-        ...(status === "cannot_do"
-          ? { cannotDo: { reason: "Synthetic test: equipment unavailable." } }
           : {}),
       };
       await put(task);

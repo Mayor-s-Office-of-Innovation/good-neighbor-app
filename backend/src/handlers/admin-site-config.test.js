@@ -494,7 +494,9 @@ describe("resend current letter", () => {
       .mockResolvedValueOnce({
         Item: { status: "active", complianceLetters: { current: letter } },
       })
-      .mockResolvedValueOnce({ Item: { email } })
+      .mockResolvedValueOnce({
+        Item: { email, effectiveStart: "2026-10-16", status: "active" },
+      })
       .mockResolvedValueOnce({});
     const response = await call(
       resendSiteLetter,

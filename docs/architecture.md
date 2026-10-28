@@ -42,7 +42,7 @@ analyzer does not retain complaint input.
 
 ## Compute topology (Lambdas)
 
-Three functions (`infra/modules/app/lambda.tf`), split by invocation style; bundles
+The core API and processing functions (Terraform in `infra/modules/app/`), split by invocation style; bundles
 are esbuild ESM outputs of `backend/scripts/build-lambdas.mjs`:
 
 | Function | Trigger | Memory | Timeout | Role |
@@ -90,7 +90,7 @@ alternative to photos; there is no per-site list of places to walk
 ([ADR 0014](./adr/0014-remove-places-photo-roll.md)). Each photo (or the description) is
 uploaded, registered, analyzed, and evaluated independently as soon as it's captured —
 results appear on the capture screen as they land, without waiting for the walk to
-finish. Finish unlocks at three photos or one description; the rule is client-side
+finish. Finish unlocks at one photo or one description of at least 20 characters; the rule is client-side
 (`frontend/src/domain/check-completion.js`) and the backend only records the counts.
 A check-level synthesis still exists, but only as the deferred, idempotent
 **completion** step the client runs in the background after `Finish` (so the saved
@@ -114,7 +114,7 @@ sequenceDiagram
   API-->>Dev: presigned PUT url + artifactId + s3Key
   Dev->>S3: PUT bytes (content-type pinned)
   Dev->>API: POST .../artifacts {artifactId, s3Key, capturedAt|text}
-  API->>DB: TransactWrite: parent exists + Put ART# (conditional)
+  API->>DB: Put ART# (conditional; registration does not reread parent)
   API->>Q: SendMessage {siteId, checkId, artifactId, s3Key, ...} (no bytes)
   API-->>Dev: 202 queued
   Q->>W: deliver message
@@ -134,7 +134,7 @@ sequenceDiagram
   Dev->>API: POST /v1/checks/{checkId}/complete
   API->>DB: Query header + ART# + ANALYSIS# (coverage gate)
   API->>API: synthesize check scorecard
-  API->>DB: Update CHECK# header (scorecard + photoCount/textCount/evidenceKind)
+  API->>DB: TransactWrite CHECK# scorecard + CHECK_COMPLETION# marker (perimeter only)
 ```
 
 Typed descriptions register as text artifacts through the same
@@ -314,17 +314,21 @@ appends the entered text to the immutable task timeline.
 
 ## Single-table data model
 
-All tenant data lives in one DynamoDB table keyed on `pk = SITE#<siteId>`, so a check's header,
-artifacts, and analyses share one partition and come back in a single query.
+The application uses one DynamoDB table. Site-domain records use `pk = SITE#<siteId>`,
+so a check's header, artifacts, and analyses share a prefix query (paginated as needed).
+People, physical devices, directories, reporting projections and operational controls
+also use non-Site partitions; the data-model reference lists their ownership rules.
 
 See [dynamodb-data-model.md](./dynamodb-data-model.md) for the authoritative item shapes, keys,
 GSIs, and access patterns.
 
 ## Security boundaries
 
-**Auth posture (ADR 0010):** device bootstrap (`POST /site-code` + device
-registration) is open; every other route sits behind a **REQUEST-type Lambda
-authorizer** that verifies the HS256 device-token Bearer credential. The
+**Auth posture:** protected field-app routes use a **REQUEST-type Lambda authorizer**
+that verifies the HS256 device-token Bearer credential and current binding/session
+authority (ADRs 0010, 0015, 0019, 0020). Admin routes use Cognito JWTs and Compliance
+role/assignment checks. Bootstrap, recovery, health, intake and bearer-lease media
+routes have explicit exceptions in `infra/modules/app/api.tf`. The
 authorizer pins `siteId` server-side — requests resolve to the token's site
 partition, never a body-supplied one. (Demo/test data remains disposable; see
 [security-review.md](./security-review.md) for the posture details.)
@@ -396,12 +400,60 @@ as anything but JSON.
 
 ## Offline capture and sync
 
-Perimeter checks are idempotent by design: the client mints the `checkId` (a ULID) and
+Perimeter checks are idempotent by design: the client mints the `checkId` (a UUID) and
 sends it as the `idempotency-key`, and artifact/analysis writes are conditional, so a
-replayed request can never create a duplicate. For the MVP there is **no active service
-worker** — full offline queue-and-replay is deferred (tracked on the issue
-tracker) —
-but the idempotency contract is already in place for when it lands.
+replayed request can never create a duplicate. That contract is what lets checks finished
+with no connection be sent later ([Offline check queue](#offline-check-queue)).
+
+A Workbox service worker (`offlineShell` in `frontend/vite.config.js`) precaches the
+built app, so it opens, reloads, and loads lazy screens with no network. It ships in every
+`vite build` bundle, so both deployed environments (dev and prod) have it; the local Vite
+dev server and the e2e suite never do; `npm run dev:offline` builds and previews it
+locally, and `npm run test:offline:e2e` tests it there. It never intercepts API calls:
+write queues live in the app, because Workbox background sync does not run on iOS.
+
+The HTML page is network first: a launch waits up to 3 seconds for the network, then
+falls back to the precached `index.html` (instantly when there is no signal), so every
+online launch opens the latest release. API routes and paths with a file extension are
+never answered with the page, mirroring the CloudFront SPA rewrite. Hashed JS, CSS, and
+icons are served cache first from the precache. A new worker takes over as soon as it
+installs; an open page keeps its loaded code, and older lazy chunks still come from S3,
+which keeps previous assets.
+
+Manager screens (site admin, access, reports) are not precached: they are not field work
+and need fresh data, so offline they show the route's load error. Languages other than
+English are cached only once someone loads one.
+
+### Offline check queue
+
+Every evidence item is saved to IndexedDB as it is captured (`state/check-session.js`).
+A transport failure (no connection) does not fail an item: it is marked `waiting`,
+still counts toward Finish, and shows "Waiting for connection". Real server errors and
+analyzer timeouts still fail it. A weak signal counts as no connection too: an API call
+still running after 30 seconds (`REQUEST_TIMEOUT_MS` in `services/api.js`), a photo
+upload with no bytes moving for 30 seconds, or one slower than about 20 kB/s is
+aborted as a transport failure instead of hanging.
+
+Done keeps the check on the device as a finished record (`check:<siteId>:<checkId>` in
+the `review` store) until its uploads and scorecard land, so several can wait at once.
+The check on screen is `current`; others stay in memory and keep saving progress, found
+by item id. `services/check-submissions.js` sends them: it restarts waiting items
+through the normal per-item pipeline, which resumes from whatever already reached the
+server, then builds each check's scorecard once every live item has a registered
+artifact, and marks it done. Triggers are app start, `online`, `pageshow`, returning
+to the app, `sitebound`, the backend recovering from an outage, and a retry every minute
+while any item waits (a weak signal may never fire `online`, and the health probe backs
+off to 5 minutes); an item run ending only re-checks scorecards, so an offline device
+does not spin. Item runs take a cross-tab Web Lock and
+skip an item another tab is already running. Home drops a finished check once the
+backend history shows it.
+
+Like care work, this is an in-app queue, not service worker background sync: sending
+pauses while the app is closed and resumes when it reopens.
+
+With no connection, home shows the last lists it loaded (saved per site in the `review`
+store, cleared on sign-out) and keeps Start check available; the app-wide offline toast
+says why. It reloads the live lists on `online`.
 
 ### Duplicate issue links (feature-gated; not yet deployed)
 
@@ -455,7 +507,7 @@ then returns to the care list without waiting for uploads. The app owns the uplo
 operation independently of the form. Pending submissions resume when the app
 reopens or connectivity returns; failed attempts remain in the list with a retry
 action. Definitive validation failures also offer editing before retry. This is a
-care-specific durable queue, not a service worker: transfers pause when the browser
+care-specific durable queue, not service worker background sync: transfers pause when the browser
 closes and resume after reopening. Records are bound to the original Site and
 device session, and API calls enforce the originating Site. Successful receipts
 retain the server result until it appears in the list, then are removed; photo

@@ -2,8 +2,8 @@
 
 *Companion to [dynamodb-data-model.md](./dynamodb-data-model.md) · [index](../README.md)*
 
-**Date:** 2026-10-01. Shapes taken from the handlers, the worker, and the analyzer fixtures
-on that date. If a field here disagrees with the code, the code wins. Please update this
+**Date:** Core examples originated 2026-10-01; storage/lifecycle notes reviewed
+2026-10-28. These are abbreviated examples, not an exhaustive export fixture. If a field here disagrees with the code, the code wins. Please update this
 file when you change an item shape.
 
 ## What this shows
@@ -12,12 +12,13 @@ One perimeter check at one site, followed all the way through:
 
 1. Staff take one photo. That creates a **check header** and one **artifact**.
 2. The worker sends the photo to the analyzer and stores one **analysis**.
-3. On complete, the worker writes the scorecard onto the **check header**.
+3. On complete, the API transactionally writes the scorecard onto the **check header**
+   and creates a perimeter **completion marker**.
 4. The guidance step turns the analysis into an **assessment** with one **condition** per
    concern.
 5. The rule for that condition creates one **task**.
 
-All six items share the same partition key, `SITE#bayview-haven`. The values are made up
+The six core example items share the same partition key, `SITE#bayview-haven`. The values are made up
 but have the real shape. Long text is trimmed.
 
 IDs used throughout:
@@ -33,7 +34,8 @@ IDs used throughout:
 
 ## How the items sit in the table
 
-DynamoDB sorts items with the same `pk` by `sk`. Here are the six items in that order.
+DynamoDB sorts items with the same `pk` by `sk`. Here are the six core items in that order. Completion markers, lineage pointers,
+counters, update events and integration outboxes are described separately below.
 Note that a check's header, analysis, and artifact sit together because they share the
 `CHECK#<checkId>` prefix. That is what makes the check detail screen one query.
 
@@ -46,13 +48,15 @@ Note that a check's header, analysis, and artifact sit together because they sha
 | `SITE#bayview-haven` | `CHECK#0d6d1a4e-…#ART#7b2f9c3e-…` | artifact |
 | `SITE#bayview-haven` | `TASK#4f8e2b1c-…` | task |
 
-The `gsi1pk` … `gsi5sk` fields below are what put an item into a GSI. Items without those
+The GSI key fields below are what put an item into a GSI. Items without those
 fields are simply not in that index.
 
 ## 1. Check header
 
 Written by `createCheck` when staff start a check. The worker bumps `issueCount` and
-`maxSeverity` as each analysis lands. `completeCheck` adds everything from `grade` down.
+`maxSeverity` as each analysis lands. `completeCheck` adds everything from `grade` down
+and atomically writes `CHECK_COMPLETION#<Pacific date>#<completedAt>#<checkId>`
+for a perimeter check. Single-problem reports omit that marker.
 `gsi1pk` and `gsi1sk` put the header in the GSI1 checks timeline.
 
 ```json
@@ -109,6 +113,8 @@ and no `s3Key` or `contentType`.
   "s3Key": "checks/bayview-haven/0d6d1a4e-8f1c-4a4b-9c2a-5e7e2c6b1f10/7b2f9c3e-1d44-4e0b-a6a1-3f1c9d8e2b77",
   "contentType": "image/jpeg",
   "capturedAt": "2026-09-30T15:03:27.000Z",
+  "receivedAt": "2026-09-30T15:03:30.000Z",
+  "contentLength": 123456,
   "latitude": 37.7312,
   "longitude": -122.3826
 }
@@ -288,13 +294,11 @@ GSI5 unresolved queue.
     ],
     "category311": "1.1.4.7.9.0",
     "guidance": "Stay away from it. Use the app to file a 311 ticket so the City can clean it up.",
-    "cannotDoReasons": ["We already filed a ticket"],
     "source": "Policy line 70; public SF311 taxonomy"
   },
   "taskIds": ["4f8e2b1c-9a3d-4c7e-b2f5-6d1a8c9e0b23"],
   "resolvedToTasks": true,
   "needsAnswer": null,
-  "cannotDo": null,
   "createdAt": "2026-09-30T15:05:10.000Z",
   "updatedAt": "2026-09-30T15:05:10.000Z"
 }
@@ -304,13 +308,16 @@ GSI5 unresolved queue.
 
 Created from the condition above by rule `FECES-1`. `kind` comes from the rule.
 `type` is derived from `kind`: `action` becomes `onsite`, anything else becomes
-`city_escalation`. `shortId` is what staff see on the card. `gsi2pk` and `gsi2sk` put the
+`city_escalation`. `shortId` is what staff see on the card. `gsi1pk` and `gsi1sk` put the task
+in the creation-time report timeline; `gsi2pk` and `gsi2sk` put the
 task in the GSI2 worklist for its current status. Both change on every status change.
 
 ```json
 {
   "pk": "SITE#bayview-haven",
   "sk": "TASK#4f8e2b1c-9a3d-4c7e-b2f5-6d1a8c9e0b23",
+  "gsi1pk": "SITE#bayview-haven#TASK",
+  "gsi1sk": "2026-09-30T15:05:10.000Z#4f8e2b1c-9a3d-4c7e-b2f5-6d1a8c9e0b23",
   "gsi2pk": "SITE#bayview-haven#TASK#open",
   "gsi2sk": "2026-09-30T15:05:10.000Z#escalation#3#4f8e2b1c-9a3d-4c7e-b2f5-6d1a8c9e0b23",
   "entityType": "TASK",
@@ -322,6 +329,8 @@ task in the GSI2 worklist for its current status. Both change on every status ch
   "policyVersion": "actions-escalations-v3",
   "maxAcceptableResponseHours": 24,
   "ruleId": "FECES-1",
+  "canBeInProgress": false,
+  "primaryInProgressAgency": "",
   "kind": "escalation",
   "type": "city_escalation",
   "status": "open",
@@ -346,7 +355,6 @@ task in the GSI2 worklist for its current status. Both change on every status ch
   "appActionStatus": "pending",
   "appActionResults": [],
   "category311": "1.1.4.7.9.0",
-  "cannotDoReasons": ["We already filed a ticket"],
   "sourceArtifactIds": ["7b2f9c3e-1d44-4e0b-a6a1-3f1c9d8e2b77"],
   "source": {
     "latitude": 37.7312,
@@ -360,14 +368,18 @@ task in the GSI2 worklist for its current status. Both change on every status ch
 
 ### The same task after staff file the 311 ticket
 
-Only the fields that change are shown. The task moves to the `completed` worklist
-partition, and the 311 result is recorded on the task itself. There is no separate ticket
-item.
+Only selected changed fields are shown after successful filing. FECES-1 has
+`canBeInProgress: false`, so it moves to `completed`; rules with that flag true
+remain `in_progress`. With async filing enabled, the initial tap first writes an
+`in_progress` task with `appActionStatus: queued` and an `SF311_JOB#…#filed-…`
+outbox. The worker persists integration checkpoints separately in `SF311_LOCK#`
+and the job, then merges results onto the task. This final snapshot is not the
+entire integration history.
 
 ```json
 {
   "gsi2pk": "SITE#bayview-haven#TASK#completed",
-  "gsi2sk": "2026-09-30T15:05:10.000Z#escalation#3#4f8e2b1c-9a3d-4c7e-b2f5-6d1a8c9e0b23",
+  "gsi2sk": "2026-09-30T15:41:03.000Z#escalation#3#4f8e2b1c-9a3d-4c7e-b2f5-6d1a8c9e0b23",
   "status": "completed",
   "completionMethod": "311_filed",
   "completedAt": "2026-09-30T15:41:03.000Z",
@@ -406,3 +418,20 @@ item.
   item 6 and every other open task.
 - **Guidance screen.** `GetItem` on item 4, then a query for `begins_with(sk, "ASSESSMENT#c1a7e2d4-…#COND#")`
   returns item 5 and its siblings.
+
+## Supporting records omitted from the core examples
+
+- `CHECK_COMPLETION#2026-09-30#<completedAt>#<checkId>`: immutable Pacific-date
+  completion history, committed with the perimeter header.
+- `GUIDANCE_CURRENT#<JSON [checkId, lineageId]>`: current assessment pointer.
+- `COUNTER#task-display-id`: Site-scoped short-ID allocation.
+- `TASK#<taskId>#UPDATE#<occurredAt>#<updateId>` and, for update-ID lookup,
+  `TASK#<taskId>#UPDATE_ID#<updateId>`: timeline events and pointers.
+- `TASK#<taskId>#MEDIA#<artifactId>` plus
+  `CHECK#<checkId>#UPDATE_MEDIA#<artifactId>`: update photos and read pointers,
+  written together without analyzer work. They do not reuse ART records.
+- `SF311_JOB#<taskId>#<phase>` and `SF311_LOCK#<taskId>`: background integration
+  jobs and durable worker checkpoints when the applicable integration is enabled.
+
+See the [data model](dynamodb-data-model.md) for full record definitions and
+[architecture](architecture.md#guidance-workflow-rule-driven-tasks) for task transitions.

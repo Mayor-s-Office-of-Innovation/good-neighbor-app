@@ -86,7 +86,10 @@ test.describe("site admin access", () => {
       }),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: t("siteAdmin.perimeter.title") }),
+      page.getByRole("heading", {
+        name: t("siteAdmin.perimeter.title"),
+        exact: true,
+      }),
     ).toBeVisible();
     await expect(
       page.getByRole("heading", {
@@ -113,8 +116,8 @@ test.describe("site admin access", () => {
     await expect(page).toHaveURL(/\/site-admin\/edit\/contact$/);
     await expect(page.locator("#site-admin-save")).toBeDisabled();
 
-    const lastName = page.locator("#admin-last-name input");
-    await lastName.fill("Unsaved change");
+    const email = page.locator("#admin-email input");
+    await email.fill("unsaved@example.test");
     await expect(page.locator("#site-admin-save")).toBeEnabled();
     await page.evaluate(() => window.history.back());
 
@@ -124,7 +127,7 @@ test.describe("site admin access", () => {
       .getByRole("button", { name: t("common.keepEditing") })
       .click();
     await expect(page).toHaveURL(/\/site-admin\/edit\/contact$/);
-    await expect(lastName).toHaveValue("Unsaved change");
+    await expect(email).toHaveValue("unsaved@example.test");
 
     await page.locator("[data-admin-back]").click();
     await discard

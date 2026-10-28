@@ -56,6 +56,15 @@ describe("issueSessionHandoff", () => {
     expect(body.token).toMatch(/^[A-Za-z0-9_-]{40,}$/);
     expect(body.startUrl).toBe(handoffStartUrl(body.grantId, body.token));
     expect(body.startUrl.startsWith("/#handoff_grant=")).toBe(true);
+    expect(response.headers?.["set-cookie"]).toContain(
+      `${body.grantId}.${body.token}`,
+    );
+    expect(response.headers?.["set-cookie"]).toMatch(
+      /Secure; HttpOnly; SameSite=Strict/,
+    );
+    expect(response.headers?.["set-cookie"]).toContain(
+      "Path=/app/v1/session-handoff",
+    );
 
     expect(send).toHaveBeenCalledTimes(2);
     const transact = send.mock.calls[1][0];
@@ -86,6 +95,25 @@ describe("issueSessionHandoff", () => {
       "attribute_not_exists(handoffGrantId)",
     );
     expect(audit.Put.Item.eventType).toBe("session_handoff_issued");
+  });
+
+  it("restores a cached pending cookie without invalidating the installed grant", async () => {
+    send.mockResolvedValueOnce({ Item: legacyDevice() }).mockResolvedValueOnce({
+      Item: pendingGrant({ expiresAt: NOW_SECONDS + 3 * 86400 }),
+    });
+    const response = await call(issueSessionHandoff, {
+      ...authorizedEvent(),
+      body: JSON.stringify({ grantId: "grant-1", token: TOKEN }),
+    });
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(String(response.body)).grantId).toBe("grant-1");
+    expect(response.headers?.["set-cookie"]).toContain(`grant-1.${TOKEN}`);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(
+      send.mock.calls.every(
+        ([command]) => !(command instanceof TransactWriteCommand),
+      ),
+    ).toBe(true);
   });
 
   it("replaces the previous pointer only from the value it read", async () => {
@@ -155,7 +183,7 @@ describe("redeemSessionHandoff", () => {
     }
   });
 
-  it("re-mints the session on a legacy setup-code device and consumes the grant atomically", async () => {
+  it("creates an independent legacy session and consumes the grant without rotating Safari", async () => {
     send
       .mockResolvedValueOnce({ Item: pendingGrant() })
       .mockResolvedValueOnce({ Item: legacyDevice({ tokenGeneration: 4 }) })
@@ -166,11 +194,11 @@ describe("redeemSessionHandoff", () => {
 
     expect(response.statusCode).toBe(200);
     const body = JSON.parse(String(response.body));
+    expect(body.deviceId).toBe("device-1");
     expect(body).toMatchObject({
-      deviceId: "device-1",
       site: { siteId: "site-1", name: "Mission Street Center" },
       accessLevel: "general",
-      tokenGeneration: 5,
+      tokenGeneration: 1,
     });
     expect(body).not.toHaveProperty("bindingId");
     const access = await verifyDeviceToken(body.token);
@@ -178,77 +206,74 @@ describe("redeemSessionHandoff", () => {
       typ: "access",
       sub: "device-1",
       siteId: "site-1",
-      ver: 5,
+      ver: 1,
+      sid: expect.any(String),
     });
     const refresh = await verifyDeviceToken(body.refreshToken);
-    expect(refresh.typ).toBe("refresh");
-
-    // Grant, device + site (one batch), then the transaction: no extra hop.
-    expect(send).toHaveBeenCalledTimes(4);
-    const transact = send.mock.calls[3][0];
-    expect(transact).toBeInstanceOf(TransactWriteCommand);
-    const items = transact.input.TransactItems;
-    expect(items).toHaveLength(3);
-    const [rotate, consume, audit] = items;
-    expect(rotate.Update.Key).toEqual({
-      pk: "SITE#site-1",
-      sk: "DEVICE#device-1",
+    const [write, consume, audit] = send.mock.calls[3][0].input.TransactItems;
+    expect(write.Update.Key.sk).toBe("DEVICE#device-1");
+    expect(write.Update.UpdateExpression).not.toContain("SET tokenGeneration");
+    expect(write.Update.UpdateExpression).toContain("REMOVE handoffGrantId");
+    expect(
+      write.Update.ExpressionAttributeValues[":sessions"][String(access.sid)],
+    ).toMatchObject({
+      kind: "home_screen",
+      tokenGeneration: 1,
+      refreshJti: refresh.jti,
     });
-    expect(rotate.Update.ConditionExpression).toContain(
-      "attribute_not_exists(#status)",
-    );
-    expect(rotate.Update.ConditionExpression).toContain(
-      "handoffGrantId = :grant",
-    );
-    expect(rotate.Update.ExpressionAttributeValues).toMatchObject({
-      ":current": 4,
-      ":next": 5,
-      ":jti": refresh.jti,
-      ":grant": "grant-1",
-    });
-    expect(rotate.Update.UpdateExpression).toContain("REMOVE handoffGrantId");
-    expect(consume.Update.Key).toEqual({
-      pk: "SESSION_HANDOFF#grant-1",
-      sk: "#META",
-    });
-    expect(consume.Update.ConditionExpression).toBe(
-      "#status = :pending AND expiresAt > :nowSeconds",
-    );
+    expect(write.Update.ExpressionAttributeValues[":deviceGeneration"]).toBe(4);
+    expect(consume.Update.Key.pk).toBe("SESSION_HANDOFF#grant-1");
     expect(audit.Put.Item).toMatchObject({
       eventType: "session_handed_off",
-      previousTokenGeneration: 4,
-      tokenGeneration: 5,
+      deviceId: "device-1",
+      sessionId: access.sid,
     });
+    expect(response.headers?.["set-cookie"]).toContain("Max-Age=0");
   });
 
-  it("rotates the canonical binding alongside a binding-backed device", async () => {
+  it("adds a session without creating another canonical binding or physical device", async () => {
+    const expires = "2027-01-01T00:00:00.000Z";
     send
       .mockResolvedValueOnce({ Item: pendingGrant({ bindingId: "binding-1" }) })
-      .mockResolvedValueOnce({ Item: boundDevice() })
-      // The binding's own lastSeenAt is stale by design (refresh never
-      // touches it): only its status counts.
       .mockResolvedValueOnce({
-        Item: binding({ lastSeenAt: "2026-01-01T00:00:00.000Z" }),
+        Item: boundDevice({ absoluteExpiresAt: expires }),
       })
+      .mockResolvedValueOnce({ Item: binding({ absoluteExpiresAt: expires }) })
       .mockResolvedValueOnce({ Item: activeSite() })
       .mockResolvedValueOnce({ Item: { status: "active", generation: 1 } })
       .mockResolvedValueOnce({});
-
     const response = await redeem();
-
     expect(response.statusCode).toBe(200);
     expect(JSON.parse(String(response.body))).toMatchObject({
       deviceId: "binding-1",
       bindingId: "binding-1",
       physicalDeviceId: "physical-1",
       accessLevel: "manager",
-      tokenGeneration: 2,
+      tokenGeneration: 1,
+      absoluteExpiresAt: expires,
     });
+    /** @type {any[]} */
     const items = send.mock.calls[5][0].input.TransactItems;
     expect(items).toHaveLength(4);
     expect(items[0].Update.Key.sk).toBe("DEVICE#binding-1");
-    expect(items[1].Update.Key.sk).toBe("DEVICE_BINDING#binding-1");
-    expect(items[1].Update.ConditionExpression).not.toContain("handoffGrantId");
+    expect(items[1].ConditionCheck.Key.sk).toBe("DEVICE_BINDING#binding-1");
+    expect(
+      items.filter((item) => item.Put).map((item) => item.Put.Item.type),
+    ).toEqual(["siteAuditEvent"]);
+  });
+
+  it("redeems from the installation cookie with no launch URL credentials", async () => {
+    send
+      .mockResolvedValueOnce({ Item: pendingGrant() })
+      .mockResolvedValueOnce({ Item: legacyDevice() })
+      .mockResolvedValueOnce({ Item: activeSite() })
+      .mockResolvedValueOnce({});
+    const response = await call(redeemSessionHandoff, {
+      ...openEvent({}),
+      cookies: [`__Secure-gnp-handoff=grant-1.${TOKEN}`],
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers?.["set-cookie"]).toContain("Max-Age=0");
   });
 
   it("refuses a grant the device no longer points at", async () => {
@@ -324,6 +349,56 @@ describe("redeemSessionHandoff", () => {
 });
 
 describe("retireSessionHandoff", () => {
+  it("retries a transient transaction conflict during explicit sign-out", async () => {
+    send
+      .mockResolvedValueOnce({ Item: legacyDevice() })
+      .mockRejectedValueOnce(
+        Object.assign(new Error("conflict"), {
+          name: "TransactionCanceledException",
+          CancellationReasons: [{ Code: "TransactionConflict" }],
+        }),
+      )
+      .mockResolvedValueOnce({});
+    const response = await call(retireSessionHandoff, {
+      ...authorizedEvent(),
+      body: JSON.stringify({ endSession: true }),
+    });
+    expect(response.statusCode).toBe(200);
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(
+      send.mock.calls[2][0].input.TransactItems[0].Update.UpdateExpression,
+    ).toContain("tokenGeneration + :one");
+  });
+  it("does not report successful sign-out when transaction conflicts persist", async () => {
+    send.mockResolvedValueOnce({ Item: legacyDevice() }).mockRejectedValue(
+      Object.assign(new Error("conflict"), {
+        name: "TransactionCanceledException",
+        CancellationReasons: [{ Code: "TransactionConflict" }],
+      }),
+    );
+    const response = await call(retireSessionHandoff, {
+      ...authorizedEvent(),
+      body: JSON.stringify({ endSession: true }),
+    });
+    expect(response.statusCode).toBe(409);
+    expect(send).toHaveBeenCalledTimes(5);
+  });
+  it("treats an already-revoked parent as an idempotent sign-out", async () => {
+    send
+      .mockResolvedValueOnce({ Item: legacyDevice({ status: "revoked" }) })
+      .mockRejectedValueOnce(
+        Object.assign(new Error("revoked"), {
+          name: "TransactionCanceledException",
+          CancellationReasons: [{ Code: "ConditionalCheckFailed" }],
+        }),
+      );
+    const response = await call(retireSessionHandoff, {
+      ...authorizedEvent(),
+      body: JSON.stringify({ endSession: true }),
+    });
+    expect(response.statusCode).toBe(200);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
   it("answers retired:false when the device has no pending grant", async () => {
     send.mockResolvedValueOnce({
       Item: legacyDevice({ handoffGrantId: undefined }),
@@ -489,7 +564,7 @@ function authorizedEvent() {
     body: undefined,
     requestContext: {
       authorizer: {
-        jwt: { claims: { "custom:siteId": "site-1", sub: "device-1" } },
+        jwt: { claims: { "custom:siteId": "site-1", sub: "device-1", ver: 1 } },
       },
     },
   };

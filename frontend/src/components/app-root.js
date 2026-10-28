@@ -56,7 +56,10 @@ import { trackEvent } from "../services/analytics.js";
 import { setupView, appShell, handoffView } from "./app-root.templates.js";
 import "./connection-status.js";
 import { isInAppBrowser } from "../services/browser-context.js";
-import { shouldOfferInstall } from "../services/install-prompt.js";
+import {
+  isStandalone,
+  shouldOfferInstall,
+} from "../services/install-prompt.js";
 import {
   deepActiveElement,
   isEditable,
@@ -185,7 +188,8 @@ export class AppRoot extends HTMLElement {
     };
     window.addEventListener("authsignout", this._onAuthSignout);
     this._onEnrollmentUrlChange = () => {
-      if (hasEnrollmentCredentials()) this._beginEnrollmentFromUrl();
+      if (hasEnrollmentCredentials(location.href, Boolean(this._site)))
+        this._beginEnrollmentFromUrl();
     };
     window.addEventListener("hashchange", this._onEnrollmentUrlChange);
     this._onSiteRequested = (event) => {
@@ -201,12 +205,13 @@ export class AppRoot extends HTMLElement {
     // Health monitoring starts regardless of binding state: /health is
     // authorizer-free, and the AUTH dialog is meaningful before setup too.
     startHealthMonitoring();
-    if (hasEnrollmentCredentials()) {
+    if (hasEnrollmentCredentials(location.href, Boolean(this._site))) {
       this._beginEnrollmentFromUrl();
       return;
     }
     if (!this._site) {
-      if (handoff) await this._beginHandoffFromUrl(handoff);
+      if (handoff || isStandalone())
+        await this._beginHandoffFromUrl(handoff ?? {});
       else this._renderSetup();
       return;
     }
@@ -354,12 +359,15 @@ export class AppRoot extends HTMLElement {
       // The start URL carries this grant for the life of the install: once
       // the server has said no for good, never present it again. A network
       // blip may succeed on the next launch, so that one is not remembered.
-      if (reason === "rejected") rememberConsumedGrant(grantId);
-      void trackEvent("handoff_failed", { reason });
-      this._renderSetup({ notice: "handoffFailed" });
+      if (reason === "rejected" && grantId) rememberConsumedGrant(grantId);
+      if (grantId || reason !== "rejected")
+        void trackEvent("handoff_failed", { reason });
+      this._renderSetup(
+        grantId || reason !== "rejected" ? { notice: "handoffFailed" } : {},
+      );
       return;
     }
-    rememberConsumedGrant(grantId);
+    if (grantId) rememberConsumedGrant(grantId);
     try {
       await setSite(session.site.name, bindingFromSession(session));
     } catch (err) {
@@ -403,6 +411,11 @@ export class AppRoot extends HTMLElement {
     this._site = await getSite();
     clearAuthState(); // re-bind heals an AUTH state
     if (!(await this._refreshSiteSettings())) return false;
+    // Complete the installation cookie before the enrolled app is shown: the
+    // person may immediately use Safari's own Add to Home Screen menu.
+    await ensureHandoffManifest({ site: this._site }).catch((err) =>
+      console.error("handoff preparation failed", err),
+    );
     this._renderApp();
     this._unsub = onRouteChange(() => this._renderView());
     navigate("/today");

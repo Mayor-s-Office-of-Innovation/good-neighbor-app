@@ -63,8 +63,8 @@ export function personPut(person, expectedRevision) {
   };
 }
 /** Contact changes are atomic across the person and compatibility records. No access generations change. */
-/** @param {Record<string, any>} person @param {Record<string, any>} input @param {string} actor */
-export async function updatePersonRecord(person, input, actor) {
+/** @param {Record<string, any>} person @param {Record<string, any>} input @param {string} actor @param {Array<NonNullable<NonNullable<import('@aws-sdk/lib-dynamodb').TransactWriteCommandInput['TransactItems']>[number]['ConditionCheck']>>} [guards] */
+export async function updatePersonRecord(person, input, actor, guards = []) {
   const contact = {
     firstName: String(input.firstName || "").trim(),
     lastName: String(input.lastName || "").trim(),
@@ -238,6 +238,24 @@ export async function updatePersonRecord(person, input, actor) {
       },
     },
   });
+  for (const guard of guards) {
+    const existing = writes.find(
+      (write) =>
+        write.Put?.Item?.pk === guard.Key?.pk &&
+        write.Put?.Item?.sk === guard.Key?.sk,
+    )?.Put;
+    if (existing) {
+      existing.ConditionExpression += ` AND (${guard.ConditionExpression})`;
+      existing.ExpressionAttributeNames = {
+        ...existing.ExpressionAttributeNames,
+        ...guard.ExpressionAttributeNames,
+      };
+      existing.ExpressionAttributeValues = {
+        ...existing.ExpressionAttributeValues,
+        ...guard.ExpressionAttributeValues,
+      };
+    } else writes.push({ ConditionCheck: guard });
+  }
   if (writes.length > 100) throw new Error("person_update_limit_exceeded");
   await ddb.send(new TransactWriteCommand({ TransactItems: writes }));
   return next;

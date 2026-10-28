@@ -400,7 +400,6 @@ function buildConditionItem({
     resolvedToTasks: evaluation.kind === "outcome",
     needsAnswer:
       evaluation.kind === "needs_answer" ? evaluation.question : null,
-    cannotDo: null,
     ...conditionTimelineGsi(
       siteId,
       condition.severity,

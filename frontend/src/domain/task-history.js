@@ -16,8 +16,7 @@ export function historyEnteredAt(task) {
     !task.resolved_at &&
     !task.completedAt &&
     !task.completed_at &&
-    !task.historyEnteredAt &&
-    !task.cannotDo?.recordedAt
+    !task.historyEnteredAt
   ) {
     return new Date(
       Date.parse(task.createdAt || task.created_at) + 14 * 86400000,
@@ -29,7 +28,6 @@ export function historyEnteredAt(task) {
       task.resolved_at,
       task.completedAt,
       task.completed_at,
-      task.cannotDo?.recordedAt,
       task.historyEnteredAt,
       task.updatedAt,
       task.updated_at,

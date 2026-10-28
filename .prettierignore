@@ -18,4 +18,3 @@ frontend/src/styles/fonts
 # Forward-looking transcription spike (ported from gnp, not wired into Phase 1).
 # Kept byte-close to the original spike; not maintained under this repo's style.
 spike/
-

@@ -356,6 +356,8 @@ export async function saveSiteSettings(
       }
       const current = stored || { id: "current", name: "Your site" };
       const incoming = { ...settings };
+      // Refresh intent belongs only to the local credential transaction.
+      delete incoming.refreshAttempt;
       for (const key of SITE_BINDING_FIELDS) {
         const bound = /** @type {Record<string, unknown>} */ (current)[key];
         if (bound !== undefined && bound !== null && bound !== "") {
@@ -397,20 +399,55 @@ export async function clearSiteSession() {
 }
 
 /**
+ * Commit the attempt before sending any refresh request. Reloads and tabs
+ * without Web Locks must reuse it until the replacement is committed.
+ * @param {string} siteId
+ * @param {string} refreshToken
+ * @returns {Promise<string | null>}
+ */
+export async function prepareRefreshAttempt(siteId, refreshToken) {
+  return tx("site", "readwrite", (os) =>
+    reqToPromise(os.get("current")).then((current) => {
+      if (
+        !current ||
+        current.siteId !== siteId ||
+        current.refreshToken !== refreshToken
+      )
+        return null;
+      if (current.refreshAttempt?.refreshToken === refreshToken)
+        return current.refreshAttempt.id;
+      const refreshAttempt = { id: crypto.randomUUID(), refreshToken };
+      os.put({ ...current, refreshAttempt });
+      os.put({ ...current, refreshAttempt, id: bindingKey(siteId) });
+      return refreshAttempt.id;
+    }),
+  );
+}
+
+/**
  * Persist a refreshed device session onto the existing site record (Option 4
  * device auth). Merge-only: identity fields (id/name/boundAt) stay untouched;
  * only the token fields are replaced. Returns the updated record.
  * @param {{ deviceId: string, token: string, refreshToken: string, expiresIn: number, tokenGeneration: number, accessLevel?: "general"|"manager" }} session
+ * @param {string} expectedSiteId
+ * @param {string} [expectedRefreshToken] reject late writes after re-enrollment or another rotation
  */
 export async function updateSiteSession(
   { deviceId, token, refreshToken, expiresIn, tokenGeneration, accessLevel },
   expectedSiteId,
+  expectedRefreshToken,
 ) {
   // Read and write in one transaction: a site switch must not let a late
   // refresh overwrite the newly selected site's credentials.
   return tx("site", "readwrite", (os) =>
     reqToPromise(os.get("current")).then((current) => {
-      if (!current || current.siteId !== expectedSiteId) return null;
+      if (
+        !current ||
+        current.siteId !== expectedSiteId ||
+        (expectedRefreshToken !== undefined &&
+          current.refreshToken !== expectedRefreshToken)
+      )
+        return null;
       const record = {
         ...current,
         deviceId,
@@ -420,6 +457,7 @@ export async function updateSiteSession(
         accessLevel: accessLevel || current.accessLevel || "general",
         tokenExpiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
       };
+      delete record.refreshAttempt;
       os.put(record);
       os.put({ ...record, id: bindingKey(expectedSiteId) });
       return record;
@@ -496,35 +534,89 @@ export async function clearDraft(flowOrOpts, maybeCheckId) {
   });
 }
 
-/* ---- review (single just-submitted check awaiting Continue, key 'current') ---- */
-export async function getReview() {
-  const siteId = (await getSite())?.siteId || "";
-  const scoped = await tx("review", "readonly", (os) =>
-    reqToPromise(os.get(draftKey(undefined, siteId))),
-  );
-  if (scoped || !siteId) return scoped;
-  const legacy = await tx("review", "readonly", (os) =>
-    reqToPromise(os.get("current")),
-  );
-  return legacy?.siteId === siteId ? legacy : null;
+/* ---- finished checks (captured; still uploading or awaiting results) ----
+  One record per check under `check:<siteId>:<checkId>` in the `review` store,
+  which care submissions share under `care:` keys. Several can wait at once
+  when checks are finished offline. Records from the old single-slot layout
+  (`site:<siteId>:current`, or the unscoped `current`) move on first read. */
+function finishedCheckKey(siteId, checkId) {
+  return `check:${siteId}:${checkId}`;
 }
-export async function saveReview(check) {
+
+/**
+ * Every finished check held for a site, oldest first.
+ * @param {string} [owningSiteId]
+ */
+export async function listFinishedChecks(owningSiteId) {
+  const siteId = owningSiteId || (await getSite())?.siteId || "";
+  if (!siteId) return [];
+  const legacyKeys = [draftKey(undefined, siteId), "current"];
+  const records = await tx("review", "readwrite", async (os) => {
+    const [keys, values] = await Promise.all([
+      reqToPromise(os.getAllKeys()),
+      reqToPromise(os.getAll()),
+    ]);
+    const found = [];
+    keys.forEach((key, index) => {
+      const record = values[index];
+      if (!record?.id || record.siteId !== siteId || record.careSubmission)
+        return;
+      if (key === finishedCheckKey(siteId, record.id)) {
+        found.push(record);
+      } else if (legacyKeys.includes(String(key))) {
+        os.put(record, finishedCheckKey(siteId, record.id));
+        os.delete(key);
+        found.push(record);
+      }
+    });
+    return found;
+  });
+  return records.sort((a, b) =>
+    (a.submittedAt || "").localeCompare(b.submittedAt || ""),
+  );
+}
+export async function saveFinishedCheck(check) {
   const siteId = check?.siteId || (await getSite())?.siteId || "";
   await tx("review", "readwrite", (os) =>
-    os.put(check, draftKey(undefined, siteId)),
+    os.put(check, finishedCheckKey(siteId, check.id)),
   );
   return check;
 }
-/** @param {string} [owningSiteId] */
-export async function clearReview(owningSiteId) {
+/**
+ * @param {string} owningSiteId
+ * @param {string} checkId
+ */
+export async function deleteFinishedCheck(owningSiteId, checkId) {
   const siteId = owningSiteId || (await getSite())?.siteId || "";
-  return tx("review", "readwrite", async (os) => {
-    os.delete(draftKey(undefined, siteId));
-    if (siteId) {
-      const legacy = await reqToPromise(os.get("current"));
-      if (legacy?.siteId === siteId) os.delete("current");
-    }
-  });
+  if (!checkId) return;
+  return tx("review", "readwrite", (os) =>
+    os.delete(finishedCheckKey(siteId, checkId)),
+  );
+}
+
+/* ---- last home lists, shown while the API is unreachable ----
+  Cleared with every other local record on sign-out (resetLocalAppState). */
+/**
+ * @param {string} siteId
+ * @param {{ checks: any[], tasks: any[] }} lists
+ */
+export function saveHomeSnapshot(siteId, { checks, tasks }) {
+  return tx("review", "readwrite", (os) =>
+    os.put(
+      { siteId, checks, tasks, savedAt: new Date().toISOString() },
+      `home:${siteId}`,
+    ),
+  );
+}
+/**
+ * @param {string} siteId
+ * @returns {Promise<{ siteId: string, checks: any[], tasks: any[], savedAt: string } | null>}
+ */
+export async function getHomeSnapshot(siteId) {
+  const snapshot = await tx("review", "readonly", (os) =>
+    reqToPromise(os.get(`home:${siteId}`)),
+  );
+  return snapshot?.siteId === siteId ? snapshot : null;
 }
 
 export async function resetLocalAppState() {
@@ -586,6 +678,33 @@ export async function listCareSubmissions(siteId) {
   return records.filter(
     (record) => record?.careSubmission && record.siteId === siteId,
   );
+}
+/**
+ * Work saved on this device that has not reached the server, across every
+ * site: finished checks and reports whose scorecard has not landed, and care
+ * work logs not yet saved. Sign-out deletes all of it (resetLocalAppState),
+ * so the logout dialogs warn with these counts.
+ * @returns {Promise<{ checks: number, careLogs: number }>}
+ */
+export async function countUnsentWork() {
+  // Includes the legacy single-slot keys listFinishedChecks migrates on read.
+  const isFinishedCheckKey = (/** @type {string} */ key) =>
+    key.startsWith("check:") || key === "current" || key.endsWith(":current");
+  const [keys, values] = await tx("review", "readonly", (os) =>
+    Promise.all([reqToPromise(os.getAllKeys()), reqToPromise(os.getAll())]),
+  );
+  let checks = 0;
+  let careLogs = 0;
+  keys.forEach((key, index) => {
+    const record = values[index];
+    if (!record) return;
+    if (record.careSubmission) {
+      if (record.status !== "saved") careLogs += 1;
+    } else if (isFinishedCheckKey(String(key)) && !record.scorecardDone) {
+      checks += 1;
+    }
+  });
+  return { checks, careLogs };
 }
 export function deleteCareSubmission(siteId, workId) {
   return tx("review", "readwrite", (os) =>

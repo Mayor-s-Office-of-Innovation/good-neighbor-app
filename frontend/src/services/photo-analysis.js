@@ -29,6 +29,8 @@ import {
 import { getCaptureDeviceLocation } from "./device-location.js";
 import {
   addItem,
+  findCheckForItem,
+  getCheck as getHeldCheck,
   getCurrentCheck,
   removeItem,
   updateItem,
@@ -53,6 +55,27 @@ function sessionItem(check, itemId) {
 }
 
 /**
+ * The in-memory check holding an item: the one on screen, else a finished
+ * check still uploading in the background (services/check-submissions.js).
+ * @param {string} itemId
+ */
+function checkWithItem(itemId) {
+  const current = getCurrentCheck();
+  if (sessionItem(current, itemId)) return current;
+  return findCheckForItem(itemId);
+}
+
+/** @param {string} itemId */
+function itemById(itemId) {
+  return sessionItem(checkWithItem(itemId), itemId);
+}
+
+/** Is this check still held (on screen or finished), so its results still apply? */
+function isHeld(check) {
+  return getCurrentCheck()?.id === check.id || Boolean(getHeldCheck(check.id));
+}
+
+/**
  * One human-readable progress stage the card shows as it happens:
  *   uploaded — media bytes reached S3 (or text registered)
  *   sent     — the artifact is registered and the analyzer is working on it
@@ -68,15 +91,14 @@ function checkDuplicates(itemId, tasks, analysisId) {
   if (typeof document === "undefined") return;
   duplicateWatches.get(itemId)?.();
   for (const [id, cancel] of duplicateWatches)
-    if (!sessionItem(getCurrentCheck(), id)) {
+    if (!itemById(id)) {
       cancel();
       duplicateWatches.delete(id);
     }
-  const assessmentId = sessionItem(getCurrentCheck(), itemId)?.analysis
-    ?.assessment?.assessmentId;
+  const assessmentId = itemById(itemId)?.analysis?.assessment?.assessmentId;
   let pendingLinks = null;
   const publish = () => {
-    const current = sessionItem(getCurrentCheck(), itemId);
+    const current = itemById(itemId);
     if (
       !current ||
       current.analysis?.sourceAnalysis?.analysisId !== analysisId ||
@@ -372,7 +394,7 @@ async function evaluateArtifact(checkId, itemId, artifactId) {
     // Merge onto the existing stages — a full object here would discard the
     // earlier `uploaded` stamp (updateItemAnalysis merges shallowly).
     stages: {
-      ...(sessionItem(getCurrentCheck(), itemId)?.analysis?.stages || {}),
+      ...(itemById(itemId)?.analysis?.stages || {}),
       sent: new Date().toISOString(),
     },
   });
@@ -420,7 +442,66 @@ async function evaluateArtifact(checkId, itemId, artifactId) {
 export function analyzeEvidenceItem(itemId) {
   if (active.has(itemId)) return;
   active.add(itemId);
-  void run(itemId).finally(() => active.delete(itemId));
+  void runOnce(itemId)
+    .catch(() => {
+      /* run() records its own failures on the item. */
+    })
+    .finally(() => {
+      active.delete(itemId);
+      globalThis.dispatchEvent?.(
+        new CustomEvent(EVIDENCE_SETTLED_EVENT, { detail: { itemId } }),
+      );
+    });
+}
+
+/** Fired on window after each item run ends, however it ended. */
+export const EVIDENCE_SETTLED_EVENT = "checkevidencesettled";
+
+/**
+ * Serialize an item's run across tabs. A tab that finds the item already
+ * running elsewhere skips it: its in-memory copy may predate that tab's
+ * upload, and replaying it would register a duplicate artifact.
+ * @param {string} itemId
+ */
+function runOnce(itemId) {
+  const locks = globalThis.navigator?.locks;
+  if (!locks) return run(itemId);
+  return locks.request(`check-item:${itemId}`, { ifAvailable: true }, (lock) =>
+    lock ? run(itemId) : undefined,
+  );
+}
+
+/**
+ * A transport failure (offline, dead zone, DNS): `ApiError` status 0 from
+ * services/api.js. Timeouts and server errors are real failures.
+ * @param {any} err
+ */
+export function isConnectionFailure(err) {
+  return err?.status === 0 && err?.body?.code !== "analyses_pending";
+}
+
+/**
+ * Should an item's pipeline be (re)started without a tap? Queued, running
+ * and waiting-for-connection items resume, as do failures that only need
+ * their analysis re-polled or their text re-registered.
+ * @param {any} item
+ */
+export function shouldResumeEvidenceItem(item) {
+  const analysisStatus = item?.analysis?.status;
+  const hasArtifact = Boolean(
+    item?.analysis?.artifactId || item?.upload?.artifactId,
+  );
+  const hasUploadedArtifact = Boolean(
+    item?.upload?.status === "uploaded" && hasArtifact,
+  );
+  const isRetryableTextRegistration = Boolean(
+    item?.kind === "text" && analysisStatus === "failed" && !hasArtifact,
+  );
+  return Boolean(
+    ["queued", "analyzing", "waiting"].includes(analysisStatus) ||
+      (analysisStatus === "failed" &&
+        (hasUploadedArtifact || isRetryableTextRegistration)),
+  );
 }
 
 /**
@@ -440,7 +521,7 @@ export function analyzeEvidenceItem(itemId) {
  * @param {string} itemId
  */
 export function retryEvidenceItem(itemId) {
-  const check = getCurrentCheck();
+  const check = checkWithItem(itemId);
   const item = sessionItem(check, itemId);
   if (!item) return;
 
@@ -563,7 +644,7 @@ async function retryMediaMetadata(item) {
  * @returns {Promise<void>}
  */
 export async function removeEvidenceItem(itemId) {
-  const check = getCurrentCheck();
+  const check = checkWithItem(itemId);
   const item = sessionItem(check, itemId);
   if (!check || !item) return;
   const artifactId = item.analysis?.artifactId || item.upload?.artifactId;
@@ -574,7 +655,7 @@ export async function removeEvidenceItem(itemId) {
 }
 
 export async function refreshEvidenceAnalysis(itemId, response, opts = {}) {
-  const check = getCurrentCheck();
+  const check = checkWithItem(itemId);
   if (!check) return;
   const item = sessionItem(check, itemId);
   if (!item || !response?.assessment) return;
@@ -609,7 +690,7 @@ export async function refreshEvidenceAnalysis(itemId, response, opts = {}) {
       )
         throw err;
       const latest = await getAssessmentGuidance(previousAssessmentId);
-      if (getCurrentCheck()?.id !== check.id) return;
+      if (!isHeld(check)) return;
       if (latest.assessment?.assessmentId !== previousAssessmentId) {
         // Another refresh won. Use its persisted analysis as well as guidance;
         // never replay this older analyzer payload against the new predecessor.
@@ -627,7 +708,7 @@ export async function refreshEvidenceAnalysis(itemId, response, opts = {}) {
       guidance.assessment.assessmentId !== refreshed.assessmentId,
   );
   const publishedRaw = reconciled ? guidance.assessment.rawAssessment : null;
-  const currentItem = sessionItem(getCurrentCheck(), itemId);
+  const currentItem = itemById(itemId);
   const currentAssessmentId = currentItem?.analysis?.assessment?.assessmentId;
   if (
     currentAssessmentId !== previousAssessmentId &&
@@ -635,7 +716,7 @@ export async function refreshEvidenceAnalysis(itemId, response, opts = {}) {
   )
     return;
 
-  if (getCurrentCheck()?.id !== check.id) return;
+  if (!isHeld(check)) return;
   updateItemAnalysis(itemId, {
     status: "analyzed",
     artifactId,
@@ -666,7 +747,7 @@ export async function refreshEvidenceAnalysis(itemId, response, opts = {}) {
 }
 
 export async function analyzeNoIssueDescriptionEdit(itemId, text) {
-  const check = getCurrentCheck();
+  const check = checkWithItem(itemId);
   const item = sessionItem(check, itemId);
   if (!check || !item) return null;
 
@@ -741,7 +822,7 @@ export async function answerAnalysisQuestion(
   answerKey,
   answerValue,
 ) {
-  const check = getCurrentCheck();
+  const check = checkWithItem(itemId);
   const item = sessionItem(check, itemId);
   const assessmentId = item?.analysis?.assessment?.assessmentId;
   if (!check || !item || !assessmentId || !conditionId || !answerKey) {
@@ -758,16 +839,14 @@ export async function answerAnalysisQuestion(
   } catch (err) {
     if (err?.body?.code === "AssessmentRevisionConflict") {
       const latest = await getAssessmentGuidance(assessmentId);
-      const current = getCurrentCheck();
-      const currentId = sessionItem(current, itemId)?.analysis?.assessment
-        ?.assessmentId;
-      if (current?.id === check.id && currentId === assessmentId)
+      const currentId = itemById(itemId)?.analysis?.assessment?.assessmentId;
+      if (isHeld(check) && currentId === assessmentId)
         updateItemAnalysis(itemId, latest);
     }
     throw err;
   }
-  if (getCurrentCheck()?.id !== check.id) return result;
-  const latestItem = sessionItem(getCurrentCheck(), itemId);
+  if (!isHeld(check)) return result;
+  const latestItem = itemById(itemId);
   if (
     !latestItem ||
     latestItem.analysis?.assessment?.assessmentId !== assessmentId
@@ -810,7 +889,7 @@ export async function answerAnalysisQuestion(
 }
 
 async function run(itemId) {
-  const check = getCurrentCheck();
+  const check = checkWithItem(itemId);
   const item = sessionItem(check, itemId);
   if (!check || !item) return;
 
@@ -894,13 +973,30 @@ async function run(itemId) {
   } catch (err) {
     // Pausing or leaving a check stops its poll; it is not an analysis failure.
     if (err?.name === "AbortError") return;
-    console.error("analyzeEvidenceItem failed", err);
-    const failure = describeFailure(err);
-    const latestItem = sessionItem(getCurrentCheck(), itemId);
+    const latestItem = itemById(itemId);
     const hasUploadedArtifact = Boolean(
       latestItem?.upload?.status === "uploaded" &&
         (latestItem?.analysis?.artifactId || latestItem?.upload?.artifactId),
     );
+    // No connection is not a failure: the item stays saved on the device,
+    // still counts toward Finish, and check-submissions.js resumes it when
+    // the connection is back. run() picks up from whatever already landed.
+    if (isConnectionFailure(err)) {
+      updateItem(itemId, {
+        upload: {
+          ...(latestItem?.upload || item.upload || {}),
+          status: hasUploadedArtifact ? "uploaded" : "pending",
+        },
+      });
+      updateItemAnalysis(itemId, {
+        status: "waiting",
+        error: undefined,
+        failure: undefined,
+      });
+      return;
+    }
+    console.error("analyzeEvidenceItem failed", err);
+    const failure = describeFailure(err);
     updateItem(itemId, {
       upload: {
         ...(latestItem?.upload || item.upload || {}),
@@ -927,7 +1023,7 @@ async function run(itemId) {
 
 /** Resume independent matching after a human separation restores task identity. */
 export function restartDuplicateChecks(itemId) {
-  const item = sessionItem(getCurrentCheck(), itemId);
+  const item = itemById(itemId);
   if (item)
     checkDuplicates(
       itemId,

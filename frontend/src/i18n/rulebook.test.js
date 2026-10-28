@@ -76,7 +76,6 @@ describe("rulebook lookup", () => {
       "label",
       "guidance",
       "button",
-      "cannotDo",
       "question",
       "option",
     ]) {

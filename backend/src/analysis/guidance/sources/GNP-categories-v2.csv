@@ -1,10 +1,10 @@
 ﻿"Category","Definition","Weighting","Includes","Excludes","Visual cues","Severity guidance","Description guidance"
-"Litter ","Scattered small refuse or litter that does not obstruct movement.","Low","Loose trash, 
-Food wrappers, 
-Paper, 
-Plastic bags, 
-Bottles, 
-Cans.","Large furniture or bulky items; 
+"Litter ","Scattered small refuse or litter that does not obstruct movement.","Low","Loose trash,
+Food wrappers,
+Paper,
+Plastic bags,
+Bottles,
+Cans.","Large furniture or bulky items;
 Human or animal waste.","Dispersed small items along sidewalk, curb, or gutter","0: No litter present.
 1: A few small items (e.g., a handful of wrappers, cups, or cans) confined to a small area — collectible by staff in a couple of minutes during a routine pass.
 2: A visible but manageable amount of loose litter scattered along a short stretch of sidewalk or curb — still collectible by a site manager or staff member in one pass (roughly a bag's worth or less).
@@ -12,12 +12,12 @@ Human or animal waste.","Dispersed small items along sidewalk, curb, or gutter",
 4 : Large accumulation spanning multiple block faces, or partially obstructing pedestrian path — requires City cleaning equipment or crew.
 5: Litter substantially obstructing pedestrian or vehicle access, or spread across a large area/multiple blocks, posing a sanitation or safety hazard.
  ","Use neutral, quantitative language (e.g., ""several wrappers along the curb"") rather than judgmental terms (""gross,"" ""disgusting""). Do not speculate about who littered."
-"Bulky items","Bulky items or materials that are difficult to move and visually dominate space.","Low","Mattresses, 
-Couches, 
-Chairs, 
-Pallets, 
-Appliances, 
-Large bags or carts.","Small loose trash; 
+"Bulky items","Bulky items or materials that are difficult to move and visually dominate space.","Low","Mattresses,
+Couches,
+Chairs,
+Pallets,
+Appliances,
+Large bags or carts.","Small loose trash;
 Tents or vehicles.","Objects occupying significant sidewalk or curb space
 Stacked items.","0: No bulky items present.
 1: A single small-to-medium item (e.g., a chair, small appliance) not obstructing the pedestrian path.
@@ -25,14 +25,14 @@ Stacked items.","0: No bulky items present.
 3: Multiple items, or a bulky item plus loose debris, narrowing the walkway to single-file passage.
 4: Items narrowing the sidewalk enough to make passage difficult or unsafe, forcing some pedestrians (e.g., wheelchair or stroller users) into the street.
 5: Sidewalk nearly or fully blocked by bulky item(s), forcing all pedestrians into the street or travel lane to get around it.","Describe items and approximate volume factually. Do not make assumptions about whether items were illegally dumped or about the housing status of anyone nearby."
-"Feces and urine","Visible feces, urine staining, or biological waste residue.","High","Feces, 
-Urine puddles or stains, 
+"Feces and urine","Visible feces, urine staining, or biological waste residue.","High","Feces,
+Urine puddles or stains,
 Soiled paper or cloth.
-People actively urinating or defecating.","Mud, 
-Water stains, 
+People actively urinating or defecating.","Mud,
+Water stains,
 Trash spills without biological indicators.
 Shadows","Piles of waste
-Brown or yellow discoloration 
+Brown or yellow discoloration
 Toilet paper nearby
 Staining near walls or tents.
 Someone appearing be actively urinating or defecating","0: None present.
@@ -41,8 +41,8 @@ Someone appearing be actively urinating or defecating","0: None present.
 3: Fresh feces or urine directly in the pedestrian path or at an entrance, requiring people to step around it.
 4: Multiple fresh instances/locations along the same block face, or clear evidence of repeated use of the same spot.
 5: Someone is actively urinating or defecating in the IASS at the time of observation.","Use neutral, sanitation-focused language. Do not attribute the waste to any specific person unless directly observed, and avoid crude or stigmatizing terms."
-"Needles","Visible needles or sharp medical objects posing puncture risk.","High","Hypodermic needles, 
-Syringes with or without caps.","Non-medical sharp objects; 
+"Needles","Visible needles or sharp medical objects posing puncture risk.","High","Hypodermic needles,
+Syringes with or without caps.","Non-medical sharp objects;
 Sealed sharps containers.","Needle shape
 Syringe barrel
 Exposed tips
@@ -52,66 +52,66 @@ Orange caps.","0: No needles visible.
 3: Multiple needles (roughly 2–5) scattered in a small area.
 4: A larger cluster (6+) or needles spread across a wider area, raising the risk of accidental contact.
 5: Needles present in enough volume or spread that the sidewalk is nearly or partially blocked / impassable without risk of contact, forcing pedestrians to alter their route.","Describe the object and its location factually. Do not speculate whether use was medical or non-medical unless clearly evidenced, and avoid labeling any person as an ""addict"" or similar."
-"Tents, tarps, or bedding ","Visible evidence of people living or sleeping in public spaces without shelter.","High","People sleeping outdoors, 
-Tents, 
-Tarps, 
-Bedding, 
-Sleeping bags.","People walking or sitting temporarily; 
-Construction or event tents.","Tents tied to poles 
-Bedding on ground 
+"Tents, tarps, or bedding ","Visible evidence of people living or sleeping in public spaces without shelter.","High","People sleeping outdoors,
+Tents,
+Tarps,
+Bedding,
+Sleeping bags.","People walking or sitting temporarily;
+Construction or event tents.","Tents tied to poles
+Bedding on ground
 Belongings arranged for living.","0: No tents, tarps, or bedding present.
 1: A single small item (e.g., a sleeping bag or bedroll) tucked against a wall or in a low-traffic area, not affecting the pedestrian path.
 2: A single tent or tarp structure, or a small cluster of bedding, occupying part of the sidewalk but leaving a clear path for pedestrians.
 3: One or more structures narrowing the walkway to single-file passage, or multiple separate bedding/tarp setups along the same block face.
 4: Structure(s) narrowing the sidewalk enough to make passage difficult or unsafe, forcing some pedestrians (e.g., wheelchair or stroller users) into the street.
 5: Tent(s), tarp(s), or bedding causing near-total or total blockage of the sidewalk, forcing all pedestrians into the street or travel lane to get around it.","Use neutral, non-stigmatizing language (""person sleeping outdoors,"" ""tent set up on sidewalk"") rather than judgmental or dehumanizing terms. Describe only what is visible, not assumptions about how someone became unhoused."
-"Graffiti","Intentional, expressive markings (writing, symbols, or drawings) applied to surfaces not designed for such use, without clear indicators of official or authorized purpose.","Low","Unauthorized writing, 
-Tags, 
-Symbols, 
-Drawings on buildings, infrastructure, vehicles, signage, or street furniture.","Official signage, 
-Commissioned murals, 
-Construction/utility markings, 
-Chalk on designated play surfaces, 
+"Graffiti","Intentional, expressive markings (writing, symbols, or drawings) applied to surfaces not designed for such use, without clear indicators of official or authorized purpose.","Low","Unauthorized writing,
+Tags,
+Symbols,
+Drawings on buildings, infrastructure, vehicles, signage, or street furniture.","Official signage,
+Commissioned murals,
+Construction/utility markings,
+Chalk on designated play surfaces,
 Non-intentional surface damage (rust, stains, peeling paint).","Spray paint or marker lines
 Stylized or irregular lettering
 High contrast colors
 Drips/overspray
-Placement over functional or architectural elements 
-Repeated tags","0: No intentional markings present. 
-1: A single small tag or mark, negligible surface coverage, easily overlooked. 
-2: Moderate coverage, small tags or limited markings, minimal surface coverage, no hate speech. 
+Placement over functional or architectural elements
+Repeated tags","0: No intentional markings present.
+1: A single small tag or mark, negligible surface coverage, easily overlooked.
+2: Moderate coverage, small tags or limited markings, minimal surface coverage, no hate speech.
 3: Extensive coverage, multiple tags or drawings, clearly visible, partial surface coverage, no hate speech.
-4: Someone is actively applying graffiti 
+4: Someone is actively applying graffiti
 5: The graffiti may represent hate speech for a protected group","Describe markings factually by location, size, and coverage. Do not interpret message content or attribute markings to a specific group unless clearly evidenced."
-"Fire hazard","Visible conditions that increase risk of fire, explosion, or injury.","High","Open flames, 
-Propane tanks, 
-Generators, 
-Fuel containers, 
+"Fire hazard","Visible conditions that increase risk of fire, explosion, or injury.","High","Open flames,
+Propane tanks,
+Generators,
+Fuel containers,
 Exposed wiring.","Standard street infrastructure
 Parked vehicles without hazard indicators","Burn marks
 Smoke
 Gas canisters
-Extension cords near flammable items","0: No hazard indicators present. 
-1: Minor hazard, contained and low risk (e.g., an upright propane tank with no ignition source nearby). 
-2: Moderate hazard; risk factors present but not actively dangerous (e.g., exposed wiring away from flammable material). 
-3: Elevated hazard; risk factors combined with proximity to flammable material or people (e.g., open flame near debris). 
-4: Severe hazard; active danger with signs of imminent ignition or spread (e.g., visible smoke, sparking wires near fuel). 
+Extension cords near flammable items","0: No hazard indicators present.
+1: Minor hazard, contained and low risk (e.g., an upright propane tank with no ignition source nearby).
+2: Moderate hazard; risk factors present but not actively dangerous (e.g., exposed wiring away from flammable material).
+3: Elevated hazard; risk factors combined with proximity to flammable material or people (e.g., open flame near debris).
+4: Severe hazard; active danger with signs of imminent ignition or spread (e.g., visible smoke, sparking wires near fuel).
 5: Critical hazard; fire or explosion actively occurring or clearly imminent (e.g., open flame burning, container at risk of exploding).","Describe the specific hazard source and its spatial relationship to flammable material or people. Avoid speculative claims about cause or intent (e.g., arson) unless clearly evidenced."
-"Blocked doorway or sidewalk","Physical blockage limiting pedestrian, wheelchair, or vehicle access.","Moderate","Blocked sidewalks, 
-Obstructed curb ramps or entrances.","Minor narrowing with clear passage 
-Signed construction zones","Objects spanning sidewalk width, 
-Forced detours, 
-Inaccessible ramps.","0: Full, unobstructed access for pedestrians, wheelchairs, and vehicles. 
-1: Minor narrowing; passage is still easy for all users. 
-2: Partial obstruction requiring users to maneuver or take a minor detour. 
-3: Significant obstruction; wheelchair or stroller access is effectively blocked, pedestrians must leave the path. 
-4: Full blockage of a sidewalk, ramp, or entrance, forcing users onto a hazardous alternate route (e.g., into a traffic lane). 
+"Blocked doorway or sidewalk","Physical blockage limiting pedestrian, wheelchair, or vehicle access.","Moderate","Blocked sidewalks,
+Obstructed curb ramps or entrances.","Minor narrowing with clear passage
+Signed construction zones","Objects spanning sidewalk width,
+Forced detours,
+Inaccessible ramps.","0: Full, unobstructed access for pedestrians, wheelchairs, and vehicles.
+1: Minor narrowing; passage is still easy for all users.
+2: Partial obstruction requiring users to maneuver or take a minor detour.
+3: Significant obstruction; wheelchair or stroller access is effectively blocked, pedestrians must leave the path.
+4: Full blockage of a sidewalk, ramp, or entrance, forcing users onto a hazardous alternate route (e.g., into a traffic lane).
 5: Complete blockage of all access routes with no safe alternate path; entry or exit is impossible or hazardous for all users.","Describe the physical obstruction and its specific impact on pedestrian, wheelchair, or vehicle access. Avoid assigning blame or intent to whoever placed the obstruction unless directly observed."
-"Public drug use","A person displaying suspected effects of intoxication, actively using drugs, or surrounded by visible paraphernalia.","Moderate","Persons visibly consuming drugs (smoking, injecting, snorting), 
+"Public drug use","A person displaying suspected effects of intoxication, actively using drugs, or surrounded by visible paraphernalia.","Moderate","Persons visibly consuming drugs (smoking, injecting, snorting),
 Persons showing clear signs of intoxication
-Persons immediately surrounded by drug paraphernalia.","Prescription medication taken as directed, medical settings, alcohol-only use (unless explicitly included elsewhere), or ambiguous objects without contextual use.","Drug paraphernalia (needles, pipes, foil, tourniquets), 
+Persons immediately surrounded by drug paraphernalia.","Prescription medication taken as directed, medical settings, alcohol-only use (unless explicitly included elsewhere), or ambiguous objects without contextual use.","Drug paraphernalia (needles, pipes, foil, tourniquets),
 Hand-to-mouth smoking gestures
-Injection posture, 
+Injection posture,
 Visible powders or substances,
 Impaired posture or consciousness (slumped, unconscious, disoriented).","0: No evidence of drug use or intoxication.
 1: Ambiguous indicators only — paraphernalia nearby with no visible use, or mild/uncertain impairment (e.g., unsteady gait with no other signs).

@@ -2,14 +2,20 @@
  * Enrollment links must take precedence over a locally cached device binding.
  * Otherwise a revoked binding can mask a fresh one-time grant and leave that
  * grant pending forever.
+ * A generic login bookmark is only a hint for an unbound browser. A real
+ * enrollment grant still takes precedence so a person can enroll another site.
  * @param {string} [href]
+ * @param {boolean} [hasSession]
  * @returns {boolean}
  */
-export function hasEnrollmentCredentials(href = globalThis.location?.href) {
+export function hasEnrollmentCredentials(
+  href = globalThis.location?.href,
+  hasSession = false,
+) {
   if (!href) return false;
   try {
     const fragment = new URLSearchParams(new URL(href).hash.slice(1));
-    if (fragment.get("login") === "1") return true;
+    if (fragment.get("login") === "1" && !hasSession) return true;
     return Boolean(
       fragment.get("enrollment_grant")?.trim() &&
         fragment.get("enrollment_token")?.trim(),

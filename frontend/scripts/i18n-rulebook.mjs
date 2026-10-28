@@ -2,7 +2,7 @@
 /*
   Generate the `rulebook.*` and `server.*` catalog namespaces from the backend
   guidance catalog and the backend's other display tables, so rulebook text that reaches the UI as DATA on task items (label,
-  guidance, button labels, cannot-do reasons, question prompts, categories,
+  guidance, button labels, question prompts, categories,
   agencies) can be shown in the active language.
 
     node scripts/i18n-rulebook.mjs          # active policy version
@@ -69,6 +69,8 @@ const catalogs = all
       "actions-escalations-v4",
       "actions-escalations-v5",
       "actions-escalations-v6",
+      "actions-escalations-v7",
+      "actions-escalations-v8",
     ].map((v) => registry.catalogForPolicyVersion(v))
   : [registry.activeCatalog()];
 
@@ -79,7 +81,6 @@ for (const catalog of catalogs) {
     add("label", rule.outcome.label);
     add("guidance", rule.outcome.guidance);
     for (const b of rule.outcome.buttons) add("button", b);
-    for (const r of rule.outcome.cannotDoReasons) add("cannotDo", r);
     for (const q of rule.requiredQuestions) {
       add("question", q.prompt);
       for (const o of q.options) add("option", o.label);

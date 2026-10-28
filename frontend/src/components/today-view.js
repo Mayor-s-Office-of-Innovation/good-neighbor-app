@@ -59,6 +59,7 @@ import { awaitOverlayUnwind, openOverlayDialog } from "../dialog-history.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import {
   clearSiteSession,
+  countUnsentWork,
   getSite,
   hasAdminAccess,
   listBoundSites,
@@ -107,6 +108,8 @@ import {
   needsTaskEvidenceHydration,
 } from "../services/task-evidence.js";
 import {
+  clearTaskStatusOverrides,
+  repairSeparatedTaskStatusOverrides,
   readTaskStatusOverrides,
   writeTaskStatusOverrides,
 } from "../state/task-status-overrides.js";
@@ -127,6 +130,7 @@ import {
 import {
   getCurrentCheck,
   hasDraft,
+  loadFinishedChecks,
   loadSubmitted,
   onCheckSessionChange,
   clearSubmittedSession,
@@ -163,6 +167,8 @@ import { getLocale, setLocale, t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 import { finalizeCaptureScorecardInBackground } from "../services/submit-check.js";
+import { isConnectionFailure } from "../services/photo-analysis.js";
+import { getHomeSnapshot, saveHomeSnapshot } from "../db.js";
 import {
   getSiteCheckDeviceLocation,
   getLastDeviceLocation,
@@ -227,6 +233,29 @@ if (typeof window !== "undefined") {
   window.addEventListener("sitebound", () => {
     lastHomeState = null;
   });
+}
+
+/**
+ * The most recently started check header (any status), in UI shape.
+ * @param {any[] | undefined} checks
+ */
+function latestStarted(checks) {
+  return (checks || [])
+    .map(adaptCheckHeader)
+    .sort((a, b) =>
+      String(b.startedAt || "").localeCompare(String(a.startedAt || "")),
+    )[0];
+}
+
+/**
+ * Submitted check headers from GET /v1/checks, newest first, in UI shape.
+ * @param {any[] | undefined} checks
+ */
+function submittedChecks(checks) {
+  return (checks || [])
+    .map((h) => adaptCheckHeader(h))
+    .filter((c) => c.status === "submitted")
+    .sort((a, b) => (b.submittedAt || "").localeCompare(a.submittedAt || ""));
 }
 
 /** Server-relevant session changes; progress and duplicate projections stay local.
@@ -298,6 +327,8 @@ class TodayView extends HTMLElement {
     this._logoutDialogOpen = false;
     this._logoutPending = false;
     this._logoutError = "";
+    /** @type {{ checks?: number, careLogs?: number }} */
+    this._logoutUnsent = {};
     this._deviceLocation = getLastDeviceLocation();
     this._locationUnsub = null;
     /** @type {any} the persistent <location-dialog>, created on first render */
@@ -361,6 +392,8 @@ class TodayView extends HTMLElement {
     this._deletionUnsub = null;
     this._sessionUnsub?.();
     this._sessionUnsub = null;
+    window.removeEventListener("online", this._onlineReload);
+    this._onlineReload = null;
     this.removeEventListener("analysiscarddeleted", this._cardDeletedHandler);
     document.removeEventListener("click", this._settingsDocumentClick);
     this._settingsDocumentClick = null;
@@ -444,7 +477,11 @@ class TodayView extends HTMLElement {
       void refreshGrantedDeviceLocation();
     }
     if (!this._sessionUnsub) {
-      let refreshKey = sessionRefreshKey(getCurrentCheck());
+      // One key per check: finished checks uploading in the background emit
+      // their own changes alongside the one on screen.
+      const refreshKeys = new Map();
+      const initial = getCurrentCheck();
+      refreshKeys.set(initial?.id, sessionRefreshKey(initial));
       this._sessionUnsub = onCheckSessionChange((session) => {
         if (session?.status === "in-progress") return;
         if (
@@ -454,10 +491,24 @@ class TodayView extends HTMLElement {
           this._renderHome({ ...this._homeModel, pendingSession: session });
         }
         const nextKey = sessionRefreshKey(session);
-        if (nextKey === refreshKey) return;
-        refreshKey = nextKey;
+        if (nextKey === refreshKeys.get(session?.id)) return;
+        refreshKeys.set(session?.id, nextKey);
+        // A background check only matters to home once it is the one shown.
+        if (
+          session &&
+          session !== getCurrentCheck() &&
+          this._homeModel?.pendingSession?.id !== session.id
+        )
+          return;
         void this.connectedCallback();
       });
+    }
+    if (!this._onlineReload) {
+      // Offline home is a saved snapshot: reload the live lists on reconnect.
+      this._onlineReload = () => {
+        if (this._offline && this.isConnected) void this.connectedCallback();
+      };
+      window.addEventListener("online", this._onlineReload);
     }
     if (!this._settingsDocumentClick) {
       this._settingsDocumentClick = (event) => {
@@ -542,7 +593,7 @@ class TodayView extends HTMLElement {
     // Legacy-stage records (uploading/analyzing/submitted) are unreachable now —
     // clear them instead of letting them linger in the review store forever.
     if (pendingSession && pendingSession.status !== "capture-complete") {
-      await clearSubmittedSession();
+      await clearSubmittedSession(pendingSession.id);
       pendingSession = null;
     }
 
@@ -592,29 +643,32 @@ class TodayView extends HTMLElement {
       tasks = uniqueTasks([...(openTasksResult.tasks || []), ...reused]);
       if (!reuseRemaining) this._remainingStatus = "pending";
       else
-        for (const status of [
-          "in_progress",
-          "completing",
-          "completed",
-          "cannot_do",
-        ])
+        for (const status of ["in_progress", "completing", "completed"])
           this._taskListFreshness.set(status, this._remainingLoadedAt);
-      latestStartedCheck = (checks || [])
-        .map(adaptCheckHeader)
-        .sort((a, b) =>
-          String(b.startedAt || "").localeCompare(String(a.startedAt || "")),
-        )[0];
-      submitted = (checks || [])
-        .map((h) => adaptCheckHeader(h))
-        .filter((c) => c.status === "submitted")
-        .sort((a, b) =>
-          (b.submittedAt || "").localeCompare(a.submittedAt || ""),
-        );
+      latestStartedCheck = latestStarted(checks);
+      submitted = submittedChecks(checks);
+      this._offline = null;
+      void saveHomeSnapshot(this._siteId, {
+        checks: checks || [],
+        tasks: openTasksResult.tasks || [],
+      }).catch(() => {});
     } catch (err) {
       if (generation !== this._homeRefreshGeneration) return;
       console.error("listChecks/listTasks failed", err);
-      this._renderError();
-      return;
+      // No connection: show the last saved lists (or empty ones) so Start
+      // check and checks waiting to upload stay reachable. Other failures
+      // keep the error screen.
+      if (!isConnectionFailure(err)) {
+        this._renderError();
+        return;
+      }
+      const snapshot = await getHomeSnapshot(this._siteId).catch(() => null);
+      if (generation !== this._homeRefreshGeneration) return;
+      this._offline = true;
+      latestStartedCheck = latestStarted(snapshot?.checks);
+      submitted = submittedChecks(snapshot?.checks);
+      tasks = uniqueTasks(snapshot?.tasks || []);
+      this._remainingStatus = "error";
     }
 
     const last = submitted[0];
@@ -623,12 +677,29 @@ class TodayView extends HTMLElement {
         ? pendingSession
         : null;
 
+    // Older finished checks wait in the background; drop each one the
+    // backend history now shows (offline lists are a snapshot, so never then).
+    const finishedChecks = await loadFinishedChecks(this._siteId).catch(
+      () => [],
+    );
+    if (!this._offline)
+      for (const check of finishedChecks)
+        if (
+          check.id !== effectivePendingSession?.id &&
+          this._isStalePendingSession(check, submitted, tasks)
+        )
+          await clearSubmittedSession(check.id);
     if (
+      !this._offline &&
       this._isStalePendingSession(effectivePendingSession, submitted, tasks)
     ) {
-      await clearSubmittedSession();
+      await clearSubmittedSession(effectivePendingSession.id);
       effectivePendingSession = null;
-    } else if (effectivePendingSession?.status === "capture-complete") {
+    } else if (
+      !this._offline &&
+      effectivePendingSession?.status === "capture-complete" &&
+      !effectivePendingSession.scorecardDone
+    ) {
       finalizeCaptureScorecardInBackground(effectivePendingSession.id, {
         expectedArtifacts: effectivePendingSession.expectedArtifacts,
       });
@@ -653,6 +724,10 @@ class TodayView extends HTMLElement {
     // (a poll) and the 311 status batch wait for the complete list, so each
     // starts once per load: here when the remaining lists were reused, else
     // in _loadRemainingTasks.
+    if (this._offline) {
+      if (announceArrival) announceScreenHeading(this, ".home-identity__site");
+      return;
+    }
     void this._hydrateVisibleHomeTasks();
     if (reuseRemaining) {
       this._remainingLoad = Promise.resolve();
@@ -792,7 +867,7 @@ class TodayView extends HTMLElement {
     let results;
     try {
       results = await Promise.all(
-        ["in_progress", "completing", "completed", "cannot_do"].map((status) =>
+        ["in_progress", "completing", "completed"].map((status) =>
           listTasks({ status, limit: 50 }),
         ),
       );
@@ -820,12 +895,7 @@ class TodayView extends HTMLElement {
     ]);
     this._remainingStatus = "loaded";
     this._remainingLoadedAt = Date.now();
-    for (const status of [
-      "in_progress",
-      "completing",
-      "completed",
-      "cannot_do",
-    ])
+    for (const status of ["in_progress", "completing", "completed"])
       this._taskListFreshness.set(status, Date.now());
     this._renderHome({ ...model, tasks });
     this._watchDuplicates(tasks);
@@ -1058,9 +1128,15 @@ class TodayView extends HTMLElement {
       },
     );
     this.querySelector("#settings-logout")?.addEventListener("click", () => {
-      this._settingsMenuOpen = false;
-      this._logoutDialogOpen = true;
-      this._renderHome(this._homeModel);
+      // Count first: logging out deletes work that hasn't uploaded yet.
+      void countUnsentWork()
+        .catch(() => ({}))
+        .then((unsent) => {
+          this._logoutUnsent = unsent;
+          this._settingsMenuOpen = false;
+          this._logoutDialogOpen = true;
+          this._renderHome(this._homeModel);
+        });
     });
     this.querySelector("#settings-help")?.addEventListener("click", () => {
       this._settingsMenuOpen = false;
@@ -1493,6 +1569,7 @@ class TodayView extends HTMLElement {
       showAnalysisDialogs: Boolean(hasPendingAssessment || hasResultCards),
       logoutError: this._logoutError,
       logoutPending: this._logoutPending,
+      logoutUnsent: this._logoutUnsent,
     });
   }
 
@@ -1646,14 +1723,12 @@ class TodayView extends HTMLElement {
         task: this._taskWith311CardStatus({
           ...entry.task,
           createdAt: entry.createdAt,
-          ...(entry.homeStatus === "in_progress"
-            ? { status: "in_progress" }
-            : {}),
           siteAddress: entry.task.siteAddress || this._site?.address || "",
         }),
         siteName: this._site?.name || "",
         action:
-          entry.homeStatus === "needs_action"
+          entry.homeStatus === "needs_action" ||
+          (entry.homeStatus === "in_progress" && entry.task.status === "open")
             ? this._primaryCardAction(entry.task)
             : entry.homeStatus === "in_progress"
               ? canRetry311Filing(entry.task)
@@ -2013,6 +2088,16 @@ class TodayView extends HTMLElement {
   }
 
   _homeTasks(tasks) {
+    // Repair overrides left by older clients before duplicate separation.
+    const separated = tasks.filter(
+      (task) =>
+        task.status === "open" &&
+        this._duplicateLinks?.get(task.taskId)?.state === "separated",
+    );
+    if (separated.length)
+      this._taskOverrides = repairSeparatedTaskStatusOverrides(
+        ...separated.map((task) => task.taskId),
+      );
     const now = new Date();
     return projectDuplicateTasks(tasks, this._duplicateLinks)
       .filter((task) => !isTaskPendingDeletion(task))
@@ -2202,8 +2287,7 @@ class TodayView extends HTMLElement {
     });
   }
 
-  // (Re)attach click handlers to every [data-action] button currently inside a
-  // card — used on first render and after swapping in the reason picker.
+  // Attach click handlers to every [data-action] button currently inside a card.
   _wireCardButtons(card, task) {
     card.querySelectorAll("[data-action]").forEach((btn) => {
       btn.addEventListener("click", () => this._onAction(card, task, btn));
@@ -2605,7 +2689,10 @@ class TodayView extends HTMLElement {
       ).find((t) => t.taskId === task.taskId);
       if (!decorated?.duplicate) return;
       openDuplicateIssue(decorated, btn, {
-        onSeparated: () => {
+        onSeparated: (restored) => {
+          this._taskOverrides = readTaskStatusOverrides();
+          this._confirmedTasks?.delete(task.taskId);
+          if (restored) this._applyTaskResult(restored.taskId, restored);
           this._duplicateLinks.delete(task.taskId);
           if (this.isConnected) void this.connectedCallback();
         },
@@ -2623,7 +2710,7 @@ class TodayView extends HTMLElement {
         task,
         onSaved: (taskResult) => {
           this._setTaskOverride(
-            task.taskId,
+            taskResult.taskId || task.taskId,
             taskResult.status === "in_progress" ? "in_progress" : "resolved",
           );
           this._applyTaskResult(task.taskId, taskResult);
@@ -2654,12 +2741,13 @@ class TodayView extends HTMLElement {
         if (!result) return;
         this._applyTaskResult(task.taskId, result.task);
         // A retry replaces the failed outcome the watcher held over lists.
-        if (this._confirmedTasks?.has(task.taskId))
-          this._confirmedTasks.set(task.taskId, result.task);
+        const savedId = result.task.taskId || task.taskId;
+        if (this._confirmedTasks?.has(savedId))
+          this._confirmedTasks.set(savedId, result.task);
         // Filed → In-progress on the server. The override (which also expires
         // the remaining lists) keeps the card there if a reload's open-list
         // read lands before the worklist index has caught up.
-        this._setTaskOverride(task.taskId, "in_progress");
+        this._setTaskOverride(savedId, "in_progress");
         void this._refreshAfterAction();
       });
     }
@@ -2698,6 +2786,10 @@ class TodayView extends HTMLElement {
    * fields (thumbnail, 311 status) the response does not carry.
    */
   _applyTaskResult(taskId, task) {
+    if (task?.taskId && task.taskId !== taskId) {
+      this._taskOverrides = clearTaskStatusOverrides(taskId);
+      this._confirmedTasks?.delete(taskId);
+    }
     const model = this._homeModel;
     if (!model || !taskId || !task) return;
     // Shared duplicate actions return the original task, not the clicked
@@ -2768,7 +2860,8 @@ class TodayView extends HTMLElement {
   _setTaskOverride(taskId, status) {
     const overrides = {
       ...readTaskStatusOverrides(),
-      [taskId]: { status, updatedAt: new Date().toISOString() },
+      // Only new action results get this marker; never stamp legacy entries.
+      [taskId]: { status, updatedAt: new Date().toISOString(), version: 1 },
     };
     writeTaskStatusOverrides(overrides);
     this._taskOverrides = overrides;

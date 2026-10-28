@@ -55,6 +55,56 @@ describe("task update handlers", () => {
     delete process.env.SF311_BASIC_AUTH_PASS;
   });
 
+  it.each(["missing", "closed", "in_progress"])(
+    "publishes and enforces ticket eligibility: %s",
+    async (scenario) => {
+      const task = {
+        taskId: "task-1",
+        status: scenario === "in_progress" ? "in_progress" : "completed",
+        completionMethod: "311_filed",
+        appActionResults:
+          scenario === "missing"
+            ? []
+            : [
+                {
+                  code: "create_311_ticket",
+                  payload: { tickets: [{ srNum: "123" }] },
+                },
+                {
+                  code: "close_311_ticket",
+                  payload: { closures: [{ srNum: "123", status: "closed" }] },
+                },
+              ],
+      };
+      send
+        .mockResolvedValueOnce({ Item: task })
+        .mockResolvedValueOnce({ Items: [] });
+      const detail = JSON.parse((await getTaskUpdates(event({}))).body);
+      expect(detail.task.canUpdate).toBe(scenario === "in_progress");
+      expect(detail.task.canRequestCityHelp).toBe(false);
+      send
+        .mockReset()
+        .mockResolvedValue({})
+        .mockResolvedValueOnce({ Item: task });
+      const fetch = vi.fn();
+      vi.stubGlobal("fetch", fetch);
+      const response = await createTaskUpdate(
+        event({
+          type: "note_photo_update",
+          notes: ["Local update"],
+          photoKeys: [],
+        }),
+      );
+      expect(response.statusCode).toBe(scenario === "in_progress" ? 201 : 409);
+      expect(fetch).not.toHaveBeenCalled();
+      expect(
+        send.mock.calls.some(
+          ([command]) => command instanceof TransactWriteCommand,
+        ),
+      ).toBe(scenario === "in_progress");
+    },
+  );
+
   it.each([
     [false, true],
     [false, false],
@@ -531,4 +581,118 @@ describe("task update handlers", () => {
       );
     },
   );
+  it.each(["completing", "completed"])(
+    "updates a recoverable %s filing without resubmitting tickets",
+    async (status) => {
+      const results = [
+        {
+          code: "create_311_ticket",
+          status: "failed",
+          reason: "fanout_incomplete",
+          payload: {
+            tickets: [{ srNum: "existing-1" }, { srNum: "existing-2" }],
+          },
+        },
+      ];
+      const task = {
+        pk: "SITE#site-1",
+        sk: "TASK#task-1",
+        taskId: "task-1",
+        status,
+        updatedAt: "2026-10-26T19:41:25Z",
+        completionLeaseExpiresAt: "2020-01-01T00:00:00Z",
+        completionMethod: "311_filed",
+        completedAt: "2026-10-26T19:41:25Z",
+        resolvedAt: "2026-10-26T19:41:25Z",
+        appActionStatus: "failed",
+        appActionResults: results,
+      };
+      send
+        .mockResolvedValueOnce({ Item: task })
+        .mockResolvedValueOnce({})
+        .mockResolvedValue({});
+      const fetch = vi.fn();
+      vi.stubGlobal("fetch", fetch);
+      const response = await createTaskUpdate(
+        event({
+          type: "note_photo_update",
+          notes: ["Still present"],
+          photoKeys: [],
+          cityHelpNeeded: true,
+        }),
+      );
+      expect(response.statusCode, response.body).toBe(201);
+      expect(fetch).not.toHaveBeenCalled();
+      const transaction = send.mock.calls.find(
+        ([command]) => command instanceof TransactWriteCommand,
+      )?.[0].input;
+      const write = transaction.TransactItems.find(
+        (/** @type {any} */ row) => row.Put?.Item.sk === "TASK#task-1",
+      ).Put;
+      expect(write.Item).toMatchObject({
+        status: "in_progress",
+        appActionStatus: "failed",
+        appActionResults: results,
+      });
+      expect(write.Item).not.toHaveProperty("resolvedAt");
+      expect(write.Item).not.toHaveProperty("completedAt");
+      expect(write.Item).not.toHaveProperty("completionLeaseExpiresAt");
+      expect(write.ConditionExpression).toContain("updatedAt = :prior");
+      expect(write.ConditionExpression).toContain(
+        "appActionResults = :priorResults",
+      );
+      if (status === "completing")
+        expect(write.ConditionExpression).toContain("#lease = :lease");
+      expect(
+        transaction.TransactItems.some(
+          (/** @type {any} */ row) =>
+            row.Put?.Item.entityType === "SF311_OUTBOX",
+        ),
+      ).toBe(false);
+      expect(JSON.parse(response.body).task.canUpdate).toBe(true);
+    },
+  );
+
+  it("rejects recovery when another worker has renewed the completion lease", async () => {
+    const expired = {
+      taskId: "task-1",
+      status: "completing",
+      completionLeaseExpiresAt: "2020-01-01T00:00:00Z",
+      updatedAt: "old",
+      appActionResults: [
+        {
+          code: "create_311_ticket",
+          payload: { tickets: [{ srNum: "existing" }] },
+        },
+      ],
+    };
+    send
+      .mockResolvedValueOnce({ Item: expired })
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(
+        Object.assign(new Error("race"), {
+          name: "TransactionCanceledException",
+        }),
+      )
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({
+        Item: { ...expired, completionLeaseExpiresAt: "2099-01-01T00:00:00Z" },
+      })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ Items: [] });
+    const response = await createTaskUpdate(
+      event({
+        type: "note_photo_update",
+        notes: ["Still present"],
+        photoKeys: [],
+        cityHelpNeeded: true,
+      }),
+    );
+    expect(response.statusCode).toBe(409);
+    expect(
+      send.mock.calls.filter(
+        ([command]) => command instanceof TransactWriteCommand,
+      ),
+    ).toHaveLength(1);
+  });
 });

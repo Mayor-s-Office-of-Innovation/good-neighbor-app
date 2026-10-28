@@ -39,7 +39,7 @@ describe("site admin device summary", () => {
 });
 
 describe("site admin form decisions", () => {
-  it("validates contact names, email, and US phone numbers", () => {
+  it("validates public email and US phone numbers without requiring a contact name", () => {
     expect(
       validateContact({
         firstName: "Priya",
@@ -55,7 +55,7 @@ describe("site admin form decisions", () => {
         email: "not-an-email",
         phone: "123",
       }),
-    ).toBe(t("siteAdmin.validation.nameRequired"));
+    ).toBe(t("siteAdmin.validation.email"));
   });
 
   it("validates required site and address fields", () => {

@@ -8,12 +8,12 @@ vi.mock("../db.js", () => ({
   saveDraft: vi.fn(),
   clearDraft: vi.fn(),
   getDraft: vi.fn(async () => null),
-  saveReview: vi.fn((check) => {
+  saveFinishedCheck: vi.fn((check) => {
     savedReview = check;
     return Promise.resolve(check);
   }),
-  getReview: vi.fn(async () => savedReview),
-  clearReview: vi.fn(async () => {
+  listFinishedChecks: vi.fn(async () => (savedReview ? [savedReview] : [])),
+  deleteFinishedCheck: vi.fn(async () => {
     savedReview = null;
   }),
 }));
@@ -262,4 +262,88 @@ it("only finishing a perimeter check ends the install offer", async () => {
   expect(completed).toHaveBeenCalledTimes(1);
   unsubscribe();
   install.resetInstallPrompt();
+});
+
+describe("several finished checks", () => {
+  // Checks finished offline wait on the device until they upload. Starting
+  // another check must keep the earlier one, and its upload progress must
+  // keep saving to its own record.
+  beforeEach(async () => {
+    savedReview = null;
+    const { discardInMemorySession } = await import("./check-session.js");
+    discardInMemorySession();
+    vi.clearAllMocks();
+  });
+
+  async function finishOne(note) {
+    const session = await import("./check-session.js");
+    const check = session.startCheck("site-1");
+    const item = session.addItem({ kind: "text", text: note });
+    session.markCaptureComplete({ checkId: check.id });
+    return { check, item };
+  }
+
+  it("keeps a finished check when the next check starts", async () => {
+    const session = await import("./check-session.js");
+    const { saveFinishedCheck } = await import("../db.js");
+    const first = await finishOne("Litter by the gate");
+    const second = await finishOne("Graffiti on the wall");
+
+    expect(session.getCurrentCheck().id).toBe(second.check.id);
+    expect(session.getCheck(first.check.id)).toBe(first.check);
+    expect(session.findCheckForItem(first.item.id)).toBe(first.check);
+
+    vi.mocked(saveFinishedCheck).mockClear();
+    session.updateItemAnalysis(first.item.id, { status: "waiting" });
+    expect(session.findItem(first.item.id).analysis.status).toBe("waiting");
+    expect(saveFinishedCheck).toHaveBeenCalledWith(
+      expect.objectContaining({ id: first.check.id }),
+    );
+  });
+
+  it("emits a background check's change with that check", async () => {
+    const session = await import("./check-session.js");
+    const first = await finishOne("Litter by the gate");
+    await finishOne("Graffiti on the wall");
+    const seen = [];
+    const unsubscribe = session.onCheckSessionChange((check) =>
+      seen.push(check?.id),
+    );
+    session.updateItem(first.item.id, { upload: { status: "uploaded" } });
+    unsubscribe();
+    expect(seen).toEqual([first.check.id]);
+  });
+
+  it("clearing the current check leaves the others waiting", async () => {
+    const session = await import("./check-session.js");
+    const { deleteFinishedCheck } = await import("../db.js");
+    const first = await finishOne("Litter by the gate");
+    const second = await finishOne("Graffiti on the wall");
+    session.clearCheck();
+    expect(deleteFinishedCheck).toHaveBeenCalledWith("site-1", second.check.id);
+    expect(deleteFinishedCheck).not.toHaveBeenCalledWith(
+      "site-1",
+      first.check.id,
+    );
+    expect(session.getCheck(first.check.id)).toBe(first.check);
+  });
+
+  it("loadSubmitted returns the newest finished check while another is in progress", async () => {
+    const session = await import("./check-session.js");
+    const first = await finishOne("Litter by the gate");
+    session.startCheck("site-1");
+    expect((await session.loadSubmitted())?.id).toBe(first.check.id);
+    expect(session.getCurrentCheck().status).toBe("in-progress");
+  });
+
+  it("marks a scorecard done once and persists it", async () => {
+    const session = await import("./check-session.js");
+    const { saveFinishedCheck } = await import("../db.js");
+    const first = await finishOne("Litter by the gate");
+    vi.mocked(saveFinishedCheck).mockClear();
+    session.markScorecardDone(first.check.id);
+    session.markScorecardDone(first.check.id);
+    expect(first.check.scorecardDone).toBe(true);
+    expect(saveFinishedCheck).toHaveBeenCalledTimes(1);
+  });
 });

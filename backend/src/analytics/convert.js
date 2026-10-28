@@ -2,7 +2,7 @@
 //
 // Trigger: manifest-summary.json landing under raw/ in the lake bucket. This
 // module resolves the export's manifest, streams each gzipped NDJSON data file,
-// unmarshals DynamoDB typed JSON, classifies each item by its sk prefix into an
+// unmarshals DynamoDB typed JSON, classifies each item by its complete key into an
 // entity, and writes one Parquet file per (entity, date) partition with the
 // export ID in the file name — so re-running the same export overwrites rather
 // than duplicates (idempotency by construction).
@@ -28,6 +28,9 @@ import readline from "node:readline";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { classifyItem } from "./entity-keys.js";
+
+export { classifyItem } from "./entity-keys.js";
 
 const s3 = new S3Client({});
 
@@ -46,32 +49,6 @@ const GRADE_SCORE = {
 // Entities recognized by key shape; see classifyItem(). Anything unrecognized
 // (receipts, counters, pointers, PROVIDER_SEARCH, setup-code items) is
 // skipped — only reporting entities reach the lake.
-
-/**
- * Classify one item by its key shape into an entity name, or null to skip.
- * Order matters: ASSESSMENT#x#COND#y must match before the bare ASSESSMENT#
- * header rule, and CHECK#x#ART#…/#ANALYSIS#… before the CHECK# header rule.
- * @param {{ pk: string, sk: string }} key
- * @returns {string | null}
- */
-export function classifyItem({ pk, sk }) {
-  if (pk.startsWith("PROVIDER#") && sk === "#META") return "providers";
-  if (pk.startsWith("SITE#")) {
-    if (sk === "#META") return "sites";
-    if (sk.startsWith("CHECK#")) {
-      if (sk.includes("#ART#")) return "artifacts";
-      if (sk.includes("#ANALYSIS#")) return "analyses";
-      return "checks";
-    }
-    if (sk.startsWith("ASSESSMENT#")) {
-      if (sk.includes("#COND#")) return "conditions";
-      return "assessments";
-    }
-    if (sk.startsWith("TASK#")) return "tasks";
-    if (sk.startsWith("DEVICE#")) return "devices";
-  }
-  return null;
-}
 
 /**
  * Promote the report columns for one entity (ADR 0013 §Decision 2: top-level

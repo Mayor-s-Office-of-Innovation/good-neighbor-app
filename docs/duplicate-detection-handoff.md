@@ -30,9 +30,10 @@ is not needed for this experiment. Source and Match candidates folders select
 the evaluation corpus. Human review is still required; the existing text harness
 remains a comparison tool.
 
-Current policy amendment (October 15, 2026): the image matcher now requires the
+Historical intermediate policy (October 15, 2026): the image matcher used the
 same canonical analyzer category and a strictly under-72-hour capture/observation
-age relative to the source. This supersedes five-day and cross-category retrieval
+age. The current generation-time rule at the top of this document supersedes that
+time basis. This supersedes five-day and cross-category retrieval
 discussed in the historical notes below. Missing categories remain unknown.
 
 ## Start here
