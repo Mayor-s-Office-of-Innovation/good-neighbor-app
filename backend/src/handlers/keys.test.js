@@ -8,8 +8,11 @@ import {
   checkChildrenPrefix,
   checkHeaderKey,
   checkTimelineGsi,
+  COMPLIANCE_TERMS_OPEN_PK,
+  complianceTermsExpiryGsi,
   conditionKey,
   conditionTimelineGsi,
+  GSI3_NAME,
   sitePk,
   taskKey,
   taskWorklistDateGsi,
@@ -60,6 +63,15 @@ describe("single-table key builders", () => {
       sk: "ASSESSMENT#asm1#COND#cond1",
     });
     expect(assessmentConditionPrefix("asm1")).toBe("ASSESSMENT#asm1#COND#");
+  });
+
+  it("builds the sparse GSI3 expiry key for an end-dated compliance terms version", () => {
+    expect(GSI3_NAME).toBe("GSI3");
+    expect(COMPLIANCE_TERMS_OPEN_PK).toBe("COMPLIANCE_TERMS#OPEN");
+    expect(complianceTermsExpiryGsi("s1", "2026-12-02", "v1")).toEqual({
+      gsi3pk: "COMPLIANCE_TERMS#OPEN",
+      gsi3sk: "2026-12-02#s1#v1",
+    });
   });
 
   it("builds assessment, condition, unresolved, and date-first task GSIs", () => {

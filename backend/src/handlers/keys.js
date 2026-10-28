@@ -206,13 +206,22 @@ export const checkArtifactPrefix = (checkId) => `CHECK#${checkId}#ART#`;
 // (infra/modules/app/main.tf) and the local harness (scripts/lib/ensure-infra.mjs)
 // both create them uppercase, and DynamoDB index names are case-sensitive, so
 // these constants must be uppercase too. GSI1 backs timelines (checks,
-// assessments, tasks, and task updates, each in its own partition per site),
-// GSI2 backs the per-status staff worklist, and GSI4/GSI5 back condition
-// review queues that nothing reads yet.
+// assessments, tasks, task updates, complaints, and care work, each in its own
+// partition per site), GSI2 backs the per-status staff worklist, GSI3 backs
+// cross-site sparse queues (today only the compliance-terms expiry sweep), and
+// GSI4/GSI5 back condition review queues that nothing reads yet.
 export const GSI1_NAME = "GSI1";
 
 /** The per-status worklist index (AP10); see taskWorklistDateGsi. */
 export const GSI2_NAME = "GSI2";
+
+/**
+ * Cross-site sparse queues, one partition per entity type. Today it holds only
+ * each site's latest open compliance terms that have an end date, so the
+ * scheduled expiry sweep is one bounded query instead of a table scan; see
+ * complianceTermsExpiryGsi.
+ */
+export const GSI3_NAME = "GSI3";
 
 /** Conditions by site/date/severity. */
 export const GSI4_NAME = "GSI4";
@@ -401,4 +410,28 @@ export const unresolvedConditionGsi = (
 ) => ({
   gsi5pk: `SITE#${siteId}#CONDITION#UNRESOLVED`,
   gsi5sk: `${reportedAt}#SEV#${severity}#${assessmentId}#${conditionId}`,
+});
+
+/** The GSI3 partition holding every site's latest open, end-dated compliance terms. */
+export const COMPLIANCE_TERMS_OPEN_PK = "COMPLIANCE_TERMS#OPEN";
+
+/**
+ * GSI3 attributes for a compliance terms version the scheduled expiry sweep
+ * still has to close. Sparse: stamped at creation only when the version has an
+ * end date, and removed when it ends or is superseded by a newer version (the
+ * sweep only closes a site's latest version, so a superseded one could never
+ * be acted on). The sort key is day-first, so `gsi3sk < <tomorrow's day key>`
+ * lists every version whose end date has passed.
+ * @param {string} siteId
+ * @param {string} expiresOnExclusive Pacific day key: the day after the last required day
+ * @param {string} termsVersionId
+ * @returns {{ gsi3pk: string, gsi3sk: string }}
+ */
+export const complianceTermsExpiryGsi = (
+  siteId,
+  expiresOnExclusive,
+  termsVersionId,
+) => ({
+  gsi3pk: COMPLIANCE_TERMS_OPEN_PK,
+  gsi3sk: `${expiresOnExclusive}#${siteId}#${termsVersionId}`,
 });

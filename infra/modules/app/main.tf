@@ -898,6 +898,18 @@ resource "aws_dynamodb_table" "app" {
     type = "S"
   }
 
+  # GSI3 keys — set only on each site's latest open compliance terms that have
+  # an end date (the scheduled expiry sweep).
+  attribute {
+    name = "gsi3pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "gsi3sk"
+    type = "S"
+  }
+
   # GSI4 keys — set only on conditions (site/date/severity condition history).
   attribute {
     name = "gsi4pk"
@@ -955,12 +967,24 @@ resource "aws_dynamodb_table" "app" {
   }
 
   # GSI2 — site worklist: SITE#<siteId>#TASK#<status> / <createdAt>#<kind>#<severity>#<taskId>. (AP10)
-  # GSI3 (cross-site escalation queue) is sparse and deferred to Phase 7 — it can
-  # be added to the live table later with no rebuild.
   global_secondary_index {
     name            = "GSI2"
     hash_key        = "gsi2pk"
     range_key       = "gsi2sk"
+    projection_type = "ALL"
+  }
+
+  # GSI3 — cross-site sparse queues, one partition per entity type. Today it
+  # holds only each site's latest open compliance terms that have an end date:
+  # COMPLIANCE_TERMS#OPEN / <expiresOnExclusive>#<siteId>#<termsVersionId>,
+  # stamped at creation and removed when the version ends or is superseded, so
+  # the scheduled expiry sweep is one query bounded by today's date instead of
+  # a full-table scan. The deferred city escalation queue (ESCALATION#<status>)
+  # can share this index as another sparse partition with no rebuild.
+  global_secondary_index {
+    name            = "GSI3"
+    hash_key        = "gsi3pk"
+    range_key       = "gsi3sk"
     projection_type = "ALL"
   }
 
