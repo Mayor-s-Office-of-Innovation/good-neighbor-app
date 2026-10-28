@@ -266,7 +266,7 @@ it("only finishing a perimeter check ends the install offer", async () => {
 
 describe("several finished checks", () => {
   // Checks finished offline wait on the device until they upload. Starting
-  // another walk must keep the earlier one, and its upload progress must
+  // another check must keep the earlier one, and its upload progress must
   // keep saving to its own record.
   beforeEach(async () => {
     savedReview = null;
@@ -283,7 +283,7 @@ describe("several finished checks", () => {
     return { check, item };
   }
 
-  it("keeps a finished check when the next walk starts", async () => {
+  it("keeps a finished check when the next check starts", async () => {
     const session = await import("./check-session.js");
     const { saveFinishedCheck } = await import("../db.js");
     const first = await finishOne("Litter by the gate");
@@ -328,7 +328,7 @@ describe("several finished checks", () => {
     expect(session.getCheck(first.check.id)).toBe(first.check);
   });
 
-  it("loadSubmitted returns the newest finished check during a walk", async () => {
+  it("loadSubmitted returns the newest finished check while another is in progress", async () => {
     const session = await import("./check-session.js");
     const first = await finishOne("Litter by the gate");
     session.startCheck("site-1");

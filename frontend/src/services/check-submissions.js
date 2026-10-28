@@ -4,10 +4,11 @@
   are captured (state/check-session.js mirrors every change to IndexedDB), so
   this only decides WHEN to send what is waiting:
 
-  - Items saved with no connection (analysis status `waiting`) and runs cut
-    short by a reload restart through the normal per-item pipeline
-    (photo-analysis.js `analyzeEvidenceItem`), which picks up from whatever
-    already reached the server. Every step is idempotent on the client ids.
+  - Items saved with no connection (analysis status `waiting`), and items
+    whose upload or analysis was interrupted by a reload or app close, are
+    sent again through the normal per-item pipeline (photo-analysis.js
+    `analyzeEvidenceItem`), which skips whatever already reached the server.
+    Every step is idempotent on the client ids.
   - A finished check gets its run-level scorecard (submit-check.js) once every
     live item has a registered artifact, then is marked done so it is not
     re-run. Home drops it once the backend history shows it.
@@ -65,13 +66,13 @@ function finalize(check) {
 }
 
 /**
- * The bound site's held checks: every finished one plus the walk on screen.
+ * The bound site's held checks: every finished one plus the check on screen.
  * @param {{ siteId: string }} site
  */
 async function heldChecks(site) {
   const checks = await loadFinishedChecks(site.siteId).catch(() => []);
-  const walk = getCurrentCheck();
-  if (walk?.status === "in-progress") checks.push(walk);
+  const inProgress = getCurrentCheck();
+  if (inProgress?.status === "in-progress") checks.push(inProgress);
   return checks.filter((check) => check.siteId === site.siteId);
 }
 

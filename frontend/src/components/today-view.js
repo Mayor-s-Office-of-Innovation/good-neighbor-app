@@ -247,9 +247,6 @@ function latestStarted(checks) {
     )[0];
 }
 
-/** Server-relevant session changes; progress and duplicate projections stay local.
- * @param {any} session
- */
 /**
  * Submitted check headers from GET /v1/checks, newest first, in UI shape.
  * @param {any[] | undefined} checks
@@ -261,6 +258,9 @@ function submittedChecks(checks) {
     .sort((a, b) => (b.submittedAt || "").localeCompare(a.submittedAt || ""));
 }
 
+/** Server-relevant session changes; progress and duplicate projections stay local.
+ * @param {any} session
+ */
 function sessionRefreshKey(session) {
   return JSON.stringify([
     session?.id,

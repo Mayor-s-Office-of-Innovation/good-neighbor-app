@@ -22,7 +22,7 @@
   finished offline. `current` is the one on screen; the others live in
   `finished`. Item ids are unique across checks, so the item mutators find
   their check by item id and an older check keeps saving its upload/analysis
-  progress after a new walk starts (services/check-submissions.js drives them).
+  progress after a new check starts (services/check-submissions.js drives them).
 */
 import { cancelCheckPolling } from "../services/check-polling.js";
 import { completeFirstPerimeterCheck } from "../services/install-prompt.js";
@@ -88,9 +88,9 @@ let current = null;
 const finished = new Map();
 const listeners = new Set();
 
-// Fire-and-forget mirror of an in-memory check to IndexedDB: the walk to the
-// draft store, a finished check to its own record. Renders read the
-// synchronous state; persistence catches up in the background.
+// Fire-and-forget mirror of an in-memory check to IndexedDB: the check in
+// progress to the draft store, a finished check to its own record. Renders
+// read the synchronous state; persistence catches up in the background.
 function persist(check = current) {
   if (!check) return;
   if (check.status === "in-progress") {
@@ -263,8 +263,9 @@ export async function loadFinishedChecks(siteId) {
 
 /**
  * The newest finished check, for home's live results (home re-kicks its
- * background scorecard). With no walk in memory it becomes `current`, as a
- * restored session always has; during a walk it stays in the background.
+ * background scorecard). With no check in progress in memory it becomes
+ * `current`, as a restored session always has; while a check is in progress
+ * it stays in the background.
  * Returns null when nothing is waiting.
  */
 export async function loadSubmitted() {

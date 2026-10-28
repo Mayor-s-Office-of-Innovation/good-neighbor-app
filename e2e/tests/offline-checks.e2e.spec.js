@@ -7,8 +7,8 @@ import { t } from "../helpers/i18n.js";
 import { PHOTO_CLEAR } from "../helpers/fixtures.js";
 
 /*
-  Perimeter checks with no connection (issue #109). The app must already be
-  open: the dev server has no service worker, so these cover the in-app queue
+  Perimeter checks with no connection. The app must already be open: the dev
+  server has no service worker, so these cover the in-app queue
   (services/check-submissions.js), not offline launch.
 
   - a photo taken offline waits on the device and still unlocks Finish;

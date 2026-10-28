@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const held = vi.hoisted(() => ({ finished: [], walk: null }));
+const held = vi.hoisted(() => ({ finished: [], inProgress: null }));
 
 vi.mock("../db.js", () => ({
   getSite: vi.fn(async () => ({ siteId: "site-1" })),
 }));
 vi.mock("../state/check-session.js", () => ({
-  getCurrentCheck: () => held.walk,
+  getCurrentCheck: () => held.inProgress,
   loadFinishedChecks: vi.fn(async () => [...held.finished]),
   markScorecardDone: vi.fn(),
 }));
@@ -57,7 +57,7 @@ const finishedCheck = (id, items, extra = {}) => ({
 beforeEach(() => {
   vi.clearAllMocks();
   held.finished = [];
-  held.walk = null;
+  held.inProgress = null;
   vi.stubGlobal("navigator", { onLine: true });
 });
 
@@ -87,7 +87,7 @@ describe("resumeCheckSubmissions", () => {
       finishedCheck("a", [waiting("1")]),
       finishedCheck("b", [waiting("2")]),
     ];
-    held.walk = {
+    held.inProgress = {
       id: "c",
       siteId: "site-1",
       status: "in-progress",
