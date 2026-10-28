@@ -51,6 +51,8 @@
 
 ## Operations
 
+- **[Shared Site details](./runbooks/site-details.md)** — public contacts, assigned manager profiles, perimeter edits, migration, and propagation checks.
+
 - **[Deployment quota permissions](./runbooks/deploy-service-quotas.md)** — repair externally owned deployment-role permissions for API Gateway quota reads.
 
 - **[Support chat](./runbooks/support-chat.md)** — FAQ sources, isolated model access, privacy, evaluation and rollout.

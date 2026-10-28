@@ -23,6 +23,10 @@ import { getDynamoTableName } from "../config.js";
 import { jsonResponse } from "../http.js";
 import { deriveAccessLevel, deriveSiteId } from "../lib/principal.js";
 import {
+  readCompliancePeriods,
+  projectSiteCompliance,
+} from "../lib/site-compliance.js";
+import {
   addDays,
   dayKeysBetween,
   isDayKey,
@@ -179,27 +183,16 @@ async function readSiteMeta(tableName, siteId) {
 
 /**
  * Every version of the site's compliance terms (`COMPLIANCE_TERMS#`), so
- * each reported day is judged by the cadence in force then. A site has a
- * handful of versions at most, so one page is enough.
+ * each reported day is judged by the cadence in force then. Every page is
+ * read so historical obligations are never truncated.
  * @param {string} tableName
  * @param {string} siteId
  * @returns {Promise<Array<import("../domain/check-compliance.js").ComplianceTermsVersion>>}
  */
 async function readComplianceTerms(tableName, siteId) {
-  const result = await ddb.send(
-    new QueryCommand({
-      TableName: tableName,
-      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-      ExpressionAttributeValues: {
-        ":pk": sitePk(siteId),
-        ":prefix": "COMPLIANCE_TERMS#",
-      },
-      ProjectionExpression:
-        "effectiveStart, expiresOnExclusive, requiredChecksPerDay, #status",
-      ExpressionAttributeNames: { "#status": "status" },
-    }),
+  return /** @type {Array<import("../domain/check-compliance.js").ComplianceTermsVersion>} */ (
+    await readCompliancePeriods(siteId, tableName)
   );
-  return /** @type {any[]} */ (result.Items ?? []);
 }
 
 /**
@@ -242,12 +235,12 @@ export const getChecksReport = async (event) => {
     queryTimeline({ tableName, partition, period: previous }),
     readComplianceTerms(tableName, siteId),
   ]);
-  const requirement = requirementFromCompliance(site.compliance);
-  // The projection describes today's terms (for the headline); each day is
-  // judged by the version that applied then. Recorded terms, even if the
-  // projection has since been nulled, mean the cadence is not assumed.
-  const hasTerms = terms.some((v) => v.status !== "cancelled");
-  if (hasTerms) requirement.assumed = false;
+  const canonical = projectSiteCompliance(site, terms, today);
+  const requirement = requirementFromCompliance(canonical.compliance);
+  if (!requirement.required) requirement.requiredPerDay = 0;
+  // The headline describes today's canonical period; each historical day is
+  // judged independently, even after the current requirement has ended.
+  requirement.assumed = false;
   const resolveRequired = requiredOnResolver(requirement, terms);
 
   const current = summarizeCheckDays({

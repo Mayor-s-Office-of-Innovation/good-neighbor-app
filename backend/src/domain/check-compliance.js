@@ -111,7 +111,6 @@ export function requiredOnResolver(requirement, terms = []) {
     .sort((a, b) => a.effectiveStart.localeCompare(b.effectiveStart));
   if (!versions.length) return (dayKey) => requiredOn(requirement, dayKey);
   return (dayKey) => {
-    if (!requirement.required) return 0;
     let applicable = null;
     for (const version of versions) {
       if (version.effectiveStart > dayKey) break;

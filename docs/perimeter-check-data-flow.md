@@ -27,7 +27,7 @@ One continuous per-item pipeline, with a background scorecard fold at the end:
    own analysis unit: the moment it's captured it uploads to S3, registers, and the
    analyzer grades it asynchronously while the walk is still happening. As soon as the
    artifact's analysis lands, the client builds a per-item assessment from it and sends
-   it to the guidance evaluator which translates issues discovered by the AI into a list 
+   it to the guidance evaluator which translates issues discovered by the AI into a list
    of tasks to be performed either by the site staff or the city.
 2. **Finish just ends the walk.** It flips the session to `capture-complete` and kicks off
    the background scorecard fold — a check-level grade/summary rollup written to the

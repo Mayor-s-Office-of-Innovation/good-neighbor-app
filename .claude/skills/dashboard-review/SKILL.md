@@ -49,7 +49,7 @@ Scale effort to the ask: a quick "is this clear?" gets the high-confidence findi
 - **No dangling links (the other direction).** If you remove a stat, fix or remove the source label that cited it — and never leave a source link pointing at a figure that isn't shown.
 
 ### 5. Chart-type & encoding honesty
-- **Match the visual to the data.** Pie/stacked charts imply a clean partition — wrong for overlapping attributes. Funnels imply nested subsets — only valid for true subsets. 
+- **Match the visual to the data.** Pie/stacked charts imply a clean partition — wrong for overlapping attributes. Funnels imply nested subsets — only valid for true subsets.
 - No truncated or distorted axes, no 3D/area tricks; encoded length/width should be **proportional to the value**.
 
 ### 6. Headline–data fidelity

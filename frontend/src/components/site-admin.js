@@ -1,15 +1,16 @@
+import {
+  adminHeader,
+  loadingView,
+  errorView,
+  field,
+} from "./site-info-shell.js";
 import "./site-admin.css";
 import "@awesome.me/webawesome/dist/components/input/input.js";
-import { getSite, hasAdminAccess, saveSiteSettings } from "../db.js";
+import { getSite, hasAdminAccess } from "../db.js";
 import { t } from "../i18n/i18n.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
-import {
-  backOrNavigate,
-  currentRoute,
-  navigate,
-  setPopstateGuard,
-} from "../router.js";
-import { getSiteAdmin, updateSiteAdmin } from "../services/api.js";
+import { backOrNavigate, navigate } from "../router.js";
+import { getSiteAdmin } from "../services/api.js";
 import {
   cancelStaffEnrollmentGrant,
   createStaffEnrollmentGrant,
@@ -18,35 +19,14 @@ import {
   revokeManagerDeviceBinding,
 } from "../services/api.js";
 import { announceScreenHeading } from "../screen-focus.js";
-import {
-  showSiteAdminErrorToast,
-  showSiteAdminSuccessToast,
-} from "../state/toasts.js";
+
 import {
   formatAdminDate,
   formatCountdown,
   formatAdminPhone,
-  validateContact,
-  validateSiteDetails,
-  valuesChanged,
 } from "./site-admin.validation.js";
 
 const EMPTY = "—";
-const CONTACT_FIELDS = [
-  ["firstName", "first-name", "given-name", "text"],
-  ["lastName", "last-name", "family-name", "text"],
-  ["email", "email", "email", "email"],
-  ["phone", "phone", "tel", "tel"],
-];
-const ADDRESS_FIELDS = [
-  ["streetNumber", "street-number", "address-line1"],
-  ["streetAddress", "street-address", "address-line1"],
-  ["secondLine", "second-line", "address-line2"],
-  ["city", "city", "address-level2"],
-  ["state", "state", "address-level1"],
-  ["zip", "zip", "postal-code"],
-];
-
 /** @param {unknown} value */
 const text = (value) => String(value || "").trim();
 
@@ -66,7 +46,35 @@ class SiteAdminView extends HTMLElement {
     try {
       const siteResult = await getSiteAdmin();
       this._site = siteResult.site;
+      this._contactUi = await import("./site-info-contacts.js");
+      if (!this.isConnected) return;
       this._render();
+      this._onContactRefresh = () => {
+        if (document.visibilityState === "hidden" || !this.isConnected) return;
+        if (this._refreshingContacts) {
+          this._pendingContacts = true;
+          return;
+        }
+        this._refreshingContacts = true;
+        void getSiteAdmin()
+          .then(({ site }) => {
+            if (!this.isConnected) return;
+            this._site = site;
+            this._render();
+          })
+          .catch(() => {})
+          .finally(() => {
+            this._refreshingContacts = false;
+            this._scheduleLetterRefresh();
+            if (this._pendingContacts) {
+              this._pendingContacts = false;
+              this._onContactRefresh();
+            }
+          });
+      };
+      window.addEventListener("focus", this._onContactRefresh);
+      document.addEventListener("visibilitychange", this._onContactRefresh);
+      this._scheduleLetterRefresh();
       announceScreenHeading(this, ".site-admin-header h1");
     } catch {
       this.innerHTML = errorView(t("siteAdmin.loadError"));
@@ -80,10 +88,32 @@ class SiteAdminView extends HTMLElement {
     );
   }
 
+  disconnectedCallback() {
+    clearTimeout(this._letterRefreshTimer);
+    window.removeEventListener("focus", this._onContactRefresh);
+    document.removeEventListener("visibilitychange", this._onContactRefresh);
+  }
+
+  _scheduleLetterRefresh() {
+    clearTimeout(this._letterRefreshTimer);
+    if (this._site?.letterState !== "draft_pending") {
+      this._letterRefreshCount = 0;
+      return;
+    }
+    if (
+      !this.isConnected ||
+      document.visibilityState === "hidden" ||
+      (this._letterRefreshCount || 0) >= 10
+    )
+      return;
+    this._letterRefreshCount = (this._letterRefreshCount || 0) + 1;
+    this._letterRefreshTimer = setTimeout(() => this._onContactRefresh(), 3000);
+  }
+
   _render() {
     const site = this._site;
     const address = site.address || {};
-    const contact = site.contactPerson || {};
+    const contact = site.publicContact || {};
     const oversight = site.oversight || {};
     const compliance = site.compliance || {};
     const letters = site.complianceLetters || {};
@@ -95,21 +125,20 @@ class SiteAdminView extends HTMLElement {
     ]
       .filter(Boolean)
       .join(", ");
-    const contactName = [contact.firstName, contact.lastName]
-      .map(text)
-      .filter(Boolean)
-      .join(" ");
     const monitoring = t(
       compliance.underEnhancedMonitoring
         ? "admin.compliance.yes"
         : "admin.compliance.no",
     );
-    const period = compliance.periodStart
-      ? t("siteAdmin.dateRange", {
-          start: formatAdminDate(compliance.periodStart),
-          end: formatAdminDate(compliance.periodEnd),
-        })
-      : EMPTY;
+    const period =
+      compliance.perimeterChecksRequired === false
+        ? t("siteAdmin.compliance.notRequired")
+        : compliance.periodStart
+          ? t("siteAdmin.dateRange", {
+              start: formatAdminDate(compliance.periodStart),
+              end: formatAdminDate(compliance.periodEnd),
+            })
+          : EMPTY;
 
     this.innerHTML = html`
       <div class="site-admin-page">
@@ -120,10 +149,18 @@ class SiteAdminView extends HTMLElement {
             [t("siteAdmin.siteDetails.address"), addressLine],
           ])}
           ${editableSection(t("siteAdmin.contact.title"), "contact", [
-            [t("siteAdmin.contact.name"), contactName],
             [t("siteAdmin.field.email"), contact.email],
             [t("siteAdmin.field.phone"), formatAdminPhone(contact.phone)],
+            ...(contact.phoneExtension
+              ? [
+                  /** @type {[string, unknown]} */ ([
+                    t("siteAdmin.field.phoneExtension"),
+                    contact.phoneExtension,
+                  ]),
+                ]
+              : []),
           ])}
+          ${this._contactUi.peopleSections(site)}
           ${readOnlySection(t("siteAdmin.oversight.title"), [
             [
               t("siteAdmin.oversight.department"),
@@ -132,10 +169,6 @@ class SiteAdminView extends HTMLElement {
             [
               t("siteAdmin.oversight.systemOfCare"),
               oversight.managingSystemOfCare,
-            ],
-            [
-              t("siteAdmin.oversight.programManager"),
-              oversight.cityProgramManager,
             ],
           ])}
           ${readOnlySection(t("siteAdmin.compliance.title"), [
@@ -146,12 +179,31 @@ class SiteAdminView extends HTMLElement {
               compliance.requiredChecksPerDay,
             ],
           ])}
-          <section class="site-admin-section">
-            <h2>${escapeHtml(t("siteAdmin.perimeter.title"))}</h2>
-            <div class="site-admin-card site-admin-card--prose">
-              ${display(site.perimeter)}
-            </div>
+          <section class="site-admin-section" data-compliance-history>
+            <h2>${escapeHtml(t("admin.compliance.pastPeriods"))}</h2>
+            ${(site.compliancePeriods || []).some(
+              (item) => item.status === "past",
+            )
+              ? rowsCard(
+                  site.compliancePeriods
+                    .filter((item) => item.status === "past")
+                    .map((item) => [
+                      t("siteAdmin.dateRange", {
+                        start: formatAdminDate(item.effectiveStart),
+                        end: formatAdminDate(item.effectiveEnd),
+                      }),
+                      t("siteAdmin.compliance.cadence", {
+                        count: item.requiredChecksPerDay,
+                      }),
+                    ]),
+                )
+              : html`<p class="site-admin-empty">
+                  ${escapeHtml(t("siteAdmin.compliance.noPast"))}
+                </p>`}
           </section>
+          ${editableSection(t("siteAdmin.perimeter.title"), "perimeter", [
+            ["", site.perimeter],
+          ])}
           <section class="site-admin-section">
             <h2>${escapeHtml(t("siteAdmin.letters.title"))}</h2>
             ${current
@@ -164,7 +216,13 @@ class SiteAdminView extends HTMLElement {
                 )
               : html`<div class="site-admin-card site-admin-letters">
                   <p class="site-admin-empty">
-                    ${escapeHtml(t("siteAdmin.letters.noCurrent"))}
+                    ${escapeHtml(
+                      t(
+                        site.letterState === "draft_pending"
+                          ? "admin.letters.pending"
+                          : "siteAdmin.letters.noCurrent",
+                      ),
+                    )}
                   </p>
                 </div>`}
           </section>
@@ -638,19 +696,10 @@ class SiteAccessView extends HTMLElement {
 
 class SiteAdminEdit extends HTMLElement {
   async connectedCallback() {
-    const binding = await getSite();
-    if (!hasAdminAccess(binding)) {
-      navigate("/today");
-      return;
-    }
-    this._kind = currentRoute().endsWith("/contact") ? "contact" : "site";
-    this.innerHTML = loadingView(this._title());
     try {
-      this._site = (await getSiteAdmin()).site;
-      this._original = this._sectionValue();
-      this._render();
-      this._installLeaveGuards();
-      announceScreenHeading(this, ".site-admin-header h1");
+      await import("./site-info-editor.js");
+      if (this.isConnected)
+        this.replaceChildren(document.createElement("site-info-editor"));
     } catch {
       this.innerHTML = errorView(t("siteAdmin.formLoadError"));
       this.querySelector("[data-admin-back]")?.addEventListener("click", () =>
@@ -658,269 +707,6 @@ class SiteAdminEdit extends HTMLElement {
       );
     }
   }
-
-  disconnectedCallback() {
-    this._removePopstateGuard?.();
-    if (this._beforeUnload) {
-      window.removeEventListener("beforeunload", this._beforeUnload);
-    }
-  }
-
-  _title() {
-    return this._kind === "contact"
-      ? t("siteAdmin.edit.contactTitle")
-      : t("siteAdmin.edit.siteTitle");
-  }
-
-  _sectionValue() {
-    if (this._kind === "contact") {
-      const contact = this._site.contactPerson || {};
-      return Object.fromEntries(
-        CONTACT_FIELDS.map(([key]) => [
-          key,
-          key === "phone" ? formatAdminPhone(contact[key]) : text(contact[key]),
-        ]),
-      );
-    }
-    const address = this._site.address || {};
-    return {
-      name: text(this._site.name),
-      address: Object.fromEntries(
-        ADDRESS_FIELDS.map(([key]) => [key, text(address[key])]),
-      ),
-    };
-  }
-
-  _render() {
-    this.innerHTML = html`
-      <div class="site-admin-page">
-        ${adminHeader(this._title())}
-        <div class="site-admin-edit">
-          <form id="site-admin-form" novalidate>
-            <div class="site-admin-fields">
-              ${this._kind === "contact"
-                ? formFields(CONTACT_FIELDS, this._original)
-                : siteFields(this._original)}
-            </div>
-            <p
-              class="site-admin-form-error"
-              id="site-admin-form-error"
-              role="alert"
-            ></p>
-            <div class="site-admin-edit-actions">
-              <button class="btn-outline" id="site-admin-cancel" type="button">
-                ${escapeHtml(t("common.cancel"))}
-              </button>
-              <button
-                class="btn-ink"
-                id="site-admin-save"
-                type="submit"
-                disabled
-              >
-                ${escapeHtml(t("siteAdmin.edit.save"))}
-              </button>
-            </div>
-          </form>
-        </div>
-        <dialog
-          class="places-modal site-admin-discard-dialog"
-          id="site-admin-discard-dialog"
-        >
-          <form class="places-modal__card" method="dialog">
-            <div class="places-modal__copy">
-              <h2 class="places-modal__title">
-                ${escapeHtml(t("siteAdmin.discard.title"))}
-              </h2>
-              <p class="places-modal__text">
-                ${escapeHtml(t("siteAdmin.discard.text"))}
-              </p>
-            </div>
-            <div class="places-modal__actions">
-              <button class="btn-outline" id="site-admin-keep" value="keep">
-                ${escapeHtml(t("common.keepEditing"))}
-              </button>
-              <button
-                class="places-modal__danger"
-                id="site-admin-discard"
-                value="discard"
-              >
-                ${escapeHtml(t("common.discardChanges"))}
-              </button>
-            </div>
-          </form>
-        </dialog>
-      </div>
-    `;
-    this.querySelector("#site-admin-form")?.addEventListener("input", () =>
-      this._syncDirty(),
-    );
-    this.querySelector("#site-admin-form")?.addEventListener(
-      "submit",
-      (event) => {
-        event.preventDefault();
-        void this._save();
-      },
-    );
-    this.querySelector("[data-admin-back]")?.addEventListener(
-      "click",
-      () => void this._attemptBack(),
-    );
-    this.querySelector("#site-admin-cancel")?.addEventListener(
-      "click",
-      () => void this._attemptBack(),
-    );
-  }
-
-  _value() {
-    /** @param {string} id */
-    const value = (id) =>
-      text(/** @type {any} */ (this.querySelector(id))?.value);
-    return this._kind === "contact"
-      ? Object.fromEntries(
-          CONTACT_FIELDS.map(([key, id]) => [key, value(`#admin-${id}`)]),
-        )
-      : {
-          name: value("#admin-site-name"),
-          address: Object.fromEntries(
-            ADDRESS_FIELDS.map(([key, id]) => [key, value(`#admin-${id}`)]),
-          ),
-        };
-  }
-
-  _syncDirty() {
-    const save = /** @type {HTMLButtonElement | null} */ (
-      this.querySelector("#site-admin-save")
-    );
-    if (save) save.disabled = !valuesChanged(this._original, this._value());
-    const error = this.querySelector("#site-admin-form-error");
-    if (error) error.textContent = "";
-  }
-
-  _isDirty() {
-    return valuesChanged(this._original, this._value());
-  }
-
-  _installLeaveGuards() {
-    this._removePopstateGuard = setPopstateGuard(async () => {
-      if (this._allowLeave || !this._isDirty()) return true;
-      const discard = await this._confirmDiscard();
-      if (discard) this._allowLeave = true;
-      return discard;
-    });
-    this._beforeUnload = (event) => {
-      if (this._allowLeave || !this._isDirty()) return;
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", this._beforeUnload);
-  }
-
-  async _attemptBack() {
-    if (!this._isDirty()) {
-      backOrNavigate("/site-admin");
-      return;
-    }
-    if (await this._confirmDiscard()) {
-      this._allowLeave = true;
-      backOrNavigate("/site-admin");
-    }
-  }
-
-  _confirmDiscard() {
-    if (this._discardPromise) return this._discardPromise;
-    const dialog = this._dialog();
-    dialog?.showModal();
-    this._discardPromise = new Promise((resolve) => {
-      dialog?.addEventListener(
-        "close",
-        () => {
-          this._discardPromise = null;
-          resolve(dialog.returnValue === "discard");
-        },
-        { once: true },
-      );
-    });
-    return this._discardPromise;
-  }
-
-  _dialog() {
-    return /** @type {HTMLDialogElement | null} */ (
-      this.querySelector("#site-admin-discard-dialog")
-    );
-  }
-
-  async _save() {
-    const value = this._value();
-    const message =
-      this._kind === "contact"
-        ? validateContact(value)
-        : validateSiteDetails(value);
-    const error = /** @type {HTMLElement | null} */ (
-      this.querySelector("#site-admin-form-error")
-    );
-    if (message) {
-      if (error) error.textContent = message;
-      return;
-    }
-    const save = /** @type {HTMLButtonElement | null} */ (
-      this.querySelector("#site-admin-save")
-    );
-    if (save) {
-      save.disabled = true;
-      save.textContent = t("siteAdmin.edit.saving");
-    }
-    try {
-      await updateSiteAdmin(
-        this._kind === "contact" ? "contactPerson" : "siteDetails",
-        value,
-      );
-      if (this._kind === "site") {
-        await saveSiteSettings({ name: value.name });
-      }
-      this._allowLeave = true;
-      showSiteAdminSuccessToast();
-      backOrNavigate("/site-admin");
-    } catch {
-      showSiteAdminErrorToast();
-      if (save) {
-        save.disabled = false;
-        save.textContent = t("siteAdmin.edit.save");
-      }
-    }
-  }
-}
-
-/** @param {string} title */
-function adminHeader(title) {
-  return html`<header class="site-admin-header">
-    <button
-      data-admin-back
-      type="button"
-      aria-label="${escapeAttr(t("common.back"))}"
-    >
-      <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
-    </button>
-    <h1 tabindex="-1">${escapeHtml(title)}</h1>
-    <span aria-hidden="true"></span>
-  </header>`;
-}
-
-/** @param {string} title */
-function loadingView(title) {
-  return html`<div class="site-admin-page">
-    ${adminHeader(title)}
-    <div class="site-admin-loading">
-      <wa-spinner></wa-spinner> ${escapeHtml(t("common.loading"))}
-    </div>
-  </div>`;
-}
-
-/** @param {string} message */
-function errorView(message) {
-  return html`<div class="site-admin-page">
-    ${adminHeader(t("siteAdmin.title"))}
-    <p class="site-admin-load-error" role="alert">${escapeHtml(message)}</p>
-  </div>`;
 }
 
 /** @param {string} title @param {string} route @param {Array<[string, unknown]>} rows */
@@ -933,7 +719,11 @@ function editableSection(title, route, rows) {
         ${escapeHtml(t("common.edit"))}
       </button>
     </div>
-    ${rowsCard(rows)}
+    ${route === "perimeter"
+      ? html`<div class="site-admin-card site-admin-card--prose">
+          ${display(rows[0][1])}
+        </div>`
+      : rowsCard(rows)}
   </section>`;
 }
 
@@ -981,49 +771,6 @@ function letterRow(dateRange, url) {
       >${escapeHtml(t("siteAdmin.letters.openPdf"))}</a
     >
   </div>`;
-}
-
-/** @param {string[][]} fields @param {Record<string, any>} value */
-function formFields(fields, value) {
-  return fields
-    .map(([key, id, autocomplete, type = "text"]) =>
-      field(
-        `admin-${id}`,
-        t(`siteAdmin.field.${key}`),
-        value[key],
-        autocomplete,
-        type,
-        key !== "secondLine",
-      ),
-    )
-    .join("");
-}
-
-/** @param {Record<string, any>} value */
-function siteFields(value) {
-  const address = value.address;
-  return [
-    field(
-      "admin-site-name",
-      t("siteAdmin.field.siteName"),
-      value.name,
-      "organization",
-      "text",
-    ),
-    formFields(ADDRESS_FIELDS, address),
-  ].join("");
-}
-
-function field(id, label, value, autocomplete, type, required = true) {
-  return html`<wa-input
-    id="${id}"
-    label="${escapeAttr(label)}"
-    value="${escapeAttr(value)}"
-    autocomplete="${autocomplete}"
-    type="${type}"
-    size="large"
-    ${required ? "required" : ""}
-  ></wa-input>`;
 }
 
 /** @param {Record<string, any>} grant @param {boolean} expanded */

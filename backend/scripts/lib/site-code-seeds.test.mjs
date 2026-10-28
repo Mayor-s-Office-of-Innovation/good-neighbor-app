@@ -2,6 +2,21 @@ import { describe, expect, it, vi } from "vitest";
 import { devSiteCodeSeeds, seedSiteCodes } from "./site-code-seeds.mjs";
 
 describe("seedSiteCodes", () => {
+  it("does not seed standalone compliance requirements or sample letters", async () => {
+    const send = vi.fn(async () => ({}));
+    await seedSiteCodes({ send }, "gnp-test-app");
+    for (const [command] of send.mock.calls) {
+      if (
+        command.input.Key?.sk !== "#META" ||
+        !command.input.Key?.pk?.startsWith("SITE#")
+      )
+        continue;
+      expect(command.input.UpdateExpression).not.toContain("compliance =");
+      expect(command.input.UpdateExpression).not.toContain(
+        "complianceLetters =",
+      );
+    }
+  });
   it("gives every seeded provider more than one site and unique login codes", () => {
     const byProvider = new Map();
     for (const seed of devSiteCodeSeeds) {

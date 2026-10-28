@@ -60,32 +60,8 @@ export const devSiteCodeSeeds = [
         managingSystemOfCare: "BHS-PBH",
         cityProgramManager: "Sample Contact002",
       },
-      compliance: {
-        underEnhancedMonitoring: true,
-        periodStart: "2026-01-15",
-        periodEnd: "",
-        requiredChecksPerDay: 3,
-      },
       perimeter:
         "15th St from Valencia St to Mission St, including the sidewalks and alleys around the site.",
-      complianceLetters: {
-        current: {
-          effectiveStart: "2026-01-15",
-          url: "/sample-compliance-letter.pdf",
-        },
-        past: [
-          {
-            effectiveStart: "2025-07-01",
-            effectiveEnd: "2026-01-14",
-            url: "/sample-compliance-letter.pdf",
-          },
-          {
-            effectiveStart: "2024-02-01",
-            effectiveEnd: "2025-06-30",
-            url: "/sample-compliance-letter.pdf",
-          },
-        ],
-      },
     },
     location: {
       latitude: 37.76656393517443,
@@ -325,7 +301,7 @@ async function upsertSite(docDdb, tableName, seed, now) {
           ? ", #location = if_not_exists(#location, :location)"
           : "") +
         (admin
-          ? ", addressParts = if_not_exists(addressParts, :addressParts), contactPerson = if_not_exists(contactPerson, :contactPerson), oversight = if_not_exists(oversight, :oversight), compliance = if_not_exists(compliance, :compliance), perimeter = if_not_exists(perimeter, :perimeter), complianceLetters = if_not_exists(complianceLetters, :complianceLetters)"
+          ? ", addressParts = if_not_exists(addressParts, :addressParts), contactPerson = if_not_exists(contactPerson, :contactPerson), oversight = if_not_exists(oversight, :oversight), perimeter = if_not_exists(perimeter, :perimeter)"
           : ""),
       ExpressionAttributeNames: {
         "#type": "type",
@@ -359,9 +335,7 @@ async function upsertSite(docDdb, tableName, seed, now) {
               ":addressParts": admin.addressParts,
               ":contactPerson": admin.contactPerson,
               ":oversight": admin.oversight,
-              ":compliance": admin.compliance,
               ":perimeter": admin.perimeter,
-              ":complianceLetters": admin.complianceLetters,
             }
           : {}),
       },

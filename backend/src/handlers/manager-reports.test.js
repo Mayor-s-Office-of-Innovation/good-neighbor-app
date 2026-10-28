@@ -91,7 +91,16 @@ describe("getChecksReport", () => {
         });
       }
       if (cmd.input.ExpressionAttributeValues[":prefix"]) {
-        return Promise.resolve({ Items: [] }); // no versioned terms
+        return Promise.resolve({
+          Items: [
+            {
+              termsVersionId: "current",
+              effectiveStart: "2026-07-01",
+              requiredChecksPerDay: 3,
+              status: "active",
+            },
+          ],
+        });
       }
       const from = cmd.input.ExpressionAttributeValues[":from"];
       if (from.startsWith("2026-09-27")) {
@@ -229,13 +238,13 @@ describe("getChecksReport", () => {
       endExclusive: "2026-10-01",
     });
     expect(body.days).toHaveLength(30);
-    // No cadence on the site: the city-wide 3 a day stands in, flagged.
+    // No canonical period means no requirement; do not invent a default duty.
     expect(body.requirement).toMatchObject({
-      requiredPerDay: 3,
-      assumed: true,
+      requiredPerDay: 0,
+      assumed: false,
     });
-    expect(body.days[0].required).toBe(3);
-    expect(body.totals.possible).toBe(30 * 3);
+    expect(body.days[0].required).toBe(0);
+    expect(body.totals.possible).toBe(0);
     // Current month needed two pages, previous month one, plus the terms
     // read. Both periods query concurrently, so only the cursor page's
     // position is stable.

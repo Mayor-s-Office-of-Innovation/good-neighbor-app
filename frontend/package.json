@@ -98,6 +98,16 @@
       "name": "artifact photo css",
       "path": "dist/assets/artifact-photo-*.css",
       "limit": "200 B"
+    },
+    {
+      "name": "site info editor js",
+      "path": "dist/assets/site-info-editor-*.js",
+      "limit": "4 kB"
+    },
+    {
+      "name": "site info contacts js",
+      "path": "dist/assets/site-info-contacts-*.js",
+      "limit": "1.5 kB"
     }
   ],
   "dependencies": {
