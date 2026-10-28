@@ -71,7 +71,15 @@ const releaseSha =
     scripts/publish-web-assets.sh keeps old assets.
   - Category artwork (~2 MB, light + dark) is cached as it is shown rather than
     downloaded up front. Source maps are never cached (or published).
+  - Manager screens (site admin, access, reports) are left out: they are not
+    part of field work and need fresh data anyway, so offline they show the
+    route's load error. Other languages (src/i18n/i18n.js catalogs plus their
+    Web Awesome translations) are cached only once someone switches to one;
+    English is in the main bundle. Both lists match chunk names, so update
+    them when those chunks are renamed or new ones are added.
 */
+const managerChunks = "{site-admin,site-access-*,reports-view,qr-code}";
+const languageChunks = "{es,fil,vi,zh-Hant,zh-tw}";
 const offlineShell = VitePWA({
   manifest: false,
   injectRegister: false,
@@ -79,6 +87,10 @@ const offlineShell = VitePWA({
     globPatterns: [
       "**/*.{js,css,html,svg,ico,webp,webmanifest}",
       "{img,icons}/*.png",
+    ],
+    globIgnores: [
+      `assets/${managerChunks}-*.{js,css}`,
+      `assets/${languageChunks}-*.js`,
     ],
     navigateFallback: null,
     directoryIndex: null,
@@ -118,6 +130,19 @@ const offlineShell = VitePWA({
         options: {
           cacheName: "category-icons",
           expiration: { maxEntries: 60 },
+        },
+      },
+      {
+        // Hashed names, so cache first is safe; the cap drops old releases.
+        urlPattern: ({ sameOrigin, url }) =>
+          sameOrigin &&
+          /^\/assets\/(?:es|fil|vi|zh-Hant|zh-tw)-[^/]+\.js$/.test(
+            url.pathname,
+          ),
+        handler: "CacheFirst",
+        options: {
+          cacheName: "languages",
+          expiration: { maxEntries: 20 },
         },
       },
     ],

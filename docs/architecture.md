@@ -417,6 +417,10 @@ icons are served cache first from the precache. A new worker takes over as soon 
 installs; an open page keeps its loaded code, and older lazy chunks still come from S3,
 which keeps previous assets.
 
+Manager screens (site admin, access, reports) are not precached: they are not field work
+and need fresh data, so offline they show the route's load error. Languages other than
+English are cached only once someone loads one.
+
 ### Duplicate issue links (feature-gated; not yet deployed)
 
 A separate DynamoDB stream dispatcher and SQS/Lambda worker perform duplicate
