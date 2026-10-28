@@ -74,6 +74,11 @@ module "app" {
   bedrock_model_id            = var.bedrock_model_id
   analyzer_base_url           = "https://xvcwo6m20a.execute-api.us-east-1.amazonaws.com/prod"
   duplicate_analyzer_base_url = "https://xvcwo6m20a.execute-api.us-east-1.amazonaws.com/prod"
+
+  # Good Neighbor - Prod feedback survey; identifiers only (key stored in Secrets Manager).
+  feedback_survey_id   = "01a184ca-e77d-0000-d993-bb815ab74819"
+  feedback_question_id = "47e4c35b-7e7c-4c84-9fb8-a9e9a35dfaca"
+
   # Production cutover enabled after deployed dev validation and comparison-key provisioning.
   enable_duplicate_detection               = true
   duplicate_worker_maximum_concurrency     = 20
