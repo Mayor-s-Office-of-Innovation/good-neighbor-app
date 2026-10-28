@@ -779,7 +779,7 @@ function waitingCard(item) {
               ${escapeHtml(t("card.waiting.message"))}
             </p>
           </div>
-          ${evidencePreview(item, true)}
+          ${evidencePreview(item)}
         </div>
       </div>
     </article>

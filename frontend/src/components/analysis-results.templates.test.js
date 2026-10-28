@@ -1381,4 +1381,19 @@ describe("waiting for connection", () => {
     expect(markup).not.toContain("analysis-card--failed");
     expect(markup).not.toContain("analysis-card--pending");
   });
+
+  it("shows the photo saved on the device, not a placeholder", () => {
+    const [markup] = analysisCards(
+      {
+        id: "item_offline_photo",
+        kind: "photo",
+        dataUrl: "data:image/jpeg;base64,AAAA",
+        analysis: { status: "waiting" },
+      },
+      "check_1",
+    );
+    expect(markup).toContain("analysis-card--waiting");
+    expect(markup).toContain("data:image/jpeg;base64,AAAA");
+    expect(markup).not.toContain("analysis-card__media--placeholder");
+  });
 });
