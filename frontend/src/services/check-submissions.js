@@ -13,9 +13,11 @@
     live item has a registered artifact, then is marked done so it is not
     re-run. Home drops it once the backend history shows it.
 
-  Triggers: app start, `online`, `pageshow`, `sitebound`, and the backend
-  coming back (backend-health.js). Each finished item run re-checks only the
-  scorecards, never restarts uploads, so an offline device cannot spin.
+  Triggers: app start, `online`, `pageshow`, returning to the app,
+  `sitebound`, the backend coming back (backend-health.js), and a retry every
+  minute while items wait (a weak signal may never fire `online`). Each
+  finished item run re-checks only the scorecards, never restarts uploads, so
+  an offline device cannot spin.
   Like care work, sending pauses while the app is closed: there is no
   background sync (iOS does not support it).
 */
@@ -76,6 +78,12 @@ async function heldChecks(site) {
   return checks.filter((check) => check.siteId === site.siteId);
 }
 
+// While items wait, try again this often. On a weak signal the browser may
+// never fire `online`, and the health probe backs off to 5 minutes.
+export const WAITING_RETRY_MS = 60_000;
+/** @type {ReturnType<typeof setTimeout> | undefined} */
+let retryTimer;
+
 /**
  * Restart waiting items and build any scorecards that are ready.
  * @param {{ uploads?: boolean }} [options] false: scorecards only
@@ -85,15 +93,30 @@ export async function resumeCheckSubmissions({ uploads = true } = {}) {
     const site = await getSite();
     if (!site?.siteId) return;
     const offline = globalThis.navigator?.onLine === false;
+    let waiting = false;
     for (const check of await heldChecks(site)) {
-      if (uploads && !offline)
-        for (const item of checkItems(check))
-          if (shouldResumeEvidenceItem(item)) analyzeEvidenceItem(item.id);
+      for (const item of checkItems(check)) {
+        if (item.analysis?.status === "waiting") waiting = true;
+        if (uploads && !offline && shouldResumeEvidenceItem(item))
+          analyzeEvidenceItem(item.id);
+      }
       finalize(check);
     }
+    scheduleRetry(waiting);
   } catch {
     /* Storage failure must not prevent app startup. */
   }
+}
+
+/** @param {boolean} waiting */
+function scheduleRetry(waiting) {
+  if (!waiting || retryTimer) return;
+  retryTimer = setTimeout(() => {
+    retryTimer = undefined;
+    // A hidden page retries on `pageshow` / visibility instead.
+    if (globalThis.document?.visibilityState === "hidden") return;
+    void resumeCheckSubmissions();
+  }, WAITING_RETRY_MS);
 }
 
 let started = false;
@@ -107,6 +130,9 @@ export function startCheckSubmissionRecovery() {
   window.addEventListener("online", resume);
   window.addEventListener("pageshow", resume);
   window.addEventListener("sitebound", resume);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") resume();
+  });
   window.addEventListener(EVIDENCE_SETTLED_EVENT, () => {
     void resumeCheckSubmissions({ uploads: false });
   });
