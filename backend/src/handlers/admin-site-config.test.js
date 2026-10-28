@@ -143,6 +143,7 @@ describe("effective-dated Site terms", () => {
             {
               pk: "SITE#site-1",
               sk: "COMPLIANCE_TERMS#2026-01-01#old",
+              termsVersionId: "old",
               effectiveStart: "2026-01-01",
             },
           ],
@@ -195,6 +196,9 @@ describe("effective-dated Site terms", () => {
       );
       expect(response.statusCode).toBe(201);
       expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+      expect(send.mock.calls[0][0].input.ConsistentRead).toBe(true);
+      expect(send.mock.calls[1][0]).toBeInstanceOf(QueryCommand);
+      expect(send.mock.calls[1][0].input.ConsistentRead).toBe(true);
       const transaction = /** @type {any} */ (
         send.mock.calls
           .map(([c]) => c)
@@ -319,6 +323,57 @@ describe("effective-dated Site terms", () => {
     expect(JSON.parse(String(response.body))).toEqual({
       error: "terms_overlap",
     });
+  });
+
+  it("returns a conflict when the Site's latest version is missing from the terms read", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          name: "Site One",
+          address: "1 Main St",
+          status: "active",
+          leadProgramId: "program-1",
+          latestComplianceTermsVersionId: "just-created",
+          primaryContactUserId: "contact-1",
+          primaryContact: { firstName: "Sam", lastName: "Lee" },
+          oversight: {
+            managingCityDepartment: "DPH",
+            cityProgramManagerId: "manager-1",
+          },
+        },
+      })
+      .mockResolvedValueOnce({ Items: [] })
+      .mockResolvedValueOnce({
+        Item: { status: "active", programId: "program-1" },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          userId: "contact-1",
+          firstName: "Sam",
+          lastName: "Lee",
+          email: "sam@example.org",
+          status: "active",
+        },
+      });
+    const response = await call(
+      createSiteTerms,
+      event(
+        {
+          reasons: ["2"],
+          siteManagerUserId: "contact-1",
+          requiredChecksPerDay: 2,
+        },
+        { siteId: "site-1" },
+      ),
+    );
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(String(response.body))).toEqual({
+      error: "terms_write_conflict",
+    });
+    expect(
+      send.mock.calls.some(([c]) => c instanceof TransactWriteCommand),
+    ).toBe(false);
   });
 
   it("requires an expiry when any temporary reason is selected", async () => {

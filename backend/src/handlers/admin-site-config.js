@@ -228,6 +228,7 @@ export const createSiteTerms = (event) =>
         new GetCommand({
           TableName: tableName,
           Key: { pk: `SITE#${siteId}`, sk: "#META" },
+          ConsistentRead: true,
         }),
       ),
       readCompliancePeriods(siteId, tableName).then((Items) => ({ Items })),
@@ -376,6 +377,18 @@ export const createSiteTerms = (event) =>
     const termsVersionId = randomUUID();
     const observedLatestVersion =
       siteResult.Item.latestComplianceTermsVersionId;
+    // The Site record and the terms list are two reads, not one snapshot. If
+    // the record names a latest version the list does not contain, a creation
+    // landed between them: stop rather than build on a partial view, which
+    // would leave that version unshortened and still in the GSI3 expiry index.
+    if (
+      observedLatestVersion !== undefined &&
+      !(termsResult.Items ?? []).some(
+        (item) => item.termsVersionId === observedLatestVersion,
+      )
+    ) {
+      return jsonResponse(409, { error: "terms_write_conflict" });
+    }
     const actor = adminPrincipal(event).subject || "central-admin";
     const [email, leadProgramResult] = await Promise.all([
       complianceLetterEmail(
