@@ -864,3 +864,18 @@ Program selection no longer requires the site's provider to own that program.
 `providerAccessGeneration` on Site metadata and its provider-site projection advances
 only on a provider change; provider-derived bindings snapshot it and authorization,
 refresh, and discovery compare it with the canonical Site value (missing means zero).
+
+## Policy authoring records
+
+Supervisor-only policy authoring uses the existing table without a GSI:
+
+| Record | PK | SK | Attributes |
+| --- | --- | --- | --- |
+| Shared policy draft | `POLICY_EDITOR` | `DRAFT` | `document`, numeric `revision`, `updatedAt`, `updatedBy`, optional `lastReleaseId` |
+| Immutable prepared policy | `POLICY_EDITOR` | `RELEASE#<UUID>` | `document`, frozen `catalog` / CSV artifacts and analyzer-base manifest, `releaseId`, `digest`, `baseVersion`, `reason`, `createdAt`, `createdBy`, `status: prepared`, `activationAvailable: false` |
+
+Saving checks the expected draft revision; first save requires a nonexistent item.
+Preparing a release writes its immutable record and advances the draft revision
+in one transaction. No authoring record is read by runtime guidance evaluation.
+There is no active-policy pointer. See [policy authoring](runbooks/policy-editor.md)
+for access patterns, limits, export semantics, and the activation boundary.

@@ -38,7 +38,8 @@
     "duplicates:images": "node --env-file=.env.duplicates scripts/evaluate-image-duplicates.mjs",
     "local:duplicates": "node --env-file=../.env.local scripts/local-duplicates.mjs",
     "support:check": "node scripts/check-support-knowledge.mjs",
-    "support:evaluate": "node scripts/evaluate-support.mjs"
+    "support:evaluate": "node scripts/evaluate-support.mjs",
+    "policy:categories": "node scripts/policy-category-source.mjs"
   },
   "dependencies": {
     "@aws-crypto/client-node": "^4.2.1",

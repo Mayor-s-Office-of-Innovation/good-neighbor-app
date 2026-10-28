@@ -51,6 +51,8 @@
 
 ## Operations
 
+- **[Policy authoring](./runbooks/policy-editor.md)** — supervisor drafts, reachability validation, inactive release packages, and the coordinated activation boundary ([ADR 0019](./adr/0019-policy-authoring-and-prepared-releases.md)).
+
 - **[Deployment quota permissions](./runbooks/deploy-service-quotas.md)** — repair externally owned deployment-role permissions for API Gateway quota reads.
 
 - **[Support chat](./runbooks/support-chat.md)** — FAQ sources, isolated model access, privacy, evaluation and rollout.

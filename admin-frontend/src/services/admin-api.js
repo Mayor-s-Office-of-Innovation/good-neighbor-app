@@ -83,12 +83,46 @@ async function parseAdminResponse(path, init) {
     if (typeof body.message === "string") {
       /** @type {any} */ (err).detail = body.message;
     }
+    if (body.report) /** @type {any} */ (err).report = body.report;
     throw err;
   }
   return body;
 }
 
 export const adminApi = {
+  getPolicyDraft: () =>
+    adminFetch("/admin/v1/policy/draft", { cache: "no-store" }),
+  savePolicyDraft: (document, revision) =>
+    adminFetch("/admin/v1/policy/draft", {
+      method: "PUT",
+      body: JSON.stringify({ document, revision }),
+    }),
+  validatePolicy: (document, translations = false) =>
+    adminFetch("/admin/v1/policy/validate", {
+      method: "POST",
+      body: JSON.stringify({ document, translations }),
+    }),
+  previewPolicy: (document, scenario) =>
+    adminFetch("/admin/v1/policy/preview", {
+      method: "POST",
+      body: JSON.stringify({ document, scenario }),
+    }),
+  importPolicy: (categoriesCsv, rulesCsv) =>
+    adminFetch("/admin/v1/policy/import", {
+      method: "POST",
+      body: JSON.stringify({ categoriesCsv, rulesCsv }),
+    }),
+  createPolicyRelease: (revision, reason) =>
+    adminFetch("/admin/v1/policy/releases", {
+      method: "POST",
+      body: JSON.stringify({ revision, reason }),
+    }),
+  listPolicyReleases: () =>
+    adminFetch("/admin/v1/policy/releases", { cache: "no-store" }),
+  getPolicyRelease: (id) =>
+    adminFetch(`/admin/v1/policy/releases/${encodeURIComponent(id)}`, {
+      cache: "no-store",
+    }),
   getSystemStatus: () => adminFetch("/admin/v1/system-status"),
   getStatusEntries: (site, kind, cursor) =>
     adminFetch(

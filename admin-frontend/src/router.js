@@ -1,4 +1,5 @@
 const ROUTES = [
+  ["policies", /^\/policies\/?$/],
   [
     "system-status",
     /^\/system-status(?:\/(network|analysis|submissions|checks|issues|actions|deletions|duplicates))?\/?$/,

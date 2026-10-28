@@ -1,0 +1,178 @@
+policy-editor {
+  display: block;
+  .policy-page {
+    max-inline-size: 90rem;
+    margin-inline: auto;
+  }
+  .policy-breadcrumb {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .policy-table-wrap {
+    overflow-x: auto;
+    margin-block: 1rem;
+  }
+  .policy-field {
+    position: relative;
+    margin-block: 1rem;
+  }
+  .policy-field-heading {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 600;
+  }
+  .policy-field-heading label {
+    margin: 0;
+  }
+  .policy-info {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-inline-size: 2.75rem;
+    min-block-size: 2.75rem;
+    border: 1px solid transparent;
+    border-radius: 50%;
+    color: inherit;
+    background: transparent;
+    cursor: pointer;
+  }
+  .policy-info:hover {
+    border-color: currentColor;
+  }
+  .policy-info:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+  }
+  .policy-field-description {
+    margin-block: 0.25rem 0.75rem;
+    padding: 0.75rem;
+    border-inline-start: 0.2rem solid currentColor;
+    max-inline-size: 65ch;
+    line-height: 1.6;
+  }
+  .policy-field-description[hidden] {
+    display: none;
+  }
+  .policy-sr-only {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .policy-help-overlay {
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-end: 0;
+    z-index: 1;
+  }
+  .policy-help-control::part(form-control-label) {
+    min-block-size: 2.75rem;
+    padding-inline-end: 3.25rem;
+    align-content: center;
+  }
+  .policy-help-control .policy-field-description {
+    display: block;
+    font-weight: normal;
+  }
+  .policy-help-control .policy-field-description[hidden] {
+    display: none;
+  }
+  .policy-field > :is(wa-input, wa-select, wa-textarea) {
+    margin-block-start: 0.25rem;
+  }
+  .policy-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: center;
+    margin-block: 1rem;
+  }
+  .policy-page:has(#policy-cancel) > .policy-toolbar {
+    position: sticky;
+    inset-block-start: 0;
+    z-index: 3;
+    background: var(--surface);
+    padding-block: 0.5rem;
+    border-block-end: 1px solid var(--line);
+  }
+  .policy-form-grid {
+    display: grid;
+    gap: 1rem;
+  }
+  wa-input,
+  wa-select,
+  wa-textarea {
+    display: block;
+    margin-block: 0.75rem;
+  }
+  wa-checkbox {
+    margin: 0.5rem;
+  }
+  fieldset {
+    max-inline-size: 56rem;
+    min-inline-size: 0;
+    border: 1px solid var(--wa-color-neutral-border-normal);
+    border-radius: 0.5rem;
+    padding: 1rem;
+  }
+  details {
+    margin-block: 1rem;
+  }
+  summary {
+    cursor: pointer;
+    font-weight: 600;
+  }
+  summary:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 3px;
+  }
+  .policy-task-preview {
+    border-inline-start: 0.25rem solid currentColor;
+    padding: 1rem;
+    margin-block: 1rem;
+    overflow-wrap: anywhere;
+  }
+  .policy-button-preview {
+    display: inline-block;
+    border: 1px solid currentColor;
+    border-radius: 0.25rem;
+    padding: 0.5rem 1rem;
+  }
+  .policy-reference {
+    overflow-wrap: anywhere;
+  }
+  label {
+    display: grid;
+    gap: 0.5rem;
+    margin-block: 1rem;
+  }
+  table {
+    inline-size: 100%;
+    border-collapse: collapse;
+  }
+  th,
+  td {
+    text-align: start;
+    padding: 0.75rem;
+    border-block-end: 1px solid var(--wa-color-neutral-border-normal);
+    overflow-wrap: anywhere;
+  }
+  td:not(:first-child) {
+    white-space: normal;
+  }
+  #policy-categories-table td {
+    inline-size: 10rem;
+  }
+  #policy-categories-table th[scope="row"] {
+    font-weight: 500;
+  }
+  li {
+    margin-block: 1rem;
+    overflow-wrap: anywhere;
+  }
+}

@@ -24,3 +24,6 @@ repos:
           - --quiet
           - --framework
           - terraform
+          - --skip-check
+          # Keep aligned with the Checkov skip_check list in .github/workflows/ci.yml.
+          - CKV2_AWS_62,CKV_AWS_144,CKV2_AWS_31

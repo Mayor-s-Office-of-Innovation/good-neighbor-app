@@ -17,6 +17,7 @@ const SUPERVISOR_CAPABILITIES = Object.freeze({
   manageSiteManagers: true,
   manageProviderManagers: true,
   runImports: true,
+  managePolicies: true,
 });
 const MANAGER_CAPABILITIES = Object.freeze({
   manageAdminUsers: false,
@@ -26,6 +27,7 @@ const MANAGER_CAPABILITIES = Object.freeze({
   manageSiteManagers: false,
   manageProviderManagers: false,
   runImports: false,
+  managePolicies: false,
 });
 
 /** @param {import("aws-lambda").APIGatewayProxyEventV2} event */

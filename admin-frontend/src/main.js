@@ -330,6 +330,13 @@ class AdminApp extends HTMLElement {
   };
 
   routeChanged = () => {
+    const policyEditor = /** @type {any} */ (
+      this.querySelector("policy-editor")
+    );
+    if (policyEditor && !policyEditor.confirmLeave()) {
+      window.history.pushState({}, "", policyEditor.pageUrl);
+      return;
+    }
     this.directorySearchDebounce?.cancel();
     const destination = window.location.pathname + window.location.search;
     if (
@@ -560,6 +567,7 @@ class AdminApp extends HTMLElement {
     if (
       ![
         "system-status",
+        "policies",
         "administrators",
         "administrator-new",
         "provider-new",
@@ -576,6 +584,19 @@ class AdminApp extends HTMLElement {
     }
     if (!["administrators", "administrator-new"].includes(route.name))
       this.useCachedAdminUsers = false;
+    if (route.name === "policies") {
+      if (!this.state.capabilities.managePolicies)
+        return navigate("/sites", { replace: true });
+      await import("./policy-editor.js");
+      if (location.pathname + location.search !== path) return;
+      this.state.provider =
+        this.state.program =
+        this.state.site =
+        this.state.siteManager =
+          null;
+      this.render();
+      return;
+    }
     if (route.name === "system-status") {
       await import("./system-status.js");
       if (location.pathname + location.search !== path) return;
@@ -5427,27 +5448,31 @@ class AdminApp extends HTMLElement {
             "manager",
             "provider-manager",
           ].includes(route.name)
-            ? route.name === "system-status"
-              ? this.state.capabilities.manageAdminUsers
-                ? `<system-status-view view="${escapeHtml(route.id)}"></system-status-view>`
+            ? route.name === "policies"
+              ? this.state.capabilities.managePolicies
+                ? `<policy-editor></policy-editor>`
                 : ""
-              : route.name === "profile"
-                ? myProfileView(this.state)
-                : route.name === "administrator-new"
-                  ? newAdministratorView(this.state)
-                  : route.name === "administrators"
-                    ? administratorView(this.state.adminUsers, this.state)
-                    : route.name === "site-import"
-                      ? siteImportView(this.state)
-                      : route.name === "site-new"
-                        ? newSiteFlowView(this.state)
-                        : route.name === "provider-new"
-                          ? newProviderView()
-                          : route.name === "program-new"
-                            ? newProgramView(this.state)
-                            : route.name === "manager-new"
-                              ? siteManagerEditorView(this.state, null)
-                              : directoryView(this.state, route)
+              : route.name === "system-status"
+                ? this.state.capabilities.manageAdminUsers
+                  ? `<system-status-view view="${escapeHtml(route.id)}"></system-status-view>`
+                  : ""
+                : route.name === "profile"
+                  ? myProfileView(this.state)
+                  : route.name === "administrator-new"
+                    ? newAdministratorView(this.state)
+                    : route.name === "administrators"
+                      ? administratorView(this.state.adminUsers, this.state)
+                      : route.name === "site-import"
+                        ? siteImportView(this.state)
+                        : route.name === "site-new"
+                          ? newSiteFlowView(this.state)
+                          : route.name === "provider-new"
+                            ? newProviderView()
+                            : route.name === "program-new"
+                              ? newProgramView(this.state)
+                              : route.name === "manager-new"
+                                ? siteManagerEditorView(this.state, null)
+                                : directoryView(this.state, route)
             : ""
         }
         ${provider ? providerView(this.state) : ""}
@@ -5585,6 +5610,7 @@ function adminSettingsMenu(canManageUsers, canImportSites) {
       <a href="/profile" data-route role="menuitem"><wa-icon name="user" aria-hidden="true"></wa-icon><span>${escapeHtml(t("admin.profile.title"))}</span></a>
       ${canManageUsers ? '<a href="/administrators" data-route role="menuitem"><wa-icon name="people-group" aria-hidden="true"></wa-icon><span>User management</span></a>' : ""}
       ${canImportSites ? '<a href="/sites/import" data-route role="menuitem"><wa-icon name="file-import" aria-hidden="true"></wa-icon><span>Import</span></a>' : ""}
+      ${canManageUsers ? `<a href="/policies" data-route role="menuitem"><wa-icon name="list-check" aria-hidden="true"></wa-icon><span>${escapeHtml(t("admin.policy.title"))}</span></a>` : ""}
       ${canManageUsers ? `<a href="/system-status" data-route role="menuitem"><wa-icon name="heart-pulse" aria-hidden="true"></wa-icon><span>${escapeHtml(t("admin.status.menu"))}</span></a>` : ""}
       <button id="clear-token" type="button" role="menuitem"><wa-icon name="arrow-right-from-bracket" aria-hidden="true"></wa-icon><span>Sign out</span></button>
     </div>

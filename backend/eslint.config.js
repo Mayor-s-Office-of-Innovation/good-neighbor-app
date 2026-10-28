@@ -19,6 +19,7 @@ export default [
         URL: "readonly",
         setTimeout: "readonly",
         clearTimeout: "readonly",
+        structuredClone: "readonly",
       },
     },
     settings: {
