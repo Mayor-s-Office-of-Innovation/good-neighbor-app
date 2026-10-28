@@ -8,7 +8,7 @@ import {
   setPopstateGuard,
   captureRouteReturn,
 } from "../router.js";
-import { getSite } from "../db.js";
+import { getSite, listCareSubmissions, deleteCareSubmission } from "../db.js";
 import { t } from "../i18n/i18n.js";
 import { escapeHtml } from "../lib/html.js";
 import { CARE_WORK_TYPES, MAX_CARE_PHOTOS } from "../domain/care-work.js";
@@ -19,20 +19,15 @@ import {
   careCompose,
   careDetail,
 } from "./care-work.templates.js";
+import { listCareWork, getCareWork, getCarePhoto } from "../services/api.js";
 import {
-  listCareWork,
-  getCareWork,
-  createCareWork,
-  presignCarePhoto,
-  getCarePhoto,
-  putMediaWithProgress,
-} from "../services/api.js";
-import { showToast } from "../state/toasts.js";
+  enqueueCareSubmission,
+  retryCareSubmission,
+  recoverCareSubmissions,
+} from "../services/care-submissions.js";
 
 /** @type {any} Live-only, Site-bound draft; never an offline queue. */
 let draft = null;
-/** @type {any} Provides immediate read-your-write while GSI1 catches up. */
-let lastSaved = null;
 function clearDraft() {
   for (const entry of draft?.files || []) URL.revokeObjectURL(entry.url);
   draft = null;
@@ -69,11 +64,17 @@ export class CareWorkView extends HTMLElement {
     this._route = currentRoute();
     this.classList.add("care-work");
     this.innerHTML = `${careHeader(t("care.title"), true)}<p role="status">${escapeHtml(t("care.loading"))}</p>`;
-    const site = await getSite();
+    let site;
+    try {
+      site = await getSite();
+    } catch {
+      if (this.isConnected) this._loadError(() => this.connectedCallback());
+      return;
+    }
     if (!this.isConnected) return;
     this._siteId = site?.siteId || "";
     if (draft && draft.siteId !== this._siteId) clearDraft();
-    if (lastSaved?.siteId !== this._siteId) lastSaved = null;
+
     if (this._route === "/care-work/new") {
       draft ||= freshDraft(this._siteId);
       this.innerHTML = careOptions();
@@ -102,13 +103,20 @@ export class CareWorkView extends HTMLElement {
       this._renderCompose();
     } else if (this._route === "/care-work") {
       clearDraft();
+      window.addEventListener("caresubmissionschange", this._refreshPending);
+      void recoverCareSubmissions();
       await this._loadList();
     } else {
       await this._loadDetail(this._route.split("/").pop());
     }
     announceScreenHeading(this, "h1");
   }
+  _refreshPending = () => {
+    void this._loadList();
+  };
+  _listVersion = 0;
   disconnectedCallback() {
+    window.removeEventListener("caresubmissionschange", this._refreshPending);
     this._controller?.abort();
     this._removeGuard?.();
     window.removeEventListener("beforeunload", this._beforeUnload);
@@ -126,6 +134,38 @@ export class CareWorkView extends HTMLElement {
       draft.returnToList = captureRouteReturn("/care-work");
       navigate("/care-work/new");
     });
+    this.querySelectorAll("[data-edit-work]").forEach((button) =>
+      button.addEventListener("click", async () => {
+        const record = (await listCareSubmissions(this._siteId)).find(
+          (r) => r.workId === button.getAttribute("data-edit-work"),
+        );
+        if (
+          !this.isConnected ||
+          !record?.editable ||
+          record.status !== "failed"
+        )
+          return;
+        clearDraft();
+        draft = {
+          ...record,
+          editing: true,
+          error: "",
+          payload: null,
+          files: record.files.map((entry) => ({
+            ...entry,
+            url: URL.createObjectURL(entry.file),
+          })),
+          returnToList: captureRouteReturn("/care-work"),
+        };
+        navigate(`/care-work/new/${record.kind}`);
+      }),
+    );
+    this.querySelectorAll("[data-retry-work]").forEach((button) =>
+      button.addEventListener(
+        "click",
+        () => void retryCareSubmission(button.getAttribute("data-retry-work")),
+      ),
+    );
     this.querySelectorAll("[data-work]").forEach((button) =>
       button.addEventListener("click", () =>
         navigate(`/care-work/${button.getAttribute("data-work")}`),
@@ -133,25 +173,63 @@ export class CareWorkView extends HTMLElement {
     );
   }
   async _loadList() {
-    this.innerHTML = careList([], true);
-    this._bindList();
+    const version = ++this._listVersion;
+    const items = new Map();
+    const remoteIds = new Set();
+    let failed = false;
+    let storageFailed = false;
+    const render = async () => {
+      try {
+        for (const record of await listCareSubmissions(this._siteId)) {
+          if (record.status === "saved" && remoteIds.has(record.workId)) {
+            try {
+              await deleteCareSubmission(this._siteId, record.workId);
+            } catch {
+              storageFailed = true;
+            }
+          } else
+            items.set(record.workId, record.work || { ...record, photos: [] });
+        }
+      } catch {
+        storageFailed = true;
+      }
+      if (!this.isConnected || version !== this._listVersion) return;
+      this.innerHTML = careList([...items.values()]);
+      if (failed || storageFailed)
+        this.insertAdjacentHTML(
+          "beforeend",
+          `${[
+            storageFailed && "care.queueLoadError",
+            failed && "care.loadError",
+          ]
+            .filter(Boolean)
+            .map((key) => `<p role="alert">${escapeHtml(t(key))}</p>`)
+            .join(
+              "",
+            )}<button type="button" class="btn-outline" data-retry>${escapeHtml(t("care.retry"))}</button>`,
+        );
+      this._bindList();
+      this.querySelector("[data-retry]")?.addEventListener(
+        "click",
+        () => void this._loadList(),
+      );
+    };
+    await render();
     try {
-      // Read all bounded API pages before counting groups, so a date never
-      // displays a partial count at a page boundary.
-      const items = new Map();
       let nextToken = "";
       do {
         const page = await listCareWork(nextToken);
-        if (!this.isConnected) return;
-        page.work.forEach((item) => items.set(item.workId, item));
+        if (!this.isConnected || version !== this._listVersion) return;
+        page.work.forEach((item) => {
+          items.set(item.workId, item);
+          remoteIds.add(item.workId);
+        });
         nextToken = page.nextToken || "";
       } while (nextToken);
-      if (lastSaved) items.set(lastSaved.work.workId, lastSaved.work);
-      this.innerHTML = careList([...items.values()]);
-      this._bindList();
     } catch {
-      if (this.isConnected) this._loadError(() => this._loadList());
+      failed = true;
     }
+    await render();
   }
   _loadError(retry) {
     this.innerHTML = `${careHeader(t("care.title"))}<p role="alert">${escapeHtml(t("care.loadError"))}</p><button type="button" class="btn-outline" data-retry>${escapeHtml(t("care.retry"))}</button>`;
@@ -220,87 +298,27 @@ export class CareWorkView extends HTMLElement {
     }
     this._renderCompose();
   }
-  async _save(recoveries = 0) {
+  async _save() {
     if (this._busy || (draft.kind === "other" && !draft.note.trim())) return;
     this._busy = true;
     draft.error = "";
-    this._controller = new AbortController();
     this._renderCompose();
     const saving = draft;
     try {
-      for (const entry of saving.files) {
-        if (entry.uploaded) continue;
-        entry.reservation = await presignCarePhoto(saving.workId, {
-          photoId: entry.photoId,
-          contentType: entry.file.type,
-          contentLength: entry.file.size,
-        });
-        if (!this.isConnected) return;
-        try {
-          await putMediaWithProgress(
-            entry.reservation.uploadUrl,
-            entry.file,
-            entry.reservation.uploadHeaders,
-            (progress) => {
-              const status = this.querySelector("[data-progress]");
-              if (status)
-                status.textContent = t("care.uploading", { progress });
-            },
-            this._controller.signal,
-          );
-        } catch (error) {
-          // Conditional PUT replay means the previous uncertain upload landed.
-          if (error?.status !== 412) throw error;
-        }
-        entry.uploaded = true;
-      }
-      // Once submission may have reached the server, retries keep exactly the
-      // same payload and ID instead of turning a lost response into an edit.
-      saving.payload ||= {
-        workId: saving.workId,
-        kind: saving.kind,
-        note: saving.note,
-        photoIds: saving.files.map((entry) => entry.reservation.photoId),
-      };
-      const result = await createCareWork(saving.payload);
-      if (!this.isConnected) return;
-      lastSaved = { siteId: this._siteId, work: result.work };
+      await enqueueCareSubmission(saving);
       const returnToList = saving.returnToList;
       clearDraft();
       this._busy = false;
-      showToast({ title: t("care.success"), message: "", icon: "check" });
       if (returnToList) returnToList();
       else replaceRoute("/care-work");
     } catch (error) {
-      if (!this.isConnected) return;
-      const code = error?.body?.error;
-      if (
-        ["upload_expired", "photo_expired"].includes(code) &&
-        recoveries < MAX_CARE_PHOTOS
-      ) {
-        // Only explicit server rejections release a frozen submission. A lost
-        // response must first replay the original payload to learn its outcome.
-        const expired = saving.files.filter(
-          (entry) => entry.photoId === error.body.photoId,
-        );
-        if (expired.length) {
-          saving.payload = null;
-          for (const entry of expired) {
-            entry.photoId = crypto.randomUUID();
-            entry.reservation = null;
-            entry.uploaded = false;
-          }
-          this._busy = false;
-          return this._save(recoveries + 1);
-        }
-      }
-      // A validation rejection definitively did not create a log. Let the
-      // user remove a corrupt photo or correct the input; only uncertain
-      // network/server failures must keep the exact submission frozen.
-      if ([400, 422].includes(error?.status)) saving.payload = null;
-      saving.error = t("care.saveError");
+      saving.error = t(
+        error?.code === "care_conflict"
+          ? "care.editConflict"
+          : "care.saveError",
+      );
       this._busy = false;
-      this._renderCompose();
+      if (this.isConnected) this._renderCompose();
     }
   }
   async _loadDetail(workId) {

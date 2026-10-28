@@ -1,0 +1,21 @@
+import { faq } from "./faq.js";
+import { policy } from "./policy.js";
+
+// Only public, reviewed behavior belongs here. Internal provenance lives in
+// knowledge-provenance.json, which is never imported into the Lambda bundle.
+export const guide = [
+  {
+    id: "GUIDE-01",
+    title: "Saving a perimeter description",
+    text: "A perimeter description must contain at least 20 characters after surrounding spaces are removed. One saved description is an alternative to the photo requirement. Three photos are recommended for coverage; one photo is sufficient to enable completion. This is separate from how many checks your Site should carry out each day: ask your compliance manager about that requirement.",
+  },
+  {
+    id: "GUIDE-02",
+    title: "Finding help and other actions",
+    text: "The three-dot menu beside the perimeter-check button contains public complaints, single-issue reporting, and proactive care work. The top-right Settings menu contains Get help, language and feedback options. Get help opens a full-screen view; Back returns to the previous screen. Help answers general questions using the FAQ, app guide and supplied Good Neighbor Policy. It cannot view your records, determine your ticket status, enroll a device, or perform actions. Each question is independent. Leaving Help clears its responses. Email goodneighbor@sf.gov for personal assistance.",
+  },
+];
+
+export const KNOWLEDGE_VERSION = "faq-v2-policy-2026-10-27-status-tickers";
+export const sources = [...faq, ...guide, ...policy];
+export const sourceById = new Map(sources.map((entry) => [entry.id, entry]));

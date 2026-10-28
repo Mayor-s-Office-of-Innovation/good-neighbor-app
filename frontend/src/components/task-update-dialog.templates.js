@@ -1,3 +1,4 @@
+import { artifactPhoto } from "./artifact-photo.templates.js";
 import {
   cityHelpQuestion,
   taskUpdateTextCard,
@@ -7,7 +8,7 @@ import {
 export { taskUpdateTimelineTone } from "./issue-updates.templates.js";
 import { localizedAnalyzerText } from "../i18n/analyzer.js";
 import { statusTickerMarkup } from "./status-ticker.js";
-import { taskMediaUrl } from "../domain/task-media.js";
+import { taskMediaUrl, taskMediaArtifactId } from "../domain/task-media.js";
 import { taskCardTitle } from "../domain/task-title.js";
 import { displayTaskId, unresolvedExpiryAt } from "../domain/home-tasks.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
@@ -47,9 +48,10 @@ export function taskUpdateDialogShell({ mode, state, content }) {
         ${state === "loading"
           ? html`<p role="status">${translatedText("taskUpdate.loading")}</p>`
           : state === "error"
-            ? html`<p role="alert">
-                ${translatedText("taskUpdate.loadError")}
-              </p>`
+            ? html`<p role="alert">${translatedText("taskUpdate.loadError")}</p>
+                <button type="button" class="btn-outline" data-retry-timeline>
+                  ${translatedText("common.retry")}
+                </button>`
             : content}
       </div>
     </dialog>
@@ -177,11 +179,13 @@ export function taskUpdateTimeline({
       <p class="task-update__description">
         ${escapeHtml(task.description || "")}
       </p>
-      ${originalMediaUrl
+      ${originalMediaUrl || task.evidence?.kind === "photo"
         ? html`<button
             class="task-update__photo-trigger"
             type="button"
             data-photo-lightbox
+            disabled
+            data-timeline-focus="original-photo"
             data-full-src="${escapeAttr(
               originalFullMediaUrl || originalMediaUrl,
             )}"
@@ -190,11 +194,14 @@ export function taskUpdateTimeline({
               task.createdAt || task.created_at || task.notifiedAt || "",
             )}"
           >
-            <img
-              class="task-update__photo task-update__photo--original"
-              src="${escapeAttr(originalMediaUrl)}"
-              alt="${escapeAttr(t("taskUpdate.photo.evidenceAlt", { title }))}"
-            />
+            ${artifactPhoto({
+              className: "task-update__photo task-update__photo--original",
+              src: originalMediaUrl,
+              original: originalFullMediaUrl,
+              checkId: task.checkId,
+              artifactId: taskMediaArtifactId(task),
+              alt: t("taskUpdate.photo.evidenceAlt", { title }),
+            })}
           </button>`
         : ""}
       ${showAgencyMetadata
@@ -326,11 +333,13 @@ function captureTaskIdentity(task) {
   const reference = displayTaskId(task);
   return html`<p class="task-update__capture-task">
     ${mediaUrl
-      ? html`<img
-          class="task-update__capture-thumb"
-          src="${escapeAttr(mediaUrl)}"
-          alt=""
-        />`
+      ? artifactPhoto({
+          className: "task-update__capture-thumb",
+          src: mediaUrl,
+          original: task.mediaUrl,
+          checkId: task.checkId,
+          artifactId: taskMediaArtifactId(task),
+        })
       : ""}
     <span class="task-update__capture-task-text"
       ><strong>${escapeHtml(taskCardTitle(task))}</strong>
@@ -369,6 +378,7 @@ function photoPicker(previews, kind, files = [], allowed = true) {
             class="task-update__photo-trigger"
             type="button"
             data-photo-lightbox
+            data-timeline-focus="original-photo"
             data-photo-time="${escapeAttr(
               files[index]?.lastModified
                 ? new Date(files[index].lastModified).toISOString()

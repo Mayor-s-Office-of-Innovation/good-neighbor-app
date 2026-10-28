@@ -12,6 +12,10 @@
  * @property {boolean} [focusAction]
  */
 import { t } from "../i18n/i18n.js";
+import {
+  filing311State,
+  submitted311ServiceRequestNumber,
+} from "../domain/task-actions.js";
 
 /** @type {Set<() => void>} */
 const listeners = new Set();
@@ -106,6 +110,33 @@ export function show311SuccessToast(serviceRequestNumber = "", title = "") {
         : t("toast.ticketFiled.messageNoNumber"),
     icon: "circle-check",
     tone: "success",
+  });
+}
+
+/**
+ * The toast for an accepted "File 311 ticket" tap: the ticket number when it
+ * was filed in the request, "Filing with 311" when it was queued.
+ * @param {import("../domain/task-actions.js").TaskActionState} task
+ * @param {string} [title] the card's title
+ */
+export function show311FilingToast(task, title = "") {
+  return filing311State(task) === "queued"
+    ? show311QueuedToast(title)
+    : show311SuccessToast(submitted311ServiceRequestNumber(task), title);
+}
+
+/**
+ * The tap was accepted and the ticket is filing in the background.
+ * @param {string} [title] the card's title
+ */
+export function show311QueuedToast(title = "") {
+  return showToast({
+    title: t("toast.ticketQueued.title"),
+    message: title
+      ? t("toast.ticketQueued.messageFor", { title })
+      : t("toast.ticketQueued.message"),
+    icon: "paper-plane",
+    tone: "info",
   });
 }
 

@@ -25,6 +25,7 @@ import {
 // Terraform routes in step — the router is a dev tool, Terraform stays the source
 // of truth for real infra.
 
+import { handler as supportHandler } from "../src/support/handler.js";
 import { createServer } from "node:http";
 import { ensureLocalInfra } from "./lib/ensure-infra.mjs";
 import { resolveDeviceClaims } from "./lib/local-device-auth.mjs";
@@ -279,6 +280,7 @@ function route(method, pattern, handler) {
 
 /** method+path → handler. Extend alongside Terraform's API Gateway routes. */
 const routes = [
+  route("POST", "/v1/support", supportHandler),
   route("GET", "/v1/311-media", get311Media),
   route("POST", "/site-code", siteCodeHandler),
   // Device bootstrap (Option 4 device auth): open routes, no authorizer.
@@ -750,6 +752,13 @@ const server = createServer(async (req, res) => {
       queryStringParameters: hasQuery ? queryStringParameters : undefined,
       rawQueryString: url.search.replace(/^\?/, ""),
     });
+
+    // Local-only origin stand-in. Live support still requires explicit env
+    // enablement, model credentials and a privacy-safe Bedrock configuration.
+    if (path === "/v1/support") {
+      event.headers["x-support-origin"] =
+        process.env.SUPPORT_ORIGIN_TOKEN || "";
+    }
 
     // The real handler. Second/third args (context/callback) are unused by our
     // async handlers.

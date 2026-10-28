@@ -1,0 +1,25 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "FindRegionalQuotaDefaultsByName",
+      "Effect": "Allow",
+      "Action": "servicequotas:ListAWSDefaultServiceQuotas",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "${aws_region}"
+        }
+      }
+    },
+    {
+      "Sid": "ReadAppliedApiGatewayThrottleQuotas",
+      "Effect": "Allow",
+      "Action": "servicequotas:GetServiceQuota",
+      "Resource": [
+        "arn:aws:servicequotas:${aws_region}:${account_id}:apigateway/L-8A5B8E43",
+        "arn:aws:servicequotas:${aws_region}:${account_id}:apigateway/L-CDF5615A"
+      ]
+    }
+  ]
+}

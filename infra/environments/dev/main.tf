@@ -81,6 +81,7 @@ module "app" {
   enable_duplicate_detection           = var.enable_duplicate_detection
   analyzer_base_url                    = "https://ipipaqh985.execute-api.us-east-1.amazonaws.com/dev"
   enable_311_submission                = true
+  enable_311_async_filing              = true
   # PostHog feedback survey (see docs/runbooks/feedback-ops.md §3): plain
   # identifiers, not secrets. The phc_ ingest key itself is set out-of-band
   # via put-secret-value on gnp-dev-posthog-project-api-key.

@@ -32,6 +32,20 @@ import {
 } from "./site-admin.validation.js";
 
 const EMPTY = "—";
+const CONTACT_FIELDS = [
+  ["firstName", "first-name", "given-name", "text"],
+  ["lastName", "last-name", "family-name", "text"],
+  ["email", "email", "email", "email"],
+  ["phone", "phone", "tel", "tel"],
+];
+const ADDRESS_FIELDS = [
+  ["streetNumber", "street-number", "address-line1"],
+  ["streetAddress", "street-address", "address-line1"],
+  ["secondLine", "second-line", "address-line2"],
+  ["city", "city", "address-level2"],
+  ["state", "state", "address-level1"],
+  ["zip", "zip", "postal-code"],
+];
 
 /** @param {unknown} value */
 const text = (value) => String(value || "").trim();
@@ -461,7 +475,10 @@ class SiteAccessView extends HTMLElement {
         void renderEnrollmentQr(card, grant.enrollmentUrl);
       card
         .querySelector("[data-share-grant]")
-        ?.addEventListener("click", () => void this._shareGrant(grant));
+        ?.addEventListener(
+          "click",
+          () => void this._accessState.shareGrant(grant),
+        );
       card
         .querySelector("[data-cancel-staff-grant]")
         ?.addEventListener("click", () => void this._cancelGrant(grant));
@@ -552,19 +569,6 @@ class SiteAccessView extends HTMLElement {
 
   async _refreshGrants() {
     await this._accessState?.refreshGrants(this);
-  }
-
-  async _shareGrant(grant) {
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: t("access.title"),
-          url: grant.enrollmentUrl,
-        });
-      } catch {
-        /* Dismissing the share sheet keeps the link available. */
-      }
-    } else await navigator.clipboard.writeText(grant.enrollmentUrl);
   }
 
   _openRevokeDialog(bindingId, label) {
@@ -671,24 +675,19 @@ class SiteAdminEdit extends HTMLElement {
   _sectionValue() {
     if (this._kind === "contact") {
       const contact = this._site.contactPerson || {};
-      return {
-        firstName: text(contact.firstName),
-        lastName: text(contact.lastName),
-        email: text(contact.email),
-        phone: formatAdminPhone(contact.phone),
-      };
+      return Object.fromEntries(
+        CONTACT_FIELDS.map(([key]) => [
+          key,
+          key === "phone" ? formatAdminPhone(contact[key]) : text(contact[key]),
+        ]),
+      );
     }
     const address = this._site.address || {};
     return {
       name: text(this._site.name),
-      address: {
-        streetNumber: text(address.streetNumber),
-        streetAddress: text(address.streetAddress),
-        secondLine: text(address.secondLine),
-        city: text(address.city),
-        state: text(address.state),
-        zip: text(address.zip),
-      },
+      address: Object.fromEntries(
+        ADDRESS_FIELDS.map(([key]) => [key, text(address[key])]),
+      ),
     };
   }
 
@@ -700,7 +699,7 @@ class SiteAdminEdit extends HTMLElement {
           <form id="site-admin-form" novalidate>
             <div class="site-admin-fields">
               ${this._kind === "contact"
-                ? contactFields(this._original)
+                ? formFields(CONTACT_FIELDS, this._original)
                 : siteFields(this._original)}
             </div>
             <p
@@ -777,22 +776,14 @@ class SiteAdminEdit extends HTMLElement {
     const value = (id) =>
       text(/** @type {any} */ (this.querySelector(id))?.value);
     return this._kind === "contact"
-      ? {
-          firstName: value("#admin-first-name"),
-          lastName: value("#admin-last-name"),
-          email: value("#admin-email"),
-          phone: value("#admin-phone"),
-        }
+      ? Object.fromEntries(
+          CONTACT_FIELDS.map(([key, id]) => [key, value(`#admin-${id}`)]),
+        )
       : {
           name: value("#admin-site-name"),
-          address: {
-            streetNumber: value("#admin-street-number"),
-            streetAddress: value("#admin-street-address"),
-            secondLine: value("#admin-second-line"),
-            city: value("#admin-city"),
-            state: value("#admin-state"),
-            zip: value("#admin-zip"),
-          },
+          address: Object.fromEntries(
+            ADDRESS_FIELDS.map(([key, id]) => [key, value(`#admin-${id}`)]),
+          ),
         };
   }
 
@@ -992,32 +983,20 @@ function letterRow(dateRange, url) {
   </div>`;
 }
 
-/** @param {Record<string, any>} value */
-function contactFields(value) {
-  return [
-    field(
-      "admin-first-name",
-      t("siteAdmin.field.firstName"),
-      value.firstName,
-      "given-name",
-      "text",
-    ),
-    field(
-      "admin-last-name",
-      t("siteAdmin.field.lastName"),
-      value.lastName,
-      "family-name",
-      "text",
-    ),
-    field(
-      "admin-email",
-      t("siteAdmin.field.email"),
-      value.email,
-      "email",
-      "email",
-    ),
-    field("admin-phone", t("siteAdmin.field.phone"), value.phone, "tel", "tel"),
-  ].join("");
+/** @param {string[][]} fields @param {Record<string, any>} value */
+function formFields(fields, value) {
+  return fields
+    .map(([key, id, autocomplete, type = "text"]) =>
+      field(
+        `admin-${id}`,
+        t(`siteAdmin.field.${key}`),
+        value[key],
+        autocomplete,
+        type,
+        key !== "secondLine",
+      ),
+    )
+    .join("");
 }
 
 /** @param {Record<string, any>} value */
@@ -1031,49 +1010,7 @@ function siteFields(value) {
       "organization",
       "text",
     ),
-    field(
-      "admin-street-number",
-      t("siteAdmin.field.streetNumber"),
-      address.streetNumber,
-      "address-line1",
-      "text",
-    ),
-    field(
-      "admin-street-address",
-      t("siteAdmin.field.streetAddress"),
-      address.streetAddress,
-      "address-line1",
-      "text",
-    ),
-    field(
-      "admin-second-line",
-      t("siteAdmin.field.secondLine"),
-      address.secondLine,
-      "address-line2",
-      "text",
-      false,
-    ),
-    field(
-      "admin-city",
-      t("siteAdmin.field.city"),
-      address.city,
-      "address-level2",
-      "text",
-    ),
-    field(
-      "admin-state",
-      t("siteAdmin.field.state"),
-      address.state,
-      "address-level1",
-      "text",
-    ),
-    field(
-      "admin-zip",
-      t("siteAdmin.field.zip"),
-      address.zip,
-      "postal-code",
-      "text",
-    ),
+    formFields(ADDRESS_FIELDS, address),
   ].join("");
 }
 

@@ -7,6 +7,8 @@
 
 ## Core reference
 
+- **[today-load-requests.md](./today-load-requests.md)** — initial Today page request
+  totals, asset/API sequence diagram, DynamoDB fanout, third-party calls and duplicate polling.
 - **[architecture.md](./architecture.md)** — the built system: container view, async analyze
   flow, the guidance workflow (rule-driven tasks), single-table pointer, security boundaries,
   idempotency/offline posture.
@@ -48,6 +50,10 @@
 - **[ADR 0018](./adr/0018-provider-issued-site-invitations.md)** — Provider Manager invitations for named Site Managers and Site Team Members, with Site-scoped authority checks.
 
 ## Operations
+
+- **[Deployment quota permissions](./runbooks/deploy-service-quotas.md)** — repair externally owned deployment-role permissions for API Gateway quota reads.
+
+- **[Support chat](./runbooks/support-chat.md)** — FAQ sources, isolated model access, privacy, evaluation and rollout.
 
 - **[Alert delivery](./runbooks/observability.md)** — production responders, both regional SNS confirmations, isolated alarm-delivery drills, and diagnosis.
 - **[Recovery drills](./runbooks/recovery.md)** — controlled DLQ diagnosis/redrive, isolated DynamoDB PITR restore, recovery limits, and cleanup.

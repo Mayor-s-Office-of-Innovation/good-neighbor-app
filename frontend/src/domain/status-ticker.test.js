@@ -75,7 +75,7 @@ describe("status ticker priorities", () => {
     expect(ticker(task).key).toBe("filed");
   });
   it.each(["open", "in_progress", "completed", "cannot_do"])(
-    "expires %s ahead of all other tickers at exactly 14 days",
+    "retains only resolved status for %s in History at 14 days",
     (status) => {
       const task = {
         ...filed,
@@ -86,15 +86,15 @@ describe("status ticker priorities", () => {
         duplicate: {},
         duplicateCheckState: "pending",
       };
-      expect(ticker(task).key).toBe("old");
-      expect(statusTicker(task, { now, history: true }).key).toBe("old");
+      expect(ticker(task).key).toBe("resolved");
+      expect(statusTicker(task, { now, history: true }).key).toBe("resolved");
     },
   );
   it("uses original creation, never updatedAt, for age", () => {
     expect(
       ticker({
         ...filed,
-        createdAt: "2026-01-01",
+        createdAt: new Date(now - 8 * 86400000).toISOString(),
         updatedAt: new Date(now).toISOString(),
       }).key,
     ).toBe("old");
@@ -109,7 +109,7 @@ describe("status ticker priorities", () => {
     );
     expect(
       ticker({ status: "completed", canBeInProgress: false }),
-    ).toMatchObject({ key: "actionTaken", tone: "action", icon: "dot" });
+    ).toMatchObject({ key: "" });
     expect(
       ticker({
         status: "completed",
@@ -175,7 +175,7 @@ describe("resolution evidence shared by ticker and expiration", () => {
       };
       expect(
         statusTicker(task, { now: Date.parse("2026-10-03T12:00:00Z") }).key,
-      ).toBe("actionTaken");
+      ).toBe("");
       expect(unresolvedExpiryAt(task, now)).toBe("2026-10-15T12:00:00.000Z");
     },
   );
@@ -191,7 +191,7 @@ describe("resolution evidence shared by ticker and expiration", () => {
         history: true,
         now: Date.parse("2026-10-03T12:00:00Z"),
       }).key,
-    ).toBe("actionTaken");
+    ).toBe("");
     expect(unresolvedExpiryAt(task, now)).toBe("2026-10-15T12:00:00.000Z");
   });
   it.each(["site_team_resolved", undefined])(
@@ -208,9 +208,54 @@ describe("resolution evidence shared by ticker and expiration", () => {
         statusTicker(task, { now: Date.parse("2026-10-03T12:00:00Z") }).key,
       ).toBe("resolved");
       expect(unresolvedExpiryAt(task, now)).toBe("");
-      expect(ticker(task).key).toBe("old");
+      expect(ticker(task).key).toBe("resolved");
       task.resolvedAt = "2026-10-16T12:00:00Z";
       expect(unresolvedExpiryAt(task, now)).toBe("2026-10-15T12:00:00.000Z");
     },
   );
+});
+
+it("warns after seven days, then hides age after archival", () => {
+  const at = (days) => ({
+    ...filed,
+    createdAt: new Date(now - days * 86400000).toISOString(),
+  });
+  expect(ticker(at(7)).key).toBe("filed");
+  expect(ticker(at(7.01)).key).toBe("old");
+  expect(ticker(at(13.99)).key).toBe("old");
+  expect(ticker(at(14)).key).toBe("");
+  expect(statusTicker(at(8), { now, history: true }).key).toBe("");
+});
+
+describe("background 311 filing", () => {
+  const tapped = (appActionStatus, reason = "sf311_timeout") => ({
+    status: "in_progress",
+    inProgressActionKind: "311_filed",
+    appActionStatus,
+    appActionResults:
+      appActionStatus === "failed"
+        ? [{ code: "create_311_ticket", status: "failed", reason }]
+        : [],
+  });
+
+  it("shows a spinner while the filing is queued", () => {
+    expect(ticker(tapped("queued"))).toMatchObject({
+      key: "filing",
+      tone: "progress",
+      icon: "spinner",
+    });
+  });
+
+  it("warns when the filing failed", () => {
+    expect(ticker(tapped("failed"))).toMatchObject({
+      key: "filingFailed",
+      tone: "warning",
+    });
+  });
+
+  it("shows the filed ticket once the worker files it", () => {
+    expect(ticker({ ...filed, inProgressActionKind: "311_filed" }).key).toBe(
+      "filed",
+    );
+  });
 });

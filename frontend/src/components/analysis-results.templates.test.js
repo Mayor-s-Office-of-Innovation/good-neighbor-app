@@ -1240,7 +1240,7 @@ describe("duplicate card presentation", () => {
       taskId: "duplicate-status-task",
       status: "open",
       category: "Litter",
-      createdAt: "2026-10-15T12:00:00Z",
+      createdAt: new Date().toISOString(),
     };
     const checking = taskAnalysisCard({
       task: { ...task, duplicateCheckState: "pending" },

@@ -49,19 +49,33 @@ html.wa-dark {
   border-radius: 50%;
   background: currentColor;
 }
+/* Inline SVG (not a wa-icon, so the icon-slot sizing rule above does not
+   match it) — it sizes itself to the same 15px slot. */
 .status-ticker__spinner {
-  animation: ticker-spin 1s linear infinite;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+}
+.status-ticker__spinner circle {
+  animation: ticker-dot-fade 1.1s linear infinite;
 }
 .analysis-card__panel > .status-ticker {
   margin-bottom: 1rem;
 }
-@keyframes ticker-spin {
-  to {
-    transform: rotate(360deg);
+/* Each dot lights up as the previous one begins to fade: a wave travelling
+   around the ring. The snap back to full opacity at cycle start IS the
+   "light up"; the per-dot stagger is set inline in status-ticker.js. */
+@keyframes ticker-dot-fade {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.15;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .status-ticker__spinner {
+  .status-ticker__spinner circle {
     animation: none;
+    opacity: 0.6;
   }
 }

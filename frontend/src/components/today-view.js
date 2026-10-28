@@ -1,9 +1,11 @@
 import { duplicateUiEnabled } from "../services/feature-flags.js";
+import { animatedEllipsis } from "../lib/ellipsis.js";
 import {
   projectDuplicateTasks,
   duplicateCounts,
 } from "../domain/duplicate-issues.js";
 import { watchDuplicateIssues } from "../services/duplicate-issues.js";
+import { watchQueued311Filings } from "../services/queued-311-filings.js";
 import { openDuplicateIssue } from "./duplicate-issue-launcher.js";
 import {
   toggleCardCompletion,
@@ -13,7 +15,7 @@ import {
 } from "./analysis-card-completion.js";
 import { taskCardTitle } from "../domain/task-title.js";
 import { groupHistory } from "../domain/task-history.js";
-import { pacificDateKey } from "../i18n/dates.js";
+import { statusTicker } from "../domain/status-ticker.js";
 /*
   today-view — the home hub (the screen with the "Perimeter check" button).
 
@@ -29,6 +31,7 @@ import { pacificDateKey } from "../i18n/dates.js";
 */
 import "./today-view.css";
 import {
+  show311FilingToast,
   show311SuccessToast,
   show311ErrorToast,
   showActionSaveErrorToast,
@@ -115,6 +118,9 @@ import {
 } from "./analysis-problem-actions.js";
 import {
   appActionFailureMessage,
+  canRetry311Filing,
+  filing311State,
+  isAccepted311Filing,
   isFiled311Completion,
   submitted311ServiceRequestNumber,
 } from "../domain/task-actions.js";
@@ -255,6 +261,13 @@ class TodayView extends HTMLElement {
     this._homeModel = null;
     /** @type {Promise<void> | null} */
     this._homeRefresh = null;
+    this._taskListFreshness = new Map();
+    this._tabRefreshes = new Map();
+    /** @type {(() => void) | null} */
+    this._tabRefreshStatus = null;
+    /** @type {(() => "pending" | "loaded" | "error") | null} */
+    this._tabListStatus = null;
+    this._tabRefreshEpoch = 0;
     this._homeRefreshQueued = false;
     this._homeRefreshGeneration = 0;
     /** @type {Promise<void> | null} */
@@ -300,9 +313,16 @@ class TodayView extends HTMLElement {
     /** @type {Map<string, import("../domain/task-311-status.js").Ticket311State>} */
     this._311StatusByTaskId = new Map();
     this._311StatusGeneration = 0;
-    this._refresh311OnReturn = () => this._refresh311Statuses();
+    this._refresh311OnReturn = () => {
+      this._refresh311Statuses();
+      void this._refreshChecks();
+      void this._refreshActiveTab();
+    };
+    this._checksRefreshTimer = null;
+    this._checksRefreshing = false;
     this._duplicateLinks = new Map();
     this._duplicateCloseHandler = () => {
+      if (!document.querySelector("dialog[open]")) this._flushDialogRender();
       if (
         this._duplicatesNeedRender &&
         this.isConnected &&
@@ -316,6 +336,10 @@ class TodayView extends HTMLElement {
   }
 
   disconnectedCallback() {
+    clearInterval(this._checksRefreshTimer);
+    this._checksRefreshTimer = null;
+    this._tabRefreshEpoch++;
+    this._tabRefreshes.clear();
     this._remainingRefresh = null;
     this._remainingRefreshQueued = false;
     this._homeRefreshGeneration++;
@@ -323,6 +347,8 @@ class TodayView extends HTMLElement {
     this._homeRefresh = null;
     this._remainingGeneration = (this._remainingGeneration || 0) + 1;
     window.removeEventListener("focus", this._refresh311OnReturn);
+    this._stopQueued311?.();
+    this._queued311Key = "";
     document.removeEventListener("visibilitychange", this._refresh311OnReturn);
     this._stopDuplicates?.();
     if (this._skeletonTabClick) {
@@ -348,6 +374,9 @@ class TodayView extends HTMLElement {
   }
 
   connectedCallback() {
+    this._checksRefreshTimer ??= setInterval(() => {
+      void this._refreshChecks();
+    }, 30_000);
     if (this._homeRefresh) {
       this._homeRefreshQueued = true;
       return this._homeRefresh;
@@ -381,6 +410,9 @@ class TodayView extends HTMLElement {
 
   /** @param {number} generation */
   async _loadHome(generation) {
+    this._taskListFreshness.clear();
+    this._tabRefreshEpoch++;
+    this._tabRefreshes.clear();
     window.addEventListener("focus", this._refresh311OnReturn);
     document.addEventListener("visibilitychange", this._refresh311OnReturn);
     document.addEventListener("close", this._duplicateCloseHandler, true);
@@ -465,6 +497,8 @@ class TodayView extends HTMLElement {
       this._site.siteId || this._site.providerSiteId || this._site.id;
     if (previousSiteId && previousSiteId !== this._siteId) {
       this._stopDuplicates?.();
+      this._stopQueued311?.();
+      this._queued311Key = "";
       this._duplicateLinks = new Map();
       this._confirmedTasks = new Map();
     }
@@ -519,7 +553,7 @@ class TodayView extends HTMLElement {
     // tab shows. The In-progress and History lists (the slowest call is the
     // ever-growing completed list) load right after the first render — see
     // _loadRemainingTasks.
-    let submitted, tasks;
+    let submitted, tasks, latestStartedCheck;
     let reuseRemaining = false;
     try {
       const [[catalog, bindings], { checks }, openTasksResult] =
@@ -554,8 +588,22 @@ class TodayView extends HTMLElement {
             (task) => task.status && task.status !== "open",
           )
         : [];
+      this._taskListFreshness.set("open", Date.now());
       tasks = uniqueTasks([...(openTasksResult.tasks || []), ...reused]);
       if (!reuseRemaining) this._remainingStatus = "pending";
+      else
+        for (const status of [
+          "in_progress",
+          "completing",
+          "completed",
+          "cannot_do",
+        ])
+          this._taskListFreshness.set(status, this._remainingLoadedAt);
+      latestStartedCheck = (checks || [])
+        .map(adaptCheckHeader)
+        .sort((a, b) =>
+          String(b.startedAt || "").localeCompare(String(a.startedAt || "")),
+        )[0];
       submitted = (checks || [])
         .map((h) => adaptCheckHeader(h))
         .filter((c) => c.status === "submitted")
@@ -597,6 +645,7 @@ class TodayView extends HTMLElement {
     this._renderHome({
       last,
       checks: submitted,
+      latestStartedCheck,
       tasks,
       pendingSession: effectivePendingSession,
     });
@@ -665,6 +714,40 @@ class TodayView extends HTMLElement {
 
   _taskWith311CardStatus(task) {
     return taskWith311Status(task, this._311StatusByTaskId);
+  }
+
+  /**
+   * Follow background 311 filings until each is filed or fails,
+   * then toast the outcome and repaint the card. Restarts only when the set
+   * of queued tasks changes.
+   * @param {Record<string, any>[]} tasks
+   */
+  _watchQueued311(tasks) {
+    const ids = tasks
+      .filter((task) => filing311State(task) === "queued")
+      .map((task) => task.taskId)
+      .sort();
+    const key = ids.join();
+    if (key === this._queued311Key) return;
+    this._stopQueued311?.();
+    this._queued311Key = key;
+    const siteId = this._siteId;
+    this._stopQueued311 = ids.length
+      ? watchQueued311Filings(ids, (task) => {
+          if (!this.isConnected || this._siteId !== siteId) return;
+          // Hold the outcome over list reads that lag behind the worker.
+          this._confirmedTasks ??= new Map();
+          this._confirmedTasks.set(task.taskId, task);
+          this._applyTaskResult(task.taskId, task);
+          if (filing311State(task) === "failed") show311ErrorToast();
+          else if (isFiled311Completion(task))
+            show311SuccessToast(
+              submitted311ServiceRequestNumber(task),
+              taskCardTitle(task),
+            );
+          void this._refreshAfterAction();
+        })
+      : null;
   }
 
   /** @param {Record<string, any>[]} tasks */
@@ -737,10 +820,73 @@ class TodayView extends HTMLElement {
     ]);
     this._remainingStatus = "loaded";
     this._remainingLoadedAt = Date.now();
+    for (const status of [
+      "in_progress",
+      "completing",
+      "completed",
+      "cannot_do",
+    ])
+      this._taskListFreshness.set(status, Date.now());
     this._renderHome({ ...model, tasks });
     this._watchDuplicates(tasks);
     void this._hydrate311CardStatuses(tasks);
     void this._hydrateVisibleHomeTasks();
+  }
+
+  async _refreshChecks() {
+    if (
+      !this.isConnected ||
+      document.visibilityState === "hidden" ||
+      !this._homeModel ||
+      this._checksRefreshing
+    )
+      return;
+    const siteId = this._siteId;
+    this._checksRefreshing = true;
+    try {
+      const response = await listChecks({ limit: 30 });
+      if (!this.isConnected || this._siteId !== siteId) return;
+      const headers = (response.checks || []).map(adaptCheckHeader);
+      const latestStartedCheck = [...headers].sort((a, b) =>
+        String(b.startedAt || "").localeCompare(String(a.startedAt || "")),
+      )[0];
+      const checks = headers
+        .filter((check) => check.status === "submitted")
+        .sort((a, b) =>
+          String(b.submittedAt || "").localeCompare(
+            String(a.submittedAt || ""),
+          ),
+        );
+      // Ignore an older snapshot and avoid rebuilding unchanged cards on each poll.
+      if (
+        String(latestStartedCheck?.startedAt || "") <
+        String(this._homeModel.latestStartedCheck?.startedAt || "")
+      )
+        return;
+      if (
+        JSON.stringify(checks) === JSON.stringify(this._homeModel.checks) &&
+        JSON.stringify(latestStartedCheck) ===
+          JSON.stringify(this._homeModel.latestStartedCheck)
+      )
+        return;
+      // Use the latest model so a background response cannot undo local actions.
+      this._renderHome({
+        ...this._homeModel,
+        checks,
+        last: checks[0],
+        latestStartedCheck,
+      });
+    } catch {
+      // Retain the last confirmed list; refresh again on return or the next poll.
+    } finally {
+      this._checksRefreshing = false;
+    }
+  }
+
+  _refreshActiveTab() {
+    return import("../services/home-task-freshness.js")
+      .then(({ refreshActiveTab }) => refreshActiveTab(this))
+      .catch(() => {});
   }
 
   _refresh311Statuses() {
@@ -828,13 +974,21 @@ class TodayView extends HTMLElement {
       )
         return task;
       const cached = {};
-      for (const key of ["evidence", "mediaUrl", "thumbnailUrl"])
+      for (const key of [
+        "evidence",
+        "mediaUrl",
+        "thumbnailUrl",
+        "mediaExpiresAt",
+        "mediaState",
+        "mediaRetryAt",
+      ])
         if (!task[key] && old[key]) cached[key] = old[key];
       return Object.keys(cached).length ? { ...task, ...cached } : task;
     });
     if (tasks.some((task, index) => task !== model.tasks[index]))
       model = { ...model, tasks };
     this._homeModel = model;
+    this._watchQueued311(model.tasks);
     // Keep the native dialog and its action buttons mounted while a location
     // decision is pending. A background location update can otherwise replace
     // the open dialog with a closed one.
@@ -862,6 +1016,7 @@ class TodayView extends HTMLElement {
       return;
     this._homeMarkup = markup;
     this.innerHTML = markup;
+    this._tabRefreshStatus?.();
 
     // Hand the bound site id to the feedback sheet so submissions carry it as
     // optional context (the server treats it as advisory, pattern-checked).
@@ -906,6 +1061,10 @@ class TodayView extends HTMLElement {
       this._settingsMenuOpen = false;
       this._logoutDialogOpen = true;
       this._renderHome(this._homeModel);
+    });
+    this.querySelector("#settings-help")?.addEventListener("click", () => {
+      this._settingsMenuOpen = false;
+      navigate("/help");
     });
     this.querySelector("#settings-feedback")?.addEventListener("click", () => {
       this._removeSettingsMenu();
@@ -1179,7 +1338,7 @@ class TodayView extends HTMLElement {
     this._renderHome({ ...model, tasks });
   }
 
-  _render({ last, checks = [], tasks, pendingSession }) {
+  _render({ last, checks = [], tasks, pendingSession, latestStartedCheck }) {
     const allRecentItems = pendingSession
       ? this._sessionItems(pendingSession)
       : [];
@@ -1199,7 +1358,10 @@ class TodayView extends HTMLElement {
       homeTasks.map((entry) => taskCheckGroupId(entry.task)),
     );
     const clearChecks = checks.filter(
-      (check) => Number(check.issueCount) === 0 && !taskCheckIds.has(check.id),
+      (check) =>
+        check.status === "submitted" &&
+        Number(check.issueCount) === 0 &&
+        !taskCheckIds.has(check.id),
     );
     const newestCheck = newestBlueCheckGroup(homeTasks, checks, pendingSession);
     const selectedTaskEntries = newestTaskEntriesFirst(
@@ -1210,7 +1372,14 @@ class TodayView extends HTMLElement {
     const tabCounts = { todo: 0, in_progress: 0 };
     for (const entry of homeTasks) {
       const tab = homeTabForStatus(entry.homeStatus);
-      if (tab in tabCounts) tabCounts[tab] += 1;
+      if (tab === "todo") tabCounts.todo += 1;
+      if (
+        tab === "in_progress" &&
+        ["cityClosed", "old", "overdue"].includes(
+          statusTicker(this._taskWith311CardStatus(entry.task)).key,
+        )
+      )
+        tabCounts.in_progress += 1;
     }
     const newTaskEntries = selectedTaskEntries.filter(
       (entry) =>
@@ -1232,42 +1401,62 @@ class TodayView extends HTMLElement {
         ? clearChecks.find((check) => check.id === latestSubmittedCheck.id) ||
           null
         : null;
-    const historicalClearChecks =
-      this._homeFilter === "history"
-        ? clearChecks.filter((check) => check.id !== activeClearCheck?.id)
-        : [];
     const hasPendingAssessment = !!pendingSession;
     const pendingHasTaskCards = homeTasks.some(
       (entry) => entry.task.checkId === pendingSession?.id,
     );
-    const displayRecentItems = pendingHasTaskCards
+    let displayRecentItems = pendingHasTaskCards
       ? recentItems.filter(
           (item) =>
             item.analysis?.status !== "analyzed" || hasProblemResults(item),
         )
       : recentItems;
+    const latestCheck = latestStartedCheck || latestSubmittedCheck;
+    const pendingSuperseded =
+      latestCheck &&
+      pendingSession &&
+      latestCheck.id !== pendingSession.id &&
+      String(latestCheck.startedAt || latestCheck.submittedAt || "") >
+        String(pendingSession.submittedAt || pendingSession.startedAt || "");
+    if (
+      pendingSuperseded &&
+      displayRecentItems.every(
+        (item) =>
+          item.analysis?.status === "analyzed" && !hasProblemResults(item),
+      )
+    )
+      displayRecentItems = [];
     const visibleRecentItems =
       this._homeFilter === "todo" ? displayRecentItems : [];
     const hasPendingClearResult =
+      this._homeFilter === "todo" &&
+      !pendingSuperseded &&
       displayRecentItems.length > 0 &&
       displayRecentItems.every(
         (item) =>
           item.analysis?.status === "analyzed" && !hasProblemResults(item),
       );
-    // The standing "check was clear" tray sits above the tabs, so its
-    // visibility must not depend on the active tab. It stays until the next
-    // check and disappears the moment a newer check records an issue (a task
-    // card from the pending session, or an analyzed item with problems).
-    const newCheckIssueRecorded =
-      pendingHasTaskCards ||
-      displayRecentItems.some(
-        (item) =>
-          item.analysis?.status === "analyzed" && hasProblemResults(item),
-      );
+    // A submitted check supersedes the prior result before analysis finishes.
+    const newerSubmission =
+      pendingSession &&
+      pendingSession.id !== activeClearCheck?.id &&
+      String(pendingSession.submittedAt || pendingSession.startedAt || "") >=
+        String(
+          activeClearCheck?.submittedAt || activeClearCheck?.startedAt || "",
+        );
     const showActiveClearTray =
+      this._homeFilter === "todo" &&
       Boolean(activeClearCheck) &&
       !hasPendingClearResult &&
-      !newCheckIssueRecorded;
+      !newerSubmission &&
+      !(
+        latestStartedCheck &&
+        latestStartedCheck.id !== activeClearCheck?.id &&
+        String(latestStartedCheck.startedAt || "") >
+          String(
+            activeClearCheck?.startedAt || activeClearCheck?.submittedAt || "",
+          )
+      );
     const hasResultCards =
       recentItems.length || homeTasks.length || clearChecks.length;
     // First-run hero only for a truly empty account: no submitted check, no
@@ -1300,7 +1489,6 @@ class TodayView extends HTMLElement {
         activeClearCheck,
         hasPendingClearResult,
         showActiveClearTray,
-        historicalClearChecks,
       }),
       showAnalysisDialogs: Boolean(hasPendingAssessment || hasResultCards),
       logoutError: this._logoutError,
@@ -1417,7 +1605,6 @@ class TodayView extends HTMLElement {
     activeClearCheck,
     hasPendingClearResult,
     showActiveClearTray,
-    historicalClearChecks,
   }) {
     const newTaskCards = this._newTaskCardEntries(newTaskEntries);
     const remainingStatus = /** @type {"pending" | "loaded" | "error"} */ (
@@ -1428,7 +1615,7 @@ class TodayView extends HTMLElement {
       homeFilter: this._homeFilter,
       // Counts only once every list is in — a partial count would be wrong.
       tabCounts: remainingStatus === "loaded" ? tabCounts : {},
-      remainingStatus,
+      remainingStatus: this._tabListStatus?.() || remainingStatus,
       siteName: this._site?.name || "",
       siteAddress: this._site?.address || "",
       pendingSessionId: pendingSession?.id || "",
@@ -1444,11 +1631,7 @@ class TodayView extends HTMLElement {
       activeClearCheck,
       hasPendingClearResult,
       showActiveClearTray,
-      historyGroups: this._historyGroups(
-        visibleTasks,
-        checks,
-        historicalClearChecks,
-      ),
+      historyGroups: this._historyGroups(visibleTasks, checks),
     });
   }
 
@@ -1473,11 +1656,17 @@ class TodayView extends HTMLElement {
           entry.homeStatus === "needs_action"
             ? this._primaryCardAction(entry.task)
             : entry.homeStatus === "in_progress"
-              ? {
-                  kind: "update",
-                  label: t("card.viewUpdates"),
-                  variant: "outline",
-                }
+              ? canRetry311Filing(entry.task)
+                ? {
+                    kind: "file311",
+                    label: t("today.action.retryFiling"),
+                    variant: "blue",
+                  }
+                : {
+                    kind: "update",
+                    label: t("card.viewUpdates"),
+                    variant: "outline",
+                  }
               : null,
         statusLabel: isNew
           ? this._newTaskStatusMeta(entry)
@@ -1493,7 +1682,7 @@ class TodayView extends HTMLElement {
   }
 
   // Active work stays grouped by check; History uses the selected grouping.
-  // Preserve no-findings check records alongside the task history.
+  // History contains issues only.
   _historyGroups(entries, checks, clearChecks = []) {
     if (this._homeFilter === "history") {
       const groups = groupHistory(
@@ -1508,24 +1697,7 @@ class TodayView extends HTMLElement {
           .map((entry) => this._taskCardEntry(entry, false).markup)
           .join(""),
       }));
-      // Preserve checks with no findings; they have no task resolution time.
-      for (const check of [...clearChecks].sort((a, b) =>
-        String(b.submittedAt || b.startedAt || "").localeCompare(
-          String(a.submittedAt || a.startedAt || ""),
-        ),
-      ))
-        groups.push({
-          dateKey: pacificDateKey(check.submittedAt || check.startedAt || ""),
-          title: "",
-          checkTime: check.submittedAt || check.startedAt,
-          compact: false,
-          cards: "",
-        });
-      // Clear checks have no resolution event: use their check day for both
-      // date modes. Type mode keeps them separate after the issue categories.
-      return this._historyGrouping === "type"
-        ? groups
-        : groups.sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+      return groups;
     }
     const checkTimes = new Map(
       checks.map((check) => [check.id, check.submittedAt || check.startedAt]),
@@ -1866,6 +2038,7 @@ class TodayView extends HTMLElement {
       this._renderHome(this._homeModel);
       void this._hydrateVisibleHomeTasks();
       this._refresh311Statuses();
+      void this._refreshActiveTab();
     }
   }
 
@@ -2313,11 +2486,11 @@ class TodayView extends HTMLElement {
         console.error("escalation failed", err);
         return null;
       });
-      if (!isFiled311Completion(result?.task)) {
+      if (!isAccepted311Filing(result?.task)) {
         show311ErrorToast();
         return;
       }
-      show311SuccessToast(submitted311ServiceRequestNumber(result.task));
+      show311FilingToast(result.task);
       this._expireRemainingLists(); // filed → In-progress on the server
       if (card.isConnected) await slideCompletedCard(card);
       this._markAnalysisProblemResolved(problem, { taskStatus: null });
@@ -2458,10 +2631,13 @@ class TodayView extends HTMLElement {
         render: () => this._refreshAfterAction(),
       });
     } else if (action === "file311") {
-      // Filing runs inside the request (5–20 s): the button says so at once,
-      // and the toast names the card the moment the response lands, before
-      // the slide and the reload.
+      // Filing runs inside the request (5–20 s) unless it is queued for the
+      // background worker: the button says so at once, and the toast names
+      // the card the moment the response lands, before the slide and the
+      // reload. A retry after a failed background filing is already in
+      // progress, so its card stays put.
       const title = taskCardTitle(task);
+      const retry = filing311State(task) === "failed";
       void this._run(
         card,
         () =>
@@ -2470,17 +2646,16 @@ class TodayView extends HTMLElement {
           }),
         {
           requireSubmitted311: true,
-          animateOnSuccess: true,
+          animateOnSuccess: !retry,
           pending: { button: btn, label: t("today.action.filing") },
-          onSuccess: (result) =>
-            show311SuccessToast(
-              submitted311ServiceRequestNumber(result.task),
-              title,
-            ),
+          onSuccess: (result) => show311FilingToast(result.task, title),
         },
       ).then((result) => {
         if (!result) return;
         this._applyTaskResult(task.taskId, result.task);
+        // A retry replaces the failed outcome the watcher held over lists.
+        if (this._confirmedTasks?.has(task.taskId))
+          this._confirmedTasks.set(task.taskId, result.task);
         // Filed → In-progress on the server. The override (which also expires
         // the remaining lists) keeps the card there if a reload's open-list
         // read lands before the worklist index has caught up.
@@ -2568,7 +2743,12 @@ class TodayView extends HTMLElement {
     const button = action
       ? card.querySelector(`[data-action="${action}"]`)
       : null;
-    if (button && label) button.textContent = label;
+    if (button && label) {
+      // Label as text (it's translated copy), animated dots as trusted
+      // presentation markup; restore() resets textContent, dropping the span.
+      button.textContent = label;
+      button.insertAdjacentHTML("beforeend", animatedEllipsis());
+    }
     // Busy goes on the triggering button, not the card: the card-level hook
     // styles the checklist box as a spinner, which is wrong for a filing.
     (button || card).setAttribute("aria-busy", "true");
@@ -2647,7 +2827,7 @@ class TodayView extends HTMLElement {
       const result = await fn();
       const task = result?.task;
       const failure =
-        requireSubmitted311 && !isFiled311Completion(task)
+        requireSubmitted311 && !isAccepted311Filing(task)
           ? appActionFailureMessage(task, { includeUnsubmitted311: true }) ||
             "We couldn't file this ticket right now. Please try again."
           : appActionFailureMessage(task);

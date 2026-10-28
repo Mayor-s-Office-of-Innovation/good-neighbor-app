@@ -50,6 +50,10 @@ export class TaskUpdateDialog extends HTMLElement {
     this._requests = new Map();
     this._cityUpdates = [];
     this._loadGeneration = 0;
+    /** @type {Set<AbortController>} */
+    this._timelineReads = new Set();
+    this._timelineFrame = null;
+    this._retryToken = "";
     /** @type {Record<string, any> | null} */
     this._pendingEvent = null;
     /**
@@ -86,6 +90,9 @@ export class TaskUpdateDialog extends HTMLElement {
     }
     this._task = task;
     this._cityUpdates = [];
+    this._detail = null;
+    this._nextToken = null;
+    this._mediaUrls.clear();
     this._results = false;
     this._pendingEvent = null;
     this._open = true;
@@ -138,6 +145,7 @@ export class TaskUpdateDialog extends HTMLElement {
    */
   openResults(task, completion = null) {
     ++this._loadGeneration;
+    this._cancelTimelineReads();
     this._task = task;
     this._results = true;
     this._editorOnly = false;
@@ -192,12 +200,13 @@ export class TaskUpdateDialog extends HTMLElement {
   async _load(nextToken = "") {
     if (!this._task) return;
     const generation = ++this._loadGeneration;
+    this._cancelTimelineReads();
+    this._retryToken = nextToken;
     this._state = "loading";
     this._render();
     try {
-      const page = await getTaskUpdates(
-        this._task.taskId,
-        nextToken || undefined,
+      const page = await this._timelineRead((signal) =>
+        getTaskUpdates(this._task.taskId, nextToken || undefined, { signal }),
       );
       if (generation !== this._loadGeneration) return;
       this._detail = nextToken
@@ -211,79 +220,159 @@ export class TaskUpdateDialog extends HTMLElement {
         : page;
       this._nextToken = page.nextToken;
       this._task = { ...this._task, ...this._detail.task };
-      const ticket = submitted311Ticket(this._task);
-      if (ticket) {
-        try {
-          const response = await get311RequestDetails([
-            { taskId: this._task.taskId, srNum: ticket.srNum },
-          ]);
-          if (generation !== this._loadGeneration) return;
-          this._task = taskWith311Status(
-            this._task,
-            map311StatusResponse(response),
-          );
-          const request = response.requests.find(
-            (item) => item.taskId === this._task.taskId,
-          )?.request;
-          const seen = new Set();
-          this._cityUpdates = (request?.events || [])
-            .filter((event) => {
-              if (event.kind === "submitted") return false;
-              const key = JSON.stringify([
-                event.kind,
-                event.occurredAt,
-                event.value,
-                event.closureReason,
-                event.notes,
-                event.description,
-              ]);
-              if (seen.has(key)) return false;
-              seen.add(key);
-              return true;
-            })
-            .map((event) => ({
-              ...event,
-              type: "city_status",
-              label: event.title,
-            }));
-        } catch {
-          // A City feed failure must not prevent access to the app's own timeline.
-        }
-      } else this._cityUpdates = [];
-
-      const photoIds = [
-        ...new Set(
-          [
-            this._task.evidence?.artifactId || taskArtifactIds(this._task)[0],
-            ...(this._detail.updates || []).flatMap(
-              (update) => update.photoKeys || [],
-            ),
-          ].filter(Boolean),
-        ),
-      ];
-      const mediaUrls = new Map(
-        await Promise.all(
-          photoIds.map((artifactId) =>
-            getMediaUrl(this._task.checkId, artifactId)
-              .then(
-                (media) =>
-                  /** @type {[string, string]} */ ([
-                    artifactId,
-                    media.downloadUrl || "",
-                  ]),
-              )
-              .catch(() => /** @type {[string, string]} */ ([artifactId, ""])),
-          ),
-        ),
-      );
-      if (generation !== this._loadGeneration) return;
-      this._mediaUrls = mediaUrls;
       this._state = "ready";
+      this._render();
+      void this._loadCityUpdates(generation);
+      void this._loadTimelinePhotos(generation);
     } catch {
       if (generation !== this._loadGeneration) return;
       this._state = "error";
+      this._render();
     }
+  }
+
+  async _loadCityUpdates(generation) {
+    const ticket = submitted311Ticket(this._task);
+    if (ticket) {
+      try {
+        const response = await this._timelineRead((signal) =>
+          get311RequestDetails(
+            [{ taskId: this._task.taskId, srNum: ticket.srNum }],
+            { signal },
+          ),
+        );
+        if (generation !== this._loadGeneration) return;
+        this._task = taskWith311Status(
+          this._task,
+          map311StatusResponse(response),
+        );
+        const request = response.requests.find(
+          (item) => item.taskId === this._task.taskId,
+        )?.request;
+        const seen = new Set();
+        this._cityUpdates = (request?.events || [])
+          .filter((event) => {
+            if (event.kind === "submitted") return false;
+            const key = JSON.stringify([
+              event.kind,
+              event.occurredAt,
+              event.value,
+              event.closureReason,
+              event.notes,
+              event.description,
+            ]);
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          })
+          .map((event) => ({
+            ...event,
+            type: "city_status",
+            label: event.title,
+          }));
+      } catch {
+        // A City feed failure must not prevent access to the app's own timeline.
+      }
+    } else {
+      this._cityUpdates = [];
+      return;
+    }
+
+    if (generation === this._loadGeneration) this._refreshTimeline();
+  }
+
+  async _loadTimelinePhotos(generation) {
+    const checkId = this._task.checkId;
+    const photoIds = [
+      ...new Set(
+        [
+          this._task.evidence?.artifactId || taskArtifactIds(this._task)[0],
+          ...(this._detail.updates || []).flatMap(
+            (update) => update.photoKeys || [],
+          ),
+        ].filter(Boolean),
+      ),
+    ];
+    await Promise.all(
+      photoIds.map(async (artifactId) => {
+        try {
+          const media = await this._timelineRead((signal) =>
+            getMediaUrl(checkId, artifactId, { signal }),
+          );
+          if (generation !== this._loadGeneration) return;
+          if (
+            media.downloadUrl &&
+            this._mediaUrls.get(artifactId) !== media.downloadUrl
+          ) {
+            this._mediaUrls.set(artifactId, media.downloadUrl);
+            this._refreshTimeline();
+          }
+        } catch {
+          // Optional evidence must never block the issue's activity timeline.
+        }
+      }),
+    );
+  }
+
+  /** @template T @param {(signal: AbortSignal) => Promise<T>} read */
+  async _timelineRead(read) {
+    const controller = new AbortController();
+    this._timelineReads.add(controller);
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    let onAbort;
+    const aborted = new Promise((_, reject) => {
+      onAbort = () =>
+        reject(new DOMException("Timeline read cancelled", "AbortError"));
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      return await Promise.race([read(controller.signal), aborted]);
+    } finally {
+      clearTimeout(timer);
+      controller.signal.removeEventListener("abort", onAbort);
+      this._timelineReads.delete(controller);
+    }
+  }
+
+  _cancelTimelineReads() {
+    for (const controller of this._timelineReads) controller.abort();
+    this._timelineReads.clear();
+    if (this._timelineFrame !== null) cancelAnimationFrame(this._timelineFrame);
+    this._timelineFrame = null;
+  }
+
+  _refreshTimeline() {
+    if (this._timelineFrame !== null) return;
+    const generation = this._loadGeneration;
+    this._timelineFrame = requestAnimationFrame(() => {
+      this._timelineFrame = null;
+      if (generation === this._loadGeneration) this._renderTimeline();
+    });
+  }
+
+  _renderTimeline() {
+    // Background enrichment must not replace an editor or reopen a closed sheet.
+    if (!this._open || this._mode !== "timeline" || this._state !== "ready")
+      return;
+    const dialog = this.querySelector?.("dialog.task-update");
+    const scrollTop = dialog?.scrollTop || 0;
+    const focused = globalThis.document?.activeElement;
+    const marker =
+      focused && dialog?.contains(focused)
+        ? focused.hasAttribute("data-timeline-focus")
+          ? "data-timeline-focus"
+          : focused.getAttributeNames().find((name) => name.startsWith("data-"))
+        : null;
+    const selector = marker
+      ? `[${marker}="${CSS.escape(focused.getAttribute(marker))}"]`
+      : null;
     this._render();
+    if (selector)
+      /** @type {HTMLElement | null} */ (this.querySelector(selector))?.focus({
+        preventScroll: true,
+      });
+    const replacement = this.querySelector?.("dialog.task-update");
+    if (replacement) replacement.scrollTop = scrollTop;
   }
 
   _content() {
@@ -393,6 +482,9 @@ export class TaskUpdateDialog extends HTMLElement {
 
   /** @param {HTMLDialogElement} root */
   _wire(root) {
+    root
+      .querySelector("[data-retry-timeline]")
+      ?.addEventListener("click", () => void this._load(this._retryToken));
     root.querySelectorAll("[data-city-help]").forEach((element) => {
       const button = /** @type {HTMLButtonElement} */ (element);
       button.addEventListener("click", () => {
@@ -805,6 +897,7 @@ export class TaskUpdateDialog extends HTMLElement {
   _dismiss() {
     const results = this._results;
     ++this._loadGeneration;
+    this._cancelTimelineReads();
     this._resetDraft();
     this._completion = null;
     this._results = false;

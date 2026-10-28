@@ -28,7 +28,7 @@ import { t } from "../i18n/i18n.js";
  * @property {(task: Record<string, any>) => void} [onTaskUpdated]
  *   apply a confirmed task before reloading the host
  * @property {() => Promise<unknown> | void} [reload] re-render the host
- *   after the updates sheet saved or closed; focus is restored afterwards
+ *   after a save or resolution; unchanged closes only restore focus
  * @property {() => HTMLElement | null} [fallbackFocus] focus target when
  *   neither the card button nor the trigger is still in the document
  */
@@ -151,10 +151,14 @@ export class TaskSheets {
           "resolve",
         );
       });
+      let updateReload = Promise.resolve();
       dialog.addEventListener("taskupdated", (event) => {
         const task = /** @type {CustomEvent} */ (event).detail?.task;
         if (task) this._options.onTaskUpdated?.(task);
-        void this._options.reload?.();
+        updateReload = Promise.resolve(this._options.reload?.()).then(
+          () => {},
+          () => {},
+        );
       });
       dialog.addEventListener("taskupdateclosed", async (event) => {
         // Resolution documentation may still be saving after dismissal.
@@ -166,7 +170,10 @@ export class TaskSheets {
         const returnFocus = this._updateReturnFocus;
         this._updateReturnFocus = null;
         await dialog._finishResolution?.(true);
-        void Promise.resolve(this._options.reload?.()).then(() => {
+        const refresh = /** @type {CustomEvent} */ (event).detail?.results
+          ? this._options.reload?.()
+          : updateReload;
+        void Promise.resolve(refresh).then(() => {
           this._focusCard(
             returnFocus?.taskId || "",
             "update",

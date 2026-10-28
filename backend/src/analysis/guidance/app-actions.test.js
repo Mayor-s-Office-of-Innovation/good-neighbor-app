@@ -214,6 +214,133 @@ describe("app action execution", () => {
     ]);
   });
 
+  it("files again after HUB rejects CreateSR, but not after a 5xx", async () => {
+    const env = {
+      GNP_311_SUBMISSION_ENABLED: "true",
+      DYNAMO_TABLE: "table",
+      S3_UPLOAD_BUCKET: "bucket",
+      SQS_QUEUE_URL: "queue",
+      SF311_CREATESR_URL: "https://hub.example/createsr",
+      SF311_BASIC_AUTH_USER: "user",
+      SF311_BASIC_AUTH_PASS: "pass",
+    };
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { return_code: "4001" } }), {
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(new Response("", { status: 503 }));
+    vi.stubGlobal("fetch", fetchImpl);
+    send.mockResolvedValue({ Items: [] });
+    /** @type {import("./app-actions.js").AppActionResult[]} */
+    const checkpoints = [];
+    const actions = [
+      {
+        code: "create_311_ticket",
+        payload: {
+          executionTrigger: "user_confirmed",
+          serviceCodeOrAction: "1.1.4.7.20.0",
+          responsibleAgencyCode: "76",
+        },
+      },
+    ];
+    const options = {
+      env,
+      tableName: "table",
+      siteId: "site",
+      now,
+      trigger: /** @type {const} */ ("user_confirmed"),
+      task: { taskId: "task", location: { latitude: 37.7, longitude: -122.4 } },
+      onCheckpoint: async (
+        /** @type {import("./app-actions.js").AppActionResult} */ result,
+      ) => {
+        checkpoints.push(result);
+      },
+    };
+    try {
+      const [rejected] = await executeAppActions(actions, options);
+      expect(rejected).toMatchObject({
+        status: "failed",
+        reason: "4001",
+        payload: { tickets: [{ creationState: "rejected" }] },
+      });
+      // Retry from the last durable checkpoint, as if the run stopped before
+      // the worker recorded the returned result.
+      const saved = checkpoints.at(-1);
+      expect(saved).toMatchObject({
+        reason: "creation_rejected",
+        payload: { tickets: [{ creationState: "rejected" }] },
+      });
+      const [serverError] = await executeAppActions(actions, {
+        ...options,
+        priorResults: saved ? [saved] : [],
+      });
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      expect(serverError.payload?.tickets).toEqual([]);
+      const [uncertain] = await executeAppActions(actions, {
+        ...options,
+        priorResults: [checkpoints.at(-1), serverError].filter(
+          (result) => result !== undefined,
+        ),
+      });
+      expect(uncertain.reason).toBe(
+        "sf311_creation_uncertain_requires_reconciliation",
+      );
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    } finally {
+      send.mockReset();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("treats blank or 0,0 coordinates as no location", async () => {
+    const actions = [
+      {
+        code: "create_311_ticket",
+        payload: {
+          serviceCodeOrAction: "1.1.4.7.20.0",
+          responsibleAgencyCode: "76",
+        },
+      },
+    ];
+    send.mockResolvedValueOnce({
+      Item: { location: { latitude: null, longitude: "" } },
+    });
+    try {
+      const [result] = await executeAppActions(actions, {
+        env: {
+          GNP_311_SUBMISSION_ENABLED: "true",
+          DYNAMO_TABLE: "table",
+          S3_UPLOAD_BUCKET: "bucket",
+          SQS_QUEUE_URL: "queue",
+          SF311_CREATESR_URL: "https://hub.example/createsr",
+          SF311_BASIC_AUTH_USER: "user",
+          SF311_BASIC_AUTH_PASS: "pass",
+        },
+        now,
+        tableName: "table",
+        siteId: "site",
+        task: {
+          taskId: "task",
+          source: {
+            latitude: 0,
+            longitude: 0,
+            positionDescriptor: "perimeter",
+          },
+        },
+      });
+      expect(result).toMatchObject({
+        status: "failed",
+        reason: "missing_location",
+      });
+      expect(send).toHaveBeenCalledOnce();
+    } finally {
+      send.mockReset();
+    }
+  });
+
   it("records a failed 311 submission when config is incomplete", async () => {
     expect(
       await executeAppActions(

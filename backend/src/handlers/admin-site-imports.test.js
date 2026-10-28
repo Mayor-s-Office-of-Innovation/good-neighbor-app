@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import {
   BatchWriteCommand,
   GetCommand,
@@ -684,4 +685,66 @@ it("records failed contact reads and continues applying subsequent import rows",
     .map(([command]) => command.input.ExpressionAttributeValues?.[":outcome"])
     .filter(Boolean);
   expect(outcomes).toEqual(["retryable_failed", "applied"]);
+});
+
+it("imports the synthetic site-admin fixture with only fictional contact details", async () => {
+  // seedLocalSiteAdmin creates these catalog entries before previewing the CSV.
+  send.mockImplementation(async (command) => {
+    if (
+      command instanceof QueryCommand &&
+      command.input.ExpressionAttributeValues?.[":pk"] ===
+        "ADMIN_DIRECTORY#OVERSIGHT"
+    )
+      return {
+        Items: [
+          {
+            sk: "DEPARTMENT#hsh",
+            optionType: "department",
+            name: "Department of Homelessness and Supportive Housing (HSH)",
+          },
+          {
+            sk: "DEPARTMENT#dph",
+            optionType: "department",
+            name: "Department of Public Health (DPH)",
+          },
+        ],
+      };
+    return { Items: [] };
+  });
+  const csv = await readFile(
+    new URL("../../fixtures/synthetic/site-admin-demo.csv", import.meta.url),
+    "utf8",
+  );
+  const response = await call(
+    previewSiteImport,
+    event({ fileName: "site-admin-demo.csv", csv }),
+  );
+  expect(response.statusCode).toBe(201);
+  const body = JSON.parse(String(response.body));
+  expect(body.counts.invalid).toBe(0);
+  expect(body.counts.conflict).toBe(0);
+  expect(body.rows).toHaveLength(28);
+  const contacts = new Map();
+  for (const { source } of body.rows) {
+    for (const role of [
+      "Site manager",
+      "Program manager",
+      "Provider manager",
+    ]) {
+      const email = source[`${role} email`];
+      expect(email).toMatch(/^contact\d{3}@example\.org$/);
+      expect(source[`${role} first name`]).toBe("Sample");
+      expect(source[`${role} last name`]).toMatch(/^Contact\d{3}$/);
+      expect(source[`${role} phone`]).toMatch(/^415-555-01\d{2}$/);
+      expect(["", "100"]).toContain(source[`${role} extension`]);
+      const identity = [
+        source[`${role} first name`],
+        source[`${role} last name`],
+        source[`${role} phone`],
+      ];
+      if (contacts.has(email)) expect(identity).toEqual(contacts.get(email));
+      contacts.set(email, identity);
+    }
+  }
+  expect(contacts.size).toBe(53);
 });

@@ -1,6 +1,8 @@
 # Developer command reference
 
-**Prereqs:** Node 24 LTS+, npm 11+. Terraform 1.9+ and pre-commit for infra work; AWS access is
+**Prereqs:** Node 24 LTS+, npm 11+, and pre-commit for all local development
+(`brew install pre-commit` on macOS, or `pipx install pre-commit`). Terraform 1.9+ is
+required for infra work; AWS access is
 for approved operators only — developers work through Git and CI. The backend local harness also
 needs **JRE 17+** (DynamoDB Local + ElasticMQ are Java jars) — install with
 `brew install --cask temurin` (not `java.com`'s Java 8), confirm `java -version` reports 17+. The
@@ -10,8 +12,17 @@ frontend, tests, lint, and typecheck do **not** need Java.
 
 | Command | Does |
 |---|---|
-| `npm install` | Install all workspace deps (run from repo root) |
+| `npm install` | Install all workspace deps and Git hooks (run from repo root) |
+| `npm run setup:hooks` | Install or repair the pre-commit hook and download its configured environments |
 | `cp .env.example .env.local` | Local backend env (git-ignored) — required by `npm run dev -w backend`. Dummies work out of the box; for the analyzer leg, set a real `ANALYZER_API_KEY` (see [Local S3 (MinIO)](#local-s3-minio)) |
+
+Local `npm install` and `npm ci` run `pre-commit install --install-hooks` through
+the root `postinstall` script. Missing pre-commit or failed hook setup fails the
+installation command; fix the reported problem and rerun `npm run setup:hooks`.
+The first run needs network access to download hook environments. CI explicitly
+skips hook setup when `CI=true` or `CI=1`; CI security scans still run separately.
+Using `--ignore-scripts` bypasses this setup, so run `npm run setup:hooks` afterward.
+Do not set `CI=true` in your local shell to suppress setup failures.
 
 ## Repo-wide checks (what CI runs)
 
@@ -219,6 +230,7 @@ Then start the local API with these env overrides:
 
 ```bash
 GNP_311_SUBMISSION_ENABLED=true \
+GNP_311_ASYNC_FILING=true \
 SF311_CREATESR_URL=http://127.0.0.1:3999/createsr \
 SF311_UPDATESR_URL=http://127.0.0.1:3999/updatesr \
 SF311_AGENCY_LOOKUP_URL=http://127.0.0.1:3999/lookup \
@@ -372,8 +384,11 @@ artifacts uploaded on failure) — see `.github/workflows/ci.yml`.
 
 ### Standard localhost site-admin dataset
 
-`backend/seeds/site-admin.csv` is the standard site-admin seed (28 sites from
-`gnp_site_admin_seed.csv`). Set `LOCAL_SITE_ADMIN_SEED=true` in `.env.local` to use
+`backend/fixtures/synthetic/site-admin-demo.csv` is the standard local site-admin
+seed: 28 sites with synthetic contact identities. Names are labeled Sample Contact,
+emails use `example.org`, and phones use the fictional `415-555-01xx` range.
+Site and organization details are preserved; repeated contacts retain the same
+synthetic identity across assignments. Set `LOCAL_SITE_ADMIN_SEED=true` in `.env.local` to use
 it instead of the device-login sample sites. The API seeds a fresh database before
 listening, using the normal CSV importer and creating its DPH/HSH departments.
 A local seed marker prevents restarts from overwriting edits. This imports contacts
@@ -390,7 +405,8 @@ This deletes and recreates only the configured `gnp-local-*` DynamoDB table.
 It refuses non-loopback DynamoDB, SQS, or S3 endpoints. Storage objects are not
 removed. Restart the backend afterward and refresh the dashboard. Without
 `--reset`, the command seeds only if the marker is absent. To reload a changed
-CSV, use the explicit reset command. Leave `LOCAL_SITE_ADMIN_SEED` unset for the
+CSV, use the explicit reset command. Existing local databases are not sanitized
+by changing this fixture; reset them explicitly to replace previously imported contacts. Leave `LOCAL_SITE_ADMIN_SEED` unset for the
 original device-login fixtures used by the existing local/E2E harness.
 
 ### Compliance letter email testing

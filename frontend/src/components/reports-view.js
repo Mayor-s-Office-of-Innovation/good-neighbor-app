@@ -401,6 +401,10 @@ class ReportsView extends ReportsScreen {
       );
       action();
     };
+    this.querySelector("#settings-help")?.addEventListener("click", () => {
+      this._settingsMenuOpen = false;
+      navigate("/help");
+    });
     this.querySelector("#settings-feedback")?.addEventListener("click", () =>
       choose(() => feedback?.open()),
     );
