@@ -5,7 +5,7 @@
   "basis": "FAQ v2 and product-owner clarifications in the support-chat task; guide entries reviewed against the following code. Reviewed PR 619: clear-check cards are omitted from History; FAQ-36 reflects that History does not always show a status note. GUIDE-02 menu guidance remains accurate.",
   "behaviorFiles": {
     "frontend/src/domain/check-completion.js": "20904aa114ec5b198400ba98e56bec58140dc3c9ba4068021d4f505175c46e66",
-    "frontend/src/components/today-view.templates.js": "7120ffb8d473435f554da2c2b7dbbe9980e54a85635b0c63ee5c464d9cce23ea"
+    "frontend/src/components/today-view.templates.js": "4c91d037f9b470cf07f32d9e39dbc050440692f7515de262f9768f1acfe9b78b"
   },
   "guideEvidence": {
     "GUIDE-01": [
