@@ -99,3 +99,23 @@ export function deriveActorId(event) {
     authorizer?.jwt?.claims?.sub;
   return typeof claim === "string" && claim.length > 0 ? claim : "site-team";
 }
+
+/** @param {import("aws-lambda").APIGatewayProxyEventV2} event */
+export function deriveSessionId(event) {
+  const authorizer = /** @type {any} */ (event.requestContext)?.authorizer;
+  const id =
+    authorizer?.lambda?.["claims.sid"] ??
+    authorizer?.["claims.sid"] ??
+    authorizer?.jwt?.claims?.sid;
+  return typeof id === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(id) ? id : "";
+}
+
+/** @param {import("aws-lambda").APIGatewayProxyEventV2} event */
+export function deriveDeviceGeneration(event) {
+  const authorizer = /** @type {any} */ (event.requestContext)?.authorizer;
+  const value =
+    authorizer?.lambda?.["claims.ver"] ??
+    authorizer?.["claims.ver"] ??
+    authorizer?.jwt?.claims?.ver;
+  return value === undefined ? undefined : Number(value);
+}

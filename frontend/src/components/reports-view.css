@@ -794,11 +794,6 @@
   color: var(--c-flag);
 }
 
-.reports-pill--cannotDo {
-  background: var(--c-hazard-bg);
-  color: var(--c-hazard);
-}
-
 /* Recorded checks use count bands, independently of compliance targets. */
 .reports-counts {
   --report-many: #3e96ff;

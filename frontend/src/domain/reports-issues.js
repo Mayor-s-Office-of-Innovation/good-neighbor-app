@@ -9,7 +9,6 @@
     sr311         a 311 request was filed (completionMethod or agency)
     emergencyCall a non-actionable escalation whose rule said "Call 911"
     call          any other non-actionable escalation acted on (a phone call)
-    cannotDo      marked "can't do" with a recorded reason
     open          nothing recorded yet
   Superseded tasks (replaced after an amendment) are not issues.
 */
@@ -24,14 +23,13 @@ import {
 } from "../i18n/dates.js";
 import { addDays, dayInstant, weekdayIndex } from "./reports-periods.js";
 
-/** @typedef {"onSite" | "sr311" | "emergencyCall" | "call" | "cannotDo" | "open"} ResponseKind */
+/** @typedef {"onSite" | "sr311" | "emergencyCall" | "call" | "open"} ResponseKind */
 
 export const RESPONSE_KINDS = /** @type {ResponseKind[]} */ ([
   "onSite",
   "sr311",
   "emergencyCall",
   "call",
-  "cannotDo",
   "open",
 ]);
 
@@ -60,15 +58,6 @@ function saysCall911(task) {
  */
 export function responseFor(task) {
   const status = String(task.status || "open");
-  if (status === "cannot_do") {
-    const reason = rulebookText(task.cannotDo?.reason || "");
-    return {
-      kind: "cannotDo",
-      label: reason
-        ? t("reports.issues.response.cannotDoReason", { reason })
-        : t("reports.issues.response.cannotDo"),
-    };
-  }
   if (!ACTED.includes(status)) {
     return { kind: "open", label: t("reports.issues.response.open") };
   }
@@ -403,8 +392,6 @@ export function attentionFlags(task, report) {
       task.inProgressAt,
       task.completedAt,
       task.resolvedAt,
-      task.cannotDo?.at,
-      task.cannotDo?.recordedAt,
       ...(task.appActionResults || []).map((result) => result.recordedAt),
     ].some(before) ||
     (report.updates || []).some(

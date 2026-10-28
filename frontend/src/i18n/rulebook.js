@@ -1,11 +1,9 @@
 /*
   Translate rulebook text that arrives as DATA on task items and assessment
-  conditions: outcome labels, guidance, button labels, cannot-do reasons,
-  clarifying-question prompts and options, categories, agencies — plus the
+  conditions: outcome labels, guidance, button labels, clarifying-question
+  prompts and options, categories, agencies — plus the
   backend's 311 vocabulary and timeline labels. The backend stores the English
-  strings on each task (and the API uses some of them as identifiers, e.g. the
-  cannot-do reason), so the UI keeps the stored English for anything it sends
-  back and only translates what it displays.
+  strings on each task, so the UI translates only what it displays.
 
   Lookup is by English text through a reverse index of the `rulebook.*` and
   `server.*` namespaces, which scripts/i18n-rulebook.mjs generates from the

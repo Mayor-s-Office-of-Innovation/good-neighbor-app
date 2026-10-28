@@ -144,7 +144,7 @@ export function appActionFailureMessage(
   // action saved successfully. Explicit filing still requires a submitted SR.
   if (
     !includeUnsubmitted311 &&
-    ["completed", "in_progress", "cannot_do"].includes(task?.status || "")
+    ["completed", "in_progress"].includes(task?.status || "")
   ) {
     return null;
   }

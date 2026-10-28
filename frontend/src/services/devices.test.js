@@ -51,6 +51,17 @@ describe("refreshDeviceToken", () => {
     );
   });
 
+  it("sends the durable attempt ID with the token", async () => {
+    const attemptId = "146508e3-44e6-4cdf-92a2-f45fca25010e";
+    await refreshDeviceToken("refresh-1", attemptId);
+    expect(fetch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        body: JSON.stringify({ refreshToken: "refresh-1", attemptId }),
+      }),
+    );
+  });
+
   it("throws ApiError with status 401 on a rejected refresh (fatal)", async () => {
     vi.stubGlobal(
       "fetch",

@@ -22,6 +22,7 @@
     "policy:validate": "node scripts/policy-validate.mjs",
     "duplicates:evaluate": "node scripts/evaluate-duplicates.mjs",
     "test": "vitest run",
+    "test:sessions": "node scripts/test-device-context-sessions.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "local:ddb": "node scripts/local-ddb.mjs",
     "local:mq": "node scripts/local-mq.mjs",

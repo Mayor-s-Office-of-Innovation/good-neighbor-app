@@ -15,6 +15,7 @@ const setup = vi.hoisted(() => ({
   stripHandoffCredentials: vi.fn(),
   rememberConsumedGrant: vi.fn(),
   ensureHandoffManifest: vi.fn(),
+  isStandalone: vi.fn(() => false),
 }));
 
 vi.mock("../db.js", () => ({
@@ -81,6 +82,7 @@ vi.mock("../services/browser-context.js", () => ({
 }));
 vi.mock("../services/install-prompt.js", () => ({
   shouldOfferInstall: () => false,
+  isStandalone: setup.isStandalone,
 }));
 vi.mock("../services/keyboard-viewport.js", () => ({
   deepActiveElement: vi.fn(),
@@ -120,6 +122,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  setup.isStandalone.mockReset().mockReturnValue(false);
   setup.currentRoute.mockReset().mockReturnValue("/today");
   setup.clearSite.mockReset().mockResolvedValue(undefined);
   setup.getSite.mockReset();
@@ -321,6 +324,32 @@ describe("Home Screen session handoff at startup", () => {
     accessLevel: "general",
   };
 
+  it("finishes install preparation before showing a newly enrolled app", async () => {
+    setup.getSite.mockResolvedValue({
+      siteId: "site-1",
+      name: "Site",
+      token: "access",
+    });
+    setup.getSiteSettings.mockResolvedValue({
+      site: { siteId: "site-1", name: "Site" },
+    });
+    setup.saveSiteSettings.mockResolvedValue({
+      siteId: "site-1",
+      name: "Site",
+      token: "access",
+    });
+    const pending = deferred();
+    setup.ensureHandoffManifest.mockReturnValue(pending.promise);
+    const root = component();
+    const entering = root._enterAppAfterBind();
+    await flush();
+    expect(setup.ensureHandoffManifest).toHaveBeenCalledOnce();
+    expect(root._renderApp).not.toHaveBeenCalled();
+    pending.resolve(true);
+    expect(await entering).toBe(true);
+    expect(root._renderApp).toHaveBeenCalledOnce();
+  });
+
   it("strips the credentials before anything else and ignores a stale grant when a session exists", async () => {
     vi.stubGlobal("location", new URL(LAUNCH));
     setup.getSite.mockResolvedValue({ siteId: "site-1", name: "Cached" });
@@ -374,6 +403,38 @@ describe("Home Screen session handoff at startup", () => {
       siteId: "site-1",
       name: "Mission Street Center",
     });
+  });
+
+  it("restores a cookie-only Home Screen launch without manifest credentials", async () => {
+    vi.stubGlobal("location", new URL("http://localhost:5173/"));
+    setup.isStandalone.mockReturnValue(true);
+    setup.getSite
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ siteId: "site-1", name: "Site" });
+    setup.redeemHandoffGrant.mockResolvedValue(session);
+    setup.getSiteSettings.mockResolvedValue({
+      site: { siteId: "site-1", name: "Site" },
+    });
+    setup.saveSiteSettings.mockResolvedValue({
+      siteId: "site-1",
+      name: "Site",
+    });
+    const root = component();
+    await root.connectedCallback();
+    expect(setup.redeemHandoffGrant).toHaveBeenCalledWith(undefined, undefined);
+    expect(root._renderApp).toHaveBeenCalledOnce();
+    expect(root._renderSetup).not.toHaveBeenCalled();
+    expect(setup.rememberConsumedGrant).not.toHaveBeenCalled();
+  });
+
+  it("keeps a valid session when a returning bookmark contains the generic login flag", async () => {
+    vi.stubGlobal("location", new URL("http://localhost:5173/#login=1"));
+    setup.getSite.mockResolvedValue({ siteId: "site-1", token: "cached" });
+    setup.getSiteSettings.mockReturnValue(new Promise(() => {}));
+    const root = component();
+    await root.connectedCallback();
+    expect(root._renderApp).toHaveBeenCalledOnce();
+    expect(root._renderSetup).not.toHaveBeenCalled();
   });
 
   it("ends on the setup screen when the redeemed session is rejected by the settings refresh", async () => {

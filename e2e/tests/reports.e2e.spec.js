@@ -200,12 +200,22 @@ test.describe("site manager reports", () => {
     await expect(typeCard.locator('[data-action="update"]')).toBeFocused();
     await page.getByRole("link", { name: t("reports.type.back") }).click();
     await expect(page).toHaveURL(/tab=issues&period=week&start=2026-09-27/);
+    // The URL changes before the view-transition swap. Both the outgoing
+    // type screen and incoming report contain t1 and the Issues tab.
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+      t("reports.title"),
+    );
+    await expect(page.locator("html")).not.toHaveAttribute(
+      "data-route-transition",
+      /.+/,
+    );
     await expect(
       page.locator('.analysis-card[data-task-id="t1"]'),
     ).toBeVisible();
-    await page.getByRole("button", { name: t("reports.tab.issues") }).focus();
     // Arrow keys move between tabs.
-    await page.keyboard.press("ArrowLeft");
+    await page
+      .getByRole("button", { name: t("reports.tab.issues") })
+      .press("ArrowLeft");
     await expect(page).toHaveURL(/tab=checks/);
     await expect(page.locator(".reports__records")).toBeVisible();
   });

@@ -132,9 +132,41 @@ describe("manager staff enrollment", () => {
         { bindingId: "manager-2", accessLevel: "manager", status: "active" },
       ],
     });
+    send.mockResolvedValueOnce({
+      Responses: {
+        "gnp-test-app": [
+          {
+            deviceId: "general-1",
+            status: "active",
+            primarySessionKind: "browser",
+            lastSeenAt: "2026-10-27T12:00:00Z",
+            sessions: {
+              home: {
+                kind: "home_screen",
+                status: "active",
+                tokenGeneration: 1,
+                refreshJti: "private-jti",
+                expiresAt: "2099-01-01T00:00:00Z",
+                lastSeenAt: "2026-10-27T13:00:00Z",
+              },
+            },
+          },
+        ],
+      },
+    });
     const response = await call(listGeneralBindings, event());
     expect(response.statusCode).toBe(200);
     expect(send.mock.calls[0][0]).toBeInstanceOf(QueryCommand);
+    /** @type {{sessions: {kind: string}[]}[]} */
+    const listed = JSON.parse(String(response.body)).bindings;
+    expect(listed[0].sessions.map((session) => session.kind)).toEqual([
+      "browser",
+      "home_screen",
+    ]);
+    expect(listed[1].sessions).toEqual([]);
+    expect(String(response.body)).not.toContain("private-jti");
+    expect(String(response.body)).not.toContain("refreshJti");
+
     expect(JSON.parse(String(response.body)).bindings).toEqual([
       expect.objectContaining({
         bindingId: "general-1",

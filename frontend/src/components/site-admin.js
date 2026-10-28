@@ -597,6 +597,7 @@ class SiteAccessView extends HTMLElement {
         enrollmentUrl: result.enrollmentUrl,
       });
       this._render();
+      this._accessState.scrollToGrant(this);
     } catch (failure) {
       const message = await this._accessState.invitationError(this, failure);
       if (error) error.textContent = t(message);
@@ -791,17 +792,25 @@ function activeGrantView(grant, expanded) {
     </p>
     ${grant.enrollmentUrl
       ? html`<wa-qr-code
-            size="220"
-            error-correction="M"
-            label="${escapeAttr(t("access.qrLabel", { label: grant.label }))}"
-          ></wa-qr-code>
-          <button class="btn-outline" type="button" data-share-grant>
+          size="220"
+          error-correction="M"
+          label="${escapeAttr(t("access.qrLabel", { label: grant.label }))}"
+        ></wa-qr-code>`
+      : ""}
+    <div class="site-access-actions">
+      ${grant.enrollmentUrl
+        ? html`<button class="btn-ink" type="button" data-share-grant>
             ${escapeHtml(t("access.share"))}
           </button>`
-      : ""}
-    <button class="btn-outline" type="button" data-cancel-staff-grant>
-      ${escapeHtml(t("access.cancel"))}
-    </button>
+        : ""}
+      <button
+        class="btn-outline site-access-cancel"
+        type="button"
+        data-cancel-staff-grant
+      >
+        ${escapeHtml(t("access.cancel"))}
+      </button>
+    </div>
   </details>`;
 }
 

@@ -23,6 +23,9 @@
 
 ## Required Local Checks
 
+See the [development prerequisites and hook troubleshooting](docs/dev-commands.md)
+before running these commands.
+
 ```bash
 pre-commit install
 npm install

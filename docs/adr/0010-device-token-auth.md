@@ -2,6 +2,9 @@
 
 ## Status
 
+The Home Screen handoff decision below is superseded by
+[ADR 0019](./0019-home-screen-session-continuity.md).
+
 Superseded in part by [ADR 0015](./0015-device-bindings-and-manager-enrollment.md)
 for token lifetime, canonical Manager role, and physical-device/Site-binding
 separation. Accepted originally (2026-09-03, branch `feature/session-security`). Amends the identity

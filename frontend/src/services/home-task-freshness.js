@@ -123,7 +123,7 @@ export async function refreshActiveTab(view) {
       .join();
     for (const result of succeeded)
       view._taskListFreshness.set(result.status, result.fetchedAt);
-    const secondary = ["in_progress", "completing", "completed", "cannot_do"];
+    const secondary = ["in_progress", "completing", "completed"];
     if (secondary.every((status) => view._taskListFreshness.has(status))) {
       view._remainingStatus = "loaded";
       view._remainingLoadedAt = Math.min(
@@ -171,6 +171,6 @@ function neededStatuses(tab) {
     case "in_progress":
       return ["in_progress", "completing", "completed"];
     default:
-      return ["open", "in_progress", "completing", "completed", "cannot_do"];
+      return ["open", "in_progress", "completing", "completed"];
   }
 }

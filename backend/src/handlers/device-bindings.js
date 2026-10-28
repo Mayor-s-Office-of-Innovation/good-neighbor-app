@@ -1,3 +1,5 @@
+import { deviceLivenessProblem } from "../lib/device-liveness.js";
+import { bindingLifecycleValid } from "./devices.js";
 import { randomUUID } from "node:crypto";
 import {
   GetCommand,
@@ -8,8 +10,22 @@ import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { sessionRotationItem } from "../lib/device-session.js";
-import { mintAccessToken, mintRefreshToken } from "../lib/device-token.js";
-import { deriveActorId, deriveSiteId } from "../lib/principal.js";
+import {
+  contextSession,
+  contextSessionWrite,
+  deviceSessionMatches,
+} from "../lib/device-context-sessions.js";
+import {
+  canonicalAccessLevel,
+  mintAccessToken,
+  mintRefreshToken,
+} from "../lib/device-token.js";
+import {
+  deriveActorId,
+  deriveSiteId,
+  deriveSessionId,
+  deriveDeviceGeneration,
+} from "../lib/principal.js";
 
 const ACCESS_TTL_SECONDS = 15 * 60;
 const REFRESH_TTL_SECONDS = 30 * 24 * 60 * 60;
@@ -62,15 +78,20 @@ export const selectDeviceBinding = async (event) => {
         pk: `PHYSICAL_DEVICE#${current.physicalDeviceId}`,
         sk: `BINDING#${bindingId}`,
       },
+      ConsistentRead: true,
     }),
   );
   const resolved = await resolveBinding(
     pointerResult.Item,
     current.physicalDeviceId,
+    true,
   );
   if (!resolved) return jsonResponse(404, { error: "binding_not_found" });
   const { device, binding, site } = resolved;
-  const generation = Number(device.tokenGeneration ?? 0) + 1;
+  const sessionId = deriveSessionId(event);
+  const generation = sessionId
+    ? Number(device.sessions?.[sessionId]?.tokenGeneration ?? 0) + 1
+    : Number(device.tokenGeneration ?? 0) + 1;
   const [access, refresh] = await Promise.all([
     mintAccessToken(
       {
@@ -78,6 +99,7 @@ export const selectDeviceBinding = async (event) => {
         deviceId: binding.bindingId,
         tokenGeneration: generation,
         accessLevel: binding.accessLevel,
+        ...(sessionId ? { sessionId } : {}),
       },
       { expiresIn: ACCESS_TTL_SECONDS },
     ),
@@ -87,18 +109,72 @@ export const selectDeviceBinding = async (event) => {
         deviceId: binding.bindingId,
         tokenGeneration: generation,
         accessLevel: binding.accessLevel,
+        ...(sessionId ? { sessionId } : {}),
       },
       { expiresIn: REFRESH_TTL_SECONDS },
     ),
   ]);
   const now = new Date().toISOString();
   const rotation = { generation, refreshJti: refresh.jti, now };
+  const sessionWrite = sessionId
+    ? contextSessionWrite(
+        tableName,
+        device,
+        sessionId,
+        contextSession(device, sessionId, refresh.jti, generation, now),
+      )
+    : null;
+  if (sessionId && !sessionWrite)
+    return jsonResponse(409, { error: "session_limit" });
   try {
     await ddb.send(
       new TransactWriteCommand({
         TransactItems: [
-          sessionRotationItem(tableName, device, rotation),
-          sessionRotationItem(tableName, binding, rotation),
+          ...(sessionWrite
+            ? [
+                sessionWrite,
+                {
+                  ConditionCheck: {
+                    TableName: tableName,
+                    Key: { pk: binding.pk, sk: binding.sk },
+                    ConditionExpression: "#status = :active",
+                    ExpressionAttributeNames: { "#status": "status" },
+                    ExpressionAttributeValues: { ":active": "active" },
+                  },
+                },
+              ]
+            : [
+                sessionRotationItem(tableName, device, rotation),
+                sessionRotationItem(tableName, binding, rotation),
+              ]),
+          ...(binding.bindingId !== current.deviceId &&
+          deriveDeviceGeneration(event) !== undefined
+            ? [
+                {
+                  ConditionCheck: {
+                    TableName: tableName,
+                    Key: { pk: current.pk, sk: current.sk },
+                    ConditionExpression:
+                      "(attribute_not_exists(#status) OR #status = :active) AND " +
+                      (sessionId
+                        ? "#sessions.#sid.#status = :active AND #sessions.#sid.tokenGeneration = :generation"
+                        : "tokenGeneration = :generation AND (attribute_not_exists(primarySessionStatus) OR primarySessionStatus = :active)"),
+                    ExpressionAttributeNames: {
+                      "#status": "status",
+                      ...(sessionId
+                        ? { "#sessions": "sessions", "#sid": sessionId }
+                        : {}),
+                    },
+                    ExpressionAttributeValues: {
+                      ":active": "active",
+                      ":generation": sessionId
+                        ? current.sessions[sessionId].tokenGeneration
+                        : current.tokenGeneration,
+                    },
+                  },
+                },
+              ]
+            : []),
           {
             Put: {
               TableName: tableName,
@@ -159,22 +235,54 @@ async function currentDevice(event) {
     new GetCommand({
       TableName: getDynamoTableName(),
       Key: { pk: `SITE#${siteId}`, sk: `DEVICE#${deviceId}` },
+      ConsistentRead: true,
     }),
   );
   const device = result.Item;
-  return device?.physicalDeviceId &&
-    (!device.status || device.status === "active")
-    ? device
-    : null;
+  if (
+    !device?.physicalDeviceId ||
+    (device.status && device.status !== "active") ||
+    deviceLivenessProblem(device, new Date())
+  )
+    return null;
+  const sid = deriveSessionId(event);
+  const generation = deriveDeviceGeneration(event);
+  if (
+    sid
+      ? device.sessions?.[sid]?.status !== "active" ||
+        Date.parse(device.sessions[sid].expiresAt) <= Date.now()
+      : device.primarySessionStatus === "signed_out"
+  )
+    return null;
+  if (
+    generation !== undefined &&
+    (!deviceSessionMatches(device, {
+      sid: sid || undefined,
+      ver: generation,
+    }) ||
+      !(await bindingLifecycleValid(
+        /** @type {import('./devices.js').DeviceItem} */ (device),
+        canonicalAccessLevel(device.accessLevel),
+        undefined,
+        true,
+      )))
+  )
+    return null;
+  return device;
 }
 
 /**
  * Resolve an ownership pointer into a currently usable Site binding.
  * @param {Record<string, any> | undefined} pointer
  * @param {string} physicalDeviceId
+ * @param {boolean} [consistentRead] read current authority before minting credentials
  * @returns {Promise<null | {binding: Record<string, any>, device: Record<string, any>, site: Record<string, any>, publicBinding: Record<string, any>} >}
  */
-async function resolveBinding(pointer, physicalDeviceId) {
+export async function resolveBinding(
+  pointer,
+  physicalDeviceId,
+  consistentRead = false,
+) {
   if (
     !pointer ||
     pointer.physicalDeviceId !== physicalDeviceId ||
@@ -191,6 +299,7 @@ async function resolveBinding(pointer, physicalDeviceId) {
           pk: `SITE#${pointer.siteId}`,
           sk: `DEVICE_BINDING#${pointer.bindingId}`,
         },
+        ...(consistentRead ? { ConsistentRead: true } : {}),
       }),
     ),
     ddb.send(
@@ -200,12 +309,14 @@ async function resolveBinding(pointer, physicalDeviceId) {
           pk: `SITE#${pointer.siteId}`,
           sk: `DEVICE#${pointer.bindingId}`,
         },
+        ...(consistentRead ? { ConsistentRead: true } : {}),
       }),
     ),
     ddb.send(
       new GetCommand({
         TableName: tableName,
         Key: { pk: `SITE#${pointer.siteId}`, sk: "#META" },
+        ...(consistentRead ? { ConsistentRead: true } : {}),
       }),
     ),
   ]);
@@ -246,6 +357,7 @@ async function resolveBinding(pointer, physicalDeviceId) {
       const memberships = await ddb.send(
         new QueryCommand({
           TableName: tableName,
+          ...(consistentRead ? { ConsistentRead: true } : {}),
           KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
           ExpressionAttributeValues: {
             ":pk": `PROVIDER#${binding.providerId}`,
@@ -272,6 +384,7 @@ async function resolveBinding(pointer, physicalDeviceId) {
             pk: `SITE#${binding.siteId}`,
             sk: `MANAGER_MEMBERSHIP#${binding.membershipId}`,
           },
+          ...(consistentRead ? { ConsistentRead: true } : {}),
         }),
       );
       if (

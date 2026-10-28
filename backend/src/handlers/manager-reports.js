@@ -68,7 +68,6 @@ const TASK_PROJECTION = [
   "latestUpdateLabel",
   "completionMethod",
   "inProgressActionKind",
-  "cannotDo",
   "agency",
   "primaryInProgressAgency",
   "buttons",

@@ -440,33 +440,66 @@ describe("get311RequestDetails", () => {
 });
 
 describe("duplicate separation invalidation", () => {
-  it("notifies pollers only after a successful separation", async () => {
-    const { separateDuplicate } = await import("./api.js");
-    const { onDuplicateInvalidation } = await import(
-      "./duplicate-invalidation.js"
-    );
-    const changed = vi.fn();
-    const stop = onDuplicateInvalidation(changed);
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(new Response("{}", { status: 409 }))
-      .mockResolvedValueOnce(new Response('{"taskId":"one"}', { status: 200 }));
-    vi.stubGlobal("fetch", fetch);
-    try {
-      const expected = { sourceRevision: "r1", originalTaskId: "old" };
-      await expect(separateDuplicate("one", expected)).rejects.toBeInstanceOf(
-        ApiError,
+  it.each(["one", "restored"])(
+    "clears overrides before notifying pollers when separation returns %s",
+    async (restoredId) => {
+      const { separateDuplicate } = await import("./api.js");
+      const { onDuplicateInvalidation } = await import(
+        "./duplicate-invalidation.js"
       );
-      expect(changed).not.toHaveBeenCalled();
-      await expect(separateDuplicate("one", expected)).resolves.toEqual({
-        taskId: "one",
+      const { readTaskStatusOverrides, writeTaskStatusOverrides } =
+        await import("../state/task-status-overrides.js");
+      let stored = "{}";
+      vi.stubGlobal("localStorage", {
+        getItem: () => stored,
+        setItem: (_key, value) => {
+          stored = value;
+        },
       });
-      expect(changed).toHaveBeenCalledOnce();
-    } finally {
-      stop();
-      vi.unstubAllGlobals();
-    }
-  });
+      writeTaskStatusOverrides({
+        one: { status: "in_progress" },
+        ...(restoredId !== "one"
+          ? { [restoredId]: { status: "resolved" } }
+          : {}),
+        old: { status: "in_progress" },
+      });
+      const changed = vi.fn(() => {
+        expect(readTaskStatusOverrides()).toEqual({
+          old: { status: "in_progress" },
+        });
+      });
+      const stop = onDuplicateInvalidation(changed);
+      const fetch = vi
+        .fn()
+        .mockResolvedValueOnce(new Response("{}", { status: 409 }))
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              taskId: restoredId,
+              task: { taskId: restoredId, status: "open" },
+            }),
+            { status: 200 },
+          ),
+        );
+      vi.stubGlobal("fetch", fetch);
+      try {
+        const expected = { sourceRevision: "r1", originalTaskId: "old" };
+        await expect(separateDuplicate("one", expected)).rejects.toBeInstanceOf(
+          ApiError,
+        );
+        expect(changed).not.toHaveBeenCalled();
+        expect(readTaskStatusOverrides().one.status).toBe("in_progress");
+        await expect(separateDuplicate("one", expected)).resolves.toEqual({
+          taskId: restoredId,
+          task: { taskId: restoredId, status: "open" },
+        });
+        expect(changed).toHaveBeenCalledOnce();
+      } finally {
+        stop();
+        vi.unstubAllGlobals();
+      }
+    },
+  );
 });
 
 describe("timeline read cancellation", () => {
@@ -494,4 +527,48 @@ describe("timeline read cancellation", () => {
       expect(options.signal).toBe(controller.signal);
     }
   });
+});
+
+it("cancels the progress upload without registering incomplete media", async () => {
+  const controller = new AbortController();
+  const file = new File(["photo"], "photo.jpg", { type: "image/jpeg" });
+  const fetch = vi.fn().mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        artifactId: "photo",
+        s3Key: "photo",
+        uploadUrl: "https://upload.example.test/photo",
+      }),
+    ),
+  );
+  const sent = vi.fn();
+  class Upload extends EventTarget {
+    upload = new EventTarget();
+    open() {}
+    setRequestHeader() {}
+    send(body) {
+      sent(body);
+      controller.abort();
+    }
+    abort() {
+      this.dispatchEvent(new Event("abort"));
+    }
+  }
+  vi.stubGlobal("fetch", fetch);
+  vi.stubGlobal("XMLHttpRequest", Upload);
+  try {
+    await expect(
+      uploadTaskUpdatePhoto(
+        "task",
+        "check",
+        { file },
+        { signal: controller.signal, onProgress: () => {} },
+      ),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(sent).toHaveBeenCalledWith(file);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][1].signal).toBe(controller.signal);
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

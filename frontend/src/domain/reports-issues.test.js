@@ -46,17 +46,6 @@ describe("responseFor", () => {
         latestUpdateLabel: "Resolved",
       }),
     ).toEqual({ kind: "onSite", label: "Resolved" });
-    expect(
-      responseFor({
-        status: "cannot_do",
-        cannotDo: { reason: "Not within the immediate area" },
-      }),
-    ).toEqual({
-      kind: "cannotDo",
-      label: t("reports.issues.response.cannotDoReason", {
-        reason: "Not within the immediate area",
-      }),
-    });
   });
 });
 
@@ -177,13 +166,14 @@ describe("summarizeIssues and issuesByDay", () => {
         taskId: "q",
         shortId: "X-1",
         category: "Litter",
-        status: "cannot_do",
-        cannotDo: { reason: 'Too much, "really"' },
+        kind: "action",
+        status: "completed",
+        latestUpdateLabel: 'Resolved, "really"',
         createdAt: "2026-09-27T16:00:00.000Z",
       },
     ]);
     expect(csv.split("\n")[0]).toBe("found,shortId,type,status,response");
-    expect(csv).toContain('"Could not do: Too much, ""really"""');
+    expect(csv).toContain('"Resolved, ""really"""');
   });
 });
 
@@ -218,9 +208,6 @@ describe("resolvedInPeriod", () => {
         period,
       ),
     ).toBe(false);
-    expect(resolvedInPeriod({ ...task, status: "cannot_do" }, period)).toBe(
-      false,
-    );
     expect(resolvedInPeriod({ ...task, completedAt: undefined }, period)).toBe(
       false,
     );

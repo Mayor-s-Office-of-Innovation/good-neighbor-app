@@ -23,6 +23,21 @@ describe("startup authentication", () => {
     expect(hasEnrollmentCredentials(href)).toBe(false);
   });
 
+  it("ignores a generic login bookmark for a bound browser, but honors explicit enrollment", () => {
+    expect(hasEnrollmentCredentials("https://app.example/#login=1", true)).toBe(
+      false,
+    );
+    expect(
+      hasEnrollmentCredentials("https://app.example/#login=1", false),
+    ).toBe(true);
+    expect(
+      hasEnrollmentCredentials(
+        "https://app.example/#enrollment_grant=g&enrollment_token=t",
+        true,
+      ),
+    ).toBe(true);
+  });
+
   it("treats rejected and revoked sessions as fatal", () => {
     expect(
       isFatalSessionError(

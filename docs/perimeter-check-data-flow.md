@@ -457,7 +457,7 @@ in-flight set + button disabling client-side; `status = needs_answer` guard serv
 **d. Home worklist buckets** (today-view.js `homeTaskStatus`): straight from `TASK#`
 status — `open` → needs-action; `completing` → in-progress; `completed` with
 `completionMethod:"311_filed"` → **stays in-progress** (the City owns the work now);
-`completed` (and historical `cannot_do`) → resolved, then archived after a 72h age window; tasks created
+`completed` → resolved, then archived after a 72h age window; tasks created
 within a 3h window also surface as "new" cards. Tasks staged for deletion are excluded
 from the worklist while their toast is pending (`isTaskPendingDeletion`). Task
 overrides are client-side only (read-model smoothing), never a second source of truth.
@@ -487,7 +487,6 @@ stateDiagram-v2
 Task status (`open → completing → in_progress | completed`, with `superseded` for retired tasks) is guarded by
 conditional writes end-to-end — a replay can never double-complete or double-mint, and
 the lineage publication never retires a mid-`completing` task (§ 3).
-`cannot_do` is read-only legacy history; there is no current UI action or API route to create it.
 
 ---
 

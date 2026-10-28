@@ -67,7 +67,6 @@ export function projectDuplicateTasks(tasks, links, now = Date.now()) {
             "kind",
             "phoneNumber",
             "canBeInProgress",
-            "cannotDoReasons",
           ].map((key) => [key, original[key]]),
         );
     return [

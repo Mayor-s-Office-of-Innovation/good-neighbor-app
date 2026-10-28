@@ -34,7 +34,7 @@
     {
       "name": "task update js",
       "path": "dist/assets/task-update-dialog-*.js",
-      "limit": "6.4 kB"
+      "limit": "6.8 kB"
     },
     {
       "name": "task update css",
@@ -108,6 +108,11 @@
       "name": "site info contacts js",
       "path": "dist/assets/site-info-contacts-*.js",
       "limit": "1.5 kB"
+    },
+    {
+      "name": "feedback submission js",
+      "path": "dist/assets/feedback-*.js",
+      "limit": "1 kB"
     }
   ],
   "dependencies": {

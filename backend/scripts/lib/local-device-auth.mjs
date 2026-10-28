@@ -6,7 +6,7 @@
 import { handler as authorizeDevice } from "../../src/lambda/authorizer.js";
 
 /**
- * @typedef {{ sub: string, siteId: string, ver: number, accessLevel: "general"|"manager" }} LocalDeviceClaims
+ * @typedef {{ sub: string, siteId: string, ver: number, accessLevel: "general"|"manager", sid?: string }} LocalDeviceClaims
  */
 
 /**
@@ -47,5 +47,12 @@ export async function resolveDeviceClaims(
     return { error: "invalid_authorizer_context" };
   }
 
-  return { sub, siteId, ver, accessLevel };
+  const sid = context["claims.sid"];
+  return {
+    sub,
+    siteId,
+    ver,
+    accessLevel,
+    ...(typeof sid === "string" ? { sid } : {}),
+  };
 }
