@@ -164,7 +164,8 @@ reconciliation, none of which are established by synthetic success.
 
 Current image-matcher policy: compare only issues with exactly equal nonempty
 analyzer `category` values. Generated display labels do not define category
-identity. Candidate age uses capture/observation time and must satisfy
+identity. Production candidate age uses issue generation time (`generatedAt`, falling back
+to `analyzedAt`), exposed as `observedAt` on the observation projection, and must satisfy
 `0 <= source.observedAt - candidate.observedAt < 72 hours`; exactly 72 hours is
 excluded. Unknown categories remain insufficient evidence. Candidate projections
 carry categories, and current analyses refresh older projection categories before
@@ -252,9 +253,9 @@ Known duplicate groups are withheld until the machine results are recorded.
    site-scoped maintenance script with AWS credentials and DYNAMO_TABLE and
    DUPLICATE_QUEUE_URL configured:
    `node backend/scripts/bootstrap-duplicate-observations.mjs --site SITE_ID`.
-   It paginates that site's CHECK partition, seeds analyzed images captured in
-   the preceding 72 hours, and publishes a coverage marker only after successful
-   writes. It makes no model calls. Older source windows outside the marker remain
+   It paginates that site's CHECK partition, seeds analyzed image and text reports
+   generated in the preceding 72 hours, and publishes a coverage marker only after
+   successful writes. It makes no model calls. Older source windows outside the marker remain
    insufficient evidence. Use a controlled maintenance job for large site histories.
 4. Enable the dev mappings via CI only after provisioning and evidence review.
    Source revisions and target lifecycle are rechecked; positives use atomic
@@ -357,7 +358,7 @@ images stay outside Git.
 
 ### Recent-first matching and original issue references
 
-Production matching checks candidates in descending capture/observation time order
+Production matching checks candidates in descending issue-generation time order
 (still the same category, same site, and strictly less than 72 hours older).
 Each production request assesses one candidate photo, so a high-confidence explicit
 issue mapping can immediately stop that issue's search. Other issues in the source

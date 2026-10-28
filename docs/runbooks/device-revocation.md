@@ -25,15 +25,21 @@ revoked binding or lowers a credential generation.
 - Provider Manager enrollment revocation is Supervisor-only and atomically revokes the
   canonical binding, compatibility Device row, and physical pointer for every Site in that
   enrollment (maximum 21). Deactivating the Provider Manager instead advances the membership
-  generation, immediately denying every derived binding; reinstatement does not reactivate
+  generation, denying derived bindings on their next live authority check; reinstatement does not reactivate
   those older bindings.
 - Unmigrated legacy dev devices do not understand the Site generation, so the same request
   explicitly revokes their Device rows. A partial legacy reconciliation requires immediate
   follow-up.
 
+API Gateway caches authorizer verdicts for up to 60 seconds. Authority changes
+therefore invalidate refresh/current-authority checks immediately but may take up
+to a minute to affect an already-cached protected request.
+
 Every successful request returns an operation ID. Site-wide operations retain counts under
 the Site partition. Emergency multi-Site operations also retain an aggregate operation and
-one idempotent Site-result row, ending in `complete` or `partial` state.
+one idempotent Site-result row. Current emergency workers retry failed reconciliation
+and record completion only after every projection succeeds; legacy operation rows
+may still report `partial`.
 
 ## Partial-operation alarm
 
@@ -57,12 +63,14 @@ fields @timestamp, marker, operationId, siteId, failedCount
    production credential in logs or screenshots.
 6. Record aggregate outcomes and the operation ID, then confirm the alarm returns to OK.
 
-For an emergency multi-Site operation, first inspect
-`REVOCATION_OPERATION#<operationId> / #META`. An `enqueueFailedCount` means the affected Site
-generation still advanced, but its display-row reconciliation was not queued. Use the Site
-operation record to identify the Site, reconcile its remaining active rows, and never reduce
-the Site generation. A partial Site-result row identifies a job that ran but could not update
-every projection.
+For an emergency multi-Site operation, inspect
+`REVOCATION_OPERATION#<operationId> / #META` and its `OUTBOX#<siteId>` rows.
+The generation change and outbox writes are atomic. Dispatch failures retry through
+the stream mapping; reconciliation failures retry through SQS and may reach the
+DLQ. Inspect both stages when an operation remains queued. Current workers do not
+record a partial Site result as terminal success. Legacy `enqueueFailedCount` and
+partial-result fields remain readable; investigate those historical failures
+separately. Never reduce Site generations to repair display reconciliation.
 
 ## Conflict response
 

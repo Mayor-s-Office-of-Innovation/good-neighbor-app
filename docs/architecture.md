@@ -42,7 +42,7 @@ analyzer does not retain complaint input.
 
 ## Compute topology (Lambdas)
 
-Three functions (`infra/modules/app/lambda.tf`), split by invocation style; bundles
+The core API and processing functions (Terraform in `infra/modules/app/`), split by invocation style; bundles
 are esbuild ESM outputs of `backend/scripts/build-lambdas.mjs`:
 
 | Function | Trigger | Memory | Timeout | Role |
@@ -90,7 +90,7 @@ alternative to photos; there is no per-site list of places to walk
 ([ADR 0014](./adr/0014-remove-places-photo-roll.md)). Each photo (or the description) is
 uploaded, registered, analyzed, and evaluated independently as soon as it's captured —
 results appear on the capture screen as they land, without waiting for the walk to
-finish. Finish unlocks at three photos or one description; the rule is client-side
+finish. Finish unlocks at one photo or one description of at least 20 characters; the rule is client-side
 (`frontend/src/domain/check-completion.js`) and the backend only records the counts.
 A check-level synthesis still exists, but only as the deferred, idempotent
 **completion** step the client runs in the background after `Finish` (so the saved
@@ -114,7 +114,7 @@ sequenceDiagram
   API-->>Dev: presigned PUT url + artifactId + s3Key
   Dev->>S3: PUT bytes (content-type pinned)
   Dev->>API: POST .../artifacts {artifactId, s3Key, capturedAt|text}
-  API->>DB: TransactWrite: parent exists + Put ART# (conditional)
+  API->>DB: Put ART# (conditional; registration does not reread parent)
   API->>Q: SendMessage {siteId, checkId, artifactId, s3Key, ...} (no bytes)
   API-->>Dev: 202 queued
   Q->>W: deliver message
@@ -134,7 +134,7 @@ sequenceDiagram
   Dev->>API: POST /v1/checks/{checkId}/complete
   API->>DB: Query header + ART# + ANALYSIS# (coverage gate)
   API->>API: synthesize check scorecard
-  API->>DB: Update CHECK# header (scorecard + photoCount/textCount/evidenceKind)
+  API->>DB: TransactWrite CHECK# scorecard + CHECK_COMPLETION# marker (perimeter only)
 ```
 
 Typed descriptions register as text artifacts through the same
@@ -314,17 +314,21 @@ appends the entered text to the immutable task timeline.
 
 ## Single-table data model
 
-All tenant data lives in one DynamoDB table keyed on `pk = SITE#<siteId>`, so a check's header,
-artifacts, and analyses share one partition and come back in a single query.
+The application uses one DynamoDB table. Site-domain records use `pk = SITE#<siteId>`,
+so a check's header, artifacts, and analyses share a prefix query (paginated as needed).
+People, physical devices, directories, reporting projections and operational controls
+also use non-Site partitions; the data-model reference lists their ownership rules.
 
 See [dynamodb-data-model.md](./dynamodb-data-model.md) for the authoritative item shapes, keys,
 GSIs, and access patterns.
 
 ## Security boundaries
 
-**Auth posture (ADR 0010):** device bootstrap (`POST /site-code` + device
-registration) is open; every other route sits behind a **REQUEST-type Lambda
-authorizer** that verifies the HS256 device-token Bearer credential. The
+**Auth posture:** protected field-app routes use a **REQUEST-type Lambda authorizer**
+that verifies the HS256 device-token Bearer credential and current binding/session
+authority (ADRs 0010, 0015, 0019, 0020). Admin routes use Cognito JWTs and Compliance
+role/assignment checks. Bootstrap, recovery, health, intake and bearer-lease media
+routes have explicit exceptions in `infra/modules/app/api.tf`. The
 authorizer pins `siteId` server-side — requests resolve to the token's site
 partition, never a body-supplied one. (Demo/test data remains disposable; see
 [security-review.md](./security-review.md) for the posture details.)
@@ -396,7 +400,7 @@ as anything but JSON.
 
 ## Offline capture and sync
 
-Perimeter checks are idempotent by design: the client mints the `checkId` (a ULID) and
+Perimeter checks are idempotent by design: the client mints the `checkId` (a UUID) and
 sends it as the `idempotency-key`, and artifact/analysis writes are conditional, so a
 replayed request can never create a duplicate. That contract is what lets checks finished
 with no connection be sent later ([Offline check queue](#offline-check-queue)).
