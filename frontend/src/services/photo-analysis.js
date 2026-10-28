@@ -1,3 +1,4 @@
+import { observePhotoStage } from "./photo-telemetry.js";
 import { pollCheck } from "./check-polling.js";
 import { watchDuplicateIssues } from "./duplicate-issues.js";
 import { projectDuplicateTasks } from "../domain/duplicate-issues.js";
@@ -366,6 +367,11 @@ function assessmentFromRefreshedAnalysis({
 }
 
 async function evaluateArtifact(checkId, itemId, artifactId) {
+  const telemetry = {
+    check_id: checkId,
+    artifact_id: artifactId,
+    attempt_id: crypto.randomUUID(),
+  };
   updateItemAnalysis(itemId, {
     status: "analyzing",
     artifactId,
@@ -377,7 +383,9 @@ async function evaluateArtifact(checkId, itemId, artifactId) {
     },
   });
   const analysis = await withLeg("analyze", () =>
-    waitForArtifactAnalysis(checkId, artifactId),
+    observePhotoStage("analyze", telemetry, () =>
+      waitForArtifactAnalysis(checkId, artifactId),
+    ),
   );
   if (analysis.status && analysis.status !== "analyzed") {
     updateItemAnalysis(itemId, {
@@ -395,7 +403,9 @@ async function evaluateArtifact(checkId, itemId, artifactId) {
   }
 
   const { assessment, guidance } = await withLeg("evaluate", () =>
-    guidanceFromAnalysis(checkId, artifactId, analysis),
+    observePhotoStage("evaluate", telemetry, () =>
+      guidanceFromAnalysis(checkId, artifactId, analysis),
+    ),
   );
   updateItemAnalysis(itemId, {
     status: "analyzed",

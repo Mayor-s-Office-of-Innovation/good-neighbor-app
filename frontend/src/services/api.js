@@ -1,3 +1,4 @@
+import { observePhotoStage } from "./photo-telemetry.js";
 import { clearTaskStatusOverrides } from "../state/task-status-overrides.js";
 import { invalidateDuplicateIssues } from "./duplicate-invalidation.js";
 /*
@@ -1220,38 +1221,45 @@ export async function uploadArtifact(
   { dataUrl, capturedAt, latitude, longitude, text, tag, onLeg },
 ) {
   const art = tag ?? "photo";
+  const telemetry = { check_id: checkId, attempt_id: crypto.randomUUID() };
   const done = span("upload", { art });
 
   const contentType = contentTypeFromDataUrl(dataUrl);
   const blob = await dataUrlToBlob(dataUrl);
+  telemetry.photo_bytes = blob.size;
   const endPresign = span("upload.presign", { art });
-  const { artifactId, s3Key, uploadUrl, uploadHeaders } = await presignArtifact(
-    checkId,
-    {
-      contentType,
-      contentLength: blob.size,
-    },
-  );
+  const { artifactId, s3Key, uploadUrl, uploadHeaders } =
+    await observePhotoStage("presign", telemetry, () =>
+      presignArtifact(checkId, {
+        contentType,
+        contentLength: blob.size,
+      }),
+    );
+  telemetry.artifact_id = artifactId;
   endPresign({ artifactId });
   onLeg?.("presign");
 
   const endPut = span("upload.put", { art, bytes: blob.size });
-  await putMedia(uploadUrl, blob, contentType, uploadHeaders);
+  await observePhotoStage("put", telemetry, () =>
+    putMedia(uploadUrl, blob, contentType, uploadHeaders),
+  );
   endPut();
   onLeg?.("put");
 
   const endRegister = span("upload.register", { art, artifactId });
-  await registerArtifact(checkId, {
-    artifactId,
-    s3Key,
-    contentType,
-    contentLength: blob.size,
-    ...(capturedAt ? { capturedAt } : {}),
-    ...(Number.isFinite(latitude) && Number.isFinite(longitude)
-      ? { latitude, longitude }
-      : {}),
-    ...(text ? { text } : {}),
-  });
+  await observePhotoStage("register", telemetry, () =>
+    registerArtifact(checkId, {
+      artifactId,
+      s3Key,
+      contentType,
+      contentLength: blob.size,
+      ...(capturedAt ? { capturedAt } : {}),
+      ...(Number.isFinite(latitude) && Number.isFinite(longitude)
+        ? { latitude, longitude }
+        : {}),
+      ...(text ? { text } : {}),
+    }),
+  );
   endRegister();
   onLeg?.("register");
 

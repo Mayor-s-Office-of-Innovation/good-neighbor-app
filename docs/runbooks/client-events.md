@@ -110,3 +110,45 @@ Previously failed beacons are not automatically replayed.
 
 `npm run dev` (backend harness) serves `POST /v1/client-events` and the Vite proxy forwards it,
 so beacons land in the harness log. Under vitest the service is off unless forced on.
+
+## Photo upload and analysis diagnosis
+
+`photo_pipeline` events trace `presign` → `put` → `register` → `analyze` →
+`evaluate`. Each stage emits `started` and `completed` or `failed`; analysis also
+reports `backend_failed`, `timeout`, or `cancelled`. A stage still pending after
+30 seconds emits one `slow` event. This observes the existing pipeline without
+changing its timeouts or retry behavior.
+
+Use `attempt_id` to group upload-stage events; retries receive a fresh ID. Use
+`check_id` and `artifact_id` to join registration, analysis, and worker logs.
+Analysis/evaluation receive a separate attempt ID so re-polling is distinguishable.
+`elapsed_ms` measures that stage, `photo_bytes` is the upload size, and
+`http_status` is the failure response status (0 means no HTTP status available).
+`online` is the browser's connectivity hint, not proof of internet access;
+`visibility` records whether the document was visible when the event was emitted.
+Existing browser, OS, connection-type, and release fields accompany every event.
+No image content, location, free-form error, S3 key, or signed URL is included.
+
+In CloudWatch, select the dev/prod intake Lambda log group:
+
+```
+fields @timestamp, marker, properties.check_id, properties.artifact_id,
+  properties.attempt_id, properties.stage, properties.outcome,
+  properties.elapsed_ms, properties.http_status, properties.online,
+  properties.visibility, properties.photo_bytes
+| filter event = "photo_pipeline"
+| sort @timestamp asc
+```
+
+In PostHog, filter the `photo_pipeline` event by `check_id` or `artifact_id`, then
+inspect stages/outcomes and compare browser/release cohorts. `put` completed with
+no `register` completion localizes the gap between upload and enqueue. An
+`analyze` timeout with a successful worker result points to result retrieval;
+`backend_failed` indicates the worker recorded a failed analysis.
+
+Delivery is best effort through the existing analytics intake and respects
+`gnp:analytics=off`. An offline/killed browser may lose events; a missing terminal
+event alone does not prove failure. Slow-event timers can be delayed while the
+browser is suspended. Compare against S3 object metadata and worker logs. CloudWatch
+retains accepted events even if PostHog forwarding fails. Deploy the intake
+allowlist before or alongside the frontend; older intakes drop the new event.
