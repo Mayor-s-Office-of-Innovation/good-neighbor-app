@@ -156,9 +156,9 @@ describe("storeEvaluatedAssessment", () => {
       },
       taskIds: ["task-1"],
       resolvedToTasks: true,
-      gsi4pk: "SITE#site-1#CONDITION#SEV#3",
-      gsi4sk: "2026-08-18T12:00:00.000Z#asm-1#001-litter",
     });
+    // Conditions carry no index keys: GSI4/GSI5 were removed, nothing read them.
+    expect(litter).not.toHaveProperty("gsi4pk");
     expect(litter).not.toHaveProperty("gsi5pk");
 
     const graffiti = writes[2].Put.Item;
@@ -168,10 +168,8 @@ describe("storeEvaluatedAssessment", () => {
       status: "needs_answer",
       needsAnswer: { key: "onsite" },
       resolvedToTasks: false,
-      gsi4pk: "SITE#site-1#CONDITION#SEV#2",
-      gsi5pk: "SITE#site-1#CONDITION#UNRESOLVED",
-      gsi5sk: "2026-08-18T12:00:00.000Z#SEV#2#asm-1#002-graffiti",
     });
+    expect(graffiti).not.toHaveProperty("gsi5pk");
     expect(graffiti).not.toHaveProperty("translations");
 
     const task = writes[3].Put.Item;
@@ -318,7 +316,6 @@ describe("storeEvaluatedAssessment", () => {
     expect(writes[1].Put.Item).toMatchObject({
       status: "manual_review",
       resolvedToTasks: false,
-      gsi5pk: "SITE#site-1#CONDITION#UNRESOLVED",
     });
     expect(writes).toHaveLength(2);
   });
@@ -367,8 +364,6 @@ describe("answerCondition", () => {
       answers: {},
       taskIds: [],
       source: { artifactIds: ["art-1"] },
-      gsi5pk: "SITE#site-1#CONDITION#UNRESOLVED",
-      gsi5sk: "x",
     };
     send.mockResolvedValueOnce({
       Item: { ...assessmentBase, assessmentRevision: 0 },
@@ -1977,7 +1972,8 @@ describe("assessment refresh preserves unchanged conditions", () => {
 
     expect(result.assessmentItem.reportedAt).toBe("2026-09-10T19:00:00Z");
     expect(result.assessmentItem.gsi1sk).toContain("2026-09-10T19:00:00Z");
-    expect(result.conditionItems[0].gsi4sk).toContain("2026-09-10T19:00:00Z");
+    // A retained condition's pinned time was only observable through its GSI4
+    // sort key, which no longer exists; the assessment assertions cover the pin.
   });
 
   it("does not reuse answers from different evidence", async () => {

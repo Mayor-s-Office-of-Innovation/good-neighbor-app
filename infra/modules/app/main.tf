@@ -911,28 +911,6 @@ resource "aws_dynamodb_table" "app" {
     type = "S"
   }
 
-  # GSI4 keys — set only on conditions (site/date/severity condition history).
-  attribute {
-    name = "gsi4pk"
-    type = "S"
-  }
-
-  attribute {
-    name = "gsi4sk"
-    type = "S"
-  }
-
-  # GSI5 keys — set only on unresolved conditions.
-  attribute {
-    name = "gsi5pk"
-    type = "S"
-  }
-
-  attribute {
-    name = "gsi5sk"
-    type = "S"
-  }
-
   # GSI6 keys — pending setup codes by site/contact.
   attribute {
     name = "gsi6pk"
@@ -988,24 +966,6 @@ resource "aws_dynamodb_table" "app" {
     name            = "GSI3"
     hash_key        = "gsi3pk"
     range_key       = "gsi3sk"
-    projection_type = "ALL"
-  }
-
-  # GSI4 — site condition history by severity:
-  # SITE#<siteId>#CONDITION#SEV#<severity> / <reportedAt>#<assessmentId>#<conditionId>.
-  global_secondary_index {
-    name            = "GSI4"
-    hash_key        = "gsi4pk"
-    range_key       = "gsi4sk"
-    projection_type = "ALL"
-  }
-
-  # GSI5 — sparse unresolved-condition queue:
-  # SITE#<siteId>#CONDITION#UNRESOLVED / <reportedAt>#SEV#<severity>#<assessmentId>#<conditionId>.
-  global_secondary_index {
-    name            = "GSI5"
-    hash_key        = "gsi5pk"
-    range_key       = "gsi5sk"
     projection_type = "ALL"
   }
 

@@ -4,7 +4,7 @@
 
 **Status:** Current code model. Verify deployment and migration state per environment.
 **Reviewed:** 2026-10-28 against `151a7d76` for storage, indexing, and lifecycle behavior.
-**Date:** 2026-08-12 · updated 2026-09-04 for the built state · 2026-09-21 for the photo roll ([ADR 0014](./adr/0014-remove-places-photo-roll.md)) · 2026-10-01 to match the deployed authorizers, UUID IDs, provider and setup-code items, GSI6–7, and the analytics tier status · 2026-10-13 for the GSI1 task and update partitions behind the site manager reports (AP27, AP28) · 2026-10-14 for public complaints · 2026-10-28 for GSI3 (the compliance-terms expiry sweep)
+**Date:** 2026-08-12 · updated 2026-09-04 for the built state · 2026-09-21 for the photo roll ([ADR 0014](./adr/0014-remove-places-photo-roll.md)) · 2026-10-01 to match the deployed authorizers, UUID IDs, provider and setup-code items, GSI6–7, and the analytics tier status · 2026-10-13 for the GSI1 task and update partitions behind the site manager reports (AP27, AP28) · 2026-10-14 for public complaints · 2026-10-28 for GSI3 (the compliance-terms expiry sweep) and the removal of the unread GSI4 and GSI5
 
 ## What this document is
 
@@ -387,10 +387,13 @@ grade without reading its `ANALYSIS#` items. Raw per-artifact output stays in th
 | **GSI1** timelines | entity-specific partitions per site: `SITE#<siteId>`, `SITE#<siteId>#ASSESSMENT`, `SITE#<siteId>#TASK`, `SITE#<siteId>#UPDATE`, `SITE#<siteId>#COMPLAINTS`, `SITE#<siteId>#CARE_WORK` | `<startedAt ISO>` (checks) / `<reportedAt>#<assessmentId>` (assessments) / `<createdAt>#<taskId>` (tasks) / `<occurredAt>#<updateId>` (task update events) / `<createdAt>#<complaintId>` (complaints) / `<createdAt>#<workId>` (care logs) | check headers, assessment reports, tasks, task update events, submitted complaints, care logs | checks timeline (AP6, AP12), assessments timeline (AP14), site manager reports (AP27, AP28), complaints, and care-log lists. Each partition holds one entity type; the task and update partitions are stamped at creation and re-derived on every full-item re-put (`taskTimelineGsiFor`), so they sort by when things happened, not by status, a legacy task is stamped on its next transition, and a backfilled stamp survives a re-put from an older snapshot. | built |
 | **GSI2** site worklist | `SITE#<siteId>#TASK#<status>` | `<worklist timestamp>#<kind>#<severity>#<taskId>` (creation initially; transitions can restamp it) | tasks | staff's open tasks, newest first. The app re-sorts each page by severity. See AP10. | built |
 | **GSI3** cross-site sparse queues | one partition per entity type. Built: `COMPLIANCE_TERMS#OPEN`. Designed, not stamped: `ESCALATION#<status>` | `<expiresOnExclusive>#<siteId>#<termsVersionId>` (terms) / `<severity>#<createdAt>#<siteId>` (escalations) | each site's latest open compliance-terms version that has an end date. Stamped at creation and removed when the version ends or is superseded (`complianceTermsExpiryGsi`), so the partition holds at most one small item per site. | the scheduled expiry sweep (AP39): one query bounded by today's Pacific date instead of a table scan. The city escalation queue (AP11) would be a second sparse partition on the same index. | built 2026-10-28 (terms partition); escalation partition **deferred post-MVP** |
-| **GSI4** condition history | `SITE#<siteId>#CONDITION#SEV#<severity>` | `<reportedAt>#<assessmentId>#<conditionId>` | conditions | list conditions by site, date, and severity | built, **no reader** (reviewed 2026-10-13; removal planned as a cleanup step once the site manager reports ship) |
-| **GSI5** unresolved conditions | `SITE#<siteId>#CONDITION#UNRESOLVED` | `<reportedAt>#SEV#<severity>#<assessmentId>#<conditionId>` | unresolved conditions only | list conditions not yet turned into tasks (AP16) | built, **no reader** (AP16 was never implemented; same cleanup plan as GSI4) |
 | **GSI6** pending codes by contact | `SETUP_CODE_PENDING#<siteId>#<contactHash>` | `<createdAt>` | `pending` setup codes only. Keys are removed on use or revoke. | cancel a contact's old code when they ask for a new one (AP21) | built |
 | **GSI7** pending codes by site | `SETUP_CODE_PENDING_SITE#<siteId>` | `<createdAt>` | `pending` setup codes only | revoke every open code when a site is deactivated (AP22) | built |
+
+GSI4 (condition history by severity) and GSI5 (unresolved conditions) were removed on
+2026-10-28; nothing ever read them. Condition items written before then keep their
+`gsi4*` / `gsi5*` attributes as plain attributes. New conditions carry no index keys and
+are read by assessment prefix (AP15).
 
 ## Access patterns
 
@@ -418,7 +421,7 @@ reads the sparse GSI3 partition instead (AP39).
 | AP13 | Cross-site analytics | **not native**. See R2. |
 | AP14 | List assessments by site and date | `Query` **GSI1** `SITE#x#ASSESSMENT` (assessments partition), sort-key date range, newest first |
 | AP15 | Conditions of one assessment | `Query` base `SITE#x`, `begins_with(sk,"ASSESSMENT#<id>#COND#")` |
-| AP16 | Unresolved conditions | `Query` **GSI5** `SITE#x#CONDITION#UNRESOLVED`. Designed, never implemented; no handler queries GSI5. |
+| AP16 | Unresolved conditions | Designed, never implemented. The GSI5 index it would have used was removed on 2026-10-28; an implementation would need a new sparse partition. |
 | AP17 | Read guidance, record answers | `GetItem` the assessment and condition; `UpdateItem` on answer |
 | AP18 | Read one task's update timeline | `GetItem` the task, then a bounded, cursor-paged `Query` of base `SITE#x`, `begins_with(sk,"TASK#<taskId>#UPDATE#")`, newest first. Update mutations look up the `UPDATE_ID` pointer. |
 | AP19 | List a provider's sites | `Query` base `PROVIDER#<providerId>`, `begins_with(sk,"SITE#")`, cursor-paged |
