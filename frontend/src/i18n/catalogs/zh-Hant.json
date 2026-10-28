@@ -554,6 +554,8 @@
   "card.title.moreDetails": "需要更多詳情",
   "card.title.problemFallback": "問題",
   "card.viewUpdates": "查看或新增更新",
+  "card.waiting.message": "已儲存在此裝置上。恢復連線後會自動上傳。",
+  "card.waiting.title": "等待連線",
   "care.choose": "您做了什麼？",
   "care.count": "{count} 項工作",
   "care.describe": "描述您做了什麼",

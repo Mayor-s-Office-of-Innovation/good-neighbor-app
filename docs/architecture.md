@@ -398,9 +398,8 @@ as anything but JSON.
 
 Perimeter checks are idempotent by design: the client mints the `checkId` (a ULID) and
 sends it as the `idempotency-key`, and artifact/analysis writes are conditional, so a
-replayed request can never create a duplicate. Check submissions have **no offline queue
-yet** (tracked on the issue tracker), but the idempotency contract is already in place for
-when it lands.
+replayed request can never create a duplicate. That contract is what lets checks finished
+with no connection be sent later ([Offline check queue](#offline-check-queue)).
 
 A Workbox service worker (`offlineShell` in `frontend/vite.config.js`) precaches the
 built app, so it opens, reloads, and loads lazy screens with no network. It ships in every
@@ -420,6 +419,32 @@ which keeps previous assets.
 Manager screens (site admin, access, reports) are not precached: they are not field work
 and need fresh data, so offline they show the route's load error. Languages other than
 English are cached only once someone loads one.
+
+### Offline check queue
+
+Every evidence item is saved to IndexedDB as it is captured (`state/check-session.js`).
+A transport failure (no connection) does not fail an item: it is marked `waiting`,
+still counts toward Finish, and shows "Waiting for connection". Real server errors and
+analyzer timeouts still fail it.
+
+Done keeps the check on the device as a finished record (`check:<siteId>:<checkId>` in
+the `review` store) until its uploads and scorecard land, so several can wait at once.
+The check on screen is `current`; others stay in memory and keep saving progress, found
+by item id. `services/check-submissions.js` sends them: it restarts waiting items
+through the normal per-item pipeline, which resumes from whatever already reached the
+server, then builds each check's scorecard once every live item has a registered
+artifact, and marks it done. Triggers are app start, `online`, `pageshow`, `sitebound`,
+and the backend recovering from an outage; an item run ending only re-checks
+scorecards, so an offline device does not spin. Item runs take a cross-tab Web Lock and
+skip an item another tab is already running. Home drops a finished check once the
+backend history shows it.
+
+Like care work, this is an in-app queue, not service worker background sync: sending
+pauses while the app is closed and resumes when it reopens.
+
+With no connection, home shows the last lists it loaded (saved per site in the `review`
+store, cleared on sign-out) and keeps Start check available; the app-wide offline toast
+says why. It reloads the live lists on `online`.
 
 ### Duplicate issue links (feature-gated; not yet deployed)
 

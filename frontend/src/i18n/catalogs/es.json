@@ -554,6 +554,8 @@
   "card.title.moreDetails": "Se necesitan más detalles",
   "card.title.problemFallback": "problema",
   "card.viewUpdates": "Ver o añadir actualizaciones",
+  "card.waiting.message": "Guardado en este dispositivo. Se subirá cuando vuelva a tener conexión.",
+  "card.waiting.title": "Esperando conexión",
   "care.choose": "¿Qué hiciste?",
   "care.count": "{count} trabajos",
   "care.describe": "Describe lo que hiciste",

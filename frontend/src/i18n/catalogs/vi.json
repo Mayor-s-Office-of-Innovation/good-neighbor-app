@@ -554,6 +554,8 @@
   "card.title.moreDetails": "Cần thêm chi tiết",
   "card.title.problemFallback": "vấn đề",
   "card.viewUpdates": "Xem hoặc thêm cập nhật",
+  "card.waiting.message": "Đã lưu trên thiết bị này. Sẽ tải lên khi bạn có mạng trở lại.",
+  "card.waiting.title": "Đang chờ kết nối",
   "care.choose": "Bạn đã làm gì?",
   "care.count": "{count} công việc",
   "care.describe": "Mô tả việc bạn đã làm",
