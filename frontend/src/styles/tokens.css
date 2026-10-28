@@ -70,6 +70,10 @@
   /* Web Awesome text tokens resolve to the app's three roles, so WA
      components and the many `wa-color-text-*` declarations inherit the same
      greys instead of drifting onto WA's own scale. */
+  /* Brand fill tokens resolve to the app palette, so WA components and the
+     button roles answer "what is brand blue" in exactly one place. */
+  --wa-color-brand-fill-loud: var(--brand-blue);
+  --wa-color-brand-on-loud: var(--on-ink);
   --wa-color-text-normal: var(--text);
   --wa-color-text-quiet: var(--text-secondary);
   --wa-form-control-placeholder-color: var(--text-secondary);

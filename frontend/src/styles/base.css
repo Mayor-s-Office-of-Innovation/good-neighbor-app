@@ -486,14 +486,17 @@ form > wa-button[type="submit"] {
    pill with an underline.
    Color is contextual — default quiet text; a call site can override `color`
    in its own scope (e.g. the amber status-line Undo uses its own color). */
+/* Tertiary — text-only, inline, low stakes (WA terms: plain). .btn-link is
+   the legacy alias. */
+.btn-tertiary,
 .btn-link {
   appearance: none;
   border: 0;
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
-  font-size: 0.9rem;
-  font-weight: 600;
+  font-size: var(--wa-font-size-s, 0.875rem);
+  font-weight: var(--wa-font-weight-bold, 600);
   text-decoration: underline;
   text-underline-offset: 0.2em;
   cursor: pointer;
@@ -506,19 +509,23 @@ form > wa-button[type="submit"] {
   transition: color 150ms ease;
 }
 
+.btn-tertiary:hover,
 .btn-link:hover {
   color: var(--text);
 }
 
+.btn-tertiary:active,
 .btn-link:active {
   color: var(--text-secondary); /* no awesome-theme punch-in repaint */
 }
 
+.btn-tertiary:disabled,
 .btn-link:disabled {
   color: var(--text-faint);
   cursor: not-allowed;
 }
 
+.btn-tertiary:focus-visible,
 .btn-link:focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 3px;
@@ -577,18 +584,26 @@ theme-toggle {
    margins; Web Awesome's default theme `@layer wa-theme`) are all layered, and
    base.css is unlayered — so every property we set here wins the cascade regardless of WA's
    higher specificity. We therefore reset height/shadow/margin that WA would force. */
-.btn-ink {
+/* Primary — THE filled action button (WA terms: loud fill, brand variant).
+   One per view. The charcoal ink pill is retired; every primary is the brand
+   blue. Theme-safe: --on-ink flips white → near-black as --brand-blue
+   brightens for dark surfaces. Legacy class names (.btn-ink, .btn-blue,
+   .btn-theme) alias this role until templates are renamed. */
+.btn-primary,
+.btn-ink,
+.btn-blue,
+.btn-theme {
   appearance: none;
   border: 0;
   cursor: pointer;
-  background: var(--ink);
-  color: var(--on-ink);
+  background: var(--wa-color-brand-fill-loud, var(--brand-blue));
+  color: var(--wa-color-brand-on-loud, var(--on-ink));
   font: inherit;
-  font-weight: 700;
-  font-size: 1rem;
+  font-weight: var(--wa-font-weight-bold, 600);
+  font-size: var(--wa-font-size-m, 1rem);
   line-height: 1.1;
   padding: 0.7rem 2.3rem;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-pill); /* deliberate divergence from WA radius */
   /* Undo WA's native-button box so our padding governs the height */
   height: auto;
   min-height: 46px;
@@ -596,7 +611,10 @@ theme-toggle {
   margin: 0;
 }
 
-.btn-ink:focus-visible {
+.btn-primary:focus-visible,
+.btn-ink:focus-visible,
+.btn-blue:focus-visible,
+.btn-theme:focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 3px;
 }
@@ -619,40 +637,16 @@ button[data-loading] [data-loading-label] {
   visibility: hidden; /* keep the label's width, hide its paint */
 }
 
-/* Outline button — the secondary sibling to .btn-ink (e.g. "Still there").
-   Same unlayered reset so WA's native-button chrome can't leak in. */
+/* Secondary — the outlined alternative (WA terms: outlined, neutral), e.g.
+   Cancel, "Describe instead", Yes/No choices. Same unlayered reset so WA's
+   native-button chrome can't leak in. */
+.btn-secondary,
 .btn-outline {
   appearance: none;
   cursor: pointer;
   background: transparent;
   color: var(--text);
   border: 1px solid var(--c-line);
-  font: inherit;
-  font-weight: 700;
-  font-size: 1rem;
-  padding: 0.7rem 2.3rem;
-  border-radius: var(--radius-pill);
-  height: auto;
-  min-height: 46px;
-  box-shadow: none;
-  margin: 0;
-}
-
-.btn-outline:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 3px;
-}
-
-/* Blue pill — the escalation action ("Filed 311 ticket"). Blue marks the city
-   lane (matching the group's blue label). Theme-safe: --on-ink flips from white
-   (on the darker light-theme blue) to near-black (on the lighter dark-theme
-   blue), so the label stays legible in both themes without a media query. */
-.btn-blue {
-  appearance: none;
-  cursor: pointer;
-  border: 0;
-  background: var(--brand-blue);
-  color: var(--on-ink);
   font: inherit;
   font-weight: var(--wa-font-weight-bold, 600);
   font-size: var(--wa-font-size-m, 1rem);
@@ -664,19 +658,22 @@ button[data-loading] [data-loading-label] {
   margin: 0;
 }
 
-.btn-blue:focus-visible {
+.btn-secondary:focus-visible,
+.btn-outline:focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 3px;
 }
 
-/* Compact size for in-card action rows (all three button styles). nowrap keeps
+/* Compact size for in-card action rows (any button role). nowrap keeps
    labels on one line so they never clip — the row wraps to a new line instead. */
+.btn-primary--sm,
+.btn-secondary--sm,
 .btn-ink--sm,
 .btn-outline--sm,
 .btn-blue--sm {
   padding: 0.45rem 1.2rem;
   min-height: 38px;
-  font-size: 0.9rem;
+  font-size: var(--wa-font-size-s, 0.875rem);
   white-space: nowrap;
 }
 

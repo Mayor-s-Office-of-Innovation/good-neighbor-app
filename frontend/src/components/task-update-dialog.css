@@ -117,11 +117,11 @@
 .task-update__prompt .task-update__actions {
   margin: 1rem 0 0;
 }
+/* Dialog-local layout only; color/weight come from the primary role. */
 .btn-theme {
   min-height: 46px;
   padding-inline: var(--wa-form-control-padding-inline, 1.25rem);
   font: inherit;
-  font-weight: 700;
 }
 .task-update__section {
   margin-top: 2rem;
