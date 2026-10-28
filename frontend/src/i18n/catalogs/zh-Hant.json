@@ -1332,7 +1332,6 @@
   "taskUpdate.capture.title": "為此問題新增相片或備註",
   "taskUpdate.capture.unattached": "無法將這些結果附加到此問題。您的草稿尚未儲存。關閉前，請複製您想保留的備註。",
   "taskUpdate.cityHelp.no": "否",
-  "taskUpdate.cityHelp.notice": "我們將代表您向市政府發送更新資訊",
   "taskUpdate.cityHelp.title": "您是否仍需要市政府的協助？",
   "taskUpdate.cityHelp.yes": "是",
   "taskUpdate.created.perimeter": "在周邊巡檢中新增的問題",

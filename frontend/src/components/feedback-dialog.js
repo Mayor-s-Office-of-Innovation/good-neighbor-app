@@ -17,7 +17,6 @@ import "./feedback-dialog.css";
 import { html, escapeAttr, escapeHtml } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
 import { openOverlayDialog } from "../dialog-history.js";
-import { sendFeedback } from "../services/feedback.js";
 import {
   showFeedbackErrorToast,
   showFeedbackSuccessToast,
@@ -85,6 +84,9 @@ class FeedbackDialog extends HTMLElement {
       /** @type {any} */ (send).loading = true;
     }
     try {
+      // Submission code is only needed after Send; import failures use the same
+      // draft-preserving retry path as network failures.
+      const { sendFeedback } = await import("../services/feedback.js");
       await sendFeedback({
         message: text,
         site: /** @type {any} */ (this).siteId || undefined,

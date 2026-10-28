@@ -1332,7 +1332,6 @@
   "taskUpdate.capture.title": "Agregue una foto o una nota a este problema",
   "taskUpdate.capture.unattached": "No se pudieron adjuntar estos resultados al problema. Tu borrador no se ha guardado. Copia las notas que quieras conservar antes de cerrar.",
   "taskUpdate.cityHelp.no": "No",
-  "taskUpdate.cityHelp.notice": "Enviaremos una actualización a la Ciudad en su nombre",
   "taskUpdate.cityHelp.title": "¿Todavía necesita ayuda de la Ciudad?",
   "taskUpdate.cityHelp.yes": "Sí",
   "taskUpdate.created.perimeter": "Problema agregado durante una revisión del perímetro",

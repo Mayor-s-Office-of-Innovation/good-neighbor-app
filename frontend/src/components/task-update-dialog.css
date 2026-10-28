@@ -357,17 +357,6 @@
   min-height: 0;
   padding-inline-start: 0;
 }
-.task-update__city-help-note {
-  /* Keep 8px clear below the selected button's 2px ring + 3px offset. */
-  margin: calc(8px + 2px + 3px) 0 0;
-  font-size: var(--wa-font-size-s, 0.875rem);
-  line-height: 1.4;
-}
-.task-update__city-help-note[hidden] {
-  /* Reserve the full message height, including wrapped translations. */
-  display: block;
-  visibility: hidden;
-}
 .task-update__city-help [aria-pressed="true"] {
   outline: 2px solid var(--brand-blue);
   outline-offset: 3px;
@@ -375,4 +364,10 @@
 
 .task-update__city-help h3 {
   margin-bottom: 1.1875rem;
+}
+
+/* Button display styles must not override the native hidden attribute. */
+.task-update [data-cancel-save][hidden],
+.task-update [data-save-status]:empty {
+  display: none;
 }

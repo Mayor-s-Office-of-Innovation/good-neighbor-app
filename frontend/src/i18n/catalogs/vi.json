@@ -1332,7 +1332,6 @@
   "taskUpdate.capture.title": "Thêm ảnh hoặc ghi chú cho vấn đề này",
   "taskUpdate.capture.unattached": "Không thể đính kèm các kết quả này vào vấn đề. Bản nháp của bạn chưa được lưu. Hãy sao chép các ghi chú bạn muốn giữ trước khi đóng.",
   "taskUpdate.cityHelp.no": "Không",
-  "taskUpdate.cityHelp.notice": "Chúng tôi sẽ thay mặt bạn gửi thông tin cập nhật cho Thành phố",
   "taskUpdate.cityHelp.title": "Bạn có còn cần Thành phố hỗ trợ không?",
   "taskUpdate.cityHelp.yes": "Có",
   "taskUpdate.created.perimeter": "Vấn đề được thêm trong đợt kiểm tra quanh tòa nhà",

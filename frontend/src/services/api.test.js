@@ -495,3 +495,47 @@ describe("timeline read cancellation", () => {
     }
   });
 });
+
+it("cancels the progress upload without registering incomplete media", async () => {
+  const controller = new AbortController();
+  const file = new File(["photo"], "photo.jpg", { type: "image/jpeg" });
+  const fetch = vi.fn().mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        artifactId: "photo",
+        s3Key: "photo",
+        uploadUrl: "https://upload.example.test/photo",
+      }),
+    ),
+  );
+  const sent = vi.fn();
+  class Upload extends EventTarget {
+    upload = new EventTarget();
+    open() {}
+    setRequestHeader() {}
+    send(body) {
+      sent(body);
+      controller.abort();
+    }
+    abort() {
+      this.dispatchEvent(new Event("abort"));
+    }
+  }
+  vi.stubGlobal("fetch", fetch);
+  vi.stubGlobal("XMLHttpRequest", Upload);
+  try {
+    await expect(
+      uploadTaskUpdatePhoto(
+        "task",
+        "check",
+        { file },
+        { signal: controller.signal, onProgress: () => {} },
+      ),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(sent).toHaveBeenCalledWith(file);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][1].signal).toBe(controller.signal);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

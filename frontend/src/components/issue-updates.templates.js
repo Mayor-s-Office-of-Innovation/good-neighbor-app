@@ -172,19 +172,11 @@ export function cityHelpQuestion(needed, disabled = false) {
         class="btn-outline"
         data-city-help="no"
         aria-pressed="${needed === false}"
-        aria-describedby="city-help-note"
         ${disabled ? "disabled" : ""}
       >
         ${escapeHtml(t("taskUpdate.cityHelp.no"))}
       </button>
     </div>
-    <p
-      id="city-help-note"
-      class="task-update__city-help-note"
-      ${needed === false ? "" : "hidden"}
-    >
-      ${escapeHtml(t("taskUpdate.cityHelp.notice"))}
-    </p>
   </section>`;
 }
 

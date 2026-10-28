@@ -620,7 +620,6 @@ class ReportsView extends ReportsScreen {
     if (!this._issueSheets)
       this._issueSheets = new TaskSheets({
         host: this,
-        readOnly: true,
         container: () => this.querySelector(":scope > .reports"),
         resolveTask,
         reload: () => this._loadReport(),
@@ -830,7 +829,6 @@ class ReportsDayView extends ReportsScreen {
     if (!this._sheets) {
       this._sheets = new TaskSheets({
         host: this,
-        readOnly: true,
         container: () => this.querySelector(":scope > .reports-day"),
         resolveTask: (task) => this._tasksById.get(task.taskId) || task,
         reload: () => this._refresh(),
@@ -1108,7 +1106,6 @@ class ReportsTypeView extends ReportsScreen {
     if (!this._sheets) {
       this._sheets = new TaskSheets({
         host: this,
-        readOnly: true,
         container: () => this.querySelector(":scope > .reports-type"),
         resolveTask: (task) => this._tasksById.get(task.taskId) || task,
         reload: () => this._load(),

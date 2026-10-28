@@ -157,15 +157,14 @@ for (const width of [393, 1178]) {
       await expect(done).toBeDisabled();
       const before = await done.boundingBox();
       await no.click();
-      await expect(dialog.locator("#city-help-note")).toHaveText(
-        t("taskUpdate.cityHelp.notice"),
-      );
-      await expect(dialog.locator("#city-help-note")).toBeVisible();
+      await expect(dialog.locator("#city-help-note")).toHaveCount(0);
+      await expect(no).toHaveAttribute("aria-pressed", "true");
       await expect(done).toBeEnabled();
       const after = await done.boundingBox();
       expect(after?.y).toBe(before?.y);
       await yes.click();
-      await expect(dialog.locator("#city-help-note")).toBeHidden();
+      await expect(dialog.locator("#city-help-note")).toHaveCount(0);
+      await expect(yes).toHaveAttribute("aria-pressed", "true");
       expect((await done.boundingBox())?.y).toBe(before?.y);
       if (mode === "action") {
         await dialog.locator("[data-clear]").click();

@@ -304,9 +304,7 @@ it.each([null, true, false])(
       expect(/data-save-(?:action|notes)\s+disabled/.test(markup)).toBe(
         cityHelpNeeded === null,
       );
-      expect(/class="task-update__city-help-note"\s+hidden/.test(markup)).toBe(
-        cityHelpNeeded !== false,
-      );
+      expect(markup).not.toContain("city-help-note");
     }
   },
 );
@@ -504,3 +502,23 @@ it("keeps timeline history and pagination but removes mutation controls in read-
   expect(readonly).toContain("data-load-older");
   expect(readonly).toContain("task-update__timeline");
 });
+
+it.each([
+  ["completing", true, true],
+  ["completed", true, true],
+  ["in_progress", false, false],
+  ["in_progress", undefined, true],
+])(
+  "honors server update capability for %s (%s)",
+  (status, canUpdate, visible) => {
+    const markup = taskUpdateTimeline({
+      task: { status, canUpdate },
+      updates: [],
+      issueOrigin: "perimeter",
+      originalMediaUrl: "",
+      mediaUrls: new Map(),
+    });
+    for (const mode of ["notes", "action", "resolve"])
+      expect(markup.includes(`data-mode="${mode}"`)).toBe(visible);
+  },
+);
