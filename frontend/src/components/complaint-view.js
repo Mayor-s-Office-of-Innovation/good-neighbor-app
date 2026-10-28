@@ -577,11 +577,17 @@ ${escapeHtml(draft.description)}</textarea
         const file = artifacts.find(
           (item) => item.artifactId === image.dataset.image,
         );
-        const { downloadUrl } = await getComplaintMediaUrl(
+        const { downloadUrl, thumbnailUrl } = await getComplaintMediaUrl(
           id,
           image.dataset.image,
         );
-        image.innerHTML = `<img src="${escapeAttr(downloadUrl)}" alt="${escapeAttr(file.name)}" />`;
+        // A thumbnail saves downloading the full image for a small tile.
+        image.innerHTML = `<button type="button" class="complaint-detail__photo" data-photo-lightbox data-photo-no-location data-full-src="${escapeAttr(downloadUrl)}"><img src="${escapeAttr(thumbnailUrl || downloadUrl)}" alt="${escapeAttr(file.name)}" loading="lazy" decoding="async" /></button>`;
+        const img = image.querySelector("img");
+        // Fall back once, so a missing thumbnail never leaves a broken image.
+        img.addEventListener("error", () => {
+          if (img.getAttribute("src") !== downloadUrl) img.src = downloadUrl;
+        });
       } catch {
         image.textContent = t("complaints.fileUnavailable");
       }
