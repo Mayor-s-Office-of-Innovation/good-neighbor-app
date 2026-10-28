@@ -64,6 +64,7 @@ import {
  * @property {string} [handoffGrantId] the pending Home Screen handoff grant (handlers/session-handoff.js)
  * @property {Record<string, any>} [sessions]
  * @property {string} [primarySessionStatus]
+ * @property {number} [sessionStartGeneration] stable generation floor for this enrollment
  */
 
 /**
@@ -134,6 +135,7 @@ export const registerDevice = async (event) => {
     lastSeenAt: now,
     tokenGeneration: generation,
     refreshJti: refresh.jti,
+    sessionStartGeneration: generation,
     primarySessionKind:
       raw.sessionKind === "home_screen" ? "home_screen" : "browser",
     siteCredentialGeneration: Number(validCode.siteCredentialGeneration ?? 0),
@@ -148,6 +150,14 @@ export const registerDevice = async (event) => {
             Put: {
               TableName: dynamoTable,
               Item,
+              ConditionExpression: existing
+                ? "tokenGeneration = :previousGeneration"
+                : "attribute_not_exists(pk)",
+              ...(existing && {
+                ExpressionAttributeValues: {
+                  ":previousGeneration": existing.tokenGeneration,
+                },
+              }),
             },
           },
           ...(consume ? [consume] : []),
@@ -170,6 +180,12 @@ export const registerDevice = async (event) => {
       }),
     );
   } catch (err) {
+    if (
+      err instanceof Error &&
+      err.name === "TransactionCanceledException" &&
+      isSetupCodeConditionFailure(err, 0)
+    )
+      return jsonResponse(409, { error: "registration_conflict" });
     if (
       err instanceof Error &&
       err.name === "TransactionCanceledException" &&
@@ -577,6 +593,7 @@ async function getDevice(siteId, deviceId) {
     new GetCommand({
       TableName: getDynamoTableName(),
       Key: { ...deviceKey(siteId, deviceId) },
+      ConsistentRead: true,
     }),
   );
   const item = /** @type {DeviceItem | undefined} */ (res.Item);

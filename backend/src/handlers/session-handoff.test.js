@@ -564,7 +564,7 @@ function authorizedEvent() {
     body: undefined,
     requestContext: {
       authorizer: {
-        jwt: { claims: { "custom:siteId": "site-1", sub: "device-1" } },
+        jwt: { claims: { "custom:siteId": "site-1", sub: "device-1", ver: 1 } },
       },
     },
   };

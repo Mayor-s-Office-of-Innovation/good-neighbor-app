@@ -259,6 +259,11 @@ describe("registerDevice", () => {
     expect(item.registeredAt).toBe("2026-01-01T00:00:00.000Z");
     // …and advances the session generation (old tokens die).
     expect(item.tokenGeneration).toBe(5);
+    expect(item.sessionStartGeneration).toBe(5);
+    expect(send.mock.calls[4][0].input.TransactItems[0].Put).toMatchObject({
+      ConditionExpression: "tokenGeneration = :previousGeneration",
+      ExpressionAttributeValues: { ":previousGeneration": 4 },
+    });
     expect(JSON.parse(res.body).tokenGeneration).toBe(5);
   });
 

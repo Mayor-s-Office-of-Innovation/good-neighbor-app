@@ -43,6 +43,9 @@ export function sessionRotationItem(
       Key: { pk: item.pk, sk: item.sk },
       UpdateExpression:
         "SET tokenGeneration = :next, refreshJti = :jti, lastSeenAt = :now, primaryLastSeenAt = :now, primarySessionStatus = :active" +
+        (item.primarySessionStatus === "signed_out"
+          ? ", sessionStartGeneration = :next"
+          : "") +
         (clearHandoffGrant ? " REMOVE handoffGrantId" : ""),
       ConditionExpression: conditions.join(" AND "),
       ExpressionAttributeNames: { "#status": "status" },

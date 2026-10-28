@@ -23,6 +23,12 @@ export function contextSession(device, id, refreshJti, generation, now) {
     kind: device.sessions?.[id]?.kind ?? "home_screen",
     status: "active",
     tokenGeneration: generation,
+    ...(device.sessions?.[id]?.status === "active" &&
+    Date.parse(device.sessions[id].expiresAt) > Date.parse(now)
+      ? device.sessions[id].sessionStartGeneration !== undefined
+        ? { sessionStartGeneration: device.sessions[id].sessionStartGeneration }
+        : {}
+      : { sessionStartGeneration: generation }),
     refreshJti,
     createdAt: device.sessions?.[id]?.createdAt ?? now,
     lastSeenAt: now,

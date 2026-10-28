@@ -86,7 +86,9 @@ await test("managed device sessions against isolated DynamoDB Local", async (t) 
     const { handler: authorize } = await import("../src/lambda/authorizer.js");
     const { issueSessionHandoff, redeemSessionHandoff, retireSessionHandoff } =
       await import("../src/handlers/session-handoff.js");
-    const { refreshDeviceToken } = await import("../src/handlers/devices.js");
+    const { refreshDeviceToken, registerDevice } = await import(
+      "../src/handlers/devices.js"
+    );
     const { selectDeviceBinding } = await import(
       "../src/handlers/device-bindings.js"
     );
@@ -955,7 +957,232 @@ await test("managed device sessions against isolated DynamoDB Local", async (t) 
         }
       },
     );
+    await t.test(
+      "registration cannot reuse a generation after concurrent refresh",
+      async () => {
+        const id = "registration-refresh-cas";
+        const source = await seed(id, id);
+        await put({
+          pk: "SITE_CODE#987654",
+          sk: "#META",
+          active: true,
+          siteId: id,
+          siteName: "Synthetic site",
+          accessLevel: "general",
+        });
+        const originalSend = ddb.send.bind(ddb);
+        let release;
+        let reached;
+        const barrier = new Promise((resolve) => {
+          reached = resolve;
+        });
+        const held = new Promise((resolve) => {
+          release = resolve;
+        });
+        ddb.send = async (command) => {
+          if (
+            command.input.TransactItems?.some(
+              (item) => item.Put?.Item?.type === "device",
+            )
+          ) {
+            reached();
+            await held;
+          }
+          return originalSend(command);
+        };
+        try {
+          const registering = registerDevice({
+            body: JSON.stringify({ code: "987654", deviceId: id }),
+          });
+          await barrier;
+          const rotated = responseBody(
+            await recoverRefresh(source, randomUUID()),
+          );
+          release();
+          assert.equal((await registering).statusCode, 409);
+          assert.equal(await allowed(rotated.token), true);
+        } finally {
+          release();
+          ddb.send = originalSend;
+        }
+      },
+    );
     for (const kind of ["browser", "home_screen"]) {
+      for (const timing of ["before_read", "before_write"]) {
+        await t.test(
+          `${kind}: cached sign-out cannot end re-registration ${timing}`,
+          async () => {
+            const id = `replace-${kind}-${timing}`;
+            const source = await seed(id, id);
+            const session = kind === "browser" ? source : await handoff(source);
+            const logout = await eventFor(session.token, { endSession: true });
+            await put({
+              pk: "SITE_CODE#987654",
+              sk: "#META",
+              active: true,
+              siteId: id,
+              siteName: "Synthetic site",
+              accessLevel: "general",
+            });
+            const replace = async () => {
+              const result = await registerDevice({
+                body: JSON.stringify({ code: "987654", deviceId: id }),
+              });
+              assert.equal(result.statusCode, 201);
+              return JSON.parse(result.body);
+            };
+            let replacement;
+            if (timing === "before_read") {
+              replacement = await replace();
+              responseBody(await retireSessionHandoff(logout));
+            } else {
+              const originalSend = ddb.send.bind(ddb);
+              let release;
+              let reached;
+              const barrier = new Promise((resolve) => {
+                reached = resolve;
+              });
+              const held = new Promise((resolve) => {
+                release = resolve;
+              });
+              ddb.send = async (command) => {
+                if (
+                  command.input.TransactItems?.some(
+                    (item) =>
+                      item.Put?.Item?.eventType === "device_session_signed_out",
+                  )
+                ) {
+                  reached();
+                  await held;
+                }
+                return originalSend(command);
+              };
+              try {
+                const ending = retireSessionHandoff(logout);
+                await barrier;
+                replacement = await replace();
+                release();
+                responseBody(await ending);
+              } finally {
+                release();
+                ddb.send = originalSend;
+              }
+            }
+            assert.equal(await allowed(replacement.token), true);
+            assert.equal(await allowed(session.token), false);
+            const issued = responseBody(
+              await issueSessionHandoff(await eventFor(replacement.token)),
+            );
+            const installed = responseBody(
+              await redeemSessionHandoff({
+                body: JSON.stringify({
+                  grantId: issued.grantId,
+                  token: issued.token,
+                }),
+                requestContext: {},
+              }),
+            );
+            // Replaying the cached verdict again must preserve both new contexts.
+            responseBody(await retireSessionHandoff(logout));
+            assert.equal(await allowed(replacement.token), true);
+            assert.equal(await allowed(installed.token), true);
+            responseBody(await recoverRefresh(replacement, randomUUID()));
+            responseBody(await recoverRefresh(installed, randomUUID()));
+          },
+        );
+      }
+      await t.test(
+        `${kind}: stale logout cannot end a reactivated session`,
+        async () => {
+          const id = `reactivated-${kind}`;
+          const source = await seed(id, id);
+          const target = await seed(`${id}-target`, `${id}-target`);
+          const session = kind === "browser" ? source : await handoff(source);
+          const logout = await eventFor(session.token, { endSession: true });
+          const elsewhere = responseBody(
+            await selectDeviceBinding(
+              await eventFor(session.token, {
+                bindingId: target.deviceId,
+              }),
+            ),
+          );
+          responseBody(await retireSessionHandoff(logout));
+          const returning = await selectDeviceBinding(
+            await eventFor(elsewhere.token, { bindingId: source.deviceId }),
+          );
+          // Signed-out Home Screen slots cannot be revived by Site switching;
+          // a fresh install gets a different sid under the same device.
+          if (kind === "home_screen") assert.equal(returning.statusCode, 409);
+          const reactivated =
+            kind === "home_screen"
+              ? await handoff(source)
+              : responseBody(returning);
+          const rotated = responseBody(
+            await recoverRefresh(reactivated, randomUUID()),
+          );
+          responseBody(await retireSessionHandoff(logout));
+          assert.equal(await allowed(rotated.token), true);
+          const currentLogout = await eventFor(rotated.token, {
+            endSession: true,
+          });
+          const latest = responseBody(
+            await recoverRefresh(rotated, randomUUID()),
+          );
+          // Its own pre-refresh token still ends this incarnation after rotation.
+          responseBody(await retireSessionHandoff(currentLogout));
+          assert.equal(await allowed(latest.token), false);
+        },
+      );
+      await t.test(
+        `${kind}: refresh cannot commit after sign-out wins`,
+        async () => {
+          const id = `refresh-after-logout-${kind}`;
+          const source = await seed(id, id);
+          const row = await get(`SITE#${id}`, `DEVICE#${id}`);
+          await put({ ...row, sessionStartGeneration: 1 });
+          const session = kind === "browser" ? source : await handoff(source);
+          const logout = await eventFor(session.token, { endSession: true });
+          const attempt = randomUUID();
+          const originalSend = ddb.send.bind(ddb);
+          let release;
+          let reached;
+          const barrier = new Promise((resolve) => {
+            reached = resolve;
+          });
+          const held = new Promise((resolve) => {
+            release = resolve;
+          });
+          ddb.send = async (command) => {
+            if (
+              command.input.TransactItems?.some(
+                (item) =>
+                  item.Update?.ExpressionAttributeValues?.[":receipt"] ||
+                  item.Update?.ExpressionAttributeValues?.[":session"]
+                    ?.refreshRecovery,
+              )
+            ) {
+              reached();
+              await held;
+            }
+            return originalSend(command);
+          };
+          try {
+            const refreshing = recoverRefresh(session, attempt);
+            await barrier;
+            responseBody(await retireSessionHandoff(logout));
+            release();
+            assert.equal((await refreshing).statusCode, 401);
+            assert.equal(await allowed(session.token), false);
+            assert.equal(
+              (await recoverRefresh(session, attempt)).statusCode,
+              401,
+            );
+          } finally {
+            release();
+            ddb.send = originalSend;
+          }
+        },
+      );
       await t.test(
         `${kind}: sign-out wins after refresh commits between its read and write`,
         async () => {

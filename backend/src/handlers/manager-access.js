@@ -516,12 +516,10 @@ export const listGeneralBindings = async (event) => {
   const devices = new Map();
   for (let offset = 0; offset < bindings.length; offset += 100) {
     /** @type {Record<string, any>[]} */
-    let keys = bindings
-      .slice(offset, offset + 100)
-      .map((item) => ({
-        pk: `SITE#${siteId}`,
-        sk: `DEVICE#${item.bindingId}`,
-      }));
+    let keys = bindings.slice(offset, offset + 100).map((item) => ({
+      pk: `SITE#${siteId}`,
+      sk: `DEVICE#${item.bindingId}`,
+    }));
     for (let attempt = 0; keys.length; attempt++) {
       if (attempt === 3) throw new Error("device_sessions_unavailable");
       const page = await ddb.send(

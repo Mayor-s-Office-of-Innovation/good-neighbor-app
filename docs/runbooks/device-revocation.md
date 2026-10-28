@@ -117,6 +117,15 @@ atomically, so a refresh committed between the sign-out read and write cannot
 leave the session active. Transient transaction conflicts retry within a bounded
 window; persistent conflicts return 409 instead of reporting success.
 
+Sign-out also checks and transactionally pins `sessionStartGeneration`, the
+stable generation floor of the enrollment/session. Refresh preserves this floor;
+re-registration and reactivation advance it. A cached token from an older
+enrollment therefore cannot end its replacement, even when replacement happens
+between the sign-out read and write. Legacy sessions without a floor retain
+compatibility until their next registration/reactivation; the transaction pins
+the field's absence. Registration itself uses a generation compare-and-swap and
+returns 409 if another registration or refresh wins first.
+
 Site selection rechecks the source session and current authority with strong
 reads, and pins the source session in the selection transaction. Cached gateway
 authorization cannot use a signed-out or revoked source to mint another Site's

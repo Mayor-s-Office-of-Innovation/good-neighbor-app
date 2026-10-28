@@ -486,6 +486,19 @@ export const retireSessionHandoff = async (event) => {
   }
   if (retirement.endSession === true && device) {
     const sessionId = deriveSessionId(event);
+    const state = sessionId ? device.sessions?.[sessionId] : device;
+    const callerGeneration = deriveDeviceGeneration(event);
+    // Refresh advances ver but keeps the enrollment's generation floor. A new
+    // enrollment/reactivated context starts a new floor. Pin that identity,
+    // not the rotating generation, so an in-flight refresh cannot escape logout.
+    if (
+      !state ||
+      typeof callerGeneration !== "number" ||
+      !Number.isSafeInteger(callerGeneration) ||
+      callerGeneration < (state.sessionStartGeneration ?? 0) ||
+      callerGeneration > state.tokenGeneration
+    )
+      return retiredResponse(false);
     let update;
     if (sessionId) {
       const slot = device.sessions?.[sessionId];
@@ -530,6 +543,17 @@ export const retireSessionHandoff = async (event) => {
       };
     }
     if (!update) return retiredResponse(false);
+    const identityPath = sessionId
+      ? "#sessions.#sid.sessionStartGeneration"
+      : "sessionStartGeneration";
+    update.Update.ConditionExpression +=
+      state.sessionStartGeneration === undefined
+        ? ` AND attribute_not_exists(${identityPath})`
+        : ` AND ${identityPath} = :sessionStart`;
+    if (state.sessionStartGeneration !== undefined)
+      Object.assign(update.Update.ExpressionAttributeValues, {
+        ":sessionStart": state.sessionStartGeneration,
+      });
     for (let attempt = 0; ; attempt++) {
       try {
         await ddb.send(
