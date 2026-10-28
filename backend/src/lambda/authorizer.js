@@ -22,6 +22,7 @@
 import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { deviceLivenessProblem } from "../lib/device-liveness.js";
+import { deviceSessionMatches } from "../lib/device-context-sessions.js";
 import {
   canonicalAccessLevel,
   DeviceTokenError,
@@ -94,7 +95,7 @@ export const handler = async (event) => {
   if (
     !device ||
     deviceLivenessProblem(device, now) ||
-    device.tokenGeneration !== claims.ver ||
+    !deviceSessionMatches(device, claims) ||
     canonicalAccessLevel(device.accessLevel) !== claims.accessLevel
   ) {
     return DENY({ reason: "revoked" });
@@ -190,6 +191,7 @@ export const handler = async (event) => {
       "claims.sub": claims.sub,
       "claims.custom:siteId": claims.siteId,
       "claims.ver": claims.ver,
+      ...(claims.sid ? { "claims.sid": claims.sid } : {}),
       "claims.accessLevel": claims.accessLevel,
       // Undotted copies for the API Gateway access-log format
       // ($context.authorizer.sub / .siteId), which replaces the viewer IP

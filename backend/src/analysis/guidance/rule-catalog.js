@@ -29,7 +29,6 @@ const WEEKDAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
  * @property {{ code: string, payload: Record<string, unknown> }[]} appActions
  * @property {string | null} category311
  * @property {string} guidance
- * @property {string[]} cannotDoReasons
  * @property {string} source
  */
 
@@ -379,13 +378,6 @@ export function buildCatalog({ policyVersion, metadata, rows, aliases }) {
             : isResponsibleAgencyRulebaseShape
               ? row[13]
               : row[12];
-      const cannotDoReasons = isAgencyAwareRulebaseShape
-        ? row[18]
-        : isTimeValidityRulebaseShape
-          ? row[17]
-          : isResponsibleAgencyRulebaseShape
-            ? row[isResponseTimeRulebaseShape ? 15 : 14]
-            : row[13];
       const source = isAgencyAwareRulebaseShape
         ? row[19]
         : isTimeValidityRulebaseShape
@@ -428,7 +420,6 @@ export function buildCatalog({ policyVersion, metadata, rows, aliases }) {
           }),
           category311: cleanCell(serviceCodeOrAction) || null,
           guidance: cleanCell(guidance),
-          cannotDoReasons: splitLines(cannotDoReasons),
           source: cleanCell(source),
         },
       };

@@ -1,3 +1,8 @@
+import { perimeterAttribution } from "../lib/perimeter-attribution.js";
+import {
+  readCompliancePeriods,
+  activeCompliancePeriod,
+} from "../lib/site-compliance.js";
 import { getPerson } from "../lib/people.js";
 import { closeComplianceTerms } from "../domain/end-compliance-terms.js";
 import { sitePrimaryContactChange } from "../lib/site-primary-contact.js";
@@ -173,18 +178,12 @@ export const replaceSiteComplianceManagers = (event) =>
 export const listSiteTerms = (event) =>
   adminOnly(event, async () => {
     const siteId = event.pathParameters?.siteId ?? "";
-    const result = await ddb.send(
-      new QueryCommand({
-        TableName: getDynamoTableName(),
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-        ExpressionAttributeValues: {
-          ":pk": `SITE#${siteId}`,
-          ":prefix": "COMPLIANCE_TERMS#",
-        },
-        ScanIndexForward: false,
-      }),
-    );
-    return jsonResponse(200, { terms: result.Items ?? [] });
+    const periods = await readCompliancePeriods(siteId);
+    return jsonResponse(200, {
+      terms: periods.sort((a, b) =>
+        String(b.effectiveStart).localeCompare(String(a.effectiveStart)),
+      ),
+    });
   });
 
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -230,16 +229,7 @@ export const createSiteTerms = (event) =>
           Key: { pk: `SITE#${siteId}`, sk: "#META" },
         }),
       ),
-      ddb.send(
-        new QueryCommand({
-          TableName: tableName,
-          KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-          ExpressionAttributeValues: {
-            ":pk": `SITE#${siteId}`,
-            ":prefix": "COMPLIANCE_TERMS#",
-          },
-        }),
-      ),
+      readCompliancePeriods(siteId, tableName).then((Items) => ({ Items })),
     ]);
     if (!siteResult.Item || siteResult.Item.status === "inactive") {
       return jsonResponse(404, { error: "site_not_found" });
@@ -538,32 +528,13 @@ export const endSiteTerms = (event) =>
           Key: { pk: `SITE#${siteId}`, sk: "#META" },
         }),
       ),
-      ddb.send(
-        new QueryCommand({
-          TableName: tableName,
-          KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-          ExpressionAttributeValues: {
-            ":pk": `SITE#${siteId}`,
-            ":prefix": "COMPLIANCE_TERMS#",
-          },
-          ConsistentRead: true,
-        }),
-      ),
+      readCompliancePeriods(siteId, tableName).then((Items) => ({ Items })),
     ]);
     if (!siteResult.Item || siteResult.Item.status === "inactive") {
       return jsonResponse(404, { error: "site_not_found" });
     }
     const today = pacificToday();
-    const active = (termsResult.Items ?? [])
-      .filter(
-        (item) =>
-          item.status !== "cancelled" &&
-          item.effectiveStart <= today &&
-          (!item.expiresOnExclusive || item.expiresOnExclusive > today),
-      )
-      .sort((a, b) =>
-        String(b.effectiveStart).localeCompare(String(a.effectiveStart)),
-      )[0];
+    const active = activeCompliancePeriod(termsResult.Items ?? [], today);
     if (!active) return jsonResponse(409, { error: "no_active_checks_period" });
     const now = new Date().toISOString();
     const actor = String(
@@ -836,6 +807,7 @@ export const getSitePerimeter = (event) =>
       updatedAt: result.Item.updatedAt,
       perimeterUpdatedAt: result.Item.perimeterUpdatedAt,
       perimeterUpdatedBy: result.Item.perimeterUpdatedBy,
+      ...(await perimeterAttribution(result.Item, siteId)),
     });
   });
 
@@ -872,13 +844,14 @@ export const putSitePerimeter = (event) =>
                 TableName: tableName,
                 Key: { pk: `SITE#${siteId}`, sk: "#META" },
                 UpdateExpression:
-                  "SET perimeter = :perimeter, perimeterUpdatedAt = :now, perimeterUpdatedBy = :actor, updatedAt = :now",
+                  "SET perimeter = :perimeter, perimeterUpdatedAt = :now, perimeterUpdatedBy = :actor, perimeterUpdatedSource = :source, updatedAt = :now",
                 ConditionExpression:
                   "attribute_exists(pk) AND updatedAt = :expectedUpdatedAt",
                 ExpressionAttributeValues: {
                   ":perimeter": perimeter,
                   ":now": now,
                   ":actor": actor,
+                  ":source": "dashboard",
                   ":expectedUpdatedAt": expectedUpdatedAt,
                 },
               },
@@ -909,6 +882,8 @@ export const putSitePerimeter = (event) =>
       updatedAt: now,
       perimeterUpdatedAt: now,
       perimeterUpdatedBy: actor,
+      perimeterUpdatedSource: "dashboard",
+      perimeterUpdatedDeviceLabel: "",
     });
   });
 
@@ -1096,6 +1071,8 @@ export const resendSiteLetter = (event) =>
         }),
       )
     ).Item;
+    if (!term || !activeCompliancePeriod([term]))
+      return jsonResponse(409, { error: "current_letter_required" });
     if (!term?.email)
       return jsonResponse(409, { error: "letter_email_unavailable" });
     const job = {

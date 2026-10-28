@@ -52,5 +52,37 @@ export function deviceRow(binding, provider = false) {
           ${escapeHtml(t("access.revoke"))}
         </button>`
       : ""}
+    ${binding.sessions?.length
+      ? html`<details class="site-access-sessions">
+          <summary>${escapeHtml(t("access.sessions"))}</summary>
+          <ul>
+            ${binding.sessions
+              .map(
+                (session) =>
+                  html`<li data-session-kind="${escapeAttr(session.kind)}">
+                    <strong
+                      >${escapeHtml(
+                        t(
+                          session.kind === "home_screen"
+                            ? "access.session.homeScreen"
+                            : "access.session.browser",
+                        ),
+                      )}</strong
+                    >
+                    <p>
+                      ${escapeHtml(
+                        t(
+                          `access.session.status.${session.status === "signed_out" ? "signedOut" : session.status}`,
+                        ),
+                      )}
+                      · ${escapeHtml(t("access.lastSeen"))}
+                      ${escapeHtml(formatTimestamp(session.lastSeenAt))}
+                    </p>
+                  </li>`,
+              )
+              .join("")}
+          </ul>
+        </details>`
+      : ""}
   </article>`;
 }

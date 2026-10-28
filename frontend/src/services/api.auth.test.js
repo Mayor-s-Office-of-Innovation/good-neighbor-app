@@ -1,6 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, ReauthRequiredError } from "./api.js";
-import { updateSiteSession } from "../db.js";
+import { updateSiteSession, prepareRefreshAttempt } from "../db.js";
 
 /*
   Auth-flow tests for the device-token plumbing (Option 4, docs/adr/0010).
@@ -32,10 +32,25 @@ function stubFetch(list) {
 
 vi.mock("../db.js", () => ({
   getSite: vi.fn(() => Promise.resolve(site)),
-  updateSiteSession: vi.fn((session, expectedSiteId) => {
-    if (site.siteId !== expectedSiteId) return Promise.resolve(null);
+  prepareRefreshAttempt: vi.fn(async (siteId, refreshToken) => {
+    if (site?.siteId !== siteId || site.refreshToken !== refreshToken)
+      return null;
+    if (site.refreshAttempt?.refreshToken !== refreshToken)
+      site.refreshAttempt = {
+        id: crypto.randomUUID(),
+        refreshToken,
+      };
+    return site.refreshAttempt.id;
+  }),
+  updateSiteSession: vi.fn((session, expectedSiteId, expectedRefreshToken) => {
+    if (
+      site.siteId !== expectedSiteId ||
+      (expectedRefreshToken && site.refreshToken !== expectedRefreshToken)
+    )
+      return Promise.resolve(null);
     // Mirror the real merge: token fields replace, identity stays.
     site = { ...site, ...session };
+    delete site.refreshAttempt;
     return Promise.resolve(site);
   }),
 }));
@@ -87,8 +102,15 @@ describe("request auth flow (listChecks as the vehicle)", () => {
     vi.stubGlobal("fetch", fetch);
 
     await expect(listChecks()).resolves.toMatchObject({ checks: [] });
-    expect(refreshDeviceToken).toHaveBeenCalledWith("refresh-1");
-    expect(updateSiteSession).toHaveBeenCalledWith(freshSession, "site_1");
+    expect(refreshDeviceToken).toHaveBeenCalledWith(
+      "refresh-1",
+      expect.any(String),
+    );
+    expect(updateSiteSession).toHaveBeenCalledWith(
+      freshSession,
+      "site_1",
+      "refresh-1",
+    );
     // Retry leg rode the persisted access token.
     expect(fetch).toHaveBeenLastCalledWith(
       expect.anything(),
@@ -108,7 +130,10 @@ describe("request auth flow (listChecks as the vehicle)", () => {
     vi.stubGlobal("fetch", fetch);
 
     await expect(listChecks()).resolves.toMatchObject({ checks: [] });
-    expect(refreshDeviceToken).toHaveBeenCalledWith("refresh-1");
+    expect(refreshDeviceToken).toHaveBeenCalledWith(
+      "refresh-1",
+      expect.any(String),
+    );
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
@@ -365,11 +390,9 @@ describe("request auth flow (listChecks as the vehicle)", () => {
     releaseR1();
     await settled;
 
-    // R2 legitimately used refresh-1 (it was current at its start); R1's late
-    // leg must have re-read the stored record and sent refresh-2 — the dead
-    // token is never replayed.
+    // R1 reuses the persisted access token from R2 instead of rotating again.
     const tokens = vi.mocked(refreshDeviceToken).mock.calls.map((c) => c[0]);
-    expect(tokens).toEqual(["refresh-1", "refresh-2"]);
+    expect(tokens).toEqual(["refresh-1"]);
   });
 
   it("does not poison the shared promise: a rejected refresh clears, the next request refreshes again", async () => {
@@ -707,4 +730,121 @@ it("recovers an overlapping completion once the matching result is confirmed", a
   } finally {
     vi.useRealTimers();
   }
+});
+
+describe("durable refresh recovery attempts", () => {
+  for (const status of [0, 409, 503]) {
+    it(`retains and reuses the attempt after a retryable ${status} failure`, async () => {
+      site.tokenExpiresAt = "2000-01-01T00:00:00Z";
+      vi.stubGlobal(
+        "fetch",
+        stubFetch([{ status: 401 }, { status: 200, body: { checks: [] } }]),
+      );
+      vi.mocked(refreshDeviceToken)
+        .mockRejectedValueOnce(new ApiError("interrupted", { status }))
+        .mockResolvedValue(freshSession);
+      await expect(listChecks()).rejects.toMatchObject({ status });
+      const attempt = site.refreshAttempt.id;
+      expect(site.refreshToken).toBe("refresh-1");
+      await expect(listChecks()).resolves.toMatchObject({ checks: [] });
+      expect(
+        vi.mocked(refreshDeviceToken).mock.calls.map((call) => call[1]),
+      ).toEqual([attempt, attempt]);
+      expect(site.refreshAttempt).toBeUndefined();
+      expect(site.refreshToken).toBe(freshSession.refreshToken);
+    });
+  }
+  it("commits the attempt before sending refresh and never sends after local persistence fails", async () => {
+    site.tokenExpiresAt = "2000-01-01T00:00:00Z";
+    vi.stubGlobal("fetch", stubFetch([{ status: 401 }]));
+    vi.mocked(prepareRefreshAttempt).mockRejectedValueOnce(
+      new DOMException("Storage full", "QuotaExceededError"),
+    );
+    await expect(listChecks()).rejects.toMatchObject({
+      name: "QuotaExceededError",
+    });
+    expect(refreshDeviceToken).not.toHaveBeenCalled();
+    expect(site.refreshToken).toBe("refresh-1");
+  });
+  it("does not overwrite a new enrollment at the same Site after a late response", async () => {
+    site.tokenExpiresAt = "2000-01-01T00:00:00Z";
+    vi.mocked(refreshDeviceToken).mockImplementationOnce(async () => {
+      site = {
+        ...site,
+        deviceId: "replacement",
+        token: "replacement-token",
+        refreshToken: "replacement-refresh",
+      };
+      return freshSession;
+    });
+    vi.stubGlobal("fetch", stubFetch([{ status: 401 }]));
+    await expect(listChecks()).rejects.toMatchObject({
+      name: "SiteBindingChangedError",
+    });
+    expect(site.refreshToken).toBe("replacement-refresh");
+    expect(site.deviceId).toBe("replacement");
+  });
+});
+
+describe("refresh remains bound to its original enrollment", () => {
+  it("does not retry an old request with replacement credentials after a failed refresh", async () => {
+    site.tokenExpiresAt = "2000-01-01T00:00:00Z";
+    vi.mocked(refreshDeviceToken).mockImplementationOnce(async () => {
+      site = {
+        ...site,
+        deviceId: "replacement",
+        localSessionId: "new-enrollment",
+        token: "new-access",
+        refreshToken: "new-refresh",
+      };
+      throw new ApiError("lost response", { status: 0 });
+    });
+    const fetch = stubFetch([{ status: 200, body: { checks: [] } }]);
+    vi.stubGlobal("fetch", fetch);
+    await expect(listChecks()).rejects.toMatchObject({
+      name: "SiteBindingChangedError",
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(site.refreshToken).toBe("new-refresh");
+  });
+  it("rejects an old request if enrollment changes while it waits for the refresh lock", async () => {
+    site.tokenExpiresAt = "2000-01-01T00:00:00Z";
+    /** @type {() => void} */
+    let release = () => {
+      throw new Error("Refresh lock was not acquired");
+    };
+    let reached;
+    const held = new Promise((resolve) => {
+      release = () => resolve(undefined);
+    });
+    const queued = new Promise((resolve) => {
+      reached = resolve;
+    });
+    vi.stubGlobal("navigator", {
+      locks: {
+        request: vi.fn(async (_name, work) => {
+          reached();
+          await held;
+          return work();
+        }),
+      },
+    });
+    const fetch = stubFetch([{ status: 200, body: { checks: [] } }]);
+    vi.stubGlobal("fetch", fetch);
+    const request = listChecks();
+    const rejected = expect(request).rejects.toMatchObject({
+      name: "SiteBindingChangedError",
+    });
+    await queued;
+    site = {
+      ...site,
+      localSessionId: "new-enrollment",
+      token: "new-access",
+      refreshToken: "new-refresh",
+    };
+    release();
+    await rejected;
+    expect(refreshDeviceToken).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
 });

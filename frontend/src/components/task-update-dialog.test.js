@@ -104,7 +104,11 @@ describe("task-update-dialog controller", () => {
       ),
     ).resolves.toBeNull();
     expect(button.disabled).toBe(false);
-    expect(error).toEqual({ hidden: true, textContent: "" });
+    expect(error).toMatchObject({
+      hidden: true,
+      textContent: "",
+      inert: false,
+    });
     expect(toasts.showTaskUpdateErrorToast).toHaveBeenCalledOnce();
   });
 
@@ -129,6 +133,7 @@ describe("task-update-dialog controller", () => {
         file,
         capturedAt: expect.any(String),
       },
+      expect.objectContaining({ onProgress: expect.any(Function) }),
     );
   });
 });
@@ -176,6 +181,7 @@ describe("standalone 311 editors", () => {
         cityHelpNeeded: true,
       },
       expect.any(String),
+      { signal: expect.any(AbortSignal) },
     );
     expect(dialog._open).toBe(false);
     expect(dialog._load).not.toHaveBeenCalled();
@@ -200,6 +206,7 @@ describe("standalone 311 editors", () => {
         cityHelpNeeded: true,
       },
       expect.any(String),
+      { signal: expect.any(AbortSignal) },
     );
     expect(dialog._open).toBe(false);
   });
@@ -436,10 +443,15 @@ it.each([false, true])(
     dialog._uploadFiles = vi.fn().mockResolvedValue(["photo-1"]);
     api.documentTaskUpdate.mockReset().mockResolvedValue({ update: {} });
     await dialog._saveAction({ querySelectorAll: () => [] }, skip);
-    expect(api.documentTaskUpdate).toHaveBeenCalledWith("task-1", "action-1", {
-      notes: [],
-      photoKeys: skip ? [] : ["photo-1"],
-    });
+    expect(api.documentTaskUpdate).toHaveBeenCalledWith(
+      "task-1",
+      "action-1",
+      {
+        notes: [],
+        photoKeys: skip ? [] : ["photo-1"],
+      },
+      { signal: expect.any(AbortSignal) },
+    );
     expect(dialog._pendingEvent).toBeNull();
     expect(dialog._actionText).toBe("");
     expect(dialog._load).toHaveBeenCalledOnce();
@@ -489,10 +501,15 @@ it.each(["Followed up"])(
     });
     const type = "additional_action_resolved";
     await dialog._recordOutcome({ querySelectorAll: () => [] }, type, text);
-    expect(api.createTaskUpdate).toHaveBeenCalledWith("task-1", {
-      type,
-      text,
-    });
+    expect(api.createTaskUpdate).toHaveBeenCalledWith(
+      "task-1",
+      {
+        type,
+        text,
+      },
+      expect.any(String),
+      { signal: expect.any(AbortSignal) },
+    );
     expect(dialog._pendingEvent.updateId).toBe("update-1");
     expect(dialog._mode).toBe("action-photos");
   },
@@ -1086,4 +1103,98 @@ describe("timeline loading resilience", () => {
       vi.useRealTimers();
     }
   });
+});
+
+it("cancels a stalled upload, keeps the draft, and never saves a late result", async () => {
+  const { TaskUpdateDialog } = await import("./task-update-dialog.js");
+  const dialog = /** @type {any} */ (new TaskUpdateDialog());
+  dialog._task = { taskId: "cancel-task", status: "in_progress" };
+  dialog._mode = "notes";
+  dialog._noteDrafts = ["Keep this note", "", ""];
+  dialog._showDiscard = vi.fn();
+  /** @type {(photos: string[]) => void} */
+  let completeUpload = () => {
+    throw new Error("Upload has not started");
+  };
+  dialog._uploadFiles = vi.fn(
+    () =>
+      new Promise((resolve) => {
+        completeUpload = resolve;
+      }),
+  );
+  api.createTaskUpdate.mockClear();
+  const capture = { inert: false };
+  const root = {
+    querySelector: (selector) =>
+      selector.startsWith(".task-update__capture") ? capture : null,
+    querySelectorAll: () => [],
+  };
+  const save = dialog._saveNotes(root);
+  await vi.waitFor(() => expect(dialog._uploadFiles).toHaveBeenCalled());
+  expect(capture.inert).toBe(true);
+  await dialog._close();
+  await save;
+  expect(capture.inert).toBe(false);
+  expect(dialog._noteDrafts[0]).toBe("Keep this note");
+  expect(dialog._showDiscard).toHaveBeenCalledOnce();
+  completeUpload?.(["late-photo"]);
+  await Promise.resolve();
+  expect(api.createTaskUpdate).not.toHaveBeenCalled();
+});
+
+it("times out an unresponsive save and retries with the same update identity", async () => {
+  const { TaskUpdateDialog } = await import("./task-update-dialog.js");
+  const dialog = /** @type {any} */ (new TaskUpdateDialog());
+  dialog._task = { taskId: "timeout-task", status: "in_progress" };
+  dialog._mode = "notes";
+  dialog._noteDrafts = ["Keep this note", "", ""];
+  dialog._finishSave = vi.fn();
+  api.createTaskUpdate
+    .mockReset()
+    .mockImplementationOnce(() => new Promise(() => {}))
+    .mockResolvedValue({});
+  toasts.showTaskUpdateErrorToast.mockClear();
+  const root = { querySelector: () => null, querySelectorAll: () => [] };
+  vi.useFakeTimers();
+  try {
+    const save = dialog._saveNotes(root);
+    await vi.advanceTimersByTimeAsync(120_000);
+    await save;
+    expect(dialog._busy).toBe(false);
+    expect(toasts.showTaskUpdateErrorToast).toHaveBeenCalledOnce();
+    expect(dialog._noteDrafts[0]).toBe("Keep this note");
+    await dialog._saveNotes(root);
+    expect(api.createTaskUpdate.mock.calls[1][2]).toBe(
+      api.createTaskUpdate.mock.calls[0][2],
+    );
+    expect(dialog._finishSave).toHaveBeenCalledOnce();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("allows local updates without a City-help choice when the API reports only closed tickets", async () => {
+  const { TaskUpdateDialog } = await import("./task-update-dialog.js");
+  const dialog = new TaskUpdateDialog();
+  dialog._render = vi.fn();
+  dialog._loadCityUpdates = vi.fn();
+  dialog._loadTimelinePhotos = vi.fn();
+  api.getTaskUpdates.mockResolvedValueOnce({
+    task: { canUpdate: true, canRequestCityHelp: false },
+    updates: [],
+  });
+  await dialog.open(
+    {
+      taskId: "closed-city-ticket",
+      status: "in_progress",
+      appActionResults: [
+        { code: "create_311_ticket", payload: { tickets: [{ srNum: "123" }] } },
+      ],
+    },
+    "notes",
+  );
+  expect(dialog._cityHelpNeeded).toBeUndefined();
+  expect(dialog._content()).not.toContain("data-city-help");
+  dialog._resetDraft();
+  expect(dialog._cityHelpNeeded).toBeUndefined();
 });

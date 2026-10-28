@@ -25,15 +25,21 @@ revoked binding or lowers a credential generation.
 - Provider Manager enrollment revocation is Supervisor-only and atomically revokes the
   canonical binding, compatibility Device row, and physical pointer for every Site in that
   enrollment (maximum 21). Deactivating the Provider Manager instead advances the membership
-  generation, immediately denying every derived binding; reinstatement does not reactivate
+  generation, denying derived bindings on their next live authority check; reinstatement does not reactivate
   those older bindings.
 - Unmigrated legacy dev devices do not understand the Site generation, so the same request
   explicitly revokes their Device rows. A partial legacy reconciliation requires immediate
   follow-up.
 
+API Gateway caches authorizer verdicts for up to 60 seconds. Authority changes
+therefore invalidate refresh/current-authority checks immediately but may take up
+to a minute to affect an already-cached protected request.
+
 Every successful request returns an operation ID. Site-wide operations retain counts under
 the Site partition. Emergency multi-Site operations also retain an aggregate operation and
-one idempotent Site-result row, ending in `complete` or `partial` state.
+one idempotent Site-result row. Current emergency workers retry failed reconciliation
+and record completion only after every projection succeeds; legacy operation rows
+may still report `partial`.
 
 ## Partial-operation alarm
 
@@ -57,12 +63,14 @@ fields @timestamp, marker, operationId, siteId, failedCount
    production credential in logs or screenshots.
 6. Record aggregate outcomes and the operation ID, then confirm the alarm returns to OK.
 
-For an emergency multi-Site operation, first inspect
-`REVOCATION_OPERATION#<operationId> / #META`. An `enqueueFailedCount` means the affected Site
-generation still advanced, but its display-row reconciliation was not queued. Use the Site
-operation record to identify the Site, reconcile its remaining active rows, and never reduce
-the Site generation. A partial Site-result row identifies a job that ran but could not update
-every projection.
+For an emergency multi-Site operation, inspect
+`REVOCATION_OPERATION#<operationId> / #META` and its `OUTBOX#<siteId>` rows.
+The generation change and outbox writes are atomic. Dispatch failures retry through
+the stream mapping; reconciliation failures retry through SQS and may reach the
+DLQ. Inspect both stages when an operation remains queued. Current workers do not
+record a partial Site result as terminal success. Legacy `enqueueFailedCount` and
+partial-result fields remain readable; investigate those historical failures
+separately. Never reduce Site generations to repair display reconciliation.
 
 ## Conflict response
 
@@ -91,11 +99,50 @@ A device running in iOS Safari keeps one pending `SESSION_HANDOFF#` grant
 session into the installed app. Redemption re-checks the device, its binding,
 the Site generation, and Manager membership exactly like the authorizer, so
 every revocation above also kills any pending grant; nothing extra is needed.
-An explicit sign-out in Safari retires the grant (`session_handoff_retired`
-audit event) and puts the static manifest back on the page.
-A redeem bumps `tokenGeneration` and writes a `session_handed_off` audit
-event, which is also what a stolen grant would look like: a Site reporting
-"signed out without installing" is the signal to revoke and re-enroll.
+The grant travels in a Secure, HttpOnly, SameSite=Strict installation cookie;
+the manifest fragment remains a compatibility fallback. An explicit sign-out
+in Safari retires the grant (`session_handoff_retired` audit event), clears
+the cookie, and puts the static manifest back on the page.
+Redemption adds a Home Screen session to the same managed device and writes a
+`session_handed_off` audit event with `deviceId` and `sessionId`. Safari's
+credentials remain valid. The manager sees one device with Browser and Home
+Screen app sessions underneath. Revoking that device disables both, including
+refresh and pending installation grants; no second device entry is required.
+Signing out ends only the current session. Absolute expiry and authority
+checks still apply to every session. Never implement whole-device revocation by
+changing only the primary session's token generation: use the managed revocation
+endpoints, which change parent status or authority generations.
+See [ADR 0019](../adr/0019-home-screen-session-continuity.md).
+
+## Interrupted refresh recovery
+
+A browser can recover a lost refresh response for five minutes using its saved
+attempt ID and original signed refresh token. Recovery rechecks current authority
+with strongly consistent reads and only returns a still-current replacement pair.
+All revocation controls above invalidate pending recovery receipts as well as
+ordinary refresh. Explicit sign-out increments the current session generation
+atomically, so a refresh committed between the sign-out read and write cannot
+leave the session active. Transient transaction conflicts retry within a bounded
+window; persistent conflicts return 409 instead of reporting success.
+
+Sign-out also checks and transactionally pins `sessionStartGeneration`, the
+stable generation floor of the enrollment/session. Refresh preserves this floor;
+re-registration and reactivation advance it. A cached token from an older
+enrollment therefore cannot end its replacement, even when replacement happens
+between the sign-out read and write. Legacy sessions without a floor retain
+compatibility until their next registration/reactivation; the transaction pins
+the field's absence. Registration itself uses a generation compare-and-swap and
+returns 409 if another registration or refresh wins first.
+
+Site selection rechecks the source session and current authority with strong
+reads, and pins the source session in the selection transaction. Cached gateway
+authorization cannot use a signed-out or revoked source to mint another Site's
+credentials. The browser also binds refresh promises and retries to the original
+local enrollment, including when a new enrollment uses the same Site.
+ Do not restore status or reduce generations to recover access.
+Receipts remain encrypted and bounded to one per session; their expiry is enforced
+by the handler even if the encrypted data remains in DynamoDB. See
+[ADR 0020](../adr/0020-retryable-refresh-recovery.md) for the protocol and tests.
 
 ## Compliance dashboard controls
 

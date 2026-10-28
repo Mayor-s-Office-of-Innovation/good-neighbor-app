@@ -43,16 +43,21 @@ export function formatDeviceEnrollmentSummary(bindings) {
 
 /** @param {Record<string, unknown>} value */
 export function validateContact(value) {
-  if (!text(value.firstName) || !text(value.lastName)) {
-    return t("siteAdmin.validation.nameRequired");
-  }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text(value.email))) {
+  if (
+    text(value.email) &&
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text(value.email))
+  ) {
     return t("siteAdmin.validation.email");
   }
   const digits = text(value.phone).replace(/\D/g, "");
-  if (!(digits.length === 10 || (digits.length === 11 && digits[0] === "1"))) {
+  if (
+    text(value.phone) &&
+    !(digits.length === 10 || (digits.length === 11 && digits[0] === "1"))
+  ) {
     return t("siteAdmin.validation.phone");
   }
+  if (text(value.phoneExtension).length > 20)
+    return t("siteAdmin.validation.phone");
   return "";
 }
 

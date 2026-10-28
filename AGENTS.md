@@ -28,9 +28,11 @@ New here? Get your bearings in this order:
   pipeline (see [docs/architecture.md](./docs/architecture.md)), error tracking
   ([ADR 0008](./docs/adr/0008-lean-client-error-capture.md); rollout completion tracked as
   an issue), and the Docker-free local harness ([ADR 0006](./docs/adr/0006-docker-free-local-dev-harness.md)).
-- **Deferred for the MVP: all offline / service worker.** No SW ships yet; the "Use Workbox
-  for offline capture and sync" standing choice below is on hold until a dedicated post-MVP
-  offline pass (tracked on the issue tracker).
+- **Offline is partial.** A Workbox service worker precaches the built app so it opens
+  offline (`offlineShell` in `frontend/vite.config.js`); it never touches API calls. Queuing
+  writes lives in the app, not Workbox background sync: care work logs and perimeter checks
+  each have a durable queue (`services/care-submissions.js`, `services/check-submissions.js`),
+  and home shows its last saved lists while offline.
 - Live transcription was dropped (2026-09-02) — keyboard dictation covers the need; see
   [ADR 0009](./docs/adr/0009-drop-transcription.md).
 

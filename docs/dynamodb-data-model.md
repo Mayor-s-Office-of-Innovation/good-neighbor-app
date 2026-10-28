@@ -2,7 +2,8 @@
 
 *Data-model reference · [index](../README.md) · ← [decision](./adr/0002-datastore-dynamodb.md)*
 
-**Status:** Live model. This is what the app writes and reads today.
+**Status:** Current code model. Verify deployment and migration state per environment.
+**Reviewed:** 2026-10-28 against `151a7d76` for storage, indexing, and lifecycle behavior.
 **Date:** 2026-08-12 · updated 2026-09-04 for the built state · 2026-09-21 for the photo roll ([ADR 0014](./adr/0014-remove-places-photo-roll.md)) · 2026-10-01 to match the deployed authorizers, UUID IDs, provider and setup-code items, GSI6–7, and the analytics tier status · 2026-10-13 for the GSI1 task and update partitions behind the site manager reports (AP27, AP28) · 2026-10-14 for public complaints
 
 ## What this document is
@@ -100,10 +101,10 @@ Who can write what:
 
 | Principal | How they authenticate | What they write | How their scope is enforced |
 |---|---|---|---|
-| **City administrator** | Cognito JWT in the `central-admin` group | cross-Site configuration and operations | central-admin handler guard plus server-built keys |
+| **City administrator** | Cognito JWT with `compliance-manager` or `compliance-supervisor`; `central-admin` is a legacy manager alias | cross-Site configuration and operations | role and Site-assignment guards plus server-built keys |
 | **Site-bound device** | bounded access token checked against current physical-device, binding, membership, and Site generations | perimeter checks, artifacts, and Manager operations allowed by binding access | authorizer-derived Site/access claims plus server-built keys and negative tests |
 | **Performer** (staff member) | none; they use the device | nothing directly | not needed; attribution is device + site |
-| **City reviewer** | Cognito `central-admin` user | cross-Site review | central-admin handler guard |
+| **City reviewer** | Cognito Compliance manager or supervisor | cross-Site reads allowed by the endpoint; System Status is supervisor-only | endpoint role guard |
 
 The key decision: **the device is authenticated as the site.** Staff never need accounts.
 Every check is still tied to a site and a device. The admin registers the device once
@@ -117,16 +118,20 @@ JWT caller because DynamoDB sees the execution role, not the original principal.
 
 ### What runs today
 
-The IAM part above is the target. Here is what is deployed now (`infra/modules/app/api.tf`):
+Current route and authorization configuration is in `infra/modules/app/api.tf`:
 
-- Every protected route uses the **device-token authorizer**
+- Protected field-app routes use the **device-token authorizer**
   ([ADR 0010](./adr/0010-device-token-auth.md), `backend/src/lambda/authorizer.js`). It
-  checks the bearer token against the site's `DEVICE#` item, including the token
-  generation and revocation state. It then adds `custom:siteId` to the request.
+  checks the bearer token against the site's `DEVICE#` session and applicable
+  physical-device, binding, Site, and membership authority. It adds `custom:siteId`
+  to the request. API Gateway caches verdicts for 60 seconds, so revocation can
+  take that long to affect cached requests. Refresh and binding selection perform
+  their own current-authority checks.
 - Routes under `/admin/v1/*`, including analytics, use a **Cognito JWT authorizer**. The
-  handlers also require the `central-admin` group (`backend/src/lib/admin-auth.js`).
-- Open routes are limited to bootstrap (`/site-code`, `/v1/devices*`, `/v1/sites:search`,
-  `/v1/setup-codes:request`), `/health`, and the best-effort intakes.
+  handlers enforce Compliance roles and Site assignments (`backend/src/lib/admin-auth.js`).
+- Open routes include bootstrap and recovery, `/health`, best-effort intakes,
+  and the token-bound 311 media redirect. The explicit open-route list in `api.tf`
+  is authoritative; `/v1/devices*` is not an anonymous wildcard.
 - Handlers read `siteId` from the authorizer context (`backend/src/lib/principal.js`).
   `DEMO_SITE_ID` is only a fallback for requests with no authorizer context, such as the
   local harness and the open intakes. Clients never choose their own site.
@@ -141,12 +146,14 @@ isolation. See [security-review.md](./security-review.md).
 
 ## Table design
 
-One table, `gnp-<env>-app`, with partition key `pk` and sort key `sk`.
+One application table, `good-neighbor-app-<env>-app` with the default Terraform
+application name, and partition key `pk` and sort key `sk`. The local harness uses
+`gnp-local-app`; isolated E2E tests use `gnp-local-e2e`.
 
-We chose a single table for isolation, not for scale. Volume is tiny (see
-[Scale](#scale)). The point is that **all of one site's data shares one `pk` prefix**,
-`SITE#<siteId>`. That is what makes the IAM `LeadingKeys` rule possible. It also puts a
-check's header, artifacts, and analyses next to each other, so one query reads them all.
+Site-domain records share `pk = SITE#<siteId>`, placing a check's header, artifacts,
+and analyses together for prefix queries. Cross-Site identities and reporting
+projections use other partitions. This layout supports server-built tenant keys;
+it does not provide caller-specific IAM isolation in the shared Lambda role.
 
 A few item types live **outside** the `SITE#` prefix. They are needed before we know the
 site, or they span sites:
@@ -156,13 +163,20 @@ site, or they span sites:
 - setup codes and their request throttles
 - the analytics export watermark
 - the legacy submission receipt
+- Programs, canonical people, administrator directories, and profile journals
+- physical devices, enrollment-token lookups, and Home Screen handoff grants
+- system-status projections, migration markers, and revocation operation roots
+- 311 media leases and the duplicate-comparison request pacer
 
-These belong to central admin or to device bootstrap, not to a tenant. A `LeadingKeys`
-rule on site and device roles would not grant them, and only admin and bootstrap code
-touches them.
+These records have endpoint- or worker-specific ownership and authorization rules;
+they are not all limited to admin/bootstrap code. See the inventory and the reporting
+and integration sections below for their access paths.
 
-**IDs are UUIDs.** The client makes `checkId` with `crypto.randomUUID`. The backend makes
-artifact, task, and assessment IDs with `node:crypto`. UUIDs have **no time order**, so
+**IDs are opaque, not chronological.** The client normally makes `checkId` with
+`crypto.randomUUID`; the backend uses UUIDs for newly allocated artifact and task IDs.
+Assessment IDs may be client-supplied and derived from check/artifact identity;
+condition IDs may be explicit analyzer identities or generated fallbacks. UUIDs have
+**no time order**, so
 `CHECK#<checkId>` does not sort by time. The checks timeline comes from GSI1, whose sort
 key is `startedAt`. Any key that must sort by time includes a timestamp on purpose, such
 as task update events and every GSI sort key.
@@ -171,9 +185,8 @@ as task update events and every GSI sort key.
 
 | Entity | `pk` | `sk` | Notes |
 |---|---|---|---|
-| Site config | `SITE#<siteId>` | `#META` | `type`/`entityType`, name, optional `siteType` (`permanent_supportive_housing`, `shelter`, or `drop_in`), `address` + `addressParts`, `location` (lat/lng) + `geocodedAddress`, `providerId` / `providerName` / `providerSiteId`, `status`, `contactPerson`, admin-managed `oversight` / `compliance` / `perimeter` / `complianceLetters`, runtime presentation `featureFlags` (currently `duplicateDetection`, boolean, default false), `providerShortCode`, `siteShortCode`. New Sites have no active perimeter-check period. Site compliance stores `underEnhancedMonitoring` as a boolean, set from the enhanced-monitoring reason when saving a requirement and cleared when that requirement is ended. Each compliance period snapshots the flag for history. `perimeter` is a plain-text description (not geometry or a geofence), with `perimeterUpdatedAt` and `perimeterUpdatedBy` edit metadata. Compliance letters keep a private S3 key. The site response for devices mints short-lived download URLs. |
-| User profile | `SITE#<siteId>` | `USER#<sub>` | admin roster; the JWT usually makes the lookup unnecessary |
-| Device | `SITE#<siteId>` | `DEVICE#<deviceId>` | Compatibility projection for authorization and refresh: label, physical-device ID, lastSeenAt, lifecycle/expiry fields, `tokenGeneration`, `refreshJti`, and canonical `accessLevel` (`general` or `manager`). |
+| Site config | `SITE#<siteId>` | `#META` | `type`/`entityType`, name, optional `siteType` (`permanent_supportive_housing`, `shelter`, or `drop_in`), `address` + `addressParts`, `location` (lat/lng) + `geocodedAddress`, `providerId` / `providerName` / `providerSiteId`, `status`, `publicContact` (public email/phone/extension shared by the dashboard and field app), legacy `contactPerson`, admin-managed `oversight` / `compliance` / `perimeter` / `complianceLetters`, runtime presentation `featureFlags` (currently `duplicateDetection`, boolean, default false), `providerShortCode`, `siteShortCode`. New Sites have no active perimeter-check period. Site `compliance` is a write-side snapshot; canonical effective-dated `COMPLIANCE_TERMS#` records determine requirement status, report duties, and the current/past classification of version-linked letters. A missing canonical period never implies a default requirement. Site compliance stores `underEnhancedMonitoring` as a boolean, set from the enhanced-monitoring reason when saving a requirement and cleared when that requirement is ended. Each compliance period snapshots the flag for history. `perimeter` is a plain-text description editable by the dashboard and Site Manager app (not geometry or a geofence), with `perimeterUpdatedAt` and `perimeterUpdatedBy` edit metadata. Compliance letters keep a private S3 key. The site response for devices mints short-lived download URLs. |
+| Device | `SITE#<siteId>` | `DEVICE#<deviceId>` | Compatibility projection for authorization and refresh: label, physical-device ID, lastSeenAt, lifecycle/expiry fields, `tokenGeneration`, `refreshJti`, optional `primarySessionKind` / `primarySessionStatus` / `primaryLastSeenAt`, and a bounded `sessions` map (up to eight live Home Screen contexts with independent generation, refresh JTI, status, activity and expiry). A stable `sessionStartGeneration` floor distinguishes replacement enrollments/reactivated sessions from refreshes; legacy sessions omit it until replacement. Each session may hold one encrypted `refreshRecovery` receipt with a five-minute enforced expiry; see [ADR 0020](./adr/0020-retryable-refresh-recovery.md). Signed JWT `sid` selects a slot; tokens without it use the primary fields. All contexts share parent revocation and authority. See ADR 0019. Also stores canonical `accessLevel` (`general` or `manager`). |
 | Legacy code/master contact | `SITE#<siteId>` | `CODE_CONTACT#<emailHash>` / `MASTER_CONTACT#<emailHash>` | Retired. Master contacts are migrated to Site manager memberships in dev; these records no longer authorize setup-code requests. |
 | Manager membership | `SITE#<siteId>` | `MANAGER_MEMBERSHIP#<membershipId>` | One email-based Site Manager role at exactly one Site. Stores normalized `email`, keyed verifier in `emailHash`, optional source `programId` / `userId`, `status`, `role=manager`, and a generation advanced on removal so later bindings can fail closed. Contact edits update the email-directory pointers transactionally without revoking active bindings. |
 | Manager email uniqueness | `SITE#<siteId>` | `MANAGER_EMAIL#<emailHash>` | Conditional uniqueness marker pointing to the active `membershipId`; written and removed in the same transaction as membership lifecycle changes. |
@@ -184,6 +197,7 @@ as task update events and every GSI sort key.
 | Staff enrollment grant | `SITE#<siteId>` | `STAFF_GRANT#<createdAt>#<grantId>` | Eight-hour, single-use Site invitation issued by an active Manager binding. Site Managers issue general-access grants; Provider Managers can also issue manager grants linked to a new named Site membership. Stores the intended device label, target role, issuing authority snapshots, status, and only the token verifier. Provider snapshots include membership ID/generation, Provider ID, Site credential generation, and provider-access generation, all revalidated transactionally at redemption. |
 | Staff grant issuance version | `SITE#<siteId>` | `STAFF_GRANT_ISSUANCE#VERSION` | Site-wide optimistic concurrency guard. Read strongly before counting the rolling hour; conditionally replace its opaque version in every grant creation transaction. No credentials or authorization are stored here. |
 | Enrollment-token lookup | `ENROLLMENT_TOKEN#<tokenHash>` | `#META` | Opaque lookup from a presented 256-bit link token or six-character manual enrollment code to its grant. Raw credentials are never stored. Successful redemption atomically adds `redeemedAt` and a numeric `expiresAt` TTL 30 days later, retaining a replay diagnostic tombstone. Cancellation removes the lookup. |
+| Home Screen handoff grant | `SESSION_HANDOFF#<grantId>` | `#META` | Single-use grant with SHA-256 token verifier, source Site/device/session, pending status, and numeric seven-day `expiresAt`. Issuance transactionally replaces the device's `handoffGrantId` pointer; redemption adds an independent session to the same Device row. Application checks enforce expiry and current authority before TTL cleanup. |
 | Physical device | `PHYSICAL_DEVICE#<physicalDeviceId>` | `#META` | Stable browser/device identity shared by one or more Site bindings. Stores label, lifecycle status, and enrollment timestamps; no Site authorization is inferred from this item alone. A revoked physical identity cannot redeem another enrollment grant. |
 | Device binding | `SITE#<siteId>` | `DEVICE_BINDING#<bindingId>` | One physical device's role at one Site. Stores canonical `general` or `manager` access, membership and Site generations, rotating-refresh state, 365-day absolute expiry, 60-day inactivity policy, enrollment provenance, and lifecycle status. Provider-derived bindings additionally store `authorityScope=provider`, Provider/membership IDs and generation, and the provider enrollment ID. Suspension records its reason, actor, and time; suspended bindings are immutable and never restored in place. |
 | Physical-device binding pointer | `PHYSICAL_DEVICE#<physicalDeviceId>` | `BINDING#<bindingId>` | Non-secret ownership and discovery pointer to one Site binding. It grants no access by itself; listing and selection revalidate the canonical binding, compatibility Device row, Site generation/status, expiry/inactivity, and Manager membership where applicable. |
@@ -191,11 +205,11 @@ as task update events and every GSI sort key.
 | **Artifact** (one photo or description) | `SITE#<siteId>` | `CHECK#<checkId>#ART#<artifactId>` | S3 key or text, capturedAt, server `receivedAt` (new registrations), latitude/longitude, contentType; `thumbS3Key` (`<s3Key>.thumb.webp`, set by the analyze worker once the card thumbnail is stored — absent until then, so `presignMedia` falls back to the original). See [Old artifact rows](#old-artifact-rows). |
 | **Perimeter completion** | `SITE#<siteId>` | `CHECK_COMPLETION#<Pacific date>#<completedAt ISO>#<checkId>` | Immutable `checkId` and `completedAt`, written atomically with perimeter completion; no GSI attributes or TTL. Strongly consistent completion-date queries power capture guidance. Single-problem reports have no marker. |
 | **Completion migration readiness** | `SYSTEM#MIGRATIONS` | `CHECK_COMPLETIONS_V1` | `status: "ready"` and migration `completedAt`; written only after the entire historical backfill succeeds. |
-| **Analysis** (one per artifact) | `SITE#<siteId>` | `CHECK#<checkId>#ANALYSIS#<artifactId>` | `status` (`analyzed` or `failed`), `analysisId`, `model`, `rubricVersion`, `grade`, `gradeDescription`, `concerns[]` (each with a per-locale `translations` map of its `userFriendlyLabel` / `explanation`, filled in by the background translate worker), `issueCount`, `maxSeverity`, `analyzedAt`, optional `shotType` (`wide` or `detail`, from image manifest index 0), optional lat/lng + `georeferencedAddress`. A `failed` item holds `error` instead of results. It is the one case a retry may overwrite, and the only item the translate worker updates in place. |
+| **Analysis** (one per artifact) | `SITE#<siteId>` | `CHECK#<checkId>#ANALYSIS#<artifactId>` | `status` (`analyzed` or `failed`), `analysisId`, `model`, `rubricVersion`, `grade`, `gradeDescription`, `concerns[]` (each with a per-locale `translations` map of its `userFriendlyLabel` / `explanation`, filled in by the background translate worker), `issueCount`, `maxSeverity`, `analyzedAt`, optional `shotType` (`wide` or `detail`, from image manifest index 0), optional lat/lng + `georeferencedAddress`. A `failed` item holds `error` instead of results and may be replaced by a successful analysis retry. The translate worker updates analysis concerns and condition/task translation maps in place. |
 | **Complaint header** | `SITE#<siteId>` | `COMPLAINT#<complaintId>` | `status` (`analyzing`, `ready`, or `analysis_failed`), list `label`, generated `detail`/`what`/`where`/`when`/`notes`, optional submitted description, artifact count, timestamps, and numeric one-year `expiresAt`. GSI1 uses `SITE#<siteId>#COMPLAINTS` plus `createdAt#complaintId` for newest-first listing. |
 | **Complaint artifact** | `SITE#<siteId>` | `COMPLAINT#<complaintId>#ART#<artifactId>` | Private S3 key, original name, verified content type/length, `status` (`registered` or the retryable deletion tombstone `deleting`), and numeric `expiresAt`. Draft rows expire after one day; submission transactionally advances them to one year after retagging the object `state=complaint`. |
 | **Assessment report** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>` | status, `policyVersion`, `rubricVersion`, grade, `reportedAt`, `assessmentRevision`, `lineageId`, `summary{}` counts, `rawAssessment`. Gets `supersededByAssessmentId` when a refresh replaces it. |
-| **Condition** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>#COND#<conditionId>` | `canonicalCategory` / `analyzerCategory`, severity, `userFriendlyLabel`, `description`, `translations` (per-locale map, see [localization](./localization.md)), `answers`, `outcome`, `selectedRuleId`, status, `taskIds`, `resolvedToTasks`, `needsAnswer`, `cannotDo`, `source`. See [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks). |
+| **Condition** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>#COND#<conditionId>` | `canonicalCategory` / `analyzerCategory`, severity, `userFriendlyLabel`, `description`, `translations` (per-locale map, see [localization](./localization.md)), `answers`, `outcome`, `selectedRuleId`, status, `taskIds`, `resolvedToTasks`, `needsAnswer`, `source`. See [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks). |
 | Guidance current pointer | `SITE#<siteId>` | `GUIDANCE_CURRENT#<JSON [checkId, lineageId]>` | points to the current assessment for one artifact. Moved atomically on refresh. See [Guidance refresh lineage](#guidance-refresh-lineage). |
 | **Task** (action item) | `SITE#<siteId>` | `TASK#<taskId>` | `shortId`, kind (`action` \| `escalation` \| `non_actionable_escalation`), type (`onsite` \| `city_escalation`, derived from kind), immutable evaluated `ruleId`, policyVersion, optional `actionOverride` (selected rule/custom type, original rule, actor, time), optional recorded `customAction` text/outcome, `canBeInProgress`, `primaryInProgressAgency`, category, severity, status, `userFriendlyLabel`, `description`, `translations` (per-locale map copied from the condition) |
 | **Task update event** | `SITE#<siteId>` | `TASK#<taskId>#UPDATE#<occurredAt>#<updateId>` | append-only timeline event for an in-progress task: type, label, actorId, `text` / `notes`, `photoKeys` (artifact IDs), optional `presencePeriod`, `documentationState` |
@@ -213,7 +227,7 @@ as task update events and every GSI sort key.
 | Site Compliance manager assignment | `SITE#<siteId>` | `COMPLIANCE_MANAGER#<managerId>` | Active Site administration assignment for one Compliance manager directory identity. Compliance managers can read globally after Cognito authentication, but Site mutations require this active row. Supervisors bypass Site assignment. |
 | Provider manager membership | `PROVIDER#<providerId>` | `PROVIDER_MANAGER#<managerId>` | Provider-scoped manager contact with normalized email, contact details, lifecycle status, and generation. Deactivation advances the generation so every derived Site binding fails closed; reinstatement never restores an older generation. Only Compliance Supervisors administer these rows. |
 | Provider manager email directory | `PROVIDER_MANAGER_EMAIL#<emailHash>` | `PROVIDER#<providerId>#MEMBERSHIP#<membershipId>` | Non-secret active-membership pointer maintained transactionally with Provider Manager lifecycle changes. Canonical membership revalidation remains required. |
-| Provider Manager enrollment grant | `PROVIDER#<providerId>` | `PROVIDER_MANAGER_GRANT#<createdAt>#<grantId>` | Fifteen-minute, single-use provider-scoped grant issued by a Compliance Supervisor. It snapshots the membership generation but resolves active Sites at redemption. Stores only the token verifier and aggregate Site/delivery evidence. |
+| Provider Manager enrollment grant | `PROVIDER#<providerId>` | `PROVIDER_MANAGER_GRANT#<createdAt>#<grantId>` | 24-hour, single-use provider-scoped grant issued by a Compliance Supervisor. It snapshots the membership generation but resolves active Sites at redemption. Stores only the token verifier and aggregate Site/delivery evidence. |
 | Current Provider Manager grant guard | `PROVIDER#<providerId>` | `PROVIDER_MANAGER_GRANT_CURRENT#<membershipId>` | Conditional singleton for one unexpired provider grant per membership. Redemption, cancellation, or replacement removes or changes the matching pointer atomically. |
 | Provider Manager enrollment | `PROVIDER#<providerId>` | `PROVIDER_MANAGER_ENROLLMENT#<enrollmentId>` | Directly addressable root lifecycle record for one physical device's all-or-nothing provider redemption. Stores the membership generation and up to 21 Site/binding pointers so a Supervisor can revoke every still-active projection in one transaction. List responses derive active/partial/revoked state from the authoritative physical-device and binding rows. |
 | Perimeter-check compliance period | `SITE#<siteId>` | `COMPLIANCE_TERMS#<effectiveStart>#<versionId>` | Immutable effective-dated period containing one or more reason codes, integer checks/day (1–8), a snapshotted `underEnhancedMonitoring` boolean (reason 6 only), and a snapshot of the selected Site manager plus the authenticated generator. The generator—not a client-nominated manager—appears as sender; Compliance managers must be assigned to the Site while supervisors may generate for any Site. Generator phone is required. Start is the server's current Pacific date; the user-facing end date is inclusive and is stored with an exclusive boundary. Reasons 1 or 6 require an end date. Missing expiry means indefinite. |
@@ -261,8 +275,9 @@ The analyzer requires a `position_descriptor`. We always send the fixed value
 
 ### Extra task fields
 
-**311 state.** Tasks carry the 311 app-action state as plain attributes. There is no index
-and no separate ticket item.
+**311 state.** Tasks expose 311 app-action results as attributes with no dedicated
+ticket index. Background jobs and durable integration checkpoints also live in
+`SF311_JOB#` and `SF311_LOCK#` records; a task snapshot is not the only stored state.
 
 - `appActions`: the rule's structured actions.
 - `appActionResults`: one result per action that ran.
@@ -275,9 +290,11 @@ and no separate ticket item.
 `lastAnsweredPresencePeriod`; the UI no longer prompts periodically. The permanent
 resolution action appends an `issue_resolved` event with an optional documentation
 window and sets `completionMethod: "site_team_resolved"`. Task-update
-photos reuse ART rows with `purpose: "task_update"`. Registering them skips the SQS and
-analyzer path on purpose. The update event stores the artifact IDs so the media route can
-authorize reads.
+photos use `TASK#<taskId>#MEDIA#<artifactId>` rows with `purpose: "task_update"`,
+transactionally paired with `CHECK#<checkId>#UPDATE_MEDIA#<artifactId>` pointers.
+They are not ART rows and registration skips the analyzer queue. Events store
+artifact IDs in `photoKeys`; the media route follows the pointer and validates the
+stored Site/check S3 key before signing.
 
 **311 documentation and City-help choice.** Informational `note_photo_update` and
 `additional_action` events on filed 311 tasks store `cityHelpNeeded`. A `false`
@@ -306,11 +323,10 @@ without that flag complete directly.
 progress, it becomes the task's displayed `agency` without interpreting user-facing button
 text.
 
-Resolution of an in-progress task with an app-owned informational 311 ticket temporarily
-uses `status: "resolving"`, `resolutionUpdateId`, and `resolutionLeaseExpiresAt`. The claim
-prevents concurrent, non-idempotent ticket closures. Per-ticket closure checkpoints are
-written under that lease; partial or failed closure returns the task to `in_progress` for
-retry, while full success atomically writes the resolution event and completed task.
+Current resolution atomically writes the completed task, its `issue_resolved` event,
+and any applicable 311 closure outbox job. Background closure does not delay or undo
+resolution. Legacy `resolving` records and resolution leases remain readable by the
+interrupted-action recovery path; they do not describe the normal new resolution flow.
 
 **Short IDs.** `shortId` is the reference staff see on task cards. New tasks mint it as
 `<providerShortCode>-<siteShortCode>-<nnn>`. The short codes are site metadata. `nnn`
@@ -331,23 +347,24 @@ number.
   closed by earlier attempts are copied into `closures[]` as they were, so the latest
   result is always complete. The result status rolls up to `submitted`, `partial`, or
   `failed`. A failed closure never blocks task completion. See
-  [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks). Each
-  successful HUB close is also saved onto the task right away, merged into
-  `appActionResults` under the completion lease. HUB closure cannot be repeated safely, so
-  this makes sure a crash or lease expiry after HUB accepts a close never closes the same
-  SR twice.
+  [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks). Background
+  processing checkpoints integration results in `SF311_LOCK#` and the job, then
+  merges them into the latest task. Closure retries reconcile City state rather
+  than assuming a lost response means the close failed.
 
-### One query reads a whole check
+### One query pattern reads a whole check
 
 The header and all its children start with `CHECK#<checkId>`. So the check detail screen
-is one query: `pk = SITE#x AND begins_with(sk, "CHECK#<checkId>")`. It returns the header,
-every artifact, and every analysis.
+uses `pk = SITE#x AND begins_with(sk, "CHECK#<checkId>")`, following every
+DynamoDB page. It returns the header, artifacts, analyses, and any update-media
+pointers; handlers select the relevant item shapes.
 
 ### Scorecard on the header
 
 Decided 2026-08-14. One `CHECK#<checkId>` is one full perimeter run. There is no separate
-"synthesis" item. At `complete`, the worker writes the check-level scorecard onto the
-header:
+"synthesis" item. At `complete`, the API synthesizes the check-level scorecard and transactionally
+updates the header with a perimeter completion marker (single-problem reports omit
+the marker):
 
 - `grade`: the worst grade across the check's artifacts, on the scale Excellent < Good <
   Fair < Poor < Very Poor. Taken from the service's `general_conditions.label`.
@@ -365,8 +382,8 @@ grade without reading its `ANALYSIS#` items. Raw per-artifact output stays in th
 
 | GSI | Partition | Sort | Sparse on | Serves | Status |
 |---|---|---|---|---|---|
-| **GSI1** timelines | four partitions per site: `SITE#<siteId>`, `SITE#<siteId>#ASSESSMENT`, `SITE#<siteId>#TASK`, `SITE#<siteId>#UPDATE` | `<startedAt ISO>` (checks) / `<reportedAt>#<assessmentId>` (assessments) / `<createdAt>#<taskId>` (tasks) / `<occurredAt>#<updateId>` (task update events) | check headers, assessment reports, tasks, task update events | checks timeline (AP6, AP12), assessments timeline (AP14), and the site manager reports (AP27, AP28). Each partition holds one entity type; the task and update partitions are stamped at creation and re-derived on every full-item re-put (`taskTimelineGsiFor`), so they sort by when things happened, not by status, a legacy task is stamped on its next transition, and a backfilled stamp survives a re-put from an older snapshot. | built |
-| **GSI2** site worklist | `SITE#<siteId>#TASK#<status>` | `<createdAt>#<kind>#<severity>#<taskId>` | tasks | staff's open tasks, newest first. The app re-sorts each page by severity. See AP10. | built |
+| **GSI1** timelines | entity-specific partitions per site: `SITE#<siteId>`, `SITE#<siteId>#ASSESSMENT`, `SITE#<siteId>#TASK`, `SITE#<siteId>#UPDATE`, `SITE#<siteId>#COMPLAINTS`, `SITE#<siteId>#CARE_WORK` | `<startedAt ISO>` (checks) / `<reportedAt>#<assessmentId>` (assessments) / `<createdAt>#<taskId>` (tasks) / `<occurredAt>#<updateId>` (task update events) / `<createdAt>#<complaintId>` (complaints) / `<createdAt>#<workId>` (care logs) | check headers, assessment reports, tasks, task update events, submitted complaints, care logs | checks timeline (AP6, AP12), assessments timeline (AP14), site manager reports (AP27, AP28), complaints, and care-log lists. Each partition holds one entity type; the task and update partitions are stamped at creation and re-derived on every full-item re-put (`taskTimelineGsiFor`), so they sort by when things happened, not by status, a legacy task is stamped on its next transition, and a backfilled stamp survives a re-put from an older snapshot. | built |
+| **GSI2** site worklist | `SITE#<siteId>#TASK#<status>` | `<worklist timestamp>#<kind>#<severity>#<taskId>` (creation initially; transitions can restamp it) | tasks | staff's open tasks, newest first. The app re-sorts each page by severity. See AP10. | built |
 | **GSI3** city queue | `ESCALATION#<status>` | `<severity>#<createdAt>#<siteId>` | `city_escalation` tasks only | cross-site escalation queue for the city | **deferred post-MVP**. Sparse, so it can be added with no rebuild. |
 | **GSI4** condition history | `SITE#<siteId>#CONDITION#SEV#<severity>` | `<reportedAt>#<assessmentId>#<conditionId>` | conditions | list conditions by site, date, and severity | built, **no reader** (reviewed 2026-10-13; removal planned as a cleanup step once the site manager reports ship) |
 | **GSI5** unresolved conditions | `SITE#<siteId>#CONDITION#UNRESOLVED` | `<reportedAt>#SEV#<severity>#<assessmentId>#<conditionId>` | unresolved conditions only | list conditions not yet turned into tasks (AP16) | built, **no reader** (AP16 was never implemented; same cleanup plan as GSI4) |
@@ -375,20 +392,22 @@ grade without reading its `ANALYSIS#` items. Raw per-artifact output stays in th
 
 ## Access patterns
 
-Every pattern is a single query. There are no scans.
+Interactive access uses keyed reads and queries, often several paginated reads or
+conditional transactions per operation. Maintenance/backfill scripts and the scheduled
+compliance-terms expiry worker also use scans; the application is not scan-free.
 
 | # | Pattern | Operation |
 |---|---|---|
 | AP1 | Get site config | `GetItem` `SITE#x` / `#META` |
-| AP2 | List a site's users | `Query` `SITE#x`, `begins_with(sk,"USER#")` |
-| AP3 | Find an admin's site | read `custom:siteId` from the JWT. No query. |
+| AP2 | List a Site's manager roster | Query `ASSIGNED_USER#` and `MANAGER_MEMBERSHIP#` under `SITE#x`, following pages and resolving current person/contact references as needed. |
+| AP3 | Resolve caller scope | Field-device Site comes from verified claims. City administrators use Cognito roles and, for scoped mutations, active Site assignments; they do not have one implicit tenant Site. |
 | AP4 | List devices | `Query` `SITE#x`, `begins_with(sk,"DEVICE#")` |
 | AP5 | Create a check | conditional `PutItem` of the header with `attribute_not_exists(sk)`. Idempotent on the client-minted `checkId`. A repeat returns 200 instead of 201. This is not a transaction. Artifacts arrive one at a time (AP5a). |
 | AP5a | Register one artifact | conditional `PutItem` of `…#ART#…`, then an SQS send. The two are **not atomic**. Registering the same `artifactId` again re-queues it on purpose. The worker's conditional `ANALYSIS#` write (AP8) absorbs the duplicate. |
 | AP6 | List recent or today's checks | `Query` **GSI1** `SITE#x` (checks partition), sort-key date range, newest first |
 | AP7 | Open one check with artifacts and analyses | `Query` base `SITE#x`, `begins_with(sk,"CHECK#<id>")` |
 | AP8 | Worker writes an analysis | conditional `PutItem` of `…#ANALYSIS#…`. Allowed into an empty slot or over a `failed` marker. Then `UpdateItem` on the header: `ADD issueCount` and a running max of `maxSeverity`. Header `status` does not change until `complete`. |
-| AP8a | Amend or reject one analyzed condition | consistent `GetItem` of `SITE#x` / `CHECK#<checkId>#ANALYSIS#<artifactId>`, then an analyzer call and a GSI2 task supersede. Routes use `checkId` + `artifactId`, which is the item's key. The analyzer's `analysisId` is an attribute on the item. The client never supplies it. |
+| AP8a | Amend or reject one analyzed condition | consistent `GetItem` of `SITE#x` / `CHECK#<checkId>#ANALYSIS#<artifactId>`, then an analyzer call and guidance publication or rejected-condition task retirement. Explicit rejection also uses an `ISSUE_DELETION#` attempt/confirmation journal. An amendment alone does not retire tasks before guidance publication succeeds. Routes use `checkId` + `artifactId`, which is the item's key. The analyzer's `analysisId` is an attribute on the item. The client never supplies it. |
 | AP9 | Create tasks | `TransactWrite` of the tasks |
 | AP10 | Staff worklist (open tasks) | `Query` **GSI2** `SITE#x#TASK#open`, newest first. The app re-sorts each page most-severe first. The key is date-first, so severity order holds within a page only. A severity-first index is deferred. |
 | AP11 | City escalation queue, all sites | `Query` **GSI3** `ESCALATION#open`. Post-MVP; GSI3 is not built. |
@@ -409,8 +428,8 @@ Every pattern is a single query. There are no scans.
 | AP26 | Preview/apply a Site CSV import | Query active Provider/Program/Site directories, oversight departments, Compliance-manager identities, Site children, and Provider children. Each row exact-matches or creates its Site manager, Site assignment, Site-manager membership, Site Compliance-manager assignment, and Provider-manager membership in the same conditional transaction as Provider/Program/Site changes. Repeated Site rows accumulate managers. Known DPH/HSH names create missing canonical department entities; other unknown or conflicting person/department values remain manual-review conflicts. A TTL-bound ledger and terminal row outcomes make retries idempotent. |
 | AP27 | Site manager reports: checks and issues over a period | `GET /app/v1/manager/reports/checks` queries **GSI1** `SITE#x` with `gsi1sk BETWEEN` the Pacific-midnight instants of the period and of the previous period, then counts per day against the cadence in force that day: a `begins_with(sk, "COMPLIANCE_TERMS#")` read of the site partition resolves each day's `requiredChecksPerDay` from the applicable non-cancelled terms version, so a past period is not rewritten when terms change; `#META.compliance` (and the city-wide default of 3) is the rule only for a site with no terms (`backend/src/domain/check-compliance.js`). A day with fewer completed perimeter checks than required is `partial`; none is `missed`; today is `pending`. Nothing is written for a missing check: the gap is derived at read time, which is R3's answer. `…/reports/tasks` does the same over `SITE#x#TASK`. Manager access level required. |
 | AP28 | Site manager reports: responses over a period | `GET /app/v1/manager/reports/task-updates` queries **GSI1** `SITE#x#UPDATE` for the period, every task's events in one range. The per-task timeline (AP18) is unchanged. Items written before the stamp exist are filled by `npm run backfill:report-timelines -w backend`. |
-| AP27 | List or select this physical device's Site bindings | Query `PHYSICAL_DEVICE#<physicalDeviceId>` with `begins_with(sk,"BINDING#")`, then revalidate each canonical Site binding. Selection conditionally rotates the target binding's session and writes a Site audit event. |
-| AP28 | Manager enrolls and manages general devices | Strongly range-query every page of the last hour of `STAFF_GRANT#` rows, counting all statuses against 25 grants per Manager and 40 per Site. Read the Site issuance version before that query and conditionally advance it with the grant transaction; retry conflicts with a fresh count. Query `DEVICE_BINDING#` rows filtered to `general`. Redemption marks the token lookup redeemed atomically; cancellation removes the lookup. Individual revocation conditionally updates the canonical binding, compatibility Device row, and physical-device pointer in one transaction. |
+| AP39 | List or select this physical device's Site bindings | Query `PHYSICAL_DEVICE#<physicalDeviceId>` with `begins_with(sk,"BINDING#")`, then revalidate each canonical Site binding. Selection conditionally rotates the target binding's session and writes a Site audit event. |
+| AP40 | Manager enrolls and manages general devices | Strongly range-query every page of the last hour of `STAFF_GRANT#` rows, counting all statuses against 25 grants per Manager and 40 per Site. Read the Site issuance version before that query and conditionally advance it with the grant transaction; retry conflicts with a fresh count. Query `DEVICE_BINDING#` rows filtered to `general`. Redemption marks the token lookup redeemed atomically; cancellation removes the lookup. Individual revocation conditionally updates the canonical binding, compatibility Device row, and physical-device pointer in one transaction. |
 | AP29 | Recover Site Manager access by email | Apply per-IP, per-email, and cooldown controls, then query `MANAGER_EMAIL#<emailHash>`. Revalidate every canonical Site and membership and issue one 15-minute, single-use link per active Site membership. The public response is generic whether the address is known, unknown, throttled, or delivery fails. |
 | AP30 | City revokes one Site binding | Consistently read `SITE#x / DEVICE_BINDING#y`, then transactionally mark the canonical binding, compatibility Device row, and physical-device pointer revoked with the same incremented generation and append a Site audit event. Pre-binding dev devices retain a bounded legacy fallback until migration is complete. |
 | AP31 | City revokes selected Site bindings | Consistently read up to 20 canonical bindings, then use one all-or-nothing transaction to revoke every canonical/compatibility/pointer projection and write the completed operation plus audit event. Already-revoked selections are reported without changing generations. |
@@ -428,8 +447,8 @@ AP27 retains its compliance fields for other consumers and adds compact per-chec
 rows (`checkId`, `startedAt`, `photoCount`) for the day cards. Raw headers stay
 server-side. Issues use the task report's non-superseded tasks. “Issues resolved”
 requires `status = completed` and both creation and completion timestamps inside
-the selected Pacific period; calls, 311 filings, and “can't do” do not count as
-resolution. The summary links retain the period and the resolved filter. Report
+the selected Pacific period; calls and 311 filings do not count as resolution.
+The summary links retain the period and the resolved filter. Report
 issue cards open the shared timeline in read-only mode. No operating-day schedule
 is currently stored, so absence of a compliance obligation alone does not label
 a day “not operating.”
@@ -465,23 +484,23 @@ After the analysis returns, the app derives conditions, creates tasks, marks eac
 `onsite` or `city_escalation`, assigns them, and writes them in one batch (AP9). The owner
 is set before anyone sees the task.
 
-The `type` value is set once at creation and never changed. Routing rules may change
-later, but old tasks will already be closed. `type` is just an attribute. It needs no
-index.
+The original evaluated `ruleId` and `policyVersion` are retained. An authorized
+action override can replace executable fields, including `kind` and `type`, while
+recording `actionOverride`. `type` itself has no dedicated index.
 
 - **In MVP:** the classification logic and the per-site worklist (GSI2, AP10).
-- **Post-MVP:** the escalation integrations (sending work to city teams and outside
-  systems) and the cross-site city queue (GSI3, AP11). GSI3 is sparse, so adding it later
-  costs nothing now.
+- **Built:** 311 integration and its task-linked outbox/worker checkpoints, gated by
+  environment configuration.
+- **Deferred:** the GSI3 cross-site city queue (AP11); no GSI3 is provisioned.
 
 ## Scale
 
 - 400 sites × 3 checks a day = **1,200 checks a day**, about 438k a year. Trivial for
   DynamoDB.
 - Each site's partition grows by about 1,095 checks a year. It will take **years** to get
-  large. The `expiresAt` TTL attribute is already wired on the table but turned off. Turn
-  it on when retention policy allows, after fixing the ISO-string `expiresAt` on
-  setup-code rows (see fact 4 above).
+  large. TTL is enabled on numeric epoch-seconds `expiresAt` values. It does not expire
+  ordinary check/task history without that numeric attribute, and legacy ISO-string
+  expiries still require application checks (see fact 4 above).
 - Writes are spread across 400 sites. There is **no hot partition**.
 - Capacity is on-demand, pay per request. It scales to zero. Nothing to size.
 
@@ -489,8 +508,8 @@ index.
 
 The client makes a UUID `checkId` and sends it as the `idempotency-key` header.
 `createCheck` writes the header with `attribute_not_exists(sk)`. A repeated request
-cannot create a duplicate. Full offline queue-and-replay (a Workbox service worker) is
-deferred past MVP. The idempotency contract is already in place for when it lands. AI
+cannot create a duplicate. That is what lets the app's offline check queue
+(`services/check-submissions.js`) resend checks finished with no connection. AI
 analysis stays asynchronous through the existing SQS → worker path.
 
 **Current state: built.** `createCheck`, `registerArtifact`, and `completeCheck` write real
@@ -523,10 +542,11 @@ The analytics layer has two tiers:
 
 No `#STATS#` items, aggregator Lambda, or shared `scoring` module exist in the repo today.
 DynamoDB Streams are already **on** for the table (`NEW_AND_OLD_IMAGES`,
-`infra/modules/app/main.tf`). One filtered consumer exists today, the revocation outbox
-mapping (`infra/modules/app/lambda.tf`, `aws_lambda_event_source_mapping.revocation_outbox`);
-an aggregator would be a second filtered mapping on the same stream, added without a
-table change.
+`infra/modules/app/main.tf`). Two stream mappings are defined: the shared outbox/System Status consumer
+(`lambda.tf`, `revocation_outbox`) and the feature-gated duplicate dispatcher
+(`duplicates.tf`, `duplicate_analysis_stream`). The first handles revocation,
+compliance-letter and 311 outboxes as well as Site reporting projections. A future
+aggregator must account for both mappings and their enabled state.
 
 The design: the day is the unit of counting, because the legal duty is 3 checks per day.
 Longer windows add up a range of days. A Streams-triggered Lambda would update the
@@ -555,7 +575,7 @@ over them for any set of sites or time grain. The pipeline lives in
 | `analytics-export` | EventBridge `rate(6 hours)` | incremental export, starting from the `ANALYTICS#EXPORT` / `#WATERMARK` cursor, into the analytics lake bucket |
 | `analytics-convert` | export completion | rewrites the export as Parquet, split by entity |
 | `analytics-query` | `GET/POST /admin/v1/analytics/*`, behind the admin JWT authorizer | runs DuckDB over the Parquet lake and serves the named query catalog (`backend/src/analytics/catalog.js`) |
-| `analytics-report` | EventBridge `cron(0 14 * * ? *)`, 06:00 America/Los_Angeles | builds the daily citywide report |
+| `analytics-report` | EventBridge `cron(0 14 * * ? *)`, 14:00 UTC (06:00 Pacific standard time, 07:00 Pacific daylight time) | builds the daily citywide report |
 
 ADR 0013 replaced the Glue and Athena tooling we first sketched. Athena could still be
 added over the same Parquet later. We also considered a streaming Firehose-to-Parquet
@@ -566,11 +586,11 @@ needs. The 6-hour export is the design.
 
 All of it is Terraform. Nothing is set up by hand.
 
-- **Built:** DynamoDB Streams on the table (one consumer: the revocation outbox), the S3 analytics lake bucket
+- **Built:** DynamoDB Streams on the table (shared outbox/System Status mapping and a feature-gated duplicate mapping), the S3 analytics lake bucket
   (KMS, lifecycle rules), the four Lambdas, and the two EventBridge schedules above.
 - **Not built:** the Tier-1 Streams aggregator and the `#STATS#` counter items. No
-  Firehose (see T2b above). Dashboards, if any, will be app-rendered or QuickSight.
-  Decide when building.
+  Firehose (see T2b above). The admin Analytics page already renders query results; System Status uses its
+  separate operational projections, not the lake or the proposed Tier-1 counters.
 
 Tier-1 buildout is post-MVP and tracked on the issue tracker.
 
@@ -597,9 +617,10 @@ a score, so there is nothing to migrate.
 - **Evidence mix is not a score input.** The header's `evidenceKind` (`photos`,
   `description`, `mixed`, or `none`) and its `photoCount` / `textCount` are stamped once at
   `complete`. They let us report how often staff use text instead of photos.
-- **Regularity is a legal 3 per day, with no grace.** Three checks a day is a legal
-  requirement. Today it lives as the literal `>= 3` in the analytics SQL, not as a named
-  constant. There is **no grace period** for device outages. The duty is per day, so
+- **Lake regularity uses a fixed three-check threshold.** It lives as the literal
+  `>= 3` in the analytics SQL. This is not the Site-specific compliance calculation:
+  manager reports use effective-dated terms and Pacific days (AP27), with a default
+  of three only when cadence is unconfigured. The lake query uses UTC dates. There is **no grace period** for device outages. The duty is per day, so
   compliance is per day and yes-or-no: a day is **compliant if it had 3 or more checks**.
   Compliance over a window is `compliant_days / total_days`. A flat ratio of
   `completed ÷ (3 × days)` was rejected. It would let extra checks on one day hide a
@@ -628,7 +649,7 @@ routine.
 ## Settled questions
 
 1. **City cross-site queue.** Deferred post-MVP. GSI3 is sparse and can be added with no
-   rebuild. The queue view ships with the escalation integrations.
+   rebuild. The 311 integrations exist independently of that deferred queue view.
 2. **Retention.** A bucket-wide rule expires every check/task photo 30 days after upload.
    Complaint evidence lives in a separate bucket with a bucket-wide one-year rule. In
    either bucket, upload-state tags only shorten retention: never-registered (pending)
@@ -637,7 +658,8 @@ routine.
 3. **Analytics scope and metrics.** The Tier 2 S3-export lake is built
    ([ADR 0013](./adr/0013-analytics-read-plane.md)). Tier 1 live KPIs are post-MVP. Metric
    definitions are settled (see above).
-4. **Single table.** Confirmed, for the `LeadingKeys` isolation reason. The non-tenant item
+4. **Single application table.** Confirmed; tenant isolation is enforced by current
+   authorization and server-built keys, not caller-specific IAM on the shared role. The non-tenant item
    types (provider, search, setup code, analytics watermark) live outside `SITE#` by
    design.
 5. **Per-place artifact model.** Retired
@@ -791,7 +813,10 @@ conditions protect against source deactivation, edits, or program reassignment.
 
 Selection creates an additional `PROGRAM#… / USER#…` contact with its own
 program-scoped identifier and a `staffSource` reference to the original record.
-Contact details are copied at creation; later edits are local to each membership.
+Contact details are copied at creation. Once linked to a canonical person, later
+profile edits update that person and its registered projections transactionally;
+legacy unlinked contacts retain the compatibility edit path. See ADR 0017 and the
+people-migration runbook.
 The original program/provider affiliation and its device access are unchanged.
 This operation does not move a staff record or grant new device access.
 
@@ -864,3 +889,28 @@ Program selection no longer requires the site's provider to own that program.
 `providerAccessGeneration` on Site metadata and its provider-site projection advances
 only on a provider change; provider-derived bindings snapshot it and authorization,
 refresh, and discovery compare it with the canonical Site value (missing means zero).
+
+### Analytics classification and deletion limits
+
+`backend/src/analytics/entity-keys.js` defines the reporting allowlist by complete
+partition and sort-key shape. Task/check headers must have bare `TASK#<id>` or
+`CHECK#<id>` keys. Update events, update-ID pointers, task media, check update-media
+pointers and unknown children are excluded. Current ART keys and legacy ART keys
+with a place segment remain supported. Assessment/condition and device shapes are
+also matched explicitly; identifiers need not be UUIDs.
+
+Both export conversion and lake views use this contract. View filters exclude
+misclassified children in older Parquet files, while latest-wins deduplication
+still uses the full `pk, sk`. Filtering does not rewrite or remove those files;
+physical cleanup requires a separate assessment. Re-conversion alone does not
+remove an old file when its partition has no accepted rows left to replace it.
+
+DynamoDB incremental exports include deletions as keys without a `NewImage`, even
+with `NEW_IMAGE_ONLY` ([AWS export format](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/S3DataExport.Output.html)).
+The current parser skips those records. ART rows can be hard-deleted by the
+artifact route, so previously exported artifacts can remain visible in the lake.
+Latest-wins deduplication does not remove a key absent from a later export.
+Deletion propagation is deferred and is not part of the classification fix.
+ADR 0013 records the earlier assumption that reporting entities were not deleted;
+that assumption no longer holds for artifacts. Raw exports and Parquet are
+analytics copies, not media backups.

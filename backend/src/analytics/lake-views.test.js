@@ -23,6 +23,7 @@ const {
   stripTrailingSemicolon,
 } = await import("./lake-views.js");
 const { ENTITY_COLUMNS } = await import("./convert.js");
+const { ENTITY_KEY_SHAPES } = await import("./entity-keys.js");
 
 /** @type {any} */
 let db;
@@ -54,6 +55,7 @@ describe("ENTITIES", () => {
     expect(ENTITIES).toContain("sites");
     expect(ENTITIES).toContain("providers");
     expect(ENTITIES).toContain("devices");
+    expect(Object.keys(ENTITY_KEY_SHAPES)).toEqual(ENTITIES);
   });
 });
 
@@ -167,6 +169,83 @@ describe("lakeViewSql over a local lake", () => {
     );
     expect(await rows("SELECT count(*) FROM checks")).toEqual([[4n]]);
   });
+});
+
+describe("historical entity filtering over Parquet", () => {
+  it.each([
+    [
+      "tasks",
+      "SITE#s1",
+      ["TASK#t1"],
+      [
+        "TASK#t1#UPDATE#timestamp#u1",
+        "TASK#t1#UPDATE_ID#u1",
+        "TASK#t1#MEDIA#a1",
+        "TASK#t1#FUTURE#x",
+      ],
+    ],
+    [
+      "checks",
+      "SITE#s1",
+      ["CHECK#c1"],
+      ["CHECK#c1#UPDATE_MEDIA#a1", "CHECK#c1#FUTURE#x"],
+    ],
+    [
+      "artifacts",
+      "SITE#s1",
+      ["CHECK#c1#ART#a1", "CHECK#c1#ART#place#a2"],
+      ["CHECK#c1#FUTURE#ART#a1"],
+    ],
+    [
+      "analyses",
+      "SITE#s1",
+      ["CHECK#c1#ANALYSIS#a1"],
+      ["CHECK#c1#FUTURE#ANALYSIS#a1"],
+    ],
+    ["assessments", "SITE#s1", ["ASSESSMENT#as1"], ["ASSESSMENT#as1#FUTURE#x"]],
+    [
+      "conditions",
+      "SITE#s1",
+      [
+        "ASSESSMENT#as1#COND#c1",
+        "ASSESSMENT#as1#COND#c1#extra",
+        "ASSESSMENT#as1#COND##",
+        "ASSESSMENT#as1#COND#c1\n#extra",
+      ],
+      ["ASSESSMENT#as1#FUTURE#COND#c1"],
+    ],
+    ["devices", "SITE#s1", ["DEVICE#d1"], ["DEVICE#d1#SESSION#s1"]],
+    ["sites", "SITE#s1", ["#META"], ["#META#CHILD"]],
+    ["providers", "PROVIDER#p1", ["#META"], ["#META#CHILD"]],
+  ])(
+    "filters old %s pollution while preserving latest valid records",
+    async (entity, pk, valid, invalid) => {
+      const lake = mkdtempSync(join(tmpdir(), "gn-lake-shapes-"));
+      try {
+        const dir = join(lake, entity, "date=unknown");
+        mkdirSync(dir, { recursive: true });
+        const items = [
+          ...valid.map((sk) => ({ pk, sk, version: 1 })),
+          ...valid.map((sk) => ({ pk, sk, version: 2 })),
+          ...invalid.map((sk) => ({ pk, sk, version: 3 })),
+          { pk: `${pk}#CHILD`, sk: valid[0], version: 3 },
+        ];
+        for (const [index, item] of items.entries()) {
+          await conn.run(`COPY (SELECT '${JSON.stringify(item)}' AS raw,
+          TIMESTAMP '2026-10-28 0${item.version}:00:00' AS exportedAt)
+          TO '${join(dir, `part-${index}.parquet`)}' (FORMAT PARQUET)`);
+        }
+        await conn.run(lakeViewSql(lake, entity));
+        expect(
+          await rows(
+            `SELECT raw->>'$.sk', raw->>'$.version' FROM ${entity} ORDER BY 1`,
+          ),
+        ).toEqual([...valid].sort().map((sk) => [sk, "2"]));
+      } finally {
+        rmSync(lake, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("createViews", () => {

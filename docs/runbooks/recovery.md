@@ -130,3 +130,41 @@ media must stay unavailable; recovered records must still enforce expiry.
 The production Terraform backend has independent versioned/KMS-encrypted S3 state
 and its own PITR-enabled lock table. Do not restore or overwrite Terraform state
 as part of an application-data drill.
+
+## Issue updates after an interrupted 311 filing
+
+A `completing` task is an action attempt, not a resolved issue. Its
+`completionLeaseExpiresAt` prevents concurrent processing while the action runs.
+An expired lease does not undo tickets already filed or automatically change the
+task status. A partial filing can retain ticket references alongside
+`appActionStatus: failed` and `fanout_incomplete`.
+
+The task-update API exposes `task.canUpdate`. In addition to ordinary
+`in_progress` tasks, it permits updates to an expired completion claim with
+recorded 311 ticket references, expired resolution claims, and legacy
+`completed`/`311_filed` tasks whose recorded filing is not closed. The normal
+14-day archive boundary still applies. Active or malformed leases, completion
+claims without recorded tickets, and explicitly resolved issues are not opened
+by this recovery rule.
+
+Opening the timeline does not change data. The next successful note/photo or
+additional-action update atomically moves a recoverable task to `in_progress`,
+clears stale completion fields, and preserves the ticket references and partial
+filing outcome. Explicit resolution moves it to `completed` through the usual
+resolution flow. Conditional writes check the original status, timestamp,
+lease (when present), and action results; a renewed worker claim cannot be
+silently overwritten. Photo registration alone does not recover the task.
+
+To verify a reported case, inspect the task's status, lease, and recorded ticket
+references before acting. Do not re-file an existing ticket just to regain
+update controls. After an authorized issue update, verify its single timeline
+entry, the intended task status, unchanged ticket references, and the original
+filing failure information. Any incomplete City filing still needs separate
+reconciliation; accepting a local update does not declare that filing successful.
+
+For upload failures, the editor keeps Close and Cancel available while saving.
+Cancel stops waiting and preserves the draft; Close then offers the usual discard
+confirmation. A foreground save has a 120-second deadline. A cancelled or timed-out
+HTTP write may already have reached the server, so retry the unchanged draft:
+its idempotency key and successfully uploaded photos are reused. Refreshing the
+page discards the in-memory draft; no offline queue is provided.

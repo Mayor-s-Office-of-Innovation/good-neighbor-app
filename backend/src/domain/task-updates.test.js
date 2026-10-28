@@ -132,3 +132,51 @@ it("resolves before the first presence prompt without consuming a presence perio
   });
   expect(result.task).not.toHaveProperty("lastAnsweredPresencePeriod");
 });
+
+it("recovers expired partial filings but never active leases or resolved issues", async () => {
+  const { canUpdateTask } = await import("./task-updates.js");
+  const now = Date.parse("2026-10-27T20:00:00Z");
+  const partial = {
+    status: "completing",
+    createdAt: "2026-10-26T19:40:00Z",
+    completionLeaseExpiresAt: "2026-10-26T19:46:00Z",
+    appActionResults: [
+      {
+        code: "create_311_ticket",
+        status: "failed",
+        reason: "fanout_incomplete",
+        payload: { tickets: [{ srNum: "existing-ticket" }] },
+      },
+    ],
+  };
+  expect(canUpdateTask(partial, now)).toBe(true);
+  expect(
+    canUpdateTask(
+      { ...partial, completionLeaseExpiresAt: "2026-10-28T00:00:00Z" },
+      now,
+    ),
+  ).toBe(false);
+  expect(canUpdateTask({ ...partial, appActionResults: [] }, now)).toBe(false);
+  expect(
+    canUpdateTask({ ...partial, completionLeaseExpiresAt: undefined }, now),
+  ).toBe(false);
+  expect(
+    canUpdateTask(
+      {
+        ...partial,
+        status: "completed",
+        completionMethod: "site_team_resolved",
+      },
+      now,
+    ),
+  ).toBe(false);
+  expect(
+    canUpdateTask(
+      { ...partial, status: "completed", completionMethod: "311_filed" },
+      now,
+    ),
+  ).toBe(true);
+  expect(
+    canUpdateTask({ ...partial, createdAt: "2026-10-01T00:00:00Z" }, now),
+  ).toBe(false);
+});

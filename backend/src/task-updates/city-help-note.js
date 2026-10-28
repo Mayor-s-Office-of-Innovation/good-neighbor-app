@@ -1,3 +1,4 @@
+import { openFiledTicketNumbers } from "../domain/open-filed-tickets.js";
 import { logServerError } from "../lib/log-server-error.js";
 import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { getConfig } from "../config.js";
@@ -37,20 +38,12 @@ export function logCityNoteFailure(stage, error, update) {
 }
 
 /**
- * The same first filed request displayed by the 311 card.
+ * The first recorded filing without a successful closure.
  * @param {{appActionResults?: Array<{code?: string, payload?: {tickets?: Array<{srNum?: string}>}}>}} task
  * @returns {string}
  */
 export function cityHelpTicket(task) {
-  for (const result of task.appActionResults || []) {
-    if (result.code !== "create_311_ticket") continue;
-    const tickets = /** @type {Array<{srNum?: string}>} */ (
-      result.payload?.tickets || []
-    );
-    const ticket = tickets.find((ticket) => ticket.srNum);
-    if (ticket) return String(ticket.srNum);
-  }
-  return "";
+  return openFiledTicketNumbers(task)[0] || "";
 }
 
 /**

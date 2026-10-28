@@ -18,9 +18,9 @@ vi.mock("../db.js", () => ({
   saveDraft: vi.fn(async () => {}),
   clearDraft: vi.fn(),
   getDraft: vi.fn(),
-  saveReview: vi.fn(),
-  getReview: vi.fn(),
-  clearReview: vi.fn(),
+  saveFinishedCheck: vi.fn(),
+  listFinishedChecks: vi.fn(async () => []),
+  deleteFinishedCheck: vi.fn(),
 }));
 vi.mock("./api.js", async (importOriginal) => ({
   ...(await importOriginal()),

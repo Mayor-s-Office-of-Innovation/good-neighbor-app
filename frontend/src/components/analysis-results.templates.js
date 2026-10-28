@@ -431,6 +431,9 @@ function analysisCardEntries(
   if (status === "failed") {
     return [{ markup: failedCard(item), createdAt: itemTime }];
   }
+  if (status === "waiting") {
+    return [{ markup: waitingCard(item), createdAt: itemTime }];
+  }
   if (status !== "analyzed") {
     return [{ markup: pendingCard(item), createdAt: itemTime }];
   }
@@ -478,7 +481,6 @@ function analysisCardEntries(
               "completing",
               "resolving",
               "completed",
-              "cannot_do",
             ].includes(task.status),
             actionKind: task.kind || "",
             phoneNumber: task.phoneNumber || "",
@@ -598,13 +600,9 @@ export function taskAnalysisCard({
   if (history) return historyCard(task);
   includeControls =
     includeControls &&
-    ![
-      "in_progress",
-      "completing",
-      "resolving",
-      "completed",
-      "cannot_do",
-    ].includes(task.status);
+    !["in_progress", "completing", "resolving", "completed"].includes(
+      task.status,
+    );
   const mediaUrl = taskMediaUrl(task);
   // `positionDescriptor` is deliberately not a fallback: since ADR 0014 it is
   // a fixed literal, not a location.
@@ -754,6 +752,34 @@ function pendingCard(item) {
             ></span>
           </div>
           ${evidencePreview(item, true)}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+/**
+ * Saved on the device with no connection: not analyzing, not failed. The
+ * background sender (services/check-submissions.js) resumes it.
+ * @param {AnalysisItem} item
+ * @returns {string}
+ */
+function waitingCard(item) {
+  const place = cardPlace(item);
+  return html`
+    <article class="analysis-card analysis-card--waiting analysis-card--new">
+      <div class="analysis-card__panel">
+        <div class="analysis-card__layout">
+          <div class="analysis-card__content">
+            <p class="analysis-card__place">
+              ${escapeHtml(place || t("card.place.placeholder"))}
+            </p>
+            <h3>${escapeHtml(t("card.waiting.title"))}</h3>
+            <p class="analysis-card__waiting-copy">
+              ${escapeHtml(t("card.waiting.message"))}
+            </p>
+          </div>
+          ${evidencePreview(item)}
         </div>
       </div>
     </article>

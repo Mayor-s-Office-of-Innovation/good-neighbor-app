@@ -34,8 +34,8 @@
   wider viewports retain the checkbox without dialing.
 - Corrects BLOCK-3's primary agency to SFPD and THREAT-1's number to
   415-553-0123. ANIMAL-4 and THREAT-3 have Moderate weighting.
-- Removes the Can't do this mutation and controls. Historical records remain
-  readable. Earlier policy catalogs remain registered.
+- Removes the deprecated task-decline mutation and controls. Earlier policy
+  catalogs remain registered.
 
 ## actions-escalations-v6 - 2026-10-08
 

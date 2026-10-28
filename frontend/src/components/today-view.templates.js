@@ -31,6 +31,7 @@ import { analysisDialogs } from "./analysis-results.templates.js";
  *   showAnalysisDialogs: boolean,
  *   logoutError: string,
  *   logoutPending: boolean,
+ *   logoutUnsent?: { checks?: number, careLogs?: number },
  *   busy?: boolean,
  *   settingsDisabled?: boolean,
  * }} vm `busy` marks the results region aria-busy; `settingsDisabled`
@@ -45,6 +46,7 @@ export function homeShell({
   showAnalysisDialogs,
   logoutError,
   logoutPending,
+  logoutUnsent = {},
   busy = false,
   settingsDisabled = false,
 }) {
@@ -81,7 +83,11 @@ export function homeShell({
       ${showAnalysisDialogs ? analysisDialogs() : ""}
       <location-dialog></location-dialog>
       ${attributionDialog()} ${languageDialog()}
-      ${logoutDialog({ error: logoutError, pending: logoutPending })}
+      ${logoutDialog({
+        error: logoutError,
+        pending: logoutPending,
+        unsent: logoutUnsent,
+      })}
     </div>
   `;
 }
@@ -329,14 +335,27 @@ export function languageDialog() {
   </dialog>`;
 }
 
-/** @param {{ error: string, pending: boolean }} state */
-export function logoutDialog({ error, pending }) {
+/**
+ * Lines naming the work that logging out would delete before it uploads.
+ * @param {{ checks?: number, careLogs?: number }} unsent
+ * @returns {string[]}
+ */
+function unsentLines({ checks = 0, careLogs = 0 }) {
+  return [
+    checks ? t("today.logout.unsentChecks", { count: checks }) : "",
+    careLogs ? t("today.logout.unsentCareLogs", { count: careLogs }) : "",
+  ].filter(Boolean);
+}
+
+/** @param {{ error: string, pending: boolean, unsent?: { checks?: number, careLogs?: number } }} state */
+export function logoutDialog({ error, pending, unsent = {} }) {
+  const lines = unsentLines(unsent);
   return html`
     <dialog
       class="places-modal logout-dialog"
       id="logout-dialog"
       aria-labelledby="logout-title"
-      aria-describedby="logout-copy"
+      aria-describedby="logout-copy${lines.length ? " logout-unsent" : ""}"
     >
       <form class="places-modal__card" method="dialog">
         <div class="places-modal__copy">
@@ -346,6 +365,24 @@ export function logoutDialog({ error, pending }) {
           <p class="places-modal__text" id="logout-copy">
             ${escapeHtml(t("today.logout.text"))}
           </p>
+          ${lines.length
+            ? html`<div class="logout-dialog__unsent" id="logout-unsent">
+                <p class="logout-dialog__unsent-title">
+                  ${escapeHtml(t("today.logout.unsentTitle"))}
+                </p>
+                ${lines
+                  .map(
+                    (line) =>
+                      html`<p class="logout-dialog__unsent-line">
+                        ${escapeHtml(line)}
+                      </p>`,
+                  )
+                  .join("")}
+                <p class="logout-dialog__unsent-line">
+                  ${escapeHtml(t("today.logout.unsentHint"))}
+                </p>
+              </div>`
+            : ""}
           ${error
             ? html`<p class="logout-dialog__error" role="alert">
                 ${escapeHtml(error)}

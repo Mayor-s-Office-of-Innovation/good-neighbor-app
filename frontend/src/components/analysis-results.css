@@ -265,6 +265,17 @@ html.wa-dark .analysis-card__clear-copy a {
   background: transparent;
 }
 
+/* Saved offline: a calm, neutral state — not progress, not a failure. */
+.analysis-card--waiting {
+  border-left: 3px solid var(--wa-color-neutral-border-loud, #8d8f99);
+}
+
+.analysis-card__waiting-copy {
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
 .analysis-card--failed {
   flex-direction: row;
   align-items: flex-start;

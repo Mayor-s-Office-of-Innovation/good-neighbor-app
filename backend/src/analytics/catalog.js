@@ -19,7 +19,7 @@
 //   duty; these reports count UTC days until the converter partitions by
 //   America/Los_Angeles.
 // - Check status values: in_progress | analyzing | completed. Task status:
-//   open | completed | cannot_do; task type: onsite | city_escalation.
+//   open | completed; task type: onsite | city_escalation.
 //   gradeScore: Excellent=5 … Very Poor=1, NULL when no grade.
 
 import { ENTITIES } from "./lake-views.js";
@@ -206,7 +206,7 @@ ORDER BY max(gradeScore) DESC NULLS LAST`,
     id: "open-tasks-by-site",
     title: "Open tasks by site",
     description:
-      "Current task load per site for tasks created in the window: open, open city escalations, completed, and cannot-do. Status reflects the latest export.",
+      "Current task load per site for tasks created in the window: open, open city escalations, and completed. Status reflects the latest export.",
     group: "Tasks",
     params: [DAYS_30],
     scheduled: true,
@@ -214,8 +214,7 @@ ORDER BY max(gradeScore) DESC NULLS LAST`,
        any_value(s.name) AS site,
        count(*) FILTER (t.taskStatus = 'open') AS open_tasks,
        count(*) FILTER (t.taskStatus = 'open' AND t.type = 'city_escalation') AS open_escalations,
-       count(*) FILTER (t.taskStatus = 'completed') AS completed,
-       count(*) FILTER (t.taskStatus = 'cannot_do') AS cannot_do
+       count(*) FILTER (t.taskStatus = 'completed') AS completed
 FROM tasks t
 LEFT JOIN sites s ON s.siteId = t.siteId
 WHERE t.${IN_WINDOW}

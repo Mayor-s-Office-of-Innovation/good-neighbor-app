@@ -74,7 +74,7 @@ describe("status ticker priorities", () => {
     task.ticketStatus = "Open";
     expect(ticker(task).key).toBe("filed");
   });
-  it.each(["open", "in_progress", "completed", "cannot_do"])(
+  it.each(["open", "in_progress", "completed"])(
     "retains only resolved status for %s in History at 14 days",
     (status) => {
       const task = {
@@ -121,7 +121,7 @@ describe("status ticker priorities", () => {
 });
 
 describe("expiration routes cards to history", () => {
-  it.each(["open", "in_progress", "completed", "cannot_do"])(
+  it.each(["open", "in_progress", "completed"])(
     "archives %s regardless of overrides",
     async (status) => {
       const { homeTaskStatus, homeTabForStatus } = await import(

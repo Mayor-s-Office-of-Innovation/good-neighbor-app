@@ -24,6 +24,33 @@ skips hook setup when `CI=true` or `CI=1`; CI security scans still run separatel
 Using `--ignore-scripts` bypasses this setup, so run `npm run setup:hooks` afterward.
 Do not set `CI=true` in your local shell to suppress setup failures.
 
+### Checkov hook fails while building Python dependencies
+
+If hook initialization fails while compiling a dependency such as `pycares`,
+check the Python interpreter and compiler named in the error. This can depend
+on the local environment; Python 3.11 is a workaround, not a prerequisite for
+every contributor. For example, a Python 3.15 environment compiling `pycares`
+with GCC against the macOS SDK has failed during hook setup.
+
+On macOS, run pre-commit in an isolated Python 3.11 environment:
+
+```bash
+brew install python@3.11 pipx
+pipx install --python "$(brew --prefix python@3.11)/bin/python3.11" pre-commit
+# If pre-commit is already installed through pipx, use instead:
+# pipx reinstall --python "$(brew --prefix python@3.11)/bin/python3.11" pre-commit
+export PATH="$HOME/.local/bin:$PATH"
+command -v pre-commit
+pre-commit --version
+npm run setup:hooks
+```
+
+Keep that PATH ordering in your shell configuration if you also have a Homebrew
+pre-commit installation. The pipx executable must take precedence for subsequent
+`npm install` runs. This selects Python for your local tooling without imposing
+an exact Python version in the shared hook configuration. Existing contributors
+whose hook setup succeeds do not need to change their environment.
+
 ## Repo-wide checks (what CI runs)
 
 | Command | Does |
@@ -316,14 +343,13 @@ Notes for debugging:
   (`multi` → several issue cards, `excellent` → clean). If a run behaves oddly,
   watch its console lines — `[analyzer-stub] /v1/analyses -> …` tells you which
   verdict was served.
-- **DynamoDB Local persists between runs** (`backend/.local/dynamodb-data/`).
-  A `globalSetup` hook (`e2e/global-setup.mjs`) resets the seeded setup-code
-  usage counters **and clears leftover TASK items** each run, so code entry
-  can't exhaust `maxUses: 3` and the home worklist starts clean (previous
-  runs' cards would otherwise pollute the "New analysis results" tray — home
-  treats any needs-action task younger than 3h as NEW). If site-code login
-  ever 401s with "Invalid site code", nuke `backend/.local/dynamodb-data/`
-  and retry.
+- **Developer data persists; E2E data is isolated.** DynamoDB Local stores files in
+  `backend/.local/dynamodb-data/`, but Playwright pins its backend and cleanup hooks
+  to `gnp-local-e2e`. Setup resets only that table's seeded code counters and tasks;
+  teardown deletes that disposable table. The suite refuses to reuse running
+  servers, so stop the dev stack before running it. Do not delete the shared
+  DynamoDB Local directory to repair an E2E login: that would also erase developer
+  tables. See [ADR 0006](adr/0006-docker-free-local-dev-harness.md).
 - Tests always get a **fresh browser context** (fresh IndexedDB), so each test
   re-runs the real site-code → device-registration flow; no shared login state.
 
@@ -433,3 +459,21 @@ snapshots were introduced must be regenerated before they can be emailed.
 Deployment includes the resend API route and worker mail permissions/environment.
 Ending a check period moves the current letter into history and clears the current
 terms pointer so queued generation cannot restore it.
+
+### Issue update dialog recovery tests
+
+Run `npm run test:updates:ui` for the isolated Chromium and WebKit suite. It
+starts Vite on port 5179 and mocks all API requests; it does not need the local
+backend or change live data. Playwright browser binaries must already be
+available (the CI Playwright image includes both). To use installed Google Chrome
+locally, set `UPDATE_TEST_CHROME=1`.
+
+The suite covers the timeline action controls, preserving the native modal when
+selecting a photo, keyboard dismissal and accessibility, cancelling a stalled
+upload, and retrying an uncertain save. Controller tests also advance the
+120-second foreground-save deadline and check that late upload results cannot
+save a cancelled draft.
+
+The lazy task-update bundle has a 6.8 kB Brotli budget, including cancellation,
+progress feedback, and stable native-dialog rendering. No new runtime dependency
+is required for this flow.

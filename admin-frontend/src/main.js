@@ -5811,9 +5811,12 @@ function siteSectionView(state, section, subview = "") {
 function sitePerimeterView(state) {
   const site = /** @type {AdminSite} */ (state.site);
   const conflict = state.perimeterError.includes("Reload the latest version");
-  const updatedBy = site.perimeterUpdatedBy
-    ? ` by ${escapeHtml(site.perimeterUpdatedBy)}`
-    : "";
+  const updatedBy =
+    site.perimeterUpdatedSource === "good-neighbor"
+      ? ` ${escapeHtml(t(site.perimeterUpdatedDeviceLabel ? "admin.perimeter.appDeviceLabel" : "admin.perimeter.appDeviceId", { device: site.perimeterUpdatedDeviceLabel || site.perimeterUpdatedBy }))}`
+      : site.perimeterUpdatedBy
+        ? ` by ${escapeHtml(site.perimeterUpdatedBy)}`
+        : "";
   return `<section class="subsection" aria-labelledby="perimeter-title">
     <div>
       <h2 id="perimeter-title">Perimeter</h2>
@@ -7739,8 +7742,10 @@ function activeSiteTerms(terms) {
   return terms.find(
     (term) =>
       term.status !== "cancelled" &&
+      !term.endedAt &&
       term.effectiveStart <= today &&
-      (!term.expiresOnExclusive || term.expiresOnExclusive > today),
+      (!term.expiresOnExclusive || term.expiresOnExclusive > today) &&
+      (!term.periodEnd || term.periodEnd >= today),
   );
 }
 

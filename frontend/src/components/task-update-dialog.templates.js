@@ -45,6 +45,10 @@ export function taskUpdateDialogShell({ mode, state, content }) {
             <wa-icon name="xmark"></wa-icon>
           </button>
         </header>
+        <p role="status" data-save-status></p>
+        <button type="button" class="btn-outline" data-cancel-save hidden>
+          ${translatedText("common.cancel")}
+        </button>
         ${state === "loading"
           ? html`<p role="status">${translatedText("taskUpdate.loading")}</p>`
           : state === "error"
@@ -233,7 +237,9 @@ export function taskUpdateTimeline({
     </section>
     <section class="task-update__section">
       <h3>${translatedText("taskUpdate.updates.title")}</h3>
-      ${task.status === "in_progress" && !readOnly ? taskUpdateActions() : ""}
+      ${(task.canUpdate ?? task.status === "in_progress") && !readOnly
+        ? taskUpdateActions()
+        : ""}
     </section>
     <ol class="ticket-timeline task-update__timeline">
       ${timeline

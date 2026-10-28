@@ -247,7 +247,7 @@ export async function reconcileObservation(table, site, checkId, artifactId) {
     const previous = await get({ pk, sk: link.sk });
     const adoptAction =
       root.status === "open" &&
-      ["in_progress", "completed", "cannot_do"].includes(task.status);
+      ["in_progress", "completed"].includes(task.status);
     if (previous?.updateId === updateId && !adoptAction) continue;
     const actionFields = [
       "status",
@@ -264,7 +264,6 @@ export async function reconcileObservation(table, site, checkId, artifactId) {
       "appActionResults",
       "canBeInProgress",
       "resolvedAt",
-      "cannotDo",
     ];
     const adoptedUpdateId = `adopt-${task.taskId}`;
     const actionAt = task.inProgressAt ?? task.completedAt ?? task.updatedAt;

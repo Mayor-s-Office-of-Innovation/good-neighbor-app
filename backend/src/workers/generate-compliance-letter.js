@@ -1,4 +1,5 @@
 import { deliverComplianceLetter } from "./deliver-compliance-letter.js";
+import { activeCompliancePeriod } from "../lib/site-compliance.js";
 import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { getComplianceLetterBucket, getConfig } from "../config.js";
 import {
@@ -53,7 +54,8 @@ export const handler = async (event) => {
       continue;
     }
     if (
-      siteResult.Item?.latestComplianceTermsVersionId !== term.termsVersionId
+      siteResult.Item?.latestComplianceTermsVersionId !== term.termsVersionId ||
+      !activeCompliancePeriod([term])
     ) {
       await ddb.send(
         new UpdateCommand({
@@ -141,7 +143,11 @@ async function saveCurrentLetter(siteId, term, letter) {
       }),
     );
     const site = result.Item;
-    if (!site || site.latestComplianceTermsVersionId !== term.termsVersionId) {
+    if (
+      !site ||
+      site.latestComplianceTermsVersionId !== term.termsVersionId ||
+      !activeCompliancePeriod([term])
+    ) {
       return false;
     }
     const observedLetters = site.complianceLetters;

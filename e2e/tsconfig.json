@@ -16,6 +16,10 @@
     "status-tests/**/*.js",
     "system-status.config.js",
     "support-tests/**/*.js",
-    "support.config.js"
+    "support.config.js",
+    "task-update-tests/**/*.js",
+    "task-updates.config.js",
+    "offline-shell-tests/**/*.js",
+    "offline-shell.config.js"
   ]
 }

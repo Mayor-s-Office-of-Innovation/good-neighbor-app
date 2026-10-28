@@ -272,13 +272,13 @@ describe("requiredOnResolver", () => {
     expect(required("2026-09-02")).toBe(3);
   });
 
-  it("respects an explicit 'not required' and a version without a cadence", () => {
+  it("keeps historical version duties after today becomes not required, and supports a legacy version cadence", () => {
     expect(
       requiredOnResolver(
         { ...THREE_A_DAY, required: false },
         versions,
       )("2026-09-10"),
-    ).toBe(0);
+    ).toBe(4);
     expect(
       requiredOnResolver(THREE_A_DAY, [
         { effectiveStart: "2026-09-01", status: "active" },

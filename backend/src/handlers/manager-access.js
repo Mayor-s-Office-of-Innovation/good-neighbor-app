@@ -7,11 +7,13 @@ import { URLSearchParams } from "node:url";
 import {
   GetCommand,
   QueryCommand,
+  BatchGetCommand,
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { jsonResponse, readJsonBody } from "../http.js";
+import { publicDeviceSessions } from "../lib/device-context-sessions.js";
 import {
   deriveAccessLevel,
   deriveActorId,
@@ -508,10 +510,45 @@ export const listGeneralBindings = async (event) => {
       },
     }),
   );
+  const bindings = (result.Items ?? []).filter((item) =>
+    ["general", "manager"].includes(item.accessLevel),
+  );
+  const devices = new Map();
+  for (let offset = 0; offset < bindings.length; offset += 100) {
+    /** @type {Record<string, any>[]} */
+    let keys = bindings.slice(offset, offset + 100).map((item) => ({
+      pk: `SITE#${siteId}`,
+      sk: `DEVICE#${item.bindingId}`,
+    }));
+    for (let attempt = 0; keys.length; attempt++) {
+      if (attempt === 3) throw new Error("device_sessions_unavailable");
+      const page = await ddb.send(
+        new BatchGetCommand({
+          RequestItems: {
+            [getDynamoTableName()]: { Keys: keys, ConsistentRead: true },
+          },
+        }),
+      );
+      for (const device of page.Responses?.[getDynamoTableName()] ?? [])
+        devices.set(device.deviceId, device);
+      keys = page.UnprocessedKeys?.[getDynamoTableName()]?.Keys ?? [];
+    }
+  }
   return jsonResponse(200, {
-    bindings: (result.Items ?? [])
-      .filter((item) => ["general", "manager"].includes(item.accessLevel))
-      .map(publicBinding),
+    bindings: bindings.map((binding) => {
+      const device = devices.get(binding.bindingId);
+      return {
+        ...publicBinding(binding),
+        lastSeenAt: device?.lastSeenAt ?? binding.lastSeenAt,
+        sessions: device
+          ? publicDeviceSessions({
+              ...device,
+              status:
+                binding.status === "active" ? device.status : binding.status,
+            })
+          : [],
+      };
+    }),
   });
 };
 

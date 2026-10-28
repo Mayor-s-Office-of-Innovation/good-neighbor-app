@@ -58,11 +58,7 @@ export function toggleCardCompletion(
       const result = await (isPhone
         ? savePhoneCompletion(taskId, host._site?.siteId)
         : completeCardAction(taskId, { completionMethod: "manual" }, { task }));
-      if (
-        !["completed", "in_progress", "cannot_do"].includes(
-          result?.task?.status,
-        )
-      )
+      if (!["completed", "in_progress"].includes(result?.task?.status))
         throw new Error("Task completion was not confirmed");
       saved = true;
       // Confirmed: the busy spinner (an infinite animation) must stop before

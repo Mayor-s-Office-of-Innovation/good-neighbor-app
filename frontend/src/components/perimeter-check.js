@@ -52,6 +52,7 @@ import {
   answerAnalysisQuestion,
   analyzeNoIssueDescriptionEdit,
   analyzeEvidenceItem,
+  shouldResumeEvidenceItem,
   retryEvidenceItem,
   refreshEvidenceAnalysis,
   removeEvidenceItem,
@@ -797,20 +798,5 @@ class PerimeterCheck extends HTMLElement {
 
 customElements.define("perimeter-check", PerimeterCheck);
 
-export function shouldResumeEvidenceItem(item) {
-  const analysisStatus = item?.analysis?.status;
-  const hasArtifact = Boolean(
-    item?.analysis?.artifactId || item?.upload?.artifactId,
-  );
-  const hasUploadedArtifact = Boolean(
-    item?.upload?.status === "uploaded" && hasArtifact,
-  );
-  const isRetryableTextRegistration = Boolean(
-    item?.kind === "text" && analysisStatus === "failed" && !hasArtifact,
-  );
-  return Boolean(
-    ["queued", "analyzing"].includes(analysisStatus) ||
-      (analysisStatus === "failed" &&
-        (hasUploadedArtifact || isRetryableTextRegistration)),
-  );
-}
+// Re-exported for existing callers; the rule lives with the pipeline.
+export { shouldResumeEvidenceItem };

@@ -1,3 +1,4 @@
+import { clearTaskStatusOverrides } from "../state/task-status-overrides.js";
 import { invalidateDuplicateIssues } from "./duplicate-invalidation.js";
 /*
   api.js — the field app's thin online client for the GNP backend.
@@ -17,7 +18,7 @@ import { invalidateDuplicateIssues } from "./duplicate-invalidation.js";
 
 import { pollCheck } from "./check-polling.js";
 import { mark, span } from "./instrument.js";
-import { getSite, updateSiteSession } from "../db.js";
+import { getSite, updateSiteSession, prepareRefreshAttempt } from "../db.js";
 import { refreshDeviceToken } from "./devices.js";
 import { ApiError, ReauthRequiredError } from "./api-error.js";
 import { reportClientEvent } from "./error-report.js";
@@ -82,40 +83,77 @@ async function assertActiveSite(expectedSiteId) {
  *   already resolved with the older rotation. Re-reading here (inside the
  *   shared promise) means every waiter observes the latest persisted session.
  * @param {string} siteId the site that started the request
+ * @param {string} expectedToken access token that prompted this refresh
+ * @param {{deviceId?: string, localSessionId?: string} | null | undefined} expectedBinding
  * @returns {Promise<{ token: string }>}
  */
-async function refreshSession(siteId) {
-  const existing = refreshInFlight.get(siteId);
+async function refreshSession(siteId, expectedToken, expectedBinding) {
+  const key = `${siteId}:${expectedBinding?.localSessionId ?? expectedBinding?.deviceId ?? ""}`;
+  const existing = refreshInFlight.get(key);
   if (existing) return existing;
-  const pending = (async () => {
+  const rotate = async () => {
     // Re-read inside the shared promise — never trust the caller's snapshot.
     const site = await assertActiveSite(siteId);
+    if (
+      site.deviceId !== expectedBinding?.deviceId ||
+      site.localSessionId !== expectedBinding?.localSessionId
+    )
+      throw new SiteBindingChangedError();
+    // A different tab may have rotated while we waited for the origin-wide
+    // lock. Use its persisted token instead of spending another refresh token.
+    if (site?.token && site.token !== expectedToken)
+      return { token: site.token };
     const refreshToken = site?.refreshToken;
     if (!refreshToken) throw new ReauthRequiredError();
     try {
-      const session = await refreshDeviceToken(refreshToken);
+      const attemptId = await prepareRefreshAttempt(siteId, refreshToken);
+      if (!attemptId) throw new SiteBindingChangedError();
+      const session = await refreshDeviceToken(refreshToken, attemptId);
       if (session.site?.siteId && session.site.siteId !== siteId) {
         throw new SiteBindingChangedError();
       }
-      const stored = await updateSiteSession(session, siteId);
-      if (!stored) throw new SiteBindingChangedError();
+      const stored = await updateSiteSession(session, siteId, refreshToken);
+      if (!stored) {
+        const current = await assertActiveSite(siteId);
+        if (
+          current.token === session.token &&
+          current.refreshToken === session.refreshToken
+        )
+          return { token: current.token };
+        throw new SiteBindingChangedError();
+      }
       mark("auth:refreshed", { generation: session.tokenGeneration });
       return { token: session.token };
     } catch (err) {
       if (err instanceof SiteBindingChangedError) throw err;
-      await assertActiveSite(siteId);
+      const current = await assertActiveSite(siteId);
+      if (
+        current.deviceId !== site.deviceId ||
+        current.localSessionId !== site.localSessionId
+      )
+        throw new SiteBindingChangedError();
+      // Also recover from a rotation by an older tab without Web Locks.
+      if (current?.token && current.refreshToken !== refreshToken) {
+        return { token: current.token };
+      }
       // A 401 from the refresh endpoint is fatal: the stored session cannot
       // renew. 5xx/transport stays retryable — the session may be fine.
       if (is401(err)) throw new ReauthRequiredError();
       throw err;
     }
-  })();
-  refreshInFlight.set(siteId, pending);
+  };
+  // Web Locks serialize rotations across tabs sharing this origin's IndexedDB.
+  // Older browsers retain the in-tab guard and the rejection recovery above.
+  const locks = globalThis.navigator?.locks;
+  const pending = locks
+    ? locks.request(`gnp:refresh:${siteId}`, rotate)
+    : rotate();
+  refreshInFlight.set(key, pending);
   try {
     return await pending;
   } finally {
-    if (refreshInFlight.get(siteId) === pending) {
-      refreshInFlight.delete(siteId);
+    if (refreshInFlight.get(key) === pending) {
+      refreshInFlight.delete(key);
     }
   }
 }
@@ -205,6 +243,42 @@ function untilAborted(promise, signal) {
   });
 }
 
+// A request that has not finished after this long counts as a lost connection
+// (status 0), so a weak signal fails over to the offline paths instead of
+// hanging. Generous: a slow but working connection should still get through.
+export const REQUEST_TIMEOUT_MS = 30_000;
+// Photo uploads: abort when no bytes have moved for this long (XHR), or when
+// the whole PUT is slower than UPLOAD_MIN_BYTES_PER_SECOND (fetch).
+export const UPLOAD_STALL_MS = 30_000;
+const UPLOAD_MIN_BYTES_PER_SECOND = 20_000;
+
+/**
+ * An abort signal that fires when `signal` does or after `ms`. `timedOut()`
+ * tells the two apart; `clear()` stops the timer once the work is done.
+ * (AbortSignal.any / .timeout are missing on older devices.)
+ * @param {AbortSignal | undefined} signal
+ * @param {number} ms
+ */
+function withTimeout(signal, ms) {
+  const controller = new AbortController();
+  let expired = false;
+  const timer = setTimeout(() => {
+    expired = true;
+    controller.abort();
+  }, ms);
+  const forward = () => controller.abort();
+  if (signal?.aborted) forward();
+  else signal?.addEventListener("abort", forward, { once: true });
+  return {
+    signal: controller.signal,
+    timedOut: () => expired,
+    clear: () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", forward);
+    },
+  };
+}
+
 /**
  * One JSON request against the backend. Serializes an object body, parses a
  * JSON response, and throws `ApiError` on a non-2xx status or a transport
@@ -223,7 +297,32 @@ function untilAborted(promise, signal) {
  * @param {string} [opts.originSiteId] internal: keep retries bound to the original site
  * @returns {Promise<any>} the parsed JSON body (null for an empty 2xx)
  */
-async function request(
+async function request(method, path, opts = {}) {
+  const timeout = withTimeout(opts.signal, REQUEST_TIMEOUT_MS);
+  try {
+    return await requestOnce(method, path, { ...opts, signal: timeout.signal });
+  } catch (err) {
+    if (!timeout.timedOut() || opts.signal?.aborted) throw err;
+    const timedOut = new ApiError(
+      `Timed out after ${REQUEST_TIMEOUT_MS}ms calling ${method} ${path}`,
+      { status: 0 },
+    );
+    classifyApiFailure(timedOut);
+    throw timedOut;
+  } finally {
+    timeout.clear();
+  }
+}
+
+/**
+ * `request` without the time limit; the signal covers the refresh, the
+ * fetch, and reading the body.
+ * @param {string} method
+ * @param {string} path
+ * @param {Parameters<typeof request>[2]} [opts]
+ * @returns {Promise<any>}
+ */
+async function requestOnce(
   method,
   path,
   { headers = {}, body, signal, allowAuthRetry = true, originSiteId } = {},
@@ -252,7 +351,9 @@ async function request(
     isAccessTokenExpiring(site.tokenExpiresAt)
   ) {
     try {
-      token = (await untilAborted(refreshSession(requestSiteId), signal)).token;
+      token = (
+        await untilAborted(refreshSession(requestSiteId, token, site), signal)
+      ).token;
     } catch (err) {
       if (
         signal?.aborted ||
@@ -333,7 +434,7 @@ async function request(
       // Refresh from the CURRENT stored session — `site` here may be stale
       // (read before this request's fetch); refreshSession re-reads it.
       try {
-        await refreshSession(requestSiteId);
+        await refreshSession(requestSiteId, token, site);
       } catch (err) {
         classifyApiFailure(err);
         if (err instanceof ReauthRequiredError) throw err;
@@ -421,7 +522,7 @@ export function getSiteAdmin() {
 
 /**
  * Update one editable site-information section.
- * @param {"siteDetails"|"contactPerson"} section
+ * @param {"siteDetails"|"publicContact"|"perimeter"|"siteManagerPhone"} section
  * @param {Record<string, unknown>} values
  */
 export function updateSiteAdmin(section, values) {
@@ -459,18 +560,27 @@ export function selectDeviceBinding(bindingId) {
 /**
  * Mint a Home Screen handoff grant for the authenticated device
  * (services/session-handoff.js). The secret comes back once, in this body.
+ * @param {{ grantId: string, token: string } | null} [cached] reinstall a pending grant's cookie
+ * @param {AbortSignal} [signal]
  * @returns {Promise<{ grantId: string, token: string, expiresAt: string, startUrl: string }>}
  */
-export function issueSessionHandoff() {
-  return request("POST", "/app/v1/session-handoff");
+export function issueSessionHandoff(cached = null, signal) {
+  return request("POST", "/app/v1/session-handoff", {
+    body: cached ?? {},
+    signal,
+  });
 }
 
 /**
  * Retire the authenticated device's pending handoff grant (sign-out).
+ * @param {{signal?: AbortSignal, endSession?: boolean}} [options]
  * @returns {Promise<{ retired: boolean }>}
  */
-export function retireSessionHandoff() {
-  return request("DELETE", "/app/v1/session-handoff");
+export function retireSessionHandoff({ signal, endSession = false } = {}) {
+  return request("DELETE", "/app/v1/session-handoff", {
+    signal,
+    body: { endSession },
+  });
 }
 
 /** @param {string} label @param {{accessLevel?: string, firstName?: string, lastName?: string, email?: string}} [invitation] */
@@ -778,10 +888,23 @@ export function putMediaWithProgress(
     Object.entries(uploadHeaders).forEach(([name, value]) =>
       xhr.setRequestHeader(name, value),
     );
+    // No bytes moving for UPLOAD_STALL_MS counts as a lost connection.
+    let stalled = false;
+    /** @type {ReturnType<typeof setTimeout> | undefined} */
+    let stallTimer;
+    const watchStall = () => {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        stalled = true;
+        xhr.abort();
+      }, UPLOAD_STALL_MS);
+    };
     xhr.upload.addEventListener("progress", (event) => {
+      watchStall();
       if (event.lengthComputable)
         onProgress(Math.round((event.loaded / event.total) * 100));
     });
+    xhr.addEventListener("loadend", () => clearTimeout(stallTimer));
     xhr.addEventListener("load", () =>
       xhr.status >= 200 && xhr.status < 300
         ? resolve()
@@ -795,8 +918,13 @@ export function putMediaWithProgress(
       reject(new ApiError("Network error uploading media", { status: 0 })),
     );
     xhr.addEventListener("abort", () =>
-      reject(new DOMException("Upload cancelled", "AbortError")),
+      reject(
+        stalled
+          ? new ApiError("Media upload stalled", { status: 0 })
+          : new DOMException("Upload cancelled", "AbortError"),
+      ),
     );
+    watchStall();
     signal?.addEventListener("abort", () => xhr.abort(), { once: true });
     xhr.send(file);
   });
@@ -811,11 +939,11 @@ export function putMediaWithProgress(
  * @param {{ contentType: string, contentLength: number }} body
  * @returns {Promise<{ artifactId: string, s3Key: string, contentType: string, contentLength: number, uploadHeaders: Record<string, string>, uploadUrl: string, expiresIn: number }>}
  */
-export function presignArtifact(checkId, body) {
+export function presignArtifact(checkId, body, { signal = undefined } = {}) {
   return request(
     "POST",
     `/v1/checks/${encodeURIComponent(checkId)}/artifacts:presign`,
-    { body },
+    { body, signal },
   );
 }
 
@@ -863,6 +991,7 @@ export function deleteArtifact(checkId, artifactId) {
  * @param {Blob} blob
  * @param {string} contentType
  * @param {Record<string, string>} [uploadHeaders]
+ * @param {AbortSignal} [signal]
  * @returns {Promise<void>}
  */
 export async function putMedia(
@@ -870,7 +999,12 @@ export async function putMedia(
   blob,
   contentType,
   uploadHeaders = {},
+  signal = undefined,
 ) {
+  // fetch reports no upload progress, so allow time for the size instead.
+  const limitMs =
+    UPLOAD_STALL_MS + (blob.size / UPLOAD_MIN_BYTES_PER_SECOND) * 1000;
+  const timeout = withTimeout(signal, limitMs);
   /** @type {Response} */
   let res;
   try {
@@ -878,9 +1012,17 @@ export async function putMedia(
       method: "PUT",
       headers: { "content-type": contentType, ...uploadHeaders },
       body: blob,
+      signal: timeout.signal,
     });
   } catch (err) {
-    throw new ApiError(`Network error uploading media: ${err}`, { status: 0 });
+    throw new ApiError(
+      timeout.timedOut()
+        ? `Media upload timed out after ${Math.round(limitMs)}ms`
+        : `Network error uploading media: ${err}`,
+      { status: 0 },
+    );
+  } finally {
+    timeout.clear();
   }
   if (!res.ok) {
     throw new ApiError(`Media upload → ${res.status} ${res.statusText}`, {
@@ -974,26 +1116,37 @@ export function createTaskUpdate(
   taskId,
   body,
   requestId = crypto.randomUUID(),
+  { signal = AbortSignal.timeout(30_000) } = {},
 ) {
   return request("POST", `/v1/tasks/${encodeURIComponent(taskId)}/updates`, {
     body,
     headers: { "idempotency-key": requestId },
+    signal,
   });
 }
 
-export function documentTaskUpdate(taskId, updateId, body = {}) {
+export function documentTaskUpdate(
+  taskId,
+  updateId,
+  body = {},
+  { signal = AbortSignal.timeout(30_000) } = {},
+) {
   return request(
     "POST",
     `/v1/tasks/${encodeURIComponent(taskId)}/updates/${encodeURIComponent(updateId)}/document`,
-    { body },
+    { body, signal },
   );
 }
 
-export function registerTaskUpdateMedia(taskId, body) {
+export function registerTaskUpdateMedia(
+  taskId,
+  body,
+  { signal = AbortSignal.timeout(30_000) } = {},
+) {
   return request(
     "POST",
     `/v1/tasks/${encodeURIComponent(taskId)}/update-media`,
-    { body },
+    { body, signal },
   );
 }
 
@@ -1201,8 +1354,14 @@ export async function uploadArtifact(
  * @param {string} taskId
  * @param {string} checkId
  * @param {{ file: File, capturedAt?: string }} item
+ * @param {{ signal?: AbortSignal, onProgress?: (progress: number) => void }} [options]
  */
-export async function uploadTaskUpdatePhoto(taskId, checkId, item) {
+export async function uploadTaskUpdatePhoto(
+  taskId,
+  checkId,
+  item,
+  { signal = AbortSignal.timeout(120_000), onProgress } = {},
+) {
   const blob = item.file;
   const contentType = blob.type || "application/octet-stream";
   const { artifactId, s3Key, uploadUrl, uploadHeaders } = await presignArtifact(
@@ -1211,16 +1370,29 @@ export async function uploadTaskUpdatePhoto(taskId, checkId, item) {
       contentType,
       contentLength: blob.size,
     },
+    { signal },
   );
-  await putMedia(uploadUrl, blob, contentType, uploadHeaders);
-  await registerTaskUpdateMedia(taskId, {
-    checkId,
-    artifactId,
-    s3Key,
-    contentType,
-    contentLength: blob.size,
-    ...(item.capturedAt ? { capturedAt: item.capturedAt } : {}),
-  });
+  if (onProgress)
+    await putMediaWithProgress(
+      uploadUrl,
+      blob,
+      { "content-type": contentType, ...uploadHeaders },
+      onProgress,
+      signal,
+    );
+  else await putMedia(uploadUrl, blob, contentType, uploadHeaders, signal);
+  await registerTaskUpdateMedia(
+    taskId,
+    {
+      checkId,
+      artifactId,
+      s3Key,
+      contentType,
+      contentLength: blob.size,
+      ...(item.capturedAt ? { capturedAt: item.capturedAt } : {}),
+    },
+    { signal },
+  );
   return { artifactId, s3Key };
 }
 
@@ -1349,6 +1521,10 @@ export async function separateDuplicate(taskId, expected) {
     "POST",
     `/v1/tasks/${encodeURIComponent(taskId)}/duplicate:separate`,
     { body: expected },
+  );
+  clearTaskStatusOverrides(
+    taskId,
+    result.task?.taskId || result.taskId || taskId,
   );
   invalidateDuplicateIssues();
   return result;

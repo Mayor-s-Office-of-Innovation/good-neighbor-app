@@ -98,6 +98,14 @@ jobs:
       - name: Test support dialog accessibility
         run: npm run test:support:ui
 
+      - name: Test issue update recovery in Chromium and WebKit
+        run: npm run test:updates:ui
+
+      # The offline-launch service worker exists only in a build, so this runs
+      # against `vite preview` (npm run dev:offline), not the dev server.
+      - name: Test offline launch
+        run: npm run test:offline:e2e
+
       # Browsers and their OS dependencies are in the image. The host runner's
       # Java installation is not available inside the job container.
       - name: Setup Java for local harness

@@ -126,14 +126,28 @@ export function observeAccess(view) {
 
 /** @param {{ enrollmentUrl: string }} grant */
 export async function shareGrant(grant) {
+  const text = t("access.shareMessage");
   if (navigator.share) {
     try {
       await navigator.share({
         title: t("access.title"),
+        text,
         url: grant.enrollmentUrl,
       });
     } catch {
       /* Dismissing the share sheet keeps the link available. */
     }
-  } else await navigator.clipboard.writeText(grant.enrollmentUrl);
+  } else
+    await navigator.clipboard.writeText(`${text}\n\n${grant.enrollmentUrl}`);
+}
+
+/** @param {HTMLElement} view */
+export function scrollToGrant(view) {
+  const card = view.querySelector("#staff-grant-result > details");
+  if (!(card instanceof HTMLElement)) return;
+  const height =
+    view.querySelector(".site-admin-header")?.getBoundingClientRect().height ??
+    0;
+  card.style.scrollMarginBlockStart = `${height + 8}px`;
+  card.scrollIntoView({ block: "start", behavior: "auto" });
 }
