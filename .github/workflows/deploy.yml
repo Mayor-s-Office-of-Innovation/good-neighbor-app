@@ -262,34 +262,56 @@ jobs:
       # then associates the maps with the release named after the commit sha.
       # Best-effort: a failed upload must not fail the deploy (errors just
       # stay minified until the next green run), hence continue-on-error on
-      # both steps + the CLI's --no-fail on the upload.
+      # both steps; their actual outcomes are reported in the job summary.
       - name: Inject PostHog metadata into bundles
+        id: posthog_inject
         if: ${{ vars.POSTHOG_SOURCEMAP_UPLOAD == 'true' }}
         working-directory: ${{ github.workspace }}
         env:
           POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
           POSTHOG_CLI_PROJECT_ID: ${{ vars.POSTHOG_PROJECT_ID }}
+          POSTHOG_CLI_HOST: https://us.posthog.com
           RELEASE_SHA: ${{ github.sha }}
         run: |
-          npx @posthog/cli sourcemap inject \
+          if [[ -z "$POSTHOG_CLI_API_KEY" || -z "$POSTHOG_CLI_PROJECT_ID" ]]; then
+            echo "::error::Set POSTHOG_PERSONAL_API_KEY and POSTHOG_PROJECT_ID in the GitHub deployment environment."
+            exit 1
+          fi
+          npx --yes @posthog/cli@0.19.0 sourcemap inject \
             --directory frontend/dist
         continue-on-error: true
 
       - name: Upload sourcemaps to PostHog
-        if: ${{ vars.POSTHOG_SOURCEMAP_UPLOAD == 'true' }}
+        id: posthog_upload
+        if: ${{ vars.POSTHOG_SOURCEMAP_UPLOAD == 'true' && steps.posthog_inject.outcome == 'success' }}
         working-directory: ${{ github.workspace }}
         env:
           POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
           POSTHOG_CLI_PROJECT_ID: ${{ vars.POSTHOG_PROJECT_ID }}
+          POSTHOG_CLI_HOST: https://us.posthog.com
           RELEASE_SHA: ${{ github.sha }}
         run: |
-          npx @posthog/cli sourcemap upload \
+          npx --yes @posthog/cli@0.19.0 sourcemap upload \
             --directory frontend/dist \
             --release-name good-neighbor \
-            --release-version "$RELEASE_SHA" \
-            --host https://us.i.posthog.com \
-            --no-fail
+            --release-version "$RELEASE_SHA"
         continue-on-error: true
+
+      - name: Report PostHog source-map results
+        if: ${{ always() && vars.POSTHOG_SOURCEMAP_UPLOAD == 'true' }}
+        env:
+          INJECT_OUTCOME: ${{ steps.posthog_inject.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.posthog_upload.outcome }}
+        run: |
+          {
+            echo "### PostHog source maps"
+            echo "Injection: $INJECT_OUTCOME"
+            echo ""
+            echo "Upload: $UPLOAD_OUTCOME"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$INJECT_OUTCOME" != "success" || "$UPLOAD_OUTCOME" != "success" ]]; then
+            echo "::warning::PostHog source-map setup did not complete. See the injection/upload logs; deployment continues without confirmed source maps."
+          fi
 
       # Maps must not go public — they'd leak full source. They live in
       # PostHog (uploaded above) and only there.
