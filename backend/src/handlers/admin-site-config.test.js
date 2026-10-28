@@ -203,6 +203,18 @@ describe("effective-dated Site terms", () => {
       expect(transaction).toBeInstanceOf(TransactWriteCommand);
       if (!transaction) throw new Error("Missing transaction");
       expect(transaction.input.TransactItems).toHaveLength(5);
+      // periodEnd 2026-12-01 → the version expires on 2026-12-02 and joins the
+      // sparse GSI3 expiry partition; the superseded version leaves it.
+      expect(transaction.input.TransactItems[0].Put.Item).toMatchObject({
+        expiresOnExclusive: "2026-12-02",
+        gsi3pk: "COMPLIANCE_TERMS#OPEN",
+      });
+      expect(transaction.input.TransactItems[0].Put.Item.gsi3sk).toMatch(
+        /^2026-12-02#site-1#/,
+      );
+      expect(
+        transaction.input.TransactItems[4].Update.UpdateExpression,
+      ).toContain("REMOVE gsi3pk, gsi3sk");
       expect(
         transaction.input.TransactItems[0].Put.Item.underEnhancedMonitoring,
       ).toBe(true);
@@ -388,6 +400,16 @@ describe("effective-dated Site terms", () => {
     );
 
     expect(response.statusCode).toBe(201);
+    // Open-ended terms never expire on their own and stay out of GSI3.
+    const transaction = /** @type {any} */ (
+      send.mock.calls
+        .map(([c]) => c)
+        .find((c) => c instanceof TransactWriteCommand)
+    );
+    expect(
+      transaction.input.TransactItems[0].Put.Item.expiresOnExclusive,
+    ).toBeUndefined();
+    expect(transaction.input.TransactItems[0].Put.Item.gsi3pk).toBeUndefined();
   });
 
   it("ends the active period and clears the current compliance projection", async () => {

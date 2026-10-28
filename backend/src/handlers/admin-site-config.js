@@ -27,6 +27,7 @@ import {
   supervisorOnly,
 } from "../lib/admin-auth.js";
 import { pacificToday } from "../lib/pacific-dates.js";
+import { complianceTermsExpiryGsi } from "./keys.js";
 
 /** Replace the Compliance managers assigned to one Site. */
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -405,6 +406,11 @@ export const createSiteTerms = (event) =>
       effectiveStart,
       ...(periodEnd ? { periodEnd } : {}),
       ...(expiresOnExclusive ? { expiresOnExclusive } : {}),
+      // Sparse GSI3 entry for the scheduled expiry sweep. Open-ended terms
+      // never expire on their own, so they stay out of the index.
+      ...(expiresOnExclusive
+        ? complianceTermsExpiryGsi(siteId, expiresOnExclusive, termsVersionId)
+        : {}),
       status: termsStatus(effectiveStart, expiresOnExclusive),
       createdAt: now,
       createdBy: actor,
@@ -490,8 +496,10 @@ export const createSiteTerms = (event) =>
         Update: {
           TableName: tableName,
           Key: { pk: String(prior.pk), sk: String(prior.sk) },
+          // The superseded version leaves the expiry index (GSI3): the sweep
+          // only closes a site's latest version, so it could never act on it.
           UpdateExpression:
-            "SET expiresOnExclusive = :expiry, updatedAt = :now",
+            "SET expiresOnExclusive = :expiry, updatedAt = :now REMOVE gsi3pk, gsi3sk",
           ConditionExpression:
             "attribute_not_exists(expiresOnExclusive) OR expiresOnExclusive > :expiry",
           ExpressionAttributeValues: { ":expiry": effectiveStart, ":now": now },
