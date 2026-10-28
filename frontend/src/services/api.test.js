@@ -12,6 +12,7 @@ import {
   toDevUploadUrl,
   waitForAnalyses,
   uploadTaskUpdatePhoto,
+  uploadArtifact,
 } from "./api.js";
 
 /**
@@ -572,3 +573,41 @@ it("cancels the progress upload without registering incomplete media", async () 
     vi.unstubAllGlobals();
   }
 });
+
+it.each([
+  undefined,
+  {
+    randomUUID() {
+      throw new Error("unavailable");
+    },
+  },
+])(
+  "uploads and registers photos without a working UUID API (%s)",
+  async (cryptoApi) => {
+    vi.stubGlobal("crypto", cryptoApi);
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            artifactId: "artifact",
+            s3Key: "synthetic-key",
+            uploadUrl: "https://example.test/upload",
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(""))
+      .mockResolvedValueOnce(new Response("{}"));
+    vi.stubGlobal("fetch", fetch);
+    try {
+      await expect(
+        uploadArtifact("check", { dataUrl: "data:image/jpeg;base64,aGk=" }),
+      ).resolves.toMatchObject({ artifactId: "artifact" });
+      expect(fetch).toHaveBeenCalledTimes(3);
+      expect(fetch.mock.calls[1][1].method).toBe("PUT");
+      expect(fetch.mock.calls[2][0]).toBe("/v1/checks/check/artifacts");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  },
+);

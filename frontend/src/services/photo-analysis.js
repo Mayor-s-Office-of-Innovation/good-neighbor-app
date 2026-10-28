@@ -1,4 +1,4 @@
-import { observePhotoStage } from "./photo-telemetry.js";
+import { observePhotoStage, photoAttemptId } from "./photo-telemetry.js";
 import { pollCheck } from "./check-polling.js";
 import { watchDuplicateIssues } from "./duplicate-issues.js";
 import { projectDuplicateTasks } from "../domain/duplicate-issues.js";
@@ -370,7 +370,7 @@ async function evaluateArtifact(checkId, itemId, artifactId) {
   const telemetry = {
     check_id: checkId,
     artifact_id: artifactId,
-    attempt_id: crypto.randomUUID(),
+    attempt_id: photoAttemptId(),
   };
   updateItemAnalysis(itemId, {
     status: "analyzing",

@@ -1,4 +1,4 @@
-import { observePhotoStage } from "./photo-telemetry.js";
+import { observePhotoStage, photoAttemptId } from "./photo-telemetry.js";
 import { clearTaskStatusOverrides } from "../state/task-status-overrides.js";
 import { invalidateDuplicateIssues } from "./duplicate-invalidation.js";
 /*
@@ -1221,7 +1221,7 @@ export async function uploadArtifact(
   { dataUrl, capturedAt, latitude, longitude, text, tag, onLeg },
 ) {
   const art = tag ?? "photo";
-  const telemetry = { check_id: checkId, attempt_id: crypto.randomUUID() };
+  const telemetry = { check_id: checkId, attempt_id: photoAttemptId() };
   const done = span("upload", { art });
 
   const contentType = contentTypeFromDataUrl(dataUrl);
