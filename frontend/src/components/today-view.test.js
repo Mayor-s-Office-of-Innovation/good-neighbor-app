@@ -1110,3 +1110,107 @@ describe("return-to-app task freshness", () => {
     }
   });
 });
+
+it("keeps a shared filing override on the returned original and repairs separated cards", async () => {
+  await import("./today-view.js");
+  const { setDuplicateUiSite } = await import("../services/feature-flags.js");
+  const { readTaskStatusOverrides, writeTaskStatusOverrides } = await import(
+    "../state/task-status-overrides.js"
+  );
+  const View = /** @type {any} */ (
+    vi
+      .mocked(customElements.define)
+      .mock.calls.find(([name]) => name === "today-view")[1]
+  );
+  let stored = "{}";
+  const previousStorage = globalThis.localStorage;
+  vi.stubGlobal("localStorage", {
+    getItem: () => stored,
+    setItem: (_key, value) => {
+      stored = value;
+    },
+  });
+  setDuplicateUiSite({ featureFlags: { duplicateDetection: true } });
+  try {
+    const source = {
+      taskId: "repeat",
+      status: "open",
+      kind: "escalation",
+      createdAt: new Date().toISOString(),
+    };
+    const original = { ...source, taskId: "original", status: "in_progress" };
+    const view = new View();
+    view._homeModel = { tasks: [source, original] };
+    view._duplicateLinks = new Map();
+    view._expireRemainingLists = vi.fn();
+    view._refreshAfterAction = vi.fn();
+    view._run = vi.fn().mockResolvedValue({ task: original });
+    writeTaskStatusOverrides({
+      repeat: { status: "in_progress" },
+      unrelated: { status: "resolved" },
+    });
+    view._onAction({}, source, { getAttribute: () => "file311" });
+    await Promise.resolve();
+    expect(readTaskStatusOverrides()).toMatchObject({
+      original: { status: "in_progress" },
+      unrelated: { status: "resolved" },
+    });
+    expect(readTaskStatusOverrides().repeat).toBeUndefined();
+    expect(
+      view._homeModel.tasks.find((task) => task.taskId === "repeat").status,
+    ).toBe("open");
+
+    // A returning user may still have the override written by an older client.
+    writeTaskStatusOverrides({
+      ...readTaskStatusOverrides(),
+      repeat: { status: "in_progress" },
+    });
+    view._taskOverrides = readTaskStatusOverrides();
+    view._duplicateLinks.set("repeat", { state: "separated" });
+    const entry = view
+      ._homeTasks([source])
+      .find((entry) => entry.task.taskId === "repeat");
+    expect(entry.homeStatus).toBe("needs_action");
+    expect(readTaskStatusOverrides().repeat).toBeUndefined();
+    expect(readTaskStatusOverrides().original.status).toBe("in_progress");
+  } finally {
+    setDuplicateUiSite(null);
+    vi.stubGlobal("localStorage", previousStorage);
+  }
+});
+
+it("does not turn bucket overrides or pending filing states into resolve permission", async () => {
+  await import("./today-view.js");
+  const View = /** @type {any} */ (
+    vi
+      .mocked(customElements.define)
+      .mock.calls.find(([name]) => name === "today-view")[1]
+  );
+  const view = new View();
+  view._taskWith311CardStatus = (task) => task;
+  view._taskStatusMeta = () => "";
+  view._primaryCardAction = () => ({
+    kind: "file311",
+    label: t("today.action.retryFiling"),
+  });
+  for (const status of [
+    "open",
+    "completing",
+    "resolving",
+    "completed",
+    "in_progress",
+  ]) {
+    const { markup } = view._taskCardEntry(
+      {
+        task: { taskId: "task", status, kind: "escalation" },
+        homeStatus: "in_progress",
+        createdAt: new Date().toISOString(),
+      },
+      false,
+    );
+    expect(markup.includes('data-action="mark-resolved"')).toBe(
+      status === "in_progress",
+    );
+    if (status === "open") expect(markup).toContain('data-action="file311"');
+  }
+});

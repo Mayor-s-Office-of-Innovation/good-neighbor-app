@@ -440,33 +440,66 @@ describe("get311RequestDetails", () => {
 });
 
 describe("duplicate separation invalidation", () => {
-  it("notifies pollers only after a successful separation", async () => {
-    const { separateDuplicate } = await import("./api.js");
-    const { onDuplicateInvalidation } = await import(
-      "./duplicate-invalidation.js"
-    );
-    const changed = vi.fn();
-    const stop = onDuplicateInvalidation(changed);
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(new Response("{}", { status: 409 }))
-      .mockResolvedValueOnce(new Response('{"taskId":"one"}', { status: 200 }));
-    vi.stubGlobal("fetch", fetch);
-    try {
-      const expected = { sourceRevision: "r1", originalTaskId: "old" };
-      await expect(separateDuplicate("one", expected)).rejects.toBeInstanceOf(
-        ApiError,
+  it.each(["one", "restored"])(
+    "clears overrides before notifying pollers when separation returns %s",
+    async (restoredId) => {
+      const { separateDuplicate } = await import("./api.js");
+      const { onDuplicateInvalidation } = await import(
+        "./duplicate-invalidation.js"
       );
-      expect(changed).not.toHaveBeenCalled();
-      await expect(separateDuplicate("one", expected)).resolves.toEqual({
-        taskId: "one",
+      const { readTaskStatusOverrides, writeTaskStatusOverrides } =
+        await import("../state/task-status-overrides.js");
+      let stored = "{}";
+      vi.stubGlobal("localStorage", {
+        getItem: () => stored,
+        setItem: (_key, value) => {
+          stored = value;
+        },
       });
-      expect(changed).toHaveBeenCalledOnce();
-    } finally {
-      stop();
-      vi.unstubAllGlobals();
-    }
-  });
+      writeTaskStatusOverrides({
+        one: { status: "in_progress" },
+        ...(restoredId !== "one"
+          ? { [restoredId]: { status: "resolved" } }
+          : {}),
+        old: { status: "in_progress" },
+      });
+      const changed = vi.fn(() => {
+        expect(readTaskStatusOverrides()).toEqual({
+          old: { status: "in_progress" },
+        });
+      });
+      const stop = onDuplicateInvalidation(changed);
+      const fetch = vi
+        .fn()
+        .mockResolvedValueOnce(new Response("{}", { status: 409 }))
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              taskId: restoredId,
+              task: { taskId: restoredId, status: "open" },
+            }),
+            { status: 200 },
+          ),
+        );
+      vi.stubGlobal("fetch", fetch);
+      try {
+        const expected = { sourceRevision: "r1", originalTaskId: "old" };
+        await expect(separateDuplicate("one", expected)).rejects.toBeInstanceOf(
+          ApiError,
+        );
+        expect(changed).not.toHaveBeenCalled();
+        expect(readTaskStatusOverrides().one.status).toBe("in_progress");
+        await expect(separateDuplicate("one", expected)).resolves.toEqual({
+          taskId: restoredId,
+          task: { taskId: restoredId, status: "open" },
+        });
+        expect(changed).toHaveBeenCalledOnce();
+      } finally {
+        stop();
+        vi.unstubAllGlobals();
+      }
+    },
+  );
 });
 
 describe("timeline read cancellation", () => {

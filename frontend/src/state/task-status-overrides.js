@@ -22,3 +22,14 @@ export function writeTaskStatusOverrides(overrides) {
     // Losing this overlay only affects the temporary home bucket assignment.
   }
 }
+
+/**
+ * Remove presentation overrides when the server restores an independent issue.
+ * @param {...string} taskIds
+ */
+export function clearTaskStatusOverrides(...taskIds) {
+  const overrides = readTaskStatusOverrides();
+  for (const taskId of taskIds) delete overrides[taskId];
+  writeTaskStatusOverrides(overrides);
+  return overrides;
+}

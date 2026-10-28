@@ -20,6 +20,7 @@ repos:
     rev: 3.2.252
     hooks:
       - id: checkov
+        language_version: python3.11
         args:
           - --quiet
           - --framework

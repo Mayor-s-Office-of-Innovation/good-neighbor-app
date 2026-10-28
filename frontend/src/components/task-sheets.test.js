@@ -213,3 +213,114 @@ it("waits for a dismissed resolution to save before reloading", async () => {
   );
   expect(f.reload).toHaveBeenCalledOnce();
 });
+
+it.each(["open", "completed", "completing", "resolving"])(
+  "refreshes instead of resolving a stale card whose latest status is %s",
+  async (status) => {
+    const f = fixture();
+    f.sheets._options.resolveTask = () => ({ ...task, status });
+    const load = vi.spyOn(f.sheets, "_loadUpdates");
+    await f.sheets.openUpdates(task, f.button, "resolve");
+    expect(save).not.toHaveBeenCalled();
+    expect(load).not.toHaveBeenCalled();
+    expect(f.reload).toHaveBeenCalledOnce();
+    expect(f.dialog.openResults).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps the saved documentation target when the worklist still has an older task", async () => {
+  const f = fixture();
+  f.sheets._options.resolveTask = () => task;
+  vi.spyOn(f.sheets, "_loadUpdates").mockResolvedValue(/** @type {any} */ ({}));
+  const completed = { ...saved.task, latestUpdateId: saved.update.updateId };
+  await f.sheets.openUpdates(completed, f.button, "results");
+  expect(save).not.toHaveBeenCalled();
+  expect(f.dialog.openResults).toHaveBeenCalledWith(completed, null);
+});
+
+it.each(["open", "completed"])(
+  "uses a newer timeline task instead of an older %s worklist record",
+  async (status) => {
+    const f = fixture();
+    const fresh = { ...task, updatedAt: "2026-10-01T12:01:00Z" };
+    f.sheets._options.resolveTask = () => ({
+      ...task,
+      status,
+      updatedAt: "2026-10-01T12:00:00Z",
+    });
+    vi.spyOn(f.sheets, "_loadUpdates").mockResolvedValue(
+      /** @type {any} */ ({}),
+    );
+    await f.sheets.openUpdates(fresh, f.button, "resolve");
+    expect(save).toHaveBeenCalledOnce();
+    expect(f.dialog.openResults).toHaveBeenCalledWith(
+      fresh,
+      expect.any(Promise),
+    );
+    expect(f.reload).not.toHaveBeenCalled();
+  },
+);
+
+it("blocks an older timeline task when the worklist has a newer completion", async () => {
+  const f = fixture();
+  f.sheets._options.resolveTask = () => ({
+    ...saved.task,
+    updatedAt: "2026-10-01T12:01:00Z",
+  });
+  await f.sheets.openUpdates(
+    { ...task, updatedAt: "2026-10-01T12:00:00Z" },
+    f.button,
+    "resolve",
+  );
+  expect(save).not.toHaveBeenCalled();
+  expect(f.reload).toHaveBeenCalledOnce();
+});
+
+it.each([0, 408, 500])(
+  "recovers a lost resolution response (%s) after the worklist becomes completed",
+  async (status) => {
+    const f = fixture();
+    const load = vi
+      .spyOn(f.sheets, "_loadUpdates")
+      .mockRejectedValue(new Error("missing chunk"));
+    save.mockRejectedValueOnce(
+      Object.assign(new Error("uncertain response"), { status }),
+    );
+    await f.sheets.openUpdates(task, f.button, "resolve");
+    const firstKey = save.mock.calls[0][2];
+    f.reload.mockClear();
+    f.sheets._options.resolveTask = () => saved.task;
+    load.mockResolvedValue(/** @type {any} */ ({}));
+    errorToast.mock.calls[0][1]();
+    await vi.waitFor(() => expect(f.dialog.openResults).toHaveBeenCalledOnce());
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save.mock.calls[1][2]).toBe(firstKey);
+    const completion = f.dialog.openResults.mock.calls[0][1];
+    await expect(completion).resolves.toMatchObject({
+      task: { status: "completed", latestUpdateId: "update" },
+    });
+    // Confirmed attempts must not authorize new resolves of terminal tasks.
+    await f.sheets.openUpdates(task, f.button, "resolve");
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(f.reload).toHaveBeenCalledOnce();
+  },
+);
+
+it.each([400, 403, 409, 429])(
+  "does not bypass current state after a definite rejection (%s)",
+  async (status) => {
+    const f = fixture();
+    vi.spyOn(f.sheets, "_loadUpdates").mockRejectedValue(
+      new Error("missing chunk"),
+    );
+    save.mockRejectedValueOnce(
+      Object.assign(new Error("rejected"), { status }),
+    );
+    await f.sheets.openUpdates(task, f.button, "resolve");
+    f.reload.mockClear();
+    f.sheets._options.resolveTask = () => saved.task;
+    errorToast.mock.calls[0][1]();
+    await vi.waitFor(() => expect(f.reload).toHaveBeenCalledOnce());
+    expect(save).toHaveBeenCalledOnce();
+  },
+);
