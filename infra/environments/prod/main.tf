@@ -79,12 +79,16 @@ module "app" {
   duplicate_worker_maximum_concurrency     = 20
   duplicate_comparison_requests_per_second = 3
   duplicate_comparison_cache_version       = "image-comparison-v2"
-  alarm_emails                             = var.alarm_emails
-  daily_cost_warning_usd                   = 50
-  enable_alarm_delivery_drills             = true
-  tags                                     = local.common_tags
-  sf311_media_domain_name                  = "media.${local.frontend_domain_name}"
-  sf311_media_zone_id                      = aws_route53_zone.goodneighbor.zone_id
+  # Production HUB credentials are populated out-of-band in Secrets Manager.
+  # Use the durable worker path already exercised in dev for every filing.
+  enable_311_submission        = true
+  enable_311_async_filing      = true
+  alarm_emails                 = var.alarm_emails
+  daily_cost_warning_usd       = 50
+  enable_alarm_delivery_drills = true
+  tags                         = local.common_tags
+  sf311_media_domain_name      = "media.${local.frontend_domain_name}"
+  sf311_media_zone_id          = aws_route53_zone.goodneighbor.zone_id
 
   frontend_domain_names    = local.frontend_domain_names
   frontend_certificate_arn = aws_acm_certificate_validation.frontend.certificate_arn
