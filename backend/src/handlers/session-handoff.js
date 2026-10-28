@@ -35,6 +35,7 @@ import { handoffCookie, readHandoffCookie } from "../lib/handoff-cookie.js";
 import {
   contextSession,
   contextSessionWrite,
+  deviceSessionMatches,
 } from "../lib/device-context-sessions.js";
 import {
   canonicalAccessLevel,
@@ -45,6 +46,7 @@ import {
   deriveActorId,
   deriveSiteId,
   deriveSessionId,
+  deriveDeviceGeneration,
 } from "../lib/principal.js";
 import { bindingLifecycleValid } from "./devices.js";
 import { deviceKey, sitePk } from "./keys.js";
@@ -105,12 +107,18 @@ export const issueSessionHandoff = async (event) => {
   );
   const device = deviceResult.Item;
   const sourceSessionId = deriveSessionId(event);
+  const sourceGeneration = deriveDeviceGeneration(event);
   const sourceSession = sourceSessionId
     ? device?.sessions?.[sourceSessionId]
     : null;
   if (
     !device ||
     deviceLivenessProblem(device, now) ||
+    (sourceGeneration !== undefined &&
+      !deviceSessionMatches(device, {
+        sid: sourceSessionId || undefined,
+        ver: sourceGeneration,
+      })) ||
     (sourceSessionId
       ? sourceSession?.status !== "active" ||
         Date.parse(sourceSession.expiresAt) <= now.getTime()
@@ -192,12 +200,23 @@ export const issueSessionHandoff = async (event) => {
               // leaving an untracked pending grant behind.
               ConditionExpression:
                 "attribute_exists(pk) AND tokenGeneration = :generation AND (attribute_not_exists(#status) OR #status = :active) AND " +
+                (sourceSessionId
+                  ? "#sessions.#sid.#status = :active AND #sessions.#sid.tokenGeneration = :sourceGeneration AND "
+                  : "") +
                 (previousGrantId
                   ? "handoffGrantId = :previous"
                   : "attribute_not_exists(handoffGrantId)"),
-              ExpressionAttributeNames: { "#status": "status" },
+              ExpressionAttributeNames: {
+                "#status": "status",
+                ...(sourceSessionId
+                  ? { "#sessions": "sessions", "#sid": sourceSessionId }
+                  : {}),
+              },
               ExpressionAttributeValues: {
                 ":grantId": grantId,
+                ...(sourceSessionId
+                  ? { ":sourceGeneration": sourceSession.tokenGeneration }
+                  : {}),
                 ":generation": device.tokenGeneration,
                 ":active": "active",
                 ...(previousGrantId ? { ":previous": previousGrantId } : {}),
@@ -450,7 +469,11 @@ export const retireSessionHandoff = async (event) => {
   const nowIso = new Date().toISOString();
 
   const deviceResult = await ddb.send(
-    new GetCommand({ TableName: tableName, Key: deviceKey(siteId, deviceId) }),
+    new GetCommand({
+      TableName: tableName,
+      Key: deviceKey(siteId, deviceId),
+      ConsistentRead: true,
+    }),
   );
   const device = deviceResult.Item;
   let retirement;
@@ -467,51 +490,81 @@ export const retireSessionHandoff = async (event) => {
     if (sessionId) {
       const slot = device.sessions?.[sessionId];
       if (!slot || slot.status !== "active") return retiredResponse(false);
-      update = contextSessionWrite(tableName, device, sessionId, {
-        ...slot,
-        status: "signed_out",
-        refreshJti: "",
-        tokenGeneration: slot.tokenGeneration + 1,
-      });
+      update = {
+        Update: {
+          TableName: tableName,
+          Key: deviceKey(siteId, deviceId),
+          UpdateExpression:
+            "SET #sessions.#sid.#status = :signedOut, #sessions.#sid.refreshJti = :empty, #sessions.#sid.tokenGeneration = #sessions.#sid.tokenGeneration + :one",
+          ConditionExpression:
+            "attribute_exists(pk) AND (attribute_not_exists(#status) OR #status = :active) AND #sessions.#sid.#status = :active",
+          ExpressionAttributeNames: {
+            "#sessions": "sessions",
+            "#sid": sessionId,
+            "#status": "status",
+          },
+          ExpressionAttributeValues: {
+            ":signedOut": "signed_out",
+            ":empty": "",
+            ":one": 1,
+            ":active": "active",
+          },
+        },
+      };
     } else {
       update = {
         Update: {
           TableName: tableName,
           Key: deviceKey(siteId, deviceId),
           UpdateExpression:
-            "SET tokenGeneration = :next, primarySessionStatus = :signedOut REMOVE handoffGrantId",
+            "SET tokenGeneration = tokenGeneration + :one, primarySessionStatus = :signedOut REMOVE handoffGrantId",
           ConditionExpression:
-            "attribute_exists(pk) AND tokenGeneration = :current",
+            "attribute_exists(pk) AND (attribute_not_exists(#status) OR #status = :active)",
+          ExpressionAttributeNames: { "#status": "status" },
           ExpressionAttributeValues: {
-            ":next": Number(device.tokenGeneration ?? 0) + 1,
-            ":current": device.tokenGeneration,
+            ":one": 1,
+            ":active": "active",
             ":signedOut": "signed_out",
           },
         },
       };
     }
     if (!update) return retiredResponse(false);
-    try {
-      await ddb.send(
-        new TransactWriteCommand({
-          TransactItems: [
-            update,
-            auditItem(tableName, siteId, nowIso, {
-              eventType: "device_session_signed_out",
-              deviceId,
-              ...(sessionId ? { sessionId } : {}),
-            }),
-          ],
-        }),
-      );
-    } catch (error) {
-      if (
-        !(
-          error instanceof Error &&
-          error.name === "TransactionCanceledException"
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await ddb.send(
+          new TransactWriteCommand({
+            TransactItems: [
+              update,
+              auditItem(tableName, siteId, nowIso, {
+                eventType: "device_session_signed_out",
+                deviceId,
+                ...(sessionId ? { sessionId } : {}),
+              }),
+            ],
+          }),
+        );
+        break;
+      } catch (error) {
+        if (
+          !(
+            error instanceof Error &&
+            error.name === "TransactionCanceledException"
+          )
         )
-      )
-        throw error;
+          throw error;
+        const reasons = /** @type {any} */ (error).CancellationReasons;
+        if (
+          reasons?.some(
+            (/** @type {{Code?: string}} */ reason) =>
+              reason.Code === "ConditionalCheckFailed",
+          )
+        )
+          return retiredResponse(false);
+        if (attempt === 3)
+          return jsonResponse(409, { error: "sign_out_conflict" });
+        await new Promise((resolve) => setTimeout(resolve, 10 * (attempt + 1)));
+      }
     }
     return retiredResponse(!sessionId && Boolean(device.handoffGrantId));
   }

@@ -83,14 +83,21 @@ async function assertActiveSite(expectedSiteId) {
  *   shared promise) means every waiter observes the latest persisted session.
  * @param {string} siteId the site that started the request
  * @param {string} expectedToken access token that prompted this refresh
+ * @param {{deviceId?: string, localSessionId?: string} | null | undefined} expectedBinding
  * @returns {Promise<{ token: string }>}
  */
-async function refreshSession(siteId, expectedToken) {
-  const existing = refreshInFlight.get(siteId);
+async function refreshSession(siteId, expectedToken, expectedBinding) {
+  const key = `${siteId}:${expectedBinding?.localSessionId ?? expectedBinding?.deviceId ?? ""}`;
+  const existing = refreshInFlight.get(key);
   if (existing) return existing;
   const rotate = async () => {
     // Re-read inside the shared promise — never trust the caller's snapshot.
     const site = await assertActiveSite(siteId);
+    if (
+      site.deviceId !== expectedBinding?.deviceId ||
+      site.localSessionId !== expectedBinding?.localSessionId
+    )
+      throw new SiteBindingChangedError();
     // A different tab may have rotated while we waited for the origin-wide
     // lock. Use its persisted token instead of spending another refresh token.
     if (site?.token && site.token !== expectedToken)
@@ -119,6 +126,11 @@ async function refreshSession(siteId, expectedToken) {
     } catch (err) {
       if (err instanceof SiteBindingChangedError) throw err;
       const current = await assertActiveSite(siteId);
+      if (
+        current.deviceId !== site.deviceId ||
+        current.localSessionId !== site.localSessionId
+      )
+        throw new SiteBindingChangedError();
       // Also recover from a rotation by an older tab without Web Locks.
       if (current?.token && current.refreshToken !== refreshToken) {
         return { token: current.token };
@@ -135,12 +147,12 @@ async function refreshSession(siteId, expectedToken) {
   const pending = locks
     ? locks.request(`gnp:refresh:${siteId}`, rotate)
     : rotate();
-  refreshInFlight.set(siteId, pending);
+  refreshInFlight.set(key, pending);
   try {
     return await pending;
   } finally {
-    if (refreshInFlight.get(siteId) === pending) {
-      refreshInFlight.delete(siteId);
+    if (refreshInFlight.get(key) === pending) {
+      refreshInFlight.delete(key);
     }
   }
 }
@@ -277,8 +289,9 @@ async function request(
     isAccessTokenExpiring(site.tokenExpiresAt)
   ) {
     try {
-      token = (await untilAborted(refreshSession(requestSiteId, token), signal))
-        .token;
+      token = (
+        await untilAborted(refreshSession(requestSiteId, token, site), signal)
+      ).token;
     } catch (err) {
       if (
         signal?.aborted ||
@@ -359,7 +372,7 @@ async function request(
       // Refresh from the CURRENT stored session — `site` here may be stale
       // (read before this request's fetch); refreshSession re-reads it.
       try {
-        await refreshSession(requestSiteId, token);
+        await refreshSession(requestSiteId, token, site);
       } catch (err) {
         classifyApiFailure(err);
         if (err instanceof ReauthRequiredError) throw err;

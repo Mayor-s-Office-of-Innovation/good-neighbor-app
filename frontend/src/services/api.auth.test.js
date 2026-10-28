@@ -785,3 +785,66 @@ describe("durable refresh recovery attempts", () => {
     expect(site.deviceId).toBe("replacement");
   });
 });
+
+describe("refresh remains bound to its original enrollment", () => {
+  it("does not retry an old request with replacement credentials after a failed refresh", async () => {
+    site.tokenExpiresAt = "2000-01-01T00:00:00Z";
+    vi.mocked(refreshDeviceToken).mockImplementationOnce(async () => {
+      site = {
+        ...site,
+        deviceId: "replacement",
+        localSessionId: "new-enrollment",
+        token: "new-access",
+        refreshToken: "new-refresh",
+      };
+      throw new ApiError("lost response", { status: 0 });
+    });
+    const fetch = stubFetch([{ status: 200, body: { checks: [] } }]);
+    vi.stubGlobal("fetch", fetch);
+    await expect(listChecks()).rejects.toMatchObject({
+      name: "SiteBindingChangedError",
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(site.refreshToken).toBe("new-refresh");
+  });
+  it("rejects an old request if enrollment changes while it waits for the refresh lock", async () => {
+    site.tokenExpiresAt = "2000-01-01T00:00:00Z";
+    /** @type {() => void} */
+    let release = () => {
+      throw new Error("Refresh lock was not acquired");
+    };
+    let reached;
+    const held = new Promise((resolve) => {
+      release = () => resolve(undefined);
+    });
+    const queued = new Promise((resolve) => {
+      reached = resolve;
+    });
+    vi.stubGlobal("navigator", {
+      locks: {
+        request: vi.fn(async (_name, work) => {
+          reached();
+          await held;
+          return work();
+        }),
+      },
+    });
+    const fetch = stubFetch([{ status: 200, body: { checks: [] } }]);
+    vi.stubGlobal("fetch", fetch);
+    const request = listChecks();
+    const rejected = expect(request).rejects.toMatchObject({
+      name: "SiteBindingChangedError",
+    });
+    await queued;
+    site = {
+      ...site,
+      localSessionId: "new-enrollment",
+      token: "new-access",
+      refreshToken: "new-refresh",
+    };
+    release();
+    await rejected;
+    expect(refreshDeviceToken).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});

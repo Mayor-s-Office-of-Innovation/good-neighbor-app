@@ -112,7 +112,17 @@ A browser can recover a lost refresh response for five minutes using its saved
 attempt ID and original signed refresh token. Recovery rechecks current authority
 with strongly consistent reads and only returns a still-current replacement pair.
 All revocation controls above invalidate pending recovery receipts as well as
-ordinary refresh. Do not restore status or reduce generations to recover access.
+ordinary refresh. Explicit sign-out increments the current session generation
+atomically, so a refresh committed between the sign-out read and write cannot
+leave the session active. Transient transaction conflicts retry within a bounded
+window; persistent conflicts return 409 instead of reporting success.
+
+Site selection rechecks the source session and current authority with strong
+reads, and pins the source session in the selection transaction. Cached gateway
+authorization cannot use a signed-out or revoked source to mint another Site's
+credentials. The browser also binds refresh promises and retries to the original
+local enrollment, including when a new enrollment uses the same Site.
+ Do not restore status or reduce generations to recover access.
 Receipts remain encrypted and bounded to one per session; their expiry is enforced
 by the handler even if the encrypted data remains in DynamoDB. See
 [ADR 0020](../adr/0020-retryable-refresh-recovery.md) for the protocol and tests.

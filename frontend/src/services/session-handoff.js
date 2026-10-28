@@ -346,7 +346,6 @@ async function prepareManifest(bound, key, version, signal) {
     }
     const base = await manifestPromise;
     if (signal.aborted || version !== preparationVersion) return false;
-    if (signal.aborted || version !== preparationVersion) return false;
     installedBlobUrl = install(
       buildHandoffManifest(base, grant.startUrl, globalThis.location.origin),
       globalThis.document,

@@ -955,6 +955,137 @@ await test("managed device sessions against isolated DynamoDB Local", async (t) 
         }
       },
     );
+    for (const kind of ["browser", "home_screen"]) {
+      await t.test(
+        `${kind}: sign-out wins after refresh commits between its read and write`,
+        async () => {
+          const id = `logout-race-${kind}`;
+          const source = await seed(id, id);
+          const target = await seed(`${id}-target`, `${id}-target`);
+          const session = kind === "browser" ? source : await handoff(source);
+          const logout = await eventFor(session.token, { endSession: true });
+          const cachedSwitch = await eventFor(session.token, {
+            bindingId: target.deviceId,
+          });
+          const originalSend = ddb.send.bind(ddb);
+          let release;
+          let reached;
+          const barrier = new Promise((resolve) => {
+            reached = resolve;
+          });
+          const held = new Promise((resolve) => {
+            release = resolve;
+          });
+          ddb.send = async (command) => {
+            if (
+              command.input.TransactItems?.some(
+                (item) =>
+                  item.Put?.Item?.eventType === "device_session_signed_out",
+              )
+            ) {
+              reached();
+              await held;
+            }
+            return originalSend(command);
+          };
+          try {
+            const ending = retireSessionHandoff(logout);
+            await barrier;
+            const attempt = randomUUID();
+            const rotated = responseBody(
+              await recoverRefresh(session, attempt),
+            );
+            release();
+            responseBody(await ending);
+            assert.equal(await allowed(rotated.token), false);
+            assert.equal(
+              (await recoverRefresh(session, attempt)).statusCode,
+              401,
+            );
+            assert.equal(
+              (await selectDeviceBinding(cachedSwitch)).statusCode,
+              401,
+            );
+            assert.equal(await allowed(target.token), true);
+          } finally {
+            release();
+            ddb.send = originalSend;
+          }
+        },
+      );
+      await t.test(
+        `${kind}: a cached old generation cannot mint a Home Screen grant`,
+        async () => {
+          const id = `cached-grant-${kind}`;
+          const source = await seed(id, id);
+          const session = kind === "browser" ? source : await handoff(source);
+          const cached = await eventFor(session.token);
+          responseBody(await recoverRefresh(session, randomUUID()));
+          assert.equal((await issueSessionHandoff(cached)).statusCode, 401);
+        },
+      );
+      await t.test(
+        `${kind}: source Site revocation blocks switching despite cached authorization`,
+        async () => {
+          const id = `cached-switch-${kind}`;
+          const source = await seed(id, id);
+          const target = await seed(`${id}-target`, `${id}-target`);
+          const session = kind === "browser" ? source : await handoff(source);
+          const cached = await eventFor(session.token, {
+            bindingId: target.deviceId,
+          });
+          const site = await get(`SITE#${id}`, "#META");
+          await put({ ...site, siteCredentialGeneration: 1 });
+          assert.equal((await selectDeviceBinding(cached)).statusCode, 401);
+          assert.equal(await allowed(target.token), true);
+        },
+      );
+      await t.test(
+        `${kind}: Site selection cannot commit after its source signs out`,
+        async () => {
+          const id = `select-logout-race-${kind}`;
+          const source = await seed(id, id);
+          const target = await seed(`${id}-target`, `${id}-target`);
+          const session = kind === "browser" ? source : await handoff(source);
+          const request = await eventFor(session.token, {
+            bindingId: target.deviceId,
+          });
+          const logout = await eventFor(session.token, { endSession: true });
+          const originalSend = ddb.send.bind(ddb);
+          let release;
+          let reached;
+          const barrier = new Promise((resolve) => {
+            reached = resolve;
+          });
+          const held = new Promise((resolve) => {
+            release = resolve;
+          });
+          ddb.send = async (command) => {
+            if (
+              command.input.TransactItems?.some(
+                (item) =>
+                  item.Put?.Item?.eventType === "device_binding_selected",
+              )
+            ) {
+              reached();
+              await held;
+            }
+            return originalSend(command);
+          };
+          try {
+            const selecting = selectDeviceBinding(request);
+            await barrier;
+            responseBody(await retireSessionHandoff(logout));
+            release();
+            assert.equal((await selecting).statusCode, 409);
+            assert.equal(await allowed(target.token), true);
+          } finally {
+            release();
+            ddb.send = originalSend;
+          }
+        },
+      );
+    }
     let home;
     await t.test(
       "handoff creates two labeled sessions under one managed device",

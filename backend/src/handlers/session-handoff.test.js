@@ -349,6 +349,56 @@ describe("redeemSessionHandoff", () => {
 });
 
 describe("retireSessionHandoff", () => {
+  it("retries a transient transaction conflict during explicit sign-out", async () => {
+    send
+      .mockResolvedValueOnce({ Item: legacyDevice() })
+      .mockRejectedValueOnce(
+        Object.assign(new Error("conflict"), {
+          name: "TransactionCanceledException",
+          CancellationReasons: [{ Code: "TransactionConflict" }],
+        }),
+      )
+      .mockResolvedValueOnce({});
+    const response = await call(retireSessionHandoff, {
+      ...authorizedEvent(),
+      body: JSON.stringify({ endSession: true }),
+    });
+    expect(response.statusCode).toBe(200);
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(
+      send.mock.calls[2][0].input.TransactItems[0].Update.UpdateExpression,
+    ).toContain("tokenGeneration + :one");
+  });
+  it("does not report successful sign-out when transaction conflicts persist", async () => {
+    send.mockResolvedValueOnce({ Item: legacyDevice() }).mockRejectedValue(
+      Object.assign(new Error("conflict"), {
+        name: "TransactionCanceledException",
+        CancellationReasons: [{ Code: "TransactionConflict" }],
+      }),
+    );
+    const response = await call(retireSessionHandoff, {
+      ...authorizedEvent(),
+      body: JSON.stringify({ endSession: true }),
+    });
+    expect(response.statusCode).toBe(409);
+    expect(send).toHaveBeenCalledTimes(5);
+  });
+  it("treats an already-revoked parent as an idempotent sign-out", async () => {
+    send
+      .mockResolvedValueOnce({ Item: legacyDevice({ status: "revoked" }) })
+      .mockRejectedValueOnce(
+        Object.assign(new Error("revoked"), {
+          name: "TransactionCanceledException",
+          CancellationReasons: [{ Code: "ConditionalCheckFailed" }],
+        }),
+      );
+    const response = await call(retireSessionHandoff, {
+      ...authorizedEvent(),
+      body: JSON.stringify({ endSession: true }),
+    });
+    expect(response.statusCode).toBe(200);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
   it("answers retired:false when the device has no pending grant", async () => {
     send.mockResolvedValueOnce({
       Item: legacyDevice({ handoffGrantId: undefined }),
