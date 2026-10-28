@@ -17,14 +17,14 @@ export function statusTicker(task, { history = false, now = Date.now() } = {}) {
     icon,
     count,
   });
-  if (isTaskExpired(task, now)) return state("old", "warning");
-  if (history || task.status === "completed") {
+  if (history || task.status === "completed" || isTaskExpired(task, now)) {
     const { confirmed } = taskResolution(task);
     if (confirmed) return state("resolved", "success", "circle-check");
-    return task.status === "completed" || task.canBeInProgress === false
-      ? state("actionTaken", "action", "dot")
-      : state("needsAction", "action", "dot");
+    return state("", "muted", "dot");
   }
+  const created = Date.parse(task.createdAt || task.created_at || "");
+  if (Number.isFinite(created) && now - created > 7 * 86400000)
+    return state("old", "warning");
   const inProgress = ["in_progress", "completing", "resolving"].includes(
     task.status,
   );

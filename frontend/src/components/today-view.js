@@ -15,7 +15,7 @@ import {
 } from "./analysis-card-completion.js";
 import { taskCardTitle } from "../domain/task-title.js";
 import { groupHistory } from "../domain/task-history.js";
-import { pacificDateKey } from "../i18n/dates.js";
+import { statusTicker } from "../domain/status-ticker.js";
 /*
   today-view — the home hub (the screen with the "Perimeter check" button).
 
@@ -315,8 +315,11 @@ class TodayView extends HTMLElement {
     this._311StatusGeneration = 0;
     this._refresh311OnReturn = () => {
       this._refresh311Statuses();
+      void this._refreshChecks();
       void this._refreshActiveTab();
     };
+    this._checksRefreshTimer = null;
+    this._checksRefreshing = false;
     this._duplicateLinks = new Map();
     this._duplicateCloseHandler = () => {
       if (!document.querySelector("dialog[open]")) this._flushDialogRender();
@@ -333,6 +336,8 @@ class TodayView extends HTMLElement {
   }
 
   disconnectedCallback() {
+    clearInterval(this._checksRefreshTimer);
+    this._checksRefreshTimer = null;
     this._tabRefreshEpoch++;
     this._tabRefreshes.clear();
     this._remainingRefresh = null;
@@ -369,6 +374,9 @@ class TodayView extends HTMLElement {
   }
 
   connectedCallback() {
+    this._checksRefreshTimer ??= setInterval(() => {
+      void this._refreshChecks();
+    }, 30_000);
     if (this._homeRefresh) {
       this._homeRefreshQueued = true;
       return this._homeRefresh;
@@ -545,7 +553,7 @@ class TodayView extends HTMLElement {
     // tab shows. The In-progress and History lists (the slowest call is the
     // ever-growing completed list) load right after the first render — see
     // _loadRemainingTasks.
-    let submitted, tasks;
+    let submitted, tasks, latestStartedCheck;
     let reuseRemaining = false;
     try {
       const [[catalog, bindings], { checks }, openTasksResult] =
@@ -591,6 +599,11 @@ class TodayView extends HTMLElement {
           "cannot_do",
         ])
           this._taskListFreshness.set(status, this._remainingLoadedAt);
+      latestStartedCheck = (checks || [])
+        .map(adaptCheckHeader)
+        .sort((a, b) =>
+          String(b.startedAt || "").localeCompare(String(a.startedAt || "")),
+        )[0];
       submitted = (checks || [])
         .map((h) => adaptCheckHeader(h))
         .filter((c) => c.status === "submitted")
@@ -632,6 +645,7 @@ class TodayView extends HTMLElement {
     this._renderHome({
       last,
       checks: submitted,
+      latestStartedCheck,
       tasks,
       pendingSession: effectivePendingSession,
     });
@@ -817,6 +831,56 @@ class TodayView extends HTMLElement {
     this._watchDuplicates(tasks);
     void this._hydrate311CardStatuses(tasks);
     void this._hydrateVisibleHomeTasks();
+  }
+
+  async _refreshChecks() {
+    if (
+      !this.isConnected ||
+      document.visibilityState === "hidden" ||
+      !this._homeModel ||
+      this._checksRefreshing
+    )
+      return;
+    const siteId = this._siteId;
+    this._checksRefreshing = true;
+    try {
+      const response = await listChecks({ limit: 30 });
+      if (!this.isConnected || this._siteId !== siteId) return;
+      const headers = (response.checks || []).map(adaptCheckHeader);
+      const latestStartedCheck = [...headers].sort((a, b) =>
+        String(b.startedAt || "").localeCompare(String(a.startedAt || "")),
+      )[0];
+      const checks = headers
+        .filter((check) => check.status === "submitted")
+        .sort((a, b) =>
+          String(b.submittedAt || "").localeCompare(
+            String(a.submittedAt || ""),
+          ),
+        );
+      // Ignore an older snapshot and avoid rebuilding unchanged cards on each poll.
+      if (
+        String(latestStartedCheck?.startedAt || "") <
+        String(this._homeModel.latestStartedCheck?.startedAt || "")
+      )
+        return;
+      if (
+        JSON.stringify(checks) === JSON.stringify(this._homeModel.checks) &&
+        JSON.stringify(latestStartedCheck) ===
+          JSON.stringify(this._homeModel.latestStartedCheck)
+      )
+        return;
+      // Use the latest model so a background response cannot undo local actions.
+      this._renderHome({
+        ...this._homeModel,
+        checks,
+        last: checks[0],
+        latestStartedCheck,
+      });
+    } catch {
+      // Retain the last confirmed list; refresh again on return or the next poll.
+    } finally {
+      this._checksRefreshing = false;
+    }
   }
 
   _refreshActiveTab() {
@@ -1274,7 +1338,7 @@ class TodayView extends HTMLElement {
     this._renderHome({ ...model, tasks });
   }
 
-  _render({ last, checks = [], tasks, pendingSession }) {
+  _render({ last, checks = [], tasks, pendingSession, latestStartedCheck }) {
     const allRecentItems = pendingSession
       ? this._sessionItems(pendingSession)
       : [];
@@ -1294,7 +1358,10 @@ class TodayView extends HTMLElement {
       homeTasks.map((entry) => taskCheckGroupId(entry.task)),
     );
     const clearChecks = checks.filter(
-      (check) => Number(check.issueCount) === 0 && !taskCheckIds.has(check.id),
+      (check) =>
+        check.status === "submitted" &&
+        Number(check.issueCount) === 0 &&
+        !taskCheckIds.has(check.id),
     );
     const newestCheck = newestBlueCheckGroup(homeTasks, checks, pendingSession);
     const selectedTaskEntries = newestTaskEntriesFirst(
@@ -1305,7 +1372,14 @@ class TodayView extends HTMLElement {
     const tabCounts = { todo: 0, in_progress: 0 };
     for (const entry of homeTasks) {
       const tab = homeTabForStatus(entry.homeStatus);
-      if (tab in tabCounts) tabCounts[tab] += 1;
+      if (tab === "todo") tabCounts.todo += 1;
+      if (
+        tab === "in_progress" &&
+        ["cityClosed", "old", "overdue"].includes(
+          statusTicker(this._taskWith311CardStatus(entry.task)).key,
+        )
+      )
+        tabCounts.in_progress += 1;
     }
     const newTaskEntries = selectedTaskEntries.filter(
       (entry) =>
@@ -1327,42 +1401,62 @@ class TodayView extends HTMLElement {
         ? clearChecks.find((check) => check.id === latestSubmittedCheck.id) ||
           null
         : null;
-    const historicalClearChecks =
-      this._homeFilter === "history"
-        ? clearChecks.filter((check) => check.id !== activeClearCheck?.id)
-        : [];
     const hasPendingAssessment = !!pendingSession;
     const pendingHasTaskCards = homeTasks.some(
       (entry) => entry.task.checkId === pendingSession?.id,
     );
-    const displayRecentItems = pendingHasTaskCards
+    let displayRecentItems = pendingHasTaskCards
       ? recentItems.filter(
           (item) =>
             item.analysis?.status !== "analyzed" || hasProblemResults(item),
         )
       : recentItems;
+    const latestCheck = latestStartedCheck || latestSubmittedCheck;
+    const pendingSuperseded =
+      latestCheck &&
+      pendingSession &&
+      latestCheck.id !== pendingSession.id &&
+      String(latestCheck.startedAt || latestCheck.submittedAt || "") >
+        String(pendingSession.submittedAt || pendingSession.startedAt || "");
+    if (
+      pendingSuperseded &&
+      displayRecentItems.every(
+        (item) =>
+          item.analysis?.status === "analyzed" && !hasProblemResults(item),
+      )
+    )
+      displayRecentItems = [];
     const visibleRecentItems =
       this._homeFilter === "todo" ? displayRecentItems : [];
     const hasPendingClearResult =
+      this._homeFilter === "todo" &&
+      !pendingSuperseded &&
       displayRecentItems.length > 0 &&
       displayRecentItems.every(
         (item) =>
           item.analysis?.status === "analyzed" && !hasProblemResults(item),
       );
-    // The standing "check was clear" tray sits above the tabs, so its
-    // visibility must not depend on the active tab. It stays until the next
-    // check and disappears the moment a newer check records an issue (a task
-    // card from the pending session, or an analyzed item with problems).
-    const newCheckIssueRecorded =
-      pendingHasTaskCards ||
-      displayRecentItems.some(
-        (item) =>
-          item.analysis?.status === "analyzed" && hasProblemResults(item),
-      );
+    // A submitted check supersedes the prior result before analysis finishes.
+    const newerSubmission =
+      pendingSession &&
+      pendingSession.id !== activeClearCheck?.id &&
+      String(pendingSession.submittedAt || pendingSession.startedAt || "") >=
+        String(
+          activeClearCheck?.submittedAt || activeClearCheck?.startedAt || "",
+        );
     const showActiveClearTray =
+      this._homeFilter === "todo" &&
       Boolean(activeClearCheck) &&
       !hasPendingClearResult &&
-      !newCheckIssueRecorded;
+      !newerSubmission &&
+      !(
+        latestStartedCheck &&
+        latestStartedCheck.id !== activeClearCheck?.id &&
+        String(latestStartedCheck.startedAt || "") >
+          String(
+            activeClearCheck?.startedAt || activeClearCheck?.submittedAt || "",
+          )
+      );
     const hasResultCards =
       recentItems.length || homeTasks.length || clearChecks.length;
     // First-run hero only for a truly empty account: no submitted check, no
@@ -1395,7 +1489,6 @@ class TodayView extends HTMLElement {
         activeClearCheck,
         hasPendingClearResult,
         showActiveClearTray,
-        historicalClearChecks,
       }),
       showAnalysisDialogs: Boolean(hasPendingAssessment || hasResultCards),
       logoutError: this._logoutError,
@@ -1512,7 +1605,6 @@ class TodayView extends HTMLElement {
     activeClearCheck,
     hasPendingClearResult,
     showActiveClearTray,
-    historicalClearChecks,
   }) {
     const newTaskCards = this._newTaskCardEntries(newTaskEntries);
     const remainingStatus = /** @type {"pending" | "loaded" | "error"} */ (
@@ -1539,11 +1631,7 @@ class TodayView extends HTMLElement {
       activeClearCheck,
       hasPendingClearResult,
       showActiveClearTray,
-      historyGroups: this._historyGroups(
-        visibleTasks,
-        checks,
-        historicalClearChecks,
-      ),
+      historyGroups: this._historyGroups(visibleTasks, checks),
     });
   }
 
@@ -1594,7 +1682,7 @@ class TodayView extends HTMLElement {
   }
 
   // Active work stays grouped by check; History uses the selected grouping.
-  // Preserve no-findings check records alongside the task history.
+  // History contains issues only.
   _historyGroups(entries, checks, clearChecks = []) {
     if (this._homeFilter === "history") {
       const groups = groupHistory(
@@ -1609,24 +1697,7 @@ class TodayView extends HTMLElement {
           .map((entry) => this._taskCardEntry(entry, false).markup)
           .join(""),
       }));
-      // Preserve checks with no findings; they have no task resolution time.
-      for (const check of [...clearChecks].sort((a, b) =>
-        String(b.submittedAt || b.startedAt || "").localeCompare(
-          String(a.submittedAt || a.startedAt || ""),
-        ),
-      ))
-        groups.push({
-          dateKey: pacificDateKey(check.submittedAt || check.startedAt || ""),
-          title: "",
-          checkTime: check.submittedAt || check.startedAt,
-          compact: false,
-          cards: "",
-        });
-      // Clear checks have no resolution event: use their check day for both
-      // date modes. Type mode keeps them separate after the issue categories.
-      return this._historyGrouping === "type"
-        ? groups
-        : groups.sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+      return groups;
     }
     const checkTimes = new Map(
       checks.map((check) => [check.id, check.submittedAt || check.startedAt]),

@@ -508,7 +508,7 @@ export function homeResults({
   const hasVisibleCards =
     recentItems.length ||
     newTaskCount ||
-    Boolean(activeClearCheck) ||
+    Boolean(showActiveClearTray && activeClearCheck) ||
     historyGroups.length;
   // The In-progress and History lists load after the first paint (the open
   // list is all the To-do tab needs). Until they land those tabs show one
@@ -663,7 +663,7 @@ export function historyTray({
         ${counts ? duplicateCountLabel(counts) : ""}
         ${compact
           ? html`<div class="history-card-list">${cards}</div>`
-          : cards || clearCheckCard()}
+          : cards || ""}
       </div>
     </section>
   `;

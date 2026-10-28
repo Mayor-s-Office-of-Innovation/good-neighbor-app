@@ -65,6 +65,7 @@ const catalog = vi.hoisted(() => ({
   listProviderSites: vi.fn(),
   listBoundSites: vi.fn(),
   listTasks: vi.fn(),
+  listChecks: vi.fn(),
 }));
 vi.mock("../services/session-handoff.js", () => ({
   retireHandoff: vi.fn(async () => false),
@@ -79,7 +80,7 @@ vi.mock("../db.js", () => ({
 vi.mock("../services/api.js", () => ({
   listProviderSites: catalog.listProviderSites,
   selectDeviceBinding: vi.fn(),
-  listChecks: async () => ({ checks: [] }),
+  listChecks: catalog.listChecks,
   listTasks: catalog.listTasks,
 }));
 const queued311 = vi.hoisted(() => ({
@@ -118,6 +119,7 @@ beforeEach(() => {
   awaitOverlayUnwindMock.mockClear();
   catalog.listBoundSites.mockReset().mockResolvedValue([]);
   catalog.listTasks.mockReset().mockResolvedValue({ tasks: [] });
+  catalog.listChecks.mockReset().mockResolvedValue({ checks: [] });
   catalog.listProviderSites.mockReset();
   catalog.listProviderSites.mockResolvedValue({
     providerId: "provider-1",
@@ -235,7 +237,7 @@ describe("clear perimeter checks on home", () => {
     expect(overlapMarkup.match(/Your check was clear!/g)).toHaveLength(1);
   });
 
-  it("shows the active clear check above every filter and superseded checks in History", async () => {
+  it("shows the latest clear check only on To-do", async () => {
     freezeClock();
     const view = await mount("?filter=todo");
     const checks = [
@@ -273,14 +275,10 @@ describe("clear perimeter checks on home", () => {
 
     view._homeFilter = "history";
     const historyMarkup = view._render(model);
-    expect(historyMarkup).toContain("analysis-tray--new");
-    expect(historyMarkup.indexOf("analysis-tray--new")).toBeLessThan(
-      historyMarkup.indexOf("home-tabs"),
-    );
-    expect(historyMarkup).toContain("analysis-tray--history");
-    expect(historyMarkup).toContain(olderTitle);
-    expect(historyMarkup).toContain(newerTitle);
-    expect(historyMarkup.match(/Your check was clear!/g)).toHaveLength(2);
+    expect(historyMarkup).not.toContain(t("card.clear.title"));
+    expect(historyMarkup).not.toContain("analysis-tray--history");
+    view._homeFilter = "in_progress";
+    expect(view._render(model)).not.toContain(t("card.clear.title"));
   });
 
   it("keeps the latest clear check active across days until another check completes", async () => {
@@ -305,13 +303,7 @@ describe("clear perimeter checks on home", () => {
     expect(todoMarkup).toContain("Your check was clear!");
     view._homeFilter = "history";
     const markup = view._render(model);
-    expect(markup).toContain("analysis-tray--new");
-    expect(markup).toContain(
-      escapeHtml(
-        t("analysis.checkTitle.yesterdayTime", { time: formatTime(YESTERDAY) }),
-      ),
-    );
-    expect(markup.match(/Your check was clear!/g)).toHaveLength(1);
+    expect(markup).not.toContain(t("card.clear.title"));
   });
 
   it("groups newest-check history tasks by the selected date or issue type", async () => {
@@ -357,7 +349,7 @@ describe("clear perimeter checks on home", () => {
     }
   });
 
-  it("moves an active clear check to History after a newer check completes", async () => {
+  it("omits superseded clear checks from History", async () => {
     freezeClock();
     const view = await mount("?filter=history");
     const checks = [
@@ -390,16 +382,11 @@ describe("clear perimeter checks on home", () => {
       pendingSession: null,
     });
 
-    expect(markup).toContain("analysis-tray--history");
-    expect(markup).toContain(todayTitle(OLDER_TODAY));
-    expect(markup.indexOf(todayTitle(OLDER_TODAY))).toBeGreaterThan(
-      markup.indexOf("home-tabs"),
-    );
-    expect(markup.match(/Your check was clear!/g)).toHaveLength(1);
+    expect(markup).not.toContain(t("card.clear.title"));
   });
 
   it.each(["resolved", "opened"])(
-    "orders historical clear checks alongside %s day groups",
+    "excludes clear checks from %s day groups",
     async (mode) => {
       const view = await mount("?filter=history");
       view._historyGrouping = mode;
@@ -432,20 +419,13 @@ describe("clear perimeter checks on home", () => {
       );
       expect(groups.map((group) => group.dateKey)).toEqual([
         mode === "opened" ? "2026-10-04" : "2026-10-05",
-        "2026-10-02",
-        "2026-09-10",
         mode === "opened" ? "2026-09-01" : "2026-09-02",
       ]);
-      expect(groups.map((group) => group.compact)).toEqual([
-        true,
-        false,
-        false,
-        true,
-      ]);
+      expect(groups.map((group) => group.compact)).toEqual([true, true]);
     },
   );
 
-  it("keeps clear checks separate after issue-type groups", async () => {
+  it("excludes clear checks from issue-type groups", async () => {
     const view = await mount("?filter=history");
     view._historyGrouping = "type";
     view._taskCardEntry = () => ({ markup: "task-card" });
@@ -454,12 +434,7 @@ describe("clear perimeter checks on home", () => {
       [],
       [{ submittedAt: NEWER_TODAY }],
     );
-    expect(groups.map((group) => group.title)).toEqual([
-      "Graffiti",
-      "Litter",
-      "",
-    ]);
-    expect(groups[2].checkTime).toBe(NEWER_TODAY);
+    expect(groups.map((group) => group.title)).toEqual(["Graffiti", "Litter"]);
   });
 });
 
@@ -1526,6 +1501,129 @@ it("paints a saved clarification before the background worklist refresh complete
   view._renderHome.mockClear();
   listener({ ...updated, id: "different-check" });
   expect(view._renderHome).not.toHaveBeenCalled();
+});
+
+describe("attention badges and newer submissions", () => {
+  it("counts only old, City-closed, and overdue in-progress issues once each", async () => {
+    freezeClock();
+    const view = await mount("?filter=in_progress");
+    const filed = {
+      status: "in_progress",
+      createdAt: NEWER_TODAY,
+      appActionResults: [
+        { code: "create_311_ticket", payload: { tickets: [{ srNum: "123" }] } },
+      ],
+    };
+    const tasks = [
+      {
+        ...filed,
+        taskId: "closed",
+        ticketStatus: "Closed",
+        ticketResponseOverdue: true,
+      },
+      { ...filed, taskId: "overdue", ticketResponseOverdue: true },
+      {
+        ...filed,
+        taskId: "old",
+        createdAt: new Date(FROZEN_NOW.getTime() - 8 * 86400000).toISOString(),
+      },
+      { ...filed, taskId: "normal" },
+      { ...filed, taskId: "scheduled", ticketStatus: "Scheduled" },
+      {
+        taskId: "called",
+        status: "in_progress",
+        kind: "non_actionable_escalation",
+        createdAt: NEWER_TODAY,
+      },
+      {
+        ...filed,
+        taskId: "history",
+        createdAt: new Date(FROZEN_NOW.getTime() - 15 * 86400000).toISOString(),
+      },
+    ];
+    view._311StatusByTaskId = new Map([
+      ["closed", { status: "Closed", responseOverdue: true }],
+      ["overdue", { status: "Open", responseOverdue: true }],
+      ["scheduled", { status: "Scheduled", responseOverdue: false }],
+    ]);
+    const results = vi.spyOn(view, "_homeResults").mockReturnValue("");
+    view._render({ checks: [], tasks });
+    expect(
+      /** @type {any} */ (results.mock.calls[0][0]).tabCounts.in_progress,
+    ).toBe(3);
+  });
+
+  it("removes the old notice while a newer local submission is analyzing", async () => {
+    freezeClock();
+    const view = await mount("?filter=todo");
+    const clear = {
+      id: "clear",
+      status: "submitted",
+      issueCount: 0,
+      submittedAt: OLDER_TODAY,
+    };
+    const markup = view._render({
+      last: clear,
+      checks: [clear],
+      tasks: [],
+      pendingSession: {
+        id: "pending",
+        status: "capture-complete",
+        submittedAt: NEWER_TODAY,
+        items: [{ id: "photo", analysis: { status: "pending" } }],
+      },
+    });
+    expect(markup).not.toContain(t("card.clear.title"));
+  });
+
+  it("hides the clear notice when another user starts a check before analysis finishes", async () => {
+    freezeClock();
+    const view = await mount("?filter=todo");
+    view.isConnected = true;
+    Object.defineProperty(document, "visibilityState", {
+      value: "visible",
+      configurable: true,
+    });
+    const clear = {
+      id: "clear",
+      status: "submitted",
+      issueCount: 0,
+      submittedAt: OLDER_TODAY,
+    };
+    view._homeModel = { last: clear, checks: [clear], tasks: [] };
+    catalog.listChecks.mockResolvedValue({
+      checks: [
+        {
+          checkId: "new",
+          startedAt: NEWER_TODAY,
+          status: "in_progress",
+          issueCount: 0,
+        },
+        {
+          checkId: "clear",
+          status: "completed",
+          completedAt: OLDER_TODAY,
+          issueCount: 0,
+        },
+      ],
+    });
+    await view._refreshChecks();
+    const model = view._renderHome.mock.calls.at(-1)[0];
+    expect(model.last.id).toBe("clear");
+    expect(model.latestStartedCheck.id).toBe("new");
+    expect(view._render(model)).not.toContain(t("card.clear.title"));
+    view._homeModel = model;
+    view._renderHome.mockClear();
+    await view._refreshChecks();
+    expect(view._renderHome).not.toHaveBeenCalled();
+    // A later clear result may display its own notice.
+    model.checks[0] = {
+      ...model.latestStartedCheck,
+      status: "submitted",
+      issueCount: 0,
+    };
+    expect(view._render(model)).toContain(t("card.clear.title"));
+  });
 });
 
 it("repaints photo progress without refetching lists, but refreshes new analysis", async () => {

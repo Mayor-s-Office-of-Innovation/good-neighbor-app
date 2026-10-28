@@ -535,7 +535,7 @@
   "card.ticker.filing": "Presentando al 311…",
   "card.ticker.filingFailed": "No se pudo presentar",
   "card.ticker.needsAction": "Requiere acción",
-  "card.ticker.old": "Más de 14 días",
+  "card.ticker.old": "Más de 7 días",
   "card.ticker.onHold": "En espera por la Ciudad",
   "card.ticker.overdue": "La respuesta de la Ciudad está atrasada",
   "card.ticker.resolved": "Problema resuelto",

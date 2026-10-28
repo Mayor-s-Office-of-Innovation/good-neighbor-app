@@ -99,7 +99,7 @@ describe("task update dialog templates", () => {
       mediaUrls: new Map(),
     };
     const markup = taskUpdateTimeline(view);
-    expect(markup).toContain(t("card.ticker.old"));
+    expect(markup).not.toContain("data-status-ticker");
     expect(markup).not.toContain(t("card.route.nonEmergency"));
     expect(markup).not.toContain("task-update__metadata");
     expect(markup).toContain('datetime="2026-10-06T20:05:00Z"');
@@ -437,7 +437,7 @@ it("uses the identical shared ticker and shows City closure details in the timel
     status: "in_progress",
     ticketStatus: "Closed",
     ticketClosedReason: "8",
-    createdAt: "2026-10-16",
+    createdAt: new Date(Date.now() - 86400000).toISOString(),
     appActionResults: [
       {
         code: "create_311_ticket",

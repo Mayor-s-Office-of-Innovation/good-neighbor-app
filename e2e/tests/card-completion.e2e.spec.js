@@ -15,6 +15,8 @@ test("checklist waits for confirmed save, recovers from failure, and opens compl
     status: "open",
     userFriendlyLabel: "Scattered paper",
     ruleId: "LITTER-1",
+    canBeInProgress: false,
+    completionMethod: "user_confirmed",
     buttons: ["We picked this up"],
     createdAt: new Date(createdAt).toISOString(),
     completedAt: "",
@@ -90,12 +92,11 @@ test("checklist waits for confirmed save, recovers from failure, and opens compl
   await page.locator('[data-home-filter="history"]').click();
   await expect(card).toContainText(t("card.history.minutes", { count: 5 }));
   await expect(card.locator('[data-analysis-action="edit"]')).toHaveCount(0);
+  await expect(card.locator("[data-status-ticker]")).toHaveCount(0);
   await card.getByRole("button").click();
   const dialog = page.locator("dialog.task-update[open]");
   await expect(dialog).toContainText(t("taskUpdate.siteResolved"));
-  await expect(
-    dialog.locator('[data-status-ticker="actionTaken"]'),
-  ).toBeVisible();
+  await expect(dialog.locator("[data-status-ticker]")).toHaveCount(0);
   await expect(dialog.locator(".task-update__route")).toHaveCount(0);
   await expect(dialog.locator(".task-update__metadata")).toHaveCount(0);
 });

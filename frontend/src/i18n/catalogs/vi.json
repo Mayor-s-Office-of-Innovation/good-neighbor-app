@@ -535,7 +535,7 @@
   "card.ticker.filing": "Đang gửi lên 311…",
   "card.ticker.filingFailed": "Gửi thất bại",
   "card.ticker.needsAction": "Cần hành động",
-  "card.ticker.old": "Đã hơn 14 ngày",
+  "card.ticker.old": "Đã hơn 7 ngày",
   "card.ticker.onHold": "Thành phố đang tạm hoãn",
   "card.ticker.overdue": "Phản hồi của Thành phố đã quá hạn",
   "card.ticker.resolved": "Đã giải quyết vấn đề",

@@ -211,7 +211,7 @@ matrix(
       },
     );
 
-    // Home's History tab with real historical check trays. The only scanned
+    // Home's History tab with completed-issue trays. The only scanned
     // state that renders .analysis-tray--history — required to catch
     // theme-dependent styling on tray surfaces (a dark-mode title/background
     // contrast bug shipped because every other scanned state has no trays),

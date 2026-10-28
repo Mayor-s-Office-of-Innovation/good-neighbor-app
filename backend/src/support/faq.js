@@ -178,7 +178,7 @@ export const faq = [
   {
     id: "FAQ-36",
     title: "What do the three tabs mean?",
-    text: "“To do” shows issues needing an initial action. “In progress” shows issues that remain open after an action or escalation. “History” contains completed and other past outcomes. Appearing in History does not prove that an issue was addressed: the status note at the top of the card provides details on what happened.",
+    text: "“To do” shows issues needing an initial action. “In progress” shows issues that remain open after an action or escalation. “History” contains completed and other past outcomes. Appearing in History does not prove that an issue was resolved. History shows “Resolved” for explicitly resolved issues; other past outcomes may have no status note. Open the issue’s timeline to review recorded actions and updates.",
   },
   {
     id: "FAQ-37",
