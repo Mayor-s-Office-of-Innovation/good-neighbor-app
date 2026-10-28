@@ -522,7 +522,7 @@ export function getSiteAdmin() {
 
 /**
  * Update one editable site-information section.
- * @param {"siteDetails"|"contactPerson"} section
+ * @param {"siteDetails"|"publicContact"|"perimeter"|"siteManagerPhone"} section
  * @param {Record<string, unknown>} values
  */
 export function updateSiteAdmin(section, values) {

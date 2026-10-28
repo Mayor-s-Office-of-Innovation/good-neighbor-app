@@ -123,7 +123,7 @@
 
 .site-admin-rows > div {
   display: grid;
-  grid-template-columns: minmax(7.5rem, 0.85fr) minmax(0, 1.35fr);
+  grid-template-columns: fit-content(50%) minmax(0, 1fr);
   gap: 1rem;
   align-items: start;
   box-sizing: border-box;
@@ -407,6 +407,21 @@
 .site-access-form wa-input::part(form-control-label),
 .site-access-form wa-radio-group::part(form-control-label) {
   font-size: var(--wa-font-size-m);
+}
+
+.site-admin-person {
+  margin-bottom: 0.75rem;
+}
+.site-admin-person-actions {
+  justify-content: flex-end;
+}
+.site-admin-person a {
+  color: var(--brand-blue);
+  text-decoration: underline;
+}
+.site-admin-card > .site-admin-empty {
+  margin: 0;
+  padding-block: 1.2rem;
 }
 
 .site-access-actions {

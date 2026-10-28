@@ -25,6 +25,27 @@ beforeEach(() => {
 });
 
 describe("generate compliance letter worker", () => {
+  it.each([{ expiresOnExclusive: "2020-01-01" }, { status: "cancelled" }])(
+    "does not generate a current letter for inactive canonical terms (%j)",
+    async (inactive) => {
+      send
+        .mockResolvedValueOnce({
+          Item: { status: "dispatched", termsSk: "terms" },
+        })
+        .mockResolvedValueOnce({ Item: { ...term(), ...inactive } })
+        .mockResolvedValueOnce({
+          Item: { latestComplianceTermsVersionId: "v1" },
+        })
+        .mockResolvedValueOnce({});
+      await handler(event(), /** @type {any} */ ({}), () => {});
+      expect(putObject).not.toHaveBeenCalled();
+      expect(deliver).not.toHaveBeenCalled();
+      expect(
+        send.mock.calls[send.mock.calls.length - 1][0].input
+          .ExpressionAttributeValues[":superseded"],
+      ).toBe("superseded");
+    },
+  );
   it("does not regenerate or restore a letter after the period was closed", async () => {
     send
       .mockResolvedValueOnce({

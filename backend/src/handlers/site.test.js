@@ -28,7 +28,7 @@ const { getSite, getSiteAdmin, listProviderSites, updateSiteAdmin } =
   await import("./site.js");
 
 beforeEach(() => {
-  send.mockReset();
+  send.mockReset().mockResolvedValue({});
   geocodeAddress.mockReset();
   presignGet.mockReset();
   geocodeAddress.mockResolvedValue({
@@ -191,7 +191,7 @@ describe("listProviderSites", () => {
     expect(cursor).toBe(Buffer.from("SITE#site-25").toString("base64url"));
     expect(send).toHaveBeenCalledTimes(3);
 
-    send.mockReset();
+    send.mockReset().mockResolvedValue({});
     send
       .mockResolvedValueOnce({
         Item: { siteId: "site-1", providerId: "provider-1" },
@@ -352,6 +352,7 @@ describe("site admin", () => {
     );
     expect(body(response).site.compliance).toEqual({
       perimeterChecksRequired: false,
+      underEnhancedMonitoring: false,
     });
   });
 
@@ -364,11 +365,22 @@ describe("site admin", () => {
           current: {
             s3Key: "compliance-letters/site-1/current.pdf",
             fileName: "current.pdf",
+            termsVersionId: "canonical-current",
             effectiveStart: "2026-02-01",
           },
           past: [],
         },
       },
+    });
+    send.mockResolvedValueOnce({
+      Items: [
+        {
+          termsVersionId: "canonical-current",
+          effectiveStart: "2026-02-01",
+          requiredChecksPerDay: 3,
+          status: "active",
+        },
+      ],
     });
     presignGet.mockResolvedValueOnce("https://uploads.example/current");
 
@@ -386,14 +398,14 @@ describe("site admin", () => {
     });
   });
 
-  it("validates and updates the contact person", async () => {
+  it("validates and updates canonical public contact fields", async () => {
     send.mockResolvedValueOnce({
       Item: { siteId: "site-1", name: "Mission", status: "active" },
     });
     send.mockResolvedValueOnce({});
     const request = accessEvent("site-1", "admin");
     request.body = JSON.stringify({
-      section: "contactPerson",
+      section: "publicContact",
       values: {
         firstName: "Priya",
         lastName: "Anand",
@@ -407,10 +419,9 @@ describe("site admin", () => {
     expect(
       send.mock.calls[1][0].input.ExpressionAttributeValues[":contact"],
     ).toEqual({
-      firstName: "Priya",
-      lastName: "Anand",
       email: "priya@example.org",
-      phone: "(415) 555-0148",
+      phone: "415-555-0148",
+      phoneExtension: "",
     });
   });
 

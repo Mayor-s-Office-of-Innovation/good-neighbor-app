@@ -101,6 +101,16 @@
       "limit": "200 B"
     },
     {
+      "name": "site info editor js",
+      "path": "dist/assets/site-info-editor-*.js",
+      "limit": "4 kB"
+    },
+    {
+      "name": "site info contacts js",
+      "path": "dist/assets/site-info-contacts-*.js",
+      "limit": "1.5 kB"
+    },
+    {
       "name": "feedback submission js",
       "path": "dist/assets/feedback-*.js",
       "limit": "1 kB"
