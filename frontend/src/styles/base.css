@@ -845,3 +845,39 @@ connection-status {
   border-color: var(--wa-color-neutral-border-loud);
   color: var(--wa-color-neutral-on-quiet);
 }
+
+/* Animated trailing ellipsis for in-progress statuses (lib/ellipsis.js).
+   Each dot brightens and grows in turn, then settles; opacity + transform
+   only, so the text line never reflows. */
+.ellipsis-dots span {
+  display: inline-block;
+  animation: ellipsis-dot 1.3s ease-in-out infinite;
+  opacity: 0.35;
+}
+.ellipsis-dots span:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.ellipsis-dots span:nth-child(3) {
+  animation-delay: 0.36s;
+}
+@keyframes ellipsis-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.35;
+    transform: scale(1);
+  }
+  30% {
+    opacity: 1;
+    transform: scale(1.25);
+  }
+}
+/* The global reduced-motion rule freezes animations mid-keyframe, which can
+   park the dots near-invisible; pin them to a static, readable state. */
+@media (prefers-reduced-motion: reduce) {
+  .ellipsis-dots span {
+    animation: none;
+    opacity: 0.75;
+    transform: none;
+  }
+}

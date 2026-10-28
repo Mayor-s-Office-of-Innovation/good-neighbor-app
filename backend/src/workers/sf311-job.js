@@ -551,8 +551,9 @@ async function fileUserConfirmed(ctx) {
       ],
     }),
   );
-  if (retry) throw new Error("SF311 filing failed; retry from checkpoint");
   if (!filed) {
+    // Logged on every failed attempt, retried or not, so the reason HUB gave
+    // is visible next to the worker's generic retry error.
     logServerError(
       "task app-action create_311_ticket",
       new Error(String(filing?.reason ?? "app action failed")),
@@ -565,8 +566,16 @@ async function fileUserConfirmed(ctx) {
           trigger: "user_confirmed",
           completionMethod: "311_filed",
           attempt: ctx.attempt,
+          willRetry: retry,
+          ...(filing?.diagnostics?.status
+            ? { sf311Status: filing.diagnostics.status }
+            : {}),
+          ...(filing?.diagnostics?.code
+            ? { sf311Code: filing.diagnostics.code }
+            : {}),
         },
       },
     );
   }
+  if (retry) throw new Error("SF311 filing failed; retry from checkpoint");
 }

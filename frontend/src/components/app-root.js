@@ -6,7 +6,7 @@ import { startPhoneCompletionRecovery } from "../services/phone-completion.js";
 
   Routes → views: /today → today-view, /check → perimeter-check, /problem →
   problem-report, /check/describe + /problem/describe → describe-instead,
-  /site-admin* and /reports* → lazily loaded manager-only screens.
+  Capture flows and manager-only screens load their modules on navigation.
   Setup (device→site binding) is retained and gates everything. There is no
   per-site places setup any more (docs/plan-remove-places.md): a bound device
   lands straight on home.
@@ -538,8 +538,25 @@ export class AppRoot extends HTMLElement {
       navigate("/today");
       return;
     }
+    const match = ROUTE_VIEW.find(([prefix]) => route.startsWith(prefix));
+    const tag = match ? match[1] : "today-view";
     const lazy = [
       [route === "/help", "support-view", () => import("./support-view.js")],
+      [
+        tag === "describe-instead",
+        "describe-instead",
+        () => import("./describe-instead.js"),
+      ],
+      [
+        tag === "perimeter-check",
+        "perimeter-check",
+        () => import("./perimeter-check.js"),
+      ],
+      [
+        tag === "problem-report",
+        "problem-report",
+        () => import("./problem-report.js"),
+      ],
       [
         route.startsWith("/site-admin") || route.startsWith("/manage-access"),
         "site-admin-view",
@@ -565,8 +582,6 @@ export class AppRoot extends HTMLElement {
       this._loadRoute(route, lazy[2]);
       return;
     }
-    const match = ROUTE_VIEW.find(([prefix]) => route.startsWith(prefix));
-    const tag = match ? match[1] : "today-view";
     // Every screen owns its own header now (design port): the home hub has its
     // site header, and each flow screen has a .topbar. So the shell chrome stays
     // hidden throughout — the shell is just the routing container.

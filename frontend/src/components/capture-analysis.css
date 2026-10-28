@@ -80,12 +80,6 @@
   flex: 0 0 20px;
   color: var(--wa-color-neutral-fill-normal);
 }
-.capture-label__skeleton {
-  width: 120px;
-  height: 19px;
-  border-radius: var(--radius-pill);
-  background: var(--wa-color-neutral-fill-quiet);
-}
 .capture-category-icon {
   position: relative;
   width: 20px;

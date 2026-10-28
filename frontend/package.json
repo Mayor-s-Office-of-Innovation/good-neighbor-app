@@ -72,6 +72,24 @@
       "limit": "2 kB"
     },
     {
+      "name": "capture routes js",
+      "path": [
+        "dist/assets/perimeter-check*.js",
+        "dist/assets/problem-report*.js",
+        "dist/assets/describe-instead*.js"
+      ],
+      "limit": "12 kB"
+    },
+    {
+      "name": "capture routes css",
+      "path": [
+        "dist/assets/perimeter-check*.css",
+        "dist/assets/problem-report*.css",
+        "dist/assets/describe-instead*.css"
+      ],
+      "limit": "4 kB"
+    },
+    {
       "name": "artifact photo js",
       "path": "dist/assets/artifact-photo-*.js",
       "limit": "1.5 kB"

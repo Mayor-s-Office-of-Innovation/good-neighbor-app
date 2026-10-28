@@ -302,12 +302,30 @@ function problemDescriptionForTask(task) {
 }
 
 /**
+ * `Number(null)` and `Number("")` are 0, so blanks must be rejected first.
  * @param {unknown} value
  * @returns {number | null}
  */
 function finiteNumber(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" && !value.trim()) return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+/**
+ * A usable point, or null. 0,0 is the analyzer's placeholder for a photo
+ * without device location, never a real place to send a 311 crew.
+ * @param {Record<string, unknown>} item
+ * @returns {{ latitude: number, longitude: number } | null}
+ */
+function coordinates(item) {
+  const latitude = finiteNumber(item.latitude ?? item.Latitude);
+  const longitude = finiteNumber(item.longitude ?? item.Longitude);
+  if (latitude === null || longitude === null) return null;
+  if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
+  if (latitude === 0 && longitude === 0) return null;
+  return { latitude, longitude };
 }
 
 /**
@@ -322,10 +340,10 @@ function locationFromTask(task) {
   ];
   for (const source of sources) {
     if (!source || typeof source !== "object") continue;
-    const item = /** @type {Record<string, unknown>} */ (source);
-    const latitude = finiteNumber(item.latitude ?? item.Latitude);
-    const longitude = finiteNumber(item.longitude ?? item.Longitude);
-    if (latitude !== null && longitude !== null) return { latitude, longitude };
+    const location = coordinates(
+      /** @type {Record<string, unknown>} */ (source),
+    );
+    if (location) return location;
   }
   return null;
 }
@@ -349,14 +367,10 @@ async function resolveLocation({ tableName, siteId, task }) {
     }),
   );
   const location =
-    site.Item && typeof site.Item.location === "object"
+    site.Item?.location && typeof site.Item.location === "object"
       ? /** @type {Record<string, unknown>} */ (site.Item.location)
       : {};
-  const latitude = finiteNumber(location.latitude);
-  const longitude = finiteNumber(location.longitude);
-  return latitude !== null && longitude !== null
-    ? { latitude, longitude }
-    : null;
+  return coordinates(location);
 }
 
 /**
@@ -776,7 +790,32 @@ async function execute311Action({
           }),
         );
       }
-      const response = await sf311.createServiceRequest(payload);
+      let response;
+      try {
+        response = await sf311.createServiceRequest(payload);
+      } catch (error) {
+        // HUB answered and created nothing. Durably replacing the pending
+        // checkpoint before rethrowing lets the next attempt file again, even
+        // if this run stops before the caller records its result.
+        if (onCheckpoint && isCreateSrRejection(error)) {
+          tickets.push({
+            serviceCode,
+            responsibleAgency,
+            sourceRequestId: payload.SourceRequestID,
+            creationState: "rejected",
+          });
+          await onCheckpoint(
+            build311ActionResult({
+              action,
+              status: "partial",
+              reason: "creation_rejected",
+              recordedAt: now,
+              tickets,
+            }),
+          );
+        }
+        throw error;
+      }
       if (onCheckpoint)
         await onCheckpoint(
           build311ActionResult({
@@ -876,6 +915,23 @@ async function execute311Action({
     recordedAt: now,
     tickets,
   });
+}
+
+/**
+ * CreateSR got a definite "no" from HUB (a non-zero return code or a 4xx), so
+ * no SR exists. Timeouts, network errors, 5xx and a missing SRNum stay
+ * uncertain: HUB may have created the SR.
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+function isCreateSrRejection(error) {
+  return (
+    error instanceof Sf311Error &&
+    error.code !== "sf311_timeout" &&
+    error.code !== "missing_srnum" &&
+    typeof error.status === "number" &&
+    error.status < 500
+  );
 }
 
 /**

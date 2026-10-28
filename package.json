@@ -10,6 +10,8 @@
     "e2e"
   ],
   "scripts": {
+    "postinstall": "npm run setup:hooks",
+    "setup:hooks": "node scripts/setup-hooks.mjs",
     "build": "npm run build --workspaces --if-present",
     "format": "prettier . --write",
     "format:check": "prettier . --check",

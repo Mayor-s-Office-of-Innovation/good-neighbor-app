@@ -267,3 +267,22 @@ A browser trace is needed to count the exact icons and other page assets.
 - [Duplicate route](../backend/src/handlers/duplicate-links.js), [duplicate reads](../backend/src/analysis/duplicates/links.js), and [access checks](../backend/src/lambda/authorizer.js).
 - [PostHog](../backend/src/handlers/event-forwarder.js) and [SF311](../backend/src/integrations/sf311-client.js).
 - [Location](../frontend/src/services/device-location.js) and [iOS handoff](../frontend/src/services/session-handoff.js).
+
+
+## Returning to the app
+
+On return to a visible Today page, or when switching tabs, the app checks the
+age of the task data needed by the selected tab. Lists fetched successfully
+within five minutes are reused. Older lists refresh without reloading provider
+data or check lists. Overlapping return events share in-flight requests. This
+adds no periodic timer and does not change the initial-load counts above.
+
+To-do needs open tasks. In-progress also needs completing and completed tasks,
+because completed 311 filings can still be in progress. History needs all five
+statuses because expired open and in-progress tasks can appear there. Only stale
+status lists are fetched. Unchanged task IDs retain their duplicate watch.
+
+The current list stays visible, with “Checking for updates…” after a short
+delay. Open dialogs hold the new list display until they close. Failed reads
+keep the old list and remain stale for a later return. Closing unchanged task
+history no longer fetches lists; saves and resolutions still refresh Home.
