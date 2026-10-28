@@ -37,7 +37,7 @@ export const handler = async (event) => {
   // Resolve manager invitations without consuming them. The normal login submit
   // redeems the grant, retaining its provider/site scope and single-use rules.
   if (/^[A-Z0-9]{6}$/.test(code)) {
-    const limited = await checkCodeAttemptLimit();
+    const limited = await checkCodeAttemptLimit(undefined, "lookup");
     if (limited) return limited;
     const hash = await enrollmentCodeVerifier(code);
     const { Item } = await ddb.send(

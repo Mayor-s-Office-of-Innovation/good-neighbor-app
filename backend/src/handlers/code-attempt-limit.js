@@ -3,15 +3,22 @@ import { ddb } from "../db.js";
 import { getDynamoTableName } from "../config.js";
 import { jsonResponse } from "../http.js";
 
-// One budget across both public short-code endpoints, including direct-origin
+// One budget across lookup, enrollment and device registration, including direct-origin
 // requests. Never trust forwarded IP headers or key this by a guessed code.
 const WINDOWS = [
-  { seconds: 300, limit: 300 },
-  { seconds: 86400, limit: 3000 },
+  { seconds: 300, limit: 1000 },
+  { seconds: 86400, limit: 10000 },
 ];
 
-/** @param {number} [now] @returns {Promise<import("aws-lambda").APIGatewayProxyResult | null>} */
-export async function checkCodeAttemptLimit(now = Date.now()) {
+/**
+ * @param {number} [now]
+ * @param {"lookup" | "redeem" | "register" | "unspecified"} [source]
+ * @returns {Promise<import("aws-lambda").APIGatewayProxyResult | null>} Budget rejection, or admission.
+ */
+export async function checkCodeAttemptLimit(
+  now = Date.now(),
+  source = "unspecified",
+) {
   const seconds = Math.floor(now / 1000);
   const windows = WINDOWS.map((window) => ({
     ...window,
@@ -39,6 +46,15 @@ export async function checkCodeAttemptLimit(now = Date.now()) {
         })),
       }),
     );
+    // Admission counts requests, not successful authentication. Only fixed
+    // route labels and budget outcomes are logged, never submitted credentials.
+    console.info(
+      JSON.stringify({
+        marker: "ShortCodeAttempt",
+        source,
+        outcome: "admitted",
+      }),
+    );
     return null;
   } catch (error) {
     const reasons = /** @type {{CancellationReasons?: {Code?: string}[]}} */ (
@@ -48,8 +64,16 @@ export async function checkCodeAttemptLimit(now = Date.now()) {
       !(error instanceof Error) ||
       error.name !== "TransactionCanceledException" ||
       !reasons?.some((reason) => reason.Code === "ConditionalCheckFailed")
-    )
+    ) {
+      console.warn(
+        JSON.stringify({
+          marker: "ShortCodeAttempt",
+          source,
+          outcome: "store_error",
+        }),
+      );
       throw error;
+    }
     const retryAfter = Math.max(
       ...windows.map((window, index) =>
         reasons[index]?.Code === "ConditionalCheckFailed"
@@ -57,7 +81,9 @@ export async function checkCodeAttemptLimit(now = Date.now()) {
           : 0,
       ),
     );
-    console.info(JSON.stringify({ marker: "ShortCodeThrottled", retryAfter }));
+    console.info(
+      JSON.stringify({ marker: "ShortCodeThrottled", source, retryAfter }),
+    );
     const response = jsonResponse(429, { error: "code_attempts_limited" });
     response.headers = {
       ...response.headers,

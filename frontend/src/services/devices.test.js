@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "./api-error.js";
 import {
+  registerDevice,
   redeemEnrollmentGrant,
   redeemHandoffGrant,
   refreshDeviceToken,
@@ -215,4 +216,17 @@ describe("redeemHandoffGrant", () => {
       status: 503,
     });
   });
+});
+
+it("preserves registration throttling as a typed 429 even for a WAF response", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 429 }));
+  try {
+    await expect(registerDevice("ABC123")).rejects.toMatchObject({
+      name: "ApiError",
+      status: 429,
+      body: { error: "code_attempts_limited" },
+    });
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

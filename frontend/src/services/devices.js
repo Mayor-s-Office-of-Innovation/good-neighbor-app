@@ -57,6 +57,12 @@ export async function registerDevice(code, opts = {}) {
       ...(opts.label ? { label: opts.label } : {}),
     }),
   });
+  if (res.status === 429) {
+    throw new ApiError("Device registration rate limited", {
+      status: 429,
+      body: { error: "code_attempts_limited" },
+    });
+  }
   if (res.status === 401 || res.status === 404) {
     throw new InvalidSiteCodeError(res.status);
   }

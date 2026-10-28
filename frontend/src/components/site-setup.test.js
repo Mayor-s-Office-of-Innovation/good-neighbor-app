@@ -519,3 +519,24 @@ it("shows the translated wait message for throttled code redemption", async () =
   expect(component._error).toBe(t("setup.enrollment.limited"));
   expect(setup.setSite).not.toHaveBeenCalled();
 });
+
+it("shows the translated wait message when registration is throttled after successful lookup", async () => {
+  setup.validateSetupCode.mockResolvedValue({
+    ok: true,
+    code: "ABC123",
+    providerSite: { siteId: "site-2", name: "Synthetic site" },
+  });
+  setup.registerDevice.mockRejectedValue(
+    Object.assign(new Error("limited"), { status: 429 }),
+  );
+  const component = new SiteSetup();
+  component._otp = { value: "ABC123" };
+  component._checking = false;
+  component._validationGeneration = 0;
+  component._cancelled = false;
+  component._render = vi.fn();
+  await component._validate();
+  expect(component._checking).toBe(false);
+  expect(component._error).toBe(t("setup.enrollment.limited"));
+  expect(setup.setSite).not.toHaveBeenCalled();
+});

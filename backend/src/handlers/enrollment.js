@@ -49,7 +49,7 @@ export const redeemEnrollmentGrant = async (event) => {
   }
 
   if (code) {
-    const limited = await checkCodeAttemptLimit();
+    const limited = await checkCodeAttemptLimit(undefined, "redeem");
     if (limited) return limited;
   }
 

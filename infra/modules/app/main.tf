@@ -1641,8 +1641,9 @@ resource "aws_wafv2_web_acl" "web" {
     }
   }
 
-  # Share a viewer-IP budget across short-code lookup and enrollment. The
-  # application also caps attempts globally to cover distributed/direct-origin traffic.
+  # Share a viewer-IP budget across lookup and all enrollment redemptions
+  # (including long-token links). Application budgets cover short-code lookup,
+  # redemption and device registration, including direct-origin requests.
   rule {
     name     = "EnrollmentCodeRateLimit"
     priority = 9
@@ -1661,7 +1662,7 @@ resource "aws_wafv2_web_acl" "web" {
     statement {
       rate_based_statement {
         aggregate_key_type = "IP"
-        limit              = 60
+        limit              = 300
         scope_down_statement {
           or_statement {
             statement {

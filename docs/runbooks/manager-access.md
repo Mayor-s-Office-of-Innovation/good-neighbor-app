@@ -140,23 +140,39 @@ change before scanning tests are meaningful.
 
 ### Short-code abuse controls
 
-Both `/site-code` and manual-code submissions to `/app/v1/enrollment/redeem`
-consume the same atomic DynamoDB budget before any credential lookup: 300 attempts
-per five-minute UTC window and 3,000 per UTC day, per environment. Successful
-lookups and redemptions count too (a normal manager login consumes two attempts).
+`/site-code`, manual-code submissions to `/app/v1/enrollment/redeem`, and setup-code
+registration at `/v1/devices` consume the same atomic DynamoDB budget before any credential lookup: 1,000 attempts
+per five-minute UTC window and 10,000 per UTC day, per environment. Successful
+lookups, redemptions and registrations count too (a normal lookup plus enrollment or
+registration consumes two attempts). Token refresh and long-token redemption do not spend
+this application budget. Malformed inputs are rejected before credential resolution.
 The counters have numeric TTLs; window keys, not TTL deletion timing, control resets.
 This global cap also covers distributed guesses and requests sent directly to API Gateway.
 No counter is tied to an invitation or to a caller-supplied IP header.
 
-CloudFront WAF additionally shares a 60-request/five-minute viewer-IP limit across
-both paths. This edge rule includes link redemption, while the application budget
-applies only to short codes. Infrastructure changes deploy through CI.
+CloudFront WAF additionally shares a 300-request/five-minute viewer-IP limit across
+`/site-code` and `/app/v1/enrollment/redeem`. This edge rule includes link redemption,
+while the application budget applies only to short codes. Setup-code registration
+uses the separate device-auth WAF rule. Infrastructure changes deploy through CI.
 
 Exhausted application budgets return 429 with `Retry-After`, a localized wait message,
 and a `ShortCodeThrottled` log event without credentials. During an attack, the global
 cap can temporarily prevent all code logins until the window resets; full-token
 invitations remain outside that application cap. Investigate sustained throttling
 before raising limits. Storage failures fail closed before code resolution.
+`ShortCodeAttempt` records only a fixed route label (`lookup`, `redeem`, `register`) and
+budget outcome (`admitted`, `store_error`). Admission is not successful authentication.
+`ShortCodeThrottled` includes the route label and retry delay. No credentials or caller-supplied
+IP headers are logged by these events.
+
+The windows are fixed: traffic can consume allowances immediately before and after a
+boundary. Manual short-code enrollment uses two requests through the enrollment WAF
+rule: the edge allowance permits roughly 150 enrollments per shared IP per five minutes.
+Setup-code login uses one lookup under that rule and one registration under the separate
+device-auth rule. Both flows consume two application attempts, allowing roughly 500 logins
+across the environment per five-minute window, before retries or invalid attempts. Raising the global budget increases the
+permitted guessing allowance; it does not preserve the previous numerical allowance.
+
 
 ## Invitations created in Manage access
 

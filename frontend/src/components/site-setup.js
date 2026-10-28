@@ -447,6 +447,12 @@ export class SiteSetup extends HTMLElement {
       session = await registerDevice(result.code);
       if (this._cancelled || generation !== this._validationGeneration) return;
     } catch (err) {
+      if (err?.status === 429) {
+        this._checking = false;
+        this._error = t("setup.enrollment.limited");
+        this._render();
+        return;
+      }
       if (err instanceof Error && err.name === "InvalidSiteCodeError") {
         this._checking = false;
         this._error = t("setup.error.invalidCode");
