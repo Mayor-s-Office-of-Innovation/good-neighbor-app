@@ -206,7 +206,12 @@ describe("historical entity filtering over Parquet", () => {
     [
       "conditions",
       "SITE#s1",
-      ["ASSESSMENT#as1#COND#c1"],
+      [
+        "ASSESSMENT#as1#COND#c1",
+        "ASSESSMENT#as1#COND#c1#extra",
+        "ASSESSMENT#as1#COND##",
+        "ASSESSMENT#as1#COND#c1\n#extra",
+      ],
       ["ASSESSMENT#as1#FUTURE#COND#c1"],
     ],
     ["devices", "SITE#s1", ["DEVICE#d1"], ["DEVICE#d1#SESSION#s1"]],

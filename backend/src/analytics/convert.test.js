@@ -191,6 +191,7 @@ describe("parseExportFile", () => {
         "CHECK#c1#ANALYSIS#a1",
         "ASSESSMENT#as1",
         "ASSESSMENT#as1#COND#c1",
+        "ASSESSMENT#as1#COND#c1#extra",
         "ASSESSMENT#as1#FUTURE#x",
         "DEVICE#d1",
         "DEVICE#d1#SESSION#s1",
@@ -218,7 +219,7 @@ describe("parseExportFile", () => {
         artifacts: ["CHECK#c1#ART#a1", "CHECK#c1#ART#legacy-place#a2"],
         analyses: ["CHECK#c1#ANALYSIS#a1"],
         assessments: ["ASSESSMENT#as1"],
-        conditions: ["ASSESSMENT#as1#COND#c1"],
+        conditions: ["ASSESSMENT#as1#COND#c1", "ASSESSMENT#as1#COND#c1#extra"],
         devices: ["DEVICE#d1"],
       });
     },

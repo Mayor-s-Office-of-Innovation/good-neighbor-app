@@ -7,7 +7,9 @@
 export const ENTITY_KEY_SHAPES = {
   checks: { pk: "SITE#[^#]+", sk: "CHECK#[^#]+" },
   tasks: { pk: "SITE#[^#]+", sk: "TASK#[^#]+" },
-  conditions: { pk: "SITE#[^#]+", sk: "ASSESSMENT#[^#]+#COND#[^#]+" },
+  // Submitted condition IDs are stored verbatim, including # and whitespace.
+  // Everything after #COND# is the condition ID, not an operational child.
+  conditions: { pk: "SITE#[^#]+", sk: "ASSESSMENT#[^#]+#COND#[\\s\\S]+" },
   assessments: { pk: "SITE#[^#]+", sk: "ASSESSMENT#[^#]+" },
   // Pre-photo-roll artifacts include a place ID before their artifact ID.
   artifacts: { pk: "SITE#[^#]+", sk: "CHECK#[^#]+#ART#[^#]+(#[^#]+)?" },
