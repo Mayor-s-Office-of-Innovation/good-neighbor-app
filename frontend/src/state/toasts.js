@@ -12,6 +12,7 @@
  * @property {boolean} [focusAction]
  */
 import { t } from "../i18n/i18n.js";
+import { getHealthState } from "../services/backend-health.js";
 import {
   filing311State,
   submitted311ServiceRequestNumber,
@@ -324,7 +325,13 @@ export function showSiteSwitchErrorToast() {
   });
 }
 
+/**
+ * Skipped while the API is unreachable: the outage already has its own
+ * "You're offline" toast (connection-status.js), and every home load would
+ * otherwise add a second error for the same cause. Returns null when skipped.
+ */
 export function showSiteCatalogErrorToast() {
+  if (getHealthState() === "outage") return null;
   return showToast({
     title: t("toast.siteCatalogError.title"),
     message: t("toast.siteCatalogError.message"),
