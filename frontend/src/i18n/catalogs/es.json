@@ -39,6 +39,7 @@
   "access.session.status.suspended": "Suspendida",
   "access.sessions": "Sesiones",
   "access.share": "Compartir enlace de inscripción",
+  "access.shareMessage": "El administrador de su sitio le invitó a Good Neighbor. Abra este enlace en el teléfono que usará para la aplicación. Solo se puede usar una vez y vence después de 8 horas.",
   "access.site": "este sitio",
   "access.siteHeading": "Invitar a alguien a {site}",
   "access.title": "Administrar acceso",

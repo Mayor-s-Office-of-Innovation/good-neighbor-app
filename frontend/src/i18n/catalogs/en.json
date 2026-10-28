@@ -39,6 +39,7 @@
   "access.session.status.suspended": "Suspended",
   "access.sessions": "Sessions",
   "access.share": "Share enrollment link",
+  "access.shareMessage": "Your site manager invited you to Good Neighbor. Open this link on the phone you’ll use for the app. It works once and expires after 8 hours.",
   "access.site": "this Site",
   "access.siteHeading": "Invite someone to {site}",
   "access.title": "Manage access",

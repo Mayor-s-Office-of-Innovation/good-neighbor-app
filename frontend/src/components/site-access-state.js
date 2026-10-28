@@ -126,16 +126,19 @@ export function observeAccess(view) {
 
 /** @param {{ enrollmentUrl: string }} grant */
 export async function shareGrant(grant) {
+  const text = t("access.shareMessage");
   if (navigator.share) {
     try {
       await navigator.share({
         title: t("access.title"),
+        text,
         url: grant.enrollmentUrl,
       });
     } catch {
       /* Dismissing the share sheet keeps the link available. */
     }
-  } else await navigator.clipboard.writeText(grant.enrollmentUrl);
+  } else
+    await navigator.clipboard.writeText(`${text}\n\n${grant.enrollmentUrl}`);
 }
 
 /** @param {HTMLElement} view */
