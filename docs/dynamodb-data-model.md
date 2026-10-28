@@ -4,7 +4,7 @@
 
 **Status:** Current code model. Verify deployment and migration state per environment.
 **Reviewed:** 2026-10-28 against `151a7d76` for storage, indexing, and lifecycle behavior.
-**Date:** 2026-08-12 · updated 2026-09-04 for the built state · 2026-09-21 for the photo roll ([ADR 0014](./adr/0014-remove-places-photo-roll.md)) · 2026-10-01 to match the deployed authorizers, UUID IDs, provider and setup-code items, GSI6–7, and the analytics tier status · 2026-10-13 for the GSI1 task and update partitions behind the site manager reports (AP27, AP28) · 2026-10-14 for public complaints
+**Date:** 2026-08-12 · updated 2026-09-04 for the built state · 2026-09-21 for the photo roll ([ADR 0014](./adr/0014-remove-places-photo-roll.md)) · 2026-10-01 to match the deployed authorizers, UUID IDs, provider and setup-code items, GSI6–7, and the analytics tier status · 2026-10-13 for the GSI1 task and update partitions behind the site manager reports (AP27, AP28) · 2026-10-14 for public complaints · 2026-10-28 for GSI3 (the compliance-terms expiry sweep)
 
 ## What this document is
 
@@ -81,8 +81,10 @@ empty tables also require this initialization. See [the backfill runbook](runboo
 ## Facts that shape the model
 
 1. **The city needs one queue of escalations across all sites.** This is the only
-   cross-site read we planned for. It would use GSI3. GSI3 is deferred past MVP. It is
-   sparse, so we can add it later without rebuilding the table.
+   cross-site read we planned for. It would be a sparse partition on GSI3, the
+   cross-site index that now exists for the compliance-terms expiry sweep. The
+   escalation partition itself is deferred past MVP; items that set its keys can be
+   added later without rebuilding the table.
 2. **Staff are anonymous.** A check is attributed to the site and the device, never to a
    person. See [Identity model](#identity-model).
 3. **Photos live in S3, not DynamoDB.** Items store the S3 key. See R4.
@@ -230,7 +232,7 @@ as task update events and every GSI sort key.
 | Provider Manager enrollment grant | `PROVIDER#<providerId>` | `PROVIDER_MANAGER_GRANT#<createdAt>#<grantId>` | 24-hour, single-use provider-scoped grant issued by a Compliance Supervisor. It snapshots the membership generation but resolves active Sites at redemption. Stores only the token verifier and aggregate Site/delivery evidence. |
 | Current Provider Manager grant guard | `PROVIDER#<providerId>` | `PROVIDER_MANAGER_GRANT_CURRENT#<membershipId>` | Conditional singleton for one unexpired provider grant per membership. Redemption, cancellation, or replacement removes or changes the matching pointer atomically. |
 | Provider Manager enrollment | `PROVIDER#<providerId>` | `PROVIDER_MANAGER_ENROLLMENT#<enrollmentId>` | Directly addressable root lifecycle record for one physical device's all-or-nothing provider redemption. Stores the membership generation and up to 21 Site/binding pointers so a Supervisor can revoke every still-active projection in one transaction. List responses derive active/partial/revoked state from the authoritative physical-device and binding rows. |
-| Perimeter-check compliance period | `SITE#<siteId>` | `COMPLIANCE_TERMS#<effectiveStart>#<versionId>` | Immutable effective-dated period containing one or more reason codes, integer checks/day (1–8), a snapshotted `underEnhancedMonitoring` boolean (reason 6 only), and a snapshot of the selected Site manager plus the authenticated generator. The generator—not a client-nominated manager—appears as sender; Compliance managers must be assigned to the Site while supervisors may generate for any Site. Generator phone is required. Start is the server's current Pacific date; the user-facing end date is inclusive and is stored with an exclusive boundary. Reasons 1 or 6 require an end date. Missing expiry means indefinite. |
+| Perimeter-check compliance period | `SITE#<siteId>` | `COMPLIANCE_TERMS#<effectiveStart>#<versionId>` | Immutable effective-dated period containing one or more reason codes, integer checks/day (1–8), a snapshotted `underEnhancedMonitoring` boolean (reason 6 only), and a snapshot of the selected Site manager plus the authenticated generator. The generator—not a client-nominated manager—appears as sender; Compliance managers must be assigned to the Site while supervisors may generate for any Site. Generator phone is required. Start is the server's current Pacific date; the user-facing end date is inclusive and is stored with an exclusive boundary. Reasons 1 or 6 require an end date. Missing expiry means indefinite. A version with an end date carries GSI3 keys (`COMPLIANCE_TERMS#OPEN` / `<expiresOnExclusive>#<siteId>#<versionId>`) until it ends or is superseded. |
 | SF311 job | `SITE#<siteId>` | `SF311_JOB#<taskId>#<phase>` | `SF311_OUTBOX`, committed with task creation, action override, resolution, or a "File 311 ticket" tap (phase `filed-<id>`, `trigger: "user_confirmed"`, `actorId`). Streams dispatches to SQS; status tracks pending/dispatched/retry/complete/failed and results retain ticket checkpoints. |
 | SF311 worker state | `SITE#<siteId>` | `SF311_LOCK#<taskId>` | Expiring worker lease plus durable integration results shared across jobs. Separate from task snapshots so foreground updates cannot erase a filing checkpoint. |
 | Compliance-letter generation job | `SITE#<siteId>` | `LETTER_JOB#<createdAt>#<jobId>` | Transactional outbox item (`COMPLIANCE_LETTER_OUTBOX`) created with a perimeter-check period. DynamoDB Streams dispatches it to SQS; the worker renders the PDF, stores it in S3, and advances the Site letter state idempotently. |
@@ -384,7 +386,7 @@ grade without reading its `ANALYSIS#` items. Raw per-artifact output stays in th
 |---|---|---|---|---|---|
 | **GSI1** timelines | entity-specific partitions per site: `SITE#<siteId>`, `SITE#<siteId>#ASSESSMENT`, `SITE#<siteId>#TASK`, `SITE#<siteId>#UPDATE`, `SITE#<siteId>#COMPLAINTS`, `SITE#<siteId>#CARE_WORK` | `<startedAt ISO>` (checks) / `<reportedAt>#<assessmentId>` (assessments) / `<createdAt>#<taskId>` (tasks) / `<occurredAt>#<updateId>` (task update events) / `<createdAt>#<complaintId>` (complaints) / `<createdAt>#<workId>` (care logs) | check headers, assessment reports, tasks, task update events, submitted complaints, care logs | checks timeline (AP6, AP12), assessments timeline (AP14), site manager reports (AP27, AP28), complaints, and care-log lists. Each partition holds one entity type; the task and update partitions are stamped at creation and re-derived on every full-item re-put (`taskTimelineGsiFor`), so they sort by when things happened, not by status, a legacy task is stamped on its next transition, and a backfilled stamp survives a re-put from an older snapshot. | built |
 | **GSI2** site worklist | `SITE#<siteId>#TASK#<status>` | `<worklist timestamp>#<kind>#<severity>#<taskId>` (creation initially; transitions can restamp it) | tasks | staff's open tasks, newest first. The app re-sorts each page by severity. See AP10. | built |
-| **GSI3** city queue | `ESCALATION#<status>` | `<severity>#<createdAt>#<siteId>` | `city_escalation` tasks only | cross-site escalation queue for the city | **deferred post-MVP**. Sparse, so it can be added with no rebuild. |
+| **GSI3** cross-site sparse queues | one partition per entity type. Built: `COMPLIANCE_TERMS#OPEN`. Designed, not stamped: `ESCALATION#<status>` | `<expiresOnExclusive>#<siteId>#<termsVersionId>` (terms) / `<severity>#<createdAt>#<siteId>` (escalations) | each site's latest open compliance-terms version that has an end date. Stamped at creation and removed when the version ends or is superseded (`complianceTermsExpiryGsi`), so the partition holds at most one small item per site. | the scheduled expiry sweep (AP39): one query bounded by today's Pacific date instead of a table scan. The city escalation queue (AP11) would be a second sparse partition on the same index. | built 2026-10-28 (terms partition); escalation partition **deferred post-MVP** |
 | **GSI4** condition history | `SITE#<siteId>#CONDITION#SEV#<severity>` | `<reportedAt>#<assessmentId>#<conditionId>` | conditions | list conditions by site, date, and severity | built, **no reader** (reviewed 2026-10-13; removal planned as a cleanup step once the site manager reports ship) |
 | **GSI5** unresolved conditions | `SITE#<siteId>#CONDITION#UNRESOLVED` | `<reportedAt>#SEV#<severity>#<assessmentId>#<conditionId>` | unresolved conditions only | list conditions not yet turned into tasks (AP16) | built, **no reader** (AP16 was never implemented; same cleanup plan as GSI4) |
 | **GSI6** pending codes by contact | `SETUP_CODE_PENDING#<siteId>#<contactHash>` | `<createdAt>` | `pending` setup codes only. Keys are removed on use or revoke. | cancel a contact's old code when they ask for a new one (AP21) | built |
@@ -393,8 +395,9 @@ grade without reading its `ANALYSIS#` items. Raw per-artifact output stays in th
 ## Access patterns
 
 Interactive access uses keyed reads and queries, often several paginated reads or
-conditional transactions per operation. Maintenance/backfill scripts and the scheduled
-compliance-terms expiry worker also use scans; the application is not scan-free.
+conditional transactions per operation. Maintenance/backfill scripts still scan the
+table; no request path or scheduled worker does. The compliance-terms expiry sweep
+reads the sparse GSI3 partition instead (AP39).
 
 | # | Pattern | Operation |
 |---|---|---|
@@ -410,7 +413,7 @@ compliance-terms expiry worker also use scans; the application is not scan-free.
 | AP8a | Amend or reject one analyzed condition | consistent `GetItem` of `SITE#x` / `CHECK#<checkId>#ANALYSIS#<artifactId>`, then an analyzer call and guidance publication or rejected-condition task retirement. Explicit rejection also uses an `ISSUE_DELETION#` attempt/confirmation journal. An amendment alone does not retire tasks before guidance publication succeeds. Routes use `checkId` + `artifactId`, which is the item's key. The analyzer's `analysisId` is an attribute on the item. The client never supplies it. |
 | AP9 | Create tasks | `TransactWrite` of the tasks |
 | AP10 | Staff worklist (open tasks) | `Query` **GSI2** `SITE#x#TASK#open`, newest first. The app re-sorts each page most-severe first. The key is date-first, so severity order holds within a page only. A severity-first index is deferred. |
-| AP11 | City escalation queue, all sites | `Query` **GSI3** `ESCALATION#open`. Post-MVP; GSI3 is not built. |
+| AP11 | City escalation queue, all sites | `Query` **GSI3** `ESCALATION#open`. Post-MVP; the index exists (AP39) but nothing stamps the escalation partition yet. |
 | AP12 | Compliance: were there N checks on date D? | `Query` **GSI1** `SITE#x` for the Pacific day's instant range and count completed perimeter headers. Served by AP27 for whole periods. |
 | AP13 | Cross-site analytics | **not native**. See R2. |
 | AP14 | List assessments by site and date | `Query` **GSI1** `SITE#x#ASSESSMENT` (assessments partition), sort-key date range, newest first |
@@ -440,6 +443,7 @@ compliance-terms expiry worker also use scans; the application is not scan-free.
 | AP36 | Suspend one Site binding | Consistently read the canonical binding, then atomically advance its token generation and mark the canonical, compatibility, and physical-pointer projections suspended with a bounded reason plus a Site audit event. A bounded legacy fallback updates the legacy Device row. Re-enrollment consumes a new single-Site grant and creates a new binding; it never reactivates the suspended row. |
 | AP37 | Manage oversight dropdown directories | Query the bounded `ADMIN_DIRECTORY#OVERSIGHT` partition. Supervisors conditionally create normalized department/system rows. Compliance-manager identities live in `ADMIN_DIRECTORY#PROGRAM_MANAGERS` in every environment so CSV imports can precede Cognito provisioning and later link by normalized email. |
 | AP38 | Manage and enroll Provider Managers | A Compliance Supervisor queries `PROVIDER_MANAGER#`, `PROVIDER_MANAGER_GRANT#`, and `PROVIDER_MANAGER_ENROLLMENT#` rows in one Provider partition. Grant issuance rejects more than 21 active `SITE#` relationships. Redemption re-queries active Sites and uses one transaction to consume the link, recheck Provider/membership/Site authority, and create every canonical, compatibility, and physical-pointer projection. Authorization and refresh recheck both the membership generation and each Site's current `providerId`. |
+| AP39 | Scheduled compliance-terms expiry | Every 15 minutes the worker queries **GSI3** `COMPLIANCE_TERMS#OPEN` with `gsi3sk < <tomorrow's Pacific day key>`, consistently re-reads each Site's `#META`, and closes only the version that is still the Site's latest (the same transaction as a manual end; see [Perimeter requirement notifications](#perimeter-requirement-notifications)). Versions without an end date are never in the index; closed and superseded versions leave it, so the query is bounded by the number of Sites, not by table size. |
 
 The manager Checks UI uses recorded counts rather than compliance status: 3+,
 1–2, or zero completed check records per day (including single-issue reports).
@@ -491,7 +495,8 @@ recording `actionOverride`. `type` itself has no dedicated index.
 - **In MVP:** the classification logic and the per-site worklist (GSI2, AP10).
 - **Built:** 311 integration and its task-linked outbox/worker checkpoints, gated by
   environment configuration.
-- **Deferred:** the GSI3 cross-site city queue (AP11); no GSI3 is provisioned.
+- **Deferred:** the cross-site city queue (AP11). GSI3 itself is provisioned for the
+  expiry sweep; nothing stamps the escalation partition yet.
 
 ## Scale
 
@@ -635,7 +640,7 @@ migration cost.
 
 | # | Limitation | Status | Mitigation |
 |---|---|---|---|
-| **R1** | The city needs a **cross-site** view, which breaks per-site partitioning | Deferred post-MVP | GSI3 collects `city_escalation` tasks across sites. Toxic escalations are rare, so the `ESCALATION#open` partition stays small. Shard the key later only if volume demands it. |
+| **R1** | The city needs a **cross-site** view, which breaks per-site partitioning | Deferred post-MVP | A sparse `ESCALATION#<status>` partition on GSI3 (the index already built for the expiry sweep) would collect `city_escalation` tasks across sites. Toxic escalations are rare, so the `ESCALATION#open` partition stays small. Shard the key later only if volume demands it. |
 | **R2** | **Cross-site analytics** for city-wide reports. See [City-wide reporting](#city-wide-reporting-and-analytics). | Tier 2 built; Tier 1 deferred post-MVP | The Tier 2 lake (S3 export → Parquet → DuckDB, [ADR 0013](./adr/0013-analytics-read-plane.md)) serves the admin analytics routes today. Tier 1 live counters (Streams → counter items) are design only. Cheap at this volume. |
 | **R3** | Detecting a **missing** check (a site did fewer than N today). You cannot query for something that was never written. | Per site: built (AP27). Cross-site: not built | Per site, the manager reports derive the gap at read time: one GSI1 range query per period, counted per Pacific day against the site's own `requiredChecksPerDay`. A cross-site sweep (EventBridge over the site registry) is still the design for city-wide alerting; the daily Tier 2 lake report answers it after the fact today, in UTC days. |
 | **R4** | Photos/audio exceed the **400 KB item limit** | Handled by design | Check/task blobs go to the S3 uploads bucket and complaint evidence goes to its dedicated S3 bucket. Items store the S3 key and use presigned URLs. Never store media in the item. |
@@ -643,13 +648,14 @@ migration cost.
 | **R6** | Anonymous staff, so **no per-person attribution** | By design | Attribution is site + device. If per-person is ever needed, add a device-local PIN or roster. Not required now. |
 | **R7** | Each task status change rewrites its GSI2 entry | Normal | Expected DynamoDB behavior. Volume is tiny. |
 
-R1 (GSI3) and the rest of R2 are post-MVP and tracked on the issue tracker. The others are
+R1 (the GSI3 escalation partition) and the rest of R2 are post-MVP and tracked on the issue tracker. The others are
 routine.
 
 ## Settled questions
 
-1. **City cross-site queue.** Deferred post-MVP. GSI3 is sparse and can be added with no
-   rebuild. The 311 integrations exist independently of that deferred queue view.
+1. **City cross-site queue.** Deferred post-MVP. It would be a second sparse partition
+   on GSI3, added with no rebuild. The 311 integrations exist independently of that
+   deferred queue view.
 2. **Retention.** A bucket-wide rule expires every check/task photo 30 days after upload.
    Complaint evidence lives in a separate bucket with a bucket-wide one-year rule. In
    either bucket, upload-state tags only shorten retention: never-registered (pending)
@@ -867,8 +873,9 @@ resends and ending notices retain the original recipients.
 Manual cancellation and scheduled expiry atomically archive the current letter,
 clear the active Site projection, audit the ending, and create a deterministic
 notice outbox row. An EventBridge rule invokes the background worker every 15
-minutes; the local worker sweeps once a minute. The sweep uses Pacific dates and
-only closes a Site's latest terms version, never an older superseded version.
+minutes; the local worker sweeps once a minute. The sweep queries the sparse GSI3
+partition of open, end-dated versions (AP39), uses Pacific dates, and only closes a
+Site's latest terms version, never an older superseded version.
 Legacy terms without an email snapshot can still end but cannot notify original
 recipients. End notices use the same transport claim and receipt handling as
 letters: proven non-submission can retry; ambiguous sends require reconciliation.

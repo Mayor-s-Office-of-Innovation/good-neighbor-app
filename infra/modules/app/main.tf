@@ -876,7 +876,8 @@ resource "aws_dynamodb_table" "app" {
     type = "S"
   }
 
-  # GSI1 keys — set only on check headers (checks timeline).
+  # GSI1 keys — per-site timelines: check headers, assessments, tasks, task
+  # updates, complaints, and care-work logs, each in its own partition.
   attribute {
     name = "gsi1pk"
     type = "S"
@@ -956,9 +957,11 @@ resource "aws_dynamodb_table" "app" {
 
   # GSI1 — per-site timelines, one partition per entity type: checks
   # SITE#<siteId> / <startedAt ISO> (AP6, AP12); assessments
-  # SITE#<siteId>#ASSESSMENT (AP14); tasks SITE#<siteId>#TASK /
+  # SITE#<siteId>#ASSESSMENT (stamped, no reader yet); tasks SITE#<siteId>#TASK /
   # <createdAt>#<taskId> and task updates SITE#<siteId>#UPDATE /
-  # <occurredAt>#<updateId> (AP27, AP28 — the site manager reports).
+  # <occurredAt>#<updateId> (AP27, AP28 — the site manager reports);
+  # complaints SITE#<siteId>#COMPLAINTS / <createdAt>#<complaintId>; care-work
+  # logs SITE#<siteId>#CARE_WORK / <createdAt>#<workId>.
   global_secondary_index {
     name            = "GSI1"
     hash_key        = "gsi1pk"
