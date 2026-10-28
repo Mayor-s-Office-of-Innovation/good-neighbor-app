@@ -16,6 +16,13 @@
 
   The item API stays kind-agnostic on purpose ({kind:'photo', dataUrl} /
   {kind:'text', text}) so post-MVP capture kinds don't require a reshaping.
+
+  Finished checks: Done keeps the check (status `capture-complete`) until its
+  uploads and scorecard land, so several can wait at once when checks are
+  finished offline. `current` is the one on screen; the others live in
+  `finished`. Item ids are unique across checks, so the item mutators find
+  their check by item id and an older check keeps saving its upload/analysis
+  progress after a new walk starts (services/check-submissions.js drives them).
 */
 import { cancelCheckPolling } from "../services/check-polling.js";
 import { completeFirstPerimeterCheck } from "../services/install-prompt.js";
@@ -24,9 +31,9 @@ import {
   saveDraft,
   clearDraft,
   getDraft,
-  saveReview,
-  getReview,
-  clearReview,
+  saveFinishedCheck,
+  listFinishedChecks,
+  deleteFinishedCheck,
 } from "../db.js";
 
 function normalizeFlowType(flowType) {
@@ -75,27 +82,40 @@ function normalizeCheck(check) {
   };
 }
 
-/** @type {null | {id,siteId,window,startedAt,items:any[],status,submittedAt?,expectedArtifacts?:number,flowType?:string,submissionKind?:string,assessment?:any,captureGuidanceContext?:{titleKey:string}}} */
+/** @type {null | {id,siteId,window,startedAt,items:any[],status,submittedAt?,expectedArtifacts?:number,flowType?:string,submissionKind?:string,scorecardDone?:boolean,assessment?:any,captureGuidanceContext?:{titleKey:string}}} */
 let current = null;
+/** Finished checks other than `current`, by check id. */
+const finished = new Map();
 const listeners = new Set();
 
-// Fire-and-forget mirror of the in-memory check to the draft store. Renders read
-// the synchronous `current`; persistence catches up in the background.
-function persist() {
-  if (!current) return;
-  if (current.status === "in-progress") {
-    void saveDraft(current);
+// Fire-and-forget mirror of an in-memory check to IndexedDB: the walk to the
+// draft store, a finished check to its own record. Renders read the
+// synchronous state; persistence catches up in the background.
+function persist(check = current) {
+  if (!check) return;
+  if (check.status === "in-progress") {
+    void saveDraft(check);
   } else {
-    void saveReview(current);
+    void saveFinishedCheck(check);
   }
 }
 
-function emit() {
-  listeners.forEach((fn) => fn(current));
+/** Listeners receive the check that changed: usually `current`, or a finished one. */
+function emit(check = current) {
+  listeners.forEach((fn) => fn(check));
 }
 
-function persistReview() {
-  if (current) void saveReview(current);
+/** Keep a finished `current` running in the background before replacing it. */
+function retireCurrent() {
+  if (current && current.status !== "in-progress")
+    finished.set(current.id, current);
+}
+
+function checkForItem(itemId) {
+  if (current?.items?.some((item) => item.id === itemId)) return current;
+  for (const check of finished.values())
+    if (check.items.some((item) => item.id === itemId)) return check;
+  return null;
 }
 
 function canMutateCurrentSession(checkId) {
@@ -126,6 +146,7 @@ function startFlow(siteId, flowType) {
   // Submitted checks still need their background scorecard finalized, even
   // when the user starts another capture before analysis finishes.
   if (current?.status === "in-progress") cancelCheckPolling(current.id);
+  retireCurrent();
   current = {
     id: newId(),
     siteId,
@@ -152,6 +173,17 @@ export function getCurrentCheck() {
   return current;
 }
 
+/** A check held in memory (current or finished) by id, or null. */
+export function getCheck(checkId) {
+  if (current?.id === checkId) return current;
+  return finished.get(checkId) || null;
+}
+
+/** The in-memory check (current or finished) that holds an evidence item, or null. */
+export function findCheckForItem(itemId) {
+  return checkForItem(itemId);
+}
+
 export function onCheckSessionChange(fn) {
   listeners.add(fn);
   return () => listeners.delete(fn);
@@ -175,6 +207,7 @@ export async function loadDraft(flowType) {
   if (!draft) {
     return requestedFlow ? null : current;
   }
+  retireCurrent();
   current = normalizeCheck(draft);
   return current;
 }
@@ -209,26 +242,49 @@ export function ensureProblemReport(siteId) {
 }
 
 /**
- * Hydrate the in-memory check from the persisted review store (after a reload —
- * home re-kicks the background scorecard finalization for a capture-complete
- * session). Unlike loadDraft this restores a non-in-progress session. An
- * in-memory check wins (no clobbering). Returns the active check or null.
+ * Hydrate every finished check for the site from IndexedDB (after a reload).
+ * In-memory copies win (no clobbering a live upload). Returns them oldest
+ * first, including a finished `current`.
+ * @param {string} [siteId]
  */
-export async function loadSubmitted() {
-  if (current) return current.status === "in-progress" ? null : current;
-  const saved = await getReview();
-  if (saved) current = normalizeCheck(saved);
-  return current;
+export async function loadFinishedChecks(siteId) {
+  const owner = siteId || current?.siteId;
+  for (const saved of await listFinishedChecks(owner)) {
+    if (current?.id === saved.id || finished.has(saved.id)) continue;
+    finished.set(saved.id, normalizeCheck(saved));
+  }
+  return [
+    ...finished.values(),
+    ...(current && current.status !== "in-progress" ? [current] : []),
+  ]
+    .filter((check) => !owner || check.siteId === owner)
+    .sort((a, b) => (a.submittedAt || "").localeCompare(b.submittedAt || ""));
 }
 
-/** Every evidence item in the check, in capture order. */
+/**
+ * The newest finished check, for home's live results (home re-kicks its
+ * background scorecard). With no walk in memory it becomes `current`, as a
+ * restored session always has; during a walk it stays in the background.
+ * Returns null when nothing is waiting.
+ */
+export async function loadSubmitted() {
+  if (current && current.status !== "in-progress") return current;
+  const newest = (await loadFinishedChecks(current?.siteId)).at(-1) || null;
+  if (newest && !current) {
+    finished.delete(newest.id);
+    current = newest;
+  }
+  return newest;
+}
+
+/** Every evidence item in the current check, in capture order. */
 export function getItems() {
   return current?.items || [];
 }
 
-/** One evidence item by id, or null. */
+/** One evidence item by id from any in-memory check, or null. */
 export function findItem(itemId) {
-  return getItems().find((item) => item.id === itemId) || null;
+  return checkForItem(itemId)?.items.find((item) => item.id === itemId) || null;
 }
 
 export function getFlowType() {
@@ -271,27 +327,30 @@ export function addItem(item) {
 }
 
 export function removeItem(itemId) {
-  if (!current) return;
-  current.items = current.items.filter((i) => i.id !== itemId);
-  persist();
-  emit();
+  const check = checkForItem(itemId) || current;
+  if (!check) return;
+  check.items = check.items.filter((i) => i.id !== itemId);
+  persist(check);
+  emit(check);
 }
 
 export function updateItem(itemId, patch) {
+  const check = checkForItem(itemId);
   const item = findItem(itemId);
   if (!item) return null;
   Object.assign(item, patch);
-  persist();
-  emit();
+  persist(check);
+  emit(check);
   return item;
 }
 
 export function updateItemAnalysis(itemId, analysisPatch) {
+  const check = checkForItem(itemId);
   const item = findItem(itemId);
   if (!item) return null;
   item.analysis = { ...(item.analysis || {}), ...analysisPatch };
-  persist();
-  emit();
+  persist(check);
+  emit(check);
   return item;
 }
 
@@ -354,58 +413,82 @@ export function markCaptureComplete({
   if (typeof expectedArtifacts === "number") {
     current.expectedArtifacts = expectedArtifacts;
   }
-  persistReview();
+  persist();
   void clearDraft({ flowType: current.flowType, siteId: current.siteId });
   emit();
   return current;
 }
 
 /**
- * Drop only the persisted review-backed session. Used when the local pending
- * marker is stale and should no longer override the backend home view.
+ * Record that a finished check's run-level scorecard has landed, so the
+ * background sender stops re-running it. The check stays held until home
+ * sees it in the backend history (clearSubmittedSession).
+ * @param {string} checkId
  */
-export async function clearSubmittedSession() {
-  const siteId = current?.siteId;
-  if (current && current.status !== "in-progress") {
-    current = null;
-  }
-  await clearReview(siteId);
+export function markScorecardDone(checkId) {
+  const check = getCheck(checkId);
+  if (!check || check.status === "in-progress" || check.scorecardDone) return;
+  check.scorecardDone = true;
+  persist(check);
+}
+
+/**
+ * Drop one finished check (default: a finished `current`) from memory and
+ * IndexedDB. Used when home sees it superseded by backend history and it
+ * should no longer override the backend view.
+ * @param {string} [checkId]
+ */
+export async function clearSubmittedSession(checkId) {
+  const id =
+    checkId || (current && current.status !== "in-progress" ? current.id : "");
+  if (!id) return;
+  const check = getCheck(id);
+  if (current?.id === id && current.status !== "in-progress") current = null;
+  finished.delete(id);
+  await deleteFinishedCheck(check?.siteId || current?.siteId || "", id);
   emit();
 }
 
 /**
- * Drop the walk from memory AND both persisted copies (draft + review). Called on
- * submit/discard and on the review screen's Continue.
+ * Drop the current check from memory AND its persisted copies (draft and
+ * finished record). Called on submit/discard and on the review screen's
+ * Continue. Other finished checks keep uploading.
  */
 export function clearCheck() {
   if (current) cancelCheckPolling(current.id);
   const flowType = current?.flowType;
   const siteId = current?.siteId;
+  const checkId = current?.id;
   current = null;
   void clearDraft({ flowType, siteId });
   if (flowType) void clearDraft({ siteId });
-  void clearReview(siteId);
+  if (checkId) void deleteFinishedCheck(siteId, checkId);
   emit();
 }
 
 /**
- * Drop the in-memory session without touching persisted stores. Used for
+ * Drop the in-memory checks without touching persisted stores. Used for
  * site switching after pauseCheck() saves the active site's draft, and for
  * sign-out recovery after clearSiteSession() clears all local records.
  */
 export function discardInMemorySession() {
   if (current) cancelCheckPolling(current.id);
+  for (const id of finished.keys()) cancelCheckPolling(id);
   current = null;
+  finished.clear();
   emit();
 }
 
 export async function pauseCheck() {
   if (current) cancelCheckPolling(current.id);
+  for (const id of finished.keys()) cancelCheckPolling(id);
   if (current?.status === "in-progress") {
     await saveDraft(current);
   } else {
     persist();
   }
+  // Finished checks are already persisted; they resume with their own site.
   current = null;
+  finished.clear();
   emit();
 }

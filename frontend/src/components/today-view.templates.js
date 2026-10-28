@@ -7,6 +7,7 @@ import { duplicateCountLabel } from "./duplicate-issue.templates.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { HOME_TABS } from "../domain/home-tasks.js";
 import { getLocale, LOCALES, t } from "../i18n/i18n.js";
+import { formatMonthDayTime } from "../i18n/dates.js";
 import {
   analysisResultsTray,
   clearCheckCard,
@@ -775,6 +776,29 @@ export function actionButton(a) {
 }
 
 /* ---- Error view ---- */
+
+/**
+ * No connection on load: home shows the last saved lists (or none) under this
+ * notice, with the count of checks still waiting to upload.
+ * @param {{ savedAt?: string, waiting?: number }} offline
+ */
+export function offlineNotice({ savedAt = "", waiting = 0 }) {
+  return html`
+    <div class="home-offline" role="status" id="home-offline">
+      <p class="home-offline__title">${escapeHtml(t("home.offline.title"))}</p>
+      <p class="home-offline__text">
+        ${escapeHtml(
+          savedAt
+            ? t("home.offline.snapshot", { time: formatMonthDayTime(savedAt) })
+            : t("home.offline.noSnapshot"),
+        )}
+        ${waiting
+          ? escapeHtml(t("home.offline.waiting", { count: waiting }))
+          : ""}
+      </p>
+    </div>
+  `;
+}
 
 /**
  * Backend unreachable on load: identity, a plain status, and a retry.

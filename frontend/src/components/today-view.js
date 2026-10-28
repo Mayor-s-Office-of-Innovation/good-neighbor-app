@@ -129,6 +129,7 @@ import {
 import {
   getCurrentCheck,
   hasDraft,
+  loadFinishedChecks,
   loadSubmitted,
   onCheckSessionChange,
   clearSubmittedSession,
@@ -147,6 +148,7 @@ import {
   errorView,
   heroBlock,
   homeResults,
+  offlineNotice,
   homeShell,
   homeSkeleton,
   summaryBlock,
@@ -165,6 +167,8 @@ import { getLocale, setLocale, t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
 import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 import { finalizeCaptureScorecardInBackground } from "../services/submit-check.js";
+import { isConnectionFailure } from "../services/photo-analysis.js";
+import { getHomeSnapshot, saveHomeSnapshot } from "../db.js";
 import {
   getSiteCheckDeviceLocation,
   getLastDeviceLocation,
@@ -231,9 +235,32 @@ if (typeof window !== "undefined") {
   });
 }
 
+/**
+ * The most recently started check header (any status), in UI shape.
+ * @param {any[] | undefined} checks
+ */
+function latestStarted(checks) {
+  return (checks || [])
+    .map(adaptCheckHeader)
+    .sort((a, b) =>
+      String(b.startedAt || "").localeCompare(String(a.startedAt || "")),
+    )[0];
+}
+
 /** Server-relevant session changes; progress and duplicate projections stay local.
  * @param {any} session
  */
+/**
+ * Submitted check headers from GET /v1/checks, newest first, in UI shape.
+ * @param {any[] | undefined} checks
+ */
+function submittedChecks(checks) {
+  return (checks || [])
+    .map((h) => adaptCheckHeader(h))
+    .filter((c) => c.status === "submitted")
+    .sort((a, b) => (b.submittedAt || "").localeCompare(a.submittedAt || ""));
+}
+
 function sessionRefreshKey(session) {
   return JSON.stringify([
     session?.id,
@@ -363,6 +390,8 @@ class TodayView extends HTMLElement {
     this._deletionUnsub = null;
     this._sessionUnsub?.();
     this._sessionUnsub = null;
+    window.removeEventListener("online", this._onlineReload);
+    this._onlineReload = null;
     this.removeEventListener("analysiscarddeleted", this._cardDeletedHandler);
     document.removeEventListener("click", this._settingsDocumentClick);
     this._settingsDocumentClick = null;
@@ -446,7 +475,11 @@ class TodayView extends HTMLElement {
       void refreshGrantedDeviceLocation();
     }
     if (!this._sessionUnsub) {
-      let refreshKey = sessionRefreshKey(getCurrentCheck());
+      // One key per check: finished checks uploading in the background emit
+      // their own changes alongside the one on screen.
+      const refreshKeys = new Map();
+      const initial = getCurrentCheck();
+      refreshKeys.set(initial?.id, sessionRefreshKey(initial));
       this._sessionUnsub = onCheckSessionChange((session) => {
         if (session?.status === "in-progress") return;
         if (
@@ -456,10 +489,24 @@ class TodayView extends HTMLElement {
           this._renderHome({ ...this._homeModel, pendingSession: session });
         }
         const nextKey = sessionRefreshKey(session);
-        if (nextKey === refreshKey) return;
-        refreshKey = nextKey;
+        if (nextKey === refreshKeys.get(session?.id)) return;
+        refreshKeys.set(session?.id, nextKey);
+        // A background check only matters to home once it is the one shown.
+        if (
+          session &&
+          session !== getCurrentCheck() &&
+          this._homeModel?.pendingSession?.id !== session.id
+        )
+          return;
         void this.connectedCallback();
       });
+    }
+    if (!this._onlineReload) {
+      // Offline home is a saved snapshot: reload the live lists on reconnect.
+      this._onlineReload = () => {
+        if (this._offline && this.isConnected) void this.connectedCallback();
+      };
+      window.addEventListener("online", this._onlineReload);
     }
     if (!this._settingsDocumentClick) {
       this._settingsDocumentClick = (event) => {
@@ -544,7 +591,7 @@ class TodayView extends HTMLElement {
     // Legacy-stage records (uploading/analyzing/submitted) are unreachable now —
     // clear them instead of letting them linger in the review store forever.
     if (pendingSession && pendingSession.status !== "capture-complete") {
-      await clearSubmittedSession();
+      await clearSubmittedSession(pendingSession.id);
       pendingSession = null;
     }
 
@@ -596,22 +643,30 @@ class TodayView extends HTMLElement {
       else
         for (const status of ["in_progress", "completing", "completed"])
           this._taskListFreshness.set(status, this._remainingLoadedAt);
-      latestStartedCheck = (checks || [])
-        .map(adaptCheckHeader)
-        .sort((a, b) =>
-          String(b.startedAt || "").localeCompare(String(a.startedAt || "")),
-        )[0];
-      submitted = (checks || [])
-        .map((h) => adaptCheckHeader(h))
-        .filter((c) => c.status === "submitted")
-        .sort((a, b) =>
-          (b.submittedAt || "").localeCompare(a.submittedAt || ""),
-        );
+      latestStartedCheck = latestStarted(checks);
+      submitted = submittedChecks(checks);
+      this._offline = null;
+      void saveHomeSnapshot(this._siteId, {
+        checks: checks || [],
+        tasks: openTasksResult.tasks || [],
+      }).catch(() => {});
     } catch (err) {
       if (generation !== this._homeRefreshGeneration) return;
       console.error("listChecks/listTasks failed", err);
-      this._renderError();
-      return;
+      // No connection: show the last saved lists (or empty ones) so Start
+      // check and checks waiting to upload stay reachable. Other failures
+      // keep the error screen.
+      if (!isConnectionFailure(err)) {
+        this._renderError();
+        return;
+      }
+      const snapshot = await getHomeSnapshot(this._siteId).catch(() => null);
+      if (generation !== this._homeRefreshGeneration) return;
+      this._offline = { savedAt: snapshot?.savedAt || "" };
+      latestStartedCheck = latestStarted(snapshot?.checks);
+      submitted = submittedChecks(snapshot?.checks);
+      tasks = uniqueTasks(snapshot?.tasks || []);
+      this._remainingStatus = "error";
     }
 
     const last = submitted[0];
@@ -620,16 +675,37 @@ class TodayView extends HTMLElement {
         ? pendingSession
         : null;
 
+    // Older finished checks wait in the background; drop each one the
+    // backend history now shows (offline lists are a snapshot, so never then).
+    const finishedChecks = await loadFinishedChecks(this._siteId).catch(
+      () => [],
+    );
+    if (!this._offline)
+      for (const check of finishedChecks)
+        if (
+          check.id !== effectivePendingSession?.id &&
+          this._isStalePendingSession(check, submitted, tasks)
+        )
+          await clearSubmittedSession(check.id);
     if (
+      !this._offline &&
       this._isStalePendingSession(effectivePendingSession, submitted, tasks)
     ) {
-      await clearSubmittedSession();
+      await clearSubmittedSession(effectivePendingSession.id);
       effectivePendingSession = null;
-    } else if (effectivePendingSession?.status === "capture-complete") {
+    } else if (
+      !this._offline &&
+      effectivePendingSession?.status === "capture-complete" &&
+      !effectivePendingSession.scorecardDone
+    ) {
       finalizeCaptureScorecardInBackground(effectivePendingSession.id, {
         expectedArtifacts: effectivePendingSession.expectedArtifacts,
       });
     }
+    if (this._offline)
+      this._offline.waiting = finishedChecks.filter(
+        (check) => !check.scorecardDone,
+      ).length;
 
     if (generation !== this._homeRefreshGeneration) return;
     this._taskOverrides = readTaskStatusOverrides();
@@ -650,6 +726,10 @@ class TodayView extends HTMLElement {
     // (a poll) and the 311 status batch wait for the complete list, so each
     // starts once per load: here when the remaining lists were reused, else
     // in _loadRemainingTasks.
+    if (this._offline) {
+      if (announceArrival) announceScreenHeading(this, ".home-identity__site");
+      return;
+    }
     void this._hydrateVisibleHomeTasks();
     if (reuseRemaining) {
       this._remainingLoad = Promise.resolve();
@@ -1463,9 +1543,11 @@ class TodayView extends HTMLElement {
       busy:
         this._homeFilter !== "todo" &&
         (this._remainingStatus || "loaded") === "pending",
-      hero: showFirstRun
-        ? this._firstRunBlock()
-        : this._activityBlock({ last, homeTasks }),
+      hero:
+        (this._offline ? offlineNotice(this._offline) : "") +
+        (showFirstRun
+          ? this._firstRunBlock()
+          : this._activityBlock({ last, homeTasks })),
       results: this._homeResults({
         pendingSession,
         tabCounts,

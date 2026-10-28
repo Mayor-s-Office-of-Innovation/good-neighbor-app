@@ -188,12 +188,15 @@ export function footer({
     ["queued", "analyzing"].includes(item.analysis?.status),
   );
   const failed = items.some((item) => item.analysis?.status === "failed");
+  const waiting = items.some((item) => item.analysis?.status === "waiting");
   const problems = problemSummary(items);
   const problemLabel = active
     ? t("card.pending.title")
     : failed
       ? t("card.failed.analysisTitle")
-      : problemSummaryLabel(problems);
+      : waiting
+        ? t("card.waiting.title")
+        : problemSummaryLabel(problems);
   return html`
     <button
       class="check-timeline__done"

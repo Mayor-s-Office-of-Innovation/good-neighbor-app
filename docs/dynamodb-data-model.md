@@ -489,8 +489,8 @@ index.
 
 The client makes a UUID `checkId` and sends it as the `idempotency-key` header.
 `createCheck` writes the header with `attribute_not_exists(sk)`. A repeated request
-cannot create a duplicate. An offline queue-and-replay for checks is not built yet. The
-idempotency contract is already in place for when it lands. AI
+cannot create a duplicate. That is what lets the app's offline check queue
+(`services/check-submissions.js`) resend checks finished with no connection. AI
 analysis stays asynchronous through the existing SQS → worker path.
 
 **Current state: built.** `createCheck`, `registerArtifact`, and `completeCheck` write real

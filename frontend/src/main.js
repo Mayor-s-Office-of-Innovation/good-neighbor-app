@@ -93,6 +93,11 @@ import "./components/site-setup.js";
 import "./components/app-toasts.js";
 import "./components/app-root.js";
 
+// Checks finished offline wait on the device; send them when the connection
+// returns (services/check-submissions.js).
+import { startCheckSubmissionRecovery } from "./services/check-submissions.js";
+startCheckSubmissionRecovery();
+
 // Page views + app events (services/analytics.js): one `$pageview` per route
 // change, beaconed to our own intake and forwarded to PostHog server-side
 // with browser/OS/device properties. No vendor SDK ships.

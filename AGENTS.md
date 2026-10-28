@@ -30,8 +30,9 @@ New here? Get your bearings in this order:
   an issue), and the Docker-free local harness ([ADR 0006](./docs/adr/0006-docker-free-local-dev-harness.md)).
 - **Offline is partial.** A Workbox service worker precaches the built app so it opens
   offline (`offlineShell` in `frontend/vite.config.js`); it never touches API calls. Queuing
-  writes lives in the app, not Workbox background sync: care work logs have a durable queue,
-  perimeter checks do not yet (#109).
+  writes lives in the app, not Workbox background sync: care work logs and perimeter checks
+  each have a durable queue (`services/care-submissions.js`, `services/check-submissions.js`),
+  and home shows its last saved lists while offline.
 - Live transcription was dropped (2026-09-02) — keyboard dictation covers the need; see
   [ADR 0009](./docs/adr/0009-drop-transcription.md).
 

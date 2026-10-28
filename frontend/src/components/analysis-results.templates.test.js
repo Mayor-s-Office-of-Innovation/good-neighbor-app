@@ -1362,3 +1362,23 @@ it.each(["in_progress", "open", "completed"])(
       );
   },
 );
+
+describe("waiting for connection", () => {
+  it("shows a saved-offline card instead of a failure or progress", () => {
+    const [markup] = analysisCards(
+      {
+        id: "item_offline",
+        kind: "text",
+        text: "Litter by the gate",
+        placeName: "15th St",
+        analysis: { status: "waiting" },
+      },
+      "check_1",
+    );
+    expect(markup).toContain("analysis-card--waiting");
+    expect(markup).toContain(escapeHtml(t("card.waiting.title")));
+    expect(markup).toContain(escapeHtml(t("card.waiting.message")));
+    expect(markup).not.toContain("analysis-card--failed");
+    expect(markup).not.toContain("analysis-card--pending");
+  });
+});

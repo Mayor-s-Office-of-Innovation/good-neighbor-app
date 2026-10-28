@@ -785,3 +785,26 @@ html.wa-dark .home-results__complete-content img {
     font-size: var(--wa-font-size-xl, 1.5625rem);
   }
 }
+
+/* No connection: the lists below are the last saved copy. Neutral, not an
+   error; the title carries the meaning, the border only reinforces it. */
+.home-offline {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--c-line);
+  border-left: 3px solid var(--c-flag);
+  border-radius: 0.5rem;
+  background: var(--surface);
+  text-align: left;
+}
+
+.home-offline__title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.home-offline__text {
+  margin: 0.25rem 0 0;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
