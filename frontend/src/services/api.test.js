@@ -16,7 +16,13 @@ import {
   toDevUploadUrl,
   waitForAnalyses,
   uploadTaskUpdatePhoto,
+  uploadArtifact,
 } from "./api.js";
+
+vi.mock("../db.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  getUploadRequestId: vi.fn().mockResolvedValue("durable-request-1"),
+}));
 
 /**
  * A fetch stub whose responses are driven by successive `getCheck` payloads.
@@ -289,6 +295,7 @@ describe("uploadTaskUpdatePhoto", () => {
     expect(JSON.parse(fetch.mock.calls[0][1].body)).toMatchObject({
       contentType: "image/jpeg",
       contentLength: 4,
+      uploadRequestId: "durable-request-1",
     });
     expect(JSON.parse(fetch.mock.calls[2][1].body)).toMatchObject({
       artifactId: "photo-1",
@@ -734,4 +741,47 @@ describe("time limits on a weak connection", () => {
       await expect(pending).rejects.toMatchObject({ name: "AbortError" });
     });
   });
+});
+
+describe("uncertain media uploads", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it.each(["check", "task"])(
+    "reuses %s upload identity after a lost registration response and accepts an existing object",
+    async (kind) => {
+      const signed = {
+        artifactId: "photo-1",
+        s3Key: "photos/photo-1",
+        uploadUrl: "https://upload.example.test/photo-1",
+        uploadHeaders: {},
+      };
+      const fetch = vi
+        .fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify(signed)))
+        .mockResolvedValueOnce(new Response(""))
+        .mockRejectedValueOnce(new Error("lost registration response"))
+        .mockResolvedValueOnce(new Response(JSON.stringify(signed)))
+        .mockResolvedValueOnce(new Response("", { status: 412 }))
+        .mockResolvedValueOnce(new Response("{}"));
+      vi.stubGlobal("fetch", fetch);
+      const file = new File(["test"], "synthetic.jpg", { type: "image/jpeg" });
+      const upload = () =>
+        kind === "check"
+          ? uploadArtifact("check-1", {
+              dataUrl: "data:image/jpeg;base64,dGVzdA==",
+              tag: "evidence-1",
+            })
+          : uploadTaskUpdatePhoto("task-1", "check-1", { file });
+      await expect(upload()).rejects.toMatchObject({ status: 0 });
+      await expect(upload()).resolves.toMatchObject({ artifactId: "photo-1" });
+      expect(JSON.parse(fetch.mock.calls[0][1].body).uploadRequestId).toBe(
+        "durable-request-1",
+      );
+      expect(JSON.parse(fetch.mock.calls[3][1].body).uploadRequestId).toBe(
+        "durable-request-1",
+      );
+      expect(JSON.parse(fetch.mock.calls[5][1].body).artifactId).toBe(
+        "photo-1",
+      );
+    },
+  );
 });

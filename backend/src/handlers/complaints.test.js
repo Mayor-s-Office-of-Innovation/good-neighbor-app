@@ -119,6 +119,33 @@ describe("complaint upload lifecycle", () => {
     );
   });
 
+  it("reuses complaint upload coordinates without charging quota again", async () => {
+    ddbSend
+      .mockResolvedValueOnce({
+        Item: {
+          createdBy: "device-1",
+          artifactId: ARTIFACT_ID,
+          s3Key: `complaints/site-1/${COMPLAINT_ID}/${ARTIFACT_ID}`,
+          contentType: "image/jpeg",
+          contentLength: 1024,
+          renewUntil: Math.floor(Date.now() / 1000) + 300,
+        },
+      })
+      .mockResolvedValueOnce({});
+    const response = await presignComplaintArtifact(
+      event({
+        body: {
+          contentType: "image/jpeg",
+          contentLength: 1024,
+          uploadRequestId: "retry-id",
+        },
+      }),
+    );
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body).artifactId).toBe(ARTIFACT_ID);
+    expect(ddbSend.mock.calls[1][0].input.TransactItems).toHaveLength(1);
+  });
+
   it("rejects DOCX and malformed complaint IDs", async () => {
     const docx = await presignComplaintArtifact(
       event({

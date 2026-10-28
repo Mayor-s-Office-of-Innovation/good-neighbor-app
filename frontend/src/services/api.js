@@ -16,6 +16,7 @@ import { invalidateDuplicateIssues } from "./duplicate-invalidation.js";
     - media bytes go straight to S3 via a presigned PUT — they never transit this API.
 */
 
+import { reserveMediaUpload } from "./upload-reservation.js";
 import { pollCheck } from "./check-polling.js";
 import { mark, span } from "./instrument.js";
 import { getSite, updateSiteSession, prepareRefreshAttempt } from "../db.js";
@@ -936,7 +937,7 @@ export function putMediaWithProgress(
  * POST /v1/checks/{checkId}/artifacts:presign — mint an artifactId + S3 key and
  * a presigned PUT URL. content-type is pinned into the signature.
  * @param {string} checkId
- * @param {{ contentType: string, contentLength: number }} body
+ * @param {{ contentType: string, contentLength: number, uploadRequestId?: string }} body
  * @returns {Promise<{ artifactId: string, s3Key: string, contentType: string, contentLength: number, uploadHeaders: Record<string, string>, uploadUrl: string, expiresIn: number }>}
  */
 export function presignArtifact(checkId, body, { signal = undefined } = {}) {
@@ -1315,18 +1316,27 @@ export async function uploadArtifact(
   const contentType = contentTypeFromDataUrl(dataUrl);
   const blob = await dataUrlToBlob(dataUrl);
   const endPresign = span("upload.presign", { art });
-  const { artifactId, s3Key, uploadUrl, uploadHeaders } = await presignArtifact(
-    checkId,
-    {
-      contentType,
-      contentLength: blob.size,
-    },
-  );
+  const { artifactId, s3Key, uploadUrl, uploadHeaders } =
+    await reserveMediaUpload(
+      `check:${checkId}:${tag ?? "photo"}`,
+      blob,
+      (uploadRequestId) =>
+        presignArtifact(checkId, {
+          contentType,
+          contentLength: blob.size,
+          uploadRequestId,
+        }),
+    );
   endPresign({ artifactId });
   onLeg?.("presign");
 
   const endPut = span("upload.put", { art, bytes: blob.size });
-  await putMedia(uploadUrl, blob, contentType, uploadHeaders);
+  try {
+    await putMedia(uploadUrl, blob, contentType, uploadHeaders);
+  } catch (error) {
+    if (error?.status !== 412) throw error;
+    // A lost successful PUT is verified by registration below.
+  }
   endPut();
   onLeg?.("put");
 
@@ -1364,23 +1374,34 @@ export async function uploadTaskUpdatePhoto(
 ) {
   const blob = item.file;
   const contentType = blob.type || "application/octet-stream";
-  const { artifactId, s3Key, uploadUrl, uploadHeaders } = await presignArtifact(
-    checkId,
-    {
-      contentType,
-      contentLength: blob.size,
-    },
-    { signal },
-  );
-  if (onProgress)
-    await putMediaWithProgress(
-      uploadUrl,
+  const { artifactId, s3Key, uploadUrl, uploadHeaders } =
+    await reserveMediaUpload(
+      `task:${taskId}:check:${checkId}`,
       blob,
-      { "content-type": contentType, ...uploadHeaders },
-      onProgress,
-      signal,
+      (uploadRequestId) =>
+        presignArtifact(
+          checkId,
+          {
+            contentType,
+            contentLength: blob.size,
+            uploadRequestId,
+          },
+          { signal },
+        ),
     );
-  else await putMedia(uploadUrl, blob, contentType, uploadHeaders, signal);
+  try {
+    if (onProgress)
+      await putMediaWithProgress(
+        uploadUrl,
+        blob,
+        { "content-type": contentType, ...uploadHeaders },
+        onProgress,
+        signal,
+      );
+    else await putMedia(uploadUrl, blob, contentType, uploadHeaders, signal);
+  } catch (error) {
+    if (error?.status !== 412) throw error;
+  }
   await registerTaskUpdateMedia(
     taskId,
     {

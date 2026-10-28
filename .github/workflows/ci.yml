@@ -98,6 +98,9 @@ jobs:
       - name: Test support dialog accessibility
         run: npm run test:support:ui
 
+      - name: Test upload reservation persistence in browser IndexedDB
+        run: node --test e2e/upload-reservation-storage.test.mjs
+
       - name: Test issue update recovery in Chromium and WebKit
         run: npm run test:updates:ui
 

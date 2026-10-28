@@ -9,12 +9,32 @@ strips metadata and applies orientation while enforcing byte, pixel, edge, and s
 
 - one object: 10 MiB
 - one check: 20 artifacts and 50 MiB
-- one device per UTC day: 50 artifacts and 100 MiB
+- one site/actor pair per UTC day: 200 reservations and 512 MiB
 
 Reservations are deliberately conservative: issuing a PUT URL consumes quota even if the client
-abandons the upload. Reservation records and check/device daily counters expire after
-24 hours, so an abandoned URL cannot permanently block its Check. Do not manually lower counters during an active incident—doing so weakens the cost
-control and can race in-flight uploads.
+abandons the upload. Rejection, deletion, and expiry do not refund that charge. Check/device
+counters retain their existing 24-hour TTL; application quota keys use the UTC day.
+
+Checks and complaints accept an optional `uploadRequestId`. Its mapping is committed atomically
+with the quota charge and binds the actor, parent submission, server-generated artifact/key,
+content type, and byte count. Identical retries reuse that reservation; different metadata or
+actors cannot reuse it. Renewed URLs keep the same key and no-overwrite constraint, and expire
+within five minutes or at the original UTC midnight, whichever is earlier. Mappings retain an
+extra day of TTL for explicit expired-request rejection. DynamoDB TTL deletion is not an expiry
+check. Expired recovery uses a new request ID and object key and consumes today's quota.
+Older clients omitting the ID retain their previous behavior.
+
+The client saves request IDs in IndexedDB before presigning, scoped to the current site/device,
+submission, and a SHA-256 fingerprint of the file bytes and type. Lost responses keep the same
+identity; an explicit server `upload_expired` response rotates it. Metadata older than two days
+is pruned during subsequent reservation lookups and sign-out clears it. Signed URLs and media
+are not stored in these records. Check queues retain their existing recovery behavior; complaint
+and task-update selections do not gain an offline submission queue. Repeated selection of the
+same scoped file reuses its request ID. Care-work keeps its existing per-photo reservation reuse.
+
+A PUT retry may return 412 because the original object exists. Clients then continue to
+registration, whose metadata validation remains mandatory. Never manually lower counters
+during an incident: outstanding write-capable URLs can race such a change.
 
 There is no Site-wide or global daily upload quota. Upload reservations do not
 update shared Site or global counters: these counters made independent checks
@@ -33,8 +53,9 @@ from one Site or device may indicate abuse or a broken client release.
 
 `MediaQuotaExceeded` alarms after five rejected reservations in five minutes. Determine which
 check or device counter is near its conditional limit from the Site's
-`MEDIA_QUOTA#` rows. Inspect cancellation reasons as well: this marker also covers
-transaction conflicts and does not by itself prove quota exhaustion.
+`MEDIA_QUOTA#` rows. Check upload transaction conflicts use `MediaReservationConflict` and HTTP 409 rather than
+being reported as exhausted quota. Inspect cancellation reasons; failures without explicit quota
+conditions also return a conflict rather than inventing an exhaustion diagnosis.
 Confirm whether traffic is expected before changing a limit in code. The public response
 intentionally does not reveal which budget was exhausted.
 
@@ -273,3 +294,10 @@ above 8 KiB succeeds, one above 64 KiB returns the JSON 413, and another route s
 blocks above 8 KiB with a WAF log entry. Terraform validation and handler tests do
 not prove deployed WAF behavior. Logging begins at deployment and cannot recover
 historical blocked requests.
+
+## Local reservation verification
+
+Run the focused upload handler suites and `frontend/src/services/upload-reservation.test.js`.
+`node --test e2e/upload-reservation-storage.test.mjs` checks real browser IndexedDB persistence,
+cross-tab serialization, expiry rotation, and site isolation using synthetic data and a loopback
+server, without AWS or app startup. Chromium must already be installed for Playwright.

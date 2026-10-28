@@ -1,5 +1,6 @@
 // @ts-nocheck -- routed view; JSDoc ratchet follows established frontend migration.
 import "./complaint-view.css";
+import { reserveMediaUpload } from "../services/upload-reservation.js";
 import { currentRoute, navigate, setPopstateGuard } from "../router.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
@@ -438,31 +439,41 @@ ${escapeHtml(draft.description)}</textarea
       this._aborters.set(entry.id, controller);
       try {
         const contentType = contentTypeFor(file);
-        const signed = await presignComplaintArtifact(
-          activeDraft.complaintId,
-          {
-            contentType,
-            contentLength: file.size,
-          },
-          controller.signal,
+        const signed = await reserveMediaUpload(
+          `complaint:${activeDraft.complaintId}`,
+          file,
+          (uploadRequestId) =>
+            presignComplaintArtifact(
+              activeDraft.complaintId,
+              {
+                contentType,
+                contentLength: file.size,
+                uploadRequestId,
+              },
+              controller.signal,
+            ),
         );
         if (controller.signal.aborted)
           throw new DOMException("Upload cancelled", "AbortError");
         entry.artifactId = signed.artifactId;
         entry.s3Key = signed.s3Key;
-        await putMediaWithProgress(
-          signed.uploadUrl,
-          file,
-          signed.uploadHeaders,
-          (value) => {
-            entry.progress = value;
-            this.querySelector(`[data-remove-file="${entry.id}"]`)
-              ?.closest(".complaint-file")
-              ?.querySelector("progress")
-              ?.setAttribute("value", value);
-          },
-          controller.signal,
-        );
+        try {
+          await putMediaWithProgress(
+            signed.uploadUrl,
+            file,
+            signed.uploadHeaders,
+            (value) => {
+              entry.progress = value;
+              this.querySelector(`[data-remove-file="${entry.id}"]`)
+                ?.closest(".complaint-file")
+                ?.querySelector("progress")
+                ?.setAttribute("value", value);
+            },
+            controller.signal,
+          );
+        } catch (error) {
+          if (error?.status !== 412) throw error;
+        }
         await registerComplaintArtifact(
           activeDraft.complaintId,
           {

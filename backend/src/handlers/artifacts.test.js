@@ -216,6 +216,88 @@ describe("presignUpload", () => {
     });
   });
 
+  it("reuses a request's original artifact without charging quota again", async () => {
+    const now = Date.now();
+    const existing = {
+      createdBy: "device-1",
+      artifactId: "original-artifact",
+      s3Key: "checks/site-1/chk_01/original-artifact",
+      contentType: "image/jpeg",
+      contentLength: 1024,
+      renewUntil: Math.floor(now / 1000) + 100,
+    };
+    const event = artifactEvent({
+      checkId: "chk_01",
+      siteClaim: "site-1",
+      body: {
+        contentType: "image/jpeg",
+        contentLength: 1024,
+        uploadRequestId: "retry-id",
+      },
+    });
+    // Use the real principal helper's test identity rather than guessing it.
+    const { deriveActorId } = await import("../lib/principal.js");
+    existing.createdBy = deriveActorId(event);
+    ddbSend.mockResolvedValueOnce({ Item: existing }).mockResolvedValueOnce({});
+    const response = await callPresign(event);
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toMatchObject({
+      artifactId: "original-artifact",
+      expiresIn: expect.any(Number),
+    });
+    expect(JSON.parse(response.body).expiresIn).toBeLessThanOrEqual(100);
+    expect(ddbSend.mock.calls[1][0].input.TransactItems).toHaveLength(1);
+    expect(ddbSend.mock.calls[1][0].input.TransactItems[0]).toHaveProperty(
+      "ConditionCheck",
+    );
+  });
+
+  it("raises the shared daily budget while retaining the check budget", async () => {
+    ddbSend.mockResolvedValue({});
+    const response = await callPresign(
+      artifactEvent({
+        checkId: "chk_01",
+        siteClaim: "site-1",
+        body: {
+          contentType: "image/jpeg",
+          contentLength: 1024,
+        },
+      }),
+    );
+    expect(response.statusCode).toBe(200);
+    const writes = ddbSend.mock.calls[0][0].input.TransactItems;
+    expect(writes[1].Update.ExpressionAttributeValues).toMatchObject({
+      ":maxCount": 20,
+      ":remaining": 50 * 1024 * 1024 - 1024,
+    });
+    expect(writes[2].Update.ExpressionAttributeValues).toMatchObject({
+      ":maxCount": 200,
+      ":remaining": 512 * 1024 * 1024 - 1024,
+    });
+  });
+
+  it("reports transaction contention as retryable conflict rather than exhausted quota", async () => {
+    ddbSend.mockRejectedValueOnce(
+      Object.assign(new Error("conflict"), {
+        name: "TransactionCanceledException",
+        CancellationReasons: [{ Code: "TransactionConflict" }],
+      }),
+    );
+    const response = await callPresign(
+      artifactEvent({
+        checkId: "chk_01",
+        siteClaim: "site-1",
+        body: {
+          contentType: "image/jpeg",
+          contentLength: 1024,
+        },
+      }),
+    );
+    expect(response.statusCode).toBe(409);
+    expect(JSON.parse(response.body).error).toBe("upload_reservation_conflict");
+    expect(presignPut).not.toHaveBeenCalled();
+  });
+
   it("rejects an unsupported content-type without presigning", async () => {
     const res = await callPresign(
       artifactEvent({
@@ -232,6 +314,10 @@ describe("presignUpload", () => {
     ddbSend.mockRejectedValueOnce(
       Object.assign(new Error("quota"), {
         name: "TransactionCanceledException",
+        CancellationReasons: [
+          { Code: "None" },
+          { Code: "ConditionalCheckFailed" },
+        ],
       }),
     );
     const res = await callPresign(

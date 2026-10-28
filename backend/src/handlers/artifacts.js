@@ -4,7 +4,6 @@ import {
   GetCommand,
   PutCommand,
   QueryCommand,
-  TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { ddb } from "../db.js";
@@ -19,6 +18,12 @@ import {
   sitePk,
   taskUpdateMediaPointerKey,
 } from "./keys.js";
+
+import {
+  reserveUpload,
+  reservationStatus,
+  uploadUrlLifetime,
+} from "./upload-reservations.js";
 
 const sqs = new SQSClient({});
 
@@ -47,8 +52,8 @@ const MIN_ARTIFACT_TEXT_LENGTH = 5;
 const MAX_OBJECT_BYTES = 10 * 1024 * 1024;
 const MAX_CHECK_ARTIFACTS = 20;
 const MAX_CHECK_BYTES = 50 * 1024 * 1024;
-export const MAX_DEVICE_DAILY_BYTES = 100 * 1024 * 1024;
-export const MAX_DEVICE_DAILY_ARTIFACTS = 50;
+export const MAX_DEVICE_DAILY_BYTES = 512 * 1024 * 1024;
+export const MAX_DEVICE_DAILY_ARTIFACTS = 200;
 
 /**
  * S3 layout for a check's media. Server-owned and tenant-prefixed, so a
@@ -114,8 +119,8 @@ export const presignUpload = async (event) => {
   } catch {
     return rejectUpload("Invalid JSON body", "invalid_json");
   }
-  const { contentType, contentLength } =
-    /** @type {{ contentType?: unknown, contentLength?: unknown }} */ (
+  const { contentType, contentLength, uploadRequestId } =
+    /** @type {{ contentType?: unknown, contentLength?: unknown, uploadRequestId?: string }} */ (
       body ?? {}
     );
 
@@ -142,78 +147,100 @@ export const presignUpload = async (event) => {
     return rejectUpload("invalid_content_length", reason, contentLength);
   }
 
-  const artifactId = randomUUID();
-  const key = mediaKey(siteId, checkId, artifactId);
+  /** @type {string} */
+  let artifactId = randomUUID();
+  let key = mediaKey(siteId, checkId, artifactId);
   const now = new Date();
   const day = now.toISOString().slice(0, 10);
   const expiresAt = Math.floor(now.getTime() / 1000) + 24 * 60 * 60;
   const bytes = Number(contentLength);
   const tableName = getConfig().dynamoTable;
+  let uploadExpiresIn = UPLOAD_PRESIGN_EXPIRY_SECONDS;
   try {
-    await ddb.send(
-      new TransactWriteCommand({
-        TransactItems: [
-          {
-            ConditionCheck: {
-              TableName: tableName,
-              Key: checkHeaderKey(siteId, checkId),
-              ConditionExpression:
-                "attribute_exists(pk) AND #status IN (:inProgress, :completed)",
-              ExpressionAttributeNames: { "#status": "status" },
-              ExpressionAttributeValues: {
-                ":inProgress": "in_progress",
-                ":completed": "completed",
-              },
-            },
+    const writes = [
+      {
+        ConditionCheck: {
+          TableName: tableName,
+          Key: checkHeaderKey(siteId, checkId),
+          ConditionExpression:
+            "attribute_exists(pk) AND #status IN (:inProgress, :completed)",
+          ExpressionAttributeNames: { "#status": "status" },
+          ExpressionAttributeValues: {
+            ":inProgress": "in_progress",
+            ":completed": "completed",
           },
-          quotaUpdate({
-            tableName,
-            key: {
-              pk: sitePk(siteId),
-              sk: `MEDIA_QUOTA#${day}#CHECK#${checkId}`,
-            },
-            bytes,
-            maxBytes: MAX_CHECK_BYTES,
-            countField: "reservedCount",
-            maxCount: MAX_CHECK_ARTIFACTS,
-            expiresAt,
-          }),
-          quotaUpdate({
-            tableName,
-            key: {
-              pk: sitePk(siteId),
-              sk: `MEDIA_QUOTA#${day}#DEVICE#${deriveActorId(event)}`,
-            },
-            bytes,
-            maxBytes: MAX_DEVICE_DAILY_BYTES,
-            countField: "reservedCount",
-            maxCount: MAX_DEVICE_DAILY_ARTIFACTS,
-            expiresAt,
-          }),
-          {
-            Put: {
-              TableName: tableName,
-              Item: {
-                pk: sitePk(siteId),
-                sk: `UPLOAD_RESERVATION#${checkId}#${artifactId}`,
-                type: "uploadReservation",
-                siteId,
-                checkId,
-                artifactId,
-                s3Key: key,
-                contentType,
-                contentLength: bytes,
-                status: "pending",
-                createdAt: now.toISOString(),
-                expiresAt,
-              },
-              ConditionExpression: "attribute_not_exists(pk)",
-            },
-          },
-        ],
+        },
+      },
+      quotaUpdate({
+        tableName,
+        key: {
+          pk: sitePk(siteId),
+          sk: `MEDIA_QUOTA#${day}#CHECK#${checkId}`,
+        },
+        bytes,
+        maxBytes: MAX_CHECK_BYTES,
+        countField: "reservedCount",
+        maxCount: MAX_CHECK_ARTIFACTS,
+        expiresAt,
       }),
-    );
+      quotaUpdate({
+        tableName,
+        key: {
+          pk: sitePk(siteId),
+          sk: `MEDIA_QUOTA#${day}#DEVICE#${deriveActorId(event)}`,
+        },
+        bytes,
+        maxBytes: MAX_DEVICE_DAILY_BYTES,
+        countField: "reservedCount",
+        maxCount: MAX_DEVICE_DAILY_ARTIFACTS,
+        expiresAt,
+      }),
+      {
+        Put: {
+          TableName: tableName,
+          Item: {
+            pk: sitePk(siteId),
+            sk: `UPLOAD_RESERVATION#${checkId}#${artifactId}`,
+            type: "uploadReservation",
+            siteId,
+            checkId,
+            artifactId,
+            s3Key: key,
+            contentType,
+            contentLength: bytes,
+            status: "pending",
+            createdAt: now.toISOString(),
+            expiresAt,
+          },
+          ConditionExpression: "attribute_not_exists(pk)",
+        },
+      },
+    ];
+    const reservation = await reserveUpload({
+      requestId: uploadRequestId,
+      tableName,
+      reservation: {
+        pk: sitePk(siteId),
+        kind: "check",
+        parentId: checkId,
+        createdBy: deriveActorId(event),
+        artifactId,
+        s3Key: key,
+        contentType,
+        contentLength: bytes,
+        createdAt: now.toISOString(),
+      },
+      writes,
+      parentGuard: writes[0],
+    });
+    ({ artifactId, s3Key: key } = reservation);
+    uploadExpiresIn = uploadUrlLifetime(reservation);
   } catch (error) {
+    const status = reservationStatus(error);
+    if (status)
+      return jsonResponse(status, {
+        error: /** @type {{code: string}} */ (error).code,
+      });
     if (
       error instanceof Error &&
       [
@@ -225,12 +252,15 @@ export const presignUpload = async (event) => {
         /** @type {{ CancellationReasons?: Array<{ Code?: string }> }} */ (
           error
         ).CancellationReasons;
+      const quotaFailed = [1, 2].some(
+        (index) => reasons?.[index]?.Code === "ConditionalCheckFailed",
+      );
       console.warn(
         JSON.stringify({
-          // Retain the existing metric marker and public response. The marker
-          // alone does not prove a quota was exhausted: cancellations can also
-          // be conflicts. Log codes by transaction position, never Item/Message.
-          marker: "MediaQuotaExceeded",
+          // Log codes by transaction position, never Item/Message.
+          marker: quotaFailed
+            ? "MediaQuotaExceeded"
+            : "MediaReservationConflict",
           siteId,
           checkId,
           errorName: error.name,
@@ -248,7 +278,9 @@ export const presignUpload = async (event) => {
             : null,
         }),
       );
-      return jsonResponse(429, { error: "media_quota_exceeded" });
+      return quotaFailed
+        ? jsonResponse(429, { error: "media_quota_exceeded" })
+        : jsonResponse(409, { error: "upload_reservation_conflict" });
     }
     throw error;
   }
@@ -258,7 +290,7 @@ export const presignUpload = async (event) => {
     contentType,
     contentLength: bytes,
     tagging: "state=pending",
-    expiresIn: UPLOAD_PRESIGN_EXPIRY_SECONDS,
+    expiresIn: uploadExpiresIn,
   });
 
   return jsonResponse(200, {
@@ -274,7 +306,7 @@ export const presignUpload = async (event) => {
       "if-none-match": "*",
     },
     uploadUrl,
-    expiresIn: UPLOAD_PRESIGN_EXPIRY_SECONDS,
+    expiresIn: uploadExpiresIn,
   });
 };
 
