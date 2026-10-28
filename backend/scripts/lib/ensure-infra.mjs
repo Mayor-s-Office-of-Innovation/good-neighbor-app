@@ -81,10 +81,6 @@ export const TABLE_SCHEMA = {
     { AttributeName: "gsi2sk", AttributeType: "S" },
     { AttributeName: "gsi3pk", AttributeType: "S" },
     { AttributeName: "gsi3sk", AttributeType: "S" },
-    { AttributeName: "gsi4pk", AttributeType: "S" },
-    { AttributeName: "gsi4sk", AttributeType: "S" },
-    { AttributeName: "gsi5pk", AttributeType: "S" },
-    { AttributeName: "gsi5sk", AttributeType: "S" },
     { AttributeName: "gsi6pk", AttributeType: "S" },
     { AttributeName: "gsi6sk", AttributeType: "S" },
     { AttributeName: "gsi7pk", AttributeType: "S" },
@@ -116,22 +112,6 @@ export const TABLE_SCHEMA = {
       KeySchema: [
         { AttributeName: "gsi3pk", KeyType: "HASH" },
         { AttributeName: "gsi3sk", KeyType: "RANGE" },
-      ],
-      Projection: { ProjectionType: "ALL" },
-    },
-    {
-      IndexName: "GSI4",
-      KeySchema: [
-        { AttributeName: "gsi4pk", KeyType: "HASH" },
-        { AttributeName: "gsi4sk", KeyType: "RANGE" },
-      ],
-      Projection: { ProjectionType: "ALL" },
-    },
-    {
-      IndexName: "GSI5",
-      KeySchema: [
-        { AttributeName: "gsi5pk", KeyType: "HASH" },
-        { AttributeName: "gsi5sk", KeyType: "RANGE" },
       ],
       Projection: { ProjectionType: "ALL" },
     },

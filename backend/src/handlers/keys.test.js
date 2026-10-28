@@ -11,12 +11,10 @@ import {
   COMPLIANCE_TERMS_OPEN_PK,
   complianceTermsExpiryGsi,
   conditionKey,
-  conditionTimelineGsi,
   GSI3_NAME,
   sitePk,
   taskKey,
   taskWorklistDateGsi,
-  unresolvedConditionGsi,
 } from "./keys.js";
 
 describe("single-table key builders", () => {
@@ -74,36 +72,12 @@ describe("single-table key builders", () => {
     });
   });
 
-  it("builds assessment, condition, unresolved, and date-first task GSIs", () => {
+  it("builds assessment and date-first task GSIs", () => {
     expect(
       assessmentTimelineGsi("s1", "2026-08-18T00:00:00.000Z", "asm1"),
     ).toEqual({
       gsi1pk: "SITE#s1#ASSESSMENT",
       gsi1sk: "2026-08-18T00:00:00.000Z#asm1",
-    });
-    expect(
-      conditionTimelineGsi(
-        "s1",
-        3,
-        "2026-08-18T00:00:00.000Z",
-        "asm1",
-        "cond1",
-      ),
-    ).toEqual({
-      gsi4pk: "SITE#s1#CONDITION#SEV#3",
-      gsi4sk: "2026-08-18T00:00:00.000Z#asm1#cond1",
-    });
-    expect(
-      unresolvedConditionGsi(
-        "s1",
-        3,
-        "2026-08-18T00:00:00.000Z",
-        "asm1",
-        "cond1",
-      ),
-    ).toEqual({
-      gsi5pk: "SITE#s1#CONDITION#UNRESOLVED",
-      gsi5sk: "2026-08-18T00:00:00.000Z#SEV#3#asm1#cond1",
     });
     expect(
       taskWorklistDateGsi(
