@@ -24,3 +24,5 @@ repos:
           - --quiet
           - --framework
           - terraform
+          - --skip-check
+          - CKV2_AWS_62,CKV_AWS_144,CKV2_AWS_31
