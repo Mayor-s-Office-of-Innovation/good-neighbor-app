@@ -61,12 +61,6 @@ describe("history duration", () => {
     expect(
       historyEnteredAt({ ...taskAt(60), updatedAt: "2026-10-06T12:00:00Z" }),
     ).toBe(taskAt(60).completedAt);
-    expect(
-      historyEnteredAt({
-        cannotDo: { recordedAt: createdAt },
-        updatedAt: "2026-10-06T12:00:00Z",
-      }),
-    ).toBe(createdAt);
   });
 });
 describe("history grouping", () => {

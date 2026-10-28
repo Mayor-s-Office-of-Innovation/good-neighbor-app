@@ -62,9 +62,7 @@ export const handler = async (event) => {
         (!previous ||
           current.assessmentId !== previous.assessmentId ||
           (current.status !== previous.status &&
-            ["in_progress", "completed", "cannot_do"].includes(
-              current.status,
-            )) ||
+            ["in_progress", "completed"].includes(current.status)) ||
           current.resolvedAt !== previous.resolvedAt)
       ) {
         for (const artifactId of current.sourceArtifactIds)

@@ -1143,12 +1143,12 @@ describe("deferred In-progress / History lists", () => {
     );
     const view = liveView("?filter=todo");
     const loading = view.connectedCallback();
-    await vi.waitFor(() => expect(catalog.listTasks).toHaveBeenCalledTimes(5));
+    await vi.waitFor(() => expect(catalog.listTasks).toHaveBeenCalledTimes(4));
 
     const statuses = catalog.listTasks.mock.calls.map(([{ status }]) => status);
     expect(statuses[0]).toBe("open");
     expect(statuses.slice(1).sort()).toEqual(
-      ["cannot_do", "completed", "completing", "in_progress"].sort(),
+      ["completed", "completing", "in_progress"].sort(),
     );
     // The open-only render happened before any other list was requested.
     const firstRender = view._renderHome.mock.invocationCallOrder[0];
@@ -1269,9 +1269,7 @@ describe("deferred In-progress / History lists", () => {
     expect(view._remainingStatus).toBe("loaded");
     expect(
       catalog.listTasks.mock.calls.map(([{ status }]) => status).sort(),
-    ).toEqual(
-      ["cannot_do", "completed", "completing", "in_progress", "open"].sort(),
-    );
+    ).toEqual(["completed", "completing", "in_progress", "open"].sort());
   });
 
   it("drops the lists and shows a placeholder once they are older than a minute", async () => {
@@ -1322,9 +1320,7 @@ describe("deferred In-progress / History lists", () => {
     expect(view._remainingStatus).toBe("loaded");
     expect(
       catalog.listTasks.mock.calls.map(([{ status }]) => status).sort(),
-    ).toEqual(
-      ["cannot_do", "completed", "completing", "in_progress", "open"].sort(),
-    );
+    ).toEqual(["completed", "completing", "in_progress", "open"].sort());
     expect(view._remainingStatus).toBe("loaded");
   });
 
@@ -1650,7 +1646,7 @@ it("repaints photo progress without refetching lists, but refreshes new analysis
   pending.items[0].analysis.status = "analyzed";
   listener(pending);
   await view._homeRefresh;
-  expect(catalog.listTasks).toHaveBeenCalledTimes(5);
+  expect(catalog.listTasks).toHaveBeenCalledTimes(4);
   expect(catalog.listProviderSites).toHaveBeenCalledOnce();
 });
 
@@ -1674,7 +1670,7 @@ it("refreshes open tasks while secondary lists are slow, without overlapping sec
     status === "completed" ? held : Promise.resolve({ tasks: [] }),
   );
   await view.connectedCallback();
-  expect(catalog.listTasks).toHaveBeenCalledTimes(5);
+  expect(catalog.listTasks).toHaveBeenCalledTimes(4);
   catalog.listTasks.mockImplementation(async ({ status }) => ({
     tasks: status === "open" ? [{ taskId: "late-task", status: "open" }] : [],
   }));
@@ -1684,14 +1680,14 @@ it("refreshes open tasks while secondary lists are slow, without overlapping sec
   // One active primary pass and one coalesced trailing pass; neither waits
   // for the old completed-task read. No new secondary batch starts yet.
   expect(catalog.listProviderSites).toHaveBeenCalledTimes(3);
-  expect(catalog.listTasks).toHaveBeenCalledTimes(7);
+  expect(catalog.listTasks).toHaveBeenCalledTimes(6);
   expect(view._homeModel.tasks).toContainEqual({
     taskId: "late-task",
     status: "open",
   });
   release();
   await view._remainingLoad;
-  expect(catalog.listTasks).toHaveBeenCalledTimes(11);
+  expect(catalog.listTasks).toHaveBeenCalledTimes(9);
   expect(view._homeModel.tasks.some((task) => task.taskId === "stale")).toBe(
     false,
   );
@@ -1726,7 +1722,7 @@ it("refreshes tasks when an existing assessment revision changes", async () => {
   listener(pending);
   await view._homeRefresh;
   await view._remainingLoad;
-  expect(catalog.listTasks).toHaveBeenCalledTimes(5);
+  expect(catalog.listTasks).toHaveBeenCalledTimes(4);
   catalog.listTasks.mockClear();
   listener(pending);
   expect(catalog.listTasks).not.toHaveBeenCalled();

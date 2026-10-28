@@ -36,7 +36,6 @@ const USER_EXPERIENCE_PATHS = new Set([
   "outcome.label",
   "outcome.buttons",
   "outcome.guidance",
-  "outcome.cannotDoReasons",
 ]);
 
 /**
@@ -97,7 +96,6 @@ function comparableRule(rule) {
     "outcome.appActions": rule.outcome.appActions,
     "outcome.category311": rule.outcome.category311,
     "outcome.guidance": rule.outcome.guidance,
-    "outcome.cannotDoReasons": rule.outcome.cannotDoReasons,
     "outcome.source": rule.outcome.source,
   };
 }

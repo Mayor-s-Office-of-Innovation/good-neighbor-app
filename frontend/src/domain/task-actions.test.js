@@ -12,7 +12,7 @@ import {
 } from "./task-actions.js";
 
 describe("task action helpers", () => {
-  it.each(["completed", "in_progress", "cannot_do"])(
+  it.each(["completed", "in_progress"])(
     "does not report a saved %s action as failed because of background 311 results",
     (status) => {
       for (const code of ["create_311_ticket", "close_311_ticket"]) {

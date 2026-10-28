@@ -186,7 +186,7 @@ export function homeTaskStatus(task, override, now = new Date()) {
   ) {
     return "in_progress";
   }
-  if (status === "completed" || status === "cannot_do") {
+  if (status === "completed") {
     if (
       status === "completed" &&
       task.completionMethod === "311_filed" &&

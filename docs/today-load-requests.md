@@ -50,7 +50,7 @@ and install prompts can load more JS files.
   The five To-do photos come from five different checks. None is a duplicate.
   The other tabs' photos do not load yet.
 - The task lists have 5 `open`, 5 `in_progress`, and 20 `completed` rows.
-  Both `completing` and `cannot_do` are empty, but still need a call.
+  `completing` is empty, but still needs a call.
 - The site list and each check fit in one database page. No task has a 311 ticket.
 - Duplicate checks are on, and all results are ready. Site settings arrive before
   the task lists finish. The total counts the first poll only.
@@ -103,9 +103,9 @@ sequenceDiagram
         A-->>B: Signed URLs (signing does not GET S3 objects)
         B->>S: 5 photo GETs
     and Remaining task lists
-        B->>A: 4 GET /v1/tasks?status=...&limit=50
-        Note over B,A: in_progress, completing, completed, cannot_do
-        A->>D: 4 GSI2 Queries, even for empty lists
+        B->>A: 3 GET /v1/tasks?status=...&limit=50
+        Note over B,A: in_progress, completing, completed
+        A->>D: 3 GSI2 Queries, even for empty lists
     end
     Note over B: Merge 30 tasks and update tab counts
     B->>A: 1 POST /v1/duplicates:batch (30 task IDs)
