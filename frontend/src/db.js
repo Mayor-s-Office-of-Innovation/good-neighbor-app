@@ -679,6 +679,33 @@ export async function listCareSubmissions(siteId) {
     (record) => record?.careSubmission && record.siteId === siteId,
   );
 }
+/**
+ * Work saved on this device that has not reached the server, across every
+ * site: finished checks and reports whose scorecard has not landed, and care
+ * work logs not yet saved. Sign-out deletes all of it (resetLocalAppState),
+ * so the logout dialogs warn with these counts.
+ * @returns {Promise<{ checks: number, careLogs: number }>}
+ */
+export async function countUnsentWork() {
+  // Includes the legacy single-slot keys listFinishedChecks migrates on read.
+  const isFinishedCheckKey = (/** @type {string} */ key) =>
+    key.startsWith("check:") || key === "current" || key.endsWith(":current");
+  const [keys, values] = await tx("review", "readonly", (os) =>
+    Promise.all([reqToPromise(os.getAllKeys()), reqToPromise(os.getAll())]),
+  );
+  let checks = 0;
+  let careLogs = 0;
+  keys.forEach((key, index) => {
+    const record = values[index];
+    if (!record) return;
+    if (record.careSubmission) {
+      if (record.status !== "saved") careLogs += 1;
+    } else if (isFinishedCheckKey(String(key)) && !record.scorecardDone) {
+      checks += 1;
+    }
+  });
+  return { checks, careLogs };
+}
 export function deleteCareSubmission(siteId, workId) {
   return tx("review", "readwrite", (os) =>
     os.delete(`care:${siteId}:${workId}`),

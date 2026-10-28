@@ -110,6 +110,26 @@ test.describe("offline checks", () => {
       .poll(() => submittedCheckIds(page), { timeout: 120_000 })
       .toEqual(expect.arrayContaining([first, second]));
   });
+  test("logout warns about a check that hasn't uploaded", async ({ page }) => {
+    await setAnalyzerFixture("excellent");
+    await page.evaluate(() => {
+      const path = "/src/components/perimeter-check.js";
+      return import(/* @vite-ignore */ path);
+    });
+    await page.context().setOffline(true);
+    await finishOfflineCheck(page);
+
+    await page.locator("#home-settings").click();
+    await page.locator("#settings-logout").click();
+    const unsent = page.locator("#logout-dialog #logout-unsent");
+    await expect(unsent).toBeVisible();
+    await expect(unsent).toContainText(
+      t("today.logout.unsentChecks", { count: 1 }),
+    );
+    // Back out: the check must stay on the device.
+    await page.locator("#logout-dialog .logout-dialog__cancel").click();
+    await expect(page.locator("#logout-dialog")).not.toBeVisible();
+  });
 });
 
 // Storage only: needs Vite and IndexedDB, not the API or a bound site flow.
@@ -188,5 +208,54 @@ bare.describe("offline checks: local storage", () => {
       return { first, again };
     });
     expect(stored).toEqual({ first: ["legacy"], again: ["legacy"] });
+  });
+  bare("counts unsent checks and care logs on every site", async ({ page }) => {
+    const counts = await page.evaluate(async () => {
+      const dbPath = "/src/db.js";
+      const db = await import(/* @vite-ignore */ dbPath);
+      await db.setSite("Test", { siteId: "site", deviceId: "device" });
+      const empty = await db.countUnsentWork();
+      await new Promise((resolve, reject) => {
+        const open = window.indexedDB.open("conditions-reporter");
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const tx = open.result.transaction("review", "readwrite");
+          const store = tx.objectStore("review");
+          const check = (/** @type {string} */ id, extra = {}) => ({
+            id,
+            status: "capture-complete",
+            items: [],
+            ...extra,
+          });
+          store.put(check("a", { siteId: "site" }), "check:site:a");
+          store.put(check("b", { siteId: "other" }), "check:other:b");
+          store.put(
+            check("sent", { siteId: "site", scorecardDone: true }),
+            "check:site:sent",
+          );
+          store.put(check("old", { siteId: "site" }), "site:site:current");
+          store.put(
+            { careSubmission: true, siteId: "site", status: "pending" },
+            "care:site:w1",
+          );
+          store.put(
+            { careSubmission: true, siteId: "other", status: "failed" },
+            "care:other:w2",
+          );
+          store.put(
+            { careSubmission: true, siteId: "site", status: "saved" },
+            "care:site:w3",
+          );
+          store.put({ siteId: "site", items: [] }, "home:site");
+          tx.oncomplete = () => resolve(undefined);
+          tx.onerror = () => reject(tx.error);
+        };
+      });
+      return { empty, filled: await db.countUnsentWork() };
+    });
+    expect(counts).toEqual({
+      empty: { checks: 0, careLogs: 0 },
+      filled: { checks: 3, careLogs: 2 },
+    });
   });
 });

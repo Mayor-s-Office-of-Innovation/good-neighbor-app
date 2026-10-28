@@ -59,6 +59,7 @@ import { awaitOverlayUnwind, openOverlayDialog } from "../dialog-history.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import {
   clearSiteSession,
+  countUnsentWork,
   getSite,
   hasAdminAccess,
   listBoundSites,
@@ -326,6 +327,8 @@ class TodayView extends HTMLElement {
     this._logoutDialogOpen = false;
     this._logoutPending = false;
     this._logoutError = "";
+    /** @type {{ checks?: number, careLogs?: number }} */
+    this._logoutUnsent = {};
     this._deviceLocation = getLastDeviceLocation();
     this._locationUnsub = null;
     /** @type {any} the persistent <location-dialog>, created on first render */
@@ -1125,9 +1128,15 @@ class TodayView extends HTMLElement {
       },
     );
     this.querySelector("#settings-logout")?.addEventListener("click", () => {
-      this._settingsMenuOpen = false;
-      this._logoutDialogOpen = true;
-      this._renderHome(this._homeModel);
+      // Count first: logging out deletes work that hasn't uploaded yet.
+      void countUnsentWork()
+        .catch(() => ({}))
+        .then((unsent) => {
+          this._logoutUnsent = unsent;
+          this._settingsMenuOpen = false;
+          this._logoutDialogOpen = true;
+          this._renderHome(this._homeModel);
+        });
     });
     this.querySelector("#settings-help")?.addEventListener("click", () => {
       this._settingsMenuOpen = false;
@@ -1560,6 +1569,7 @@ class TodayView extends HTMLElement {
       showAnalysisDialogs: Boolean(hasPendingAssessment || hasResultCards),
       logoutError: this._logoutError,
       logoutPending: this._logoutPending,
+      logoutUnsent: this._logoutUnsent,
     });
   }
 
