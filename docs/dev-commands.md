@@ -384,8 +384,11 @@ artifacts uploaded on failure) — see `.github/workflows/ci.yml`.
 
 ### Standard localhost site-admin dataset
 
-`backend/seeds/site-admin.csv` is the standard site-admin seed (28 sites from
-`gnp_site_admin_seed.csv`). Set `LOCAL_SITE_ADMIN_SEED=true` in `.env.local` to use
+`backend/fixtures/synthetic/site-admin-demo.csv` is the standard local site-admin
+seed: 28 sites with synthetic contact identities. Names are labeled Sample Contact,
+emails use `example.org`, and phones use the fictional `415-555-01xx` range.
+Site and organization details are preserved; repeated contacts retain the same
+synthetic identity across assignments. Set `LOCAL_SITE_ADMIN_SEED=true` in `.env.local` to use
 it instead of the device-login sample sites. The API seeds a fresh database before
 listening, using the normal CSV importer and creating its DPH/HSH departments.
 A local seed marker prevents restarts from overwriting edits. This imports contacts
@@ -402,7 +405,8 @@ This deletes and recreates only the configured `gnp-local-*` DynamoDB table.
 It refuses non-loopback DynamoDB, SQS, or S3 endpoints. Storage objects are not
 removed. Restart the backend afterward and refresh the dashboard. Without
 `--reset`, the command seeds only if the marker is absent. To reload a changed
-CSV, use the explicit reset command. Leave `LOCAL_SITE_ADMIN_SEED` unset for the
+CSV, use the explicit reset command. Existing local databases are not sanitized
+by changing this fixture; reset them explicitly to replace previously imported contacts. Leave `LOCAL_SITE_ADMIN_SEED` unset for the
 original device-login fixtures used by the existing local/E2E harness.
 
 ### Compliance letter email testing

@@ -1168,7 +1168,7 @@ describe("provider and site management", () => {
             managingCityDepartment: "DPH",
             managingSystemOfCare: "BHS-PBH",
             cityProgramManagerId: "manager-1",
-            cityProgramManager: "Rob Hoffman",
+            cityProgramManager: "Sample Contact002",
           },
           programManagerPhone: "415-555-0199",
         },
@@ -1237,8 +1237,8 @@ describe("provider and site management", () => {
           oversight: {
             managingCityDepartment: "DPH",
             managingSystemOfCare: "BHS-PBH",
-            cityProgramManagerFirstName: "Rob",
-            cityProgramManagerLastName: "Hoffman",
+            cityProgramManagerFirstName: "Sample",
+            cityProgramManagerLastName: "Contact002",
           },
           compliance: {
             underEnhancedMonitoring: true,
@@ -1282,7 +1282,7 @@ describe("provider and site management", () => {
       ":oversight": {
         managingCityDepartment: "DPH",
         managingSystemOfCare: "BHS-PBH",
-        cityProgramManager: "Rob Hoffman",
+        cityProgramManager: "Sample Contact002",
       },
       ":compliance": {
         underEnhancedMonitoring: true,

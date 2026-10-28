@@ -35,7 +35,7 @@ export async function seedLocalSiteAdmin() {
   );
   if (existing.Item) return;
   const csv = await readFile(
-    new URL("../../seeds/site-admin.csv", import.meta.url),
+    new URL("../../fixtures/synthetic/site-admin-demo.csv", import.meta.url),
     "utf8",
   );
   const digest = createHash("sha256").update(csv).digest("hex");
@@ -80,7 +80,7 @@ export async function seedLocalSiteAdmin() {
   }
   const preview = await invoke(
     previewSiteImport,
-    event({ csv, fileName: "site-admin.csv" }),
+    event({ csv, fileName: "site-admin-demo.csv" }),
   );
   console.log("[seed] preview counts:", preview.counts);
   if (preview.counts.conflict || preview.counts.invalid)
