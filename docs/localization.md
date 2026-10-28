@@ -24,7 +24,7 @@ English by design.
   a fixed locale, and only for calendar arithmetic (`pacificDaysAgo`,
   `pacificWeekdayIndex`), never for text a user sees.
 - **Text that arrives as data:** rulebook strings on task items (labels,
-  guidance, buttons, cannot-do reasons, questions, categories, agencies) and
+  guidance, buttons, questions, categories, agencies) and
   the backend's 311 vocabulary and timeline labels are translated by looking
   the stored English up in the `rulebook.*` / `server.*` namespaces
   (`frontend/src/i18n/rulebook.js`, `rulebookText(text, scope)`). The same

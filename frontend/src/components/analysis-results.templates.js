@@ -478,7 +478,6 @@ function analysisCardEntries(
               "completing",
               "resolving",
               "completed",
-              "cannot_do",
             ].includes(task.status),
             actionKind: task.kind || "",
             phoneNumber: task.phoneNumber || "",
@@ -598,13 +597,9 @@ export function taskAnalysisCard({
   if (history) return historyCard(task);
   includeControls =
     includeControls &&
-    ![
-      "in_progress",
-      "completing",
-      "resolving",
-      "completed",
-      "cannot_do",
-    ].includes(task.status);
+    !["in_progress", "completing", "resolving", "completed"].includes(
+      task.status,
+    );
   const mediaUrl = taskMediaUrl(task);
   // `positionDescriptor` is deliberately not a fallback: since ADR 0014 it is
   // a fixed literal, not a location.

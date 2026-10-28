@@ -117,7 +117,7 @@ describe("rulebase semantic diff", () => {
     });
   });
 
-  it("reports fixture impact for guidance, buttons, and cannot-do reason changes", () => {
+  it("reports fixture impact for guidance and button changes", () => {
     const after = catalogVariant((rule) => {
       if (rule.ruleId !== "LITTER-2") return rule;
       return {
@@ -126,7 +126,6 @@ describe("rulebase semantic diff", () => {
           ...rule.outcome,
           guidance: "Use a broom before making the request.",
           buttons: ["Open 311 request", "Copy case notes"],
-          cannotDoReasons: ["Unsafe", "Blocked access"],
         },
       };
     });
@@ -147,7 +146,6 @@ describe("rulebase semantic diff", () => {
           outcome: expect.objectContaining({
             guidance: expect.any(String),
             buttons: expect.any(Array),
-            cannotDoReasons: expect.any(Array),
           }),
         }),
         after: expect.objectContaining({
@@ -156,7 +154,6 @@ describe("rulebase semantic diff", () => {
           outcome: expect.objectContaining({
             guidance: "Use a broom before making the request.",
             buttons: ["Open 311 request", "Copy case notes"],
-            cannotDoReasons: ["Unsafe", "Blocked access"],
           }),
         }),
       },

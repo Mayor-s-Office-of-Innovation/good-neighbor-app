@@ -974,7 +974,7 @@ describe("return-to-app task freshness", () => {
       await view._refreshActiveTab();
       expect(
         fetch.mock.calls.map(([options]) => options.status).sort(),
-      ).toEqual(["cannot_do", "open"]);
+      ).toEqual(["open"]);
     } finally {
       fetch.mockRestore();
     }
@@ -1055,7 +1055,7 @@ describe("return-to-app task freshness", () => {
     }
   });
 
-  it("recovers the active tab without claiming unfetched History data is loaded", async () => {
+  it("recovers both secondary tabs after all remaining statuses load", async () => {
     const { view, api } = await fixture();
     view._homeFilter = "in_progress";
     view._remainingStatus = "error";
@@ -1063,12 +1063,8 @@ describe("return-to-app task freshness", () => {
     try {
       await view._refreshActiveTab();
       expect(view._tabListStatus()).toBe("loaded");
-      expect(view._remainingStatus).toBe("error");
-      expect(view._taskListFreshness.has("cannot_do")).toBe(false);
-      view._homeFilter = "history";
-      expect(view._tabListStatus()).toBe("error");
-      await view._refreshActiveTab();
       expect(view._remainingStatus).toBe("loaded");
+      view._homeFilter = "history";
       expect(view._tabListStatus()).toBe("loaded");
     } finally {
       fetch.mockRestore();

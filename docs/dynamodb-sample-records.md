@@ -288,13 +288,11 @@ GSI5 unresolved queue.
     ],
     "category311": "1.1.4.7.9.0",
     "guidance": "Stay away from it. Use the app to file a 311 ticket so the City can clean it up.",
-    "cannotDoReasons": ["We already filed a ticket"],
     "source": "Policy line 70; public SF311 taxonomy"
   },
   "taskIds": ["4f8e2b1c-9a3d-4c7e-b2f5-6d1a8c9e0b23"],
   "resolvedToTasks": true,
   "needsAnswer": null,
-  "cannotDo": null,
   "createdAt": "2026-09-30T15:05:10.000Z",
   "updatedAt": "2026-09-30T15:05:10.000Z"
 }
@@ -346,7 +344,6 @@ task in the GSI2 worklist for its current status. Both change on every status ch
   "appActionStatus": "pending",
   "appActionResults": [],
   "category311": "1.1.4.7.9.0",
-  "cannotDoReasons": ["We already filed a ticket"],
   "sourceArtifactIds": ["7b2f9c3e-1d44-4e0b-a6a1-3f1c9d8e2b77"],
   "source": {
     "latitude": 37.7312,

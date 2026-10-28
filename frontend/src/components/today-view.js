@@ -592,12 +592,7 @@ class TodayView extends HTMLElement {
       tasks = uniqueTasks([...(openTasksResult.tasks || []), ...reused]);
       if (!reuseRemaining) this._remainingStatus = "pending";
       else
-        for (const status of [
-          "in_progress",
-          "completing",
-          "completed",
-          "cannot_do",
-        ])
+        for (const status of ["in_progress", "completing", "completed"])
           this._taskListFreshness.set(status, this._remainingLoadedAt);
       latestStartedCheck = (checks || [])
         .map(adaptCheckHeader)
@@ -792,7 +787,7 @@ class TodayView extends HTMLElement {
     let results;
     try {
       results = await Promise.all(
-        ["in_progress", "completing", "completed", "cannot_do"].map((status) =>
+        ["in_progress", "completing", "completed"].map((status) =>
           listTasks({ status, limit: 50 }),
         ),
       );
@@ -820,12 +815,7 @@ class TodayView extends HTMLElement {
     ]);
     this._remainingStatus = "loaded";
     this._remainingLoadedAt = Date.now();
-    for (const status of [
-      "in_progress",
-      "completing",
-      "completed",
-      "cannot_do",
-    ])
+    for (const status of ["in_progress", "completing", "completed"])
       this._taskListFreshness.set(status, Date.now());
     this._renderHome({ ...model, tasks });
     this._watchDuplicates(tasks);
@@ -2202,8 +2192,7 @@ class TodayView extends HTMLElement {
     });
   }
 
-  // (Re)attach click handlers to every [data-action] button currently inside a
-  // card — used on first render and after swapping in the reason picker.
+  // Attach click handlers to every [data-action] button currently inside a card.
   _wireCardButtons(card, task) {
     card.querySelectorAll("[data-action]").forEach((btn) => {
       btn.addEventListener("click", () => this._onAction(card, task, btn));

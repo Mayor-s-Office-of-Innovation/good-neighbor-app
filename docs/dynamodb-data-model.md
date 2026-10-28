@@ -195,7 +195,7 @@ as task update events and every GSI sort key.
 | **Complaint header** | `SITE#<siteId>` | `COMPLAINT#<complaintId>` | `status` (`analyzing`, `ready`, or `analysis_failed`), list `label`, generated `detail`/`what`/`where`/`when`/`notes`, optional submitted description, artifact count, timestamps, and numeric one-year `expiresAt`. GSI1 uses `SITE#<siteId>#COMPLAINTS` plus `createdAt#complaintId` for newest-first listing. |
 | **Complaint artifact** | `SITE#<siteId>` | `COMPLAINT#<complaintId>#ART#<artifactId>` | Private S3 key, original name, verified content type/length, `status` (`registered` or the retryable deletion tombstone `deleting`), and numeric `expiresAt`. Draft rows expire after one day; submission transactionally advances them to one year after retagging the object `state=complaint`. |
 | **Assessment report** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>` | status, `policyVersion`, `rubricVersion`, grade, `reportedAt`, `assessmentRevision`, `lineageId`, `summary{}` counts, `rawAssessment`. Gets `supersededByAssessmentId` when a refresh replaces it. |
-| **Condition** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>#COND#<conditionId>` | `canonicalCategory` / `analyzerCategory`, severity, `userFriendlyLabel`, `description`, `translations` (per-locale map, see [localization](./localization.md)), `answers`, `outcome`, `selectedRuleId`, status, `taskIds`, `resolvedToTasks`, `needsAnswer`, `cannotDo`, `source`. See [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks). |
+| **Condition** | `SITE#<siteId>` | `ASSESSMENT#<assessmentId>#COND#<conditionId>` | `canonicalCategory` / `analyzerCategory`, severity, `userFriendlyLabel`, `description`, `translations` (per-locale map, see [localization](./localization.md)), `answers`, `outcome`, `selectedRuleId`, status, `taskIds`, `resolvedToTasks`, `needsAnswer`, `source`. See [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks). |
 | Guidance current pointer | `SITE#<siteId>` | `GUIDANCE_CURRENT#<JSON [checkId, lineageId]>` | points to the current assessment for one artifact. Moved atomically on refresh. See [Guidance refresh lineage](#guidance-refresh-lineage). |
 | **Task** (action item) | `SITE#<siteId>` | `TASK#<taskId>` | `shortId`, kind (`action` \| `escalation` \| `non_actionable_escalation`), type (`onsite` \| `city_escalation`, derived from kind), immutable evaluated `ruleId`, policyVersion, optional `actionOverride` (selected rule/custom type, original rule, actor, time), optional recorded `customAction` text/outcome, `canBeInProgress`, `primaryInProgressAgency`, category, severity, status, `userFriendlyLabel`, `description`, `translations` (per-locale map copied from the condition) |
 | **Task update event** | `SITE#<siteId>` | `TASK#<taskId>#UPDATE#<occurredAt>#<updateId>` | append-only timeline event for an in-progress task: type, label, actorId, `text` / `notes`, `photoKeys` (artifact IDs), optional `presencePeriod`, `documentationState` |
@@ -428,8 +428,8 @@ AP27 retains its compliance fields for other consumers and adds compact per-chec
 rows (`checkId`, `startedAt`, `photoCount`) for the day cards. Raw headers stay
 server-side. Issues use the task report's non-superseded tasks. “Issues resolved”
 requires `status = completed` and both creation and completion timestamps inside
-the selected Pacific period; calls, 311 filings, and “can't do” do not count as
-resolution. The summary links retain the period and the resolved filter. Report
+the selected Pacific period; calls and 311 filings do not count as resolution.
+The summary links retain the period and the resolved filter. Report
 issue cards open the shared timeline in read-only mode. No operating-day schedule
 is currently stored, so absence of a compliance obligation alone does not label
 a day “not operating.”

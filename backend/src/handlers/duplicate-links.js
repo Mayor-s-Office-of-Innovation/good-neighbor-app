@@ -183,7 +183,6 @@ export const separateDuplicate = async (event) => {
     "latestUpdateLabel",
     "lastAnsweredPresencePeriod",
     "resolvedAt",
-    "cannotDo",
     "completionStartedAt",
     "completionLeaseExpiresAt",
   ])
