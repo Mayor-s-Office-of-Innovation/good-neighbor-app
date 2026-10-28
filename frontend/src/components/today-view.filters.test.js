@@ -1239,14 +1239,10 @@ describe("deferred In-progress / History lists", () => {
       expect(view._homeModel.tasks.map((task) => task.taskId)).toEqual([
         "open-1",
       ]);
-      expect(view._offline).toEqual(
-        expect.objectContaining({ savedAt: "2026-10-27T15:00:00.000Z" }),
-      );
+      expect(view._offline).toBe(true);
       expect(view._remainingStatus).toBe("error");
       expect(saveHomeSnapshot).not.toHaveBeenCalled();
       const markup = view._render(view._homeModel);
-      expect(markup).toContain('id="home-offline"');
-      expect(markup).toContain(escapeHtml(t("home.offline.title")));
       expect(markup).toContain('id="start-check"');
       errorLog.mockRestore();
     });

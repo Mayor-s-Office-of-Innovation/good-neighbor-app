@@ -52,7 +52,7 @@ async function finishOfflineCheck(page) {
   });
   await expect(page.locator("#done-check")).toBeEnabled();
   await page.locator("#done-check").click();
-  await expect(page.locator("#home-offline")).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator("#start-check")).toBeVisible({ timeout: 30_000 });
   return checkId;
 }
 
@@ -82,11 +82,10 @@ test.describe("offline checks", () => {
       const home = /** @type {any} */ (document.querySelector("today-view"));
       home.connectedCallback();
     });
-    const notice = page.locator("#home-offline");
-    await expect(notice).toBeVisible({ timeout: 30_000 });
-    await expect(notice).toContainText(t("home.offline.title"));
+    await expect(page.locator("#start-check")).toBeVisible({
+      timeout: 30_000,
+    });
     await expect(page.locator("#retry")).toHaveCount(0);
-    await expect(page.locator("#start-check")).toBeVisible();
   });
 
   test("two checks finished offline both reach the backend once back online", async ({
@@ -105,14 +104,8 @@ test.describe("offline checks", () => {
     const second = await finishOfflineCheck(page);
     expect(first).toBeTruthy();
     expect(second).not.toBe(first);
-    await expect(page.locator("#home-offline")).toContainText(
-      t("home.offline.waiting", { count: 2 }),
-    );
 
     await page.context().setOffline(false);
-    await expect(page.locator("#home-offline")).toHaveCount(0, {
-      timeout: 30_000,
-    });
     await expect
       .poll(() => submittedCheckIds(page), { timeout: 120_000 })
       .toEqual(expect.arrayContaining([first, second]));

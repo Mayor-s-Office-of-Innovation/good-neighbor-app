@@ -148,7 +148,6 @@ import {
   errorView,
   heroBlock,
   homeResults,
-  offlineNotice,
   homeShell,
   homeSkeleton,
   summaryBlock,
@@ -662,7 +661,7 @@ class TodayView extends HTMLElement {
       }
       const snapshot = await getHomeSnapshot(this._siteId).catch(() => null);
       if (generation !== this._homeRefreshGeneration) return;
-      this._offline = { savedAt: snapshot?.savedAt || "" };
+      this._offline = true;
       latestStartedCheck = latestStarted(snapshot?.checks);
       submitted = submittedChecks(snapshot?.checks);
       tasks = uniqueTasks(snapshot?.tasks || []);
@@ -702,10 +701,6 @@ class TodayView extends HTMLElement {
         expectedArtifacts: effectivePendingSession.expectedArtifacts,
       });
     }
-    if (this._offline)
-      this._offline.waiting = finishedChecks.filter(
-        (check) => !check.scorecardDone,
-      ).length;
 
     if (generation !== this._homeRefreshGeneration) return;
     this._taskOverrides = readTaskStatusOverrides();
@@ -1543,11 +1538,9 @@ class TodayView extends HTMLElement {
       busy:
         this._homeFilter !== "todo" &&
         (this._remainingStatus || "loaded") === "pending",
-      hero:
-        (this._offline ? offlineNotice(this._offline) : "") +
-        (showFirstRun
-          ? this._firstRunBlock()
-          : this._activityBlock({ last, homeTasks })),
+      hero: showFirstRun
+        ? this._firstRunBlock()
+        : this._activityBlock({ last, homeTasks }),
       results: this._homeResults({
         pendingSession,
         tabCounts,

@@ -443,8 +443,8 @@ Like care work, this is an in-app queue, not service worker background sync: sen
 pauses while the app is closed and resumes when it reopens.
 
 With no connection, home shows the last lists it loaded (saved per site in the `review`
-store, cleared on sign-out) under an offline notice with the count of checks waiting,
-and keeps Start check available. It reloads the live lists on `online`.
+store, cleared on sign-out) and keeps Start check available; the app-wide offline toast
+says why. It reloads the live lists on `online`.
 
 ### Duplicate issue links (feature-gated; not yet deployed)
 
