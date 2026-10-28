@@ -243,6 +243,42 @@ function untilAborted(promise, signal) {
   });
 }
 
+// A request that has not finished after this long counts as a lost connection
+// (status 0), so a weak signal fails over to the offline paths instead of
+// hanging. Generous: a slow but working connection should still get through.
+export const REQUEST_TIMEOUT_MS = 30_000;
+// Photo uploads: abort when no bytes have moved for this long (XHR), or when
+// the whole PUT is slower than UPLOAD_MIN_BYTES_PER_SECOND (fetch).
+export const UPLOAD_STALL_MS = 30_000;
+const UPLOAD_MIN_BYTES_PER_SECOND = 20_000;
+
+/**
+ * An abort signal that fires when `signal` does or after `ms`. `timedOut()`
+ * tells the two apart; `clear()` stops the timer once the work is done.
+ * (AbortSignal.any / .timeout are missing on older devices.)
+ * @param {AbortSignal | undefined} signal
+ * @param {number} ms
+ */
+function withTimeout(signal, ms) {
+  const controller = new AbortController();
+  let expired = false;
+  const timer = setTimeout(() => {
+    expired = true;
+    controller.abort();
+  }, ms);
+  const forward = () => controller.abort();
+  if (signal?.aborted) forward();
+  else signal?.addEventListener("abort", forward, { once: true });
+  return {
+    signal: controller.signal,
+    timedOut: () => expired,
+    clear: () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", forward);
+    },
+  };
+}
+
 /**
  * One JSON request against the backend. Serializes an object body, parses a
  * JSON response, and throws `ApiError` on a non-2xx status or a transport
@@ -261,7 +297,32 @@ function untilAborted(promise, signal) {
  * @param {string} [opts.originSiteId] internal: keep retries bound to the original site
  * @returns {Promise<any>} the parsed JSON body (null for an empty 2xx)
  */
-async function request(
+async function request(method, path, opts = {}) {
+  const timeout = withTimeout(opts.signal, REQUEST_TIMEOUT_MS);
+  try {
+    return await requestOnce(method, path, { ...opts, signal: timeout.signal });
+  } catch (err) {
+    if (!timeout.timedOut() || opts.signal?.aborted) throw err;
+    const timedOut = new ApiError(
+      `Timed out after ${REQUEST_TIMEOUT_MS}ms calling ${method} ${path}`,
+      { status: 0 },
+    );
+    classifyApiFailure(timedOut);
+    throw timedOut;
+  } finally {
+    timeout.clear();
+  }
+}
+
+/**
+ * `request` without the time limit; the signal covers the refresh, the
+ * fetch, and reading the body.
+ * @param {string} method
+ * @param {string} path
+ * @param {Parameters<typeof request>[2]} [opts]
+ * @returns {Promise<any>}
+ */
+async function requestOnce(
   method,
   path,
   { headers = {}, body, signal, allowAuthRetry = true, originSiteId } = {},
@@ -827,10 +888,23 @@ export function putMediaWithProgress(
     Object.entries(uploadHeaders).forEach(([name, value]) =>
       xhr.setRequestHeader(name, value),
     );
+    // No bytes moving for UPLOAD_STALL_MS counts as a lost connection.
+    let stalled = false;
+    /** @type {ReturnType<typeof setTimeout> | undefined} */
+    let stallTimer;
+    const watchStall = () => {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        stalled = true;
+        xhr.abort();
+      }, UPLOAD_STALL_MS);
+    };
     xhr.upload.addEventListener("progress", (event) => {
+      watchStall();
       if (event.lengthComputable)
         onProgress(Math.round((event.loaded / event.total) * 100));
     });
+    xhr.addEventListener("loadend", () => clearTimeout(stallTimer));
     xhr.addEventListener("load", () =>
       xhr.status >= 200 && xhr.status < 300
         ? resolve()
@@ -844,8 +918,13 @@ export function putMediaWithProgress(
       reject(new ApiError("Network error uploading media", { status: 0 })),
     );
     xhr.addEventListener("abort", () =>
-      reject(new DOMException("Upload cancelled", "AbortError")),
+      reject(
+        stalled
+          ? new ApiError("Media upload stalled", { status: 0 })
+          : new DOMException("Upload cancelled", "AbortError"),
+      ),
     );
+    watchStall();
     signal?.addEventListener("abort", () => xhr.abort(), { once: true });
     xhr.send(file);
   });
@@ -922,6 +1001,10 @@ export async function putMedia(
   uploadHeaders = {},
   signal = undefined,
 ) {
+  // fetch reports no upload progress, so allow time for the size instead.
+  const limitMs =
+    UPLOAD_STALL_MS + (blob.size / UPLOAD_MIN_BYTES_PER_SECOND) * 1000;
+  const timeout = withTimeout(signal, limitMs);
   /** @type {Response} */
   let res;
   try {
@@ -929,10 +1012,17 @@ export async function putMedia(
       method: "PUT",
       headers: { "content-type": contentType, ...uploadHeaders },
       body: blob,
-      signal,
+      signal: timeout.signal,
     });
   } catch (err) {
-    throw new ApiError(`Network error uploading media: ${err}`, { status: 0 });
+    throw new ApiError(
+      timeout.timedOut()
+        ? `Media upload timed out after ${Math.round(limitMs)}ms`
+        : `Network error uploading media: ${err}`,
+      { status: 0 },
+    );
+  } finally {
+    timeout.clear();
   }
   if (!res.ok) {
     throw new ApiError(`Media upload → ${res.status} ${res.statusText}`, {

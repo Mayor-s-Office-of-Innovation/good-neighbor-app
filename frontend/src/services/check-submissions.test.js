@@ -132,3 +132,45 @@ describe("resumeCheckSubmissions", () => {
     expect(finalizeCaptureScorecardInBackground).not.toHaveBeenCalled();
   });
 });
+
+describe("retry while items wait", () => {
+  // A fresh module per test: the pending retry timer is module state.
+  async function freshQueue() {
+    vi.resetModules();
+    const queue = await import("./check-submissions.js");
+    const analysis = await import("./photo-analysis.js");
+    return { queue, analyze: vi.mocked(analysis.analyzeEvidenceItem) };
+  }
+
+  it("tries waiting items again after a minute, once per minute", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { queue, analyze } = await freshQueue();
+      held.finished = [finishedCheck("a", [waiting("1")])];
+      await queue.resumeCheckSubmissions();
+      await queue.resumeCheckSubmissions({ uploads: false });
+      expect(analyze).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(queue.WAITING_RETRY_MS - 1);
+      expect(analyze).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(analyze).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops retrying once nothing is waiting", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { queue, analyze } = await freshQueue();
+      held.finished = [finishedCheck("a", [uploaded("1")])];
+      await queue.resumeCheckSubmissions();
+      await vi.advanceTimersByTimeAsync(queue.WAITING_RETRY_MS * 3);
+      expect(analyze).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

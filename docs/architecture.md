@@ -425,7 +425,10 @@ English are cached only once someone loads one.
 Every evidence item is saved to IndexedDB as it is captured (`state/check-session.js`).
 A transport failure (no connection) does not fail an item: it is marked `waiting`,
 still counts toward Finish, and shows "Waiting for connection". Real server errors and
-analyzer timeouts still fail it.
+analyzer timeouts still fail it. A weak signal counts as no connection too: an API call
+still running after 30 seconds (`REQUEST_TIMEOUT_MS` in `services/api.js`), a photo
+upload with no bytes moving for 30 seconds, or one slower than about 20 kB/s is
+aborted as a transport failure instead of hanging.
 
 Done keeps the check on the device as a finished record (`check:<siteId>:<checkId>` in
 the `review` store) until its uploads and scorecard land, so several can wait at once.
@@ -433,9 +436,11 @@ The check on screen is `current`; others stay in memory and keep saving progress
 by item id. `services/check-submissions.js` sends them: it restarts waiting items
 through the normal per-item pipeline, which resumes from whatever already reached the
 server, then builds each check's scorecard once every live item has a registered
-artifact, and marks it done. Triggers are app start, `online`, `pageshow`, `sitebound`,
-and the backend recovering from an outage; an item run ending only re-checks
-scorecards, so an offline device does not spin. Item runs take a cross-tab Web Lock and
+artifact, and marks it done. Triggers are app start, `online`, `pageshow`, returning
+to the app, `sitebound`, the backend recovering from an outage, and a retry every minute
+while any item waits (a weak signal may never fire `online`, and the health probe backs
+off to 5 minutes); an item run ending only re-checks scorecards, so an offline device
+does not spin. Item runs take a cross-tab Web Lock and
 skip an item another tab is already running. Home drops a finished check once the
 backend history shows it.
 
