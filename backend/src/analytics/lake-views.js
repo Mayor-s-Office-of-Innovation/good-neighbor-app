@@ -134,6 +134,8 @@ export async function hasParquetFiles(s3, bucket, entity) {
  * @returns {string}
  */
 export function lakeViewSql(base, entity) {
+  // Old exports may contain operational children misclassified as headers.
+  // Filter by the same contract as new exports; deduplication alone keeps them.
   const shape = ENTITY_KEY_SHAPES[entity];
   if (!shape) throw new Error(`unknown lake entity: ${entity}`);
   // union_by_name tolerates schema drift between exports; the converter pins

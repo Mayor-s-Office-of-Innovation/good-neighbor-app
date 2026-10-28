@@ -207,7 +207,9 @@ describe("parseExportFile", () => {
         Object.fromEntries(
           [...parsed].map(([entity, rows]) => [
             entity,
-            rows.map((row) => JSON.parse(row.raw).sk),
+            rows.map(
+              (/** @type {{raw: string}} */ row) => JSON.parse(row.raw).sk,
+            ),
           ]),
         ),
       ).toEqual({

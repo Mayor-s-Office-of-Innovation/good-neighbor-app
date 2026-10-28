@@ -383,7 +383,7 @@ grade without reading its `ANALYSIS#` items. Raw per-artifact output stays in th
 | GSI | Partition | Sort | Sparse on | Serves | Status |
 |---|---|---|---|---|---|
 | **GSI1** timelines | entity-specific partitions per site: `SITE#<siteId>`, `SITE#<siteId>#ASSESSMENT`, `SITE#<siteId>#TASK`, `SITE#<siteId>#UPDATE`, `SITE#<siteId>#COMPLAINTS`, `SITE#<siteId>#CARE_WORK` | `<startedAt ISO>` (checks) / `<reportedAt>#<assessmentId>` (assessments) / `<createdAt>#<taskId>` (tasks) / `<occurredAt>#<updateId>` (task update events) / `<createdAt>#<complaintId>` (complaints) / `<createdAt>#<workId>` (care logs) | check headers, assessment reports, tasks, task update events, submitted complaints, care logs | checks timeline (AP6, AP12), assessments timeline (AP14), site manager reports (AP27, AP28), complaints, and care-log lists. Each partition holds one entity type; the task and update partitions are stamped at creation and re-derived on every full-item re-put (`taskTimelineGsiFor`), so they sort by when things happened, not by status, a legacy task is stamped on its next transition, and a backfilled stamp survives a re-put from an older snapshot. | built |
-| **GSI2** site worklist | `SITE#<siteId>#TASK#<status>` | `<createdAt>#<kind>#<severity>#<taskId>` | tasks | staff's open tasks, newest first. The app re-sorts each page by severity. See AP10. | built |
+| **GSI2** site worklist | `SITE#<siteId>#TASK#<status>` | `<worklist timestamp>#<kind>#<severity>#<taskId>` (creation initially; transitions can restamp it) | tasks | staff's open tasks, newest first. The app re-sorts each page by severity. See AP10. | built |
 | **GSI3** city queue | `ESCALATION#<status>` | `<severity>#<createdAt>#<siteId>` | `city_escalation` tasks only | cross-site escalation queue for the city | **deferred post-MVP**. Sparse, so it can be added with no rebuild. |
 | **GSI4** condition history | `SITE#<siteId>#CONDITION#SEV#<severity>` | `<reportedAt>#<assessmentId>#<conditionId>` | conditions | list conditions by site, date, and severity | built, **no reader** (reviewed 2026-10-13; removal planned as a cleanup step once the site manager reports ship) |
 | **GSI5** unresolved conditions | `SITE#<siteId>#CONDITION#UNRESOLVED` | `<reportedAt>#SEV#<severity>#<assessmentId>#<conditionId>` | unresolved conditions only | list conditions not yet turned into tasks (AP16) | built, **no reader** (AP16 was never implemented; same cleanup plan as GSI4) |
@@ -893,16 +893,25 @@ refresh, and discovery compare it with the canonical Site value (missing means z
 
 ### Analytics classification and deletion limits
 
-The converter currently uses broad TASK/CHECK prefixes and therefore also exports
-task updates, update pointers, and task media as tasks, and check update-media
-pointers as checks. Lake views deduplicate by full `pk, sk`, so those children
-survive as separate rows. This is a known implementation defect, not an intended
-reporting entity contract. Existing Parquet needs separate assessment after a fix.
+`backend/src/analytics/entity-keys.js` defines the reporting allowlist by complete
+partition and sort-key shape. Task/check headers must have bare `TASK#<id>` or
+`CHECK#<id>` keys. Update events, update-ID pointers, task media, check update-media
+pointers and unknown children are excluded. Current ART keys and legacy ART keys
+with a place segment remain supported. Assessment/condition and device shapes are
+also matched explicitly; identifiers need not be UUIDs.
 
-`NEW_IMAGE_ONLY` export parsing skips deletion records. ART rows can be hard-deleted
-by the artifact route, so a previously exported artifact can remain visible in the
-lake. Latest-wins deduplication does not remove a key absent from a later export.
-Deletion propagation needs tombstones or an explicit reconciliation/rebuild design;
-it is separate from correcting entity classification. ADR 0013 records the earlier
-assumption that reporting entities were not deleted; that assumption no longer holds
-for artifacts. Raw exports and Parquet are analytics copies, not media backups.
+Both export conversion and lake views use this contract. View filters exclude
+misclassified children in older Parquet files, while latest-wins deduplication
+still uses the full `pk, sk`. Filtering does not rewrite or remove those files;
+physical cleanup requires a separate assessment. Re-conversion alone does not
+remove an old file when its partition has no accepted rows left to replace it.
+
+DynamoDB incremental exports include deletions as keys without a `NewImage`, even
+with `NEW_IMAGE_ONLY` ([AWS export format](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/S3DataExport.Output.html)).
+The current parser skips those records. ART rows can be hard-deleted by the
+artifact route, so previously exported artifacts can remain visible in the lake.
+Latest-wins deduplication does not remove a key absent from a later export.
+Deletion propagation is deferred and is not part of the classification fix.
+ADR 0013 records the earlier assumption that reporting entities were not deleted;
+that assumption no longer holds for artifacts. Raw exports and Parquet are
+analytics copies, not media backups.
