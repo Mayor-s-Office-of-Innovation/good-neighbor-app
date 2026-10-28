@@ -46,6 +46,7 @@ import { backfillCheckCompletions } from "../backend/src/domain/backfill-check-c
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { clearInterval, setInterval } from "node:timers";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   DeleteCommand,
@@ -216,8 +217,40 @@ async function waitAndReset() {
   }
 }
 
+/**
+ * Watch the suite's own backend for the rest of the run. It can stop mid-run —
+ * most often because the `npm run dev` stack whose DynamoDB Local / ElasticMQ
+ * it reuses was shut down (backend/scripts/lib/reuse-running.mjs) — and
+ * Playwright neither shows that lane's output nor stops on its own, so every
+ * later test would fail slowly. Say why and stop the run instead: SIGINT is
+ * Ctrl+C, so Playwright still runs teardown and stops its servers.
+ * @returns {() => void} stops the watch (Playwright calls it as teardown)
+ */
+function watchBackend() {
+  const url = `http://127.0.0.1:${process.env.E2E_API_PORT ?? 3001}/health`;
+  let misses = 0;
+  const timer = setInterval(async () => {
+    try {
+      await fetch(url, { signal: AbortSignal.timeout(2000) });
+      misses = 0;
+    } catch {
+      if (++misses < 2) return;
+      clearInterval(timer);
+      console.error(
+        `\n[e2e] the suite's backend (${url}) stopped answering. Most likely the ` +
+          "`npm run dev` stack it shares DynamoDB Local / ElasticMQ with was shut " +
+          "down. Stopping the run — start it again.\n",
+      );
+      process.kill(process.pid, "SIGINT");
+    }
+  }, 3000);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
 export default async function globalSetup() {
   loadEnvLocal();
   assertLocalOnly();
   await waitAndReset();
+  return watchBackend();
 }

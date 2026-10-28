@@ -6,8 +6,6 @@
 // the running one instead of crashing, which under `concurrently -k` would tear
 // down every other lane. Same pattern as local-minio.mjs and local-sf311.mjs.
 
-import { createServer } from "node:http";
-
 /**
  * Run `probe` against the port. Resolves true when it answers (the caller
  * should then park), false when nothing is listening. Anything else — a
@@ -33,20 +31,34 @@ export async function alreadyRunning(label, port, probe) {
 }
 
 /**
- * Idle until the stack is torn down. DO NOT exit instead: under
- * `concurrently -k` a lane that exits (even 0) SIGTERMs every other lane.
- * Parks on a real handle, since a bare pending promise does not keep Node alive.
+ * Idle until the stack is torn down. DO NOT exit while the service is up:
+ * under `concurrently -k` a lane that exits (even 0) SIGTERMs every other lane.
+ * That is exactly what we want once the borrowed service disappears (the stack
+ * that started it was stopped): say so and exit, so this stack stops loudly
+ * instead of failing request by request.
  * @param {string} label
  * @param {number} port
+ * @param {() => Promise<unknown>} probe same call as for alreadyRunning
  * @returns {Promise<never>}
  */
-export function park(label, port) {
+export function park(label, port, probe) {
   console.log(
     `[${label}] port ${port} already serves it — reusing (idling while the stack runs)`,
   );
-  const handle = createServer(() => {});
-  handle.on("error", () => {});
-  handle.listen(0, "127.0.0.1");
+  // The interval is also the handle that keeps Node alive while parked.
+  setInterval(async () => {
+    try {
+      await probe();
+    } catch (err) {
+      const e = /** @type {any} */ (err);
+      if ((e?.code ?? e?.cause?.code) !== "ECONNREFUSED") return; // transient
+      console.error(
+        `[${label}] the service this stack was reusing on port ${port} has stopped ` +
+          "(the stack that started it was shut down) — stopping this stack too; start it again",
+      );
+      process.exit(1);
+    }
+  }, 3000);
   process.on("SIGINT", () => process.exit(0));
   process.on("SIGTERM", () => process.exit(0));
   return new Promise(() => {});

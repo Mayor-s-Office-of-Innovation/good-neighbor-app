@@ -59,12 +59,11 @@ async function main() {
     credentials: { accessKeyId: "local", secretAccessKey: "local" },
     maxAttempts: 1,
   });
-  const running = await alreadyRunning("mq", PORT, () =>
+  const ping = () =>
     probe.send(new ListQueuesCommand({}), {
       abortSignal: AbortSignal.timeout(1500),
-    }),
-  );
-  if (running) await park("mq", PORT);
+    });
+  if (await alreadyRunning("mq", PORT, ping)) await park("mq", PORT, ping);
 
   await ensureJar();
   console.log(`[mq] starting ElasticMQ on :${PORT}…`);

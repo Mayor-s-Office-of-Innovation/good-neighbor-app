@@ -70,4 +70,7 @@ The e2e suite can run while a dev stack is up:
   port instead of crashing the stack. The suite still keeps to its own table
   (`gnp-local-e2e`) and queue, so dev data is untouched.
 - Stopping the dev stack while the suite runs takes the shared services with
-  it; let the suite finish first.
+  it. The borrowing lanes check every 3 s and stop the suite's backend when the
+  service is gone; globalSetup watches that backend and, when it stops
+  answering, prints why and interrupts the run (like Ctrl+C), so it ends in
+  seconds instead of failing test by test. Let the suite finish first.

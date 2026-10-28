@@ -39,12 +39,11 @@ async function main() {
     credentials: { accessKeyId: "local", secretAccessKey: "local" },
     maxAttempts: 1,
   });
-  const running = await alreadyRunning("ddb", PORT, () =>
+  const ping = () =>
     probe.send(new ListTablesCommand({ Limit: 1 }), {
       abortSignal: AbortSignal.timeout(1500),
-    }),
-  );
-  if (running) await park("ddb", PORT);
+    });
+  if (await alreadyRunning("ddb", PORT, ping)) await park("ddb", PORT, ping);
 
   // A null dbPath makes the launcher use -inMemory, losing all local records
   // whenever the dev stack restarts. Keep data alongside the other local stores.
