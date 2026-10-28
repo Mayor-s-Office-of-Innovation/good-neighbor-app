@@ -325,3 +325,105 @@ test("Site information uses shared rows and padded empty states", async ({
     fullPage: true,
   });
 });
+
+test("pending letters recover beyond ten attempts and stop polling on completion", async ({
+  page,
+}) => {
+  await page.clock.install();
+  const { site } = await setup(page);
+  site.letterState = "draft_pending";
+  await page.evaluate(() => window.dispatchEvent(new window.Event("focus")));
+  await expect(page.locator("site-admin-view")).toContainText(
+    t("admin.letters.pending"),
+  );
+  // Each tick exceeds the maximum backoff. Wait for the response and render
+  // before advancing again so network scheduling cannot collapse the attempts.
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const response = page.waitForResponse((r) =>
+      r.url().endsWith("/site-admin"),
+    );
+    await page.clock.runFor(30000);
+    await response;
+    await expect(page.locator("site-admin-view")).toContainText(
+      t("admin.letters.pending"),
+    );
+  }
+  site.letterState = "generated";
+  site.complianceLetters.current = {
+    effectiveStart: "2026-10-01",
+    url: "https://example.test/delayed.pdf",
+  };
+  await page.clock.runFor(30000);
+  await expect(page.locator(".site-admin-letter-current a")).toHaveAttribute(
+    "href",
+    "https://example.test/delayed.pdf",
+  );
+  let requests = 0;
+  page.on("request", (request) => {
+    if (request.url().endsWith("/site-admin")) requests++;
+  });
+  await page.clock.runFor(120000);
+  expect(requests).toBe(0);
+});
+
+test("pending-letter polling survives fetch failures and pauses when hidden or removed", async ({
+  page,
+}) => {
+  await page.clock.install();
+  const { site } = await setup(page);
+  site.letterState = "draft_pending";
+  await page.evaluate(() => window.dispatchEvent(new window.Event("focus")));
+  await expect(page.locator("site-admin-view")).toContainText(
+    t("admin.letters.pending"),
+  );
+  let failNext = true;
+  await page.route("**/v1/site-admin", (route) => {
+    if (failNext) {
+      failNext = false;
+      return route.abort("failed");
+    }
+    return route.fallback();
+  });
+  const failure = page.waitForEvent("requestfailed", (request) =>
+    request.url().endsWith("/site-admin"),
+  );
+  await page.clock.runFor(3000);
+  await failure;
+  const recovery = page.waitForResponse((response) =>
+    response.url().endsWith("/site-admin"),
+  );
+  await page.clock.runFor(30000);
+  await recovery;
+  await expect(page.locator("site-admin-view")).toContainText(
+    t("admin.letters.pending"),
+  );
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    });
+    document.dispatchEvent(new window.Event("visibilitychange"));
+  });
+  let requests = 0;
+  page.on("request", (request) => {
+    if (request.url().endsWith("/site-admin")) requests++;
+  });
+  await page.clock.runFor(120000);
+  expect(requests).toBe(0);
+  const resumed = page.waitForResponse((response) =>
+    response.url().endsWith("/site-admin"),
+  );
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
+    document.dispatchEvent(new window.Event("visibilitychange"));
+  });
+  await resumed;
+  await expect.poll(() => requests).toBe(1);
+  await page.locator("site-admin-view").evaluate((el) => el.remove());
+  requests = 0;
+  await page.clock.runFor(120000);
+  expect(requests).toBe(0);
+});

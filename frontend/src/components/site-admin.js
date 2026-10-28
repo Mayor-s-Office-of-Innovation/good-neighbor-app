@@ -100,14 +100,14 @@ class SiteAdminView extends HTMLElement {
       this._letterRefreshCount = 0;
       return;
     }
-    if (
-      !this.isConnected ||
-      document.visibilityState === "hidden" ||
-      (this._letterRefreshCount || 0) >= 10
-    )
-      return;
-    this._letterRefreshCount = (this._letterRefreshCount || 0) + 1;
-    this._letterRefreshTimer = setTimeout(() => this._onContactRefresh(), 3000);
+    if (!this.isConnected || document.visibilityState === "hidden") return;
+    // Keep delayed jobs discoverable without sustaining a three-second poll.
+    const delay = Math.min(3000 * 2 ** (this._letterRefreshCount || 0), 30000);
+    this._letterRefreshCount = Math.min((this._letterRefreshCount || 0) + 1, 4);
+    this._letterRefreshTimer = setTimeout(
+      () => this._onContactRefresh(),
+      delay,
+    );
   }
 
   _render() {

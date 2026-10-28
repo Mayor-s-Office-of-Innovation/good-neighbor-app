@@ -78,6 +78,29 @@ await test("Site details propagate through canonical local records", async (t) =
           new GetCommand({ TableName, Key: { pk, sk }, ConsistentRead: true }),
         )
       ).Item;
+    await t.test(
+      "dev seed initializes public contact and preserves edits on rerun",
+      async () => {
+        const { seedSiteCodes, devSiteCodeSeeds } = await import(
+          "./lib/site-code-seeds.mjs"
+        );
+        await seedSiteCodes(ddb, TableName);
+        const key = "SITE#st-john-the-evangelist";
+        const seeded = await get(key, "#META");
+        const expected = devSiteCodeSeeds.find(
+          (seed) => seed.siteId === "st-john-the-evangelist",
+        ).adminData.publicContact;
+        assert.deepEqual(seeded.publicContact, expected);
+        const edited = {
+          email: "edited@example.test",
+          phone: "415-555-0199",
+          phoneExtension: "9",
+        };
+        await put({ ...seeded, publicContact: edited });
+        await seedSiteCodes(ddb, TableName);
+        assert.deepEqual((await get(key, "#META")).publicContact, edited);
+      },
+    );
     const { getSiteAdmin, updateSiteAdmin } = await import(
       "../src/handlers/site.js"
     );

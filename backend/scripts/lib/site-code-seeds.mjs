@@ -49,6 +49,11 @@ export const devSiteCodeSeeds = [
         state: "CA",
         zip: "94103",
       },
+      publicContact: {
+        email: "public-contact@example.test",
+        phone: "(415) 555-0148",
+        phoneExtension: "",
+      },
       contactPerson: {
         firstName: "Priya",
         lastName: "Anand",
@@ -301,7 +306,7 @@ async function upsertSite(docDdb, tableName, seed, now) {
           ? ", #location = if_not_exists(#location, :location)"
           : "") +
         (admin
-          ? ", addressParts = if_not_exists(addressParts, :addressParts), contactPerson = if_not_exists(contactPerson, :contactPerson), oversight = if_not_exists(oversight, :oversight), perimeter = if_not_exists(perimeter, :perimeter)"
+          ? ", addressParts = if_not_exists(addressParts, :addressParts), contactPerson = if_not_exists(contactPerson, :contactPerson), publicContact = if_not_exists(publicContact, :publicContact), oversight = if_not_exists(oversight, :oversight), perimeter = if_not_exists(perimeter, :perimeter)"
           : ""),
       ExpressionAttributeNames: {
         "#type": "type",
@@ -334,6 +339,7 @@ async function upsertSite(docDdb, tableName, seed, now) {
           ? {
               ":addressParts": admin.addressParts,
               ":contactPerson": admin.contactPerson,
+              ":publicContact": admin.publicContact,
               ":oversight": admin.oversight,
               ":perimeter": admin.perimeter,
             }

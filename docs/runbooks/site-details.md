@@ -16,8 +16,9 @@ bound Site's current metadata. Contacts are projected from shared records:
   read-only in the field app. Directory credentials and authority are not returned.
 
 The field app refreshes this screen when opened and when returning to the app.
-While a current letter is being generated, it polls every three seconds for up
-to ten attempts, pausing when hidden and stopping on navigation or completion.
+While a current letter is being generated, it polls with increasing delays
+(3, 6, 12, 24, then 30 seconds) while visible, stopping on navigation or completion.
+Temporary fetch failures retain the pending state and retry.
 Open edit forms retain the user's draft instead of replacing it on focus.
 The dashboard reads the same records when its Site/person view is loaded.
 
@@ -92,3 +93,7 @@ recorded checks, contacts, and enrollments. The command refuses non-loopback
 DynamoDB endpoints and is safe to repeat. Normal restarts do not reintroduce these
 fixtures. Create real testing periods through the dashboard so the normal letter
 outbox, PDF generation, and history are exercised together.
+
+The dev Site seed initializes an explicit synthetic `publicContact` with
+`if_not_exists`, preserving edits on subsequent runs. It does not derive public
+contact information from the legacy `contactPerson` field.
