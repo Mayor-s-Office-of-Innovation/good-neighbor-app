@@ -21,7 +21,6 @@
 // or a HEAD round trip onto the per-card media route. One attribute, set as
 // soon as the object lands (idempotent), keeps the read path a plain lookup.
 
-import sharp from "sharp";
 import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { putObject } from "../s3.js";
@@ -57,6 +56,8 @@ export function thumbnailKeyFor(s3Key) {
  * @returns {Promise<{ bytes: Buffer, contentType: string }>}
  */
 export async function makeThumbnail(bytes) {
+  // Lazy import speeds up api cold starts; most routes never need sharp (as in downscale.js).
+  const { default: sharp } = await import("sharp");
   const out = await sharp(bytes)
     .resize({
       width: THUMBNAIL_EDGE_PX,

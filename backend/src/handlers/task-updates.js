@@ -8,7 +8,10 @@ import { randomUUID } from "node:crypto";
 import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveActorId, deriveSiteId } from "../lib/principal.js";
-import { headObject, setObjectTags } from "../s3.js";
+import { getObjectBytes, headObject, setObjectTags } from "../s3.js";
+import { downscaleImage } from "../media/downscale.js";
+import { recordThumbnail, storeThumbnail } from "../media/thumbnail.js";
+import { taskUpdateMediaKey } from "./keys.js";
 import { is311SubmissionEnabled } from "../analysis/guidance/app-actions.js";
 import {
   buildTaskUpdateTransition,
@@ -405,6 +408,7 @@ export const registerTaskUpdateMedia = async (event) => {
     return jsonResponse(422, { error: "media_metadata_mismatch" });
   }
   let alreadyRegistered = false;
+  let hasThumbnail = false;
   try {
     await writeTaskUpdateMedia({
       tableName: dynamoTable,
@@ -452,6 +456,7 @@ export const registerTaskUpdateMedia = async (event) => {
         return jsonResponse(409, { error: "task_update_media_conflict" });
       }
       alreadyRegistered = true;
+      hasThumbnail = typeof media?.thumbS3Key === "string";
     } else {
       throw error;
     }
@@ -463,8 +468,66 @@ export const registerTaskUpdateMedia = async (event) => {
     key: s3Key,
     tags: { state: "registered" },
   });
+  if (!hasThumbnail)
+    await storeUpdateMediaThumbnail({
+      dynamoTable,
+      uploadBucket,
+      siteId,
+      taskId,
+      artifactId,
+      s3Key,
+      contentType,
+    });
   return jsonResponse(alreadyRegistered ? 200 : 201, {
     artifactId,
     status: "registered",
   });
 };
+
+/**
+ * Card thumbnail for an update photo, as the analyze worker makes for check
+ * photos. Best-effort: on failure the timeline shows the original.
+ * @param {{ dynamoTable: string, uploadBucket: string, siteId: string, taskId: string, artifactId: string, s3Key: string, contentType: string }} input
+ */
+async function storeUpdateMediaThumbnail({
+  dynamoTable,
+  uploadBucket,
+  siteId,
+  taskId,
+  artifactId,
+  s3Key,
+  contentType,
+}) {
+  let reason = "read";
+  try {
+    const object = await getObjectBytes({ bucket: uploadBucket, key: s3Key });
+    reason = "decode";
+    const normalized = await downscaleImage(
+      object.bytes,
+      object.contentType ?? contentType,
+    );
+    reason = "store";
+    const thumbS3Key = await storeThumbnail({
+      bucket: uploadBucket,
+      s3Key,
+      bytes: normalized.bytes,
+    });
+    reason = "record";
+    await recordThumbnail({
+      tableName: dynamoTable,
+      key: taskUpdateMediaKey(siteId, taskId, artifactId),
+      thumbS3Key,
+    });
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        marker: "UpdateMediaThumbnailFailed",
+        reason,
+        siteId,
+        taskId,
+        artifactId,
+        error: error instanceof Error ? error.name : "unknown",
+      }),
+    );
+  }
+}

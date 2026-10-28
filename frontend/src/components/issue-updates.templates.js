@@ -4,6 +4,7 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { hasKey, t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
 import { formatPacificDateTime } from "../domain/task-updates.js";
+import { artifactPhoto } from "./artifact-photo.templates.js";
 
 /** @param {string} type */
 export function taskUpdateTimelineTone(type) {
@@ -50,7 +51,13 @@ export function taskUpdateActions() {
   </div>`;
 }
 
-/** @param {Record<string, any>} update @param {Record<string, any>} task @param {Map<string, string>} mediaUrls @param {string} title */
+/**
+ * `mediaUrls` maps each photo to its display URL: the thumbnail when one exists.
+ * @param {Record<string, any>} update
+ * @param {Record<string, any>} task
+ * @param {Map<string, string>} mediaUrls
+ * @param {string} title
+ */
 export function taskUpdateTimelineItem(update, task, mediaUrls, title) {
   if (
     !duplicateUiEnabled() &&
@@ -115,6 +122,7 @@ export function taskUpdateTimelineItem(update, task, mediaUrls, title) {
                 class="task-update__photo-trigger"
                 type="button"
                 data-photo-lightbox
+                disabled
                 data-timeline-focus="${escapeAttr(
                   JSON.stringify([
                     update.updateId || update.occurredAt,
@@ -130,13 +138,13 @@ export function taskUpdateTimelineItem(update, task, mediaUrls, title) {
                 )}"
                 data-photo-time="${escapeAttr(update.occurredAt)}"
               >
-                <img
-                  class="task-update__photo"
-                  src="${escapeAttr(mediaUrls.get(artifactId))}"
-                  alt="${escapeAttr(
-                    t("taskUpdate.photo.updateAlt", { title }),
-                  )}"
-                />
+                ${artifactPhoto({
+                  className: "task-update__photo",
+                  src: mediaUrls.get(artifactId),
+                  checkId: task.checkId,
+                  artifactId,
+                  alt: t("taskUpdate.photo.updateAlt", { title }),
+                })}
               </button>`
             : "",
         )

@@ -1,12 +1,17 @@
-// Backfill card thumbnails for check photos registered before the analyze
-// worker started writing them (backend/src/media/thumbnail.js).
+// Backfill card thumbnails for photos stored before a thumbnail was written
+// for them (backend/src/media/thumbnail.js): check photos from before the
+// analyze worker wrote them, and task-update photos from before registration
+// did.
 //
 //   DYNAMO_TABLE=... S3_UPLOAD_BUCKET=... node scripts/backfill-thumbnails.mjs [--apply] [--site <siteId>]
 //
-// Default is a dry run that only counts. Finds ART# rows with an S3 key, an
-// image content type and no `thumbS3Key`; with `--site` that is one Query of
-// the site's CHECK# items, without it a table Scan. For each row it reads the
-// original, runs the same normalize + thumbnail path as the worker, stores
+// Default is a dry run that only counts. Finds check-photo rows
+// (CHECK#…#ART#…) and task-update photo rows (TASK#…#MEDIA#…) with an S3 key,
+// an image content type and no `thumbS3Key`; with `--site` that is one Query
+// of the site's partition, without it a table Scan. The sort-key match runs
+// here rather than in the filter: a Query's FilterExpression may not name a
+// key attribute. For each row it reads the original, runs the same
+// normalize + thumbnail path as the worker, stores
 // `<key>.thumb.webp` (tagged active), and records it on the row by its actual
 // sort key, so pre-Phase-2 rows with a place segment are covered too.
 //
@@ -49,10 +54,12 @@ for (let i = 0; i < args.length; i += 1) {
   }
 }
 
+/** Photo rows that carry a thumbnail: check photos and task-update photos. */
+const PHOTO_ROW = /^CHECK#.*#ART#|^TASK#[^#]+#MEDIA#/;
+
 const filter = {
   FilterExpression:
-    "contains(#sk, :art) AND attribute_exists(s3Key)" +
-    " AND attribute_not_exists(thumbS3Key)" +
+    "attribute_exists(s3Key) AND attribute_not_exists(thumbS3Key)" +
     " AND begins_with(contentType, :image)",
   ProjectionExpression: "pk, #sk, s3Key, contentType, capturedAt",
   ExpressionAttributeNames: { "#sk": "sk" },
@@ -63,12 +70,10 @@ function pageCommand(startKey) {
   return onlySite
     ? new QueryCommand({
         TableName: tableName,
-        KeyConditionExpression: "pk = :pk AND begins_with(#sk, :check)",
+        KeyConditionExpression: "pk = :pk",
         ...filter,
         ExpressionAttributeValues: {
           ":pk": `SITE#${onlySite}`,
-          ":check": "CHECK#",
-          ":art": "#ART#",
           ":image": "image/",
         },
         ExclusiveStartKey: startKey,
@@ -76,12 +81,7 @@ function pageCommand(startKey) {
     : new ScanCommand({
         TableName: tableName,
         ...filter,
-        FilterExpression: `begins_with(#sk, :check) AND ${filter.FilterExpression}`,
-        ExpressionAttributeValues: {
-          ":check": "CHECK#",
-          ":art": "#ART#",
-          ":image": "image/",
-        },
+        ExpressionAttributeValues: { ":image": "image/" },
         ExclusiveStartKey: startKey,
       });
 }
@@ -133,6 +133,7 @@ let startKey;
 do {
   const page = await ddb.send(pageCommand(startKey));
   for (const row of page.Items ?? []) {
+    if (!PHOTO_ROW.test(String(row.sk))) continue;
     counts.candidates += 1;
     const outcome = await processRow(row);
     if (outcome) counts[outcome] += 1;

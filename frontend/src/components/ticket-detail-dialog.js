@@ -15,11 +15,8 @@ import { rulebookText } from "../i18n/rulebook.js";
 import { localizedAnalyzerText } from "../i18n/analyzer.js";
 import "./ticket-detail-dialog.css";
 import { openOverlayDialog } from "../dialog-history.js";
-import {
-  get311RequestDetail,
-  getTaskUpdates,
-  getMediaUrl,
-} from "../services/api.js";
+import { get311RequestDetail, getTaskUpdates } from "../services/api.js";
+import { cachedMediaUrls } from "../services/task-evidence.js";
 import { submitted311Ticket } from "../domain/home-tasks.js";
 import { ticketDetailLocation } from "../domain/ticket-detail.js";
 import { taskMediaUrl, taskMediaArtifactId } from "../domain/task-media.js";
@@ -161,12 +158,13 @@ class TicketDetailDialog extends HTMLElement {
         await Promise.all(
           [...new Set(updates.flatMap((update) => update.photoKeys || []))].map(
             async (id) => {
-              const media = await getMediaUrl(task.checkId, id).catch(
+              const media = await cachedMediaUrls(task.checkId, id).catch(
                 () => null,
               );
+              // A thumbnail saves downloading the multi-MB original for a small tile.
               return /** @type {[string, string]} */ ([
                 id,
-                media?.downloadUrl || "",
+                media?.thumbnailUrl || media?.downloadUrl || "",
               ]);
             },
           ),

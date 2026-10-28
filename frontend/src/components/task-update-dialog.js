@@ -10,12 +10,12 @@ import {
   ApiError,
   createTaskUpdate,
   documentTaskUpdate,
-  getMediaUrl,
   getTaskUpdates,
   get311RequestDetails,
   uploadTaskUpdatePhoto,
 } from "../services/api.js";
 import { showTaskUpdateErrorToast } from "../state/toasts.js";
+import { cachedMediaUrls } from "../services/task-evidence.js";
 import { taskArtifactIds, submitted311Ticket } from "../domain/home-tasks.js";
 import { taskMediaUrl } from "../domain/task-media.js";
 import {
@@ -306,15 +306,16 @@ export class TaskUpdateDialog extends HTMLElement {
     await Promise.all(
       photoIds.map(async (artifactId) => {
         try {
-          const media = await this._timelineRead((signal) =>
-            getMediaUrl(checkId, artifactId, { signal }),
+          // Shared with the cards and <artifact-photo>: one signing request
+          // per photo per page load, not one here and another per tile.
+          const media = await this._timelineRead(() =>
+            cachedMediaUrls(checkId, artifactId),
           );
           if (generation !== this._loadGeneration) return;
-          if (
-            media.downloadUrl &&
-            this._mediaUrls.get(artifactId) !== media.downloadUrl
-          ) {
-            this._mediaUrls.set(artifactId, media.downloadUrl);
+          // A thumbnail saves downloading the multi-MB original for a small tile.
+          const src = media.thumbnailUrl || media.downloadUrl;
+          if (src && this._mediaUrls.get(artifactId) !== src) {
+            this._mediaUrls.set(artifactId, src);
             this._refreshTimeline();
           }
         } catch {
