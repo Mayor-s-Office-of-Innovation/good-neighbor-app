@@ -103,6 +103,11 @@ matrix(
         // Always include two photo cards, even when this spec runs alone on
         // an empty table. This exercises offscreen lightbox keyboard stops.
         await stubReports(page);
+        // Other tests create real checks in the shared table. Keep their clear
+        // result cards out of this fixture, just as we isolate its task list.
+        await page.route("**/v1/checks?*", (route) =>
+          route.fulfill({ json: { checks: [] } }),
+        );
         await page.route("**/v1/tasks?*", (route) =>
           route.fulfill({
             json: {
