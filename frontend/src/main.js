@@ -19,9 +19,10 @@
   package, so the app remains fully CDN-free at runtime while matching the official
   Web Awesome Figma kit.
 
-  (No service worker ships in the MVP — real offline/precaching is a later pass; see
-  vite.config.js and memory step2-gnp-port-scope. The manifest + icons in /public do
-  ship, so the app is installable where the browser allows it without one.)
+  A service worker precaches the built app so it opens offline (deployed dev and
+  prod; not the local Vite dev server — see services/service-worker.js and
+  vite.config.js). The manifest + icons in
+  /public make it installable.
 */
 // Error capture installs FIRST — this is the first import in the module graph,
 // and the module self-installs its `error` + `unhandledrejection` listeners at
@@ -101,3 +102,6 @@ startPageViewTracking({ currentRoute, onRouteChange });
 
 import { startCareSubmissionRecovery } from "./services/care-submissions.js";
 startCareSubmissionRecovery();
+
+import { registerServiceWorker } from "./services/service-worker.js";
+registerServiceWorker();
