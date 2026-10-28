@@ -175,6 +175,56 @@ async function parseText(ndjson, exportedAt = "2026-09-16T18:00:00.000Z") {
 }
 
 describe("parseExportFile", () => {
+  it.each(["Item", "NewImage"])(
+    "excludes operational children from a mixed %s export",
+    async (imageField) => {
+      const keys = [
+        "TASK#t1",
+        "TASK#t1#UPDATE#2026-10-28T00:00:00.000Z#u1",
+        "TASK#t1#UPDATE_ID#u1",
+        "TASK#t1#MEDIA#a1",
+        "CHECK#c1",
+        "CHECK#c1#UPDATE_MEDIA#a1",
+        "CHECK#c1#FUTURE#x",
+        "CHECK#c1#ART#a1",
+        "CHECK#c1#ART#legacy-place#a2",
+        "CHECK#c1#ANALYSIS#a1",
+        "ASSESSMENT#as1",
+        "ASSESSMENT#as1#COND#c1",
+        "ASSESSMENT#as1#COND#c1#extra",
+        "ASSESSMENT#as1#FUTURE#x",
+        "DEVICE#d1",
+        "DEVICE#d1#SESSION#s1",
+      ];
+      const ndjson = keys
+        .map((sk) =>
+          JSON.stringify({
+            [imageField]: { pk: { S: "SITE#s1" }, sk: { S: sk } },
+          }),
+        )
+        .join("\n");
+      const parsed = await parseText(ndjson);
+      expect(
+        Object.fromEntries(
+          [...parsed].map(([entity, rows]) => [
+            entity,
+            rows.map(
+              (/** @type {{raw: string}} */ row) => JSON.parse(row.raw).sk,
+            ),
+          ]),
+        ),
+      ).toEqual({
+        tasks: ["TASK#t1"],
+        checks: ["CHECK#c1"],
+        artifacts: ["CHECK#c1#ART#a1", "CHECK#c1#ART#legacy-place#a2"],
+        analyses: ["CHECK#c1#ANALYSIS#a1"],
+        assessments: ["ASSESSMENT#as1"],
+        conditions: ["ASSESSMENT#as1#COND#c1", "ASSESSMENT#as1#COND#c1#extra"],
+        devices: ["DEVICE#d1"],
+      });
+    },
+  );
+
   it('parses full-export shape ({"Item": …})', async () => {
     const ndjson =
       JSON.stringify({

@@ -68,7 +68,7 @@ src/
   domain/       read-model adapters (backend items → UI records) · check-completion.js (the perimeter completion rule)
   dev/          dev-only page modules (guidance harness: guidance-harness.js + guidance-fixtures.js + raw-fetch guidance-api.js)
   lib/          html tag helper, escaping
-  db.js         IndexedDB (site binding + resumable draft + review-backed session)
+  db.js         IndexedDB (site binding + resumable draft + finished checks + home snapshot)
   router.js     tiny History-API router
 ```
 

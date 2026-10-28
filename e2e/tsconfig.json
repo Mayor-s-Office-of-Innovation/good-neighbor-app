@@ -18,6 +18,8 @@
     "support-tests/**/*.js",
     "support.config.js",
     "task-update-tests/**/*.js",
-    "task-updates.config.js"
+    "task-updates.config.js",
+    "offline-shell-tests/**/*.js",
+    "offline-shell.config.js"
   ]
 }

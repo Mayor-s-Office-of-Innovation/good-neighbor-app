@@ -8,9 +8,9 @@
     1. wait for every registered artifact's analysis to land (bounded poll)
     2. complete the check (backend synthesizes + persists the scorecard)
 
-  No local fallback: any failure throws (offline is post-MVP; there is no write
-  queue). The capture-complete session persists the checkId, so home re-kicks the
-  finalization idempotently on every load until the completed header lands.
+  Any failure throws. The finished check stays on the device, so
+  services/check-submissions.js (and home on load) re-kick the finalization
+  idempotently until the completed header lands.
 */
 import { waitForAnalyses, completeCheck } from "./api.js";
 import { checkItems, itemHasLiveEvidence } from "../domain/check-completion.js";
