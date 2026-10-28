@@ -1,5 +1,6 @@
 import { defineConfig } from "@playwright/test";
 import { slowMoOptions } from "./helpers/pace.js";
+import { e2ePort } from "./helpers/ports.mjs";
 
 const CI = !!process.env.CI;
 
@@ -10,6 +11,11 @@ const CI = !!process.env.CI;
   stub (helpers/analyzer-stub.mjs) whose base URL flows to the worker through
   ANALYZER_BASE_URL — set here (not in .env.local) so the stub never leaks into
   manual `npm run dev` sessions.
+
+  Running beside `npm run dev`: the API, analyzer stub and Vite move to the next
+  free port when the usual one is taken (helpers/ports.mjs), and the shared
+  DDB/ElasticMQ/MinIO/SF311 services are reused when already running — the suite
+  keeps to its own table and queue (below).
 
   Env-file loading: npm --workspace scripts resolve the workspace root, so
   backend's --env-file=../.env.local still reads the repo root .env.local even
@@ -26,6 +32,13 @@ const CI = !!process.env.CI;
   a suite run can neither read nor destroy `npm run dev` data.
 */
 process.env.DYNAMO_TABLE = "gnp-local-e2e";
+
+const apiPort = await e2ePort("E2E_API_PORT", 3001);
+const analyzerPort = await e2ePort("E2E_ANALYZER_PORT", 3101);
+const appPort = await e2ePort("E2E_APP_PORT", 5173);
+const apiUrl = `http://127.0.0.1:${apiPort}`;
+const analyzerUrl = `http://127.0.0.1:${analyzerPort}`;
+const appUrl = `http://127.0.0.1:${appPort}`;
 
 export default defineConfig({
   globalSetup: "./global-setup.mjs",
@@ -44,7 +57,7 @@ export default defineConfig({
     : [["list"], ["html", { open: "never" }]],
   outputDir: "./test-results",
   use: {
-    baseURL: "http://127.0.0.1:5173",
+    baseURL: appUrl,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: CI ? "retain-on-failure" : "off",
@@ -63,15 +76,17 @@ export default defineConfig({
     {
       command: "npm run dev -w backend",
       cwd: "..",
-      url: "http://127.0.0.1:3001/health",
+      url: `${apiUrl}/health`,
       // Maximum safety: never attach to a server a developer started (it would
-      // carry the dev table's env). If ports are occupied, Playwright fails
-      // fast with "port in use" — stop the dev stack, then run the suite.
+      // carry the dev table's env). The ports above are picked free, so the
+      // suite always boots its own.
       reuseExistingServer: false,
       timeout: 120_000,
       env: {
         ...process.env,
-        ANALYZER_BASE_URL: "http://127.0.0.1:3101",
+        LOCAL_API_PORT: String(apiPort),
+        SF311_MEDIA_BASE_URL: apiUrl,
+        ANALYZER_BASE_URL: analyzerUrl,
         ANALYZER_API_KEY: "e2e-stub-key",
         // Never inherit live Bedrock comparison settings from .env.local.
         // Dedicated duplicate UI scenarios use their own controlled fixtures.
@@ -82,16 +97,18 @@ export default defineConfig({
     },
     {
       command: "node helpers/analyzer-stub.mjs",
-      url: "http://127.0.0.1:3101/healthz",
+      url: `${analyzerUrl}/healthz`,
+      env: { ...process.env, LOCAL_ANALYZER_PORT: String(analyzerPort) },
       reuseExistingServer: false,
       timeout: 30_000,
     },
     {
-      command: "npm run dev -w frontend",
+      command: `npm run dev -w frontend -- --port ${appPort} --strictPort`,
       cwd: "..",
-      url: "http://127.0.0.1:5173",
-      // The frontend proxies whatever listens on :3001 — reusing a dev-started
-      // frontend could route the suite at the dev table's API.
+      url: appUrl,
+      env: { ...process.env, API_PROXY_TARGET: apiUrl },
+      // Reusing a dev-started frontend could route the suite at the dev
+      // table's API.
       reuseExistingServer: false,
       timeout: 60_000,
     },

@@ -48,8 +48,8 @@ data when the host table held real work. Two changes close that:
   the same name. globalSetup **refuses to run** against any other table.
 - **The suite never reuses running servers.** `reuseExistingServer: false` — a
   dev-started backend carries the dev table's env, so attaching to it would
-  defeat the isolation. If ports 3001/5173/3101 are occupied, Playwright fails
-  fast; stop the dev stack before running the suite.
+  defeat the isolation. (Superseded 2026-10-28: the suite now moves to free
+  ports instead of failing — see the addendum below.)
 - **globalTeardown deletes `gnp-local-e2e`** after the run (the suite's table is
   disposable). The next boot re-creates + reseeds it, so checks and tasks are
   always coherent; globalSetup's entry cleanup remains as crash self-healing.
@@ -57,3 +57,17 @@ data when the host table held real work. Two changes close that:
 Developer-facing consequence: `npm run dev` data is never touched by the suite,
 and a clean dev table is `rm -rf backend/.local/dynamodb-data` (optionally
 `minio-data` too) with the stack stopped, since the next dev boot re-bootstraps.
+
+## Addendum — e2e beside `npm run dev` (2026-10-28)
+
+The e2e suite can run while a dev stack is up:
+
+- **Its servers move instead of clashing.** The e2e configs pick the next free
+  port when the usual one is taken (`e2e/helpers/ports.mjs`) for the API, the
+  analyzer stub and Vite, and point the spawned backend and Vite proxy at them.
+- **Shared services are reused.** DynamoDB Local and ElasticMQ, like MinIO and
+  the SF311 fake already did, reuse a copy that is already answering on their
+  port instead of crashing the stack. The suite still keeps to its own table
+  (`gnp-local-e2e`) and queue, so dev data is untouched.
+- Stopping the dev stack while the suite runs takes the shared services with
+  it; let the suite finish first.
