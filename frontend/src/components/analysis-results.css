@@ -802,6 +802,20 @@ artifact-photo img {
   cursor: pointer;
 }
 .analysis-card__answer-progress:focus-visible,
+/* Pressed feedback for the row/list and icon buttons — a brief surface wash,
+   the iOS table-row convention. */
+.btn-card:active:not(:disabled) {
+  background: var(--surface-2);
+}
+.btn-icon:active:not(:disabled) {
+  background: var(--surface-3);
+  border-radius: 50%;
+}
+.btn-icon:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+  border-radius: 50%;
+}
 .btn-card:focus-visible,
 .analysis-card__dismiss:focus-visible {
   outline: 2px solid var(--text);

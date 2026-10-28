@@ -486,18 +486,21 @@ form > wa-button[type="submit"] {
    pill with an underline.
    Color is contextual — default quiet text; a call site can override `color`
    in its own scope (e.g. the amber status-line Undo uses its own color). */
-/* Tertiary — text-only, inline, low stakes (WA terms: plain). .btn-link is
-   the legacy alias. */
+/* Tertiary — text-only, inline, low stakes (WA terms: plain). Interactive
+   text wears the interactive color and the app's dotted-underline link
+   signature, so it cannot be mistaken for body copy. .btn-link is the
+   legacy alias. */
 .btn-tertiary,
 .btn-link {
   appearance: none;
   border: 0;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--brand-blue);
   font: inherit;
-  font-size: var(--wa-font-size-s, 0.875rem);
+  font-size: var(--wa-font-size-m, 1rem);
   font-weight: var(--wa-font-weight-bold, 600);
-  text-decoration: underline;
+  text-decoration: underline dotted;
+  text-decoration-thickness: 1px;
   text-underline-offset: 0.2em;
   cursor: pointer;
   height: auto;
@@ -511,12 +514,12 @@ form > wa-button[type="submit"] {
 
 .btn-tertiary:hover,
 .btn-link:hover {
-  color: var(--text);
+  text-decoration-style: solid;
 }
 
 .btn-tertiary:active,
 .btn-link:active {
-  color: var(--text-secondary); /* no awesome-theme punch-in repaint */
+  text-decoration-style: solid; /* no awesome-theme punch-in repaint */
 }
 
 .btn-tertiary:disabled,
@@ -646,7 +649,9 @@ button[data-loading] [data-loading-label] {
   cursor: pointer;
   background: transparent;
   color: var(--text);
-  border: 1px solid var(--c-line);
+  /* The boundary is the affordance, so it must meet 1.4.11 (3:1) — the old
+     hairline (--c-line, 1.25:1) read as a chip or a disabled control. */
+  border: 1px solid var(--control-outline, #8c8c8c);
   font: inherit;
   font-weight: var(--wa-font-weight-bold, 600);
   font-size: var(--wa-font-size-m, 1rem);
@@ -662,6 +667,18 @@ button[data-loading] [data-loading-label] {
 .btn-outline:focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 3px;
+}
+
+/* Pressed feedback — field app: touch must visibly respond. */
+.btn-secondary:active:not(:disabled),
+.btn-outline:active:not(:disabled) {
+  background: var(--surface-2);
+}
+.btn-primary:active:not(:disabled),
+.btn-ink:active:not(:disabled),
+.btn-blue:active:not(:disabled),
+.btn-theme:active:not(:disabled) {
+  filter: brightness(0.92);
 }
 
 /* Compact size for in-card action rows (any button role). nowrap keeps
