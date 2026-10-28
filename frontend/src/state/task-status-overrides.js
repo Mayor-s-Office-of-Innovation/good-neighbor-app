@@ -33,3 +33,22 @@ export function clearTaskStatusOverrides(...taskIds) {
   writeTaskStatusOverrides(overrides);
   return overrides;
 }
+
+/**
+ * Repair only overrides written before actions targeted the returned task.
+ * Read storage again so a stale view cannot erase a newer action from another tab.
+ * @param {...string} taskIds
+ */
+export function repairSeparatedTaskStatusOverrides(...taskIds) {
+  const overrides = readTaskStatusOverrides();
+  let changed = false;
+  for (const taskId of taskIds) {
+    const override = overrides[taskId];
+    if (override?.status === "in_progress" && override?.version !== 1) {
+      delete overrides[taskId];
+      changed = true;
+    }
+  }
+  if (changed) writeTaskStatusOverrides(overrides);
+  return overrides;
+}

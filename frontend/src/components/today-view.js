@@ -108,6 +108,7 @@ import {
 } from "../services/task-evidence.js";
 import {
   clearTaskStatusOverrides,
+  repairSeparatedTaskStatusOverrides,
   readTaskStatusOverrides,
   writeTaskStatusOverrides,
 } from "../state/task-status-overrides.js";
@@ -2016,11 +2017,10 @@ class TodayView extends HTMLElement {
     const separated = tasks.filter(
       (task) =>
         task.status === "open" &&
-        this._duplicateLinks?.get(task.taskId)?.state === "separated" &&
-        this._taskOverrides?.[task.taskId]?.status === "in_progress",
+        this._duplicateLinks?.get(task.taskId)?.state === "separated",
     );
     if (separated.length)
-      this._taskOverrides = clearTaskStatusOverrides(
+      this._taskOverrides = repairSeparatedTaskStatusOverrides(
         ...separated.map((task) => task.taskId),
       );
     const now = new Date();
@@ -2786,7 +2786,8 @@ class TodayView extends HTMLElement {
   _setTaskOverride(taskId, status) {
     const overrides = {
       ...readTaskStatusOverrides(),
-      [taskId]: { status, updatedAt: new Date().toISOString() },
+      // Only new action results get this marker; never stamp legacy entries.
+      [taskId]: { status, updatedAt: new Date().toISOString(), version: 1 },
     };
     writeTaskStatusOverrides(overrides);
     this._taskOverrides = overrides;

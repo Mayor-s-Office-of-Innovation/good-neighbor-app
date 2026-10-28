@@ -1173,6 +1173,24 @@ it("keeps a shared filing override on the returned original and repairs separate
     expect(entry.homeStatus).toBe("needs_action");
     expect(readTaskStatusOverrides().repeat).toBeUndefined();
     expect(readTaskStatusOverrides().original.status).toBe("in_progress");
+
+    // A subsequent independent filing must survive a lagging open-list read.
+    view._run.mockResolvedValue({ task: { ...source, status: "in_progress" } });
+    view._onAction({}, source, { getAttribute: () => "file311" });
+    await Promise.resolve();
+    const fresh = readTaskStatusOverrides().repeat;
+    expect(fresh.status).toBe("in_progress");
+    // Simulate a stale view snapshot, including one retained by another tab.
+    view._taskOverrides = { repeat: { status: "in_progress" } };
+    for (let render = 0; render < 2; render++) {
+      expect(view._homeTasks([source])[0].homeStatus).toBe("in_progress");
+      expect(readTaskStatusOverrides().repeat).toEqual(fresh);
+    }
+    const reloaded = new View();
+    reloaded._taskOverrides = readTaskStatusOverrides();
+    reloaded._duplicateLinks = new Map([["repeat", { state: "separated" }]]);
+    expect(reloaded._homeTasks([source])[0].homeStatus).toBe("in_progress");
+    expect(readTaskStatusOverrides().repeat).toEqual(fresh);
   } finally {
     setDuplicateUiSite(null);
     vi.stubGlobal("localStorage", previousStorage);
