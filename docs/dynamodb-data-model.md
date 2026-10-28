@@ -508,9 +508,8 @@ recording `actionOverride`. `type` itself has no dedicated index.
 
 The client makes a UUID `checkId` and sends it as the `idempotency-key` header.
 `createCheck` writes the header with `attribute_not_exists(sk)`. A repeated request
-cannot create a duplicate. Perimeter capture retains local drafts but has no durable submission queue in this
-revision. Care work has a separate IndexedDB submission queue. No service worker is
-generated or registered in this revision; see [Offline capture](architecture.md#offline-capture-and-sync). AI
+cannot create a duplicate. That is what lets the app's offline check queue
+(`services/check-submissions.js`) resend checks finished with no connection. AI
 analysis stays asynchronous through the existing SQS → worker path.
 
 **Current state: built.** `createCheck`, `registerArtifact`, and `completeCheck` write real

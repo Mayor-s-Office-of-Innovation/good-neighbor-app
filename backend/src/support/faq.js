@@ -298,7 +298,7 @@ export const faq = [
   {
     id: "FAQ-60",
     title: "Can I use the app without internet?",
-    text: "No. Restore Wi-Fi or mobile data and retry.",
+    text: "Partly. If you have opened the app on this device before, it opens without internet and home shows your lists from the last time you were online. You can take photos, finish a check, and log care work; they are saved on the device and sent automatically when the connection returns. Photo results, new reports, and ticket updates need internet.",
   },
   {
     id: "FAQ-61",

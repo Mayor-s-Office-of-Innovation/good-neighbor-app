@@ -400,17 +400,60 @@ as anything but JSON.
 
 ## Offline capture and sync
 
-Perimeter checks use a client-generated UUID as `checkId` and the `idempotency-key`;
-conditional writes prevent duplicate records for retries with that identity. Local
-drafts and review/session records survive reloads in IndexedDB. This revision has
-no perimeter submission queue and no generated or registered service worker
-(`frontend/vite.config.js`). A saved draft is not a guarantee of offline submission.
+Perimeter checks are idempotent by design: the client mints the `checkId` (a UUID) and
+sends it as the `idempotency-key`, and artifact/analysis writes are conditional, so a
+replayed request can never create a duplicate. That contract is what lets checks finished
+with no connection be sent later ([Offline check queue](#offline-check-queue)).
 
-Care work has its own durable IndexedDB submission/photo queue
-(`services/care-submissions.js`), resumed by the app on reopening or connectivity
-recovery. It does not use Workbox background sync. See the care-work section below.
-These are separate persistence capabilities; ADR 0005 records the earlier online-only
-decision, before the care queue was added.
+A Workbox service worker (`offlineShell` in `frontend/vite.config.js`) precaches the
+built app, so it opens, reloads, and loads lazy screens with no network. It ships in every
+`vite build` bundle, so both deployed environments (dev and prod) have it; the local Vite
+dev server and the e2e suite never do; `npm run dev:offline` builds and previews it
+locally, and `npm run test:offline:e2e` tests it there. It never intercepts API calls:
+write queues live in the app, because Workbox background sync does not run on iOS.
+
+The HTML page is network first: a launch waits up to 3 seconds for the network, then
+falls back to the precached `index.html` (instantly when there is no signal), so every
+online launch opens the latest release. API routes and paths with a file extension are
+never answered with the page, mirroring the CloudFront SPA rewrite. Hashed JS, CSS, and
+icons are served cache first from the precache. A new worker takes over as soon as it
+installs; an open page keeps its loaded code, and older lazy chunks still come from S3,
+which keeps previous assets.
+
+Manager screens (site admin, access, reports) are not precached: they are not field work
+and need fresh data, so offline they show the route's load error. Languages other than
+English are cached only once someone loads one.
+
+### Offline check queue
+
+Every evidence item is saved to IndexedDB as it is captured (`state/check-session.js`).
+A transport failure (no connection) does not fail an item: it is marked `waiting`,
+still counts toward Finish, and shows "Waiting for connection". Real server errors and
+analyzer timeouts still fail it. A weak signal counts as no connection too: an API call
+still running after 30 seconds (`REQUEST_TIMEOUT_MS` in `services/api.js`), a photo
+upload with no bytes moving for 30 seconds, or one slower than about 20 kB/s is
+aborted as a transport failure instead of hanging.
+
+Done keeps the check on the device as a finished record (`check:<siteId>:<checkId>` in
+the `review` store) until its uploads and scorecard land, so several can wait at once.
+The check on screen is `current`; others stay in memory and keep saving progress, found
+by item id. `services/check-submissions.js` sends them: it restarts waiting items
+through the normal per-item pipeline, which resumes from whatever already reached the
+server, then builds each check's scorecard once every live item has a registered
+artifact, and marks it done. Triggers are app start, `online`, `pageshow`, returning
+to the app, `sitebound`, the backend recovering from an outage, and a retry every minute
+while any item waits (a weak signal may never fire `online`, and the health probe backs
+off to 5 minutes); an item run ending only re-checks scorecards, so an offline device
+does not spin. Item runs take a cross-tab Web Lock and
+skip an item another tab is already running. Home drops a finished check once the
+backend history shows it.
+
+Like care work, this is an in-app queue, not service worker background sync: sending
+pauses while the app is closed and resumes when it reopens.
+
+With no connection, home shows the last lists it loaded (saved per site in the `review`
+store, cleared on sign-out) and keeps Start check available; the app-wide offline toast
+says why. It reloads the live lists on `online`.
 
 ### Duplicate issue links (feature-gated; not yet deployed)
 
@@ -464,7 +507,7 @@ then returns to the care list without waiting for uploads. The app owns the uplo
 operation independently of the form. Pending submissions resume when the app
 reopens or connectivity returns; failed attempts remain in the list with a retry
 action. Definitive validation failures also offer editing before retry. This is a
-care-specific durable queue, not a service worker: transfers pause when the browser
+care-specific durable queue, not service worker background sync: transfers pause when the browser
 closes and resume after reopening. Records are bound to the original Site and
 device session, and API calls enforce the originating Site. Successful receipts
 retain the server result until it appears in the list, then are removed; photo
