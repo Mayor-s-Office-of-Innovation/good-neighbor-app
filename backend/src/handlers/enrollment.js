@@ -267,6 +267,8 @@ export const redeemEnrollmentGrant = async (event) => {
     pk: `SITE#${siteId}`,
     sk: `DEVICE#${bindingId}`,
     type: "device",
+    primarySessionKind:
+      input.sessionKind === "home_screen" ? "home_screen" : "browser",
     deviceId: bindingId,
     bindingId,
     physicalDeviceId,
@@ -676,6 +678,8 @@ async function redeemProviderEnrollment(context) {
         pk: `SITE#${entry.siteId}`,
         sk: `DEVICE#${entry.bindingId}`,
         type: "device",
+        primarySessionKind:
+          input.sessionKind === "home_screen" ? "home_screen" : "browser",
         deviceId: entry.bindingId,
         siteName: entry.siteName,
         registeredAt: nowIso,

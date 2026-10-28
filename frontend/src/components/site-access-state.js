@@ -137,3 +137,14 @@ export async function shareGrant(grant) {
     }
   } else await navigator.clipboard.writeText(grant.enrollmentUrl);
 }
+
+/** @param {HTMLElement} view */
+export function scrollToGrant(view) {
+  const card = view.querySelector("#staff-grant-result > details");
+  if (!(card instanceof HTMLElement)) return;
+  const height =
+    view.querySelector(".site-admin-header")?.getBoundingClientRect().height ??
+    0;
+  card.style.scrollMarginBlockStart = `${height + 8}px`;
+  card.scrollIntoView({ block: "start", behavior: "auto" });
+}

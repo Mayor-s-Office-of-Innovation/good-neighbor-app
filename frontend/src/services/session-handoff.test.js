@@ -1,3 +1,4 @@
+import { buildHandoffManifest, installManifest } from "./handoff-manifest.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -28,11 +29,9 @@ vi.mock("./install-prompt.js", () => ({
 }));
 
 const {
-  buildHandoffManifest,
   consumedGrantIds,
   ensureHandoffManifest,
   grantIsFresh,
-  installManifest,
   isHandoffPrepared,
   onHandoffPrepared,
   readHandoffCredentials,
@@ -258,7 +257,7 @@ describe("installManifest", () => {
     expect(link.setAttribute).toHaveBeenCalledWith("href", "blob:one");
     expect(doc.createElement).not.toHaveBeenCalled();
 
-    installManifest({ start_url: "y" }, doc);
+    installManifest({ start_url: "y" }, doc, "blob:one");
     expect(urlApi.revokeObjectURL).toHaveBeenCalledWith("blob:one");
     expect(link.setAttribute).toHaveBeenLastCalledWith("href", "blob:two");
   });
@@ -290,9 +289,12 @@ describe("ensureHandoffManifest", () => {
     resetHandoffManifest();
     vi.useFakeTimers({ now: Date.parse("2026-10-21T12:00:00Z") });
     mocks.getSite.mockReset();
-    mocks.saveSiteSettings.mockReset();
-    mocks.issueSessionHandoff.mockReset();
+    mocks.saveSiteSettings.mockReset().mockResolvedValue({ siteId: "s1" });
+    mocks.issueSessionHandoff
+      .mockReset()
+      .mockResolvedValue({ ...fresh, token: "t-cached" });
     mocks.trackEvent.mockReset();
+    vi.stubGlobal("navigator", {});
     mocks.installMethod.mockReturnValue("ios");
     mocks.isStandalone.mockReturnValue(false);
     mocks.isInAppBrowser.mockReturnValue(false);
@@ -334,6 +336,93 @@ describe("ensureHandoffManifest", () => {
       /** @type {any} */ (URL.createObjectURL).mock.calls[0][0].parts[0],
     ).start_url;
 
+  it("shares preparation and does not mint again when the shell has an older snapshot", async () => {
+    const site = { siteId: "s1", deviceId: "d1", token: "a" };
+    const first = ensureHandoffManifest({ site });
+    const second = ensureHandoffManifest({ site });
+    expect(await first).toBe(true);
+    expect(await second).toBe(true);
+    expect(await ensureHandoffManifest({ site })).toBe(true);
+    expect(mocks.issueSessionHandoff).toHaveBeenCalledOnce();
+    expect(link.setAttribute).toHaveBeenCalledOnce();
+  });
+
+  it("re-reads another tab's cached grant under the origin-wide preparation lock", async () => {
+    const request = vi.fn(async (_name, work) => work());
+    vi.stubGlobal("navigator", { locks: { request } });
+    mocks.getSite.mockResolvedValue({
+      siteId: "s1",
+      deviceId: "d1",
+      token: "a",
+      handoff: fresh,
+    });
+    expect(
+      await ensureHandoffManifest({
+        site: { siteId: "s1", deviceId: "d1", token: "a" },
+      }),
+    ).toBe(true);
+    expect(request).toHaveBeenCalledWith(
+      "gnp:handoff:s1:d1",
+      expect.any(Function),
+    );
+    expect(mocks.issueSessionHandoff).toHaveBeenCalledWith(
+      {
+        grantId: "g-cached",
+        token: "t-cached",
+      },
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("cancels a stalled mint and retires immediately without waiting for its response", async () => {
+    let release = () => {};
+    mocks.issueSessionHandoff.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ ...fresh, token: "t-cached" });
+        }),
+    );
+    mocks.retireSessionHandoff.mockReset().mockResolvedValue({ retired: true });
+    const site = { siteId: "s1", deviceId: "d1", token: "a" };
+    const preparing = ensureHandoffManifest({ site });
+    const rejected = expect(preparing).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(await retireHandoff({ site })).toBe(true);
+    await rejected;
+    expect(mocks.retireSessionHandoff).toHaveBeenCalledWith({
+      signal: expect.any(AbortSignal),
+      endSession: true,
+    });
+    release();
+    await Promise.resolve();
+    expect(mocks.saveSiteSettings).not.toHaveBeenCalled();
+    expect(isHandoffPrepared()).toBe(false);
+    expect(link.setAttribute).not.toHaveBeenCalled();
+  });
+
+  it("times out a stalled mint so enrollment can proceed", async () => {
+    mocks.issueSessionHandoff.mockReturnValue(new Promise(() => {}));
+    const pending = ensureHandoffManifest({
+      site: { siteId: "s1", deviceId: "d1", token: "a" },
+    });
+    const rejected = expect(pending).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    await vi.advanceTimersByTimeAsync(5000);
+    await rejected;
+    expect(isHandoffPrepared()).toBe(false);
+  });
+
+  it("bounds retirement itself when the network never responds", async () => {
+    mocks.retireSessionHandoff.mockReturnValue(new Promise(() => {}));
+    const pending = retireHandoff({
+      site: { siteId: "s1", deviceId: "d1", token: "a" },
+    });
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(await pending).toBe(false);
+  });
+
   it("does nothing off iOS Safari, when standalone, or when unbound", async () => {
     mocks.installMethod.mockReturnValue("prompt");
     expect(await ensureHandoffManifest()).toBe(false);
@@ -349,7 +438,7 @@ describe("ensureHandoffManifest", () => {
     expect(isHandoffPrepared()).toBe(false);
   });
 
-  it("reuses a fresh cached grant without a request and reports prepared", async () => {
+  it("restores the cached grant cookie before reporting prepared", async () => {
     const prepared = vi.fn();
     onHandoffPrepared(prepared);
     const site = { siteId: "s1", token: "a", handoff: fresh };
@@ -357,9 +446,17 @@ describe("ensureHandoffManifest", () => {
     expect(await ensureHandoffManifest({ site })).toBe(true);
 
     expect(mocks.getSite).not.toHaveBeenCalled();
-    expect(mocks.issueSessionHandoff).not.toHaveBeenCalled();
-    expect(mocks.saveSiteSettings).not.toHaveBeenCalled();
-    expect(fetch).toHaveBeenCalledWith("/manifest.webmanifest");
+    expect(mocks.issueSessionHandoff).toHaveBeenCalledWith(
+      {
+        grantId: "g-cached",
+        token: "t-cached",
+      },
+      expect.any(AbortSignal),
+    );
+    expect(mocks.saveSiteSettings).toHaveBeenCalledOnce();
+    expect(fetch).toHaveBeenCalledWith("/manifest.webmanifest", {
+      signal: expect.any(AbortSignal),
+    });
     expect(link.setAttribute).toHaveBeenCalledWith("href", "blob:m");
     expect(installedStartUrl()).toBe(
       "https://app.example.org/#handoff_grant=g-cached&handoff_token=t-cached",
@@ -471,9 +568,12 @@ describe("ensureHandoffManifest", () => {
 
   it("skips the server when there is nothing to retire or the session is dead, and never throws", async () => {
     mocks.retireSessionHandoff.mockReset().mockResolvedValue({ retired: true });
+    // Retire even without a locally cached grant: a mint may have just completed.
     expect(await retireHandoff({ site: { siteId: "s1", token: "a" } })).toBe(
-      false,
+      true,
     );
+    expect(mocks.retireSessionHandoff).toHaveBeenCalledOnce();
+    mocks.retireSessionHandoff.mockClear();
     expect(await retireHandoff({ site: null })).toBe(false);
     expect(
       await retireHandoff({
