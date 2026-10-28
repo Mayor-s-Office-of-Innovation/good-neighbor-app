@@ -26,6 +26,7 @@
 import { ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { ENTITY_COLUMNS, columnSchema } from "./convert.js";
 import { logServerError } from "../lib/log-server-error.js";
+import { ENTITY_KEY_SHAPES } from "./entity-keys.js";
 
 /** Every entity the converter writes, in converter order. */
 export const ENTITIES = Object.keys(ENTITY_COLUMNS);
@@ -133,6 +134,8 @@ export async function hasParquetFiles(s3, bucket, entity) {
  * @returns {string}
  */
 export function lakeViewSql(base, entity) {
+  const shape = ENTITY_KEY_SHAPES[entity];
+  if (!shape) throw new Error(`unknown lake entity: ${entity}`);
   // union_by_name tolerates schema drift between exports; the converter pins
   // column types so real drift shouldn't happen. pk/sk come from the raw JSON
   // column with `->>` (VARCHAR, not JSON-typed).
@@ -149,6 +152,8 @@ export function lakeViewSql(base, entity) {
         hive_types = {'date': 'VARCHAR'}
       )
     )
+    WHERE regexp_full_match(pk, '${shape.pk}')
+      AND regexp_full_match(sk, '${shape.sk}')
     QUALIFY row_number() OVER (PARTITION BY pk, sk ORDER BY exportedAt DESC) = 1;
   `;
 }
