@@ -16,10 +16,10 @@ The deployment role's administrator must provision
 role infrastructure. Application Terraform cannot bootstrap the permission:
 the deployment role explicitly denies modifying its own IAM policies.
 
-Render `account_id` and `aws_region` for the target environment. For the failed
-dev deployment, these are `518892333858` and `us-west-2`, and the role is
-`good-neighbor-app-deploy-dev`. Provision prod separately using its own account
-and region; repairing dev does not repair prod.
+Render `account_id` from the target GitHub Environment's `AWS_ACCOUNT_ID` secret
+and `aws_region` from its `AWS_REGION` variable. For the failed dev deployment,
+the role is `good-neighbor-app-deploy-dev`. Provision prod separately using its
+own account and region; repairing dev does not repair prod.
 
 The policy grants only:
 
