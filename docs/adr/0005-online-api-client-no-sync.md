@@ -32,3 +32,11 @@ still carries the offline story when it is turned on later.
   masked by a local demo mode.
 - Turning offline on later is additive (queue + replay in front of the same `api.js`), not a
   rewrite, because writes are already idempotent.
+
+## Update (2026-10-27)
+
+The offline queue landed as planned, in the app and in front of the same `api.js`:
+checks finished with no connection wait on the device and are sent when it returns
+(`services/check-submissions.js`; see [architecture](../architecture.md#offline-check-queue)).
+The thin client is unchanged; a transport failure now waits instead of erroring, while
+server errors still surface.

@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./api.js", () => ({ getCheck: vi.fn() }));
 vi.mock("../state/check-session.js", () => ({
+  findCheckForItem: vi.fn(() => null),
+  getCheck: vi.fn(() => null),
   getCurrentCheck: vi.fn(),
   updateItemAnalysis: vi.fn(),
 }));

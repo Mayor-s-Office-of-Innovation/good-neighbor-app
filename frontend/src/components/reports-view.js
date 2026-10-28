@@ -17,6 +17,7 @@ import "@awesome.me/webawesome/dist/components/select/select.js";
 import "@awesome.me/webawesome/dist/components/option/option.js";
 import {
   clearSiteSession,
+  countUnsentWork,
   getSite,
   hasAdminAccess,
   listBoundSites,
@@ -213,6 +214,8 @@ class ReportsView extends ReportsScreen {
     this._logoutDialogOpen = false;
     this._logoutPending = false;
     this._logoutError = "";
+    /** @type {{ checks?: number, careLogs?: number }} */
+    this._logoutUnsent = {};
     this._onDocumentClick = (/** @type {Event} */ event) => {
       if (!this._settingsMenuOpen) return;
       const path = event.composedPath?.() || [];
@@ -362,6 +365,7 @@ class ReportsView extends ReportsScreen {
       settingsMenuOpen: this._settingsMenuOpen,
       logoutError: this._logoutError,
       logoutPending: this._logoutPending,
+      logoutUnsent: this._logoutUnsent,
     });
     this._mountSiteSwitcher("/reports");
     this._wire();
@@ -456,8 +460,15 @@ class ReportsView extends ReportsScreen {
     );
     this.querySelector("#settings-logout")?.addEventListener("click", () =>
       choose(() => {
-        this._logoutDialogOpen = true;
-        if (logout) openOverlayDialog(logout, "logout");
+        // Count first: logging out deletes work that hasn't uploaded yet.
+        // The re-render opens the dialog with the counts.
+        void countUnsentWork()
+          .catch(() => ({}))
+          .then((unsent) => {
+            this._logoutUnsent = unsent;
+            this._logoutDialogOpen = true;
+            this._render();
+          });
       }),
     );
     logout?.addEventListener("close", () => {

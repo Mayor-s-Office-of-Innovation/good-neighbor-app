@@ -65,6 +65,7 @@ export const TYPE_ROWS = 5;
  *   settingsMenuOpen?: boolean,
  *   logoutError?: string,
  *   logoutPending?: boolean,
+ *   logoutUnsent?: { checks?: number, careLogs?: number },
  * }} vm
  *   `body` is already-rendered markup for the active tab.
  */
@@ -75,6 +76,7 @@ export function reportsShell({
   settingsMenuOpen = false,
   logoutError = "",
   logoutPending = false,
+  logoutUnsent = {},
 }) {
   return html`
     <div class="home reports">
@@ -109,7 +111,11 @@ export function reportsShell({
         ${body}
       </section>
       ${attributionDialog()} ${languageDialog()}
-      ${logoutDialog({ error: logoutError, pending: logoutPending })}
+      ${logoutDialog({
+        error: logoutError,
+        pending: logoutPending,
+        unsent: logoutUnsent,
+      })}
     </div>
   `;
 }

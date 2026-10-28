@@ -227,3 +227,19 @@ describe("canSubmitDescription", () => {
     expect(canSubmitDescription(null)).toBe(false);
   });
 });
+
+describe("photos saved with no connection", () => {
+  const WAITING_PHOTO = {
+    id: "offline",
+    kind: "photo",
+    dataUrl: "data:,",
+    upload: { status: "pending" },
+    analysis: { status: "waiting" },
+  };
+
+  it("count toward Finish, so a check can be finished offline", () => {
+    expect(itemCountsTowardCompletion(WAITING_PHOTO)).toBe(true);
+    expect(itemHasLiveEvidence(WAITING_PHOTO)).toBe(true);
+    expect(isPerimeterCheckComplete({ items: [WAITING_PHOTO] })).toBe(true);
+  });
+});
