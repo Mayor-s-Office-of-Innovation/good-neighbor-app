@@ -24,6 +24,33 @@ skips hook setup when `CI=true` or `CI=1`; CI security scans still run separatel
 Using `--ignore-scripts` bypasses this setup, so run `npm run setup:hooks` afterward.
 Do not set `CI=true` in your local shell to suppress setup failures.
 
+### Checkov hook fails while building Python dependencies
+
+If hook initialization fails while compiling a dependency such as `pycares`,
+check the Python interpreter and compiler named in the error. This can depend
+on the local environment; Python 3.11 is a workaround, not a prerequisite for
+every contributor. For example, a Python 3.15 environment compiling `pycares`
+with GCC against the macOS SDK has failed during hook setup.
+
+On macOS, run pre-commit in an isolated Python 3.11 environment:
+
+```bash
+brew install python@3.11 pipx
+pipx install --python "$(brew --prefix python@3.11)/bin/python3.11" pre-commit
+# If pre-commit is already installed through pipx, use instead:
+# pipx reinstall --python "$(brew --prefix python@3.11)/bin/python3.11" pre-commit
+export PATH="$HOME/.local/bin:$PATH"
+command -v pre-commit
+pre-commit --version
+npm run setup:hooks
+```
+
+Keep that PATH ordering in your shell configuration if you also have a Homebrew
+pre-commit installation. The pipx executable must take precedence for subsequent
+`npm install` runs. This selects Python for your local tooling without imposing
+an exact Python version in the shared hook configuration. Existing contributors
+whose hook setup succeeds do not need to change their environment.
+
 ## Repo-wide checks (what CI runs)
 
 | Command | Does |

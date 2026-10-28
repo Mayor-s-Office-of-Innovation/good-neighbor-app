@@ -107,6 +107,8 @@ import {
   needsTaskEvidenceHydration,
 } from "../services/task-evidence.js";
 import {
+  clearTaskStatusOverrides,
+  repairSeparatedTaskStatusOverrides,
   readTaskStatusOverrides,
   writeTaskStatusOverrides,
 } from "../state/task-status-overrides.js";
@@ -1646,14 +1648,12 @@ class TodayView extends HTMLElement {
         task: this._taskWith311CardStatus({
           ...entry.task,
           createdAt: entry.createdAt,
-          ...(entry.homeStatus === "in_progress"
-            ? { status: "in_progress" }
-            : {}),
           siteAddress: entry.task.siteAddress || this._site?.address || "",
         }),
         siteName: this._site?.name || "",
         action:
-          entry.homeStatus === "needs_action"
+          entry.homeStatus === "needs_action" ||
+          (entry.homeStatus === "in_progress" && entry.task.status === "open")
             ? this._primaryCardAction(entry.task)
             : entry.homeStatus === "in_progress"
               ? canRetry311Filing(entry.task)
@@ -2013,6 +2013,16 @@ class TodayView extends HTMLElement {
   }
 
   _homeTasks(tasks) {
+    // Repair overrides left by older clients before duplicate separation.
+    const separated = tasks.filter(
+      (task) =>
+        task.status === "open" &&
+        this._duplicateLinks?.get(task.taskId)?.state === "separated",
+    );
+    if (separated.length)
+      this._taskOverrides = repairSeparatedTaskStatusOverrides(
+        ...separated.map((task) => task.taskId),
+      );
     const now = new Date();
     return projectDuplicateTasks(tasks, this._duplicateLinks)
       .filter((task) => !isTaskPendingDeletion(task))
@@ -2605,7 +2615,10 @@ class TodayView extends HTMLElement {
       ).find((t) => t.taskId === task.taskId);
       if (!decorated?.duplicate) return;
       openDuplicateIssue(decorated, btn, {
-        onSeparated: () => {
+        onSeparated: (restored) => {
+          this._taskOverrides = readTaskStatusOverrides();
+          this._confirmedTasks?.delete(task.taskId);
+          if (restored) this._applyTaskResult(restored.taskId, restored);
           this._duplicateLinks.delete(task.taskId);
           if (this.isConnected) void this.connectedCallback();
         },
@@ -2623,7 +2636,7 @@ class TodayView extends HTMLElement {
         task,
         onSaved: (taskResult) => {
           this._setTaskOverride(
-            task.taskId,
+            taskResult.taskId || task.taskId,
             taskResult.status === "in_progress" ? "in_progress" : "resolved",
           );
           this._applyTaskResult(task.taskId, taskResult);
@@ -2654,12 +2667,13 @@ class TodayView extends HTMLElement {
         if (!result) return;
         this._applyTaskResult(task.taskId, result.task);
         // A retry replaces the failed outcome the watcher held over lists.
-        if (this._confirmedTasks?.has(task.taskId))
-          this._confirmedTasks.set(task.taskId, result.task);
+        const savedId = result.task.taskId || task.taskId;
+        if (this._confirmedTasks?.has(savedId))
+          this._confirmedTasks.set(savedId, result.task);
         // Filed → In-progress on the server. The override (which also expires
         // the remaining lists) keeps the card there if a reload's open-list
         // read lands before the worklist index has caught up.
-        this._setTaskOverride(task.taskId, "in_progress");
+        this._setTaskOverride(savedId, "in_progress");
         void this._refreshAfterAction();
       });
     }
@@ -2698,6 +2712,10 @@ class TodayView extends HTMLElement {
    * fields (thumbnail, 311 status) the response does not carry.
    */
   _applyTaskResult(taskId, task) {
+    if (task?.taskId && task.taskId !== taskId) {
+      this._taskOverrides = clearTaskStatusOverrides(taskId);
+      this._confirmedTasks?.delete(taskId);
+    }
     const model = this._homeModel;
     if (!model || !taskId || !task) return;
     // Shared duplicate actions return the original task, not the clicked
@@ -2768,7 +2786,8 @@ class TodayView extends HTMLElement {
   _setTaskOverride(taskId, status) {
     const overrides = {
       ...readTaskStatusOverrides(),
-      [taskId]: { status, updatedAt: new Date().toISOString() },
+      // Only new action results get this marker; never stamp legacy entries.
+      [taskId]: { status, updatedAt: new Date().toISOString(), version: 1 },
     };
     writeTaskStatusOverrides(overrides);
     this._taskOverrides = overrides;

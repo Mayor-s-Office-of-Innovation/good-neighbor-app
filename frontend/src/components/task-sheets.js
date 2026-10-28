@@ -41,6 +41,11 @@ export class TaskSheets {
     this._resolutions = new Map();
     /** Stable across uncertain HTTP retries. @type {Map<string, ReturnType<typeof crypto.randomUUID>>} */
     this._resolutionIds = new Map();
+    /**
+     * Failed requests whose server outcome needs an idempotent replay.
+     * @type {Set<string>}
+     */
+    this._uncertainResolutions = new Set();
     /** @type {Record<string, any> | null} the bound site, for the 311 sheet */
     this.site = null;
     /** @type {any} */
@@ -101,6 +106,16 @@ export class TaskSheets {
    */
   async openUpdates(task, trigger, mode = "timeline") {
     if (this._options.readOnly) mode = "timeline";
+    if (mode !== "results") task = this._resolve(task);
+    // A detached/stale card must not resolve a task whose current state changed.
+    if (
+      mode === "resolve" &&
+      task.status !== "in_progress" &&
+      !this._uncertainResolutions.has(task.taskId)
+    ) {
+      await this._options.reload?.();
+      return;
+    }
     const completion =
       mode === "resolve" ? this._startResolution(task, trigger) : null;
     if (mode === "resolve" && !completion) return;
@@ -248,6 +263,7 @@ export class TaskSheets {
       id,
     )
       .then((response) => {
+        this._uncertainResolutions.delete(task.taskId);
         const saved = {
           ...task,
           ...response.task,
@@ -262,6 +278,12 @@ export class TaskSheets {
         return { task: saved };
       })
       .catch((error) => {
+        // A timeout, transport failure, or server error can follow a committed
+        // write. Replay its key even if a later worklist already says completed.
+        const status = Number(error?.status ?? 0);
+        if (status === 0 || status === 408 || status >= 500)
+          this._uncertainResolutions.add(task.taskId);
+        else this._uncertainResolutions.delete(task.taskId);
         showTaskUpdateErrorToast(error, () => {
           void this.openUpdates(task, trigger, "resolve");
         });
@@ -281,7 +303,16 @@ export class TaskSheets {
 
   /** @param {Record<string, any>} task */
   _resolve(task) {
-    return this._options.resolveTask?.(task) || task;
+    const cached = this._options.resolveTask?.(task);
+    if (!cached) return task;
+    // Timeline reads are authoritative and may be newer than the host worklist,
+    // especially while an open dialog defers the host's next render.
+    const taskTime = Date.parse(task.updatedAt);
+    const cachedTime = Date.parse(cached.updatedAt);
+    return Number.isFinite(taskTime) &&
+      (!Number.isFinite(cachedTime) || taskTime > cachedTime)
+      ? task
+      : cached;
   }
 
   /**

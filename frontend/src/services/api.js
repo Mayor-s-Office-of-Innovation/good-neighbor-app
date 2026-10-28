@@ -1,3 +1,4 @@
+import { clearTaskStatusOverrides } from "../state/task-status-overrides.js";
 import { invalidateDuplicateIssues } from "./duplicate-invalidation.js";
 /*
   api.js — the field app's thin online client for the GNP backend.
@@ -1430,6 +1431,10 @@ export async function separateDuplicate(taskId, expected) {
     "POST",
     `/v1/tasks/${encodeURIComponent(taskId)}/duplicate:separate`,
     { body: expected },
+  );
+  clearTaskStatusOverrides(
+    taskId,
+    result.task?.taskId || result.taskId || taskId,
   );
   invalidateDuplicateIssues();
   return result;
