@@ -307,6 +307,28 @@
   outline: none;
 }
 
+/* Work that logging out would delete before it uploads. */
+.logout-dialog__unsent {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--c-line);
+  border-left: 3px solid var(--c-flag);
+  border-radius: 0.5rem;
+  background: var(--c-flag-bg);
+  text-align: left;
+}
+
+.logout-dialog__unsent-title {
+  margin: 0 0 0.25rem;
+  font-weight: 600;
+}
+
+.logout-dialog__unsent-line {
+  margin: 0;
+  font-size: var(--wa-font-size-s, 0.875rem);
+  line-height: 1.4;
+}
+
 .logout-dialog__error {
   margin: 0;
   color: var(--wa-color-danger-on-quiet, #b30532);

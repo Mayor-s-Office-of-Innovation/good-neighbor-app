@@ -73,6 +73,39 @@ describe("logoutDialog", () => {
     expect(pending).toContain('class="logout-dialog__error" role="alert"');
   });
 
+  it("warns about work that hasn't uploaded yet", () => {
+    const none = logoutDialog({ error: "", pending: false });
+    expect(none).not.toContain('id="logout-unsent"');
+    expect(none).toContain('aria-describedby="logout-copy"');
+
+    const markup = logoutDialog({
+      error: "",
+      pending: false,
+      unsent: { checks: 2, careLogs: 1 },
+    });
+    expect(markup).toContain('id="logout-unsent"');
+    expect(markup).toContain('aria-describedby="logout-copy logout-unsent"');
+    expect(markup).toContain(
+      escapeHtml(t("today.logout.unsentChecks", { count: 2 })),
+    );
+    expect(markup).toContain(
+      escapeHtml(t("today.logout.unsentCareLogs", { count: 1 })),
+    );
+    expect(markup).toContain(escapeHtml(t("today.logout.unsentHint")));
+
+    const checksOnly = logoutDialog({
+      error: "",
+      pending: false,
+      unsent: { checks: 1, careLogs: 0 },
+    });
+    expect(checksOnly).toContain(
+      escapeHtml(t("today.logout.unsentChecks", { count: 1 })),
+    );
+    expect(checksOnly).not.toContain(
+      escapeHtml(t("today.logout.unsentCareLogs", { count: 0 })),
+    );
+  });
+
   it("escapes the error text", () => {
     const markup = logoutDialog({
       error: "<img src=x onerror=1>",
