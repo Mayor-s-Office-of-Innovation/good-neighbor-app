@@ -31,6 +31,7 @@
   "access.role.general": "Site Team Member",
   "access.role.manager": "Site Manager",
   "access.share": "Share enrollment link",
+  "access.shareMessage": "Your site manager invited you to Good Neighbor. Open this link on the phone you’ll use for the app. It works once and expires after 8 hours.",
   "access.site": "this Site",
   "access.siteHeading": "Invite someone to {site}",
   "access.title": "Manage access",

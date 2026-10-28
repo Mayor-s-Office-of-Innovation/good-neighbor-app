@@ -31,6 +31,7 @@
   "access.role.general": "Miyembro ng Team ng Site",
   "access.role.manager": "Tagapamahala ng Site",
   "access.share": "Ibahagi ang link sa pagpapatala",
+  "access.shareMessage": "Inimbitahan ka ng iyong site manager sa Good Neighbor. Buksan ang link na ito sa teleponong gagamitin mo para sa app. Isang beses lang ito magagamit at mag-e-expire pagkalipas ng 8 oras.",
   "access.site": "Site na ito",
   "access.siteHeading": "Mag-imbita ng tao sa {site}",
   "access.title": "Pamahalaan ang access",

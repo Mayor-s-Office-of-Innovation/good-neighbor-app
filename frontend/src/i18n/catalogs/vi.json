@@ -31,6 +31,7 @@
   "access.role.general": "Thành viên nhóm tại địa điểm",
   "access.role.manager": "Người quản lý địa điểm",
   "access.share": "Chia sẻ liên kết đăng ký",
+  "access.shareMessage": "Người quản lý cơ sở đã mời bạn sử dụng Good Neighbor. Hãy mở liên kết này trên điện thoại bạn sẽ dùng cho ứng dụng. Liên kết chỉ dùng được một lần và hết hạn sau 8 giờ.",
   "access.site": "địa điểm này",
   "access.siteHeading": "Mời người tham gia {site}",
   "access.title": "Quản lý quyền truy cập",
