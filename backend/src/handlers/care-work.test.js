@@ -13,12 +13,17 @@ const mocks = vi.hoisted(() => ({
   putObject: vi.fn(),
   setObjectTags: vi.fn(),
   downscaleImage: vi.fn(),
+  storeThumbnail: vi.fn(),
 }));
 vi.mock("../db.js", () => ({ ddb: { send: mocks.send } }));
 vi.mock("../s3.js", () => mocks);
 vi.mock("../media/downscale.js", () => ({
   downscaleImage: mocks.downscaleImage,
   DownscaleError: class extends Error {},
+}));
+vi.mock("../media/thumbnail.js", () => ({
+  storeThumbnail: mocks.storeThumbnail,
+  thumbnailKeyFor: (/** @type {string} */ key) => `${key}.thumb.webp`,
 }));
 import {
   createCareWork,
@@ -418,11 +423,82 @@ describe("Site-scoped proactive care", () => {
     });
     const saved = records.get(`SITE#site-a/CARE_WORK#${ID}`);
     expect(saved.photos[0].expiresAt).toBe(NOW + 30 * 86400);
+    expect(saved.photos[0]).not.toHaveProperty("thumbS3Key");
     expect((await getCarePhoto(event())).statusCode).toBe(200);
     vi.setSystemTime((NOW + 30 * 86400) * 1000);
     expect((await getCarePhoto(event())).statusCode).toBe(410);
     expect((await getCareWork(event())).statusCode).toBe(200);
     expect(mocks.presignGet).toHaveBeenCalledTimes(1);
+  });
+  it("stores a thumbnail beside the photo and signs it for the detail screen", async () => {
+    records.set(`SITE#site-a/CARE_UPLOAD#${ID}#${PHOTO}`, {
+      createdBy: "device-a",
+      contentLength: 3,
+      contentType: "image/jpeg",
+      createdAt: NOW,
+      expiresAt: NOW + 86400,
+    });
+    mocks.headObject.mockResolvedValue({
+      contentType: "image/jpeg",
+      contentLength: 3,
+      metadata: { "declared-bytes": "3" },
+    });
+    mocks.getObjectBytes.mockResolvedValue({ bytes: Buffer.from("raw") });
+    mocks.downscaleImage.mockResolvedValue({
+      bytes: Buffer.from("normalized"),
+      contentType: "image/jpeg",
+    });
+    const key = `care-work/site-a/${ID}/${PHOTO}.jpg`;
+    mocks.storeThumbnail.mockResolvedValue(`${key}.thumb.webp`);
+    mocks.presignGet.mockImplementation(async ({ key }) => `https://s3/${key}`);
+    expect(
+      (await createCareWork(event({ ...payload(), photoIds: [PHOTO] })))
+        .statusCode,
+    ).toBe(201);
+    expect(mocks.storeThumbnail).toHaveBeenCalledWith({
+      bucket: "uploads",
+      s3Key: key,
+      bytes: Buffer.from("normalized"),
+    });
+    expect(records.get(`SITE#site-a/CARE_WORK#${ID}`).photos[0]).toMatchObject({
+      s3Key: key,
+      thumbS3Key: `${key}.thumb.webp`,
+    });
+    expect(JSON.parse((await getCarePhoto(event())).body)).toEqual({
+      downloadUrl: `https://s3/${key}`,
+      thumbnailUrl: `https://s3/${key}.thumb.webp`,
+    });
+  });
+  it("saves the log without a thumbnail when the thumbnail write fails", async () => {
+    records.set(`SITE#site-a/CARE_UPLOAD#${ID}#${PHOTO}`, {
+      createdBy: "device-a",
+      contentLength: 3,
+      contentType: "image/jpeg",
+      createdAt: NOW,
+      expiresAt: NOW + 86400,
+    });
+    mocks.headObject.mockResolvedValue({
+      contentType: "image/jpeg",
+      contentLength: 3,
+      metadata: { "declared-bytes": "3" },
+    });
+    mocks.getObjectBytes.mockResolvedValue({ bytes: Buffer.from("raw") });
+    mocks.downscaleImage.mockResolvedValue({
+      bytes: Buffer.from("normalized"),
+      contentType: "image/jpeg",
+    });
+    mocks.storeThumbnail.mockRejectedValue(new Error("encode failed"));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(
+      (await createCareWork(event({ ...payload(), photoIds: [PHOTO] })))
+        .statusCode,
+    ).toBe(201);
+    expect(
+      records.get(`SITE#site-a/CARE_WORK#${ID}`).photos[0],
+    ).not.toHaveProperty("thumbS3Key");
+    const body = JSON.parse((await getCarePhoto(event())).body);
+    expect(body.downloadUrl).toBe("https://download.test");
+    expect(body).not.toHaveProperty("thumbnailUrl");
   });
   it("rejects another device's reservation and unsigned size metadata", async () => {
     records.set(`SITE#site-a/CARE_UPLOAD#${ID}#${PHOTO}`, {
@@ -456,6 +532,19 @@ describe("Site-scoped proactive care", () => {
     ];
     expect((await getCarePhoto(event())).statusCode).toBe(404);
     expect(mocks.presignGet).not.toHaveBeenCalled();
+    const key = `care-work/site-a/${ID}/${PHOTO}.jpg`;
+    records.get(`SITE#site-a/CARE_WORK#${ID}`).photos = [
+      {
+        photoId: PHOTO,
+        s3Key: key,
+        thumbS3Key: "checks/other/private.thumb.webp",
+        expiresAt: NOW + 1000,
+      },
+    ];
+    expect(JSON.parse((await getCarePhoto(event())).body)).not.toHaveProperty(
+      "thumbnailUrl",
+    );
+    expect(mocks.presignGet).toHaveBeenCalledTimes(1);
   });
 });
 

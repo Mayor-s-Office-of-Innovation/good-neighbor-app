@@ -328,10 +328,11 @@ export class CareWorkView extends HTMLElement {
         work.photos.map(async (photo) => {
           if (photo.expiresAt <= Date.now() / 1000) return photo;
           try {
-            return {
-              ...photo,
-              url: (await getCarePhoto(workId, photo.photoId)).downloadUrl,
-            };
+            const { downloadUrl, thumbnailUrl } = await getCarePhoto(
+              workId,
+              photo.photoId,
+            );
+            return { ...photo, url: downloadUrl, thumbnailUrl };
           } catch (error) {
             return { ...photo, unavailable: error?.status !== 410 };
           }
@@ -342,6 +343,12 @@ export class CareWorkView extends HTMLElement {
       this._bindBack("/care-work");
       this.querySelectorAll(".care-detail-photos img").forEach((image) =>
         image.addEventListener("error", () => {
+          // Fall back once, so a missing thumbnail never leaves a broken image.
+          const original = image.closest("button")?.dataset.fullSrc;
+          if (original && image.getAttribute("src") !== original) {
+            image.setAttribute("src", original);
+            return;
+          }
           image.closest("button")?.remove();
           if (!this.querySelector(".care-photo-unavailable")) {
             const message = document.createElement("p");
