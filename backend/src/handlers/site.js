@@ -1,5 +1,15 @@
 import { currentManagerOversight } from "../lib/site-manager-name.js";
 import {
+  readCompliancePeriods,
+  projectSiteCompliance,
+} from "../lib/site-compliance.js";
+import { randomUUID } from "node:crypto";
+import {
+  siteContacts,
+  siteManagerProfiles,
+} from "../lib/site-admin-contacts.js";
+import { updatePersonRecord } from "../lib/people.js";
+import {
   GetCommand,
   QueryCommand,
   TransactWriteCommand,
@@ -16,8 +26,11 @@ import {
 import { jsonResponse, readJsonBody } from "../http.js";
 import { presignGet } from "../s3.js";
 import { GeocodingError } from "../integrations/census-geocoder.js";
-import { deriveAccessLevel, deriveSiteId } from "../lib/principal.js";
-import { pacificToday } from "../lib/pacific-dates.js";
+import {
+  deriveAccessLevel,
+  deriveSiteId,
+  deriveActorId,
+} from "../lib/principal.js";
 import { siteMetaKey } from "./keys.js";
 
 const PROVIDER_SITES_PAGE_SIZE = 25;
@@ -105,7 +118,8 @@ export const getSiteAdmin = async (event) => {
 };
 
 /**
- * PATCH /v1/site-admin — update only the two staff-editable sections.
+ * PATCH /v1/site-admin — update Site details, public contacts, assigned manager
+ * phones, or perimeter text. City Program Manager profiles remain read-only.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const updateSiteAdmin = async (event) => {
@@ -127,6 +141,76 @@ export const updateSiteAdmin = async (event) => {
   const section = body.section;
   const values = /** @type {Record<string, unknown>} */ (body.values ?? {});
   const now = new Date().toISOString();
+  if (section === "siteManagerPhone") {
+    const assigned = (await siteManagerProfiles(siteId)).find(
+      (entry) => entry.person?.personId === values.personId,
+    );
+    if (!assigned?.person)
+      return jsonResponse(404, { error: "assigned_person_not_found" });
+    if (typeof values.phone !== "string")
+      return jsonResponse(400, { error: "invalid_phone" });
+    const phone = values.phone.trim();
+    const digits = phone.replace(/\D/g, "");
+    if (
+      phone &&
+      !(
+        digits.length === 10 ||
+        (digits.length === 11 && digits.startsWith("1"))
+      )
+    )
+      return jsonResponse(400, { error: "invalid_phone" });
+    const assignment = assigned.assignment;
+    try {
+      await updatePersonRecord(
+        assigned.person,
+        { ...assigned.person, phone },
+        deriveActorId(event),
+        [
+          {
+            TableName: getConfig().dynamoTable,
+            Key: { pk: assignment.pk, sk: assignment.sk },
+            ConditionExpression:
+              "#assignmentStatus = :assignmentActive" +
+              (assignment.personId
+                ? " AND personId = :assignmentPerson"
+                : " AND programId = :assignmentProgram AND userId = :assignmentUser AND attribute_not_exists(personId)"),
+            ExpressionAttributeNames: { "#assignmentStatus": "status" },
+            ExpressionAttributeValues: {
+              ":assignmentActive": "active",
+              ...(assignment.personId
+                ? { ":assignmentPerson": assignment.personId }
+                : {
+                    ":assignmentProgram": assignment.programId,
+                    ":assignmentUser": assignment.userId,
+                  }),
+            },
+          },
+          {
+            TableName: getConfig().dynamoTable,
+            Key: siteMetaKey(siteId),
+            ConditionExpression:
+              "attribute_exists(pk) AND (attribute_not_exists(#siteStatus) OR #siteStatus <> :inactiveSite)",
+            ExpressionAttributeNames: { "#siteStatus": "status" },
+            ExpressionAttributeValues: { ":inactiveSite": "inactive" },
+          },
+        ],
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.name === "TransactionCanceledException" ||
+          [
+            "person_source_conflict",
+            "person_update_limit_exceeded",
+            "affiliation_not_found",
+            "invalid_person_contact",
+          ].includes(error.message))
+      )
+        return jsonResponse(409, { error: "person_update_conflict" });
+      throw error;
+    }
+    return jsonResponse(200, { site: await siteAdminView(site) });
+  }
   let update;
   /** @type {import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]} */
   const relatedWrites = [];
@@ -219,19 +303,52 @@ export const updateSiteAdmin = async (event) => {
         },
       });
     }
-  } else if (section === "contactPerson") {
-    const validation = validateContactPerson(values);
+  } else if (section === "publicContact" || section === "contactPerson") {
+    // Older clients use contactPerson; keep that route writing the canonical public fields.
+    const validation = validatePublicContact(values);
     if (!validation.ok || !validation.value) {
       return jsonResponse(400, { error: validation.error });
     }
     update = {
-      UpdateExpression: "SET contactPerson = :contact, updatedAt = :now",
+      UpdateExpression: "SET publicContact = :contact, updatedAt = :now",
       ExpressionAttributeValues: {
         ":contact": validation.value,
         ":now": now,
       },
     };
-    site.contactPerson = validation.value;
+    site.publicContact = validation.value;
+  } else if (section === "perimeter") {
+    if (
+      typeof values.perimeter !== "string" ||
+      !values.perimeter.trim() ||
+      values.perimeter.trim().length > 4000
+    )
+      return jsonResponse(400, { error: "invalid_perimeter" });
+    site.perimeter = values.perimeter.trim();
+    relatedWrites.push({
+      Put: {
+        TableName: getConfig().dynamoTable,
+        Item: {
+          pk: `SITE#${siteId}`,
+          sk: `AUDIT#${now}#${randomUUID()}`,
+          type: "siteAuditEvent",
+          eventType: "perimeter_text_updated",
+          siteId,
+          actor: deriveActorId(event),
+          createdAt: now,
+        },
+      },
+    });
+    update = {
+      UpdateExpression:
+        "SET perimeter = :perimeter, perimeterUpdatedAt = :now, perimeterUpdatedBy = :actor, perimeterUpdatedSource = :source, updatedAt = :now",
+      ExpressionAttributeValues: {
+        ":perimeter": site.perimeter,
+        ":now": now,
+        ":actor": deriveActorId(event),
+        ":source": "good-neighbor",
+      },
+    };
   } else {
     return jsonResponse(400, { error: "invalid_section" });
   }
@@ -281,6 +398,7 @@ async function loadSite(siteId) {
     new GetCommand({
       TableName: getConfig().dynamoTable,
       Key: siteMetaKey(siteId),
+      ConsistentRead: true,
     }),
   );
   return /** @type {Record<string, any> | undefined} */ (result.Item);
@@ -291,11 +409,11 @@ async function loadSite(siteId) {
  * @returns {Promise<Record<string, any>>}
  */
 async function siteAdminView(site) {
-  const compliance = site.compliance || {};
-  const activeCompliance =
-    compliance.periodEnd && compliance.periodEnd < pacificToday()
-      ? { perimeterChecksRequired: false }
-      : compliance;
+  const oversight = await currentManagerOversight(site.oversight || {});
+  const canonical = projectSiteCompliance(
+    site,
+    await readCompliancePeriods(site.siteId),
+  );
   return {
     siteId: site.siteId,
     name: String(site.name || "Your site"),
@@ -307,18 +425,17 @@ async function siteAdminView(site) {
       state: "",
       zip: "",
     },
-    contactPerson: site.contactPerson || {
-      firstName: "",
-      lastName: "",
+    publicContact: site.publicContact || {
       email: "",
       phone: "",
     },
-    oversight: await currentManagerOversight(site.oversight || {}),
-    compliance: activeCompliance,
+    ...(await siteContacts(site.siteId)),
+    oversight,
+    compliance: canonical.compliance,
+    compliancePeriods: canonical.compliancePeriods,
+    letterState: canonical.letterState,
     perimeter: String(site.perimeter || ""),
-    complianceLetters: await complianceLetterLinks(
-      site.complianceLetters || { current: null, past: [] },
-    ),
+    complianceLetters: await complianceLetterLinks(canonical.complianceLetters),
   };
 }
 
@@ -375,25 +492,28 @@ function validateSiteDetails(values) {
 
 /**
  * @param {Record<string, unknown>} values
- * @returns {{ ok: boolean, error?: string, value?: { firstName: string, lastName: string, email: string, phone: string } }}
+ * @returns {{ ok: boolean, error?: string, value?: { email: string, phone: string, phoneExtension: string } }}
  */
-function validateContactPerson(values) {
+function validatePublicContact(values) {
   const value = {
-    firstName: clean(values.firstName),
-    lastName: clean(values.lastName),
     email: clean(values.email).toLowerCase(),
     phone: clean(values.phone),
+    phoneExtension: clean(values.phoneExtension).slice(0, 20),
   };
-  if (!value.firstName || !value.lastName) {
-    return { ok: false, error: "contact_name_required" };
-  }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.email)) {
+  if (value.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.email)) {
     return { ok: false, error: "invalid_email" };
   }
   const digits = value.phone.replace(/\D/g, "");
-  if (!(digits.length === 10 || (digits.length === 11 && digits[0] === "1"))) {
+  if (
+    value.phone &&
+    !(digits.length === 10 || (digits.length === 11 && digits[0] === "1"))
+  ) {
     return { ok: false, error: "invalid_phone" };
   }
+  const national = digits.length === 11 ? digits.slice(1) : digits;
+  value.phone = national
+    ? `${national.slice(0, 3)}-${national.slice(3, 6)}-${national.slice(6)}`
+    : "";
   return { ok: true, value };
 }
 

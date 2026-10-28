@@ -76,6 +76,8 @@ vi.mock("../db.js", () => ({
   listBoundSites: catalog.listBoundSites,
   setSite: vi.fn(async (_name, meta) => ({ ...meta, id: "current" })),
   clearSiteSession: logout.clearSiteSession,
+  saveHomeSnapshot: vi.fn(async () => {}),
+  getHomeSnapshot: vi.fn(async () => null),
 }));
 vi.mock("../services/api.js", () => ({
   listProviderSites: catalog.listProviderSites,
@@ -94,6 +96,8 @@ vi.mock("../state/check-session.js", () => ({
   getCurrentCheck: () => session.current,
   hasDraft: async () => Boolean(session.current),
   loadSubmitted: async () => null,
+  loadFinishedChecks: async () => [],
+  clearSubmittedSession: vi.fn(async () => {}),
   onCheckSessionChange: subscribeSession,
   discardInMemorySession: logout.discardInMemorySession,
 }));
@@ -1209,6 +1213,65 @@ describe("deferred In-progress / History lists", () => {
     expect(view._remainingStatus).toBe("loaded");
     expect(view._render(view._homeModel)).not.toContain("retry-remaining");
     errorLog.mockRestore();
+  });
+
+  describe("with no connection", () => {
+    const offline = Object.assign(new Error("Network error"), { status: 0 });
+
+    it("shows the saved lists and a notice instead of the error screen", async () => {
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+      const { getHomeSnapshot, saveHomeSnapshot } = await import("../db.js");
+      vi.mocked(saveHomeSnapshot).mockClear();
+      catalog.listTasks.mockImplementation(async () => {
+        throw offline;
+      });
+      vi.mocked(getHomeSnapshot).mockResolvedValueOnce({
+        siteId: "site-1",
+        checks: [],
+        tasks: [openTask],
+        savedAt: "2026-10-27T15:00:00.000Z",
+      });
+      const view = liveView("?filter=todo");
+      view._renderError = vi.fn();
+      await view.connectedCallback();
+
+      expect(view._renderError).not.toHaveBeenCalled();
+      expect(view._homeModel.tasks.map((task) => task.taskId)).toEqual([
+        "open-1",
+      ]);
+      expect(view._offline).toBe(true);
+      expect(view._remainingStatus).toBe("error");
+      expect(saveHomeSnapshot).not.toHaveBeenCalled();
+      const markup = view._render(view._homeModel);
+      expect(markup).toContain('id="start-check"');
+      errorLog.mockRestore();
+    });
+
+    it("keeps the error screen for a server failure", async () => {
+      const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+      catalog.listTasks.mockImplementation(async () => {
+        throw Object.assign(new Error("boom"), { status: 500 });
+      });
+      const view = liveView("?filter=todo");
+      view._renderError = vi.fn();
+      await view.connectedCallback();
+      expect(view._renderError).toHaveBeenCalled();
+      expect(view._offline).toBeFalsy();
+      errorLog.mockRestore();
+    });
+
+    it("saves the lists after a successful load", async () => {
+      const { saveHomeSnapshot } = await import("../db.js");
+      vi.mocked(saveHomeSnapshot).mockClear();
+      catalog.listTasks.mockResolvedValue({ tasks: [openTask] });
+      const view = liveView("?filter=todo");
+      await view.connectedCallback();
+      expect(saveHomeSnapshot).toHaveBeenCalledWith("site-1", {
+        checks: [],
+        tasks: [openTask],
+      });
+      expect(view._offline).toBeNull();
+    });
   });
 
   /** First load with one open and one completed task, fully settled. */

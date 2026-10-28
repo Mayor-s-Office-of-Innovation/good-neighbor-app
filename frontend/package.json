@@ -8,6 +8,7 @@
     "dev": "vite --host 127.0.0.1",
     "dev:lan": "vite --host 0.0.0.0",
     "dev:remote": "API_PROXY_TARGET=https://dev.goodneighborsf.org vite --host 127.0.0.1",
+    "dev:offline": "vite build && vite preview --host 127.0.0.1",
     "lint": "eslint src",
     "perf": "speed-check",
     "size": "size-limit",
@@ -98,6 +99,16 @@
       "name": "artifact photo css",
       "path": "dist/assets/artifact-photo-*.css",
       "limit": "200 B"
+    },
+    {
+      "name": "site info editor js",
+      "path": "dist/assets/site-info-editor-*.js",
+      "limit": "4 kB"
+    },
+    {
+      "name": "site info contacts js",
+      "path": "dist/assets/site-info-contacts-*.js",
+      "limit": "1.5 kB"
     },
     {
       "name": "feedback submission js",

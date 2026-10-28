@@ -8,7 +8,11 @@ import {
   getTaskUpdates,
   get311RequestDetails,
   getCaptureGuidance,
+  putMedia,
+  putMediaWithProgress,
   rejectAnalysisCondition,
+  REQUEST_TIMEOUT_MS,
+  UPLOAD_STALL_MS,
   toDevUploadUrl,
   waitForAnalyses,
   uploadTaskUpdatePhoto,
@@ -303,8 +307,10 @@ describe("capture guidance requests", () => {
     const aborted = new DOMException("Canceled", "AbortError");
     const fetch = vi.fn(async (url, options) => {
       expect(url).toContain("/v1/checks:capture-guidance?");
-      expect(options.signal).toBe(controller.signal);
+      expect(options.signal.aborted).toBe(false);
       controller.abort();
+      // The request's own signal (caller + time limit) follows the caller.
+      expect(options.signal.aborted).toBe(true);
       throw aborted;
     });
     vi.stubGlobal("fetch", fetch);
@@ -315,7 +321,6 @@ describe("capture guidance requests", () => {
         signal: controller.signal,
       }),
     ).rejects.toBe(aborted);
-    expect(fetch.mock.calls[0][1].signal).toBe(controller.signal);
   });
 });
 
@@ -507,25 +512,41 @@ describe("timeline read cancellation", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("passes the caller signal to core, media, and every City batch fetch", async () => {
-    const controller = new AbortController();
-    const fetch = vi
-      .fn()
-      .mockImplementation(() =>
-        Promise.resolve(new Response('{"requests":[]}', { status: 200 })),
-      );
-    vi.stubGlobal("fetch", fetch);
-    await getTaskUpdates("task", undefined, { signal: controller.signal });
-    await getMediaUrl("check", "photo", { signal: controller.signal });
-    await get311RequestDetails(
-      Array.from({ length: 51 }, (_, i) => ({
-        taskId: `t${i}`,
-        srNum: `s${i}`,
-      })),
-      { signal: controller.signal },
+    // Each request's signal adds a time limit, so it is not the caller's
+    // object; it must abort when the caller's does. The fetch stub hangs
+    // until its signal aborts.
+    const fetch = vi.fn(
+      (_url, /** @type {any} */ options) =>
+        new Promise((_resolve, reject) =>
+          options.signal.addEventListener("abort", () =>
+            reject(new DOMException("Canceled", "AbortError")),
+          ),
+        ),
     );
-    expect(fetch).toHaveBeenCalledTimes(4);
-    for (const [, options] of fetch.mock.calls) {
-      expect(options.signal).toBe(controller.signal);
+    vi.stubGlobal("fetch", fetch);
+    const reads = [
+      (/** @type {AbortSignal} */ signal) =>
+        getTaskUpdates("task", undefined, { signal }),
+      (/** @type {AbortSignal} */ signal) =>
+        getMediaUrl("check", "photo", { signal }),
+      (/** @type {AbortSignal} */ signal) =>
+        get311RequestDetails(
+          Array.from({ length: 51 }, (_, i) => ({
+            taskId: `t${i}`,
+            srNum: `s${i}`,
+          })),
+          { signal },
+        ),
+    ];
+    for (const read of reads) {
+      fetch.mockClear();
+      const controller = new AbortController();
+      const pending = read(controller.signal);
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+      controller.abort();
+      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+      for (const [, options] of fetch.mock.calls)
+        expect(/** @type {any} */ (options).signal.aborted).toBe(true);
     }
   });
 });
@@ -568,7 +589,9 @@ it("cancels the progress upload without registering incomplete media", async () 
     ).rejects.toMatchObject({ name: "AbortError" });
     expect(sent).toHaveBeenCalledWith(file);
     expect(fetch).toHaveBeenCalledTimes(1);
-    expect(fetch.mock.calls[0][1].signal).toBe(controller.signal);
+    // request() wraps the caller's signal with its time limit; forwarding a
+    // cancel mid-request is covered by "timeline read cancellation".
+    expect(fetch.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
   } finally {
     vi.unstubAllGlobals();
   }
@@ -611,3 +634,143 @@ it.each([
     }
   },
 );
+
+describe("time limits on a weak connection", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  /** A fetch that never answers; it rejects only when its signal aborts. */
+  const hangingFetch = () =>
+    vi.fn(
+      (_url, /** @type {any} */ options) =>
+        new Promise((_resolve, reject) =>
+          options.signal?.addEventListener("abort", () =>
+            reject(new DOMException("Aborted", "AbortError")),
+          ),
+        ),
+    );
+
+  it("turns a request that never finishes into a lost connection", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.stubGlobal("fetch", hangingFetch());
+    const pending = getMediaUrl("check", "photo");
+    const outcome = expect(pending).rejects.toMatchObject({
+      name: "ApiError",
+      status: 0,
+    });
+    await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+    await outcome;
+  });
+
+  it("keeps waiting on a request that is slow but inside the limit", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(
+              () => resolve(new Response('{"ok":true}', { status: 200 })),
+              REQUEST_TIMEOUT_MS - 1000,
+            ),
+          ),
+      ),
+    );
+    const pending = getMediaUrl("check", "photo");
+    await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS - 1000);
+    await expect(pending).resolves.toEqual({ ok: true });
+  });
+
+  it("gives a large photo upload more time than a small one", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.stubGlobal("fetch", hangingFetch());
+    let settled = false;
+    const big = new Blob([new Uint8Array(2_000_000)], { type: "image/jpeg" });
+    const pending = putMedia("https://bucket.example/a.jpg", big, "image/jpeg");
+    void pending.catch(() => {}).finally(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(UPLOAD_STALL_MS);
+    expect(settled).toBe(false);
+    // 2 MB at the 20 kB/s floor adds 100 s on top of the stall window.
+    await vi.advanceTimersByTimeAsync(100_000);
+    await expect(pending).rejects.toMatchObject({
+      name: "ApiError",
+      status: 0,
+    });
+  });
+
+  describe("progress uploads", () => {
+    /** @type {any[]} */
+    let xhrs;
+    class FakeXhr {
+      constructor() {
+        this.listeners = /** @type {Record<string, Function[]>} */ ({});
+        this.upload = {
+          listeners: /** @type {Function[]} */ ([]),
+          addEventListener: (
+            /** @type {string} */ _type,
+            /** @type {Function} */ fn,
+          ) => this.upload.listeners.push(fn),
+        };
+        this.status = 0;
+        xhrs.push(this);
+      }
+      open() {}
+      setRequestHeader() {}
+      send() {}
+      /** @param {string} type @param {Function} fn */
+      addEventListener(type, fn) {
+        (this.listeners[type] ||= []).push(fn);
+      }
+      /** @param {string} type */
+      fire(type) {
+        for (const fn of this.listeners[type] || []) fn();
+      }
+      abort() {
+        this.fire("abort");
+        this.fire("loadend");
+      }
+      /** @param {number} loaded */
+      progress(loaded) {
+        for (const fn of this.upload.listeners)
+          fn({ lengthComputable: true, loaded, total: 100 });
+      }
+    }
+
+    it("aborts as a lost connection when no bytes move", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      xhrs = [];
+      vi.stubGlobal("XMLHttpRequest", FakeXhr);
+      const blob = new Blob(["x"], { type: "image/jpeg" });
+      const pending = putMediaWithProgress("https://bucket.example/a", blob);
+      const outcome = expect(pending).rejects.toMatchObject({
+        name: "ApiError",
+        status: 0,
+      });
+      // Progress keeps it alive past one stall window...
+      await vi.advanceTimersByTimeAsync(UPLOAD_STALL_MS - 1000);
+      xhrs[0].progress(40);
+      await vi.advanceTimersByTimeAsync(UPLOAD_STALL_MS - 1000);
+      // ...then silence for a full window ends it.
+      await vi.advanceTimersByTimeAsync(1000);
+      await outcome;
+    });
+
+    it("still reports a cancel by the caller as a cancel", async () => {
+      xhrs = [];
+      vi.stubGlobal("XMLHttpRequest", FakeXhr);
+      const controller = new AbortController();
+      const blob = new Blob(["x"], { type: "image/jpeg" });
+      const pending = putMediaWithProgress(
+        "https://bucket.example/a",
+        blob,
+        {},
+        () => {},
+        controller.signal,
+      );
+      controller.abort();
+      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    });
+  });
+});

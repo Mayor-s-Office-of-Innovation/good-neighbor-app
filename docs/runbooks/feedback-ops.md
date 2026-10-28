@@ -5,7 +5,7 @@
 client-error and client-event intakes) → PostHog Surveys.
 
 CloudWatch carries **metadata only**. While forwarding is off, submitted text is
-discarded at intake because we don't want to risk recording sensitive information in 
+discarded at intake because we don't want to risk recording sensitive information in
 
 ## Current state (2026-09-02)
 

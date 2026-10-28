@@ -80,4 +80,3 @@ Only admins may update the main branch. Merge release ready code to main and tag
 - Core Web Vitals pass for the primary user journeys.
 - Accessibility keyboard pass and WCAG 2.2 AA review.
 - Terraform resources verified for required CCSF tags.
-

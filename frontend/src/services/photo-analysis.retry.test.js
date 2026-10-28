@@ -21,6 +21,8 @@ vi.mock("./api.js", () => ({
   LEG: { PRESIGN: "presign", PUT: "put", REGISTER: "register" },
 }));
 vi.mock("../state/check-session.js", () => ({
+  findCheckForItem: vi.fn(() => null),
+  getCheck: vi.fn(() => null),
   getCurrentCheck: vi.fn(),
   updateItem: vi.fn(),
   updateItemAnalysis: vi.fn(),
@@ -175,7 +177,7 @@ describe("retryEvidenceItem", () => {
       /** @type {any} */ ({ analyses: [], artifacts: [] }),
     );
     const boom = Object.assign(
-      new ApiError("Network error uploading media: offline", { status: 0 }),
+      new ApiError("Media upload → 503 Service Unavailable", { status: 503 }),
       { leg: "upload" },
     );
     vi.mocked(uploadArtifact).mockRejectedValue(boom);
@@ -196,6 +198,32 @@ describe("retryEvidenceItem", () => {
         }),
       );
     });
+  });
+
+  it("keeps an item waiting, not failed, when there is no connection", async () => {
+    const item = sessionItem();
+    vi.mocked(getCurrentCheck).mockReturnValue(session(item));
+    vi.mocked(uploadArtifact).mockRejectedValue(
+      new ApiError("Network error uploading media: offline", { status: 0 }),
+    );
+
+    retryEvidenceItem(item.id);
+    await vi.waitFor(() => {
+      expect(updateItemAnalysis).toHaveBeenCalledWith(
+        item.id,
+        expect.objectContaining({ status: "waiting", failure: undefined }),
+      );
+    });
+    expect(updateItem).toHaveBeenLastCalledWith(
+      item.id,
+      expect.objectContaining({
+        upload: expect.objectContaining({ status: "pending" }),
+      }),
+    );
+    expect(updateItemAnalysis).not.toHaveBeenCalledWith(
+      item.id,
+      expect.objectContaining({ status: "failed" }),
+    );
   });
 
   it("records analyzer timeouts with uploaded/enqueued true and the waited time", async () => {

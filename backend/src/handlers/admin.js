@@ -1,9 +1,11 @@
+import { perimeterAttribution } from "../lib/perimeter-attribution.js";
 import { readSiteParts, boundedReads } from "../lib/admin-site-reads.js";
 import { loadAdminDirectory } from "./admin-users.js";
 import { registerPeopleChanges } from "../lib/people.js";
 import { queryAllItems } from "../lib/query-all-items.js";
 import { contactRevisionChange } from "../lib/staff-contact-guard.js";
 import { currentManagerOversight } from "../lib/site-manager-name.js";
+import { projectSiteCompliance } from "../lib/site-compliance.js";
 import {
   DeleteCommand,
   GetCommand,
@@ -192,6 +194,7 @@ export const listProviders = (event) =>
             if (item.sk !== "#META") return item;
             const summary = { ...item };
             delete summary.complianceLetters;
+            delete summary.compliance;
             return summary;
           }),
         };
@@ -669,6 +672,17 @@ export const getAdminSite = (event) =>
     if (!res.Items?.length) return jsonResponse(404, { error: "not_found" });
     const items = await Promise.all(
       res.Items.map(async (item) => {
+        if (item.sk === "#META" && item.perimeterUpdatedBy)
+          item = { ...item, ...(await perimeterAttribution(item, siteId)) };
+        if (
+          item.sk === "#META" &&
+          (!view || view === "compliance" || view === "letters")
+        ) {
+          const periods = res.Items.filter((row) =>
+            String(row.sk).startsWith("COMPLIANCE_TERMS#"),
+          );
+          item = { ...item, ...projectSiteCompliance(item, periods) };
+        }
         if (view === "status")
           return item.sk === "#META"
             ? {
@@ -693,6 +707,7 @@ export const getAdminSite = (event) =>
         ) {
           const summary = { ...item };
           delete summary.complianceLetters;
+          delete summary.compliance;
           item = summary;
         }
         if (item.sk === "#META" && item.oversight) {
