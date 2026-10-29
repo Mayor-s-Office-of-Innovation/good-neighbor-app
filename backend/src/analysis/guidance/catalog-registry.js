@@ -1,3 +1,4 @@
+import { actionsEscalationsV9Catalog } from "./actions-escalations-v9.js";
 import { actionsEscalationsV8Catalog } from "./actions-escalations-v8.js";
 import { actionsEscalationsV7Catalog } from "./actions-escalations-v7.js";
 import { actionsEscalationsV2Catalog } from "./actions-escalations-v2.js";
@@ -9,6 +10,7 @@ import { actionsEscalationsV5Catalog } from "./actions-escalations-v5.js";
 import { actionsEscalationsV6Catalog } from "./actions-escalations-v6.js";
 
 const CATALOGS = new Map([
+  [actionsEscalationsV9Catalog.policyVersion, actionsEscalationsV9Catalog],
   [actionsEscalationsV8Catalog.policyVersion, actionsEscalationsV8Catalog],
   [actionsEscalationsV7Catalog.policyVersion, actionsEscalationsV7Catalog],
   [actionsEscalationsV6Catalog.policyVersion, actionsEscalationsV6Catalog],
@@ -36,5 +38,5 @@ export function catalogForPolicyVersion(policyVersion) {
  * @returns {import("./rule-catalog.js").GuidanceCatalog}
  */
 export function activeCatalog() {
-  return actionsEscalationsV8Catalog;
+  return actionsEscalationsV9Catalog;
 }
