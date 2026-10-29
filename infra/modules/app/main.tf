@@ -1326,6 +1326,12 @@ resource "aws_wafv2_web_acl" "web" {
     content_type = "APPLICATION_JSON"
   }
 
+  custom_response_body {
+    key          = "rate-limited"
+    content      = jsonencode({ error = "rate_limited" })
+    content_type = "APPLICATION_JSON"
+  }
+
   # CLOUDFRONT-scoped WAF must live in us-east-1 regardless of the app's region.
   provider = aws.us_east_1
 
@@ -1344,10 +1350,15 @@ resource "aws_wafv2_web_acl" "web" {
     action {
       block {
         custom_response {
-          response_code = 429
+          response_code            = 429
+          custom_response_body_key = "rate-limited"
           response_header {
             name  = "Retry-After"
             value = "300"
+          }
+          response_header {
+            name  = "Cache-Control"
+            value = "no-store"
           }
         }
       }
@@ -1503,7 +1514,20 @@ resource "aws_wafv2_web_acl" "web" {
     priority = 3
 
     action {
-      block {}
+      block {
+        custom_response {
+          response_code            = 429
+          custom_response_body_key = "rate-limited"
+          response_header {
+            name  = "Retry-After"
+            value = "300"
+          }
+          response_header {
+            name  = "Cache-Control"
+            value = "no-store"
+          }
+        }
+      }
     }
 
     statement {
@@ -1531,7 +1555,20 @@ resource "aws_wafv2_web_acl" "web" {
     priority = 4
 
     action {
-      block {}
+      block {
+        custom_response {
+          response_code            = 429
+          custom_response_body_key = "rate-limited"
+          response_header {
+            name  = "Retry-After"
+            value = "300"
+          }
+          response_header {
+            name  = "Cache-Control"
+            value = "no-store"
+          }
+        }
+      }
     }
 
     statement {
@@ -1567,7 +1604,20 @@ resource "aws_wafv2_web_acl" "web" {
     priority = 5
 
     action {
-      block {}
+      block {
+        custom_response {
+          response_code            = 429
+          custom_response_body_key = "rate-limited"
+          response_header {
+            name  = "Retry-After"
+            value = "300"
+          }
+          response_header {
+            name  = "Cache-Control"
+            value = "no-store"
+          }
+        }
+      }
     }
 
     statement {
@@ -1610,7 +1660,20 @@ resource "aws_wafv2_web_acl" "web" {
     priority = 6
 
     action {
-      block {}
+      block {
+        custom_response {
+          response_code            = 429
+          custom_response_body_key = "rate-limited"
+          response_header {
+            name  = "Retry-After"
+            value = "300"
+          }
+          response_header {
+            name  = "Cache-Control"
+            value = "no-store"
+          }
+        }
+      }
     }
 
     statement {
@@ -1655,6 +1718,10 @@ resource "aws_wafv2_web_acl" "web" {
           response_header {
             name  = "Retry-After"
             value = "300"
+          }
+          response_header {
+            name  = "Cache-Control"
+            value = "no-store"
           }
         }
       }
@@ -1711,7 +1778,20 @@ resource "aws_wafv2_web_acl" "web" {
     priority = 7
 
     action {
-      block {}
+      block {
+        custom_response {
+          response_code            = 429
+          custom_response_body_key = "rate-limited"
+          response_header {
+            name  = "Retry-After"
+            value = "300"
+          }
+          response_header {
+            name  = "Cache-Control"
+            value = "no-store"
+          }
+        }
+      }
     }
 
     statement {
@@ -1751,7 +1831,20 @@ resource "aws_wafv2_web_acl" "web" {
     priority = 8
 
     action {
-      block {}
+      block {
+        custom_response {
+          response_code            = 429
+          custom_response_body_key = "rate-limited"
+          response_header {
+            name  = "Retry-After"
+            value = "300"
+          }
+          response_header {
+            name  = "Cache-Control"
+            value = "no-store"
+          }
+        }
+      }
     }
 
     statement {

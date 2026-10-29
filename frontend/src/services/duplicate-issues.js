@@ -14,6 +14,7 @@ let running = false;
 /** @type {AbortController | undefined} */
 let activeController;
 let generation = 0;
+let cooldownUntil = 0;
 let siteId;
 let unsubscribe;
 let unsubscribeInvalidation;
@@ -29,6 +30,7 @@ function stop(subscriber) {
     activeController?.abort();
     running = false;
     siteId = undefined;
+    cooldownUntil = 0;
     unsubscribe?.();
     unsubscribe = undefined;
     unsubscribeInvalidation?.();
@@ -70,13 +72,20 @@ function schedule() {
   if (running || !subscribers.size) return;
   clearTimeout(timer);
   const next = Math.min(...[...tasks.values()].map((task) => task.due));
-  timer = setTimeout(run, Math.max(0, next - Date.now()));
+  timer = setTimeout(
+    run,
+    Math.min(
+      2147483647,
+      Math.max(0, Math.max(next, cooldownUntil) - Date.now()),
+    ),
+  );
 }
 
 async function run() {
   const activeGeneration = generation;
   running = true;
   try {
+    if (Date.now() < cooldownUntil) return;
     const site = await bounded(() => getSite());
     if (generation !== activeGeneration) return;
     const currentSiteId = site?.siteId || "";
@@ -121,8 +130,21 @@ async function run() {
             Date.now() + (task.row?.state === "pending" ? delay : 30000);
         }
         for (const subscriber of [...subscribers]) publish(subscriber);
-      } catch {
+      } catch (error) {
         if (generation !== activeGeneration) return;
+        if (error?.status === 429) {
+          const delay =
+            Number.isFinite(error.retryAfterMs) && error.retryAfterMs >= 0
+              ? error.retryAfterMs
+              : 300000;
+          // Positive jitter avoids another synchronized burst. Never shorten the
+          // server's advice, and pause remaining batches and new subscriptions.
+          cooldownUntil =
+            Date.now() + Math.max(1000, delay) + Math.random() * 1000;
+          for (const task of tasks.values())
+            task.due = Math.max(task.due, cooldownUntil);
+          break;
+        }
         for (const [, task] of batch) task.due = Date.now() + 15000;
       }
     }

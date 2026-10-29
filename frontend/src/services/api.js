@@ -1,3 +1,4 @@
+import { parseRetryAfter } from "../lib/retry-after.js";
 import { clearTaskStatusOverrides } from "../state/task-status-overrides.js";
 import { invalidateDuplicateIssues } from "./duplicate-invalidation.js";
 /*
@@ -402,21 +403,27 @@ async function requestOnce(
     try {
       parsed = JSON.parse(text);
     } catch {
-      // Non-JSON from a JSON API means an intermediary rewrote the response
-      // (e.g. a CDN error page served as 200) — a transport-grade failure,
-      // never a usable body. Empty body stays legal (204s exist).
-      const nonJson = new ApiError(
-        `Non-JSON response from ${method} ${path} (status ${res.status})`,
-        { status: res.status, body: { code: "non_json_response" } },
-      );
-      mark("api:non-json", { method, path, status: res.status });
-      reportClientEvent(
-        "non_json_response",
-        `Non-JSON ${res.status} from ${method} ${path}`,
-        { status: res.status },
-      );
-      classifyApiFailure(nonJson);
-      throw nonJson;
+      if (res.status === 429) {
+        // A throttling status remains throttling when an intermediary supplies
+        // HTML. Other non-JSON responses retain the outage integrity checks.
+        parsed = { error: "rate_limited" };
+      } else {
+        // Non-JSON from a JSON API means an intermediary rewrote the response
+        // (e.g. a CDN error page served as 200) — a transport-grade failure,
+        // never a usable body. Empty body stays legal (204s exist).
+        const nonJson = new ApiError(
+          `Non-JSON response from ${method} ${path} (status ${res.status})`,
+          { status: res.status, body: { code: "non_json_response" } },
+        );
+        mark("api:non-json", { method, path, status: res.status });
+        reportClientEvent(
+          "non_json_response",
+          `Non-JSON ${res.status} from ${method} ${path}`,
+          { status: res.status },
+        );
+        classifyApiFailure(nonJson);
+        throw nonJson;
+      }
     }
   }
 
@@ -484,6 +491,7 @@ async function requestOnce(
       {
         status: res.status,
         body: parsed,
+        retryAfterMs: parseRetryAfter(res.headers?.get?.("retry-after")),
       },
     );
     // Feed the health state machine (backend-health.js): 403 → AUTH, 0 →

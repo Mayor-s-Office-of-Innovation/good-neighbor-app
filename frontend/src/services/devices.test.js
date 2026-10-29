@@ -230,3 +230,31 @@ it("preserves registration throttling as a typed 429 even for a WAF response", a
     vi.unstubAllGlobals();
   }
 });
+
+it.each(["registration", "redemption", "refresh"])(
+  "preserves 429 and Retry-After for %s without retrying",
+  async (kind) => {
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: "rate_limited" }), {
+        status: 429,
+        headers: { "Retry-After": "300" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    try {
+      const operation =
+        kind === "registration"
+          ? registerDevice("ABC123")
+          : kind === "redemption"
+            ? redeemEnrollmentGrant("synthetic-grant", "synthetic-token")
+            : refreshDeviceToken("synthetic-refresh");
+      await expect(operation).rejects.toMatchObject({
+        status: 429,
+        retryAfterMs: 300000,
+      });
+      expect(fetch).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  },
+);

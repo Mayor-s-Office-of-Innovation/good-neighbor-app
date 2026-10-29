@@ -423,3 +423,44 @@ it("aborts the last watcher's request before its replacement starts", async () =
   stopReplacement();
   expect(inFlight).toBe(0);
 });
+
+it("pauses all batches and new subscriptions for the server cooldown", async () => {
+  const random = vi.spyOn(Math, "random").mockReturnValue(0);
+  api.getDuplicateLinks
+    .mockRejectedValueOnce({ status: 429, retryAfterMs: 300000 })
+    .mockResolvedValue({ enabled: true, issues: [] });
+  const stop = watchDuplicateIssues(
+    Array.from({ length: 101 }, (_, i) => `task-${i}`),
+    vi.fn(),
+  );
+  let stopNew;
+  try {
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.getDuplicateLinks).toHaveBeenCalledOnce();
+    stopNew = watchDuplicateIssues(["new-task"], vi.fn());
+    invalidateDuplicateIssues();
+    await vi.advanceTimersByTimeAsync(299999);
+    expect(api.getDuplicateLinks).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(api.getDuplicateLinks).toHaveBeenCalledTimes(4);
+  } finally {
+    stop();
+    stopNew?.();
+    random.mockRestore();
+  }
+});
+
+it("uses a conservative cooldown when throttling has no retry advice and expires subscribers", async () => {
+  api.getDuplicateLinks.mockRejectedValue({ status: 429 });
+  const stop = watchDuplicateIssues(["one"], vi.fn());
+  try {
+    await vi.advanceTimersByTimeAsync(299999);
+    expect(api.getDuplicateLinks).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(610001);
+    const calls = api.getDuplicateLinks.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(600000);
+    expect(api.getDuplicateLinks).toHaveBeenCalledTimes(calls);
+  } finally {
+    stop();
+  }
+});

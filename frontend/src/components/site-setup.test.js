@@ -540,3 +540,16 @@ it("shows the translated wait message when registration is throttled after succe
   expect(component._error).toBe(t("setup.enrollment.limited"));
   expect(setup.setSite).not.toHaveBeenCalled();
 });
+
+it("shows the translated wait message for a general-WAF enrollment throttle", async () => {
+  setup.redeemEnrollmentGrant.mockRejectedValue(
+    Object.assign(new Error("limited"), { status: 429, code: "rate_limited" }),
+  );
+  setup.getSite.mockResolvedValue(null);
+  const component = new SiteSetup();
+  component._cancelled = false;
+  component._render = vi.fn();
+  await component._redeemEnrollment({ code: "ABC123" });
+  expect(component._error).toBe(t("setup.enrollment.limited"));
+  expect(setup.setSite).not.toHaveBeenCalled();
+});

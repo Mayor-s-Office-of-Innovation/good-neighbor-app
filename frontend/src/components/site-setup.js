@@ -524,7 +524,11 @@ export class SiteSetup extends HTMLElement {
         enrollment_access_unavailable: "setup.enrollment.unavailable",
         enrollment_conflict: "setup.enrollment.conflict",
       };
-      this._error = t(messages[err?.code] || "setup.enrollment.failed");
+      this._error = t(
+        err?.status === 429
+          ? "setup.enrollment.limited"
+          : messages[err?.code] || "setup.enrollment.failed",
+      );
       this._enrollmentReference = err?.requestId || "";
       this._render();
     }
