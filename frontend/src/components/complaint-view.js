@@ -1,4 +1,11 @@
 // @ts-nocheck -- routed view; JSDoc ratchet follows established frontend migration.
+import {
+  contentTypeFor,
+  MAX_IMAGE_FILE,
+  MAX_DOCUMENT_FILE,
+  MAX_TOTAL,
+  MAX_FILES,
+} from "../domain/attachment-files.js";
 import "./complaint-view.css";
 import { reserveMediaUpload } from "../services/upload-reservation.js";
 import { currentRoute, navigate, setPopstateGuard } from "../router.js";
@@ -20,26 +27,8 @@ import {
 import { showComplaintLoggedToast } from "../state/toasts.js";
 
 const ACCEPT = ".jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.txt";
-const MAX_IMAGE_FILE = 10 * 1024 * 1024;
-const MAX_DOCUMENT_FILE = Math.floor(4.5 * 1024 * 1024);
-const MAX_TOTAL = 25 * 1024 * 1024;
-const MAX_FILES = 5;
 const DESCRIPTION_MAX = 4000;
 let draft = null;
-
-const contentTypeFor = (file) =>
-  file.type ||
-  {
-    heic: "image/heic",
-    heif: "image/heif",
-    pdf: "application/pdf",
-    txt: "text/plain",
-    jpg: "image/jpeg",
-    jpeg: "image/jpeg",
-    png: "image/png",
-    webp: "image/webp",
-  }[file.name.split(".").pop()?.toLowerCase()] ||
-  "application/octet-stream";
 
 const isDocument = (file) =>
   ["application/pdf", "text/plain"].includes(contentTypeFor(file));

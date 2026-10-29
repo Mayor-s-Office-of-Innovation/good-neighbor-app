@@ -19,6 +19,7 @@ import { invalidateDuplicateIssues } from "./duplicate-invalidation.js";
 */
 
 import { reserveMediaUpload } from "./upload-reservation.js";
+import { contentTypeFor } from "../domain/attachment-files.js";
 import { pollCheck } from "./check-polling.js";
 import { mark, span } from "./instrument.js";
 import { getSite, updateSiteSession, prepareRefreshAttempt } from "../db.js";
@@ -1409,7 +1410,7 @@ export async function uploadTaskUpdatePhoto(
     attachmentId = crypto.randomUUID();
     taskUploadAttachmentIds.set(blob, attachmentId);
   }
-  const contentType = blob.type || "application/octet-stream";
+  const contentType = contentTypeFor(blob);
   const { artifactId, s3Key, uploadUrl, uploadHeaders } =
     await reserveMediaUpload(
       `task:${taskId}:check:${checkId}:attachment:${attachmentId}`,

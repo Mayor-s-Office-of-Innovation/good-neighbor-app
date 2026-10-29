@@ -559,3 +559,60 @@ function header(checkId, startedAt, issueCount = 0, flowType = "perimeter") {
     gsi1sk: startedAt,
   };
 }
+
+it("includes saved and legacy proof state in report cards", async () => {
+  const rows = [
+    {
+      taskId: "saved",
+      status: "completed",
+      canBeInProgress: false,
+      proofAddedAt: "2026-09-20",
+    },
+    {
+      taskId: "legacy",
+      status: "completed",
+      canBeInProgress: false,
+      latestUpdateId: "done",
+    },
+    { taskId: "pending", status: "completed", canBeInProgress: false },
+  ];
+  send.mockImplementation(async (command) => {
+    if (command instanceof GetCommand) {
+      if (command.input.Key?.sk === "legacy-update")
+        return {
+          Item: {
+            type: "task_completed",
+            notes: ["Cleaned"],
+            occurredAt: "2026-09-19",
+          },
+        };
+      return { Item: { updateSk: "legacy-update" } };
+    }
+    const projection = command.input.ProjectionExpression || "";
+    if (!projection.includes("#latestUpdateId")) return { Items: [] };
+    for (const field of ["proofAddedAt", "canBeInProgress", "latestUpdateId"])
+      expect(projection).toContain(`#${field}`);
+    // DynamoDB applies the projection, so returning only its selected fields
+    // makes this test catch accidentally omitted proof metadata.
+    const included = new Set(
+      Object.values(command.input.ExpressionAttributeNames),
+    );
+    return {
+      Items: rows.map((row) =>
+        Object.fromEntries(
+          Object.entries(row).filter(([key]) => included.has(key)),
+        ),
+      ),
+    };
+  });
+  const response = await call(
+    getTasksReport,
+    event({ query: { period: "month", start: "2026-09-01" } }),
+  );
+  expect(response.statusCode).toBe(200);
+  expect(JSON.parse(response.body).tasks).toEqual([
+    rows[0],
+    { ...rows[1], proofAddedAt: "2026-09-19" },
+    { ...rows[2], proofAddedAt: null },
+  ]);
+});

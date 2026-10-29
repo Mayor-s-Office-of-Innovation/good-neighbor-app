@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { t } from "../i18n/i18n.js";
 import {
   taskUpdateActionEditor,
+  taskUpdateActionPhotos,
   taskUpdateCapture,
   taskUpdateDialogShell,
   taskUpdateTimeline,
@@ -173,7 +174,7 @@ describe("task update dialog templates", () => {
       notes: ["", "", ""],
       previews: [],
     });
-    expect(capture).toContain(t("taskUpdate.capture.addNote"));
+    expect(capture).toContain(t("taskUpdate.capture.typeNote"));
     expect(capture).not.toContain("task-update__capture-task");
     const results = taskUpdateCapture({
       pendingEvent: { updateId: null },
@@ -193,10 +194,10 @@ describe("task update dialog templates", () => {
     expect(results).toContain("#AB12");
     expect(results).toContain('src="https://cdn.example/thumb.jpg"');
     expect(results).toContain("data-skip");
-    expect(capture).toContain("photo-capture-tile");
-    expect(capture).toContain("photo-capture-tile__icon");
-    expect(capture).toContain("photo-capture-tile__label");
-    expect(capture).toContain(t("check.photo.take"));
+    expect(capture).toContain("data-take-photo");
+    expect(capture).toContain("data-upload-input");
+    expect(capture).toContain("data-upload-photos");
+    expect(capture).toContain(t("taskUpdate.capture.takePhoto"));
     expect(taskUpdateActionEditor({ text: "" })).toContain("disabled");
     expect(taskUpdateActionEditor({ text: "Done" })).not.toContain(
       'data-action-outcome="additional_action_resolved" disabled',
@@ -559,3 +560,53 @@ it.each([
       expect(markup.includes(`data-mode="${mode}"`)).toBe(visible);
   },
 );
+
+it.each(["manual", "user_confirmed", "custom_action", "311_filed"])(
+  "uses original completion time for proof-backed %s expiry",
+  (completionMethod) => {
+    const view = {
+      task: {
+        status: "completed",
+        canBeInProgress: false,
+        completionMethod,
+        createdAt: "2026-10-01T12:00:00Z",
+        completedAt: "2026-10-02T12:00:00Z",
+        proofAddedAt: "2026-10-20T12:00:00Z",
+      },
+      updates: [],
+      issueOrigin: "single-problem",
+      originalMediaUrl: "",
+      mediaUrls: new Map(),
+      now: new Date("2026-10-28T12:00:00Z"),
+    };
+    expect(taskUpdateTimeline(view)).not.toContain(t("taskUpdate.expired"));
+    expect(
+      taskUpdateTimeline({
+        ...view,
+        task: { ...view.task, completedAt: "2026-10-16T12:00:00Z" },
+      }),
+    ).toContain(t("taskUpdate.expired"));
+    expect(
+      taskUpdateTimeline({
+        ...view,
+        task: { ...view.task, proofAddedAt: null },
+      }),
+    ).toContain(t("taskUpdate.expired"));
+  },
+);
+
+it("uses the same photo formats in both documentation editors", () => {
+  const capture = taskUpdateCapture({
+    pendingEvent: null,
+    files: [],
+    notes: [],
+    previews: [],
+  });
+  const action = taskUpdateActionPhotos([]);
+  const accepts = [...(capture + action).matchAll(/accept="([^"]+)"/g)].map(
+    (match) => match[1],
+  );
+  expect(accepts).toHaveLength(3);
+  expect(new Set(accepts).size).toBe(1);
+  expect(accepts[0]).toContain(".heic");
+});

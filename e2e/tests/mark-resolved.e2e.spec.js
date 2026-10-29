@@ -94,28 +94,13 @@ for (const screen of ["today-view", "perimeter-check", "problem-report"]) {
       await expect(button).toBeDisabled();
       await expect.poll(() => requests).toBe(1);
       release();
-      if (blockModule) {
-        await expect(
-          page.getByText(t("taskUpdate.formUnavailableResolved"), {
-            exact: true,
-          }),
-        ).toBeVisible();
-        await page
-          .getByRole("button", { name: t("common.retry"), exact: true })
-          .click();
-        await expect(
-          page.getByText(t("taskUpdate.formUnavailableResolved"), {
-            exact: true,
-          }),
-        ).toBeVisible();
-      } else {
-        await expect(
-          page.locator("task-update-dialog dialog[open]"),
-        ).toBeVisible();
-        await expect(
-          page.getByText(t("taskUpdate.siteResolved"), { exact: true }).first(),
-        ).toBeVisible();
-      }
+      await expect(button).not.toHaveAttribute("aria-busy", "true");
+      await expect(page.locator("task-update-dialog dialog[open]")).toHaveCount(
+        0,
+      );
+      await expect(
+        page.getByText(t("taskUpdate.siteResolved"), { exact: true }),
+      ).toBeVisible();
 
       expect(requests).toBe(1);
     });
