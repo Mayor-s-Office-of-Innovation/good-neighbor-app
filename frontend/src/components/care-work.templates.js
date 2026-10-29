@@ -236,10 +236,13 @@ export function careDetail(work) {
                 data-photo-lightbox
                 data-photo-no-location
                 data-photo-time="${a(work.createdAt)}"
+                data-full-src="${a(photo.url)}"
               >
                 <img
-                  src="${a(photo.url)}"
+                  src="${a(photo.thumbnailUrl || photo.url)}"
                   alt="${a(t("care.photo.alt", { index: i + 1 }))}"
+                  loading="lazy"
+                  decoding="async"
                 />
               </button>`
             : "",

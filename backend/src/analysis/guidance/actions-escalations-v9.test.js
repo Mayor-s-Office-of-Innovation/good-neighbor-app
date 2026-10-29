@@ -1,11 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { activeCatalog, catalogForPolicyVersion } from "./catalog-registry.js";
+import { catalogForPolicyVersion } from "./catalog-registry.js";
 import { evaluateCondition } from "./evaluator.js";
 import { validateCatalog } from "./rule-catalog.js";
 
-it("activates all 39 final CSV rules without changing their fields", () => {
+it("preserves all 39 final CSV rules without changing their fields", () => {
   const imported = JSON.parse(
     execFileSync(
       process.execPath,
@@ -19,10 +19,18 @@ it("activates all 39 final CSV rules without changing their fields", () => {
       { encoding: "utf8" },
     ),
   );
-  expect(activeCatalog().policyVersion).toBe("actions-escalations-v9");
-  expect(activeCatalog().rules).toHaveLength(39);
-  expect(activeCatalog().rules).toEqual(imported.catalog.rules);
-  expect(validateCatalog(activeCatalog())).toEqual([]);
+  expect(catalogForPolicyVersion("actions-escalations-v9").policyVersion).toBe(
+    "actions-escalations-v9",
+  );
+  expect(catalogForPolicyVersion("actions-escalations-v9").rules).toHaveLength(
+    39,
+  );
+  expect(catalogForPolicyVersion("actions-escalations-v9").rules).toEqual(
+    imported.catalog.rules,
+  );
+  expect(
+    validateCatalog(catalogForPolicyVersion("actions-escalations-v9")),
+  ).toEqual([]);
 });
 
 it.each([1, 2])(
@@ -32,19 +40,32 @@ it.each([1, 2])(
       category: "Threats, intimidation, or violence",
       severity,
     };
-    expect(evaluateCondition({ condition })).toMatchObject({
+    expect(
+      evaluateCondition({
+        catalog: catalogForPolicyVersion("actions-escalations-v9"),
+        condition,
+      }),
+    ).toMatchObject({
       kind: "needs_answer",
       question: { key: "likely_to_leave", type: "boolean" },
     });
     expect(
-      evaluateCondition({ condition, answers: { likely_to_leave: true } }),
+      evaluateCondition({
+        catalog: catalogForPolicyVersion("actions-escalations-v9"),
+        condition,
+        answers: { likely_to_leave: true },
+      }),
     ).toMatchObject({
       kind: "outcome",
       rule: { ruleId: "THREAT-2" },
       outcome: { kind: "action", buttons: ["Ask them to leave"] },
     });
     expect(
-      evaluateCondition({ condition, answers: { likely_to_leave: false } }),
+      evaluateCondition({
+        catalog: catalogForPolicyVersion("actions-escalations-v9"),
+        condition,
+        answers: { likely_to_leave: false },
+      }),
     ).toMatchObject({
       kind: "outcome",
       rule: { ruleId: "THREAT-1" },
@@ -52,7 +73,11 @@ it.each([1, 2])(
     });
     // An old answer must not silently satisfy the renamed question.
     expect(
-      evaluateCondition({ condition, answers: { refusal_leave: true } }),
+      evaluateCondition({
+        catalog: catalogForPolicyVersion("actions-escalations-v9"),
+        condition,
+        answers: { refusal_leave: true },
+      }),
     ).toMatchObject({
       kind: "needs_answer",
       question: { key: "likely_to_leave" },
@@ -90,13 +115,22 @@ it.each(["v2", "v3", "v4", "v5", "v6", "v7", "v8"])(
 
 it.each([1, 2, 3])("asks about medical help at severity %s", (severity) => {
   const condition = { category: "Medical emergency", severity };
-  expect(evaluateCondition({ condition })).toMatchObject({
+  expect(
+    evaluateCondition({
+      catalog: catalogForPolicyVersion("actions-escalations-v9"),
+      condition,
+    }),
+  ).toMatchObject({
     kind: "needs_answer",
     question: { key: "medical_help" },
   });
   for (const answer of [true, false]) {
     expect(
-      evaluateCondition({ condition, answers: { medical_help: answer } }),
+      evaluateCondition({
+        catalog: catalogForPolicyVersion("actions-escalations-v9"),
+        condition,
+        answers: { medical_help: answer },
+      }),
     ).toMatchObject({
       kind: "outcome",
       rule: { ruleId: answer ? "MED-1" : "MED-2" },
@@ -109,6 +143,7 @@ it.each([4, 5])(
   (severity) => {
     expect(
       evaluateCondition({
+        catalog: catalogForPolicyVersion("actions-escalations-v9"),
         condition: { category: "Medical emergency", severity },
       }),
     ).toMatchObject({

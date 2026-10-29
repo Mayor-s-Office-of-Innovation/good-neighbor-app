@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { t } from "../i18n/i18n.js";
 import {
   taskUpdateActionEditor,
+  taskUpdateActionPhotos,
   taskUpdateCapture,
   taskUpdateDialogShell,
   taskUpdateTimeline,
@@ -173,7 +174,7 @@ describe("task update dialog templates", () => {
       notes: ["", "", ""],
       previews: [],
     });
-    expect(capture).toContain(t("taskUpdate.capture.addNote"));
+    expect(capture).toContain(t("taskUpdate.capture.typeNote"));
     expect(capture).not.toContain("task-update__capture-task");
     const results = taskUpdateCapture({
       pendingEvent: { updateId: null },
@@ -196,6 +197,8 @@ describe("task update dialog templates", () => {
     expect(capture).toContain("data-update-gallery");
     expect(results).not.toContain("data-update-gallery");
     expect(capture).toContain("data-update-camera");
+    expect(capture).toContain("data-photo-upload-status");
+    expect(capture).toContain("data-photo-error");
     expect(capture).toContain("data-capture-text");
     expect(capture).toContain(t("check.photo.take"));
     expect(taskUpdateActionEditor({ text: "" })).toContain("disabled");
@@ -398,7 +401,44 @@ it("reuses capture with the results title and skip, then renders saved content i
     mediaUrls: new Map([["photo-1", "https://example.test/photo.jpg"]]),
   });
   expect(timeline).toContain("Area cleaned");
-  expect(timeline).toContain('src="https://example.test/photo.jpg"');
+  expect(timeline).toContain('data-src="https://example.test/photo.jpg"');
+});
+
+it("renders update photos through artifact-photo so they load lazily and renew", () => {
+  const timeline = taskUpdateTimeline({
+    task: { status: "completed", checkId: "check-1" },
+    updates: [
+      {
+        type: "note_photo_update",
+        label: "Updated with photos and notes",
+        occurredAt: "2026-10-08T12:00:00Z",
+        photoKeys: ["photo-1"],
+      },
+    ],
+    issueOrigin: "perimeter",
+    originalMediaUrl: "",
+    mediaUrls: new Map([
+      [
+        "photo-1",
+        {
+          downloadUrl: "https://example.test/photo.jpg",
+          thumbnailUrl: "https://example.test/photo.thumb.webp",
+        },
+      ],
+    ]),
+  });
+  const photo = timeline.slice(timeline.indexOf("task-update__timeline"));
+  expect(photo).toMatch(
+    /<artifact-photo[^>]*data-check-id="check-1"[^>]*data-artifact-id="photo-1"/,
+  );
+  // The element sets src itself, so an expired URL is never fetched eagerly.
+  const img = photo.match(/<img[^>]*>/)?.[0] || "";
+  expect(img).toContain('data-src="https://example.test/photo.thumb.webp"');
+  expect(img).not.toMatch(/\ssrc=/);
+  expect(img).toContain('loading="lazy"');
+  // An enabled trigger keeps focus through a timeline re-render.
+  expect(photo).not.toMatch(/<button[^>]*data-photo-lightbox\s+disabled/);
+  expect(photo).toContain('data-full-src="https://example.test/photo.jpg"');
 });
 
 it("keeps notes and skip available without an uploadable check", () => {
@@ -523,3 +563,53 @@ it.each([
       expect(markup.includes(`data-mode="${mode}"`)).toBe(visible);
   },
 );
+
+it.each(["manual", "user_confirmed", "custom_action", "311_filed"])(
+  "uses original completion time for proof-backed %s expiry",
+  (completionMethod) => {
+    const view = {
+      task: {
+        status: "completed",
+        canBeInProgress: false,
+        completionMethod,
+        createdAt: "2026-10-01T12:00:00Z",
+        completedAt: "2026-10-02T12:00:00Z",
+        proofAddedAt: "2026-10-20T12:00:00Z",
+      },
+      updates: [],
+      issueOrigin: "single-problem",
+      originalMediaUrl: "",
+      mediaUrls: new Map(),
+      now: new Date("2026-10-28T12:00:00Z"),
+    };
+    expect(taskUpdateTimeline(view)).not.toContain(t("taskUpdate.expired"));
+    expect(
+      taskUpdateTimeline({
+        ...view,
+        task: { ...view.task, completedAt: "2026-10-16T12:00:00Z" },
+      }),
+    ).toContain(t("taskUpdate.expired"));
+    expect(
+      taskUpdateTimeline({
+        ...view,
+        task: { ...view.task, proofAddedAt: null },
+      }),
+    ).toContain(t("taskUpdate.expired"));
+  },
+);
+
+it("uses the same photo formats in both documentation editors", () => {
+  const capture = taskUpdateCapture({
+    pendingEvent: null,
+    files: [],
+    notes: [],
+    previews: [],
+  });
+  const action = taskUpdateActionPhotos([]);
+  const accepts = [...(capture + action).matchAll(/accept="([^"]+)"/g)].map(
+    (match) => match[1],
+  );
+  expect(accepts).toHaveLength(3);
+  expect(new Set(accepts).size).toBe(1);
+  expect(accepts[0]).toContain(".heic");
+});

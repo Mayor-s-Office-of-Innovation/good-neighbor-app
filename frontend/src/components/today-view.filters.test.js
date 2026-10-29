@@ -1612,6 +1612,33 @@ describe("attention badges and newer submissions", () => {
     ).toBe(3);
   });
 
+  it("badges only history cards still awaiting completion proof", async () => {
+    freezeClock();
+    const view = await mount("?filter=history");
+    const completed = {
+      status: "completed",
+      createdAt: NEWER_TODAY,
+      completedAt: NEWER_TODAY,
+      completionMethod: "site_team_resolved",
+    };
+    const tasks = [
+      { ...completed, taskId: "resolved" },
+      {
+        ...completed,
+        taskId: "direct",
+        completionMethod: "manual",
+        canBeInProgress: false,
+      },
+      { ...completed, taskId: "documented", proofAddedAt: NEWER_TODAY },
+      { taskId: "expired", status: "in_progress", createdAt: "2020-01-01" },
+    ];
+    const results = vi.spyOn(view, "_homeResults").mockReturnValue("");
+    view._render({ checks: [], tasks });
+    expect(
+      /** @type {any} */ (results.mock.calls[0][0]).tabCounts.history,
+    ).toBe(2);
+  });
+
   it("removes the old notice while a newer local submission is analyzing", async () => {
     freezeClock();
     const view = await mount("?filter=todo");

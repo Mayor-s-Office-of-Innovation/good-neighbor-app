@@ -96,6 +96,20 @@ for (const name of [
     expect(gallery.isMultiple()).toBe(true);
     await gallery.setFiles(photos);
     await expect(previews).toHaveCount(3);
+    if (name === "task-update-dialog") {
+      await page.locator("[data-update-gallery]").setInputFiles({
+        name: "synthetic.pdf",
+        mimeType: "application/pdf",
+        buffer: Buffer.from("not a photo"),
+      });
+      await expect(page.locator("[data-photo-error]")).toBeVisible();
+      await expect(previews).toHaveCount(3);
+      await page
+        .locator("[data-update-gallery]")
+        .setInputFiles([...photos, photos[0]]);
+      await expect(page.locator("[data-photo-error]")).toBeVisible();
+      await expect(previews).toHaveCount(3);
+    }
     for (const width of [390, 834]) {
       await page.setViewportSize({ width, height: 1000 });
       await expect

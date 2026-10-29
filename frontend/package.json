@@ -35,7 +35,7 @@
     {
       "name": "task update js",
       "path": "dist/assets/task-update-dialog-*.js",
-      "limit": "7.0 kB"
+      "limit": "7.5 kB"
     },
     {
       "name": "task update css",
