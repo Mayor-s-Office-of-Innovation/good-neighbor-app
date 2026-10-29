@@ -1,3 +1,4 @@
+import { PHOTO_ACCEPT } from "../domain/attachment-files.js";
 import { artifactPhoto } from "./artifact-photo.templates.js";
 import {
   cityHelpQuestion,
@@ -298,7 +299,7 @@ export function taskUpdateCapture({
             <input
               hidden
               type="file"
-              accept=".jpg,.jpeg,.png,.webp,.heic,.heif"
+              accept="${PHOTO_ACCEPT}"
               capture="environment"
               multiple
               aria-label="${escapeAttr(t("taskUpdate.capture.takePhoto"))}"
@@ -325,7 +326,7 @@ export function taskUpdateCapture({
               <input
                 hidden
                 type="file"
-                accept=".jpg,.jpeg,.png,.webp,.heic,.heif"
+                accept="${PHOTO_ACCEPT}"
                 multiple
                 aria-label="${escapeAttr(t("taskUpdate.capture.uploadPhotos"))}"
                 data-upload-input
@@ -419,7 +420,7 @@ function photoPicker(
           ><input
             class="visually-hidden"
             type="file"
-            accept="image/jpeg,image/png,image/webp"
+            accept="${PHOTO_ACCEPT}"
             capture="environment"
             multiple
             data-photos
@@ -458,8 +459,12 @@ function photoPicker(
                     { index: index + 1 },
                   ),
                 )}"
-              /></button
-            ><button
+              />
+            </button>
+            <p hidden data-preview-unavailable role="status">
+              ${translatedText("taskUpdate.photo.previewUnavailable")}
+            </p>
+            <button
               type="button"
               class="btn-outline task-update__remove-photo"
               data-remove-photo="${index}"

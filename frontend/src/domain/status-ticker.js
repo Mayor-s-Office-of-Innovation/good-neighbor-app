@@ -21,7 +21,6 @@ export function statusTicker(task, { history = false, now = Date.now() } = {}) {
   if (history || task.status === "completed" || isTaskExpired(task, now)) {
     if (needsResolutionProof(task))
       return state("awaitingProof", "warning", "file-circle-check");
-    if (task.proofAddedAt) return state("resolved", "success", "circle-check");
     const { confirmed } = taskResolution(task);
     if (confirmed) return state("resolved", "success", "circle-check");
     return state("", "muted", "dot");

@@ -1064,3 +1064,38 @@ describe("presignMedia", () => {
     expect(ddbSend).not.toHaveBeenCalled();
   });
 });
+
+it.each([
+  "checks/site-1/chk_01/art_1.display.jpg",
+  "checks/other/chk_01/art_1.display.jpg",
+])(
+  "serves only the task photo's own display rendition: %s",
+  async (displayS3Key) => {
+    ddbSend.mockResolvedValueOnce({
+      Items: [
+        {
+          entityType: "task_update_media",
+          artifactId: "art_1",
+          s3Key: "checks/site-1/chk_01/art_1",
+          displayS3Key,
+        },
+      ],
+    });
+    presignGet.mockResolvedValue("https://signed.example/display");
+    const response = await callMedia(
+      mediaEvent({
+        checkId: "chk_01",
+        artifactId: "art_1",
+        siteClaim: "site-1",
+      }),
+    );
+    expect(response.statusCode).toBe(200);
+    expect(presignGet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: displayS3Key.startsWith("checks/site-1/")
+          ? displayS3Key
+          : "checks/site-1/chk_01/art_1",
+      }),
+    );
+  },
+);

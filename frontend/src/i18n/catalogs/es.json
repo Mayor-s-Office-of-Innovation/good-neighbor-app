@@ -1376,6 +1376,7 @@
   "taskUpdate.overdue": "El tiempo de respuesta esperado ya pasó",
   "taskUpdate.photo.add": "Agregar una foto",
   "taskUpdate.photo.evidenceAlt": "Evidencia de {title}",
+  "taskUpdate.photo.previewUnavailable": "La vista previa no está disponible en este navegador. Aún puede guardar esta foto.",
   "taskUpdate.photo.selectedActionAlt": "Foto de acción seleccionada {index}",
   "taskUpdate.photo.selectedUpdateAlt": "Foto de actualización seleccionada {index}",
   "taskUpdate.photo.unavailable": "Las fotos no están disponibles para este problema porque falta su revisión o ya no está disponible. Puedes agregar notas u omitir este paso.",

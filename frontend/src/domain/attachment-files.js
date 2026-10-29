@@ -3,6 +3,14 @@ export const MAX_IMAGE_FILE = 10 * 1024 * 1024;
 export const MAX_DOCUMENT_FILE = Math.floor(4.5 * 1024 * 1024);
 export const MAX_TOTAL = 25 * 1024 * 1024;
 export const MAX_FILES = 5;
+export const PHOTO_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+];
+export const PHOTO_ACCEPT = ".jpg,.jpeg,.png,.webp,.heic,.heif";
 
 /** @param {{type: string, name: string}} file */
 export function contentTypeFor(file) {
@@ -32,13 +40,7 @@ export function validPhotoAttachments(files) {
       (file) =>
         file.size > 0 &&
         file.size <= MAX_IMAGE_FILE &&
-        [
-          "image/jpeg",
-          "image/png",
-          "image/webp",
-          "image/heic",
-          "image/heif",
-        ].includes(contentTypeFor(file)),
+        PHOTO_TYPES.includes(contentTypeFor(file)),
     ) &&
     files.reduce((sum, file) => sum + file.size, 0) <= MAX_TOTAL
   );

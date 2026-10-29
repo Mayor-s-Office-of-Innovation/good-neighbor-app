@@ -294,7 +294,14 @@ photos use `TASK#<taskId>#MEDIA#<artifactId>` rows with `purpose: "task_update"`
 transactionally paired with `CHECK#<checkId>#UPDATE_MEDIA#<artifactId>` pointers.
 They are not ART rows and registration skips the analyzer queue. Events store
 artifact IDs in `photoKeys`; the media route follows the pointer and validates the
-stored Site/check S3 key before signing.
+stored Site/check S3 key before signing. HEIC/HEIF registration preserves the
+original `s3Key` and writes a JPEG rendition at `<s3Key>.display.jpg`, recorded
+as `displayS3Key` on the media row. The media route returns that rendition as
+`downloadUrl` only when the key exactly matches the original's sibling path.
+Conversion must succeed before registration; an undecodable upload returns 422
+and leaves the user's documentation draft unsaved. Both objects use the uploads
+bucket retention policy. The HEIC decoder is loaded lazily in the API Lambda,
+not shipped to browsers.
 
 **311 documentation and City-help choice.** Informational `note_photo_update` and
 `additional_action` events on filed 311 tasks store `cityHelpNeeded`. A `false`

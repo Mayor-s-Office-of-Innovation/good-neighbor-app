@@ -1376,6 +1376,7 @@
   "taskUpdate.overdue": "預計回應時間已過",
   "taskUpdate.photo.add": "新增相片",
   "taskUpdate.photo.evidenceAlt": "{title}的證據",
+  "taskUpdate.photo.previewUnavailable": "此瀏覽器無法顯示預覽。您仍可儲存這張照片。",
   "taskUpdate.photo.selectedActionAlt": "已選取的行動相片 {index}",
   "taskUpdate.photo.selectedUpdateAlt": "已選取的更新相片 {index}",
   "taskUpdate.photo.unavailable": "此問題缺少檢查記錄，或該記錄已無法使用，因此無法新增照片。您仍可新增備註或略過。",

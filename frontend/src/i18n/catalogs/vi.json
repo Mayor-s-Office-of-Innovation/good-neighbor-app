@@ -1376,6 +1376,7 @@
   "taskUpdate.overdue": "Đã quá thời gian phản hồi dự kiến",
   "taskUpdate.photo.add": "Thêm ảnh",
   "taskUpdate.photo.evidenceAlt": "Bằng chứng cho {title}",
+  "taskUpdate.photo.previewUnavailable": "Không thể xem trước trong trình duyệt này. Bạn vẫn có thể lưu ảnh này.",
   "taskUpdate.photo.selectedActionAlt": "Ảnh hành động đã chọn {index}",
   "taskUpdate.photo.selectedUpdateAlt": "Ảnh cập nhật đã chọn {index}",
   "taskUpdate.photo.unavailable": "Không thể thêm ảnh cho vấn đề này vì lượt kiểm tra bị thiếu hoặc không còn khả dụng. Bạn vẫn có thể thêm ghi chú hoặc bỏ qua.",

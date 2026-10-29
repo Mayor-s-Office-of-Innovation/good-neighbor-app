@@ -445,3 +445,7 @@
   min-height: 44px;
   background: var(--wa-color-surface-default);
 }
+
+.task-update__draft-photo [hidden] {
+  display: none;
+}

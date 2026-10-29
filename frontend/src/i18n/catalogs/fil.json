@@ -1376,6 +1376,7 @@
   "taskUpdate.overdue": "Lampas na ang inaasahang oras ng tugon",
   "taskUpdate.photo.add": "Magdagdag ng larawan",
   "taskUpdate.photo.evidenceAlt": "Ebidensya para sa {title}",
+  "taskUpdate.photo.previewUnavailable": "Hindi available ang preview sa browser na ito. Maaari mo pa ring i-save ang larawang ito.",
   "taskUpdate.photo.selectedActionAlt": "Napiling larawan ng aksyon {index}",
   "taskUpdate.photo.selectedUpdateAlt": "Napiling larawan ng update {index}",
   "taskUpdate.photo.unavailable": "Hindi available ang mga larawan para sa isyung ito dahil wala o hindi na available ang pagsusuri nito. Maaari ka pa ring magdagdag ng mga tala o lumaktaw.",

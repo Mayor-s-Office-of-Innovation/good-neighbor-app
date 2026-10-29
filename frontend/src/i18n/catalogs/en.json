@@ -1376,6 +1376,7 @@
   "taskUpdate.overdue": "Expected response time has passed",
   "taskUpdate.photo.add": "Add a photo",
   "taskUpdate.photo.evidenceAlt": "Evidence for {title}",
+  "taskUpdate.photo.previewUnavailable": "Preview unavailable in this browser. You can still save this photo.",
   "taskUpdate.photo.selectedActionAlt": "Selected action photo {index}",
   "taskUpdate.photo.selectedUpdateAlt": "Selected update photo {index}",
   "taskUpdate.photo.unavailable": "Photos are unavailable for this issue because its check is missing or no longer available. You can still add notes or skip.",

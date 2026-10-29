@@ -521,6 +521,25 @@ export class TaskUpdateDialog extends HTMLElement {
           root.querySelector("[data-upload-input]")
         )?.click();
       });
+    root.querySelectorAll(".task-update__photo--draft").forEach((image) => {
+      const unavailable = () => {
+        const draft = image.closest(".task-update__draft-photo");
+        const trigger = /** @type {HTMLButtonElement | null} */ (
+          image.closest("button")
+        );
+        const notice = /** @type {HTMLElement | null} */ (
+          draft?.querySelector("[data-preview-unavailable]")
+        );
+        if (trigger) {
+          trigger.hidden = true;
+          trigger.disabled = true;
+        }
+        if (notice) notice.hidden = false;
+      };
+      image.addEventListener("error", unavailable, { once: true });
+      const img = /** @type {HTMLImageElement} */ (image);
+      if (img.complete && !img.naturalWidth) unavailable();
+    });
     root.querySelectorAll("[data-remove-photo]").forEach((button) => {
       button.addEventListener("click", () => {
         if (this._busy) return;

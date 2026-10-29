@@ -373,7 +373,7 @@ export async function writeDocumentedUpdate(tableName, update) {
   );
 }
 
-/** @param {{ tableName: string, siteId: string, checkId: string, taskId: string, artifactId: string, s3Key: string, contentType: string, contentLength: number, capturedAt: string }} input */
+/** @param {{ tableName: string, siteId: string, checkId: string, taskId: string, artifactId: string, s3Key: string, contentType: string, contentLength: number, capturedAt: string, displayS3Key?: string }} input */
 export async function writeTaskUpdateMedia(input) {
   const mediaKey = taskUpdateMediaKey(
     input.siteId,
@@ -394,6 +394,9 @@ export async function writeTaskUpdateMedia(input) {
               s3Key: input.s3Key,
               contentType: input.contentType,
               contentLength: input.contentLength,
+              ...(input.displayS3Key
+                ? { displayS3Key: input.displayS3Key }
+                : {}),
               capturedAt: input.capturedAt,
               purpose: "task_update",
               taskId: input.taskId,

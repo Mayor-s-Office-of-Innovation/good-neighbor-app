@@ -1,4 +1,8 @@
 import {
+  storeTaskPhotoDisplay,
+  InvalidTaskPhoto,
+} from "../media/task-photo.js";
+import {
   canAddResolutionProof,
   withResolutionProof,
 } from "../task-updates/resolution-proof.js";
@@ -436,6 +440,19 @@ export const registerTaskUpdateMedia = async (event) => {
     });
     return jsonResponse(422, { error: "media_metadata_mismatch" });
   }
+  let displayS3Key;
+  try {
+    displayS3Key = await storeTaskPhotoDisplay({
+      bucket: uploadBucket,
+      key: s3Key,
+      contentType,
+      contentLength,
+    });
+  } catch (error) {
+    if (error instanceof InvalidTaskPhoto)
+      return jsonResponse(422, { error: "invalid_photo" });
+    throw error;
+  }
   let alreadyRegistered = false;
   try {
     await writeTaskUpdateMedia({
@@ -447,6 +464,7 @@ export const registerTaskUpdateMedia = async (event) => {
       s3Key,
       contentType,
       contentLength,
+      displayS3Key,
       capturedAt:
         typeof input.capturedAt === "string"
           ? input.capturedAt

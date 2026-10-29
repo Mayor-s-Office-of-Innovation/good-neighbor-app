@@ -1,10 +1,17 @@
 import { GetCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { send, headObject, setObjectTags } = vi.hoisted(() => ({
-  send: vi.fn(),
-  headObject: vi.fn(),
-  setObjectTags: vi.fn(),
+const { send, headObject, setObjectTags, storeTaskPhotoDisplay } = vi.hoisted(
+  () => ({
+    send: vi.fn(),
+    storeTaskPhotoDisplay: vi.fn(),
+    headObject: vi.fn(),
+    setObjectTags: vi.fn(),
+  }),
+);
+vi.mock("../media/task-photo.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  storeTaskPhotoDisplay,
 }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 vi.mock("../s3.js", () => ({ headObject, setObjectTags }));
@@ -32,6 +39,11 @@ function event(body, pathParameters = { taskId: "task-1" }) {
 
 describe("task update handlers", () => {
   beforeEach(() => {
+    storeTaskPhotoDisplay
+      .mockReset()
+      .mockImplementation(async ({ key, contentType }) =>
+        contentType === "image/jpeg" ? undefined : `${key}.display.jpg`,
+      );
     send.mockReset();
     headObject.mockReset().mockResolvedValue({
       contentType: "image/jpeg",
@@ -369,6 +381,11 @@ describe("task update handlers", () => {
         artifactId: "photo-1",
         contentLength: 1024,
       });
+      expect(mediaPut.Put.Item.displayS3Key).toBe(
+        contentType === "image/jpeg"
+          ? undefined
+          : "checks/site-1/check-1/photo-1.display.jpg",
+      );
       expect(pointerPut.Put.Item).toMatchObject({
         sk: "CHECK#check-1#UPDATE_MEDIA#photo-1",
         mediaSk: "TASK#task-1#MEDIA#photo-1",
@@ -802,4 +819,34 @@ describe("task update handlers", () => {
       ),
     ).toHaveLength(1);
   });
+});
+
+it("does not register proof media when conversion fails", async () => {
+  const { InvalidTaskPhoto } = await import("../media/task-photo.js");
+  process.env.DYNAMO_TABLE = "tasks";
+  process.env.S3_UPLOAD_BUCKET = "uploads";
+  send.mockReset().mockResolvedValue({
+    Item: { taskId: "task-1", status: "completed", checkId: "check-1" },
+  });
+  headObject.mockResolvedValue({
+    contentType: "image/heic",
+    contentLength: 1024,
+    metadata: { "declared-bytes": "1024" },
+  });
+  storeTaskPhotoDisplay.mockRejectedValue(new InvalidTaskPhoto("bad image"));
+  const response = await registerTaskUpdateMedia(
+    event({
+      artifactId: "photo-1",
+      checkId: "check-1",
+      s3Key: "checks/site-1/check-1/photo-1",
+      contentType: "image/heic",
+      contentLength: 1024,
+    }),
+  );
+  expect(response.statusCode).toBe(422);
+  expect(
+    send.mock.calls.some(
+      ([command]) => command instanceof TransactWriteCommand,
+    ),
+  ).toBe(false);
 });

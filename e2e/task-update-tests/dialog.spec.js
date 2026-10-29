@@ -349,17 +349,100 @@ test("additional-action photos show rejection errors without losing the draft", 
     dialog._pendingEvent = { updateId: "action" };
     dialog._render();
   });
-  await page
-    .locator("[data-photos]")
-    .setInputFiles({
-      name: "document.pdf",
-      mimeType: "application/pdf",
-      buffer: Buffer.from("not a photo"),
-    });
+  await page.locator("[data-photos]").setInputFiles({
+    name: "document.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("not a photo"),
+  });
   await expect(page.locator("[data-photo-error]")).toBeVisible();
   await page
     .locator("[data-photos]")
     .setInputFiles("e2e/fixtures/photos/input-1.jpg");
   await expect(page.locator(".task-update__photo--draft")).toHaveCount(1);
   await expect(page.locator("[data-photo-error]")).toBeHidden();
+});
+
+test("undecodable draft photos show a removable fallback without losing the draft", async ({
+  page,
+}) => {
+  await page.evaluate((task) => {
+    const dialog = /** @type {any} */ (
+      document.querySelector("task-update-dialog")
+    );
+    dialog.openResults({ ...task, status: "completed" });
+  }, task);
+  await page.locator("[data-upload-input]").setInputFiles({
+    name: "unsupported.heic",
+    mimeType: "image/heic",
+    buffer: Buffer.from("undecodable fixture"),
+  });
+  await expect(page.locator("[data-preview-unavailable]")).toBeVisible();
+  await expect(
+    page.locator(".task-update__draft-photo [data-photo-lightbox]"),
+  ).toBeHidden();
+  await expect(page.locator("[data-save-notes]")).toBeEnabled();
+  await page.locator("[data-add-note]").click();
+  await page.locator("[data-note-text]").fill("Synthetic proof note");
+  await page.locator("[data-save-note]").click();
+  await expect(page.locator("[data-preview-unavailable]")).toBeVisible();
+  await page.locator("[data-remove-photo]").click();
+  await expect(page.locator(".task-update__draft-photo")).toHaveCount(0);
+  await expect(page.locator("[data-edit-note]")).toContainText(
+    "Synthetic proof note",
+  );
+});
+
+test("saved HEIC rendition displays in the timeline in Chrome", async ({
+  page,
+}) => {
+  const { readFile } = await import("node:fs/promises");
+  const { heicDisplayImage } = await import(
+    "../../backend/src/media/task-photo.js"
+  );
+  const jpeg = await heicDisplayImage(
+    await readFile("backend/src/media/fixtures/synthetic.heic"),
+  );
+  await page.route("**/converted-proof.jpg", (route) =>
+    route.fulfill({ contentType: "image/jpeg", body: jpeg }),
+  );
+  await page.route("**/v1/checks/check/artifacts/proof-photo/media", (route) =>
+    route.fulfill({
+      json: { downloadUrl: "http://127.0.0.1:5179/converted-proof.jpg" },
+    }),
+  );
+  await page.route("**/v1/tasks/issue/updates", (route) =>
+    route.fulfill({
+      json: {
+        task: {
+          ...task,
+          status: "completed",
+          proofAddedAt: "2026-10-28T12:00:00Z",
+        },
+        updates: [
+          {
+            updateId: "proof",
+            type: "resolution_proof",
+            label: "Proof added",
+            occurredAt: "2026-10-28T12:00:00Z",
+            photoKeys: ["proof-photo"],
+          },
+        ],
+      },
+    }),
+  );
+  await page.evaluate(async (task) => {
+    const dialog = /** @type {any} */ (
+      document.querySelector("task-update-dialog")
+    );
+    await dialog.open({ ...task, status: "completed" });
+  }, task);
+  const img = page.locator(".task-update__timeline img");
+  await expect(img).toBeVisible();
+  await expect
+    .poll(() =>
+      img.evaluate(
+        (node) => /** @type {HTMLImageElement} */ (node).naturalWidth,
+      ),
+    )
+    .toBe(48);
 });
