@@ -25,12 +25,16 @@ check. Expired recovery uses a new request ID and object key and consumes today'
 Older clients omitting the ID retain their previous behavior.
 
 The client saves request IDs in IndexedDB before presigning, scoped to the current site/device,
-submission, and a SHA-256 fingerprint of the file bytes and type. Lost responses keep the same
-identity; an explicit server `upload_expired` response rotates it. Metadata older than two days
-is pruned during subsequent reservation lookups and sign-out clears it. Signed URLs and media
+submission, attachment identity, and a SHA-256 fingerprint of the file bytes and effective
+content type. Lost responses keep the same identity; an explicit server `upload_expired`
+response rotates it. Metadata older than two days is pruned during subsequent reservation lookups and sign-out clears it. Signed URLs and media
 are not stored in these records. Check queues retain their existing recovery behavior; complaint
-and task-update selections do not gain an offline submission queue. Repeated selection of the
-same scoped file reuses its request ID. Care-work keeps its existing per-photo reservation reuse.
+and task-update selections do not gain an offline submission queue. Retrying the same
+attachment reuses its request ID; selecting another attachment creates a
+separate identity even when its bytes match. Check photos use their durable evidence-item ID.
+Complaint entries and task-update File objects retain attachment identity for the lifetime of
+their in-memory draft; these drafts do not survive reload. Care-work keeps its existing
+per-photo reservation reuse.
 
 A PUT retry may return 412 because the original object exists. Clients then continue to
 registration, whose metadata validation remains mandatory. Never manually lower counters

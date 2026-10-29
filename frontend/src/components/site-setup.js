@@ -389,9 +389,11 @@ export class SiteSetup extends HTMLElement {
       this._request.message = result.message;
     } else {
       this._request.error =
-        result.reason === "invalid"
-          ? t("setup.error.requestInvalid")
-          : t("setup.error.request");
+        result.reason === "limited"
+          ? t("setup.enrollment.limited")
+          : result.reason === "invalid"
+            ? t("setup.error.requestInvalid")
+            : t("setup.error.request");
     }
     this._render();
   }

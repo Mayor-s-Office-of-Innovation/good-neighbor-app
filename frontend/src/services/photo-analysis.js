@@ -567,9 +567,11 @@ export function retryEvidenceItem(itemId) {
         analyzeEvidenceItem(itemId);
       })
       .catch((err) => {
-        // 409 = already registered — the backend enqueued on that path too,
-        // so a poll is still the right next step.
-        if (/** @type {any} */ (err)?.status === 409) {
+        // Only this replay response confirms the backend re-enqueued analysis.
+        if (
+          err?.status === 409 &&
+          err?.body?.error === "artifact already registered"
+        ) {
           analyzeEvidenceItem(itemId);
           return;
         }

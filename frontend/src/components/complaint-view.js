@@ -440,7 +440,7 @@ ${escapeHtml(draft.description)}</textarea
       try {
         const contentType = contentTypeFor(file);
         const signed = await reserveMediaUpload(
-          `complaint:${activeDraft.complaintId}`,
+          `complaint:${activeDraft.complaintId}:attachment:${entry.id}`,
           file,
           (uploadRequestId) =>
             presignComplaintArtifact(
@@ -452,6 +452,7 @@ ${escapeHtml(draft.description)}</textarea
               },
               controller.signal,
             ),
+          { contentType },
         );
         if (controller.signal.aborted)
           throw new DOMException("Upload cancelled", "AbortError");

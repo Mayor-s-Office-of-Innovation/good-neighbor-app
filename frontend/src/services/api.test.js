@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { getUploadRequestId } from "../db.js";
 import {
   ApiError,
   dataUrlToBlob,
@@ -761,7 +762,17 @@ describe("uncertain media uploads", () => {
         .mockRejectedValueOnce(new Error("lost registration response"))
         .mockResolvedValueOnce(new Response(JSON.stringify(signed)))
         .mockResolvedValueOnce(new Response("", { status: 412 }))
-        .mockResolvedValueOnce(new Response("{}"));
+        .mockResolvedValueOnce(
+          kind === "check"
+            ? new Response(
+                JSON.stringify({ error: "artifact already registered" }),
+                {
+                  status: 409,
+                  headers: { "content-type": "application/json" },
+                },
+              )
+            : new Response("{}"),
+        );
       vi.stubGlobal("fetch", fetch);
       const file = new File(["test"], "synthetic.jpg", { type: "image/jpeg" });
       const upload = () =>
@@ -782,6 +793,71 @@ describe("uncertain media uploads", () => {
       expect(JSON.parse(fetch.mock.calls[5][1].body).artifactId).toBe(
         "photo-1",
       );
+    },
+  );
+});
+
+describe("upload reservation boundaries", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("keeps distinct same-content task attachments separate while reusing each retry scope", async () => {
+    vi.mocked(getUploadRequestId).mockClear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async (url) =>
+          new Response(
+            JSON.stringify(
+              String(url).endsWith("artifacts:presign")
+                ? {
+                    artifactId: "a",
+                    s3Key: "k",
+                    uploadUrl: "https://upload.example.test/a",
+                    uploadHeaders: {},
+                  }
+                : {},
+            ),
+          ),
+      ),
+    );
+    const first = new File(["identical"], "same.jpg", { type: "image/jpeg" });
+    const second = new File(["identical"], "same.jpg", { type: "image/jpeg" });
+    for (const file of [first, second, first])
+      await uploadTaskUpdatePhoto("task", "check", { file });
+    const calls = vi.mocked(getUploadRequestId).mock.calls;
+    expect(calls[0][0]).not.toBe(calls[1][0]);
+    expect(calls[0][0]).toBe(calls[2][0]);
+    expect(calls[0][1]).toBe(calls[1][1]);
+  });
+  it.each(["upload_reservation_conflict", "Check already completed"])(
+    "does not hide a registration conflict: %s",
+    async (error) => {
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValueOnce(
+            new Response(
+              JSON.stringify({
+                artifactId: "a",
+                s3Key: "k",
+                uploadUrl: "https://upload.example.test/a",
+              }),
+            ),
+          )
+          .mockResolvedValueOnce(new Response(""))
+          .mockResolvedValueOnce(
+            new Response(JSON.stringify({ error }), {
+              status: 409,
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+      );
+      await expect(
+        uploadArtifact("check", {
+          dataUrl: "data:image/jpeg;base64,dGVzdA==",
+          tag: "attachment",
+        }),
+      ).rejects.toMatchObject({ status: 409, body: { error } });
     },
   );
 });

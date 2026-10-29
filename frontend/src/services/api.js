@@ -1349,23 +1349,36 @@ export async function uploadArtifact(
   onLeg?.("put");
 
   const endRegister = span("upload.register", { art, artifactId });
-  await registerArtifact(checkId, {
-    artifactId,
-    s3Key,
-    contentType,
-    contentLength: blob.size,
-    ...(capturedAt ? { capturedAt } : {}),
-    ...(Number.isFinite(latitude) && Number.isFinite(longitude)
-      ? { latitude, longitude }
-      : {}),
-    ...(text ? { text } : {}),
-  });
+  try {
+    await registerArtifact(checkId, {
+      artifactId,
+      s3Key,
+      contentType,
+      contentLength: blob.size,
+      ...(capturedAt ? { capturedAt } : {}),
+      ...(Number.isFinite(latitude) && Number.isFinite(longitude)
+        ? { latitude, longitude }
+        : {}),
+      ...(text ? { text } : {}),
+    });
+  } catch (error) {
+    if (
+      error?.status !== 409 ||
+      error?.body?.error !== "artifact already registered"
+    )
+      throw error;
+    // This exact replay response confirms registration and re-enqueues analysis.
+  }
   endRegister();
   onLeg?.("register");
 
   done({ artifactId });
   return { artifactId, s3Key, contentType, contentLength: blob.size };
 }
+
+// Task-update attachment identity is local to each selected File object.
+/** @type {WeakMap<File, string>} */
+const taskUploadAttachmentIds = new WeakMap();
 
 /**
  * Upload documentation for a task update without registering it for analysis.
@@ -1381,10 +1394,15 @@ export async function uploadTaskUpdatePhoto(
   { signal = AbortSignal.timeout(120_000), onProgress } = {},
 ) {
   const blob = item.file;
+  let attachmentId = taskUploadAttachmentIds.get(blob);
+  if (!attachmentId) {
+    attachmentId = crypto.randomUUID();
+    taskUploadAttachmentIds.set(blob, attachmentId);
+  }
   const contentType = blob.type || "application/octet-stream";
   const { artifactId, s3Key, uploadUrl, uploadHeaders } =
     await reserveMediaUpload(
-      `task:${taskId}:check:${checkId}`,
+      `task:${taskId}:check:${checkId}:attachment:${attachmentId}`,
       blob,
       (uploadRequestId) =>
         presignArtifact(
@@ -1396,6 +1414,7 @@ export async function uploadTaskUpdatePhoto(
           },
           { signal },
         ),
+      { contentType },
     );
   try {
     if (onProgress)

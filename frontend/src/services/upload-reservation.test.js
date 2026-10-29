@@ -70,3 +70,18 @@ it("changes the fingerprint for changed bytes or type", async () => {
       .size,
   ).toBe(3);
 });
+
+it("fingerprints the effective MIME type even when the browser type is empty", async () => {
+  const file = new File(["same bytes"], "evidence.txt");
+  const presign = vi.fn().mockResolvedValue({});
+  await reserveMediaUpload("attachment:1", file, presign, {
+    contentType: "text/plain",
+  });
+  await reserveMediaUpload("attachment:1", file, presign, {
+    contentType: "application/pdf",
+  });
+  const calls = vi.mocked(getUploadRequestId).mock.calls;
+  expect(calls[0][1]).toMatch(/^text\/plain:/);
+  expect(calls[1][1]).toMatch(/^application\/pdf:/);
+  expect(calls[0][1]).not.toBe(calls[1][1]);
+});

@@ -11,6 +11,7 @@ import {
 import { t } from "../i18n/i18n.js";
 
 const setup = vi.hoisted(() => ({
+  requestSetupCode: vi.fn(),
   validateSetupCode: vi.fn(),
   registerDevice: vi.fn(),
   redeemEnrollmentGrant: vi.fn(),
@@ -20,7 +21,7 @@ const setup = vi.hoisted(() => ({
 }));
 vi.mock("../services/onboarding.js", () => ({
   formatSiteCode: (value) => value,
-  requestSetupCode: vi.fn(),
+  requestSetupCode: setup.requestSetupCode,
   searchSites: vi.fn(),
   validateSetupCode: setup.validateSetupCode,
 }));
@@ -553,3 +554,27 @@ it("shows the translated wait message for a general-WAF enrollment throttle", as
   expect(component._error).toBe(t("setup.enrollment.limited"));
   expect(setup.setSite).not.toHaveBeenCalled();
 });
+
+it.each([
+  ["limited", "setup.enrollment.limited"],
+  ["invalid", "setup.error.requestInvalid"],
+  ["network", "setup.error.request"],
+])(
+  "maps email-code request reason %s to its localized message",
+  async (reason, key) => {
+    setup.requestSetupCode.mockResolvedValue({ ok: false, reason });
+    const component = new SiteSetup();
+    Object.assign(component, {
+      _request: {
+        selectedSiteId: "site-test",
+        email: "synthetic@example.test",
+        requesting: false,
+      },
+      _syncRequestSubmit: vi.fn(),
+      _render: vi.fn(),
+    });
+    await component._requestCode();
+    expect(component._request.error).toBe(t(key));
+    expect(component._request.requesting).toBe(false);
+  },
+);
