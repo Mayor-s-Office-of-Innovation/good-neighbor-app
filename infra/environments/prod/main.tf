@@ -74,6 +74,7 @@ module "app" {
   bedrock_model_id            = var.bedrock_model_id
   analyzer_base_url           = "https://xvcwo6m20a.execute-api.us-east-1.amazonaws.com/prod"
   duplicate_analyzer_base_url = "https://xvcwo6m20a.execute-api.us-east-1.amazonaws.com/prod"
+  enable_support_chat         = true
 
   # Good Neighbor - Prod feedback survey; identifiers only (key stored in Secrets Manager).
   feedback_survey_id   = "01a184ca-e77d-0000-d993-bb815ab74819"

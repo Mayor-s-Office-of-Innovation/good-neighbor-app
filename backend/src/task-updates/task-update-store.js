@@ -249,7 +249,8 @@ export async function writeTaskTransition(input) {
   await ddb.send(
     new TransactWriteCommand({
       TransactItems: [
-        ...(input.task.status === "completed" &&
+        ...(input.update.type !== "resolution_proof" &&
+        input.task.status === "completed" &&
         input.task.completionMethod !== "311_filed"
           ? sf311Job(
               input.tableName,
@@ -314,6 +315,9 @@ export async function writeTaskTransition(input) {
                 : statusOnly
                   ? "#status = :expected"
                   : "#status = :expected AND updatedAt = :prior") +
+              (input.update.type === "resolution_proof"
+                ? " AND (attribute_not_exists(proofAddedAt) OR attribute_type(proofAddedAt, :nullType))"
+                : "") +
               (Object.hasOwn(input, "expectedAppActionResults")
                 ? input.expectedAppActionResults
                   ? " AND appActionResults = :priorResults"
@@ -327,6 +331,9 @@ export async function writeTaskTransition(input) {
             },
             ExpressionAttributeValues: {
               ":expected": input.expectedStatus,
+              ...(input.update.type === "resolution_proof"
+                ? { ":nullType": "NULL" }
+                : {}),
               ...(input.expectedAppActionResults
                 ? { ":priorResults": input.expectedAppActionResults }
                 : {}),
@@ -366,7 +373,7 @@ export async function writeDocumentedUpdate(tableName, update) {
   );
 }
 
-/** @param {{ tableName: string, siteId: string, checkId: string, taskId: string, artifactId: string, s3Key: string, contentType: string, contentLength: number, capturedAt: string }} input */
+/** @param {{ tableName: string, siteId: string, checkId: string, taskId: string, artifactId: string, s3Key: string, contentType: string, contentLength: number, capturedAt: string, displayS3Key?: string }} input */
 export async function writeTaskUpdateMedia(input) {
   const mediaKey = taskUpdateMediaKey(
     input.siteId,
@@ -387,6 +394,9 @@ export async function writeTaskUpdateMedia(input) {
               s3Key: input.s3Key,
               contentType: input.contentType,
               contentLength: input.contentLength,
+              ...(input.displayS3Key
+                ? { displayS3Key: input.displayS3Key }
+                : {}),
               capturedAt: input.capturedAt,
               purpose: "task_update",
               taskId: input.taskId,

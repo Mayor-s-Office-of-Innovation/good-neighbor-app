@@ -239,5 +239,7 @@ export async function openHistoryWithTrays(page) {
     page.locator(".analysis-tray--history .analysis-tray__check-title").first(),
   ).toBeVisible();
   await expect(page.locator(".analysis-card--clear")).toHaveCount(0);
-  await expect(page.locator('[data-status-ticker="resolved"]')).toBeVisible();
+  await expect(
+    page.locator('[data-status-ticker="awaitingProof"]'),
+  ).toBeVisible();
 }
