@@ -1623,6 +1623,33 @@ describe("attention badges and newer submissions", () => {
     ).toBe(3);
   });
 
+  it("badges only history cards still awaiting completion proof", async () => {
+    freezeClock();
+    const view = await mount("?filter=history");
+    const completed = {
+      status: "completed",
+      createdAt: NEWER_TODAY,
+      completedAt: NEWER_TODAY,
+      completionMethod: "site_team_resolved",
+    };
+    const tasks = [
+      { ...completed, taskId: "resolved" },
+      {
+        ...completed,
+        taskId: "direct",
+        completionMethod: "manual",
+        canBeInProgress: false,
+      },
+      { ...completed, taskId: "documented", proofAddedAt: NEWER_TODAY },
+      { taskId: "expired", status: "in_progress", createdAt: "2020-01-01" },
+    ];
+    const results = vi.spyOn(view, "_homeResults").mockReturnValue("");
+    view._render({ checks: [], tasks });
+    expect(
+      /** @type {any} */ (results.mock.calls[0][0]).tabCounts.history,
+    ).toBe(2);
+  });
+
   it("removes the old notice while a newer local submission is analyzing", async () => {
     freezeClock();
     const view = await mount("?filter=todo");
@@ -2068,4 +2095,28 @@ it("uses retained local evidence when committing deletion of a recovered card", 
     commit.mockRestore();
     reject.mockRestore();
   }
+});
+
+it("keeps the resolution-proof History badge visible when guidance recovery fails", async () => {
+  freezeClock();
+  const view = await mount("?filter=history");
+  view._homeModel = { tasks: [], pendingGuidanceFailed: true };
+  view._remainingStatus = "loaded";
+  const markup = view._render({
+    checks: [],
+    tasks: [
+      {
+        taskId: "resolved-needing-proof",
+        status: "completed",
+        createdAt: NEWER_TODAY,
+        completedAt: NEWER_TODAY,
+        completionMethod: "site_team_resolved",
+      },
+    ],
+  });
+  const historyTab = markup.match(
+    /data-home-filter="history"[^>]*>([\s\S]*?)<\/button>/,
+  )?.[1];
+  expect(historyTab).toContain('class="home-tabs__count"');
+  expect(historyTab).toMatch(/>1<\/span/);
 });

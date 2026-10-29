@@ -1,5 +1,6 @@
 import {
   isTaskExpired,
+  needsResolutionProof,
   submitted311Ticket,
   taskResolution,
 } from "./home-tasks.js";
@@ -18,6 +19,8 @@ export function statusTicker(task, { history = false, now = Date.now() } = {}) {
     count,
   });
   if (history || task.status === "completed" || isTaskExpired(task, now)) {
+    if (needsResolutionProof(task))
+      return state("awaitingProof", "warning", "file-circle-check");
     const { confirmed } = taskResolution(task);
     if (confirmed) return state("resolved", "success", "circle-check");
     return state("", "muted", "dot");

@@ -1,3 +1,4 @@
+import { validPhotoAttachments } from "../domain/attachment-files.js";
 import { t } from "../i18n/i18n.js";
 import {
   map311StatusResponse,
@@ -7,21 +8,19 @@ import { openOverlayDialog, onBackdropDismiss } from "../dialog-history.js";
 import "./timeline.css";
 import "./task-update-dialog.css";
 import {
-  ApiError,
   createTaskUpdate,
   documentTaskUpdate,
-  getMediaUrl,
   getTaskUpdates,
   get311RequestDetails,
   uploadTaskUpdatePhoto,
 } from "../services/api.js";
 import { showTaskUpdateErrorToast } from "../state/toasts.js";
+import { cachedMediaUrls } from "../services/task-evidence.js";
 import { taskArtifactIds, submitted311Ticket } from "../domain/home-tasks.js";
 import { taskMediaUrl } from "../domain/task-media.js";
 import {
   emptyTaskUpdateNotes,
   hasUnsavedTaskUpdateDraft,
-  MAX_TASK_UPDATE_PHOTOS,
   MAX_TASK_UPDATE_TEXT,
 } from "../domain/task-update-draft.js";
 import {
@@ -59,12 +58,6 @@ export class TaskUpdateDialog extends HTMLElement {
     this._retryToken = "";
     /** @type {Record<string, any> | null} */
     this._pendingEvent = null;
-    /**
-     * Results mode opened before the completion response: resolves to the
-     * documentation event once it lands (null when there is none).
-     * @type {Promise<Record<string, any> | null> | null}
-     */
-    this._completion = null;
     /** @type {File[]} */
     this._files = [];
     this._actionText = "";
@@ -77,7 +70,7 @@ export class TaskUpdateDialog extends HTMLElement {
     this._nextToken = null;
     /** @type {Map<File, Promise<string>>} */
     this._fileUploads = new Map();
-    /** @type {Map<string, string>} */
+    /** @type {Map<string, import("../services/task-evidence.js").MediaUrls>} */
     this._mediaUrls = new Map();
   }
 
@@ -140,67 +133,32 @@ export class TaskUpdateDialog extends HTMLElement {
       .finally(() => {
         this._resolving = false;
       });
-    this.openResults(task, completion);
+    void completion.then(({ task: saved }) => {
+      if (saved) this._dismiss();
+    });
   }
 
-  /**
-   * Collect documentation for the action that just completed this task.
-   * With `completion` the prompt opens before the completion response: the
-   * user can pick photos and type notes right away. Done and Skip both close
-   * at once; the documentation finishes in the background (_finishResults).
-   * @param {Record<string, any>} task
-   * @param {Promise<{ task: Record<string, any> | null, failed?: boolean }> | null} [completion]
-   */
-  openResults(task, completion = null) {
+  /** Open proof with fresh photo permissions and task state. */
+  async openProof(task) {
+    await this.open(task, "proof");
+  }
+
+  /** @param {Record<string, any>} task */
+  openResults(task) {
     ++this._loadGeneration;
     this._cancelTimelineReads();
     this._task = task;
     this._results = true;
     this._editorOnly = false;
     this._resetDraft();
-    this._completion = completion
-      ? completion.then((completed) => this._adoptCompletion(completed))
-      : null;
-    this._pendingEvent = { updateId: completion ? null : task.latestUpdateId };
+    this._pendingEvent = {};
     this._mode = "notes";
     this._state = "ready";
     this._open = true;
     this._render();
   }
 
-  /**
-   * The completion response landed: adopt its task (documentation event,
-   * photo permission), or close when there is nothing to document.
-   * @param {{ task: Record<string, any> | null, failed?: boolean }} completed
-   */
-  _adoptCompletion(completed) {
-    const photosAllowed = this._photosAllowed();
-    this._completion = null;
-    const task = completed.task;
-    const showing = this._open && this._results;
-    if (!task) {
-      if (showing) {
-        this._pendingEvent = null;
-        // The action failed (reported on the card) or opened no documentation
-        // window: an empty prompt just goes away, but a draft typed meanwhile
-        // stays on screen with a note saying so, so it can be copied first.
-        if (this._hasUnsavedDraft()) this._render();
-        else this._dismiss();
-      }
-      return null;
-    }
-    const pendingEvent = { updateId: task.latestUpdateId };
-    if (showing) {
-      this._task = { ...this._task, ...task };
-      this._pendingEvent = pendingEvent;
-      if (this._photosAllowed() !== photosAllowed) this._render();
-    }
-    return pendingEvent;
-  }
-
-  /** Before the response lands, any task with a check can take photos. */
   _photosAllowed() {
-    if (this._completion) return Boolean(this._task?.checkId);
     return this._task?.canUploadPhotos === true;
   }
 
@@ -231,6 +189,10 @@ export class TaskUpdateDialog extends HTMLElement {
       if (this._task.canRequestCityHelp === false)
         this._cityHelpNeeded = undefined;
       this._state = "ready";
+      if (this._mode === "proof") {
+        this.openResults(this._task);
+        return;
+      }
       this._render();
       void this._loadCityUpdates(generation);
       void this._loadTimelinePhotos(generation);
@@ -306,15 +268,21 @@ export class TaskUpdateDialog extends HTMLElement {
     await Promise.all(
       photoIds.map(async (artifactId) => {
         try {
+          // Shared with the cards and <artifact-photo>: one signing request
+          // per photo per page load, not one here and another per tile.
           const media = await this._timelineRead((signal) =>
-            getMediaUrl(checkId, artifactId, { signal }),
+            cachedMediaUrls(checkId, artifactId, { signal }),
           );
           if (generation !== this._loadGeneration) return;
+          // A thumbnail saves downloading the multi-MB original for a small tile.
+          const src = media.thumbnailUrl || media.downloadUrl;
+          const previous = this._mediaUrls.get(artifactId);
           if (
-            media.downloadUrl &&
-            this._mediaUrls.get(artifactId) !== media.downloadUrl
+            src &&
+            (previous?.downloadUrl !== media.downloadUrl ||
+              previous?.thumbnailUrl !== media.thumbnailUrl)
           ) {
-            this._mediaUrls.set(artifactId, media.downloadUrl);
+            this._mediaUrls.set(artifactId, media);
             this._refreshTimeline();
           }
         } catch {
@@ -412,19 +380,21 @@ export class TaskUpdateDialog extends HTMLElement {
         this._task?.canUploadPhotos === true,
       );
     const task = this._task || {};
+    const sourceMedia = this._mediaUrls.get(
+      task.evidence?.artifactId || taskArtifactIds(task)[0],
+    );
     return taskUpdateTimeline({
       task,
       updates: [...(this._detail?.updates || []), ...this._cityUpdates],
       issueOrigin: this._detail?.issueOrigin || "perimeter",
       originalMediaUrl:
         taskMediaUrl(task) ||
-        this._mediaUrls.get(
-          task.evidence?.artifactId || taskArtifactIds(task)[0],
-        ) ||
+        sourceMedia?.thumbnailUrl ||
+        sourceMedia?.downloadUrl ||
         "",
       // The lightbox always opens the full-size original, never the card
       // thumbnail `taskMediaUrl` may have picked above.
-      originalFullMediaUrl: task.mediaUrl || "",
+      originalFullMediaUrl: task.mediaUrl || sourceMedia?.downloadUrl || "",
       mediaUrls: this._mediaUrls,
       nextToken: this._nextToken,
       readOnly: this.readOnly,
@@ -547,13 +517,80 @@ export class TaskUpdateDialog extends HTMLElement {
     root.querySelector("[data-load-older]")?.addEventListener("click", () => {
       if (this._nextToken) void this._load(this._nextToken);
     });
-    root.querySelector("[data-photos]")?.addEventListener("change", (event) => {
-      const input = /** @type {HTMLInputElement} */ (event.currentTarget);
-      this._resetFiles();
-      this._files = [...(input.files || [])].slice(0, MAX_TASK_UPDATE_PHOTOS);
-      this._filePreviews = this._files.map((file) => URL.createObjectURL(file));
-      this._render();
+    root.querySelector("[data-take-photo]")?.addEventListener("click", () => {
+      /** @type {HTMLInputElement | null} */ (
+        root.querySelector("[data-photos]")
+      )?.click();
     });
+    root
+      .querySelector("[data-upload-photos]")
+      ?.addEventListener("click", () => {
+        /** @type {HTMLInputElement | null} */ (
+          root.querySelector("[data-upload-input]")
+        )?.click();
+      });
+    root.querySelectorAll(".task-update__photo--draft").forEach((image) => {
+      const unavailable = () => {
+        const draft = image.closest(".task-update__draft-photo");
+        const trigger = /** @type {HTMLButtonElement | null} */ (
+          image.closest("button")
+        );
+        const notice = /** @type {HTMLElement | null} */ (
+          draft?.querySelector("[data-preview-unavailable]")
+        );
+        if (trigger) {
+          trigger.hidden = true;
+          trigger.disabled = true;
+        }
+        if (notice) notice.hidden = false;
+      };
+      image.addEventListener("error", unavailable, { once: true });
+      const img = /** @type {HTMLImageElement} */ (image);
+      if (img.complete && !img.naturalWidth) unavailable();
+    });
+    root.querySelectorAll("[data-remove-photo]").forEach((button) => {
+      button.addEventListener("click", () => {
+        if (this._busy) return;
+        const index = Number(button.getAttribute("data-remove-photo"));
+        const file = this._files[index];
+        if (!file) return;
+        URL.revokeObjectURL(this._filePreviews[index]);
+        this._fileUploads.delete(file);
+        this._files.splice(index, 1);
+        this._filePreviews.splice(index, 1);
+        this._render();
+        /** @type {HTMLElement | null} */ (
+          this.querySelector("[data-upload-photos]") ||
+            this.querySelector("[data-photos]")
+        )?.focus();
+      });
+    });
+    root
+      .querySelectorAll("[data-photos], [data-upload-input]")
+      .forEach((element) => {
+        const input = /** @type {HTMLInputElement} */ (element);
+        input.addEventListener("change", () => {
+          const selected = [...(input.files || [])];
+          if (!selected.length) return;
+          const files = [...this._files, ...selected];
+          if (!validPhotoAttachments(files)) {
+            const error = /** @type {HTMLElement | null} */ (
+              root.querySelector("[data-photo-error]")
+            );
+            if (error) {
+              error.hidden = false;
+              error.textContent = t("taskUpdate.capture.photoLimits");
+            }
+            input.value = "";
+            return;
+          }
+          this._files = files;
+          this._filePreviews.push(
+            ...selected.map((file) => URL.createObjectURL(file)),
+          );
+          this._render();
+        });
+      });
     root
       .querySelector("[data-action-text]")
       ?.addEventListener("input", (event) => {
@@ -638,7 +675,22 @@ export class TaskUpdateDialog extends HTMLElement {
   /** @returns {Promise<string[] | null>} */
   async _uploadFiles() {
     if (!this._task) return null;
-    return Promise.all(this._files.map((file) => this._uploadFile(file)));
+    const button = /** @type {HTMLElement | null} */ (
+      this.querySelector?.("[data-upload-photos]")
+    );
+    const status = /** @type {HTMLElement | null} */ (
+      this.querySelector?.("[data-photo-upload-status]")
+    );
+    if (button) button.hidden = this._files.length > 0;
+    if (status) status.hidden = this._files.length === 0;
+    try {
+      return await Promise.all(
+        this._files.map((file) => this._uploadFile(file)),
+      );
+    } finally {
+      if (button) button.hidden = false;
+      if (status) status.hidden = true;
+    }
   }
 
   /**
@@ -699,7 +751,7 @@ export class TaskUpdateDialog extends HTMLElement {
       return;
     const notes = this._noteDrafts.map((note) => note.trim()).filter(Boolean);
     if (this._results) {
-      this._finishResults(notes, this._files);
+      await this._finishResults(notes, this._files);
       return;
     }
     const response = await this._runMutation(
@@ -730,58 +782,41 @@ export class TaskUpdateDialog extends HTMLElement {
     }
   }
 
-  /**
-   * Results mode (Done, Skip, close): the prompt closes now and the
-   * documentation finishes in the background: the completion response when
-   * still in flight, then photo uploads (update media registers only once
-   * the server has moved the task on), then the document write that seals
-   * the window. A results prompt is a single-use element (openResultsDialog
-   * creates one per prompt and removes it on close), so its fields are free
-   * to carry the late work. The draft leaves with the prompt: a failed save
-   * surfaces as the update error toast with a retry that re-runs this chain
-   * (uploads that succeeded are cached per file; the document route replays
-   * identical content), except when another window already closed the
-   * event. An empty seal fails silently.
+  /** Save proof before dismissing; failed saves keep the draft available.
    * @param {string[]} notes @param {File[]} files
    */
-  _finishResults(notes, files) {
-    const task = this._task;
-    const pending = this._completion ?? Promise.resolve(this._pendingEvent);
-    const draft = Boolean(notes.length || files.length);
-    this._dismiss();
-    if (!task) return;
-    const attempt = () =>
-      pending
-        .then(async (pendingEvent) => {
-          // No documentation window (the action failed, or nothing to
-          // document): a draft typed for it cannot be attached anywhere.
-          if (!pendingEvent) {
-            if (draft) showTaskUpdateErrorToast();
-            return;
-          }
-          const photoKeys = await Promise.all(
-            files.map((file) => this._uploadFile(file, task)),
-          );
-          await documentTaskUpdate(task.taskId, pendingEvent.updateId, {
-            notes,
-            photoKeys,
-          });
-        })
-        .catch((error) => {
-          if (!draft) return;
-          const conflict =
-            error instanceof ApiError &&
-            /** @type {{ code?: string }} */ (error.body)?.code ===
-              "DocumentationConflict";
-          showTaskUpdateErrorToast(error, conflict ? undefined : attempt);
+  async _finishResults(notes, files) {
+    if (!notes.length && !files.length) {
+      this._dismiss();
+      return;
+    }
+    if (this._busy) return;
+    return this._runMutation(
+      this,
+      "[data-save-notes], [data-skip]",
+      async (signal) => {
+        const photoKeys = await this._uploadFiles();
+        signal.throwIfAborted();
+        if (!photoKeys) return null;
+        return this._createUpdate({
+          type: "resolution_proof",
+          notes,
+          photoKeys,
         });
-    void attempt();
+      },
+    ).then((response) => {
+      if (!response) return;
+      this._task = { ...this._task, ...response.task };
+      this._resetDraft();
+      this._notifyUpdated();
+      this._dismiss();
+    });
   }
 
   /** @param {HTMLElement} root @param {string[]} notes @param {string[]} photos */
   async _finishDocumentation(root, notes, photos) {
     if (this._results) {
-      this._finishResults(notes, []);
+      await this._finishResults(notes, []);
       return;
     }
     if (!this._task || !this._pendingEvent) return;
@@ -995,7 +1030,6 @@ export class TaskUpdateDialog extends HTMLElement {
     ++this._loadGeneration;
     this._cancelTimelineReads();
     this._resetDraft();
-    this._completion = null;
     this._results = false;
     this._editorOnly = false;
     this._open = false;

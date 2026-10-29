@@ -119,9 +119,14 @@ export const presignUpload = async (event) => {
       body ?? {}
     );
 
+  // Task documentation also accepts HEIC/HEIF. Analysis registration below
+  // deliberately retains the narrower analyzer-supported content types.
   if (
     typeof contentType !== "string" ||
-    !ALLOWED_CONTENT_TYPES.has(contentType)
+    !(
+      ALLOWED_CONTENT_TYPES.has(contentType) ||
+      ["image/heic", "image/heif"].includes(contentType)
+    )
   ) {
     return rejectUpload(
       "Unsupported or missing contentType",
@@ -678,7 +683,13 @@ export const presignMedia = async (event) => {
       ? artifact.thumbS3Key
       : undefined;
   const [downloadUrl, thumbnailUrl] = await Promise.all([
-    sign(artifact.s3Key),
+    sign(
+      artifact.entityType === "task_update_media" &&
+        typeof artifact.displayS3Key === "string" &&
+        artifact.displayS3Key === `${artifact.s3Key}.display.jpg`
+        ? artifact.displayS3Key
+        : artifact.s3Key,
+    ),
     thumbS3Key ? sign(thumbS3Key).catch(() => undefined) : undefined,
   ]);
 

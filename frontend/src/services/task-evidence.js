@@ -139,24 +139,45 @@ async function cachedCheckArtifacts(checkId) {
 
 /**
  * Presigned URLs for one artifact, memoised per page load.
- * @param {string} checkId @param {string} artifactId
+ * @param {string} checkId
+ * @param {string} artifactId
+ * @param {{signal?: AbortSignal}} [options]
  * @returns {Promise<MediaUrls>}
  */
-export async function cachedMediaUrls(checkId, artifactId) {
+export async function cachedMediaUrls(checkId, artifactId, options = {}) {
+  const { signal } = options;
+  if (signal?.aborted)
+    throw new DOMException("Photo read cancelled", "AbortError");
   const key = `${checkId}:${artifactId}`;
   const failure = MEDIA_FAILURES.get(key);
   if (failure?.retryAt > Date.now()) throw failure.error;
   const cached = MEDIA_URL_CACHE.get(key);
   if (cached && (cached.pending || cached.expiresAt > Date.now()))
-    return cached.promise;
+    return consumeMedia(cached, key, signal);
   const started = Date.now();
+  const controller = new AbortController();
   const entry = {
+    controller,
+    consumers: 0,
     pending: true,
     expiresAt: 0,
     diagnosticStatus: failure?.diagnosticStatus,
     promise: /** @type {Promise<MediaUrls>} */ (null),
   };
-  entry.promise = getMediaUrl(checkId, artifactId)
+  let timer;
+  let onCancel;
+  const deadline = new Promise((_, reject) => {
+    onCancel = () =>
+      reject(new DOMException("Photo signing cancelled", "AbortError"));
+    controller.signal.addEventListener("abort", onCancel, { once: true });
+    timer = setTimeout(() => {
+      controller.abort();
+    }, 15000);
+  });
+  entry.promise = Promise.race([
+    getMediaUrl(checkId, artifactId, { signal: controller.signal }),
+    deadline,
+  ])
     .then(({ downloadUrl, thumbnailUrl, expiresIn }) => {
       // Start the clock before the request and renew 30 seconds before expiry.
       // Short TTLs keep a proportional margin instead of becoming instantly stale.
@@ -170,6 +191,7 @@ export async function cachedMediaUrls(checkId, artifactId) {
     .catch((error) => {
       if (MEDIA_URL_CACHE.get(key) === entry) {
         MEDIA_URL_CACHE.delete(key);
+        if (controller.signal.aborted) throw error;
         const status = Number.isInteger(error?.status) ? error.status : 0;
         // One diagnostic per artifact/status until a successful signing resets it.
         // Never include raw errors: network messages can contain signed URLs.
@@ -182,9 +204,38 @@ export async function cachedMediaUrls(checkId, artifactId) {
         });
       }
       throw error;
+    })
+    .finally(() => {
+      clearTimeout(timer);
+      controller.signal.removeEventListener("abort", onCancel);
+      entry.pending = false;
     });
   MEDIA_URL_CACHE.set(key, entry);
-  return entry.promise;
+  return consumeMedia(entry, key, signal);
+}
+
+/**
+ * A caller can release its request without cancelling other photo consumers.
+ * @param {{consumers: number, pending: boolean, controller: AbortController, promise: Promise<MediaUrls>}} entry
+ * @param {string} key
+ * @param {AbortSignal} [signal]
+ */
+function consumeMedia(entry, key, signal) {
+  entry.consumers++;
+  let onAbort;
+  const aborted = new Promise((_, reject) => {
+    onAbort = () =>
+      reject(new DOMException("Photo read cancelled", "AbortError"));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+  });
+  return Promise.race([entry.promise, aborted]).finally(() => {
+    signal?.removeEventListener("abort", onAbort);
+    if (--entry.consumers === 0 && entry.pending) {
+      if (MEDIA_URL_CACHE.get(key) === entry) MEDIA_URL_CACHE.delete(key);
+      entry.controller.abort();
+    }
+  });
 }
 
 /** Invalidate one failed image, never another artifact or an in-flight signer.

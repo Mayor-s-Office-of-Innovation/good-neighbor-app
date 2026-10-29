@@ -4,6 +4,7 @@ import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { hasKey, t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
 import { formatPacificDateTime } from "../domain/task-updates.js";
+import { artifactPhoto } from "./artifact-photo.templates.js";
 
 /** @param {string} type */
 export function taskUpdateTimelineTone(type) {
@@ -50,7 +51,13 @@ export function taskUpdateActions() {
   </div>`;
 }
 
-/** @param {Record<string, any>} update @param {Record<string, any>} task @param {Map<string, string>} mediaUrls @param {string} title */
+/**
+ * `mediaUrls` retains the original and thumbnail URLs for each photo.
+ * @param {Record<string, any>} update
+ * @param {Record<string, any>} task
+ * @param {Map<string, string | {downloadUrl: string, thumbnailUrl?: string}>} mediaUrls
+ * @param {string} title
+ */
 export function taskUpdateTimelineItem(update, task, mediaUrls, title) {
   if (
     !duplicateUiEnabled() &&
@@ -129,14 +136,17 @@ export function taskUpdateTimelineItem(update, task, mediaUrls, title) {
                     "",
                 )}"
                 data-photo-time="${escapeAttr(update.occurredAt)}"
+                data-full-src="${escapeAttr(
+                  timelinePhotoUrl(mediaUrls.get(artifactId), true),
+                )}"
               >
-                <img
-                  class="task-update__photo"
-                  src="${escapeAttr(mediaUrls.get(artifactId))}"
-                  alt="${escapeAttr(
-                    t("taskUpdate.photo.updateAlt", { title }),
-                  )}"
-                />
+                ${artifactPhoto({
+                  className: "task-update__photo",
+                  src: timelinePhotoUrl(mediaUrls.get(artifactId)),
+                  checkId: task.checkId,
+                  artifactId,
+                  alt: t("taskUpdate.photo.updateAlt", { title }),
+                })}
               </button>`
             : "",
         )
@@ -198,4 +208,17 @@ ${escapeHtml(text)}</textarea
       ${escapeHtml(t("common.clearAll"))}
     </button>
   </div>`;
+}
+
+/**
+ * @param {string | {downloadUrl: string, thumbnailUrl?: string} | undefined} media
+ * @param {boolean} [original]
+ */
+function timelinePhotoUrl(media, original = false) {
+  if (typeof media === "string") return media;
+  return (
+    (original
+      ? media?.downloadUrl
+      : media?.thumbnailUrl || media?.downloadUrl) || ""
+  );
 }

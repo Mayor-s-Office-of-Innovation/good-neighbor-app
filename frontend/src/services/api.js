@@ -1,3 +1,4 @@
+import { contentTypeFor } from "../domain/attachment-files.js";
 import { observePhotoStage, photoAttemptId } from "./photo-telemetry.js";
 import { clearTaskStatusOverrides } from "../state/task-status-overrides.js";
 import { invalidateDuplicateIssues } from "./duplicate-invalidation.js";
@@ -1371,7 +1372,7 @@ export async function uploadTaskUpdatePhoto(
   { signal = AbortSignal.timeout(120_000), onProgress } = {},
 ) {
   const blob = item.file;
-  const contentType = blob.type || "application/octet-stream";
+  const contentType = contentTypeFor(blob);
   const { artifactId, s3Key, uploadUrl, uploadHeaders } = await presignArtifact(
     checkId,
     {

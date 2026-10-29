@@ -338,97 +338,43 @@ it.each(["notes", "action"])(
     ).toEqual(["taskupdated"]);
   },
 );
-it.each(["save", "skip", "failure"])(
-  "closes at once and documents completion results in the background: %s",
+it.each(["save", "failure", "skip"])(
+  "keeps proof pending until a successful save: %s",
   async (kind) => {
     const { TaskUpdateDialog } = await import("./task-update-dialog.js");
     const dialog = /** @type {any} */ (new TaskUpdateDialog());
     dialog._render = vi.fn();
     dialog.dispatchEvent = vi.fn();
-    const modal = {
-      close: vi.fn(),
-      querySelectorAll: () => [],
-      querySelector: () => null,
-    };
-    dialog.querySelector = vi.fn(() => modal);
-    dialog.openResults({ taskId: "task-1", latestUpdateId: "update-1" });
-    const file = { name: "pile.jpg" };
-    dialog._uploadFile = vi.fn().mockResolvedValue("photo-1");
-    dialog._files = [file];
+    dialog.querySelector = vi.fn(() => null);
+    dialog.querySelectorAll = vi.fn(() => []);
+    dialog.openResults({ taskId: "task-1", status: "completed" });
     dialog._noteDrafts = [" Work completed ", "", ""];
-    toasts.showTaskUpdateErrorToast.mockClear();
-    api.documentTaskUpdate.mockReset();
+    dialog._uploadFiles = vi.fn().mockResolvedValue([]);
+    api.createTaskUpdate.mockReset();
+    api.documentTaskUpdate.mockClear();
     if (kind === "failure")
-      api.documentTaskUpdate.mockRejectedValue(new Error("offline"));
-    else api.documentTaskUpdate.mockResolvedValue({ update: {} });
-    if (kind === "skip") await dialog._finishDocumentation(modal, [], []);
-    else await dialog._saveNotes(modal);
-    // The prompt is gone before any request completes; the draft with it.
-    expect(dialog._open).toBe(false);
-    expect(modal.close).toHaveBeenCalledOnce();
-    expect(dialog._files).toEqual([]);
-    await vi.waitFor(() =>
-      expect(api.documentTaskUpdate).toHaveBeenCalledWith(
-        "task-1",
-        "update-1",
-        {
-          notes: kind === "skip" ? [] : ["Work completed"],
-          photoKeys: kind === "skip" ? [] : ["photo-1"],
-        },
-      ),
-    );
-    // Skip discards picked photos rather than uploading them.
-    if (kind === "skip") expect(dialog._uploadFile).not.toHaveBeenCalled();
+      api.createTaskUpdate.mockRejectedValue(new Error("offline"));
     else
-      expect(dialog._uploadFile).toHaveBeenCalledWith(
-        file,
-        expect.objectContaining({ taskId: "task-1" }),
+      api.createTaskUpdate.mockResolvedValue({
+        task: { proofAddedAt: "2026-10-28" },
+      });
+    if (kind === "skip") await dialog._close(true);
+    else await dialog._saveNotes(dialog);
+    expect(api.documentTaskUpdate).not.toHaveBeenCalled();
+    expect(dialog._open).toBe(kind === "failure");
+    if (kind === "skip") expect(api.createTaskUpdate).not.toHaveBeenCalled();
+    else
+      expect(api.createTaskUpdate).toHaveBeenCalledWith(
+        "task-1",
+        { type: "resolution_proof", notes: ["Work completed"], photoKeys: [] },
+        expect.any(String),
+        expect.any(Object),
       );
-    if (kind !== "failure") {
-      expect(toasts.showTaskUpdateErrorToast).not.toHaveBeenCalled();
-      return;
-    }
-    await vi.waitFor(() =>
-      expect(toasts.showTaskUpdateErrorToast).toHaveBeenCalledOnce(),
-    );
-    // The toast's retry re-runs the same save with the captured draft.
-    const [, retry] = toasts.showTaskUpdateErrorToast.mock.calls[0];
-    api.documentTaskUpdate.mockResolvedValue({ update: {} });
-    retry();
-    await vi.waitFor(() =>
-      expect(api.documentTaskUpdate).toHaveBeenCalledTimes(2),
-    );
-    expect(api.documentTaskUpdate).toHaveBeenLastCalledWith(
-      "task-1",
-      "update-1",
-      { notes: ["Work completed"], photoKeys: ["photo-1"] },
-    );
+    if (kind === "failure")
+      expect(dialog._noteDrafts[0]).toBe(" Work completed ");
+    else if (kind === "save") expect(dialog._task.proofAddedAt).toBeTruthy();
   },
 );
-
-it("offers no retry when another window already closed the event", async () => {
-  const { TaskUpdateDialog } = await import("./task-update-dialog.js");
-  const { ApiError } = await import("../services/api.js");
-  const dialog = /** @type {any} */ (new TaskUpdateDialog());
-  dialog._render = vi.fn();
-  dialog.dispatchEvent = vi.fn();
-  const modal = { close: vi.fn(), querySelectorAll: () => [] };
-  dialog.querySelector = vi.fn(() => modal);
-  dialog.openResults({ taskId: "task-1", latestUpdateId: "update-1" });
-  dialog._noteDrafts = ["Typed", "", ""];
-  toasts.showTaskUpdateErrorToast.mockClear();
-  api.documentTaskUpdate.mockReset().mockRejectedValue(
-    Object.assign(new ApiError("conflict"), {
-      status: 409,
-      body: { code: "DocumentationConflict" },
-    }),
-  );
-  await dialog._saveNotes(modal);
-  await vi.waitFor(() =>
-    expect(toasts.showTaskUpdateErrorToast).toHaveBeenCalledOnce(),
-  );
-  expect(toasts.showTaskUpdateErrorToast.mock.calls[0][1]).toBeUndefined();
-});
 
 it.each([false, true])(
   "documents the existing additional action (skip: %s)",
@@ -459,7 +405,7 @@ it.each([false, true])(
   },
 );
 
-it("asks before discarding a results draft on close, then seals without it", async () => {
+it("asks before discarding a results draft on close, without marking proof complete", async () => {
   const { TaskUpdateDialog } = await import("./task-update-dialog.js");
   const dialog = /** @type {any} */ (new TaskUpdateDialog());
   dialog._render = vi.fn();
@@ -478,12 +424,7 @@ it("asks before discarding a results draft on close, then seals without it", asy
   expect(api.documentTaskUpdate).not.toHaveBeenCalled();
   await dialog._close(true);
   expect(dialog._open).toBe(false);
-  await vi.waitFor(() =>
-    expect(api.documentTaskUpdate).toHaveBeenCalledWith("task-1", "update-1", {
-      notes: [],
-      photoKeys: [],
-    }),
-  );
+  expect(api.documentTaskUpdate).not.toHaveBeenCalled();
   expect(dialog._uploadFile).not.toHaveBeenCalled();
 });
 
@@ -515,32 +456,6 @@ it.each(["Followed up"])(
   },
 );
 
-it("saves notes for a check-free task without attempting a photo upload", async () => {
-  const { TaskUpdateDialog } = await import("./task-update-dialog.js");
-  const dialog = /** @type {any} */ (new TaskUpdateDialog());
-  dialog._render = vi.fn();
-  dialog.dispatchEvent = vi.fn();
-  const modal = { querySelectorAll: () => [], close: vi.fn() };
-  dialog.querySelector = vi.fn(() => modal);
-  dialog.openResults({
-    taskId: "task-1",
-    latestUpdateId: "update-1",
-    canUploadPhotos: false,
-  });
-  dialog._noteDrafts = ["Area cleaned", "", ""];
-  api.uploadTaskUpdatePhoto.mockClear();
-  api.documentTaskUpdate.mockReset().mockResolvedValue({ update: {} });
-  await dialog._saveNotes(modal);
-  expect(dialog._open).toBe(false);
-  await vi.waitFor(() =>
-    expect(api.documentTaskUpdate).toHaveBeenCalledWith("task-1", "update-1", {
-      notes: ["Area cleaned"],
-      photoKeys: [],
-    }),
-  );
-  expect(api.uploadTaskUpdatePhoto).not.toHaveBeenCalled();
-});
-
 it("resets workflow state when reusing a 311 editor for completion results and back", async () => {
   const { TaskUpdateDialog } = await import("./task-update-dialog.js");
   const dialog = new TaskUpdateDialog();
@@ -561,7 +476,7 @@ it("resets workflow state when reusing a 311 editor for completion results and b
   expect(dialog._cityHelpNeeded).toBeUndefined();
   expect(dialog._noteDrafts.every((note) => !note)).toBe(true);
   expect(dialog._content()).not.toContain("data-city-help");
-  expect(dialog._pendingEvent.updateId).toBe("result-1");
+  expect(dialog._pendingEvent).toEqual({});
 
   await dialog.open(ticket, "action");
   expect(dialog._results).toBe(false);
@@ -570,142 +485,6 @@ it("resets workflow state when reusing a 311 editor for completion results and b
   expect(dialog._cityHelpNeeded).toBeNull();
   expect(dialog._content()).toContain("data-city-help");
   expect(dialog._content()).not.toContain("data-action-outcome");
-});
-
-describe("results prompt opened before the completion response", () => {
-  function deferred() {
-    let resolve = (value) => {
-      void value;
-    };
-    const promise = new Promise((r) => {
-      resolve = r;
-    });
-    return { promise, resolve };
-  }
-  async function openPending(task = { taskId: "task-1", checkId: "check-1" }) {
-    const { TaskUpdateDialog } = await import("./task-update-dialog.js");
-    const dialog = /** @type {any} */ (new TaskUpdateDialog());
-    dialog._render = vi.fn();
-    dialog.dispatchEvent = vi.fn();
-    const modal = {
-      close: vi.fn(),
-      querySelectorAll: () => [],
-      querySelector: () => null,
-    };
-    dialog.querySelector = vi.fn(() => modal);
-    const completion = deferred();
-    dialog.openResults(task, completion.promise);
-    return { dialog, modal, completion };
-  }
-
-  it("closes on Done at once and saves once the response lands", async () => {
-    const { dialog, modal, completion } = await openPending();
-    expect(dialog._open).toBe(true);
-    expect(dialog._pendingEvent).toEqual({ updateId: null });
-    expect(dialog._photosAllowed()).toBe(true);
-    const file = { name: "pile.jpg" };
-    dialog._uploadFile = vi.fn().mockResolvedValue("photo-1");
-    dialog._files = [file];
-    dialog._noteDrafts = ["Picked up", "", ""];
-    api.documentTaskUpdate.mockReset().mockResolvedValue({ update: {} });
-    await dialog._saveNotes(modal);
-    expect(dialog._open).toBe(false);
-    expect(dialog._completion).toBeNull();
-    await Promise.resolve();
-    // Update media registers only once the task has moved on: nothing is
-    // uploaded or documented until the completion response lands.
-    expect(dialog._uploadFile).not.toHaveBeenCalled();
-    expect(api.documentTaskUpdate).not.toHaveBeenCalled();
-    completion.resolve({
-      task: {
-        taskId: "task-1",
-        latestUpdateId: "update-1",
-        canUploadPhotos: true,
-      },
-    });
-    await vi.waitFor(() =>
-      expect(api.documentTaskUpdate).toHaveBeenCalledWith(
-        "task-1",
-        "update-1",
-        { notes: ["Picked up"], photoKeys: ["photo-1"] },
-      ),
-    );
-    expect(dialog._uploadFile).toHaveBeenCalledWith(
-      file,
-      expect.objectContaining({ taskId: "task-1" }),
-    );
-  });
-
-  it.each([
-    ["a draft", ["Typed meanwhile", "", ""], 1],
-    ["no draft", ["", "", ""], 0],
-  ])(
-    "reports a late response that leaves nothing to attach: %s",
-    async (_label, notes, toastCount) => {
-      const { dialog, modal, completion } = await openPending();
-      dialog._noteDrafts = notes;
-      toasts.showTaskUpdateErrorToast.mockClear();
-      api.documentTaskUpdate.mockReset();
-      await dialog._saveNotes(modal);
-      expect(dialog._open).toBe(false);
-      completion.resolve({ task: null });
-      await new Promise((resolve) => setTimeout(resolve));
-      expect(api.documentTaskUpdate).not.toHaveBeenCalled();
-      expect(toasts.showTaskUpdateErrorToast).toHaveBeenCalledTimes(toastCount);
-    },
-  );
-
-  it("closes on skip at once and seals the documentation window later", async () => {
-    const { dialog, modal, completion } = await openPending();
-    api.documentTaskUpdate.mockReset().mockResolvedValue({ update: {} });
-    await dialog._finishDocumentation(modal, [], []);
-    expect(dialog._open).toBe(false);
-    expect(api.documentTaskUpdate).not.toHaveBeenCalled();
-    completion.resolve({
-      task: { taskId: "task-1", latestUpdateId: "update-1" },
-    });
-    await vi.waitFor(() =>
-      expect(api.documentTaskUpdate).toHaveBeenCalledWith(
-        "task-1",
-        "update-1",
-        { notes: [], photoKeys: [] },
-      ),
-    );
-  });
-
-  it.each([
-    ["failed, no draft", { task: null, failed: true }, false, false],
-    ["failed, draft kept", { task: null, failed: true }, true, true],
-    ["no results, no draft", { task: null }, false, false],
-    ["no results, draft kept", { task: null }, true, true],
-  ])(
-    "handles a completion with nothing to document: %s",
-    async (_label, completed, hasDraft, staysOpen) => {
-      const { dialog, completion } = await openPending();
-      if (hasDraft) dialog._noteDrafts = ["Typed meanwhile", "", ""];
-      completion.resolve(completed);
-      await dialog._completion;
-      expect(dialog._open).toBe(staysOpen);
-      expect(dialog._pendingEvent).toBeNull();
-      if (staysOpen) expect(dialog._render).toHaveBeenCalled();
-    },
-  );
-
-  it("re-renders only when the response changes the photo permission", async () => {
-    const { dialog, completion } = await openPending();
-    dialog._render.mockClear();
-    completion.resolve({
-      task: {
-        taskId: "task-1",
-        latestUpdateId: "update-1",
-        canUploadPhotos: false,
-      },
-    });
-    await dialog._completion;
-    expect(dialog._pendingEvent).toEqual({ updateId: "update-1" });
-    expect(dialog._photosAllowed()).toBe(false);
-    expect(dialog._render).toHaveBeenCalledOnce();
-  });
 });
 
 describe("City status in issue timeline", () => {
@@ -797,7 +576,7 @@ describe("City status in issue timeline", () => {
   });
 });
 
-it("starts resolution and documentation together and updates the card before documentation closes", async () => {
+it("resolves immediately without opening documentation", async () => {
   const { TaskUpdateDialog } = await import("./task-update-dialog.js");
   const dialog = new TaskUpdateDialog();
   /** @type {(value: any) => void} */
@@ -816,16 +595,14 @@ it("starts resolution and documentation together and updates the card before doc
   expect(api.createTaskUpdate).toHaveBeenLastCalledWith("resolve-now", {
     type: "issue_resolved",
   });
-  expect(dialog.openResults).toHaveBeenCalledTimes(1);
-  const completion = vi.mocked(dialog.openResults).mock.calls[0][1];
+  expect(dialog.openResults).not.toHaveBeenCalled();
+  dialog._dismiss = vi.fn();
   expect(dialog._notifyUpdated).not.toHaveBeenCalled();
   finish({
     task: { ...task, status: "completed" },
     update: { updateId: "resolved-event" },
   });
-  await expect(completion).resolves.toMatchObject({
-    task: { status: "completed", latestUpdateId: "resolved-event" },
-  });
+  await vi.waitFor(() => expect(dialog._dismiss).toHaveBeenCalledOnce());
   expect(dialog._notifyUpdated).toHaveBeenCalledOnce();
 });
 
@@ -913,9 +690,9 @@ describe("timeline loading resilience", () => {
       expect(dialog._state).toBe("ready");
       expect(dialog._detail.updates[0].text).toBe("Saved activity");
       await vi.advanceTimersByTimeAsync(0);
-      expect(dialog._mediaUrls.get("ready")).toBe(
-        "https://example.com/photo.jpg",
-      );
+      expect(dialog._mediaUrls.get("ready")).toMatchObject({
+        downloadUrl: "https://example.com/photo.jpg",
+      });
       await vi.advanceTimersByTimeAsync(15_000);
       expect(dialog._state).toBe("ready");
     } finally {
@@ -1061,6 +838,41 @@ describe("timeline loading resilience", () => {
     }
   });
 
+  it("shows each update photo's thumbnail and signs it once per page load", async () => {
+    const dialog = await makeDialog();
+    const thumbTask = { taskId: "thumbs", checkId: "check-thumbs" };
+    api.getTaskUpdates.mockResolvedValue({
+      task: thumbTask,
+      updates: [{ photoKeys: ["with-thumb", "no-thumb"] }],
+    });
+    api.getMediaUrl.mockImplementation((_check, id) =>
+      Promise.resolve({
+        downloadUrl: `https://example.com/${id}.jpg`,
+        thumbnailUrl:
+          id === "with-thumb"
+            ? `https://example.com/${id}.jpg.thumb.webp`
+            : undefined,
+        expiresIn: 3600,
+      }),
+    );
+    api.getMediaUrl.mockClear();
+    await dialog.open(thumbTask);
+    await vi.waitFor(() => expect(dialog._mediaUrls.size).toBe(2));
+    expect(dialog._mediaUrls.get("with-thumb")).toMatchObject({
+      downloadUrl: "https://example.com/with-thumb.jpg",
+      thumbnailUrl: "https://example.com/with-thumb.jpg.thumb.webp",
+    });
+    expect(dialog._mediaUrls.get("no-thumb")).toMatchObject({
+      downloadUrl: "https://example.com/no-thumb.jpg",
+    });
+    // Reopening reuses the signed URLs instead of signing again.
+    await dialog.open(thumbTask);
+    await vi.waitFor(() => expect(dialog._mediaUrls.size).toBe(2));
+    expect(
+      api.getMediaUrl.mock.calls.filter(([, id]) => id === "with-thumb"),
+    ).toHaveLength(1);
+  });
+
   it("aborts optional reads and cancels queued rendering on dismissal", async () => {
     const dialog = await makeDialog();
     api.getTaskUpdates.mockResolvedValueOnce({
@@ -1073,13 +885,16 @@ describe("timeline loading resilience", () => {
     api.getMediaUrl.mockImplementationOnce(() => new Promise(() => {}));
     await dialog.open(task);
     const citySignal = api.get311RequestDetails.mock.calls.at(-1)[1].signal;
-    const photoSignal = api.getMediaUrl.mock.calls.at(-1)[2].signal;
+    // Photo signing is shared with the cards (task-evidence cache), so the
+    // dialog stops waiting for it rather than cancelling the shared request.
+    const photoReads = [...dialog._timelineReads];
+    expect(photoReads.length).toBeGreaterThan(0);
     dialog._refreshTimeline();
     dialog.querySelector = () => null;
     dialog.dispatchEvent = vi.fn();
     dialog._dismiss();
     expect(citySignal.aborted).toBe(true);
-    expect(photoSignal.aborted).toBe(true);
+    expect(photoReads.every((read) => read.signal.aborted)).toBe(true);
     expect(dialog._timelineFrame).toBeNull();
   });
 
@@ -1095,7 +910,7 @@ describe("timeline loading resilience", () => {
       expect(dialog._renderTimeline).toHaveBeenCalledTimes(1);
       dialog._task = { checkId: "check" };
       dialog._detail = { updates: [{ photoKeys: ["same"] }] };
-      dialog._mediaUrls.set("same", "url");
+      dialog._mediaUrls.set("same", { downloadUrl: "url" });
       api.getMediaUrl.mockResolvedValueOnce({ downloadUrl: "url" });
       await dialog._loadTimelinePhotos(dialog._loadGeneration);
       expect(dialog._timelineFrame).toBeNull();

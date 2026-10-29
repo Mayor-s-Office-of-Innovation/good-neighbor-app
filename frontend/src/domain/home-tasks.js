@@ -141,6 +141,7 @@ export function isTaskExpired(task, now = Date.now()) {
  * @param {Record<string, any>} task
  */
 export function taskResolution(task) {
+  const proof = task.status === "completed" && Boolean(task.proofAddedAt);
   const explicit =
     task.completionMethod === "site_team_resolved" ||
     task.latestUpdateLabel === "Resolved";
@@ -151,12 +152,14 @@ export function taskResolution(task) {
     );
   const resolvedAt = task.resolvedAt || task.resolved_at || "";
   return {
-    confirmed: explicit || (!actionOnly && Boolean(resolvedAt)),
-    at: explicit
-      ? resolvedAt || task.completedAt || task.completed_at || ""
-      : actionOnly
-        ? ""
-        : resolvedAt,
+    confirmed: proof || explicit || (!actionOnly && Boolean(resolvedAt)),
+    at: proof
+      ? task.completedAt || task.completed_at || resolvedAt
+      : explicit
+        ? resolvedAt || task.completedAt || task.completed_at || ""
+        : actionOnly
+          ? ""
+          : resolvedAt,
   };
 }
 
@@ -460,4 +463,13 @@ export function splitSiteIdentity(name) {
     }
   }
   return null;
+}
+
+/** Explicitly completed cards need evidence of the result, never expiry alone. */
+export function needsResolutionProof(task) {
+  return (
+    task.status === "completed" &&
+    (taskResolution(task).confirmed || task.canBeInProgress === false) &&
+    !task.proofAddedAt
+  );
 }
