@@ -131,6 +131,12 @@ test.describe("proactive care", () => {
       if (!dropped) {
         dropped = true;
         await route.fetch();
+        // Deliver the lost response after the list has mounted and started
+        // queue recovery, so this scenario exercises the explicit Retry action.
+        await expect(page.locator(".care-days")).toHaveAttribute(
+          "aria-busy",
+          "false",
+        );
         return route.abort("failed");
       }
       return route.fallback();

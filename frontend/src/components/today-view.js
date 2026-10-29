@@ -1085,6 +1085,15 @@ class TodayView extends HTMLElement {
     const markup = this._render(model);
     if (markup === this._homeMarkup && this.querySelector(":scope > .home"))
       return;
+    // Background list/evidence updates must not dismiss an open action menu
+    // or strand keyboard focus when its DOM is replaced.
+    const previousActionMenu = /** @type {HTMLElement | null} */ (
+      this.querySelector("#home-action-menu")
+    );
+    const actionMenuOpen = previousActionMenu && !previousActionMenu.hidden;
+    const focusedActionId = previousActionMenu?.contains(document.activeElement)
+      ? document.activeElement?.id
+      : null;
     this._homeMarkup = markup;
     this.innerHTML = markup;
     this._tabRefreshStatus?.();
@@ -1240,6 +1249,14 @@ class TodayView extends HTMLElement {
     const actionMenu = /** @type {HTMLElement | null} */ (
       this.querySelector("#home-action-menu")
     );
+    if (actionMenuOpen && actionMenu && actionMenuTrigger) {
+      actionMenu.hidden = false;
+      actionMenuTrigger.setAttribute("aria-expanded", "true");
+      if (focusedActionId)
+        /** @type {HTMLElement | null} */ (
+          actionMenu.querySelector(`#${focusedActionId}`)
+        )?.focus({ preventScroll: true });
+    }
     actionMenuTrigger?.addEventListener("click", () => {
       const opening = actionMenu.hidden;
       actionMenu.hidden = !opening;
