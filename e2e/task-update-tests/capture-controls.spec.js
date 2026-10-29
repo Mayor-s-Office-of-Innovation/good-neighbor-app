@@ -56,6 +56,11 @@ async function mount(page, name) {
     }
   }, name);
   await expect(page.locator("[data-capture-camera]")).toBeVisible();
+  if (name === "care-work-view") {
+    // Async initialization schedules the route announcement for the next frame.
+    // Wait for it before testing keyboard focus, or it can steal Enter from camera.
+    await expect(page.locator("care-work-view h1")).toBeFocused();
+  }
 }
 
 for (const name of [
@@ -72,7 +77,7 @@ for (const name of [
     const camera = page.locator("[data-capture-camera]");
     await camera.focus();
     const chooserPromise = page.waitForEvent("filechooser");
-    await page.keyboard.press("Enter");
+    await camera.press("Enter");
     const chooser = await chooserPromise;
     expect(await chooser.element().getAttribute("capture")).toBe("environment");
     await chooser.setFiles(photos[0]);
