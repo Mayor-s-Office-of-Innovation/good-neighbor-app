@@ -1,71 +1,149 @@
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { activeCatalog, catalogForPolicyVersion } from "./catalog-registry.js";
+import { catalogForPolicyVersion } from "./catalog-registry.js";
 import { evaluateCondition } from "./evaluator.js";
 import { validateCatalog } from "./rule-catalog.js";
 
-it("activates the supplied v9 rubric and preserves historical pickup behavior", () => {
-  const catalog = activeCatalog();
-  expect(catalog.policyVersion).toBe("actions-escalations-v9");
-  expect(catalog.rules).toHaveLength(39);
-  expect(validateCatalog(catalog)).toEqual([]);
+it("preserves all 39 final CSV rules without changing their fields", () => {
+  const imported = JSON.parse(
+    execFileSync(
+      process.execPath,
+      [
+        fileURLToPath(
+          new URL("../../../scripts/policy-import.mjs", import.meta.url),
+        ),
+        fileURLToPath(new URL("./sources/GNP-rules-v9.csv", import.meta.url)),
+        "actions-escalations-v9",
+      ],
+      { encoding: "utf8" },
+    ),
+  );
+  expect(catalogForPolicyVersion("actions-escalations-v9").policyVersion).toBe(
+    "actions-escalations-v9",
+  );
+  expect(catalogForPolicyVersion("actions-escalations-v9").rules).toHaveLength(
+    39,
+  );
+  expect(catalogForPolicyVersion("actions-escalations-v9").rules).toEqual(
+    imported.catalog.rules,
+  );
   expect(
-    evaluateCondition({
-      condition: { category: "Bulky items", severity: 3 },
-      answers: { provider_generated: true },
-    }),
-  ).toMatchObject({
-    kind: "outcome",
-    rule: { ruleId: "BULKY-1" },
-    outcome: {
-      kind: "non_actionable_escalation",
-      phoneNumber: "415-330-1400",
-      label: "Call Recology for pickup.",
-    },
-  });
-  expect(
-    catalogForPolicyVersion("actions-escalations-v8").rules.find(
-      (rule) => rule.ruleId === "BULKY-1",
-    )?.outcome.kind,
-  ).toBe("action");
+    validateCatalog(catalogForPolicyVersion("actions-escalations-v9")),
+  ).toEqual([]);
 });
 
-it.each([
-  [true, "THREAT-2"],
-  [false, "THREAT-1"],
-])(
-  "routes likely-to-leave answer %s using the supplied polarity",
-  (answer, ruleId) => {
+it.each([1, 2])(
+  "routes both threat answers correctly at severity %s",
+  (severity) => {
     const condition = {
       category: "Threats, intimidation, or violence",
-      severity: 2,
+      severity,
     };
-    expect(evaluateCondition({ condition })).toMatchObject({
+    expect(
+      evaluateCondition({
+        catalog: catalogForPolicyVersion("actions-escalations-v9"),
+        condition,
+      }),
+    ).toMatchObject({
+      kind: "needs_answer",
+      question: { key: "likely_to_leave", type: "boolean" },
+    });
+    expect(
+      evaluateCondition({
+        catalog: catalogForPolicyVersion("actions-escalations-v9"),
+        condition,
+        answers: { likely_to_leave: true },
+      }),
+    ).toMatchObject({
+      kind: "outcome",
+      rule: { ruleId: "THREAT-2" },
+      outcome: { kind: "action", buttons: ["Ask them to leave"] },
+    });
+    expect(
+      evaluateCondition({
+        catalog: catalogForPolicyVersion("actions-escalations-v9"),
+        condition,
+        answers: { likely_to_leave: false },
+      }),
+    ).toMatchObject({
+      kind: "outcome",
+      rule: { ruleId: "THREAT-1" },
+      outcome: { phoneNumber: "415-553-0123" },
+    });
+    // An old answer must not silently satisfy the renamed question.
+    expect(
+      evaluateCondition({
+        catalog: catalogForPolicyVersion("actions-escalations-v9"),
+        condition,
+        answers: { refusal_leave: true },
+      }),
+    ).toMatchObject({
       kind: "needs_answer",
       question: { key: "likely_to_leave" },
     });
-    expect(
-      evaluateCondition({ condition, answers: { likely_to_leave: answer } }),
-    ).toMatchObject({ kind: "outcome", rule: { ruleId } });
-    expect(
-      catalogForPolicyVersion("actions-escalations-v8").rules.find(
-        (rule) => rule.ruleId === "THREAT-1",
-      )?.requiredQuestions[0].key,
-    ).toBe("refusal_leave");
+  },
+);
+
+it.each(["v2", "v3", "v4", "v5", "v6", "v7", "v8"])(
+  "preserves the stored threat answer contract for %s",
+  (version) => {
+    const catalog = catalogForPolicyVersion(`actions-escalations-${version}`);
+    const category = catalog.rules.find(
+      (rule) => rule.ruleId === "THREAT-1",
+    )?.category;
+    if (!category) throw new Error("Missing historical threat category");
+    const condition = { category, severity: 1 };
+    expect(evaluateCondition({ condition, catalog })).toMatchObject({
+      kind: "needs_answer",
+      question: { key: "refusal_leave" },
+    });
+    for (const answer of [true, false]) {
+      expect(
+        evaluateCondition({
+          condition,
+          catalog,
+          answers: { refusal_leave: answer },
+        }),
+      ).toMatchObject({
+        kind: "outcome",
+        rule: { ruleId: answer ? "THREAT-1" : "THREAT-2" },
+      });
+    }
   },
 );
 
 it.each([1, 2, 3])("asks about medical help at severity %s", (severity) => {
+  const condition = { category: "Medical emergency", severity };
   expect(
     evaluateCondition({
-      condition: { category: "Medical emergency", severity },
+      catalog: catalogForPolicyVersion("actions-escalations-v9"),
+      condition,
     }),
-  ).toMatchObject({ kind: "needs_answer", question: { key: "medical_help" } });
+  ).toMatchObject({
+    kind: "needs_answer",
+    question: { key: "medical_help" },
+  });
+  for (const answer of [true, false]) {
+    expect(
+      evaluateCondition({
+        catalog: catalogForPolicyVersion("actions-escalations-v9"),
+        condition,
+        answers: { medical_help: answer },
+      }),
+    ).toMatchObject({
+      kind: "outcome",
+      rule: { ruleId: answer ? "MED-1" : "MED-2" },
+    });
+  }
 });
+
 it.each([4, 5])(
-  "routes severe medical emergencies directly to 911 at severity %s",
+  "routes medical severity %s to 911 without a question",
   (severity) => {
     expect(
       evaluateCondition({
+        catalog: catalogForPolicyVersion("actions-escalations-v9"),
         condition: { category: "Medical emergency", severity },
       }),
     ).toMatchObject({

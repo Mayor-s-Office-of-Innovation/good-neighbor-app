@@ -6,7 +6,7 @@ export const ACTIONS_ESCALATIONS_V9_POLICY_VERSION = "actions-escalations-v9";
 export const actionsEscalationsV9Catalog = buildCatalog({
   policyVersion: ACTIONS_ESCALATIONS_V9_POLICY_VERSION,
   metadata: {
-    sourceAsset: "GNP - rubrics-5.csv",
+    sourceAsset: "GNP - rubrics-3.csv",
     effectiveDate: "2026-10-28",
     createdAt: "2026-10-28T00:00:00.000Z",
     changelogPath: "docs/guidance-policy-changelog.md",

@@ -150,11 +150,20 @@ export function questionKeyForPrompt(prompt) {
 
 /**
  * @param {string} prompt
+ * @param {{ all: RulePredicateClause[] }} [predicate]
  * @returns {RuleQuestion[]}
  */
-export function questionsForPrompt(prompt) {
+export function questionsForPrompt(prompt, predicate = { all: [] }) {
   const cleaned = cleanCell(prompt);
-  const key = questionKeyForPrompt(cleaned);
+  let key = questionKeyForPrompt(cleaned);
+  // The corrected rubric names the positive answer explicitly. Older catalogs
+  // must retain refusal_leave so saved assessments keep their original answers.
+  if (
+    key === "refusal_leave" &&
+    predicate.all.some((clause) => clause.fact === "likely_to_leave")
+  ) {
+    key = "likely_to_leave";
+  }
   return key
     ? [{ key, prompt: cleaned, type: "boolean", options: BOOLEAN_OPTIONS }]
     : [];
@@ -383,6 +392,7 @@ export function buildCatalog({ policyVersion, metadata, rows, aliases }) {
         responseHours === undefined
           ? undefined
           : Number(cleanCell(responseHours));
+      const predicate = parsePredicate(userResponse);
 
       return {
         policyVersion,
@@ -397,19 +407,8 @@ export function buildCatalog({ policyVersion, metadata, rows, aliases }) {
         validTimeRange,
         canBeInProgress,
         primaryInProgressAgency,
-        requiredQuestions: questionsForPrompt(askUser).map((question) => {
-          // Preserve historical answer keys, but honor the corrected positive
-          // question key when supplied by the new rubric's predicate.
-          if (
-            question.key === "refusal_leave" &&
-            parsePredicate(userResponse).all.some(
-              (clause) => clause.fact === "likely_to_leave",
-            )
-          )
-            return { ...question, key: "likely_to_leave" };
-          return question;
-        }),
-        predicate: parsePredicate(userResponse),
+        requiredQuestions: questionsForPrompt(askUser, predicate),
+        predicate,
         outcome: {
           kind: normalizeOutcomeKind(thenKind),
           ...(phoneNumber ? { phoneNumber } : {}),

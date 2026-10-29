@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { catalogForPolicyVersion } from "./catalog-registry.js";
 import { validateCatalog } from "./rule-catalog.js";
 
-it("retains v8 with only the nine supplied button-label changes", () => {
+it("preserves v8 with only the nine supplied button-label changes", () => {
   const catalog = catalogForPolicyVersion("actions-escalations-v8");
   expect(catalog.policyVersion).toBe("actions-escalations-v8");
   expect(validateCatalog(catalog)).toEqual([]);

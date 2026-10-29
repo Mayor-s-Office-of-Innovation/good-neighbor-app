@@ -2,19 +2,31 @@
 
 *Policy operations log for the action/escalation rulebase.*
 
+## actions-escalations-v10 - 2026-10-28
+
+- Supersedes v9 for new assessments with all 39 rules from `GNP - rubrics-5.csv`,
+  preserved as `backend/src/analysis/guidance/sources/GNP-rules-v10.csv`.
+- BULKY-1 is a Phone call to Recology at the supplied number, with the updated
+  action text. It uses standard phone-action behavior without a ticker override.
+- Retains v9's predicate-aware `likely_to_leave` handling, medical severity routing,
+  guidance wording, and saved button-label support.
+- Keeps v9 and earlier catalogs available for saved assessments and task snapshots;
+  historical answer keys and pickup behavior are unchanged.
+
 ## actions-escalations-v9 - 2026-10-28
 
-- Imports `GNP - rubrics-5.csv` (39 rules), preserved as `sources/GNP-rules-v9.csv`.
-- Classifies BULKY-1 as a Phone call to Recology, with the supplied phone number
-  and updated action text. It uses the standard phone-action behavior, with no
-  rule-specific ticker override.
-- Updates BLOCK-1 and DISTRESS-2/3 guidance and DISTRESS-3 action text.
-- Restricts MED-3's unconditional emergency branch to severity 4–5; severity
-  1–3 continues through the medical-help question.
-- Uses `likely_to_leave` for THREAT-1/2: No routes to the phone call and Yes
-  routes to asking them to leave. Historical catalogs retain `refusal_leave`.
-- New assessments use v9. Existing task snapshots and in-flight assessments
-  retain their original policy version and behavior.
+- Imports the final `GNP - rubrics-3.csv` supplied on 2026-10-28 (39 rules),
+  preserved in `backend/src/analysis/guidance/sources/GNP-rules-v9.csv`.
+  Imports the approved wording without editorial changes.
+- THREAT-1/2 use `likely_to_leave`: Yes selects the sidewalk action, No selects
+  the SFPD non-emergency call. Question keys follow that corrected predicate;
+  older catalogs retain `refusal_leave` and their original answer behavior.
+- Updates BLOCK-1 and DISTRESS-2/3 guidance and DISTRESS-3's action text.
+  MED-3 applies to severity 4–5; severity 1–3 follows the medical-help answer.
+- Preserves supplied routing, phone numbers, and expected response times,
+  which apply to the responsible party (site or outside agency) for each rule.
+- New assessments use v9. Earlier catalogs, saved task snapshots, and their
+  translations remain available. The frontend uses v9's saved button labels.
 
 ## actions-escalations-v8 - 2026-10-15
 
