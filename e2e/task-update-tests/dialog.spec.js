@@ -191,7 +191,13 @@ test("timeline photos retain the original URL and keyboard focus through enrichm
     }),
   );
   await page.evaluate(async (task) => {
-    await document.querySelector("task-update-dialog").open(task);
+    const element = document.querySelector("task-update-dialog");
+    if (!element) throw new Error("Task update dialog is missing");
+    const dialog =
+      /** @type {Element & {open: (task: Record<string, unknown>) => Promise<void>}} */ (
+        element
+      );
+    await dialog.open(task);
   }, task);
   const trigger = page.locator(".task-update__photo-trigger");
   await expect(trigger).toHaveAttribute("data-full-src", /test-original\.jpg$/);
@@ -200,9 +206,14 @@ test("timeline photos retain the original URL and keyboard focus through enrichm
     /test-thumbnail\.jpg$/,
   );
   await trigger.focus();
-  await page.evaluate(() =>
-    document.querySelector("task-update-dialog")._renderTimeline(),
-  );
+  await page.evaluate(() => {
+    const element = document.querySelector("task-update-dialog");
+    if (!element) throw new Error("Task update dialog is missing");
+    const dialog = /** @type {Element & {_renderTimeline: () => void}} */ (
+      element
+    );
+    dialog._renderTimeline();
+  });
   await expect(trigger).toBeFocused();
   await expect(trigger).toHaveAttribute("data-full-src", /test-original\.jpg$/);
 });
