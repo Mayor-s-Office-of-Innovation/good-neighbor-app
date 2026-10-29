@@ -40,12 +40,15 @@ it("preserves labels for unknown historical rules", () => {
   ).toBe("Historical action");
 });
 
-it("uses v8 labels without the legacy phone-number suffix", () => {
-  expect(
-    taskActionLabel({
-      policyVersion: "actions-escalations-v8",
-      ruleId: "THREAT-1",
-      buttons: ["Call SFPD"],
-    }),
-  ).toBe("Call SFPD");
-});
+it.each(["actions-escalations-v8", "actions-escalations-v9"])(
+  "uses %s labels without the legacy phone-number suffix",
+  (policyVersion) => {
+    expect(
+      taskActionLabel({
+        policyVersion,
+        ruleId: "THREAT-1",
+        buttons: ["Call SFPD"],
+      }),
+    ).toBe("Call SFPD");
+  },
+);

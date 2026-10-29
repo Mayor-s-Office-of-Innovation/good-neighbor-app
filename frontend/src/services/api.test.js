@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getUploadRequestId } from "../db.js";
+import { trackEvent } from "./analytics.js";
+vi.mock("./analytics.js", () => ({
+  trackEvent: vi.fn().mockResolvedValue(undefined),
+}));
 import {
   ApiError,
   dataUrlToBlob,
@@ -604,6 +608,49 @@ it("cancels the progress upload without registering incomplete media", async () 
   }
 });
 
+it.each([
+  undefined,
+  {
+    randomUUID() {
+      throw new Error("unavailable");
+    },
+  },
+])(
+  "uploads and registers photos without a working UUID API (%s)",
+  async (cryptoApi) => {
+    // Durable upload fingerprinting needs Web Crypto; only the optional
+    // telemetry UUID API is unavailable in this scenario.
+    vi.stubGlobal("crypto", {
+      subtle: globalThis.crypto.subtle,
+      randomUUID: cryptoApi?.randomUUID,
+    });
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            artifactId: "artifact",
+            s3Key: "synthetic-key",
+            uploadUrl: "https://example.test/upload",
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(""))
+      .mockResolvedValueOnce(new Response("{}"));
+    vi.stubGlobal("fetch", fetch);
+    try {
+      await expect(
+        uploadArtifact("check", { dataUrl: "data:image/jpeg;base64,aGk=" }),
+      ).resolves.toMatchObject({ artifactId: "artifact" });
+      expect(fetch).toHaveBeenCalledTimes(3);
+      expect(fetch.mock.calls[1][1].method).toBe("PUT");
+      expect(fetch.mock.calls[2][0]).toBe("/v1/checks/check/artifacts");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
 describe("time limits on a weak connection", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -793,6 +840,21 @@ describe("uncertain media uploads", () => {
       expect(JSON.parse(fetch.mock.calls[5][1].body).artifactId).toBe(
         "photo-1",
       );
+      if (kind === "check") {
+        expect(
+          vi
+            .mocked(trackEvent)
+            .mock.calls.slice(-6)
+            .map(([, props]) => [props.stage, props.outcome]),
+        ).toEqual([
+          ["presign", "started"],
+          ["presign", "completed"],
+          ["put", "started"],
+          ["put", "completed"],
+          ["register", "started"],
+          ["register", "completed"],
+        ]);
+      }
     },
   );
 });

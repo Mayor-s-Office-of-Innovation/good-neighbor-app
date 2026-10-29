@@ -93,6 +93,7 @@ for (const cancelControl of ["data-cancel-save", "data-close"])
   }) => {
     let presigns = 0;
     let saves = 0;
+    /** @type {string[]} */
     const requestIds = [];
     await page.route("**/v1/checks/check/artifacts:presign", (route) => {
       presigns++;

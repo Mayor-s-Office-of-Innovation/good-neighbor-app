@@ -1,4 +1,5 @@
 import { parseRetryAfter } from "../lib/retry-after.js";
+import { observePhotoStage, photoAttemptId } from "./photo-telemetry.js";
 import { clearTaskStatusOverrides } from "../state/task-status-overrides.js";
 import { invalidateDuplicateIssues } from "./duplicate-invalidation.js";
 /*
@@ -1319,56 +1320,65 @@ export async function uploadArtifact(
   { dataUrl, capturedAt, latitude, longitude, text, tag, onLeg },
 ) {
   const art = tag ?? "photo";
+  const telemetry = { check_id: checkId, attempt_id: photoAttemptId() };
   const done = span("upload", { art });
 
   const contentType = contentTypeFromDataUrl(dataUrl);
   const blob = await dataUrlToBlob(dataUrl);
+  telemetry.photo_bytes = blob.size;
   const endPresign = span("upload.presign", { art });
   const { artifactId, s3Key, uploadUrl, uploadHeaders } =
-    await reserveMediaUpload(
-      `check:${checkId}:${tag ?? "photo"}`,
-      blob,
-      (uploadRequestId) =>
-        presignArtifact(checkId, {
-          contentType,
-          contentLength: blob.size,
-          uploadRequestId,
-        }),
+    await observePhotoStage("presign", telemetry, () =>
+      reserveMediaUpload(
+        `check:${checkId}:${tag ?? "photo"}`,
+        blob,
+        (uploadRequestId) =>
+          presignArtifact(checkId, {
+            contentType,
+            contentLength: blob.size,
+            uploadRequestId,
+          }),
+      ),
     );
+  telemetry.artifact_id = artifactId;
   endPresign({ artifactId });
   onLeg?.("presign");
 
   const endPut = span("upload.put", { art, bytes: blob.size });
-  try {
-    await putMedia(uploadUrl, blob, contentType, uploadHeaders);
-  } catch (error) {
-    if (error?.status !== 412) throw error;
-    // A lost successful PUT is verified by registration below.
-  }
+  await observePhotoStage("put", telemetry, async () => {
+    try {
+      await putMedia(uploadUrl, blob, contentType, uploadHeaders);
+    } catch (error) {
+      if (error?.status !== 412) throw error;
+      // A lost successful PUT is verified by registration below.
+    }
+  });
   endPut();
   onLeg?.("put");
 
   const endRegister = span("upload.register", { art, artifactId });
-  try {
-    await registerArtifact(checkId, {
-      artifactId,
-      s3Key,
-      contentType,
-      contentLength: blob.size,
-      ...(capturedAt ? { capturedAt } : {}),
-      ...(Number.isFinite(latitude) && Number.isFinite(longitude)
-        ? { latitude, longitude }
-        : {}),
-      ...(text ? { text } : {}),
-    });
-  } catch (error) {
-    if (
-      error?.status !== 409 ||
-      error?.body?.error !== "artifact already registered"
-    )
-      throw error;
-    // This exact replay response confirms registration and re-enqueues analysis.
-  }
+  await observePhotoStage("register", telemetry, async () => {
+    try {
+      await registerArtifact(checkId, {
+        artifactId,
+        s3Key,
+        contentType,
+        contentLength: blob.size,
+        ...(capturedAt ? { capturedAt } : {}),
+        ...(Number.isFinite(latitude) && Number.isFinite(longitude)
+          ? { latitude, longitude }
+          : {}),
+        ...(text ? { text } : {}),
+      });
+    } catch (error) {
+      if (
+        error?.status !== 409 ||
+        error?.body?.error !== "artifact already registered"
+      )
+        throw error;
+      // This exact replay response confirms registration and re-enqueues analysis.
+    }
+  });
   endRegister();
   onLeg?.("register");
 
