@@ -252,8 +252,8 @@ it("delays transient failures without acknowledging them", async () => {
 });
 
 it.each([
-  ["arn:aws:sqs:us-west-2:000000000000:311", "https://sqs.example/311"],
-  ["arn:aws:sqs:us-west-2:000000000000:submissions", "queue"],
+  ["arn:aws:sqs:us-west-2:ACCOUNT_ID:311", "https://sqs.example/311"],
+  ["arn:aws:sqs:us-west-2:ACCOUNT_ID:submissions", "queue"],
 ])(
   "backs off a receipt on its actual source queue: %s",
   async (eventSourceARN, expectedQueue) => {
