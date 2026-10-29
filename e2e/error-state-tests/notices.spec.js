@@ -442,9 +442,11 @@ for (const removal of [
       removal === "artifact_not_found" ? 0 : 1,
     );
     if (removal !== "artifact_not_found")
-      await expect(page.locator(".app-error[role=alert]").filter({hasText: t("complaints.upload.removeError")})).toContainText(
-        t("complaints.upload.removeError"),
-      );
+      await expect(
+        page
+          .locator(".app-error[role=alert]")
+          .filter({ hasText: t("complaints.upload.removeError") }),
+      ).toContainText(t("complaints.upload.removeError"));
   });
 }
 
