@@ -504,7 +504,9 @@ form > wa-button[type="submit"] {
   text-underline-offset: 0.2em;
   cursor: pointer;
   height: auto;
-  min-height: 44px; /* keep the touch target without the WA pill height */
+  /* Invisible 44×44 floor (Apple HIG / 2.5.5 AAA) without the WA pill height */
+  min-height: var(--hit-target, 2.75rem);
+  min-width: var(--hit-target, 2.75rem);
   padding: 0;
   margin: 0;
   box-shadow: none;
@@ -692,6 +694,47 @@ button[data-loading] [data-loading-label] {
   min-height: 38px;
   font-size: var(--wa-font-size-s, 0.875rem);
   white-space: nowrap;
+}
+
+/* ---- Hit-target halo (Apple HIG 44×44pt = WCAG 2.5.5 Target Size, AAA) ----
+   System-level a11y preset, centralized like the button roles: controls whose
+   VISUAL must stay compact (compact card buttons, photo-overlay deletes, small
+   chips, inline clears) keep their size while an invisible overlay centered on
+   the control carries the tap area up to 44×44. Controls that already measure
+   44+ (primary/secondary 46, tertiary/icon/tab/dismiss 44) don't need it.
+   .shot__del and .support__delete are already positioned; the rest get
+   position: relative here. */
+.btn-primary--sm,
+.btn-secondary--sm,
+.btn-ink--sm,
+.btn-outline--sm,
+.btn-blue--sm,
+.support__small,
+.reports__record-issues,
+.task-update__clear,
+.install-banner__close,
+.app-toast__close {
+  position: relative;
+}
+.btn-primary--sm::after,
+.btn-secondary--sm::after,
+.btn-ink--sm::after,
+.btn-outline--sm::after,
+.btn-blue--sm::after,
+.support__small::after,
+.reports__record-issues::after,
+.task-update__clear::after,
+.install-banner__close::after,
+.app-toast__close::after,
+.shot__del::after,
+.support__delete::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100%, var(--hit-target, 2.75rem));
+  height: max(100%, var(--hit-target, 2.75rem));
+  translate: -50% -50%;
 }
 
 /* ==================================================================

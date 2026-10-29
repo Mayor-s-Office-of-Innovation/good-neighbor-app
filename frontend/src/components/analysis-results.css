@@ -426,8 +426,8 @@ html.wa-dark .analysis-card__clear-copy a {
 }
 
 .analysis-card__primary {
-  height: 2.6875rem;
-  min-height: 2.6875rem;
+  height: var(--hit-target, 2.75rem);
+  min-height: var(--hit-target, 2.75rem);
   padding: 0 var(--wa-form-control-padding-inline, 1rem);
   background: var(--wa-color-brand-fill-loud, var(--brand-blue));
   color: var(--wa-color-brand-on-loud, var(--on-ink));
@@ -457,11 +457,11 @@ html.wa-dark .analysis-card__clear-copy a {
 
 .btn-icon,
 .analysis-card__icon {
-  width: 2.6875rem;
-  height: 2.6875rem;
-  flex: 0 0 2.6875rem;
-  min-width: 2.6875rem;
-  min-height: 2.6875rem;
+  width: var(--hit-target, 2.75rem);
+  height: var(--hit-target, 2.75rem);
+  flex: 0 0 var(--hit-target, 2.75rem);
+  min-width: var(--hit-target, 2.75rem);
+  min-height: var(--hit-target, 2.75rem);
   border-radius: var(--radius-pill);
   background: var(--wa-color-neutral-fill-quiet, #f1f2f3);
   color: var(--text-secondary);

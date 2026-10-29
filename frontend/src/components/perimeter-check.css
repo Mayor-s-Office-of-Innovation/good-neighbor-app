@@ -124,9 +124,9 @@
 .check-timeline__close {
   appearance: none;
   -webkit-appearance: none;
-  width: 2.6875rem;
-  height: 2.6875rem;
-  min-height: 2.6875rem;
+  width: var(--hit-target, 2.75rem);
+  height: var(--hit-target, 2.75rem);
+  min-height: var(--hit-target, 2.75rem);
   display: inline-flex;
   align-items: center;
   justify-content: center;

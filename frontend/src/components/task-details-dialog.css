@@ -30,8 +30,8 @@
 }
 
 .task-details__close-row .btn-icon {
-  width: 43px;
-  height: 43px;
+  width: var(--hit-target, 2.75rem);
+  height: var(--hit-target, 2.75rem);
   border-radius: 50%;
   background: var(--wa-color-neutral-fill-quiet);
 }

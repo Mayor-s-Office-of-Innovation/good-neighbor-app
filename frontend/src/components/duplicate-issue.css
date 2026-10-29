@@ -103,8 +103,8 @@
 }
 .duplicate-detail__close button {
   padding: 0;
-  inline-size: 43px;
-  block-size: 43px;
+  inline-size: var(--hit-target, 2.75rem);
+  block-size: var(--hit-target, 2.75rem);
 }
 .duplicate-detail__route {
   display: flex;

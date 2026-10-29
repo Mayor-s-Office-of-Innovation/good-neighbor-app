@@ -84,6 +84,10 @@
 
   --card-outline: #c9caca; /* 1px outline around home/task cards */
   --control-outline: #8c8c8c; /* 3.2:1 on white/#fafafa — 1.4.11 boundary */
+  /* Minimum touch target — Apple HIG 44×44pt = WCAG 2.5.5 Target Size (AAA).
+     rem so it grows with a raised browser font size (1.4.4). Controls whose
+     visual must stay smaller get an invisible 44px tap halo (see base.css). */
+  --hit-target: 2.75rem; /* 44px */
   --group-grey: #e9eaea; /* grey check-group container + card footer strip */
   --radius: 12px;
   --radius-sm: 8px;
