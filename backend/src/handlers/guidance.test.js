@@ -504,8 +504,6 @@ describe("guidance handlers", () => {
         answers: {},
         taskIds: [],
         source: { artifactIds: ["art-1"] },
-        gsi5pk: "SITE#site-1#CONDITION#UNRESOLVED",
-        gsi5sk: "x",
       },
     });
     mockTaskShortIdAllocation({
@@ -543,7 +541,6 @@ describe("guidance handlers", () => {
       answers: { onsite: false },
       resolvedToTasks: true,
     });
-    expect(condition).not.toHaveProperty("gsi5pk");
     expect(tx.input.TransactItems[2].Put.Item).toMatchObject({
       ruleId: "GRAFFITI-2",
       conditionId: "cond-1",

@@ -15,6 +15,8 @@ const {
   presignGet,
   presignPut,
   setObjectTags,
+  downscaleImage,
+  storeThumbnail,
 } = vi.hoisted(() => ({
   ddbSend: vi.fn(),
   sqsSend: vi.fn(),
@@ -24,6 +26,8 @@ const {
   presignGet: vi.fn(),
   presignPut: vi.fn(),
   setObjectTags: vi.fn(),
+  downscaleImage: vi.fn(),
+  storeThumbnail: vi.fn(),
 }));
 
 vi.mock("../db.js", () => ({ ddb: { send: ddbSend } }));
@@ -34,6 +38,11 @@ vi.mock("../s3.js", () => ({
   presignGet,
   presignPut,
   setObjectTags,
+}));
+vi.mock("../media/downscale.js", () => ({ downscaleImage }));
+vi.mock("../media/thumbnail.js", () => ({
+  storeThumbnail,
+  thumbnailKeyFor: (/** @type {string} */ key) => `${key}.thumb.webp`,
 }));
 vi.mock("@aws-sdk/client-sqs", async (importOriginal) => {
   const actual = /** @type {any} */ (await importOriginal());
@@ -47,7 +56,9 @@ vi.mock("@aws-sdk/client-sqs", async (importOriginal) => {
 
 const {
   createComplaint,
+  deleteComplaint,
   deleteComplaintArtifact,
+  getComplaint,
   presignComplaintArtifact,
   presignComplaintMedia,
   registerComplaintArtifact,
@@ -82,6 +93,13 @@ beforeEach(() => {
   presignGet.mockReset();
   presignPut.mockReset().mockResolvedValue("https://upload.example");
   setObjectTags.mockReset().mockResolvedValue({});
+  downscaleImage.mockReset().mockResolvedValue({
+    bytes: Buffer.from("normalized"),
+    contentType: "image/jpeg",
+  });
+  storeThumbnail
+    .mockReset()
+    .mockImplementation(async ({ s3Key }) => `${s3Key}.thumb.webp`);
   process.env.DYNAMO_TABLE = "table";
   process.env.S3_UPLOAD_BUCKET = "bucket";
   process.env.S3_COMPLAINT_BUCKET = "complaints";
@@ -256,6 +274,7 @@ describe("complaint upload lifecycle", () => {
         )
       ).statusCode,
     ).toBe(400);
+    expect(storeThumbnail).not.toHaveBeenCalled();
   });
 
   it("allows individual artifact deletion only from a draft", async () => {
@@ -402,5 +421,199 @@ describe("complaint scheduling", () => {
 
     expect(response.statusCode).toBe(404);
     expect(presignGet).not.toHaveBeenCalled();
+  });
+});
+
+describe("complaint image thumbnails", () => {
+  const KEY = `complaints/site-1/${COMPLAINT_ID}/${ARTIFACT_ID}`;
+  const THUMB = `${KEY}.thumb.webp`;
+  const imageBody = {
+    artifactId: ARTIFACT_ID,
+    s3Key: KEY,
+    name: "photo.jpg",
+    contentType: "image/jpeg",
+    contentLength: 3,
+  };
+  const artifactRow = (extra = {}) => ({
+    pk: "SITE#site-1",
+    sk: `COMPLAINT#${COMPLAINT_ID}#ART#${ARTIFACT_ID}`,
+    s3Key: KEY,
+    thumbS3Key: THUMB,
+    contentType: "image/jpeg",
+    contentLength: 3,
+    status: "registered",
+    ...extra,
+  });
+
+  /** @param {Buffer} bytes */
+  const uploaded = (bytes) => {
+    headObject.mockResolvedValue({
+      contentType: "image/jpeg",
+      contentLength: 3,
+    });
+    getObjectBytes.mockResolvedValue({ bytes });
+  };
+
+  it("stores a pending-tagged thumbnail at registration and records it", async () => {
+    uploaded(Buffer.from([0xff, 0xd8, 0xff]));
+    ddbSend.mockResolvedValueOnce({});
+
+    const response = await registerComplaintArtifact(
+      event({ body: imageBody }),
+    );
+
+    expect(response.statusCode).toBe(201);
+    expect(downscaleImage).toHaveBeenCalledWith(
+      Buffer.from([0xff, 0xd8, 0xff]),
+      "image/jpeg",
+    );
+    expect(storeThumbnail).toHaveBeenCalledWith({
+      bucket: "complaints",
+      s3Key: KEY,
+      bytes: Buffer.from("normalized"),
+    });
+    expect(setObjectTags.mock.calls.map(([call]) => call)).toEqual([
+      { bucket: "complaints", key: KEY, tags: { state: "pending" } },
+      { bucket: "complaints", key: THUMB, tags: { state: "pending" } },
+    ]);
+    const put = ddbSend.mock.calls[0][0].input.TransactItems[1].Put.Item;
+    expect(put).toMatchObject({ s3Key: KEY, thumbS3Key: THUMB });
+  });
+
+  it("keeps the thumbnail when retagging it pending fails", async () => {
+    uploaded(Buffer.from([0xff, 0xd8, 0xff]));
+    ddbSend.mockResolvedValueOnce({});
+    setObjectTags.mockRejectedValueOnce(new Error("tagging failed"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const response = await registerComplaintArtifact(
+      event({ body: imageBody }),
+    );
+
+    expect(response.statusCode).toBe(201);
+    expect(warn).toHaveBeenCalled();
+    const put = ddbSend.mock.calls[0][0].input.TransactItems[1].Put.Item;
+    expect(put).toMatchObject({ thumbS3Key: THUMB });
+  });
+
+  it("registers the image without a thumbnail when encoding fails", async () => {
+    uploaded(Buffer.from([0xff, 0xd8, 0xff]));
+    ddbSend.mockResolvedValueOnce({});
+    storeThumbnail.mockRejectedValueOnce(new Error("encode failed"));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const response = await registerComplaintArtifact(
+      event({ body: imageBody }),
+    );
+
+    expect(response.statusCode).toBe(201);
+    const put = ddbSend.mock.calls[0][0].input.TransactItems[1].Put.Item;
+    expect(put).not.toHaveProperty("thumbS3Key");
+  });
+
+  it("retags the thumbnail with its original when the complaint is submitted", async () => {
+    ddbSend
+      .mockResolvedValueOnce({ Items: [artifactRow()] })
+      .mockResolvedValueOnce({});
+    sqsSend.mockResolvedValueOnce({});
+
+    const response = await createComplaint(
+      event({ body: { complaintId: COMPLAINT_ID, description: "Noise" } }),
+    );
+
+    expect(response.statusCode).toBe(202);
+    expect(setObjectTags.mock.calls.map(([call]) => call)).toEqual([
+      { bucket: "complaints", key: KEY, tags: { state: "complaint" } },
+      { bucket: "complaints", key: THUMB, tags: { state: "complaint" } },
+    ]);
+  });
+
+  it("deletes the thumbnail with its original when one file is removed", async () => {
+    ddbSend
+      .mockResolvedValueOnce({ Item: artifactRow() })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+
+    const response = await deleteComplaintArtifact(
+      event({ artifactId: ARTIFACT_ID }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(deleteObject.mock.calls.map(([call]) => call.key).sort()).toEqual([
+      KEY,
+      THUMB,
+    ]);
+  });
+
+  it("deletes every thumbnail with its original when the complaint is deleted", async () => {
+    const SECOND = "33333333-3333-4333-8333-333333333333";
+    const secondKey = `complaints/site-1/${COMPLAINT_ID}/${SECOND}`;
+    ddbSend
+      .mockResolvedValueOnce({ Item: { status: "ready" } })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Items: [
+          artifactRow(),
+          // A document never has a thumbnail.
+          artifactRow({
+            sk: `COMPLAINT#${COMPLAINT_ID}#ART#${SECOND}`,
+            s3Key: secondKey,
+            thumbS3Key: undefined,
+            contentType: "application/pdf",
+          }),
+        ],
+      })
+      .mockResolvedValue({});
+
+    const response = await deleteComplaint(event());
+
+    expect(response.statusCode).toBe(200);
+    expect(deleteObject.mock.calls.map(([call]) => call.key).sort()).toEqual([
+      KEY,
+      THUMB,
+      secondKey,
+    ]);
+  });
+
+  it("never signs, retags or deletes a recorded key that is not the original's thumbnail", async () => {
+    const stray = artifactRow({ thumbS3Key: "complaints/site-2/other" });
+    ddbSend
+      .mockResolvedValueOnce({ Item: { status: "ready" } })
+      .mockResolvedValueOnce({ Item: stray });
+    presignGet.mockImplementation(async ({ key }) => `https://s3/${key}`);
+    const media = JSON.parse(
+      (await presignComplaintMedia(event({ artifactId: ARTIFACT_ID }))).body,
+    );
+    expect(media).toEqual({ downloadUrl: `https://s3/${KEY}`, expiresIn: 300 });
+
+    ddbSend
+      .mockResolvedValueOnce({ Item: stray })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+    await deleteComplaintArtifact(event({ artifactId: ARTIFACT_ID }));
+    expect(deleteObject.mock.calls.map(([call]) => call.key)).toEqual([KEY]);
+  });
+
+  it("signs the thumbnail beside the original and hides both keys from the client", async () => {
+    ddbSend
+      .mockResolvedValueOnce({ Item: { status: "ready" } })
+      .mockResolvedValueOnce({ Item: artifactRow() });
+    presignGet.mockImplementation(async ({ key }) => `https://s3/${key}`);
+
+    const media = JSON.parse(
+      (await presignComplaintMedia(event({ artifactId: ARTIFACT_ID }))).body,
+    );
+    expect(media).toEqual({
+      downloadUrl: `https://s3/${KEY}`,
+      thumbnailUrl: `https://s3/${THUMB}`,
+      expiresIn: 300,
+    });
+
+    ddbSend
+      .mockResolvedValueOnce({ Item: { status: "ready" } })
+      .mockResolvedValueOnce({ Items: [artifactRow()] });
+    const detail = JSON.parse((await getComplaint(event())).body);
+    expect(detail.artifacts[0]).not.toHaveProperty("s3Key");
+    expect(detail.artifacts[0]).not.toHaveProperty("thumbS3Key");
   });
 });

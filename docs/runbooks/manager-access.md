@@ -160,9 +160,21 @@ this application budget. Malformed inputs are rejected before credential resolut
 The counters have numeric TTLs; window keys, not TTL deletion timing, control resets.
 This global cap also covers distributed guesses and requests sent directly to API Gateway.
 No counter is tied to an invitation or to a caller-supplied IP header.
+Each source also has 100 attempts per five minutes and 1,000 per day, updated in
+that same transaction: source rejections spend no global allowance. CloudFront
+replaces `x-code-viewer-ip` with the transport viewer address; the API trusts it
+only with the configured origin secret. Direct-origin requests use Gateway's
+transport source address. Equivalent IPv6 spellings share one counter, stored as a
+hash and never logged. Shared NAT users share an allowance. The API Lambda explicitly
+depends on the frontend distribution, which waits for deployment: CI must finish
+propagating the edge function before updating API code or origin-secret configuration.
+Keep this dependency and `wait_for_deployment = true`; bypassing it can group old-edge
+requests into the missing-identity bucket or trust a viewer header the old edge has
+not overwritten. Missing identity uses a shared fail-closed source bucket. Existing
+global-only counters remain compatible.
 
-CloudFront WAF additionally shares a 300-request/five-minute viewer-IP limit across
-`/site-code` and `/app/v1/enrollment/redeem`. This edge rule includes link redemption,
+CloudFront WAF additionally shares a 100-request/five-minute viewer-IP limit across
+`/site-code`, `/app/v1/enrollment/redeem`, and exact `/v1/devices` registration. This edge rule includes link redemption,
 while the application budget applies only to short codes. Setup-code registration
 uses the separate device-auth WAF rule. Infrastructure changes deploy through CI.
 

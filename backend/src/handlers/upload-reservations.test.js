@@ -43,7 +43,7 @@ const input = () => ({
 });
 const existing = () => ({
   ...reservation,
-  renewUntil: Date.parse("2026-10-29T00:00:00Z") / 1000,
+  renewUntil: Date.parse("2026-10-29T12:00:00Z") / 1000,
 });
 beforeEach(() => {
   send.mockReset();
@@ -104,7 +104,7 @@ it.each([null, "", "bad#key", "a".repeat(129)])(
 );
 
 it("does not renew an expired mapping even when TTL has not deleted it", async () => {
-  vi.setSystemTime(new Date("2026-10-29T00:00:00Z"));
+  vi.setSystemTime(new Date("2026-10-29T12:00:00Z"));
   send.mockResolvedValueOnce({ Item: existing() });
   await expect(reserveUpload(input())).rejects.toMatchObject({
     statusCode: 410,
@@ -182,9 +182,22 @@ it("charges a racing pair only once and returns the winner to both", async () =>
   ]);
 });
 
-it("caps a renewed URL at the UTC boundary and rejects renewal at midnight", () => {
-  vi.setSystemTime(new Date("2026-10-28T23:59:30Z"));
+it("caps a renewed URL at its original deadline and rejects renewal after 24 hours", () => {
+  vi.setSystemTime(new Date("2026-10-29T11:59:30Z"));
   expect(uploadUrlLifetime(existing())).toBe(30);
-  vi.setSystemTime(new Date("2026-10-29T00:00:00Z"));
+  vi.setSystemTime(new Date("2026-10-29T12:00:00Z"));
   expect(() => uploadUrlLifetime(existing())).toThrow("upload_expired");
+});
+
+it("keeps a reservation created just before midnight renewable for 24 hours", async () => {
+  const createdAt = "2026-10-28T23:59:59Z";
+  vi.setSystemTime(new Date(createdAt));
+  send.mockResolvedValue({});
+  const result = await reserveUpload({
+    ...input(),
+    reservation: { ...reservation, createdAt },
+  });
+  expect(result.renewUntil).toBe(Date.parse("2026-10-29T23:59:59Z") / 1000);
+  vi.setSystemTime(new Date("2026-10-29T00:00:00Z"));
+  expect(uploadUrlLifetime(result)).toBe(300);
 });

@@ -47,7 +47,9 @@ describe("hydrateTaskEvidenceFromCheck", () => {
     });
     expect(task.mediaUrl).toBe("https://media/p1");
     expect(task.thumbnailUrl).toBeUndefined();
-    expect(getMediaUrl).toHaveBeenCalledWith("c1", "p1");
+    expect(getMediaUrl).toHaveBeenCalledWith("c1", "p1", {
+      signal: expect.anything(),
+    });
   });
 
   it("prefers the backend's card thumbnail and keeps the original for the lightbox", async () => {
@@ -60,7 +62,9 @@ describe("hydrateTaskEvidenceFromCheck", () => {
       [{ taskId: "t4", checkId: "c3", sourceArtifactIds: ["p1"] }],
       detail,
     );
-    expect(getMediaUrl).toHaveBeenCalledWith("c3", "p1");
+    expect(getMediaUrl).toHaveBeenCalledWith("c3", "p1", {
+      signal: expect.anything(),
+    });
     expect(task.thumbnailUrl).toBe("https://media/p1.thumb.webp");
     expect(task.mediaUrl).toBe("https://media/p1");
   });
@@ -224,4 +228,64 @@ it("does not let an obsolete signing success erase a newer missing-image backoff
     cachedMediaUrls("obsolete-success", "photo"),
   ).rejects.toMatchObject({ status: 404 });
   expect(getMediaUrl).toHaveBeenCalledTimes(1);
+});
+
+it("cancels one signer consumer without aborting another", async () => {
+  /** @type {(value: {downloadUrl: string, expiresIn: number}) => void} */
+  let finish = () => {};
+  getMediaUrl.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const a = new AbortController();
+  const b = new AbortController();
+  const first = cachedMediaUrls("shared-cancel", "photo", {
+    signal: a.signal,
+  }).catch((e) => e);
+  const second = cachedMediaUrls("shared-cancel", "photo", {
+    signal: b.signal,
+  });
+  const sharedSignal = getMediaUrl.mock.calls.at(-1)[2].signal;
+  a.abort();
+  expect((await first).name).toBe("AbortError");
+  expect(sharedSignal.aborted).toBe(false);
+  finish({ downloadUrl: "original", expiresIn: 300 });
+  expect((await second).downloadUrl).toBe("original");
+});
+
+it("evicts and aborts the signer when its last consumer cancels", async () => {
+  getMediaUrl.mockImplementationOnce(() => new Promise(() => {}));
+  const controller = new AbortController();
+  const first = cachedMediaUrls("all-cancel", "photo", {
+    signal: controller.signal,
+  }).catch((e) => e);
+  const sharedSignal = getMediaUrl.mock.calls.at(-1)[2].signal;
+  controller.abort();
+  expect((await first).name).toBe("AbortError");
+  expect(sharedSignal.aborted).toBe(true);
+  getMediaUrl.mockResolvedValueOnce({ downloadUrl: "fresh", expiresIn: 300 });
+  expect((await cachedMediaUrls("all-cancel", "photo")).downloadUrl).toBe(
+    "fresh",
+  );
+});
+
+it("bounds a stalled shared signer and allows an immediate fresh attempt", async () => {
+  vi.useFakeTimers();
+  try {
+    getMediaUrl.mockImplementationOnce(() => new Promise(() => {}));
+    const pending = cachedMediaUrls("signer-deadline", "photo").catch((e) => e);
+    const sharedSignal = getMediaUrl.mock.calls.at(-1)[2].signal;
+    await vi.advanceTimersByTimeAsync(15000);
+    expect((await pending).name).toBe("AbortError");
+    expect(sharedSignal.aborted).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+    getMediaUrl.mockResolvedValueOnce({ downloadUrl: "fresh", expiresIn: 300 });
+    expect(
+      (await cachedMediaUrls("signer-deadline", "photo")).downloadUrl,
+    ).toBe("fresh");
+  } finally {
+    vi.useRealTimers();
+  }
 });

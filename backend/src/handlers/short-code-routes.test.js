@@ -27,7 +27,7 @@ beforeEach(() => {
         return {};
       }
       const updates = command.input.TransactItems ?? [];
-      expect(updates).toHaveLength(2);
+      expect(updates).toHaveLength(4);
       expect(updates[0].Update?.Key?.pk).toBe("SHORT_CODE_ATTEMPTS");
       const limit = Number(
         updates[0].Update?.ExpressionAttributeValues?.[":limit"],
@@ -61,7 +61,12 @@ async function invoke(handler, body = { code: "ABC123" }) {
     await handler(
       /** @type {import("aws-lambda").APIGatewayProxyEventV2} */ ({
         body: JSON.stringify(body),
-        requestContext: { requestId: "synthetic-request" },
+        requestContext: {
+          requestId: "synthetic-request",
+          http: {
+            sourceIp: `192.0.${Math.floor(count / 250)}.${(count % 250) + 1}`,
+          },
+        },
       }),
       /** @type {import("aws-lambda").Context} */ ({}),
       () => {},

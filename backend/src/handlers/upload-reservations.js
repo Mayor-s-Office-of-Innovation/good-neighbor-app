@@ -59,7 +59,7 @@ export async function reserveUpload({
   // TTL retains expired mappings for another day. Expiry is enforced below,
   // never by waiting for asynchronous DynamoDB deletion.
   const renewUntil = Math.floor(
-    (Date.parse(reservation.createdAt.slice(0, 10)) + 86400000) / 1000,
+    (Date.parse(reservation.createdAt) + 86400000) / 1000,
   );
   const candidate = {
     ...reservation,
@@ -146,7 +146,7 @@ export function reservationStatus(error) {
 
 /**
  * @param {UploadReservation} reservation
- * @returns {number} URL lifetime capped at the original UTC-day boundary.
+ * @returns {number} URL lifetime capped at the original 24-hour renewal deadline.
  */
 export function uploadUrlLifetime(reservation) {
   if (reservation.renewUntil === undefined) return 300;

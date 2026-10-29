@@ -159,7 +159,11 @@ describe("registerDevice", () => {
     };
     vi.mocked(checkCodeAttemptLimit).mockResolvedValueOnce(limited);
     expect(await callRegister({ code: "a1b-2c3" })).toEqual(limited);
-    expect(checkCodeAttemptLimit).toHaveBeenCalledWith(undefined, "register");
+    expect(checkCodeAttemptLimit).toHaveBeenCalledWith(
+      undefined,
+      "register",
+      expect.any(Object),
+    );
     expect(send).not.toHaveBeenCalled();
   });
 

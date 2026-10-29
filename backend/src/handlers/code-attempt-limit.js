@@ -1,3 +1,5 @@
+import { createHash, timingSafeEqual } from "node:crypto";
+import { isIP } from "node:net";
 import { TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getDynamoTableName } from "../config.js";
@@ -13,14 +15,25 @@ const WINDOWS = [
 /**
  * @param {number} [now]
  * @param {"lookup" | "redeem" | "register" | "unspecified"} [source]
+ * @param {import("aws-lambda").APIGatewayProxyEventV2} [event]
  * @returns {Promise<import("aws-lambda").APIGatewayProxyResult | null>} Budget rejection, or admission.
  */
 export async function checkCodeAttemptLimit(
   now = Date.now(),
   source = "unspecified",
+  event,
 ) {
   const seconds = Math.floor(now / 1000);
-  const windows = WINDOWS.map((window) => ({
+  const sourceIp = codeAttemptSource(event);
+  const sourceKey = createHash("sha256").update(sourceIp).digest("hex");
+  const windows = [
+    ...WINDOWS.map((window) => ({ ...window, pk: "SHORT_CODE_ATTEMPTS" })),
+    ...WINDOWS.map((window) => ({
+      ...window,
+      limit: window.limit / 10,
+      pk: `SHORT_CODE_SOURCE#${sourceKey}`,
+    })),
+  ].map((window) => ({
     ...window,
     start: Math.floor(seconds / window.seconds) * window.seconds,
   }));
@@ -31,7 +44,7 @@ export async function checkCodeAttemptLimit(
           Update: {
             TableName: getDynamoTableName(),
             Key: {
-              pk: "SHORT_CODE_ATTEMPTS",
+              pk: window.pk,
               sk: `${window.seconds}#${window.start}`,
             },
             UpdateExpression: "SET expiresAt = :ttl ADD requestCount :one",
@@ -91,4 +104,27 @@ export async function checkCodeAttemptLimit(
     };
     return response;
   }
+}
+
+/**
+ * Only the authenticated CloudFront origin may supply the viewer identity.
+ * Direct-origin callers use Gateway's transport source; forwarded headers are ignored.
+ * @param {import("aws-lambda").APIGatewayProxyEventV2} [event]
+ * @returns {string} Canonical source address, or a shared fail-closed fallback.
+ */
+export function codeAttemptSource(event) {
+  const configured = process.env.SHORT_CODE_ORIGIN_TOKEN;
+  const supplied = event?.headers?.["x-support-origin"];
+  const viewer = event?.headers?.["x-code-viewer-ip"];
+  const trusted =
+    configured &&
+    supplied &&
+    Buffer.byteLength(configured) === Buffer.byteLength(supplied) &&
+    timingSafeEqual(Buffer.from(configured), Buffer.from(supplied));
+  const address = trusted ? viewer : event?.requestContext?.http?.sourceIp;
+  if (!address || !isIP(address)) return "unknown";
+  // URL canonicalization collapses equivalent IPv6 spellings.
+  return isIP(address) === 6
+    ? new URL(`http://[${address}]/`).hostname
+    : address;
 }

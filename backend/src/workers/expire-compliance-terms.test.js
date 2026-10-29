@@ -1,5 +1,5 @@
 import { beforeEach, it, expect, vi } from "vitest";
-import { ScanCommand } from "@aws-sdk/lib-dynamodb";
+import { QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 const { send, close } = vi.hoisted(() => ({ send: vi.fn(), close: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 vi.mock("../domain/end-compliance-terms.js", () => ({
@@ -9,7 +9,10 @@ import { expireComplianceTerms } from "./expire-compliance-terms.js";
 const term = {
   pk: "SITE#one",
   termsVersionId: "v1",
+  status: "active",
   expiresOnExclusive: "2026-10-22",
+  gsi3pk: "COMPLIANCE_TERMS#OPEN",
+  gsi3sk: "2026-10-22#one#v1",
 };
 beforeEach(() => {
   vi.stubEnv("DYNAMO_TABLE", "test");
@@ -18,7 +21,7 @@ beforeEach(() => {
   send.mockReset();
   close.mockReset().mockResolvedValue(undefined);
 });
-it("uses the Pacific day and paginates, skipping superseded requirements", async () => {
+it("queries the GSI3 expiry partition up to the Pacific day and paginates, skipping superseded requirements", async () => {
   send
     .mockResolvedValueOnce({
       Items: [term],
@@ -30,10 +33,17 @@ it("uses the Pacific day and paginates, skipping superseded requirements", async
       Item: { siteId: "one", latestComplianceTermsVersionId: "v3" },
     });
   await expireComplianceTerms();
-  expect(send.mock.calls[0][0]).toBeInstanceOf(ScanCommand);
-  expect(send.mock.calls[0][0].input.ExpressionAttributeValues[":today"]).toBe(
-    "2026-10-22",
-  );
+  const query = send.mock.calls[0][0];
+  expect(query).toBeInstanceOf(QueryCommand);
+  expect(query.input).toMatchObject({
+    IndexName: "GSI3",
+    KeyConditionExpression: "gsi3pk = :open AND gsi3sk < :tomorrow",
+    ExpressionAttributeValues: {
+      ":open": "COMPLIANCE_TERMS#OPEN",
+      ":tomorrow": "2026-10-23",
+    },
+  });
+  expect(send.mock.calls.some(([c]) => c instanceof ScanCommand)).toBe(false);
   expect(send.mock.calls[2][0].input.ExclusiveStartKey).toEqual({
     pk: "next",
     sk: "next",
@@ -48,9 +58,22 @@ it("uses the Pacific day and paginates, skipping superseded requirements", async
   );
   vi.useRealTimers();
 });
+it("skips versions the eventually consistent index still lists after they ended, were cancelled, or expire later", async () => {
+  send.mockResolvedValueOnce({
+    Items: [
+      { ...term, endedAt: "2026-10-22T10:00:00Z" },
+      { ...term, termsVersionId: "v2", status: "cancelled" },
+      { ...term, termsVersionId: "v4", expiresOnExclusive: "2026-10-23" },
+    ],
+  });
+  await expireComplianceTerms();
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(close).not.toHaveBeenCalled();
+  vi.useRealTimers();
+});
 it("retries optimistic conflicts on the next sweep but surfaces service failures", async () => {
   send.mockImplementation(async (c) =>
-    c instanceof ScanCommand
+    c instanceof QueryCommand
       ? { Items: [term] }
       : { Item: { latestComplianceTermsVersionId: "v1" } },
   );

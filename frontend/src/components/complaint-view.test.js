@@ -3,6 +3,7 @@ import { t } from "../i18n/i18n.js";
 
 vi.mock("../services/api.js", () => ({
   getComplaint: vi.fn(),
+  getComplaintMediaUrl: vi.fn(),
   presignComplaintArtifact: vi.fn(),
   putMediaWithProgress: vi.fn(),
   registerComplaintArtifact: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock("../router.js", () => ({
 }));
 const {
   getComplaint,
+  getComplaintMediaUrl,
   presignComplaintArtifact,
   putMediaWithProgress,
   registerComplaintArtifact,
@@ -113,4 +115,39 @@ it("gives identical complaint attachments separate identities and uses effective
     expect.any(AbortSignal),
   );
   view.disconnectedCallback();
+});
+
+it("shows an image attachment as a thumbnail that opens the original", async () => {
+  vi.mocked(getComplaint).mockResolvedValue({
+    complaint: {
+      label: "Noise complaint",
+      status: "ready",
+      createdAt: "2026-10-26T17:00:00Z",
+    },
+    artifacts: [
+      { artifactId: "photo-1", contentType: "image/jpeg", name: "photo.jpg" },
+    ],
+  });
+  vi.mocked(getComplaintMediaUrl).mockResolvedValue({
+    downloadUrl: "https://s3.test/original",
+    thumbnailUrl: "https://s3.test/original.thumb.webp",
+  });
+  const img = { addEventListener: vi.fn() };
+  const tile = {
+    dataset: { image: "photo-1" },
+    innerHTML: "",
+    querySelector: () => img,
+  };
+  const view = new View();
+  view.querySelectorAll = (/** @type {string} */ selector) =>
+    selector === "[data-image]" ? [tile] : [];
+  await view._renderDetail("complaint-1");
+  expect(getComplaintMediaUrl).toHaveBeenCalledWith("complaint-1", "photo-1");
+  expect(tile.innerHTML).toContain("data-photo-lightbox");
+  expect(tile.innerHTML).toContain('data-full-src="https://s3.test/original"');
+  expect(tile.innerHTML).toContain('src="https://s3.test/original.thumb.webp"');
+  expect(img.addEventListener).toHaveBeenCalledWith(
+    "error",
+    expect.any(Function),
+  );
 });

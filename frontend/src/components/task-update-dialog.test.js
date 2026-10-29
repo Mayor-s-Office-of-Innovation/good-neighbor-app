@@ -913,9 +913,9 @@ describe("timeline loading resilience", () => {
       expect(dialog._state).toBe("ready");
       expect(dialog._detail.updates[0].text).toBe("Saved activity");
       await vi.advanceTimersByTimeAsync(0);
-      expect(dialog._mediaUrls.get("ready")).toBe(
-        "https://example.com/photo.jpg",
-      );
+      expect(dialog._mediaUrls.get("ready")).toMatchObject({
+        downloadUrl: "https://example.com/photo.jpg",
+      });
       await vi.advanceTimersByTimeAsync(15_000);
       expect(dialog._state).toBe("ready");
     } finally {
@@ -1061,6 +1061,41 @@ describe("timeline loading resilience", () => {
     }
   });
 
+  it("shows each update photo's thumbnail and signs it once per page load", async () => {
+    const dialog = await makeDialog();
+    const thumbTask = { taskId: "thumbs", checkId: "check-thumbs" };
+    api.getTaskUpdates.mockResolvedValue({
+      task: thumbTask,
+      updates: [{ photoKeys: ["with-thumb", "no-thumb"] }],
+    });
+    api.getMediaUrl.mockImplementation((_check, id) =>
+      Promise.resolve({
+        downloadUrl: `https://example.com/${id}.jpg`,
+        thumbnailUrl:
+          id === "with-thumb"
+            ? `https://example.com/${id}.jpg.thumb.webp`
+            : undefined,
+        expiresIn: 3600,
+      }),
+    );
+    api.getMediaUrl.mockClear();
+    await dialog.open(thumbTask);
+    await vi.waitFor(() => expect(dialog._mediaUrls.size).toBe(2));
+    expect(dialog._mediaUrls.get("with-thumb")).toMatchObject({
+      downloadUrl: "https://example.com/with-thumb.jpg",
+      thumbnailUrl: "https://example.com/with-thumb.jpg.thumb.webp",
+    });
+    expect(dialog._mediaUrls.get("no-thumb")).toMatchObject({
+      downloadUrl: "https://example.com/no-thumb.jpg",
+    });
+    // Reopening reuses the signed URLs instead of signing again.
+    await dialog.open(thumbTask);
+    await vi.waitFor(() => expect(dialog._mediaUrls.size).toBe(2));
+    expect(
+      api.getMediaUrl.mock.calls.filter(([, id]) => id === "with-thumb"),
+    ).toHaveLength(1);
+  });
+
   it("aborts optional reads and cancels queued rendering on dismissal", async () => {
     const dialog = await makeDialog();
     api.getTaskUpdates.mockResolvedValueOnce({
@@ -1073,13 +1108,16 @@ describe("timeline loading resilience", () => {
     api.getMediaUrl.mockImplementationOnce(() => new Promise(() => {}));
     await dialog.open(task);
     const citySignal = api.get311RequestDetails.mock.calls.at(-1)[1].signal;
-    const photoSignal = api.getMediaUrl.mock.calls.at(-1)[2].signal;
+    // Photo signing is shared with the cards (task-evidence cache), so the
+    // dialog stops waiting for it rather than cancelling the shared request.
+    const photoReads = [...dialog._timelineReads];
+    expect(photoReads.length).toBeGreaterThan(0);
     dialog._refreshTimeline();
     dialog.querySelector = () => null;
     dialog.dispatchEvent = vi.fn();
     dialog._dismiss();
     expect(citySignal.aborted).toBe(true);
-    expect(photoSignal.aborted).toBe(true);
+    expect(photoReads.every((read) => read.signal.aborted)).toBe(true);
     expect(dialog._timelineFrame).toBeNull();
   });
 
@@ -1095,7 +1133,7 @@ describe("timeline loading resilience", () => {
       expect(dialog._renderTimeline).toHaveBeenCalledTimes(1);
       dialog._task = { checkId: "check" };
       dialog._detail = { updates: [{ photoKeys: ["same"] }] };
-      dialog._mediaUrls.set("same", "url");
+      dialog._mediaUrls.set("same", { downloadUrl: "url" });
       api.getMediaUrl.mockResolvedValueOnce({ downloadUrl: "url" });
       await dialog._loadTimelinePhotos(dialog._loadGeneration);
       expect(dialog._timelineFrame).toBeNull();

@@ -876,7 +876,8 @@ resource "aws_dynamodb_table" "app" {
     type = "S"
   }
 
-  # GSI1 keys — set only on check headers (checks timeline).
+  # GSI1 keys — per-site timelines: check headers, assessments, tasks, task
+  # updates, complaints, and care-work logs, each in its own partition.
   attribute {
     name = "gsi1pk"
     type = "S"
@@ -898,25 +899,15 @@ resource "aws_dynamodb_table" "app" {
     type = "S"
   }
 
-  # GSI4 keys — set only on conditions (site/date/severity condition history).
+  # GSI3 keys — set only on each site's latest open compliance terms that have
+  # an end date (the scheduled expiry sweep).
   attribute {
-    name = "gsi4pk"
+    name = "gsi3pk"
     type = "S"
   }
 
   attribute {
-    name = "gsi4sk"
-    type = "S"
-  }
-
-  # GSI5 keys — set only on unresolved conditions.
-  attribute {
-    name = "gsi5pk"
-    type = "S"
-  }
-
-  attribute {
-    name = "gsi5sk"
+    name = "gsi3sk"
     type = "S"
   }
 
@@ -944,9 +935,11 @@ resource "aws_dynamodb_table" "app" {
 
   # GSI1 — per-site timelines, one partition per entity type: checks
   # SITE#<siteId> / <startedAt ISO> (AP6, AP12); assessments
-  # SITE#<siteId>#ASSESSMENT (AP14); tasks SITE#<siteId>#TASK /
+  # SITE#<siteId>#ASSESSMENT (stamped, no reader yet); tasks SITE#<siteId>#TASK /
   # <createdAt>#<taskId> and task updates SITE#<siteId>#UPDATE /
-  # <occurredAt>#<updateId> (AP27, AP28 — the site manager reports).
+  # <occurredAt>#<updateId> (AP27, AP28 — the site manager reports);
+  # complaints SITE#<siteId>#COMPLAINTS / <createdAt>#<complaintId>; care-work
+  # logs SITE#<siteId>#CARE_WORK / <createdAt>#<workId>.
   global_secondary_index {
     name            = "GSI1"
     hash_key        = "gsi1pk"
@@ -955,8 +948,6 @@ resource "aws_dynamodb_table" "app" {
   }
 
   # GSI2 — site worklist: SITE#<siteId>#TASK#<status> / <createdAt>#<kind>#<severity>#<taskId>. (AP10)
-  # GSI3 (cross-site escalation queue) is sparse and deferred to Phase 7 — it can
-  # be added to the live table later with no rebuild.
   global_secondary_index {
     name            = "GSI2"
     hash_key        = "gsi2pk"
@@ -964,21 +955,17 @@ resource "aws_dynamodb_table" "app" {
     projection_type = "ALL"
   }
 
-  # GSI4 — site condition history by severity:
-  # SITE#<siteId>#CONDITION#SEV#<severity> / <reportedAt>#<assessmentId>#<conditionId>.
+  # GSI3 — cross-site sparse queues, one partition per entity type. Today it
+  # holds only each site's latest open compliance terms that have an end date:
+  # COMPLIANCE_TERMS#OPEN / <expiresOnExclusive>#<siteId>#<termsVersionId>,
+  # stamped at creation and removed when the version ends or is superseded, so
+  # the scheduled expiry sweep is one query bounded by today's date instead of
+  # a full-table scan. The deferred city escalation queue (ESCALATION#<status>)
+  # can share this index as another sparse partition with no rebuild.
   global_secondary_index {
-    name            = "GSI4"
-    hash_key        = "gsi4pk"
-    range_key       = "gsi4sk"
-    projection_type = "ALL"
-  }
-
-  # GSI5 — sparse unresolved-condition queue:
-  # SITE#<siteId>#CONDITION#UNRESOLVED / <reportedAt>#SEV#<severity>#<assessmentId>#<conditionId>.
-  global_secondary_index {
-    name            = "GSI5"
-    hash_key        = "gsi5pk"
-    range_key       = "gsi5sk"
+    name            = "GSI3"
+    hash_key        = "gsi3pk"
+    range_key       = "gsi3sk"
     projection_type = "ALL"
   }
 
@@ -1703,7 +1690,7 @@ resource "aws_wafv2_web_acl" "web" {
     }
   }
 
-  # Share a viewer-IP budget across lookup and all enrollment redemptions
+  # Share a viewer-IP budget across registration, lookup and all enrollment redemptions
   # (including long-token links). Application budgets cover short-code lookup,
   # redemption and device registration, including direct-origin requests.
   rule {
@@ -1728,9 +1715,22 @@ resource "aws_wafv2_web_acl" "web" {
     statement {
       rate_based_statement {
         aggregate_key_type = "IP"
-        limit              = 300
+        limit              = 100
         scope_down_statement {
           or_statement {
+            statement {
+              byte_match_statement {
+                positional_constraint = "EXACTLY"
+                search_string         = "/v1/devices"
+                field_to_match {
+                  uri_path {}
+                }
+                text_transformation {
+                  priority = 0
+                  type     = "LOWERCASE"
+                }
+              }
+            }
             statement {
               byte_match_statement {
                 positional_constraint = "EXACTLY"

@@ -19,7 +19,7 @@ Checks and complaints accept an optional `uploadRequestId`. Its mapping is commi
 with the quota charge and binds the actor, parent submission, server-generated artifact/key,
 content type, and byte count. Identical retries reuse that reservation; different metadata or
 actors cannot reuse it. Renewed URLs keep the same key and no-overwrite constraint, and expire
-within five minutes or at the original UTC midnight, whichever is earlier. Mappings retain an
+within five minutes or at the original 24-hour renewal deadline, whichever is earlier. Mappings retain an
 extra day of TTL for explicit expired-request rejection. DynamoDB TTL deletion is not an expiry
 check. Expired recovery uses a new request ID and object key and consumes today's quota.
 Older clients omitting the ID retain their previous behavior.
@@ -77,9 +77,16 @@ The analyze worker stores a card thumbnail beside every check photo it analyzes
 (`<key>.thumb.webp`, ≤480 px WebP, tagged active; `backend/src/media/thumbnail.js`). It
 sits under the same `checks/<site>/<check>/` prefix, so the 30-day expiry and the media
 route's tenant check cover it without separate rules. A missing thumbnail is never an
-error: `presignMedia` returns only the original and cards use that. Task-update photos
-are never analyzed, so they have no thumbnail and always serve the original. Photos
-analyzed before thumbnails existed can be filled in with
+error: `presignMedia` returns only the original and cards use that.
+
+Task-update photo registrations emit durable DynamoDB stream inserts. The
+existing stream dispatcher queues `update_media_thumbnail` jobs on the background queue;
+the worker reads the current media row, creates the thumbnail and records its key.
+Duplicate deliveries skip rows that already have thumbnails. Transient failures
+retry through SQS and its existing dead-letter queue; expired originals and
+undecodable images are acknowledged. Registration does not wait for image work.
+Until a thumbnail exists, the timeline serves the original. Photos missing
+thumbnails can be filled in with
 `npm run backfill:thumbnails -w backend` (dry run by default, `--apply` to write,
 `--site <id>` to scope; needs `DYNAMO_TABLE` and `S3_UPLOAD_BUCKET`). A backfilled
 thumbnail gets its own 30-day clock, so the script skips photos older than 25 days

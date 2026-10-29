@@ -96,7 +96,7 @@ export const registerDevice = async (event) => {
   // Malformed inputs cannot reach a credential lookup and spend no short-code budget.
   if (normalizeSiteCode(code).length !== 6)
     return jsonResponse(401, { error: "invalid_site_code" });
-  const limited = await checkCodeAttemptLimit(undefined, "register");
+  const limited = await checkCodeAttemptLimit(undefined, "register", event);
   if (limited) return limited;
 
   const dynamoTable = getDynamoTableName();

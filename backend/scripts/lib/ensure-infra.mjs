@@ -70,7 +70,7 @@ async function waitForService(probe, label) {
   }
 }
 
-const TABLE_SCHEMA = {
+export const TABLE_SCHEMA = {
   BillingMode: "PAY_PER_REQUEST", // matches Terraform; no ProvisionedThroughput anywhere
   AttributeDefinitions: [
     { AttributeName: "pk", AttributeType: "S" },
@@ -79,10 +79,8 @@ const TABLE_SCHEMA = {
     { AttributeName: "gsi1sk", AttributeType: "S" },
     { AttributeName: "gsi2pk", AttributeType: "S" },
     { AttributeName: "gsi2sk", AttributeType: "S" },
-    { AttributeName: "gsi4pk", AttributeType: "S" },
-    { AttributeName: "gsi4sk", AttributeType: "S" },
-    { AttributeName: "gsi5pk", AttributeType: "S" },
-    { AttributeName: "gsi5sk", AttributeType: "S" },
+    { AttributeName: "gsi3pk", AttributeType: "S" },
+    { AttributeName: "gsi3sk", AttributeType: "S" },
     { AttributeName: "gsi6pk", AttributeType: "S" },
     { AttributeName: "gsi6sk", AttributeType: "S" },
     { AttributeName: "gsi7pk", AttributeType: "S" },
@@ -110,18 +108,10 @@ const TABLE_SCHEMA = {
       Projection: { ProjectionType: "ALL" },
     },
     {
-      IndexName: "GSI4",
+      IndexName: "GSI3",
       KeySchema: [
-        { AttributeName: "gsi4pk", KeyType: "HASH" },
-        { AttributeName: "gsi4sk", KeyType: "RANGE" },
-      ],
-      Projection: { ProjectionType: "ALL" },
-    },
-    {
-      IndexName: "GSI5",
-      KeySchema: [
-        { AttributeName: "gsi5pk", KeyType: "HASH" },
-        { AttributeName: "gsi5sk", KeyType: "RANGE" },
+        { AttributeName: "gsi3pk", KeyType: "HASH" },
+        { AttributeName: "gsi3sk", KeyType: "RANGE" },
       ],
       Projection: { ProjectionType: "ALL" },
     },
@@ -299,7 +289,7 @@ async function seedLocalSiteCodes(docDdb, tableName) {
  * @param {string} tableName
  * @returns {Promise<void>}
  */
-async function ensureLocalTableIndexes(ddb, tableName) {
+export async function ensureLocalTableIndexes(ddb, tableName) {
   const description = await describeTable(ddb, tableName);
   const existing = new Set(
     description.Table?.GlobalSecondaryIndexes?.map((index) => index.IndexName),
@@ -312,15 +302,40 @@ async function ensureLocalTableIndexes(ddb, tableName) {
     console.log(
       `[bootstrap] adding DynamoDB local index "${index.IndexName}" to "${tableName}"`,
     );
-    await ddb.send(
-      new UpdateTableCommand({
-        TableName: tableName,
-        AttributeDefinitions: attributeDefinitionsForIndex(index),
-        GlobalSecondaryIndexUpdates: [{ Create: index }],
-      }),
-    );
+    try {
+      await ddb.send(
+        new UpdateTableCommand({
+          TableName: tableName,
+          AttributeDefinitions: attributeDefinitionsForIndex(index),
+          GlobalSecondaryIndexUpdates: [{ Create: index }],
+        }),
+      );
+    } catch (err) {
+      // `npm run dev` starts the api, worker, and duplicates processes
+      // together and each reconciles indexes, so the losers of that race see
+      // the table busy or the index already present. Wait for it like the
+      // winner does instead of taking the whole harness down.
+      if (!indexCreationUnderway(/** @type {Error} */ (err))) throw err;
+      console.log(
+        `[bootstrap] DynamoDB local index "${index.IndexName}" is being added by another process`,
+      );
+    }
     await waitForIndex(ddb, tableName, index.IndexName);
   }
+}
+
+/**
+ * Whether an UpdateTable failure means another process already started, or
+ * finished, creating the same index.
+ * @param {Error} err
+ * @returns {boolean}
+ */
+function indexCreationUnderway(err) {
+  return (
+    err.name === "ResourceInUseException" ||
+    err.name === "LimitExceededException" ||
+    (err.name === "ValidationException" && /already exist/i.test(err.message))
+  );
 }
 
 /**

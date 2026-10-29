@@ -40,6 +40,8 @@ it("atomically archives, audits, and queues a single end notice using the origin
   expect(items[1].Update.ConditionExpression).toContain(
     "attribute_not_exists(endedAt)",
   );
+  // The closed version leaves the GSI3 expiry partition the sweep queries.
+  expect(items[1].Update.UpdateExpression).toContain("REMOVE gsi3pk, gsi3sk");
   expect(items[2].Update.ConditionExpression).toContain(
     "latestComplianceTermsVersionId = :version",
   );
