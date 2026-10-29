@@ -8,12 +8,13 @@ import {
   checkChildrenPrefix,
   checkHeaderKey,
   checkTimelineGsi,
+  COMPLIANCE_TERMS_OPEN_PK,
+  complianceTermsExpiryGsi,
   conditionKey,
-  conditionTimelineGsi,
+  GSI3_NAME,
   sitePk,
   taskKey,
   taskWorklistDateGsi,
-  unresolvedConditionGsi,
 } from "./keys.js";
 
 describe("single-table key builders", () => {
@@ -62,36 +63,21 @@ describe("single-table key builders", () => {
     expect(assessmentConditionPrefix("asm1")).toBe("ASSESSMENT#asm1#COND#");
   });
 
-  it("builds assessment, condition, unresolved, and date-first task GSIs", () => {
+  it("builds the sparse GSI3 expiry key for an end-dated compliance terms version", () => {
+    expect(GSI3_NAME).toBe("GSI3");
+    expect(COMPLIANCE_TERMS_OPEN_PK).toBe("COMPLIANCE_TERMS#OPEN");
+    expect(complianceTermsExpiryGsi("s1", "2026-12-02", "v1")).toEqual({
+      gsi3pk: "COMPLIANCE_TERMS#OPEN",
+      gsi3sk: "2026-12-02#s1#v1",
+    });
+  });
+
+  it("builds assessment and date-first task GSIs", () => {
     expect(
       assessmentTimelineGsi("s1", "2026-08-18T00:00:00.000Z", "asm1"),
     ).toEqual({
       gsi1pk: "SITE#s1#ASSESSMENT",
       gsi1sk: "2026-08-18T00:00:00.000Z#asm1",
-    });
-    expect(
-      conditionTimelineGsi(
-        "s1",
-        3,
-        "2026-08-18T00:00:00.000Z",
-        "asm1",
-        "cond1",
-      ),
-    ).toEqual({
-      gsi4pk: "SITE#s1#CONDITION#SEV#3",
-      gsi4sk: "2026-08-18T00:00:00.000Z#asm1#cond1",
-    });
-    expect(
-      unresolvedConditionGsi(
-        "s1",
-        3,
-        "2026-08-18T00:00:00.000Z",
-        "asm1",
-        "cond1",
-      ),
-    ).toEqual({
-      gsi5pk: "SITE#s1#CONDITION#UNRESOLVED",
-      gsi5sk: "2026-08-18T00:00:00.000Z#SEV#3#asm1#cond1",
     });
     expect(
       taskWorklistDateGsi(
