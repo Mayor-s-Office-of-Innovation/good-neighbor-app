@@ -6,7 +6,7 @@
   loopback HTTP (node side), not page context — the worker calls the stub
   server-to-server.
 */
-const STUB = `http://127.0.0.1:${process.env.E2E_ANALYZER_PORT ?? 3101}`;
+const STUB = "http://127.0.0.1:3101";
 
 /**
  * @param {"multi" | "excellent"} fixture

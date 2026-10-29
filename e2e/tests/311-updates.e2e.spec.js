@@ -78,7 +78,7 @@ async function filedTicket(
       json: {
         artifactId: "update-photo",
         s3Key: "fixture/photo.jpg",
-        uploadUrl: `http://127.0.0.1:${process.env.E2E_APP_PORT ?? 5173}/e2e-photo-upload`,
+        uploadUrl: "http://127.0.0.1:5173/e2e-photo-upload",
       },
     }),
   );
@@ -93,9 +93,7 @@ async function filedTicket(
     "**/v1/checks/311-update-check/artifacts/update-photo/media",
     (route) =>
       route.fulfill({
-        json: {
-          downloadUrl: `http://127.0.0.1:${process.env.E2E_APP_PORT ?? 5173}/e2e-photo.jpg`,
-        },
+        json: { downloadUrl: "http://127.0.0.1:5173/e2e-photo.jpg" },
       }),
   );
   await page.route("**/e2e-photo.jpg", (route) =>

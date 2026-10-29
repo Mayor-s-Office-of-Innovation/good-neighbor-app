@@ -48,8 +48,8 @@ data when the host table held real work. Two changes close that:
   the same name. globalSetup **refuses to run** against any other table.
 - **The suite never reuses running servers.** `reuseExistingServer: false` — a
   dev-started backend carries the dev table's env, so attaching to it would
-  defeat the isolation. (Superseded 2026-10-28: the suite now moves to free
-  ports instead of failing — see the addendum below.)
+  defeat the isolation. If ports 3001/5173/3101 are occupied, Playwright fails
+  fast; stop the dev stack before running the suite.
 - **globalTeardown deletes `gnp-local-e2e`** after the run (the suite's table is
   disposable). The next boot re-creates + reseeds it, so checks and tasks are
   always coherent; globalSetup's entry cleanup remains as crash self-healing.
@@ -57,31 +57,3 @@ data when the host table held real work. Two changes close that:
 Developer-facing consequence: `npm run dev` data is never touched by the suite,
 and a clean dev table is `rm -rf backend/.local/dynamodb-data` (optionally
 `minio-data` too) with the stack stopped, since the next dev boot re-bootstraps.
-
-## Addendum — e2e beside `npm run dev` (2026-10-28)
-
-The e2e suite can run while a dev stack is up:
-
-- **Its servers move instead of clashing.** The e2e configs pick the next free
-  port when the usual one is taken (`e2e/helpers/ports.mjs`) for the API, the
-  analyzer stub and Vite, and point the spawned backend and Vite proxy at them.
-- **Shared services are reused.** DynamoDB Local and ElasticMQ, like MinIO and
-  the SF311 fake already did, reuse a copy that is already answering on their
-  port instead of crashing the stack. The suite still keeps to its own table
-  (`gnp-local-e2e-<runId>`) and matching submission queue, so dev data and
-  other runs are untouched. A UUID is generated once per invocation and inherited
-  by workers; setup and teardown validate the exact names before mutation.
-  Teardown removes both resources. A hard-killed run can leave its namespaced
-  resources behind; a later run does not reuse or delete them.
-- Stopping the dev stack while the suite runs takes the shared services with
-  it. The borrowing lanes check every 3 s and stop the suite's backend when the
-  service is gone; globalSetup watches that backend and, when it stops
-  answering, prints why and interrupts the run (like Ctrl+C), so it ends in
-  seconds instead of failing test by test. Let the suite finish first.
-
-- Pinned ports are validated and cannot overlap another server selected by the
-  same config process. Cross-process probe-to-bind races remain a known limitation:
-  simultaneous starts can still fail to bind; the suite never attaches to a foreign server.
-- Shared-service startup probes retry inconclusive timeouts for a bounded period.
-  Backend-watch cleanup aborts its active probe and prevents late interruption
-  of a completed run.
