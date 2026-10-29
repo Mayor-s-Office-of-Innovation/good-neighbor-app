@@ -1557,8 +1557,8 @@ export async function completeTaskWithAppActions(opts) {
         new Error(String(result.reason ?? "app action failed")),
         {
           extra: {
-            ...(result.code === "create_311_ticket"
-              ? { eventType: "311_app_action_failed" }
+            ...(["create_311_ticket", "close_311_ticket"].includes(result.code)
+              ? { eventType: "311_app_action_failed", integration: "sf311" }
               : {}),
             taskId: opts.taskId,
             siteId: opts.siteId,

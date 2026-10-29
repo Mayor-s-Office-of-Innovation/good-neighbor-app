@@ -111,9 +111,15 @@ export const handler = async (event, context) => {
         "";
       // Structured error convention (logServerError) — groupable + alarmable;
       // then batchItemFailures drives the SQS redrive as before.
-      logServerError(`worker ${messageId}`, result.reason, {
-        extra: { messageId },
-      });
+      const is311 =
+        "body" in failedRecord && pickHandler(failedRecord.body) === sf311Job;
+      logServerError(
+        `worker ${messageId}`,
+        is311 ? new Error("311 job attempt failed") : result.reason,
+        {
+          extra: { messageId, ...(is311 ? { integration: "sf311" } : {}) },
+        },
+      );
       batchItemFailures.push({ itemIdentifier: messageId });
     } else if (result.value?.batchItemFailures) {
       // Child handlers may catch record errors and resolve with a partial-batch

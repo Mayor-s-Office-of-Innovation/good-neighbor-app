@@ -28,6 +28,16 @@ output "submission_queue_url" {
   value       = aws_sqs_queue.submissions.url
 }
 
+output "sf311_queue_url" {
+  description = "Dedicated queue for 311 filing and closure jobs."
+  value       = aws_sqs_queue.sf311.url
+}
+
+output "sf311_dlq_url" {
+  description = "311 jobs that exhausted queue retries."
+  value       = aws_sqs_queue.sf311_dlq.url
+}
+
 output "dynamodb_table_name" {
   description = "Single-table DynamoDB store name (DYNAMO_TABLE)."
   value       = aws_dynamodb_table.app.name

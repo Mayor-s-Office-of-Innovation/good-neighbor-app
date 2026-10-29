@@ -202,6 +202,7 @@ it("logs safe outbound diagnostics without HUB payloads or exception messages", 
     const entry = JSON.parse(log.mock.calls[0][0]);
     expect(entry).toMatchObject({
       route: "city-note",
+      integration: "sf311",
       stage: "outbound",
       taskId: "t1",
       updateId: "u1",

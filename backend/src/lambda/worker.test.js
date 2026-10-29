@@ -62,6 +62,7 @@ function event(body) {
 
 describe("worker dispatch (pickHandler)", () => {
   beforeEach(() => {
+    sf311Job.mockClear();
     processSubmission.mockClear();
     analyzeArtifact.mockClear();
     reconcileSiteRevocation.mockClear();
@@ -92,6 +93,27 @@ describe("worker dispatch (pickHandler)", () => {
     ).resolves.toEqual({
       batchItemFailures: [],
     });
+  });
+
+  it("separates legacy 311 failures from general errors without logging upstream payloads", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      sf311Job.mockRejectedValueOnce(new Error("private upstream narrative"));
+      processSubmission.mockRejectedValueOnce(new Error("submission failed"));
+      await handler(event({ type: "sf311_job" }), /** @type {any} */ ({}));
+      await handler(event({ requestId: "synthetic" }), /** @type {any} */ ({}));
+      const entries = log.mock.calls.map(([line]) => JSON.parse(line));
+      expect(entries[0]).toMatchObject({
+        integration: "sf311",
+        messageId: "m1",
+      });
+      expect(entries[1]).not.toHaveProperty("integration");
+      expect(JSON.stringify(entries)).not.toContain(
+        "private upstream narrative",
+      );
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("reports only failed records for SQS retry", async () => {

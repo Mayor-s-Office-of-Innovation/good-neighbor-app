@@ -107,7 +107,7 @@ alarm-status widget, which is same-region only; their metrics are the bottom row
 
 | Alarm                       | Fires when                                                         | Look first                                                                                                                                                       |
 | --------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `submissions-dlq-not-empty` | ≥ 1 message in the dead-letter queue                               | SQS console → DLQ → poll a message (ids only, never media) → worker log group, `level = "ERROR"` around that time. Fix, then **Start DLQ redrive** on the queue. |
+| `submissions-dlq-not-empty` | ≥ 1 message in the dead-letter queue                               | Inspect worker logs and job state, then follow [controlled recovery](recovery.md). Old 311 messages can remain here; console polling is not read-only. |
 | `submissions-queue-backlog` | oldest queued message > 10 min, 2 periods                          | `AnalyzerLatencyMs` p95 (slow analyzer) or `worker-lambda-errors` (redelivery churn).                                                                            |
 | `<fn>-lambda-errors`        | invocation errors on api / worker / authorizer / intake            | the function's log group: `Task timed out`, `Runtime exited`, or a `level = "ERROR"` line.                                                                       |
 | `<fn>-lambda-throttles`     | any throttle on api / authorizer / worker                          | api: reservation is 10 in `lambda.tf`. worker: the event-source cap should make this impossible.                                                                 |
@@ -115,6 +115,15 @@ alarm-status widget, which is same-region only; their metrics are the bottom row
 | `api-5xx`                   | > 5 gateway 5xx in 5 min                                           | `api_gw` access-log group: filter `status >= 500`, read `integrationErr`.                                                                                        |
 | `dynamodb-throttles`        | any read/write throttle on the app table                           | a hot `SITE#` partition; Contributor Insights or the api logs at that minute.                                                                                    |
 | `app-health-check`          | `/health` unreachable from Route53 for 3 min (missing data counts) | CloudFront → API Gateway → api Lambda, in that order.                                                                                                            |
+
+## 311 alarms and metrics
+
+[The 311 runbook](sf311.md) defines the dedicated queue/DLQ, connection,
+reconciliation and terminal-action alarms, including inline calls and legacy
+jobs. The alarm-status widget includes the new alarms; the fault-events chart
+uses five-minute EMF sums from `-app`. Counts represent events, not unique jobs
+or an unresolved backlog. Known handled 311 errors are excluded from generic
+`ServerError`; uncaught API and platform errors remain monitored.
 
 ## Business metrics (namespace `good-neighbor-app-<env>-app`)
 

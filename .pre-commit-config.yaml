@@ -16,6 +16,23 @@ repos:
     hooks:
       - id: terraform_fmt
       - id: terraform_validate
+        name: Terraform validate (app environments)
+        # Module changes still trigger this hook. Validate through the roots
+        # that supply provider aliases, not each changed file's directory.
+        files: ^infra/(environments|modules)/.*\.(tf(vars)?|terraform\.lock\.hcl)$
+        pass_filenames: false
+        args:
+          - --tf-init-args=-input=false
+          - --tf-init-args=-lockfile=readonly
+          - infra/environments/dev/main.tf
+          - infra/environments/prod/main.tf
+      - id: terraform_validate
+        name: Terraform validate (state bootstrap)
+        # Bootstrap pins its own Terraform version; run it only for its edits.
+        files: ^infra/bootstrap/.*\.(tf(vars)?|terraform\.lock\.hcl)$
+        args:
+          - --tf-init-args=-input=false
+          - --tf-init-args=-lockfile=readonly
   - repo: https://github.com/bridgecrewio/checkov
     rev: 3.2.252
     hooks:

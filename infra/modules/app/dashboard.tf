@@ -36,6 +36,10 @@ locals {
       aws_cloudwatch_metric_alarm.dynamodb_throttles.arn,
       aws_cloudwatch_metric_alarm.server_error_rate.arn,
       aws_cloudwatch_metric_alarm.sf311_action_failed.arn,
+      aws_cloudwatch_metric_alarm.sf311_connection_failed.arn,
+      aws_cloudwatch_metric_alarm.sf311_reconciliation_blocked.arn,
+      aws_cloudwatch_metric_alarm.sf311_dlq_not_empty.arn,
+      aws_cloudwatch_metric_alarm.sf311_queue_backlog.arn,
       aws_cloudwatch_metric_alarm.media_rejected.arn,
       aws_cloudwatch_metric_alarm.media_quota_exceeded.arn,
       aws_cloudwatch_metric_alarm.client_error_forward_failed.arn,
@@ -281,11 +285,13 @@ locals {
     {
       type = "metric", x = 8, y = 30, width = 8, height = 6
       properties = merge(local.five_min, {
-        title   = "Code-reported faults (metric filters)"
+        title   = "Code-reported fault events (not unique jobs)"
         stacked = false
         metrics = [
           [local.error_namespace, "ServerError", { label = "server errors", color = "#d62728" }],
-          [local.error_namespace, "Sf311ActionFailed", { label = "311 action failed" }],
+          [local.metrics_namespace, "Sf311ActionFailed", { label = "311 terminal action failure events" }],
+          [local.metrics_namespace, "Sf311ReconciliationBlocked", { label = "311 blocked reconciliation events" }],
+          [local.metrics_namespace, "Sf311ConnectionFailed", { label = "311 connection failure attempts" }],
           [local.security_namespace, "MediaRejected", { label = "media rejected" }],
           [local.security_namespace, "MediaQuotaExceeded", { label = "media quota exceeded" }],
           [local.error_namespace, "ClientErrorForwardFailed", { label = "client-error forward failed" }],

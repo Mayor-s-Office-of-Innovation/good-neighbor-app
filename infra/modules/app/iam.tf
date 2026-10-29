@@ -495,7 +495,7 @@ data "aws_iam_policy_document" "worker" {
     sid       = "EnqueueRevocationReconciliation"
     effect    = "Allow"
     actions   = ["sqs:SendMessage"]
-    resources = [aws_sqs_queue.submissions.arn]
+    resources = [aws_sqs_queue.submissions.arn, aws_sqs_queue.sf311.arn]
   }
 
   statement {

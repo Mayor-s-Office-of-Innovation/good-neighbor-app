@@ -115,6 +115,8 @@
   deliberate divergences from off-the-shelf Web Awesome — using the real `tokens.css` /
   `base.css` and component sheets, so it can't drift from the app.
 
+- **[runbooks/sf311.md](./runbooks/sf311.md)** — dedicated 311 queue and alarms, safe diagnosis, metric definitions, legacy jobs and rollout/recovery.
+
 ## Process & security
 
 - **[sdlc-level-2-checklist.md](./sdlc-level-2-checklist.md)** — the CCSF SDLC standard,

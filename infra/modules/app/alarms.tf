@@ -16,6 +16,9 @@ variable "alarm_emails" {
 locals {
   error_namespace    = "${local.name_prefix}-errors"
   security_namespace = "${local.name_prefix}-security"
+  # Handled 311 outcomes have their own EMF alarms, including legacy jobs.
+  # Preserve errors without an integration field and all other integrations.
+  server_error_filter_pattern = "{ $.level = \"ERROR\" && ($.integration NOT EXISTS || $.integration != \"sf311\") }"
 }
 
 resource "aws_sns_topic" "alarms" {
@@ -174,7 +177,7 @@ resource "aws_cloudwatch_metric_alarm" "client_event_dropped" {
 resource "aws_cloudwatch_log_metric_filter" "intake_server_errors" {
   name           = "${local.name_prefix}-intake-server-errors"
   log_group_name = aws_cloudwatch_log_group.intake.name
-  pattern        = "{ $.level = \"ERROR\" }"
+  pattern        = local.server_error_filter_pattern
 
   metric_transformation {
     name          = "ServerError"
@@ -189,7 +192,7 @@ resource "aws_cloudwatch_log_metric_filter" "intake_server_errors" {
 resource "aws_cloudwatch_log_metric_filter" "api_server_errors" {
   name           = "${local.name_prefix}-api-server-errors"
   log_group_name = aws_cloudwatch_log_group.api.name
-  pattern        = "{ $.level = \"ERROR\" }"
+  pattern        = local.server_error_filter_pattern
 
   metric_transformation {
     name          = "ServerError"
@@ -315,7 +318,7 @@ resource "aws_cloudwatch_metric_alarm" "feedback_forward_failed" {
 resource "aws_cloudwatch_log_metric_filter" "worker_errors" {
   name           = "${local.name_prefix}-worker-server-errors"
   log_group_name = aws_cloudwatch_log_group.worker.name
-  pattern        = "{ $.level = \"ERROR\" }"
+  pattern        = local.server_error_filter_pattern
 
   metric_transformation {
     name          = "ServerError"
@@ -385,58 +388,10 @@ resource "aws_cloudwatch_metric_alarm" "media_quota_exceeded" {
   tags                = var.tags
 }
 
-# 311 app actions return a stored failure result rather than throwing. Capture
-# that explicit operational event from both execution paths: automatic filings
-# run in the worker, while user-confirmed filings run in the API Lambda.
-resource "aws_cloudwatch_log_metric_filter" "api_311_action_failures" {
-  name           = "${local.name_prefix}-api-311-action-failures"
-  log_group_name = aws_cloudwatch_log_group.api.name
-  pattern        = "{ $.eventType = \"311_app_action_failed\" }"
-
-  metric_transformation {
-    name          = "Sf311ActionFailed"
-    namespace     = local.error_namespace
-    value         = "1"
-    default_value = "0"
-  }
-}
-
-resource "aws_cloudwatch_log_metric_filter" "worker_311_action_failures" {
-  name           = "${local.name_prefix}-worker-311-action-failures"
-  log_group_name = aws_cloudwatch_log_group.worker.name
-  pattern        = "{ $.eventType = \"311_app_action_failed\" }"
-
-  metric_transformation {
-    name          = "Sf311ActionFailed"
-    namespace     = local.error_namespace
-    value         = "1"
-    default_value = "0"
-  }
-}
-
-resource "aws_cloudwatch_metric_alarm" "sf311_action_failed" {
-  alarm_name          = "${local.name_prefix}-311-action-failed"
-  alarm_description   = "A 311 filing action failed. Search API and worker logs for eventType=311_app_action_failed and inspect the safe failure reason."
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  datapoints_to_alarm = 1
-  threshold           = 1
-  period              = 300
-  namespace           = local.error_namespace
-  metric_name         = "Sf311ActionFailed"
-  statistic           = "Sum"
-  treat_missing_data  = "notBreaching"
-
-  alarm_actions = [aws_sns_topic.alarms.arn]
-  ok_actions    = [aws_sns_topic.alarms.arn]
-
-  tags = var.tags
-}
-
 # Combined "the api or worker is failing now" page.
 resource "aws_cloudwatch_metric_alarm" "server_error_rate" {
   alarm_name          = "${local.name_prefix}-server-errors"
-  alarm_description   = "Uncaught server errors logged by the logServerError convention (api or worker) — see docs/todo/client-error-tracking-plan.md Phase 4."
+  alarm_description   = "Server errors from the API, intake, general worker or analysis worker. Known handled 311 errors use their dedicated action/connection/reconciliation alarms. See docs/runbooks/observability.md and docs/runbooks/sf311.md."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
   threshold           = 5
@@ -616,7 +571,7 @@ resource "aws_cloudwatch_metric_alarm" "revocation_operation_partial" {
 resource "aws_cloudwatch_log_metric_filter" "analysis_worker_errors" {
   name           = "${local.name_prefix}-analysis-server-errors"
   log_group_name = aws_cloudwatch_log_group.analysis.name
-  pattern        = "{ $.level = \"ERROR\" }"
+  pattern        = local.server_error_filter_pattern
 
   metric_transformation {
     name          = "ServerError"
@@ -634,19 +589,6 @@ resource "aws_cloudwatch_log_metric_filter" "analysis_media_rejected" {
   metric_transformation {
     name          = "MediaRejected"
     namespace     = local.security_namespace
-    value         = "1"
-    default_value = "0"
-  }
-}
-
-resource "aws_cloudwatch_log_metric_filter" "analysis_311_action_failures" {
-  name           = "${local.name_prefix}-analysis-311-action-failures"
-  log_group_name = aws_cloudwatch_log_group.analysis.name
-  pattern        = "{ $.eventType = \"311_app_action_failed\" }"
-
-  metric_transformation {
-    name          = "Sf311ActionFailed"
-    namespace     = local.error_namespace
     value         = "1"
     default_value = "0"
   }

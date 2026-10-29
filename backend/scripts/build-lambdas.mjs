@@ -10,8 +10,8 @@
 // handled specially: esbuild keeps it external (it's a `.node` native addon and
 // must not be bundled), and this script copies `sharp`, its JS runtime
 // dependencies (`detect-libc`, `semver` — imported by sharp's module-load
-// path), and its platform binaries (`@img/*`) from node_modules into both
-// deployment artifacts so their zips are self-contained. On the deploy runner,
+// path), and its platform binaries (`@img/*`) from node_modules into each
+// relevant deployment artifact so its zip is self-contained. On the deploy runner,
 // `npm ci` resolves the linux-x64 binaries via sharp's optionalDependencies.
 //
 // `@duckdb/node-api` (analytics convert + report + query lambdas) gets the
@@ -54,6 +54,11 @@ const shared = {
 };
 
 const entries = [
+  {
+    name: "sf311-worker",
+    entry: resolve(backendRoot, "src/lambda/sf311-worker.js"),
+    external: ["sharp"],
+  },
   { name: "support", entry: resolve(backendRoot, "src/lambda/support.js") },
   {
     name: "duplicate-dispatch",
@@ -141,7 +146,7 @@ for (const { name, entry, external } of entries) {
 // and each platform package self-describes its os/cpu, so extras are inert.
 // The wasm32 fallback (~9 MB) is what sharp loads if no native binary matches,
 // so it doubles as insurance against an os/cpu mismatch in the zip.
-const sharpTargets = ["api", "worker", "duplicate-worker"];
+const sharpTargets = ["api", "worker", "duplicate-worker", "sf311-worker"];
 const roots = [resolve(backendRoot, ".."), backendRoot];
 const findPkg = (pkg) =>
   roots.map((root) => resolve(root, "node_modules", pkg)).find(existsSync);
