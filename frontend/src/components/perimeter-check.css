@@ -354,3 +354,10 @@
   opacity: 0.45;
   cursor: default;
 }
+
+.check-timeline {
+  gap: 1.25rem;
+}
+.check-roll__grid:empty {
+  display: none;
+}

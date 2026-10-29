@@ -608,6 +608,7 @@
   "check.photo.alt": "Foto capturada {index}",
   "check.photo.delete": "Eliminar foto",
   "check.photo.take": "Tomar foto",
+  "check.photo.upload": "Subir fotos",
   "check.photos.one": "{photos} foto",
   "check.photos.other": "{photos} fotos",
   "check.title": "Tome al menos 3 fotos alrededor de su edificio.",

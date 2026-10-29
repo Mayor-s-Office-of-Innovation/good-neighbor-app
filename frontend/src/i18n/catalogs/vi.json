@@ -608,6 +608,7 @@
   "check.photo.alt": "Ảnh đã chụp {index}",
   "check.photo.delete": "Xóa ảnh",
   "check.photo.take": "Chụp ảnh",
+  "check.photo.upload": "Tải ảnh lên",
   "check.photos.one": "{photos} ảnh",
   "check.photos.other": "{photos} ảnh",
   "check.title": "Chụp ít nhất 3 ảnh xung quanh tòa nhà của quý vị.",

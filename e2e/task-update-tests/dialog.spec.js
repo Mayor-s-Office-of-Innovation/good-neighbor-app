@@ -41,7 +41,7 @@ test.beforeEach(async ({ page }) => {
 async function pickPhoto(page) {
   await page.locator('[data-mode="notes"]').click();
   await page
-    .locator("[data-photos]")
+    .locator("[data-photos], [data-update-camera]")
     .setInputFiles("e2e/fixtures/photos/input-1.jpg");
   await expect(page.locator("dialog.task-update")).toHaveAttribute(
     "data-test-identity",
@@ -66,7 +66,7 @@ test("all actions are available on a recoverable issue; picking a photo keeps th
     "data-test-identity",
     "original",
   );
-  await page.locator("[data-add-note]").click();
+  await page.locator("[data-add-note], [data-capture-text]").click();
   await page.locator("[data-note-text]").fill("An update");
   await page.locator("[data-save-note]").click();
   await page.locator("[data-close]").click();
@@ -143,7 +143,7 @@ test("an uncertain save times out and retry reuses the update identity", async (
     });
   });
   await page.locator('[data-mode="notes"]').click();
-  await page.locator("[data-add-note]").click();
+  await page.locator("[data-add-note], [data-capture-text]").click();
   await page.locator("[data-note-text]").fill("A note to retain");
   await page.locator("[data-save-note]").click();
   await page.locator("[data-save-notes]").click();

@@ -193,9 +193,10 @@ describe("task update dialog templates", () => {
     expect(results).toContain("#AB12");
     expect(results).toContain('src="https://cdn.example/thumb.jpg"');
     expect(results).toContain("data-skip");
-    expect(capture).toContain("photo-capture-tile");
-    expect(capture).toContain("photo-capture-tile__icon");
-    expect(capture).toContain("photo-capture-tile__label");
+    expect(capture).toContain("data-update-gallery");
+    expect(results).not.toContain("data-update-gallery");
+    expect(capture).toContain("data-update-camera");
+    expect(capture).toContain("data-capture-text");
     expect(capture).toContain(t("check.photo.take"));
     expect(taskUpdateActionEditor({ text: "" })).toContain("disabled");
     expect(taskUpdateActionEditor({ text: "Done" })).not.toContain(

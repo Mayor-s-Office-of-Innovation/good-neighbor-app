@@ -547,6 +547,31 @@ export class TaskUpdateDialog extends HTMLElement {
     root.querySelector("[data-load-older]")?.addEventListener("click", () => {
       if (this._nextToken) void this._load(this._nextToken);
     });
+    for (const [button, picker] of [
+      ["[data-capture-camera]", "[data-update-camera]"],
+      ["[data-capture-upload]", "[data-update-gallery]"],
+    ]) {
+      const input = /** @type {HTMLInputElement | null} */ (
+        root.querySelector(picker)
+      );
+      root.querySelector(button)?.addEventListener("click", () => {
+        if (!input || this._busy) return;
+        input.value = "";
+        input.click();
+      });
+      input?.addEventListener("change", () => {
+        if (this._busy || !input.files?.length) return;
+        const added = [...input.files].slice(
+          0,
+          Math.max(0, MAX_TASK_UPDATE_PHOTOS - this._files.length),
+        );
+        this._files.push(...added);
+        this._filePreviews.push(
+          ...added.map((file) => URL.createObjectURL(file)),
+        );
+        this._render();
+      });
+    }
     root.querySelector("[data-photos]")?.addEventListener("change", (event) => {
       const input = /** @type {HTMLInputElement} */ (event.currentTarget);
       this._resetFiles();
@@ -568,11 +593,13 @@ export class TaskUpdateDialog extends HTMLElement {
                 this._cityHelpNeeded === null);
           });
       });
-    root.querySelector("[data-add-note]")?.addEventListener("click", () => {
-      this._noteIndex = this._noteDrafts.findIndex((note) => !note.trim());
-      this._mode = "note-text";
-      this._render();
-    });
+    root
+      .querySelector("[data-add-note], [data-capture-text]")
+      ?.addEventListener("click", () => {
+        this._noteIndex = this._noteDrafts.findIndex((note) => !note.trim());
+        this._mode = "note-text";
+        this._render();
+      });
     root.querySelectorAll("[data-edit-note]").forEach((element) => {
       const button = /** @type {HTMLButtonElement} */ (element);
       button.addEventListener("click", () => {

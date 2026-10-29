@@ -253,10 +253,28 @@ export class CareWorkView extends HTMLElement {
     const input = /** @type {HTMLInputElement} */ (
       this.querySelector("#care-photo-input")
     );
-    this.querySelector("[data-add-photo]")?.addEventListener("click", () => {
-      if (!draft.payload) input.click();
-    });
+    this.querySelector("[data-capture-camera]")?.addEventListener(
+      "click",
+      () => {
+        if (!draft.payload) input.click();
+      },
+    );
     input.addEventListener("change", () => this._addFiles([...input.files]));
+    const gallery = /** @type {HTMLInputElement} */ (
+      this.querySelector("#care-gallery-input")
+    );
+    this.querySelector("[data-capture-upload]").addEventListener(
+      "click",
+      () => {
+        if (draft.payload || this._busy) return;
+        gallery.value = "";
+        gallery.click();
+      },
+    );
+    gallery.addEventListener("change", () =>
+      this._addFiles([...gallery.files]),
+    );
+
     this.querySelectorAll("[data-remove]").forEach((button) =>
       button.addEventListener("click", () => {
         if (draft.payload || this._busy) return;
@@ -272,6 +290,7 @@ export class CareWorkView extends HTMLElement {
     );
   }
   _addFiles(files) {
+    if (draft.payload || this._busy || !files.length) return;
     const selected = [...draft.files.map((entry) => entry.file), ...files];
     if (
       selected.length > MAX_CARE_PHOTOS ||

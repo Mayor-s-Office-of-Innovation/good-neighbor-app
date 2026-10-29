@@ -1,4 +1,5 @@
 // @ts-nocheck -- lenient migration baseline (checkJs).
+import { readCaptureFiles } from "../services/capture-files.js";
 import { resolveSessionTask } from "./session-task-resolution.js";
 import { openSessionDuplicate } from "./duplicate-issue-launcher.js";
 import { captureGuidance } from "../domain/capture-guidance.js";
@@ -105,6 +106,7 @@ import { trackEvent } from "../services/analytics.js";
 class PerimeterCheck extends HTMLElement {
   constructor() {
     super();
+    this._captureReadVersion = 0;
     this._answeringConditionIds = new Set();
   }
 
@@ -186,6 +188,21 @@ class PerimeterCheck extends HTMLElement {
     );
     this.addEventListener("click", (e) => this._onAnalysisClick(e));
     this._fileInput.addEventListener("change", () => this._onFilePicked());
+    this.querySelector("#add-photo").addEventListener("click", () =>
+      this._openCamera(),
+    );
+    const gallery = /** @type {HTMLInputElement} */ (
+      this.querySelector("#gallery-input")
+    );
+    this.querySelector("[data-capture-upload]").addEventListener(
+      "click",
+      () => {
+        gallery.value = "";
+        gallery.click();
+      },
+    );
+    gallery.addEventListener("change", () => this._onFilePicked(gallery));
+
     [
       this._analysisDeleteDialog,
       this._analysisSuccessDialog,
@@ -689,39 +706,32 @@ class PerimeterCheck extends HTMLElement {
     this._fileInput.click();
   }
 
-  _onFilePicked() {
+  _onFilePicked(input = this._fileInput) {
     clearCameraOpen();
-    const file = this._fileInput.files && this._fileInput.files[0];
-    if (!file) return;
-    mark("camera:picked", { bytes: file.size, type: file.type });
-    void trackEvent("photo_picked", {
-      flow: "perimeter",
-      photo_bytes: file.size,
-      photo_type: file.type,
-    });
-    if (this._fileReader?.readyState === FileReader.LOADING) {
-      this._fileReader.abort();
-    }
+    const files = [...(input?.files || [])];
+    if (!files.length) return;
+    if (input === this._fileInput)
+      mark("camera:picked", { bytes: files[0].size, type: files[0].type });
     const originCheckId = this._checkId;
-    const reader = new FileReader();
-    this._fileReader = reader;
-    reader.onload = () => {
-      if (!this.isConnected || !isCurrentSession(originCheckId, "perimeter")) {
-        this._fileReader = null;
-        return;
-      }
-      this._fileReader = null;
-      if (typeof reader.result === "string") {
-        this._addPhoto(reader.result);
-      }
-    };
-    reader.onerror = () => {
-      this._fileReader = null;
-    };
-    reader.onabort = () => {
-      this._fileReader = null;
-    };
-    reader.readAsDataURL(file);
+    const version = this._captureReadVersion;
+    this._photoReadQueue = (this._photoReadQueue || Promise.resolve()).then(
+      () =>
+        readCaptureFiles(
+          files,
+          () =>
+            this.isConnected &&
+            !this._finishing &&
+            version === this._captureReadVersion &&
+            isCurrentSession(originCheckId, "perimeter"),
+          (dataUrl) => this._addPhoto(dataUrl),
+        ),
+    );
+    for (const file of files)
+      void trackEvent("photo_picked", {
+        flow: "perimeter",
+        photo_bytes: file.size,
+        photo_type: file.type,
+      });
   }
 
   _addPhoto(dataUrl) {
@@ -784,12 +794,10 @@ class PerimeterCheck extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._captureReadVersion += 1;
     this._guidanceAbort?.abort();
     // Only an abnormal document death leaves the marker behind.
     clearCameraOpen();
-    if (this._fileReader?.readyState === FileReader.LOADING) {
-      this._fileReader.abort();
-    }
     this._stopElapsedTicker();
     this._deletionUnsub?.();
     this._unsubscribe?.();

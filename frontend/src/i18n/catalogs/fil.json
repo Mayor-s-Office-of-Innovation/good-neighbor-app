@@ -608,6 +608,7 @@
   "check.photo.alt": "Kinuhang larawan {index}",
   "check.photo.delete": "Burahin ang larawan",
   "check.photo.take": "Kumuha ng larawan",
+  "check.photo.upload": "Mag-upload ng mga litrato",
   "check.photos.one": "{photos} larawan",
   "check.photos.other": "{photos} larawan",
   "check.title": "Kumuha ng hindi bababa sa 3 larawan sa paligid ng inyong gusali.",
