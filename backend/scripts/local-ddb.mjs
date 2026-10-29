@@ -12,20 +12,17 @@
 // which crashes on startup with NoClassDefFoundError. Install into backend/.local/
 // instead (the same persistent, git-ignored dir minio/elasticmq use) so it isn't
 // reaped between runs.
-//
-// If a DynamoDB Local already answers on the port (another stack is up), it is
-// reused instead — see lib/reuse-running.mjs.
 
 import { dirname, join } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-import { DynamoDBClient, ListTablesCommand } from "@aws-sdk/client-dynamodb";
 import DynamoDbLocal from "dynamodb-local";
 
-import { alreadyRunning, park } from "./lib/reuse-running.mjs";
-
-const PORT = 8000;
+const PORT = Number(process.env.LOCAL_DDB_PORT ?? 8000);
+// The e2e suite runs its own throwaway copy (LOCAL_DDB_IN_MEMORY=true) beside
+// the dev one, so nothing it writes outlives the run.
+const IN_MEMORY = process.env.LOCAL_DDB_IN_MEMORY === "true";
 
 const backendDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 DynamoDbLocal.configureInstaller({
@@ -33,23 +30,15 @@ DynamoDbLocal.configureInstaller({
 });
 
 async function main() {
-  const probe = new DynamoDBClient({
-    endpoint: `http://127.0.0.1:${PORT}`,
-    region: "us-east-1",
-    credentials: { accessKeyId: "local", secretAccessKey: "local" },
-    maxAttempts: 1,
-  });
-  const ping = () =>
-    probe.send(new ListTablesCommand({ Limit: 1 }), {
-      abortSignal: AbortSignal.timeout(1500),
-    });
-  if (await alreadyRunning("ddb", PORT, ping)) await park("ddb", PORT, ping);
-
-  // A null dbPath makes the launcher use -inMemory, losing all local records
-  // whenever the dev stack restarts. Keep data alongside the other local stores.
-  const dataPath = join(backendDir, ".local", "dynamodb-data");
-  await mkdir(dataPath, { recursive: true });
-  console.log(`[ddb] starting DynamoDB Local on :${PORT} (JRE 17+ required)…`);
+  // A null dbPath makes the launcher use -inMemory. The dev copy keeps its data
+  // alongside the other local stores so records survive a restart.
+  const dataPath = IN_MEMORY
+    ? null
+    : join(backendDir, ".local", "dynamodb-data");
+  if (dataPath) await mkdir(dataPath, { recursive: true });
+  console.log(
+    `[ddb] starting DynamoDB Local on :${PORT}${IN_MEMORY ? " (in memory)" : ""} (JRE 17+ required)…`,
+  );
   await DynamoDbLocal.launch(PORT, dataPath, ["-sharedDb"]);
   console.log(`[ddb] DynamoDB Local ready on http://localhost:${PORT}`);
 
