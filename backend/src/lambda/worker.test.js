@@ -1,3 +1,7 @@
+const updateMediaThumbnail = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock("../workers/update-media-thumbnail.js", () => ({
+  handler: updateMediaThumbnail,
+}));
 const { expireComplianceTerms } = vi.hoisted(() => ({
   expireComplianceTerms: vi.fn(),
 }));
@@ -229,4 +233,16 @@ describe("worker dispatch (pickHandler)", () => {
 it("routes scheduled expiry invocations without expecting SQS records", async () => {
   await handler({ type: "expire_compliance_terms" }, /** @type {any} */ ({}));
   expect(expireComplianceTerms).toHaveBeenCalledTimes(1);
+});
+
+it("routes thumbnail jobs without invoking the analyzer", async () => {
+  await handler(
+    event({
+      type: "update_media_thumbnail",
+      pk: "SITE#site",
+      sk: "TASK#task#MEDIA#photo",
+    }),
+    /** @type {any} */ ({}),
+  );
+  expect(updateMediaThumbnail).toHaveBeenCalledTimes(1);
 });

@@ -64,7 +64,7 @@ test.describe("back button handling", () => {
       name: t("location.title"),
     });
     await expect(locationDialog).toBeVisible();
-    await expect(page).toHaveURL(/\/today#location$/);
+    await expect(page).toHaveURL(/\/today(?:\?filter=todo)?#location$/);
 
     await page.getByRole("button", { name: t("location.stay") }).click();
     await expect(page).toHaveURL(/\/check$/);

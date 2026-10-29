@@ -85,7 +85,7 @@ export function taskUpdateDialogShell({ mode, state, content }) {
     </dialog>`;
 }
 
-/** @param {{ task: Record<string, any>, updates: Record<string, any>[], issueOrigin: string, originalMediaUrl: string, originalFullMediaUrl?: string, mediaUrls: Map<string, string>, nextToken?: string | null, readOnly?: boolean, now?: Date }} view */
+/** @param {{ task: Record<string, any>, updates: Record<string, any>[], issueOrigin: string, originalMediaUrl: string, originalFullMediaUrl?: string, mediaUrls: Map<string, string | {downloadUrl: string, thumbnailUrl?: string}>, nextToken?: string | null, readOnly?: boolean, now?: Date }} view */
 export function taskUpdateTimeline({
   task,
   updates,

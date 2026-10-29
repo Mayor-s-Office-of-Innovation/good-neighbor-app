@@ -63,4 +63,21 @@ describe("proactive care screens", () => {
     expect(markup).not.toContain("Where");
     expect(careList([entry])).toContain(t("care.new"));
   });
+  it("shows the thumbnail and opens the original in the lightbox", () => {
+    const markup = careDetail({
+      ...entry,
+      photos: [
+        {
+          photoId: "p1",
+          url: "https://s3.test/full.jpg",
+          thumbnailUrl: "https://s3.test/full.jpg.thumb.webp",
+        },
+        { photoId: "p2", url: "https://s3.test/legacy.jpg" },
+      ],
+    });
+    expect(markup).toContain('data-full-src="https://s3.test/full.jpg"');
+    expect(markup).toContain('src="https://s3.test/full.jpg.thumb.webp"');
+    // A photo saved before thumbnails existed shows its original.
+    expect(markup).toContain('src="https://s3.test/legacy.jpg"');
+  });
 });

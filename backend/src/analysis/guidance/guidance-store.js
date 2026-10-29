@@ -13,7 +13,6 @@ import {
   assessmentConditionPrefix,
   assessmentTimelineGsi,
   conditionKey,
-  conditionTimelineGsi,
   GSI2_NAME,
   siteMetaKey,
   taskDisplayCounterKey,
@@ -25,7 +24,6 @@ import {
   taskUpdateTimelineGsi,
   taskWorklistPk,
   taskWorklistDateGsi,
-  unresolvedConditionGsi,
 } from "../../handlers/keys.js";
 import { evaluateCondition } from "./evaluator.js";
 import {
@@ -360,7 +358,6 @@ function buildConditionItem({
   taskIds,
   now,
 }) {
-  const unresolved = evaluation.kind !== "outcome";
   const base = {
     ...conditionKey(siteId, assessmentId, conditionId),
     entityType: "CONDITION",
@@ -400,29 +397,11 @@ function buildConditionItem({
     resolvedToTasks: evaluation.kind === "outcome",
     needsAnswer:
       evaluation.kind === "needs_answer" ? evaluation.question : null,
-    ...conditionTimelineGsi(
-      siteId,
-      condition.severity,
-      reportedAt,
-      assessmentId,
-      conditionId,
-    ),
     createdAt: now,
     updatedAt: now,
   };
 
-  return unresolved
-    ? {
-        ...base,
-        ...unresolvedConditionGsi(
-          siteId,
-          condition.severity,
-          reportedAt,
-          assessmentId,
-          conditionId,
-        ),
-      }
-    : base;
+  return base;
 }
 
 /**
@@ -642,25 +621,7 @@ export async function storeEvaluatedAssessment(input, options) {
         ...(translations ? { translations } : {}),
         ...conditionKey(input.siteId, input.assessmentId, conditionId),
         assessmentId: input.assessmentId,
-        ...conditionTimelineGsi(
-          input.siteId,
-          condition.severity,
-          reportedAt,
-          input.assessmentId,
-          conditionId,
-        ),
       };
-      if (prior.gsi5pk)
-        Object.assign(
-          preserved,
-          unresolvedConditionGsi(
-            input.siteId,
-            condition.severity,
-            reportedAt,
-            input.assessmentId,
-            conditionId,
-          ),
-        );
       retainedConditionIds.add(conditionId);
       conditionItems.push(preserved);
       for (const task of priorTasks) {
@@ -1211,14 +1172,6 @@ export async function answerCondition(opts) {
         evaluation.kind === "needs_answer" ? evaluation.question : null,
       updatedAt: now,
     };
-    if (evaluation.kind === "outcome") {
-      const sparseCondition = /** @type {Record<string, unknown>} */ (
-        updatedCondition
-      );
-      delete sparseCondition.gsi5pk;
-      delete sparseCondition.gsi5sk;
-    }
-
     const priorRevision = Number(assessmentItem.assessmentRevision ?? 0);
     const updatedAssessment = applyAssessmentConditionDelta({
       assessment: assessmentItem,

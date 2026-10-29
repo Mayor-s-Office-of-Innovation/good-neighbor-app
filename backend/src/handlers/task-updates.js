@@ -513,6 +513,7 @@ export const registerTaskUpdateMedia = async (event) => {
     key: s3Key,
     tags: { state: "registered" },
   });
+  // The durable media INSERT is dispatched to the background thumbnail worker.
   return jsonResponse(alreadyRegistered ? 200 : 201, {
     artifactId,
     status: "registered",

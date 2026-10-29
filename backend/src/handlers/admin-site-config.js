@@ -27,6 +27,7 @@ import {
   supervisorOnly,
 } from "../lib/admin-auth.js";
 import { pacificToday } from "../lib/pacific-dates.js";
+import { complianceTermsExpiryGsi } from "./keys.js";
 
 /** Replace the Compliance managers assigned to one Site. */
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -227,6 +228,7 @@ export const createSiteTerms = (event) =>
         new GetCommand({
           TableName: tableName,
           Key: { pk: `SITE#${siteId}`, sk: "#META" },
+          ConsistentRead: true,
         }),
       ),
       readCompliancePeriods(siteId, tableName).then((Items) => ({ Items })),
@@ -375,6 +377,18 @@ export const createSiteTerms = (event) =>
     const termsVersionId = randomUUID();
     const observedLatestVersion =
       siteResult.Item.latestComplianceTermsVersionId;
+    // The Site record and the terms list are two reads, not one snapshot. If
+    // the record names a latest version the list does not contain, a creation
+    // landed between them: stop rather than build on a partial view, which
+    // would leave that version unshortened and still in the GSI3 expiry index.
+    if (
+      observedLatestVersion !== undefined &&
+      !(termsResult.Items ?? []).some(
+        (item) => item.termsVersionId === observedLatestVersion,
+      )
+    ) {
+      return jsonResponse(409, { error: "terms_write_conflict" });
+    }
     const actor = adminPrincipal(event).subject || "central-admin";
     const [email, leadProgramResult] = await Promise.all([
       complianceLetterEmail(
@@ -405,6 +419,11 @@ export const createSiteTerms = (event) =>
       effectiveStart,
       ...(periodEnd ? { periodEnd } : {}),
       ...(expiresOnExclusive ? { expiresOnExclusive } : {}),
+      // Sparse GSI3 entry for the scheduled expiry sweep. Open-ended terms
+      // never expire on their own, so they stay out of the index.
+      ...(expiresOnExclusive
+        ? complianceTermsExpiryGsi(siteId, expiresOnExclusive, termsVersionId)
+        : {}),
       status: termsStatus(effectiveStart, expiresOnExclusive),
       createdAt: now,
       createdBy: actor,
@@ -490,8 +509,10 @@ export const createSiteTerms = (event) =>
         Update: {
           TableName: tableName,
           Key: { pk: String(prior.pk), sk: String(prior.sk) },
+          // The superseded version leaves the expiry index (GSI3): the sweep
+          // only closes a site's latest version, so it could never act on it.
           UpdateExpression:
-            "SET expiresOnExclusive = :expiry, updatedAt = :now",
+            "SET expiresOnExclusive = :expiry, updatedAt = :now REMOVE gsi3pk, gsi3sk",
           ConditionExpression:
             "attribute_not_exists(expiresOnExclusive) OR expiresOnExclusive > :expiry",
           ExpressionAttributeValues: { ":expiry": effectiveStart, ":now": now },

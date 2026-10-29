@@ -43,6 +43,8 @@ async function issueFixture(page, ruleId) {
     (candidate) => candidate.ruleId === ruleId,
   );
   if (!rule) throw new Error(`Missing rule ${ruleId}`);
+  // Keep the task inside Today's 14-day active window on every test run.
+  const createdAt = Date.now() - 5 * 60 * 1000;
   let task = {
     ...rule.outcome,
     taskId: `phone-test-${ruleId}`,
@@ -53,9 +55,7 @@ async function issueFixture(page, ruleId) {
     canBeInProgress: rule.canBeInProgress,
     primaryInProgressAgency: rule.primaryInProgressAgency,
     status: "open",
-    // Keep the fixture in the active worklist. A fixed historical date
-    // eventually crosses the 14-day expiry boundary and is rightly archived.
-    createdAt: new Date().toISOString(),
+    createdAt: new Date(createdAt).toISOString(),
     inProgressAt: "",
   };
   /** @type {Array<{completionMethod: string}>} */
@@ -85,7 +85,7 @@ async function issueFixture(page, ruleId) {
     task = {
       ...task,
       status: "in_progress",
-      inProgressAt: "2026-10-15T12:01:00Z",
+      inProgressAt: new Date().toISOString(),
     };
     await route.fulfill({ json: { task } });
   });

@@ -32,7 +32,7 @@ export async function closeComplianceTerms(site, term, today, now, actor) {
             TableName: tableName,
             Key: { pk: term.pk, sk: term.sk },
             UpdateExpression:
-              "SET expiresOnExclusive = :today, endedOn = :endDay, endedAt = :now, endedBy = :actor, #status = :ended",
+              "SET expiresOnExclusive = :today, endedOn = :endDay, endedAt = :now, endedBy = :actor, #status = :ended REMOVE gsi3pk, gsi3sk",
             ConditionExpression:
               "attribute_not_exists(endedAt) AND #status <> :cancelled",
             ExpressionAttributeNames: { "#status": "status" },

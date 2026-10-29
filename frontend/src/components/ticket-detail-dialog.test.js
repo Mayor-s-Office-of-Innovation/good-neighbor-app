@@ -190,7 +190,9 @@ describe("311 issue updates", () => {
       dialog._render = vi.fn();
       await dialog.open(task);
       expect(dialog._detail.updates).toHaveLength(1);
-      expect(dialog._detail.mediaUrls.get("p1")).toBe("photo.jpg");
+      expect(dialog._detail.mediaUrls.get("p1")).toMatchObject({
+        downloadUrl: "photo.jpg",
+      });
       expect(dialog._detail.nextToken).toBe("older");
       await dialog._load("older");
       expect(getTaskUpdates).toHaveBeenLastCalledWith("t1", "older");
