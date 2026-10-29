@@ -19,7 +19,8 @@ export class ArtifactPhoto extends HTMLElement {
     this._generation = (this._generation || 0) + 1;
     this._busy = false;
     this._trigger = this.closest("[data-photo-lightbox]");
-    this._setTrigger("");
+    // A trigger rendered with a URL stays focusable, so a timeline re-render can restore focus to it.
+    if (!this._trigger?.getAttribute("data-full-src")) this._setTrigger("");
     const generation = this._generation;
     this._attempts = 0;
     this._visible = !globalThis.IntersectionObserver;

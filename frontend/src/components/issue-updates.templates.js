@@ -122,7 +122,6 @@ export function taskUpdateTimelineItem(update, task, mediaUrls, title) {
                 class="task-update__photo-trigger"
                 type="button"
                 data-photo-lightbox
-                disabled
                 data-timeline-focus="${escapeAttr(
                   JSON.stringify([
                     update.updateId || update.occurredAt,
@@ -137,6 +136,7 @@ export function taskUpdateTimelineItem(update, task, mediaUrls, title) {
                     "",
                 )}"
                 data-photo-time="${escapeAttr(update.occurredAt)}"
+                data-full-src="${escapeAttr(mediaUrls.get(artifactId))}"
               >
                 ${artifactPhoto({
                   className: "task-update__photo",

@@ -424,8 +424,11 @@ it("renders update photos through artifact-photo so they load lazily and renew",
   expect(img).toContain('data-src="https://example.test/photo.thumb.webp"');
   expect(img).not.toMatch(/\ssrc=/);
   expect(img).toContain('loading="lazy"');
-  // The lightbox trigger waits for artifact-photo to supply the original.
-  expect(photo).toMatch(/<button[^>]*data-photo-lightbox\s+disabled/);
+  // An enabled trigger keeps focus through a timeline re-render.
+  expect(photo).not.toMatch(/<button[^>]*data-photo-lightbox\s+disabled/);
+  expect(photo).toContain(
+    'data-full-src="https://example.test/photo.thumb.webp"',
+  );
 });
 
 it("keeps notes and skip available without an uploadable check", () => {
