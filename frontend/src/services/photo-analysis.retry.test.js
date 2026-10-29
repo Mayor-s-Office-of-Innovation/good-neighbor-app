@@ -47,6 +47,7 @@ afterEach(async () => {
   const { cancelCheckPolling } = await import("./check-polling.js");
   cancelCheckPolling("check");
   await new Promise((resolve) => setTimeout(resolve, 0));
+  vi.unstubAllGlobals();
 });
 
 // Unique item id per test: photo-analysis dedupes concurrent runs on the item
@@ -72,7 +73,15 @@ function session(checkItem) {
 }
 
 describe("retryEvidenceItem", () => {
-  it("resumes polling directly when the artifact was already registered", async () => {
+  it.each([
+    undefined,
+    {
+      randomUUID() {
+        throw new Error("unavailable");
+      },
+    },
+  ])("resumes polling without a working UUID API (%s)", async (cryptoApi) => {
+    vi.stubGlobal("crypto", cryptoApi);
     const item = sessionItem({
       upload: {
         status: "uploaded",
