@@ -492,6 +492,22 @@ async function requestOnce(
     classifyApiFailure(apiError);
     throw apiError;
   }
+  // These successful writes can change evidence, guidance or the original task
+  // embedded in a duplicate result. Invalidate the whole site because a cached
+  // original may be reached through an intermediate link. Reads never invalidate.
+  // Separation notifies after clearing local status overrides in its wrapper.
+  if (
+    method !== "GET" &&
+    ((/^\/v1\/checks\/[^/]+\/artifacts(?:$|\/)/.test(path) &&
+      !path.endsWith("/presign")) ||
+      /^\/v1\/assessments(?::evaluate$|\/[^/]+\/conditions\/[^/]+\/answers$)/.test(
+        path,
+      ) ||
+      /^\/v1\/tasks\/[^/]+\/(?:complete|custom-action|action|updates)$/.test(
+        path,
+      ))
+  )
+    invalidateDuplicateIssues(requestSiteId);
   return parsed;
 }
 

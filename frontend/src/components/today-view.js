@@ -4,6 +4,10 @@ import {
   projectDuplicateTasks,
   duplicateCounts,
 } from "../domain/duplicate-issues.js";
+import {
+  observeDuplicateTasks,
+  invalidateDuplicateIssues,
+} from "../services/duplicate-invalidation.js";
 import { watchDuplicateIssues } from "../services/duplicate-issues.js";
 import { watchQueued311Filings } from "../services/queued-311-filings.js";
 import { openDuplicateIssue } from "./duplicate-issue-launcher.js";
@@ -382,6 +386,7 @@ class TodayView extends HTMLElement {
     this._queued311Key = "";
     document.removeEventListener("visibilitychange", this._refresh311OnReturn);
     this._stopDuplicates?.();
+    this._stopDuplicates = null;
     if (this._skeletonTabClick) {
       this.removeEventListener("click", this._skeletonTabClick);
       this._skeletonTabClick = null;
@@ -548,6 +553,7 @@ class TodayView extends HTMLElement {
       this._site.siteId || this._site.providerSiteId || this._site.id;
     if (previousSiteId && previousSiteId !== this._siteId) {
       this._stopDuplicates?.();
+      this._stopDuplicates = null;
       this._stopQueued311?.();
       this._queued311Key = "";
       this._duplicateLinks = new Map();
@@ -827,7 +833,17 @@ class TodayView extends HTMLElement {
 
   /** @param {Record<string, any>[]} tasks */
   _watchDuplicates(tasks) {
-    this._stopDuplicates?.();
+    // A changed server task is evidence to refresh; returning to Home alone is
+    // not. Include status because local authoritative action results may precede
+    // the next worklist read. Invalidate dependents as well as the changed task.
+    observeDuplicateTasks(this._siteId, tasks);
+    const key = JSON.stringify([
+      this._siteId,
+      tasks.map((t) => t.taskId).sort(),
+    ]);
+    if (this._stopDuplicates && this._duplicateWatchKey === key) return;
+    this._duplicateWatchKey = key;
+    const stopPrevious = this._stopDuplicates;
     const siteId = this._siteId;
     this._stopDuplicates = watchDuplicateIssues(
       tasks.map((t) => t.taskId),
@@ -846,6 +862,7 @@ class TodayView extends HTMLElement {
           this._renderHome(this._homeModel);
       },
     );
+    stopPrevious?.();
   }
 
   /**
@@ -2934,6 +2951,7 @@ class TodayView extends HTMLElement {
           if (this._remainingStatus === "pending") this._startRemainingLoad();
           if (task.taskId && task.taskId !== taskId && this._homeModel) {
             // Cancel duplicate reads started before the failed shared action.
+            invalidateDuplicateIssues(this._siteId);
             this._watchDuplicates(this._homeModel.tasks);
           }
         }

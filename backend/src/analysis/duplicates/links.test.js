@@ -3,12 +3,16 @@ import { analysisRevision, projectionKey } from "./jobs.js";
 const state = vi.hoisted(() => ({
   items: new Map(),
   writes: /** @type {any[]} */ ([]),
+  reads: /** @type {string[]} */ ([]),
 }));
 vi.mock("../../db.js", () => ({
   ddb: {
     send: async (/** @type {any} */ command) => {
       const i = command.input;
-      if (i.Key) return { Item: state.items.get(i.Key.pk + "|" + i.Key.sk) };
+      if (i.Key) {
+        state.reads.push(i.Key.sk);
+        return { Item: state.items.get(i.Key.pk + "|" + i.Key.sk) };
+      }
       state.writes.push(i);
       for (const entry of i.TransactItems ?? [])
         if (entry.Put)
@@ -111,6 +115,7 @@ function fixture() {
 beforeEach(() => {
   state.items.clear();
   state.writes.length = 0;
+  state.reads.length = 0;
   process.env.DUPLICATE_DETECTION_ENABLED = "true";
 });
 it("resolves current issue/task identities using generation times, not capture times", async () => {
@@ -424,4 +429,96 @@ it("keeps an assessed condition complete when another condition makes the source
     failedCandidateCount: 3,
   });
   expect((await duplicateForTask("test", "site", task)).state).toBe("complete");
+});
+
+it.each([1, 30])(
+  "keeps full no-match validation at nine reads per task (%s tasks)",
+  async (count) => {
+    const tasks = Array.from(
+      { length: count },
+      (_, i) => issue(`source-${i}`, "2026-10-15T10:00:00Z").task,
+    );
+    const { getDuplicateLinks } = await import(
+      "../../handlers/duplicate-links.js"
+    );
+    const response = await getDuplicateLinks({
+      body: JSON.stringify({ taskIds: tasks.map((t) => t.taskId) }),
+    });
+    expect(
+      JSON.parse(response.body).issues.every(
+        (/** @type {{state:string}} */ row) => row.state === "complete",
+      ),
+    ).toBe(true);
+    expect(state.reads).toHaveLength(count * 9);
+  },
+);
+
+it("uses five reads for a pending batch item, without artifact/projection/guidance reads", async () => {
+  const { task, ref } = issue("waiting", new Date().toISOString());
+  put({
+    pk: task.pk,
+    sk: `DUP_RESULT#waiting:photo#${ref.revision}`,
+    status: "pending",
+    queuedAt: task.createdAt,
+  });
+  const { getDuplicateLinks } = await import(
+    "../../handlers/duplicate-links.js"
+  );
+  const response = await getDuplicateLinks({
+    body: JSON.stringify({ taskIds: [task.taskId] }),
+  });
+  expect(JSON.parse(response.body).issues[0].state).toBe("pending");
+  expect(state.reads).toHaveLength(5);
+  expect(
+    state.reads.some((key) =>
+      /ART#|DUP_OBSERVATION#|GUIDANCE_CURRENT#|ASSESSMENT#/.test(key),
+    ),
+  ).toBe(false);
+});
+
+it("retains an incremental positive while the full result is pending", async () => {
+  const { recent, old } = fixture();
+  put({
+    pk: recent.task.pk,
+    sk: `DUP_RESULT#recent:photo#${recent.ref.revision}`,
+    status: "pending",
+  });
+  const relation = await duplicateForTask("test", "site", recent.task);
+  expect(relation.state).toBe("matched");
+  expect(relation.original.taskId).toBe(old.task.taskId);
+});
+
+it("ignores an invalidated incremental positive on the pending fast path", async () => {
+  const { recent } = fixture();
+  put({
+    pk: recent.task.pk,
+    sk: `DUP_RESULT#recent:photo#${recent.ref.revision}`,
+    status: "pending",
+    invalidatedAt: "2026-10-15T10:02:00Z",
+  });
+  expect((await duplicateForTask("test", "site", recent.task)).state).toBe(
+    "pending",
+  );
+  expect(state.reads).toHaveLength(4); // Caller already supplied the task.
+});
+
+it("still rejects a settled negative from a superseded source projection", async () => {
+  const { task } = issue("stale", "2026-10-15T10:00:00Z");
+  put({
+    ...projectionKey("site", task.createdAt, "stale:photo"),
+    revision: "different",
+  });
+  expect((await duplicateForTask("test", "site", task)).state).toBe("pending");
+});
+
+it("still rejects a settled negative whose guidance no longer includes the task", async () => {
+  const { task } = issue("stale-guidance", "2026-10-15T10:00:00Z");
+  put({
+    pk: task.pk,
+    sk: "ASSESSMENT#stale-guidance#COND#condition",
+    taskIds: [],
+  });
+  expect((await duplicateForTask("test", "site", task)).state).toBe(
+    "not_applicable",
+  );
 });
