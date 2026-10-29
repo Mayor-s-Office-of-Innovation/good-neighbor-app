@@ -52,6 +52,9 @@ locals {
 # IAM Identity Center instance ARN to add IdP sign-in for non-IAM staff.
 # ---------------------------------------------------------------------------
 
+# CCSF tag exception: the domain has no tags argument (provider 6.71) and
+# CloudWatch Omni exposes no tagging API for it. The IAM roles, Dataset
+# integration, and grants below all carry var.tags.
 resource "aws_cloudwatchomni_domain" "app" {
   count = var.enable_cloudwatch_omni ? 1 : 0
 
@@ -117,6 +120,8 @@ resource "aws_iam_role_policy_attachment" "omni_space_access" {
 # assumed here.
 # ---------------------------------------------------------------------------
 
+# CCSF tag exception: same as the domain; the space resource has no tags
+# argument and the service does not return or accept tags on spaces.
 resource "aws_cloudwatchomni_space" "app" {
   count = var.enable_cloudwatch_omni ? 1 : 0
 
@@ -218,11 +223,29 @@ resource "aws_observabilityadmin_dataset_integration" "app" {
 # name rather than hardcoding an ARN.
 # ---------------------------------------------------------------------------
 
+# One listing of every reserved Identity Center role, matched with a fixed
+# pattern. The configured permission-set names are never placed in a regex:
+# Identity Center allows "." and "+" in them, which a regex would read as
+# wildcards and could match another team's role.
 data "aws_iam_roles" "omni_sso" {
-  for_each = var.enable_cloudwatch_omni ? var.cloudwatch_omni_sso_permission_sets : {}
+  count = var.enable_cloudwatch_omni && length(var.cloudwatch_omni_sso_permission_sets) > 0 ? 1 : 0
 
-  name_regex  = "^AWSReservedSSO_${each.key}_[0-9a-f]+$"
+  name_regex  = "^AWSReservedSSO_"
   path_prefix = "/aws-reserved/sso.amazonaws.com/"
+}
+
+locals {
+  # Role name is the last ARN segment: AWSReservedSSO_<PermissionSet>_<hex>.
+  # Exact string match on the prefix, and the remainder must be the hex
+  # suffix alone, so "Power" cannot match "Power_Admin_<hex>".
+  omni_sso_role_arns = {
+    for set_name in keys(var.enable_cloudwatch_omni ? var.cloudwatch_omni_sso_permission_sets : {}) :
+    set_name => [
+      for arn in try(data.aws_iam_roles.omni_sso[0].arns, []) : arn
+      if startswith(element(split("/", arn), length(split("/", arn)) - 1), "AWSReservedSSO_${set_name}_")
+      && can(regex("^[0-9a-f]+$", trimprefix(element(split("/", arn), length(split("/", arn)) - 1), "AWSReservedSSO_${set_name}_")))
+    ]
+  }
 }
 
 resource "aws_cloudwatchomni_access_grant" "sso" {
@@ -235,15 +258,15 @@ resource "aws_cloudwatchomni_access_grant" "sso" {
 
   principal {
     principal_type = "IAM_ROLE"
-    principal_id   = one(data.aws_iam_roles.omni_sso[each.key].arns)
+    principal_id   = one(local.omni_sso_role_arns[each.key])
   }
 
   tags = var.tags
 
   lifecycle {
     precondition {
-      condition     = length(data.aws_iam_roles.omni_sso[each.key].arns) == 1
-      error_message = "Expected exactly one Identity Center role for permission set ${each.key} in this account; found ${length(data.aws_iam_roles.omni_sso[each.key].arns)}. Check the permission set name or that Identity Center is provisioned here."
+      condition     = length(local.omni_sso_role_arns[each.key]) == 1
+      error_message = "Expected exactly one Identity Center role for permission set ${each.key} in this account; found ${length(local.omni_sso_role_arns[each.key])}. Check the permission set name or that Identity Center is provisioned here."
     }
   }
 }
