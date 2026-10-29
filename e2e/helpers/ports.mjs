@@ -11,6 +11,8 @@
 */
 import { createServer } from "node:net";
 
+const selected = new Map();
+
 /**
  * @param {number} port
  * @returns {Promise<boolean>}
@@ -30,12 +32,23 @@ function isFree(port) {
  */
 export async function e2ePort(envName, preferred) {
   const pinned = process.env[envName];
-  if (pinned) return Number(pinned);
+  if (pinned) {
+    const port = Number(pinned);
+    if (!Number.isInteger(port) || port < 1 || port > 65535)
+      throw new Error(`[e2e] invalid port for ${envName}`);
+    if (selected.has(port) && selected.get(port) !== envName)
+      throw new Error(
+        `[e2e] ${envName} and ${selected.get(port)} both select port ${port}`,
+      );
+    selected.set(port, envName);
+    return port;
+  }
   for (let port = preferred; port < preferred + 50; port++) {
-    if (await isFree(port)) {
+    if (!selected.has(port) && (await isFree(port))) {
       if (port !== preferred) {
         console.log(`[e2e] port ${preferred} is busy — using ${port} instead`);
       }
+      selected.set(port, envName);
       process.env[envName] = String(port);
       return port;
     }

@@ -1,5 +1,6 @@
 import { defineConfig } from "@playwright/test";
 import { slowMoOptions } from "./helpers/pace.js";
+import { configureRunResources } from "./helpers/run-resources.mjs";
 import { e2ePort } from "./helpers/ports.mjs";
 
 const CI = !!process.env.CI;
@@ -24,14 +25,14 @@ const CI = !!process.env.CI;
   explicit env below so they win regardless of file order.
 
   Table isolation (ADR 0006 addendum): the suite runs against its OWN DynamoDB
-  table, gnp-local-e2e — never the developer's gnp-local-app. Setting DYNAMO_TABLE
+  table, gnp-local-e2e-<runId> — never the developer's gnp-local-app. Setting DYNAMO_TABLE
   here, before .env.local matters, is the single declaration point: the spawned
   backend bootstraps (creates + seeds) it at startup via ensureLocalInfra(), and
   globalSetup/globalTeardown inherit the same value for their guards. globalSetup
   REFUSES to run against any other table, and globalTeardown deletes this one, so
   a suite run can neither read nor destroy `npm run dev` data.
 */
-process.env.DYNAMO_TABLE = "gnp-local-e2e";
+const resources = configureRunResources();
 
 const apiPort = await e2ePort("E2E_API_PORT", 3001);
 const analyzerPort = await e2ePort("E2E_ANALYZER_PORT", 3101);
@@ -92,7 +93,7 @@ export default defineConfig({
         // Dedicated duplicate UI scenarios use their own controlled fixtures.
         DUPLICATE_DETECTION_ENABLED: "false",
         DUPLICATE_QUEUE_URL: "",
-        SQS_QUEUE_URL: "http://localhost:9324/local/gnp-local-e2e-submissions",
+        SQS_QUEUE_URL: resources.queueUrl,
       },
     },
     {

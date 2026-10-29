@@ -68,9 +68,20 @@ The e2e suite can run while a dev stack is up:
 - **Shared services are reused.** DynamoDB Local and ElasticMQ, like MinIO and
   the SF311 fake already did, reuse a copy that is already answering on their
   port instead of crashing the stack. The suite still keeps to its own table
-  (`gnp-local-e2e`) and queue, so dev data is untouched.
+  (`gnp-local-e2e-<runId>`) and matching submission queue, so dev data and
+  other runs are untouched. A UUID is generated once per invocation and inherited
+  by workers; setup and teardown validate the exact names before mutation.
+  Teardown removes both resources. A hard-killed run can leave its namespaced
+  resources behind; a later run does not reuse or delete them.
 - Stopping the dev stack while the suite runs takes the shared services with
   it. The borrowing lanes check every 3 s and stop the suite's backend when the
   service is gone; globalSetup watches that backend and, when it stops
   answering, prints why and interrupts the run (like Ctrl+C), so it ends in
   seconds instead of failing test by test. Let the suite finish first.
+
+- Pinned ports are validated and cannot overlap another server selected by the
+  same config process. Cross-process probe-to-bind races remain a known limitation:
+  simultaneous starts can still fail to bind; the suite never attaches to a foreign server.
+- Shared-service startup probes retry inconclusive timeouts for a bounded period.
+  Backend-watch cleanup aborts its active probe and prevents late interruption
+  of a completed run.

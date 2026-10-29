@@ -3,25 +3,10 @@
   Playwright globalSetup: runs after the webServers are healthy (backend /health
   gates on DDB Local being reachable), before any test.
 
-  Why: the suite's own table (gnp-local-e2e, declared in playwright.config.js)
-  may carry leftovers, and two pieces poison reruns:
-
-  1. Seeded setup codes carry maxUses: 3. Every test registers a fresh device
-     through the real flow, consuming a use — three reruns and the seed code
-     401s ("Invalid site code"). The harness seed is deliberately write-once
-     (attribute_not_exists), so re-seeding never resets counters.
-     Fix: reset uses/maxUses on SETUP_CODE# items each run.
-
-  2. TASK# items from previous runs stay `open` forever. The home worklist
-     (GET /v1/tasks) returns them all, and recent tasks can appear in To do
-     or the newest-check tray before this run creates its own check. Reruns
-     would inherit unrelated cards and card-counting could not reliably
-     scope to this run's guidance.
-     Fix: delete TASK# items (their GSI2 projection lives on the same item,
-     so one delete suffices) each run.
-
-  Both are no-ops after globalTeardown wiped the table (the healthy state);
-  they self-heal a run that died before teardown.
+  Every invocation owns a new UUID-namespaced table. Reset the seeded setup
+  code counters/limits so the suite can enroll more than three devices, and
+  clear any task records if setup is repeated within the same invocation.
+  A hard-killed run's abandoned table is never reused by a later invocation.
 
   ── Safeguard ────────────────────────────────────────────────────────────
   This script MUTATES setup codes and DELETES tasks, and the suite binds
@@ -34,10 +19,10 @@
      emulator (.env.example). Deployed environments never set it
      (Terraform). The value the harness's own client uses is hardcoded in
      DDB_ENDPOINT below, so this check guards THAT client's target.
-  2. DYNAMO_TABLE must equal the suite's dedicated table (gnp-local-e2e,
-     the same value playwright.config.js pins for the spawned backend) — and
-     when missing (CI with no config-provided value…), fall back to the suite
-     table, never an inherited ambient value like the dev table.
+  2. DYNAMO_TABLE must equal the suite's dedicated table (gnp-local-e2e-<runId>,
+     the same value playwright.config.js pins for the spawned backend), and
+     the submission queue must match the same run identity. Missing ownership
+     information fails closed rather than falling back to an ambient resource.
 
   If either check fails, the setup aborts BEFORE any AWS call, failing the
   e2e job loudly instead of silently mutating shared data.
@@ -46,7 +31,8 @@ import { backfillCheckCompletions } from "../backend/src/domain/backfill-check-c
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { clearInterval, setInterval } from "node:timers";
+import { watchBackend } from "./helpers/backend-watch.mjs";
+import { assertRunResources } from "./helpers/run-resources.mjs";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   DeleteCommand,
@@ -58,9 +44,6 @@ import {
 const E2E_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(E2E_DIR, "..");
 const DDB_ENDPOINT = "http://127.0.0.1:8000";
-/** The suite's own table — the ONLY table this script may touch. Must match
- * the value playwright.config.js pins for the spawned backend. */
-const E2E_TABLE_NAME = "gnp-local-e2e";
 const RETRIES = 30;
 const RETRY_DELAY_MS = 1000;
 
@@ -90,10 +73,8 @@ function loadEnvLocal() {
  */
 function assertLocalOnly() {
   const endpoint = process.env.AWS_ENDPOINT_URL_DYNAMODB;
-  // No ambient fallback: an unset DYNAMO_TABLE always means the suite's own
-  // table, never "inherit whatever the shell has" (the dev table leaking in
-  // would otherwise be used).
-  const tableName = process.env.DYNAMO_TABLE || E2E_TABLE_NAME;
+  // Require the exact run-owned table and queue; never inherit dev resources.
+  assertRunResources();
 
   // Guard 1: the .env.local-loaded (or CI-provided) endpoint must exist and
   // point at the loopback emulator. This is the same var the harness's own
@@ -117,16 +98,6 @@ function assertLocalOnly() {
     throw new Error(
       `[e2e-global] refusing to run: AWS_ENDPOINT_URL_DYNAMODB host "${host}" is not localhost/127.0.0.1. ` +
         "This script mutates/deletes data and must never target a deployed table.",
-    );
-  }
-  // Guard 2: table name must be the suite's OWN table, never the developer's
-  // gnp-local-app (same DynamoDB Local instance hosts both) and never a
-  // deployed namespace. Belt against guard 1's braces: a loopback endpoint
-  // does not imply the right table.
-  if (tableName !== E2E_TABLE_NAME) {
-    throw new Error(
-      `[e2e-global] refusing to run: DYNAMO_TABLE "${tableName}" is not the suite table "${E2E_TABLE_NAME}". ` +
-        "The e2e suite must never mutate the dev table or any deployed table.",
     );
   }
 }
@@ -175,7 +146,7 @@ async function waitAndReset() {
     credentials: { accessKeyId: "local", secretAccessKey: "local" },
   });
   const doc = DynamoDBDocumentClient.from(client);
-  const tableName = process.env.DYNAMO_TABLE || E2E_TABLE_NAME;
+  const { tableName } = assertRunResources();
 
   for (let attempt = 1; attempt <= RETRIES; attempt++) {
     try {
@@ -217,40 +188,11 @@ async function waitAndReset() {
   }
 }
 
-/**
- * Watch the suite's own backend for the rest of the run. It can stop mid-run —
- * most often because the `npm run dev` stack whose DynamoDB Local / ElasticMQ
- * it reuses was shut down (backend/scripts/lib/reuse-running.mjs) — and
- * Playwright neither shows that lane's output nor stops on its own, so every
- * later test would fail slowly. Say why and stop the run instead: SIGINT is
- * Ctrl+C, so Playwright still runs teardown and stops its servers.
- * @returns {() => void} stops the watch (Playwright calls it as teardown)
- */
-function watchBackend() {
-  const url = `http://127.0.0.1:${process.env.E2E_API_PORT ?? 3001}/health`;
-  let misses = 0;
-  const timer = setInterval(async () => {
-    try {
-      await fetch(url, { signal: AbortSignal.timeout(2000) });
-      misses = 0;
-    } catch {
-      if (++misses < 2) return;
-      clearInterval(timer);
-      console.error(
-        `\n[e2e] the suite's backend (${url}) stopped answering. Most likely the ` +
-          "`npm run dev` stack it shares DynamoDB Local / ElasticMQ with was shut " +
-          "down. Stopping the run — start it again.\n",
-      );
-      process.kill(process.pid, "SIGINT");
-    }
-  }, 3000);
-  timer.unref();
-  return () => clearInterval(timer);
-}
-
 export default async function globalSetup() {
   loadEnvLocal();
   assertLocalOnly();
   await waitAndReset();
-  return watchBackend();
+  return watchBackend(
+    `http://127.0.0.1:${process.env.E2E_API_PORT ?? 3001}/health`,
+  );
 }
