@@ -1,3 +1,4 @@
+import { needsResolutionProof } from "../domain/home-tasks.js";
 import { artifactPhoto } from "./artifact-photo.templates.js";
 import { cardDescription } from "./card-description.js";
 import { animatedEllipsis } from "../lib/ellipsis.js";
@@ -600,7 +601,7 @@ export function taskAnalysisCard({
 }) {
   if (duplicateUiEnabled() && task.duplicate?.compact)
     return duplicateCard(task);
-  if (history) return historyCard(task);
+  if (history) return historyCard(task, readOnly);
   includeControls =
     includeControls &&
     !["in_progress", "completing", "resolving", "completed"].includes(
@@ -1454,7 +1455,7 @@ export const analysisDialogs = () => html`
   </dialog>
 `;
 
-function historyCard(task) {
+function historyCard(task, readOnly = false) {
   const title =
     displayCategory(task) ||
     rulebookText(task.label) ||
@@ -1496,5 +1497,16 @@ function historyCard(task) {
       >
       <wa-icon name="chevron-right" aria-hidden="true"></wa-icon>
     </button>
+    ${!readOnly && needsResolutionProof(task)
+      ? html`<div class="history-card__proof">
+          <button
+            type="button"
+            class="btn-outline issue-update-button analysis-card__resolve"
+            data-action="add-proof"
+          >
+            ${escapeHtml(t("taskUpdate.addProof"))}
+          </button>
+        </div>`
+      : ""}
   </article>`;
 }

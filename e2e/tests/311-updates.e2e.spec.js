@@ -78,7 +78,7 @@ async function filedTicket(
       json: {
         artifactId: "update-photo",
         s3Key: "fixture/photo.jpg",
-        uploadUrl: "http://127.0.0.1:5173/e2e-photo-upload",
+        uploadUrl: `http://127.0.0.1:${process.env.E2E_APP_PORT ?? 5173}/e2e-photo-upload`,
       },
     }),
   );
@@ -93,7 +93,9 @@ async function filedTicket(
     "**/v1/checks/311-update-check/artifacts/update-photo/media",
     (route) =>
       route.fulfill({
-        json: { downloadUrl: "http://127.0.0.1:5173/e2e-photo.jpg" },
+        json: {
+          downloadUrl: `http://127.0.0.1:${process.env.E2E_APP_PORT ?? 5173}/e2e-photo.jpg`,
+        },
       }),
   );
   await page.route("**/e2e-photo.jpg", (route) =>
@@ -130,13 +132,14 @@ for (const width of [393, 1178]) {
       if (mode === "notes") {
         await expect(dialog.locator("[data-photos]")).toBeAttached();
         await expect(
-          dialog.locator(".task-update__photo-picker"),
+          dialog.locator(".task-update__capture-controls"),
         ).toBeVisible();
         await dialog.locator("[data-photos]").setInputFiles(PHOTO_ISSUES);
         await expect(yes).toBeEnabled();
         await expect(no).toBeEnabled();
         await expect(done).toBeDisabled();
         await dialog.locator("[data-photos]").setInputFiles([]);
+        await dialog.locator("[data-remove-photo]").click();
         await expect(yes).toBeDisabled();
         await expect(no).toBeDisabled();
         await dialog.locator("[data-add-note]").click();
@@ -144,7 +147,7 @@ for (const width of [393, 1178]) {
         await dialog.locator("[data-save-note]").click();
         await expect(dialog.locator("[data-photos]")).toBeAttached();
         await expect(
-          dialog.locator(".task-update__photo-picker"),
+          dialog.locator(".task-update__capture-controls"),
         ).toBeVisible();
         await dialog.locator("[data-photos]").setInputFiles(PHOTO_ISSUES);
       } else {

@@ -1475,7 +1475,7 @@ export async function completeTaskWithAppActions(opts) {
         : "completed",
     ...(appActionFailed || canBeInProgress
       ? {}
-      : { completedAt: now, resolvedAt: now }),
+      : { completedAt: now, resolvedAt: now, proofAddedAt: null }),
     ...(appActionFailed || canBeInProgress
       ? {}
       : { completionMethod: opts.completionMethod ?? "user_confirmed" }),

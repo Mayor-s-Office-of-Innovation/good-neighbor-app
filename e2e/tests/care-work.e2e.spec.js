@@ -1,3 +1,4 @@
+import { assertRunResources } from "../helpers/run-resources.mjs";
 import { test, expect } from "../helpers/harness.js";
 import { t } from "../helpers/i18n.js";
 import { PHOTO_CLEAR } from "../helpers/fixtures.js";
@@ -341,6 +342,7 @@ test("proactive care preserves read-only notes when photos expire and recovers a
  * @param {string} workId
  */
 async function expireCareReservations(workId) {
+  const { tableName } = assertRunResources();
   const { DynamoDBClient } = await import("@aws-sdk/client-dynamodb");
   const { DynamoDBDocumentClient, ScanCommand, PutCommand } = await import(
     "@aws-sdk/lib-dynamodb"
@@ -359,7 +361,7 @@ async function expireCareReservations(workId) {
     do {
       const result = await client.send(
         new ScanCommand({
-          TableName: "gnp-local-e2e",
+          TableName: tableName,
           ConsistentRead: true,
           ExclusiveStartKey: cursor,
           FilterExpression: "begins_with(sk, :uploads) OR sk = :budget",
@@ -375,9 +377,7 @@ async function expireCareReservations(workId) {
           for (const reservation of Object.values(item.reservations))
             reservation.expiresAt = item.expiresAt;
         } else expired++;
-        await client.send(
-          new PutCommand({ TableName: "gnp-local-e2e", Item: item }),
-        );
+        await client.send(new PutCommand({ TableName: tableName, Item: item }));
       }
       cursor = result.LastEvaluatedKey;
     } while (cursor);

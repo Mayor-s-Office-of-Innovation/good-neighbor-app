@@ -1,3 +1,4 @@
+import { withResolutionProofForTasks } from "../task-updates/resolution-proof.js";
 import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
@@ -83,7 +84,13 @@ export const listTasks = async (event) => {
   }
 
   const ranked = byWorklistPriority(result.Items ?? []);
-  return jsonResponse(200, { tasks: limit ? ranked.slice(0, limit) : ranked });
+  const selected = limit ? ranked.slice(0, limit) : ranked;
+  const tasks = await withResolutionProofForTasks(
+    dynamoTable,
+    siteId,
+    selected,
+  );
+  return jsonResponse(200, { tasks });
 };
 
 const updateCache = new Map();

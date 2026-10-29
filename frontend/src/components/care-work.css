@@ -214,12 +214,16 @@ care-work-view {
   font-size: 0.875rem;
 }
 .care-detail-photos {
-  display: grid;
-  gap: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.care-detail-photos .care-photo {
+  width: 112px;
 }
 .care-detail-photos img {
-  max-height: 360px;
-  object-fit: contain;
+  height: 112px;
+  object-fit: cover;
 }
 .care-notes {
   margin-top: 24px;

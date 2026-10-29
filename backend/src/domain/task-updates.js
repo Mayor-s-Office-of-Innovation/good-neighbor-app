@@ -120,7 +120,7 @@ export function buildTaskUpdateTransition(task, input, context) {
       ? TASK_UPDATE_LABELS.siteTeamResolved
       : TASK_UPDATE_LABELS.stillThere;
     documentationState = "open_for_documentation";
-  } else if (type === "note_photo_update") {
+  } else if (type === "note_photo_update" || type === "resolution_proof") {
     const parsedNotes = textList(input.notes, MAX_NOTES);
     const parsedPhotos = photoList(input.photoKeys);
     if (!parsedNotes || !parsedPhotos)
@@ -168,18 +168,21 @@ export function buildTaskUpdateTransition(task, input, context) {
     ...(notes.length ? { notes } : {}),
     ...(photoKeys.length ? { photoKeys } : {}),
   };
-  const status = resolved ? "completed" : "in_progress";
+  const proof = type === "resolution_proof";
+  const status = proof ? task.status : resolved ? "completed" : "in_progress";
   return {
     update,
     task: {
       ...task,
       status,
       latestUpdateId: context.updateId,
-      latestUpdateLabel: label,
+      latestUpdateLabel: proof ? task.latestUpdateLabel : label,
+      ...(proof ? { proofAddedAt: now } : {}),
       updatedAt: now,
       ...(period ? { lastAnsweredPresencePeriod: period } : {}),
       ...(resolved
         ? {
+            proofAddedAt: null,
             resolvedAt: now,
             completedAt: now,
             completionMethod: "site_team_resolved",

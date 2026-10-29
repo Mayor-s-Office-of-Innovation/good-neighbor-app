@@ -313,12 +313,19 @@
   list-style: none;
 }
 
-.complaint-detail__image img {
+.complaint-detail__photo {
+  width: 112px;
+  height: 112px;
+  overflow: hidden;
+  border-radius: var(--wa-border-radius-m);
+  background: var(--surface-2);
+}
+
+.complaint-detail__photo img {
   display: block;
   width: 100%;
-  max-height: 22rem;
-  object-fit: contain;
-  border-radius: var(--wa-border-radius-m);
+  height: 100%;
+  object-fit: cover;
 }
 
 .complaint-file--failed > wa-icon {

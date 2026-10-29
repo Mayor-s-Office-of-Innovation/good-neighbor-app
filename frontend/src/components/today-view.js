@@ -1,3 +1,4 @@
+import { needsResolutionProof } from "../domain/home-tasks.js";
 import { duplicateUiEnabled } from "../services/feature-flags.js";
 import { animatedEllipsis } from "../lib/ellipsis.js";
 import {
@@ -1439,9 +1440,11 @@ class TodayView extends HTMLElement {
         (entry) => homeTabForStatus(entry.homeStatus) === this._homeFilter,
       ),
     );
-    const tabCounts = { todo: 0, in_progress: 0 };
+    const tabCounts = { todo: 0, in_progress: 0, history: 0 };
     for (const entry of homeTasks) {
       const tab = homeTabForStatus(entry.homeStatus);
+      if (tab === "history" && needsResolutionProof(entry.task))
+        tabCounts.history += 1;
       if (tab === "todo") tabCounts.todo += 1;
       if (
         tab === "in_progress" &&
@@ -2311,7 +2314,9 @@ class TodayView extends HTMLElement {
     task = this._tasksById?.get(card.getAttribute("data-task-id")) || task;
     const action = btn.getAttribute("data-analysis-action");
     const problem = this._problemFromCard(card, task);
-    if (action === "mark-resolved") {
+    if (action === "add-proof" && task) {
+      void this._taskSheets().openUpdates(task, btn, "results");
+    } else if (action === "mark-resolved") {
       const current =
         task ||
         this._sessionItem(problem)?.analysis?.tasks?.find(
@@ -2702,6 +2707,8 @@ class TodayView extends HTMLElement {
         onOriginal: (original, trigger) =>
           void this._openTaskUpdate(original, trigger),
       });
+    } else if (action === "add-proof") {
+      void this._taskSheets().openUpdates(task, btn, "results");
     } else if (action === "mark-resolved") {
       void this._taskSheets().openUpdates(task, btn, "resolve");
     } else if (action === "update") {
@@ -2798,6 +2805,11 @@ class TodayView extends HTMLElement {
     // Shared duplicate actions return the original task, not the clicked
     // observation. Never merge its identity or evidence into that observation.
     taskId = task.taskId || taskId;
+    // Keep the authoritative action result over cached or lagging list reads.
+    // Otherwise a refresh after the exit animation can briefly repaint the
+    // pre-action card (or an older queued-filing confirmation can win).
+    this._confirmedTasks ??= new Map();
+    this._confirmedTasks.set(taskId, task);
     const known = model.tasks.some((entry) => entry.taskId === taskId);
     const tasks = known
       ? model.tasks.map((entry) =>

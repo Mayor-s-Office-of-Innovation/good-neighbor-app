@@ -1319,3 +1319,23 @@ artifact-photo img {
 .analysis-card--waiting {
   border-left: 0;
 }
+
+.history-card__proof {
+  padding: 0 0.875rem 0.875rem 6.3125rem;
+}
+.history-card__proof .analysis-card__resolve {
+  margin-block-start: 0.625rem;
+}
+@media (max-width: 360px) {
+  .history-card__proof {
+    padding-inline-start: 5.125rem;
+  }
+}
+
+.history-card__copy [data-status-ticker="awaitingProof"] {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+.history-card__copy [data-status-ticker="awaitingProof"] > wa-icon {
+  margin-top: 0.25rem;
+}
