@@ -43,6 +43,8 @@ async function issueFixture(page, ruleId) {
     (candidate) => candidate.ruleId === ruleId,
   );
   if (!rule) throw new Error(`Missing rule ${ruleId}`);
+  // Keep the task inside Today's 14-day active window on every test run.
+  const createdAt = Date.now() - 5 * 60 * 1000;
   let task = {
     ...rule.outcome,
     taskId: `phone-test-${ruleId}`,
@@ -53,8 +55,7 @@ async function issueFixture(page, ruleId) {
     canBeInProgress: rule.canBeInProgress,
     primaryInProgressAgency: rule.primaryInProgressAgency,
     status: "open",
-    // Keep the fixture inside the rubric’s time-based worklist window.
-    createdAt: new Date(Date.now() - 60_000).toISOString(),
+    createdAt: new Date(createdAt).toISOString(),
     inProgressAt: "",
   };
   /** @type {Array<{completionMethod: string}>} */
