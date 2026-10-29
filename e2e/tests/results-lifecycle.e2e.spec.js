@@ -55,73 +55,43 @@ async function fixture(page, status) {
 }
 
 for (const status of ["open", "in_progress"]) {
-  for (const early of [false, true]) {
-    test(`${status}: dismissal ${early ? "before" : "after"} save animates the card`, async ({
-      page,
-    }) => {
-      let release = () => {};
-      const gate = new Promise((resolve) => {
-        release = () => resolve(null);
-      });
-      await page.route("**/v1/tasks/lifecycle/**", async (route) => {
-        if (route.request().method() !== "POST")
-          return route.fulfill({ json: {} });
-        await gate;
-        await route.fulfill({
-          json: {
-            task: {
-              taskId: "lifecycle",
-              status: "completed",
-              latestUpdateId: "saved",
-              canUploadPhotos: false,
-            },
-            update: { updateId: "saved" },
-            resultsPending: true,
-          },
-        });
-      });
-      await fixture(page, status);
-      await page.locator("#resolve").click();
-      const dialog = page.locator(
-        "task-update-dialog dialog.task-update[open]",
-      );
-      await expect(dialog).toBeVisible();
-      if (!early) {
-        // A gesture started inside the old dialog must not dismiss its
-        // replacement when the response changes photo permissions.
-        await dialog.locator("h2").dispatchEvent("pointerdown");
-        release();
-        await expect(page.locator("#resolve")).not.toHaveAttribute(
-          "aria-busy",
-          "true",
-        );
-        await expect
-          .poll(() =>
-            dialog.evaluate(
-              (el) =>
-                /** @type {any} */ (el.parentElement)._completion === null,
-            ),
-          )
-          .toBe(true);
-        await dialog.dispatchEvent("click");
-        await expect(dialog).toBeVisible();
-        await expect(page.locator(".analysis-card")).toHaveCount(1);
-        await expect(page.locator("#fixture")).not.toHaveAttribute(
-          "data-saved",
-        );
-      }
-      await dialog.locator(early ? "[data-skip]" : "[data-save-notes]").click();
-      await expect(dialog).toHaveCount(0);
-      if (early) {
-        await expect(page.locator(".analysis-card")).toHaveCount(1);
-        release();
-      }
-      await expect(page.locator(".analysis-card--completing")).toBeVisible();
-      await expect(page.locator("#fixture")).toHaveAttribute(
-        "data-saved",
-        "true",
-      );
-      await expect(page.locator(".analysis-card")).toHaveCount(0);
+  test(`${status}: save animates the card without opening documentation`, async ({
+    page,
+  }) => {
+    let release = () => {};
+    const gate = new Promise((resolve) => {
+      release = () => resolve(null);
     });
-  }
+    await page.route("**/v1/tasks/lifecycle/**", async (route) => {
+      if (route.request().method() !== "POST")
+        return route.fulfill({ json: {} });
+      await gate;
+      await route.fulfill({
+        json: {
+          task: {
+            taskId: "lifecycle",
+            status: "completed",
+            latestUpdateId: "saved",
+            canUploadPhotos: false,
+          },
+          update: { updateId: "saved" },
+          resultsPending: true,
+        },
+      });
+    });
+    await fixture(page, status);
+    await page.locator("#resolve").click();
+    await expect(page.locator("#resolve")).toHaveAttribute("aria-busy", "true");
+    await expect(
+      page.locator("task-update-dialog dialog.task-update[open]"),
+    ).toHaveCount(0);
+    await expect(page.locator(".analysis-card")).toHaveCount(1);
+    release();
+    await expect(page.locator(".analysis-card--completing")).toBeVisible();
+    await expect(page.locator("#fixture")).toHaveAttribute(
+      "data-saved",
+      "true",
+    );
+    await expect(page.locator(".analysis-card")).toHaveCount(0);
+  });
 }

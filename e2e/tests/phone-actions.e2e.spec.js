@@ -182,14 +182,18 @@ test("failed mobile save offers a save-only retry", async ({ page }) => {
   expect(calls).toEqual(["tel:4155530123"]);
 });
 
-test("mobile Sidewalk action stays a checkbox and 311 ticket stays a manual filing CTA", async ({
+test("mobile Recology pickup action uses its rubric phone number and 311 ticket stays a manual filing CTA", async ({
   page,
 }) => {
   const calls = await capturePhoneHandoffs(page);
   await page.setViewportSize({ width: 390, height: 850 });
   const { card } = await issueFixture(page, "BULKY-1");
-  await expect(card.getByRole("checkbox")).toBeVisible();
-  await expect(card.locator("[data-phone-number]")).toHaveCount(0);
+  await expect(card.getByRole("checkbox")).toHaveCount(0);
+  await expect(card.locator("[data-phone-number]")).toBeVisible();
+  await expect(card.locator("[data-phone-number]")).toHaveAttribute(
+    "data-phone-number",
+    "415-330-1400",
+  );
   const ticket = await issueFixture(page, "LITTER-2");
   await expect(ticket.card.locator('[data-action="file311"]')).toBeVisible();
   await expect(ticket.card.getByRole("checkbox")).toHaveCount(0);
