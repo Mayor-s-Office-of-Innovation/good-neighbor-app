@@ -48,27 +48,81 @@ locals {
 }
 
 # ---------------------------------------------------------------------------
+# Domain and space. Managed through CloudFormation rather than the provider's
+# aws_cloudwatchomni_domain / aws_cloudwatchomni_space resources: the Omni
+# API accepts tags on both at creation, but provider 6.71 exposes no tags
+# argument for either, and the service has no TagResource call to add them
+# afterwards. AWS::CloudWatch::Domain and AWS::CloudWatch::Space carry Tags,
+# so this is the only path that satisfies the CCSF tag requirement today.
+# Same pattern as the Mail Manager stack in mail-relay.tf. Swap back to the
+# provider resources (import by id) once they gain tags.
+#
 # Domain: the sign-in URL. IAM sign-in (console deep link) by default; pass an
 # IAM Identity Center instance ARN to add IdP sign-in for non-IAM staff.
+# Space: one per account per Region. AWS-owned encryption at rest; customer
+# managed keys for the Dataset are enabled per account by AWS and not
+# assumed here.
 # ---------------------------------------------------------------------------
 
-# CCSF tag exception: the domain has no tags argument (provider 6.71) and
-# CloudWatch Omni exposes no tagging API for it. The IAM roles, Dataset
-# integration, and grants below all carry var.tags.
-resource "aws_cloudwatchomni_domain" "app" {
-  count = var.enable_cloudwatch_omni ? 1 : 0
+locals {
+  omni_tags = [
+    for key in sort(keys(var.tags)) : {
+      Key   = key
+      Value = var.tags[key]
+    }
+  ]
+  omni_identity_providers = var.cloudwatch_omni_identity_center_instance_arn != "" ? ["IAM", "IDC"] : ["IAM"]
 
-  name               = local.omni_domain_name
-  identity_providers = var.cloudwatch_omni_identity_center_instance_arn != "" ? ["IAM", "IDC"] : ["IAM"]
-
-  dynamic "identity_provider_configuration" {
-    for_each = var.cloudwatch_omni_identity_center_instance_arn != "" ? [1] : []
-    content {
-      identity_center_configuration {
-        identity_center_instance_arn = var.cloudwatch_omni_identity_center_instance_arn
+  # Kept as a local so the rendered template can be asserted on in tests.
+  omni_stack_template = {
+    AWSTemplateFormatVersion = "2010-09-09"
+    Description              = "CloudWatch Omni domain and space for ${local.name_prefix}, tagged per CCSF."
+    Resources = {
+      Domain = {
+        Type = "AWS::CloudWatch::Domain"
+        Properties = merge(
+          {
+            Name              = local.omni_domain_name
+            IdentityProviders = local.omni_identity_providers
+            Tags              = local.omni_tags
+          },
+          var.cloudwatch_omni_identity_center_instance_arn != "" ? {
+            IdentityProviderConfiguration = {
+              IdentityCenterConfiguration = {
+                IdentityCenterInstanceArn = var.cloudwatch_omni_identity_center_instance_arn
+              }
+            }
+          } : {}
+        )
+      }
+      Space = {
+        Type = "AWS::CloudWatch::Space"
+        Properties = {
+          Name              = local.name_prefix
+          DomainId          = { "Fn::GetAtt" = ["Domain", "DomainId"] }
+          DataAccessRoleArn = var.enable_cloudwatch_omni ? aws_iam_role.omni_space_access[0].arn : ""
+          Tags              = local.omni_tags
+        }
       }
     }
+    Outputs = {
+      DomainId          = { Value = { "Fn::GetAtt" = ["Domain", "DomainId"] } }
+      DomainEndpointUrl = { Value = { "Fn::GetAtt" = ["Domain", "DomainEndpointUrl"] } }
+      SpaceId           = { Value = { "Fn::GetAtt" = ["Space", "SpaceId"] } }
+      SpaceArn          = { Value = { "Fn::GetAtt" = ["Space", "Arn"] } }
+    }
   }
+}
+
+resource "aws_cloudformation_stack" "omni" {
+  count = var.enable_cloudwatch_omni ? 1 : 0
+
+  name              = "${local.name_prefix}-cloudwatch-omni"
+  notification_arns = [aws_sns_topic.alarms.arn]
+  template_body     = jsonencode(local.omni_stack_template)
+  tags              = var.tags
+
+  depends_on = [aws_iam_role_policy_attachment.omni_space_access]
 }
 
 # ---------------------------------------------------------------------------
@@ -112,24 +166,6 @@ resource "aws_iam_role_policy_attachment" "omni_space_access" {
 
   role       = aws_iam_role.omni_space_access[0].name
   policy_arn = "arn:aws:iam::aws:policy/CloudWatchOmniSpaceAccessPolicy"
-}
-
-# ---------------------------------------------------------------------------
-# Space: one per account per Region. AWS-owned encryption at rest; customer
-# managed keys for the Dataset are enabled per account by AWS and not
-# assumed here.
-# ---------------------------------------------------------------------------
-
-# CCSF tag exception: same as the domain; the space resource has no tags
-# argument and the service does not return or accept tags on spaces.
-resource "aws_cloudwatchomni_space" "app" {
-  count = var.enable_cloudwatch_omni ? 1 : 0
-
-  name                 = local.name_prefix
-  domain_id            = aws_cloudwatchomni_domain.app[0].domain_id
-  data_access_role_arn = aws_iam_role.omni_space_access[0].arn
-
-  depends_on = [aws_iam_role_policy_attachment.omni_space_access]
 }
 
 # ---------------------------------------------------------------------------
@@ -205,7 +241,7 @@ resource "aws_observabilityadmin_dataset_integration" "app" {
   tags     = var.tags
 
   depends_on = [
-    aws_cloudwatchomni_space.app,
+    aws_cloudformation_stack.omni,
     aws_iam_role_policy.omni_forwarding,
   ]
 }
@@ -252,8 +288,8 @@ resource "aws_cloudwatchomni_access_grant" "sso" {
   for_each = var.enable_cloudwatch_omni ? var.cloudwatch_omni_sso_permission_sets : {}
 
   name       = "sso-${lower(each.key)}"
-  domain_id  = aws_cloudwatchomni_domain.app[0].domain_id
-  space_id   = aws_cloudwatchomni_space.app[0].space_id
+  domain_id  = aws_cloudformation_stack.omni[0].outputs["DomainId"]
+  space_id   = aws_cloudformation_stack.omni[0].outputs["SpaceId"]
   permission = each.value
 
   principal {
@@ -275,8 +311,8 @@ resource "aws_cloudwatchomni_access_grant" "members" {
   for_each = var.enable_cloudwatch_omni ? var.cloudwatch_omni_members : {}
 
   name       = each.key
-  domain_id  = aws_cloudwatchomni_domain.app[0].domain_id
-  space_id   = aws_cloudwatchomni_space.app[0].space_id
+  domain_id  = aws_cloudformation_stack.omni[0].outputs["DomainId"]
+  space_id   = aws_cloudformation_stack.omni[0].outputs["SpaceId"]
   permission = each.value.permission
 
   principal {

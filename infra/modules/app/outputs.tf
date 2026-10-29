@@ -115,10 +115,10 @@ output "duplicate_analyzer_key_secret_arn" {
 
 output "cloudwatch_omni_sign_in_url" {
   description = "CloudWatch Omni domain sign-in URL; null until enable_cloudwatch_omni is set."
-  value       = var.enable_cloudwatch_omni ? aws_cloudwatchomni_domain.app[0].domain_endpoint_url : null
+  value       = var.enable_cloudwatch_omni ? aws_cloudformation_stack.omni[0].outputs["DomainEndpointUrl"] : null
 }
 
 output "cloudwatch_omni_space_id" {
   description = "CloudWatch Omni space id for this environment; null until enable_cloudwatch_omni is set."
-  value       = var.enable_cloudwatch_omni ? aws_cloudwatchomni_space.app[0].space_id : null
+  value       = var.enable_cloudwatch_omni ? aws_cloudformation_stack.omni[0].outputs["SpaceId"] : null
 }

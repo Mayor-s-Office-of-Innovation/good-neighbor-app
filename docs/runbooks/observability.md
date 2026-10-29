@@ -197,8 +197,10 @@ required for SSO users to sign in.
 - Omni alerts are a separate system from the CloudWatch alarms in this runbook
   and do not appear in the console alarm list. Keep paging on the Terraform
   alarms; use Omni alerts for exploration only until a decision is made.
-- Omni resources do not accept tags, so the domain and space cannot carry the
-  CCSF tag set. The two IAM roles and the Dataset integration do.
+- The domain and space are created through a small CloudFormation stack
+  (`aws_cloudformation_stack.omni`) rather than the provider's Omni resources,
+  because only the CloudFormation types accept the CCSF tags today. Everything
+  else in the file is plain Terraform with `var.tags`.
 
 ## Verifying after a deploy
 
