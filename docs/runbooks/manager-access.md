@@ -138,6 +138,17 @@ issuing a replacement. A replacement invitation does not invalidate its predeces
 already-created sessions. The deployed frontend must include the confirmation
 change before scanning tests are meaningful.
 
+### Shared-network endpoint budgets
+
+The recovery WAF rule permits 100 requests per viewer IP per five minutes. Device
+registration and refresh share a separate 1,000-request viewer-IP allowance over five
+minutes. Recovery's application safeguards remain three attempts per email per calendar
+hour and a 15-minute cooldown, acquired atomically; cooldown rejections do not consume
+hourly allowance. Device registration still spends the shared application short-code
+budget, while token refresh does not. The general WAF traffic budget can block before
+these endpoint rules. All WAF rate-limit responses follow the 429 contract in
+[architecture.md](../architecture.md).
+
 ### Short-code abuse controls
 
 `/site-code`, manual-code submissions to `/app/v1/enrollment/redeem`, and setup-code

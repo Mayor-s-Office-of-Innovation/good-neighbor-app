@@ -399,6 +399,17 @@ OUTAGE/AUTH states), and CI's deploy smoke check fails if an API error response 
 as anything but JSON.
 
 WAF rate rules return **429**, JSON, `Retry-After: 300`, and `Cache-Control: no-store`.
+The general viewer-IP ceiling is 30,000 requests per five minutes, shared by static
+assets and API requests. It is sized for up to 100 people behind one public IP,
+assuming one browser tab per person. Source-based estimates allow roughly 19,300
+requests for 100 cold Today loads, pending duplicate polling, and one prolonged
+analysis per person; the remaining budget covers variable assets and interactions.
+This is a sizing allowance, not measured backend capacity; additional tabs or repeated
+work can consume it. Direct S3 photo transfers do not use this CloudFront budget.
+Endpoint viewer-IP budgets per five minutes are 1,000 for device registration/refresh,
+100 for manager recovery, 1,000 for client errors, 5,000 for client events, and 100 for
+feedback. They share the general traffic ceiling: a higher endpoint allowance does not
+raise that ceiling. Client error reporting retains its five-reports-per-minute browser cap.
 Enrollment keeps its `code_attempts_limited` error code; other rate rules use
 `rate_limited`. Managed-security and body-size blocks retain their own responses.
 The general rate rule can match before an endpoint rule, so clients classify throttling
