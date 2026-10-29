@@ -475,6 +475,8 @@
   "analysis.tray.title": "Mga resulta ng pagsusuri",
   "app.home.aria": "Home",
   "app.name": "Good Neighbor",
+  "capture.files.rejectedMessage": "Hindi naidagdag ang {count} napiling larawan. Gumamit ng mga larawang hanggang 10 MiB bawat isa, na may hanggang 20 ebidensya at kabuuang 50 MiB bawat pagsusuri o ulat. Pumili ng mas kaunti o mas maliliit na larawan at subukang muli.",
+  "capture.files.rejectedTitle": "May mga larawang hindi naidagdag",
   "card.action.escalate": "I-escalate",
   "card.action.logAction": "Itala ang aksyon",
   "card.clear.addProblem": "Magdagdag ng problema",

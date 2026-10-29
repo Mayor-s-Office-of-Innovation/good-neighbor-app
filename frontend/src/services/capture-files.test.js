@@ -48,3 +48,112 @@ it("discards the in-flight photo and remaining batch after leaving the session",
   expect(onPhoto).not.toHaveBeenCalled();
   expect(pending).toHaveLength(0);
 });
+
+import {
+  CaptureFileQueue,
+  CAPTURE_MAX_FILE_BYTES,
+  CAPTURE_MAX_BYTES,
+} from "./capture-files.js";
+
+it("reserves queued selections against existing evidence and releases cancelled reads", async () => {
+  const readers = readerStub();
+  const queue = new CaptureFileQueue();
+  const items = Array.from({ length: 18 }, () => ({ kind: "text" }));
+  let current = true;
+  const photo = vi.fn();
+  const change = vi.fn();
+  const pick = () =>
+    queue.enqueue(
+      [new File([], "one"), new File([], "two")],
+      items,
+      () => current,
+      photo,
+      change,
+    );
+  expect(pick()).toBe(0);
+  expect(queue.busy).toBe(true);
+  expect(pick()).toBe(2);
+  await Promise.resolve();
+  current = false;
+  readers.shift()();
+  await queue.tail;
+  expect(queue.busy).toBe(false);
+  expect(photo).not.toHaveBeenCalled();
+  expect(readers).toHaveLength(0);
+});
+
+it("rejects oversized files before reading and counts existing and queued bytes", async () => {
+  const readers = readerStub();
+  const queue = new CaptureFileQueue();
+  const items = [{ upload: { contentLength: CAPTURE_MAX_BYTES - 4 } }];
+  const file = new File(["1234"], "fits");
+  const oversized = new File([], "large");
+  Object.defineProperty(oversized, "size", {
+    value: CAPTURE_MAX_FILE_BYTES + 1,
+  });
+  const photo = vi.fn();
+  expect(
+    queue.enqueue(
+      [oversized, file],
+      items,
+      () => true,
+      photo,
+      () => {},
+    ),
+  ).toBe(1);
+  expect(
+    queue.enqueue(
+      [file],
+      items,
+      () => true,
+      photo,
+      () => {},
+    ),
+  ).toBe(1);
+  await Promise.resolve();
+  expect(readers).toHaveLength(1);
+  readers.shift()();
+  await queue.tail;
+  expect(photo).toHaveBeenCalledTimes(1);
+  expect(queue.busy).toBe(false);
+});
+
+it("accounts for restored data URLs including base64 padding", () => {
+  const queue = new CaptureFileQueue();
+  const items = [
+    { dataUrl: "data:image/png;base64,YQ==" },
+    { upload: { contentLength: CAPTURE_MAX_BYTES - 1 } },
+  ];
+  expect(
+    queue.enqueue(
+      [new File(["a"], "over")],
+      items,
+      () => true,
+      vi.fn(),
+      vi.fn(),
+    ),
+  ).toBe(1);
+  expect(queue.busy).toBe(false);
+});
+
+it("settles failed readers and allows the next selection", async () => {
+  vi.stubGlobal(
+    "FileReader",
+    class {
+      readAsDataURL() {
+        throw new Error("read failed");
+      }
+    },
+  );
+  const queue = new CaptureFileQueue();
+  const photo = vi.fn();
+  queue.enqueue([new File([], "failed")], [], () => true, photo, vi.fn());
+  await queue.tail;
+  expect(queue.busy).toBe(false);
+  const readers = readerStub();
+  queue.enqueue([new File([], "retry")], [], () => true, photo, vi.fn());
+  await Promise.resolve();
+  readers.shift()();
+  await queue.tail;
+  expect(photo).toHaveBeenCalledWith("data:retry");
+});

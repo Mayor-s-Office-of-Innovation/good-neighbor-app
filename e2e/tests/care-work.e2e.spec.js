@@ -421,7 +421,7 @@ test("proactive care replaces five expired uploads without waiting for quota TTL
   await openLogs(page);
   await choose(page, "power_washed");
   await page
-    .locator("#care-photo-input")
+    .locator("#care-gallery-input")
     .setInputFiles(Array(5).fill(PHOTO_CLEAR));
   let expired = false;
   /** @type {Record<string, any>[]} */

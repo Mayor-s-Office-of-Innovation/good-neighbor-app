@@ -477,6 +477,8 @@
   "analysis.tray.title": "Analysis results",
   "app.home.aria": "Home",
   "app.name": "Good Neighbor",
+  "capture.files.rejectedMessage": "{count} selected photo(s) could not be added. Use photos up to 10 MiB each, with up to 20 evidence items and 50 MiB total per check or report. Choose fewer or smaller photos and try again.",
+  "capture.files.rejectedTitle": "Some photos weren’t added",
   "card.action.escalate": "Escalate",
   "card.action.logAction": "Log action",
   "card.clear.addProblem": "Add a problem",

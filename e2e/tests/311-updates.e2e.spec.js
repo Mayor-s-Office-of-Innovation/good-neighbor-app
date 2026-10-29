@@ -128,25 +128,28 @@ for (const width of [393, 1178]) {
       await expect(no).toBeDisabled();
       await expect(done).toBeDisabled();
       if (mode === "notes") {
-        await expect(dialog.locator("[data-photos]")).toBeAttached();
-        await expect(
-          dialog.locator(".task-update__photo-picker"),
-        ).toBeVisible();
-        await dialog.locator("[data-photos]").setInputFiles(PHOTO_ISSUES);
+        await expect(dialog.locator("[data-update-gallery]")).toBeAttached();
+        await expect(dialog.locator("[data-capture-camera]")).toBeVisible();
+        await dialog
+          .locator("[data-update-gallery]")
+          .setInputFiles(PHOTO_ISSUES);
         await expect(yes).toBeEnabled();
         await expect(no).toBeEnabled();
         await expect(done).toBeDisabled();
-        await dialog.locator("[data-photos]").setInputFiles([]);
+        // Gallery picks append; discard the draft to exercise the empty state again.
+        await dialog.locator("[data-close]").click();
+        await page.locator("[data-confirm-discard]").click();
+        await launch();
         await expect(yes).toBeDisabled();
         await expect(no).toBeDisabled();
-        await dialog.locator("[data-add-note]").click();
+        await dialog.locator("[data-capture-text]").click();
         await dialog.locator("[data-note-text]").fill("A saved 311 note");
         await dialog.locator("[data-save-note]").click();
-        await expect(dialog.locator("[data-photos]")).toBeAttached();
-        await expect(
-          dialog.locator(".task-update__photo-picker"),
-        ).toBeVisible();
-        await dialog.locator("[data-photos]").setInputFiles(PHOTO_ISSUES);
+        await expect(dialog.locator("[data-update-gallery]")).toBeAttached();
+        await expect(dialog.locator("[data-capture-camera]")).toBeVisible();
+        await dialog
+          .locator("[data-update-gallery]")
+          .setInputFiles(PHOTO_ISSUES);
       } else {
         await dialog.locator("[data-action-text]").fill(" ");
         await expect(yes).toBeDisabled();
@@ -207,7 +210,7 @@ for (const width of [393, 1178]) {
       // Discarding an editor draft returns to the timeline without another event.
       await launch();
       if (mode === "notes") {
-        await dialog.locator("[data-add-note]").click();
+        await dialog.locator("[data-capture-text]").click();
         await dialog.locator("[data-note-text]").fill("Unsaved note");
       } else await dialog.locator("[data-action-text]").fill("Unsaved action");
       await dialog.locator("[data-close]").click();
@@ -300,7 +303,7 @@ for (const mode of ["notes", "action"]) {
     await expect(page).toHaveURL(/#ticket-detail$/);
     await ticket.locator(`[data-mode="${mode}"]`).click();
     if (mode === "notes") {
-      await editor.locator("[data-add-note]").click();
+      await editor.locator("[data-capture-text]").click();
       await editor.locator("[data-note-text]").fill("Keep this draft");
     } else await editor.locator("[data-action-text]").fill("Keep this draft");
     await page.goBack();
@@ -320,7 +323,7 @@ for (const mode of ["notes", "action"]) {
     await expect(page).toHaveURL(/#ticket-detail$/);
     await ticket.locator(`[data-mode="${mode}"]`).click();
     if (mode === "notes") {
-      await editor.locator("[data-add-note]").click();
+      await editor.locator("[data-capture-text]").click();
       await editor.locator("[data-note-text]").fill("Saved from nested editor");
       await editor.locator("[data-save-note]").click();
     } else

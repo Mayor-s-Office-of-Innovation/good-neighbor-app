@@ -1,4 +1,4 @@
-import { readCaptureFiles } from "../services/capture-files.js";
+import { CaptureFileQueue } from "../services/capture-files.js";
 import { resolveSessionTask } from "./session-task-resolution.js";
 import { openSessionDuplicate } from "./duplicate-issue-launcher.js";
 import { captureLabels } from "./capture-analysis.templates.js";
@@ -15,6 +15,7 @@ import {
 import "./perimeter-check.css";
 import "./problem-report.css";
 import {
+  showToast,
   show311FilingToast,
   show311ErrorToast,
   showActionSaveErrorToast,
@@ -92,6 +93,7 @@ class ProblemReport extends HTMLElement {
   constructor() {
     super();
     this._captureReadVersion = 0;
+    this._captureFiles = new CaptureFileQueue();
     /** @type {SiteRecord | null} */
     this._site = null;
     /** @type {string} */
@@ -274,18 +276,24 @@ class ProblemReport extends HTMLElement {
     if (!files.length) return;
     const originCheckId = this._checkId;
     const version = this._captureReadVersion;
-    this._photoReadQueue = (this._photoReadQueue || Promise.resolve()).then(
+    const rejected = this._captureFiles.enqueue(
+      files,
+      getItems(),
       () =>
-        readCaptureFiles(
-          files,
-          () =>
-            this.isConnected &&
-            !this._finishing &&
-            version === this._captureReadVersion &&
-            isCurrentSession(originCheckId, "single-problem"),
-          (dataUrl) => this._addPhoto(dataUrl),
-        ),
+        this.isConnected &&
+        !this._finishing &&
+        version === this._captureReadVersion &&
+        isCurrentSession(originCheckId, "single-problem"),
+      (dataUrl) => this._addPhoto(dataUrl),
+      () => this._render(),
     );
+    if (rejected)
+      showToast({
+        title: t("capture.files.rejectedTitle"),
+        message: t("capture.files.rejectedMessage", { count: rejected }),
+        tone: "warning",
+        duration: 0,
+      });
     for (const file of files)
       void trackEvent("photo_picked", {
         flow: "single-problem",
@@ -424,7 +432,7 @@ class ProblemReport extends HTMLElement {
     container.innerHTML = footer({
       items,
       analyzingOpen: getAnalyzingOpen(),
-      complete: hasLiveEvidence(getCurrentCheck()),
+      complete: !this._captureFiles.busy && hasLiveEvidence(getCurrentCheck()),
       doneId: "submit-report",
       doneLabel: t("common.done"),
     });
@@ -433,7 +441,7 @@ class ProblemReport extends HTMLElement {
   /** @returns {Promise<void>} */
   async _done() {
     const check = getCurrentCheck();
-    if (!hasLiveEvidence(check)) {
+    if (this._captureFiles.busy || !hasLiveEvidence(check)) {
       this._syncControls();
       return;
     }
@@ -739,6 +747,7 @@ class ProblemReport extends HTMLElement {
   /** @returns {void} */
   disconnectedCallback() {
     this._captureReadVersion += 1;
+    this._captureFiles = new CaptureFileQueue();
     // Only an abnormal document death leaves the marker behind.
     clearCameraOpen();
     this._initGeneration += 1;

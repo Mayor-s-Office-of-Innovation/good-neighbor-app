@@ -1,5 +1,5 @@
 // @ts-nocheck -- lenient migration baseline (checkJs).
-import { readCaptureFiles } from "../services/capture-files.js";
+import { CaptureFileQueue } from "../services/capture-files.js";
 import { resolveSessionTask } from "./session-task-resolution.js";
 import { openSessionDuplicate } from "./duplicate-issue-launcher.js";
 import { captureGuidance } from "../domain/capture-guidance.js";
@@ -22,6 +22,7 @@ import {
 */
 import "./perimeter-check.css";
 import {
+  showToast,
   show311FilingToast,
   show311ErrorToast,
   showActionSaveErrorToast,
@@ -107,6 +108,7 @@ class PerimeterCheck extends HTMLElement {
   constructor() {
     super();
     this._captureReadVersion = 0;
+    this._captureFiles = new CaptureFileQueue();
     this._answeringConditionIds = new Set();
   }
 
@@ -664,11 +666,13 @@ class PerimeterCheck extends HTMLElement {
 
   /** Finish is disabled until the completion rule is met; this is the backstop. */
   _done() {
-    if (!isPerimeterCheckComplete(getCurrentCheck())) return;
+    if (this._captureFiles.busy || !isPerimeterCheckComplete(getCurrentCheck()))
+      return;
     this._finishCheck();
   }
 
   async _finishCheck() {
+    if (this._captureFiles.busy) return;
     const check = getCurrentCheck();
     const expectedArtifacts = expectedArtifactCountForCheck(check);
     this._finishing = true;
@@ -714,18 +718,24 @@ class PerimeterCheck extends HTMLElement {
       mark("camera:picked", { bytes: files[0].size, type: files[0].type });
     const originCheckId = this._checkId;
     const version = this._captureReadVersion;
-    this._photoReadQueue = (this._photoReadQueue || Promise.resolve()).then(
+    const rejected = this._captureFiles.enqueue(
+      files,
+      getItems(),
       () =>
-        readCaptureFiles(
-          files,
-          () =>
-            this.isConnected &&
-            !this._finishing &&
-            version === this._captureReadVersion &&
-            isCurrentSession(originCheckId, "perimeter"),
-          (dataUrl) => this._addPhoto(dataUrl),
-        ),
+        this.isConnected &&
+        !this._finishing &&
+        version === this._captureReadVersion &&
+        isCurrentSession(originCheckId, "perimeter"),
+      (dataUrl) => this._addPhoto(dataUrl),
+      () => this._render(),
     );
+    if (rejected)
+      showToast({
+        title: t("capture.files.rejectedTitle"),
+        message: t("capture.files.rejectedMessage", { count: rejected }),
+        tone: "warning",
+        duration: 0,
+      });
     for (const file of files)
       void trackEvent("photo_picked", {
         flow: "perimeter",
@@ -773,7 +783,7 @@ class PerimeterCheck extends HTMLElement {
     this.querySelector("#check-footer").innerHTML = footer({
       items: evidence,
       analyzingOpen: getAnalyzingOpen(),
-      complete: status.complete,
+      complete: !this._captureFiles.busy && status.complete,
     });
     const existingTray = this.querySelector("#analysis-tray");
     existingTray?.remove();
@@ -795,6 +805,7 @@ class PerimeterCheck extends HTMLElement {
 
   disconnectedCallback() {
     this._captureReadVersion += 1;
+    this._captureFiles = new CaptureFileQueue();
     this._guidanceAbort?.abort();
     // Only an abnormal document death leaves the marker behind.
     clearCameraOpen();
