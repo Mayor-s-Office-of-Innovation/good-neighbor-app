@@ -664,6 +664,21 @@ export async function removeEvidenceItem(itemId) {
   removeItem(itemId);
 }
 
+export async function refreshRecoveredQuestion(item, response) {
+  if (!response?.assessment) throw new Error("Missing amended assessment");
+  const refreshed = assessmentFromRefreshedAnalysis({
+    checkId: item.checkId,
+    artifactId: item.analysis.artifactId,
+    analysisId: response.analysis_id,
+    assessment: response.assessment,
+    location: item.location,
+  });
+  return evaluateAssessment({
+    ...refreshed,
+    previousAssessmentId: item.analysis.assessment.assessmentId,
+  });
+}
+
 export async function refreshEvidenceAnalysis(itemId, response, opts = {}) {
   const check = checkWithItem(itemId);
   if (!check) return;

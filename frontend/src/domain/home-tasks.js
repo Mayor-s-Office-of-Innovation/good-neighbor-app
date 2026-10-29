@@ -77,7 +77,7 @@ export function isOutsideSiteRadius(position, site) {
 
 /**
  * Decide whether a local pending/review session has been superseded by backend history.
- * @param {{ id: string, status?: string, submittedAt?: string, items?: Array<{analysis?: {status?: string, tasks?: Array<{taskId?: string, conditionId?: string, assessmentId?: string}>, conditions?: Array<{conditionId?: string}>}}> } | null} session
+ * @param {{ id: string, status?: string, submittedAt?: string, items?: Array<{analysis?: {status?: string, tasks?: Array<{taskId?: string, conditionId?: string, assessmentId?: string}>, conditions?: Array<{conditionId?: string, status?: string}>, assessment?: {assessmentId?: string}}}> } | null} session
  * @param {Array<{ id: string, status?: string, submittedAt?: string }>} submitted
  * @param {Array<{taskId?: string, conditionId?: string, assessmentId?: string}>} [tasks]
  * @returns {boolean}
@@ -330,24 +330,25 @@ export function hasProblemResults(item) {
 export function sessionProblemItemHasBackendCards(item, tasks) {
   const backendTasks = Array.isArray(tasks) ? tasks : [];
   const localTasks = item?.analysis?.tasks || [];
-  if (localTasks.length) {
-    return localTasks.every((localTask) =>
+  const localConditions = item?.analysis?.conditions || [];
+  if (!localTasks.length && !localConditions.length) return false;
+  return (
+    localTasks.every((localTask) =>
       backendTasks.some((backendTask) =>
         sameProblemCard(localTask, backendTask),
       ),
-    );
-  }
-  const localConditions = item?.analysis?.conditions || [];
-  if (localConditions.length) {
-    return localConditions.every((condition) =>
-      backendTasks.some(
+    ) &&
+    localConditions.every((condition) => {
+      if (["completed", "rejected"].includes(condition.status)) return true;
+      return backendTasks.some(
         (backendTask) =>
           condition.conditionId &&
-          condition.conditionId === backendTask.conditionId,
-      ),
-    );
-  }
-  return false;
+          condition.conditionId === backendTask.conditionId &&
+          (!item.analysis?.assessment?.assessmentId ||
+            backendTask.assessmentId === item.analysis.assessment.assessmentId),
+      );
+    })
+  );
 }
 
 function sameProblemCard(localTask, backendTask) {

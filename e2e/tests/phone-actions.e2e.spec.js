@@ -53,7 +53,7 @@ async function issueFixture(page, ruleId) {
     canBeInProgress: rule.canBeInProgress,
     primaryInProgressAgency: rule.primaryInProgressAgency,
     status: "open",
-    createdAt: "2026-10-15T12:00:00Z",
+    createdAt: new Date().toISOString(),
     inProgressAt: "",
   };
   /** @type {Array<{completionMethod: string}>} */
@@ -83,7 +83,7 @@ async function issueFixture(page, ruleId) {
     task = {
       ...task,
       status: "in_progress",
-      inProgressAt: "2026-10-15T12:01:00Z",
+      inProgressAt: new Date().toISOString(),
     };
     await route.fulfill({ json: { task } });
   });

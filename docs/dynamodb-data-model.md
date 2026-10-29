@@ -395,6 +395,20 @@ GSI4 (condition history by severity) and GSI5 (unresolved conditions) were remov
 `gsi4*` / `gsi5*` attributes as plain attributes. New conditions carry no index keys and
 are read by assessment prefix (AP15).
 
+`GET /v1/guidance/pending` recovers unanswered questions for the authenticated
+site from the existing GSI1 assessment timeline (AP14), including historical
+reports. Each response examines at most 25 assessments, filters for pending or
+manual-review reports, and retains the cursor even on an empty filtered page.
+The client follows every page. Before returning questions, the API reads the
+assessment and its conditions from the base table (AP15) with consistent reads,
+excluding superseded assessments and conditions already answered. It also reads
+the existing `ISSUE_DELETION#<checkId>:<artifactId>:<conditionId>` receipt
+consistently and excludes confirmed deletions. No migration
+or additional index is needed. Home merges these questions with local in-flight
+results and backend tasks without treating a sibling task as an answered question.
+Answers use the existing condition-answer transaction and original policy version.
+
+
 ## Access patterns
 
 Interactive access uses keyed reads and queries, often several paginated reads or

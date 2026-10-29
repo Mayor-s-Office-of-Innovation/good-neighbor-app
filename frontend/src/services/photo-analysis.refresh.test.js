@@ -20,6 +20,7 @@ import {
 import { getCurrentCheck, updateItemAnalysis } from "../state/check-session.js";
 import {
   refreshEvidenceAnalysis,
+  refreshRecoveredQuestion,
   answerAnalysisQuestion,
 } from "./photo-analysis.js";
 
@@ -281,5 +282,37 @@ it("does not let a delayed answer restore a replaced assessment", async () => {
   check.items[0].analysis.assessment = { assessmentId: "new" };
   finish();
   await pending;
+  expect(updateItemAnalysis).not.toHaveBeenCalled();
+});
+
+it("publishes an edited recovered question without a local session", async () => {
+  vi.mocked(evaluateAssessment).mockResolvedValue({
+    assessment: {},
+    conditions: [],
+    tasks: [],
+  });
+  await refreshRecoveredQuestion(
+    {
+      checkId: "original-check",
+      analysis: {
+        artifactId: "original-artifact",
+        assessment: { assessmentId: "previous" },
+      },
+    },
+    {
+      analysis_id: "amended-analysis",
+      assessment: {
+        identified_conditions_of_concern: [
+          { condition_id: "remaining", category: "Litter", severity: 1 },
+        ],
+      },
+    },
+  );
+  expect(evaluateAssessment).toHaveBeenCalledWith(
+    expect.objectContaining({
+      checkId: "original-check",
+      previousAssessmentId: "previous",
+    }),
+  );
   expect(updateItemAnalysis).not.toHaveBeenCalled();
 });

@@ -64,7 +64,7 @@ test.describe("back button handling", () => {
       name: t("location.title"),
     });
     await expect(locationDialog).toBeVisible();
-    await expect(page).toHaveURL(/\/today#location$/);
+    await expect(page).toHaveURL(/\/today(?:\?filter=todo)?#location$/);
 
     await page.getByRole("button", { name: t("location.stay") }).click();
     await expect(page).toHaveURL(/\/check$/);
@@ -84,7 +84,7 @@ test.describe("back button handling", () => {
     const attributions = page.locator("#attributions-dialog");
     await expect(attributions).toBeVisible();
     // The dialog sub-state is visible in the URL as a short-lived hash.
-    await expect(page).toHaveURL(/\/today#attributions$/);
+    await expect(page).toHaveURL(/\/today(?:\?filter=todo)?#attributions$/);
 
     // System back: the sentinel unwinds, the dialog closes, the hash is gone.
     await page.evaluate(() => window.history.back());

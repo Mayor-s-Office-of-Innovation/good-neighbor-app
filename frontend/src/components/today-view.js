@@ -1,3 +1,7 @@
+import {
+  loadPendingQuestionItems,
+  mergePendingQuestionItems,
+} from "../services/pending-guidance.js";
 import { duplicateUiEnabled } from "../services/feature-flags.js";
 import { animatedEllipsis } from "../lib/ellipsis.js";
 import {
@@ -68,6 +72,7 @@ import { retireHandoff } from "../services/session-handoff.js";
 import {
   listChecks,
   listTasks,
+  submitConditionAnswers,
   editAnalysisCondition,
   get311RequestDetails,
 } from "../services/api.js";
@@ -75,6 +80,7 @@ import {
   answerAnalysisQuestion,
   analyzeNoIssueDescriptionEdit,
   refreshEvidenceAnalysis,
+  refreshRecoveredQuestion,
   retryEvidenceItem,
 } from "../services/photo-analysis.js";
 import { adaptCheckHeader } from "../domain/check-adapter.js";
@@ -604,14 +610,15 @@ class TodayView extends HTMLElement {
     // tab shows. The In-progress and History lists (the slowest call is the
     // ever-growing completed list) load right after the first render — see
     // _loadRemainingTasks.
-    let submitted, tasks, latestStartedCheck;
+    let submitted, tasks, latestStartedCheck, pendingQuestions;
     let reuseRemaining = false;
     try {
-      const [[catalog, bindings], { checks }, openTasksResult] =
+      const [[catalog, bindings], { checks }, openTasksResult, questions] =
         await Promise.all([
           catalogLoad,
           listChecks({ limit: 30 }),
           listTasks({ status: "open", limit: 50 }),
+          loadPendingQuestionItems(),
         ]);
       if (generation !== this._homeRefreshGeneration) return;
       this._providerSitesStatus = catalog ? "loaded" : "error";
@@ -641,6 +648,7 @@ class TodayView extends HTMLElement {
         : [];
       this._taskListFreshness.set("open", Date.now());
       tasks = uniqueTasks([...(openTasksResult.tasks || []), ...reused]);
+      pendingQuestions = questions;
       if (!reuseRemaining) this._remainingStatus = "pending";
       else
         for (const status of ["in_progress", "completing", "completed"])
@@ -650,7 +658,8 @@ class TodayView extends HTMLElement {
       this._offline = null;
       void saveHomeSnapshot(this._siteId, {
         checks: checks || [],
-        tasks: openTasksResult.tasks || [],
+        tasks: this._reconcileConfirmedTasks(openTasksResult.tasks || []),
+        pendingQuestions,
       }).catch(() => {});
     } catch (err) {
       if (generation !== this._homeRefreshGeneration) return;
@@ -668,6 +677,7 @@ class TodayView extends HTMLElement {
       latestStartedCheck = latestStarted(snapshot?.checks);
       submitted = submittedChecks(snapshot?.checks);
       tasks = uniqueTasks(snapshot?.tasks || []);
+      pendingQuestions = snapshot?.pendingQuestions || [];
       this._remainingStatus = "error";
     }
 
@@ -682,16 +692,29 @@ class TodayView extends HTMLElement {
     const finishedChecks = await loadFinishedChecks(this._siteId).catch(
       () => [],
     );
+    const coveredCards = [
+      ...tasks,
+      ...(pendingQuestions || []).flatMap((item) =>
+        item.analysis.conditions.map((condition) => ({
+          conditionId: condition.conditionId,
+          assessmentId: item.analysis.assessment.assessmentId,
+        })),
+      ),
+    ];
     if (!this._offline)
       for (const check of finishedChecks)
         if (
           check.id !== effectivePendingSession?.id &&
-          this._isStalePendingSession(check, submitted, tasks)
+          this._isStalePendingSession(check, submitted, coveredCards)
         )
           await clearSubmittedSession(check.id);
     if (
       !this._offline &&
-      this._isStalePendingSession(effectivePendingSession, submitted, tasks)
+      this._isStalePendingSession(
+        effectivePendingSession,
+        submitted,
+        coveredCards,
+      )
     ) {
       await clearSubmittedSession(effectivePendingSession.id);
       effectivePendingSession = null;
@@ -719,6 +742,7 @@ class TodayView extends HTMLElement {
       latestStartedCheck,
       tasks,
       pendingSession: effectivePendingSession,
+      pendingQuestions,
     });
     // Evidence hydration is for the cards on screen now. The duplicate watcher
     // (a poll) and the 311 status batch wait for the complete list, so each
@@ -1414,12 +1438,19 @@ class TodayView extends HTMLElement {
     this._renderHome({ ...model, tasks });
   }
 
-  _render({ last, checks = [], tasks, pendingSession, latestStartedCheck }) {
+  _render({
+    last,
+    checks = [],
+    tasks,
+    pendingSession,
+    latestStartedCheck,
+    pendingQuestions = [],
+  }) {
     const allRecentItems = pendingSession
       ? this._sessionItems(pendingSession)
       : [];
     const taskArtifactIds = taskArtifactIdSet(tasks);
-    const recentItems = allRecentItems.filter((item) => {
+    const localRecentItems = allRecentItems.filter((item) => {
       const artifactId = item.analysis?.artifactId || item.upload?.artifactId;
       if (item.analysis?.status === "analyzed") {
         return (
@@ -1429,6 +1460,11 @@ class TodayView extends HTMLElement {
       }
       return !taskArtifactIds.has(artifactId);
     });
+    const recentItems = mergePendingQuestionItems(
+      localRecentItems,
+      pendingQuestions,
+      tasks,
+    );
     const homeTasks = this._homeTasks(tasks);
     const taskCheckIds = new Set(
       homeTasks.map((entry) => taskCheckGroupId(entry.task)),
@@ -1445,7 +1481,17 @@ class TodayView extends HTMLElement {
         (entry) => homeTabForStatus(entry.homeStatus) === this._homeFilter,
       ),
     );
-    const tabCounts = { todo: 0, in_progress: 0 };
+    const tabCounts = {
+      todo: recentItems.reduce(
+        (count, item) =>
+          count +
+          (item.analysis?.conditions || []).filter(
+            (condition) => condition.needsAnswer,
+          ).length,
+        0,
+      ),
+      in_progress: 0,
+    };
     for (const entry of homeTasks) {
       const tab = homeTabForStatus(entry.homeStatus);
       if (tab === "todo") tabCounts.todo += 1;
@@ -1553,11 +1599,14 @@ class TodayView extends HTMLElement {
       results: this._homeResults({
         pendingSession,
         tabCounts,
-        recentCheckTime:
-          newestCheck.time ||
-          pendingSession?.startedAt ||
-          last?.submittedAt ||
-          "",
+        recentCheckTime: recentItems.some(
+          (item) => item.checkId && item.checkId !== newestCheck.id,
+        )
+          ? ""
+          : newestCheck.time ||
+            pendingSession?.startedAt ||
+            last?.submittedAt ||
+            "",
         checks,
         recentItems: visibleRecentItems,
         newTaskEntries,
@@ -2525,15 +2574,26 @@ class TodayView extends HTMLElement {
           caller: { request_id: this._requestId("edit", problem) },
         },
       );
-      if (problem.itemId) {
+      const localItemId = await this._localQuestionItemId(problem.itemId);
+      if (localItemId) {
         try {
-          await refreshEvidenceAnalysis(problem.itemId, result);
+          await refreshEvidenceAnalysis(localItemId, result);
         } catch (error) {
           console.error("refresh after saved edit failed", error);
           this._analysisEditDialog?.close();
           this._activeProblem = null;
           showEditRefreshErrorToast();
           return;
+        }
+      }
+      const recovered = (this._homeModel?.pendingQuestions || []).find(
+        (item) => item.id === problem.itemId,
+      );
+      if (recovered && !localItemId) {
+        const guidance = await refreshRecoveredQuestion(recovered, result);
+        for (const task of guidance.tasks || []) {
+          this._confirmedTasks ??= new Map();
+          this._confirmedTasks.set(task.taskId, task);
         }
       }
       this._analysisEditDialog?.close();
@@ -2620,12 +2680,56 @@ class TodayView extends HTMLElement {
     setQuestionAnswerBusy(this, problem.conditionId, true);
     this._setInlineProblemError(problem, "");
     try {
-      await answerAnalysisQuestion(
-        problem.itemId,
-        problem.conditionId,
-        answerKey,
-        answerValue,
+      const persisted = (this._homeModel?.pendingQuestions || []).find(
+        (item) => item.id === problem.itemId,
       );
+      const localItemId = persisted
+        ? await this._localQuestionItemId(problem.itemId)
+        : problem.itemId;
+      const result =
+        persisted && !localItemId
+          ? await submitConditionAnswers(
+              persisted.analysis.assessment.assessmentId,
+              problem.conditionId,
+              { answers: { [answerKey]: answerValue } },
+            )
+          : await answerAnalysisQuestion(
+              localItemId,
+              problem.conditionId,
+              answerKey,
+              answerValue,
+            );
+      if (persisted) {
+        // Publish the authoritative answer immediately, even while GSI2 catches up.
+        if (this._homeModel)
+          this._homeModel = {
+            ...this._homeModel,
+            pendingQuestions: (this._homeModel.pendingQuestions || []).flatMap(
+              (item) => {
+                if (item.id !== persisted.id) return [item];
+                return result.conditionItem?.status === "needs_answer"
+                  ? [
+                      {
+                        ...item,
+                        analysis: {
+                          ...item.analysis,
+                          conditions: [result.conditionItem],
+                          assessment:
+                            result.assessmentItem || item.analysis.assessment,
+                        },
+                      },
+                    ]
+                  : [];
+              },
+            ),
+          };
+        if (result.taskItem) {
+          this._confirmedTasks ??= new Map();
+          this._confirmedTasks.set(result.taskItem.taskId, result.taskItem);
+          this._applyTaskResult(result.taskItem.taskId, result.taskItem);
+        }
+        await this._refreshAfterAction();
+      }
     } catch (err) {
       console.error("answer condition failed", err);
       showAnswerSaveErrorToast();
@@ -2642,10 +2746,32 @@ class TodayView extends HTMLElement {
     }
   }
 
-  _sessionItem(problem) {
-    return this._sessionItems(getCurrentCheck()).find(
-      (item) => item.id === problem.itemId,
+  /** Resolve synthetic recovered-card ids to their retained local evidence. */
+  async _localQuestionItemId(itemId) {
+    const persisted = (this._homeModel?.pendingQuestions || []).find(
+      (item) => item.id === itemId,
     );
+    if (!persisted) return itemId;
+    const items = [
+      ...this._sessionItems(getCurrentCheck()),
+      ...(await loadFinishedChecks(this._siteId)).flatMap((check) =>
+        this._sessionItems(check),
+      ),
+    ];
+    return (
+      items.find(
+        (item) =>
+          item.analysis?.assessment?.assessmentId ===
+          persisted.analysis.assessment.assessmentId,
+      )?.id || null
+    );
+  }
+
+  _sessionItem(problem) {
+    return [
+      ...this._sessionItems(getCurrentCheck()),
+      ...(this._homeModel?.pendingQuestions || []),
+    ].find((item) => item.id === problem.itemId);
   }
 
   _setInlineProblemError(problem, message) {

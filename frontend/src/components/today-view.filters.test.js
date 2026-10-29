@@ -65,6 +65,9 @@ const catalog = vi.hoisted(() => ({
   listProviderSites: vi.fn(),
   listBoundSites: vi.fn(),
   listTasks: vi.fn(),
+  listPendingGuidance: vi.fn(async () => ({ guidance: [], nextToken: null })),
+  submitConditionAnswers: vi.fn(),
+  editAnalysisCondition: vi.fn(),
   listChecks: vi.fn(),
 }));
 vi.mock("../services/session-handoff.js", () => ({
@@ -84,6 +87,9 @@ vi.mock("../services/api.js", () => ({
   selectDeviceBinding: vi.fn(),
   listChecks: catalog.listChecks,
   listTasks: catalog.listTasks,
+  listPendingGuidance: catalog.listPendingGuidance,
+  submitConditionAnswers: catalog.submitConditionAnswers,
+  editAnalysisCondition: catalog.editAnalysisCondition,
 }));
 const queued311 = vi.hoisted(() => ({
   stop: vi.fn(),
@@ -133,6 +139,7 @@ beforeEach(() => {
   });
 });
 beforeAll(async () => {
+  vi.stubGlobal("HTMLButtonElement", class {});
   vi.stubGlobal(
     "HTMLElement",
     class {
@@ -1269,6 +1276,7 @@ describe("deferred In-progress / History lists", () => {
       expect(saveHomeSnapshot).toHaveBeenCalledWith("site-1", {
         checks: [],
         tasks: [openTask],
+        pendingQuestions: [],
       });
       expect(view._offline).toBeNull();
     });
@@ -1834,3 +1842,87 @@ it("discards a disconnected refresh and its queued work after reconnecting to an
   expect(view._providerName).not.toBe("old-provider");
   expect(view._renderHome).not.toHaveBeenCalled();
 });
+
+it("maps a recovered question to its retained local evidence for edits and answers", async () => {
+  const view = await mount("?filter=todo");
+  session.current = {
+    id: "check-one",
+    items: [
+      {
+        id: "local-photo",
+        analysis: { assessment: { assessmentId: "assessment-one" } },
+      },
+    ],
+  };
+  view._homeModel = {
+    pendingQuestions: [
+      {
+        id: "pending:assessment-one:condition-one",
+        analysis: { assessment: { assessmentId: "assessment-one" } },
+      },
+    ],
+  };
+  expect(
+    await view._localQuestionItemId("pending:assessment-one:condition-one"),
+  ).toBe("local-photo");
+  session.current = null;
+  expect(
+    await view._localQuestionItemId("pending:assessment-one:condition-one"),
+  ).toBeNull();
+  expect(await view._localQuestionItemId("ordinary-local-item")).toBe(
+    "ordinary-local-item",
+  );
+});
+
+it.each([true, false])(
+  "republishes edits to recovered questions (retained local copy: %s)",
+  async (hasLocal) => {
+    const analysis = await import("../services/photo-analysis.js");
+    const localRefresh = vi
+      .spyOn(analysis, "refreshEvidenceAnalysis")
+      .mockResolvedValue(undefined);
+    const recoveredRefresh = vi
+      .spyOn(analysis, "refreshRecoveredQuestion")
+      .mockResolvedValue({ assessment: {}, conditions: [], tasks: [] });
+    try {
+      const view = await mount("?filter=todo");
+      const item = {
+        id: "recovered",
+        checkId: "check",
+        analysis: {
+          artifactId: "artifact",
+          assessment: { assessmentId: "assessment" },
+        },
+      };
+      view._homeModel = { tasks: [], pendingQuestions: [item] };
+      view._activeProblem = {
+        itemId: item.id,
+        checkId: "check",
+        artifactId: "artifact",
+        conditionId: "condition",
+        description: "Original description",
+      };
+      view._analysisEditDescription = { value: "Updated description" };
+      view.querySelector = () => null;
+      view._setDialogError = vi.fn();
+      view._localQuestionItemId = vi.fn(async () =>
+        hasLocal ? "local-photo" : null,
+      );
+      view.connectedCallback = vi.fn(async () => {});
+      const response = { assessment: {} };
+      catalog.editAnalysisCondition.mockResolvedValue(response);
+      await view._saveProblemEdit();
+      if (hasLocal) {
+        expect(localRefresh).toHaveBeenCalledWith("local-photo", response);
+        expect(recoveredRefresh).not.toHaveBeenCalled();
+      } else {
+        expect(recoveredRefresh).toHaveBeenCalledWith(item, response);
+        expect(localRefresh).not.toHaveBeenCalled();
+      }
+      expect(view.connectedCallback).toHaveBeenCalledOnce();
+    } finally {
+      localRefresh.mockRestore();
+      recoveredRefresh.mockRestore();
+    }
+  },
+);
