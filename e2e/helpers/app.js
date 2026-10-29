@@ -8,6 +8,7 @@ import { expect } from "@playwright/test";
 import { t } from "./i18n.js";
 import { SITE_CODE, SITE_NAME } from "./fixtures.js";
 import { typeDelay, isSlowMo } from "./pace.js";
+import { resetCodeAttemptBudget } from "./code-attempt-budget.mjs";
 
 /**
  * Bind a fresh browser context to the seeded site through the real code-entry
@@ -18,6 +19,8 @@ import { typeDelay, isSlowMo } from "./pace.js";
  * @param {{ siteCode?: string, siteName?: string }} [options]
  */
 export async function bindSite(page, options = {}) {
+  // The suite is serial; isolate login budgets just like browser storage.
+  await resetCodeAttemptBudget();
   const siteCode = options.siteCode || SITE_CODE;
   const siteName = options.siteName || SITE_NAME;
   await page.goto("/");
