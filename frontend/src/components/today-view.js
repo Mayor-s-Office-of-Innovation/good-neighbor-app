@@ -165,7 +165,10 @@ import { fetchProviderSites } from "../services/provider-sites.js";
 import { switchToBoundSite } from "../services/site-switch.js";
 import { getLocale, setLocale, t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
-import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
+import {
+  setQuestionAnswerBusy,
+  showQuestionAnswerUpdated,
+} from "./analysis-answer-controls.js";
 import { finalizeCaptureScorecardInBackground } from "../services/submit-check.js";
 import { isConnectionFailure } from "../services/photo-analysis.js";
 import { getHomeSnapshot, saveHomeSnapshot } from "../db.js";
@@ -2626,6 +2629,7 @@ class TodayView extends HTMLElement {
         answerKey,
         answerValue,
       );
+      showQuestionAnswerUpdated(this, problem.conditionId);
     } catch (err) {
       console.error("answer condition failed", err);
       showAnswerSaveErrorToast();

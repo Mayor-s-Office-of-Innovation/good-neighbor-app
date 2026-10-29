@@ -462,6 +462,7 @@
   "analysis.missingCondition.noCoordinates.deleted": "Wala ang orihinal na coordinates ng ebidensya ng resultang ito, kaya hindi ito mabubura. Kumuha ng bagong larawan at subukan ulit.",
   "analysis.missingCondition.noCoordinates.edited": "Wala ang orihinal na coordinates ng ebidensya ng resultang ito, kaya hindi ito mae-edit. Kumuha ng bagong larawan at subukan ulit.",
   "analysis.progressDialog.title": "Nagfa-file ng tiket",
+  "analysis.question.updated": "Na-update ang isyu",
   "analysis.question.updating": "Ina-update ang isyu",
   "analysis.successDialog.resolved": "minarkahang nalutas na.",
   "analysis.successDialog.text": "Naitala na namin ang inyong aksyon. Ang item na ito ay {resolved}",

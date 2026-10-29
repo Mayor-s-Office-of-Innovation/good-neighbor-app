@@ -462,6 +462,7 @@
   "analysis.missingCondition.noCoordinates.deleted": "Kết quả này thiếu tọa độ của bằng chứng gốc nên không thể xóa. Hãy chụp ảnh mới và thử lại.",
   "analysis.missingCondition.noCoordinates.edited": "Kết quả này thiếu tọa độ của bằng chứng gốc nên không thể sửa. Hãy chụp ảnh mới và thử lại.",
   "analysis.progressDialog.title": "Đang gửi yêu cầu",
+  "analysis.question.updated": "Đã cập nhật vấn đề",
   "analysis.question.updating": "Đang cập nhật vấn đề",
   "analysis.successDialog.resolved": "được đánh dấu là đã giải quyết.",
   "analysis.successDialog.text": "Chúng tôi đã ghi lại hành động của bạn. Mục này hiện {resolved}",
