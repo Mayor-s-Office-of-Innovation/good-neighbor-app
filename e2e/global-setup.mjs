@@ -190,8 +190,26 @@ async function waitAndReset() {
   }
 }
 
+/**
+ * The suite's SF311 fake keeps every filed request in its own log file
+ * (LOCAL_SF311_LOG_PATH, set in playwright.config.js) and numbers new requests
+ * from it. Clear it through the fake so each run starts from an empty log, like
+ * its in-memory table.
+ * @returns {Promise<void>}
+ */
+async function clearSf311Log() {
+  const res = await fetch(`${E2E_URLS.sf311}/requests`, { method: "DELETE" });
+  if (!res.ok) {
+    throw new Error(
+      `[e2e-global] could not clear the SF311 fake's log (${res.status})`,
+    );
+  }
+  console.log("[e2e-global] cleared the SF311 fake's request log");
+}
+
 export default async function globalSetup() {
   loadEnvLocal();
   assertLocalOnly();
   await waitAndReset();
+  await clearSf311Log();
 }

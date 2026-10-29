@@ -28,7 +28,7 @@ const CI = !!process.env.CI;
 
   Own stack (ADR 0006 addendum, 2026-10-29): every server and emulator the
   suite starts listens on its own port (helpers/ports.js), DynamoDB Local runs
-  in memory and MinIO keeps a separate data folder, so the suite runs beside
+  in memory, and MinIO and the SF311 fake keep separate files, so the suite runs beside
   `npm run dev` without sharing anything with it. The values below are set on
   process.env (not only on the backend's env) so globalSetup and the specs
   that reach the emulators directly see the same endpoints.
@@ -38,6 +38,9 @@ Object.assign(process.env, {
   LOCAL_API_PORT: String(E2E_PORTS.api),
   LOCAL_ANALYZER_PORT: String(E2E_PORTS.analyzer),
   LOCAL_SF311_PORT: String(E2E_PORTS.sf311),
+  LOCAL_SF311_LOG_PATH: fileURLToPath(
+    new URL("../backend/.local/sf311-requests-e2e.jsonl", import.meta.url),
+  ),
   LOCAL_DDB_PORT: String(E2E_PORTS.ddb),
   LOCAL_DDB_IN_MEMORY: "true",
   LOCAL_MQ_PORT: String(E2E_PORTS.mq),

@@ -348,8 +348,9 @@ Notes for debugging:
   5183, DynamoDB Local 8010, ElasticMQ 9334, MinIO 9010, …), so a dev stack can
   stay up while it runs and nothing is shared with it. Its DynamoDB Local runs
   in memory, so every run starts from a freshly seeded `gnp-local-e2e` table and
-  leaves nothing behind; its MinIO keeps files in `backend/.local/minio-data-e2e/`.
-  Setup resets only the seeded code counters. Only one suite can run at a time:
+  leaves nothing behind. Its MinIO keeps files in `backend/.local/minio-data-e2e/`
+  and its SF311 fake logs to `backend/.local/sf311-requests-e2e.jsonl`. Setup
+  resets the seeded code counters and clears that log. Only one suite can run at a time:
   a second one finds the ports taken and Playwright stops it before any test.
   See [ADR 0006](adr/0006-docker-free-local-dev-harness.md).
 - Tests always get a **fresh browser context** (fresh IndexedDB), so each test

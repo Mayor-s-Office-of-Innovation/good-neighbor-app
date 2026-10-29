@@ -74,10 +74,11 @@ own instead of sharing any part of the dev one:
 - **DynamoDB Local runs in memory** for the suite (`LOCAL_DDB_IN_MEMORY=true`,
   still `-sharedDb`). Each run starts from an empty, freshly seeded table and
   leaves nothing behind, so the teardown and the leftover-task cleanup are gone;
-  globalSetup only resets the seeded code counters. The dev copy still persists
+  globalSetup resets the seeded code counters. The dev copy still persists
   to `backend/.local/dynamodb-data/`.
 - **MinIO uses a separate data folder** (`backend/.local/minio-data-e2e/`), so
-  two MinIO processes never share one.
+  two MinIO processes never share one. The SF311 fake likewise logs to its own
+  file (`backend/.local/sf311-requests-e2e.jsonl`), which globalSetup clears.
 - **globalSetup also checks the port** of the DynamoDB endpoint it writes to, so
   it can only touch the suite's own copy.
 - **One suite at a time.** A second run finds the suite's ports taken and
