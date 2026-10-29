@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../../db.js";
 import { getObjectBytes } from "../../s3.js";
 import { create311MediaLink } from "../../integrations/sf311-media.js";
@@ -8,6 +8,7 @@ import { getAnalyzerApiKey } from "../api-key.js";
 import { createAnalyzerClient } from "../analyzer-client.js";
 import { getConfig } from "../../config.js";
 import { emitMetrics } from "../../lib/metrics.js";
+import { queryAllItems } from "../../lib/query-all-items.js";
 import {
   buildAttachmentUpdatePayload,
   buildCloseSrPayload,
@@ -358,13 +359,32 @@ function locationFromTask(task) {
  * @returns {Promise<{ latitude: number, longitude: number } | null>}
  */
 async function resolveLocation({ tableName, siteId, task, artifacts }) {
-  const taskLocation = locationFromTask(task);
-  if (taskLocation) return taskLocation;
-  // A location sent after upload can land after the task was written.
-  for (const artifact of artifacts) {
-    const location = coordinates(artifact);
-    if (location) return location;
-  }
+  const order = /** @type {string[]} */ (task.sourceArtifactIds ?? []);
+  const source = /** @type {Record<string, unknown>} */ (task.source ?? {});
+  // Only source carries an accuracy; a top-level task.location has none.
+  const topLevel =
+    task.location && typeof task.location === "object"
+      ? coordinates(/** @type {Record<string, unknown>} */ (task.location))
+      : null;
+  const best = [
+    {
+      location: locationFromTask(task),
+      accuracy: topLevel
+        ? Infinity
+        : (finiteNumber(source.accuracyMeters) ?? Infinity),
+      rank: -1,
+    },
+    // A location sent after upload can land on the photo but miss the task.
+    ...artifacts.map((artifact) => ({
+      location: coordinates(artifact),
+      accuracy: finiteNumber(artifact.accuracyMeters) ?? Infinity,
+      rank: order.indexOf(String(artifact.artifactId ?? "")),
+    })),
+  ]
+    .filter((candidate) => candidate.location)
+    // Crews walk to this point, so the tightest fix wins.
+    .sort((a, b) => a.accuracy - b.accuracy || a.rank - b.rank)[0]?.location;
+  if (best) return best;
 
   const site = await ddb.send(
     new GetCommand({
@@ -410,17 +430,15 @@ async function loadClassifierEvidence({ tableName, siteId, task, config }) {
       "No source image or text is available for 311 classifier analysis",
     );
   }
-  const result = await ddb.send(
-    new QueryCommand({
-      TableName: tableName,
-      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-      ExpressionAttributeValues: {
-        ":pk": `SITE#${siteId}`,
-        ":prefix": checkArtifactPrefix(String(task.checkId)),
-      },
-      ConsistentRead: true,
-    }),
-  );
+  const result = await queryAllItems({
+    TableName: tableName,
+    KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+    ExpressionAttributeValues: {
+      ":pk": `SITE#${siteId}`,
+      ":prefix": checkArtifactPrefix(String(task.checkId)),
+    },
+    ConsistentRead: true,
+  });
   const artifacts = (result.Items ?? []).filter((item) =>
     artifactIds.has(String(item.artifactId ?? "")),
   );
@@ -478,18 +496,16 @@ async function sourceArtifactsForTask({ tableName, siteId, task }) {
     /** @type {string[]} */ (task.sourceArtifactIds ?? []),
   );
   if (!task.checkId || artifactIds.size === 0) return [];
-  const result = await ddb.send(
-    new QueryCommand({
-      TableName: tableName,
-      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-      ExpressionAttributeValues: {
-        ":pk": `SITE#${siteId}`,
-        ":prefix": checkArtifactPrefix(String(task.checkId)),
-      },
-      ConsistentRead: true,
-    }),
-  );
-  return (result.Items ?? []).filter((item) =>
+  const result = await queryAllItems({
+    TableName: tableName,
+    KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+    ExpressionAttributeValues: {
+      ":pk": `SITE#${siteId}`,
+      ":prefix": checkArtifactPrefix(String(task.checkId)),
+    },
+    ConsistentRead: true,
+  });
+  return result.Items.filter((item) =>
     artifactIds.has(String(item.artifactId ?? "")),
   );
 }

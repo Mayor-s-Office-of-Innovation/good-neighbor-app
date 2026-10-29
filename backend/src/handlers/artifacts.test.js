@@ -1159,11 +1159,12 @@ describe("updateArtifactLocation", () => {
 
   /**
    * Answers each read the way the table would, and records every write.
-   * @param {{ artifact?: Record<string, unknown>, tasks?: Record<string, unknown>[], failUpdates?: string[] }} state
+   * @param {{ artifact?: Record<string, unknown>, tasks?: Record<string, unknown>[], failUpdates?: string[], failOnce?: string[], stored?: Record<string, unknown> }} state
    */
-  function table({ artifact, tasks, failUpdates = [] }) {
+  function table({ artifact, tasks, failUpdates = [], failOnce = [], stored }) {
     /** @type {any[]} */
     const updates = [];
+    const pendingFailures = new Set(failOnce);
     ddbSend.mockImplementation(async (/** @type {any} */ command) => {
       const input = command.input;
       if (command instanceof QueryCommand) {
@@ -1178,6 +1179,7 @@ describe("updateArtifactLocation", () => {
       if (command instanceof GetCommand) {
         if (input.Key.sk.startsWith("GUIDANCE_CURRENT#"))
           return tasks ? { Item: { assessmentId: "asmt_1" } } : {};
+        if (input.Key.sk === artifact?.sk) return { Item: stored };
         return { Item: { assessmentId: "asmt_1" } };
       }
       if (command instanceof BatchGetCommand) {
@@ -1188,9 +1190,10 @@ describe("updateArtifactLocation", () => {
           (/** @type {any} */ item) => item.Update,
         );
         const reasons = items.map((/** @type {any} */ u) => ({
-          Code: failUpdates.includes(u.Key.sk)
-            ? "ConditionalCheckFailed"
-            : "None",
+          Code:
+            failUpdates.includes(u.Key.sk) || pendingFailures.delete(u.Key.sk)
+              ? "ConditionalCheckFailed"
+              : "None",
         }));
         if (
           reasons.some((/** @type {{ Code: string }} */ r) => r.Code !== "None")
@@ -1301,7 +1304,7 @@ describe("updateArtifactLocation", () => {
       ([command]) => command instanceof TransactWriteCommand,
     )?.[0];
     expect(write.input.TransactItems[0].Update.ConditionExpression).toBe(
-      "attribute_exists(sk) AND (attribute_not_exists(latitude) OR accuracyMeters > :acc)",
+      "attribute_exists(sk) AND (attribute_not_exists(latitude) OR attribute_not_exists(accuracyMeters) OR accuracyMeters > :acc)",
     );
 
     ddbSend.mockReset();
@@ -1319,12 +1322,14 @@ describe("updateArtifactLocation", () => {
   it("updates tasks already written, but never one filed to 311", async () => {
     const open = {
       taskId: "t_open",
+      sourceArtifactIds: ["art_1"],
       status: "open",
       source: {},
       updatedAt: "2026-10-28T10:00:00Z",
     };
     const queued = {
       taskId: "t_queued",
+      sourceArtifactIds: ["art_1"],
       status: "in_progress",
       inProgressActionKind: "311_filed",
       appActionStatus: "queued",
@@ -1332,11 +1337,17 @@ describe("updateArtifactLocation", () => {
     };
     const submitted = {
       taskId: "t_submitted",
+      sourceArtifactIds: ["art_1"],
       status: "open",
       source: {},
       appActionResults: [{ code: "create_311_ticket", status: "submitted" }],
     };
-    const done = { taskId: "t_done", status: "completed", source: {} };
+    const done = {
+      taskId: "t_done",
+      sourceArtifactIds: ["art_1"],
+      status: "completed",
+      source: {},
+    };
     const updates = table({
       artifact,
       tasks: [open, queued, submitted, done],
@@ -1375,12 +1386,17 @@ describe("updateArtifactLocation", () => {
       "inProgressActionKind <> :filed",
     );
     expect(taskUpdates[0].ConditionExpression).toContain(
-      "(attribute_not_exists(#source.#lat) OR #source.#acc > :acc)",
+      "(attribute_not_exists(#source.#lat) OR attribute_not_exists(#source.#acc) OR #source.#acc > :acc)",
     );
   });
 
   it("keeps a task's more accurate location", async () => {
-    const task = { taskId: "t_open", status: "open", source: {} };
+    const task = {
+      taskId: "t_open",
+      sourceArtifactIds: ["art_1"],
+      status: "open",
+      source: {},
+    };
     table({ artifact, tasks: [task], failUpdates: ["TASK#t_open"] });
     const res = await callLocation({
       body: { ...location, accuracyMeters: 9 },
@@ -1393,8 +1409,18 @@ describe("updateArtifactLocation", () => {
   });
 
   it("saves the photo and its other tasks when one task was filed meanwhile", async () => {
-    const filed = { taskId: "t_filed", status: "open", source: {} };
-    const open = { taskId: "t_open", status: "open", source: {} };
+    const filed = {
+      taskId: "t_filed",
+      sourceArtifactIds: ["art_1"],
+      status: "open",
+      source: {},
+    };
+    const open = {
+      taskId: "t_open",
+      sourceArtifactIds: ["art_1"],
+      status: "open",
+      source: {},
+    };
     const updates = table({
       artifact,
       tasks: [filed, open],
@@ -1408,13 +1434,142 @@ describe("updateArtifactLocation", () => {
       artifactUpdated: true,
       tasksUpdated: 1,
     });
-    // One transaction, retried once without the row whose check failed.
+    // Tasks read again once, then the row that still fails is dropped.
     expect(
       ddbSend.mock.calls.filter(
         ([command]) => command instanceof TransactWriteCommand,
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     expect(updates.map((u) => u.Key.sk)).toEqual([artifact.sk, "TASK#t_open"]);
+  });
+
+  it("reads a task again when another writer changed it meanwhile", async () => {
+    const open = {
+      taskId: "t_open",
+      sourceArtifactIds: ["art_1"],
+      status: "open",
+      source: {},
+    };
+    const updates = table({
+      artifact,
+      tasks: [open],
+      failOnce: ["TASK#t_open"],
+    });
+    const res = await callLocation({
+      body: { ...location, accuracyMeters: 9 },
+    });
+    expect(JSON.parse(res.body)).toEqual({
+      artifactId: "art_1",
+      artifactUpdated: true,
+      tasksUpdated: 1,
+    });
+    expect(updates.map((u) => u.Key.sk)).toEqual([artifact.sk, "TASK#t_open"]);
+  });
+
+  it("gives the fix to a task that names no source photos", async () => {
+    const updates = table({
+      artifact,
+      tasks: [{ taskId: "t_open", status: "open", source: {} }],
+    });
+    const res = await callLocation({
+      body: { ...location, accuracyMeters: 9 },
+    });
+    expect(JSON.parse(res.body)).toMatchObject({ tasksUpdated: 1 });
+    expect(updates.map((u) => u.Key.sk)).toEqual([artifact.sk, "TASK#t_open"]);
+  });
+
+  it("counts each task that was sent to 311 before the late location", async () => {
+    const queued = {
+      taskId: "t_queued",
+      sourceArtifactIds: ["art_1"],
+      status: "in_progress",
+      inProgressActionKind: "311_filed",
+      source: {},
+    };
+    const submitted = {
+      taskId: "t_submitted",
+      sourceArtifactIds: ["art_1"],
+      status: "open",
+      source: {},
+      appActionResults: [{ code: "create_311_ticket", status: "submitted" }],
+    };
+    const open = {
+      taskId: "t_open",
+      sourceArtifactIds: ["art_1"],
+      status: "open",
+      source: {},
+    };
+    table({ artifact, tasks: [queued, submitted, open] });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await callLocation({ body: { ...location, accuracyMeters: 9 } });
+      const counted = log.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.includes("LateLocationAfterFiling"))
+        .map((line) => JSON.parse(line));
+      expect(
+        counted.map((line) => `${line.taskId}:${line.filing}`).sort(),
+      ).toEqual(["t_queued:queued", "t_submitted:submitted"]);
+      expect(counted[0]).toMatchObject({
+        siteId: "site-1",
+        checkId: "chk_01",
+        artifactId: "art_1",
+      });
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("doesn't count a filed task when the photo already had a better fix", async () => {
+    table({
+      artifact,
+      tasks: [
+        {
+          taskId: "t_queued",
+          sourceArtifactIds: ["art_1"],
+          status: "in_progress",
+          inProgressActionKind: "311_filed",
+          source: {},
+        },
+      ],
+      failUpdates: [artifact.sk],
+      stored: {
+        ...artifact,
+        latitude: 37.78,
+        longitude: -122.41,
+        accuracyMeters: 5,
+      },
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await callLocation({ body: { ...location, accuracyMeters: 9 } });
+      expect(
+        log.mock.calls.some(([line]) =>
+          String(line).includes("LateLocationAfterFiling"),
+        ),
+      ).toBe(false);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("doesn't copy a stored 0,0 placeholder onto the tasks", async () => {
+    const updates = table({
+      artifact,
+      tasks: [
+        {
+          taskId: "t_open",
+          sourceArtifactIds: ["art_1"],
+          status: "open",
+          source: {},
+        },
+      ],
+      failUpdates: [artifact.sk],
+      stored: { ...artifact, latitude: 0, longitude: 0 },
+    });
+    const res = await callLocation({ body: location });
+    expect(JSON.parse(res.body)).toMatchObject({ tasksUpdated: 0 });
+    expect(updates).toEqual([]);
   });
 
   it("fails on a transaction error that is not a condition check", async () => {
@@ -1436,26 +1591,72 @@ describe("updateArtifactLocation", () => {
     expect(ddbSend.mock.calls[0][0].input.ConsistentRead).toBe(true);
   });
 
-  it("leaves the tasks alone when the photo already has a better location", async () => {
-    const task = { taskId: "t_open", status: "open", source: {} };
+  it("gives the tasks the photo's better stored location instead", async () => {
+    const task = {
+      taskId: "t_open",
+      sourceArtifactIds: ["art_1"],
+      status: "open",
+      source: { latitude: 37.7, longitude: -122.4, accuracyMeters: 400 },
+    };
+    const better = {
+      latitude: 37.7801,
+      longitude: -122.4188,
+      accuracyMeters: 8,
+    };
     const updates = table({
       artifact,
       tasks: [task],
       failUpdates: [artifact.sk],
+      stored: { ...artifact, ...better },
     });
     const res = await callLocation({
       body: { ...location, accuracyMeters: 50 },
     });
     expect(JSON.parse(res.body)).toMatchObject({
       artifactUpdated: false,
-      tasksUpdated: 0,
+      tasksUpdated: 1,
     });
-    expect(updates).toEqual([]);
+    expect(updates.map((u) => u.Key.sk)).toEqual(["TASK#t_open"]);
+    expect(updates[0].ExpressionAttributeValues).toMatchObject({
+      ":lat": better.latitude,
+      ":lng": better.longitude,
+      ":acc": better.accuracyMeters,
+    });
+  });
+
+  it("leaves a task sourced from another photo alone", async () => {
+    const other = {
+      taskId: "t_other",
+      sourceArtifactIds: ["art_2"],
+      status: "open",
+      source: {},
+    };
+    const updates = table({ artifact, tasks: [other] });
+    const res = await callLocation({
+      body: { ...location, accuracyMeters: 9 },
+    });
+    expect(JSON.parse(res.body)).toMatchObject({ tasksUpdated: 0 });
+    expect(updates.map((u) => u.Key.sk)).toEqual([artifact.sk]);
+  });
+
+  it("finds the photo on a later page of the check's artifacts", async () => {
+    const updates = table({ artifact });
+    const pageOne = {
+      Items: [],
+      LastEvaluatedKey: { sk: "CHECK#chk_01#ART#art_0" },
+    };
+    ddbSend.mockImplementationOnce(async () => pageOne);
+    const res = await callLocation({
+      body: { ...location, accuracyMeters: 9 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(updates.map((u) => u.Key.sk)).toEqual([artifact.sk]);
   });
 
   it("bumps a task's updatedAt so a writer holding an older copy can't overwrite the location", async () => {
     const task = {
       taskId: "t_open",
+      sourceArtifactIds: ["art_1"],
       status: "open",
       source: {},
       updatedAt: "2026-10-28T10:00:00Z",

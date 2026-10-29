@@ -13,6 +13,8 @@ import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveActorId, deriveSiteId } from "../lib/principal.js";
 import { artifactTaskLocationUpdates } from "../analysis/guidance/guidance-store.js";
+import { queryAllItems } from "../lib/query-all-items.js";
+import { emitMetrics } from "../lib/metrics.js";
 import {
   artifactKey,
   checkArtifactPrefix,
@@ -370,7 +372,7 @@ export const registerArtifact = async (event) => {
   if ((hasLatitude || hasLongitude) && !hasCoordinates) {
     return jsonResponse(400, { error: "invalid_location" });
   }
-  // Diagnostic only; drop a bad value rather than fail the photo.
+  // Picks the 311 point among fixes; drop a bad value rather than fail the photo.
   const hasAccuracy =
     hasCoordinates &&
     typeof accuracyMeters === "number" &&
@@ -514,6 +516,23 @@ export const registerArtifact = async (event) => {
 };
 
 /**
+ * @param {Record<string, unknown> | undefined} item
+ * @returns {{ latitude: number, longitude: number, accuracyMeters?: number } | null}
+ */
+function storedLocation(item) {
+  const { latitude, longitude, accuracyMeters } = item ?? {};
+  if (typeof latitude !== "number" || typeof longitude !== "number")
+    return null;
+  // 0,0 is the placeholder for a photo without a fix.
+  if (latitude === 0 && longitude === 0) return null;
+  return {
+    latitude,
+    longitude,
+    ...(typeof accuracyMeters === "number" ? { accuracyMeters } : {}),
+  };
+}
+
+/**
  * PATCH /v1/checks/{checkId}/artifacts/{artifactId}/location — a GPS reading
  * that arrived after the photo was sent, so analysis never waits for it.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
@@ -558,21 +577,17 @@ export const updateArtifactLocation = async (event) => {
     ...(accuracyMeters !== undefined ? { accuracyMeters } : {}),
   };
 
-  const result = await ddb.send(
-    new QueryCommand({
-      TableName: dynamoTable,
-      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-      ExpressionAttributeValues: {
-        ":pk": sitePk(siteId),
-        ":prefix": checkArtifactPrefix(checkId),
-      },
-      // The PATCH can follow register by milliseconds; a stale read would 404.
-      ConsistentRead: true,
-    }),
-  );
-  const artifact = (result.Items ?? []).find(
-    (it) => it.artifactId === artifactId,
-  );
+  const result = await queryAllItems({
+    TableName: dynamoTable,
+    KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+    ExpressionAttributeValues: {
+      ":pk": sitePk(siteId),
+      ":prefix": checkArtifactPrefix(checkId),
+    },
+    // The PATCH can follow register by milliseconds; a stale read would 404.
+    ConsistentRead: true,
+  });
+  const artifact = result.Items.find((it) => it.artifactId === artifactId);
   if (!artifact) return jsonResponse(404, { error: "Artifact not found" });
 
   const hasAccuracy = location.accuracyMeters !== undefined;
@@ -584,7 +599,7 @@ export const updateArtifactLocation = async (event) => {
         hasAccuracy ? ", accuracyMeters = :acc" : ""
       }`,
       ConditionExpression: hasAccuracy
-        ? "attribute_exists(sk) AND (attribute_not_exists(latitude) OR accuracyMeters > :acc)"
+        ? "attribute_exists(sk) AND (attribute_not_exists(latitude) OR attribute_not_exists(accuracyMeters) OR accuracyMeters > :acc)"
         : "attribute_exists(sk) AND attribute_not_exists(latitude)",
       ExpressionAttributeValues: {
         ":lat": location.latitude,
@@ -593,6 +608,11 @@ export const updateArtifactLocation = async (event) => {
       },
     },
   };
+  /** @type {Map<string, "queued" | "submitted">} */
+  const filedTasks = new Map();
+  /** @param {{ taskId: string, state: "queued" | "submitted" }[]} tasks */
+  const onFiled = (tasks) =>
+    tasks.forEach(({ taskId, state }) => filedTasks.set(taskId, state));
   let items = [
     artifactItem,
     ...(await artifactTaskLocationUpdates({
@@ -601,8 +621,11 @@ export const updateArtifactLocation = async (event) => {
       checkId,
       artifactId,
       location,
+      onFiled,
     })),
   ];
+  let taskLocation = location;
+  let rereadTasks = true;
   // A row that already has a better reading, or a task filed meanwhile, fails
   // its check and cancels the batch; drop it and save the rest.
   while (items.length > 0) {
@@ -621,19 +644,62 @@ export const updateArtifactLocation = async (event) => {
         ),
       );
       if (failed.size === 0) throw err;
-      // The photo already has a better reading, which 311 filing falls back to.
+      // The photo already has a better reading; give its tasks that one instead.
       if (items[0] === artifactItem && failed.has(0)) {
-        return jsonResponse(200, {
+        const stored = await ddb.send(
+          new GetCommand({
+            TableName: dynamoTable,
+            Key: { pk: sitePk(siteId), sk: artifact.sk },
+            ConsistentRead: true,
+          }),
+        );
+        const better = storedLocation(stored.Item);
+        if (!better) {
+          items = [];
+          break;
+        }
+        taskLocation = better;
+        items = await artifactTaskLocationUpdates({
+          tableName: dynamoTable,
+          siteId,
+          checkId,
           artifactId,
-          artifactUpdated: false,
-          tasksUpdated: 0,
+          location: taskLocation,
         });
+        continue;
+      }
+      // Another writer may have bumped a task's updatedAt; read the tasks once more.
+      if (rereadTasks) {
+        rereadTasks = false;
+        items = [
+          ...items.filter((item) => item === artifactItem),
+          ...(await artifactTaskLocationUpdates({
+            tableName: dynamoTable,
+            siteId,
+            checkId,
+            artifactId,
+            location: taskLocation,
+            ...(taskLocation === location ? { onFiled } : {}),
+          })),
+        ];
+        continue;
       }
       items = items.filter((_, index) => !failed.has(index));
     }
   }
   const artifactUpdated = items.includes(artifactItem);
   const tasksUpdated = items.length - (artifactUpdated ? 1 : 0);
+  if (artifactUpdated) {
+    // Counts late GPS fixes that miss a 311 ticket (#683). If it shows up, add
+    // code to update the ticket's location when a late fix arrives.
+    for (const [taskId, state] of filedTasks) {
+      emitMetrics({
+        marker: "LateLocationAfterFiling",
+        metrics: [{ name: "LateLocationAfterFiling", value: 1 }],
+        props: { siteId, checkId, artifactId, taskId, filing: state },
+      });
+    }
+  }
   return jsonResponse(200, { artifactId, artifactUpdated, tasksUpdated });
 };
 

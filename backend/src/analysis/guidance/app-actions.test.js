@@ -412,6 +412,167 @@ describe("app action execution", () => {
     }
   });
 
+  /**
+   * File one 311 ticket for a task with the given source photos.
+   * @param {string[]} sourceArtifactIds
+   * @param {Record<string, unknown>} [source]
+   * @param {Record<string, unknown>} [location] the task's top-level location
+   * @returns {Promise<{ result: Record<string, unknown>, sent: string }>}
+   */
+  async function fileWithPhotos(sourceArtifactIds, source = {}, location) {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ data: { return_code: "0", SRNum: "2000008106" } }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchImpl);
+    const [result] = await executeAppActions(
+      [
+        {
+          code: "create_311_ticket",
+          payload: {
+            serviceCodeOrAction: "1.1.4.7.20.0",
+            responsibleAgencyCode: "76",
+          },
+        },
+      ],
+      {
+        env: {
+          GNP_311_SUBMISSION_ENABLED: "true",
+          DYNAMO_TABLE: "table",
+          S3_UPLOAD_BUCKET: "bucket",
+          SQS_QUEUE_URL: "queue",
+          SF311_CREATESR_URL: "https://hub.example/createsr",
+          SF311_BASIC_AUTH_USER: "user",
+          SF311_BASIC_AUTH_PASS: "pass",
+        },
+        now,
+        tableName: "table",
+        siteId: "site",
+        task: {
+          taskId: "task",
+          checkId: "check",
+          sourceArtifactIds,
+          source,
+          ...(location ? { location } : {}),
+        },
+      },
+    );
+    return { result, sent: JSON.stringify(fetchImpl.mock.calls) };
+  }
+
+  it("files 311 at the most accurate of several source photos", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    send.mockResolvedValueOnce({
+      Items: [
+        {
+          artifactId: "artifact-1",
+          latitude: 37.7001,
+          longitude: -122.4001,
+          accuracyMeters: 120,
+        },
+        {
+          artifactId: "artifact-2",
+          latitude: 37.7793,
+          longitude: -122.4192,
+          accuracyMeters: 9,
+        },
+      ],
+    });
+    try {
+      const { result, sent } = await fileWithPhotos([
+        "artifact-1",
+        "artifact-2",
+      ]);
+      expect(result.status).toBe("submitted");
+      expect(sent).toContain("37.7793");
+      expect(sent).not.toContain("37.7001");
+    } finally {
+      log.mockRestore();
+      send.mockReset();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("files 311 at a photo's fix that is more accurate than the task's", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    send.mockResolvedValueOnce({
+      Items: [
+        {
+          artifactId: "artifact-1",
+          latitude: 37.7793,
+          longitude: -122.4192,
+          accuracyMeters: 8,
+        },
+      ],
+    });
+    try {
+      const { result, sent } = await fileWithPhotos(["artifact-1"], {
+        latitude: 37.7001,
+        longitude: -122.4001,
+        accuracyMeters: 400,
+      });
+      expect(result.status).toBe("submitted");
+      expect(sent).toContain("37.7793");
+      expect(sent).not.toContain("37.7001");
+    } finally {
+      log.mockRestore();
+      send.mockReset();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("doesn't score a task's top-level location with its source accuracy", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    send.mockResolvedValueOnce({
+      Items: [
+        {
+          artifactId: "artifact-1",
+          latitude: 37.7793,
+          longitude: -122.4192,
+          accuracyMeters: 8,
+        },
+      ],
+    });
+    try {
+      const { sent } = await fileWithPhotos(
+        ["artifact-1"],
+        {
+          accuracyMeters: 5,
+        },
+        { latitude: 37.7001, longitude: -122.4001 },
+      );
+      expect(sent).toContain("37.7793");
+      expect(sent).not.toContain("37.7001");
+    } finally {
+      log.mockRestore();
+      send.mockReset();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("files 311 at a photo on a later page of the check's artifacts", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    send
+      .mockResolvedValueOnce({ Items: [], LastEvaluatedKey: { sk: "page-1" } })
+      .mockResolvedValueOnce({
+        Items: [
+          { artifactId: "artifact-1", latitude: 37.7793, longitude: -122.4192 },
+        ],
+      });
+    try {
+      const { result, sent } = await fileWithPhotos(["artifact-1"]);
+      expect(result.status).toBe("submitted");
+      expect(sent).toContain("37.7793");
+    } finally {
+      log.mockRestore();
+      send.mockReset();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("files 311 at a location sent after the task was written", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     send.mockResolvedValueOnce({
@@ -635,6 +796,68 @@ describe("app action execution", () => {
       getObjectBytes.mockReset();
       create311MediaLink.mockReset();
       vi.unstubAllGlobals();
+    }
+  });
+
+  it("finds classifier evidence on a later page of the check's artifacts", async () => {
+    send
+      .mockResolvedValueOnce({ Items: [], LastEvaluatedKey: { sk: "page-1" } })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            artifactId: "artifact-1",
+            s3Key: "checks/site-1/check-1/North/artifact-1",
+            contentType: "image/jpeg",
+          },
+        ],
+      });
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("image"),
+      contentType: "image/jpeg",
+    });
+    downscaleImage.mockResolvedValueOnce({
+      bytes: Buffer.from("resized-image"),
+      contentType: "image/jpeg",
+    });
+    getAnalyzerApiKey.mockResolvedValueOnce("analyzer-key");
+    const classifyEvidence = vi.fn().mockResolvedValueOnce({ labels: [] });
+    createAnalyzerClient.mockReturnValueOnce({ classifyEvidence });
+
+    try {
+      await executeAppActions(
+        [
+          {
+            code: "create_311_ticket",
+            payload: { serviceCodeOrAction: "Run graffiti analysis" },
+          },
+        ],
+        {
+          env: {
+            GNP_311_SUBMISSION_ENABLED: "true",
+            DYNAMO_TABLE: "table",
+            S3_UPLOAD_BUCKET: "bucket",
+            SQS_QUEUE_URL: "queue",
+            ANALYZER_BASE_URL: "https://analyzer.example.test",
+            ANALYZER_API_KEY: "analyzer-key",
+            SF311_CREATESR_URL: "https://hub.example.test/createsr",
+            SF311_AGENCY_LOOKUP_URL: "https://hub.example.test/lookup",
+            SF311_BASIC_AUTH_USER: "user",
+            SF311_BASIC_AUTH_PASS: "pass",
+          },
+          now,
+          tableName: "table",
+          siteId: "site-1",
+          task: {
+            taskId: "task-1",
+            checkId: "check-1",
+            description: "Graffiti",
+            sourceArtifactIds: ["artifact-1"],
+          },
+        },
+      );
+      expect(classifyEvidence).toHaveBeenCalled();
+    } finally {
+      send.mockReset();
     }
   });
 

@@ -1023,6 +1023,16 @@ export async function getPublishedAssessmentGuidance(opts) {
 }
 
 /**
+ * @param {Record<string, unknown>} task
+ * @param {string} artifactId
+ */
+function isFromArtifact(task, artifactId) {
+  // The guidance API can write tasks that name no photo; they used to get the fix.
+  const ids = /** @type {string[]} */ (task.sourceArtifactIds ?? []);
+  return ids.length === 0 || ids.includes(artifactId);
+}
+
+/**
  * Transaction items that copy a photo's late location to its tasks not yet sent
  * to 311.
  * @param {object} opts
@@ -1031,6 +1041,7 @@ export async function getPublishedAssessmentGuidance(opts) {
  * @param {string} opts.checkId
  * @param {string} opts.artifactId
  * @param {{ latitude: number, longitude: number, accuracyMeters?: number }} opts.location
+ * @param {(tasks: { taskId: string, state: "queued" | "submitted" }[]) => void} [opts.onFiled] gets the tasks already queued or filed for 311
  * @returns {Promise<NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>>}
  */
 export async function artifactTaskLocationUpdates({
@@ -1039,6 +1050,7 @@ export async function artifactTaskLocationUpdates({
   checkId,
   artifactId,
   location,
+  onFiled,
 }) {
   const pointer = await ddb.send(
     new GetCommand({
@@ -1054,16 +1066,28 @@ export async function artifactTaskLocationUpdates({
     assessmentId: pointer.Item.assessmentId,
   });
   const hasAccuracy = location.accuracyMeters !== undefined;
-  return tasks
+  /** @param {Record<string, unknown>} task */
+  const submitted = (task) =>
+    hasSubmitted311ActionResult(
+      /** @type {import("./app-actions.js").AppActionResult[]} */ (
+        task.appActionResults ?? []
+      ),
+    );
+  /** @param {Record<string, unknown>} task */
+  const filed = (task) =>
+    task.inProgressActionKind === "311_filed" || submitted(task);
+  // One assessment can hold tasks from other photos via the API.
+  const own = tasks.filter((task) => isFromArtifact(task, artifactId));
+  onFiled?.(
+    own.filter(filed).map((task) => ({
+      taskId: String(task.taskId),
+      state: submitted(task) ? "submitted" : "queued",
+    })),
+  );
+  return own
     .filter(
       (task) =>
-        ["open", "in_progress"].includes(String(task.status)) &&
-        task.inProgressActionKind !== "311_filed" &&
-        !hasSubmitted311ActionResult(
-          /** @type {import("./app-actions.js").AppActionResult[]} */ (
-            task.appActionResults ?? []
-          ),
-        ),
+        ["open", "in_progress"].includes(String(task.status)) && !filed(task),
     )
     .map((task) => ({
       Update: {
@@ -1081,7 +1105,7 @@ export async function artifactTaskLocationUpdates({
             ? "updatedAt = :updatedAt"
             : "attribute_not_exists(updatedAt)") +
           (hasAccuracy
-            ? " AND (attribute_not_exists(#source.#lat) OR #source.#acc > :acc)"
+            ? " AND (attribute_not_exists(#source.#lat) OR attribute_not_exists(#source.#acc) OR #source.#acc > :acc)"
             : " AND attribute_not_exists(#source.#lat)"),
         ExpressionAttributeNames: {
           "#source": "source",
