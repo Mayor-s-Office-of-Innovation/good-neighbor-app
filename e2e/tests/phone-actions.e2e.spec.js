@@ -53,7 +53,9 @@ async function issueFixture(page, ruleId) {
     canBeInProgress: rule.canBeInProgress,
     primaryInProgressAgency: rule.primaryInProgressAgency,
     status: "open",
-    createdAt: "2026-10-15T12:00:00Z",
+    // Keep the fixture in the active worklist. A fixed historical date
+    // eventually crosses the 14-day expiry boundary and is rightly archived.
+    createdAt: new Date().toISOString(),
     inProgressAt: "",
   };
   /** @type {Array<{completionMethod: string}>} */

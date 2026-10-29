@@ -76,6 +76,9 @@ export default defineConfig({
         // Never inherit live Bedrock comparison settings from .env.local.
         // Dedicated duplicate UI scenarios use their own controlled fixtures.
         DUPLICATE_DETECTION_ENABLED: "false",
+        // A developer's admin-seed setting skips the normal site-code seeds.
+        // The E2E suite always needs its own standard fixture sites.
+        LOCAL_SITE_ADMIN_SEED: "false",
         DUPLICATE_QUEUE_URL: "",
         SQS_QUEUE_URL: "http://localhost:9324/local/gnp-local-e2e-submissions",
       },
