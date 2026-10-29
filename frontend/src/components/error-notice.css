@@ -67,14 +67,15 @@
 .app-error--entry {
   margin-inline-start: 0.75rem;
 }
-.app-connection-banner {
+.app-connection-banner,
+.connection-banner-copy {
   position: sticky;
   inset-block-start: 0;
   z-index: 110;
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  padding: 1.25rem;
+  padding: calc(1.25rem + env(safe-area-inset-top, 0px)) 1.25rem 1.25rem;
   background: var(--wa-color-neutral-fill-quiet, var(--group-grey, #e9eaea));
   color: var(--text, #171717);
   font-size: 0.875rem;
@@ -87,7 +88,7 @@
   background: var(--wa-color-success-fill-quiet, var(--c-ok-bg));
   color: var(--wa-color-success-on-quiet, var(--c-ok));
 }
-.app-connection-banner button {
+:is(.app-connection-banner, .connection-banner-copy) button {
   margin-inline-start: auto;
   flex-shrink: 0;
   background: transparent;
@@ -99,7 +100,7 @@
   font-weight: 600;
   cursor: pointer;
 }
-.app-connection-banner button[hidden] {
+:is(.app-connection-banner, .connection-banner-copy) button[hidden] {
   display: none;
 }
 .app-connection-banner button:focus-visible {
@@ -128,6 +129,23 @@ connection-banner[popover] {
 connection-banner[popover] .app-connection-banner {
   position: static;
 }
-body {
-  padding-block-start: var(--connection-banner-height, 0px);
+.connection-banner-space {
+  visibility: hidden;
+  pointer-events: none;
+  inline-size: 100%;
+}
+.connection-banner-space[hidden] {
+  display: none;
+}
+.connection-banner-space .connection-banner-copy {
+  position: static;
+}
+app-toasts:has(> .connection-banner-space:not([hidden])) {
+  padding-block-start: 0;
+  row-gap: 0;
+}
+app-toasts:has(> .connection-banner-space:not([hidden]))
+  .app-toast
+  + .app-toast {
+  margin-block-start: 0.75rem;
 }

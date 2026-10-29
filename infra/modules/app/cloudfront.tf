@@ -43,7 +43,7 @@ function handler(event) {
   var request = event.request;
   var uri = request.uri;
 
-  if (uri.indexOf("/admin/v1/") === 0) {
+  if (uri === "/health" || uri.indexOf("/admin/v1/") === 0) {
     return request;
   }
 
@@ -269,6 +269,19 @@ resource "aws_cloudfront_distribution" "admin" {
       event_type   = "viewer-request"
       function_arn = aws_cloudfront_function.admin_spa_rewrite.arn
     }
+  }
+
+  # Same-origin recovery probes must reach JSON health, never the SPA fallback.
+  ordered_cache_behavior {
+    path_pattern               = "/health"
+    target_origin_id           = "api-gateway"
+    viewer_protocol_policy     = "redirect-to-https"
+    allowed_methods            = ["GET", "HEAD", "OPTIONS"]
+    cached_methods             = ["GET", "HEAD", "OPTIONS"]
+    compress                   = true
+    cache_policy_id            = data.aws_cloudfront_cache_policy.disabled.id
+    origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.admin_security.id
   }
 
   ordered_cache_behavior {

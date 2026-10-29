@@ -616,7 +616,14 @@ ${escapeHtml(draft.description)}</textarea
         await deleteComplaintArtifact(
           activeDraft.complaintId,
           entry.artifactId,
-        );
+        ).catch((error) => {
+          // Registration may have failed before an artifact row was created.
+          if (
+            error.status !== 404 ||
+            error.body?.error !== "artifact_not_found"
+          )
+            throw error;
+        });
       activeDraft.files = activeDraft.files.filter((file) => file.id !== id);
       return true;
     } catch {

@@ -393,3 +393,125 @@ test("overlapping complaint selections cannot exceed the five-file limit", async
     release();
   }
 });
+
+for (const removal of [
+  "artifact_not_found",
+  "complaint_not_found",
+  "temporary_failure",
+]) {
+  test(`uncertain attachment removal handles ${removal} precisely`, async ({
+    page,
+  }) => {
+    await page.route("**/v1/complaints/**", (route) => {
+      if (route.request().method() === "DELETE")
+        return route.fulfill({
+          status: removal === "temporary_failure" ? 500 : 404,
+          json: { error: removal },
+        });
+      if (route.request().url().endsWith("artifacts:presign"))
+        return route.fulfill({
+          json: {
+            artifactId: "synthetic",
+            s3Key: "synthetic",
+            uploadUrl: "http://127.0.0.1:5182/__upload/1",
+            expiresIn: 300,
+          },
+        });
+      return route.fulfill({ status: 400, json: { error: "invalid_media" } });
+    });
+    await page.route("**/__upload/*", (route) =>
+      route.fulfill({ status: 200 }),
+    );
+    await page.evaluate(async () => {
+      window.history.replaceState({}, "", "/complaints/new");
+      const { setSite } = await import("/src/db.js");
+      await setSite("Example", {
+        siteId: "example",
+        token: "synthetic-test-token",
+      });
+      await import("/src/components/complaint-view.js");
+      const host = document.createElement("complaint-view");
+      document.querySelector("#view").replaceChildren(host);
+      await host._selectFiles([
+        new window.File(["invalid"], "invalid.jpg", { type: "image/jpeg" }),
+      ]);
+    });
+    await expect(page.locator("[data-retry-file]")).toHaveCount(1);
+    await page.locator("[data-remove-file]").click();
+    await expect(page.locator(".complaint-file")).toHaveCount(
+      removal === "artifact_not_found" ? 0 : 1,
+    );
+    if (removal !== "artifact_not_found")
+      await expect(page.locator(".app-error[role=alert]").filter({hasText: t("complaints.upload.removeError")})).toContainText(
+        t("complaints.upload.removeError"),
+      );
+  });
+}
+
+test("mobile wrapped banner reserves page and toast space without measurements", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 740 });
+  await page.evaluate(async () => {
+    await import("/src/components/app-toasts.js");
+    document.body.append(document.createElement("app-toasts"));
+    const { connectionFailed } = await import(
+      "/src/services/connection-state.js"
+    );
+    connectionFailed("api");
+    const { showToast } = await import("/src/state/toasts.js");
+    showToast({ title: "Example notification", message: "Example text" });
+  });
+  const banner = page.locator("connection-banner .app-connection-banner");
+  await expect(banner).toBeVisible();
+  const bounds = await banner.boundingBox();
+  const pageBounds = await page.locator("#view").boundingBox();
+  const toastBounds = await page.locator(".app-toast").boundingBox();
+  expect(pageBounds.y).toBeGreaterThanOrEqual(bounds.y + bounds.height);
+  expect(toastBounds.y).toBeGreaterThanOrEqual(bounds.y + bounds.height);
+  await page.locator("[data-connection-retry]").focus();
+  await expect(page.locator("[data-connection-retry]")).toBeFocused();
+});
+
+test("upload and auth recover through host checks without replaying writes", async ({
+  page,
+}) => {
+  const probes = [];
+  for (const host of ["uploads.example.test", "login.example.test"]) {
+    await page.route(`https://${host}/**`, (route) => {
+      const request = route.request();
+      if (
+        request.method() === "GET" &&
+        new URL(request.url()).pathname === "/"
+      ) {
+        probes.push(request.url());
+        return route.fulfill({ status: 403, body: "" });
+      }
+      return route.abort("failed");
+    });
+  }
+  await page.evaluate(async () => {
+    const { connectionFetch } = await import(
+      "/src/services/connection-state.js"
+    );
+    await connectionFetch(
+      "https://uploads.example.test/object?signature=synthetic",
+      { method: "PUT", body: "synthetic" },
+    ).catch(() => {});
+    await connectionFetch("https://login.example.test/oauth2/token", {
+      method: "POST",
+      body: "synthetic",
+    }).catch(() => {});
+  });
+  await expect(page.locator("connection-banner")).toContainText(
+    t("notice.disconnected"),
+  );
+  await page.locator("[data-connection-retry]").click();
+  await expect(page.locator("connection-banner")).toContainText(
+    t("notice.online"),
+  );
+  expect(probes.sort()).toEqual([
+    "https://login.example.test/",
+    "https://uploads.example.test/",
+  ]);
+});

@@ -55,11 +55,19 @@ export async function retryConnection() {
   if (globalThis.navigator?.onLine === false) return;
   const generation = failureGeneration;
   if (retrying) return retrying;
+  const recovered = new Set();
   retrying = Promise.all(
     [...failures].map(async ([service, url]) => {
       if (!url || (cooldowns.get(service) || 0) > Date.now()) return;
       try {
+        const originProbe =
+          service.startsWith("upload:") || service.startsWith("auth:");
+        // Browsers require follow mode for no-cors GETs. Credentials stay
+        // omitted across redirects; no signed path, headers or body are reused.
         const response = await fetch(url, {
+          ...(originProbe
+            ? { mode: "no-cors", credentials: "omit", redirect: "follow" }
+            : {}),
           cache: "no-store",
           signal: AbortSignal.timeout(10000),
         });
@@ -76,11 +84,14 @@ export async function retryConnection() {
               (Number.isFinite(delay) ? Math.max(1000, delay) : 300000),
           );
         } else if (
-          response.ok &&
-          (await response.json().catch(() => null))?.ok === true
+          (originProbe && response.type !== "error") ||
+          (!originProbe &&
+            response.ok &&
+            (await response.json().catch(() => null))?.ok === true)
         ) {
           cooldowns.delete(service);
           connectionSucceeded(service, generation);
+          if (!failures.has(service)) recovered.add(service);
         }
       } catch {
         /* No optimistic online state: this service has not recovered. */
@@ -91,7 +102,8 @@ export async function retryConnection() {
     if (
       globalThis.navigator?.onLine !== false &&
       generation === failureGeneration &&
-      ![...cooldowns.values()].some((until) => until > Date.now())
+      [...recovered].some((service) => !service.startsWith("auth:")) &&
+      ![...failures.keys()].some((service) => !service.startsWith("auth:"))
     )
       globalThis.window?.dispatchEvent(new Event("connectionretry"));
     if (installed && failures.size && !timer)
@@ -102,13 +114,14 @@ export async function retryConnection() {
   });
   return retrying;
 }
-/** Service key contains no signed URL or credentials; upload recovery requires an actual successful request.
+/** Service keys and probes contain no signed URLs or credentials.
+ * Opaque GETs prove host reachability only, never authentication or write success.
  * @param {string} value
  */
 export function connectionTarget(value) {
   const url = new URL(value, globalThis.location?.href || "http://localhost");
   if (url.pathname === "/oauth2/token")
-    return { service: `auth:${url.origin}`, probeUrl: "" };
+    return { service: `auth:${url.origin}`, probeUrl: `${url.origin}/` };
   if (url.pathname.endsWith("/health")) {
     const prefix = url.pathname.slice(0, -7);
     return {
@@ -119,7 +132,8 @@ export function connectionTarget(value) {
   const match = url.pathname.match(
     /^(.*?)\/(?:admin\/|app\/)?v1(?:\/|$)|^(.*?)\/site-code$/,
   );
-  if (!match) return { service: `upload:${url.origin}`, probeUrl: "" };
+  if (!match)
+    return { service: `upload:${url.origin}`, probeUrl: `${url.origin}/` };
   const prefix = match[1] ?? match[2] ?? "";
   return {
     service: `api:${url.origin}${prefix}`,

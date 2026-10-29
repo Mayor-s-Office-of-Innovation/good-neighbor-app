@@ -37,7 +37,7 @@ test("API probe cannot clear a failed upload host and never replays a write", as
   );
   expect(upload).toEqual({
     service: "upload:https://uploads.example.test",
-    probeUrl: "",
+    probeUrl: "https://uploads.example.test/",
   });
   state.connectionFailed(upload.service);
   vi.mocked(fetch).mockResolvedValue(
@@ -119,5 +119,62 @@ test("an HTML fallback is not a successful health probe", async () => {
     new Response("<!doctype html><html></html>"),
   );
   await state.retryConnection();
+  expect(state.connectionSnapshot().disconnected).toBe(true);
+});
+
+test("auth and upload probes use only credential-free host GETs", async () => {
+  for (const url of [
+    "https://login.test/oauth2/token",
+    "https://uploads.test/object?signature=secret",
+  ]) {
+    const target = state.connectionTarget(url);
+    state.connectionFailed(target.service, target.probeUrl);
+  }
+  vi.mocked(fetch).mockResolvedValue(
+    Object.defineProperty(new Response(), "type", { value: "opaque" }),
+  );
+  await state.retryConnection();
+  expect(state.connectionSnapshot().disconnected).toBe(false);
+  expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([
+    "https://login.test/",
+    "https://uploads.test/",
+  ]);
+  for (const [, options] of vi.mocked(fetch).mock.calls) {
+    expect(options).toMatchObject({
+      mode: "no-cors",
+      credentials: "omit",
+      redirect: "follow",
+      cache: "no-store",
+    });
+    expect(options.body).toBeUndefined();
+    expect(options.headers).toBeUndefined();
+  }
+});
+
+test("failed API or upload probes cannot wake queues; unrelated auth does not block recovery", async () => {
+  const dispatchEvent = vi.fn();
+  vi.stubGlobal("window", { dispatchEvent });
+  state.connectionFailed("api:field", "/health");
+  state.connectionFailed(
+    "upload:https://uploads.test",
+    "https://uploads.test/",
+  );
+  state.connectionFailed("auth:https://login.test", "https://login.test/");
+  vi.mocked(fetch).mockRejectedValue(new TypeError("offline"));
+  await state.retryConnection();
+  expect(dispatchEvent).not.toHaveBeenCalled();
+  vi.mocked(fetch).mockImplementation(async (url) => {
+    if (url === "/health") return new Response(JSON.stringify({ ok: true }));
+    throw new TypeError("offline");
+  });
+  await state.retryConnection();
+  expect(dispatchEvent).not.toHaveBeenCalled();
+  vi.mocked(fetch).mockImplementation(async (url) => {
+    if (url === "https://uploads.test/")
+      return Object.defineProperty(new Response(), "type", { value: "opaque" });
+    throw new TypeError("offline");
+  });
+  await state.retryConnection();
+  expect(dispatchEvent).toHaveBeenCalledTimes(1);
   expect(state.connectionSnapshot().disconnected).toBe(true);
 });

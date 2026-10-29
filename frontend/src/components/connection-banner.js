@@ -26,22 +26,47 @@ class ConnectionBanner extends HTMLElement {
       attributeFilter: ["open"],
       subtree: true,
     });
-    this.resizeObserver = new ResizeObserver((entries) => {
-      document.documentElement.style.setProperty(
-        "--connection-banner-height",
-        `${this.visible ? entries[0]?.contentRect.height || 0 : 0}px`,
-      );
-    });
-    this.resizeObserver.observe(this);
     this.sync(connectionSnapshot());
+    this.reserveSpace();
   }
   disconnectedCallback() {
     if (this.relocating) return;
     this.unsubscribe?.();
     clearTimeout(this.timer);
     this.modalObserver?.disconnect();
-    this.resizeObserver?.disconnect();
-    document.documentElement.style.removeProperty("--connection-banner-height");
+  }
+  reserveSpace() {
+    // Inert, invisible copies reserve their natural CSS height in page/toast
+    // flow while the accessible, interactive banner stays in the top layer.
+    for (const parent of [
+      document.body,
+      document.querySelector("app-toasts"),
+    ]) {
+      if (!parent) continue;
+      let space = /** @type {HTMLElement | null} */ (
+        parent.querySelector(":scope > .connection-banner-space")
+      );
+      if (!space) {
+        space = document.createElement("div");
+        space.className = "connection-banner-space";
+        space.setAttribute("aria-hidden", "true");
+        space.setAttribute("inert", "");
+        parent.prepend(space);
+      }
+      space.hidden = !this.visible;
+      const copy = /** @type {HTMLElement} */ (
+        this.querySelector(".app-connection-banner").cloneNode(true)
+      );
+      copy.className = "connection-banner-copy";
+      copy.removeAttribute("role");
+      for (const node of copy.querySelectorAll(
+        "[data-connection-copy], [data-connection-retry]",
+      )) {
+        node.removeAttribute("data-connection-copy");
+        node.removeAttribute("data-connection-retry");
+      }
+      space.replaceChildren(copy);
+    }
   }
   promote() {
     // A top-layer popover outside an active modal is still inert. Keep the
@@ -53,6 +78,7 @@ class ConnectionBanner extends HTMLElement {
       parent.append(this);
       this.relocating = false;
     }
+    this.reserveSpace();
     if (!this.visible || typeof this.showPopover !== "function") return;
     if (this.matches(":popover-open")) this.hidePopover();
     this.showPopover();
@@ -91,10 +117,7 @@ class ConnectionBanner extends HTMLElement {
           this.visible = false;
           panel.hidden = true;
           if (this.matches(":popover-open")) this.hidePopover();
-          document.documentElement.style.setProperty(
-            "--connection-banner-height",
-            "0px",
-          );
+          this.reserveSpace();
         },
         Math.max(0, this.recoveredUntil - Date.now()),
       );
@@ -113,11 +136,17 @@ export function mountConnectionBanner() {
     document.querySelector("connection-banner")
   )
     return;
-  const banner = document.createElement("connection-banner");
+  const banner = /** @type {ConnectionBanner} */ (
+    document.createElement("connection-banner")
+  );
   document.body.prepend(banner);
   // A modal can replace its contents while the banner is portalled into it.
   // Restore the same shell-owned component instead of losing connectivity UI.
   new MutationObserver(() => {
     if (!banner.isConnected) document.body.prepend(banner);
+    if (
+      document.querySelector("app-toasts:not(:has(> .connection-banner-space))")
+    )
+      banner.reserveSpace();
   }).observe(document.body, { childList: true, subtree: true });
 }
