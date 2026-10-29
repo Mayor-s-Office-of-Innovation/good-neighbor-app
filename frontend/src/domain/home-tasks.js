@@ -77,13 +77,22 @@ export function isOutsideSiteRadius(position, site) {
 
 /**
  * Decide whether a local pending/review session has been superseded by backend history.
- * @param {{ id: string, status?: string, submittedAt?: string, items?: Array<{analysis?: {status?: string, tasks?: Array<{taskId?: string, conditionId?: string, assessmentId?: string}>, conditions?: Array<{conditionId?: string, status?: string}>, assessment?: {assessmentId?: string}}}> } | null} session
+ * @param {{ id: string, status?: string, submittedAt?: string, items?: Array<{locationUnsent?: boolean, upload?: {artifactId?: string}, analysis?: {artifactId?: string, status?: string, tasks?: Array<{taskId?: string, conditionId?: string, assessmentId?: string}>, conditions?: Array<{conditionId?: string, status?: string}>, assessment?: {assessmentId?: string}}}> } | null} session
  * @param {Array<{ id: string, status?: string, submittedAt?: string }>} submitted
  * @param {Array<{taskId?: string, conditionId?: string, assessmentId?: string}>} [tasks]
  * @returns {boolean}
  */
 export function isStalePendingSession(session, submitted, tasks = []) {
   if (!session) return false;
+  // Clearing the session would drop a late GPS fix that is still being resent.
+  if (
+    session.items?.some(
+      (item) =>
+        item.locationUnsent &&
+        (item.analysis?.artifactId || item.upload?.artifactId),
+    )
+  )
+    return false;
   if (session.status === "capture-complete") {
     // The backend check can be submitted before per-artifact guidance has
     // finished. Keep the local results alive until every captured item has

@@ -44,6 +44,7 @@ locals {
     "POST /v1/checks/{checkId}/artifacts:presign",
     "POST /v1/checks/{checkId}/artifacts",
     "DELETE /v1/checks/{checkId}/artifacts/{artifactId}",
+    "PATCH /v1/checks/{checkId}/artifacts/{artifactId}/location",
     "POST /v1/checks/{checkId}/complete",
     "GET /v1/checks/{checkId}/artifacts/{artifactId}/media",
     "GET /v1/checks/{checkId}/artifacts/{artifactId}/duplicates",

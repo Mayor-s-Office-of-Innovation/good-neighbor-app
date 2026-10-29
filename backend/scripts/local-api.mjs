@@ -42,6 +42,7 @@ import {
   presignUpload,
   registerArtifact,
   deleteArtifact,
+  updateArtifactLocation,
   presignMedia,
 } from "../src/handlers/artifacts.js";
 import {
@@ -322,6 +323,11 @@ const routes = [
     "DELETE",
     "/v1/checks/{checkId}/artifacts/{artifactId}",
     deleteArtifact,
+  ),
+  route(
+    "PATCH",
+    "/v1/checks/{checkId}/artifacts/{artifactId}/location",
+    updateArtifactLocation,
   ),
   route("POST", "/v1/tasks/{taskId}/update-media", registerTaskUpdateMedia),
   route("POST", "/v1/checks/{checkId}/complete", completeCheck),

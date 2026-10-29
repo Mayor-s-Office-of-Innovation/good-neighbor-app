@@ -1,8 +1,8 @@
 /*
   UI helpers for the Good Neighbor field app. Everything here drives the real
   user paths — site-code entry, the flat photo roll capture screen, and the
-  home results tray — against the local harness (backend :3001 behind the Vite
-  proxy on :5173).
+  home results tray — against the local harness (backend behind the Vite
+  proxy; ports in helpers/ports.js).
 */
 import { expect } from "@playwright/test";
 import { t } from "./i18n.js";

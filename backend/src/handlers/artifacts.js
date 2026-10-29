@@ -12,6 +12,9 @@ import { headObject, presignGet, presignPut, setObjectTags } from "../s3.js";
 import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveActorId, deriveSiteId } from "../lib/principal.js";
+import { artifactTaskLocationUpdates } from "../analysis/guidance/guidance-store.js";
+import { queryAllItems } from "../lib/query-all-items.js";
+import { emitMetrics } from "../lib/metrics.js";
 import {
   artifactKey,
   checkArtifactPrefix,
@@ -301,7 +304,7 @@ export const presignUpload = async (event) => {
  * is a client-guaranteed invariant rather than one re-proven on every photo.
  *
  * Body: `artifactId` (required); one of `s3Key` (from presign) or `text`;
- * optional `contentType`, `capturedAt`, `latitude` + `longitude`. Legacy
+ * optional `contentType`, `capturedAt`, `latitude` + `longitude` (+ `accuracyMeters`). Legacy
  * `placeId` / `placeName` fields from pre-Phase-2 clients are ignored.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
@@ -326,10 +329,11 @@ export const registerArtifact = async (event) => {
     capturedAt,
     latitude,
     longitude,
+    accuracyMeters,
     text,
     language,
   } =
-    /** @type {{ artifactId?: unknown, s3Key?: unknown, contentType?: unknown, contentLength?: unknown, capturedAt?: unknown, latitude?: unknown, longitude?: unknown, text?: unknown, language?: unknown }} */ (
+    /** @type {{ artifactId?: unknown, s3Key?: unknown, contentType?: unknown, contentLength?: unknown, capturedAt?: unknown, latitude?: unknown, longitude?: unknown, accuracyMeters?: unknown, text?: unknown, language?: unknown }} */ (
       body ?? {}
     );
 
@@ -368,6 +372,12 @@ export const registerArtifact = async (event) => {
   if ((hasLatitude || hasLongitude) && !hasCoordinates) {
     return jsonResponse(400, { error: "invalid_location" });
   }
+  // Picks the 311 point among fixes; drop a bad value rather than fail the photo.
+  const hasAccuracy =
+    hasCoordinates &&
+    typeof accuracyMeters === "number" &&
+    Number.isFinite(accuracyMeters) &&
+    accuracyMeters >= 0;
   // No-graft: the key the client hands back must live under this site + check.
   if (hasS3Key && s3Key !== mediaKey(siteId, checkId, artifactId)) {
     return jsonResponse(400, { error: "s3Key does not belong to this check" });
@@ -432,6 +442,7 @@ export const registerArtifact = async (event) => {
     capturedAt: capturedAtValue,
     receivedAt: now,
     ...(hasCoordinates ? { latitude, longitude } : {}),
+    ...(hasAccuracy ? { accuracyMeters } : {}),
     ...(typeof contentType === "string" ? { contentType } : {}),
     ...(verifiedContentLength ? { contentLength: verifiedContentLength } : {}),
     ...(hasText ? { text: normalizedText } : {}),
@@ -502,6 +513,194 @@ export const registerArtifact = async (event) => {
   return alreadyRegistered
     ? jsonResponse(409, { error: "artifact already registered" })
     : jsonResponse(202, { artifactId, status: "queued" });
+};
+
+/**
+ * @param {Record<string, unknown> | undefined} item
+ * @returns {{ latitude: number, longitude: number, accuracyMeters?: number } | null}
+ */
+function storedLocation(item) {
+  const { latitude, longitude, accuracyMeters } = item ?? {};
+  if (typeof latitude !== "number" || typeof longitude !== "number")
+    return null;
+  // 0,0 is the placeholder for a photo without a fix.
+  if (latitude === 0 && longitude === 0) return null;
+  return {
+    latitude,
+    longitude,
+    ...(typeof accuracyMeters === "number" ? { accuracyMeters } : {}),
+  };
+}
+
+/**
+ * PATCH /v1/checks/{checkId}/artifacts/{artifactId}/location — a GPS reading
+ * that arrived after the photo was sent, so analysis never waits for it.
+ * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
+ */
+export const updateArtifactLocation = async (event) => {
+  const { dynamoTable } = getConfig();
+  const siteId = deriveSiteId(event);
+
+  const checkId = event.pathParameters?.checkId;
+  if (!checkId) return jsonResponse(400, { error: "Missing checkId" });
+  const artifactId = event.pathParameters?.artifactId;
+  if (!artifactId) return jsonResponse(400, { error: "Missing artifactId" });
+
+  let body;
+  try {
+    body = readJsonBody(event);
+  } catch {
+    return jsonResponse(400, { error: "Invalid JSON body" });
+  }
+  const { latitude, longitude, accuracyMeters } =
+    /** @type {{ latitude?: unknown, longitude?: unknown, accuracyMeters?: unknown }} */ (
+      body ?? {}
+    );
+  if (
+    typeof latitude !== "number" ||
+    typeof longitude !== "number" ||
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude) ||
+    Math.abs(latitude) > 90 ||
+    Math.abs(longitude) > 180 ||
+    (latitude === 0 && longitude === 0) ||
+    (accuracyMeters !== undefined &&
+      (typeof accuracyMeters !== "number" ||
+        !Number.isFinite(accuracyMeters) ||
+        accuracyMeters < 0))
+  ) {
+    return jsonResponse(400, { error: "invalid_location" });
+  }
+  const location = {
+    latitude,
+    longitude,
+    ...(accuracyMeters !== undefined ? { accuracyMeters } : {}),
+  };
+
+  const result = await queryAllItems({
+    TableName: dynamoTable,
+    KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+    ExpressionAttributeValues: {
+      ":pk": sitePk(siteId),
+      ":prefix": checkArtifactPrefix(checkId),
+    },
+    // The PATCH can follow register by milliseconds; a stale read would 404.
+    ConsistentRead: true,
+  });
+  const artifact = result.Items.find((it) => it.artifactId === artifactId);
+  if (!artifact) return jsonResponse(404, { error: "Artifact not found" });
+
+  const hasAccuracy = location.accuracyMeters !== undefined;
+  const artifactItem = {
+    Update: {
+      TableName: dynamoTable,
+      Key: { pk: sitePk(siteId), sk: artifact.sk },
+      UpdateExpression: `SET latitude = :lat, longitude = :lng${
+        hasAccuracy ? ", accuracyMeters = :acc" : ""
+      }`,
+      ConditionExpression: hasAccuracy
+        ? "attribute_exists(sk) AND (attribute_not_exists(latitude) OR attribute_not_exists(accuracyMeters) OR accuracyMeters > :acc)"
+        : "attribute_exists(sk) AND attribute_not_exists(latitude)",
+      ExpressionAttributeValues: {
+        ":lat": location.latitude,
+        ":lng": location.longitude,
+        ...(hasAccuracy ? { ":acc": location.accuracyMeters } : {}),
+      },
+    },
+  };
+  /** @type {Map<string, "queued" | "submitted">} */
+  const filedTasks = new Map();
+  /** @param {{ taskId: string, state: "queued" | "submitted" }[]} tasks */
+  const onFiled = (tasks) =>
+    tasks.forEach(({ taskId, state }) => filedTasks.set(taskId, state));
+  let items = [
+    artifactItem,
+    ...(await artifactTaskLocationUpdates({
+      tableName: dynamoTable,
+      siteId,
+      checkId,
+      artifactId,
+      location,
+      onFiled,
+    })),
+  ];
+  let taskLocation = location;
+  let rereadTasks = true;
+  // A row that already has a better reading, or a task filed meanwhile, fails
+  // its check and cancels the batch; drop it and save the rest.
+  while (items.length > 0) {
+    try {
+      await ddb.send(new TransactWriteCommand({ TransactItems: items }));
+      break;
+    } catch (err) {
+      const reasons =
+        err instanceof Error && err.name === "TransactionCanceledException"
+          ? /** @type {{ CancellationReasons?: { Code?: string }[] }} */ (err)
+              .CancellationReasons
+          : undefined;
+      const failed = new Set(
+        (reasons ?? []).flatMap((reason, index) =>
+          reason?.Code === "ConditionalCheckFailed" ? [index] : [],
+        ),
+      );
+      if (failed.size === 0) throw err;
+      // The photo already has a better reading; give its tasks that one instead.
+      if (items[0] === artifactItem && failed.has(0)) {
+        const stored = await ddb.send(
+          new GetCommand({
+            TableName: dynamoTable,
+            Key: { pk: sitePk(siteId), sk: artifact.sk },
+            ConsistentRead: true,
+          }),
+        );
+        const better = storedLocation(stored.Item);
+        if (!better) {
+          items = [];
+          break;
+        }
+        taskLocation = better;
+        items = await artifactTaskLocationUpdates({
+          tableName: dynamoTable,
+          siteId,
+          checkId,
+          artifactId,
+          location: taskLocation,
+        });
+        continue;
+      }
+      // Another writer may have bumped a task's updatedAt; read the tasks once more.
+      if (rereadTasks) {
+        rereadTasks = false;
+        items = [
+          ...items.filter((item) => item === artifactItem),
+          ...(await artifactTaskLocationUpdates({
+            tableName: dynamoTable,
+            siteId,
+            checkId,
+            artifactId,
+            location: taskLocation,
+            ...(taskLocation === location ? { onFiled } : {}),
+          })),
+        ];
+        continue;
+      }
+      items = items.filter((_, index) => !failed.has(index));
+    }
+  }
+  const artifactUpdated = items.includes(artifactItem);
+  const tasksUpdated = items.length - (artifactUpdated ? 1 : 0);
+  if (artifactUpdated) {
+    // Counts late GPS fixes that miss a 311 ticket (#683). If it shows up, add
+    // code to update the ticket's location when a late fix arrives.
+    for (const [taskId, state] of filedTasks) {
+      emitMetrics({
+        marker: "LateLocationAfterFiling",
+        metrics: [{ name: "LateLocationAfterFiling", value: 1 }],
+        props: { siteId, checkId, artifactId, taskId, filing: state },
+      });
+    }
+  }
+  return jsonResponse(200, { artifactId, artifactUpdated, tasksUpdated });
 };
 
 /**
