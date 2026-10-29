@@ -17,6 +17,7 @@ import {
   setObjectTags,
 } from "../s3.js";
 import { downscaleImage, DownscaleError } from "../media/downscale.js";
+import { storeThumbnail, thumbnailKeyFor } from "../media/thumbnail.js";
 import { sitePk, GSI1_NAME } from "./keys.js";
 import {
   quotaUpdate,
@@ -363,9 +364,22 @@ export async function createCareWork(event) {
         key: s3Key,
         tags: { state: "active" },
       });
+      // Best effort: a missing thumbnail only means the detail screen loads
+      // the original, so a failure here never fails the log.
+      let thumbS3Key;
+      try {
+        thumbS3Key = await storeThumbnail({
+          bucket: uploadBucket,
+          s3Key,
+          bytes: normalized.bytes,
+        });
+      } catch (error) {
+        console.warn("care-work thumbnail failed", { error });
+      }
       photos.push({
         photoId,
         s3Key,
+        ...(thumbS3Key ? { thumbS3Key } : {}),
         expiresAt: reservation.createdAt + 30 * DAY,
       });
     } catch (error) {
@@ -514,11 +528,19 @@ export async function getCarePhoto(event) {
       return jsonResponse(410, { error: "photo_expired" });
     throw error;
   }
-  return jsonResponse(200, {
-    downloadUrl: await presignGet({
+  const sign = (/** @type {string} */ key) =>
+    presignGet({
       bucket: getConfig().uploadBucket,
-      key: photo.s3Key,
+      key,
       expiresIn: Math.min(300, remaining),
-    }),
-  });
+    });
+  // Only a recorded thumbnail beside this photo's own key is signed; the
+  // client falls back to the original when it is absent.
+  const [downloadUrl, thumbnailUrl] = await Promise.all([
+    sign(photo.s3Key),
+    photo.thumbS3Key === thumbnailKeyFor(photo.s3Key)
+      ? sign(photo.thumbS3Key).catch(() => undefined)
+      : undefined,
+  ]);
+  return jsonResponse(200, { downloadUrl, thumbnailUrl });
 }

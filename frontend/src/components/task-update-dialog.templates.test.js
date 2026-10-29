@@ -397,7 +397,44 @@ it("reuses capture with the results title and skip, then renders saved content i
     mediaUrls: new Map([["photo-1", "https://example.test/photo.jpg"]]),
   });
   expect(timeline).toContain("Area cleaned");
-  expect(timeline).toContain('src="https://example.test/photo.jpg"');
+  expect(timeline).toContain('data-src="https://example.test/photo.jpg"');
+});
+
+it("renders update photos through artifact-photo so they load lazily and renew", () => {
+  const timeline = taskUpdateTimeline({
+    task: { status: "completed", checkId: "check-1" },
+    updates: [
+      {
+        type: "note_photo_update",
+        label: "Updated with photos and notes",
+        occurredAt: "2026-10-08T12:00:00Z",
+        photoKeys: ["photo-1"],
+      },
+    ],
+    issueOrigin: "perimeter",
+    originalMediaUrl: "",
+    mediaUrls: new Map([
+      [
+        "photo-1",
+        {
+          downloadUrl: "https://example.test/photo.jpg",
+          thumbnailUrl: "https://example.test/photo.thumb.webp",
+        },
+      ],
+    ]),
+  });
+  const photo = timeline.slice(timeline.indexOf("task-update__timeline"));
+  expect(photo).toMatch(
+    /<artifact-photo[^>]*data-check-id="check-1"[^>]*data-artifact-id="photo-1"/,
+  );
+  // The element sets src itself, so an expired URL is never fetched eagerly.
+  const img = photo.match(/<img[^>]*>/)?.[0] || "";
+  expect(img).toContain('data-src="https://example.test/photo.thumb.webp"');
+  expect(img).not.toMatch(/\ssrc=/);
+  expect(img).toContain('loading="lazy"');
+  // An enabled trigger keeps focus through a timeline re-render.
+  expect(photo).not.toMatch(/<button[^>]*data-photo-lightbox\s+disabled/);
+  expect(photo).toContain('data-full-src="https://example.test/photo.jpg"');
 });
 
 it("keeps notes and skip available without an uploadable check", () => {

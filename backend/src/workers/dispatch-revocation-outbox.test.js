@@ -132,3 +132,20 @@ function event(item) {
     ],
   });
 }
+
+it("durably queues media inserts but does not loop on thumbnail modifications", async () => {
+  const input = event({
+    pk: "SITE#site",
+    sk: "TASK#task#MEDIA#photo",
+    entityType: "task_update_media",
+  });
+  await handler(input, /** @type {any} */ ({}), () => {});
+  expect(JSON.parse(sqsSend.mock.calls[0][0].input.MessageBody)).toEqual({
+    type: "update_media_thumbnail",
+    pk: "SITE#site",
+    sk: "TASK#task#MEDIA#photo",
+  });
+  input.Records[0].eventName = "MODIFY";
+  await handler(input, /** @type {any} */ ({}), () => {});
+  expect(sqsSend).toHaveBeenCalledTimes(1);
+});

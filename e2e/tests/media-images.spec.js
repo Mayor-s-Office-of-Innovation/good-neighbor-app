@@ -253,7 +253,7 @@ test("shows unavailable photos within actual in-progress and history cards", asy
   });
 });
 
-test("reattaching a photo during signing cannot strand it or duplicate the request", async ({
+test("reattaching a photo restarts its cancelled signing request without stranding it", async ({
   page,
 }) => {
   let calls = 0;
@@ -285,12 +285,14 @@ test("reattaching a photo during signing cannot strand it or duplicate the reque
     photo.remove();
     parent.append(photo);
   });
+  // Removing the last consumer cancels its signer; reconnect starts one fresh read.
+  await expect.poll(() => calls).toBe(2);
   release();
   await expect(page.locator("artifact-photo img")).toHaveAttribute(
     "src",
     "/reattached.svg",
   );
-  expect(calls).toBe(1);
+  expect(calls).toBe(2);
 });
 
 test("report lightbox stays disabled during delayed signing and enables with a valid source", async ({
@@ -301,16 +303,21 @@ test("report lightbox stays disabled during delayed signing and enables with a v
   await page.route("**/report.svg", (route) =>
     route.fulfill({ contentType: "image/svg+xml", body: svg }),
   );
-  await open(page, (route) => {
-    calls++;
-    return new Promise((resolve) => {
-      release = () => {
-        void route
-          .fulfill({ json: { downloadUrl: "/report.svg", expiresIn: 300 } })
-          .then(resolve);
-      };
-    });
-  });
+  // Only the report photo should start a signer; the initial fixture has no remote identity.
+  await open(
+    page,
+    (route) => {
+      calls++;
+      return new Promise((resolve) => {
+        release = () => {
+          void route
+            .fulfill({ json: { downloadUrl: "/report.svg", expiresIn: 300 } })
+            .then(resolve);
+        };
+      });
+    },
+    fixture.replace('data-check-id="check" data-artifact-id="photo"', ""),
+  );
   await page.evaluate(async () => {
     const path = "/src/components/reports-view.templates.js";
     const { dayDetail } = await import(path);

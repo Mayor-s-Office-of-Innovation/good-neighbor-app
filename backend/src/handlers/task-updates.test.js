@@ -1,13 +1,27 @@
 import { GetCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { send, headObject, setObjectTags } = vi.hoisted(() => ({
+const {
+  send,
+  headObject,
+  setObjectTags,
+  getObjectBytes,
+  downscaleImage,
+  storeThumbnail,
+  recordThumbnail,
+} = vi.hoisted(() => ({
   send: vi.fn(),
   headObject: vi.fn(),
   setObjectTags: vi.fn(),
+  getObjectBytes: vi.fn(),
+  downscaleImage: vi.fn(),
+  storeThumbnail: vi.fn(),
+  recordThumbnail: vi.fn(),
 }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
-vi.mock("../s3.js", () => ({ headObject, setObjectTags }));
+vi.mock("../s3.js", () => ({ headObject, setObjectTags, getObjectBytes }));
+vi.mock("../media/downscale.js", () => ({ downscaleImage }));
+vi.mock("../media/thumbnail.js", () => ({ storeThumbnail, recordThumbnail }));
 
 const {
   createTaskUpdate,
@@ -39,6 +53,18 @@ describe("task update handlers", () => {
       metadata: { "declared-bytes": "1024" },
     });
     setObjectTags.mockReset().mockResolvedValue({});
+    getObjectBytes.mockReset().mockResolvedValue({
+      bytes: Buffer.from("original"),
+      contentType: "image/jpeg",
+    });
+    downscaleImage.mockReset().mockResolvedValue({
+      bytes: Buffer.from("normalized"),
+      contentType: "image/jpeg",
+    });
+    storeThumbnail
+      .mockReset()
+      .mockImplementation(async ({ s3Key }) => `${s3Key}.thumb.webp`);
+    recordThumbnail.mockReset().mockResolvedValue({});
     process.env.DYNAMO_TABLE = "tasks";
     process.env.S3_UPLOAD_BUCKET = "uploads";
     process.env.SQS_QUEUE_URL = "analysis";
@@ -268,6 +294,72 @@ describe("task update handlers", () => {
       mediaSk: "TASK#task-1#MEDIA#photo-1",
     });
     expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns registration without waiting for thumbnail work", async () => {
+    getObjectBytes.mockImplementation(() => new Promise(() => {}));
+    send
+      .mockResolvedValueOnce({
+        Item: { taskId: "task-1", status: "in_progress", checkId: "check-1" },
+      })
+      .mockResolvedValueOnce({});
+    const response = await registerTaskUpdateMedia(
+      event({
+        checkId: "check-1",
+        artifactId: "photo-1",
+        s3Key: "checks/site-1/check-1/photo-1",
+        contentType: "image/jpeg",
+        contentLength: 1024,
+      }),
+    );
+    expect(response.statusCode).toBe(201);
+    expect(getObjectBytes).not.toHaveBeenCalled();
+    expect(storeThumbnail).not.toHaveBeenCalled();
+  });
+
+  it("does not redo the thumbnail on an exact retry that already has one", async () => {
+    const conflict = new Error("conflict");
+    conflict.name = "TransactionCanceledException";
+    send
+      .mockResolvedValueOnce({
+        Item: { taskId: "task-1", status: "in_progress", checkId: "check-1" },
+      })
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({
+        Item: {
+          sk: "TASK#task-1#MEDIA#photo-1",
+          taskId: "task-1",
+          checkId: "check-1",
+          artifactId: "photo-1",
+          s3Key: "checks/site-1/check-1/photo-1",
+          contentType: "image/jpeg",
+          contentLength: 1024,
+          thumbS3Key: "checks/site-1/check-1/photo-1.thumb.webp",
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          taskId: "task-1",
+          checkId: "check-1",
+          artifactId: "photo-1",
+          mediaSk: "TASK#task-1#MEDIA#photo-1",
+        },
+      });
+
+    const response = await /** @type {any} */ (
+      registerTaskUpdateMedia(
+        event({
+          checkId: "check-1",
+          artifactId: "photo-1",
+          s3Key: "checks/site-1/check-1/photo-1",
+          contentType: "image/jpeg",
+          contentLength: 1024,
+        }),
+      )
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(getObjectBytes).not.toHaveBeenCalled();
   });
 
   it("accepts an exact retry after a conditional media conflict", async () => {

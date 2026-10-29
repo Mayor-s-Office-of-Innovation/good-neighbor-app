@@ -15,11 +15,8 @@ import { rulebookText } from "../i18n/rulebook.js";
 import { localizedAnalyzerText } from "../i18n/analyzer.js";
 import "./ticket-detail-dialog.css";
 import { openOverlayDialog } from "../dialog-history.js";
-import {
-  get311RequestDetail,
-  getTaskUpdates,
-  getMediaUrl,
-} from "../services/api.js";
+import { get311RequestDetail, getTaskUpdates } from "../services/api.js";
+import { cachedMediaUrls } from "../services/task-evidence.js";
 import { submitted311Ticket } from "../domain/home-tasks.js";
 import { ticketDetailLocation } from "../domain/ticket-detail.js";
 import { taskMediaUrl, taskMediaArtifactId } from "../domain/task-media.js";
@@ -135,6 +132,9 @@ class TicketDetailDialog extends HTMLElement {
     const task = this._task;
     const ticket = submitted311Ticket(task);
     if (!task || !ticket) return;
+    this._photoRead?.abort();
+    const photoRead = new AbortController();
+    this._photoRead = photoRead;
     const generation = ++this._generation;
     const isCurrent = () =>
       generation === this._generation &&
@@ -161,12 +161,13 @@ class TicketDetailDialog extends HTMLElement {
         await Promise.all(
           [...new Set(updates.flatMap((update) => update.photoKeys || []))].map(
             async (id) => {
-              const media = await getMediaUrl(task.checkId, id).catch(
-                () => null,
-              );
-              return /** @type {[string, string]} */ ([
+              const media = await cachedMediaUrls(task.checkId, id, {
+                signal: photoRead.signal,
+              }).catch(() => null);
+              // A thumbnail saves downloading the multi-MB original for a small tile.
+              return /** @type {[string, import("../services/task-evidence.js").MediaUrls | null]} */ ([
                 id,
-                media?.downloadUrl || "",
+                media,
               ]);
             },
           ),
@@ -265,6 +266,7 @@ class TicketDetailDialog extends HTMLElement {
       this._open = false;
       this.removeAttribute?.("data-settled");
       this._generation += 1;
+      this._photoRead?.abort();
       this.dispatchEvent(
         new CustomEvent("ticketdetailclosed", {
           bubbles: true,
