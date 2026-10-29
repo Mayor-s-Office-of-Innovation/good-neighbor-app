@@ -152,6 +152,54 @@ fields @timestamp, marker, Kind, AnalyzerLatencyMs, reason, checkId, artifactId,
 Local dev and tests print the same lines without the `_aws` envelope
 (`METRICS_NAMESPACE` unset), so nothing is ingested as a metric outside AWS.
 
+## CloudWatch Omni (`infra/modules/app/omni.tf`)
+
+Omni is AWS's web front end on the CloudWatch data this app already produces:
+plain-language queries across the Lambda and API Gateway log groups, service
+discovery, alerts to Slack or SNS, and shared investigation threads. It adds
+nothing to ingestion and changes nothing about the alarms, dashboard, or
+Logs Insights queries above. It is enabled per environment with
+`enable_cloudwatch_omni` (dev on, prod off).
+
+**Scope.** The AWS account hosts other applications, and Omni is scoped to an
+account and Region (one space, one Dataset integration). Isolation is in IAM:
+
+- `aws_iam_role.omni_forwarding` names each of this module's log groups in its
+  `logs:IntegrateWithDataset` statement. Only those forward into Omni. Adding a
+  Lambda means adding its log group to `local.omni_forwarded_log_group_arns`,
+  the same way new functions must be added to the alarm maps.
+- `aws_iam_role.omni_space_access` carries only `CloudWatchOmniSpaceAccessPolicy`.
+  The Context Graph policy is deliberately not attached; it inventories every
+  resource in the account.
+- Metrics are read straight from CloudWatch Metrics and cannot be narrowed per
+  namespace, so a space member can browse other applications' metrics.
+  Membership is therefore the control: grants live in `cloudwatch_omni_members`.
+
+**Signing in.** Sign in to the account the usual way (Identity Center, the
+PowerUserAccess permission set) and open CloudWatch → Omni → the space; the
+domain URL is also the `cloudwatch_omni_sign_in_url` output. That SSO sign-in
+is a shared IAM role named `AWSReservedSSO_PowerUserAccess_<hash>`, and the
+header shows it as `name / PowerUserAccess / <account id>`. Terraform looks the
+role up by permission-set name (`cloudwatch_omni_sso_permission_sets`) and
+grants it, so everyone who holds the set in that account can open the space.
+Grants for a single IAM role or user go in `cloudwatch_omni_members`. The CI
+deploy role is the first Space Admin automatically. Connecting the Identity
+Center instance itself to the domain (`cloudwatch_omni_identity_center_instance_arn`)
+is optional and needs the instance in the same Region as the domain; it is not
+required for SSO users to sign in.
+
+**Known limits, as of 2026-10-29.**
+
+- The first enablement backfills up to 7 days of logs, but not from log groups
+  encrypted with a customer managed key. All of ours are, so expect the space
+  to start empty and fill from the moment forwarding begins. Confirm forwarding
+  of KMS-encrypted log groups in dev before relying on it.
+- Omni alerts are a separate system from the CloudWatch alarms in this runbook
+  and do not appear in the console alarm list. Keep paging on the Terraform
+  alarms; use Omni alerts for exploration only until a decision is made.
+- Omni resources do not accept tags, so the domain and space cannot carry the
+  CCSF tag set. The two IAM roles and the Dataset integration do.
+
 ## Verifying after a deploy
 
 1. Run one photo check and one description check against the environment.
