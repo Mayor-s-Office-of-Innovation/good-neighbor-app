@@ -46,6 +46,7 @@ export class ArtifactPhoto extends HTMLElement {
   }
   disconnectedCallback() {
     this._generation++;
+    this._readController?.abort();
     clearTimeout(this._timer);
     this._observer?.disconnect();
     document.removeEventListener("visibilitychange", this._onReturn);
@@ -76,7 +77,10 @@ export class ArtifactPhoto extends HTMLElement {
     this._busy = true;
     const generation = this._generation;
     try {
-      const urls = await cachedMediaUrls(checkId, artifactId);
+      this._readController = new AbortController();
+      const urls = await cachedMediaUrls(checkId, artifactId, {
+        signal: this._readController.signal,
+      });
       if (!this.isConnected || generation !== this._generation) return;
       this._original = urls.downloadUrl;
       this._attempts = 0;

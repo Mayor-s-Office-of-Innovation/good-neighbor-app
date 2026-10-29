@@ -913,9 +913,9 @@ describe("timeline loading resilience", () => {
       expect(dialog._state).toBe("ready");
       expect(dialog._detail.updates[0].text).toBe("Saved activity");
       await vi.advanceTimersByTimeAsync(0);
-      expect(dialog._mediaUrls.get("ready")).toBe(
-        "https://example.com/photo.jpg",
-      );
+      expect(dialog._mediaUrls.get("ready")).toMatchObject({
+        downloadUrl: "https://example.com/photo.jpg",
+      });
       await vi.advanceTimersByTimeAsync(15_000);
       expect(dialog._state).toBe("ready");
     } finally {
@@ -1081,12 +1081,13 @@ describe("timeline loading resilience", () => {
     api.getMediaUrl.mockClear();
     await dialog.open(thumbTask);
     await vi.waitFor(() => expect(dialog._mediaUrls.size).toBe(2));
-    expect(dialog._mediaUrls.get("with-thumb")).toBe(
-      "https://example.com/with-thumb.jpg.thumb.webp",
-    );
-    expect(dialog._mediaUrls.get("no-thumb")).toBe(
-      "https://example.com/no-thumb.jpg",
-    );
+    expect(dialog._mediaUrls.get("with-thumb")).toMatchObject({
+      downloadUrl: "https://example.com/with-thumb.jpg",
+      thumbnailUrl: "https://example.com/with-thumb.jpg.thumb.webp",
+    });
+    expect(dialog._mediaUrls.get("no-thumb")).toMatchObject({
+      downloadUrl: "https://example.com/no-thumb.jpg",
+    });
     // Reopening reuses the signed URLs instead of signing again.
     await dialog.open(thumbTask);
     await vi.waitFor(() => expect(dialog._mediaUrls.size).toBe(2));
@@ -1132,7 +1133,7 @@ describe("timeline loading resilience", () => {
       expect(dialog._renderTimeline).toHaveBeenCalledTimes(1);
       dialog._task = { checkId: "check" };
       dialog._detail = { updates: [{ photoKeys: ["same"] }] };
-      dialog._mediaUrls.set("same", "url");
+      dialog._mediaUrls.set("same", { downloadUrl: "url" });
       api.getMediaUrl.mockResolvedValueOnce({ downloadUrl: "url" });
       await dialog._loadTimelinePhotos(dialog._loadGeneration);
       expect(dialog._timelineFrame).toBeNull();

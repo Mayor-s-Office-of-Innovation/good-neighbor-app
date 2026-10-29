@@ -132,6 +132,9 @@ class TicketDetailDialog extends HTMLElement {
     const task = this._task;
     const ticket = submitted311Ticket(task);
     if (!task || !ticket) return;
+    this._photoRead?.abort();
+    const photoRead = new AbortController();
+    this._photoRead = photoRead;
     const generation = ++this._generation;
     const isCurrent = () =>
       generation === this._generation &&
@@ -158,13 +161,13 @@ class TicketDetailDialog extends HTMLElement {
         await Promise.all(
           [...new Set(updates.flatMap((update) => update.photoKeys || []))].map(
             async (id) => {
-              const media = await cachedMediaUrls(task.checkId, id).catch(
-                () => null,
-              );
+              const media = await cachedMediaUrls(task.checkId, id, {
+                signal: photoRead.signal,
+              }).catch(() => null);
               // A thumbnail saves downloading the multi-MB original for a small tile.
-              return /** @type {[string, string]} */ ([
+              return /** @type {[string, import("../services/task-evidence.js").MediaUrls | null]} */ ([
                 id,
-                media?.thumbnailUrl || media?.downloadUrl || "",
+                media,
               ]);
             },
           ),
@@ -263,6 +266,7 @@ class TicketDetailDialog extends HTMLElement {
       this._open = false;
       this.removeAttribute?.("data-settled");
       this._generation += 1;
+      this._photoRead?.abort();
       this.dispatchEvent(
         new CustomEvent("ticketdetailclosed", {
           bubbles: true,

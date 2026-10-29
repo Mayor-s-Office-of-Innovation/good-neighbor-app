@@ -413,7 +413,15 @@ it("renders update photos through artifact-photo so they load lazily and renew",
     ],
     issueOrigin: "perimeter",
     originalMediaUrl: "",
-    mediaUrls: new Map([["photo-1", "https://example.test/photo.thumb.webp"]]),
+    mediaUrls: new Map([
+      [
+        "photo-1",
+        {
+          downloadUrl: "https://example.test/photo.jpg",
+          thumbnailUrl: "https://example.test/photo.thumb.webp",
+        },
+      ],
+    ]),
   });
   const photo = timeline.slice(timeline.indexOf("task-update__timeline"));
   expect(photo).toMatch(
@@ -426,9 +434,7 @@ it("renders update photos through artifact-photo so they load lazily and renew",
   expect(img).toContain('loading="lazy"');
   // An enabled trigger keeps focus through a timeline re-render.
   expect(photo).not.toMatch(/<button[^>]*data-photo-lightbox\s+disabled/);
-  expect(photo).toContain(
-    'data-full-src="https://example.test/photo.thumb.webp"',
-  );
+  expect(photo).toContain('data-full-src="https://example.test/photo.jpg"');
 });
 
 it("keeps notes and skip available without an uploadable check", () => {

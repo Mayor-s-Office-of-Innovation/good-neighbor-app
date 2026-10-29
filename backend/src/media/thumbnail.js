@@ -15,8 +15,8 @@
 // like other server-generated derivatives (care-work JPEGs).
 //
 // Why the key is recorded on the ART# row rather than derived by convention
-// at read time: presignMedia also serves task-update photos (never analyzed,
-// so never thumbnailed) and photos whose write failed, and signing a key that
+// at read time: presignMedia also serves task-update photos (thumbnailed by a
+// background worker) and photos whose write failed, and signing a key that
 // may not exist would push a 403-then-fallback onto every card <img> consumer
 // or a HEAD round trip onto the per-card media route. One attribute, set as
 // soon as the object lands (idempotent), keeps the read path a plain lookup.

@@ -77,7 +77,7 @@ export class TaskUpdateDialog extends HTMLElement {
     this._nextToken = null;
     /** @type {Map<File, Promise<string>>} */
     this._fileUploads = new Map();
-    /** @type {Map<string, string>} */
+    /** @type {Map<string, import("../services/task-evidence.js").MediaUrls>} */
     this._mediaUrls = new Map();
   }
 
@@ -308,14 +308,19 @@ export class TaskUpdateDialog extends HTMLElement {
         try {
           // Shared with the cards and <artifact-photo>: one signing request
           // per photo per page load, not one here and another per tile.
-          const media = await this._timelineRead(() =>
-            cachedMediaUrls(checkId, artifactId),
+          const media = await this._timelineRead((signal) =>
+            cachedMediaUrls(checkId, artifactId, { signal }),
           );
           if (generation !== this._loadGeneration) return;
           // A thumbnail saves downloading the multi-MB original for a small tile.
           const src = media.thumbnailUrl || media.downloadUrl;
-          if (src && this._mediaUrls.get(artifactId) !== src) {
-            this._mediaUrls.set(artifactId, src);
+          const previous = this._mediaUrls.get(artifactId);
+          if (
+            src &&
+            (previous?.downloadUrl !== media.downloadUrl ||
+              previous?.thumbnailUrl !== media.thumbnailUrl)
+          ) {
+            this._mediaUrls.set(artifactId, media);
             this._refreshTimeline();
           }
         } catch {
@@ -413,19 +418,21 @@ export class TaskUpdateDialog extends HTMLElement {
         this._task?.canUploadPhotos === true,
       );
     const task = this._task || {};
+    const sourceMedia = this._mediaUrls.get(
+      task.evidence?.artifactId || taskArtifactIds(task)[0],
+    );
     return taskUpdateTimeline({
       task,
       updates: [...(this._detail?.updates || []), ...this._cityUpdates],
       issueOrigin: this._detail?.issueOrigin || "perimeter",
       originalMediaUrl:
         taskMediaUrl(task) ||
-        this._mediaUrls.get(
-          task.evidence?.artifactId || taskArtifactIds(task)[0],
-        ) ||
+        sourceMedia?.thumbnailUrl ||
+        sourceMedia?.downloadUrl ||
         "",
       // The lightbox always opens the full-size original, never the card
       // thumbnail `taskMediaUrl` may have picked above.
-      originalFullMediaUrl: task.mediaUrl || "",
+      originalFullMediaUrl: task.mediaUrl || sourceMedia?.downloadUrl || "",
       mediaUrls: this._mediaUrls,
       nextToken: this._nextToken,
       readOnly: this.readOnly,

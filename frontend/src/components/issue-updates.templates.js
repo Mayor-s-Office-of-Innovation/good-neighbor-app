@@ -52,10 +52,10 @@ export function taskUpdateActions() {
 }
 
 /**
- * `mediaUrls` maps each photo to its display URL: the thumbnail when one exists.
+ * `mediaUrls` retains the original and thumbnail URLs for each photo.
  * @param {Record<string, any>} update
  * @param {Record<string, any>} task
- * @param {Map<string, string>} mediaUrls
+ * @param {Map<string, string | {downloadUrl: string, thumbnailUrl?: string}>} mediaUrls
  * @param {string} title
  */
 export function taskUpdateTimelineItem(update, task, mediaUrls, title) {
@@ -136,11 +136,13 @@ export function taskUpdateTimelineItem(update, task, mediaUrls, title) {
                     "",
                 )}"
                 data-photo-time="${escapeAttr(update.occurredAt)}"
-                data-full-src="${escapeAttr(mediaUrls.get(artifactId))}"
+                data-full-src="${escapeAttr(
+                  timelinePhotoUrl(mediaUrls.get(artifactId), true),
+                )}"
               >
                 ${artifactPhoto({
                   className: "task-update__photo",
-                  src: mediaUrls.get(artifactId),
+                  src: timelinePhotoUrl(mediaUrls.get(artifactId)),
                   checkId: task.checkId,
                   artifactId,
                   alt: t("taskUpdate.photo.updateAlt", { title }),
@@ -206,4 +208,17 @@ ${escapeHtml(text)}</textarea
       ${escapeHtml(t("common.clearAll"))}
     </button>
   </div>`;
+}
+
+/**
+ * @param {string | {downloadUrl: string, thumbnailUrl?: string} | undefined} media
+ * @param {boolean} [original]
+ */
+function timelinePhotoUrl(media, original = false) {
+  if (typeof media === "string") return media;
+  return (
+    (original
+      ? media?.downloadUrl
+      : media?.thumbnailUrl || media?.downloadUrl) || ""
+  );
 }

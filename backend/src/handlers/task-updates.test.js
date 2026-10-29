@@ -296,79 +296,25 @@ describe("task update handlers", () => {
     expect(send).toHaveBeenCalledTimes(2);
   });
 
-  it("stores a card thumbnail for new update media and records it on the media row", async () => {
+  it("returns registration without waiting for thumbnail work", async () => {
+    getObjectBytes.mockImplementation(() => new Promise(() => {}));
     send
       .mockResolvedValueOnce({
         Item: { taskId: "task-1", status: "in_progress", checkId: "check-1" },
       })
       .mockResolvedValueOnce({});
-
-    const response = await /** @type {any} */ (
-      registerTaskUpdateMedia(
-        event({
-          checkId: "check-1",
-          artifactId: "photo-1",
-          s3Key: "checks/site-1/check-1/photo-1",
-          contentType: "image/jpeg",
-          contentLength: 1024,
-        }),
-      )
+    const response = await registerTaskUpdateMedia(
+      event({
+        checkId: "check-1",
+        artifactId: "photo-1",
+        s3Key: "checks/site-1/check-1/photo-1",
+        contentType: "image/jpeg",
+        contentLength: 1024,
+      }),
     );
-
     expect(response.statusCode).toBe(201);
-    expect(getObjectBytes).toHaveBeenCalledWith({
-      bucket: "uploads",
-      key: "checks/site-1/check-1/photo-1",
-    });
-    expect(downscaleImage).toHaveBeenCalledWith(
-      Buffer.from("original"),
-      "image/jpeg",
-    );
-    expect(storeThumbnail).toHaveBeenCalledWith({
-      bucket: "uploads",
-      s3Key: "checks/site-1/check-1/photo-1",
-      bytes: Buffer.from("normalized"),
-    });
-    expect(recordThumbnail).toHaveBeenCalledWith({
-      tableName: "tasks",
-      key: { pk: "SITE#site-1", sk: "TASK#task-1#MEDIA#photo-1" },
-      thumbS3Key: "checks/site-1/check-1/photo-1.thumb.webp",
-    });
-  });
-
-  it("still registers update media when its thumbnail cannot be made", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    downscaleImage.mockRejectedValueOnce(
-      Object.assign(new Error("bad"), { name: "DownscaleError" }),
-    );
-    send
-      .mockResolvedValueOnce({
-        Item: { taskId: "task-1", status: "in_progress", checkId: "check-1" },
-      })
-      .mockResolvedValueOnce({});
-
-    const response = await /** @type {any} */ (
-      registerTaskUpdateMedia(
-        event({
-          checkId: "check-1",
-          artifactId: "photo-1",
-          s3Key: "checks/site-1/check-1/photo-1",
-          contentType: "image/jpeg",
-          contentLength: 1024,
-        }),
-      )
-    );
-
-    expect(response.statusCode).toBe(201);
+    expect(getObjectBytes).not.toHaveBeenCalled();
     expect(storeThumbnail).not.toHaveBeenCalled();
-    expect(recordThumbnail).not.toHaveBeenCalled();
-    expect(JSON.parse(warn.mock.calls[0][0])).toMatchObject({
-      marker: "UpdateMediaThumbnailFailed",
-      reason: "decode",
-      artifactId: "photo-1",
-      error: "DownscaleError",
-    });
-    warn.mockRestore();
   });
 
   it("does not redo the thumbnail on an exact retry that already has one", async () => {

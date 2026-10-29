@@ -7,8 +7,8 @@
 //
 // Default is a dry run that only counts. Finds check-photo rows
 // (CHECK#…#ART#…) and task-update photo rows (TASK#…#MEDIA#…) with an S3 key,
-// an image content type and no `thumbS3Key`; with `--site` that is one Query
-// of the site's partition, without it a table Scan. The sort-key match runs
+// an image content type and no `thumbS3Key`; with `--site` that is a paginated Query
+// of each CHECK# and TASK# sort-key family, without it a table Scan. The sort-key match runs
 // here rather than in the filter: a Query's FilterExpression may not name a
 // key attribute. For each row it reads the original, runs the same
 // normalize + thumbnail path as the worker, stores
@@ -30,8 +30,8 @@ import { recordThumbnail, storeThumbnail } from "../src/media/thumbnail.js";
 
 const MAX_AGE_DAYS = 25;
 
-const tableName = process.env.DYNAMO_TABLE;
-const bucket = process.env.S3_UPLOAD_BUCKET;
+const tableName = process.env.DYNAMO_TABLE || "";
+const bucket = process.env.S3_UPLOAD_BUCKET || "";
 if (!tableName || !bucket) {
   console.error("DYNAMO_TABLE and S3_UPLOAD_BUCKET are required");
   process.exit(1);
@@ -65,15 +65,19 @@ const filter = {
   ExpressionAttributeNames: { "#sk": "sk" },
 };
 
-/** @param {Record<string, any> | undefined} startKey */
-function pageCommand(startKey) {
+/**
+ * @param {Record<string, any> | undefined} startKey
+ * @param {string | undefined} prefix
+ */
+function pageCommand(startKey, prefix) {
   return onlySite
     ? new QueryCommand({
         TableName: tableName,
-        KeyConditionExpression: "pk = :pk",
+        KeyConditionExpression: "pk = :pk AND begins_with(#sk, :prefix)",
         ...filter,
         ExpressionAttributeValues: {
           ":pk": `SITE#${onlySite}`,
+          ":prefix": prefix,
           ":image": "image/",
         },
         ExclusiveStartKey: startKey,
@@ -128,18 +132,20 @@ async function processRow(row) {
   }
 }
 
-/** @type {Record<string, any> | undefined} */
-let startKey;
-do {
-  const page = await ddb.send(pageCommand(startKey));
-  for (const row of page.Items ?? []) {
-    if (!PHOTO_ROW.test(String(row.sk))) continue;
-    counts.candidates += 1;
-    const outcome = await processRow(row);
-    if (outcome) counts[outcome] += 1;
-  }
-  startKey = page.LastEvaluatedKey;
-} while (startKey);
+for (const prefix of onlySite ? ["CHECK#", "TASK#"] : [undefined]) {
+  /** @type {Record<string, any> | undefined} */
+  let startKey;
+  do {
+    const page = await ddb.send(pageCommand(startKey, prefix));
+    for (const row of page.Items ?? []) {
+      if (!PHOTO_ROW.test(String(row.sk))) continue;
+      counts.candidates += 1;
+      const outcome = await processRow(row);
+      if (outcome) counts[outcome] += 1;
+    }
+    startKey = page.LastEvaluatedKey;
+  } while (startKey);
+}
 
 console.log(JSON.stringify({ mode: apply ? "apply" : "dry-run", ...counts }));
 process.exitCode = counts.failed ? 1 : 0;
