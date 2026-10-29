@@ -69,7 +69,7 @@ sequenceDiagram
 
   Note over Staff,UI: /check — capture screen
   Staff->>UI: taps Add photo in the photo roll (or Describe instead → one text item)
-  Note over UI: item added to session → its own pipeline starts immediately<br/>(device location is fetched best-effort, 2s cap, and rides along)
+  Note over UI: item added to session → its own pipeline starts immediately<br/>(GPS starts when staff tap Start, asking for permission then if needed;<br/>device location is read best-effort and never delays the upload;<br/>a reading that lands later goes to PATCH .../artifacts/{artifactId}/location)
   UI->>API: POST /v1/checks (checkId as idempotency-key)<br/>once per run, lazily on the first item
   API->>DB: Put CHECK# header {status:"in_progress"}
   UI->>API: POST .../artifacts:presign {contentType, contentLength}
@@ -500,7 +500,7 @@ the lineage publication never retires a mid-`completing` task (§ 3).
 | Completion rule (client-side only) | — | frontend/src/domain/check-completion.js `isPerimeterCheckComplete` (1 photo or 1 qualifying description); perimeter-check.js `_done` / `_finishCheck`, templates `progressLine` / `footer` |
 | Describe instead (one text item per check) | backend/src/handlers/artifacts.js `registerArtifact` (text, no s3Key) | frontend/src/components/describe-instead.js `_onContinue` → photo-analysis.js `analyzeEvidenceItem` |
 | Presign / register artifact | backend/src/handlers/artifacts.js `presignUpload`, `registerArtifact` (S3 key `checks/<siteId>/<checkId>/<artifactId>`; legacy place fields ignored) | frontend/src/services/api.js `uploadArtifact`, `registerTextArtifact` (photo-analysis.js `run`) |
-| Device location (per item) | — | frontend/src/services/device-location.js `getCaptureDeviceLocation` (2s best-effort; 311 falls back to the site's geocoded `#META` location) |
+| Device location (per item) | backend/src/handlers/artifacts.js `updateArtifactLocation` (a reading that arrived after upload) | frontend/src/services/device-location.js `readCaptureDeviceLocation` (never delays the upload; 311 falls back to the source artifact's location, then the site's geocoded `#META` location) |
 | Per-item analysis | backend/src/workers/analyze-artifact.js (+ media/downscale.js) | frontend/src/services/photo-analysis.js `analyzeEvidenceItem` → `waitForArtifactAnalysis` |
 | Failed-card retry | — | photo-analysis.js `retryEvidenceItem` (re-register same artifactId → fresh analyze) |
 | Per-item guidance evaluate → tasks | backend/src/handlers/guidance.js `evaluateAssessment` → analysis/guidance/guidance-store.js `storeEvaluatedAssessment` (+ `allocateTaskShortIds`) | frontend/src/services/photo-analysis.js `guidanceFromAnalysis` |

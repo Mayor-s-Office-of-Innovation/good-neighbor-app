@@ -4,7 +4,7 @@ import {
   DynamoDBDocumentClient,
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
-import { assertRunResources } from "./run-resources.mjs";
+import { E2E_PORTS, E2E_URLS } from "./ports.js";
 
 /**
  * Give each browser binding its own test budget. The local adapter reports all
@@ -21,12 +21,19 @@ export async function resetCodeAttemptBudget({
   now = Date.now(),
   send,
 } = {}) {
-  const { tableName } = assertRunResources(env);
+  const tableName = "gnp-local-e2e";
+  if (
+    env.DYNAMO_TABLE !== tableName ||
+    env.SQS_QUEUE_URL !== `${E2E_URLS.mq}/local/${tableName}-submissions`
+  )
+    throw new Error(
+      "[e2e] refusing to reset code attempts outside the suite stack",
+    );
   const endpoint = new URL(env.AWS_ENDPOINT_URL_DYNAMODB || "");
   if (
     endpoint.protocol !== "http:" ||
     !["127.0.0.1", "localhost"].includes(endpoint.hostname) ||
-    endpoint.port !== "8000" ||
+    endpoint.port !== String(E2E_PORTS.ddb) ||
     endpoint.username ||
     endpoint.password ||
     endpoint.pathname !== "/" ||
@@ -58,7 +65,7 @@ export async function resetCodeAttemptBudget({
   }
   const client = DynamoDBDocumentClient.from(
     new DynamoDBClient({
-      endpoint: "http://127.0.0.1:8000",
+      endpoint: E2E_URLS.ddb,
       region: "us-east-1",
       credentials: { accessKeyId: "local", secretAccessKey: "local" },
     }),

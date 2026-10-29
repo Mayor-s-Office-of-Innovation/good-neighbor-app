@@ -4,15 +4,32 @@
   filing then uses the site's geocoded default location.
 */
 
+import { trackEvent } from "./analytics.js";
+
+// Logged with each photo so we can see why location failed.
+export const LOCATION_OUTCOME = Object.freeze({
+  acquired: "acquired",
+  timeout: "timeout",
+  denied: "denied",
+  unavailable: "unavailable",
+  skipped: "skipped",
+});
+/** @typedef {"acquired" | "timeout" | "denied" | "unavailable" | "skipped"} LocationOutcome */
 const LOCATION_TIMEOUT_MS = 10_000;
-const CAPTURE_LOCATION_TIMEOUT_MS = 2_000;
+// GPS started when the camera opened; 10 s more matches FixMyStreet and iNaturalist.
+const CAPTURE_LOCATION_TIMEOUT_MS = 10_000;
+const CAPTURE_PREFETCH_TIMEOUT_MS = 30_000;
+// An older reading may show where the person stood a minute ago.
+const CAPTURE_PREFETCH_MAX_AGE_MS = 60_000;
 const SITE_CHECK_LOCATION_TIMEOUT_MS = 2_000;
 const SITE_CHECK_CACHE_AGE_MS = 30_000;
 const SITE_CHECK_FALLBACK_AGE_MS = 60_000;
 const PERMISSION_REQUESTED_KEY = "gnp:location-permission-requested";
 let requestedEarly = false;
-/** @type {Promise<DeviceLocation | null> | null} */
+/** @type {Promise<LocationResult> | null} */
 let earlyLocationRequest = null;
+/** @type {{ request: Promise<LocationResult>, settledAt: number, location?: DeviceLocation | null } | null} */
+let capturePrefetch = null;
 let capturePromptAttempted = false;
 /** @type {DeviceLocation | null} */
 let lastDeviceLocation = null;
@@ -23,35 +40,57 @@ let lastSuccessfulAt = 0;
 const locationListeners = new Set();
 
 /**
- * @typedef {{ latitude: number, longitude: number }} DeviceLocation
+ * @typedef {{ latitude: number, longitude: number, accuracyMeters?: number }} DeviceLocation
+ * @typedef {{ location: DeviceLocation | null, outcome: LocationOutcome }} LocationResult
+ * @typedef {{
+ *   atUpload: () => DeviceLocation | null,
+ *   later: Promise<DeviceLocation | null>,
+ * }} CaptureLocationRead
+ * @typedef {{
+ *   timeoutMs?: number,
+ *   maximumAgeMs?: number,
+ *   enableHighAccuracy?: boolean,
+ *   onError?: (error: GeolocationPositionError) => void,
+ * }} LocationOptions
  */
 
 /**
  * Request a fresh device position. `maximumAge: 0` prevents a previous place's
  * cached position from being attached to a newly captured item.
- * @param {{
- *   timeoutMs?: number,
- *   maximumAgeMs?: number,
- *   enableHighAccuracy?: boolean,
- *   onError?: (error: GeolocationPositionError) => void,
- * }} [opts]
+ * @param {LocationOptions} [opts]
  * @returns {Promise<DeviceLocation | null>}
  */
-export function getDeviceLocation({
+export function getDeviceLocation(opts) {
+  return locate(opts).then(({ location }) => location);
+}
+
+/**
+ * Keeps why a read failed, for the `photo_location` event.
+ * @param {LocationOptions} [opts]
+ * @returns {Promise<LocationResult>}
+ */
+function locate({
   timeoutMs = LOCATION_TIMEOUT_MS,
   maximumAgeMs = 0,
   enableHighAccuracy = true,
   onError,
 } = {}) {
   if (typeof navigator === "undefined" || !navigator.geolocation) {
-    return Promise.resolve(null);
+    return Promise.resolve({
+      location: null,
+      outcome: LOCATION_OUTCOME.unavailable,
+    });
   }
 
   console.info("[location] Position request started.");
 
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (location) => {
+    /**
+     * @param {DeviceLocation | null} location
+     * @param {LocationOutcome} outcome
+     */
+    const finish = (location, outcome) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -61,7 +100,7 @@ export function getDeviceLocation({
         lastSuccessfulAt = Date.now();
       }
       for (const listener of locationListeners) listener(location);
-      resolve(location);
+      resolve({ location, outcome });
     };
     // Some mobile browsers fail to invoke either geolocation callback after
     // returning from the camera. Keep location best-effort so that platform
@@ -70,13 +109,13 @@ export function getDeviceLocation({
       console.warn(
         `[location] Position request produced no callback within ${timeoutMs}ms.`,
       );
-      finish(null);
+      finish(null, LOCATION_OUTCOME.timeout);
     }, timeoutMs);
 
     try {
       navigator.geolocation.getCurrentPosition(
         (position) => {
-          const { latitude, longitude } = position.coords;
+          const { latitude, longitude, accuracy } = position.coords;
           if (
             Number.isFinite(latitude) &&
             Number.isFinite(longitude) &&
@@ -86,11 +125,19 @@ export function getDeviceLocation({
             longitude <= 180
           ) {
             console.info("[location] Position acquired.");
-            finish({ latitude, longitude });
+            const accuracyMeters = Math.round(accuracy);
+            finish(
+              {
+                latitude,
+                longitude,
+                ...(accuracyMeters >= 0 ? { accuracyMeters } : {}),
+              },
+              LOCATION_OUTCOME.acquired,
+            );
             return;
           }
           console.warn("[location] Position contained invalid coordinates.");
-          finish(null);
+          finish(null, LOCATION_OUTCOME.unavailable);
         },
         (error) => {
           if (error) {
@@ -99,13 +146,20 @@ export function getDeviceLocation({
             );
           }
           onError?.(error);
-          finish(null);
+          finish(
+            null,
+            error?.code === 1
+              ? LOCATION_OUTCOME.denied
+              : error?.code === 3
+                ? LOCATION_OUTCOME.timeout
+                : LOCATION_OUTCOME.unavailable,
+          );
         },
         { enableHighAccuracy, maximumAge: maximumAgeMs, timeout: timeoutMs },
       );
     } catch (error) {
       console.warn("[location] Position request threw an exception.", error);
-      finish(null);
+      finish(null, LOCATION_OUTCOME.unavailable);
     }
   });
 }
@@ -122,7 +176,7 @@ export function onDeviceLocationChange(listener) {
 
 /** Refresh the home hint without presenting a new permission prompt. */
 export async function refreshGrantedDeviceLocation() {
-  if (earlyLocationRequest) return earlyLocationRequest;
+  if (earlyLocationRequest) return (await earlyLocationRequest).location;
   if ((await locationPermissionState()) !== "granted") return null;
   return getDeviceLocation({
     timeoutMs: SITE_CHECK_LOCATION_TIMEOUT_MS,
@@ -153,7 +207,9 @@ export async function getSiteCheckDeviceLocation() {
     return lastSuccessfulLocation;
   }
   if (earlyLocationRequest) {
-    return (await waitForStartupLocation(earlyLocationRequest)) || recent();
+    return (
+      (await waitForStartupLocation(earlyLocationRequest)).location || recent()
+    );
   }
   if (
     permission === "prompt" ||
@@ -176,39 +232,135 @@ export async function getSiteCheckDeviceLocation() {
 }
 
 /**
- * Bound the capture path's wait for best-effort coordinates. The longer
- * default guard remains useful for the early permission request, but an
- * unresponsive browser must not hold up artifact registration or upload.
- * @returns {Promise<DeviceLocation | null>}
+ * GPS can be slow, so start it when staff tap Start. This may prompt: Safari
+ * resets sites to "ask", and a prompt at the first photo leaves GPS no time.
+ * @returns {Promise<void>}
  */
-export async function getCaptureDeviceLocation() {
-  // Retain the request even if it settles while the permission query runs.
-  const startupRequest = earlyLocationRequest;
+export async function startCaptureDeviceLocation() {
   const state = await locationPermissionState();
-  if (state === "denied") return null;
+  if (state === "denied" || (state !== "granted" && capturePromptAttempted)) {
+    return;
+  }
+  // One prompt per session, so a dismissed one doesn't come back at the photo.
+  if (state === "prompt") capturePromptAttempted = true;
+  if (earlyLocationRequest || (capturePrefetch && !capturePrefetch.settledAt)) {
+    return;
+  }
+  /** @type {{ request: Promise<LocationResult>, settledAt: number, location?: DeviceLocation | null }} */
+  const prefetch = {
+    request: locate({ timeoutMs: CAPTURE_PREFETCH_TIMEOUT_MS }),
+    settledAt: 0,
+  };
+  capturePrefetch = prefetch;
+  void prefetch.request.then(({ location }) => {
+    prefetch.location = location;
+    if (capturePrefetch !== prefetch) return;
+    // A failed read is dropped so the capture asks again.
+    if (location) prefetch.settledAt = Date.now();
+    else capturePrefetch = null;
+  });
+}
+
+/**
+ * Start one photo's location read without holding up its upload.
+ * @param {string} [flow] reports a `photo_location` event for this flow
+ * @returns {CaptureLocationRead}
+ */
+export function readCaptureDeviceLocation(flow) {
+  const startedAt = Date.now();
+  // Retain the request even if it settles while the permission query runs.
+  const prefetch = earlyLocationRequest ? null : capturePrefetch;
+  const startupRequest = earlyLocationRequest || takeCapturePrefetch();
+  // A Start reading that is already in goes with an upload that beats the permission check.
+  const ready =
+    startupRequest && prefetch?.settledAt ? prefetch.location : null;
+  /** @type {LocationResult | null} */
+  let result = null;
+  /** @type {DeviceLocation | null | undefined} */
+  let sent;
+  const later = locationPermissionState().then(async (state) => {
+    const settled = await captureLocation(state, startupRequest);
+    result = settled;
+    if (flow) {
+      void trackEvent("photo_location", {
+        flow,
+        location_outcome: settled.outcome,
+        location_wait_ms: Date.now() - startedAt,
+        ...(settled.location?.accuracyMeters !== undefined
+          ? { location_accuracy_m: settled.location.accuracyMeters }
+          : {}),
+        ...(settled.location
+          ? { location_sent_with_upload: sent === undefined || sent !== null }
+          : {}),
+        permission_state: state ?? "unsupported",
+      });
+    }
+    return settled.location;
+  });
+  return {
+    atUpload() {
+      if (sent === undefined) sent = result?.location ?? ready ?? null;
+      return sent;
+    },
+    later,
+  };
+}
+
+/**
+ * @param {string | null} state
+ * @param {Promise<LocationResult> | null} startupRequest
+ * @returns {Promise<LocationResult>}
+ */
+async function captureLocation(state, startupRequest) {
+  if (state === "denied")
+    return { location: null, outcome: LOCATION_OUTCOME.denied };
   if (startupRequest) return waitForStartupLocation(startupRequest);
   if (state !== "granted") {
     // A first capture is a user-initiated fallback for browsers that suppress
     // startup prompts. Do not repeat a dismissed/unsupported prompt per photo.
-    if (capturePromptAttempted) return null;
+    if (capturePromptAttempted)
+      return { location: null, outcome: LOCATION_OUTCOME.skipped };
     capturePromptAttempted = true;
   }
-  return getDeviceLocation({ timeoutMs: CAPTURE_LOCATION_TIMEOUT_MS });
+  return locate({ timeoutMs: CAPTURE_LOCATION_TIMEOUT_MS });
+}
+
+/**
+ * One early reading per photo; the next photo may be elsewhere.
+ * @returns {Promise<LocationResult> | null}
+ */
+function takeCapturePrefetch() {
+  const prefetch = capturePrefetch;
+  capturePrefetch = null;
+  if (
+    !prefetch ||
+    (prefetch.settledAt &&
+      Date.now() - prefetch.settledAt > CAPTURE_PREFETCH_MAX_AGE_MS)
+  ) {
+    return null;
+  }
+  return prefetch.request;
 }
 
 /**
  * Bound only this capture's wait; leave the shared startup request running.
- * @param {Promise<DeviceLocation | null>} request
- * @returns {Promise<DeviceLocation | null>}
+ * @param {Promise<LocationResult>} request
+ * @returns {Promise<LocationResult>}
  */
 async function waitForStartupLocation(request) {
   let timer;
   try {
     return await Promise.race([
       request,
-      new Promise((resolve) => {
-        timer = setTimeout(() => resolve(null), CAPTURE_LOCATION_TIMEOUT_MS);
-      }),
+      /** @type {Promise<LocationResult>} */ (
+        new Promise((resolve) => {
+          timer = setTimeout(
+            () =>
+              resolve({ location: null, outcome: LOCATION_OUTCOME.timeout }),
+            CAPTURE_LOCATION_TIMEOUT_MS,
+          );
+        })
+      ),
     ]);
   } finally {
     clearTimeout(timer);
@@ -250,7 +402,7 @@ export function requestLocationPermissionEarly() {
     // Restricted storage still gets one attempt per page lifetime.
   }
   void locationPermissionState();
-  earlyLocationRequest = getDeviceLocation().finally(() => {
+  earlyLocationRequest = locate().finally(() => {
     earlyLocationRequest = null;
   });
 }

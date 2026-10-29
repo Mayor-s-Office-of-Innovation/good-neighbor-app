@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { resetCodeAttemptBudget } from "./code-attempt-budget.mjs";
-import { configureRunResources } from "./run-resources.mjs";
+import { E2E_URLS } from "./ports.js";
 
 function ownedEnv() {
-  const env = { AWS_ENDPOINT_URL_DYNAMODB: "http://127.0.0.1:8000" };
-  configureRunResources(env);
-  return env;
+  return {
+    AWS_ENDPOINT_URL_DYNAMODB: E2E_URLS.ddb,
+    DYNAMO_TABLE: "gnp-local-e2e",
+    SQS_QUEUE_URL: `${E2E_URLS.mq}/local/gnp-local-e2e-submissions`,
+  };
 }
 
 test("clears only the four current login counters in this run's local table", async () => {
@@ -41,12 +43,16 @@ test("refuses foreign tables, queues, and nonlocal endpoints before any mutation
   for (const overrides of [
     { DYNAMO_TABLE: "gnp-local-app" },
     { SQS_QUEUE_URL: "https://example.test/queue" },
-    { E2E_RUN_ID: "" },
+    { DYNAMO_TABLE: "" },
     ...[
       "",
       "https://dynamodb.us-east-1.amazonaws.com",
       "http://example.test:8000",
       "http://127.0.0.1:9000",
+      "http://127.0.0.1:8000",
+      "http://user:pass@127.0.0.1:8010",
+      "http://127.0.0.1:8010/?foreign=true",
+      "http://127.0.0.1:8010/#foreign",
       "http://localhost:8000/foreign",
     ].map((AWS_ENDPOINT_URL_DYNAMODB) => ({ AWS_ENDPOINT_URL_DYNAMODB })),
   ]) {

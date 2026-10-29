@@ -15,9 +15,11 @@ import {
   getCaptureGuidance,
   putMedia,
   putMediaWithProgress,
+  registerTextArtifact,
   rejectAnalysisCondition,
   REQUEST_TIMEOUT_MS,
   UPLOAD_STALL_MS,
+  updateArtifactLocation,
   toDevUploadUrl,
   waitForAnalyses,
   uploadTaskUpdatePhoto,
@@ -168,6 +170,72 @@ describe("analysis amendments", () => {
     expect(url).toBe(
       "/v1/checks/ch%20k/artifacts/art%2F1/conditions/cond%231/reject",
     );
+  });
+});
+
+describe("registerTextArtifact", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("sends GPS accuracy only alongside coordinates", async () => {
+    /** @type {any} */ const fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 202,
+        text: () => Promise.resolve("{}"),
+      }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    await registerTextArtifact("chk_01", {
+      text: "Litter by the door",
+      latitude: 37.7793,
+      longitude: -122.4192,
+      accuracyMeters: 18,
+    });
+    await registerTextArtifact("chk_01", {
+      text: "Litter by the door",
+      accuracyMeters: 18,
+    });
+    const bodies = fetch.mock.calls.map(([, init]) => JSON.parse(init.body));
+    expect(bodies[0]).toMatchObject({
+      latitude: 37.7793,
+      longitude: -122.4192,
+      accuracyMeters: 18,
+    });
+    expect(bodies[1]).not.toHaveProperty("accuracyMeters");
+  });
+});
+
+describe("updateArtifactLocation", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("patches the artifact's location route with coordinates only", async () => {
+    /** @type {any} */ const fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve("{}"),
+      }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    await updateArtifactLocation("chk 01", "art/1", {
+      latitude: 37.7793,
+      longitude: -122.4192,
+      accuracyMeters: 18,
+    });
+    const [url, init] = fetch.mock.calls[0];
+    expect(String(url)).toMatch(
+      /\/v1\/checks\/chk%2001\/artifacts\/art%2F1\/location$/,
+    );
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body)).toEqual({
+      latitude: 37.7793,
+      longitude: -122.4192,
+      accuracyMeters: 18,
+    });
   });
 });
 
@@ -837,6 +905,11 @@ describe("uncertain media uploads", () => {
           ? uploadArtifact("check-1", {
               dataUrl: "data:image/jpeg;base64,dGVzdA==",
               tag: "evidence-1",
+              location: () => ({
+                latitude: 37.7793,
+                longitude: -122.4192,
+                accuracyMeters: 18,
+              }),
             })
           : uploadTaskUpdatePhoto("task-1", "check-1", { file });
       await expect(upload()).rejects.toMatchObject({ status: 0 });
@@ -851,6 +924,11 @@ describe("uncertain media uploads", () => {
         "photo-1",
       );
       if (kind === "check") {
+        expect(JSON.parse(fetch.mock.calls[5][1].body)).toMatchObject({
+          latitude: 37.7793,
+          longitude: -122.4192,
+          accuracyMeters: 18,
+        });
         expect(
           vi
             .mocked(trackEvent)

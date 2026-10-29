@@ -338,18 +338,21 @@ Notes for debugging:
   per failing test). Open one with
   `npx playwright show-trace e2e/test-results/<dir>/trace.zip` — shows every
   click, network call, and DOM snapshot.
-- **The analyzer stub** (`e2e/helpers/analyzer-stub.mjs`, :3101) picks the
+- **The analyzer stub** (`e2e/helpers/analyzer-stub.mjs`, :3111 in the suite) picks the
   canned verdict per test: tests POST to `/__control` before uploading a photo
   (`multi` → several issue cards, `excellent` → clean). If a run behaves oddly,
   watch its console lines — `[analyzer-stub] /v1/analyses -> …` tells you which
   verdict was served.
-- **Developer data persists; E2E data is isolated.** DynamoDB Local stores files in
-  `backend/.local/dynamodb-data/`, but Playwright pins its backend and cleanup hooks
-  to `gnp-local-e2e`. Setup resets only that table's seeded code counters and tasks;
-  teardown deletes that disposable table. The suite refuses to reuse running
-  servers, so stop the dev stack before running it. Do not delete the shared
-  DynamoDB Local directory to repair an E2E login: that would also erase developer
-  tables. See [ADR 0006](adr/0006-docker-free-local-dev-harness.md).
+- **The suite runs its own stack beside `npm run dev`.** Every server and
+  emulator it starts has its own port (`e2e/helpers/ports.js`: API 3011, app
+  5183, DynamoDB Local 8010, ElasticMQ 9334, MinIO 9010, …), so a dev stack can
+  stay up while it runs and nothing is shared with it. Its DynamoDB Local runs
+  in memory, so every run starts from a freshly seeded `gnp-local-e2e` table and
+  leaves nothing behind. Its MinIO keeps files in `backend/.local/minio-data-e2e/`
+  and its SF311 fake logs to `backend/.local/sf311-requests-e2e.jsonl`. Setup
+  resets the seeded code counters and clears that log. Only one suite can run at a time:
+  a second one finds the ports taken and Playwright stops it before any test.
+  See [ADR 0006](adr/0006-docker-free-local-dev-harness.md).
 - Tests always get a **fresh browser context** (fresh IndexedDB), so each test
   re-runs the real site-code → device-registration flow; no shared login state.
 

@@ -23,6 +23,7 @@ bracket the hand-off.
 | `site_setup_completed` | `app-root` on `sitebound` | `switching_site` |
 | `camera_opened` | `perimeter-check` / `problem-report` `_openCamera` | `flow` |
 | `photo_picked` | the file input's `change` | `flow`, `photo_bytes`, `photo_type` |
+| `photo_location` | `services/device-location.js` once the capture's position read settles, per photo | `flow`, `location_outcome` (`acquired` / `timeout` / `denied` / `unavailable` / `skipped`), `location_wait_ms` (until the read settles, which may be after the upload), `location_accuracy_m` (rounded; acquired only), `location_sent_with_upload` (acquired only: true if the location went with the photo, false if it followed by PATCH), `permission_state` (`granted` / `prompt` / `denied` / `unsupported`). Never coordinates |
 | `capture_resumed` | `app-root` boot when a check is auto-resumed after a relaunch | `route`, `flow`, `marker_age_s`, `navigation_type`, `landing_path`, `$referring_domain` |
 | `handoff_grant_issued` | `services/session-handoff.js` when iOS Safari mints a Home Screen handoff grant | — |
 | `handoff_redeemed` | `app-root` on the installed app's first launch, after the grant bought a session | — |
