@@ -2,6 +2,20 @@
 
 *Policy operations log for the action/escalation rulebase.*
 
+## actions-escalations-v9 - 2026-10-28
+
+- Imports `GNP - rubrics-5.csv` (39 rules), preserved as `sources/GNP-rules-v9.csv`.
+- Classifies BULKY-1 as a Phone call to Recology, with the supplied phone number
+  and updated action text. It uses the standard phone-action behavior, with no
+  rule-specific ticker override.
+- Updates BLOCK-1 and DISTRESS-2/3 guidance and DISTRESS-3 action text.
+- Restricts MED-3's unconditional emergency branch to severity 4–5; severity
+  1–3 continues through the medical-help question.
+- Uses `likely_to_leave` for THREAT-1/2: No routes to the phone call and Yes
+  routes to asking them to leave. Historical catalogs retain `refusal_leave`.
+- New assessments use v9. Existing task snapshots and in-flight assessments
+  retain their original policy version and behavior.
+
 ## actions-escalations-v8 - 2026-10-15
 
 - Imports `GNP - rubrics-3.csv` (39 rules). Removes full phone numbers from nine

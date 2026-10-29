@@ -460,3 +460,12 @@ export function splitSiteIdentity(name) {
   }
   return null;
 }
+
+/** Explicitly completed cards need evidence of the result, never expiry alone. */
+export function needsResolutionProof(task) {
+  return (
+    task.status === "completed" &&
+    (taskResolution(task).confirmed || task.canBeInProgress === false) &&
+    !task.proofAddedAt
+  );
+}

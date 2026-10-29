@@ -249,7 +249,8 @@ export async function writeTaskTransition(input) {
   await ddb.send(
     new TransactWriteCommand({
       TransactItems: [
-        ...(input.task.status === "completed" &&
+        ...(input.update.type !== "resolution_proof" &&
+        input.task.status === "completed" &&
         input.task.completionMethod !== "311_filed"
           ? sf311Job(
               input.tableName,
@@ -314,6 +315,9 @@ export async function writeTaskTransition(input) {
                 : statusOnly
                   ? "#status = :expected"
                   : "#status = :expected AND updatedAt = :prior") +
+              (input.update.type === "resolution_proof"
+                ? " AND (attribute_not_exists(proofAddedAt) OR attribute_type(proofAddedAt, :nullType))"
+                : "") +
               (Object.hasOwn(input, "expectedAppActionResults")
                 ? input.expectedAppActionResults
                   ? " AND appActionResults = :priorResults"
@@ -327,6 +331,9 @@ export async function writeTaskTransition(input) {
             },
             ExpressionAttributeValues: {
               ":expected": input.expectedStatus,
+              ...(input.update.type === "resolution_proof"
+                ? { ":nullType": "NULL" }
+                : {}),
               ...(input.expectedAppActionResults
                 ? { ":priorResults": input.expectedAppActionResults }
                 : {}),

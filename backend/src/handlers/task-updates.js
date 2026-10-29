@@ -1,4 +1,8 @@
 import {
+  canAddResolutionProof,
+  withResolutionProof,
+} from "../task-updates/resolution-proof.js";
+import {
   cityHelpTicket,
   logCityNoteFailure,
   prepareCityHelpNote,
@@ -38,6 +42,8 @@ const ALLOWED_CONTENT_TYPES = new Set([
   "image/jpeg",
   "image/png",
   "image/webp",
+  "image/heic",
+  "image/heif",
 ]);
 
 /** @param {any} event @returns {Record<string, any> | null} */
@@ -117,7 +123,7 @@ export const getTaskUpdates = async (event) => {
   return jsonResponse(200, {
     ...detail(
       {
-        ...task,
+        ...(await withResolutionProof(dynamoTable, siteId, task)),
         canUploadPhotos: ["in_progress", "completed"].includes(check?.status),
       },
       timelinePage.items,
@@ -160,7 +166,15 @@ export const createTaskUpdate = async (event, retry = true) => {
       update: priorUpdate,
     });
   }
-  if (!canUpdateTask(task)) {
+  const proof = input.type === "resolution_proof";
+  if (proof) {
+    const current = await withResolutionProof(dynamoTable, siteId, task);
+    if (!canAddResolutionProof(task) || current.proofAddedAt)
+      return jsonResponse(409, {
+        error: "Task cannot accept resolution proof",
+      });
+  }
+  if (!proof && !canUpdateTask(task)) {
     const legacyRetry = await readLegacyUpdateById(
       dynamoTable,
       siteId,
@@ -199,6 +213,24 @@ export const createTaskUpdate = async (event, retry = true) => {
     return jsonResponse(transition.statusCode, { error: transition.error });
   const { update, task: updated } = transition;
   const now = update.occurredAt;
+  if (proof) {
+    for (const artifactId of update.photoKeys || []) {
+      const { media, pointer } = await readTaskUpdateMediaRegistration({
+        tableName: dynamoTable,
+        siteId,
+        checkId: task.checkId,
+        taskId,
+        artifactId,
+      });
+      if (
+        !media ||
+        !pointer ||
+        pointer.taskId !== taskId ||
+        media.artifactId !== artifactId
+      )
+        return jsonResponse(400, { error: "Invalid proof media" });
+    }
+  }
   if (informational && srNum) {
     update.cityHelpNeeded = input.cityHelpNeeded;
     if (input.cityHelpNeeded === false) {
@@ -218,7 +250,7 @@ export const createTaskUpdate = async (event, retry = true) => {
   }
   // The compare-and-swap below prevents a late worker or another user from
   // overwriting recovery. Preserve all ticket references and filing failures.
-  if (task.status !== "in_progress") {
+  if (!proof && task.status !== "in_progress") {
     updated.inProgressAt ||= task.notifiedAt || task.updatedAt || now;
     if (updated.status === "in_progress") {
       delete updated.completedAt;

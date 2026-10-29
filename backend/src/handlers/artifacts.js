@@ -119,9 +119,14 @@ export const presignUpload = async (event) => {
       body ?? {}
     );
 
+  // Task documentation also accepts HEIC/HEIF. Analysis registration below
+  // deliberately retains the narrower analyzer-supported content types.
   if (
     typeof contentType !== "string" ||
-    !ALLOWED_CONTENT_TYPES.has(contentType)
+    !(
+      ALLOWED_CONTENT_TYPES.has(contentType) ||
+      ["image/heic", "image/heif"].includes(contentType)
+    )
   ) {
     return rejectUpload(
       "Unsupported or missing contentType",

@@ -55,6 +55,105 @@ describe("task update handlers", () => {
     delete process.env.SF311_BASIC_AUTH_PASS;
   });
 
+  it.each([
+    "note",
+    "photo",
+    "empty",
+    "foreign-photo",
+    "already-saved",
+    "expired-only",
+  ])("handles shared resolution proof: %s", async (kind) => {
+    const task = {
+      pk: "SITE#site-1",
+      sk: "TASK#task-1",
+      taskId: "task-1",
+      checkId: "check-1",
+      status: kind === "expired-only" ? "open" : "completed",
+      completionMethod: "site_team_resolved",
+      createdAt: "2020-01-01",
+      completedAt: "2020-01-02",
+      updatedAt: "2020-01-02",
+      actorId: "another-session",
+      proofAddedAt: kind === "already-saved" ? "2020-01-03" : null,
+    };
+    send.mockImplementation(async (command) => {
+      if (command instanceof GetCommand && command.input.Key?.sk === task.sk)
+        return { Item: task };
+      if (
+        command instanceof GetCommand &&
+        command.input.Key?.sk.includes("MEDIA") &&
+        kind === "photo"
+      )
+        return { Item: { taskId: "task-1", artifactId: "photo" } };
+      return {};
+    });
+    const response = await createTaskUpdate(
+      event({
+        type: "resolution_proof",
+        notes: kind === "empty" || kind.includes("photo") ? [] : ["Cleaned"],
+        photoKeys: kind.includes("photo") ? ["photo"] : [],
+      }),
+    );
+    const expected = ["note", "photo"].includes(kind)
+      ? 201
+      : ["empty", "foreign-photo"].includes(kind)
+        ? 400
+        : 409;
+    expect(response.statusCode).toBe(expected);
+    const writes = send.mock.calls.filter(
+      ([command]) => command instanceof TransactWriteCommand,
+    );
+    expect(writes).toHaveLength(expected === 201 ? 1 : 0);
+    if (expected === 201) {
+      const body = JSON.parse(response.body);
+      expect(body.task.status).toBe("completed");
+      expect(body.task.completedAt).toBe("2020-01-02");
+      expect(body.task.proofAddedAt).toBeTruthy();
+      expect(body.update.actorId).toBe("device-1");
+      expect(writes[0][0].input.TransactItems).toHaveLength(3);
+      expect(
+        writes[0][0].input.TransactItems.at(-1).Put.ConditionExpression,
+      ).toContain("attribute_not_exists(proofAddedAt)");
+    }
+  });
+
+  it("does not overwrite proof saved by another session during a race", async () => {
+    let committed = false;
+    send.mockImplementation(async (command) => {
+      if (
+        command instanceof GetCommand &&
+        command.input.Key?.sk === "TASK#task-1"
+      )
+        return {
+          Item: {
+            taskId: "task-1",
+            status: "completed",
+            completionMethod: "site_team_resolved",
+            updatedAt: committed ? "new" : "old",
+            proofAddedAt: committed ? "2026-10-28" : null,
+          },
+        };
+      if (command instanceof TransactWriteCommand) {
+        committed = true;
+        throw Object.assign(new Error("conflict"), {
+          name: "TransactionCanceledException",
+        });
+      }
+      return {};
+    });
+    const response = await createTaskUpdate(
+      event({ type: "resolution_proof", notes: ["My result"], photoKeys: [] }),
+    );
+    expect(response.statusCode).toBe(409);
+    const writes = send.mock.calls.filter(
+      ([command]) => command instanceof TransactWriteCommand,
+    );
+    expect(writes).toHaveLength(1);
+    expect(
+      writes[0][0].input.TransactItems.at(-1).Put.ConditionExpression,
+    ).toContain("updatedAt = :prior");
+  });
+
   it.each(["missing", "closed", "in_progress"])(
     "publishes and enforces ticket eligibility: %s",
     async (scenario) => {
@@ -230,45 +329,53 @@ describe("task update handlers", () => {
     },
   );
 
-  it("registers update media without enqueuing analysis", async () => {
-    send
-      .mockResolvedValueOnce({
-        Item: {
-          taskId: "task-1",
-          status: "in_progress",
-          checkId: "check-1",
-        },
-      })
-      .mockResolvedValueOnce({});
+  it.each(["image/jpeg", "image/heic", "image/heif"])(
+    "registers %s update media without enqueuing analysis",
+    async (contentType) => {
+      headObject.mockResolvedValue({
+        contentType,
+        contentLength: 1024,
+        metadata: { "declared-bytes": "1024" },
+      });
+      send
+        .mockResolvedValueOnce({
+          Item: {
+            taskId: "task-1",
+            status: "in_progress",
+            checkId: "check-1",
+          },
+        })
+        .mockResolvedValueOnce({});
 
-    const response = await /** @type {any} */ (
-      registerTaskUpdateMedia(
-        event({
-          checkId: "check-1",
-          artifactId: "photo-1",
-          s3Key: "checks/site-1/check-1/photo-1",
-          contentType: "image/jpeg",
-          contentLength: 1024,
-        }),
-      )
-    );
+      const response = await /** @type {any} */ (
+        registerTaskUpdateMedia(
+          event({
+            checkId: "check-1",
+            artifactId: "photo-1",
+            s3Key: "checks/site-1/check-1/photo-1",
+            contentType,
+            contentLength: 1024,
+          }),
+        )
+      );
 
-    expect(response.statusCode).toBe(201);
-    expect(send.mock.calls[1][0]).toBeInstanceOf(TransactWriteCommand);
-    const [mediaPut, pointerPut] = send.mock.calls[1][0].input.TransactItems;
-    expect(mediaPut.Put.Item).toMatchObject({
-      sk: "TASK#task-1#MEDIA#photo-1",
-      purpose: "task_update",
-      taskId: "task-1",
-      artifactId: "photo-1",
-      contentLength: 1024,
-    });
-    expect(pointerPut.Put.Item).toMatchObject({
-      sk: "CHECK#check-1#UPDATE_MEDIA#photo-1",
-      mediaSk: "TASK#task-1#MEDIA#photo-1",
-    });
-    expect(send).toHaveBeenCalledTimes(2);
-  });
+      expect(response.statusCode).toBe(201);
+      expect(send.mock.calls[1][0]).toBeInstanceOf(TransactWriteCommand);
+      const [mediaPut, pointerPut] = send.mock.calls[1][0].input.TransactItems;
+      expect(mediaPut.Put.Item).toMatchObject({
+        sk: "TASK#task-1#MEDIA#photo-1",
+        purpose: "task_update",
+        taskId: "task-1",
+        artifactId: "photo-1",
+        contentLength: 1024,
+      });
+      expect(pointerPut.Put.Item).toMatchObject({
+        sk: "CHECK#check-1#UPDATE_MEDIA#photo-1",
+        mediaSk: "TASK#task-1#MEDIA#photo-1",
+      });
+      expect(send).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it("accepts an exact retry after a conditional media conflict", async () => {
     const conflict = new Error("conflict");

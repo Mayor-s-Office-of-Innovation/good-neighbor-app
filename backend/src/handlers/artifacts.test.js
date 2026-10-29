@@ -88,6 +88,32 @@ beforeEach(() => {
 });
 
 describe("presignUpload", () => {
+  it.each(["image/heic", "image/heif"])(
+    "presigns %s for documentation while analysis registration rejects it",
+    async (contentType) => {
+      presignPut.mockResolvedValue("https://example.test/upload");
+      const event = artifactEvent({
+        checkId: "check",
+        siteClaim: "site",
+        body: { contentType, contentLength: 1024 },
+      });
+      expect((await callPresign(event)).statusCode).toBe(200);
+      const result = await callRegister(
+        artifactEvent({
+          checkId: "check",
+          siteClaim: "site",
+          body: {
+            artifactId: "photo",
+            s3Key: "photo",
+            contentType,
+            contentLength: 1024,
+          },
+        }),
+      );
+      expect(result.statusCode).toBe(400);
+      expect(sqsSend).not.toHaveBeenCalled();
+    },
+  );
   it.each([
     [10 * 1024 * 1024 + 1, "photo_too_large"],
     [0, "non_positive_content_length"],

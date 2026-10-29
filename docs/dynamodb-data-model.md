@@ -914,3 +914,19 @@ Deletion propagation is deferred and is not part of the classification fix.
 ADR 0013 records the earlier assumption that reporting entities were not deleted;
 that assumption no longer holds for artifacts. Raw exports and Parquet are
 analytics copies, not media backups.
+
+### Resolution proof
+
+Explicitly completed tasks (including actions that cannot stay in progress) move
+straight to History. `proofAddedAt` is null until a site user saves a nonempty note
+or registered photo through a `resolution_proof` task update. This transaction
+appends the attributed timeline event and stamps the task, preserving its original
+completion time/status and avoiding another City closure job. Site authorization
+still applies; the proof author need not be the session that completed the task.
+Concurrent saves use the task snapshot condition and idempotency pointer, so only
+one proof submission wins and retries cannot add duplicate events.
+
+For legacy completed tasks without the summary field, worklist/detail reads inspect
+the latest completion event's notes/photos. Earlier progress evidence and an empty
+closed documentation window do not count. Expiry alone never requires proof.
+The History badge, Add proof button, and orange ticker use this shared summary.

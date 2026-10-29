@@ -1363,7 +1363,18 @@ export async function uploadTaskUpdatePhoto(
   { signal = AbortSignal.timeout(120_000), onProgress } = {},
 ) {
   const blob = item.file;
-  const contentType = blob.type || "application/octet-stream";
+  const extension = blob.name.split(".").pop()?.toLowerCase();
+  const contentType =
+    blob.type ||
+    {
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      png: "image/png",
+      webp: "image/webp",
+      heic: "image/heic",
+      heif: "image/heif",
+    }[extension] ||
+    "application/octet-stream";
   const { artifactId, s3Key, uploadUrl, uploadHeaders } = await presignArtifact(
     checkId,
     {
