@@ -501,4 +501,88 @@ describe("analysis amendments (check/artifact-addressed)", () => {
       expect.anything(),
     );
   });
+  it.each([true, false])(
+    "dismisses expired analyzer results only for a verified site-owned condition: %s",
+    async (verified) => {
+      /** @type {any} */ let receipt;
+      analyzeReject.mockRejectedValue(
+        new AnalyzerError("Expired", { status: 404, code: "unknown_analysis" }),
+      );
+      send.mockImplementation(async (command) => {
+        if (command instanceof GetCommand)
+          return {
+            Item: command.input.Key?.sk.includes("#ANALYSIS#")
+              ? {
+                  ...analysisItem(),
+                  concerns: verified
+                    ? [
+                        {
+                          conditionId: "chk_01-art_1-001-litter",
+                          category: "Litter",
+                        },
+                      ]
+                    : [],
+                }
+              : receipt,
+          };
+        if (command instanceof PutCommand) receipt = command.input.Item;
+        return { Items: [] };
+      });
+      const response = await invoke(amendEvent({}), rejectAnalysisCondition);
+      expect(response.statusCode).toBe(verified ? 200 : 404);
+      if (verified) {
+        expect(JSON.parse(response.body)).toMatchObject({
+          dismissed_locally: true,
+        });
+        expect(receipt).toMatchObject({
+          state: "dismissed",
+          dismissalReason: "analysis_unavailable",
+          pk: "SITE#site-1",
+        });
+        expect(receipt.dismissedAt).toBeTruthy();
+        expect(receipt).not.toHaveProperty("deletedAt");
+        const { statusRecords } = await import("../domain/system-status.js");
+        expect(statusRecords(receipt)).toEqual([]);
+        await invoke(amendEvent({}), rejectAnalysisCondition);
+        expect(analyzeReject).toHaveBeenCalledOnce();
+      } else {
+        expect(receipt.state).toBe("pending");
+        expect(receipt).not.toHaveProperty("dismissedAt");
+      }
+    },
+  );
+  it("does not report a historical dismissal as saved when its durable write fails", async () => {
+    /** @type {any} */ let receipt;
+    analyzeReject.mockRejectedValue(
+      new AnalyzerError("Expired", { status: 404, code: "unknown_analysis" }),
+    );
+    send.mockImplementation(async (command) => {
+      if (command instanceof GetCommand)
+        return {
+          Item: command.input.Key?.sk.includes("#ANALYSIS#")
+            ? {
+                ...analysisItem(),
+                concerns: [
+                  {
+                    conditionId: "chk_01-art_1-001-litter",
+                    category: "Litter",
+                  },
+                ],
+              }
+            : receipt,
+        };
+      if (command instanceof PutCommand) {
+        if (command.input.Item?.dismissedAt)
+          throw new Error("dismissal write failed");
+        receipt = command.input.Item;
+      }
+      return { Items: [] };
+    });
+    await expect(
+      invoke(amendEvent({}), rejectAnalysisCondition),
+    ).rejects.toThrow("dismissal write failed");
+    expect(receipt.state).toBe("pending");
+    expect(receipt).not.toHaveProperty("dismissedAt");
+    expect(analyzeReject).toHaveBeenCalledOnce();
+  });
 });

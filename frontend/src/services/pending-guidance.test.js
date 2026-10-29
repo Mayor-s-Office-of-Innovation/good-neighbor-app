@@ -118,3 +118,40 @@ it("does not silently return a partial list on read failure", async () => {
     .mockRejectedValueOnce(new Error("offline"));
   await expect(loadPendingQuestionItems()).rejects.toThrow("offline");
 });
+
+it("drops terminal local conditions without dropping unanswered siblings or local tasks", () => {
+  const task = { taskId: "local-task", conditionId: "other" };
+  const local = {
+    id: "local",
+    analysis: {
+      status: "analyzed",
+      assessment: group.assessment,
+      conditions: [
+        { conditionId: "done", status: "completed" },
+        { conditionId: "removed", status: "rejected" },
+        condition,
+      ],
+      tasks: [task],
+    },
+  };
+  expect(mergePendingQuestionItems([local], [], [])[0].analysis).toMatchObject({
+    conditions: [condition],
+    tasks: [task],
+  });
+  expect(
+    mergePendingQuestionItems(
+      [
+        {
+          ...local,
+          analysis: {
+            ...local.analysis,
+            conditions: [{ conditionId: "done", status: "completed" }],
+            tasks: [],
+          },
+        },
+      ],
+      [],
+      [],
+    ),
+  ).toEqual([]);
+});

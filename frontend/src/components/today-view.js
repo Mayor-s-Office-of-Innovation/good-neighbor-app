@@ -611,6 +611,7 @@ class TodayView extends HTMLElement {
     // ever-growing completed list) load right after the first render — see
     // _loadRemainingTasks.
     let submitted, tasks, latestStartedCheck, pendingQuestions;
+    let pendingGuidanceFailed = false;
     let reuseRemaining = false;
     try {
       const [[catalog, bindings], { checks }, openTasksResult, questions] =
@@ -618,7 +619,10 @@ class TodayView extends HTMLElement {
           catalogLoad,
           listChecks({ limit: 30 }),
           listTasks({ status: "open", limit: 50 }),
-          loadPendingQuestionItems(),
+          loadPendingQuestionItems().then(
+            (items) => ({ items, failed: false }),
+            () => ({ items: null, failed: true }),
+          ),
         ]);
       if (generation !== this._homeRefreshGeneration) return;
       this._providerSitesStatus = catalog ? "loaded" : "error";
@@ -648,7 +652,15 @@ class TodayView extends HTMLElement {
         : [];
       this._taskListFreshness.set("open", Date.now());
       tasks = uniqueTasks([...(openTasksResult.tasks || []), ...reused]);
-      pendingQuestions = questions;
+      pendingGuidanceFailed = questions.failed;
+      if (pendingGuidanceFailed) {
+        const cached = sameSite ? this._homeModel?.pendingQuestions : null;
+        const snapshot = cached
+          ? null
+          : await getHomeSnapshot(this._siteId).catch(() => null);
+        if (generation !== this._homeRefreshGeneration) return;
+        pendingQuestions = cached || snapshot?.pendingQuestions || [];
+      } else pendingQuestions = questions.items || [];
       if (!reuseRemaining) this._remainingStatus = "pending";
       else
         for (const status of ["in_progress", "completing", "completed"])
@@ -656,11 +668,12 @@ class TodayView extends HTMLElement {
       latestStartedCheck = latestStarted(checks);
       submitted = submittedChecks(checks);
       this._offline = null;
-      void saveHomeSnapshot(this._siteId, {
-        checks: checks || [],
-        tasks: this._reconcileConfirmedTasks(openTasksResult.tasks || []),
-        pendingQuestions,
-      }).catch(() => {});
+      if (!pendingGuidanceFailed)
+        void saveHomeSnapshot(this._siteId, {
+          checks: checks || [],
+          tasks: this._reconcileConfirmedTasks(openTasksResult.tasks || []),
+          pendingQuestions,
+        }).catch(() => {});
     } catch (err) {
       if (generation !== this._homeRefreshGeneration) return;
       console.error("listChecks/listTasks failed", err);
@@ -701,7 +714,7 @@ class TodayView extends HTMLElement {
         })),
       ),
     ];
-    if (!this._offline)
+    if (!this._offline && !pendingGuidanceFailed)
       for (const check of finishedChecks)
         if (
           check.id !== effectivePendingSession?.id &&
@@ -710,6 +723,7 @@ class TodayView extends HTMLElement {
           await clearSubmittedSession(check.id);
     if (
       !this._offline &&
+      !pendingGuidanceFailed &&
       this._isStalePendingSession(
         effectivePendingSession,
         submitted,
@@ -743,6 +757,7 @@ class TodayView extends HTMLElement {
       tasks,
       pendingSession: effectivePendingSession,
       pendingQuestions,
+      pendingGuidanceFailed,
     });
     // Evidence hydration is for the cards on screen now. The duplicate watcher
     // (a poll) and the 311 status batch wait for the complete list, so each
@@ -1333,6 +1348,9 @@ class TodayView extends HTMLElement {
         void this._startCapture("single-problem", control);
       });
     });
+    this.querySelector("#retry-guidance")?.addEventListener("click", () => {
+      void this.connectedCallback();
+    });
     this.querySelector("#retry-remaining")?.addEventListener("click", () =>
       this._retryRemaining(),
     );
@@ -1740,7 +1758,13 @@ class TodayView extends HTMLElement {
       historyGrouping: this._historyGrouping || "resolved",
       homeFilter: this._homeFilter,
       // Counts only once every list is in — a partial count would be wrong.
-      tabCounts: remainingStatus === "loaded" ? tabCounts : {},
+      tabCounts:
+        remainingStatus === "loaded"
+          ? this._homeModel?.pendingGuidanceFailed
+            ? { in_progress: tabCounts.in_progress }
+            : tabCounts
+          : {},
+      pendingGuidanceFailed: Boolean(this._homeModel?.pendingGuidanceFailed),
       remainingStatus: this._tabListStatus?.() || remainingStatus,
       siteName: this._site?.name || "",
       siteAddress: this._site?.address || "",
@@ -2483,15 +2507,26 @@ class TodayView extends HTMLElement {
       await deleteAnalysisCard(
         this,
         problem,
-        () =>
-          rejectProblemCondition(problem, {
+        async () => {
+          const localProblem = {
+            ...problem,
+            itemId: (await this._localQuestionItemId(problem.itemId)) || "",
+          };
+          let removed = false;
+          const deleteLocally = () => {
+            if (removed) return;
+            removed = true;
+            this._deleteProblemLocally(localProblem);
+          };
+          await rejectProblemCondition(localProblem, {
             requestId: this._requestId("delete", problem),
-            deleteLocally: () => this._deleteProblemLocally(problem),
-            onRefreshFailure: () => {
-              if (getCurrentCheck()?.id === problem.checkId)
-                this._deleteProblemLocally(problem);
-            },
-          }),
+            deleteLocally,
+            onRefreshFailure: deleteLocally,
+          });
+          // Retained finished checks must also remember the rejection, even
+          // when the shared refresh helper only updates the current check.
+          deleteLocally();
+        },
         () => {
           if (this._homeModel) this._renderHome(this._homeModel);
         },
@@ -2602,7 +2637,12 @@ class TodayView extends HTMLElement {
       showEditSavedToast();
     } catch (err) {
       console.error("edit analysis condition failed", err);
-      showEditErrorToast();
+      if (err?.status === 404 && err?.body?.code === "unknown_analysis") {
+        this._setDialogError(
+          "analysis-edit-error",
+          t("analysis.editDialog.expired"),
+        );
+      } else showEditErrorToast();
     } finally {
       setBusy(button, false);
     }

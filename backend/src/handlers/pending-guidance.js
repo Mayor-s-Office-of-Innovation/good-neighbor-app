@@ -24,7 +24,8 @@ export const listPendingGuidance = async (event) => {
         cursor.pk !== `SITE#${siteId}` ||
         cursor.gsi1pk !== partition ||
         typeof cursor.sk !== "string" ||
-        !/^ASSESSMENT#[^#]+$/.test(cursor.sk) ||
+        !cursor.sk.startsWith("ASSESSMENT#") ||
+        cursor.sk.length === "ASSESSMENT#".length ||
         typeof cursor.gsi1sk !== "string" ||
         Object.keys(cursor).sort().join() !== "gsi1pk,gsi1sk,pk,sk"
       )
@@ -80,7 +81,7 @@ export const listPendingGuidance = async (event) => {
             ConsistentRead: true,
           }),
         );
-        if (deletion.Item?.deletedAt) continue;
+        if (deletion.Item?.deletedAt || deletion.Item?.dismissedAt) continue;
       }
       conditions.push(condition);
     }

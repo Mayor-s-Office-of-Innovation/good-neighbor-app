@@ -130,6 +130,9 @@ beforeEach(() => {
   catalog.listBoundSites.mockReset().mockResolvedValue([]);
   catalog.listTasks.mockReset().mockResolvedValue({ tasks: [] });
   catalog.listChecks.mockReset().mockResolvedValue({ checks: [] });
+  catalog.listPendingGuidance
+    .mockReset()
+    .mockResolvedValue({ guidance: [], nextToken: null });
   catalog.listProviderSites.mockReset();
   catalog.listProviderSites.mockResolvedValue({
     providerId: "provider-1",
@@ -1926,3 +1929,143 @@ it.each([true, false])(
     }
   },
 );
+
+it("keeps live tasks and cached questions when only guidance fails, without retiring local evidence", async () => {
+  const { saveHomeSnapshot } = await import("../db.js");
+  const { clearSubmittedSession } = await import("../state/check-session.js");
+  const view = await mount("?filter=todo");
+  const condition = {
+    conditionId: "question",
+    canonicalCategory: "Bulky items",
+    status: "needs_answer",
+    needsAnswer: { key: "provider_generated", options: [] },
+  };
+  const pending = {
+    id: "pending:a:question",
+    checkId: "old-check",
+    analysis: {
+      status: "analyzed",
+      artifactId: "artifact",
+      assessment: { assessmentId: "a" },
+      conditions: [condition],
+      tasks: [],
+    },
+  };
+  const task = {
+    taskId: "fresh",
+    status: "open",
+    createdAt: new Date().toISOString(),
+  };
+  view._homeModel = { tasks: [], pendingQuestions: [pending] };
+  session.current = {
+    id: "old-check",
+    status: "capture-complete",
+    items: [{ ...pending, id: "local" }],
+  };
+  catalog.listChecks.mockResolvedValue({
+    checks: [{ checkId: "old-check", status: "completed" }],
+  });
+  catalog.listTasks.mockImplementation(async ({ status }) => ({
+    tasks: status === "open" ? [task] : [],
+  }));
+  catalog.listPendingGuidance.mockRejectedValueOnce(new Error("guidance down"));
+  vi.mocked(saveHomeSnapshot).mockClear();
+  vi.mocked(clearSubmittedSession).mockClear();
+  view._renderError = vi.fn();
+  await view.connectedCallback();
+  const model = view._renderHome.mock.calls.at(-1)[0];
+  expect(model).toMatchObject({
+    tasks: [task],
+    pendingQuestions: [pending],
+    pendingGuidanceFailed: true,
+  });
+  expect(view._offline).toBeNull();
+  expect(view._renderError).not.toHaveBeenCalled();
+  expect(saveHomeSnapshot).not.toHaveBeenCalled();
+  expect(clearSubmittedSession).not.toHaveBeenCalled();
+  view._homeModel = model;
+  expect(view._render(model)).toContain(t("today.questions.error"));
+  expect(view._render(model)).toContain('id="retry-guidance"');
+  catalog.listPendingGuidance.mockResolvedValue({
+    guidance: [],
+    nextToken: null,
+  });
+  await view.connectedCallback();
+  expect(view._renderHome.mock.calls.at(-1)[0].pendingGuidanceFailed).toBe(
+    false,
+  );
+});
+
+it("does not leak cached questions across a site switch when guidance fails", async () => {
+  const view = await mount("?filter=todo");
+  view._homeModel = {
+    tasks: [],
+    pendingQuestions: [{ id: "other-site-question" }],
+  };
+  siteRead.mockResolvedValue({ siteId: "site-2" });
+  catalog.listPendingGuidance.mockRejectedValueOnce(new Error("guidance down"));
+  await view.connectedCallback();
+  expect(view._renderHome.mock.calls.at(-1)[0].pendingQuestions).toEqual([]);
+});
+
+it("explains an expired analyzer edit and retains the description for the user", async () => {
+  const view = await mount("?filter=todo");
+  const problem = {
+    itemId: "recovered",
+    checkId: "check",
+    artifactId: "artifact",
+    conditionId: "condition",
+    description: "Original description",
+  };
+  view._activeProblem = problem;
+  view._analysisEditDescription = { value: "My updated description" };
+  view.querySelector = () => null;
+  view._setDialogError = vi.fn();
+  catalog.editAnalysisCondition.mockRejectedValueOnce({
+    status: 404,
+    body: { code: "unknown_analysis" },
+  });
+  await view._saveProblemEdit();
+  expect(view._setDialogError).toHaveBeenLastCalledWith(
+    "analysis-edit-error",
+    t("analysis.editDialog.expired"),
+  );
+  expect(view._activeProblem).toBe(problem);
+  expect(view._analysisEditDescription.value).toBe("My updated description");
+});
+
+it("uses retained local evidence when committing deletion of a recovered card", async () => {
+  const deletion = await import("./analysis-card-deletion.js");
+  const actions = await import("./analysis-problem-actions.js");
+  const commit = vi
+    .spyOn(deletion, "deleteAnalysisCard")
+    .mockImplementation(async (_host, _problem, save) => {
+      await save();
+    });
+  const reject = vi
+    .spyOn(actions, "rejectProblemCondition")
+    .mockImplementation(async (_problem, handlers) => {
+      handlers.deleteLocally();
+    });
+  try {
+    const view = await mount("?filter=todo");
+    view._activeProblem = {
+      itemId: "recovered",
+      checkId: "check",
+      artifactId: "artifact",
+      conditionId: "condition",
+    };
+    view._localQuestionItemId = vi.fn(async () => "local-evidence");
+    view._deleteProblemLocally = vi.fn();
+    view._setDialogError = vi.fn();
+    view.querySelector = () => null;
+    await view._confirmDeleteProblem();
+    expect(reject.mock.calls[0][0].itemId).toBe("local-evidence");
+    expect(view._deleteProblemLocally).toHaveBeenCalledWith(
+      expect.objectContaining({ itemId: "local-evidence" }),
+    );
+  } finally {
+    commit.mockRestore();
+    reject.mockRestore();
+  }
+});

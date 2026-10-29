@@ -671,12 +671,50 @@ export async function refreshRecoveredQuestion(item, response) {
     artifactId: item.analysis.artifactId,
     analysisId: response.analysis_id,
     assessment: response.assessment,
-    location: item.location,
+    // Amended coordinates win; persisted evidence coordinates are only a fallback.
+    location: hasCoordinates(response.assessment.metadata)
+      ? null
+      : hasCoordinates(item.location)
+        ? item.location
+        : item.analysis.conditions?.find((condition) =>
+            hasCoordinates(condition.source),
+          )?.source,
   });
-  return evaluateAssessment({
-    ...refreshed,
-    previousAssessmentId: item.analysis.assessment.assessmentId,
-  });
+  const guidance = await evaluateAmendedAssessment(
+    refreshed,
+    item.analysis.assessment.assessmentId,
+  );
+  if (!guidance) throw new Error("Missing amended guidance");
+  return guidance;
+}
+
+/** Reuse one amendment identity across bounded revision-conflict retries. */
+async function evaluateAmendedAssessment(
+  refreshed,
+  previousAssessmentId,
+  canPublish = () => true,
+) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await evaluateAssessment({ ...refreshed, previousAssessmentId });
+    } catch (err) {
+      if (
+        err?.status !== 409 ||
+        err?.body?.code !== "AssessmentRevisionConflict" ||
+        !previousAssessmentId
+      )
+        throw err;
+      const latest = await getAssessmentGuidance(previousAssessmentId);
+      if (!canPublish()) return null;
+      if (
+        latest.assessment?.assessmentId &&
+        latest.assessment.assessmentId !== previousAssessmentId
+      )
+        return latest;
+      if (!latest.assessment || attempt === 2) throw err;
+    }
+  }
+  return null;
 }
 
 export async function refreshEvidenceAnalysis(itemId, response, opts = {}) {
@@ -697,38 +735,14 @@ export async function refreshEvidenceAnalysis(itemId, response, opts = {}) {
     assessment: response.assessment,
     location: item.location,
   });
-  let guidance;
-  let reconciled = false;
   const previousAssessmentId = item.analysis?.assessment?.assessmentId;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      guidance = await evaluateAssessment({
-        ...refreshed,
-        previousAssessmentId,
-      });
-      break;
-    } catch (err) {
-      if (
-        err?.status !== 409 ||
-        err?.body?.code !== "AssessmentRevisionConflict" ||
-        !previousAssessmentId
-      )
-        throw err;
-      const latest = await getAssessmentGuidance(previousAssessmentId);
-      if (!isHeld(check)) return;
-      if (latest.assessment?.assessmentId !== previousAssessmentId) {
-        // Another refresh won. Use its persisted analysis as well as guidance;
-        // never replay this older analyzer payload against the new predecessor.
-        guidance = latest;
-        reconciled = true;
-        break;
-      }
-      if (attempt === 2) throw err;
-      // Same predecessor: an answer changed. The backend reloads those answers
-      // on the next evaluation; the analyzer amendment is not repeated.
-    }
-  }
-  reconciled ||= Boolean(
+  const guidance = await evaluateAmendedAssessment(
+    refreshed,
+    previousAssessmentId,
+    () => isHeld(check),
+  );
+  if (!guidance) return;
+  const reconciled = Boolean(
     guidance.assessment?.assessmentId &&
       guidance.assessment.assessmentId !== refreshed.assessmentId,
   );

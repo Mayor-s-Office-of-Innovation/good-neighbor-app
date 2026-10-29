@@ -519,6 +519,7 @@ export function summaryBlock({ outsideRadius, label }) {
  *   showActiveClearTray?: boolean,
  *   historyGrouping?: string,
  *   remainingStatus?: "pending" | "loaded" | "error",
+ *   pendingGuidanceFailed?: boolean,
  *   historyGroups: Array<{ checkTime: string | Date, cards: string, title?: string, compact?: boolean, counts?: any }>,
  * }} vm
  */
@@ -541,6 +542,7 @@ export function homeResults({
   historyGroups,
   historyGrouping = "resolved",
   remainingStatus = "loaded",
+  pendingGuidanceFailed = false,
 }) {
   const hasVisibleCards =
     recentItems.length ||
@@ -571,6 +573,18 @@ export function homeResults({
           ? clearCheckTray(activeClearCheck, true)
           : ""}
       ${taskTabs({ activeId: homeFilter, counts: tabCounts })}
+      ${homeFilter === "todo" && pendingGuidanceFailed
+        ? html`<p class="home-results__empty" role="status">
+            ${escapeHtml(t("today.questions.error"))}
+            <button
+              id="retry-guidance"
+              class="btn-outline home-results__retry"
+              type="button"
+            >
+              ${escapeHtml(t("common.retry"))}
+            </button>
+          </p>`
+        : ""}
       ${homeFilter === "history"
         ? html`<div class="history-grouping">
             <wa-select
@@ -621,9 +635,11 @@ export function homeResults({
             </p>`
           : pendingCards(1)
         : !hasVisibleCards
-          ? homeFilter === "todo" && !hasPendingSession
-            ? homeAllDonePanel()
-            : emptyResults({ homeFilter })
+          ? homeFilter === "todo" && pendingGuidanceFailed
+            ? ""
+            : homeFilter === "todo" && !hasPendingSession
+              ? homeAllDonePanel()
+              : emptyResults({ homeFilter })
           : ""}
     </div>
   `;

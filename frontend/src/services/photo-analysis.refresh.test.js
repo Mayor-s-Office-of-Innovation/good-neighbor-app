@@ -316,3 +316,82 @@ it("publishes an edited recovered question without a local session", async () =>
   );
   expect(updateItemAnalysis).not.toHaveBeenCalled();
 });
+
+const recovered = {
+  checkId: "check",
+  analysis: {
+    artifactId: "artifact",
+    assessment: { assessmentId: "previous" },
+    conditions: [{ source: { latitude: 37.76, longitude: -122.42 } }],
+  },
+};
+const amendment = {
+  analysis_id: "amended",
+  assessment: {
+    identified_conditions_of_concern: [{ category: "Litter", severity: 1 }],
+  },
+};
+const conflict = { status: 409, body: { code: "AssessmentRevisionConflict" } };
+const published = {
+  assessment: { assessmentId: "published" },
+  conditions: [],
+  tasks: [],
+};
+
+it.each([false, true])(
+  "preserves recovered coordinates, preferring amended coordinates when supplied: %s",
+  async (amendedLocation) => {
+    vi.mocked(evaluateAssessment).mockResolvedValue(published);
+    const metadata = { latitude: 37.78, longitude: -122.44 };
+    await refreshRecoveredQuestion(recovered, {
+      ...amendment,
+      assessment: {
+        ...amendment.assessment,
+        ...(amendedLocation ? { metadata } : {}),
+      },
+    });
+    expect(vi.mocked(evaluateAssessment).mock.calls[0][0]).toMatchObject({
+      assessment: {
+        metadata: amendedLocation
+          ? metadata
+          : recovered.analysis.conditions[0].source,
+      },
+    });
+  },
+);
+it("retries a recovered amendment after an answer conflict using one stable assessment ID", async () => {
+  vi.mocked(evaluateAssessment)
+    .mockRejectedValueOnce(conflict)
+    .mockResolvedValueOnce(published);
+  vi.mocked(getAssessmentGuidance).mockResolvedValue({
+    assessment: { assessmentId: "previous" },
+    conditions: [],
+    tasks: [],
+  });
+  expect(await refreshRecoveredQuestion(recovered, amendment)).toEqual(
+    published,
+  );
+  const calls = vi.mocked(evaluateAssessment).mock.calls;
+  expect(calls).toHaveLength(2);
+  expect(calls[0][0]).toEqual(calls[1][0]);
+});
+it("adopts a winning recovered-edit successor without replaying the old amendment", async () => {
+  vi.mocked(evaluateAssessment).mockRejectedValueOnce(conflict);
+  vi.mocked(getAssessmentGuidance).mockResolvedValue(published);
+  expect(await refreshRecoveredQuestion(recovered, amendment)).toEqual(
+    published,
+  );
+  expect(evaluateAssessment).toHaveBeenCalledOnce();
+});
+it("bounds recovered-edit conflict retries", async () => {
+  vi.mocked(evaluateAssessment).mockRejectedValue(conflict);
+  vi.mocked(getAssessmentGuidance).mockResolvedValue({
+    assessment: { assessmentId: "previous" },
+    conditions: [],
+    tasks: [],
+  });
+  await expect(refreshRecoveredQuestion(recovered, amendment)).rejects.toEqual(
+    conflict,
+  );
+  expect(evaluateAssessment).toHaveBeenCalledTimes(3);
+});

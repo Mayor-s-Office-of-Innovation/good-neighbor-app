@@ -57,9 +57,11 @@ export function mergePendingQuestionItems(localItems, pendingItems, tasks) {
       );
     const conditions = (analysis.conditions || []).filter(
       (condition) =>
+        !["completed", "rejected"].includes(condition.status) &&
         !questionKeys.has(
           `${analysis.assessment?.assessmentId}:${condition.conditionId}`,
-        ) && !represented(condition.conditionId),
+        ) &&
+        !represented(condition.conditionId),
     );
     const localTasks = (analysis.tasks || []).filter(
       (task) => !tasks.some((saved) => saved.taskId === task.taskId),

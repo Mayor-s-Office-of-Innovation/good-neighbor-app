@@ -124,3 +124,36 @@ it("does not resurrect a question after a confirmed analyzer deletion", async ()
     ConsistentRead: true,
   });
 });
+
+it("accepts its own pagination cursor when the assessment ID contains #", async () => {
+  const key = {
+    ...cursor,
+    sk: "ASSESSMENT#check#artifact",
+    gsi1sk: "2026-10-01#check#artifact",
+  };
+  send.mockResolvedValueOnce({ Items: [], LastEvaluatedKey: key });
+  const first = JSON.parse((await invoke(undefined)).body);
+  expect((await invoke(first.nextToken)).statusCode).toBe(200);
+  expect(send.mock.calls[1][0].input.ExclusiveStartKey).toEqual(key);
+});
+
+it("does not resurrect an app-dismissed question when its analyzer has expired", async () => {
+  read.mockResolvedValueOnce({
+    assessment: { assessmentId: "old", checkId: "old-check" },
+    conditions: [
+      {
+        conditionId: "question",
+        status: "needs_answer",
+        needsAnswer: {},
+        source: { artifactIds: ["artifact"] },
+      },
+    ],
+    tasks: [],
+  });
+  send.mockImplementation(async (command) =>
+    command instanceof GetCommand
+      ? { Item: { state: "dismissed", dismissedAt: "2026-10-29T12:00:00Z" } }
+      : { Items: [{ assessmentId: "old" }] },
+  );
+  expect(JSON.parse((await invoke(undefined)).body).guidance).toEqual([]);
+});

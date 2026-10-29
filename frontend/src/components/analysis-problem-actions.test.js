@@ -129,18 +129,15 @@ describe("rejectProblemCondition", () => {
     expect(analysis.refreshEvidenceAnalysis).not.toHaveBeenCalled();
   });
 
-  it("treats a 404 as already deleted, only for the current check", async () => {
+  it("does not present an arbitrary 404 as a durable deletion", async () => {
     const { rejectProblemCondition } = await import(
       "./analysis-problem-actions.js"
     );
     api.rejectAnalysisCondition.mockRejectedValue(new api.ApiError(404));
-    let h = handlers();
-    await rejectProblemCondition(problem, h);
-    expect(h.deleteLocally).toHaveBeenCalledOnce();
-
-    session.current = { id: "other-check" };
-    h = handlers();
-    await rejectProblemCondition(problem, h);
+    const h = handlers();
+    await expect(rejectProblemCondition(problem, h)).rejects.toThrow(
+      "HTTP 404",
+    );
     expect(h.deleteLocally).not.toHaveBeenCalled();
   });
 
