@@ -132,10 +132,20 @@ export class TaskSheets {
           release?.();
           this._options.onTaskUpdated?.(saved);
         }
+        return saved;
       } finally {
         release?.();
       }
     };
+    if (completion) {
+      const saved = await finish(true);
+      if (!saved) return;
+      if (this._updateDialog?._task?.taskId === task.taskId)
+        this._updateDialog?._dismiss?.();
+      await this._options.reload?.();
+      this._options.fallbackFocus?.()?.focus();
+      return;
+    }
     this._updateReturnFocus = { taskId: task.taskId, trigger };
     try {
       await this._loadUpdates();
@@ -176,8 +186,7 @@ export class TaskSheets {
         );
       });
       dialog.addEventListener("taskupdateclosed", async (event) => {
-        // Resolution documentation may still be saving after dismissal.
-        // Keep that controller single-use so another card cannot replace its state.
+        // Proof editors are single-use; a fresh open reloads the shared task state.
         if (/** @type {CustomEvent} */ (event).detail?.results) {
           dialog.remove();
           if (this._updateDialog === dialog) this._updateDialog = null;
@@ -202,7 +211,7 @@ export class TaskSheets {
     this._updateDialog._finishResolution = finish;
     this.mount();
     if (completion || mode === "results")
-      this._updateDialog.openResults(task, completion);
+      await this._updateDialog.openProof(task);
     else await this._updateDialog.open(this._resolve(task), mode);
   }
 

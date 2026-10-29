@@ -69,7 +69,7 @@ const entries = [
     entry: resolve(backendRoot, "src/lambda/api.js"),
     // Native addons can't be bundled — keep the import as a runtime require
     // resolved against the copied node_modules (see copy step below).
-    external: ["sharp"],
+    external: ["sharp", "libheif-js"],
   },
   {
     name: "authorizer",
@@ -222,6 +222,13 @@ if (!sharpSrc) {
     );
   }
 }
+
+// Keep the HEIC WASM decoder self-contained and lazy-loaded in the API only.
+const heifSrc = findPkg("libheif-js");
+if (!heifSrc) throw new Error("[build-lambdas] libheif-js not found");
+await cp(heifSrc, join(distDir, "api", "node_modules", "libheif-js"), {
+  recursive: true,
+});
 
 // Copy @duckdb/node-api + its native bindings into the analytics dists.
 // Same resolution logic as sharp: workspace-root node_modules first.

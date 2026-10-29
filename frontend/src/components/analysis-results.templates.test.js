@@ -1397,3 +1397,25 @@ describe("waiting for connection", () => {
     expect(markup).not.toContain("analysis-card__media--placeholder");
   });
 });
+
+it.each([false, true])(
+  "shows Add proof for either completion path and removes it after saving (%s)",
+  (canBeInProgress) => {
+    const task = {
+      taskId: "proof",
+      status: "completed",
+      canBeInProgress,
+      completionMethod: canBeInProgress ? "site_team_resolved" : "manual",
+    };
+    const render = (task) =>
+      taskAnalysisCard({ task, action: null, statusLabel: "", history: true });
+    expect(render(task)).toContain('data-action="add-proof"');
+    expect(render(task)).toContain(t("taskUpdate.addProof"));
+    expect(render({ ...task, proofAddedAt: "2026-10-28" })).not.toContain(
+      'data-action="add-proof"',
+    );
+    expect(
+      render({ ...task, status: "open", createdAt: "2020-01-01" }),
+    ).not.toContain('data-action="add-proof"');
+  },
+);

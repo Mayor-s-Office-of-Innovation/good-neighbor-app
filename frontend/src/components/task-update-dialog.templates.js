@@ -1,3 +1,4 @@
+import { PHOTO_ACCEPT } from "../domain/attachment-files.js";
 import { artifactPhoto } from "./artifact-photo.templates.js";
 import {
   cityHelpQuestion,
@@ -282,7 +283,61 @@ export function taskUpdateCapture({
           ${translatedText("taskUpdate.capture.unattached")}
         </p>`
       : ""}
-    ${photoPicker(previews, "update", files, photosAllowed)}
+    ${!photosAllowed
+      ? html`<p>${translatedText("taskUpdate.photo.unavailable")}</p>`
+      : ""}
+    <div class="task-update__capture-controls">
+      ${photosAllowed
+        ? html`<button
+              type="button"
+              class="btn-blue task-update__take-photo"
+              data-take-photo
+            >
+              <wa-icon name="camera" aria-hidden="true"></wa-icon
+              >${translatedText("taskUpdate.capture.takePhoto")}
+            </button>
+            <input
+              hidden
+              type="file"
+              accept="${PHOTO_ACCEPT}"
+              capture="environment"
+              multiple
+              aria-label="${escapeAttr(t("taskUpdate.capture.takePhoto"))}"
+              data-photos
+            />`
+        : ""}
+      <div class="task-update__capture-secondary">
+        ${populatedNotes.length < MAX_TASK_UPDATE_NOTES
+          ? html`<button type="button" class="btn-outline" data-add-note>
+              <wa-icon name="keyboard" aria-hidden="true"></wa-icon
+              >${translatedText("taskUpdate.capture.typeNote")}
+            </button>`
+          : ""}
+        ${photosAllowed
+          ? html`<button type="button" class="btn-outline" data-upload-photos>
+                <wa-icon name="image" aria-hidden="true"></wa-icon
+                >${translatedText("taskUpdate.capture.uploadPhotos")}
+              </button>
+              <span hidden data-photo-upload-status role="status"
+                ><wa-spinner></wa-spinner>${translatedText(
+                  "taskUpdate.capture.uploading",
+                )}</span
+              >
+              <input
+                hidden
+                type="file"
+                accept="${PHOTO_ACCEPT}"
+                multiple
+                aria-label="${escapeAttr(t("taskUpdate.capture.uploadPhotos"))}"
+                data-upload-input
+              />`
+          : ""}
+      </div>
+      <p hidden data-photo-error role="alert" class="task-update__error"></p>
+    </div>
+    ${previews.length
+      ? photoPicker(previews, "update", files, photosAllowed, false)
+      : ""}
     ${populatedNotes.length
       ? html`<ul class="task-update__note-list">
           ${notes
@@ -298,22 +353,15 @@ export function taskUpdateCapture({
             .join("")}
         </ul>`
       : ""}
-    ${populatedNotes.length < MAX_TASK_UPDATE_NOTES
-      ? html`<button
-          type="button"
-          class="btn-outline task-update__add-note"
-          data-add-note
-        >
-          ${translatedText("taskUpdate.capture.addNote")}
-        </button>`
-      : ""}
     ${cityHelpQuestion(cityHelpNeeded, !hasContent)}
     <div class="task-update__actions task-update__actions--footer">
       <button
         type="button"
         class="btn-ink"
         data-save-notes
-        ${cityHelpNeeded === null || (!pendingEvent && (results || !hasContent))
+        ${cityHelpNeeded === null ||
+        (results && (!hasContent || !pendingEvent)) ||
+        (!pendingEvent && !hasContent)
           ? "disabled"
           : ""}
       >
@@ -356,56 +404,87 @@ function captureTaskIdentity(task) {
   </p>`;
 }
 
-/** @param {string[]} previews @param {"update" | "action"} kind @param {File[]} [files] @param {boolean} [allowed] */
-function photoPicker(previews, kind, files = [], allowed = true) {
+/** @param {string[]} previews @param {"update" | "action"} kind @param {File[]} [files] @param {boolean} [allowed] @param {boolean} [showPicker] */
+function photoPicker(
+  previews,
+  kind,
+  files = [],
+  allowed = true,
+  showPicker = true,
+) {
   if (!allowed)
     return html`<p>${translatedText("taskUpdate.photo.unavailable")}</p>`;
   return html`<div class="task-update__photo-grid">
-    <label class="photo-capture-tile task-update__photo-picker"
-      ><input
-        class="visually-hidden"
-        type="file"
-        accept="image/jpeg,image/png,image/webp"
-        capture="environment"
-        multiple
-        data-photos
-      /><span
-        class="photo-capture-tile__icon task-update__camera"
-        aria-hidden="true"
-        ><wa-icon name="camera"></wa-icon></span
-      ><span class="photo-capture-tile__label"
-        >${translatedText("check.photo.take")}</span
-      ></label
-    >
+    ${showPicker
+      ? html`<label class="photo-capture-tile task-update__photo-picker"
+          ><input
+            class="visually-hidden"
+            type="file"
+            accept="${PHOTO_ACCEPT}"
+            capture="environment"
+            multiple
+            data-photos
+          /><span
+            class="photo-capture-tile__icon task-update__camera"
+            aria-hidden="true"
+            ><wa-icon name="camera"></wa-icon></span
+          ><span class="photo-capture-tile__label"
+            >${translatedText("check.photo.take")}</span
+          ></label
+        > `
+      : ""}
     ${previews
       .map(
         (url, index) =>
-          html`<button
-            class="task-update__photo-trigger"
-            type="button"
-            data-photo-lightbox
-            data-timeline-focus="original-photo"
-            data-photo-time="${escapeAttr(
-              files[index]?.lastModified
-                ? new Date(files[index].lastModified).toISOString()
-                : "",
-            )}"
-          >
-            <img
-              class="task-update__photo task-update__photo--draft"
-              src="${escapeAttr(url)}"
-              alt="${escapeAttr(
-                t(
-                  kind === "action"
-                    ? "taskUpdate.photo.selectedActionAlt"
-                    : "taskUpdate.photo.selectedUpdateAlt",
-                  { index: index + 1 },
-                ),
+          html`<div class="task-update__draft-photo">
+            <button
+              class="task-update__photo-trigger"
+              type="button"
+              data-photo-lightbox
+              data-timeline-focus="original-photo"
+              data-photo-time="${escapeAttr(
+                files[index]?.lastModified
+                  ? new Date(files[index].lastModified).toISOString()
+                  : "",
               )}"
-            />
-          </button>`,
+            >
+              <img
+                class="task-update__photo task-update__photo--draft"
+                src="${escapeAttr(url)}"
+                alt="${escapeAttr(
+                  t(
+                    kind === "action"
+                      ? "taskUpdate.photo.selectedActionAlt"
+                      : "taskUpdate.photo.selectedUpdateAlt",
+                    { index: index + 1 },
+                  ),
+                )}"
+              />
+            </button>
+            <p hidden data-preview-unavailable role="status">
+              ${translatedText("taskUpdate.photo.previewUnavailable")}
+            </p>
+            <button
+              type="button"
+              class="btn-outline task-update__remove-photo"
+              data-remove-photo="${index}"
+              aria-label="${escapeAttr(
+                t("care.photo.remove", { index: index + 1 }),
+              )}"
+            >
+              <wa-icon name="xmark" aria-hidden="true"></wa-icon>
+            </button>
+          </div>`,
       )
       .join("")}
+    ${showPicker
+      ? html`<p
+          hidden
+          data-photo-error
+          role="alert"
+          class="task-update__error"
+        ></p>`
+      : ""}
   </div>`;
 }
 

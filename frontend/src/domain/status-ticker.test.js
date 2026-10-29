@@ -86,8 +86,12 @@ describe("status ticker priorities", () => {
         duplicate: {},
         duplicateCheckState: "pending",
       };
-      expect(ticker(task).key).toBe("resolved");
-      expect(statusTicker(task, { now, history: true }).key).toBe("resolved");
+      expect(ticker(task).key).toBe(
+        task.status === "completed" ? "awaitingProof" : "resolved",
+      );
+      expect(statusTicker(task, { now, history: true }).key).toBe(
+        status === "completed" ? "awaitingProof" : "resolved",
+      );
     },
   );
   it("uses original creation, never updatedAt, for age", () => {
@@ -109,14 +113,14 @@ describe("status ticker priorities", () => {
     );
     expect(
       ticker({ status: "completed", canBeInProgress: false }),
-    ).toMatchObject({ key: "" });
+    ).toMatchObject({ key: "awaitingProof" });
     expect(
       ticker({
         status: "completed",
         canBeInProgress: false,
         completionMethod: "site_team_resolved",
       }),
-    ).toMatchObject({ key: "resolved", tone: "success" });
+    ).toMatchObject({ key: "awaitingProof", tone: "warning" });
   });
 });
 
@@ -156,13 +160,13 @@ describe("resolution evidence shared by ticker and expiration", () => {
     };
     expect(
       statusTicker(task, { now: Date.parse("2026-10-03T12:00:00Z") }).key,
-    ).toBe("resolved");
+    ).toBe("awaitingProof");
     expect(unresolvedExpiryAt(task, now)).toBe("");
     task.completedAt = "2026-10-16T12:00:00Z";
     expect(unresolvedExpiryAt(task, now)).toBe("2026-10-15T12:00:00.000Z");
   });
   it.each(["manual", "user_confirmed", "custom_action", "311_filed"])(
-    "does not treat %s action completion as resolution",
+    "requests proof for %s action completion",
     async (completionMethod) => {
       const { unresolvedExpiryAt } = await import("./home-tasks.js");
       const task = {
@@ -175,7 +179,7 @@ describe("resolution evidence shared by ticker and expiration", () => {
       };
       expect(
         statusTicker(task, { now: Date.parse("2026-10-03T12:00:00Z") }).key,
-      ).toBe("");
+      ).toBe("awaitingProof");
       expect(unresolvedExpiryAt(task, now)).toBe("2026-10-15T12:00:00.000Z");
     },
   );
@@ -206,9 +210,11 @@ describe("resolution evidence shared by ticker and expiration", () => {
       };
       expect(
         statusTicker(task, { now: Date.parse("2026-10-03T12:00:00Z") }).key,
-      ).toBe("resolved");
+      ).toBe("awaitingProof");
       expect(unresolvedExpiryAt(task, now)).toBe("");
-      expect(ticker(task).key).toBe("resolved");
+      expect(ticker(task).key).toBe(
+        task.status === "completed" ? "awaitingProof" : "resolved",
+      );
       task.resolvedAt = "2026-10-16T12:00:00Z";
       expect(unresolvedExpiryAt(task, now)).toBe("2026-10-15T12:00:00.000Z");
     },
@@ -258,4 +264,18 @@ describe("background 311 filing", () => {
       "filed",
     );
   });
+});
+
+it("clears the proof ticker only after evidence is saved and excludes expiry-only cards", () => {
+  expect(ticker({ status: "completed", canBeInProgress: false })).toMatchObject(
+    { key: "awaitingProof", tone: "warning", icon: "file-circle-check" },
+  );
+  expect(
+    ticker({
+      status: "completed",
+      canBeInProgress: false,
+      proofAddedAt: "2026-10-22",
+    }).key,
+  ).toBe("resolved");
+  expect(ticker({ status: "open", createdAt: "2026-10-01" }).key).toBe("");
 });

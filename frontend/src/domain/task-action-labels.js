@@ -49,6 +49,7 @@ export function taskActionLabel(task) {
       "actions-escalations-v7",
       "actions-escalations-v8",
       "actions-escalations-v9",
+      "actions-escalations-v10",
     ].includes(task.policyVersion)
   ) {
     return rulebookText(task.buttons?.[0] || "");

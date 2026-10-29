@@ -2,6 +2,17 @@
 
 *Policy operations log for the action/escalation rulebase.*
 
+## actions-escalations-v10 - 2026-10-28
+
+- Supersedes v9 for new assessments with all 39 rules from `GNP - rubrics-5.csv`,
+  preserved as `backend/src/analysis/guidance/sources/GNP-rules-v10.csv`.
+- BULKY-1 is a Phone call to Recology at the supplied number, with the updated
+  action text. It uses standard phone-action behavior without a ticker override.
+- Retains v9's predicate-aware `likely_to_leave` handling, medical severity routing,
+  guidance wording, and saved button-label support.
+- Keeps v9 and earlier catalogs available for saved assessments and task snapshots;
+  historical answer keys and pickup behavior are unchanged.
+
 ## actions-escalations-v9 - 2026-10-28
 
 - Imports the final `GNP - rubrics-3.csv` supplied on 2026-10-28 (39 rules),

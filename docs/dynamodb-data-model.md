@@ -296,7 +296,14 @@ photos use `TASK#<taskId>#MEDIA#<artifactId>` rows with `purpose: "task_update"`
 transactionally paired with `CHECK#<checkId>#UPDATE_MEDIA#<artifactId>` pointers.
 They are not ART rows and registration skips the analyzer queue. Events store
 artifact IDs in `photoKeys`; the media route follows the pointer and validates the
-stored Site/check S3 key before signing.
+stored Site/check S3 key before signing. HEIC/HEIF registration preserves the
+original `s3Key` and writes a JPEG rendition at `<s3Key>.display.jpg`, recorded
+as `displayS3Key` on the media row. The media route returns that rendition as
+`downloadUrl` only when the key exactly matches the original's sibling path.
+Conversion must succeed before registration; an undecodable upload returns 422
+and leaves the user's documentation draft unsaved. Both objects use the uploads
+bucket retention policy. The HEIC decoder is loaded lazily in the API Lambda,
+not shipped to browsers.
 
 **311 documentation and City-help choice.** Informational `note_photo_update` and
 `additional_action` events on filed 311 tasks store `cityHelpNeeded`. A `false`
@@ -924,3 +931,19 @@ Deletion propagation is deferred and is not part of the classification fix.
 ADR 0013 records the earlier assumption that reporting entities were not deleted;
 that assumption no longer holds for artifacts. Raw exports and Parquet are
 analytics copies, not media backups.
+
+### Resolution proof
+
+Explicitly completed tasks (including actions that cannot stay in progress) move
+straight to History. `proofAddedAt` is null until a site user saves a nonempty note
+or registered photo through a `resolution_proof` task update. This transaction
+appends the attributed timeline event and stamps the task, preserving its original
+completion time/status and avoiding another City closure job. Site authorization
+still applies; the proof author need not be the session that completed the task.
+Concurrent saves use the task snapshot condition and idempotency pointer, so only
+one proof submission wins and retries cannot add duplicate events.
+
+For legacy completed tasks without the summary field, worklist/detail reads inspect
+the latest completion event's notes/photos. Earlier progress evidence and an empty
+closed documentation window do not count. Expiry alone never requires proof.
+The History badge, Add proof button, and orange ticker use this shared summary.

@@ -132,13 +132,14 @@ for (const width of [393, 1178]) {
       if (mode === "notes") {
         await expect(dialog.locator("[data-photos]")).toBeAttached();
         await expect(
-          dialog.locator(".task-update__photo-picker"),
+          dialog.locator(".task-update__capture-controls"),
         ).toBeVisible();
         await dialog.locator("[data-photos]").setInputFiles(PHOTO_ISSUES);
         await expect(yes).toBeEnabled();
         await expect(no).toBeEnabled();
         await expect(done).toBeDisabled();
         await dialog.locator("[data-photos]").setInputFiles([]);
+        await dialog.locator("[data-remove-photo]").click();
         await expect(yes).toBeDisabled();
         await expect(no).toBeDisabled();
         await dialog.locator("[data-add-note]").click();
@@ -146,7 +147,7 @@ for (const width of [393, 1178]) {
         await dialog.locator("[data-save-note]").click();
         await expect(dialog.locator("[data-photos]")).toBeAttached();
         await expect(
-          dialog.locator(".task-update__photo-picker"),
+          dialog.locator(".task-update__capture-controls"),
         ).toBeVisible();
         await dialog.locator("[data-photos]").setInputFiles(PHOTO_ISSUES);
       } else {
