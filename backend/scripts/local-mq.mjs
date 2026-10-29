@@ -5,6 +5,9 @@
 // jar on SIGINT/SIGTERM so port 9324 isn't orphaned.
 //
 // Requires a JVM (11+; 17+ is fine and is what DynamoDB Local needs anyway).
+//
+// If an ElasticMQ already answers on the port (another stack is up), it is
+// reused instead — see lib/reuse-running.mjs.
 
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
@@ -13,6 +16,12 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { ListQueuesCommand, SQSClient } from "@aws-sdk/client-sqs";
+
+import { alreadyRunning, park } from "./lib/reuse-running.mjs";
+
+const PORT = 9324;
 
 const ELASTICMQ_VERSION = "1.7.1";
 const JAR_NAME = `elasticmq-server-all-${ELASTICMQ_VERSION}.jar`;
@@ -44,8 +53,20 @@ async function ensureJar() {
 }
 
 async function main() {
+  const probe = new SQSClient({
+    endpoint: `http://127.0.0.1:${PORT}`,
+    region: "us-east-1",
+    credentials: { accessKeyId: "local", secretAccessKey: "local" },
+    maxAttempts: 1,
+  });
+  const ping = () =>
+    probe.send(new ListQueuesCommand({}), {
+      abortSignal: AbortSignal.timeout(1500),
+    });
+  if (await alreadyRunning("mq", PORT, ping)) await park("mq", PORT, ping);
+
   await ensureJar();
-  console.log("[mq] starting ElasticMQ on :9324…");
+  console.log(`[mq] starting ElasticMQ on :${PORT}…`);
 
   const child = spawn("java", [`-Dconfig.file=${confPath}`, "-jar", jarPath], {
     stdio: "inherit",

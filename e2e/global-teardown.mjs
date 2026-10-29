@@ -6,11 +6,13 @@
   ensureLocalInfra() path (schema mirrored from Terraform, site codes seeded),
   so checks and tasks are always coherent together.
 
-  This is deliberately coarse: the suite owns gnp-local-e2e outright (declared
-  in playwright.config.js), so wiping it cannot affect a developer's
-  `npm run dev` table or anything deployed. If the process is killed before
-  teardown runs, globalSetup's entry cleanup self-heals the next run.
+  Each run owns a UUID-namespaced table and submission queue. Exact resource
+  identity and loopback guards protect other runs and the developer's data.
+  A hard kill may leave that run's disposable resources behind; later runs
+  never reuse or delete them.
 */
+import { assertRunResources } from "./helpers/run-resources.mjs";
+import { DeleteQueueCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,8 +21,6 @@ import { DeleteTableCommand, DynamoDBClient } from "@aws-sdk/client-dynamodb";
 const E2E_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(E2E_DIR, "..");
 const DDB_ENDPOINT = "http://127.0.0.1:8000";
-/** Must match playwright.config.js and global-setup.mjs. */
-const E2E_TABLE_NAME = "gnp-local-e2e";
 
 /** Same minimal .env.local reader as global-setup.mjs. */
 function loadEnvLocal() {
@@ -38,7 +38,7 @@ function loadEnvLocal() {
 /** Same safeguards as global-setup's assertLocalOnly, table name included. */
 function assertLocalOnly() {
   const endpoint = process.env.AWS_ENDPOINT_URL_DYNAMODB;
-  const tableName = process.env.DYNAMO_TABLE || E2E_TABLE_NAME;
+  assertRunResources();
   if (!endpoint) {
     throw new Error(
       "[e2e-teardown] refusing to run: AWS_ENDPOINT_URL_DYNAMODB is not set.",
@@ -57,11 +57,6 @@ function assertLocalOnly() {
       `[e2e-teardown] refusing to run: endpoint host "${host}" is not localhost/127.0.0.1.`,
     );
   }
-  if (tableName !== E2E_TABLE_NAME) {
-    throw new Error(
-      `[e2e-teardown] refusing to run: DYNAMO_TABLE "${tableName}" is not the suite table "${E2E_TABLE_NAME}".`,
-    );
-  }
 }
 
 export default async function globalTeardown() {
@@ -72,7 +67,7 @@ export default async function globalTeardown() {
     region: "us-east-1",
     credentials: { accessKeyId: "local", secretAccessKey: "local" },
   });
-  const tableName = process.env.DYNAMO_TABLE || E2E_TABLE_NAME;
+  const { tableName, queueUrl } = assertRunResources();
   try {
     await client.send(new DeleteTableCommand({ TableName: tableName }));
     console.log(`[e2e-teardown] deleted table "${tableName}"`);
@@ -80,12 +75,30 @@ export default async function globalTeardown() {
     if (/** @type {Error} */ (err).name === "ResourceNotFoundException") {
       console.log(`[e2e-teardown] table "${tableName}" already absent`);
     } else {
-      // A failed teardown leaves leftovers behind, but globalSetup's entry
-      // cleanup self-heals the next run — warn, don't fail the job.
+      // A failed teardown leaves only this run's resources behind.
+      // Warn without hiding the test result.
       console.warn(
         `[e2e-teardown] could not delete "${tableName}":`,
         /** @type {Error} */ (err).message,
       );
     }
+  }
+  const sqs = new SQSClient({
+    endpoint: "http://localhost:9324",
+    region: "us-east-1",
+    credentials: { accessKeyId: "local", secretAccessKey: "local" },
+  });
+  try {
+    await sqs.send(new DeleteQueueCommand({ QueueUrl: queueUrl }));
+    console.log(`[e2e-teardown] deleted queue "${queueUrl}"`);
+  } catch (err) {
+    if (
+      err.name !== "AWS.SimpleQueueService.NonExistentQueue" &&
+      err.name !== "QueueDoesNotExist"
+    )
+      console.warn("[e2e-teardown] could not delete run queue:", err.message);
+  } finally {
+    sqs.destroy();
+    client.destroy();
   }
 }

@@ -94,7 +94,7 @@ for (const cancelControl of ["data-cancel-save", "data-close"])
         json: {
           artifactId: `photo-${++presigns}`,
           s3Key: "photo",
-          uploadUrl: "http://127.0.0.1:5179/test-upload",
+          uploadUrl: `http://127.0.0.1:${process.env.E2E_UPDATES_PORT ?? 5179}/test-upload`,
           uploadHeaders: {},
         },
       }),
