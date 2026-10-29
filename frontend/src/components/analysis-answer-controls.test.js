@@ -188,3 +188,79 @@ it("makes covered content inert, preserves existing inert state, and restarts re
     vi.useRealTimers();
   }
 });
+
+it.each([false, true])(
+  "restores a replaced confirmation card only while it owns focus (moved away: %s)",
+  async (movedAway) => {
+    vi.useFakeTimers();
+    let repaint = () => {};
+    vi.stubGlobal(
+      "MutationObserver",
+      class {
+        constructor(callback) {
+          repaint = callback;
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const listeners = new Set();
+    const doc = {
+      body: {},
+      activeElement: null,
+      addEventListener: (_name, listener) => listeners.add(listener),
+      removeEventListener: (_name, listener) => listeners.delete(listener),
+    };
+    const focus = (element) => {
+      doc.activeElement = element;
+      for (const listener of listeners) listener({ target: element });
+    };
+    const makeCard = () => ({
+      children: [],
+      isConnected: true,
+      overlay: null,
+      getAttribute: () => "one",
+      setAttribute: vi.fn(),
+      focus: vi.fn(function () {
+        focus(this);
+      }),
+      querySelector() {
+        return this.overlay;
+      },
+      insertAdjacentHTML() {
+        this.overlay = {
+          remove: () => {
+            this.overlay = null;
+          },
+        };
+      },
+    });
+    let card = makeCard();
+    const original = card;
+    const outside = {};
+    const root = /** @type {HTMLElement} */ (
+      /** @type {unknown} */ ({
+        ownerDocument: doc,
+        querySelectorAll: () => [card],
+      })
+    );
+    const { showQuestionAnswerUpdated } = await import(
+      "./analysis-answer-controls.js"
+    );
+    try {
+      focus(card);
+      showQuestionAnswerUpdated(root, "one");
+      if (movedAway) focus(outside);
+      original.isConnected = false;
+      card = makeCard();
+      if (!movedAway) doc.activeElement = doc.body;
+      repaint();
+      expect(doc.activeElement).toBe(movedAway ? outside : card);
+      expect(card.focus).toHaveBeenCalledTimes(movedAway ? 0 : 1);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(listeners.size).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);

@@ -121,6 +121,22 @@ export function showQuestionAnswerUpdated(root, conditionId) {
   sessions.get(conditionId)?.();
   /** @type {Map<HTMLElement, boolean>} */
   const covered = new Map();
+  const doc = root.ownerDocument;
+  /** @type {Element | null} */
+  let focusedCard = null;
+  let ownsFocus = false;
+  /** @param {FocusEvent} event */
+  const onFocus = (event) => {
+    if (event.target !== focusedCard) ownsFocus = false;
+  };
+  doc?.addEventListener("focusin", onFocus);
+  /** @param {Element} card */
+  const focusCard = (card) => {
+    focusedCard = card;
+    ownsFocus = true;
+    card.setAttribute("tabindex", "-1");
+    /** @type {HTMLElement} */ (card).focus({ preventScroll: true });
+  };
   let announced = false;
   const paint = () => {
     for (const card of root.querySelectorAll(
@@ -142,6 +158,19 @@ export function showQuestionAnswerUpdated(root, conditionId) {
         );
         announced = true;
       }
+      const active = doc?.activeElement;
+      if (active === card) {
+        focusedCard = card;
+        ownsFocus = true;
+      } else if (
+        ownsFocus &&
+        focusedCard &&
+        !focusedCard.isConnected &&
+        (active === doc?.body || !active)
+      ) {
+        // Removing the owned card drops focus to body without a focusin event.
+        focusCard(card);
+      }
       for (const child of card.children) {
         if (
           !(child instanceof HTMLElement) ||
@@ -151,8 +180,7 @@ export function showQuestionAnswerUpdated(root, conditionId) {
         if (!covered.has(child)) covered.set(child, child.inert);
         // Keep focus on the card rather than an action hidden by the overlay.
         if (child.contains(root.ownerDocument?.activeElement)) {
-          card.setAttribute("tabindex", "-1");
-          /** @type {HTMLElement} */ (card).focus({ preventScroll: true });
+          focusCard(card);
         }
         child.inert = true;
       }
@@ -162,6 +190,7 @@ export function showQuestionAnswerUpdated(root, conditionId) {
   const finish = () => {
     clearTimeout(timer);
     observer.disconnect();
+    doc?.removeEventListener("focusin", onFocus);
     for (const [child, inert] of covered) child.inert = inert;
     for (const card of root.querySelectorAll(
       ".analysis-card[data-condition-id]",
