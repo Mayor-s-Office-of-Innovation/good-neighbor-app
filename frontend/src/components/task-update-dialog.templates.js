@@ -282,6 +282,9 @@ export function taskUpdateCapture({
           ${translatedText("taskUpdate.capture.unattached")}
         </p>`
       : ""}
+    ${!photosAllowed
+      ? html`<p>${translatedText("taskUpdate.photo.unavailable")}</p>`
+      : ""}
     <div class="task-update__capture-controls">
       ${photosAllowed
         ? html`<button
@@ -432,32 +435,51 @@ function photoPicker(
     ${previews
       .map(
         (url, index) =>
-          html`<button
-            class="task-update__photo-trigger"
-            type="button"
-            data-photo-lightbox
-            data-timeline-focus="original-photo"
-            data-photo-time="${escapeAttr(
-              files[index]?.lastModified
-                ? new Date(files[index].lastModified).toISOString()
-                : "",
-            )}"
-          >
-            <img
-              class="task-update__photo task-update__photo--draft"
-              src="${escapeAttr(url)}"
-              alt="${escapeAttr(
-                t(
-                  kind === "action"
-                    ? "taskUpdate.photo.selectedActionAlt"
-                    : "taskUpdate.photo.selectedUpdateAlt",
-                  { index: index + 1 },
-                ),
+          html`<div class="task-update__draft-photo">
+            <button
+              class="task-update__photo-trigger"
+              type="button"
+              data-photo-lightbox
+              data-timeline-focus="original-photo"
+              data-photo-time="${escapeAttr(
+                files[index]?.lastModified
+                  ? new Date(files[index].lastModified).toISOString()
+                  : "",
               )}"
-            />
-          </button>`,
+            >
+              <img
+                class="task-update__photo task-update__photo--draft"
+                src="${escapeAttr(url)}"
+                alt="${escapeAttr(
+                  t(
+                    kind === "action"
+                      ? "taskUpdate.photo.selectedActionAlt"
+                      : "taskUpdate.photo.selectedUpdateAlt",
+                    { index: index + 1 },
+                  ),
+                )}"
+              /></button
+            ><button
+              type="button"
+              class="btn-outline task-update__remove-photo"
+              data-remove-photo="${index}"
+              aria-label="${escapeAttr(
+                t("care.photo.remove", { index: index + 1 }),
+              )}"
+            >
+              <wa-icon name="xmark" aria-hidden="true"></wa-icon>
+            </button>
+          </div>`,
       )
       .join("")}
+    ${showPicker
+      ? html`<p
+          hidden
+          data-photo-error
+          role="alert"
+          class="task-update__error"
+        ></p>`
+      : ""}
   </div>`;
 }
 

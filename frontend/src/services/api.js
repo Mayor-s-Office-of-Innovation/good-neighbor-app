@@ -1,3 +1,4 @@
+import { contentTypeFor } from "../domain/attachment-files.js";
 import { clearTaskStatusOverrides } from "../state/task-status-overrides.js";
 import { invalidateDuplicateIssues } from "./duplicate-invalidation.js";
 /*
@@ -1363,18 +1364,7 @@ export async function uploadTaskUpdatePhoto(
   { signal = AbortSignal.timeout(120_000), onProgress } = {},
 ) {
   const blob = item.file;
-  const extension = blob.name.split(".").pop()?.toLowerCase();
-  const contentType =
-    blob.type ||
-    {
-      jpg: "image/jpeg",
-      jpeg: "image/jpeg",
-      png: "image/png",
-      webp: "image/webp",
-      heic: "image/heic",
-      heif: "image/heif",
-    }[extension] ||
-    "application/octet-stream";
+  const contentType = contentTypeFor(blob);
   const { artifactId, s3Key, uploadUrl, uploadHeaders } = await presignArtifact(
     checkId,
     {

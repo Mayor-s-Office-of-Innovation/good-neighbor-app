@@ -1,4 +1,4 @@
-import { withResolutionProof } from "../task-updates/resolution-proof.js";
+import { withResolutionProofForTasks } from "../task-updates/resolution-proof.js";
 import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
@@ -85,16 +85,11 @@ export const listTasks = async (event) => {
 
   const ranked = byWorklistPriority(result.Items ?? []);
   const selected = limit ? ranked.slice(0, limit) : ranked;
-  const tasks = [];
-  // Bound legacy lookups; documented cards already include their proof summary.
-  for (let i = 0; i < selected.length; i += 10)
-    tasks.push(
-      ...(await Promise.all(
-        selected
-          .slice(i, i + 10)
-          .map((task) => withResolutionProof(dynamoTable, siteId, task)),
-      )),
-    );
+  const tasks = await withResolutionProofForTasks(
+    dynamoTable,
+    siteId,
+    selected,
+  );
   return jsonResponse(200, { tasks });
 };
 

@@ -430,3 +430,18 @@
 .task-update__capture-controls input[hidden] {
   display: none;
 }
+
+.task-update__draft-photo {
+  position: relative;
+}
+.task-update__remove-photo {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  width: 44px;
+  min-height: 44px;
+  background: var(--wa-color-surface-default);
+}

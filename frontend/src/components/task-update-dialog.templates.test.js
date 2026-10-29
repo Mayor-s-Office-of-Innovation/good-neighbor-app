@@ -173,7 +173,7 @@ describe("task update dialog templates", () => {
       notes: ["", "", ""],
       previews: [],
     });
-    expect(capture).toContain(t("taskUpdate.capture.addNote"));
+    expect(capture).toContain(t("taskUpdate.capture.typeNote"));
     expect(capture).not.toContain("task-update__capture-task");
     const results = taskUpdateCapture({
       pendingEvent: { updateId: null },
@@ -193,10 +193,10 @@ describe("task update dialog templates", () => {
     expect(results).toContain("#AB12");
     expect(results).toContain('src="https://cdn.example/thumb.jpg"');
     expect(results).toContain("data-skip");
-    expect(capture).toContain("photo-capture-tile");
-    expect(capture).toContain("photo-capture-tile__icon");
-    expect(capture).toContain("photo-capture-tile__label");
-    expect(capture).toContain(t("check.photo.take"));
+    expect(capture).toContain("data-take-photo");
+    expect(capture).toContain("data-upload-input");
+    expect(capture).toContain("data-upload-photos");
+    expect(capture).toContain(t("taskUpdate.capture.takePhoto"));
     expect(taskUpdateActionEditor({ text: "" })).toContain("disabled");
     expect(taskUpdateActionEditor({ text: "Done" })).not.toContain(
       'data-action-outcome="additional_action_resolved" disabled',

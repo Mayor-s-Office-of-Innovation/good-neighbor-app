@@ -320,6 +320,13 @@ test("proof controls have square original media, separate camera and upload pick
     .setInputFiles(Array(4).fill("e2e/fixtures/photos/input-1.jpg"));
   await expect(page.locator("[data-photo-error]")).toBeVisible();
   await expect(page.locator(".task-update__photo--draft")).toHaveCount(2);
+  await page.locator('[data-remove-photo="0"]').click();
+  await expect(page.locator(".task-update__photo--draft")).toHaveCount(1);
+  await expect(page.locator("[data-upload-photos]")).toBeFocused();
+  await page
+    .locator("[data-upload-input]")
+    .setInputFiles("e2e/fixtures/photos/input-1.jpg");
+  await expect(page.locator(".task-update__photo--draft")).toHaveCount(2);
   await page.setViewportSize({ width: 320, height: 900 });
   await page.screenshot({
     path: "/tmp/good-neighbor-proof-controls.png",
@@ -329,4 +336,30 @@ test("proof controls have square original media, separate camera and upload pick
     (await new AxeBuilder({ page }).include("dialog.task-update").analyze())
       .violations,
   ).toEqual([]);
+});
+
+test("additional-action photos show rejection errors without losing the draft", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    const dialog = /** @type {any} */ (
+      document.querySelector("task-update-dialog")
+    );
+    dialog._mode = "action-photos";
+    dialog._pendingEvent = { updateId: "action" };
+    dialog._render();
+  });
+  await page
+    .locator("[data-photos]")
+    .setInputFiles({
+      name: "document.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("not a photo"),
+    });
+  await expect(page.locator("[data-photo-error]")).toBeVisible();
+  await page
+    .locator("[data-photos]")
+    .setInputFiles("e2e/fixtures/photos/input-1.jpg");
+  await expect(page.locator(".task-update__photo--draft")).toHaveCount(1);
+  await expect(page.locator("[data-photo-error]")).toBeHidden();
 });

@@ -43,3 +43,19 @@ export async function withResolutionProof(table, siteId, task) {
     proofAddedAt: hasContent ? update.documentedAt || update.occurredAt : null,
   };
 }
+
+/** Enrich list responses without unbounded concurrent legacy lookups.
+ * @param {string} table @param {string} siteId @param {Record<string, any>[]} tasks
+ */
+export async function withResolutionProofForTasks(table, siteId, tasks) {
+  const result = [];
+  for (let i = 0; i < tasks.length; i += 10)
+    result.push(
+      ...(await Promise.all(
+        tasks
+          .slice(i, i + 10)
+          .map((task) => withResolutionProof(table, siteId, task)),
+      )),
+    );
+  return result;
+}

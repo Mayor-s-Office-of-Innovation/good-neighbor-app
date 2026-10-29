@@ -1,3 +1,4 @@
+import { validPhotoAttachments } from "../domain/attachment-files.js";
 import { t } from "../i18n/i18n.js";
 import {
   map311StatusResponse,
@@ -520,6 +521,23 @@ export class TaskUpdateDialog extends HTMLElement {
           root.querySelector("[data-upload-input]")
         )?.click();
       });
+    root.querySelectorAll("[data-remove-photo]").forEach((button) => {
+      button.addEventListener("click", () => {
+        if (this._busy) return;
+        const index = Number(button.getAttribute("data-remove-photo"));
+        const file = this._files[index];
+        if (!file) return;
+        URL.revokeObjectURL(this._filePreviews[index]);
+        this._fileUploads.delete(file);
+        this._files.splice(index, 1);
+        this._filePreviews.splice(index, 1);
+        this._render();
+        /** @type {HTMLElement | null} */ (
+          this.querySelector("[data-upload-photos]") ||
+            this.querySelector("[data-photos]")
+        )?.focus();
+      });
+    });
     root
       .querySelectorAll("[data-photos], [data-upload-input]")
       .forEach((element) => {
@@ -528,24 +546,7 @@ export class TaskUpdateDialog extends HTMLElement {
           const selected = [...(input.files || [])];
           if (!selected.length) return;
           const files = [...this._files, ...selected];
-          const invalid = selected.some(
-            (file) =>
-              !/\.(jpe?g|png|webp|heic|heif)$/i.test(file.name) ||
-              (file.type &&
-                ![
-                  "image/jpeg",
-                  "image/png",
-                  "image/webp",
-                  "image/heic",
-                  "image/heif",
-                ].includes(file.type)),
-          );
-          if (
-            invalid ||
-            files.length > 5 ||
-            files.some((file) => !file.size || file.size > 10 * 1024 * 1024) ||
-            files.reduce((sum, file) => sum + file.size, 0) > 25 * 1024 * 1024
-          ) {
+          if (!validPhotoAttachments(files)) {
             const error = /** @type {HTMLElement | null} */ (
               root.querySelector("[data-photo-error]")
             );
