@@ -341,6 +341,146 @@ describe("app action execution", () => {
     }
   });
 
+  it("logs when 311 falls back to the site point, without coordinates", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    send
+      .mockResolvedValueOnce({
+        Item: { location: { latitude: 37.7, longitude: -122.4 } },
+      })
+      .mockResolvedValue({ Items: [] });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ data: { return_code: "0", SRNum: "2000008106" } }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const run = (/** @type {Record<string, unknown>} */ task) =>
+      executeAppActions(
+        [
+          {
+            code: "create_311_ticket",
+            payload: {
+              serviceCodeOrAction: "1.1.4.7.20.0",
+              responsibleAgencyCode: "76",
+            },
+          },
+        ],
+        {
+          env: {
+            GNP_311_SUBMISSION_ENABLED: "true",
+            DYNAMO_TABLE: "table",
+            S3_UPLOAD_BUCKET: "bucket",
+            SQS_QUEUE_URL: "queue",
+            SF311_CREATESR_URL: "https://hub.example/createsr",
+            SF311_BASIC_AUTH_USER: "user",
+            SF311_BASIC_AUTH_PASS: "pass",
+          },
+          now,
+          tableName: "table",
+          siteId: "site",
+          task,
+        },
+      );
+    const fallbackLines = () =>
+      log.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.includes("LocationFallbackToSite"));
+    try {
+      await run({ taskId: "task", checkId: "check" });
+      expect(fallbackLines()).toHaveLength(1);
+      expect(JSON.parse(fallbackLines()[0])).toMatchObject({
+        marker: "LocationFallbackToSite",
+        siteId: "site",
+        taskId: "task",
+        checkId: "check",
+      });
+      expect(fallbackLines()[0]).not.toContain("37.7");
+
+      await run({
+        taskId: "task-2",
+        location: { latitude: 37.78, longitude: -122.41 },
+      });
+      expect(fallbackLines()).toHaveLength(1);
+    } finally {
+      log.mockRestore();
+      send.mockReset();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("files 311 at a location sent after the task was written", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    send.mockResolvedValueOnce({
+      Items: [
+        {
+          artifactId: "artifact-1",
+          text: "Trash by the door",
+          latitude: 37.7793,
+          longitude: -122.4192,
+          accuracyMeters: 9,
+        },
+      ],
+    });
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ data: { return_code: "0", SRNum: "2000008106" } }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchImpl);
+    try {
+      const [result] = await executeAppActions(
+        [
+          {
+            code: "create_311_ticket",
+            payload: {
+              serviceCodeOrAction: "1.1.4.7.20.0",
+              responsibleAgencyCode: "76",
+            },
+          },
+        ],
+        {
+          env: {
+            GNP_311_SUBMISSION_ENABLED: "true",
+            DYNAMO_TABLE: "table",
+            S3_UPLOAD_BUCKET: "bucket",
+            SQS_QUEUE_URL: "queue",
+            SF311_CREATESR_URL: "https://hub.example/createsr",
+            SF311_BASIC_AUTH_USER: "user",
+            SF311_BASIC_AUTH_PASS: "pass",
+          },
+          now,
+          tableName: "table",
+          siteId: "site",
+          task: {
+            taskId: "task",
+            checkId: "check",
+            sourceArtifactIds: ["artifact-1"],
+            source: {},
+          },
+        },
+      );
+      expect(result.status).toBe("submitted");
+      expect(JSON.stringify(fetchImpl.mock.calls)).toContain("37.7793");
+      // One read of the artifact; the site's point is never needed.
+      expect(send).toHaveBeenCalledOnce();
+      expect(
+        log.mock.calls.some(([line]) =>
+          String(line).includes("LocationFallbackToSite"),
+        ),
+      ).toBe(false);
+    } finally {
+      log.mockRestore();
+      send.mockReset();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("records a failed 311 submission when config is incomplete", async () => {
     expect(
       await executeAppActions(
@@ -698,6 +838,7 @@ describe("app action execution", () => {
           },
         ],
       })
+      .mockResolvedValueOnce({ Items: [] })
       .mockResolvedValueOnce({
         Item: {
           location: {
@@ -706,7 +847,6 @@ describe("app action execution", () => {
           },
         },
       })
-      .mockResolvedValueOnce({ Items: [] })
       .mockResolvedValueOnce({});
     getObjectBytes.mockResolvedValueOnce({
       bytes: Buffer.from("image"),
@@ -828,14 +968,6 @@ describe("app action execution", () => {
   it("attaches source images to submitted SF311 service requests", async () => {
     send
       .mockResolvedValueOnce({
-        Item: {
-          location: {
-            latitude: 37.76656393517443,
-            longitude: -122.4213267021692,
-          },
-        },
-      })
-      .mockResolvedValueOnce({
         Items: [
           {
             artifactId: "artifact-1",
@@ -843,6 +975,14 @@ describe("app action execution", () => {
             contentType: "image/jpeg",
           },
         ],
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          location: {
+            latitude: 37.76656393517443,
+            longitude: -122.4213267021692,
+          },
+        },
       });
     create311MediaLink.mockResolvedValueOnce(
       "https://uploads.example.test/image.jpg?X-Amz-Signature=secret",
@@ -962,14 +1102,6 @@ describe("app action execution", () => {
   it("keeps created SF311 tickets retryable when image attachment fails", async () => {
     send
       .mockResolvedValueOnce({
-        Item: {
-          location: {
-            latitude: 37.76656393517443,
-            longitude: -122.4213267021692,
-          },
-        },
-      })
-      .mockResolvedValueOnce({
         Items: [
           {
             artifactId: "artifact-1",
@@ -977,6 +1109,14 @@ describe("app action execution", () => {
             contentType: "image/jpeg",
           },
         ],
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          location: {
+            latitude: 37.76656393517443,
+            longitude: -122.4213267021692,
+          },
+        },
       });
     create311MediaLink.mockResolvedValueOnce(
       "https://uploads.example.test/image.jpg?X-Amz-Signature=secret",
@@ -1084,9 +1224,6 @@ describe("app action execution", () => {
       const url = `https://media.example/v1/311-media?token=${token}`;
       send
         .mockResolvedValueOnce({
-          Item: { location: { latitude: 37.7, longitude: -122.4 } },
-        })
-        .mockResolvedValueOnce({
           Items: [
             {
               artifactId: "artifact-1",
@@ -1094,6 +1231,9 @@ describe("app action execution", () => {
               contentType: "image/jpeg",
             },
           ],
+        })
+        .mockResolvedValueOnce({
+          Item: { location: { latitude: 37.7, longitude: -122.4 } },
         })
         .mockResolvedValue({});
       create311MediaLink.mockResolvedValueOnce(url);
@@ -1192,14 +1332,6 @@ describe("app action execution", () => {
   it("retries failed image attachments without recreating the SF311 ticket", async () => {
     send
       .mockResolvedValueOnce({
-        Item: {
-          location: {
-            latitude: 37.76656393517443,
-            longitude: -122.4213267021692,
-          },
-        },
-      })
-      .mockResolvedValueOnce({
         Items: [
           {
             artifactId: "artifact-1",
@@ -1207,6 +1339,14 @@ describe("app action execution", () => {
             contentType: "image/jpeg",
           },
         ],
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          location: {
+            latitude: 37.76656393517443,
+            longitude: -122.4213267021692,
+          },
+        },
       });
     create311MediaLink.mockResolvedValueOnce(
       "https://uploads.example.test/image.jpg?X-Amz-Signature=secret",

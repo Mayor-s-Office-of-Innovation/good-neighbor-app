@@ -1023,6 +1023,88 @@ export async function getPublishedAssessmentGuidance(opts) {
 }
 
 /**
+ * Transaction items that copy a photo's late location to its tasks not yet sent
+ * to 311.
+ * @param {object} opts
+ * @param {string} opts.tableName
+ * @param {string} opts.siteId
+ * @param {string} opts.checkId
+ * @param {string} opts.artifactId
+ * @param {{ latitude: number, longitude: number, accuracyMeters?: number }} opts.location
+ * @returns {Promise<NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>>}
+ */
+export async function artifactTaskLocationUpdates({
+  tableName,
+  siteId,
+  checkId,
+  artifactId,
+  location,
+}) {
+  const pointer = await ddb.send(
+    new GetCommand({
+      TableName: tableName,
+      Key: currentAssessmentKey(siteId, checkId, artifactId),
+      ConsistentRead: true,
+    }),
+  );
+  if (typeof pointer.Item?.assessmentId !== "string") return [];
+  const { tasks } = await getAssessmentGuidance({
+    tableName,
+    siteId,
+    assessmentId: pointer.Item.assessmentId,
+  });
+  const hasAccuracy = location.accuracyMeters !== undefined;
+  return tasks
+    .filter(
+      (task) =>
+        ["open", "in_progress"].includes(String(task.status)) &&
+        task.inProgressActionKind !== "311_filed" &&
+        !hasSubmitted311ActionResult(
+          /** @type {import("./app-actions.js").AppActionResult[]} */ (
+            task.appActionResults ?? []
+          ),
+        ),
+    )
+    .map((task) => ({
+      Update: {
+        TableName: tableName,
+        Key: taskKey(siteId, String(task.taskId)),
+        // Bumping updatedAt makes a writer holding an older copy fail its check.
+        UpdateExpression: `SET #source.#lat = :lat, #source.#lng = :lng${
+          hasAccuracy ? ", #source.#acc = :acc" : ""
+        }, updatedAt = :now`,
+        // A filing that started after the read above keeps its location.
+        ConditionExpression:
+          "attribute_exists(#source) AND #status IN (:open, :inProgress) AND " +
+          "(attribute_not_exists(inProgressActionKind) OR inProgressActionKind <> :filed) AND " +
+          (task.updatedAt
+            ? "updatedAt = :updatedAt"
+            : "attribute_not_exists(updatedAt)") +
+          (hasAccuracy
+            ? " AND (attribute_not_exists(#source.#lat) OR #source.#acc > :acc)"
+            : " AND attribute_not_exists(#source.#lat)"),
+        ExpressionAttributeNames: {
+          "#source": "source",
+          "#status": "status",
+          "#lat": "latitude",
+          "#lng": "longitude",
+          ...(hasAccuracy ? { "#acc": "accuracyMeters" } : {}),
+        },
+        ExpressionAttributeValues: {
+          ":lat": location.latitude,
+          ":lng": location.longitude,
+          ...(hasAccuracy ? { ":acc": location.accuracyMeters } : {}),
+          ":open": "open",
+          ":inProgress": "in_progress",
+          ":filed": "311_filed",
+          ...(task.updatedAt ? { ":updatedAt": task.updatedAt } : {}),
+          ":now": new Date().toISOString(),
+        },
+      },
+    }));
+}
+
+/**
  * @param {object} opts
  * @param {string} opts.tableName
  * @param {string} opts.siteId

@@ -22,12 +22,13 @@ import {
   submitConditionAnswers,
   uploadArtifact,
   registerTextArtifact,
+  updateArtifactLocation,
   ApiError,
   contentTypeFromDataUrl,
   dataUrlToBlob,
   LEG,
 } from "./api.js";
-import { getCaptureDeviceLocation } from "./device-location.js";
+import { readCaptureDeviceLocation } from "./device-location.js";
 import {
   addItem,
   findCheckForItem,
@@ -301,6 +302,31 @@ function hasCoordinates(value) {
   );
 }
 
+// A location that arrived after upload still belongs on the photo's tasks.
+function withLocation(analysis, location) {
+  return hasCoordinates(analysis) || !hasCoordinates(location)
+    ? analysis
+    : {
+        ...analysis,
+        latitude: location.latitude,
+        longitude: location.longitude,
+      };
+}
+
+/**
+ * @param {string} checkId
+ * @param {string} artifactId
+ * @param {{ latitude: number, longitude: number, accuracyMeters?: number }} location
+ * @returns {Promise<void>}
+ */
+async function sendLocation(checkId, artifactId, location) {
+  try {
+    await updateArtifactLocation(checkId, artifactId, location);
+  } catch (err) {
+    console.warn("Could not send the photo's location", err?.status);
+  }
+}
+
 async function guidanceFromAnalysis(checkId, artifactId, analysis) {
   const assessment = assessmentFromAnalysis({ checkId, artifactId, analysis });
   const guidance = await evaluateAssessment(assessment);
@@ -426,7 +452,14 @@ async function evaluateArtifact(checkId, itemId, artifactId) {
 
   const { assessment, guidance } = await withLeg("evaluate", () =>
     observePhotoStage("evaluate", telemetry, () =>
-      guidanceFromAnalysis(checkId, artifactId, analysis),
+      guidanceFromAnalysis(
+        checkId,
+        artifactId,
+        withLocation(
+          analysis,
+          sessionItem(getCurrentCheck(), itemId)?.location,
+        ),
+      ),
     ),
   );
   updateItemAnalysis(itemId, {
@@ -761,14 +794,25 @@ export async function analyzeNoIssueDescriptionEdit(itemId, text) {
   const item = sessionItem(check, itemId);
   if (!check || !item) return null;
 
+  const read = readCaptureDeviceLocation();
   await ensureRemoteCheck(check);
   const capturedAt = new Date().toISOString();
-  const location = await getCaptureDeviceLocation();
+  let location = read.atUpload();
   const artifactId = await registerTextArtifact(check.id, {
     text,
     capturedAt,
     ...(location ?? {}),
   });
+  let textItemId = null;
+  if (!location) {
+    // GPS hadn't answered yet; send its fix if one comes within 10 s.
+    void read.later.then((late) => {
+      if (!late) return;
+      location = late;
+      if (textItemId) updateItem(textItemId, { location: late });
+      return sendLocation(check.id, artifactId, late);
+    });
+  }
   const analysis = await waitForArtifactAnalysis(check.id, artifactId);
   if (analysis.status && analysis.status !== "analyzed") {
     throw new ApiError("Analysis failed for edited description", {
@@ -779,7 +823,7 @@ export async function analyzeNoIssueDescriptionEdit(itemId, text) {
   const { guidance } = await guidanceFromAnalysis(
     check.id,
     artifactId,
-    analysis,
+    withLocation(analysis, location),
   );
   const hasProblems = Boolean(
     (guidance.tasks || []).length || (guidance.conditions || []).length,
@@ -801,6 +845,7 @@ export async function analyzeNoIssueDescriptionEdit(itemId, text) {
     ...(location ? { location } : {}),
   });
   if (!textItem) return { status: "problems", artifactId };
+  textItemId = textItem.id;
   updateItem(textItem.id, {
     upload: { status: "uploaded", artifactId },
   });
@@ -905,15 +950,17 @@ async function run(itemId) {
 
   const startedAt = Date.now();
   try {
-    const locationPromise = hasCoordinates(item.location)
-      ? Promise.resolve(item.location)
-      : getCaptureDeviceLocation();
+    const read =
+      hasCoordinates(item.location) ||
+      item.analysis?.artifactId ||
+      item.upload?.artifactId
+        ? null
+        : readCaptureDeviceLocation(
+            item.kind === "text" ? undefined : check.flowType,
+          );
+    const uploadLocation = () => (read ? read.atUpload() : item.location);
     updateItemAnalysis(itemId, { status: "queued" });
     await withLeg("start", () => ensureRemoteCheck(check));
-    const location = await locationPromise;
-    if (location && !hasCoordinates(item.location)) {
-      updateItem(itemId, { location });
-    }
     // An interrupted run may have completed the upload before analysis started:
     // the artifact coordinates then live only under `upload`. Adopt them here
     // so run() and the poll both see them instead of re-uploading.
@@ -931,7 +978,7 @@ async function run(itemId) {
           registerTextArtifact(check.id, {
             text: item.text,
             capturedAt: item.uploadedAt,
-            ...(location ?? {}),
+            ...(uploadLocation() ?? {}),
           }),
         );
         updateItem(itemId, {
@@ -948,7 +995,7 @@ async function run(itemId) {
           uploadArtifact(check.id, {
             dataUrl: item.dataUrl,
             capturedAt: item.uploadedAt,
-            ...(location ?? {}),
+            location: uploadLocation,
             ...(item.note ? { text: item.note } : {}),
             tag: item.id,
             onLeg: (leg) => {
@@ -978,6 +1025,16 @@ async function run(itemId) {
         });
         updateItemAnalysis(itemId, { s3Key });
       }
+    }
+    const sent = read?.atUpload();
+    if (sent) updateItem(itemId, { location: sent });
+    else if (read) {
+      // GPS hadn't answered yet; send its fix if one comes within 10 s.
+      void read.later.then((location) => {
+        if (!location) return;
+        updateItem(itemId, { location });
+        return sendLocation(check.id, artifactId, location);
+      });
     }
     await evaluateArtifact(check.id, itemId, artifactId);
   } catch (err) {

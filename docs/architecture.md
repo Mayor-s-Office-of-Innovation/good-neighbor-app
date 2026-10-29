@@ -206,9 +206,12 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
 - **Category resolution:** analyzer category labels → canonical rule categories via aliases;
   unresolved categories become `manual_review`, never a guess (safety-critical rules).
 - **Ticket location resolution:** capture requests a fresh device location for each photo or
-  text report and carries it through the condition/task; 311 filing uses that location first,
-  then the site's geocoded default location from `SITE#<siteId> / #META`. With neither it fails
-  the app action with a retryable `missing_location` result rather than guessing.
+  text report but never waits for it: a reading ready at upload rides along, and a later one
+  goes to `PATCH /v1/checks/{checkId}/artifacts/{artifactId}/location`, which updates the
+  `ART#` row and the photo's tasks not yet filed in one transaction. 311 filing uses the task's location, then
+  its source artifact's, then the site's geocoded default location from
+  `SITE#<siteId> / #META`. With none it fails the app action with a retryable
+  `missing_location` result rather than guessing.
 - **Classifier-backed 311 routing:** the app sends the task's source image to the constrained
   analyzer classifier when one exists, otherwise it sends the original text artifact. Images use
   the same orientation correction, 1568 px long-edge cap, flattening, and JPEG normalization as

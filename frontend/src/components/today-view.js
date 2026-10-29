@@ -175,6 +175,7 @@ import {
   getLastDeviceLocation,
   onDeviceLocationChange,
   refreshGrantedDeviceLocation,
+  startCaptureDeviceLocation,
 } from "../services/device-location.js";
 
 /**
@@ -1809,6 +1810,8 @@ class TodayView extends HTMLElement {
   async _startCapture(flowType, launcher = null) {
     if (this._startingCapture) return;
     this._startingCapture = true;
+    // Start acquiring GPS early, so we get accurate location faster when user takes a photo.
+    void startCaptureDeviceLocation();
     try {
       const position = await getSiteCheckDeviceLocation();
       if (!position) {

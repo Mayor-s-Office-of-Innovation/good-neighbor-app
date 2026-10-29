@@ -7,6 +7,7 @@ import { downscaleImage } from "../../media/downscale.js";
 import { getAnalyzerApiKey } from "../api-key.js";
 import { createAnalyzerClient } from "../analyzer-client.js";
 import { getConfig } from "../../config.js";
+import { emitMetrics } from "../../lib/metrics.js";
 import {
   buildAttachmentUpdatePayload,
   buildCloseSrPayload,
@@ -353,11 +354,17 @@ function locationFromTask(task) {
  * @param {string} opts.tableName
  * @param {string} opts.siteId
  * @param {Record<string, unknown>} opts.task
+ * @param {Record<string, unknown>[]} opts.artifacts the task's source ART# rows
  * @returns {Promise<{ latitude: number, longitude: number } | null>}
  */
-async function resolveLocation({ tableName, siteId, task }) {
+async function resolveLocation({ tableName, siteId, task, artifacts }) {
   const taskLocation = locationFromTask(task);
   if (taskLocation) return taskLocation;
+  // A location sent after upload can land after the task was written.
+  for (const artifact of artifacts) {
+    const location = coordinates(artifact);
+    if (location) return location;
+  }
 
   const site = await ddb.send(
     new GetCommand({
@@ -370,7 +377,20 @@ async function resolveLocation({ tableName, siteId, task }) {
     site.Item?.location && typeof site.Item.location === "object"
       ? /** @type {Record<string, unknown>} */ (site.Item.location)
       : {};
-  return coordinates(location);
+  const siteLocation = coordinates(location);
+  if (siteLocation) {
+    // Shows how often 311 gets the site's address, not the photo's (#560).
+    emitMetrics({
+      marker: "LocationFallbackToSite",
+      metrics: [{ name: "LocationFallbackToSite", value: 1 }],
+      props: {
+        siteId,
+        taskId: String(task.taskId ?? ""),
+        checkId: String(task.checkId ?? ""),
+      },
+    });
+  }
+  return siteLocation;
 }
 
 /**
@@ -451,9 +471,9 @@ async function loadClassifierEvidence({ tableName, siteId, task, config }) {
  * @param {string} opts.tableName
  * @param {string} opts.siteId
  * @param {Record<string, unknown>} opts.task
- * @returns {Promise<Array<{ artifactId: string, s3Key: string }>>}
+ * @returns {Promise<Record<string, unknown>[]>}
  */
-async function imageArtifactsForTask({ tableName, siteId, task }) {
+async function sourceArtifactsForTask({ tableName, siteId, task }) {
   const artifactIds = new Set(
     /** @type {string[]} */ (task.sourceArtifactIds ?? []),
   );
@@ -469,18 +489,9 @@ async function imageArtifactsForTask({ tableName, siteId, task }) {
       ConsistentRead: true,
     }),
   );
-  return (result.Items ?? [])
-    .filter(
-      (item) =>
-        artifactIds.has(String(item.artifactId ?? "")) &&
-        typeof item.s3Key === "string" &&
-        typeof item.contentType === "string" &&
-        String(item.contentType).startsWith("image/"),
-    )
-    .map((item) => ({
-      artifactId: String(item.artifactId),
-      s3Key: String(item.s3Key),
-    }));
+  return (result.Items ?? []).filter((item) =>
+    artifactIds.has(String(item.artifactId ?? "")),
+  );
 }
 
 /**
@@ -698,7 +709,13 @@ async function execute311Action({
     };
   }
 
-  const location = await resolveLocation({ tableName, siteId, task });
+  const artifacts = await sourceArtifactsForTask({ tableName, siteId, task });
+  const location = await resolveLocation({
+    tableName,
+    siteId,
+    task,
+    artifacts,
+  });
   if (!location) {
     return {
       code: action.code,
@@ -710,11 +727,17 @@ async function execute311Action({
   }
 
   const sf311 = createSf311Client({ config });
-  const imageArtifacts = await imageArtifactsForTask({
-    tableName,
-    siteId,
-    task,
-  });
+  const imageArtifacts = artifacts
+    .filter(
+      (item) =>
+        typeof item.s3Key === "string" &&
+        typeof item.contentType === "string" &&
+        String(item.contentType).startsWith("image/"),
+    )
+    .map((item) => ({
+      artifactId: String(item.artifactId),
+      s3Key: String(item.s3Key),
+    }));
   /** @type {Array<Record<string, unknown>>} */
   const tickets = [];
   for (const serviceCode of serviceCodes) {

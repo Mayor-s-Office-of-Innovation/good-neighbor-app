@@ -135,6 +135,7 @@ the "which check" question the metric cannot. Dimensions are deliberately few:
 | `AnalysisRetried` | Kind | analyze worker | transient analyzer failure; the message redelivers. Prop `reason` |
 | `AnalysisDuplicate` | Kind | analyze worker | a redelivered message found the analysis already stored |
 | `ThumbnailFailed` | Kind | analyze worker | the card thumbnail could not be stored (`reason: store`) or recorded on the ART# row (`reason: record`); the card keeps using the original. Props `reason`, `error` (SDK error name). Not an analysis failure |
+| `LocationFallbackToSite` | — | `analysis/guidance/app-actions.js` | a 311 filing used the site's point because the task had no photo position. Props `siteId`, `taskId`, `checkId` |
 
 Useful ratios (metric math): failure rate `AnalysisFailed / (AnalysisCompleted +
 AnalysisFailed)`; completion rate `CheckCompleted / CheckStarted`.
