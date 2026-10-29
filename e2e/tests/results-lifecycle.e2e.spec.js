@@ -81,7 +81,17 @@ for (const status of ["open", "in_progress"]) {
     });
     await fixture(page, status);
     await page.locator("#resolve").click();
-    await expect(page.locator("#resolve")).toHaveAttribute("aria-busy", "true");
+    if (status === "open") {
+      await expect(page.locator(".analysis-card")).toHaveAttribute(
+        "aria-busy",
+        "true",
+      );
+      await expect(page.locator("#resolve")).toBeDisabled();
+    } else
+      await expect(page.locator("#resolve")).toHaveAttribute(
+        "aria-busy",
+        "true",
+      );
     await expect(
       page.locator("task-update-dialog dialog.task-update[open]"),
     ).toHaveCount(0);

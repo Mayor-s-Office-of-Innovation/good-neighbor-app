@@ -137,6 +137,7 @@ for (const width of [393, 1178]) {
         await expect(no).toBeEnabled();
         await expect(done).toBeDisabled();
         await dialog.locator("[data-photos]").setInputFiles([]);
+        await dialog.locator("[data-remove-photo]").click();
         await expect(yes).toBeDisabled();
         await expect(no).toBeDisabled();
         await dialog.locator("[data-add-note]").click();
