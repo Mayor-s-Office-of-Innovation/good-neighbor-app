@@ -164,7 +164,7 @@ it finds:
 | Check finished with no match, with current guidance and full records | **9 GetItems** before sharing reads with other items |
 | A person marked it as separate | **2 GetItems**: task and override |
 | Task is missing, or lacks fields needed for matching | **1 GetItem**: task |
-| Pending, with analyzed source but no usable outcome yet | **5 GetItems**: task, override, analysis, result, incremental issue result |
+| Pending, with analyzed source but no usable outcome yet | **7 GetItems**: task, override, analysis, result, incremental issue result, guidance pointer, condition |
 | Other pending or unavailable paths | Varies with how far validation gets |
 | Matched to another issue | Varies; also reads the linked issue and its records |
 
@@ -187,11 +187,12 @@ early. Linked issues can add
 reads. All of these costs are in addition to loading task lists and photos.
 
 Local tests of the real handler with synthetic data confirm **9 reads for one
-complete no-match item**, **270 for 30 separate photos**, and **5 for an ordinary
+complete no-match item**, **270 for 30 separate photos**, and **7 for an ordinary
 pending item**. These checks do not contact AWS. Settled outcomes still validate
 artifact existence, observation revision, current guidance, and incremental
-positives. Pending work without a usable outcome skips the four artifact,
-observation, guidance-pointer, and condition reads in the full path.
+positives. Pending work without a usable outcome skips the artifact and
+observation reads in the full path, but still checks that current guidance
+includes the task so removed or replaced tasks stop polling.
 
 ### While the page stays open
 

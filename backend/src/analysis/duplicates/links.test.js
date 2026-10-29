@@ -453,7 +453,7 @@ it.each([1, 30])(
   },
 );
 
-it("uses five reads for a pending batch item, without artifact/projection/guidance reads", async () => {
+it("uses seven reads for a pending batch item, without artifact/projection reads", async () => {
   const { task, ref } = issue("waiting", new Date().toISOString());
   put({
     pk: task.pk,
@@ -468,12 +468,10 @@ it("uses five reads for a pending batch item, without artifact/projection/guidan
     body: JSON.stringify({ taskIds: [task.taskId] }),
   });
   expect(JSON.parse(response.body).issues[0].state).toBe("pending");
-  expect(state.reads).toHaveLength(5);
-  expect(
-    state.reads.some((key) =>
-      /ART#|DUP_OBSERVATION#|GUIDANCE_CURRENT#|ASSESSMENT#/.test(key),
-    ),
-  ).toBe(false);
+  expect(state.reads).toHaveLength(7);
+  expect(state.reads.some((key) => /ART#|DUP_OBSERVATION#/.test(key))).toBe(
+    false,
+  );
 });
 
 it("retains an incremental positive while the full result is pending", async () => {
@@ -499,8 +497,34 @@ it("ignores an invalidated incremental positive on the pending fast path", async
   expect((await duplicateForTask("test", "site", recent.task)).state).toBe(
     "pending",
   );
-  expect(state.reads).toHaveLength(4); // Caller already supplied the task.
+  expect(state.reads).toHaveLength(7); // Direct reader also reloads the current task.
 });
+
+it.each(["removed", "replaced"])(
+  "rejects a pending result whose task was %s from current guidance",
+  async (change) => {
+    const { task, ref } = issue("stale-pending", new Date().toISOString());
+    put({
+      pk: task.pk,
+      sk: `DUP_RESULT#${ref.observationId}#${ref.revision}`,
+      status: "pending",
+      queuedAt: task.createdAt,
+    });
+    put({ ...task, sk: "TASK#replacement", taskId: "replacement" });
+    put({
+      pk: task.pk,
+      sk: "ASSESSMENT#stale-pending#COND#condition",
+      taskIds: change === "removed" ? [] : ["replacement"],
+    });
+    const { getDuplicateLinks } = await import(
+      "../../handlers/duplicate-links.js"
+    );
+    const response = await getDuplicateLinks({
+      body: JSON.stringify({ taskIds: [task.taskId] }),
+    });
+    expect(JSON.parse(response.body).issues[0].state).toBe("not_applicable");
+  },
+);
 
 it("still rejects a settled negative from a superseded source projection", async () => {
   const { task } = issue("stale", "2026-10-15T10:00:00Z");

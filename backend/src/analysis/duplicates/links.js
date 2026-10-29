@@ -144,10 +144,19 @@ export async function duplicateForTask(table, site, task, reader) {
             ? "complete"
             : "pending",
   };
-  // No usable outcome yet: avoid artifact/projection/guidance reads. Incremental
+  // No usable outcome yet: avoid artifact/projection reads. Incremental
   // positives still take precedence, even while the observation is pending.
   // Every settled outcome below retains the complete current-source validation.
-  if (!hasMatch && outcome.state === "pending") return pending;
+  if (!hasMatch && outcome.state === "pending") {
+    const current = await taskForIssue(
+      site,
+      { observationId: id, conditionId: task.conditionId },
+      get,
+    );
+    return current?.taskId === task.taskId
+      ? pending
+      : { state: "not_applicable" };
+  }
   const artifact = await get({
     pk: analysisKey.pk,
     sk: `CHECK#${task.checkId}#ART#${artifactId}`,
