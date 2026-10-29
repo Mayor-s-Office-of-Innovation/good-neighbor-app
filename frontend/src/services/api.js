@@ -1,3 +1,9 @@
+import {
+  connectionFetch,
+  connectionFailed,
+  connectionSucceeded,
+  connectionTarget,
+} from "./connection-state.js";
 import { observePhotoStage, photoAttemptId } from "./photo-telemetry.js";
 import { clearTaskStatusOverrides } from "../state/task-status-overrides.js";
 import { invalidateDuplicateIssues } from "./duplicate-invalidation.js";
@@ -372,7 +378,7 @@ async function requestOnce(
   /** @type {Response} */
   let res;
   try {
-    res = await fetch(`${BASE}${path}`, {
+    res = await connectionFetch(`${BASE}${path}`, {
       method,
       headers: {
         ...(hasBody ? { "content-type": "application/json" } : {}),
@@ -884,6 +890,7 @@ export function putMediaWithProgress(
       reject(new DOMException("Upload cancelled", "AbortError"));
       return;
     }
+    const transport = connectionTarget(uploadUrl);
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", toDevUploadUrl(uploadUrl));
     Object.entries(uploadHeaders).forEach(([name, value]) =>
@@ -906,25 +913,28 @@ export function putMediaWithProgress(
         onProgress(Math.round((event.loaded / event.total) * 100));
     });
     xhr.addEventListener("loadend", () => clearTimeout(stallTimer));
-    xhr.addEventListener("load", () =>
-      xhr.status >= 200 && xhr.status < 300
+    xhr.addEventListener("load", () => {
+      connectionSucceeded(transport.service);
+      return xhr.status >= 200 && xhr.status < 300
         ? resolve()
         : reject(
             new ApiError(`Media upload → ${xhr.status}`, {
               status: xhr.status,
             }),
-          ),
-    );
-    xhr.addEventListener("error", () =>
-      reject(new ApiError("Network error uploading media", { status: 0 })),
-    );
-    xhr.addEventListener("abort", () =>
-      reject(
+          );
+    });
+    xhr.addEventListener("error", () => {
+      connectionFailed(transport.service, transport.probeUrl);
+      reject(new ApiError("Network error uploading media", { status: 0 }));
+    });
+    xhr.addEventListener("abort", () => {
+      if (stalled) connectionFailed(transport.service, transport.probeUrl);
+      return reject(
         stalled
           ? new ApiError("Media upload stalled", { status: 0 })
           : new DOMException("Upload cancelled", "AbortError"),
-      ),
-    );
+      );
+    });
     watchStall();
     signal?.addEventListener("abort", () => xhr.abort(), { once: true });
     xhr.send(file);
@@ -1009,7 +1019,7 @@ export async function putMedia(
   /** @type {Response} */
   let res;
   try {
-    res = await fetch(toDevUploadUrl(uploadUrl), {
+    res = await connectionFetch(toDevUploadUrl(uploadUrl), {
       method: "PUT",
       headers: { "content-type": contentType, ...uploadHeaders },
       body: blob,

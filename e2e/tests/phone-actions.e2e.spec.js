@@ -53,7 +53,8 @@ async function issueFixture(page, ruleId) {
     canBeInProgress: rule.canBeInProgress,
     primaryInProgressAgency: rule.primaryInProgressAgency,
     status: "open",
-    createdAt: "2026-10-15T12:00:00Z",
+    // Keep the fixture inside the rubric’s time-based worklist window.
+    createdAt: new Date(Date.now() - 60_000).toISOString(),
     inProgressAt: "",
   };
   /** @type {Array<{completionMethod: string}>} */
@@ -83,7 +84,7 @@ async function issueFixture(page, ruleId) {
     task = {
       ...task,
       status: "in_progress",
-      inProgressAt: "2026-10-15T12:01:00Z",
+      inProgressAt: new Date().toISOString(),
     };
     await route.fulfill({ json: { task } });
   });
@@ -167,9 +168,9 @@ test("failed mobile save offers a save-only retry", async ({ page }) => {
   state.fail = true;
   const button = card.locator("[data-phone-number]");
   await button.click();
-  await expect(
-    page.getByText(t("toast.actionSaveError.message"), { exact: true }),
-  ).toBeVisible();
+  await expect(card.locator("[data-operation-error]")).toContainText(
+    t("toast.actionSaveError.message"),
+  );
   await expect(button).toBeEnabled();
   await expect(card).toBeVisible();
   expect(calls).toEqual(["tel:4155530123"]);

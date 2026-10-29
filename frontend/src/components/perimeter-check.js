@@ -28,7 +28,6 @@ import {
   showDeleteErrorToast,
   showEditErrorToast,
   showEditRefreshErrorToast,
-  showEditSavedToast,
   showReanalysisErrorToast,
 } from "../state/toasts.js";
 import { requestId, setBusy, setDialogError } from "../lib/dialog-controls.js";
@@ -459,7 +458,6 @@ class PerimeterCheck extends HTMLElement {
         this._analysisEditDialog?.close();
         this._activeProblem = null;
         this._render();
-        showEditSavedToast();
       } catch (err) {
         console.error("text-only no-issue reanalysis failed", err);
         showReanalysisErrorToast();
@@ -502,7 +500,6 @@ class PerimeterCheck extends HTMLElement {
       this._analysisEditDialog?.close();
       this._activeProblem = null;
       this._render();
-      showEditSavedToast();
     } catch (err) {
       console.error("edit analysis condition failed", err);
       showEditErrorToast();
@@ -521,10 +518,7 @@ class PerimeterCheck extends HTMLElement {
     }
 
     if (problem.actionKind === "escalation") {
-      openOverlayDialog(
-        /** @type {HTMLDialogElement} */ (this._analysisProgressDialog),
-        "analysis-progress",
-      );
+      show311FilingToast(problem);
       try {
         const result = await completeCardAction(problem.taskId, {
           completionMethod: "311_filed",
@@ -535,7 +529,6 @@ class PerimeterCheck extends HTMLElement {
           return;
         }
         this._markProblemResolved(problem);
-        show311FilingToast(result.task);
       } catch (err) {
         console.error("escalation failed", err);
         this._analysisProgressDialog?.close();

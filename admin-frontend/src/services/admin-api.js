@@ -1,3 +1,4 @@
+import { connectionFetch } from "../../../frontend/src/services/connection-state.js";
 import { createReadRequests } from "./read-requests.js";
 import { localRoleHeaders } from "../local-role.js";
 import { getFreshAdminToken, startAdminLogin } from "./admin-auth.js";
@@ -35,7 +36,7 @@ async function authenticatedFetch(path, init = {}) {
   const signal = init.signal
     ? AbortSignal.any([init.signal, timeout])
     : timeout;
-  const res = await fetch(`${config.apiBase}${path}`, {
+  const res = await connectionFetch(`${config.apiBase}${path}`, {
     ...init,
     signal,
     headers: {
@@ -453,7 +454,7 @@ export const adminApi = {
       },
     ),
   uploadComplianceLetter: async (uploadUrl, file) => {
-    const response = await fetch(uploadUrl, {
+    const response = await connectionFetch(uploadUrl, {
       method: "PUT",
       headers: { "content-type": "application/pdf" },
       body: file,

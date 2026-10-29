@@ -33,10 +33,12 @@ test.describe("public complaints", () => {
     await expect(trigger).toHaveAttribute("aria-expanded", "false");
     await expect(menu).toBeHidden();
 
-    const triggerBox = await trigger.boundingBox();
-    expect(triggerBox).not.toBeNull();
-    expect(triggerBox?.width).toBe(54);
-    expect(triggerBox?.height).toBe(54);
+    await expect
+      .poll(async () => {
+        const box = await trigger.boundingBox();
+        return box && { width: box.width, height: box.height };
+      })
+      .toEqual({ width: 54, height: 54 });
     expect(
       await trigger.evaluate(
         (element) => window.getComputedStyle(element).borderRadius,
@@ -171,9 +173,9 @@ test.describe("public complaints", () => {
       });
     });
     await submit.click();
-    await expect(page.getByRole("alert")).toHaveText(
-      t("complaints.submitError"),
-    );
+    await expect(
+      page.locator("complaint-view").getByRole("alert"),
+    ).toContainText(t("complaints.submitError"));
     await expect(submit).toBeEnabled();
     await expect(description).toHaveValue("Five!");
 
@@ -219,9 +221,9 @@ test.describe("public complaints", () => {
     expect(await link.evaluate((element) => element.tagName)).toBe("A");
 
     await link.click();
-    await expect(page.getByRole("alert")).toHaveText(
-      t("complaints.detailError"),
-    );
+    await expect(
+      page.locator("complaint-view").getByRole("alert"),
+    ).toContainText(t("complaints.detailError"));
     await expect(page.locator(".complaints .topbar__back")).toBeVisible();
   });
 });

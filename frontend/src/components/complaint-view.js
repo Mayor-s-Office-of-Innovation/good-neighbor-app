@@ -1,4 +1,5 @@
 // @ts-nocheck -- routed view; JSDoc ratchet follows established frontend migration.
+import { loadError } from "./load-error.js";
 import "./complaint-view.css";
 import { currentRoute, navigate, setPopstateGuard } from "../router.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
@@ -16,7 +17,6 @@ import {
   registerComplaintArtifact,
   retryComplaint,
 } from "../services/api.js";
-import { showComplaintLoggedToast } from "../state/toasts.js";
 
 const ACCEPT = ".jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.txt";
 const MAX_IMAGE_FILE = 10 * 1024 * 1024;
@@ -169,9 +169,22 @@ class ComplaintView extends HTMLElement {
     } catch {
       this.innerHTML = html`<div class="flow complaints">
         ${this._topbar(t("complaints.title"))}
-        <p role="alert">${escapeHtml(t("complaints.loadError"))}</p>
+        <button class="btn-ink" type="button" data-new-complaint>
+          ${escapeHtml(t("complaints.log"))}
+        </button>
+        ${loadError(t("complaints.loadError"), {
+          retryAttribute: "data-retry-list",
+        })}
       </div>`;
       this._bindBack();
+      this.querySelector("[data-retry-list]")?.addEventListener(
+        "click",
+        () => void this._renderList(),
+      );
+      this.querySelector("[data-new-complaint]")?.addEventListener(
+        "click",
+        () => navigate("/complaints/new"),
+      );
     }
   }
 
@@ -188,7 +201,13 @@ class ComplaintView extends HTMLElement {
         data-complaint-link="${escapeAttr(item.complaintId)}"
         href="/complaints/${encodeURIComponent(item.complaintId)}"
       >
-        <h2>${escapeHtml(failed ? t("complaints.failed") : item.label)}</h2>
+        <h2>
+          ${escapeHtml(
+            failed
+              ? t("complaints.failed")
+              : item.label || t("complaints.analyzing"),
+          )}
+        </h2>
         <p>${escapeHtml(formatMonthDayTime(item.createdAt))}</p>
       </a>
       <div class="complaint-row__actions">
@@ -228,12 +247,24 @@ class ComplaintView extends HTMLElement {
   }
 
   _deleteDialog() {
-    return html`<dialog id="complaint-delete" class="places-modal">
+    return html`<dialog
+      id="complaint-delete"
+      class="places-modal"
+      aria-labelledby="complaint-delete-title"
+    >
       <form method="dialog" class="places-modal__card">
         <div>
-          <h2>${escapeHtml(t("complaints.delete.title"))}</h2>
+          <h2 id="complaint-delete-title">
+            ${escapeHtml(t("complaints.delete.title"))}
+          </h2>
           <p>${escapeHtml(t("complaints.delete.text"))}</p>
         </div>
+        <div
+          class="app-error app-error--panel"
+          data-delete-error
+          role="alert"
+          hidden
+        ></div>
         <div class="places-modal__actions">
           <button class="btn-ink" id="delete-confirm" type="button">
             ${escapeHtml(t("complaints.delete.confirm"))}</button
@@ -247,11 +278,23 @@ class ComplaintView extends HTMLElement {
 
   _confirmDelete(id) {
     const dialog = this.querySelector("#complaint-delete");
+    const error = dialog.querySelector("[data-delete-error]");
+    error.hidden = true;
     dialog.showModal();
-    this.querySelector("#delete-confirm").onclick = async () => {
-      await deleteComplaint(id);
-      dialog.close();
-      await this._renderList();
+    const button = this.querySelector("#delete-confirm");
+    button.onclick = async () => {
+      button.disabled = true;
+      error.hidden = true;
+      try {
+        await deleteComplaint(id);
+        dialog.close();
+        await this._renderList();
+      } catch {
+        error.textContent = `${t("notice.deleteFailed")} ${t("notice.retry")}.`;
+        error.hidden = false;
+      } finally {
+        button.disabled = false;
+      }
     };
   }
 
@@ -263,7 +306,7 @@ class ComplaintView extends HTMLElement {
     const canSubmit =
       (ready || draft.description.trim().length >= 5) &&
       draft.uploading === 0 &&
-      !draft.files.some((file) => file.status === "error");
+      !draft.files.some((file) => file.status !== "registered");
     this.innerHTML = html`<div class="flow complaint-compose">
       <button
         class="complaint-compose__close"
@@ -290,6 +333,9 @@ class ComplaintView extends HTMLElement {
         </div>
         <input id="complaint-files" type="file" multiple accept="${ACCEPT}" />
       </div>
+      ${draft.uploadError
+        ? `<p class="app-error" role="alert">${escapeHtml(t(draft.uploadError))}</p>`
+        : ""}
       <div class="complaint-files">
         ${draft.files.map((file) => this._fileRow(file)).join("")}
       </div>
@@ -304,7 +350,7 @@ class ComplaintView extends HTMLElement {
             ${escapeHtml(t("complaints.describe"))}
           </button>`}
       ${draft.submitError
-        ? `<p class="complaint-compose__error" role="alert">${escapeHtml(t(draft.submitError))}</p>`
+        ? `<p class="app-error app-error--panel app-error--warning" role="alert">${escapeHtml(t(draft.submitError))}</p>`
         : ""}
       <button
         class="btn-ink"
@@ -333,6 +379,20 @@ class ComplaintView extends HTMLElement {
     });
     this.querySelector("#complaint-files").addEventListener("change", (event) =>
       this._selectFiles([...event.target.files]),
+    );
+    this.querySelectorAll("[data-retry-file]").forEach((button) =>
+      button.addEventListener("click", () => {
+        const entry = draft.files.find(
+          (file) => file.id === button.dataset.retryFile,
+        );
+        if (entry) void this._uploadEntry(entry, draft);
+      }),
+    );
+    this.querySelectorAll("[data-replace-file]").forEach((button) =>
+      button.addEventListener("click", () => {
+        this._replacingId = button.dataset.replaceFile;
+        this.querySelector("#complaint-files")?.click();
+      }),
     );
     this.querySelectorAll("[data-remove-file]").forEach((button) =>
       button.addEventListener("click", () =>
@@ -383,22 +443,34 @@ ${escapeHtml(draft.description)}</textarea
     navigate("/complaints");
   }
 
-  _fileRow(file) {
-    return html`<div class="complaint-file">
+  _fileRow(entry) {
+    const failed = entry.status === "error";
+    return html`<div
+      class="complaint-file ${failed ? "complaint-file--failed" : ""}"
+    >
       <wa-icon
-        name="${file.file.type.startsWith("image/") ? "image" : "file-lines"}"
+        name="${failed
+          ? "triangle-exclamation"
+          : entry.status === "registered"
+            ? "circle-check"
+            : "file-lines"}"
         aria-hidden="true"
       ></wa-icon>
       <div>
-        <strong>${escapeHtml(file.file.name)}</strong
-        ><progress max="100" value="${file.progress || 0}"></progress
-        ><small>${escapeHtml(t(`complaints.upload.${file.status}`))}</small>
+        <strong>${escapeHtml(entry.file.name)}</strong>
+        ${entry.status === "uploading"
+          ? `<progress max="100" value="${entry.progress || 0}"></progress>`
+          : ""}
+        ${failed
+          ? `<p class="complaint-file__error" role="alert">${escapeHtml(t(entry.tooLarge ? "notice.tooLarge" : "notice.uploadFailed"))}
+          <button class="btn-link" type="button" ${entry.tooLarge ? "data-replace-file" : "data-retry-file"}="${escapeAttr(entry.id)}">${escapeHtml(t(entry.tooLarge ? "notice.replace" : "notice.retry"))}</button></p>`
+          : ""}
       </div>
       <button
         type="button"
-        data-remove-file="${escapeAttr(file.id)}"
+        data-remove-file="${escapeAttr(entry.id)}"
         aria-label="${escapeAttr(
-          t("complaints.upload.remove", { name: file.file.name }),
+          t("complaints.upload.remove", { name: entry.file.name }),
         )}"
       >
         <wa-icon name="xmark" aria-hidden="true"></wa-icon>
@@ -408,48 +480,89 @@ ${escapeHtml(draft.description)}</textarea
 
   async _selectFiles(files) {
     const activeDraft = draft;
+    const replacing = this._replacingId;
+    this._replacingId = null;
+    const remaining = activeDraft.files.filter(
+      (entry) => entry.id !== replacing,
+    );
+    const acceptedSize = (file) =>
+      file.size <= (isDocument(file) ? MAX_DOCUMENT_FILE : MAX_IMAGE_FILE)
+        ? file.size
+        : 0;
     if (
-      files.some((file) => isDocument(file) && file.size > MAX_DOCUMENT_FILE)
-    ) {
-      alert(t("complaints.upload.documentLimit"));
-      return;
-    }
-    if (
-      activeDraft.files.length + files.length > MAX_FILES ||
-      files.some((file) => !isDocument(file) && file.size > MAX_IMAGE_FILE) ||
-      activeDraft.files.reduce((n, entry) => n + entry.file.size, 0) +
-        files.reduce((n, file) => n + file.size, 0) >
+      remaining.length + files.length > MAX_FILES ||
+      remaining.reduce((n, entry) => n + acceptedSize(entry.file), 0) +
+        files.reduce((n, file) => n + acceptedSize(file), 0) >
         MAX_TOTAL
     ) {
-      alert(t("complaints.upload.limit"));
+      activeDraft.uploadError = "complaints.upload.limit";
+      this._renderDraft();
       return;
     }
-    for (const file of files) {
-      const entry = {
-        id: crypto.randomUUID(),
-        file,
-        progress: 0,
-        status: "uploading",
-      };
-      activeDraft.files.push(entry);
-      activeDraft.uploading += 1;
-      this._renderDraft();
-      const controller = new AbortController();
-      this._aborters.set(entry.id, controller);
-      try {
-        const contentType = contentTypeFor(file);
-        const signed = await presignComplaintArtifact(
+    if (replacing && !(await this._removeFile(replacing))) return;
+    activeDraft.uploadError = "";
+    if (draft !== activeDraft || !this.isConnected) return;
+    // Reserve the entire batch before awaiting uploads so another selection
+    // cannot bypass the attachment count/total-byte limits.
+    const entries = files.map((file) => ({
+      id: crypto.randomUUID(),
+      file,
+      progress: 0,
+      tooLarge:
+        file.size > (isDocument(file) ? MAX_DOCUMENT_FILE : MAX_IMAGE_FILE),
+      status:
+        file.size > (isDocument(file) ? MAX_DOCUMENT_FILE : MAX_IMAGE_FILE)
+          ? "error"
+          : "pending",
+    }));
+    activeDraft.files.push(...entries);
+    this._renderDraft();
+    for (const entry of entries) {
+      if (draft !== activeDraft || !this.isConnected) break;
+      if (!entry.tooLarge) await this._uploadEntry(entry, activeDraft);
+    }
+  }
+
+  async _uploadEntry(entry, activeDraft) {
+    if (entry.status === "uploading" || entry.tooLarge) return;
+    entry.status = "uploading";
+    activeDraft.uploading += 1;
+    this._renderDraft();
+    const controller = new AbortController();
+    this._aborters.set(entry.id, controller);
+    const file = entry.file;
+    const contentType = contentTypeFor(file);
+    try {
+      if (entry.registrationUncertain) {
+        const saved = await getComplaint(activeDraft.complaintId);
+        if (
+          saved.artifacts?.some(
+            (row) =>
+              row.artifactId === entry.artifactId &&
+              row.contentType === contentType &&
+              Number(row.contentLength) === file.size,
+          )
+        ) {
+          entry.status = "registered";
+          entry.progress = 100;
+          return;
+        }
+      }
+      if (!entry.signed || entry.signedUntil <= Date.now()) {
+        entry.signed = await presignComplaintArtifact(
           activeDraft.complaintId,
-          {
-            contentType,
-            contentLength: file.size,
-          },
+          { contentType, contentLength: file.size, uploadRequestId: entry.id },
           controller.signal,
         );
-        if (controller.signal.aborted)
-          throw new DOMException("Upload cancelled", "AbortError");
-        entry.artifactId = signed.artifactId;
-        entry.s3Key = signed.s3Key;
+        entry.signedUntil =
+          Date.now() +
+          Math.max(0, Number(entry.signed.expiresIn || 300) - 5) * 1000;
+      }
+      const signed = entry.signed;
+      controller.signal.throwIfAborted();
+      entry.artifactId = signed.artifactId;
+      entry.s3Key = signed.s3Key;
+      try {
         await putMediaWithProgress(
           signed.uploadUrl,
           file,
@@ -463,53 +576,73 @@ ${escapeHtml(draft.description)}</textarea
           },
           controller.signal,
         );
-        await registerComplaintArtifact(
-          activeDraft.complaintId,
-          {
-            artifactId: entry.artifactId,
-            s3Key: entry.s3Key,
-            name: file.name,
-            contentType,
-            contentLength: file.size,
-          },
-          controller.signal,
-        );
-        entry.status = "registered";
-        entry.progress = 100;
       } catch (error) {
-        if (error.name !== "AbortError") entry.status = "error";
-      } finally {
-        activeDraft.uploading -= 1;
-        this._aborters.delete(entry.id);
-        if (draft === activeDraft && this.isConnected) this._renderDraft();
+        if (error?.status !== 412) throw error;
       }
+      controller.signal.throwIfAborted();
+      entry.registrationUncertain = true;
+      await registerComplaintArtifact(
+        activeDraft.complaintId,
+        {
+          artifactId: entry.artifactId,
+          s3Key: entry.s3Key,
+          name: file.name,
+          contentType,
+          contentLength: file.size,
+        },
+        controller.signal,
+      );
+      entry.registrationUncertain = false;
+      entry.status = "registered";
+      entry.progress = 100;
+    } catch {
+      entry.status = "error";
+    } finally {
+      activeDraft.uploading -= 1;
+      this._aborters.delete(entry.id);
+      if (draft === activeDraft && this.isConnected) this._renderDraft();
     }
   }
 
   async _removeFile(id) {
-    const entry = draft.files.find((file) => file.id === id);
+    const activeDraft = draft;
+    const entry = activeDraft.files.find((file) => file.id === id);
     this._aborters.get(id)?.abort();
-    if (entry?.artifactId && entry.status === "registered")
-      await deleteComplaintArtifact(draft.complaintId, entry.artifactId);
-    draft.files = draft.files.filter((file) => file.id !== id);
-    this._renderDraft();
+    try {
+      if (
+        entry?.artifactId &&
+        (entry.status === "registered" || entry.registrationUncertain)
+      )
+        await deleteComplaintArtifact(
+          activeDraft.complaintId,
+          entry.artifactId,
+        );
+      activeDraft.files = activeDraft.files.filter((file) => file.id !== id);
+      return true;
+    } catch {
+      activeDraft.uploadError = "complaints.upload.removeError";
+      return false;
+    } finally {
+      if (draft === activeDraft && this.isConnected) this._renderDraft();
+    }
   }
 
   async _submit() {
+    const activeDraft = draft;
     const button = this.querySelector("#submit-complaint");
     button.disabled = true;
-    draft.submitError = "";
+    activeDraft.submitError = "";
     try {
       await createComplaint({
-        complaintId: draft.complaintId,
-        description: draft.description.trim(),
+        complaintId: activeDraft.complaintId,
+        description: activeDraft.description.trim(),
       });
+      if (draft !== activeDraft) return;
       draft = null;
-      showComplaintLoggedToast();
-      navigate("/complaints");
+      if (this.isConnected) navigate("/complaints");
     } catch {
-      draft.submitError = "complaints.submitError";
-      this._renderDraft();
+      activeDraft.submitError = "complaints.submitError";
+      if (draft === activeDraft && this.isConnected) this._renderDraft();
     }
   }
 
@@ -521,9 +654,15 @@ ${escapeHtml(draft.description)}</textarea
     } catch {
       this.innerHTML = html`<div class="flow complaints">
         ${this._topbar(t("complaints.title"))}
-        <p role="alert">${escapeHtml(t("complaints.detailError"))}</p>
+        ${loadError(t("complaints.detailError"), {
+          retryAttribute: "data-retry-detail",
+        })}
       </div>`;
       this._bindBack("/complaints");
+      this.querySelector("[data-retry-detail]")?.addEventListener(
+        "click",
+        () => void this._renderDetail(id),
+      );
       this.querySelector("h1")?.focus();
       return;
     }

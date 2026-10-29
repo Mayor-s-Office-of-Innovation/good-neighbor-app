@@ -91,7 +91,10 @@ export function ticketDetailDialog({ detail, state }) {
         ? html`<p role="status">${escapeHtml(t("ticket.loading"))}</p>`
         : ""}
       ${state === "error"
-        ? html`<div role="alert">
+        ? html`<div
+            class="app-error app-error--panel app-error--neutral"
+            role="alert"
+          >
             <p>${escapeHtml(t("ticket.loadError"))}</p>
             <button
               type="button"

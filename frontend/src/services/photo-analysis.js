@@ -1,8 +1,9 @@
+// @ts-nocheck -- matches the surrounding frontend migration baseline.
+import { saveDraft, saveFinishedCheck } from "../db.js";
 import { observePhotoStage, photoAttemptId } from "./photo-telemetry.js";
 import { pollCheck } from "./check-polling.js";
 import { watchDuplicateIssues } from "./duplicate-issues.js";
 import { projectDuplicateTasks } from "../domain/duplicate-issues.js";
-// @ts-nocheck -- matches the surrounding frontend migration baseline.
 /*
   photo-analysis — incremental evidence pipeline for perimeter checks.
 
@@ -85,6 +86,17 @@ function isHeld(check) {
  * step took and, after a failure, how long we waited overall.
  * @typedef {{ uploaded?: string, sent?: string, waiting?: string }} AnalysisStages
  */
+
+async function confirmLocalSave(check) {
+  if (!check || !isHeld(check)) return false;
+  try {
+    if (check?.status === "in-progress") await saveDraft(check);
+    else await saveFinishedCheck(check);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const active = new Set();
 const duplicateWatches = new Map();
@@ -410,9 +422,14 @@ async function evaluateArtifact(checkId, itemId, artifactId) {
     ),
   );
   if (analysis.status && analysis.status !== "analyzed") {
+    const held = checkWithItem(itemId);
+    const retries = itemById(itemId)?.analysis?.retryCount || 0;
     updateItemAnalysis(itemId, {
       status: "failed",
       artifactId,
+      lastTriedAt: new Date().toISOString(),
+      localSaveConfirmed:
+        retries >= 3 && Boolean(held) && (await confirmLocalSave(held)),
       error: analysis.error?.message || "Analysis failed.",
       failure: {
         leg: "analyze",
@@ -534,6 +551,10 @@ export function retryEvidenceItem(itemId) {
   const check = checkWithItem(itemId);
   const item = sessionItem(check, itemId);
   if (!item) return;
+  updateItemAnalysis(itemId, {
+    retryCount: (item.analysis?.retryCount || 0) + 1,
+    lastTriedAt: new Date().toISOString(),
+  });
 
   const analysisArtifactId = item.analysis?.artifactId;
   const uploadArtifactId = item.upload?.artifactId;
@@ -1000,6 +1021,7 @@ async function run(itemId) {
       });
       updateItemAnalysis(itemId, {
         status: "waiting",
+        localSaveConfirmed: await confirmLocalSave(check),
         error: undefined,
         failure: undefined,
       });
@@ -1007,6 +1029,11 @@ async function run(itemId) {
     }
     console.error("analyzeEvidenceItem failed", err);
     const failure = describeFailure(err);
+    const retries = latestItem?.analysis?.retryCount || 0;
+    const savedForLater =
+      retries >= 3 &&
+      (err?.status === 0 || err?.status >= 500) &&
+      (await confirmLocalSave(check));
     updateItem(itemId, {
       upload: {
         ...(latestItem?.upload || item.upload || {}),
@@ -1015,6 +1042,8 @@ async function run(itemId) {
     });
     updateItemAnalysis(itemId, {
       status: "failed",
+      localSaveConfirmed: savedForLater,
+      lastTriedAt: new Date().toISOString(),
       error:
         err?.body?.code === "analyses_pending"
           ? "Analysis is taking longer than expected."

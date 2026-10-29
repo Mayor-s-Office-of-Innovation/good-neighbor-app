@@ -11,7 +11,7 @@ vi.mock("./analysis-card-completion.js", () => ({
 }));
 vi.mock("../services/api.js", () => ({ createTaskUpdate: save }));
 vi.mock("../state/toasts.js", () => ({
-  showToast: toast,
+  showOperationError: toast,
   showTaskUpdateErrorToast: errorToast,
 }));
 import { TaskSheets } from "./task-sheets.js";

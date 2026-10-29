@@ -118,14 +118,18 @@ test.describe("standardized app toasts", () => {
 
   test("dismisses a standard toast after 3.5 seconds", async ({ page }) => {
     await page.evaluate(async (moduleLoader) => {
-      const { show311ErrorToast } = await /** @type {any} */ (
+      const { showToast } = await /** @type {any} */ (
         eval(`(${moduleLoader})`)
       )();
-      show311ErrorToast();
+      showToast({
+        title: "Temporary notice",
+        message: "Example",
+        duration: 3500,
+      });
     }, loadActiveToastModule);
 
     const toast = page.locator(".app-toast", {
-      hasText: t("toast.ticketFailed.title"),
+      hasText: "Temporary notice",
     });
     await expect(toast).toBeVisible();
     await page.waitForTimeout(3200);
@@ -147,7 +151,7 @@ test.describe("standardized app toasts", () => {
     await expect(toast).toContainText(t("toast.feedbackSuccess.message"));
   });
 
-  test("shows a failure toast and preserves feedback after a failed send", async ({
+  test("shows an inline error and preserves feedback after a failed send", async ({
     page,
   }) => {
     await page.route("**/v1/feedback", async (route) => {
@@ -163,57 +167,37 @@ test.describe("standardized app toasts", () => {
       "value",
       message,
     );
-    const toast = page.locator(".app-toast--error");
-    await expect(toast).toContainText(t("toast.feedbackError.title"));
-    await expect(toast).toContainText(t("toast.feedbackError.message"));
-    await expect(page.locator("app-toasts")).toHaveAttribute(
-      "popover",
-      "manual",
-    );
-    expect(
-      await page
-        .locator("app-toasts")
-        .evaluate((element) => element.matches(":popover-open")),
-    ).toBe(true);
+    const error = dialog.locator("[data-operation-error]");
+    await expect(error).toContainText(t("toast.feedbackError.title"));
+    await expect(error).toContainText(t("toast.feedbackError.message"));
+    await expect(page.locator(".app-toast--error")).toHaveCount(0);
   });
 
-  test("renders and dismisses an informational offline toast", async ({
+  test("keeps the disconnected banner until connectivity returns", async ({
     page,
+    context,
   }) => {
-    await page.evaluate(async (moduleLoader) => {
-      const { showOfflinePhotosToast } = await /** @type {any} */ (
-        eval(`(${moduleLoader})`)
-      )();
-      showOfflinePhotosToast();
-    }, loadActiveToastModule);
-
-    const toast = page.locator(".app-toast--info");
-    await expect(toast).toContainText(t("toast.offlinePhotos.title"));
-    await expect(toast).toContainText(t("toast.offlinePhotos.message"));
-    await toast
-      .getByRole("button", {
-        name: t("toastUi.dismiss.aria", {
-          title: t("toast.offlinePhotos.title"),
-        }),
-      })
-      .click();
-    await expect(toast).toHaveCount(0);
+    await context.setOffline(true);
+    const banner = page.locator(".app-connection-banner");
+    await expect(banner).toContainText(t("notice.disconnected"));
+    await expect(
+      banner.getByRole("button", { name: t("notice.checkConnection") }),
+    ).toBeVisible();
+    await expect(page.locator(".app-toast--info")).toHaveCount(0);
+    await context.setOffline(false);
+    await expect(banner).toContainText(t("notice.online"));
   });
 });
 
-base("renders notifications before a site has been bound", async ({ page }) => {
-  await page.goto("/");
-  await expect(page.locator("wa-otp-input#code-input")).toBeVisible();
-  await expect(page.locator("app-toasts")).toHaveCount(1);
-
-  await page.evaluate(async (moduleLoader) => {
-    const { showOfflinePhotosToast } = await /** @type {any} */ (
-      eval(`(${moduleLoader})`)
-    )();
-    showOfflinePhotosToast();
-  }, loadActiveToastModule);
-
-  await expect(page.locator(".app-toast--info")).toContainText(
-    t("toast.offlinePhotos.message"),
-  );
-});
+base(
+  "shows the connection banner before a site has been bound",
+  async ({ page, context }) => {
+    await page.goto("/");
+    await expect(page.locator("wa-otp-input#code-input")).toBeVisible();
+    await context.setOffline(true);
+    await expect(page.locator(".app-connection-banner")).toContainText(
+      t("notice.disconnected"),
+    );
+    await expect(page.locator("wa-otp-input#code-input")).toBeVisible();
+  },
+);

@@ -1,3 +1,7 @@
+import { startErrorPresentation } from "../../frontend/src/components/error-notice.js";
+import { mountConnectionBanner } from "../../frontend/src/components/connection-banner.js";
+startErrorPresentation();
+mountConnectionBanner();
 // Analytics page: canned queries over the reporting lake (ADR 0013), run
 // from buttons, plus an advanced panel that shows and lets you edit the SQL
 // behind the last query. Reads only the lake — never the production table.
@@ -293,7 +297,7 @@ class AdminAnalytics extends HTMLElement {
           ${s.hasToken ? '<button id="clear-token" type="button">Sign out</button>' : ""}
         </header>
         ${s.hasToken ? "" : renderSignIn(s)}
-        ${s.error ? `<p class="error" role="alert">${escapeHtml(s.error)}</p>` : ""}
+        ${s.error ? `<p class="error app-error app-error--panel" role="alert">${escapeHtml(s.error)}</p>` : ""}
         ${s.hasToken ? renderWorkspace(s) : ""}
       </main>
     `;
@@ -479,12 +483,12 @@ function renderParam(s, p) {
  * @returns {string}
  */
 function renderResult(s) {
-  if (s.resultError) {
-    return `<p class="error" role="alert">${escapeHtml(s.resultError)}</p>`;
-  }
+  const failure = s.resultError
+    ? `<p class="error app-error app-error--panel" role="alert">${escapeHtml(s.resultError)}</p>`
+    : "";
   const r = s.result;
-  if (!r) return "";
-  return `
+  if (!r) return failure;
+  return `${failure}${failure ? `<p>${escapeHtml(t("notice.previousResults"))}</p>` : ""}
     <div class="result-meta">
       <p class="muted">
         ${r.rows.length} row${r.rows.length === 1 ? "" : "s"}

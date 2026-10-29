@@ -112,9 +112,7 @@ for (const screen of ["today-view", "perimeter-check", "problem-report"]) {
         await expect(
           page.locator("task-update-dialog dialog[open]"),
         ).toBeVisible();
-        await expect(
-          page.getByText(t("taskUpdate.siteResolved"), { exact: true }).first(),
-        ).toBeVisible();
+        await expect(page.locator(".app-toast--success")).toHaveCount(0);
       }
 
       expect(requests).toBe(1);

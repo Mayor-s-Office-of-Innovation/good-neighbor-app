@@ -1,8 +1,14 @@
-import { savePhoneCompletion } from "../services/phone-completion.js";
+import {
+  savePhoneCompletion,
+  showPhoneCompletionError,
+} from "../services/phone-completion.js";
 import { getSite } from "../db.js";
 import { t } from "../i18n/i18n.js";
 import { completeTask } from "../services/api.js";
-import { showActionSaveErrorToast, showToast } from "../state/toasts.js";
+import {
+  showActionSaveErrorToast,
+  showOperationError,
+} from "../state/toasts.js";
 
 const pending = new Map();
 /** One save and results prompt per site/task, independent of card elements. */
@@ -53,6 +59,7 @@ export function toggleCardCompletion(
   const taskId = card.getAttribute("data-task-id");
   const save = async () => {
     let saved = false;
+    let saveFailed = false;
     try {
       if (!taskId) throw new Error("Task is not ready to complete");
       const result = await (isPhone
@@ -68,9 +75,9 @@ export function toggleCardCompletion(
       onSaved(result.task);
     } catch (error) {
       console.error("checklist completion failed", error);
-      if (!saved && !isPhone) {
-        button.setAttribute("aria-checked", "false");
-        showActionSaveErrorToast();
+      if (!saved) {
+        if (!isPhone) button.setAttribute("aria-checked", "false");
+        saveFailed = true;
       }
     } finally {
       pending.delete(card);
@@ -84,6 +91,18 @@ export function toggleCardCompletion(
           document.activeElement === button ||
           document.activeElement === document.body;
         await render();
+        if (saveFailed) {
+          const target = [...host.querySelectorAll("[data-task-id]")].find(
+            (node) => node.getAttribute("data-task-id") === taskId,
+          );
+          if (isPhone)
+            showPhoneCompletionError(
+              taskId,
+              host._site?.siteId,
+              target || host,
+            );
+          else showActionSaveErrorToast(undefined, target || host);
+        }
         if (shouldFocus) focusChecklistControl(host, taskId);
       }
     }
@@ -201,7 +220,8 @@ async function completeAction(taskId, body, task, siteId) {
 
 function offerResultsRetry(task, siteId) {
   let retrying = false;
-  showToast({
+  showOperationError({
+    key: `task-form:${task.taskId}`,
     title: t("taskUpdate.formUnavailableResolved"),
     message: t("taskUpdate.formUnavailableHelp"),
     icon: "triangle-exclamation",

@@ -1,3 +1,4 @@
+import { connectionFetch } from "../../../frontend/src/services/connection-state.js";
 import { getAdminConfig } from "../config.js";
 
 const ACCESS_TOKEN_KEY = "good-neighbor-admin-access-token";
@@ -75,15 +76,18 @@ export async function getFreshAdminToken() {
 
 async function refreshSession(session) {
   const config = requireAuthConfig();
-  const response = await fetch(`${config.cognitoDomain}/oauth2/token`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      client_id: config.clientId,
-      refresh_token: session.refreshToken,
-    }),
-  });
+  const response = await connectionFetch(
+    `${config.cognitoDomain}/oauth2/token`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: config.clientId,
+        refresh_token: session.refreshToken,
+      }),
+    },
+  );
   const token = await response.json().catch(() => null);
   // Sign-out or a newer sign-in wins over an outstanding refresh response.
   const current = readSession();
@@ -208,7 +212,7 @@ export async function completeAdminLoginFromUrl() {
     redirect_uri: config.redirectUri,
     code_verifier: verifier,
   });
-  const res = await fetch(`${config.cognitoDomain}/oauth2/token`, {
+  const res = await connectionFetch(`${config.cognitoDomain}/oauth2/token`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body,

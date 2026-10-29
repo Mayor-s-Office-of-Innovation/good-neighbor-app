@@ -42,7 +42,7 @@ export default defineConfig({
   reporter: CI
     ? [["list"], ["github"], ["html", { open: "never" }]]
     : [["list"], ["html", { open: "never" }]],
-  outputDir: "./test-results",
+  outputDir: "./test-results/main",
   use: {
     baseURL: "http://127.0.0.1:5173",
     trace: "retain-on-failure",

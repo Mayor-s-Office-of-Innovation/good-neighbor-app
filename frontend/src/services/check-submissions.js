@@ -128,6 +128,7 @@ export function startCheckSubmissionRecovery() {
     void resumeCheckSubmissions();
   };
   window.addEventListener("online", resume);
+  window.addEventListener("connectionretry", resume);
   window.addEventListener("pageshow", resume);
   window.addEventListener("sitebound", resume);
   document.addEventListener("visibilitychange", () => {

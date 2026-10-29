@@ -1257,3 +1257,65 @@ artifact-photo img {
   gap: 0.5rem;
   min-height: 44px;
 }
+
+/* Figma error and durable saved-input cards. Illustrations retain intrinsic geometry. */
+.analysis-card--failed.analysis-card {
+  padding: 0;
+  border: 0;
+  display: block;
+  border-radius: 1.5rem;
+  overflow: hidden;
+  background: var(--group-grey);
+}
+.analysis-error__header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1.25rem;
+  background: var(--wa-color-danger-fill-quiet, var(--c-hazard-bg));
+  color: var(--wa-color-danger-on-quiet, var(--c-hazard));
+}
+.analysis-error__header button {
+  margin-inline-start: auto;
+}
+.analysis-error__body {
+  padding: 1.75rem;
+  border-radius: 0 0 1.5rem 1.5rem;
+  background: var(--surface);
+}
+.analysis-error__body h3 {
+  font-size: 1.5625rem;
+  line-height: 1.2;
+  margin-block: 1rem 0.5rem;
+}
+.analysis-error__body p {
+  line-height: 1.6;
+  margin-block: 0.5rem 1rem;
+}
+.analysis-error__body > img {
+  display: block;
+  max-inline-size: none;
+}
+.analysis-error__illustration {
+  inline-size: 118px;
+  block-size: 45.8132px;
+}
+.analysis-saved__illustration {
+  inline-size: 58px;
+  block-size: 58px;
+}
+.analysis-error__body [data-analysis-action="retry"] {
+  background: var(--wa-color-danger-fill-quiet, var(--c-hazard-bg));
+  color: var(--wa-color-danger-on-quiet, var(--c-hazard));
+  border: 0;
+}
+.analysis-error__time {
+  padding: 0.25rem 1.75rem;
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.analysis-card--waiting {
+  border-left: 0;
+}

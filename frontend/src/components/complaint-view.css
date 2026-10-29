@@ -320,3 +320,62 @@
   object-fit: contain;
   border-radius: var(--wa-border-radius-m);
 }
+
+.complaint-file--failed > wa-icon {
+  color: var(--wa-color-danger-on-quiet, var(--c-hazard));
+}
+.complaint-file__error {
+  color: var(--wa-color-danger-on-quiet, var(--c-hazard));
+  font-size: 0.75rem;
+  line-height: 1.2;
+  margin-block: 0.75rem 0;
+}
+.complaint-file__error .btn-link {
+  padding: 0;
+  margin-inline-start: 0.25rem;
+  font-size: inherit;
+  color: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+}
+.complaint-file__error.app-error {
+  padding-inline-start: 0;
+}
+.complaint-file__error.app-error::before {
+  display: none;
+}
+#complaint-delete .places-modal__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+#complaint-delete .places-modal__actions button {
+  width: 100%;
+}
+
+/* The confirmation also renders when opening this route directly. */
+#complaint-delete {
+  border: 0;
+  padding: 0;
+  width: min(400px, calc(100vw - 2rem));
+  border-radius: 24px;
+  background: var(--surface);
+}
+#complaint-delete::backdrop {
+  background: color-mix(in srgb, var(--text) 64%, transparent);
+}
+#complaint-delete .places-modal__card {
+  margin: 0;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+#complaint-delete h2,
+#complaint-delete p {
+  margin: 0;
+}
+#delete-confirm {
+  background: var(--wa-color-danger-fill-loud, var(--c-hazard));
+  color: var(--wa-color-danger-on-loud, #fff);
+}

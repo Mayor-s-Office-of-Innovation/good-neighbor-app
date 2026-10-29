@@ -6,8 +6,12 @@ import {
 } from "./analysis-card-completion.js";
 import { completeTask } from "../services/api.js";
 import { getSite } from "../db.js";
-import { showActionSaveErrorToast, showToast } from "../state/toasts.js";
+import {
+  showActionSaveErrorToast,
+  showOperationError,
+} from "../state/toasts.js";
 vi.mock("../services/phone-completion.js", () => ({
+  showPhoneCompletionError: vi.fn(),
   savePhoneCompletion: (taskId) =>
     completeTask(taskId, { completionMethod: "manual" }).catch((error) => {
       showActionSaveErrorToast();
@@ -21,7 +25,7 @@ vi.mock("../db.js", () => ({
 vi.mock("../services/api.js", () => ({ completeTask: vi.fn() }));
 vi.mock("../state/toasts.js", () => ({
   showActionSaveErrorToast: vi.fn(),
-  showToast: vi.fn(),
+  showOperationError: vi.fn(),
 }));
 let host, card, button, callbacks, shell, animation;
 beforeEach(() => {
@@ -30,11 +34,13 @@ beforeEach(() => {
   const attrs = new Map();
   button = {
     disabled: false,
+    focus: vi.fn(),
     setAttribute: (k, v) => attrs.set(k, v),
     getAttribute: (k) => attrs.get(k),
   };
   card = {
     isConnected: true,
+    querySelector: () => button,
     querySelectorAll: () => [button],
     getAttribute: () => "task",
     setAttribute: vi.fn(),
@@ -44,6 +50,7 @@ beforeEach(() => {
   host = {
     isConnected: true,
     contains: () => false,
+    querySelectorAll: () => [card],
     querySelector: () => null,
   };
   callbacks = { onSaved: vi.fn(), render: vi.fn() };
@@ -463,7 +470,7 @@ it("keeps a successful save when opening results fails and retries only the prom
   ).resolves.toEqual({ task, resultsPending: true });
   expect(dialog.remove).toHaveBeenCalledOnce();
   expect(showActionSaveErrorToast).not.toHaveBeenCalled();
-  const retry = vi.mocked(showToast).mock.calls[0][0].action.run();
+  const retry = vi.mocked(showOperationError).mock.calls[0][0].action.run();
   await vi.advanceTimersByTimeAsync(0);
   expect(dialog.openResults).toHaveBeenLastCalledWith(task, null);
   dialog.close();
@@ -532,5 +539,5 @@ it("does not hide a real save failure when the prompt also fails", async () => {
     ),
   ).rejects.toThrow("save failed");
   await vi.advanceTimersByTimeAsync(0);
-  expect(showToast).not.toHaveBeenCalled();
+  expect(showOperationError).not.toHaveBeenCalled();
 });

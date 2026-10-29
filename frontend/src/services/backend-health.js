@@ -22,6 +22,7 @@
   app-root.js.
 */
 
+import { connectionFetch } from "./connection-state.js";
 import { reportClientEvent } from "./error-report.js";
 import { mark } from "./instrument.js";
 
@@ -119,7 +120,7 @@ export async function probe() {
   const seq = ++probeSeq;
   let ok = false;
   try {
-    const res = await fetch(PROBE_PATH, { method: "GET" });
+    const res = await connectionFetch(PROBE_PATH, { method: "GET" });
     const text = await res.text();
     // The health handler speaks JSON; HTML here is the CDN incident shape.
     ok = res.ok && text.trim().startsWith("{");
