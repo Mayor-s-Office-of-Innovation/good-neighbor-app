@@ -40,6 +40,7 @@ import {
   presignUpload,
   registerArtifact,
   deleteArtifact,
+  updateArtifactLocation,
   presignMedia,
 } from "../handlers/artifacts.js";
 import {
@@ -259,6 +260,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /v1/checks/{checkId}/artifacts:presign": presignUpload,
   "POST /v1/checks/{checkId}/artifacts": registerArtifact,
   "DELETE /v1/checks/{checkId}/artifacts/{artifactId}": deleteArtifact,
+  "PATCH /v1/checks/{checkId}/artifacts/{artifactId}/location":
+    updateArtifactLocation,
   "POST /v1/checks/{checkId}/complete": completeCheck,
   "GET /v1/checks/{checkId}/artifacts/{artifactId}/media": presignMedia,
   "GET /v1/checks/{checkId}/artifacts/{artifactId}/duplicates":

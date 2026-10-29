@@ -52,6 +52,7 @@ vi.mock("../services/device-location.js", () => ({
     };
   },
   refreshGrantedDeviceLocation: async () => null,
+  startCaptureDeviceLocation: async () => {},
 }));
 const logout = vi.hoisted(() => ({
   clearSiteSession: vi.fn(async () => {}),

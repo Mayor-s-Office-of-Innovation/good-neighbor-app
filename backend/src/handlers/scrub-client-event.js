@@ -12,6 +12,7 @@ export const EVENTS = /** @type {const} */ ([
   "camera_opened",
   "photo_picked",
   "photo_pipeline",
+  "photo_location",
   // Home Screen session handoff (frontend services/session-handoff.js).
   "handoff_grant_issued",
   "handoff_redeemed",
@@ -63,6 +64,12 @@ export const PROPERTY_KEYS = /** @type {const} */ ([
   "online",
   "visibility",
   "reason",
+  // photo_location (#560); no coordinates, to keep locations private.
+  "location_outcome",
+  "location_wait_ms",
+  "location_accuracy_m",
+  "location_sent_with_upload",
+  "permission_state",
 ]);
 const URL_KEYS = new Set(["$current_url", "$pathname", "landing_path"]);
 
