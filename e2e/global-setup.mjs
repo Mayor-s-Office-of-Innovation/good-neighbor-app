@@ -3,37 +3,27 @@
   Playwright globalSetup: runs after the webServers are healthy (backend /health
   gates on DDB Local being reachable), before any test.
 
-  Why: the suite's own table (gnp-local-e2e, declared in playwright.config.js)
-  may carry leftovers, and two pieces poison reruns:
+  Why: seeded setup codes carry maxUses: 3, and every test registers a fresh
+  device through the real flow, consuming a use — the fourth test's code entry
+  would 401 ("Invalid site code"). The harness seed is deliberately write-once
+  (attribute_not_exists), so re-seeding never resets counters.
+  Fix: reset uses/maxUses on SETUP_CODE# items.
 
-  1. Seeded setup codes carry maxUses: 3. Every test registers a fresh device
-     through the real flow, consuming a use — three reruns and the seed code
-     401s ("Invalid site code"). The harness seed is deliberately write-once
-     (attribute_not_exists), so re-seeding never resets counters.
-     Fix: reset uses/maxUses on SETUP_CODE# items each run.
-
-  2. TASK# items from previous runs stay `open` forever. The home worklist
-     (GET /v1/tasks) returns them all, and recent tasks can appear in To do
-     or the newest-check tray before this run creates its own check. Reruns
-     would inherit unrelated cards and card-counting could not reliably
-     scope to this run's guidance.
-     Fix: delete TASK# items (their GSI2 projection lives on the same item,
-     so one delete suffices) each run.
-
-  Both are no-ops after globalTeardown wiped the table (the healthy state);
-  they self-heal a run that died before teardown.
+  The suite's DynamoDB Local runs in memory on its own port (helpers/ports.js),
+  so each run starts from an empty, freshly seeded table and nothing outlives
+  it — no leftover cleanup or teardown is needed.
 
   ── Safeguard ────────────────────────────────────────────────────────────
-  This script MUTATES setup codes and DELETES tasks, and the suite binds
-  devices + seeds test data. It must never touch a deployed table, and it
-  must never touch the developer's own `npm run dev` table (which shares the
-  same DynamoDB Local instance). Two independent guards, both required:
+  This script MUTATES setup codes, and the suite binds devices + seeds test
+  data. It must never touch a deployed table, and it must never touch the
+  developer's own `npm run dev` database. Two independent guards, both
+  required:
 
-  1. AWS_ENDPOINT_URL_DYNAMODB must be SET and resolve to localhost /
-     127.0.0.1 — the SDK-only mechanism that redirects at the local
-     emulator (.env.example). Deployed environments never set it
-     (Terraform). The value the harness's own client uses is hardcoded in
-     DDB_ENDPOINT below, so this check guards THAT client's target.
+  1. AWS_ENDPOINT_URL_DYNAMODB must be SET to the suite's own DynamoDB Local
+     (loopback, E2E_PORTS.ddb) — the SDK-only mechanism that redirects at the
+     local emulator (.env.example). Deployed environments never set it
+     (Terraform), and the dev copy listens on another port. The harness's
+     own client uses DDB_ENDPOINT below, so this check guards THAT target.
   2. DYNAMO_TABLE must equal the suite's dedicated table (gnp-local-e2e,
      the same value playwright.config.js pins for the spawned backend) — and
      when missing (CI with no config-provided value…), fall back to the suite
@@ -46,9 +36,9 @@ import { backfillCheckCompletions } from "../backend/src/domain/backfill-check-c
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { E2E_PORTS, E2E_URLS } from "./helpers/ports.js";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
-  DeleteCommand,
   DynamoDBDocumentClient,
   ScanCommand,
   UpdateCommand,
@@ -56,7 +46,7 @@ import {
 
 const E2E_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(E2E_DIR, "..");
-const DDB_ENDPOINT = "http://127.0.0.1:8000";
+const DDB_ENDPOINT = E2E_URLS.ddb;
 /** The suite's own table — the ONLY table this script may touch. Must match
  * the value playwright.config.js pins for the spawned backend. */
 const E2E_TABLE_NAME = "gnp-local-e2e";
@@ -118,10 +108,15 @@ function assertLocalOnly() {
         "This script mutates/deletes data and must never target a deployed table.",
     );
   }
+  if (Number(new URL(endpoint).port) !== E2E_PORTS.ddb) {
+    throw new Error(
+      `[e2e-global] refusing to run: AWS_ENDPOINT_URL_DYNAMODB "${endpoint}" is not the suite's own DynamoDB Local (port ${E2E_PORTS.ddb}). ` +
+        "The e2e suite must never mutate the dev database.",
+    );
+  }
   // Guard 2: table name must be the suite's OWN table, never the developer's
-  // gnp-local-app (same DynamoDB Local instance hosts both) and never a
-  // deployed namespace. Belt against guard 1's braces: a loopback endpoint
-  // does not imply the right table.
+  // gnp-local-app and never a deployed namespace. Belt against guard 1's
+  // braces: the right endpoint does not imply the right table.
   if (tableName !== E2E_TABLE_NAME) {
     throw new Error(
       `[e2e-global] refusing to run: DYNAMO_TABLE "${tableName}" is not the suite table "${E2E_TABLE_NAME}". ` +
@@ -136,11 +131,9 @@ function assertLocalOnly() {
  * @param {DynamoDBDocumentClient} doc
  * @param {string} tableName
  * @param {string} prefix
- * @param {"pk" | "sk"} [keyAttribute] Which key to prefix-match on. Tasks key
- *   on sk (TASK#<taskId>), everything else on pk.
  * @returns {Promise<Array<{ pk: string, sk: string }>>}
  */
-async function scanAllByKeyPrefix(doc, tableName, prefix, keyAttribute = "pk") {
+async function scanAllByPrefix(doc, tableName, prefix) {
   /** @type {Array<{ pk: string, sk: string }>} */
   const items = [];
   let exclusiveStartKey;
@@ -148,8 +141,7 @@ async function scanAllByKeyPrefix(doc, tableName, prefix, keyAttribute = "pk") {
     const page = await doc.send(
       new ScanCommand({
         TableName: tableName,
-        FilterExpression: "begins_with(#k, :prefix)",
-        ExpressionAttributeNames: { "#k": keyAttribute },
+        FilterExpression: "begins_with(pk, :prefix)",
         ExpressionAttributeValues: { ":prefix": prefix },
         ProjectionExpression: "pk, sk",
         ...(exclusiveStartKey ? { ExclusiveStartKey: exclusiveStartKey } : {}),
@@ -160,12 +152,6 @@ async function scanAllByKeyPrefix(doc, tableName, prefix, keyAttribute = "pk") {
   } while (exclusiveStartKey);
   return /** @type {Array<{ pk: string, sk: string }>} */ (items);
 }
-
-const scanAllByPrefix = (doc, tableName, prefix) =>
-  scanAllByKeyPrefix(doc, tableName, prefix, "pk");
-
-const scanAllBySkPrefix = (doc, tableName, prefix) =>
-  scanAllByKeyPrefix(doc, tableName, prefix, "sk");
 
 async function waitAndReset() {
   const client = new DynamoDBClient({
@@ -178,7 +164,7 @@ async function waitAndReset() {
 
   for (let attempt = 1; attempt <= RETRIES; attempt++) {
     try {
-      // 1. Setup codes: reset usage counters.
+      // Setup codes: reset usage counters.
       const codes = await scanAllByPrefix(doc, tableName, "SETUP_CODE#");
       for (const item of codes) {
         await doc.send(
@@ -194,18 +180,6 @@ async function waitAndReset() {
         `[e2e-global] reset ${codes.length} setup code(s) in "${tableName}"`,
       );
 
-      // 2. Tasks: drop leftovers so the home worklist starts clean. Tasks key
-      // on sk = TASK#<taskId> (handlers/keys.js taskKey), so filter on sk.
-      const tasks = await scanAllBySkPrefix(doc, tableName, "TASK#");
-      for (const item of tasks) {
-        await doc.send(
-          new DeleteCommand({
-            TableName: tableName,
-            Key: { pk: item.pk, sk: item.sk },
-          }),
-        );
-      }
-      console.log(`[e2e-global] cleared ${tasks.length} leftover task(s)`);
       // Exercise the same migration/readiness gate required before deployment.
       await backfillCheckCompletions(doc, tableName, true);
       return;

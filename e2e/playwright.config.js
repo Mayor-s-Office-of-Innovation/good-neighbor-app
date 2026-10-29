@@ -1,12 +1,13 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "@playwright/test";
 import { slowMoOptions } from "./helpers/pace.js";
+import { E2E_PORTS, E2E_URLS } from "./helpers/ports.js";
 
 const CI = !!process.env.CI;
 
 /*
   The e2e suite drives the real local harness: backend (API + DDB/ElasticMQ/
-  MinIO/SF311 fakes on :3001) and the Vite dev server (:5173, which proxies the
-  API). Playwright boots and tears down both via webServer, plus the analyzer
+  MinIO/SF311 fakes) and the Vite dev server (which proxies the API). Playwright boots and tears down both via webServer, plus the analyzer
   stub (helpers/analyzer-stub.mjs) whose base URL flows to the worker through
   ANALYZER_BASE_URL — set here (not in .env.local) so the stub never leaks into
   manual `npm run dev` sessions.
@@ -21,15 +22,45 @@ const CI = !!process.env.CI;
   table, gnp-local-e2e — never the developer's gnp-local-app. Setting DYNAMO_TABLE
   here, before .env.local matters, is the single declaration point: the spawned
   backend bootstraps (creates + seeds) it at startup via ensureLocalInfra(), and
-  globalSetup/globalTeardown inherit the same value for their guards. globalSetup
-  REFUSES to run against any other table, and globalTeardown deletes this one, so
-  a suite run can neither read nor destroy `npm run dev` data.
+  globalSetup inherits the same value for its guards. globalSetup REFUSES to run
+  against any other table, so a suite run can neither read nor destroy
+  `npm run dev` data.
+
+  Own stack (ADR 0006 addendum, 2026-10-29): every server and emulator the
+  suite starts listens on its own port (helpers/ports.js), DynamoDB Local runs
+  in memory and MinIO keeps a separate data folder, so the suite runs beside
+  `npm run dev` without sharing anything with it. The values below are set on
+  process.env (not only on the backend's env) so globalSetup and the specs
+  that reach the emulators directly see the same endpoints.
 */
-process.env.DYNAMO_TABLE = "gnp-local-e2e";
+Object.assign(process.env, {
+  DYNAMO_TABLE: "gnp-local-e2e",
+  LOCAL_API_PORT: String(E2E_PORTS.api),
+  LOCAL_ANALYZER_PORT: String(E2E_PORTS.analyzer),
+  LOCAL_SF311_PORT: String(E2E_PORTS.sf311),
+  LOCAL_DDB_PORT: String(E2E_PORTS.ddb),
+  LOCAL_DDB_IN_MEMORY: "true",
+  LOCAL_MQ_PORT: String(E2E_PORTS.mq),
+  LOCAL_MINIO_API_PORT: String(E2E_PORTS.minio),
+  LOCAL_MINIO_CONSOLE_PORT: String(E2E_PORTS.minioConsole),
+  LOCAL_MINIO_DATA_DIR: fileURLToPath(
+    new URL("../backend/.local/minio-data-e2e", import.meta.url),
+  ),
+  AWS_ENDPOINT_URL_DYNAMODB: E2E_URLS.ddb,
+  DYNAMO_ENDPOINT: E2E_URLS.ddb,
+  AWS_ENDPOINT_URL_SQS: E2E_URLS.mq,
+  SQS_QUEUE_URL: `${E2E_URLS.mq}/local/gnp-local-e2e-submissions`,
+  AWS_ENDPOINT_URL_S3: E2E_URLS.minio,
+  SF311_MEDIA_BASE_URL: E2E_URLS.api,
+  SF311_CREATESR_URL: `${E2E_URLS.sf311}/createsr`,
+  SF311_UPDATESR_URL: `${E2E_URLS.sf311}/updatesr`,
+  SF311_AGENCY_LOOKUP_URL: `${E2E_URLS.sf311}/lookup`,
+  SF311_LATEST_UPDATES_URL: `${E2E_URLS.sf311}/latest/{agencyID}`,
+  API_PROXY_TARGET: E2E_URLS.api,
+});
 
 export default defineConfig({
   globalSetup: "./global-setup.mjs",
-  globalTeardown: "./global-teardown.mjs",
   testDir: "./tests",
   timeout: 120_000,
   expect: { timeout: 15_000 },
@@ -44,7 +75,7 @@ export default defineConfig({
     : [["list"], ["html", { open: "never" }]],
   outputDir: "./test-results",
   use: {
-    baseURL: "http://127.0.0.1:5173",
+    baseURL: E2E_URLS.app,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: CI ? "retain-on-failure" : "off",
@@ -63,35 +94,33 @@ export default defineConfig({
     {
       command: "npm run dev -w backend",
       cwd: "..",
-      url: "http://127.0.0.1:3001/health",
-      // Maximum safety: never attach to a server a developer started (it would
-      // carry the dev table's env). If ports are occupied, Playwright fails
-      // fast with "port in use" — stop the dev stack, then run the suite.
+      url: `${E2E_URLS.api}/health`,
+      // Maximum safety: never attach to a server something else started. The
+      // ports are the suite's own, so this only trips when another e2e run is
+      // up — Playwright then fails fast with "already used".
       reuseExistingServer: false,
       timeout: 120_000,
       env: {
         ...process.env,
-        ANALYZER_BASE_URL: "http://127.0.0.1:3101",
+        ANALYZER_BASE_URL: E2E_URLS.analyzer,
         ANALYZER_API_KEY: "e2e-stub-key",
         // Never inherit live Bedrock comparison settings from .env.local.
         // Dedicated duplicate UI scenarios use their own controlled fixtures.
         DUPLICATE_DETECTION_ENABLED: "false",
         DUPLICATE_QUEUE_URL: "",
-        SQS_QUEUE_URL: "http://localhost:9324/local/gnp-local-e2e-submissions",
       },
     },
     {
       command: "node helpers/analyzer-stub.mjs",
-      url: "http://127.0.0.1:3101/healthz",
+      url: `${E2E_URLS.analyzer}/healthz`,
       reuseExistingServer: false,
       timeout: 30_000,
     },
     {
-      command: "npm run dev -w frontend",
+      command: `npm run dev -w frontend -- --port ${E2E_PORTS.app} --strictPort`,
       cwd: "..",
-      url: "http://127.0.0.1:5173",
-      // The frontend proxies whatever listens on :3001 — reusing a dev-started
-      // frontend could route the suite at the dev table's API.
+      url: E2E_URLS.app,
+      // A dev-started frontend proxies the dev API — never reuse one.
       reuseExistingServer: false,
       timeout: 60_000,
     },

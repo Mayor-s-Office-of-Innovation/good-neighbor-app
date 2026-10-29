@@ -1,5 +1,6 @@
 import { test, expect } from "../helpers/harness.js";
 import { t } from "../helpers/i18n.js";
+import { E2E_URLS } from "../helpers/ports.js";
 import { PHOTO_CLEAR } from "../helpers/fixtures.js";
 
 /**
@@ -348,7 +349,7 @@ async function expireCareReservations(workId) {
   );
   const client = DynamoDBDocumentClient.from(
     new DynamoDBClient({
-      endpoint: "http://127.0.0.1:8000",
+      endpoint: E2E_URLS.ddb,
       region: "us-east-1",
       credentials: { accessKeyId: "local", secretAccessKey: "local" },
     }),
