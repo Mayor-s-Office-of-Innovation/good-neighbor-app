@@ -118,6 +118,13 @@ for (const [ruleId, number] of [
     });
     try {
       await button.focus();
+      // A server/evidence refresh must keep the keyboard action on this card.
+      await page.evaluate(() => {
+        const home = /** @type {any} */ (document.querySelector("today-view"));
+        home._homeMarkup = "";
+        home._renderHome(home._homeModel);
+      });
+      await expect(button).toBeFocused();
       await page.keyboard.press("Enter");
       await expect.poll(() => calls).toEqual([`tel:${number}`]);
       await expect
