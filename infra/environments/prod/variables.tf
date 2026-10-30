@@ -124,3 +124,9 @@ variable "alarm_emails" {
   # and acknowledgment are documented in the observability runbook.
   default = ["aaron.hans@sf.gov", "beaudry.kock@sfgov.org"]
 }
+
+variable "duplicate_alarm_route_confirmed" {
+  description = "Remove the original duplicate-alarm notification fallback only after confirming the separate topic subscriptions and verifying delivery."
+  type        = bool
+  default     = false
+}

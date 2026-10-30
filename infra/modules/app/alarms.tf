@@ -54,8 +54,8 @@ resource "aws_cloudwatch_metric_alarm" "client_error_forward_failed" {
   alarm_name          = "${local.name_prefix}-client-error-forward-failed"
   alarm_description   = "Client-error forwarder to PostHog is failing (ingest down, egress broken, or secret misread). Errors still reach CloudWatch; fix forwarding so contributors regain visibility."
   comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  datapoints_to_alarm = 1
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
   metric_name         = "ClientErrorForwardFailed"
   namespace           = local.error_namespace
   period              = 300
@@ -63,8 +63,8 @@ resource "aws_cloudwatch_metric_alarm" "client_error_forward_failed" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
 
-  alarm_actions = [aws_sns_topic.alarms.arn]
-  ok_actions    = [aws_sns_topic.alarms.arn]
+  alarm_actions = []
+  ok_actions    = []
 
   tags = var.tags
 }
@@ -123,8 +123,8 @@ resource "aws_cloudwatch_metric_alarm" "client_event_forward_failed" {
   alarm_name          = "${local.name_prefix}-client-event-forward-failed"
   alarm_description   = "Client analytics forwarder to PostHog is failing (ingest slow/down, egress broken, or secret misread). Events still land in CloudWatch with their device properties; fix forwarding so PostHog page views resume. Threshold is higher than the error twin because page views are frequent and the forwarder's 1 s budget trips first under PostHog latency."
   comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  datapoints_to_alarm = 1
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
   metric_name         = "ClientEventForwardFailed"
   namespace           = local.error_namespace
   period              = 300
@@ -132,8 +132,8 @@ resource "aws_cloudwatch_metric_alarm" "client_event_forward_failed" {
   threshold           = 10
   treat_missing_data  = "notBreaching"
 
-  alarm_actions = [aws_sns_topic.alarms.arn]
-  ok_actions    = [aws_sns_topic.alarms.arn]
+  alarm_actions = []
+  ok_actions    = []
 
   tags = var.tags
 }
@@ -201,9 +201,8 @@ resource "aws_cloudwatch_log_metric_filter" "api_server_errors" {
 
 # --- user feedback filters (docs/runbooks/feedback-ops.md) --------------------
 
-# Every valid feedback submission logs one FeedbackReceived line. The alarm is
-# the notification: ≥1 per 5-min bucket emails the SNS topic (recipients are
-# console-managed per environment — see the plan's Decisions).
+# Every valid feedback submission logs one FeedbackReceived line. Arrival metrics
+# and alarm state remain available without operational notification actions.
 resource "aws_cloudwatch_log_metric_filter" "feedback_received" {
   name           = "${local.name_prefix}-feedback-received"
   log_group_name = aws_cloudwatch_log_group.intake.name
@@ -235,8 +234,8 @@ resource "aws_cloudwatch_metric_alarm" "feedback_received" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
 
-  alarm_actions = [aws_sns_topic.alarms.arn]
-  ok_actions    = [aws_sns_topic.alarms.arn]
+  alarm_actions = []
+  ok_actions    = []
 
   tags = var.tags
 }

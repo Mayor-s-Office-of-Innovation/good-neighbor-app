@@ -105,3 +105,9 @@ variable "cloudwatch_omni_sso_permission_sets" {
   default     = {}
   description = "Omni permission by Identity Center permission-set name; see the module variable of the same name."
 }
+
+variable "duplicate_alarm_route_confirmed" {
+  description = "Remove the original duplicate-alarm notification fallback only after confirming the separate topic subscriptions and verifying delivery."
+  type        = bool
+  default     = false
+}

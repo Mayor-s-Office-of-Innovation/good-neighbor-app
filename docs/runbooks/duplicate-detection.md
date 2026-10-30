@@ -2,6 +2,11 @@
 
 ## Deployment status and order
 
+Duplicate processing is deployed in dev and prod. Environment configuration and
+the deployed event-source mappings determine activation; the module default is
+not evidence that a particular environment is disabled. The sequence below is
+the provisioning/redeployment procedure, not a claim that live queues are unused.
+
 Use the repositories' CI pipelines; do not run Terraform plan/apply locally.
 
 1. Deploy the analyzer comparison handler/contract and infrastructure first. Its
@@ -386,7 +391,7 @@ batch failed schema validation in the 32-worker cohort after both analyzer
 assessments. The worker retained failed-candidate diagnostics; treat this as an
 incomplete search rather than a clean negative. The observation does not establish
 that concurrency caused the model failure. Raising concurrency does not remediate
-either issue. Keep production detection disabled until the matching
+either issue. Before further production expansion, ensure the matching
 controls and incomplete-batch behavior have been investigated and validated.
 
 
@@ -400,9 +405,9 @@ production stage prepares 128 comparison Lambda slots and a four-request/second,
 burst-eight dedicated comparison usage plan. Normal analysis controls are separate.
 Account/model quotas and Lambda reservation headroom remain deployment prerequisites.
 
-`enable_duplicate_detection = false` remains explicit in production. No Site flags
-are changed by this configuration. Promotion can install the prepared configuration
-without starting duplicate jobs. Do not raise traffic or enable detection until the
+Production configuration now enables `enable_duplicate_detection`. Site flags
+control presentation separately from background processing. For a future staged
+rollout, deploy with processing disabled until the
 representative dev load tests and controlled fanout/recovery checks,
 matching-quality review and production permission/quota checks are accepted.
 Backend activation applies to every Site: the dispatcher and worker do not enforce
