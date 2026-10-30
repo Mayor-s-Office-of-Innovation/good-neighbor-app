@@ -172,6 +172,7 @@ export async function dismissAllNewResults(page) {
       identity.taskId,
     ].join("|");
     // Hydration can reorder the tray between reading its identity and clicking.
+    // One condition can produce several tasks, each with its own delete button.
     const first = tray.locator(
       `.analysis-card[data-artifact-id=${JSON.stringify(identity.artifactId)}][data-condition-id=${JSON.stringify(identity.conditionId)}][data-task-id=${JSON.stringify(identity.taskId)}]`,
     );
