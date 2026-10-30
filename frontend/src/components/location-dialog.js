@@ -1,3 +1,5 @@
+import { showInlineError } from "./error-notice.js";
+import { t } from "../i18n/i18n.js";
 /*
   location-dialog — "Is your app set to the right location?" A native modal
   shown by today-view before a check starts when the device's position is
@@ -62,6 +64,15 @@ class LocationDialog extends HTMLElement {
     )?.focus();
   }
 
+  showSwitchError(siteName, retry) {
+    showInlineError(t("notice.switchFailed", { site: siteName }), {
+      target: this.querySelector("dialog"),
+      key: "switch",
+      warning: true,
+      retry,
+    });
+  }
+
   render() {
     this.innerHTML = locationDialog({
       siteName: this.siteName,
@@ -106,7 +117,6 @@ class LocationDialog extends HTMLElement {
     });
     dialog.querySelector("#location-confirm")?.addEventListener("click", () => {
       if (this.selectedSiteId === this.currentSite.siteId) return;
-      dialog.close();
       this.dispatchEvent(
         new CustomEvent("locationconfirm", {
           bubbles: true,

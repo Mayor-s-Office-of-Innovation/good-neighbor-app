@@ -84,7 +84,11 @@ export function siteSwitcher({
                 </p>`
               : ""}
             ${status === "error"
-              ? html`<div class="home-site-switcher__failure">
+              ? html`<div
+                  class="home-site-switcher__failure app-error app-error--panel"
+                  role="alert"
+                >
+                  <p>${escapeHtml(t("toast.siteCatalogError.title"))}</p>
                   <button id="site-catalog-retry" type="button">
                     ${escapeHtml(t("siteSwitcher.retry"))}
                   </button>

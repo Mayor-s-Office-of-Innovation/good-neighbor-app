@@ -71,16 +71,19 @@ export const codeEntryView = ({
  * @returns {string}
  */
 function enterCodeView({ value, error, checking, reference }) {
+  const invalid = error && error !== t("setup.error.network");
   return html`
     <form
       id="code-form"
-      class="login__form ${error ? "login__form--error" : ""}"
+      class="login__form ${invalid ? "login__form--error" : ""}"
       novalidate
     >
       <wa-otp-input
         id="code-input"
-        class="login__otp ${error ? "login__otp--error" : ""}"
+        class="login__otp ${invalid ? "login__otp--error" : ""}"
         label="${escapeAttr(t("setup.codeLabel"))}"
+        aria-describedby="code-error"
+        aria-invalid="${invalid ? "true" : "false"}"
         length="6"
         type="alphanumeric"
         case="upper"
@@ -90,7 +93,9 @@ function enterCodeView({ value, error, checking, reference }) {
 
       <p
         id="code-error"
-        class="login__error"
+        class="login__error app-error ${error === t("setup.error.network")
+          ? "app-error--panel"
+          : ""}"
         role="alert"
         ${error ? "" : "hidden"}
       >
@@ -180,7 +185,7 @@ function requestCodeView({
             </label>
           `
         : ""}
-      <p class="login__error" role="alert" ${error ? "" : "hidden"}>
+      <p class="login__error app-error" role="alert" ${error ? "" : "hidden"}>
         ${escapeHtml(error)}
       </p>
       <p class="login__message" role="status" ${message ? "" : "hidden"}>
@@ -232,7 +237,7 @@ export function enrollmentView({ checking, error, reference = "" }) {
         </p>
       </div>
       <form id="enrollment-form" class="login__form">
-        <p role="alert" class="login__error" ${error ? "" : "hidden"}>
+        <p role="alert" class="login__error app-error" ${error ? "" : "hidden"}>
           ${escapeHtml(error)}
         </p>
         ${reference

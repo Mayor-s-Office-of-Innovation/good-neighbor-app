@@ -122,14 +122,14 @@ export class SupportView extends HTMLElement {
     if (status) status.textContent = busy ? t("support.waiting") : "";
   }
 
-  async _submit() {
+  async _submit(retryQuestion, retryTurn) {
     if (this._pending) return;
     const textarea =
       /** @type {import("@awesome.me/webawesome/dist/components/textarea/textarea.js").default} */ (
         this.querySelector("[data-question]")
       );
-    const question = textarea.value.trim();
-    if (!question || textarea.value.length > 1000) return;
+    const question = retryQuestion || textarea.value.trim();
+    if (!question || question.length > 1000) return;
     const controller = new AbortController();
     this._pending = controller;
     this._busy(true);
@@ -156,8 +156,11 @@ export class SupportView extends HTMLElement {
     if (this._pending !== controller || !this.isConnected) return;
     this._pending = null;
     this._busy(false);
+    if (retryTurn && !retryTurn.isConnected) return;
+    retryTurn?.remove();
     this._append(question, result);
-    textarea.value = "";
+    if (!retryQuestion && textarea.value.trim() === question)
+      textarea.value = "";
     textarea.focus();
   }
 
@@ -199,6 +202,19 @@ export class SupportView extends HTMLElement {
     const toggle = document.createElement("summary");
     toggle.append(heading);
     response.append(toggle, answer);
+    if (!valid && ["limited", "unavailable"].includes(fallback)) {
+      answer.classList.add("app-error", "app-error--panel");
+      answer.setAttribute("role", "alert");
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "btn-outline btn-outline--sm";
+      retry.textContent = t("notice.retry");
+      retry.addEventListener("click", () => {
+        if (this._pending) return;
+        void this._submit(question, turn);
+      });
+      response.append(retry);
+    }
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "btn-icon support__delete";

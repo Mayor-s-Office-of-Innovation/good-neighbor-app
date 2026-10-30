@@ -1,3 +1,4 @@
+import { loadError } from "../../frontend/src/components/load-error.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { navigate } from "./router.js";
 import { rulebookText } from "../../frontend/src/i18n/rulebook.js";
@@ -135,7 +136,11 @@ class SystemStatus extends HTMLElement {
       this.render();
     }
     if (button.dataset.load) await this.loadSite(button.dataset.load);
-    if (button.id === "status-refresh") await this.refresh();
+    if (
+      button.hasAttribute("data-load-retry") ||
+      button.id === "status-refresh"
+    )
+      await this.refresh();
     if (button.dataset.preview)
       await this.preview(button.dataset.site, button.dataset.preview);
     if (button.id === "status-close") this.querySelector("dialog")?.close();
@@ -298,10 +303,12 @@ class SystemStatus extends HTMLElement {
     const row = (kind, value, state) =>
       `<a id="status-row-${kind}" class="status-row" data-status-route href="/system-status/${kind}">${state ? dot(kind, state) : ""}<span class="status-row-title">${label(kind)}</span><span class="status-row-value">${value}</span><span aria-hidden="true">›</span></a>${state ? `<wa-tooltip for="status-row-${kind}">${label(`${kind}Tooltip.${state}`)}</wa-tooltip>` : ""}`;
     this.innerHTML = `<section class="status-page" aria-labelledby="status-title"><a class="site-back-link" data-status-route href="${this.kind ? "/system-status" : "/sites"}">‹ ${this.kind ? label("title") : e(t("admin.breadcrumb.admin"))}</a><div class="panel__head"><h1 id="status-title" tabindex="-1">${label(this.kind || "title")}</h1><button class="btn-icon status-refresh" id="status-refresh" type="button" aria-busy="${this.loading}" aria-disabled="${this.loading}" aria-label="${label("refresh")}" title="${label("refresh")}"><wa-icon name="rotate" aria-hidden="true"></wa-icon></button></div>
-      ${this.error ? `<p role="alert">${e(this.error)}</p>` : ""}
+      ${this.error ? loadError(this.error, { partial: Boolean(data) }) : ""}
       ${
         !data
-          ? `<p role="status">${label(this.loading ? "loading" : "noData")}</p>`
+          ? this.error
+            ? ""
+            : `<p role="status">${label(this.loading ? "loading" : "noData")}</p>`
           : `
       <p class="muted">${e(t("admin.status.updated", { time: formatTime(data.now) }))}</p>
       ${this.kind ? this.details() : `<h2>${label("health")}</h2><div class="status-list">${row("network", percent(data.network.percent), data.network.state)}${row("analysis", percent(data.analysis.percent), data.analysis.state)}</div><p class="muted">${e(t("admin.status.pending", { count: data.pending }))}</p><h2>${label("activity")}</h2><div class="status-list">${activities.map((kind) => row(kind, kind === "duplicates" && !data.duplicatesAvailable && !total(kind) ? label("unavailable") : number(total(kind)))).join("")}</div>`}`

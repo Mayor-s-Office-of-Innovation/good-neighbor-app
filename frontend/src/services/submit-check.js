@@ -1,4 +1,5 @@
 // @ts-nocheck -- lenient migration baseline (checkJs). See memory step2-gnp-port-scope.
+import { showInlineError } from "../components/error-notice.js";
 /*
   submit-check — background run-level scorecard finalization.
 
@@ -18,6 +19,7 @@ import { startRun, span, mark } from "./instrument.js";
 import { t } from "../i18n/i18n.js";
 
 const pendingScorecardFinalizations = new Map();
+const saveNotices = new Map();
 
 /**
  * Run one submit step and stamp the failing leg onto its error so the message
@@ -151,8 +153,25 @@ export function finalizeCaptureScorecardInBackground(
     return pendingScorecardFinalizations.get(checkId);
   }
   const run = finalizeCaptureScorecard(checkId, { expectedArtifacts })
+    .then((result) => {
+      saveNotices.get(checkId)?.close();
+      saveNotices.delete(checkId);
+      return result;
+    })
     .catch((err) => {
       console.error("finalizeCaptureScorecard failed", err);
+      saveNotices.set(
+        checkId,
+        showInlineError(t("notice.saveFailed"), {
+          key: `check-save:${checkId}`,
+          warning: true,
+          retryLabel: t("notice.retrySaving"),
+          retry: () =>
+            finalizeCaptureScorecardInBackground(checkId, {
+              expectedArtifacts,
+            }),
+        }),
+      );
       throw err;
     })
     .finally(() => {

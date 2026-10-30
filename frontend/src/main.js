@@ -1,4 +1,8 @@
 // @ts-nocheck -- lenient migration baseline (checkJs). Ratchet target: remove this line and add JSDoc types, one file per PR. See memory step2-gnp-port-scope.
+import { startErrorPresentation } from "./components/error-notice.js";
+import { mountConnectionBanner } from "./components/connection-banner.js";
+startErrorPresentation();
+mountConnectionBanner();
 /*
   Bootstrap: register the icon library, load styles + Web Awesome components,
   register our own components, mount the app.

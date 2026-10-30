@@ -1,4 +1,7 @@
-import { savePhoneCompletion } from "../services/phone-completion.js";
+import {
+  savePhoneCompletion,
+  showPhoneCompletionError,
+} from "../services/phone-completion.js";
 import { getSite } from "../db.js";
 import { completeTask } from "../services/api.js";
 import { showActionSaveErrorToast } from "../state/toasts.js";
@@ -50,6 +53,7 @@ export function toggleCardCompletion(
   const taskId = card.getAttribute("data-task-id");
   const save = async () => {
     let saved = false;
+    let saveFailed = false;
     try {
       if (!taskId) throw new Error("Task is not ready to complete");
       const result = await (isPhone
@@ -65,9 +69,9 @@ export function toggleCardCompletion(
       onSaved(result.task);
     } catch (error) {
       console.error("checklist completion failed", error);
-      if (!saved && !isPhone) {
-        button.setAttribute("aria-checked", "false");
-        showActionSaveErrorToast();
+      if (!saved) {
+        if (!isPhone) button.setAttribute("aria-checked", "false");
+        saveFailed = true;
       }
     } finally {
       pending.delete(card);
@@ -81,6 +85,18 @@ export function toggleCardCompletion(
           document.activeElement === button ||
           document.activeElement === document.body;
         await render();
+        if (saveFailed) {
+          const target = [...host.querySelectorAll("[data-task-id]")].find(
+            (node) => node.getAttribute("data-task-id") === taskId,
+          );
+          if (isPhone)
+            showPhoneCompletionError(
+              taskId,
+              host._site?.siteId,
+              target || host,
+            );
+          else showActionSaveErrorToast(undefined, target || host);
+        }
         if (shouldFocus) focusChecklistControl(host, taskId);
       }
     }

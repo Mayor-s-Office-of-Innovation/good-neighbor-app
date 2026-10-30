@@ -20,10 +20,8 @@ import {
   pauseCheck,
 } from "../state/check-session.js";
 import {
-  queueSiteSwitchSuccessToast,
   showSiteSwitchBlockedToast,
   showSiteSwitchErrorToast,
-  showSiteSwitchSuccessToast,
 } from "../state/toasts.js";
 
 /**
@@ -31,6 +29,7 @@ import {
  * @param {string} input.siteId the chosen site
  * @param {string} input.currentSiteId
  * @param {Array<Record<string, any>>} input.boundSites from listBoundSites()
+ * @param {(error: unknown) => void} [input.onError]
  * @param {string} [input.destination] route to reload onto (default /today)
  * @returns {Promise<"same" | "needs-binding" | "blocked" | "switched" | "failed">}
  */
@@ -39,6 +38,7 @@ export async function switchToBoundSite({
   currentSiteId,
   boundSites,
   destination = "/today",
+  onError,
 }) {
   if (!siteId || siteId === currentSiteId) return "same";
   // Provider enrollment stores sibling binding metadata without tokens. The
@@ -79,12 +79,12 @@ export async function switchToBoundSite({
     }
     if (!selected) return "needs-binding";
     discardInMemorySession();
-    if (!queueSiteSwitchSuccessToast()) showSiteSwitchSuccessToast();
     window.location.assign(destination);
     return "switched";
   } catch (error) {
     console.error("site switch failed", error);
-    showSiteSwitchErrorToast();
+    if (onError) onError(error);
+    else showSiteSwitchErrorToast();
     return "failed";
   }
 }

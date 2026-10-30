@@ -8,7 +8,7 @@
 /* App-level notifications survive route changes without moving page content. */
 app-toasts {
   position: fixed;
-  inset-block-start: env(safe-area-inset-top, 0px);
+  inset-block-start: 0;
   inset-block-end: auto;
   inset-inline: 0;
   z-index: 100;
@@ -22,7 +22,7 @@ app-toasts {
   inline-size: auto;
   margin: 0;
   border: 0;
-  padding: 0 0 0.5rem;
+  padding: env(safe-area-inset-top, 0px) 0 0.5rem;
   background: transparent;
   color: inherit;
   pointer-events: none;

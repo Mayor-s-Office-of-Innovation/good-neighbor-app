@@ -1,5 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
+  outputDir: "./test-results/task-updates",
   testDir: "./task-update-tests",
   workers: 1,
   timeout: 30000,

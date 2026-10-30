@@ -1,3 +1,5 @@
+import { showInlineError } from "./error-notice.js";
+import { t } from "../i18n/i18n.js";
 /*
   site-switcher — the provider name button at the top of the home hub that
   opens a menu of the provider's sites.
@@ -60,6 +62,17 @@ class SiteSwitcher extends HTMLElement {
     if (!this._open) return;
     this._open = false;
     this.render();
+  }
+
+  showSwitchError(siteName, retry) {
+    this._open = true;
+    this.render();
+    showInlineError(t("notice.switchFailed", { site: siteName }), {
+      target: this.querySelector("#site-switcher-list"),
+      warning: true,
+      key: "switch",
+      retry,
+    });
   }
 
   render() {
