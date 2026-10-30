@@ -97,7 +97,10 @@ import {
   footer,
   analyzingSection,
 } from "./perimeter-check.templates.js";
-import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
+import {
+  setQuestionAnswerBusy,
+  showQuestionAnswerUpdated,
+} from "./analysis-answer-controls.js";
 import { markCameraOpen, clearCameraOpen } from "../state/capture-resume.js";
 import { trackEvent } from "../services/analytics.js";
 
@@ -570,6 +573,7 @@ class PerimeterCheck extends HTMLElement {
         answerValue,
       );
       this._render();
+      showQuestionAnswerUpdated(this, problem.conditionId);
     } catch (err) {
       console.error("answer condition failed", err);
       showAnswerSaveErrorToast();

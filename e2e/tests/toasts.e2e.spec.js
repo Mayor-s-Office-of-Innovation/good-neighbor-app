@@ -56,6 +56,16 @@ test.describe("standardized app toasts", () => {
           },
         },
       });
+      // Reproduce a late route/home announcement after the toast has already
+      // taken keyboard focus. Neither deferred focus path may steal Undo.
+      const focusModule = "/src/screen-focus.js";
+      const { announceScreenHeading } = await import(focusModule);
+      const home = document.querySelector("today-view");
+      if (home) announceScreenHeading(home, ".home-identity__site");
+      /** @type {any} */ (
+        document.querySelector("app-root")
+      )?._restateScreenFocus();
+      await new Promise((resolve) => window.requestAnimationFrame(resolve));
     }, loadActiveToastModule);
 
     const region = page.getByRole("region", { name: t("toastUi.region.aria") });

@@ -61,7 +61,7 @@ Each observation has:
 - Optional `supersededAt`: when this analysis revision was superseded.
 - Optional `location`: `latitude`, `longitude`, `source` (`device` or `site`), and
   `accuracyMeters`. Missing GPS is unknown; fallback site coordinates receive no
-  proximity bonus. The existing capture flow does not yet persist GPS accuracy.
+  proximity bonus. Artifact rows store GPS accuracy as `accuracyMeters`.
 
 Each case has `sourceId` (an observation ID), `split` (`development` or `test`),
 `label` (`duplicate`, `distinct`, or `indeterminate`), and `duplicateIds`. A duplicate

@@ -13,17 +13,17 @@ Both SNS topics subscribe the same `alarm_emails` list, set per environment in
 `infra/environments/<env>/variables.tf` and passed through `main.tf`. Every address gets one confirmation email **per
 topic** (two in total) and is silent until confirmed.
 
-| Topic | Region | Why it exists |
-|---|---|---|
-| `good-neighbor-app-<env>-alarms` | us-west-2 | every code-marker alarm (`alarms.tf`) and every platform alarm (`platform-alarms.tf`) |
+| Topic                                      | Region    | Why it exists                                                                              |
+| ------------------------------------------ | --------- | ------------------------------------------------------------------------------------------ |
+| `good-neighbor-app-<env>-alarms`           | us-west-2 | every code-marker alarm (`alarms.tf`) and every platform alarm (`platform-alarms.tf`)      |
 | `good-neighbor-app-<env>-alarms-us-east-1` | us-east-1 | metrics that only exist there: the Route53 uptime check and the CloudFront-scoped WAF rule |
 
 Production response ownership is:
 
-| Responsibility | Responder |
-|---|---|
-| Primary: acknowledge, diagnose, coordinate recovery | `aaron.hans@sf.gov` |
-| Secondary: cover the primary and assist recovery | `beaudry.kock@sfgov.org` |
+| Responsibility                                      | Responder                |
+| --------------------------------------------------- | ------------------------ |
+| Primary: acknowledge, diagnose, coordinate recovery | `aaron.hans@sf.gov`      |
+| Secondary: cover the primary and assist recovery    | `beaudry.kock@sfgov.org` |
 
 SNS emails both people simultaneously. It does not wait for the primary, track
 acknowledgment, or escalate automatically. Record the incident owner and
@@ -105,16 +105,16 @@ alarm-status widget, which is same-region only; their metrics are the bottom row
 
 ## Platform alarms (`infra/modules/app/platform-alarms.tf`)
 
-| Alarm | Fires when | Look first |
-|---|---|---|
-| `submissions-dlq-not-empty` | ≥ 1 message in the dead-letter queue | SQS console → DLQ → poll a message (ids only, never media) → worker log group, `level = "ERROR"` around that time. Fix, then **Start DLQ redrive** on the queue. |
-| `submissions-queue-backlog` | oldest queued message > 10 min, 2 periods | `AnalyzerLatencyMs` p95 (slow analyzer) or `worker-lambda-errors` (redelivery churn). |
-| `<fn>-lambda-errors` | invocation errors on api / worker / authorizer / intake | the function's log group: `Task timed out`, `Runtime exited`, or a `level = "ERROR"` line. |
-| `<fn>-lambda-throttles` | any throttle on api / authorizer / worker | api: reservation is 10 in `lambda.tf`. worker: the event-source cap should make this impossible. |
-| `worker-duration-high` | worker p95 > 4 min (timeout 5 min) | analyzer latency; a timeout is the next step. |
-| `api-5xx` | > 5 gateway 5xx in 5 min | `api_gw` access-log group: filter `status >= 500`, read `integrationErr`. |
-| `dynamodb-throttles` | any read/write throttle on the app table | a hot `SITE#` partition; Contributor Insights or the api logs at that minute. |
-| `app-health-check` | `/health` unreachable from Route53 for 3 min (missing data counts) | CloudFront → API Gateway → api Lambda, in that order. |
+| Alarm                       | Fires when                                                         | Look first                                                                                                                                                       |
+| --------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `submissions-dlq-not-empty` | ≥ 1 message in the dead-letter queue                               | SQS console → DLQ → poll a message (ids only, never media) → worker log group, `level = "ERROR"` around that time. Fix, then **Start DLQ redrive** on the queue. |
+| `submissions-queue-backlog` | oldest queued message > 10 min, 2 periods                          | `AnalyzerLatencyMs` p95 (slow analyzer) or `worker-lambda-errors` (redelivery churn).                                                                            |
+| `<fn>-lambda-errors`        | invocation errors on api / worker / authorizer / intake            | the function's log group: `Task timed out`, `Runtime exited`, or a `level = "ERROR"` line.                                                                       |
+| `<fn>-lambda-throttles`     | any throttle on api / authorizer / worker                          | api: reservation is 10 in `lambda.tf`. worker: the event-source cap should make this impossible.                                                                 |
+| `worker-duration-high`      | worker p95 > 4 min (timeout 5 min)                                 | analyzer latency; a timeout is the next step.                                                                                                                    |
+| `api-5xx`                   | > 5 gateway 5xx in 5 min                                           | `api_gw` access-log group: filter `status >= 500`, read `integrationErr`.                                                                                        |
+| `dynamodb-throttles`        | any read/write throttle on the app table                           | a hot `SITE#` partition; Contributor Insights or the api logs at that minute.                                                                                    |
+| `app-health-check`          | `/health` unreachable from Route53 for 3 min (missing data counts) | CloudFront → API Gateway → api Lambda, in that order.                                                                                                            |
 
 ## Business metrics (namespace `good-neighbor-app-<env>-app`)
 
@@ -124,17 +124,19 @@ the "which check" question the metric cannot. Dimensions are deliberately few:
 `Kind` (`photo` | `text`), `FlowType` (`perimeter` | `single-problem`),
 `EvidenceKind` (`photos` | `description` | `mixed` | `none`).
 
-| Metric | Dimensions | Emitted by | Meaning |
-|---|---|---|---|
-| `CheckStarted` | FlowType | `handlers/checks.js` createCheck | a new check header was written (idempotent replays do not count) |
-| `CheckCompleted` | FlowType; FlowType + EvidenceKind | `handlers/checks.js` completeCheck | the once-only closing write succeeded. Props: grade, issueCount, maxSeverity |
-| `CheckPhotoCount`, `CheckTextCount` | same as CheckCompleted | completeCheck | evidence counts of completed checks (Sum ÷ CheckCompleted = average evidence per check) |
-| `AnalysisCompleted` | Kind | `workers/analyze-artifact.js` | an ANALYSIS# item was stored for the first time |
-| `AnalyzerLatencyMs` | Kind | analyze worker | wall-clock of one analyzer call, **every outcome** (so p95 includes slow failures) |
-| `AnalysisFailed` | Kind | analyze worker `markFailed` | permanent failure recorded (analyzer 4xx, media rejected, unsupported type). Prop `reason` |
-| `AnalysisRetried` | Kind | analyze worker | transient analyzer failure; the message redelivers. Prop `reason` |
-| `AnalysisDuplicate` | Kind | analyze worker | a redelivered message found the analysis already stored |
-| `ThumbnailFailed` | Kind | analyze worker | the card thumbnail could not be stored (`reason: store`) or recorded on the ART# row (`reason: record`); the card keeps using the original. Props `reason`, `error` (SDK error name). Not an analysis failure |
+| Metric                              | Dimensions                        | Emitted by                                     | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ----------------------------------- | --------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CheckStarted`                      | FlowType                          | `handlers/checks.js` createCheck               | a new check header was written (idempotent replays do not count)                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `CheckCompleted`                    | FlowType; FlowType + EvidenceKind | `handlers/checks.js` completeCheck             | the once-only closing write succeeded. Props: grade, issueCount, maxSeverity                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `CheckPhotoCount`, `CheckTextCount` | same as CheckCompleted            | completeCheck                                  | evidence counts of completed checks (Sum ÷ CheckCompleted = average evidence per check)                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `AnalysisCompleted`                 | Kind                              | `workers/analyze-artifact.js`                  | an ANALYSIS# item was stored for the first time                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `AnalyzerLatencyMs`                 | Kind                              | analyze worker                                 | wall-clock of one analyzer call, **every outcome** (so p95 includes slow failures)                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `AnalysisFailed`                    | Kind                              | analyze worker `markFailed`                    | permanent failure recorded (analyzer 4xx, media rejected, unsupported type). Prop `reason`                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `AnalysisRetried`                   | Kind                              | analyze worker                                 | transient analyzer failure; the message redelivers. Prop `reason`                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `AnalysisDuplicate`                 | Kind                              | analyze worker                                 | a redelivered message found the analysis already stored                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `ThumbnailFailed`                   | Kind                              | analyze worker                                 | the card thumbnail could not be stored (`reason: store`) or recorded on the ART# row (`reason: record`); the card keeps using the original. Props `reason`, `error` (SDK error name). Not an analysis failure                                                                                                                                                                                                                                                                                                    |
+| `LocationFallbackToSite`            | —                                 | `analysis/guidance/app-actions.js`             | a 311 filing used the site's point because the task had no photo position. Props `siteId`, `taskId`, `checkId`                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `LateLocationAfterFiling`           | —                                 | `handlers/artifacts.js` updateArtifactLocation | a photo's late GPS fix arrived after its task was queued or filed for 311. Prop `filing`: `submitted` means the ticket kept the earlier point; `queued` means it may still get the fix, if the filing job reads the photo after this. Props `siteId`, `checkId`, `artifactId`, `taskId`. A task can be counted once per improving fix, so count distinct `taskId`. Expected near zero; if it shows up, late locations are a real problem and 311 tickets need a way to take a location that arrives after filing |
 
 Useful ratios (metric math): failure rate `AnalysisFailed / (AnalysisCompleted +
 AnalysisFailed)`; completion rate `CheckCompleted / CheckStarted`.
@@ -149,6 +151,56 @@ fields @timestamp, marker, Kind, AnalyzerLatencyMs, reason, checkId, artifactId,
 
 Local dev and tests print the same lines without the `_aws` envelope
 (`METRICS_NAMESPACE` unset), so nothing is ingested as a metric outside AWS.
+
+## CloudWatch Omni (`infra/modules/app/omni.tf`)
+
+Omni is AWS's web front end on the CloudWatch data this app already produces:
+plain-language queries across the Lambda and API Gateway log groups, service
+discovery, alerts to Slack or SNS, and shared investigation threads. It adds
+nothing to ingestion and changes nothing about the alarms, dashboard, or
+Logs Insights queries above. It is enabled per environment with
+`enable_cloudwatch_omni` (dev on, prod off).
+
+**Scope.** The AWS account hosts other applications, and Omni is scoped to an
+account and Region (one space, one Dataset integration). Isolation is in IAM:
+
+- `aws_iam_role.omni_forwarding` names each of this module's log groups in its
+  `logs:IntegrateWithDataset` statement. Only those forward into Omni. Adding a
+  Lambda means adding its log group to `local.omni_forwarded_log_group_arns`,
+  the same way new functions must be added to the alarm maps.
+- `aws_iam_role.omni_space_access` carries only `CloudWatchOmniSpaceAccessPolicy`.
+  The Context Graph policy is deliberately not attached; it inventories every
+  resource in the account.
+- Metrics are read straight from CloudWatch Metrics and cannot be narrowed per
+  namespace, so a space member can browse other applications' metrics.
+  Membership is therefore the control: grants live in `cloudwatch_omni_members`.
+
+**Signing in.** Sign in to the account the usual way (Identity Center, the
+PowerUserAccess permission set) and open CloudWatch → Omni → the space; the
+domain URL is also the `cloudwatch_omni_sign_in_url` output. That SSO sign-in
+is a shared IAM role named `AWSReservedSSO_PowerUserAccess_<hash>`, and the
+header shows it as `name / PowerUserAccess / <account id>`. Terraform looks the
+role up by permission-set name (`cloudwatch_omni_sso_permission_sets`) and
+grants it, so everyone who holds the set in that account can open the space.
+Grants for a single IAM role or user go in `cloudwatch_omni_members`. The CI
+deploy role is the first Space Admin automatically. Connecting the Identity
+Center instance itself to the domain (`cloudwatch_omni_identity_center_instance_arn`)
+is optional and needs the instance in the same Region as the domain; it is not
+required for SSO users to sign in.
+
+**Known limits, as of 2026-10-29.**
+
+- The first enablement backfills up to 7 days of logs, but not from log groups
+  encrypted with a customer managed key. All of ours are, so expect the space
+  to start empty and fill from the moment forwarding begins. Confirm forwarding
+  of KMS-encrypted log groups in dev before relying on it.
+- Omni alerts are a separate system from the CloudWatch alarms in this runbook
+  and do not appear in the console alarm list. Keep paging on the Terraform
+  alarms; use Omni alerts for exploration only until a decision is made.
+- The domain and space are created through a small CloudFormation stack
+  (`aws_cloudformation_stack.omni`) rather than the provider's Omni resources,
+  because only the CloudFormation types accept the CCSF tags today. Everything
+  else in the file is plain Terraform with `var.tags`.
 
 ## Verifying after a deploy
 

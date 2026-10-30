@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "e2e": "playwright test",
-    "test": "node --test a11y-report.test.mjs helpers/*.test.mjs",
+    "test": "node --test a11y-report.test.mjs",
     "a11y:report": "node a11y-report.mjs",
     "a11y:local": "node a11y-local.mjs",
     "test:headed": "E2E_SLOW_MS=200 playwright test --headed",

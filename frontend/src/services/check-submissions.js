@@ -29,6 +29,8 @@ import {
 } from "../state/check-session.js";
 import {
   analyzeEvidenceItem,
+  hasUnsentLocation,
+  resendItemLocation,
   EVIDENCE_SETTLED_EVENT,
   shouldResumeEvidenceItem,
 } from "./photo-analysis.js";
@@ -98,6 +100,10 @@ export async function resumeCheckSubmissions({ uploads = true } = {}) {
         if (item.analysis?.status === "waiting") waiting = true;
         if (uploads && !offline && shouldResumeEvidenceItem(item))
           analyzeEvidenceItem(item.id);
+        if (hasUnsentLocation(item)) {
+          waiting = true;
+          if (uploads && !offline) void resendItemLocation(check.id, item);
+        }
       }
       finalize(check);
     }

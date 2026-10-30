@@ -169,6 +169,7 @@ export class AppRoot extends HTMLElement {
     this._stopPhoneRecovery?.();
     this._stopPhoneRecovery = startPhoneCompletionRecovery();
     this._onAuthSignout = () => {
+      setDuplicateUiSite(null);
       // Recovery is IN PROGRESS: the user chose sign-out, so the health
       // state must leave `auth` now — a freshly mounted connection-status on
       // the setup screen would otherwise re-open its modal over the site
@@ -634,6 +635,8 @@ export class AppRoot extends HTMLElement {
     const view = this._view;
     if (!view) return;
     this._afterMount(() => {
+      // A toast may have focused Undo since this route announcement was queued.
+      if (document.activeElement?.closest?.("app-toasts")) return;
       const viewFocusPoint =
         view.querySelector("[data-screen-focus]") ||
         view.querySelector("h1[tabindex='-1']");

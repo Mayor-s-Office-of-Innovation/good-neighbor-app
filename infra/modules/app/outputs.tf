@@ -112,3 +112,13 @@ output "duplicate_analyzer_key_secret_arn" {
   description = "Container for the separate comparison key, provisioned out-of-band."
   value       = aws_secretsmanager_secret.duplicate_analyzer_key.arn
 }
+
+output "cloudwatch_omni_sign_in_url" {
+  description = "CloudWatch Omni domain sign-in URL; null until enable_cloudwatch_omni is set."
+  value       = var.enable_cloudwatch_omni ? aws_cloudformation_stack.omni[0].outputs["DomainEndpointUrl"] : null
+}
+
+output "cloudwatch_omni_space_id" {
+  description = "CloudWatch Omni space id for this environment; null until enable_cloudwatch_omni is set."
+  value       = var.enable_cloudwatch_omni ? aws_cloudformation_stack.omni[0].outputs["SpaceId"] : null
+}

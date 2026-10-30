@@ -52,6 +52,7 @@ vi.mock("../services/device-location.js", () => ({
     };
   },
   refreshGrantedDeviceLocation: async () => null,
+  startCaptureDeviceLocation: async () => {},
 }));
 const logout = vi.hoisted(() => ({
   clearSiteSession: vi.fn(async () => {}),
@@ -84,6 +85,10 @@ vi.mock("../services/api.js", () => ({
   selectDeviceBinding: vi.fn(),
   listChecks: catalog.listChecks,
   listTasks: catalog.listTasks,
+}));
+const duplicates = vi.hoisted(() => ({ watch: vi.fn(() => vi.fn()) }));
+vi.mock("../services/duplicate-issues.js", () => ({
+  watchDuplicateIssues: duplicates.watch,
 }));
 const queued311 = vi.hoisted(() => ({
   stop: vi.fn(),
@@ -1860,4 +1865,45 @@ it("discards a disconnected refresh and its queued work after reconnecting to an
   expect(view._siteId).toBe("site-2");
   expect(view._providerName).not.toBe("old-provider");
   expect(view._renderHome).not.toHaveBeenCalled();
+});
+
+describe("duplicate watch continuity", () => {
+  it("keeps unchanged watches and invalidates changed server tasks", async () => {
+    const { onDuplicateInvalidation } = await import(
+      "../services/duplicate-invalidation.js"
+    );
+    duplicates.watch.mockClear();
+    const changed = vi.fn();
+    const stop = onDuplicateInvalidation(changed);
+    const view = new TodayView();
+    view._siteId = "watch-continuity-site";
+    const tasks = [{ taskId: "one", status: "open", updatedAt: "v1" }];
+    try {
+      view._watchDuplicates(tasks);
+      view._watchDuplicates(tasks.map((task) => ({ ...task })));
+      expect(duplicates.watch).toHaveBeenCalledOnce();
+      expect(changed).not.toHaveBeenCalled();
+      view._watchDuplicates([
+        { ...tasks[0], status: "completed", updatedAt: "v2" },
+      ]);
+      expect(changed).toHaveBeenCalledExactlyOnceWith(view._siteId);
+      expect(duplicates.watch).toHaveBeenCalledOnce();
+      view._watchDuplicates([
+        { ...tasks[0], status: "completed", updatedAt: "v2" },
+        { taskId: "two" },
+      ]);
+      expect(duplicates.watch).toHaveBeenCalledTimes(2);
+      // A newly mounted view still observes the versions associated with the
+      // session cache, rather than treating the changed row as its first read.
+      view._stopDuplicates?.();
+      const remount = new TodayView();
+      remount._siteId = view._siteId;
+      remount._watchDuplicates([{ ...tasks[0], updatedAt: "v3" }]);
+      expect(changed).toHaveBeenCalledTimes(2);
+      remount._stopDuplicates?.();
+    } finally {
+      stop();
+      view._stopDuplicates?.();
+    }
+  });
 });

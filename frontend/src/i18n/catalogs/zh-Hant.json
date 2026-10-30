@@ -464,6 +464,7 @@
   "analysis.missingCondition.noCoordinates.deleted": "此結果缺少原始證據座標，因此無法刪除。請重新拍照再試一次。",
   "analysis.missingCondition.noCoordinates.edited": "此結果缺少原始證據座標，因此無法編輯。請重新拍照再試一次。",
   "analysis.progressDialog.title": "正在提交工單",
+  "analysis.question.updated": "問題已更新",
   "analysis.question.updating": "正在更新問題",
   "analysis.successDialog.resolved": "已標記為已解決。",
   "analysis.successDialog.text": "我們已記錄您的行動。此項目現在{resolved}",

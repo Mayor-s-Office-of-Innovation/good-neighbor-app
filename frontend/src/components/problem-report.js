@@ -78,7 +78,10 @@ import {
 } from "../state/check-session.js";
 import { shell, analysisSection } from "./problem-report.templates.js";
 import { shotTile, addTile, footer } from "./perimeter-check.templates.js";
-import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
+import {
+  setQuestionAnswerBusy,
+  showQuestionAnswerUpdated,
+} from "./analysis-answer-controls.js";
 
 /**
  * @typedef {{ siteId?: string, providerSiteId?: string, id?: string, name?: string, address?: string }} SiteRecord
@@ -704,6 +707,7 @@ class ProblemReport extends HTMLElement {
         answerValue,
       );
       this._render();
+      showQuestionAnswerUpdated(this, problem.conditionId);
     } catch (err) {
       console.error("answer condition failed", err);
       showAnswerSaveErrorToast();
