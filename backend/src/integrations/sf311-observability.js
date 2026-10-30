@@ -1,4 +1,73 @@
 import { emitMetrics } from "../lib/metrics.js";
+import { logServerError } from "../lib/log-server-error.js";
+
+/**
+ * Keep failure identity and local stack frames without copying error messages,
+ * HUB bodies or SDK request payloads. Logging must not affect SQS acknowledgments.
+ * @param {unknown} error
+ * @param {{messageId: string, attempt?: number}} context
+ * @returns {void}
+ */
+export function logSf311JobError(error, context) {
+  try {
+    const original = error instanceof Error ? error : undefined;
+    const name = original
+      ? /^[A-Za-z][\w.-]{0,79}$/.test(original.name)
+        ? original.name
+        : "Error"
+      : "NonError";
+    const safe = new Error("311 job attempt failed");
+    // Strip the entire header, including a multiline message, before reading
+    // frames. Never substitute this logger's own stack for the failure's stack.
+    const header = original
+      ? [original.name, original.message].filter(Boolean).join(": ")
+      : "";
+    const frames = original?.stack?.startsWith(`${header}\n`)
+      ? original.stack
+          .slice(header.length + 1)
+          .split("\n")
+          .filter((line) =>
+            /^\s+at (?:[\w.$<>[\] ]+ \()?(?:file:\/\/\/|\/|node:)[\w./:@+-]+:\d+:\d+\)?$/.test(
+              line,
+            ),
+          )
+          .slice(0, 20)
+      : [];
+    safe.stack = [`${name}: ${safe.message}`, ...frames].join("\n");
+    const metadata =
+      /** @type {{$metadata?: {requestId?: unknown, httpStatusCode?: unknown}} | undefined} */ (
+        original
+      )?.$metadata;
+    const requestId = metadata?.requestId;
+    const status = metadata?.httpStatusCode;
+    logServerError("worker sf311-job", safe, {
+      extra: {
+        integration: "sf311",
+        eventType: "sf311_job_error",
+        name,
+        ...sf311Failure(error),
+        ...(/^[A-Za-z0-9_-]{1,128}$/.test(context.messageId)
+          ? { messageId: context.messageId }
+          : {}),
+        ...(Number.isSafeInteger(context.attempt) && Number(context.attempt) > 0
+          ? { attempt: context.attempt }
+          : {}),
+        ...(typeof requestId === "string" &&
+        /^[A-Za-z0-9_-]{1,128}$/.test(requestId)
+          ? { awsRequestId: requestId }
+          : {}),
+        ...(typeof status === "number" &&
+        Number.isInteger(status) &&
+        status >= 100 &&
+        status < 600
+          ? { httpStatus: status }
+          : {}),
+      },
+    });
+  } catch {
+    // Match emitMetrics/logServerError: even unusual errors must remain retryable.
+  }
+}
 
 /** No payloads, URLs, credentials, free-form errors or upstream narratives. */
 const reasons = new Set([

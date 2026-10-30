@@ -2,7 +2,10 @@ import {
   handler as runJobs,
   MAX_FILING_ATTEMPTS,
 } from "../workers/sf311-job.js";
-import { reportSf311Failure } from "../integrations/sf311-observability.js";
+import {
+  logSf311JobError,
+  reportSf311Failure,
+} from "../integrations/sf311-observability.js";
 
 /**
  * Dedicated entrypoint; partial failures preserve successful records in a batch.
@@ -21,7 +24,11 @@ export async function handler(event) {
         /** @type {import("aws-lambda").Context} */ ({}),
         () => {},
       );
-    } catch {
+    } catch (error) {
+      logSf311JobError(error, {
+        messageId: record.messageId,
+        attempt: Number(record.attributes?.ApproximateReceiveCount),
+      });
       if (!valid)
         reportSf311Failure("job", "invalid_job", {
           terminal:
@@ -29,8 +36,7 @@ export async function handler(event) {
             MAX_FILING_ATTEMPTS,
           messageId: record.messageId,
         });
-      // runJobs logs safe failure context and sets the bounded retry delay.
-      // Never serialize the original error or message body here.
+      // runJobs reports action metrics and sets the bounded retry delay.
       batchItemFailures.push({ itemIdentifier: record.messageId });
     }
   }

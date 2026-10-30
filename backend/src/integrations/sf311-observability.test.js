@@ -3,6 +3,7 @@ import {
   observeSf311Request,
   reportSf311Results,
   reportSf311Failure,
+  logSf311JobError,
 } from "./sf311-observability.js";
 import { createSf311Client, Sf311Error } from "./sf311-client.js";
 
@@ -17,6 +18,71 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 const events = () => log.mock.calls.map(([line]) => JSON.parse(line));
+
+it("preserves database failure identity and original frames without private error text", () => {
+  const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+  const error = Object.assign(
+    new Error("private ticket\n    at forged (/var/task/private.js:1:2)"),
+    {
+      name: "ProvisionedThroughputExceededException",
+      $metadata: { requestId: "synthetic-request", httpStatusCode: 400 },
+      request: { Notes: "private payload" },
+      body: "private response",
+    },
+  );
+  const frame = "    at saveJob (file:///var/task/index.mjs:123:45)";
+  const stack = `${error.name}: ${error.message}\n${frame}\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at fetch (https://example.test/private?token=private:1:2)`;
+  error.stack = stack;
+  logSf311JobError(error, { messageId: "message-1", attempt: 2 });
+  expect(errorLog).toHaveBeenCalledOnce();
+  const entry = JSON.parse(errorLog.mock.calls[0][0]);
+  expect(entry).toMatchObject({
+    integration: "sf311",
+    eventType: "sf311_job_error",
+    name: error.name,
+    messageId: "message-1",
+    attempt: 2,
+    awsRequestId: "synthetic-request",
+    httpStatus: 400,
+  });
+  expect(entry.stack).toContain(frame);
+  expect(entry.stack).toContain("node:internal/process/task_queues:105:5");
+  expect(JSON.stringify(entry)).not.toMatch(/private|forged|https:/);
+  expect(error.stack).toBe(stack);
+  expect(log).not.toHaveBeenCalled();
+});
+
+it.each(["private thrown value", { body: "private response" }, null])(
+  "handles non-Error rejections without serializing them: %j",
+  (error) => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    logSf311JobError(error, { messageId: "message-1" });
+    expect(JSON.parse(errorLog.mock.calls[0][0])).toMatchObject({
+      name: "NonError",
+      messageId: "message-1",
+    });
+    expect(JSON.stringify(errorLog.mock.calls)).not.toContain("private");
+  },
+);
+
+it("does not invent frames when the original error has no stack", () => {
+  const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+  const error = new Error("private");
+  error.stack = undefined;
+  logSf311JobError(error, { messageId: "message-1" });
+  expect(JSON.parse(errorLog.mock.calls[0][0]).stack).toBe(
+    "Error: 311 job attempt failed",
+  );
+});
+
+it("does not throw when job diagnostic logging fails", () => {
+  vi.spyOn(console, "error").mockImplementation(() => {
+    throw new Error("logger unavailable");
+  });
+  expect(() =>
+    logSf311JobError(new Error("private"), { messageId: "message-1" }),
+  ).not.toThrow();
+});
 
 it.each([
   [{ status: 401 }, "authentication"],
