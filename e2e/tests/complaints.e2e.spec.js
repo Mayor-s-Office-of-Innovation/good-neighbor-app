@@ -33,10 +33,11 @@ test.describe("public complaints", () => {
     await expect(trigger).toHaveAttribute("aria-expanded", "false");
     await expect(menu).toBeHidden();
 
+    // Home data hydration may replace the button between locator operations.
     await expect
       .poll(async () => {
         const box = await trigger.boundingBox();
-        return box && { width: box.width, height: box.height };
+        return box ? { width: box.width, height: box.height } : null;
       })
       .toEqual({ width: 54, height: 54 });
     await expect(trigger).toHaveCSS("border-radius", "50%");

@@ -513,6 +513,8 @@ export function summaryBlock({ outsideRadius, label }) {
  *   hasPendingSession: boolean,
  *   recentCheckTime: string,
  *   recentItems: Array<object>,
+ *   clearResultItems?: Array<object>,
+ *   clearResultTime?: string,
  *   newTaskCards: Array<{ markup: string }>,
  *   newTaskCardsMarkup: string,
  *   newTaskCount: number,
@@ -536,6 +538,8 @@ export function homeResults({
   hasPendingSession,
   recentCheckTime,
   recentItems,
+  clearResultItems = recentItems,
+  clearResultTime = recentCheckTime,
   newTaskCards,
   newTaskCardsMarkup,
   newTaskCount,
@@ -561,6 +565,9 @@ export function homeResults({
   // cards; a failed load says so and offers a retry.
   const awaitingRemaining =
     homeFilter !== "todo" && remainingStatus !== "loaded";
+  const remainingItems = hasPendingClearResult
+    ? recentItems.filter((item) => !clearResultItems.includes(item))
+    : recentItems;
   const trayOptions = {
     id: "home-analysis-results",
     title: "",
@@ -574,7 +581,11 @@ export function homeResults({
   return html`
     <div class="home-results">
       ${hasPendingClearResult
-        ? analysisResultsTray(recentItems, pendingSessionId, trayOptions)
+        ? analysisResultsTray(clearResultItems, pendingSessionId, {
+            ...trayOptions,
+            id: "home-clear-results",
+            checkTime: clearResultTime,
+          })
         : showActiveClearTray && activeClearCheck
           ? clearCheckTray(activeClearCheck, true)
           : ""}
@@ -615,8 +626,8 @@ export function homeResults({
             >
           </div>`
         : ""}
-      ${recentItems.length && !hasPendingClearResult
-        ? analysisResultsTray(recentItems, pendingSessionId, trayOptions)
+      ${remainingItems.length
+        ? analysisResultsTray(remainingItems, pendingSessionId, trayOptions)
         : ""}
       ${newTaskCount && !recentItems.length
         ? newTaskTray({
