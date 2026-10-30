@@ -37,11 +37,16 @@ test.describe("public complaints", () => {
     expect(triggerBox).not.toBeNull();
     expect(triggerBox?.width).toBe(54);
     expect(triggerBox?.height).toBe(54);
-    expect(
-      await trigger.evaluate(
-        (element) => window.getComputedStyle(element).borderRadius,
-      ),
-    ).toBe("50%");
+    // Check each corner directly: Chromium can serialize the computed
+    // border-radius shorthand as an empty string on some platforms.
+    for (const corner of [
+      "top-left",
+      "top-right",
+      "bottom-right",
+      "bottom-left",
+    ]) {
+      await expect(trigger).toHaveCSS(`border-${corner}-radius`, "50%");
+    }
 
     await trigger.click();
     await expect(trigger).toHaveAttribute("aria-expanded", "true");
