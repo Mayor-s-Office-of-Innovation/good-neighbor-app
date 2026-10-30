@@ -1702,11 +1702,15 @@ class TodayView extends HTMLElement {
       displayRecentItems = [];
     const visibleRecentItems =
       this._homeFilter === "todo" ? displayRecentItems : [];
+    // Older recovered questions must not suppress this check's clear result.
+    const clearResultItems = visibleRecentItems.filter((item) =>
+      localRecentItems.some((local) => local.id === item.id),
+    );
     const hasPendingClearResult =
       this._homeFilter === "todo" &&
       !pendingSuperseded &&
-      displayRecentItems.length > 0 &&
-      displayRecentItems.every(
+      clearResultItems.length > 0 &&
+      clearResultItems.every(
         (item) =>
           item.analysis?.status === "analyzed" && !hasProblemResults(item),
       );
@@ -1761,6 +1765,7 @@ class TodayView extends HTMLElement {
             "",
         checks,
         recentItems: visibleRecentItems,
+        clearResultItems,
         newTaskEntries,
         visibleTasks,
         activeClearCheck,
@@ -1878,6 +1883,7 @@ class TodayView extends HTMLElement {
     recentCheckTime,
     checks,
     recentItems,
+    clearResultItems,
     newTaskEntries,
     visibleTasks,
     activeClearCheck,
@@ -1908,6 +1914,11 @@ class TodayView extends HTMLElement {
       hasPendingSession: Boolean(pendingSession),
       recentCheckTime,
       recentItems,
+      clearResultItems,
+      clearResultTime:
+        pendingSession?.submittedAt ||
+        pendingSession?.startedAt ||
+        recentCheckTime,
       newTaskCards,
       newTaskCardsMarkup: sortAnalysisCards([...newTaskCards])
         .map((card) => card.markup)
