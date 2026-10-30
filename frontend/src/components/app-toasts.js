@@ -90,7 +90,12 @@ class AppToasts extends HTMLElement {
       element.className = `app-toast app-toast--${toast.tone || "neutral"}`;
       element.innerHTML = html` <wa-icon
           class="app-toast__icon"
-          name="${escapeAttr(toast.icon || "circle-check")}"
+          name="${escapeAttr(
+            toast.icon ||
+              (toast.tone === "warning"
+                ? "triangle-exclamation"
+                : "circle-check"),
+          )}"
           aria-hidden="true"
         ></wa-icon>
         <div class="app-toast__copy">

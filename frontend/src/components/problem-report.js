@@ -237,10 +237,12 @@ class ProblemReport extends HTMLElement {
       "click",
       () => {
         gallery.value = "";
+        markCameraOpen("/problem");
         gallery.click();
       },
     );
     gallery.addEventListener("change", () => this._onFilePicked(gallery));
+    this._fileInput.oncancel = gallery.oncancel = clearCameraOpen;
 
     this._render();
     // Async-init announcement: the heading may not exist at route-mount time.

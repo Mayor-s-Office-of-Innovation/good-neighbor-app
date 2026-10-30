@@ -200,10 +200,12 @@ class PerimeterCheck extends HTMLElement {
       "click",
       () => {
         gallery.value = "";
+        markCameraOpen("/check");
         gallery.click();
       },
     );
     gallery.addEventListener("change", () => this._onFilePicked(gallery));
+    this._fileInput.oncancel = gallery.oncancel = clearCameraOpen;
 
     [
       this._analysisDeleteDialog,
