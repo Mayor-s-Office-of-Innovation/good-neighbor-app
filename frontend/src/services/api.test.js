@@ -1091,3 +1091,41 @@ describe("duplicate mutation invalidation", () => {
     }
   });
 });
+
+it("uploads the original binary file without base64 conversion", async () => {
+  const original = new File(
+    [new Uint8Array([0, 17, 128, 255])],
+    "synthetic.jpg",
+    { type: "image/jpeg" },
+  );
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          artifactId: "binary-artifact",
+          s3Key: "synthetic-key",
+          uploadUrl: "https://example.test/upload",
+        }),
+      ),
+    )
+    .mockResolvedValueOnce(new Response(""))
+    .mockResolvedValueOnce(new Response("{}"));
+  vi.stubGlobal("fetch", fetch);
+  vi.stubGlobal("atob", () => {
+    throw new Error("New captures must not decode base64");
+  });
+  try {
+    const result = await uploadArtifact("check", { blob: original });
+    expect(fetch.mock.calls[1][1].body).toBe(original);
+    expect([
+      ...new Uint8Array(await fetch.mock.calls[1][1].body.arrayBuffer()),
+    ]).toEqual([0, 17, 128, 255]);
+    expect(result).toMatchObject({
+      contentType: "image/jpeg",
+      contentLength: 4,
+    });
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

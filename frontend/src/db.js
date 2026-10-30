@@ -6,7 +6,7 @@
     - site   (keyPath 'id')   : current binding plus one saved binding per site
     - draft  (out-of-line)    : the in-progress check (per-site keys), so a
                                 walk survives reload / app-close and can be resumed
-                                from home. Photos ride inline as JPEG data-URLs.
+                                from home. New perimeter photos use media references; legacy data URLs migrate on resume.
     - review (out-of-line)    : the just-submitted check awaiting the reviewer's
                                 Continue (per-site key). Kept separate from `draft`
                                 so home never offers to "Resume" it, and so the
@@ -28,7 +28,8 @@ const DB_NAME = "conditions-reporter";
 // store (submitted checks are backend-sourced; the store's only remaining writer was
 // the retired ?demo seed). v4 added the `draft` store. Deletions/creations below are
 // idempotent, so any older version converges.
-const DB_VERSION = 6;
+// v7: pending originals and server thumbnails are separate from check metadata.
+const DB_VERSION = 7;
 
 let _dbPromise = null;
 
@@ -38,6 +39,10 @@ function openDb() {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
+      if (!db.objectStoreNames.contains("captureMedia")) {
+        const media = db.createObjectStore("captureMedia", { keyPath: "key" });
+        media.createIndex("check", ["siteId", "checkId"]);
+      }
       if (!db.objectStoreNames.contains("site")) {
         db.createObjectStore("site", { keyPath: "id" });
       }
@@ -485,8 +490,9 @@ export async function getDraft(flowType) {
 export async function saveDraft(check) {
   const siteId = check?.siteId || (await getSite())?.siteId || "";
   await tx("draft", "readwrite", (os) => {
-    os.put(check, draftKey(undefined, siteId));
-    if (check?.flowType) os.put(check, draftKey(check.flowType, siteId));
+    const saved = captureMetadata(check);
+    os.put(saved, draftKey(undefined, siteId));
+    if (check?.flowType) os.put(saved, draftKey(check.flowType, siteId));
   });
   return check;
 }
@@ -578,7 +584,7 @@ export async function listFinishedChecks(owningSiteId) {
 export async function saveFinishedCheck(check) {
   const siteId = check?.siteId || (await getSite())?.siteId || "";
   await tx("review", "readwrite", (os) =>
-    os.put(check, finishedCheckKey(siteId, check.id)),
+    os.put(captureMetadata(check), finishedCheckKey(siteId, check.id)),
   );
   return check;
 }
@@ -589,8 +595,17 @@ export async function saveFinishedCheck(check) {
 export async function deleteFinishedCheck(owningSiteId, checkId) {
   const siteId = owningSiteId || (await getSite())?.siteId || "";
   if (!checkId) return;
-  return tx("review", "readwrite", (os) =>
-    os.delete(finishedCheckKey(siteId, checkId)),
+  return tx(
+    ["review", "captureMedia"],
+    "readwrite",
+    async (os, transaction) => {
+      os.delete(finishedCheckKey(siteId, checkId));
+      const media = transaction.objectStore("captureMedia");
+      const keys = await reqToPromise(
+        media.index("check").getAllKeys([siteId, checkId]),
+      );
+      for (const key of keys) media.delete(key);
+    },
   );
 }
 
@@ -629,10 +644,14 @@ export async function getHomeSnapshot(siteId) {
 }
 
 export async function resetLocalAppState() {
-  await tx(["site", "draft", "review"], "readwrite", (_, transaction) => {
-    for (const store of ["site", "draft", "review"])
-      transaction.objectStore(store).clear();
-  });
+  await tx(
+    ["site", "draft", "review", "captureMedia"],
+    "readwrite",
+    (_, transaction) => {
+      for (const store of ["site", "draft", "review", "captureMedia"])
+        transaction.objectStore(store).clear();
+    },
+  );
 }
 
 // Every write validates identity and revision in the same transaction as the put.
@@ -763,5 +782,201 @@ export async function getUploadRequestId(scope, fingerprint, replaceId) {
     const requestId = crypto.randomUUID();
     await reqToPromise(os.put({ requestId, day }, key));
     return requestId;
+  });
+}
+
+/** @param {string} key */
+export function getCaptureMedia(key) {
+  return tx("captureMedia", "readonly", (os) => reqToPromise(os.get(key)));
+}
+
+/** @param {string} key */
+export function deleteCaptureMedia(key) {
+  return tx("captureMedia", "readwrite", (os) => os.delete(key));
+}
+
+/** Atomically admit original bytes and their check reference. No binary data in check records.
+ * @param {any} check @param {any} item @param {Blob} original
+ */
+export function saveCapturePhoto(check, item, original) {
+  const store = check.status === "in-progress" ? "draft" : "review";
+  return tx([store, "captureMedia"], "readwrite", async (os, transaction) => {
+    const migrating = typeof item.dataUrl === "string";
+    const keys =
+      store === "draft"
+        ? [
+            ...new Set([
+              draftKey(check.flowType, check.siteId),
+              ...(migrating
+                ? [
+                    draftKey(undefined, check.siteId),
+                    draftKey(check.flowType),
+                    "current",
+                  ]
+                : []),
+            ]),
+          ]
+        : [finishedCheckKey(check.siteId, check.id)];
+    const copies = await Promise.all(
+      keys.map((key) => reqToPromise(os.get(key))),
+    );
+    const saved = copies.find(
+      (record) => record?.id === check.id && record.siteId === check.siteId,
+    );
+    // Discard/sign-out or another session must not be undone by a late capture.
+    if (saved?.id !== check.id || !check.items.includes(item)) return false;
+    const prior = (
+      saved.items ||
+      Object.values(saved.places || {}).flatMap((place) => place.items || [])
+    ).find((i) => i.id === item.id);
+    if (migrating && !prior) return false;
+    if (migrating && prior.media) {
+      Object.assign(item, prior);
+      delete item.dataUrl;
+      return true;
+    }
+    const source = migrating && Array.isArray(saved.items) ? saved : check;
+    const record = {
+      ...source,
+      mediaVersion: 1,
+      items: source.items.map((i) => {
+        if (i.id !== item.id) return i;
+        const rest = { ...i, media: item.media };
+        delete rest.dataUrl;
+        delete rest.captureSaving;
+        return rest;
+      }),
+    };
+    transaction.objectStore("captureMedia").put({
+      key: item.media.key,
+      siteId: check.siteId,
+      checkId: check.id,
+      itemId: item.id,
+      flowType: check.flowType,
+      ...(item.upload?.status === "uploaded" ? {} : { original }),
+      contentType: item.media.type,
+      contentLength: item.media.size,
+    });
+    if (store === "draft") {
+      os.put(record, draftKey(undefined, check.siteId));
+      os.put(record, draftKey(check.flowType, check.siteId));
+      for (let i = 0; i < keys.length; i++) {
+        if (
+          copies[i]?.id === check.id &&
+          copies[i]?.siteId === check.siteId &&
+          !keys[i].startsWith("site:")
+        )
+          os.delete(keys[i]);
+      }
+    } else os.put(record, finishedCheckKey(check.siteId, check.id));
+    return true;
+  });
+}
+
+/** Cache a thumbnail only while the registered item still exists. Commit eviction with the thumbnail.
+ * @param {string} key @param {string} artifactId @param {Blob} thumbnail
+ */
+export function cacheCaptureThumbnail(key, artifactId, thumbnail) {
+  return tx(
+    ["captureMedia", "draft", "review"],
+    "readwrite",
+    async (media, transaction) => {
+      const existing = await reqToPromise(media.get(key));
+      if (!existing) return false;
+      const draft = await reqToPromise(
+        transaction
+          .objectStore("draft")
+          .get(draftKey(existing.flowType, existing.siteId)),
+      );
+      const review = await reqToPromise(
+        transaction
+          .objectStore("review")
+          .get(finishedCheckKey(existing.siteId, existing.checkId)),
+      );
+      const check = draft?.id === existing.checkId ? draft : review;
+      const item = check?.items?.find((i) => i.id === existing.itemId);
+      if (
+        item?.upload?.status !== "uploaded" ||
+        item.upload.artifactId !== artifactId
+      )
+        return false;
+      const metadata = { ...existing };
+      delete metadata.original;
+      media.put({ ...metadata, thumbnail });
+      return true;
+    },
+  );
+}
+
+/** @param {any} check */
+function captureMetadata(check) {
+  return {
+    ...check,
+    ...(check.items?.some((item) => item.media) ? { mediaVersion: 1 } : {}),
+    items: check.items?.map((item) => {
+      const saved = { ...item };
+      delete saved.captureSaving;
+      return saved;
+    }),
+  };
+}
+
+/** Release original bytes as soon as registration is durably acknowledged, regardless of thumbnail readiness.
+ * @param {string} key @param {string} artifactId
+ */
+export function releaseCaptureOriginal(key, artifactId) {
+  return tx(
+    ["captureMedia", "draft", "review"],
+    "readwrite",
+    async (media, transaction) => {
+      const existing = await reqToPromise(media.get(key));
+      if (!existing?.original) return;
+      const draft = await reqToPromise(
+        transaction
+          .objectStore("draft")
+          .get(draftKey(existing.flowType, existing.siteId)),
+      );
+      const review = await reqToPromise(
+        transaction
+          .objectStore("review")
+          .get(finishedCheckKey(existing.siteId, existing.checkId)),
+      );
+      const check = draft?.id === existing.checkId ? draft : review;
+      const item = check?.items?.find((i) => i.id === existing.itemId);
+      if (
+        item?.upload?.status !== "uploaded" ||
+        item.upload.artifactId !== artifactId
+      )
+        return;
+      const metadata = { ...existing };
+      delete metadata.original;
+      media.put(metadata);
+    },
+  );
+}
+
+/** Remove a photo reference and its bytes together, so a failed save cannot strand a live reference.
+ * @param {any} check
+ * @param {string} key
+ */
+export function deleteCapturePhoto(check, key) {
+  const store = check.status === "in-progress" ? "draft" : "review";
+  return tx([store, "captureMedia"], "readwrite", async (os, transaction) => {
+    const lookup =
+      store === "draft"
+        ? draftKey(check.flowType, check.siteId)
+        : finishedCheckKey(check.siteId, check.id);
+    const saved = await reqToPromise(os.get(lookup));
+    if (saved?.id === check.id) {
+      os.put(captureMetadata(check), lookup);
+      if (store === "draft") {
+        const current = await reqToPromise(
+          os.get(draftKey(undefined, check.siteId)),
+        );
+        if (current?.id === check.id)
+          os.put(captureMetadata(check), draftKey(undefined, check.siteId));
+      }
+    }
+    transaction.objectStore("captureMedia").delete(key);
   });
 }

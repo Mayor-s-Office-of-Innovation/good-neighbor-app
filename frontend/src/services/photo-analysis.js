@@ -1,5 +1,10 @@
 // @ts-nocheck -- matches the surrounding frontend migration baseline.
-import { saveDraft, saveFinishedCheck } from "../db.js";
+import {
+  releaseCaptureOriginal,
+  getCaptureMedia,
+  saveDraft,
+  saveFinishedCheck,
+} from "../db.js";
 import { observePhotoStage, photoAttemptId } from "./photo-telemetry.js";
 import { pollCheck } from "./check-polling.js";
 import { watchDuplicateIssues } from "./duplicate-issues.js";
@@ -604,6 +609,7 @@ export function isConnectionFailure(err) {
  * @param {any} item
  */
 export function shouldResumeEvidenceItem(item) {
+  if (item?.captureSaving) return false;
   const analysisStatus = item?.analysis?.status;
   const hasArtifact = Boolean(
     item?.analysis?.artifactId || item?.upload?.artifactId,
@@ -615,7 +621,8 @@ export function shouldResumeEvidenceItem(item) {
     item?.kind === "text" && analysisStatus === "failed" && !hasArtifact,
   );
   return Boolean(
-    ["queued", "analyzing", "waiting"].includes(analysisStatus) ||
+    (analysisStatus === "idle" && Boolean(item?.media || item?.dataUrl)) ||
+      ["queued", "analyzing", "waiting"].includes(analysisStatus) ||
       (analysisStatus === "failed" &&
         (hasUploadedArtifact || isRetryableTextRegistration)),
   );
@@ -736,6 +743,8 @@ async function retryMediaMetadata(item) {
       contentLength: item.upload.contentLength,
     };
   }
+  if (item.media)
+    return { contentType: item.media.type, contentLength: item.media.size };
   if (!item.dataUrl) {
     throw new ApiError("Uploaded photo metadata is unavailable", {
       status: 0,
@@ -1115,6 +1124,11 @@ async function run(itemId) {
         });
       } else {
         updateItem(itemId, { upload: { status: "uploading" } });
+        let original = item.media
+          ? (await getCaptureMedia(item.media.key))?.original
+          : null;
+        if (item.media && !original)
+          throw new Error("Pending original is unavailable");
         const {
           artifactId: uploadedId,
           s3Key,
@@ -1122,7 +1136,7 @@ async function run(itemId) {
           contentLength,
         } = await withLeg("upload", () =>
           uploadArtifact(check.id, {
-            dataUrl: item.dataUrl,
+            ...(original ? { blob: original } : { dataUrl: item.dataUrl }),
             capturedAt: item.uploadedAt,
             location: uploadLocation,
             ...(item.note ? { text: item.note } : {}),
@@ -1140,6 +1154,7 @@ async function run(itemId) {
             },
           }),
         );
+        original = null;
         artifactId = uploadedId;
         // Persist the s3Key with the artifact: retry re-registers the SAME
         // artifact from these coordinates (no new upload, no new object).
@@ -1155,6 +1170,8 @@ async function run(itemId) {
         updateItemAnalysis(itemId, { s3Key });
       }
     }
+    if (item.media && item.upload?.status === "uploaded")
+      await releaseCaptureOriginal(item.media.key, artifactId);
     const sent = read?.atUpload();
     if (sent) updateItem(itemId, { location: sent });
     else if (read) {

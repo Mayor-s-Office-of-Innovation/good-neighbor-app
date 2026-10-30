@@ -12,17 +12,28 @@ for (const [route, tag, doneId] of [
   }) => {
     await page.goto(route);
     await expect(page.locator("#gallery-input")).toBeAttached();
-    await page.evaluate(() => {
+    await page.evaluate((tag) => {
       const original = window.FileReader.prototype.readAsDataURL;
       /** @type {(() => void)[]} */
       const reads = [];
       Object.assign(window, { captureReads: reads });
+      if (tag === "perimeter-check") {
+        // Binary capture has no FileReader leg. Hold admission at the queue's
+        // async consumer boundary so the real persistence path still runs.
+        const capture = /** @type {any} */ (document.querySelector(tag));
+        const addPhoto = capture._addPhoto.bind(capture);
+        capture._addPhoto = async (/** @type {File} */ file) => {
+          await new Promise((resolve) => reads.push(() => resolve(undefined)));
+          return addPhoto(file);
+        };
+        return;
+      }
       window.FileReader.prototype.readAsDataURL = function (
         /** @type {Blob} */ file,
       ) {
         reads.push(() => original.call(this, file));
       };
-    });
+    }, tag);
     const gallery = page.locator("#gallery-input");
     const done = page.locator(`#${doneId}`);
     await gallery.setInputFiles([PHOTO_CLEAR, PHOTO_CLEAR]);

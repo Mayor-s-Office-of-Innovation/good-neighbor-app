@@ -358,6 +358,11 @@
 .check-timeline {
   gap: 1.25rem;
 }
+
+/* Keep the stable results container from adding an empty flex item or gap. */
+#capture-tray-slot {
+  display: contents;
+}
 .check-roll__grid:empty {
   display: none;
 }

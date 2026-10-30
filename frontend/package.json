@@ -14,7 +14,8 @@
     "size": "size-limit",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json",
-    "i18n:check": "node scripts/i18n-check.mjs"
+    "i18n:check": "node scripts/i18n-check.mjs",
+    "test:capture:ui": "playwright test -c ../e2e/capture-media.config.js"
   },
   "size-limit": [
     {
@@ -79,7 +80,7 @@
         "dist/assets/problem-report*.js",
         "dist/assets/describe-instead*.js"
       ],
-      "limit": "13 kB"
+      "limit": "13.5 kB"
     },
     {
       "name": "capture routes css",
@@ -114,6 +115,19 @@
       "name": "feedback submission js",
       "path": "dist/assets/feedback-*.js",
       "limit": "1 kB"
+    },
+    {
+      "name": "capture photo and storage js",
+      "path": [
+        "dist/assets/capture-photo-*.js",
+        "dist/assets/capture-media-*.js"
+      ],
+      "limit": "2 kB"
+    },
+    {
+      "name": "capture photo css",
+      "path": "dist/assets/capture-photo-*.css",
+      "limit": "300 B"
     }
   ],
   "dependencies": {

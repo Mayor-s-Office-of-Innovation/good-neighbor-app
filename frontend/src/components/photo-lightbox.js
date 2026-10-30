@@ -13,6 +13,8 @@ class PhotoLightbox extends HTMLElement {
     /** @type {HTMLElement | null} */
     this._trigger = null;
     this._source = "";
+    /** @type {(() => void) | null | undefined} */
+    this._release = null;
   }
 
   connectedCallback() {
@@ -44,7 +46,7 @@ class PhotoLightbox extends HTMLElement {
     return this.querySelector("dialog");
   }
 
-  /** @param {{ src: string, alt?: string, address?: string, capturedAt?: string, trigger?: HTMLElement, hideLocation?: boolean }} photo */
+  /** @param {{ src: string, alt?: string, address?: string, capturedAt?: string, trigger?: HTMLElement, hideLocation?: boolean, previewOnly?: boolean }} photo */
   open(photo) {
     if (!photo.src || !this._dialog) return;
     const image = this.querySelector(".photo-lightbox__image");
@@ -65,7 +67,13 @@ class PhotoLightbox extends HTMLElement {
     const timestamp = photo.capturedAt
       ? formatPhotoDateTime(photo.capturedAt)
       : "";
-    caption.textContent = [address, timestamp].filter(Boolean).join(" · ");
+    caption.textContent = [
+      address,
+      timestamp,
+      photo.previewOnly ? t("lightbox.previewOnly") : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
     caption.hidden = !caption.textContent;
     openOverlayDialog(this._dialog, "photo-lightbox");
     /** @type {HTMLElement | null} */ (
@@ -74,10 +82,24 @@ class PhotoLightbox extends HTMLElement {
   }
 
   close() {
+    this.querySelector("img")?.removeAttribute("src");
+    this._release?.();
+    this._release = null;
     this._dialog?.close();
   }
 
+  disconnectedCallback() {
+    this.querySelector("img")?.removeAttribute("src");
+    this._release?.();
+    this._release = null;
+    this._trigger = null;
+    this._source = "";
+  }
+
   _restoreFocus() {
+    this.querySelector("img")?.removeAttribute("src");
+    this._release?.();
+    this._release = null;
     const trigger = this._trigger?.isConnected
       ? this._trigger
       : [...document.querySelectorAll("[data-photo-lightbox]")].find(
@@ -108,14 +130,41 @@ customElements.define("photo-lightbox", PhotoLightbox);
  * @param {HTMLElement} trigger
  * @param {Element | null} [screen] Screen that owned the trigger when clicked.
  */
-export function openPhotoLightbox(host, trigger, screen = trigger) {
+export async function openPhotoLightbox(host, trigger, screen = trigger) {
   if (!host.isConnected || !screen?.isConnected || !host.contains(screen))
     return;
   const image = trigger.querySelector("img");
   if (!(image instanceof HTMLImageElement)) return;
+  const capture =
+    /** @type {import("./capture-photo.js").CapturePhoto | null} */ (
+      trigger.querySelector("capture-photo")
+    );
+  if (capture) {
+    await customElements.whenDefined("capture-photo");
+    if (!host.isConnected || !screen?.isConnected || !host.contains(screen))
+      return;
+  }
+  const original = capture ? await capture.original().catch(() => null) : null;
+  if (!host.isConnected || !screen?.isConnected || !host.contains(screen)) {
+    original?.release();
+    return;
+  }
   const src =
-    trigger.dataset.fullSrc || image.currentSrc || image.getAttribute("src");
-  if (!src) return;
+    original?.src ||
+    trigger.dataset.fullSrc ||
+    image.currentSrc ||
+    image.getAttribute("src");
+  if (!src) {
+    if (capture) {
+      const { showToast } = await import("../state/toasts.js");
+      showToast({
+        title: t("card.evidence.unavailable"),
+        message: "",
+        tone: "warning",
+      });
+    }
+    return;
+  }
   const existing = host.querySelector("photo-lightbox");
   const lightbox =
     existing instanceof PhotoLightbox
@@ -125,12 +174,16 @@ export function openPhotoLightbox(host, trigger, screen = trigger) {
     lightbox.setAttribute("site-address", host._site?.address || "");
     host.append(lightbox);
   }
+  lightbox._release?.();
+  lightbox._release = original?.release;
   lightbox.open({
     src,
     alt: image.alt,
     address: trigger.dataset.photoAddress || "",
     capturedAt: trigger.dataset.photoTime || "",
     hideLocation: trigger.hasAttribute("data-photo-no-location"),
+    previewOnly:
+      original && "previewOnly" in original ? original.previewOnly : false,
     trigger,
   });
 }

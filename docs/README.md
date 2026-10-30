@@ -7,6 +7,8 @@
 
 ## Core reference
 
+- **[capture-media.md](./capture-media.md)** — perimeter photo storage lifetime, server thumbnails, stable rendering, recovery, and performance checks.
+
 - **[today-load-requests.md](./today-load-requests.md)** — initial Today page request
   totals, asset/API sequence diagram, DynamoDB fanout, third-party calls and duplicate polling.
 - **[architecture.md](./architecture.md)** — the built system: container view, async analyze
