@@ -60,7 +60,7 @@
 
 - **[Support chat](./runbooks/support-chat.md)** — FAQ sources, isolated model access, privacy, evaluation and rollout.
 
-- **[Alert delivery](./runbooks/observability.md)** — production responders, both regional SNS confirmations, isolated alarm-delivery drills, and diagnosis.
+- **[Alert delivery](./runbooks/observability.md)** — production responders, both regional SNS confirmations, isolated alarm-delivery drills, and diagnosis, plus the CloudWatch Omni scope and sign-in notes.
 - **[Recovery drills](./runbooks/recovery.md)** — controlled DLQ diagnosis/redrive, isolated DynamoDB PITR restore, recovery limits, and cleanup.
 
 - **[System status](./runbooks/system-status.md)** — supervisor dashboard metric definitions, reporting projections, initialization, and verification.
