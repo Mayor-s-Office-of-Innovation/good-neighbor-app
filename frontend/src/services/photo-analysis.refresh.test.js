@@ -20,6 +20,7 @@ import {
 import { getCurrentCheck, updateItemAnalysis } from "../state/check-session.js";
 import {
   refreshEvidenceAnalysis,
+  refreshRecoveredQuestion,
   answerAnalysisQuestion,
 } from "./photo-analysis.js";
 
@@ -282,4 +283,160 @@ it("does not let a delayed answer restore a replaced assessment", async () => {
   finish();
   await pending;
   expect(updateItemAnalysis).not.toHaveBeenCalled();
+});
+
+it("publishes an edited recovered question without a local session", async () => {
+  vi.mocked(evaluateAssessment).mockResolvedValue({
+    assessment: {},
+    conditions: [],
+    tasks: [],
+  });
+  await refreshRecoveredQuestion(
+    {
+      checkId: "original-check",
+      analysis: {
+        artifactId: "original-artifact",
+        assessment: { assessmentId: "previous" },
+      },
+    },
+    {
+      analysis_id: "amended-analysis",
+      assessment: {
+        identified_conditions_of_concern: [
+          { condition_id: "remaining", category: "Litter", severity: 1 },
+        ],
+      },
+    },
+  );
+  expect(evaluateAssessment).toHaveBeenCalledWith(
+    expect.objectContaining({
+      checkId: "original-check",
+      previousAssessmentId: "previous",
+    }),
+  );
+  expect(updateItemAnalysis).not.toHaveBeenCalled();
+});
+
+const recovered = {
+  checkId: "check",
+  analysis: {
+    artifactId: "artifact",
+    assessment: { assessmentId: "previous" },
+    conditions: [{ source: { latitude: 37.76, longitude: -122.42 } }],
+  },
+};
+const amendment = {
+  analysis_id: "amended",
+  assessment: {
+    identified_conditions_of_concern: [{ category: "Litter", severity: 1 }],
+  },
+};
+const conflict = { status: 409, body: { code: "AssessmentRevisionConflict" } };
+const published = {
+  assessment: { assessmentId: "published" },
+  conditions: [],
+  tasks: [],
+};
+
+it.each([false, true])(
+  "preserves recovered coordinates, preferring amended coordinates when supplied: %s",
+  async (amendedLocation) => {
+    vi.mocked(evaluateAssessment).mockResolvedValue(published);
+    const metadata = { latitude: 37.78, longitude: -122.44 };
+    await refreshRecoveredQuestion(recovered, {
+      ...amendment,
+      assessment: {
+        ...amendment.assessment,
+        ...(amendedLocation ? { metadata } : {}),
+      },
+    });
+    expect(vi.mocked(evaluateAssessment).mock.calls[0][0]).toMatchObject({
+      assessment: {
+        metadata: amendedLocation
+          ? metadata
+          : recovered.analysis.conditions[0].source,
+      },
+    });
+  },
+);
+it("retries a recovered amendment after an answer conflict using one stable assessment ID", async () => {
+  vi.mocked(evaluateAssessment)
+    .mockRejectedValueOnce(conflict)
+    .mockResolvedValueOnce(published);
+  vi.mocked(getAssessmentGuidance).mockResolvedValue({
+    assessment: { assessmentId: "previous" },
+    conditions: [],
+    tasks: [],
+  });
+  expect(await refreshRecoveredQuestion(recovered, amendment)).toEqual(
+    published,
+  );
+  const calls = vi.mocked(evaluateAssessment).mock.calls;
+  expect(calls).toHaveLength(2);
+  expect(calls[0][0]).toEqual(calls[1][0]);
+});
+it("adopts a winning recovered-edit successor without replaying the old amendment", async () => {
+  vi.mocked(evaluateAssessment).mockRejectedValueOnce(conflict);
+  vi.mocked(getAssessmentGuidance).mockResolvedValue(published);
+  expect(await refreshRecoveredQuestion(recovered, amendment)).toEqual(
+    published,
+  );
+  expect(evaluateAssessment).toHaveBeenCalledOnce();
+});
+it("bounds recovered-edit conflict retries", async () => {
+  vi.mocked(evaluateAssessment).mockRejectedValue(conflict);
+  vi.mocked(getAssessmentGuidance).mockResolvedValue({
+    assessment: { assessmentId: "previous" },
+    conditions: [],
+    tasks: [],
+  });
+  await expect(refreshRecoveredQuestion(recovered, amendment)).rejects.toEqual(
+    conflict,
+  );
+  expect(evaluateAssessment).toHaveBeenCalledTimes(3);
+});
+
+it("persists a no-task answer against validated successor guidance without losing sibling conditions", async () => {
+  const check = {
+    id: "check",
+    items: [
+      {
+        id: "item",
+        analysis: {
+          assessment: { assessmentId: "old", assessmentRevision: 9 },
+          conditions: [{ conditionId: "outdated" }],
+          tasks: [],
+        },
+      },
+    ],
+  };
+  vi.mocked(getCurrentCheck).mockReturnValue(/** @type {any} */ (check));
+  const sibling = { conditionId: "sibling", status: "needs_answer" };
+  const answered = {
+    conditionId: "question",
+    status: "completed",
+    needsAnswer: null,
+  };
+  vi.mocked(submitConditionAnswers).mockResolvedValue({
+    assessmentItem: { assessmentId: "current", assessmentRevision: 2 },
+    conditionItem: answered,
+    taskItem: null,
+    evaluation: null,
+  });
+  await answerAnalysisQuestion("item", "question", "provider_generated", true, {
+    assessment: { assessmentId: "current", assessmentRevision: 1 },
+    conditions: [{ conditionId: "question", status: "needs_answer" }, sibling],
+    tasks: [],
+  });
+  expect(submitConditionAnswers).toHaveBeenCalledWith("current", "question", {
+    answers: { provider_generated: true },
+  });
+  expect(updateItemAnalysis).toHaveBeenCalledWith(
+    "item",
+    expect.objectContaining({
+      assessment: { assessmentId: "current", assessmentRevision: 2 },
+      conditions: [answered, sibling],
+      tasks: [],
+    }),
+  );
 });

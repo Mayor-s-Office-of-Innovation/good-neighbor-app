@@ -116,7 +116,7 @@ test.describe("proactive care", () => {
       ),
     ).toBe(true);
   });
-  test("keeps the same submission on an uncertain response and retries without duplicating", async ({
+  test("reconciles an uncertain committed response without duplicating", async ({
     page,
   }) => {
     await openLogs(page);
@@ -130,18 +130,30 @@ test.describe("proactive care", () => {
       if (!dropped) {
         dropped = true;
         await route.fetch();
+        // Deliver the lost response after the list has mounted and started
+        // queue recovery, so this scenario exercises the explicit Retry action.
+        await expect(page.locator(".care-days")).toHaveAttribute(
+          "aria-busy",
+          "false",
+        );
         return route.abort("failed");
       }
       return route.fallback();
     });
     await page.locator("[data-save]").click();
-    await expect(page.locator("[data-retry-work]")).toBeVisible();
-    await save(page, true);
-    expect(submissions).toHaveLength(2);
-    expect(submissions[0]).toEqual(submissions[1]);
-    await expect(
-      page.locator(`[data-work="${submissions[0].workId}"]`),
-    ).toHaveCount(1);
+    // A committed response can appear in the saved list before the failed
+    // local attempt settles. Otherwise the user retries the same queued item.
+    await expect.poll(() => submissions.length).toBeGreaterThan(0);
+    const id = submissions[0].workId;
+    const saved = page.locator(`[data-work="${id}"]`);
+    const retry = page.locator(`[data-retry-work="${id}"]`);
+    await expect
+      .poll(async () => (await retry.isVisible()) || (await saved.isVisible()))
+      .toBe(true);
+    if (await retry.isVisible()) await retry.click();
+    await expect(saved).toHaveCount(1);
+    for (const submission of submissions)
+      expect(submission).toEqual(submissions[0]);
   });
 });
 
@@ -421,7 +433,7 @@ test("proactive care replaces five expired uploads without waiting for quota TTL
   await openLogs(page);
   await choose(page, "power_washed");
   await page
-    .locator("#care-photo-input")
+    .locator("#care-gallery-input")
     .setInputFiles(Array(5).fill(PHOTO_CLEAR));
   let expired = false;
   /** @type {Record<string, any>[]} */

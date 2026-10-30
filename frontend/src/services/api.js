@@ -1712,3 +1712,9 @@ export function getCarePhoto(workId, photoId) {
 export function askSupport({ question, locale, signal }) {
   return request("POST", "/v1/support", { body: { question, locale }, signal });
 }
+
+/** @param {string | null} [nextToken] */
+export function listPendingGuidance(nextToken = null) {
+  const query = nextToken ? `?nextToken=${encodeURIComponent(nextToken)}` : "";
+  return request("GET", `/v1/guidance/pending${query}`);
+}

@@ -417,13 +417,15 @@
   font-weight: 500;
   min-height: 44px;
 }
-.task-update__capture-secondary [role="status"] {
+.task-update [data-photo-upload-status] {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
   min-height: 44px;
 }
-.task-update__capture-secondary [hidden] {
+.task-update__capture-secondary [hidden],
+.task-update .capture-controls [hidden],
+.task-update [data-photo-upload-status][hidden] {
   display: none;
 }
 

@@ -78,45 +78,29 @@ describe("descriptionCard", () => {
 });
 
 describe("photoGrid", () => {
-  it("renders the camera first with the newest photo immediately after it", () => {
+  it("keeps controls above the roll, with the newest photo first", () => {
     const markup = photoGrid([
       { id: "first", dataUrl: "data:first" },
       { id: "second", dataUrl: "data:second" },
     ]);
-
-    expect(markup.indexOf('id="add-photo"')).toBeLessThan(
-      markup.indexOf('data-del="second"'),
-    );
+    expect(markup).not.toContain('id="add-photo"');
     expect(markup.indexOf('data-del="second"')).toBeLessThan(
       markup.indexOf('data-del="first"'),
     );
-    expect(markup).not.toContain("addshot--empty");
+    expect(shell().indexOf("data-capture-upload")).toBeLessThan(
+      shell().indexOf('id="shotgrid"'),
+    );
   });
-
-  it("renders the empty add tile when there are no photos", () => {
-    const markup = photoGrid([]);
-
-    expect(markup).toContain("addshot--empty");
-    expect(markup).toContain("photo-capture-tile");
-    expect(markup).toContain("photo-capture-tile__icon");
-    expect(markup).toContain("photo-capture-tile__label");
-    expect(markup).toContain(t("check.photo.take"));
-    expect(markup).toContain('name="camera"');
-  });
-
-  it("renders a description immediately after the camera tile", () => {
+  it("leaves the roll empty before capture", () =>
+    expect(photoGrid([])).toBe(""));
+  it("renders a description before the photos", () => {
     const markup = photoGrid([{ id: "photo-1", dataUrl: "data:photo" }], {
       id: "text-1",
       text: "Litter near the entrance",
     });
-
-    expect(markup.indexOf('id="add-photo"')).toBeLessThan(
-      markup.indexOf('data-edit-description="text-1"'),
-    );
     expect(markup.indexOf('data-edit-description="text-1"')).toBeLessThan(
       markup.indexOf('data-del="photo-1"'),
     );
-    expect(markup).not.toContain("addshot--empty");
   });
 });
 

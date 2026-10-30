@@ -777,6 +777,59 @@ export async function removeEvidenceItem(itemId) {
   removeItem(itemId);
 }
 
+export async function refreshRecoveredQuestion(item, response) {
+  if (!response?.assessment) throw new Error("Missing amended assessment");
+  const refreshed = assessmentFromRefreshedAnalysis({
+    checkId: item.checkId,
+    artifactId: item.analysis.artifactId,
+    analysisId: response.analysis_id,
+    assessment: response.assessment,
+    // Amended coordinates win; persisted evidence coordinates are only a fallback.
+    location: hasCoordinates(response.assessment.metadata)
+      ? null
+      : hasCoordinates(item.location)
+        ? item.location
+        : item.analysis.conditions?.find((condition) =>
+            hasCoordinates(condition.source),
+          )?.source,
+  });
+  const guidance = await evaluateAmendedAssessment(
+    refreshed,
+    item.analysis.assessment.assessmentId,
+  );
+  if (!guidance) throw new Error("Missing amended guidance");
+  return guidance;
+}
+
+/** Reuse one amendment identity across bounded revision-conflict retries. */
+async function evaluateAmendedAssessment(
+  refreshed,
+  previousAssessmentId,
+  canPublish = () => true,
+) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await evaluateAssessment({ ...refreshed, previousAssessmentId });
+    } catch (err) {
+      if (
+        err?.status !== 409 ||
+        err?.body?.code !== "AssessmentRevisionConflict" ||
+        !previousAssessmentId
+      )
+        throw err;
+      const latest = await getAssessmentGuidance(previousAssessmentId);
+      if (!canPublish()) return null;
+      if (
+        latest.assessment?.assessmentId &&
+        latest.assessment.assessmentId !== previousAssessmentId
+      )
+        return latest;
+      if (!latest.assessment || attempt === 2) throw err;
+    }
+  }
+  return null;
+}
+
 export async function refreshEvidenceAnalysis(itemId, response, opts = {}) {
   const check = checkWithItem(itemId);
   if (!check) return;
@@ -795,38 +848,14 @@ export async function refreshEvidenceAnalysis(itemId, response, opts = {}) {
     assessment: response.assessment,
     location: item.location,
   });
-  let guidance;
-  let reconciled = false;
   const previousAssessmentId = item.analysis?.assessment?.assessmentId;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      guidance = await evaluateAssessment({
-        ...refreshed,
-        previousAssessmentId,
-      });
-      break;
-    } catch (err) {
-      if (
-        err?.status !== 409 ||
-        err?.body?.code !== "AssessmentRevisionConflict" ||
-        !previousAssessmentId
-      )
-        throw err;
-      const latest = await getAssessmentGuidance(previousAssessmentId);
-      if (!isHeld(check)) return;
-      if (latest.assessment?.assessmentId !== previousAssessmentId) {
-        // Another refresh won. Use its persisted analysis as well as guidance;
-        // never replay this older analyzer payload against the new predecessor.
-        guidance = latest;
-        reconciled = true;
-        break;
-      }
-      if (attempt === 2) throw err;
-      // Same predecessor: an answer changed. The backend reloads those answers
-      // on the next evaluation; the analyzer amendment is not repeated.
-    }
-  }
-  reconciled ||= Boolean(
+  const guidance = await evaluateAmendedAssessment(
+    refreshed,
+    previousAssessmentId,
+    () => isHeld(check),
+  );
+  if (!guidance) return;
+  const reconciled = Boolean(
     guidance.assessment?.assessmentId &&
       guidance.assessment.assessmentId !== refreshed.assessmentId,
   );
@@ -957,6 +986,7 @@ export async function analyzeNoIssueDescriptionEdit(itemId, text) {
  * @param {string} conditionId
  * @param {string} answerKey
  * @param {unknown} answerValue
+ * @param {{assessment?: {assessmentId?: string, assessmentRevision?: number}, conditions?: any[], tasks?: any[]} | null} [publishedGuidance]
  * @returns {Promise<AnswerAnalysisQuestionResult>}
  */
 export async function answerAnalysisQuestion(
@@ -964,10 +994,13 @@ export async function answerAnalysisQuestion(
   conditionId,
   answerKey,
   answerValue,
+  publishedGuidance = null,
 ) {
   const check = checkWithItem(itemId);
   const item = sessionItem(check, itemId);
-  const assessmentId = item?.analysis?.assessment?.assessmentId;
+  const heldAssessmentId = item?.analysis?.assessment?.assessmentId;
+  const assessmentId =
+    publishedGuidance?.assessment?.assessmentId || heldAssessmentId;
   if (!check || !item || !assessmentId || !conditionId || !answerKey) {
     throw new ApiError("This item has no assessment to answer against.", {
       body: { code: "missing_assessment" },
@@ -983,7 +1016,7 @@ export async function answerAnalysisQuestion(
     if (err?.body?.code === "AssessmentRevisionConflict") {
       const latest = await getAssessmentGuidance(assessmentId);
       const currentId = itemById(itemId)?.analysis?.assessment?.assessmentId;
-      if (isHeld(check) && currentId === assessmentId)
+      if (isHeld(check) && currentId === heldAssessmentId)
         updateItemAnalysis(itemId, latest);
     }
     throw err;
@@ -992,17 +1025,25 @@ export async function answerAnalysisQuestion(
   const latestItem = itemById(itemId);
   if (
     !latestItem ||
-    latestItem.analysis?.assessment?.assessmentId !== assessmentId
+    latestItem.analysis?.assessment?.assessmentId !== heldAssessmentId
   )
     return result;
   if (
+    latestItem.analysis?.assessment?.assessmentId === assessmentId &&
     (result?.assessmentItem?.assessmentRevision ?? 0) <
-    (latestItem.analysis?.assessment?.assessmentRevision ?? 0)
+      (latestItem.analysis?.assessment?.assessmentRevision ?? 0)
   )
     return result;
   const condition = result?.conditionItem;
   const task = result?.taskItem;
-  const existingConditions = latestItem.analysis?.conditions || [];
+  const baseline =
+    !publishedGuidance ||
+    (latestItem.analysis?.assessment?.assessmentId === assessmentId &&
+      (latestItem.analysis.assessment.assessmentRevision || 0) >
+        (publishedGuidance.assessment?.assessmentRevision || 0))
+      ? latestItem.analysis
+      : publishedGuidance;
+  const existingConditions = baseline?.conditions || [];
   const nextConditions = existingConditions.map((candidate) =>
     candidate.conditionId === conditionId ? condition || candidate : candidate,
   );
@@ -1013,7 +1054,7 @@ export async function answerAnalysisQuestion(
     nextConditions.push(condition);
   }
 
-  const nextTasks = (latestItem.analysis?.tasks || []).filter(
+  const nextTasks = (baseline?.tasks || []).filter(
     (candidate) => candidate.conditionId !== conditionId,
   );
   if (task) nextTasks.push(task);

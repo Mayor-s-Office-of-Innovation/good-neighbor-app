@@ -1,4 +1,5 @@
 // @ts-nocheck -- lenient migration baseline (checkJs).
+import { CaptureFileQueue } from "../services/capture-files.js";
 import { resolveSessionTask } from "./session-task-resolution.js";
 import { openSessionDuplicate } from "./duplicate-issue-launcher.js";
 import { captureGuidance } from "../domain/capture-guidance.js";
@@ -21,6 +22,7 @@ import {
 */
 import "./perimeter-check.css";
 import {
+  showToast,
   show311FilingToast,
   show311ErrorToast,
   showActionSaveErrorToast,
@@ -107,6 +109,8 @@ import { trackEvent } from "../services/analytics.js";
 class PerimeterCheck extends HTMLElement {
   constructor() {
     super();
+    this._captureReadVersion = 0;
+    this._captureFiles = new CaptureFileQueue();
     this._answeringConditionIds = new Set();
   }
 
@@ -188,6 +192,23 @@ class PerimeterCheck extends HTMLElement {
     );
     this.addEventListener("click", (e) => this._onAnalysisClick(e));
     this._fileInput.addEventListener("change", () => this._onFilePicked());
+    this.querySelector("#add-photo").addEventListener("click", () =>
+      this._openCamera(),
+    );
+    const gallery = /** @type {HTMLInputElement} */ (
+      this.querySelector("#gallery-input")
+    );
+    this.querySelector("[data-capture-upload]").addEventListener(
+      "click",
+      () => {
+        gallery.value = "";
+        markCameraOpen("/check");
+        gallery.click();
+      },
+    );
+    gallery.addEventListener("change", () => this._onFilePicked(gallery));
+    this._fileInput.oncancel = gallery.oncancel = clearCameraOpen;
+
     [
       this._analysisDeleteDialog,
       this._analysisSuccessDialog,
@@ -644,11 +665,13 @@ class PerimeterCheck extends HTMLElement {
 
   /** Finish is disabled until the completion rule is met; this is the backstop. */
   _done() {
-    if (!isPerimeterCheckComplete(getCurrentCheck())) return;
+    if (this._captureFiles.busy || !isPerimeterCheckComplete(getCurrentCheck()))
+      return;
     this._finishCheck();
   }
 
   async _finishCheck() {
+    if (this._captureFiles.busy) return;
     const check = getCurrentCheck();
     const expectedArtifacts = expectedArtifactCountForCheck(check);
     this._finishing = true;
@@ -686,39 +709,38 @@ class PerimeterCheck extends HTMLElement {
     this._fileInput.click();
   }
 
-  _onFilePicked() {
+  _onFilePicked(input = this._fileInput) {
     clearCameraOpen();
-    const file = this._fileInput.files && this._fileInput.files[0];
-    if (!file) return;
-    mark("camera:picked", { bytes: file.size, type: file.type });
-    void trackEvent("photo_picked", {
-      flow: "perimeter",
-      photo_bytes: file.size,
-      photo_type: file.type,
-    });
-    if (this._fileReader?.readyState === FileReader.LOADING) {
-      this._fileReader.abort();
-    }
+    const files = [...(input?.files || [])];
+    if (!files.length) return;
+    if (input === this._fileInput)
+      mark("camera:picked", { bytes: files[0].size, type: files[0].type });
     const originCheckId = this._checkId;
-    const reader = new FileReader();
-    this._fileReader = reader;
-    reader.onload = () => {
-      if (!this.isConnected || !isCurrentSession(originCheckId, "perimeter")) {
-        this._fileReader = null;
-        return;
-      }
-      this._fileReader = null;
-      if (typeof reader.result === "string") {
-        this._addPhoto(reader.result);
-      }
-    };
-    reader.onerror = () => {
-      this._fileReader = null;
-    };
-    reader.onabort = () => {
-      this._fileReader = null;
-    };
-    reader.readAsDataURL(file);
+    const version = this._captureReadVersion;
+    const rejected = this._captureFiles.enqueue(
+      files,
+      getItems(),
+      () =>
+        this.isConnected &&
+        !this._finishing &&
+        version === this._captureReadVersion &&
+        isCurrentSession(originCheckId, "perimeter"),
+      (dataUrl) => this._addPhoto(dataUrl),
+      () => this._render(),
+    );
+    if (rejected)
+      showToast({
+        title: t("capture.files.rejectedTitle"),
+        message: t("capture.files.rejectedMessage", { count: rejected }),
+        tone: "warning",
+        duration: 0,
+      });
+    for (const file of files)
+      void trackEvent("photo_picked", {
+        flow: "perimeter",
+        photo_bytes: file.size,
+        photo_type: file.type,
+      });
   }
 
   _addPhoto(dataUrl) {
@@ -760,7 +782,7 @@ class PerimeterCheck extends HTMLElement {
     this.querySelector("#check-footer").innerHTML = footer({
       items: evidence,
       analyzingOpen: getAnalyzingOpen(),
-      complete: status.complete,
+      complete: !this._captureFiles.busy && status.complete,
     });
     const existingTray = this.querySelector("#analysis-tray");
     existingTray?.remove();
@@ -781,12 +803,11 @@ class PerimeterCheck extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._captureReadVersion += 1;
+    this._captureFiles = new CaptureFileQueue();
     this._guidanceAbort?.abort();
     // Only an abnormal document death leaves the marker behind.
     clearCameraOpen();
-    if (this._fileReader?.readyState === FileReader.LOADING) {
-      this._fileReader.abort();
-    }
     this._stopElapsedTicker();
     this._deletionUnsub?.();
     this._unsubscribe?.();

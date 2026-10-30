@@ -881,3 +881,50 @@ connection-status {
     transform: none;
   }
 }
+
+/* Capture actions shared by check, problem, care and ordinary task updates. */
+.capture-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  width: 100%;
+}
+.capture-controls .capture-controls__camera {
+  display: flex;
+  width: 100%;
+  min-height: 4rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9375rem;
+  border-radius: var(--wa-border-radius-l, 1rem);
+  font-size: 1.25rem;
+  font-weight: 500;
+  padding: 0.9375rem 1.25rem;
+}
+.capture-controls__secondary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 0.625rem 0.6875rem;
+}
+.capture-controls__secondary .btn-outline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65625rem;
+  min-height: 2.75rem;
+  padding: 0.65625rem 0.875rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--text-secondary);
+  border-color: var(--wa-color-neutral-border-loud, var(--c-line));
+}
+.capture-controls button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.capture-picker[hidden] {
+  display: none;
+}

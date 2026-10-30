@@ -194,10 +194,13 @@ describe("task update dialog templates", () => {
     expect(results).toContain("#AB12");
     expect(results).toContain('src="https://cdn.example/thumb.jpg"');
     expect(results).toContain("data-skip");
-    expect(capture).toContain("data-take-photo");
-    expect(capture).toContain("data-upload-input");
-    expect(capture).toContain("data-upload-photos");
-    expect(capture).toContain(t("taskUpdate.capture.takePhoto"));
+    expect(capture).toContain("data-update-gallery");
+    expect(results).not.toContain("data-update-gallery");
+    expect(capture).toContain("data-update-camera");
+    expect(capture).toContain("data-photo-upload-status");
+    expect(capture).toContain("data-photo-error");
+    expect(capture).toContain("data-capture-text");
+    expect(capture).toContain(t("check.photo.take"));
     expect(taskUpdateActionEditor({ text: "" })).toContain("disabled");
     expect(taskUpdateActionEditor({ text: "Done" })).not.toContain(
       'data-action-outcome="additional_action_resolved" disabled',

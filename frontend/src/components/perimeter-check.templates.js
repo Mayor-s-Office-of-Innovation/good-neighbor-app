@@ -1,3 +1,4 @@
+import { captureControls } from "./capture-controls.templates.js";
 /*
   Presentational templates for <perimeter-check>.
 
@@ -48,6 +49,16 @@ export const shell = () => html`
       aria-live="polite"
     ></p>
 
+    ${captureControls({ cameraId: "add-photo", textId: "describe-instead" })}
+    <input
+      type="file"
+      id="gallery-input"
+      class="capture-picker"
+      accept="image/*"
+      multiple
+      hidden
+    />
+
     <div
       class="shotgrid check-roll__grid"
       id="shotgrid"
@@ -60,14 +71,6 @@ export const shell = () => html`
       role="status"
       aria-live="polite"
     ></div>
-
-    <button
-      class="btn-outline check-roll__describe"
-      id="describe-instead"
-      type="button"
-    >
-      ${escapeHtml(t("check.describeInstead"))}
-    </button>
 
     <div class="check-timeline__footer" id="check-footer"></div>
 
@@ -157,14 +160,13 @@ export function descriptionCard(item) {
 }
 
 /**
- * The photo roll: camera first, then captured tiles from newest to oldest.
+ * The evidence roll below the controls, with photos from newest to oldest.
  * @param {Array<{ id: string, dataUrl?: string }>} photos
  * @param {{ id: string, text?: string } | null | undefined} description
  * @returns {string}
  */
 export function photoGrid(photos, description = null) {
   return (
-    addTile(photos.length === 0 && !description) +
     descriptionCard(description) +
     photos
       .map((item, index) => shotTile(item, index))
@@ -272,21 +274,4 @@ export const shotTile = (item, index) => html`
       <wa-icon name="trash" aria-hidden="true"></wa-icon>
     </button>
   </div>
-`;
-
-export const addTile = (empty) => html`
-  <button
-    class="btn-photo photo-capture-tile addshot ${empty
-      ? "addshot--empty"
-      : ""}"
-    id="add-photo"
-    type="button"
-  >
-    <span class="photo-capture-tile__icon addshot__icon" aria-hidden="true"
-      ><wa-icon name="camera"></wa-icon
-    ></span>
-    <span class="photo-capture-tile__label addshot__label"
-      >${escapeHtml(t("check.photo.take"))}</span
-    >
-  </button>
 `;

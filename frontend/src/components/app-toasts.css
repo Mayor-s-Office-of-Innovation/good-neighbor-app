@@ -1,6 +1,6 @@
 /*
   Styles for <app-toasts> (app-toasts.js): the stacked toast region and its
-  success / error / information variants.
+  success / error / warning / information variants.
   Imported from that module; main.js loads tokens.css and base.css first, so
   these rules follow the shared base in the bundle. Unlayered, like base.css.
 */
@@ -56,6 +56,10 @@ app-toasts {
 
 .app-toast--error .app-toast__icon {
   color: var(--c-hazard);
+}
+
+.app-toast--warning .app-toast__icon {
+  color: var(--wa-color-warning-on-quiet, #8c4602);
 }
 
 .app-toast--info .app-toast__icon {

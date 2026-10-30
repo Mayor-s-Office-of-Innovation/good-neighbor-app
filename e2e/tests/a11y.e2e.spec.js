@@ -108,6 +108,13 @@ matrix(
         await page.route("**/v1/checks?*", (route) =>
           route.fulfill({ json: { checks: [] } }),
         );
+        // Earlier scenarios can leave unanswered guidance in the shared table.
+        // This fixture owns exactly two task cards, so isolate questions too.
+        let pendingGuidanceReads = 0;
+        await page.route("**/v1/guidance/pending*", (route) => {
+          pendingGuidanceReads++;
+          return route.fulfill({ json: { guidance: [], nextToken: null } });
+        });
         await page.route("**/v1/tasks?*", (route) =>
           route.fulfill({
             json: {
@@ -124,6 +131,8 @@ matrix(
         );
         await page.reload();
         await expect(page.locator("#start-check")).toBeVisible();
+        await expect.poll(() => pendingGuidanceReads).toBeGreaterThan(0);
+        await expect(page.locator("[data-answer-key]")).toHaveCount(0);
         await expect(page.locator(".analysis-card")).toHaveCount(2);
         // Evidence loads on intersection, enabling its lightbox button. Visit
         // offscreen photos before ramp-check inventories keyboard stops so
