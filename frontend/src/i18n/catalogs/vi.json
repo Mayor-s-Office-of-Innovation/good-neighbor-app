@@ -130,6 +130,7 @@
   "admin.errors.providerExistsTitle": "Nhà cung cấp đã tồn tại",
   "admin.errors.providerUnavailable": "Nhà cung cấp đã chọn không còn khả dụng. Hãy chọn nhà cung cấp đang hoạt động và thử lại.",
   "admin.errors.requestTimeout": "Yêu cầu mất quá nhiều thời gian. Hãy kiểm tra xem các thay đổi đã được lưu chưa trước khi thử lại.",
+  "admin.errors.siteChanged": "The site changed while you were saving. Reload the site and review the current setting before saving again.",
   "admin.errors.siteExists": "Nhà cung cấp này đã có địa điểm mang tên này. Hãy chọn tên khác hoặc mở địa điểm hiện có.",
   "admin.errors.siteExistsTitle": "Địa điểm đã tồn tại",
   "admin.errors.staffAssigned": "Người này đã được phân công cho nhà cung cấp này. Hãy mở hồ sơ nhân viên hiện có.",

@@ -268,10 +268,18 @@ export const get311RequestDetails = async (event) => {
   const updates = needsCity
     ? await latestUpdates(config).catch((error) => {
         if (!hasSimulated) throw error;
-        logServerError(
-          "311 status feed",
-          new Error("City ticket status unavailable"),
-        );
+        // Keep the failure location without logging upstream messages or payloads.
+        const safe = new Error("City ticket status unavailable");
+        const name =
+          error instanceof Error && /^[\w.-]{1,80}$/.test(error.name)
+            ? error.name
+            : "Error";
+        if (error instanceof Error)
+          safe.stack = `${name}: ${safe.message}\n${(error.stack || "")
+            .split("\n")
+            .filter((line) => /^\s+at /.test(line))
+            .join("\n")}`;
+        logServerError("311 status feed", safe, { extra: { name } });
         return null;
       })
     : null;

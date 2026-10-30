@@ -130,6 +130,7 @@
   "admin.errors.providerExistsTitle": "Provider already exists",
   "admin.errors.providerUnavailable": "The selected provider is no longer available. Choose an active provider and try again.",
   "admin.errors.requestTimeout": "The request took too long. Check whether your changes were saved before trying again.",
+  "admin.errors.siteChanged": "The site changed while you were saving. Reload the site and review the current setting before saving again.",
   "admin.errors.siteExists": "A site with this name already exists for this provider. Choose a different name or open the existing site.",
   "admin.errors.siteExistsTitle": "Site already exists",
   "admin.errors.staffAssigned": "This person is already assigned to this provider. Open their existing staff record instead.",

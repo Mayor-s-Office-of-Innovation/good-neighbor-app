@@ -446,9 +446,9 @@ describe("simulated 311 status endpoints", () => {
     "preserves simulated batch results during a City failure (mixed=%s)",
     async (mixed) => {
       const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-      const fetch = vi
-        .spyOn(globalThis, "fetch")
-        .mockRejectedValue(new Error("City unavailable"));
+      const failure = new TypeError("Upstream response contains private data");
+      failure.stack = `${failure.name}: ${failure.message}\n    at fetchCityStatus (sf311-status.js:42:7)`;
+      const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(failure);
       if (mixed)
         send.mockResolvedValueOnce({ Item: task }).mockResolvedValueOnce({
           Item: {
@@ -486,10 +486,17 @@ describe("simulated 311 status endpoints", () => {
         ]);
         expect(fetch).toHaveBeenCalledTimes(mixed ? 1 : 0);
         expect(logged).toHaveBeenCalledTimes(mixed ? 1 : 0);
-        if (mixed)
-          expect(logged.mock.calls[0][0]).toContain(
-            "City ticket status unavailable",
+        if (mixed) {
+          const entry = JSON.parse(logged.mock.calls[0][0]);
+          expect(entry).toMatchObject({
+            name: "TypeError",
+            message: "City ticket status unavailable",
+          });
+          expect(entry.stack).toContain(
+            "at fetchCityStatus (sf311-status.js:42:7)",
           );
+          expect(logged.mock.calls[0][0]).not.toContain(failure.message);
+        }
       } finally {
         logged.mockRestore();
         fetch.mockRestore();

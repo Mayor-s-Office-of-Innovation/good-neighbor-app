@@ -130,6 +130,7 @@
   "admin.errors.providerExistsTitle": "El proveedor ya existe",
   "admin.errors.providerUnavailable": "El proveedor seleccionado ya no está disponible. Elige un proveedor activo e inténtalo de nuevo.",
   "admin.errors.requestTimeout": "La solicitud tardó demasiado. Compruebe si se guardaron los cambios antes de volver a intentarlo.",
+  "admin.errors.siteChanged": "The site changed while you were saving. Reload the site and review the current setting before saving again.",
   "admin.errors.siteExists": "Ya existe un sitio con este nombre para este proveedor. Elige otro nombre o abre el sitio existente.",
   "admin.errors.siteExistsTitle": "El sitio ya existe",
   "admin.errors.staffAssigned": "Esta persona ya está asignada a este proveedor. Abre su registro de personal existente.",

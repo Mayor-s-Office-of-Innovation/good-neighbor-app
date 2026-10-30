@@ -2,6 +2,7 @@
 const messages = {
   program_already_exists: "admin.programs.duplicateHelp",
   provider_already_exists: "admin.errors.providerExists",
+  site_changed: "admin.errors.siteChanged",
   site_already_exists: "admin.errors.siteExists",
   provider_manager_already_assigned: "admin.errors.staffAssigned",
   provider_manager_conflict: "admin.errors.staffChanged",

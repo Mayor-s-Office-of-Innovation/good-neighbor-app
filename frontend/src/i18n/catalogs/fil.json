@@ -130,6 +130,7 @@
   "admin.errors.providerExistsTitle": "Mayroon nang ganitong provider",
   "admin.errors.providerUnavailable": "Hindi na available ang napiling provider. Pumili ng aktibong provider at subukang muli.",
   "admin.errors.requestTimeout": "Masyadong matagal ang kahilingan. Tingnan kung na-save ang mga pagbabago bago subukang muli.",
+  "admin.errors.siteChanged": "The site changed while you were saving. Reload the site and review the current setting before saving again.",
   "admin.errors.siteExists": "Mayroon nang lugar na may ganitong pangalan para sa provider na ito. Pumili ng ibang pangalan o buksan ang kasalukuyang lugar.",
   "admin.errors.siteExistsTitle": "Mayroon nang ganitong lugar",
   "admin.errors.staffAssigned": "Nakatalaga na ang taong ito sa provider na ito. Buksan ang kasalukuyan niyang rekord bilang kawani.",

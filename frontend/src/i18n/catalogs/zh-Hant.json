@@ -130,6 +130,7 @@
   "admin.errors.providerExistsTitle": "服務提供者已存在",
   "admin.errors.providerUnavailable": "所選服務提供者已無法使用。請選擇有效的服務提供者後再試。",
   "admin.errors.requestTimeout": "要求花費的時間過長。請先確認變更是否已儲存，再重試。",
+  "admin.errors.siteChanged": "The site changed while you were saving. Reload the site and review the current setting before saving again.",
   "admin.errors.siteExists": "此服務提供者已有同名地點。請使用其他名稱，或開啟現有地點。",
   "admin.errors.siteExistsTitle": "地點已存在",
   "admin.errors.staffAssigned": "此人已指派給此服務提供者。請開啟其現有工作人員紀錄。",
