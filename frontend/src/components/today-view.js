@@ -303,6 +303,7 @@ class TodayView extends HTMLElement {
       void this.connectedCallback();
     };
     this._focusAfterRender = null;
+    this._activeProblem = null;
     this._homeModel = null;
     /** @type {Promise<void> | null} */
     this._homeRefresh = null;
@@ -713,7 +714,8 @@ class TodayView extends HTMLElement {
     this._taskOverrides = readTaskStatusOverrides();
     this._homeFilter =
       this._homeFilter || normalizedHomeTab(requestedFilter || "");
-    this._activeProblem = null;
+    // A background reload may finish while a problem dialog is open. Keep
+    // its selected problem, just as _renderHome keeps the dialog mounted.
     this._hasPerimeterDraft = await hasDraft("perimeter");
     if (generation !== this._homeRefreshGeneration) return;
     if (!duplicateUiEnabled()) this._duplicateLinks = new Map();
@@ -1241,6 +1243,7 @@ class TodayView extends HTMLElement {
     const focusedActionId = previousActionMenu?.contains(document.activeElement)
       ? document.activeElement?.id
       : null;
+    const focusedCardControl = this._focusedCardControlSelector();
     this._homeMarkup = markup;
     this.innerHTML = markup;
     this._tabRefreshStatus?.();
@@ -1543,6 +1546,11 @@ class TodayView extends HTMLElement {
       setQuestionAnswerBusy(this, conditionId, true);
     }
 
+    if (focusedCardControl) {
+      const replacement = this.querySelector(focusedCardControl);
+      if (replacement instanceof HTMLElement)
+        replacement.focus({ preventScroll: true });
+    }
     this._restoreFocusAfterRender();
     const requestedIssue = new URLSearchParams(window.location.search).get(
       "issue",
@@ -2338,6 +2346,32 @@ class TodayView extends HTMLElement {
       this._refresh311Statuses();
       void this._refreshActiveTab();
     }
+  }
+
+  // Preserve the same card action across background evidence/list updates.
+  // Match identities rather than positions: cards can reorder during hydration.
+  _focusedCardControlSelector() {
+    const control = document.activeElement;
+    const card = control?.closest?.(".analysis-card");
+    if (!card || !this.contains(card) || !control.matches("button")) return "";
+    const attributes = (element, names) =>
+      names
+        .filter((name) => element.hasAttribute(name))
+        .map((name) => `[${name}="${CSS.escape(element.getAttribute(name))}"]`)
+        .join("");
+    const identity = card.getAttribute("data-task-id")
+      ? ["data-task-id"]
+      : ["data-check-id", "data-artifact-id", "data-condition-id"];
+    const action = attributes(control, [
+      "data-action",
+      "data-analysis-action",
+      "data-phone-number",
+      "data-answer-value",
+      "role",
+    ]);
+    return action
+      ? `.analysis-card${attributes(card, identity)} button${action}`
+      : "";
   }
 
   _restoreFocusAfterRender() {

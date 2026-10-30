@@ -118,6 +118,18 @@ for (const [ruleId, number] of [
     });
     try {
       await button.focus();
+      // A late list/evidence response can repaint Home between focus and Enter.
+      await page.locator("today-view").evaluate((element) => {
+        const view = /** @type {any} */ (element);
+        view._renderHome({
+          ...view._homeModel,
+          tasks: view._homeModel.tasks.map((/** @type {any} */ task) => ({
+            ...task,
+            description: "Updated synthetic issue description",
+          })),
+        });
+      });
+      await expect(button).toBeFocused();
       await page.keyboard.press("Enter");
       await expect.poll(() => calls).toEqual([`tel:${number}`]);
       await expect

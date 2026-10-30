@@ -4,6 +4,7 @@ import { t } from "../helpers/i18n.js";
 import {
   dismissAllNewResults,
   finishCheck,
+  newResultsTray,
   startCheck,
 } from "../helpers/app.js";
 import { setAnalyzerFixture } from "../helpers/analyzer-control.js";
@@ -163,6 +164,17 @@ test.describe("describe instead", () => {
 
     // The text analysis produced guidance: at least one NEW card for the
     // multi fixture's conditions. Dismiss every generated card.
+    // A saved deletion can refresh Home while the next confirmation is open.
+    const firstCard = newResultsTray(page).locator(".analysis-card").first();
+    await expect(firstCard).toBeVisible();
+    await firstCard.locator('[data-analysis-action="delete"]').click();
+    await page.locator("today-view").evaluate(async (element) => {
+      await /** @type {any} */ (element).connectedCallback();
+    });
+    await expect(page.locator("#analysis-delete-dialog")).toBeVisible();
+    await page.locator("#analysis-delete-confirm").click();
+    await expect(page.locator("#analysis-delete-dialog")).not.toBeVisible();
+
     const cardCount = await dismissAllNewResults(page);
     expect(cardCount).toBeGreaterThan(0);
   });
