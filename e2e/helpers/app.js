@@ -111,7 +111,7 @@ export function newResultsTray(page) {
  * Dismiss every generated card in the NEW results tray via its trash button.
  * Delete flow: trash (data-analysis-action="delete") → confirm dialog →
  * rejectAnalysisCondition → the card hides behind a 5s undo toast, and the
- * tray re-renders. Always drive the FIRST remaining card; when the last card's
+ * tray re-renders. Pin each selected card by its evidence identity; when the last
  * deletion lands, the empty tray renders its "resolved or deleted" placeholder,
  * so expect the section to lose its cards.
  *
@@ -138,43 +138,30 @@ export async function dismissAllNewResults(page) {
     }
   }
 
-  /** The set of card identities currently in the tray. */
-  async function cardKeys() {
-    return (
-      await tray
-        .locator(".analysis-card")
-        .evaluateAll((els) =>
-          els.map((el) =>
-            [
-              el.getAttribute("data-artifact-id"),
-              el.getAttribute("data-condition-id"),
-            ].join("|"),
-          ),
-        )
-    ).sort();
-  }
-
   let seen = 0;
   for (;;) {
     const count = await settledCount();
     if (count === 0) break;
     seen = Math.max(seen, count);
-    const first = cards.first();
-    const key = await first.evaluate((el) =>
-      [
-        el.getAttribute("data-artifact-id"),
-        el.getAttribute("data-condition-id"),
-      ].join("|"),
-    );
-    await first.locator('[data-analysis-action="delete"]').click();
+    const selector = await cards
+      .filter({ has: page.locator('[data-analysis-action="delete"]') })
+      .first()
+      .evaluate((el) =>
+        ["data-check-id", "data-artifact-id", "data-condition-id"]
+          .map((attribute) => {
+            const value = el.getAttribute(attribute);
+            if (!value) throw new Error(`Card is missing ${attribute}`);
+            return `[${attribute}="${window.CSS.escape(value)}"]`;
+          })
+          .join(""),
+      );
+    // Hydration can reorder cards after the identity read. Resolve this identity
+    // again for the click instead of clicking whichever card is now first.
+    const selected = tray.locator(`.analysis-card${selector}`);
+    await selected.locator('[data-analysis-action="delete"]').click();
     await page.locator("#analysis-delete-confirm").click();
-    // The deletion landed when THIS card leaves the tray (identity, not total:
-    // late-hydrating task cards can raise the count while we're deleting).
-    await expect
-      .poll(async () => !(await cardKeys()).includes(key), {
-        timeout: 30_000,
-      })
-      .toBe(true);
+    // Card counts can rise while other results load; only this card must leave.
+    await expect(selected).toHaveCount(0, { timeout: 30_000 });
   }
   await expect(cards).toHaveCount(0);
   return seen;
