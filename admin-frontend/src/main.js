@@ -6246,7 +6246,7 @@ function siteDirectory(state, selected) {
   return `<section class="site-directory" aria-labelledby="sites-title">
     <div class="panel__head">
       <div>
-        <h2 id="sites-title">Sites</h2>
+        <h2 class="visually-hidden" id="sites-title">Sites</h2>
         <p class="muted">${filtered.length} ${filtered.length === 1 ? "site" : "sites"}</p>
       </div>
       <a class="btn-link" href="/sites/new" data-route>Add new site</a>
@@ -6344,7 +6344,7 @@ function siteManagerDirectory(state, selected, search) {
     .sort((a, b) => siteLabel(a).localeCompare(siteLabel(b)));
   return `<section class="site-directory" aria-labelledby="managers-title">
     <div class="panel__head">
-      <div><h2 id="managers-title">Site managers</h2><p class="muted">${managers.length} ${managers.length === 1 ? "manager" : "managers"}</p></div>
+      <div><h2 class="visually-hidden" id="managers-title">Site managers</h2><p class="muted">${managers.length} ${managers.length === 1 ? "manager" : "managers"}</p></div>
       <a class="btn-link" href="/managers/new" data-route>${escapeHtml(t("admin.managers.addSiteManager"))}</a>
     </div>
     <form id="manager-directory-filters" class="directory-filters" aria-label="Filter site managers">
@@ -6814,7 +6814,7 @@ function providerDirectory(providers) {
     .sort((a, b) => a.name.localeCompare(b.name));
   return `<section class="site-directory" aria-labelledby="providers-title">
     <div class="panel__head">
-      <div><h2 id="providers-title">Providers &amp; Programs</h2>
+      <div><h2 class="visually-hidden" id="providers-title">Providers &amp; Programs</h2>
       <p class="muted">Open a provider to see its associated programs</p>
       <p class="muted">${active.length} ${active.length === 1 ? "provider" : "providers"}</p></div>
       <a class="btn-link" href="/providers/new" data-route>Add new provider</a>
@@ -7100,7 +7100,7 @@ function providerManagerDirectoryView(state, search = "") {
       .toLocaleLowerCase()
       .includes(query),
   );
-  return `<section aria-labelledby="provider-manager-directory-title"><h2 id="provider-manager-directory-title">${escapeHtml(t("admin.providerManagers.title"))}</h2>${managers.length ? `<ul class="site-directory-list">${managers.map((manager) => `<li><a class="site-directory-row" href="${providerManagerPath(manager.providerId, manager.membershipId)}" data-route><span class="site-directory-row__text"><strong>${escapeHtml([manager.firstName, manager.lastName].filter(Boolean).join(" ") || manager.name)}</strong><span>${escapeHtml(manager.status === "inactive" ? t("admin.providerManagers.previousProvider", { name: manager.providerName }) : manager.providerName)}</span></span><span class="site-directory-row__caret" aria-hidden="true">›</span></a></li>`).join("")}</ul>` : `<p class="empty-state">${escapeHtml(t("admin.providerManagers.none"))}</p>`}</section>`;
+  return `<section class="site-directory" aria-labelledby="provider-manager-directory-title"><h2 class="visually-hidden" id="provider-manager-directory-title">${escapeHtml(t("admin.providerManagers.title"))}</h2><p class="muted directory-count">${escapeHtml(t(managers.length === 1 ? "admin.providerManagers.count.one" : "admin.providerManagers.count.other", { count: managers.length }))}</p>${managers.length ? `<ul class="site-directory-list">${managers.map((manager) => `<li><a class="site-directory-row" href="${providerManagerPath(manager.providerId, manager.membershipId)}" data-route><span class="site-directory-row__text"><strong>${escapeHtml([manager.firstName, manager.lastName].filter(Boolean).join(" ") || manager.name)}</strong><span>${escapeHtml(manager.status === "inactive" ? t("admin.providerManagers.previousProvider", { name: manager.providerName }) : manager.providerName)}</span></span><span class="site-directory-row__caret" aria-hidden="true">›</span></a></li>`).join("")}</ul>` : `<p class="empty-state">${escapeHtml(t("admin.providerManagers.none"))}</p>`}</section>`;
 }
 
 function providerManagerDetailView(state, membershipId) {

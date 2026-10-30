@@ -572,7 +572,7 @@ test("failed care screen download provides reload recovery", async ({
   );
   await page.locator("#home-action-menu-trigger").click();
   await page.locator("#view-care-work").click();
-  await expect(page.locator("#view [role=alert]")).toContainText(
+  await expect(page.locator("#view > [role=alert]")).toContainText(
     t("route.loadError"),
   );
   await page.unroute("**/components/care-work-view.js*");

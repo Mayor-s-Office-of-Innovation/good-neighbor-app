@@ -236,8 +236,9 @@ export function watchDuplicateIssues(taskIds, onChange) {
 /**
  * Invalidate the site's cache, including dependents and currently unmounted tasks.
  * @param {string} [originSiteId]
+ * @param {Record<string, any>[]} [updatedTasks]
  */
-function invalidateDuplicateIssues(originSiteId) {
+function invalidateDuplicateIssues(originSiteId, updatedTasks) {
   if (originSiteId && siteId !== undefined && originSiteId !== siteId) return;
   generation++;
   clearTimeout(timer);
@@ -245,11 +246,25 @@ function invalidateDuplicateIssues(originSiteId) {
   running = false;
   for (const id of tasks.keys()) {
     // Replacing the record also invalidates batches holding the old object.
-    tasks.set(id, {
-      due: Date.now(),
-      polls: 0,
-      row: { taskId: id, state: "pending" },
-    });
+    const previous = tasks.get(id)?.row;
+    const updated = updatedTasks?.find(
+      (task) => task.taskId === previous?.original?.taskId,
+    );
+    // State-only updates keep the known relation visible while revalidating.
+    // Evidence edits and separations discard it immediately.
+    const row =
+      updatedTasks && previous?.state === "matched"
+        ? {
+            ...previous,
+            original:
+              updated &&
+              (!previous.original.updatedAt ||
+                updated.updatedAt >= previous.original.updatedAt)
+                ? { ...previous.original, ...updated }
+                : previous.original,
+          }
+        : { taskId: id, state: "pending" };
+    tasks.set(id, { due: Date.now(), polls: 0, row });
   }
   for (const subscriber of [...subscribers]) {
     if (duplicateUiEnabled()) {

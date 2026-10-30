@@ -730,3 +730,36 @@ it("retains the server cooldown across the last unmount without refreshing settl
     random.mockRestore();
   }
 });
+
+it("keeps a filed group collapsed while revalidating its cached relation", async () => {
+  const original = {
+    taskId: "original",
+    status: "open",
+    updatedAt: "2026-10-15T10:00:00Z",
+  };
+  api.getDuplicateLinks.mockResolvedValueOnce({
+    enabled: true,
+    issues: [{ taskId: "one", state: "matched", original }],
+  });
+  const changed = vi.fn();
+  const stop = watchDuplicateIssues(["one"], changed);
+  await vi.advanceTimersByTimeAsync(0);
+  const filed = {
+    ...original,
+    status: "in_progress",
+    updatedAt: "2026-10-15T11:00:00Z",
+    inProgressActionKind: "311_filed",
+    appActionResults: [{ code: "create_311_ticket", status: "submitted" }],
+  };
+  api.getDuplicateLinks.mockImplementationOnce(() => new Promise(() => {}));
+  invalidateDuplicateIssues("site-1", [filed]);
+  expect(changed.mock.calls.at(-1)[0].get("one")).toMatchObject({
+    state: "matched",
+    original: filed,
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  // Separation/evidence changes still discard the relation immediately.
+  invalidateDuplicateIssues("site-1");
+  expect(changed.mock.calls.at(-1)[0].get("one").state).toBe("pending");
+  stop();
+});

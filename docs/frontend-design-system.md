@@ -181,15 +181,16 @@ a screen matched to the design without a mockup.
 
 ## Motion
 
-Two rules decide how a surface arrives, and they follow its close control:
+These rules decide how a surface arrives, and they follow its close control:
 
-- **A screen with a back arrow slides.** Routed screens one level below the
-  one on screen (reports, site admin, a day or issue-type detail, describe-
-  instead) slide in from the right and slide back out on the way up; sibling
-  routes and the X-closed capture flows cross-fade. `router.js`
-  `routeTransitionDirection` picks push/pop/fade from path level, `app-root.js`
-  stamps it on `<html data-route-transition>` for the View Transition, and
-  base.css holds the keyframes.
+- **A screen with a back arrow slides sideways.** Drill-down routes such as
+  complaint composition, care work entry, report details, and site editors slide
+  in from the right and back out when returning to their parent.
+- **Top-level sheets rise from the bottom.** Care work and complaint lists,
+  Site info, Reports, and Get help use circle-X close controls and rise on entry,
+  then slide down on dismissal. Capture flows and sibling routes cross-fade.
+  `router.js` selects the direction; `app-root.js` stamps it on
+  `<html data-route-transition>` and `base.css` supplies the animations.
 - **An overlay with an X fades.** Every modal `<dialog>` (action sheets, modals,
   the photo lightbox, the 311 and updates sheets) fades in and out over 80 ms
   through one rule in base.css; nothing scales or moves. A host that rebuilds

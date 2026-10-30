@@ -31,6 +31,7 @@ export function careHeader(title, close = false) {
 export function careList(items, loading = false) {
   return html`${careHeader(t("care.title"), true)}
     <p class="care-subtitle">${e(t("care.subtitle"))}</p>
+    <hr class="splash-rule" />
     <button type="button" class="btn-ink care-cta" data-new>
       ${e(t("care.new"))}
     </button>

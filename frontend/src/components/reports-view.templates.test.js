@@ -95,21 +95,13 @@ describe("reportsShell", () => {
     expect(markup).toContain("<site-switcher></site-switcher>");
     expect(markup).toContain("data-screen-focus");
     expect(markup).toContain("<p>x</p>");
-    // A way back to the rest of the app, and the same gear menu as home.
-    expect(markup).toContain('href="/today"');
-    expect(markup).toContain(escapeHtml(t("reports.backHome")));
-    expect(markup).toContain('id="home-settings"');
-    expect(markup).toContain('id="language-dialog"');
-    expect(markup).toContain('id="logout-dialog"');
-    expect(markup).not.toContain('role="menu"');
-    expect(
-      reportsShell({
-        heading: "Reports",
-        body: "",
-        tab: "checks",
-        settingsMenuOpen: true,
-      }),
-    ).toContain('id="settings-logout"');
+    expect(markup).toContain('id="reports-home"');
+    expect(markup).toContain(escapeHtml(t("common.close")));
+    expect(markup).toContain('name="xmark"');
+    expect(markup).not.toContain('name="chevron-left"');
+    expect(markup).not.toContain('id="home-settings"');
+    expect(markup).not.toContain('id="language-dialog"');
+    expect(markup).not.toContain('id="logout-dialog"');
   });
 
   it("renders the Checks and Issues tabs, and no row for a single tab", () => {

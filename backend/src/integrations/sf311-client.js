@@ -553,10 +553,12 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
               /** @type {Record<string, unknown>} */ (data).return_code ?? "",
             )
           : "";
-      if (!res.ok || (returnCode && returnCode !== "0")) {
+      // HTTP acceptance alone does not confirm a HUB update. A missing code
+      // leaves the outcome uncertain; callers must retain their retry state.
+      if (!res.ok || returnCode !== "0") {
         throw new Sf311Error("SF311 UpdateSR failed", {
           status: res.status,
-          code: returnCode || undefined,
+          code: returnCode || "missing_return_code",
           body,
           request: payload,
         });

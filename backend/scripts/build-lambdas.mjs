@@ -59,6 +59,10 @@ const entries = [
     entry: resolve(backendRoot, "src/lambda/sf311-worker.js"),
     external: ["sharp"],
   },
+  {
+    name: "warning-digest",
+    entry: resolve(backendRoot, "src/lambda/warning-digest.js"),
+  },
   { name: "support", entry: resolve(backendRoot, "src/lambda/support.js") },
   {
     name: "duplicate-dispatch",

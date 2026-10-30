@@ -19,7 +19,7 @@ variable "duplicate_comparison_requests_per_second" {
 # Isolated duplicate evaluation and reversible product links. No existing analysis handler or queue changes.
 variable "enable_duplicate_detection" {
   type        = bool
-  default     = false
+  default     = true
   description = "Enable isolated duplicate evaluation only after analyzer comparison deployment and key provisioning."
 }
 variable "duplicate_analyzer_base_url" {
@@ -208,6 +208,6 @@ resource "aws_cloudwatch_metric_alarm" "duplicate_dead_letters" {
   comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "notBreaching"
   dimensions          = { QueueName = aws_sqs_queue.duplicates_dlq.name }
-  alarm_actions       = [aws_sns_topic.alarms.arn]
+  alarm_actions       = local.duplicate_alarm_actions
   tags                = var.tags
 }

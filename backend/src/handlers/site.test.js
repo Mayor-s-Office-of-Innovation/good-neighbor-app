@@ -271,7 +271,7 @@ describe("site admin", () => {
     expect(body(response).site).toEqual({
       siteId: "site-1",
       name: "Mission",
-      featureFlags: { duplicateDetection: false },
+      featureFlags: { duplicateDetection: true },
     });
   });
 
@@ -499,7 +499,7 @@ describe("duplicate UI display policy", () => {
         .featureFlags.duplicateDetection,
     ).toBe(true);
   });
-  it("defaults off unless the stored site flag is explicitly true", async () => {
+  it("defaults on while preserving an explicit false rollback", async () => {
     send
       .mockResolvedValueOnce({ Item: { siteId: "site-1" } })
       .mockResolvedValueOnce({
@@ -517,7 +517,7 @@ describe("duplicate UI display policy", () => {
     expect(
       body(await /** @type {any} */ (getSite)(event("site-1"))).site
         .featureFlags.duplicateDetection,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       body(await /** @type {any} */ (getSite)(event("site-2"))).site
         .featureFlags.duplicateDetection,
@@ -525,6 +525,6 @@ describe("duplicate UI display policy", () => {
     expect(
       body(await /** @type {any} */ (getSite)(event("site-3"))).site
         .featureFlags.duplicateDetection,
-    ).toBe(false);
+    ).toBe(true);
   });
 });

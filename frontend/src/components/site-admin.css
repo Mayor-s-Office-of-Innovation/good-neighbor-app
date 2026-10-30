@@ -440,3 +440,18 @@
   white-space: normal;
   padding-inline: 1rem;
 }
+
+.site-admin-header--close h1 {
+  grid-column: 2;
+  grid-row: 1;
+}
+.site-admin-header--close > button {
+  grid-column: 3;
+  grid-row: 1;
+  border-radius: 50%;
+  background: var(--surface-2);
+}
+.site-admin-header--close > span {
+  grid-column: 1;
+  grid-row: 1;
+}

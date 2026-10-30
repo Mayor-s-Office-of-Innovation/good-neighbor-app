@@ -224,6 +224,7 @@ function stashHomeState(view) {
         duplicateLinks: new Map(view._duplicateLinks),
         remainingStatus: view._remainingStatus,
         remainingLoadedAt: view._remainingLoadedAt,
+        tabCountSnapshot: view._tabCountSnapshot,
       }
     : null;
 }
@@ -1156,6 +1157,7 @@ class TodayView extends HTMLElement {
     this._311StatusByTaskId = snapshot.task311Statuses;
     this._remainingStatus = snapshot.remainingStatus;
     this._remainingLoadedAt = snapshot.remainingLoadedAt;
+    this._tabCountSnapshot = snapshot.tabCountSnapshot;
     this._duplicateLinks = duplicateUiEnabled()
       ? new Map(snapshot.duplicateLinks ?? [])
       : new Map();
@@ -1905,17 +1907,26 @@ class TodayView extends HTMLElement {
     const remainingStatus = /** @type {"pending" | "loaded" | "error"} */ (
       this._remainingStatus || "loaded"
     );
+    const counts =
+      this._tabCountSnapshot?.siteId === this._siteId
+        ? { ...this._tabCountSnapshot.counts }
+        : {};
+    if (remainingStatus === "loaded") {
+      counts.in_progress = tabCounts.in_progress;
+      counts.history = tabCounts.history;
+      if (
+        !this._homeModel?.pendingGuidanceFailed &&
+        !this._homeModel?.pendingGuidanceLoading
+      )
+        counts.todo = tabCounts.todo;
+    }
+    if (this._homeModel?.pendingGuidanceFailed) delete counts.todo;
+    this._tabCountSnapshot = { siteId: this._siteId, counts };
     return homeResults({
       historyGrouping: this._historyGrouping || "resolved",
       homeFilter: this._homeFilter,
-      // Counts only once every list is in — a partial count would be wrong.
-      tabCounts:
-        remainingStatus === "loaded"
-          ? this._homeModel?.pendingGuidanceFailed ||
-            this._homeModel?.pendingGuidanceLoading
-            ? { in_progress: tabCounts.in_progress, history: tabCounts.history }
-            : tabCounts
-          : {},
+      // Retain confirmed counts during refresh; update each once its lists land.
+      tabCounts: counts,
       pendingGuidanceFailed: Boolean(this._homeModel?.pendingGuidanceFailed),
       pendingGuidanceLoading: Boolean(this._homeModel?.pendingGuidanceLoading),
       remainingStatus: this._tabListStatus?.() || remainingStatus,

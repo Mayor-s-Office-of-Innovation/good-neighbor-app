@@ -158,10 +158,6 @@ export class TaskUpdateDialog extends HTMLElement {
     this._render();
   }
 
-  _photosAllowed() {
-    return this._task?.canUploadPhotos === true;
-  }
-
   /** @param {string} [nextToken] */
   async _load(nextToken = "") {
     if (!this._task) return;
@@ -359,7 +355,7 @@ export class TaskUpdateDialog extends HTMLElement {
         pendingEvent: this._pendingEvent,
         results: this._results,
         task: this._results ? this._task : null,
-        photosAllowed: this._photosAllowed(),
+        photosAllowed: this._task?.canUploadPhotos === true,
         files: this._files,
         notes: this._noteDrafts,
         previews: this._filePreviews,

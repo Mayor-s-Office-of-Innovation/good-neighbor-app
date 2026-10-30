@@ -160,3 +160,135 @@ it("counts the original and distinct matched observations, and removes separated
       .duplicateSeenCount,
   ).toBe(2);
 });
+
+it("collapses every related card after explicit filing, including later observations", () => {
+  const filed = {
+    ...original,
+    status: "in_progress",
+    inProgressActionKind: "311_filed",
+    inProgressAt: "2026-10-15T10:00:00Z",
+    updatedAt: "2026-10-15T10:00:10Z",
+    appActionResults: [{ code: "create_311_ticket", status: "submitted" }],
+  };
+  const later = { ...repeat, taskId: "later" };
+  const relations = new Map([
+    ["repeat", { state: "matched", original: filed }],
+    ["later", { state: "matched", original: filed }],
+  ]);
+  for (const input of [
+    [filed, repeat, later],
+    [repeat, later],
+  ]) {
+    const tasks = projectDuplicateTasks(input, relations, now);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({
+      taskId: "original",
+      status: "in_progress",
+      duplicateSeenCount: 3,
+      appActionResults: filed.appActionResults,
+    });
+  }
+});
+
+it("does not let a stale duplicate cache overwrite a confirmed filing", () => {
+  const filed = {
+    ...original,
+    status: "in_progress",
+    inProgressActionKind: "311_filed",
+    updatedAt: "2026-10-15T11:30:00Z",
+    appActionResults: [{ code: "create_311_ticket", status: "submitted" }],
+  };
+  const stale = { ...original, updatedAt: "2026-10-15T09:00:00Z" };
+  const tasks = projectDuplicateTasks([filed, repeat], links(stale), now);
+  expect(tasks).toHaveLength(1);
+  expect(tasks[0].appActionResults).toEqual(filed.appActionResults);
+  expect(tasks[0].status).toBe("in_progress");
+});
+
+it.each(["queued", "failed"])(
+  "does not treat a %s filing as submitted",
+  (status) => {
+    const root = {
+      ...original,
+      status: "in_progress",
+      inProgressActionKind: "311_filed",
+      inProgressAt: "2026-10-15T10:00:00Z",
+      appActionStatus: status,
+      appActionResults: [],
+    };
+    const tasks = projectDuplicateTasks([root, repeat], links(root), now);
+    expect(tasks).toHaveLength(2);
+    expect(tasks[0].appActionStatus).toBe(status);
+  },
+);
+
+it.each([false, true])(
+  "preserves ticket evidence with equal task timestamps (fresh worklist=%s)",
+  (freshWorklist) => {
+    const stale = {
+      ...original,
+      updatedAt: "2026-10-15T10:00:00Z",
+      appActionResults: [],
+      appActionStatus: "pending",
+    };
+    const fresh = {
+      ...stale,
+      appActionStatus: "submitted",
+      appActionResults: [
+        {
+          code: "create_311_ticket",
+          status: "submitted",
+          recordedAt: "2026-10-15T10:01:00Z",
+          payload: { tickets: [{ srNum: "synthetic-ticket" }] },
+        },
+      ],
+    };
+    const tasks = projectDuplicateTasks(
+      [freshWorklist ? fresh : stale, repeat],
+      links(freshWorklist ? stale : fresh),
+      now,
+    );
+    expect(tasks.find((t) => t.taskId === "original")).toMatchObject({
+      appActionStatus: "submitted",
+      appActionResults: fresh.appActionResults,
+    });
+  },
+);
+
+it("uses integration timestamps when both equal-timestamp snapshots contain results", () => {
+  const older = {
+    ...original,
+    updatedAt: "2026-10-15T10:00:00Z",
+    appActionStatus: "failed",
+    appActionResults: [
+      {
+        code: "create_311_ticket",
+        status: "failed",
+        recordedAt: "2026-10-15T10:01:00Z",
+      },
+    ],
+  };
+  const newer = {
+    ...older,
+    appActionStatus: "submitted",
+    appActionResults: [
+      {
+        code: "create_311_ticket",
+        status: "submitted",
+        recordedAt: "2026-10-15T10:02:00Z",
+      },
+    ],
+  };
+  for (const [worklist, linked] of [
+    [older, newer],
+    [newer, older],
+  ]) {
+    const result = projectDuplicateTasks(
+      [worklist, repeat],
+      links(linked),
+      now,
+    );
+    expect(result[0].appActionResults).toEqual(newer.appActionResults);
+    expect(result[0].appActionStatus).toBe("submitted");
+  }
+});

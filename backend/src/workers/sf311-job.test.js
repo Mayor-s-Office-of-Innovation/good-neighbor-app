@@ -151,6 +151,45 @@ it("closes an informational ticket if the user finishes while filing is running"
     "close_311_ticket",
   ]);
 });
+it("finishes a replayed closure job without creating its ticket again", async () => {
+  task.status = "completed";
+  task.completionMethod = "manual";
+  const failed = {
+    code: "close_311_ticket",
+    status: "failed",
+    payload: {
+      closures: [
+        {
+          serviceCode: "code",
+          srNum: "123",
+          status: "failed",
+          reason: "sf311_closure_state_unknown",
+        },
+      ],
+    },
+  };
+  job = { status: "retry", results: [ticket, failed] };
+  task.appActionResults = [ticket, failed];
+  execute.mockResolvedValueOnce([
+    {
+      code: "close_311_ticket",
+      status: "submitted",
+      payload: {
+        closures: [{ serviceCode: "code", srNum: "123", status: "closed" }],
+      },
+    },
+  ]);
+  await runJob(message);
+  expect(execute).toHaveBeenCalledOnce();
+  expect(execute.mock.calls[0][0]).toEqual([
+    { code: "close_311_ticket", payload: {} },
+  ]);
+  expect(job.status).toBe("complete");
+  expect(task.appActionResults[0].payload.tickets[0].srNum).toBe("123");
+  await runJob(message);
+  expect(execute).toHaveBeenCalledOnce();
+});
+
 it("does not close tickets filed explicitly for City-owned work", async () => {
   task.status = "completed";
   task.completionMethod = "311_filed";

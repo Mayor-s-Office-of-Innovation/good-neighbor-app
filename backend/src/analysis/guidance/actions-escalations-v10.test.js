@@ -144,3 +144,15 @@ it("activates the supplied v10 rubric and preserves historical pickup behavior",
     )?.outcome.kind,
   ).toBe("action");
 });
+
+it("keeps every explicit 311 filing rule in progress", () => {
+  const rules = activeCatalog().rules.filter((rule) =>
+    rule.outcome.appActions.some(
+      (action) =>
+        action.code === "create_311_ticket" &&
+        action.payload.executionTrigger === "user_confirmed",
+    ),
+  );
+  expect(rules).toHaveLength(10);
+  expect(rules.every((rule) => rule.canBeInProgress)).toBe(true);
+});

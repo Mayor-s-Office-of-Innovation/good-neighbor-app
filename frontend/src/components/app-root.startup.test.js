@@ -551,9 +551,11 @@ it("shows recovery controls when a route module fails instead of leaving a blank
   };
   const log = vi.spyOn(console, "error").mockImplementation(() => {});
   root._loadRoute("/today", () => Promise.reject(new Error("chunk missing")));
+  expect(root._view.inert).toBe(true);
   expect(root._view.innerHTML).toContain('role="status"');
   await flush();
   expect(root._view.innerHTML).toContain('role="alert"');
+  expect(root._view.inert).toBe(false);
   expect(handlers["[data-route-reload]"]).toBeTypeOf("function");
   expect(handlers["[data-route-back]"]).toBeTypeOf("function");
   handlers["[data-route-back]"]();
@@ -590,4 +592,21 @@ it("does not render a capture screen after navigation changes during loading", a
   pending.resolve(undefined);
   await flush();
   expect(root._renderView).not.toHaveBeenCalled();
+});
+
+it("keeps the old view inert when a superseded import fails", async () => {
+  const root = component();
+  root._view = { innerHTML: "previous screen", firstElementChild: {} };
+  const old = deferred();
+  const latest = deferred();
+  root._loadRoute("/today", () => old.promise);
+  expect(root._view.innerHTML).toBe("previous screen");
+  expect(root._view.inert).toBe(true);
+  root._loadRoute("/today", () => latest.promise);
+  old.reject(new Error("superseded"));
+  await flush();
+  expect(root._view.inert).toBe(true);
+  latest.resolve(undefined);
+  await flush();
+  expect(root._renderView).toHaveBeenCalledOnce();
 });

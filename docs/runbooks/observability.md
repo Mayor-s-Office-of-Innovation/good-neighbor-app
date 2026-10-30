@@ -9,13 +9,92 @@ reporting and trails live data by about 6 hours.
 
 ## Who gets paged
 
-Both SNS topics subscribe the same `alarm_emails` list, set per environment in
+### Notification groups
+
+The shared app module configures both dev and prod:
+
+- `api-incident` combines gateway 5xx and API/authorizer Lambda error/throttle
+  alarms with OR. Child thresholds and evaluation periods stay unchanged; only
+  the composite sends ALARM/OK notifications. Further child transitions during
+  an active incident remain visible in CloudWatch without another email.
+- `server-errors` remains independently actionable: its metric combines API,
+  intake, analysis and background-worker errors. It can overlap an API incident;
+  removing it would lose aggregate coverage across those functions.
+- PostHog forwarding starts with its existing one-period alarms and direct
+  ALARM/OK notifications. `posthog_digest_route_confirmed` defaults to false in
+  each environment. After forwarding and digest receipt are verified as described
+  below, set it to true through CI to use two of three five-minute periods and
+  digest-only notifications. Count thresholds remain unchanged. Duplicate
+  candidate/worker warnings also feed the daily digest.
+- At 16:00 UTC daily, `warning-digest` summarizes the previous completed UTC day
+  of failure attempts and the current duplicate backlog/DLQ alarm states. It sends
+  to the main alarm topic only when warnings or unresolved queue alarms exist.
+  Retries count as attempts, not unique incidents. Missing observations do not
+  prove health. Scheduler/SNS retries may repeat a digest. Its Lambda error alarm
+  reports failed digest generation or publishing; separate alarms report Lambda
+  throttles, terminal EventBridge delivery failures, `AsyncEventsDropped`, and
+  `DeadLetterErrors`. Dropped-event and DLQ-delivery failure metrics notify even
+  when no message reaches the DLQ. These are failure signals,
+  not a heartbeat: a disabled rule or missing telemetry needs schedule/invocation
+  inspection. Exhausted Lambda retries go to the encrypted `warning-digest-dlq`
+  with an immediate nonempty-queue alarm. It retains failed schedule events for
+  14 days; inspect logs and prior SNS acceptance before replaying to avoid
+  duplicate emails. Digest logs retain one year. Inbox receipt still needs verification.
+- Duplicate backlog and dead letters notify immediately through the separate
+  encrypted `<prefix>-duplicate-alarms` topic. The same environment recipients
+  must confirm its additional email subscription. During rollout, the original
+  topic remains a fallback (`duplicate_alarm_route_confirmed = false`). After
+  verifying the new subscriptions and actual receipt, set that variable to true
+  in the environment configuration through CI. Until cutover, confirmed recipients
+  can receive an alert from both topics. Assign an incident owner;
+  daily digest reminders continue while queue alarms are unresolved.
+- Feedback arrivals keep their metrics and storage in PostHog Surveys, with no
+  operational arrival/recovery emails. Feedback-forwarding failures retain their
+  immediate failure coverage.
+
+Before CI deployment removes child actions, review the plan's composite membership
+and digest resources. After deployment, verify subscription confirmation, child and
+composite states, scheduled invocations, and an actual digest receipt during an
+agreed test window. Never manufacture a service failure to test routing.
+
+### PostHog digest cutover gate
+
+Keep `posthog_digest_route_confirmed = false` independently in dev and prod until
+all of the following have non-sensitive evidence recorded in the rollout issue or
+PR. The digest is already scheduled while the fallback remains active, so its
+receipt can be tested before suppressing direct forwarding alerts.
+
+1. Verify the AWS account/environment and the deployed intake configuration.
+   Confirm the PostHog host and secret reference are intended without printing
+   secret values. Both forwarders must use their PostHog-only configuration path;
+   the historical missing-upload-bucket failure must not recur under observed traffic.
+2. Verify successful event forwarding **and** client-error forwarding under recent
+   traffic or an agreed synthetic test. Confirm receipt in PostHog; a quiet alarm
+   or a successful unrelated forwarding path is insufficient. Do not generate a
+   real application failure to test error forwarding.
+3. Confirm the main SNS topic subscriptions and receipt of a real scheduled digest
+   containing known warning counts. Record the environment, verification window,
+   markers/counts, receipt acknowledgment and remaining limitations. AWS publish
+   success alone is insufficient. Do not attach raw logs, private events or secrets.
+4. Review the environment's CI plan, set the gate to true through the reviewed
+   configuration, and verify final routing after apply. If either forwarding or
+   digest delivery is unproven, retain the false default and its original direct
+   notifications. Reverting the gate restores those notifications and sensitivity.
+
+The analyzer is managed in the separate `street-conditions-analysis` repository.
+An active `HealthMissingRun` with no action is a monitoring gap until its owner
+confirms whether the scheduled check is still intended. Check the schedule,
+invocation history, health metric dimensions and responder before wiring actions
+or retiring that check through the analyzer's deployment pipeline. Resolution is
+tracked in [analyzer issue #61](https://github.com/Mayor-s-Office-of-Innovation/street-conditions-analysis/issues/61); app response ownership below does not establish analyzer ownership.
+
+The two core regional SNS topics subscribe the same `alarm_emails` list, set per environment in
 `infra/environments/<env>/variables.tf` and passed through `main.tf`. Every address gets one confirmation email **per
 topic** (two in total) and is silent until confirmed.
 
 | Topic                                      | Region    | Why it exists                                                                              |
 | ------------------------------------------ | --------- | ------------------------------------------------------------------------------------------ |
-| `good-neighbor-app-<env>-alarms`           | us-west-2 | every code-marker alarm (`alarms.tf`) and every platform alarm (`platform-alarms.tf`)      |
+| `good-neighbor-app-<env>-alarms`           | us-west-2 | immediate core-service alarms, API incident composite, and daily warning digests      |
 | `good-neighbor-app-<env>-alarms-us-east-1` | us-east-1 | metrics that only exist there: the Route53 uptime check and the CloudFront-scoped WAF rule |
 
 Production response ownership is:
