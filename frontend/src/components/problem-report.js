@@ -24,7 +24,6 @@ import {
   showDeleteErrorToast,
   showEditErrorToast,
   showEditRefreshErrorToast,
-  showEditSavedToast,
   showReanalysisErrorToast,
 } from "../state/toasts.js";
 import { requestId, setBusy, setDialogError } from "../lib/dialog-controls.js";
@@ -647,7 +646,6 @@ class ProblemReport extends HTMLElement {
       this._analysisEditDialog?.close();
       this._activeProblem = null;
       this._render();
-      showEditSavedToast();
     } catch (err) {
       console.error("edit analysis condition failed", err);
       showEditErrorToast();
@@ -667,10 +665,7 @@ class ProblemReport extends HTMLElement {
     }
 
     if (problem.actionKind === "escalation") {
-      openOverlayDialog(
-        /** @type {HTMLDialogElement} */ (this._analysisProgressDialog),
-        "analysis-progress",
-      );
+      show311FilingToast(problem);
       try {
         const result = await completeCardAction(problem.taskId, {
           completionMethod: "311_filed",
@@ -681,7 +676,6 @@ class ProblemReport extends HTMLElement {
           return;
         }
         this._markProblemResolved(problem);
-        show311FilingToast(result.task);
       } catch (err) {
         console.error("escalation failed", err);
         this._analysisProgressDialog?.close();

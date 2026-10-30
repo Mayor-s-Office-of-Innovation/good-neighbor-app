@@ -1,3 +1,4 @@
+import { connectionFetch } from "./backend-health.js";
 import { ApiError } from "./api-error.js";
 import { parseRetryAfter } from "../lib/retry-after.js";
 /*
@@ -46,7 +47,7 @@ export async function sendFeedback({ message, site }) {
     ts: new Date().toISOString(),
   };
 
-  const res = await fetch(`${BASE}/v1/feedback`, {
+  const res = await connectionFetch(`${BASE}/v1/feedback`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),

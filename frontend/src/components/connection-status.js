@@ -1,8 +1,8 @@
 /*
-  connection-state.js — the UI surface for backend-health.js states
+  connection-status.js — the UI surface for backend-health.js states
   (api-response-integrity plan §3b).
 
-  OUTAGE → an informational app toast, shown once per outage period.
+  OUTAGE → the shared reachability banner; authentication remains separate.
 
   AUTH → expired/revoked session dialog. ACCESS → missing manager enrollment.
   Both may be cancelled without clearing local work. Explicit sign-out clears
@@ -21,7 +21,6 @@ import { retireHandoff } from "../services/session-handoff.js";
 import { discardInMemorySession } from "../state/check-session.js";
 import { html, escapeHtml } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
-import { showOfflinePhotosToast } from "../state/toasts.js";
 
 class ConnectionStatus extends HTMLElement {
   connectedCallback() {
@@ -114,9 +113,6 @@ class ConnectionStatus extends HTMLElement {
       this.querySelector("#conn-auth-dialog")
     );
 
-    if (state === "outage" && this._lastState !== "outage") {
-      showOfflinePhotosToast();
-    }
     if (state !== this._lastState) this._dismissedState = undefined;
     this._lastState = state;
 

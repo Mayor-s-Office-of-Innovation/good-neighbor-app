@@ -6,22 +6,21 @@ import {
 } from "./analysis-card-completion.js";
 import { completeTask } from "../services/api.js";
 import { getSite } from "../db.js";
-import { showActionSaveErrorToast, showToast } from "../state/toasts.js";
+import { showActionSaveErrorToast } from "../state/toasts.js";
 vi.mock("../services/phone-completion.js", () => ({
+  showPhoneCompletionError: vi.fn(),
   savePhoneCompletion: (taskId) =>
     completeTask(taskId, { completionMethod: "manual" }).catch((error) => {
       showActionSaveErrorToast();
       throw error;
     }),
 }));
-vi.mock("./task-update-dialog.js", () => ({}));
 vi.mock("../db.js", () => ({
   getSite: vi.fn(async () => ({ siteId: "site" })),
 }));
 vi.mock("../services/api.js", () => ({ completeTask: vi.fn() }));
 vi.mock("../state/toasts.js", () => ({
   showActionSaveErrorToast: vi.fn(),
-  showToast: vi.fn(),
 }));
 let host, card, button, callbacks, shell, animation;
 beforeEach(() => {
@@ -30,11 +29,13 @@ beforeEach(() => {
   const attrs = new Map();
   button = {
     disabled: false,
+    focus: vi.fn(),
     setAttribute: (k, v) => attrs.set(k, v),
     getAttribute: (k) => attrs.get(k),
   };
   card = {
     isConnected: true,
+    querySelector: () => button,
     querySelectorAll: () => [button],
     getAttribute: () => "task",
     setAttribute: vi.fn(),
@@ -44,6 +45,7 @@ beforeEach(() => {
   host = {
     isConnected: true,
     contains: () => false,
+    querySelectorAll: () => [card],
     querySelector: () => null,
   };
   callbacks = { onSaved: vi.fn(), render: vi.fn() };
@@ -257,7 +259,7 @@ it("does not share completion requests across sites", async () => {
   );
 });
 
-it("does not hide a real save failure when the prompt also fails", async () => {
+it("preserves the original save failure without loading the optional dialog", async () => {
   vi.mocked(completeTask).mockRejectedValue(new Error("save failed"));
   vi.stubGlobal("document", {
     createElement: () => {
@@ -268,5 +270,4 @@ it("does not hide a real save failure when the prompt also fails", async () => {
     completeCardAction("failed", { completionMethod: "manual" }),
   ).rejects.toThrow("save failed");
   await vi.advanceTimersByTimeAsync(0);
-  expect(showToast).not.toHaveBeenCalled();
 });

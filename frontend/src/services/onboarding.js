@@ -1,3 +1,4 @@
+import { connectionFetch } from "./backend-health.js";
 import { parseRetryAfter } from "../lib/retry-after.js";
 /*
   Site-code login client. The backend owns whether a code exists, is active, and
@@ -34,7 +35,7 @@ export async function validateSetupCode(code) {
 
   let response;
   try {
-    response = await fetch(`${BASE}/site-code`, {
+    response = await connectionFetch(`${BASE}/site-code`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ code: formatted }),
@@ -94,7 +95,7 @@ export async function searchSites(query) {
 
   let response;
   try {
-    response = await fetch(
+    response = await connectionFetch(
       `${BASE}/v1/sites:search?q=${encodeURIComponent(q)}`,
     );
   } catch {
@@ -121,7 +122,7 @@ export async function requestSetupCode({ siteId, email }) {
 
   let response;
   try {
-    response = await fetch(`${BASE}/v1/setup-codes:request`, {
+    response = await connectionFetch(`${BASE}/v1/setup-codes:request`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ siteId, email }),
@@ -161,7 +162,7 @@ export async function requestManagerAccess(email) {
   if (!isPlausibleEmail(email)) return { ok: false, reason: "invalid" };
   let response;
   try {
-    response = await fetch(`${BASE}/app/v1/manager-access/request`, {
+    response = await connectionFetch(`${BASE}/app/v1/manager-access/request`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email: String(email).trim() }),
