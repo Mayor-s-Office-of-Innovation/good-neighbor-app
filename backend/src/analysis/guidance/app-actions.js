@@ -8,6 +8,7 @@ import { getAnalyzerApiKey } from "../api-key.js";
 import { createAnalyzerClient } from "../analyzer-client.js";
 import { getConfig } from "../../config.js";
 import { emitMetrics } from "../../lib/metrics.js";
+import { reportSf311Results } from "../../integrations/sf311-observability.js";
 import { queryAllItems } from "../../lib/query-all-items.js";
 import {
   buildAttachmentUpdatePayload,
@@ -1402,6 +1403,14 @@ export async function executeAppActions(appActions, opts = {}) {
         });
     }
   }
+  // Background jobs report after the durable outcome write, with retry context.
+  // Inline actions have no automatic job retry, so failures need attention now.
+  if (!opts.onCheckpoint)
+    reportSf311Results(results, {
+      terminal: true,
+      taskId: opts.taskId,
+      siteId: opts.siteId,
+    });
   return results;
 }
 

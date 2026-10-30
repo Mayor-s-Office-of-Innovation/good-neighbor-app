@@ -88,6 +88,14 @@ output "mail_manager_ingress_username" {
   value       = module.app.mail_manager_ingress_username
 }
 
+output "sf311_queue_url" {
+  value = module.app.sf311_queue_url
+}
+
+output "sf311_dlq_url" {
+  value = module.app.sf311_dlq_url
+}
+
 output "cloudwatch_omni_sign_in_url" {
   description = "CloudWatch Omni sign-in URL for dev; null until enabled."
   value       = module.app.cloudwatch_omni_sign_in_url

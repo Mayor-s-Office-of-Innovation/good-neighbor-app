@@ -16,6 +16,11 @@ import {
 } from "../handlers/keys.js";
 import { logServerError } from "../lib/log-server-error.js";
 import {
+  reportSf311Failure,
+  reportSf311Results,
+  sf311Failure,
+} from "../integrations/sf311-observability.js";
+import {
   executeAppActions,
   eligibleTicketsForClosure,
   is311SubmissionEnabled,
@@ -35,9 +40,9 @@ const permanentReasons = new Set([
  * A tapped filing gives up on the queue's last delivery, so the task ends
  * `failed` (and the card offers retry) instead of the message reaching the
  * DLQ with the task stuck `queued`. Keep in sync with the submissions
- * queue's `maxReceiveCount` in infra/modules/app/lambda.tf.
+ * and dedicated 311 queues' `maxReceiveCount` in Terraform.
  */
-const MAX_FILING_ATTEMPTS = 5;
+export const MAX_FILING_ATTEMPTS = 5;
 
 /** @param {string | undefined} receiveCount
  * @param {number} [leaseWaitSeconds]
@@ -78,14 +83,36 @@ export function mergeBackgroundResult(prior, result) {
 /** @type {import("aws-lambda").SQSHandler} */
 export const handler = async (event) => {
   for (const record of event.Records) {
+    const attempt = Number(record.attributes?.ApproximateReceiveCount) || 1;
+    let message;
     try {
-      await runJob(JSON.parse(record.body), {
-        receiveCount: Number(record.attributes?.ApproximateReceiveCount) || 1,
+      message = JSON.parse(record.body);
+      await runJob(message, {
+        receiveCount: attempt,
       });
     } catch (error) {
+      if (!(/** @type {{sf311Reported?: boolean}} */ (error)?.sf311Reported)) {
+        reportSf311Failure("job", sf311Failure(error).reason, {
+          terminal: attempt >= MAX_FILING_ATTEMPTS,
+          attempt,
+          messageId: record.messageId,
+          jobId: message?.jobSk,
+          siteId: message?.siteId,
+          taskId: message?.taskId,
+        });
+      }
       // The dispatcher invokes us with one record and reports this rejection as
       // a partial batch failure. Never acknowledge a failed visibility update.
-      const { queueUrl } = getConfig();
+      const config = getConfig();
+      // Old messages still drain on submissions. A dedicated-queue URL must
+      // never be used with a receipt handle from the old queue.
+      const queueUrl =
+        config.sf311QueueUrl &&
+        record.eventSourceARN?.endsWith(
+          `:${config.sf311QueueUrl.split("/").pop()}`,
+        )
+          ? config.sf311QueueUrl
+          : config.queueUrl;
       const leaseWait = /** @type {{retryAfterSeconds?: number}} */ (error)
         ?.retryAfterSeconds;
       await sqs.send(
@@ -93,7 +120,7 @@ export const handler = async (event) => {
           QueueUrl: queueUrl,
           ReceiptHandle: record.receiptHandle,
           VisibilityTimeout: retryDelaySeconds(
-            record.attributes.ApproximateReceiveCount,
+            record.attributes?.ApproximateReceiveCount,
             leaseWait,
           ),
         }),
@@ -322,8 +349,18 @@ export async function runJob(message, delivery = {}) {
         ],
       }),
     );
+    reportSf311Results(results, {
+      terminal: terminal || (delivery.receiveCount ?? 1) >= MAX_FILING_ATTEMPTS,
+      attempt: delivery.receiveCount ?? 1,
+      jobId: message.jobSk,
+      taskId: message.taskId,
+      siteId: message.siteId,
+    });
     if (retry)
-      throw new Error("SF311 action failed; retry from durable checkpoint");
+      throw Object.assign(
+        new Error("SF311 action failed; retry from durable checkpoint"),
+        { sf311Reported: true },
+      );
   } finally {
     try {
       await ddb.send(
@@ -551,6 +588,21 @@ async function fileUserConfirmed(ctx) {
     }),
   );
   if (!filed) {
+    const failureContext = {
+      terminal: !retry,
+      attempt: ctx.attempt,
+      jobId: jobKey.sk,
+      taskId,
+      siteId,
+    };
+    if (filing && ["failed", "partial"].includes(filing.status))
+      reportSf311Results([filing], failureContext);
+    else
+      reportSf311Failure(
+        "create",
+        filing?.reason ?? "app_action_failed",
+        failureContext,
+      );
     // Logged on every failed attempt, retried or not, so the reason HUB gave
     // is visible next to the worker's generic retry error.
     logServerError(
@@ -558,6 +610,7 @@ async function fileUserConfirmed(ctx) {
       new Error(String(filing?.reason ?? "app action failed")),
       {
         extra: {
+          integration: "sf311",
           eventType: "311_app_action_failed",
           taskId,
           siteId,
@@ -576,5 +629,9 @@ async function fileUserConfirmed(ctx) {
       },
     );
   }
-  if (retry) throw new Error("SF311 filing failed; retry from checkpoint");
+  if (retry)
+    throw Object.assign(
+      new Error("SF311 filing failed; retry from checkpoint"),
+      { sf311Reported: true },
+    );
 }

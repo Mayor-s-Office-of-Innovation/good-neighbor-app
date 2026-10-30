@@ -332,6 +332,15 @@ boots and tears down every process via `webServer`; the only prerequisite is
 | `npm run test:headed -w e2e` | Run **headed** in slow motion — the browser clicks and types at a watchable pace (200 ms/action) |
 | `npx playwright show-trace -w e2e` *(see below)* | Open the failure trace for a dead run |
 
+CI runs the main suite in two shards, each with its own emulator stack and one
+worker. The support, task-update, error-state, and offline UI suites run in a
+separate job alongside them. The required **E2E (Playwright)** check passes only
+when all three jobs pass.
+
+To reproduce one shard locally, use `npm run e2e -w e2e -- --shard=1/2` (or
+`--shard=2/2`). Run them one at a time locally; they use the same test ports.
+The usual `npm run test:e2e` still runs the whole main suite.
+
 Notes for debugging:
 
 - **Slow-mo pace:** `test:headed` sets `E2E_SLOW_MS=200` (ms between actions
@@ -400,8 +409,10 @@ Notes:
   The standard HTML reporter never opens automatically during this command.
   Stop local dev servers first; the suite starts its own isolated stack.
   The standard Playwright report is also generated: open it with
-  `cd e2e && npx playwright show-report`. In CI that standard report is in the `playwright-report` artifact on
-  every run, pass or fail. Blocking findings are red and numbered first, warnings
+  `cd e2e && npx playwright show-report`. In CI each shard's report is in its
+  `playwright-report-main-1` or `playwright-report-main-2` artifact on every run,
+  pass or fail. UI-only test results are in `playwright-ui-results`.
+  Blocking findings are red and numbered first, warnings
   (the AAA contrast gaps) blue. No flag is needed: ramp-check's default
   `screenshot` config captures any state with a blocking finding or a warning.
   To box only blocking findings add `screenshot: { warnings: false }` to

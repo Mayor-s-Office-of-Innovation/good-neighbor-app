@@ -17,7 +17,11 @@ vi.mock("@aws-sdk/client-sqs", async (original) => ({
 }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 vi.mock("../config.js", () => ({
-  getConfig: () => ({ dynamoTable: "test", queueUrl: "queue" }),
+  getConfig: () => ({
+    dynamoTable: "test",
+    queueUrl: "queue",
+    sf311QueueUrl: "https://sqs.example/311",
+  }),
 }));
 vi.mock("../analysis/guidance/app-actions.js", async (original) => ({
   ...(await original()),
@@ -286,6 +290,94 @@ it("delays transient failures without acknowledging them", async () => {
   });
 });
 
+it.each([
+  ["arn:aws:sqs:us-west-2:ACCOUNT_ID:311", "https://sqs.example/311"],
+  ["arn:aws:sqs:us-west-2:ACCOUNT_ID:submissions", "queue"],
+])(
+  "backs off a receipt on its actual source queue: %s",
+  async (eventSourceARN, expectedQueue) => {
+    execute.mockRejectedValue(new Error("Transient failure"));
+    await expect(
+      handler(
+        /** @type {any} */ ({
+          Records: [
+            {
+              eventSourceARN,
+              messageId: "message",
+              body: JSON.stringify(message),
+              receiptHandle: "receipt",
+              attributes: { ApproximateReceiveCount: "2" },
+            },
+          ],
+        }),
+        /** @type {any} */ ({}),
+        () => {},
+      ),
+    ).rejects.toThrow("Transient failure");
+    expect(sendSqs.mock.calls[0][0].input).toMatchObject({
+      QueueUrl: expectedQueue,
+      ReceiptHandle: "receipt",
+      VisibilityTimeout: 60,
+    });
+  },
+);
+
+it("reports exhausted closure reconciliation once per action with its durable job ID", async () => {
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  task.status = "completed";
+  task.completionMethod = "manual";
+  task.appActionResults = [ticket];
+  execute.mockResolvedValue([
+    {
+      code: "close_311_ticket",
+      status: "failed",
+      payload: {
+        closures: [{ status: "failed", reason: "sf311_closure_state_unknown" }],
+      },
+    },
+  ]);
+  try {
+    await expect(deliver("5")).rejects.toThrow("retry from durable checkpoint");
+    const failures = log.mock.calls
+      .map(([line]) => JSON.parse(String(line)))
+      .filter((entry) => entry.marker === "Sf311ActionFailure");
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({
+      Operation: "close",
+      jobId: message.jobSk,
+      attempt: 5,
+      Sf311ReconciliationBlocked: 1,
+      Sf311ActionFailed: 0,
+    });
+    expect(job.status).toBe("retry");
+  } finally {
+    log.mockRestore();
+  }
+});
+
+it("alerts on a permanent failure even though the job is acknowledged", async () => {
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  execute.mockResolvedValue([
+    { code: "create_311_ticket", status: "failed", reason: "missing_location" },
+  ]);
+  try {
+    await deliver();
+    expect(job.status).toBe("failed");
+    expect(sendSqs).not.toHaveBeenCalled();
+    expect(
+      log.mock.calls.map(([line]) => JSON.parse(String(line))),
+    ).toContainEqual(
+      expect.objectContaining({
+        Operation: "create",
+        Sf311ActionFailed: 1,
+        outcome: "needs_attention",
+      }),
+    );
+  } finally {
+    log.mockRestore();
+  }
+});
+
 it("waits for a competing worker lease before retrying", async () => {
   lock.sf311LeaseExpiresAt = new Date(Date.now() + 300_000).toISOString();
   const original = send.getMockImplementation();
@@ -490,6 +582,28 @@ describe("tapped filing jobs (trigger: user_confirmed)", () => {
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining('"eventType":"311_app_action_failed"'),
     );
+  });
+
+  it("alarms on an acknowledged filing with no action result", async () => {
+    execute.mockResolvedValueOnce([]);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await runJob(filedMessage);
+      expect(job.status).toBe("failed");
+      expect(taskSet()).toMatchObject({ appActionStatus: "failed" });
+      const events = log.mock.calls.map(([line]) => JSON.parse(line));
+      expect(
+        events.filter((event) => event.marker === "Sf311ActionFailure"),
+      ).toEqual([
+        expect.objectContaining({
+          Operation: "create",
+          Sf311ActionFailed: 1,
+          reason: "app_action_failed",
+        }),
+      ]);
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it.each([

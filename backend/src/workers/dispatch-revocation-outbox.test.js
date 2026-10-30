@@ -1,7 +1,7 @@
 import { SendMessageCommand } from "@aws-sdk/client-sqs";
 import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { marshall } from "@aws-sdk/util-dynamodb";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { ddbSend, sqsSend } = vi.hoisted(() => ({
   ddbSend: vi.fn(),
@@ -19,6 +19,7 @@ vi.mock("@aws-sdk/client-sqs", async (importOriginal) => {
 });
 
 const { handler } = await import("./dispatch-revocation-outbox.js");
+afterEach(() => vi.unstubAllEnvs());
 
 beforeEach(() => {
   ddbSend.mockReset();
@@ -26,6 +27,7 @@ beforeEach(() => {
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
   vi.stubEnv("SQS_QUEUE_URL", "https://sqs.example/revocations");
   vi.stubEnv("S3_UPLOAD_BUCKET", "uploads");
+  vi.stubEnv("SF311_QUEUE_URL", "https://sqs.example/311");
 });
 
 describe("revocation outbox dispatch", () => {
@@ -38,6 +40,9 @@ describe("revocation outbox dispatch", () => {
 
     expect(ddbSend.mock.calls[0][0]).toBeInstanceOf(GetCommand);
     expect(sqsSend.mock.calls[0][0]).toBeInstanceOf(SendMessageCommand);
+    expect(sqsSend.mock.calls[0][0].input.QueueUrl).toBe(
+      "https://sqs.example/revocations",
+    );
     expect(
       JSON.parse(sqsSend.mock.calls[0][0].input.MessageBody),
     ).toMatchObject({
@@ -57,7 +62,7 @@ describe("revocation outbox dispatch", () => {
     expect(ddbSend).toHaveBeenCalledTimes(1);
   });
 
-  it("dispatches automatic 311 work to the background queue", async () => {
+  it("dispatches 311 work to its own queue", async () => {
     ddbSend
       .mockResolvedValueOnce({ Item: { status: "pending" } })
       .mockResolvedValueOnce({});
@@ -80,6 +85,51 @@ describe("revocation outbox dispatch", () => {
       jobPk: "SITE#site-1",
       jobSk: "SF311_JOB#task-1#created",
     });
+    expect(sqsSend.mock.calls[0][0].input.QueueUrl).toBe(
+      "https://sqs.example/311",
+    );
+  });
+
+  it("does not mark a 311 job dispatched if enqueueing fails", async () => {
+    ddbSend.mockResolvedValue({ Item: { status: "pending" } });
+    sqsSend.mockRejectedValue(new Error("Queue unavailable"));
+    await expect(
+      handler(
+        event({
+          pk: "SITE#site-1",
+          sk: "SF311_JOB#task-1#created",
+          entityType: "SF311_OUTBOX",
+          status: "pending",
+          siteId: "site-1",
+          taskId: "task-1",
+        }),
+        /** @type {any} */ ({}),
+        () => {},
+      ),
+    ).rejects.toThrow("Queue unavailable");
+    expect(
+      ddbSend.mock.calls.some(([command]) => command instanceof UpdateCommand),
+    ).toBe(false);
+  });
+
+  it("keeps the local harness on its single queue when SF311_QUEUE_URL is unset", async () => {
+    vi.stubEnv("SF311_QUEUE_URL", "");
+    ddbSend.mockResolvedValue({ Item: { status: "pending" } });
+    await handler(
+      event({
+        pk: "SITE#site-1",
+        sk: "SF311_JOB#task-1#created",
+        entityType: "SF311_OUTBOX",
+        status: "pending",
+        siteId: "site-1",
+        taskId: "task-1",
+      }),
+      /** @type {any} */ ({}),
+      () => {},
+    );
+    expect(sqsSend.mock.calls[0][0].input.QueueUrl).toBe(
+      "https://sqs.example/revocations",
+    );
   });
 
   it("dispatches a compliance-letter outbox entry", async () => {

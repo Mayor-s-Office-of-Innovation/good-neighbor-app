@@ -33,14 +33,11 @@ test.describe("public complaints", () => {
     await expect(trigger).toHaveAttribute("aria-expanded", "false");
     await expect(menu).toBeHidden();
 
-    // Home hydration can replace the trigger between visibility and layout
-    // reads. Re-resolve it until the rendered geometry is available.
+    // Background home refreshes can replace nodes between visibility and layout
+    // reads. Retry measurements against the current DOM without relaxing size.
     await expect
-      .poll(async () => {
-        const box = await trigger.boundingBox();
-        return box ? { width: box.width, height: box.height } : null;
-      })
-      .toEqual({ width: 54, height: 54 });
+      .poll(() => trigger.boundingBox())
+      .toMatchObject({ width: 54, height: 54 });
     // Check each corner directly: Chromium can serialize the computed
     // border-radius shorthand as an empty string on some platforms.
     for (const corner of [
@@ -71,16 +68,14 @@ test.describe("public complaints", () => {
       [complaintAction, complaintIcon],
       [issueAction, issueIcon],
     ]) {
-      const buttonBox = await button.boundingBox();
-      const iconBox = await icon.boundingBox();
-      expect(buttonBox).not.toBeNull();
-      expect(iconBox).not.toBeNull();
-      expect((iconBox?.x ?? 0) - (buttonBox?.x ?? 0)).toBeLessThan(20);
-      expect(
-        await button.evaluate(
-          (element) => window.getComputedStyle(element).justifyContent,
-        ),
-      ).toBe("flex-start");
+      await expect
+        .poll(async () => {
+          const buttonBox = await button.boundingBox();
+          const iconBox = await icon.boundingBox();
+          return buttonBox && iconBox ? iconBox.x - buttonBox.x : null;
+        })
+        .toBeLessThan(20);
+      await expect(button).toHaveCSS("justify-content", "flex-start");
     }
 
     await expect(issueAction).toBeFocused();

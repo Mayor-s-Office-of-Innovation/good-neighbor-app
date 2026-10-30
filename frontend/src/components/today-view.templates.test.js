@@ -164,7 +164,7 @@ describe("homeResults", () => {
     newTaskCardsMarkup: "",
     newTaskCount: 0,
     activeClearCheck: null,
-    hasPendingClearResult: false,
+    pendingClearCheck: null,
     historyGroups: [],
   };
 

@@ -23,6 +23,13 @@ flowchart LR
   worker --> media
   worker --> dynamodb
   worker --> analyzer["Street Conditions analyzer (external service)"]
+  dynamodb -. SF311_OUTBOX stream .-> worker
+  worker --> sf311Queue["SQS: 311 jobs"]
+  sf311Queue --> sf311Worker["Lambda: 311-worker (5 slots)"]
+  sf311Worker --> dynamodb
+  sf311Worker --> media
+  sf311Worker --> analyzer
+  sf311Worker --> hub["Oracle HUB (external 311 integration)"]
 ```
 
 The media bytes reach the analyzer only from the worker (base64, `store_input:false`);
@@ -50,12 +57,13 @@ are esbuild ESM outputs of `backend/scripts/build-lambdas.mjs`:
 | `-api` | API Gateway, sync | 512 MB | 29 s | Every route handler behind one dispatch; uses unreserved account concurrency |
 | `-authorizer` | API Gateway REQUEST authorizer | 256 MB | 5 s | Verifies the HS256 device token, pins `siteId`; verdicts cached 60 s by the gateway; reserved concurrency 200 |
 | `-worker` | SQS and DynamoDB outbox | 1024 MB | 300 s | Background translations, complaints, submissions and outbox jobs; also drains previously queued perimeter analyses |
+| `-311-worker` | Dedicated 311 SQS | 1024 MB | 300 s | Filing, attachments and closures; own role, reserved concurrency 5, batch size 1, event-source maximum concurrency 5 |
 | `-analysis` | Dedicated analysis SQS | 1024 MB | 300 s | Foreground photo/text analysis; reserved concurrency 500, batch size 1, event-source maximum concurrency 500 |
 
 Foreground evidence is routed using `ANALYSIS_QUEUE_URL`. When unset (local
 harness), it falls back to `SQS_QUEUE_URL`. Both functions reuse the worker bundle
 and IAM role; follow-up translations continue to use the background queue.
-Both queues have a zero-second batching window. The background mapping retains
+The analysis and submissions queues have a zero-second batching window. The background mapping retains
 batch size 10 and maximum concurrency 20. The foreground reservation prevents
 background work from occupying its 500 slots, but does not prewarm SQS pollers.
 
@@ -79,8 +87,8 @@ is drained before every exit, so it overlaps the analyzer's latency rather than 
 to it; it is independent of the analyzer's outcome, and a failure only means the card
 shows the original (`ThumbnailFailed` metric). `presignMedia` signs the recorded key as
 `thumbnailUrl` next to the original.
-sharp is esbuild-`external` and copied from node_modules into the worker bundle
-only (api/authorizer never import it).
+sharp is esbuild-`external` and copied from node_modules into each bundle that
+imports it, including the API, general worker, duplicate worker and 311 worker.
 
 ## Async analyze flow
 
@@ -254,13 +262,13 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   reuses the private artifact/S3 read path but does not enqueue analyzer work.
 - **Automatic 311 work:** task creation (including clarification answers and action
   overrides) and resolution atomically write an `SF311_OUTBOX` item with
-  the task change. DynamoDB Streams dispatches it to the background worker queue;
+  the task change. DynamoDB Streams dispatches it to the dedicated 311 queue;
   the local harness polls the same outbox. Classification, ticket creation,
   attachment uploads, and automatic closure never gate these HTTP responses.
   `SF311_LOCK#<taskId>` stores a separate expiring worker lease and durable
   integration results, so foreground task replacements cannot erase checkpoints.
   Workers merge integration fields into the latest task without replacing user
-  status or notes. Transient failures retry through SQS and its existing DLQ,
+  status or notes. Transient failures retry through the 311 queue and its DLQ,
   using 30-second exponential backoff capped at 15 minutes. Lease contention
   waits at least until the active six-minute lease expires. This per-message
   delay leaves the queue's default processing visibility timeout unchanged.
@@ -279,7 +287,10 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   acceptance; missing or unavailable evidence leaves the attachment pending for
   reconciliation instead of resending. Operators must confirm acceptance or
   non-submission before correcting the durable checkpoint and redriving the job.
-  Closure retries reconcile City state.
+  Closure retries reconcile City state. Previously dispatched submissions messages
+  stay on their original queue and remain supported by the general worker.
+  Connection failures, blocked reconciliation and terminal action failures have
+  separate alarms; see the [311 runbook](runbooks/sf311.md).
 - **Tapped 311 filing (`GNP_311_ASYNC_FILING`, on in dev, off by default):** a "File 311
   ticket" tap makes no HUB call. One transaction moves the task to `in_progress` with
   `appActionStatus: "queued"` and writes an `SF311_OUTBOX` job with phase `filed-<id>`
