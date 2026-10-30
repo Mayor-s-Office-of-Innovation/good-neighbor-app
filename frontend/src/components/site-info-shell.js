@@ -1,3 +1,4 @@
+import { loadError } from "./load-error.js";
 import { t } from "../i18n/i18n.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
 /** @param {string} title */
@@ -28,8 +29,7 @@ export function loadingView(title) {
 /** @param {string} message */
 export function errorView(message) {
   return html`<div class="site-admin-page">
-    ${adminHeader(t("siteAdmin.title"))}
-    <p class="site-admin-load-error" role="alert">${escapeHtml(message)}</p>
+    ${adminHeader(t("siteAdmin.title"))} ${loadError(message)}
   </div>`;
 }
 

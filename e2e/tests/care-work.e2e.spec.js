@@ -57,9 +57,8 @@ test.describe("proactive care", () => {
     await choose(page, "power_washed");
     await expect(page.locator("[data-save]")).toBeEnabled();
     const work = await save(page);
-    await expect(
-      page.getByText(t("care.success"), { exact: true }),
-    ).toBeVisible();
+    await expect(page.locator(`[data-work="${work.workId}"]`)).toBeVisible();
+    await expect(page.locator(".app-toast--success")).toHaveCount(0);
     await page.locator(`[data-work="${work.workId}"]`).click();
     await expect(page.locator("care-work-view h1")).toHaveText(
       t("care.kind.powerWashed"),
@@ -295,7 +294,7 @@ test("proactive care retries a failed list request and shows an actionable empty
   );
   await page.locator("#home-action-menu-trigger").click();
   await page.locator("#view-care-work").click();
-  await expect(page.locator("care-work-view [role=alert]")).toHaveText(
+  await expect(page.locator("care-work-view [role=alert]")).toContainText(
     t("care.loadError"),
   );
   fail = false;
@@ -331,7 +330,7 @@ test("proactive care preserves read-only notes when photos expire and recovers a
   });
   await openLogs(page);
   await page.locator('[data-work="expired-photo-log"]').click();
-  await expect(page.locator("care-work-view [role=alert]")).toHaveText(
+  await expect(page.locator("care-work-view [role=alert]")).toContainText(
     t("care.loadError"),
   );
   fail = false;
@@ -573,7 +572,7 @@ test("failed care screen download provides reload recovery", async ({
   );
   await page.locator("#home-action-menu-trigger").click();
   await page.locator("#view-care-work").click();
-  await expect(page.locator("#view [role=alert]")).toHaveText(
+  await expect(page.locator("#view [role=alert]")).toContainText(
     t("route.loadError"),
   );
   await page.unroute("**/components/care-work-view.js*");

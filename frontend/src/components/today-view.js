@@ -24,6 +24,7 @@ import {
 } from "./analysis-card-completion.js";
 import { taskCardTitle } from "../domain/task-title.js";
 import { groupHistory } from "../domain/task-history.js";
+import { restorePhoneCompletionErrors } from "../services/phone-completion.js";
 import { statusTicker } from "../domain/status-ticker.js";
 /*
   today-view — the home hub (the screen with the "Perimeter check" button).
@@ -41,14 +42,12 @@ import { statusTicker } from "../domain/status-ticker.js";
 import "./today-view.css";
 import {
   show311FilingToast,
-  show311SuccessToast,
   show311ErrorToast,
   showActionSaveErrorToast,
   showAnswerSaveErrorToast,
   showDeleteErrorToast,
   showEditErrorToast,
   showEditRefreshErrorToast,
-  showEditSavedToast,
   showReanalysisErrorToast,
   showSiteCatalogErrorToast,
   showSiteSwitchBlockedToast,
@@ -136,8 +135,6 @@ import {
   canRetry311Filing,
   filing311State,
   isAccepted311Filing,
-  isFiled311Completion,
-  submitted311ServiceRequestNumber,
 } from "../domain/task-actions.js";
 import {
   getCurrentCheck,
@@ -944,11 +941,7 @@ class TodayView extends HTMLElement {
           this._confirmedTasks.set(task.taskId, task);
           this._applyTaskResult(task.taskId, task);
           if (filing311State(task) === "failed") show311ErrorToast();
-          else if (isFiled311Completion(task))
-            show311SuccessToast(
-              submitted311ServiceRequestNumber(task),
-              taskCardTitle(task),
-            );
+
           void this._refreshAfterAction();
         })
       : null;
@@ -1544,6 +1537,7 @@ class TodayView extends HTMLElement {
     );
     this._wireCards();
     this._applyBusyCards();
+    restorePhoneCompletionErrors(this, this._siteId);
     for (const conditionId of this._answeringConditionIds) {
       setQuestionAnswerBusy(this, conditionId, true);
     }
@@ -2289,6 +2283,17 @@ class TodayView extends HTMLElement {
       currentSiteId: this._siteId,
       boundSites: this._boundSites,
       destination: "/today",
+      onError: () => {
+        const destination =
+          this._providerSites.find((site) => site.siteId === siteId)?.name ||
+          t("today.site.fallback");
+        const locationOpen =
+          this._locationDialog?.querySelector("dialog")?.open;
+        const picker = locationOpen ? this._locationDialog : this._siteSwitcher;
+        if (picker?.showSwitchError)
+          picker.showSwitchError(destination, () => this._switchToSite(siteId));
+        else showSiteSwitchErrorToast();
+      },
     });
     if (outcome === "same") {
       this._siteSwitcher?.close();
@@ -2734,7 +2739,6 @@ class TodayView extends HTMLElement {
         this._analysisEditDialog?.close();
         this._activeProblem = null;
         await this.connectedCallback();
-        showEditSavedToast();
       } catch (err) {
         console.error("text-only no-issue reanalysis failed", err);
         showReanalysisErrorToast();
@@ -2792,7 +2796,6 @@ class TodayView extends HTMLElement {
       this._analysisEditDialog?.close();
       this._activeProblem = null;
       await this.connectedCallback();
-      showEditSavedToast();
     } catch (err) {
       console.error("edit analysis condition failed", err);
       if (err?.status === 404 && err?.body?.code === "unknown_analysis") {
@@ -2822,6 +2825,7 @@ class TodayView extends HTMLElement {
     }
 
     if (problem.actionKind === "escalation") {
+      show311FilingToast(problem);
       const result = await completeCardAction(problem.taskId, {
         completionMethod: "311_filed",
       }).catch((err) => {
@@ -2832,7 +2836,6 @@ class TodayView extends HTMLElement {
         show311ErrorToast();
         return;
       }
-      show311FilingToast(result.task);
       this._expireRemainingLists(); // filed → In-progress on the server
       if (card.isConnected) await slideCompletedCard(card);
       this._markAnalysisProblemResolved(problem, { taskStatus: null });
@@ -3122,6 +3125,7 @@ class TodayView extends HTMLElement {
       // progress, so its card stays put.
       const title = taskCardTitle(task);
       const retry = filing311State(task) === "failed";
+      show311FilingToast(task, title);
       void this._run(
         card,
         () =>
@@ -3132,7 +3136,6 @@ class TodayView extends HTMLElement {
           requireSubmitted311: true,
           animateOnSuccess: !retry,
           pending: { button: btn, label: t("today.action.filing") },
-          onSuccess: (result) => show311FilingToast(result.task, title),
         },
       ).then((result) => {
         if (!result) return;
@@ -3345,8 +3348,8 @@ class TodayView extends HTMLElement {
           }
         }
         restore();
-        if (requireSubmitted311) show311ErrorToast();
-        else showActionSaveErrorToast();
+        if (requireSubmitted311) show311ErrorToast(card);
+        else showActionSaveErrorToast(undefined, card);
         return;
       }
       onSuccess?.(result);
@@ -3357,8 +3360,8 @@ class TodayView extends HTMLElement {
     } catch (e) {
       console.error("task action failed", e);
       restore();
-      if (requireSubmitted311) show311ErrorToast();
-      else showActionSaveErrorToast();
+      if (requireSubmitted311) show311ErrorToast(card);
+      else showActionSaveErrorToast(undefined, card);
       return false;
     } finally {
       release();

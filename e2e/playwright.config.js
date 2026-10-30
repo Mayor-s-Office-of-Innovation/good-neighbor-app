@@ -76,7 +76,7 @@ export default defineConfig({
   reporter: CI
     ? [["list"], ["github"], ["html", { open: "never" }]]
     : [["list"], ["html", { open: "never" }]],
-  outputDir: "./test-results",
+  outputDir: "./test-results/main",
   use: {
     baseURL: E2E_URLS.app,
     trace: "retain-on-failure",

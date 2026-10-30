@@ -169,9 +169,9 @@ test("failed mobile save offers a save-only retry", async ({ page }) => {
   state.fail = true;
   const button = card.locator("[data-phone-number]");
   await button.click();
-  await expect(
-    page.getByText(t("toast.actionSaveError.message"), { exact: true }),
-  ).toBeVisible();
+  await expect(card.locator("[data-operation-error]")).toContainText(
+    t("toast.actionSaveError.message"),
+  );
   await expect(button).toBeEnabled();
   await expect(card).toBeVisible();
   expect(calls).toEqual(["tel:4155530123"]);

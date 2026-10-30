@@ -405,7 +405,10 @@ export class TaskUpdateDialog extends HTMLElement {
     const markup = taskUpdateDialogShell({
       mode: this._mode,
       state: this._state,
-      content: this._state === "ready" ? this._content() : "",
+      content:
+        this._state === "ready" || (this._state === "error" && this._detail)
+          ? this._content()
+          : "",
     });
     const existing = this.querySelector("dialog.task-update");
     if (existing) {
@@ -964,7 +967,11 @@ export class TaskUpdateDialog extends HTMLElement {
     ])
       .catch((error) => {
         if (!controller.signal.aborted || timedOut)
-          showTaskUpdateErrorToast(error);
+          showTaskUpdateErrorToast(error, () =>
+            /** @type {HTMLButtonElement | null} */ (
+              root.querySelector(buttonSelector)
+            )?.click(),
+          );
         return null;
       })
       .finally(() => {

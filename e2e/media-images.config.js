@@ -1,6 +1,7 @@
 import { defineConfig } from "@playwright/test";
 // Frontend-only regression checks: all API/media traffic is intercepted locally.
 export default defineConfig({
+  outputDir: "./test-results/media-images",
   testDir: "./tests",
   testMatch: "media-images.spec.js",
   workers: 1,

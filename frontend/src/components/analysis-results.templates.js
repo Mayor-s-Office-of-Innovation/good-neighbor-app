@@ -105,6 +105,9 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.webp";
  * @property {boolean} [hideNoIssuesCard]
  * @property {string} [noIssuesDescription]
  * @property {string} [error]
+ * @property {string} [lastTriedAt]
+ * @property {boolean} [localSaveConfirmed]
+ * @property {number} [retryCount]
  * @property {AnalysisStages} [stages] progress checkpoints (uploaded / sent ISO stamps)
  * @property {{ leg?: string, uploaded?: boolean, enqueued?: boolean, waitedMs?: number, backendError?: boolean }} [failure]
  */
@@ -765,139 +768,101 @@ function pendingCard(item) {
  * @param {AnalysisItem} item
  * @returns {string}
  */
-function waitingCard(item) {
-  const place = cardPlace(item);
-  return html`
-    <article class="analysis-card analysis-card--waiting analysis-card--new">
-      <div class="analysis-card__panel">
-        <div class="analysis-card__layout">
-          <div class="analysis-card__content">
-            <p class="analysis-card__place">
-              ${escapeHtml(place || t("card.place.placeholder"))}
-            </p>
-            <h3>${escapeHtml(t("card.waiting.title"))}</h3>
-            <p class="analysis-card__waiting-copy">
-              ${escapeHtml(t("card.waiting.message"))}
-            </p>
-          </div>
-          ${evidencePreview(item)}
-        </div>
-      </div>
-    </article>
-  `;
-}
-
-/**
- * One progress row. The state is IN THE TEXT ("Done"/"In progress") so screen
- * readers hear it — the ✓/• glyph is decoration (aria-hidden) and never the
- * sole carrier.
- * @param {string} label
- * @param {string | undefined} stamp stage timestamp (set = done)
- * @param {boolean} reached has the pipeline reached this stage (vs skipped by an early failure)
- * @returns {string}
- */
-function stageRow(label, stamp, reached) {
-  return html`
-    <li
-      class="analysis-card__stage ${stamp
-        ? "is-done"
-        : reached
-          ? "is-active"
-          : ""}"
-    >
-      <span class="analysis-card__stage-mark" aria-hidden="true"
-        >${stamp ? "✓" : "•"}</span
-      >
-      <span class="visually-hidden"
-        >${escapeHtml(
-          stamp ? t("card.stage.done") : t("card.stage.inProgress"),
+function waitingCard(item, offline = true) {
+  return html`<article
+    class="analysis-card analysis-card--waiting analysis-card--new"
+    data-item-id="${escapeAttr(item.id || "")}"
+  >
+    <div class="analysis-error__body">
+      <img
+        src="/images/error-states/saved-photo.svg"
+        alt=""
+        class="analysis-saved__illustration"
+      />
+      <h3>
+        ${escapeHtml(
+          t(
+            item.analysis?.localSaveConfirmed
+              ? "notice.savedOnPhone"
+              : "card.waiting.title",
+          ),
         )}
-      </span>
-      <span>${escapeHtml(label)}</span>
-    </li>
-  `;
+      </h3>
+      <p>
+        ${escapeHtml(
+          t(
+            item.analysis?.localSaveConfirmed
+              ? offline
+                ? "notice.savedHelp"
+                : "notice.savedRetryHelp"
+              : "notice.keepOpen",
+          ),
+        )}
+      </p>
+      ${evidencePreview(item)}
+      ${!offline
+        ? `<button type="button" class="btn-outline btn-outline--sm" data-analysis-action="retry">${escapeHtml(t("notice.retry"))}</button>`
+        : ""}
+    </div>
+    ${item.uploadedAt
+      ? `<p class="analysis-error__time">${escapeHtml(formatTime(item.uploadedAt))}</p>`
+      : ""}
+  </article>`;
 }
 
-/**
- * A failed card: what happened, what had already succeeded, how long we
- * waited, and a Try-again button. Un-uploaded photos also offer Remove.
+/** A failed upload or analysis keeps its evidence and offers recovery.
  * @param {AnalysisItem} item
  * @returns {string}
  */
 function failedCard(item) {
+  if (item.analysis?.localSaveConfirmed && item.analysis?.retryCount >= 3)
+    return waitingCard(item, false);
   const failure = item.analysis?.failure || {};
-  const stages = item.analysis?.stages || {};
-  const uploaded = Boolean(failure.uploaded || stages.uploaded);
-  const waited = formatWaited(failure.waitedMs);
-  const sent = uploaded && failure.leg !== "upload";
-  const reason = failureReasonLine(failure, item);
-  return html`
-    <article
-      class="analysis-card analysis-card--failed analysis-card--new"
-      data-item-id="${escapeAttr(item.id || "")}"
-    >
-      <div class="analysis-card__content">
-        <p class="analysis-card__meta">
-          <img
-            class="analysis-card__star"
-            src="/icons/star.svg"
-            alt=""
-            aria-hidden="true"
-          />
-          ${escapeHtml(t("card.failed.meta"))}
-        </p>
-        <h3>
-          ${escapeHtml(
-            failure.leg === "upload"
-              ? t("card.failed.uploadTitle")
-              : t("card.failed.analysisTitle"),
-          )}
-        </h3>
-        <ul class="analysis-card__stages">
-          ${stageRow(
-            item.kind === "text"
-              ? t("card.stage.noteSaved")
-              : t("card.stage.photoUploaded"),
-            uploaded ? new Date().toISOString() : "",
-            true,
-          )}
-          ${stageRow(
-            t("card.stage.sentToAnalyzer"),
-            sent ? new Date().toISOString() : "",
-            uploaded,
-          )}
-        </ul>
-        <p class="analysis-card__failure-reason">
-          ${escapeHtml(reason)}${waited
-            ? html` ${escapeHtml(
-                t("card.failed.waited", { duration: waited }),
-              )}`
-            : ""}
-        </p>
-        <div class="analysis-card__actions">
-          <button
-            class="analysis-card__primary wa-plain"
-            type="button"
-            data-analysis-action="retry"
-          >
-            <wa-icon name="arrow-rotate-right" aria-hidden="true"></wa-icon>
-            ${escapeHtml(t("common.retry"))}
-          </button>
-          ${item.kind === "photo" && !uploaded
-            ? html`<button
-                class="analysis-card__icon analysis-card__icon--danger wa-plain"
-                type="button"
-                aria-label="${escapeAttr(t("card.failed.removePhoto.aria"))}"
-                data-analysis-action="remove-item"
-              >
-                <wa-icon name="trash" aria-hidden="true"></wa-icon>
-              </button>`
-            : ""}
-        </div>
-      </div>
-      ${evidencePreview(item)}
-    </article>
-  `;
+  const upload = failure.leg === "upload";
+  const stamp = item.analysis?.lastTriedAt || item.uploadedAt;
+  return html`<article
+    class="analysis-card analysis-card--failed analysis-card--new"
+    data-item-id="${escapeAttr(item.id || "")}"
+  >
+    <div class="analysis-error__header">
+      <wa-icon name="triangle-exclamation" aria-hidden="true"></wa-icon
+      ><strong>${escapeHtml(t("notice.error"))}</strong>
+      ${item.kind === "photo" && !failure.uploaded
+        ? `<button class="btn-icon" type="button" data-analysis-action="remove-item" aria-label="${escapeAttr(t("card.failed.removePhoto.aria"))}"><wa-icon name="xmark" aria-hidden="true"></wa-icon></button>`
+        : ""}
+    </div>
+    <div class="analysis-error__body">
+      <img
+        class="analysis-error__illustration"
+        src="/images/error-states/${upload
+          ? "unplugged-upload"
+          : "unplugged-analysis"}.svg"
+        alt=""
+      />
+      <h3>
+        ${escapeHtml(
+          t(upload ? "card.failed.uploadTitle" : "card.failed.analysisTitle"),
+        )}
+      </h3>
+      <p>
+        ${escapeHtml(failureReasonLine(failure, item))}${failure.waitedMs &&
+        formatWaited(failure.waitedMs)
+          ? ` ${escapeHtml(t("card.failed.waited", { duration: formatWaited(failure.waitedMs) }))}`
+          : ""}
+      </p>
+      <button
+        class="btn-outline btn-outline--sm"
+        type="button"
+        data-analysis-action="retry"
+      >
+        ${escapeHtml(t("notice.retry"))}
+      </button>
+      ${upload ? evidencePreview(item) : ""}
+    </div>
+    ${stamp
+      ? `<p class="analysis-error__time">${escapeHtml(t("card.failed.lastTried", { time: formatTime(stamp) }))}</p>`
+      : ""}
+  </article>`;
 }
 
 /**
@@ -1449,26 +1414,6 @@ export const analysisDialogs = () => html`
         </button>
       </div>
     </form>
-  </dialog>
-
-  <dialog
-    class="analysis-dialog"
-    id="analysis-progress-dialog"
-    aria-labelledby="analysis-progress-title"
-  >
-    <div class="analysis-dialog__card analysis-dialog__card--progress">
-      <h2 class="analysis-dialog__title" id="analysis-progress-title">
-        ${escapeHtml(t("analysis.progressDialog.title"))}${animatedEllipsis()}
-      </h2>
-      <div class="analysis-progress-ring" aria-hidden="true"></div>
-      <button
-        class="analysis-dialog__button"
-        id="analysis-progress-cancel"
-        type="button"
-      >
-        ${escapeHtml(t("common.cancel"))}
-      </button>
-    </div>
   </dialog>
 
   <dialog

@@ -11,10 +11,7 @@ import {
 } from "../router.js";
 import { getSiteAdmin, updateSiteAdmin } from "../services/api.js";
 import { announceScreenHeading } from "../screen-focus.js";
-import {
-  showSiteAdminErrorToast,
-  showSiteAdminSuccessToast,
-} from "../state/toasts.js";
+import { showSiteAdminErrorToast } from "../state/toasts.js";
 import {
   formatAdminPhone,
   validateContact,
@@ -70,6 +67,10 @@ class SiteAdminEdit extends HTMLElement {
       announceScreenHeading(this, ".site-admin-header h1");
     } catch {
       this.innerHTML = errorView(t("siteAdmin.formLoadError"));
+      this.querySelector("[data-load-retry]")?.addEventListener(
+        "click",
+        () => void this.connectedCallback(),
+      );
       this.querySelector("[data-admin-back]")?.addEventListener("click", () =>
         backOrNavigate("/site-admin"),
       );
@@ -351,7 +352,6 @@ class SiteAdminEdit extends HTMLElement {
         await saveSiteSettings({ name: value.name });
       }
       this._allowLeave = true;
-      showSiteAdminSuccessToast();
       backOrNavigate("/site-admin");
     } catch {
       showSiteAdminErrorToast();

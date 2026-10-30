@@ -91,3 +91,41 @@ it("still saves with storage unavailable", async () => {
     service.savePhoneCompletion("task", "site"),
   ).resolves.toMatchObject({ task: { status: "in_progress" } });
 });
+
+it("reattaches a failed phone save to the repainted card and closes it on recovery", async () => {
+  vi.mocked(completeTask).mockRejectedValueOnce(new Error("offline"));
+  await expect(service.savePhoneCompletion("task", "site")).rejects.toThrow();
+  const original = vi.mocked(showActionSaveErrorToast).mock.results[0].value;
+  const card = /** @type {Element} */ ({});
+  service.showPhoneCompletionError("task", "site", card);
+  expect(original.close).toHaveBeenCalledOnce();
+  expect(showActionSaveErrorToast).toHaveBeenLastCalledWith(
+    expect.any(Function),
+    card,
+  );
+  const latest = vi.mocked(showActionSaveErrorToast).mock.results.at(-1).value;
+  const retry = vi.mocked(showActionSaveErrorToast).mock.calls.at(-1)[0];
+  await retry();
+  expect(completeTask).toHaveBeenCalledTimes(2);
+  expect(latest.close).toHaveBeenCalledOnce();
+  expect(storage.size).toBe(0);
+});
+
+it("does not attach an old site's delayed failure to the newly selected site", async () => {
+  let reject = () => {};
+  vi.mocked(completeTask).mockImplementationOnce(
+    () =>
+      new Promise((_resolve, fail) => {
+        reject = () => fail(new Error("offline"));
+      }),
+  );
+  const pending = service.savePhoneCompletion("task", "site");
+  vi.mocked(getSite).mockResolvedValue({ siteId: "other" });
+  reject();
+  await expect(pending).rejects.toThrow("offline");
+  expect(showActionSaveErrorToast).not.toHaveBeenCalled();
+  expect(storage.size).toBe(1);
+  vi.mocked(getSite).mockResolvedValue({ siteId: "site" });
+  await service.recoverPhoneCompletions();
+  expect(storage.size).toBe(0);
+});

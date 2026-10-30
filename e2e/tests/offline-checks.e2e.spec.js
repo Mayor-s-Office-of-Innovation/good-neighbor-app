@@ -68,7 +68,7 @@ test.describe("offline checks", () => {
     await expect(page.locator(".shot img")).toHaveCount(1, { timeout: 30_000 });
     const waiting = page.locator(".analysis-card--waiting");
     await expect(waiting).toHaveCount(1, { timeout: 30_000 });
-    await expect(waiting).toContainText(t("card.waiting.title"));
+    await expect(waiting).toContainText(t("notice.savedOnPhone"));
     await expect(page.locator(".analysis-card--failed")).toHaveCount(0);
     await expect(page.locator("#done-check")).toBeEnabled();
   });

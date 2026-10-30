@@ -15,7 +15,10 @@ import {
   slideCompletedCard,
 } from "./analysis-card-completion.js";
 import { createTaskUpdate } from "../services/api.js";
-import { showToast, showTaskUpdateErrorToast } from "../state/toasts.js";
+import {
+  showOperationError,
+  showTaskUpdateErrorToast,
+} from "../state/toasts.js";
 import { t } from "../i18n/i18n.js";
 
 /**
@@ -223,7 +226,8 @@ export class TaskSheets {
   async _formUnavailable(task, trigger, mode, completion, busy = false) {
     const saved = completion ? (await completion).task : null;
     if (completion && !saved) return;
-    showToast({
+    showOperationError({
+      key: `task-form:${task.taskId}`,
       title: t(
         busy
           ? "taskUpdate.finishCurrentForm"
@@ -278,12 +282,6 @@ export class TaskSheets {
           ...response.task,
           latestUpdateId: response.update.updateId,
         };
-        showToast({
-          title: t("taskUpdate.siteResolved"),
-          message: "",
-          icon: "circle-check",
-          tone: "success",
-        });
         return { task: saved };
       })
       .catch((error) => {

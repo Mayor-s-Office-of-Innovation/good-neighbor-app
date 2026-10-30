@@ -1,3 +1,4 @@
+import { loadError } from "../../frontend/src/components/load-error.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { navigate } from "./router.js";
 import { rulebookText } from "../../frontend/src/i18n/rulebook.js";
@@ -198,6 +199,7 @@ class SystemStatus extends HTMLElement {
       this.render();
     }
     if (button.dataset.load) await this.loadSite(button.dataset.load);
+    if (button.hasAttribute("data-load-retry")) await this.refresh();
     if (button.id === "status-refresh") {
       if (this.tab === "control") await this.loadControls();
       else await this.refresh();
@@ -437,10 +439,12 @@ class SystemStatus extends HTMLElement {
         this.tab === "control"
           ? this.controlPanel()
           : `<section role="tabpanel" id="status-panel-status" aria-labelledby="status-tab-status">
-      ${this.error ? `<p role="alert">${e(this.error)}</p>` : ""}
+      ${this.error ? loadError(this.error, { partial: Boolean(data) }) : ""}
       ${
         !data
-          ? `<p role="status">${label(this.loading ? "loading" : "noData")}</p>`
+          ? this.error
+            ? ""
+            : `<p role="status">${label(this.loading ? "loading" : "noData")}</p>`
           : `
       <p class="muted">${e(t("admin.status.updated", { time: formatTime(data.now) }))}</p>
       ${this.kind ? this.details() : `<h2>${label("health")}</h2><div class="status-list">${row("network", percent(data.network.percent), data.network.state)}${row("analysis", percent(data.analysis.percent), data.analysis.state)}</div><p class="muted">${e(t("admin.status.pending", { count: data.pending }))}</p><h2>${label("activity")}</h2><div class="status-list">${activities.map((kind) => row(kind, kind === "duplicates" && !data.duplicatesAvailable && !total(kind) ? label("unavailable") : number(total(kind)))).join("")}</div>`}`

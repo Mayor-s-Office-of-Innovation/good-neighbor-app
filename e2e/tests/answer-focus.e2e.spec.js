@@ -32,7 +32,7 @@ async function setup(page) {
   });
   await page.locator("#no").focus();
   await page.keyboard.press("Enter");
-  await expect(page.locator('[role="status"]')).toBeFocused();
+  await expect(page.locator('#fixture [role="status"]')).toBeFocused();
 }
 
 test("answer progress preserves keyboard focus through rerenders and successful replacement", async ({
@@ -48,7 +48,7 @@ test("answer progress preserves keyboard focus through rerenders and successful 
     card.replaceWith(card.cloneNode(true));
     setQuestionAnswerBusy(root, "c", true);
   });
-  await expect(page.locator('[role="status"]')).toBeFocused();
+  await expect(page.locator('#fixture [role="status"]')).toBeFocused();
   await page.evaluate(() => {
     const { root, setQuestionAnswerBusy } = /** @type {AnswerFixtureWindow} */ (
       window
@@ -73,7 +73,7 @@ test("a failed answer restores focus to the original choice", async ({
   });
   await expect(page.locator("#no")).toBeFocused();
   await expect(page.locator("#no")).toBeEnabled();
-  await expect(page.locator('[role="status"]')).toHaveCount(0);
+  await expect(page.locator('#fixture [role="status"]')).toHaveCount(0);
 });
 
 test("completion does not steal focus after the user moves away", async ({

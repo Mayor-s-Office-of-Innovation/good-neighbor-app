@@ -6,6 +6,7 @@ import { defineConfig } from "@playwright/test";
   server the main suite uses. No backend: they cover the app shell only.
 */
 export default defineConfig({
+  outputDir: "./test-results/offline-shell",
   testDir: "./offline-shell-tests",
   workers: 1,
   timeout: 120_000,
