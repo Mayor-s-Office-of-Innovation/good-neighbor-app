@@ -54,6 +54,9 @@
 
 ## Operations
 
+- **[Omni deployment permissions](./runbooks/deploy-cloudwatch-omni.md)** — external
+  deployment-role permissions for SSO role discovery, the Omni stack and Dataset integration.
+
 - **[Shared Site details](./runbooks/site-details.md)** — public contacts, assigned manager profiles, perimeter edits, migration, and propagation checks.
 
 - **[Deployment quota permissions](./runbooks/deploy-service-quotas.md)** — repair externally owned deployment-role permissions for API Gateway quota reads.
