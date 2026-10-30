@@ -1344,6 +1344,32 @@ describe("deferred In-progress / History lists", () => {
     return liveView("?filter=todo");
   }
 
+  it("keeps confirmed badge counts visible while returned lists revalidate", async () => {
+    freezeClock();
+    const view = await loadedView();
+    view._homeModel.pendingGuidanceLoading = false;
+    const settled = view._render(view._homeModel);
+    expect(settled).toContain("home-tabs__count");
+    const counts = { ...view._tabCountSnapshot.counts };
+    const next = routeReturn(view);
+    next._restoreHomeState(
+      {
+        model: view._homeModel,
+        homeFilter: "todo",
+        site: view._site,
+        siteId: view._siteId,
+        confirmedTasks: new Map(),
+        remainingStatus: "pending",
+        tabCountSnapshot: view._tabCountSnapshot,
+      },
+      "todo",
+    );
+    expect(next._render(next._homeModel)).toContain("home-tabs__count");
+    expect(next._tabCountSnapshot.counts).toEqual(counts);
+    next._siteId = "different-site";
+    expect(next._render(next._homeModel)).not.toContain("home-tabs__count");
+  });
+
   it("reuses fresh In-progress / History lists on a route return and re-fetches only the open list", async () => {
     freezeClock();
     const view = await loadedView();

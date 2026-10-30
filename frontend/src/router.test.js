@@ -355,10 +355,23 @@ describe("routeTransitionDirection", () => {
   it("pushes into deeper routes, pops back out, fades between siblings", async () => {
     const { routeTransitionDirection } = await import("./router.js");
     expect(routeTransitionDirection(null, "/today")).toBe("fade");
-    // Reports and site admin carry a back arrow to the hub: they push.
-    expect(routeTransitionDirection("/today", "/reports")).toBe("push");
-    expect(routeTransitionDirection("/reports", "/today")).toBe("pop");
-    expect(routeTransitionDirection("/today", "/site-admin")).toBe("push");
+    // Top-level sheets rise and dismiss vertically.
+    expect(routeTransitionDirection("/today", "/reports")).toBe("rise");
+    expect(routeTransitionDirection("/reports", "/today")).toBe("dismiss");
+    expect(routeTransitionDirection("/today", "/site-admin")).toBe("rise");
+    for (const sheet of ["/care-work", "/complaints", "/help"]) {
+      expect(routeTransitionDirection("/today", sheet)).toBe("rise");
+      expect(routeTransitionDirection(sheet, "/today")).toBe("dismiss");
+    }
+    expect(routeTransitionDirection("/complaints", "/complaints/new")).toBe(
+      "push",
+    );
+    expect(routeTransitionDirection("/complaints/new", "/complaints")).toBe(
+      "pop",
+    );
+    expect(routeTransitionDirection("/care-work", "/care-work/new")).toBe(
+      "push",
+    );
     // The capture flows close with an X: they fade in and out.
     expect(routeTransitionDirection("/today", "/check")).toBe("fade");
     expect(routeTransitionDirection("/problem", "/today")).toBe("fade");

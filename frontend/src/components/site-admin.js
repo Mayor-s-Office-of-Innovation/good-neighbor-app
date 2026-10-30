@@ -42,7 +42,8 @@ class SiteAdminView extends HTMLElement {
       navigate("/today");
       return;
     }
-    this.innerHTML = loadingView(t("siteAdmin.title"));
+    this.innerHTML = loadingView(t("siteAdmin.title"), true);
+    this._wireBack();
     try {
       const siteResult = await getSiteAdmin();
       this._site = siteResult.site;
@@ -77,7 +78,7 @@ class SiteAdminView extends HTMLElement {
       this._scheduleLetterRefresh();
       announceScreenHeading(this, ".site-admin-header h1");
     } catch {
-      this.innerHTML = errorView(t("siteAdmin.loadError"));
+      this.innerHTML = errorView(t("siteAdmin.loadError"), true);
       this._wireBack();
     }
   }
@@ -142,7 +143,7 @@ class SiteAdminView extends HTMLElement {
 
     this.innerHTML = html`
       <div class="site-admin-page">
-        ${adminHeader(t("siteAdmin.title"))}
+        ${adminHeader(t("siteAdmin.title"), true)}
         <div class="site-admin-content">
           ${editableSection(t("siteAdmin.siteDetails.title"), "site", [
             [t("siteAdmin.field.siteName"), site.name],

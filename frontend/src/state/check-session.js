@@ -78,7 +78,8 @@ function normalizeCheck(check) {
     ...rest,
     flowType: normalizeFlowType(check.flowType),
     items: normalizeItems(check),
-    analyzingOpen: Boolean(check.analyzingOpen),
+    analyzingOpen:
+      check.analyzingOpen == null ? true : Boolean(check.analyzingOpen),
   };
 }
 
@@ -151,6 +152,7 @@ function startFlow(siteId, flowType) {
     id: newId(),
     siteId,
     flowType,
+    analyzingOpen: true,
     window: currentWindow(),
     startedAt: new Date().toISOString(),
     items: [],

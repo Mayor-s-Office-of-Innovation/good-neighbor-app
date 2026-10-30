@@ -74,9 +74,9 @@ test.describe("public complaints", () => {
       ).toBe("flex-start");
     }
 
-    await expect(complaintAction).toBeFocused();
-    await page.keyboard.press("ArrowDown");
     await expect(issueAction).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(complaintAction).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(menu).toBeHidden();
     await expect(trigger).toBeFocused();
@@ -94,9 +94,9 @@ test.describe("public complaints", () => {
       page.getByRole("heading", { name: t("complaints.title") }),
     ).toBeVisible();
 
-    const back = page.locator(".complaints .topbar__back");
-    await expect(back).toHaveAccessibleName(t("common.back"));
-    await expect(back.locator('wa-icon[name="chevron-left"]')).toBeVisible();
+    const back = page.locator(".complaints .care-back");
+    await expect(back).toHaveAccessibleName(t("common.close"));
+    await expect(back.locator('wa-icon[name="xmark"]')).toBeVisible();
 
     const logButton = page.locator("#log-complaint");
     const empty = page.locator(".complaints__empty");
@@ -119,7 +119,7 @@ test.describe("public complaints", () => {
     ).toBeVisible();
     await expect(page.locator(".complaint-compose [data-back]")).toHaveCount(0);
     await expect(page.locator("#close-complaint")).toHaveAccessibleName(
-      t("common.close"),
+      t("common.back"),
     );
     await expect(page.locator(".complaint-upload-copy")).toContainText(
       t("complaints.upload.title"),
@@ -180,6 +180,19 @@ test.describe("public complaints", () => {
     await page.locator("#close-complaint").click();
     await expect(page).toHaveURL(/\/complaints$/);
     await expect(empty).toBeVisible();
+
+    await logButton.click();
+    await page.locator("#describe-complaint").click();
+    await description.fill("Synthetic complaint for navigation regression");
+    await page.route("**/v1/complaints", (route) =>
+      route.request().method() === "POST"
+        ? route.fulfill({ json: { complaintId: "synthetic" } })
+        : route.fallback(),
+    );
+    await submit.click();
+    await expect(page).toHaveURL(/\/complaints$/);
+    await back.click();
+    await expect(page).toHaveURL(/\/today(?:\?filter=todo)?$/);
   });
 
   test("uses native detail links and renders a recoverable missing-detail state", async ({

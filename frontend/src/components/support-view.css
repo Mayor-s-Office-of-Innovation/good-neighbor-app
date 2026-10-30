@@ -12,6 +12,7 @@ support-view {
 }
 .support__back-row {
   display: flex;
+  justify-content: flex-end;
   margin-bottom: 1.125rem;
 }
 .support__back {

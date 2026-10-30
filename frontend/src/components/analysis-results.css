@@ -769,7 +769,7 @@ artifact-photo img {
     order: 3;
   }
 
-  .status-ticker,
+  .analysis-card .status-ticker,
   .analysis-card__skeleton--route {
     order: 1;
   }
@@ -1073,7 +1073,8 @@ artifact-photo img {
   justify-content: flex-start;
 }
 .analysis-card__dismiss {
-  background: transparent;
+  background: var(--surface-2);
+  border-radius: 50%;
 }
 /* Address eyebrow + title read as one lockup (see __place margin); the
    structural break sits between that lockup and the guidance text. */

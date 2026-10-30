@@ -1,3 +1,4 @@
+import { captureClose } from "./perimeter-check.templates.js";
 import { captureControls } from "./capture-controls.templates.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
@@ -6,15 +7,7 @@ import { analysisDialogs } from "./analysis-results.templates.js";
 
 export const shell = ({ title = t("problem.title.single") } = {}) => html`
   <div class="flow view-check check check-timeline single-issue">
-    <div class="check-timeline__topbar">
-      <span aria-hidden="true"></span>
-      <button class="check-timeline__close" id="cancel" type="button">
-        <span class="check-timeline__close-icon" aria-hidden="true"></span>
-        <span class="visually-hidden"
-          >${escapeHtml(t("problem.close.aria"))}</span
-        >
-      </button>
-    </div>
+    ${captureClose(t("problem.close.aria"))}
 
     <h1 class="check-timeline__title single-issue__title" tabindex="-1">
       ${escapeHtml(title)}

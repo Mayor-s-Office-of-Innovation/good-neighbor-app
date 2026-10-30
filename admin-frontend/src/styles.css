@@ -2191,3 +2191,14 @@ app-toasts {
     flex-direction: column;
   }
 }
+
+.entity-tabs + .site-directory {
+  margin-top: 24px;
+}
+.site-directory .panel__head {
+  margin: 0;
+}
+.site-directory .panel__head p,
+.site-directory > .directory-count {
+  margin: 0;
+}

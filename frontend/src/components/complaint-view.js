@@ -7,8 +7,15 @@ import {
   MAX_FILES,
 } from "../domain/attachment-files.js";
 import "./complaint-view.css";
+import "./care-work.css";
+import { careHeader } from "./care-work.templates.js";
 import { reserveMediaUpload } from "../services/upload-reservation.js";
-import { currentRoute, navigate, setPopstateGuard } from "../router.js";
+import {
+  backOrNavigate,
+  currentRoute,
+  navigate,
+  setPopstateGuard,
+} from "../router.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
 import { formatMonthDayTime } from "../i18n/dates.js";
@@ -96,16 +103,30 @@ class ComplaintView extends HTMLElement {
       if (draft?.uploading && !window.confirm(t("complaints.upload.leave")))
         return;
       if (draft?.uploading) draft = null;
-      navigate(fallback);
+      backOrNavigate(fallback);
     });
   }
 
   async _renderList({ focusHeading = true, restoreFocus = "" } = {}) {
-    this.innerHTML = `<div class="flow complaints"><p class="hint">${escapeHtml(t("common.loading"))}</p></div>`;
+    if (!this.querySelector(".complaints__list")) {
+      this.innerHTML = html`<div class="care-work complaints">
+        ${careHeader(t("complaints.title"), true)}
+        <p class="care-subtitle">${escapeHtml(t("complaints.subtitle"))}</p>
+        <hr class="splash-rule" />
+        <button class="btn-ink complaints__new" type="button" disabled>
+          ${escapeHtml(t("complaints.log"))}
+        </button>
+        <p class="hint" role="status">${escapeHtml(t("common.loading"))}</p>
+      </div>`;
+      this._bindBack();
+    }
     try {
       const { complaints = [] } = await listComplaints();
-      this.innerHTML = html`<div class="flow complaints">
-        ${this._topbar(t("complaints.title"))}<button
+      this.innerHTML = html`<div class="care-work complaints">
+        ${careHeader(t("complaints.title"), true)}
+        <p class="care-subtitle">${escapeHtml(t("complaints.subtitle"))}</p>
+        <hr class="splash-rule" />
+        <button
           class="btn-ink complaints__new"
           id="log-complaint"
           type="button"
@@ -115,7 +136,7 @@ class ComplaintView extends HTMLElement {
         ${this._listActionError
           ? `<p class="complaint-compose__error" role="alert">${escapeHtml(t(this._listActionError))}</p>`
           : ""}
-        <div class="complaints__list" role="list">
+        <div class="complaints__list" ${complaints.length ? 'role="list"' : ""}>
           ${complaints.length
             ? complaints.map((item) => this._row(item)).join("")
             : `<p class="complaints__empty">${escapeHtml(t("complaints.empty"))}</p>`}
@@ -157,8 +178,10 @@ class ComplaintView extends HTMLElement {
       if (restoreFocus) this.querySelector(restoreFocus)?.focus();
       else if (focusHeading) this.querySelector("h1")?.focus();
     } catch {
-      this.innerHTML = html`<div class="flow complaints">
-        ${this._topbar(t("complaints.title"))}
+      this.innerHTML = html`<div class="care-work complaints">
+        ${careHeader(t("complaints.title"), true)}
+        <p class="care-subtitle">${escapeHtml(t("complaints.subtitle"))}</p>
+        <hr class="splash-rule" />
         <p role="alert">${escapeHtml(t("complaints.loadError"))}</p>
       </div>`;
       this._bindBack();
@@ -256,12 +279,12 @@ class ComplaintView extends HTMLElement {
       !draft.files.some((file) => file.status === "error");
     this.innerHTML = html`<div class="flow complaint-compose">
       <button
-        class="complaint-compose__close"
+        class="complaint-compose__back"
         id="close-complaint"
         type="button"
-        aria-label="${escapeAttr(t("common.close"))}"
+        aria-label="${escapeAttr(t("common.back"))}"
       >
-        <wa-icon name="xmark" aria-hidden="true"></wa-icon>
+        <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
       </button>
       <div class="complaint-compose__intro">
         <h1 tabindex="-1">${escapeHtml(t("complaints.compose.title"))}</h1>
@@ -370,7 +393,7 @@ ${escapeHtml(draft.description)}</textarea
     if (draft?.uploading && !window.confirm(t("complaints.upload.leave")))
       return;
     draft = null;
-    navigate("/complaints");
+    backOrNavigate("/complaints");
   }
 
   _fileRow(file) {
@@ -507,7 +530,7 @@ ${escapeHtml(draft.description)}</textarea
       });
       draft = null;
       showComplaintLoggedToast();
-      navigate("/complaints");
+      backOrNavigate("/complaints");
     } catch {
       draft.submitError = "complaints.submitError";
       this._renderDraft();

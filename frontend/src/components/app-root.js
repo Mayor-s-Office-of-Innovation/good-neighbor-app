@@ -501,7 +501,8 @@ export class AppRoot extends HTMLElement {
 
   _loadRoute(route, load) {
     const request = (this._routeLoad = {});
-    this._view.innerHTML = `<p role="status">${escapeHtml(t("care.loading"))}</p>`;
+    if (!this._view.firstElementChild)
+      this._view.innerHTML = `<p role="status">${escapeHtml(t("care.loading"))}</p>`;
     Promise.resolve()
       .then(load)
       .then(() => {

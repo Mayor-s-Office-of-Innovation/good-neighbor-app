@@ -21,11 +21,11 @@ export class SupportView extends HTMLElement {
         <div class="support__back-row">
           <button
             type="button"
-            class="btn-icon support__back"
+            class="btn-circle-close support__back"
             data-back
-            aria-label="${escapeAttr(t("common.back"))}"
+            aria-label="${escapeAttr(t("common.close"))}"
           >
-            <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
+            <wa-icon name="xmark" aria-hidden="true"></wa-icon>
           </button>
         </div>
         <h1 class="support__title" id="support-title" tabindex="-1">
