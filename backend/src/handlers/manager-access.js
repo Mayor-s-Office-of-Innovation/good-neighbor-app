@@ -21,8 +21,8 @@ import {
 } from "../lib/principal.js";
 
 const GRANT_TTL_MS = 8 * 60 * 60 * 1000;
-const MANAGER_HOURLY_LIMIT = 25;
-const SITE_HOURLY_LIMIT = 40;
+const MANAGER_HOURLY_LIMIT = 100;
+const SITE_HOURLY_LIMIT = 200;
 
 /** Create one short-lived general-access enrollment grant. */
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer} */

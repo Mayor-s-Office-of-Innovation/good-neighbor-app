@@ -1,3 +1,4 @@
+import { parseRetryAfter } from "../lib/retry-after.js";
 /*
   backend-health.js — connection/auth state machine (api-response-integrity
   plan §3a/3b).
@@ -45,6 +46,7 @@ let retryTimer;
  * newest probe (guards concurrent boot/visibility/failure probes).
  */
 let probeSeq = 0;
+let throttledUntil = 0;
 
 /** @returns {HealthState} */
 export function getHealthState() {
@@ -77,7 +79,8 @@ export function classifyApiFailure(err) {
   }
   if (!(err instanceof Error) || err.name !== "ApiError") return state;
   const status = /** @type {any} */ (err).status;
-  // Non-JSON responses mean the pipe is broken REGARDLESS of status — an
+  if (status === 429) return state;
+  // Other non-JSON responses mean the pipe is broken — an
   // HTML 403 from an intermediary is a transport failure, not an auth
   // verdict. Check before status-based classification so a rewritten
   // response can never trigger the destructive AUTH recovery.
@@ -117,12 +120,23 @@ export function classifyApiFailure(err) {
  */
 export async function probe() {
   const seq = ++probeSeq;
+  if (Date.now() < throttledUntil) {
+    scheduleProbe(Math.min(2147483647, throttledUntil - Date.now()));
+    return state;
+  }
   let ok = false;
+  /** @type {number | undefined} */
+  let retryAfterMs;
   try {
     const res = await fetch(PROBE_PATH, { method: "GET" });
-    const text = await res.text();
-    // The health handler speaks JSON; HTML here is the CDN incident shape.
-    ok = res.ok && text.trim().startsWith("{");
+    if (res.status === 429) {
+      retryAfterMs =
+        parseRetryAfter(res.headers?.get?.("retry-after")) ?? 300000;
+    } else {
+      const text = await res.text();
+      // The health handler speaks JSON; HTML here is the CDN incident shape.
+      ok = res.ok && text.trim().startsWith("{");
+    }
   } catch {
     ok = false;
   }
@@ -132,6 +146,11 @@ export async function probe() {
     return state;
   }
   clearRetryTimer();
+  if (retryAfterMs !== undefined) {
+    throttledUntil = Date.now() + Math.max(1000, retryAfterMs);
+    scheduleProbe(Math.min(2147483647, throttledUntil - Date.now()));
+    return state;
+  }
 
   if (ok) {
     // A healthy probe recovers OUTAGE only; AUTH is user-resolved. Backoff
@@ -164,6 +183,7 @@ export function stopHealthMonitoring() {
     visibilityHook = undefined;
   }
   clearRetryTimer();
+  throttledUntil = 0;
   resetBackoff();
 }
 

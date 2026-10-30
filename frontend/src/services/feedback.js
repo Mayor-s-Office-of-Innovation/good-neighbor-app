@@ -1,3 +1,5 @@
+import { ApiError } from "./api-error.js";
+import { parseRetryAfter } from "../lib/retry-after.js";
 /*
   feedback.js — the one-call client for the in-app feedback form.
 
@@ -51,7 +53,10 @@ export async function sendFeedback({ message, site }) {
     keepalive: true,
   });
   if (!res.ok) {
-    throw new Error(`Feedback POST failed: ${res.status}`);
+    throw new ApiError(`Feedback POST failed: ${res.status}`, {
+      status: res.status,
+      retryAfterMs: parseRetryAfter(res.headers?.get?.("retry-after")),
+    });
   }
 }
 
