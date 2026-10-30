@@ -294,3 +294,7 @@ care-work-view {
   padding: 0;
   list-style: none;
 }
+
+.care-photo-section {
+  min-width: 0;
+}

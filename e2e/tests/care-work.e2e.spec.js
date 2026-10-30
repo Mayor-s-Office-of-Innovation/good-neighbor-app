@@ -131,6 +131,12 @@ test.describe("proactive care", () => {
       if (!dropped) {
         dropped = true;
         await route.fetch();
+        // Deliver the lost response after the list has mounted and started
+        // queue recovery, so this scenario exercises the explicit Retry action.
+        await expect(page.locator(".care-days")).toHaveAttribute(
+          "aria-busy",
+          "false",
+        );
         return route.abort("failed");
       }
       return route.fallback();
@@ -422,7 +428,7 @@ test("proactive care replaces five expired uploads without waiting for quota TTL
   await openLogs(page);
   await choose(page, "power_washed");
   await page
-    .locator("#care-photo-input")
+    .locator("#care-gallery-input")
     .setInputFiles(Array(5).fill(PHOTO_CLEAR));
   let expired = false;
   /** @type {Record<string, any>[]} */

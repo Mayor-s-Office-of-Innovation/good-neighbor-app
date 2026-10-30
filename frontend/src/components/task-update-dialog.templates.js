@@ -1,3 +1,4 @@
+import { captureControls } from "./capture-controls.templates.js";
 import { PHOTO_ACCEPT } from "../domain/attachment-files.js";
 import { artifactPhoto } from "./artifact-photo.templates.js";
 import {
@@ -275,6 +276,7 @@ export function taskUpdateCapture({
         : t("taskUpdate.capture.title");
   const populatedNotes = notes.filter((note) => note.trim());
   const hasContent = files.length || populatedNotes.length;
+  const ordinaryUpdate = !results && !pendingEvent;
   return html`<section class="task-update__capture">
     <h2 id="task-update-title">${escapeHtml(title)}</h2>
     ${results && task ? captureTaskIdentity(task) : ""}
@@ -286,55 +288,91 @@ export function taskUpdateCapture({
     ${!photosAllowed
       ? html`<p>${translatedText("taskUpdate.photo.unavailable")}</p>`
       : ""}
-    <div class="task-update__capture-controls">
-      ${photosAllowed
-        ? html`<button
-              type="button"
-              class="btn-blue task-update__take-photo"
-              data-take-photo
-            >
-              <wa-icon name="camera" aria-hidden="true"></wa-icon
-              >${translatedText("taskUpdate.capture.takePhoto")}
-            </button>
-            <input
-              hidden
-              type="file"
-              accept="${PHOTO_ACCEPT}"
-              capture="environment"
-              multiple
-              aria-label="${escapeAttr(t("taskUpdate.capture.takePhoto"))}"
-              data-photos
-            />`
-        : ""}
-      <div class="task-update__capture-secondary">
-        ${populatedNotes.length < MAX_TASK_UPDATE_NOTES
-          ? html`<button type="button" class="btn-outline" data-add-note>
-              <wa-icon name="keyboard" aria-hidden="true"></wa-icon
-              >${translatedText("taskUpdate.capture.typeNote")}
-            </button>`
-          : ""}
-        ${photosAllowed
-          ? html`<button type="button" class="btn-outline" data-upload-photos>
-                <wa-icon name="image" aria-hidden="true"></wa-icon
-                >${translatedText("taskUpdate.capture.uploadPhotos")}
-              </button>
-              <span hidden data-photo-upload-status role="status"
-                ><wa-spinner></wa-spinner>${translatedText(
-                  "taskUpdate.capture.uploading",
-                )}</span
-              >
-              <input
-                hidden
-                type="file"
-                accept="${PHOTO_ACCEPT}"
-                multiple
-                aria-label="${escapeAttr(t("taskUpdate.capture.uploadPhotos"))}"
-                data-upload-input
-              />`
-          : ""}
-      </div>
-      <p hidden data-photo-error role="alert" class="task-update__error"></p>
-    </div>
+    ${ordinaryUpdate
+      ? captureControls({
+          photosAllowed,
+          textKey: "taskUpdate.capture.typeNote",
+          showText: populatedNotes.length < MAX_TASK_UPDATE_NOTES,
+        })
+      : ""}
+    ${ordinaryUpdate && photosAllowed
+      ? html`<input
+            type="file"
+            data-update-camera
+            class="capture-picker"
+            accept="${PHOTO_ACCEPT}"
+            capture="environment"
+            hidden
+          /><input
+            type="file"
+            data-update-gallery
+            class="capture-picker"
+            accept="${PHOTO_ACCEPT}"
+            multiple
+            hidden
+          />`
+      : ""}
+    ${!ordinaryUpdate
+      ? html`
+          <div class="task-update__capture-controls">
+            ${photosAllowed
+              ? html`<button
+                    type="button"
+                    class="btn-blue task-update__take-photo"
+                    data-take-photo
+                  >
+                    <wa-icon name="camera" aria-hidden="true"></wa-icon
+                    >${translatedText("taskUpdate.capture.takePhoto")}
+                  </button>
+                  <input
+                    hidden
+                    type="file"
+                    accept="${PHOTO_ACCEPT}"
+                    capture="environment"
+                    multiple
+                    aria-label="${escapeAttr(
+                      t("taskUpdate.capture.takePhoto"),
+                    )}"
+                    data-photos
+                  />`
+              : ""}
+            <div class="task-update__capture-secondary">
+              ${populatedNotes.length < MAX_TASK_UPDATE_NOTES
+                ? html`<button type="button" class="btn-outline" data-add-note>
+                    <wa-icon name="keyboard" aria-hidden="true"></wa-icon
+                    >${translatedText("taskUpdate.capture.typeNote")}
+                  </button>`
+                : ""}
+              ${photosAllowed
+                ? html`<button
+                      type="button"
+                      class="btn-outline"
+                      data-upload-photos
+                    >
+                      <wa-icon name="image" aria-hidden="true"></wa-icon
+                      >${translatedText("taskUpdate.capture.uploadPhotos")}
+                    </button>
+                    <input
+                      hidden
+                      type="file"
+                      accept="${PHOTO_ACCEPT}"
+                      multiple
+                      aria-label="${escapeAttr(
+                        t("taskUpdate.capture.uploadPhotos"),
+                      )}"
+                      data-upload-input
+                    />`
+                : ""}
+            </div>
+          </div>
+        `
+      : ""}
+    <span hidden data-photo-upload-status role="status"
+      ><wa-spinner></wa-spinner>${translatedText(
+        "taskUpdate.capture.uploading",
+      )}</span
+    >
+    <p hidden data-photo-error role="alert" class="task-update__error"></p>
     ${previews.length
       ? photoPicker(previews, "update", files, photosAllowed, false)
       : ""}

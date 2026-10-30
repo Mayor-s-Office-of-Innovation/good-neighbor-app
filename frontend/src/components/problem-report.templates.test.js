@@ -6,7 +6,7 @@ describe("single-issue capture template", () => {
     const markup = shell();
 
     expect(markup).toContain("check-timeline single-issue");
-    expect(markup).toContain('class="btn-outline check-roll__describe"');
+    expect(markup).toContain('class="capture-controls"');
     expect(markup).toContain('id="problem-footer"');
     expect(markup.indexOf('id="describe-instead"')).toBeLessThan(
       markup.indexOf('id="problem-footer"'),

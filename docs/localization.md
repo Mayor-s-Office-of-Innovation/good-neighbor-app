@@ -148,6 +148,7 @@ Filipino (fil-PH), polite "kayo / ninyo", no "po"; common workplace loanwords
 
 | English | Filipino |
 | --- | --- |
+| photo | larawan |
 | perimeter check / check | pagsuri sa paligid / pagsuri |
 | issue / problem | problema |
 | task | gawain |
