@@ -124,7 +124,10 @@ export function newResultsTray(page) {
  */
 export async function dismissAllNewResults(page) {
   const tray = newResultsTray(page);
-  const cards = tray.locator(".analysis-card");
+  // Clear/empty placeholders are cards too, but cannot be dismissed.
+  const cards = tray.locator(
+    '.analysis-card:has([data-analysis-action="delete"])',
+  );
   await expect(cards.first()).toBeVisible({ timeout: 30_000 });
 
   /** Count the tray twice, 400ms apart; settle when the count stops changing. */
@@ -141,16 +144,15 @@ export async function dismissAllNewResults(page) {
   /** The set of card identities currently in the tray. */
   async function cardKeys() {
     return (
-      await tray
-        .locator(".analysis-card")
-        .evaluateAll((els) =>
-          els.map((el) =>
-            [
-              el.getAttribute("data-artifact-id"),
-              el.getAttribute("data-condition-id"),
-            ].join("|"),
-          ),
-        )
+      await cards.evaluateAll((els) =>
+        els.map((el) =>
+          [
+            el.getAttribute("data-artifact-id"),
+            el.getAttribute("data-condition-id"),
+            el.getAttribute("data-task-id"),
+          ].join("|"),
+        ),
+      )
     ).sort();
   }
 
@@ -159,12 +161,20 @@ export async function dismissAllNewResults(page) {
     const count = await settledCount();
     if (count === 0) break;
     seen = Math.max(seen, count);
-    const first = cards.first();
-    const key = await first.evaluate((el) =>
-      [
-        el.getAttribute("data-artifact-id"),
-        el.getAttribute("data-condition-id"),
-      ].join("|"),
+    const identity = await cards.first().evaluate((el) => ({
+      artifactId: el.getAttribute("data-artifact-id"),
+      conditionId: el.getAttribute("data-condition-id"),
+      taskId: el.getAttribute("data-task-id"),
+    }));
+    const key = [
+      identity.artifactId,
+      identity.conditionId,
+      identity.taskId,
+    ].join("|");
+    // Hydration can reorder the tray between reading its identity and clicking.
+    // One condition can produce several tasks, each with its own delete button.
+    const first = tray.locator(
+      `.analysis-card[data-artifact-id=${JSON.stringify(identity.artifactId)}][data-condition-id=${JSON.stringify(identity.conditionId)}][data-task-id=${JSON.stringify(identity.taskId)}]`,
     );
     await first.locator('[data-analysis-action="delete"]').click();
     await page.locator("#analysis-delete-confirm").click();

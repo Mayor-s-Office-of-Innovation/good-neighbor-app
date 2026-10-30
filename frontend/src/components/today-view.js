@@ -1234,6 +1234,14 @@ class TodayView extends HTMLElement {
     const focusedActionId = previousActionMenu?.contains(document.activeElement)
       ? document.activeElement?.id
       : null;
+    // Preserve a keyboard user's phone action across background card hydration.
+    const focused = document.activeElement;
+    const phoneCard = focused?.closest?.(".analysis-card[data-task-id]");
+    const phoneNumber = focused?.getAttribute("data-phone-number");
+    const phoneFocus =
+      phoneCard && this.contains(phoneCard) && phoneNumber
+        ? `.analysis-card[data-task-id="${CSS.escape(phoneCard.getAttribute("data-task-id") || "")}"] button[data-phone-number="${CSS.escape(phoneNumber)}"]`
+        : "";
     this._homeMarkup = markup;
     this.innerHTML = markup;
     this._tabRefreshStatus?.();
@@ -1537,6 +1545,11 @@ class TodayView extends HTMLElement {
       setQuestionAnswerBusy(this, conditionId, true);
     }
 
+    if (phoneFocus) {
+      const replacement = this.querySelector(phoneFocus);
+      if (replacement instanceof HTMLElement)
+        replacement.focus({ preventScroll: true });
+    }
     this._restoreFocusAfterRender();
     const requestedIssue = new URLSearchParams(window.location.search).get(
       "issue",
@@ -1696,11 +1709,15 @@ class TodayView extends HTMLElement {
       displayRecentItems = [];
     const visibleRecentItems =
       this._homeFilter === "todo" ? displayRecentItems : [];
+    // Older recovered questions must not suppress this check's clear result.
+    const clearResultItems = visibleRecentItems.filter((item) =>
+      localRecentItems.some((local) => local.id === item.id),
+    );
     const hasPendingClearResult =
       this._homeFilter === "todo" &&
       !pendingSuperseded &&
-      displayRecentItems.length > 0 &&
-      displayRecentItems.every(
+      clearResultItems.length > 0 &&
+      clearResultItems.every(
         (item) =>
           item.analysis?.status === "analyzed" && !hasProblemResults(item),
       );
@@ -1755,6 +1772,7 @@ class TodayView extends HTMLElement {
             "",
         checks,
         recentItems: visibleRecentItems,
+        clearResultItems,
         newTaskEntries,
         visibleTasks,
         activeClearCheck,
@@ -1872,6 +1890,7 @@ class TodayView extends HTMLElement {
     recentCheckTime,
     checks,
     recentItems,
+    clearResultItems,
     newTaskEntries,
     visibleTasks,
     activeClearCheck,
@@ -1902,6 +1921,11 @@ class TodayView extends HTMLElement {
       hasPendingSession: Boolean(pendingSession),
       recentCheckTime,
       recentItems,
+      clearResultItems,
+      clearResultTime:
+        pendingSession?.submittedAt ||
+        pendingSession?.startedAt ||
+        recentCheckTime,
       newTaskCards,
       newTaskCardsMarkup: sortAnalysisCards([...newTaskCards])
         .map((card) => card.markup)

@@ -53,7 +53,6 @@ class DescribeInstead extends HTMLElement {
       this._flowType === "perimeter" ? textItems(check)[0] || null : null;
     this._savedText = this._existing?.text || "";
     this._text = this._savedText;
-    this._programmaticFieldUpdate = false;
 
     this._render();
     this._bind();
@@ -73,9 +72,7 @@ class DescribeInstead extends HTMLElement {
     this.querySelector("#describe-dismiss").addEventListener("click", () =>
       this._onClose(),
     );
-    this.querySelector("#describe-continue").addEventListener("click", () =>
-      this._onContinue(),
-    );
+    this._continue.addEventListener("click", () => this._onContinue());
     this._clear.addEventListener("click", () => this._clearAll());
     this.querySelector("#describe-discard").addEventListener("click", () =>
       this._discardAndExit(),
@@ -84,9 +81,7 @@ class DescribeInstead extends HTMLElement {
     this._field.addEventListener("input", (event) => {
       this._text = this._clampText(event.target.value);
       if (event.target.value !== this._text) {
-        this._programmaticFieldUpdate = true;
         this._field.value = this._text;
-        this._programmaticFieldUpdate = false;
       }
       this._continue.disabled = !this._canContinue();
       this._syncClearUi();
@@ -119,9 +114,7 @@ class DescribeInstead extends HTMLElement {
   }
 
   _clearAll() {
-    this._programmaticFieldUpdate = true;
     this._field.value = "";
-    this._programmaticFieldUpdate = false;
     this._text = "";
     this._continue.disabled = true;
     this._syncClearUi();
