@@ -27,7 +27,11 @@ test.beforeEach(async ({ page }) => {
     const load = (/** @type {string} */ path) => import(path);
     await load("/src/components/task-update-dialog.js");
     const { setSite } = await load("/src/db.js");
-    await setSite("Test site", { siteId: "test-site", token: "test-token" });
+    await setSite("Test site", {
+      siteId: "test-site",
+      deviceId: "test-device",
+      token: "test-token",
+    });
     const dialog = /** @type {any} */ (
       document.createElement("task-update-dialog")
     );
@@ -41,7 +45,7 @@ test.beforeEach(async ({ page }) => {
 async function pickPhoto(page) {
   await page.locator('[data-mode="notes"]').click();
   await page
-    .locator("[data-photos]")
+    .locator("[data-photos], [data-update-camera]")
     .setInputFiles("e2e/fixtures/photos/input-1.jpg");
   await expect(page.locator("dialog.task-update")).toHaveAttribute(
     "data-test-identity",
@@ -66,7 +70,7 @@ test("all actions are available on a recoverable issue; picking a photo keeps th
     "data-test-identity",
     "original",
   );
-  await page.locator("[data-add-note]").click();
+  await page.locator("[data-add-note], [data-capture-text]").click();
   await page.locator("[data-note-text]").fill("An update");
   await page.locator("[data-save-note]").click();
   await page.locator("[data-close]").click();
@@ -89,16 +93,20 @@ for (const cancelControl of ["data-cancel-save", "data-close"])
   }) => {
     let presigns = 0;
     let saves = 0;
-    await page.route("**/v1/checks/check/artifacts:presign", (route) =>
-      route.fulfill({
+    /** @type {string[]} */
+    const requestIds = [];
+    await page.route("**/v1/checks/check/artifacts:presign", (route) => {
+      presigns++;
+      requestIds.push(route.request().postDataJSON().uploadRequestId);
+      return route.fulfill({
         json: {
-          artifactId: `photo-${++presigns}`,
+          artifactId: "photo-1",
           s3Key: "photo",
-          uploadUrl: "http://127.0.0.1:5179/test-upload",
+          uploadUrl: `http://127.0.0.1:${process.env.E2E_UPDATES_PORT ?? 5179}/test-upload`,
           uploadHeaders: {},
         },
-      }),
-    );
+      });
+    });
     await page.route("**/test-upload", () => {});
     await page.route("**/v1/tasks/issue/updates", async (route) => {
       if (route.request().method() === "POST") saves++;
@@ -110,7 +118,7 @@ for (const cancelControl of ["data-cancel-save", "data-close"])
     await page.locator("[data-save-notes]").click();
     await expect.poll(() => presigns).toBe(1);
     await expect(page.locator("[data-cancel-save]")).toBeVisible();
-    await expect(page.locator("[data-upload-photos]")).toBeHidden();
+    await expect(page.locator("[data-capture-upload]")).toBeHidden();
     await expect(page.locator("[data-photo-upload-status]")).toBeVisible();
     await page.locator(`[${cancelControl}]`).click();
     if (cancelControl === "data-close") {
@@ -127,6 +135,9 @@ for (const cancelControl of ["data-cancel-save", "data-close"])
     await page.locator("[data-save-notes]").click();
     await expect(page.locator('[data-mode="notes"]')).toBeVisible();
     expect(saves).toBe(1);
+    expect(requestIds).toHaveLength(2);
+    expect(requestIds[0]).toBeTruthy();
+    expect(requestIds[1]).toBe(requestIds[0]);
   });
 
 test("an uncertain save times out and retry reuses the update identity", async ({
@@ -145,7 +156,7 @@ test("an uncertain save times out and retry reuses the update identity", async (
     });
   });
   await page.locator('[data-mode="notes"]').click();
-  await page.locator("[data-add-note]").click();
+  await page.locator("[data-add-note], [data-capture-text]").click();
   await page.locator("[data-note-text]").fill("A note to retain");
   await page.locator("[data-save-note]").click();
   await page.locator("[data-save-notes]").click();
@@ -157,6 +168,44 @@ test("an uncertain save times out and retry reuses the update identity", async (
   await expect(page.locator('[data-mode="notes"]')).toBeVisible();
   expect(ids).toHaveLength(2);
   expect(ids[1]).toBe(ids[0]);
+});
+
+test("identical attachments receive distinct artifacts in one task update", async ({
+  page,
+}) => {
+  const reservations = new Map();
+  let savedPhotos;
+  await page.route("**/v1/checks/check/artifacts:presign", (route) => {
+    const id = route.request().postDataJSON().uploadRequestId;
+    if (!reservations.has(id))
+      reservations.set(id, `photo-${reservations.size + 1}`);
+    const artifactId = reservations.get(id);
+    return route.fulfill({
+      json: {
+        artifactId,
+        s3Key: artifactId,
+        uploadUrl: "http://127.0.0.1:5179/test-upload",
+        uploadHeaders: {},
+      },
+    });
+  });
+  await page.route("**/test-upload", (route) =>
+    route.fulfill({ status: 200, body: "" }),
+  );
+  await page.route("**/v1/tasks/issue/updates", (route) => {
+    if (route.request().method() === "POST")
+      savedPhotos = route.request().postDataJSON().photoKeys;
+    return route.fulfill({
+      json: { task: { ...task, status: "in_progress" }, updates: [] },
+    });
+  });
+  await page.locator('[data-mode="notes"]').click();
+  const file = "e2e/fixtures/photos/input-1.jpg";
+  await page.locator("[data-photos]").setInputFiles([file, file]);
+  await page.locator("[data-save-notes]").click();
+  await expect.poll(() => savedPhotos?.length).toBe(2);
+  expect(reservations.size).toBe(2);
+  expect(new Set(savedPhotos).size).toBe(2);
 });
 
 test("proof saves only after success, retains a failed draft, and supports keyboard dismissal", async ({

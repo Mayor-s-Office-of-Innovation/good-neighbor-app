@@ -440,6 +440,47 @@ it("aborts the last watcher's request before its replacement starts", async () =
   expect(inFlight).toBe(0);
 });
 
+it("pauses all batches and new subscriptions for the server cooldown", async () => {
+  const random = vi.spyOn(Math, "random").mockReturnValue(0);
+  api.getDuplicateLinks
+    .mockRejectedValueOnce({ status: 429, retryAfterMs: 300000 })
+    .mockResolvedValue({ enabled: true, issues: [] });
+  const stop = watchDuplicateIssues(
+    Array.from({ length: 101 }, (_, i) => `task-${i}`),
+    vi.fn(),
+  );
+  let stopNew;
+  try {
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.getDuplicateLinks).toHaveBeenCalledOnce();
+    stopNew = watchDuplicateIssues(["new-task"], vi.fn());
+    invalidateDuplicateIssues();
+    await vi.advanceTimersByTimeAsync(299999);
+    expect(api.getDuplicateLinks).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(api.getDuplicateLinks).toHaveBeenCalledTimes(4);
+  } finally {
+    stop();
+    stopNew?.();
+    random.mockRestore();
+  }
+});
+
+it("uses a conservative cooldown when throttling has no retry advice and expires subscribers", async () => {
+  api.getDuplicateLinks.mockRejectedValue({ status: 429 });
+  const stop = watchDuplicateIssues(["one"], vi.fn());
+  try {
+    await vi.advanceTimersByTimeAsync(299999);
+    expect(api.getDuplicateLinks).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(610001);
+    const calls = api.getDuplicateLinks.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(600000);
+    expect(api.getDuplicateLinks).toHaveBeenCalledTimes(calls);
+  } finally {
+    stop();
+  }
+});
+
 it("stops settled rows while continuing only pending rows", async () => {
   api.getDuplicateLinks.mockImplementation(async (ids) => ({
     enabled: true,
@@ -655,4 +696,37 @@ it("backs off a failed cache-site verification without refetching settled result
   await vi.advanceTimersByTimeAsync(1);
   expect(changed.mock.calls.at(-1)[0].get("one").state).toBe("complete");
   expect(api.getDuplicateLinks).toHaveBeenCalledOnce();
+});
+
+it("retains the server cooldown across the last unmount without refreshing settled rows", async () => {
+  const random = vi.spyOn(Math, "random").mockReturnValue(0);
+  api.getDuplicateLinks
+    .mockResolvedValueOnce({
+      enabled: true,
+      issues: [{ taskId: "settled", state: "complete" }],
+    })
+    .mockRejectedValueOnce({ status: 429, retryAfterMs: 300000 })
+    .mockResolvedValue({
+      enabled: true,
+      issues: [{ taskId: "pending", state: "complete" }],
+    });
+  try {
+    const stopSettled = watchDuplicateIssues(["settled"], vi.fn());
+    await vi.advanceTimersByTimeAsync(0);
+    const stopPending = watchDuplicateIssues(["pending"], vi.fn());
+    await vi.advanceTimersByTimeAsync(1);
+    expect(api.getDuplicateLinks).toHaveBeenCalledTimes(2);
+    stopSettled();
+    stopPending();
+    const changed = vi.fn();
+    watchDuplicateIssues(["settled", "pending"], changed);
+    await vi.advanceTimersByTimeAsync(299998);
+    expect(api.getDuplicateLinks).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(api.getDuplicateLinks).toHaveBeenCalledTimes(3);
+    expect(api.getDuplicateLinks.mock.calls[2][0]).toEqual(["pending"]);
+    expect(changed.mock.calls.at(-1)[0].get("settled").state).toBe("complete");
+  } finally {
+    random.mockRestore();
+  }
 });

@@ -407,10 +407,40 @@ origins' own 403/404 JSON responses reach the viewer untouched.
 distribution: they apply to *every* origin, so an API 403/404 would be rewritten into
 `index.html` with status 200 — the 2026-09-14 dev incident (device-token authorizer denial
 → 200/HTML → the client treated the SPA as a successful API response). The client guards
-against this class of failure (non-JSON API body → `ApiError(non_json_response)` in
+against this class of failure (non-JSON API body other than a 429 → `ApiError(non_json_response)` in
 `services/api.js`; `services/backend-health.js` probes `/health` and surfaces
 OUTAGE/AUTH states), and CI's deploy smoke check fails if an API error response arrives
 as anything but JSON.
+
+WAF rate rules return **429**, JSON, `Retry-After: 300`, and `Cache-Control: no-store`.
+The general viewer-IP ceiling is 30,000 requests per five minutes, shared by static
+assets and API requests. It is sized for up to 100 people behind one public IP,
+assuming one browser tab per person. Source-based estimates allow roughly 19,300
+requests for 100 cold Today loads, pending duplicate polling, and one prolonged
+analysis per person; the remaining budget covers variable assets and interactions.
+This is a sizing allowance, not measured backend capacity; additional tabs or repeated
+work can consume it. Direct S3 photo transfers do not use this CloudFront budget.
+Endpoint viewer-IP budgets per five minutes are 1,000 for device registration/refresh,
+100 for manager recovery, 1,000 for client errors, 5,000 for client events, and 100 for
+feedback. They share the general traffic ceiling: a higher endpoint allowance does not
+raise that ceiling. Client error reporting retains its five-reports-per-minute browser cap.
+Enrollment keeps its `code_attempts_limited` error code; other rate rules use
+`rate_limited`. Managed-security and body-size blocks retain their own responses.
+The general rate rule can match before an endpoint rule, so clients classify throttling
+by HTTP status rather than assuming a route-specific error code. The five-minute advice
+is conservative, not a guarantee of admission if traffic continues.
+
+Field and admin errors retain normalized `retryAfterMs` metadata, accepting delta seconds
+or an HTTP date. A non-JSON 429 remains throttling, not an expired session or outage.
+Health probes retain their current health state on 429 and defer further probes through
+its cooldown. Duplicate-result polling pauses all batches, including new subscriptions and
+invalidation-triggered reads, until the cooldown plus positive jitter; subscriber deadlines
+still apply. Missing retry advice uses a five-minute cooldown. Other read errors retain their
+existing behavior. Writes, enrollment, recovery-email requests, and feedback are never
+replayed automatically because of a 429. Telemetry continues to drop rejected reports.
+
+These edge responses apply to static assets too. A throttled document or script cannot
+render an in-app wait message; no CloudFront error-page mapping substitutes a success page.
 
 ## Offline capture and sync
 

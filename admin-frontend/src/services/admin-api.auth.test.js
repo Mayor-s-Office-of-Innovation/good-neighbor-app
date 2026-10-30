@@ -48,6 +48,10 @@ async function fixture(t, options = {}) {
     return {
       ok: !options.status || options.status < 400,
       status: options.status || 200,
+      headers: {
+        get: (name) =>
+          name.toLowerCase() === "retry-after" ? options.retryAfter : null,
+      },
       json: async () => ({ error: options.error || "admin_error" }),
       blob: async () => "csv",
     };
@@ -136,7 +140,7 @@ for (const mode of [
   );
 }
 
-for (const status of [403, 500]) {
+for (const status of [403, 429, 500]) {
   test(`does not redirect a ${status} response`, async (t) => {
     const f = await fixture(t, { status });
     saveSession();
@@ -162,4 +166,15 @@ test("local debug access works without Cognito tokens", async (t) => {
     f.calls[0].init.headers["x-debug-groups"],
     "compliance-supervisor",
   );
+});
+
+test("exposes a throttle cooldown without retrying or redirecting", async (t) => {
+  const f = await fixture(t, { status: 429, retryAfter: "300" });
+  saveSession();
+  await assert.rejects(f.adminApi.getSession(), {
+    status: 429,
+    retryAfterMs: 300000,
+  });
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.redirects.length, 0);
 });

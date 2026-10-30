@@ -146,3 +146,17 @@ describe("sendFeedback", () => {
     expect(lastBody().id).toBe("uuid-1");
   });
 });
+
+it("preserves a throttled feedback submission without automatic retries", async () => {
+  fetchMock.mockResolvedValueOnce(
+    new Response("", { status: 429, headers: { "Retry-After": "300" } }),
+  );
+  await expect(
+    sendFeedback({ message: "Synthetic feedback" }),
+  ).rejects.toMatchObject({
+    name: "ApiError",
+    status: 429,
+    retryAfterMs: 300000,
+  });
+  expect(fetchMock).toHaveBeenCalledOnce();
+});

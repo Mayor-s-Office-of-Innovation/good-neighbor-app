@@ -52,7 +52,7 @@ test.describe("perimeter check", () => {
     );
     await expect(newClearCard).toHaveCount(1, { timeout: 90_000 });
     await expect(newClearCard).toContainText(t("card.clear.title"));
-    await expect(page.locator(".analysis-tray--new")).toContainText(
+    await expect(newClearCard.locator("..")).toContainText(
       tPattern("analysis.checkTitle.today"),
     );
 

@@ -1,4 +1,8 @@
-import { needsResolutionProof } from "../domain/home-tasks.js";
+import {
+  loadPendingQuestionItems,
+  mergePendingQuestionItems,
+  reconcileLocalGuidance,
+} from "../services/pending-guidance.js";
 import { duplicateUiEnabled } from "../services/feature-flags.js";
 import { animatedEllipsis } from "../lib/ellipsis.js";
 import {
@@ -73,6 +77,7 @@ import { retireHandoff } from "../services/session-handoff.js";
 import {
   listChecks,
   listTasks,
+  submitConditionAnswers,
   editAnalysisCondition,
   get311RequestDetails,
 } from "../services/api.js";
@@ -80,6 +85,7 @@ import {
   answerAnalysisQuestion,
   analyzeNoIssueDescriptionEdit,
   refreshEvidenceAnalysis,
+  refreshRecoveredQuestion,
   retryEvidenceItem,
 } from "../services/photo-analysis.js";
 import { adaptCheckHeader } from "../domain/check-adapter.js";
@@ -93,6 +99,7 @@ import {
   isOutsideSiteRadius,
   isStalePendingSession,
   lastLogSummary,
+  needsResolutionProof,
   newestBlueCheckGroup,
   newestTaskEntriesFirst,
   normalizedHomeTab,
@@ -453,6 +460,8 @@ class TodayView extends HTMLElement {
 
   /** @param {number} generation */
   async _loadHome(generation) {
+    const guidanceGeneration = (this._guidanceGeneration =
+      (this._guidanceGeneration || 0) + 1);
     this._taskListFreshness.clear();
     this._tabRefreshEpoch++;
     this._tabRefreshes.clear();
@@ -615,7 +624,8 @@ class TodayView extends HTMLElement {
     // tab shows. The In-progress and History lists (the slowest call is the
     // ever-growing completed list) load right after the first render — see
     // _loadRemainingTasks.
-    let submitted, tasks, latestStartedCheck;
+    let submitted, tasks, latestStartedCheck, pendingQuestions, rawChecks;
+    let pendingGuidanceFailed = false;
     let reuseRemaining = false;
     try {
       const [[catalog, bindings], { checks }, openTasksResult] =
@@ -652,17 +662,17 @@ class TodayView extends HTMLElement {
         : [];
       this._taskListFreshness.set("open", Date.now());
       tasks = uniqueTasks([...(openTasksResult.tasks || []), ...reused]);
+      // Historical recovery is a second tier. Cached online questions are not
+      // actionable until revalidated; offline snapshots remain available.
+      pendingQuestions = [];
       if (!reuseRemaining) this._remainingStatus = "pending";
       else
         for (const status of ["in_progress", "completing", "completed"])
           this._taskListFreshness.set(status, this._remainingLoadedAt);
+      rawChecks = checks || [];
       latestStartedCheck = latestStarted(checks);
       submitted = submittedChecks(checks);
       this._offline = null;
-      void saveHomeSnapshot(this._siteId, {
-        checks: checks || [],
-        tasks: openTasksResult.tasks || [],
-      }).catch(() => {});
     } catch (err) {
       if (generation !== this._homeRefreshGeneration) return;
       console.error("listChecks/listTasks failed", err);
@@ -679,6 +689,7 @@ class TodayView extends HTMLElement {
       latestStartedCheck = latestStarted(snapshot?.checks);
       submitted = submittedChecks(snapshot?.checks);
       tasks = uniqueTasks(snapshot?.tasks || []);
+      pendingQuestions = snapshot?.pendingQuestions || [];
       this._remainingStatus = "error";
     }
 
@@ -688,25 +699,7 @@ class TodayView extends HTMLElement {
         ? pendingSession
         : null;
 
-    // Older finished checks wait in the background; drop each one the
-    // backend history now shows (offline lists are a snapshot, so never then).
-    const finishedChecks = await loadFinishedChecks(this._siteId).catch(
-      () => [],
-    );
-    if (!this._offline)
-      for (const check of finishedChecks)
-        if (
-          check.id !== effectivePendingSession?.id &&
-          this._isStalePendingSession(check, submitted, tasks)
-        )
-          await clearSubmittedSession(check.id);
     if (
-      !this._offline &&
-      this._isStalePendingSession(effectivePendingSession, submitted, tasks)
-    ) {
-      await clearSubmittedSession(effectivePendingSession.id);
-      effectivePendingSession = null;
-    } else if (
       !this._offline &&
       effectivePendingSession?.status === "capture-complete" &&
       !effectivePendingSession.scorecardDone
@@ -724,13 +717,36 @@ class TodayView extends HTMLElement {
     this._hasPerimeterDraft = await hasDraft("perimeter");
     if (generation !== this._homeRefreshGeneration) return;
     if (!duplicateUiEnabled()) this._duplicateLinks = new Map();
-    this._renderHome({
+    const model = {
       last,
       checks: submitted,
       latestStartedCheck,
       tasks,
       pendingSession: effectivePendingSession,
-    });
+      pendingQuestions,
+      pendingGuidanceFailed,
+      pendingGuidanceLoading: !this._offline,
+      localGuidancePending: !this._offline,
+    };
+    this._renderHome(model);
+    if (!this._offline)
+      this._pendingGuidanceLoad = this._loadHomeGuidance(
+        model,
+        generation,
+        guidanceGeneration,
+        rawChecks,
+      ).catch((error) => {
+        console.error("guidance reconciliation failed", error);
+        if (
+          generation === this._homeRefreshGeneration &&
+          guidanceGeneration === this._guidanceGeneration
+        )
+          this._renderHome({
+            ...this._homeModel,
+            pendingGuidanceLoading: false,
+            pendingGuidanceFailed: true,
+          });
+      });
     // Evidence hydration is for the cards on screen now. The duplicate watcher
     // (a poll) and the 311 status batch wait for the complete list, so each
     // starts once per load: here when the remaining lists were reused, else
@@ -748,6 +764,103 @@ class TodayView extends HTMLElement {
       this._startRemainingLoad();
     }
     if (announceArrival) announceScreenHeading(this, ".home-identity__site");
+  }
+
+  /** Load recovery independently of live tasks; stale generations never publish. */
+  async _loadHomeGuidance(
+    initialModel,
+    generation,
+    guidanceGeneration,
+    rawChecks,
+  ) {
+    const siteId = this._siteId;
+    const current = () =>
+      generation === this._homeRefreshGeneration &&
+      siteId === this._siteId &&
+      guidanceGeneration === this._guidanceGeneration;
+    let model = initialModel;
+    const publish = (patch) => {
+      if (!current()) return;
+      model = { ...model, ...(this._homeModel || {}), ...patch };
+      this._renderHome(model);
+    };
+    const localItems = this._sessionItems(initialModel.pendingSession);
+    const confirmedItems = [...(this._confirmedTasks?.values() || [])]
+      .filter((task) => task.assessmentId)
+      .map((task) => ({
+        id: `confirmed:${task.taskId}`,
+        analysis: {
+          status: "analyzed",
+          assessment: { assessmentId: task.assessmentId },
+          tasks: [task],
+        },
+      }));
+    const local = reconcileLocalGuidance(
+      [...localItems, ...confirmedItems],
+      current,
+    ).then((validated) => {
+      const localIds = new Set(localItems.map((item) => item.id));
+      const items = validated.filter((item) => localIds.has(item.id));
+      if (!current()) return;
+      const tasks = uniqueTasks([
+        ...validated.flatMap((item) => item.analysis?.tasks || []),
+        ...(this._homeModel || model).tasks,
+      ]);
+      for (const confirmed of confirmedItems) {
+        const saved = validated.find((item) => item.id === confirmed.id);
+        for (const task of confirmed.analysis.tasks)
+          if (
+            !saved?.analysis.tasks?.some(
+              (current) => current.taskId === task.taskId,
+            )
+          )
+            this._confirmedTasks.delete(task.taskId);
+      }
+      this._reconcileConfirmedTasks(tasks, true);
+      publish({
+        tasks,
+        pendingSession: initialModel.pendingSession
+          ? { ...initialModel.pendingSession, items }
+          : null,
+        localGuidancePending: false,
+      });
+    });
+    // Observe both failures immediately, while rendering each successful page.
+    const history = loadPendingQuestionItems(
+      (items) => publish({ pendingQuestions: items }),
+      current,
+    );
+    const results = await Promise.allSettled([local, history]);
+    if (!current()) return;
+    const failed = results.some((result) => result.status === "rejected");
+    publish({ pendingGuidanceLoading: false, pendingGuidanceFailed: failed });
+    if (failed) return;
+    const covered = [
+      ...model.tasks,
+      ...(model.pendingQuestions || []).flatMap((item) =>
+        item.analysis.conditions.map((condition) => ({
+          conditionId: condition.conditionId,
+          assessmentId: item.analysis.assessment.assessmentId,
+        })),
+      ),
+    ];
+    const finished = await loadFinishedChecks(siteId).catch(() => []);
+    if (!current()) return;
+    for (const check of [...finished, model.pendingSession].filter(Boolean)) {
+      if (this._isStalePendingSession(check, model.checks, covered)) {
+        await clearSubmittedSession(check.id);
+        if (!current()) return;
+        if (model.pendingSession?.id === check.id)
+          publish({ pendingSession: null });
+      }
+    }
+    void saveHomeSnapshot(siteId, {
+      checks: rawChecks,
+      tasks: this._reconcileConfirmedTasks(
+        this._homeModel?.tasks || model.tasks,
+      ),
+      pendingQuestions: model.pendingQuestions,
+    }).catch(() => {});
   }
 
   /**
@@ -1019,7 +1132,13 @@ class TodayView extends HTMLElement {
    * @returns {void}
    */
   _restoreHomeState(snapshot, requestedFilter) {
-    this._homeModel = snapshot.model;
+    this._homeModel = {
+      ...snapshot.model,
+      // Local evidence and recovered questions need fresh server validation.
+      pendingQuestions: [],
+      localGuidancePending: true,
+      pendingGuidanceLoading: true,
+    };
     this._homeFilter = snapshot.homeFilter;
     // An explicit URL filter request wins over the restored tab; a plain
     // back-navigation carries none and keeps the tab that was on screen —
@@ -1052,7 +1171,14 @@ class TodayView extends HTMLElement {
 
   _renderHome(model) {
     if (this._confirmedTasks?.size)
-      model = { ...model, tasks: this._reconcileConfirmedTasks(model.tasks) };
+      model = {
+        ...model,
+        tasks: this._reconcileConfirmedTasks(
+          model.tasks,
+          false,
+          !model.localGuidancePending,
+        ),
+      };
     // Worklist rows omit hydrated evidence; do not blank photos on each refresh.
     const previous = new Map(
       (this._homeModel?.tasks || []).map((task) => [task.taskId, task]),
@@ -1106,6 +1232,15 @@ class TodayView extends HTMLElement {
     const markup = this._render(model);
     if (markup === this._homeMarkup && this.querySelector(":scope > .home"))
       return;
+    // Background list/evidence updates must not dismiss an open action menu
+    // or strand keyboard focus when its DOM is replaced.
+    const previousActionMenu = /** @type {HTMLElement | null} */ (
+      this.querySelector("#home-action-menu")
+    );
+    const actionMenuOpen = previousActionMenu && !previousActionMenu.hidden;
+    const focusedActionId = previousActionMenu?.contains(document.activeElement)
+      ? document.activeElement?.id
+      : null;
     this._homeMarkup = markup;
     this.innerHTML = markup;
     this._tabRefreshStatus?.();
@@ -1261,6 +1396,14 @@ class TodayView extends HTMLElement {
     const actionMenu = /** @type {HTMLElement | null} */ (
       this.querySelector("#home-action-menu")
     );
+    if (actionMenuOpen && actionMenu && actionMenuTrigger) {
+      actionMenu.hidden = false;
+      actionMenuTrigger.setAttribute("aria-expanded", "true");
+      if (focusedActionId)
+        /** @type {HTMLElement | null} */ (
+          actionMenu.querySelector(`#${focusedActionId}`)
+        )?.focus({ preventScroll: true });
+    }
     actionMenuTrigger?.addEventListener("click", () => {
       const opening = actionMenu.hidden;
       actionMenu.hidden = !opening;
@@ -1330,6 +1473,9 @@ class TodayView extends HTMLElement {
         event.preventDefault();
         void this._startCapture("single-problem", control);
       });
+    });
+    this.querySelector("#retry-guidance")?.addEventListener("click", () => {
+      void this.connectedCallback();
     });
     this.querySelector("#retry-remaining")?.addEventListener("click", () =>
       this._retryRemaining(),
@@ -1436,12 +1582,24 @@ class TodayView extends HTMLElement {
     this._renderHome({ ...model, tasks });
   }
 
-  _render({ last, checks = [], tasks, pendingSession, latestStartedCheck }) {
+  _render({
+    last,
+    checks = [],
+    tasks,
+    pendingSession,
+    latestStartedCheck,
+    pendingQuestions = [],
+  }) {
     const allRecentItems = pendingSession
-      ? this._sessionItems(pendingSession)
+      ? this._sessionItems(pendingSession).filter(
+          (item) =>
+            !this._homeModel?.localGuidancePending ||
+            item.analysis?.status !== "analyzed" ||
+            !item.analysis?.assessment?.assessmentId,
+        )
       : [];
     const taskArtifactIds = taskArtifactIdSet(tasks);
-    const recentItems = allRecentItems.filter((item) => {
+    const localRecentItems = allRecentItems.filter((item) => {
       const artifactId = item.analysis?.artifactId || item.upload?.artifactId;
       if (item.analysis?.status === "analyzed") {
         return (
@@ -1451,6 +1609,11 @@ class TodayView extends HTMLElement {
       }
       return !taskArtifactIds.has(artifactId);
     });
+    const recentItems = mergePendingQuestionItems(
+      localRecentItems,
+      pendingQuestions,
+      tasks,
+    );
     const homeTasks = this._homeTasks(tasks);
     const taskCheckIds = new Set(
       homeTasks.map((entry) => taskCheckGroupId(entry.task)),
@@ -1467,7 +1630,18 @@ class TodayView extends HTMLElement {
         (entry) => homeTabForStatus(entry.homeStatus) === this._homeFilter,
       ),
     );
-    const tabCounts = { todo: 0, in_progress: 0, history: 0 };
+    const tabCounts = {
+      todo: recentItems.reduce(
+        (count, item) =>
+          count +
+          (item.analysis?.conditions || []).filter(
+            (condition) => condition.needsAnswer,
+          ).length,
+        0,
+      ),
+      in_progress: 0,
+      history: 0,
+    };
     for (const entry of homeTasks) {
       const tab = homeTabForStatus(entry.homeStatus);
       if (tab === "history" && needsResolutionProof(entry.task))
@@ -1577,11 +1751,14 @@ class TodayView extends HTMLElement {
       results: this._homeResults({
         pendingSession,
         tabCounts,
-        recentCheckTime:
-          newestCheck.time ||
-          pendingSession?.startedAt ||
-          last?.submittedAt ||
-          "",
+        recentCheckTime: recentItems.some(
+          (item) => item.checkId && item.checkId !== newestCheck.id,
+        )
+          ? ""
+          : newestCheck.time ||
+            pendingSession?.startedAt ||
+            last?.submittedAt ||
+            "",
         checks,
         recentItems: visibleRecentItems,
         newTaskEntries,
@@ -1715,7 +1892,15 @@ class TodayView extends HTMLElement {
       historyGrouping: this._historyGrouping || "resolved",
       homeFilter: this._homeFilter,
       // Counts only once every list is in — a partial count would be wrong.
-      tabCounts: remainingStatus === "loaded" ? tabCounts : {},
+      tabCounts:
+        remainingStatus === "loaded"
+          ? this._homeModel?.pendingGuidanceFailed ||
+            this._homeModel?.pendingGuidanceLoading
+            ? { in_progress: tabCounts.in_progress, history: tabCounts.history }
+            : tabCounts
+          : {},
+      pendingGuidanceFailed: Boolean(this._homeModel?.pendingGuidanceFailed),
+      pendingGuidanceLoading: Boolean(this._homeModel?.pendingGuidanceLoading),
       remainingStatus: this._tabListStatus?.() || remainingStatus,
       siteName: this._site?.name || "",
       siteAddress: this._site?.address || "",
@@ -2126,7 +2311,9 @@ class TodayView extends HTMLElement {
       );
     const now = new Date();
     return projectDuplicateTasks(tasks, this._duplicateLinks)
-      .filter((task) => !isTaskPendingDeletion(task))
+      .filter(
+        (task) => task.status !== "superseded" && !isTaskPendingDeletion(task),
+      )
       .map((task) => ({
         task,
         createdAt: taskCreatedAt(task),
@@ -2462,15 +2649,26 @@ class TodayView extends HTMLElement {
       await deleteAnalysisCard(
         this,
         problem,
-        () =>
-          rejectProblemCondition(problem, {
+        async () => {
+          const localProblem = {
+            ...problem,
+            itemId: (await this._localQuestionItemId(problem.itemId)) || "",
+          };
+          let removed = false;
+          const deleteLocally = () => {
+            if (removed) return;
+            removed = true;
+            this._deleteProblemLocally(localProblem);
+          };
+          await rejectProblemCondition(localProblem, {
             requestId: this._requestId("delete", problem),
-            deleteLocally: () => this._deleteProblemLocally(problem),
-            onRefreshFailure: () => {
-              if (getCurrentCheck()?.id === problem.checkId)
-                this._deleteProblemLocally(problem);
-            },
-          }),
+            deleteLocally,
+            onRefreshFailure: deleteLocally,
+          });
+          // Retained finished checks must also remember the rejection, even
+          // when the shared refresh helper only updates the current check.
+          deleteLocally();
+        },
         () => {
           if (this._homeModel) this._renderHome(this._homeModel);
         },
@@ -2553,9 +2751,10 @@ class TodayView extends HTMLElement {
           caller: { request_id: this._requestId("edit", problem) },
         },
       );
-      if (problem.itemId) {
+      const localItemId = await this._localQuestionItemId(problem.itemId);
+      if (localItemId) {
         try {
-          await refreshEvidenceAnalysis(problem.itemId, result);
+          await refreshEvidenceAnalysis(localItemId, result);
         } catch (error) {
           console.error("refresh after saved edit failed", error);
           this._analysisEditDialog?.close();
@@ -2564,13 +2763,28 @@ class TodayView extends HTMLElement {
           return;
         }
       }
+      const recovered = (this._homeModel?.pendingQuestions || []).find(
+        (item) => item.id === problem.itemId,
+      );
+      if (recovered && !localItemId) {
+        const guidance = await refreshRecoveredQuestion(recovered, result);
+        for (const task of guidance.tasks || []) {
+          this._confirmedTasks ??= new Map();
+          this._confirmedTasks.set(task.taskId, task);
+        }
+      }
       this._analysisEditDialog?.close();
       this._activeProblem = null;
       await this.connectedCallback();
       showEditSavedToast();
     } catch (err) {
       console.error("edit analysis condition failed", err);
-      showEditErrorToast();
+      if (err?.status === 404 && err?.body?.code === "unknown_analysis") {
+        this._setDialogError(
+          "analysis-edit-error",
+          t("analysis.editDialog.expired"),
+        );
+      } else showEditErrorToast();
     } finally {
       setBusy(button, false);
     }
@@ -2644,18 +2858,131 @@ class TodayView extends HTMLElement {
     }
     if (this._answeringConditionIds.has(problem.conditionId)) return;
 
+    const answerSiteId = this._siteId;
+    const answerGeneration = this._homeRefreshGeneration;
     this._answeringConditionIds.add(problem.conditionId);
     setQuestionAnswerBusy(this, problem.conditionId, true);
     this._setInlineProblemError(problem, "");
     try {
-      await answerAnalysisQuestion(
-        problem.itemId,
-        problem.conditionId,
-        answerKey,
-        answerValue,
+      const persisted = (this._homeModel?.pendingQuestions || []).find(
+        (item) => item.id === problem.itemId,
       );
-      showQuestionAnswerUpdated(this, problem.conditionId);
+      const localItemId = persisted
+        ? await this._localQuestionItemId(problem.itemId)
+        : problem.itemId;
+      const validated = this._sessionItems(
+        this._homeModel?.pendingSession,
+      ).find((item) => item.id === localItemId);
+      const result =
+        persisted && !localItemId
+          ? await submitConditionAnswers(
+              (persisted || validated).analysis.assessment.assessmentId,
+              problem.conditionId,
+              { answers: { [answerKey]: answerValue } },
+            )
+          : await answerAnalysisQuestion(
+              localItemId,
+              problem.conditionId,
+              answerKey,
+              answerValue,
+              !this._homeModel?.localGuidancePending
+                ? validated?.analysis
+                : undefined,
+            );
+      if (
+        answerSiteId !== this._siteId ||
+        answerGeneration !== this._homeRefreshGeneration
+      )
+        return;
+      const currentItem = this._sessionItems(
+        this._homeModel?.pendingSession,
+      ).find((item) => item.id === localItemId);
+      const expectedId = (validated || persisted)?.analysis?.assessment
+        ?.assessmentId;
+      if (
+        currentItem?.analysis?.assessment?.assessmentId &&
+        expectedId &&
+        currentItem.analysis.assessment.assessmentId !== expectedId &&
+        currentItem.analysis.assessment.assessmentId !==
+          result.assessmentItem?.assessmentId
+      )
+        return;
+      // Recovery reads issued before this answer must not restore the old question.
+      this._guidanceGeneration = (this._guidanceGeneration || 0) + 1;
+      if (persisted || validated) {
+        // Publish the authoritative answer immediately, even while GSI2 catches up.
+        if (this._homeModel)
+          this._homeModel = {
+            ...this._homeModel,
+            pendingSession: this._homeModel.pendingSession
+              ? {
+                  ...this._homeModel.pendingSession,
+                  items: this._sessionItems(this._homeModel.pendingSession).map(
+                    (item) =>
+                      item.id === localItemId
+                        ? {
+                            ...item,
+                            analysis: {
+                              ...item.analysis,
+                              assessment:
+                                result.assessmentItem ||
+                                item.analysis.assessment,
+                              conditions: (item.analysis.conditions || []).map(
+                                (condition) =>
+                                  condition.conditionId === problem.conditionId
+                                    ? result.conditionItem || condition
+                                    : condition,
+                              ),
+                              tasks: [
+                                ...(item.analysis.tasks || []).filter(
+                                  (task) =>
+                                    task.conditionId !== problem.conditionId,
+                                ),
+                                ...(result.taskItem ? [result.taskItem] : []),
+                              ],
+                            },
+                          }
+                        : item,
+                  ),
+                }
+              : null,
+            pendingQuestions: (this._homeModel.pendingQuestions || []).flatMap(
+              (item) => {
+                if (item.id !== persisted?.id) return [item];
+                return result.conditionItem?.status === "needs_answer"
+                  ? [
+                      {
+                        ...item,
+                        analysis: {
+                          ...item.analysis,
+                          conditions: [result.conditionItem],
+                          assessment:
+                            result.assessmentItem || item.analysis.assessment,
+                        },
+                      },
+                    ]
+                  : [];
+              },
+            ),
+          };
+        if (result.taskItem) {
+          this._confirmedTasks ??= new Map();
+          this._confirmedTasks.set(result.taskItem.taskId, result.taskItem);
+          this._applyTaskResult(result.taskItem.taskId, result.taskItem);
+        }
+        await this._refreshAfterAction();
+      }
+      if (
+        answerSiteId === this._siteId &&
+        answerGeneration === this._homeRefreshGeneration
+      )
+        showQuestionAnswerUpdated(this, problem.conditionId);
     } catch (err) {
+      if (
+        answerSiteId !== this._siteId ||
+        answerGeneration !== this._homeRefreshGeneration
+      )
+        return;
       console.error("answer condition failed", err);
       showAnswerSaveErrorToast();
     } finally {
@@ -2671,10 +2998,33 @@ class TodayView extends HTMLElement {
     }
   }
 
-  _sessionItem(problem) {
-    return this._sessionItems(getCurrentCheck()).find(
-      (item) => item.id === problem.itemId,
+  /** Resolve synthetic recovered-card ids to their retained local evidence. */
+  async _localQuestionItemId(itemId) {
+    const persisted = (this._homeModel?.pendingQuestions || []).find(
+      (item) => item.id === itemId,
     );
+    if (!persisted) return itemId;
+    const items = [
+      ...this._sessionItems(getCurrentCheck()),
+      ...(await loadFinishedChecks(this._siteId)).flatMap((check) =>
+        this._sessionItems(check),
+      ),
+    ];
+    return (
+      items.find(
+        (item) =>
+          item.analysis?.assessment?.assessmentId ===
+          persisted.analysis.assessment.assessmentId,
+      )?.id || null
+    );
+  }
+
+  _sessionItem(problem) {
+    return [
+      ...(this._homeModel?.pendingQuestions || []),
+      ...this._sessionItems(this._homeModel?.pendingSession),
+      ...this._sessionItems(getCurrentCheck()),
+    ].find((item) => item.id === problem.itemId);
   }
 
   _setInlineProblemError(problem, message) {
@@ -2786,9 +3136,10 @@ class TodayView extends HTMLElement {
 
   /** Keep confirmed completions through missing or stale status-index reads.
    * @param {Record<string, any>[]} tasks
-   * @param {boolean} [acknowledge] only a full status-list read can retire entries
+   * @param {boolean} [acknowledge] authoritative reads can retire older confirmations
+   * @param {boolean} [includeOpen] unvalidated optimistic open tasks must not reappear
    */
-  _reconcileConfirmedTasks(tasks, acknowledge = false) {
+  _reconcileConfirmedTasks(tasks, acknowledge = false, includeOpen = true) {
     const confirmed = this._confirmedTasks;
     if (!confirmed?.size) return tasks;
     if (acknowledge) {
@@ -2798,15 +3149,18 @@ class TodayView extends HTMLElement {
           matches.length &&
           matches.every(
             (entry) =>
-              entry.status === task.status && entry.updatedAt >= task.updatedAt,
+              entry.status === "superseded" ||
+              (entry.updatedAt && entry.updatedAt >= task.updatedAt),
           )
         )
           confirmed.delete(id);
       }
     }
     const merged = new Map(tasks.map((task) => [task.taskId, task]));
-    for (const [id, task] of confirmed)
+    for (const [id, task] of confirmed) {
+      if (!includeOpen && task.status === "open") continue;
       merged.set(id, { ...merged.get(id), ...task });
+    }
     return [...merged.values()];
   }
 

@@ -249,3 +249,34 @@ describe("validateSetupCode", () => {
     });
   });
 });
+
+it.each(["lookup", "setup request", "recovery"])(
+  "exposes %s throttling without replaying the request",
+  async (kind) => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response("", { status: 429, headers: { "Retry-After": "300" } }),
+      );
+    vi.stubGlobal("fetch", fetch);
+    try {
+      const result =
+        kind === "lookup"
+          ? await validateSetupCode("ABC123")
+          : kind === "setup request"
+            ? await requestSetupCode({
+                siteId: "synthetic-site",
+                email: "person@example.org",
+              })
+            : await requestManagerAccess("person@example.org");
+      expect(result).toEqual({
+        ok: false,
+        reason: "limited",
+        retryAfterMs: 300000,
+      });
+      expect(fetch).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  },
+);

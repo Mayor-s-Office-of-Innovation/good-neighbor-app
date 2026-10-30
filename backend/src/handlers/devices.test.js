@@ -1,6 +1,10 @@
+import { checkCodeAttemptLimit } from "./code-attempt-limit.js";
+vi.mock("./code-attempt-limit.js", () => ({
+  checkCodeAttemptLimit: vi.fn(async () => null),
+}));
 import { TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { createHmac } from "node:crypto";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the Document Client so the handlers' writes hit a spy, not AWS.
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
@@ -130,6 +134,7 @@ function transactionCanceled(reasons) {
 
 beforeEach(() => {
   send.mockReset();
+  vi.mocked(checkCodeAttemptLimit).mockReset().mockResolvedValue(null);
   withSecret("test-secret-0123456789abcdef");
 });
 
@@ -137,6 +142,35 @@ describe("registerDevice", () => {
   it("400s without a code", async () => {
     const res = await callRegister({});
     expect(res.statusCode).toBe(400);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed codes before spending budget or resolving credentials", async () => {
+    expect((await callRegister({ code: "bad" })).statusCode).toBe(401);
+    expect(checkCodeAttemptLimit).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("returns budget throttling before any direct registration lookup", async () => {
+    const limited = {
+      statusCode: 429,
+      headers: { "retry-after": "300" },
+      body: JSON.stringify({ error: "code_attempts_limited" }),
+    };
+    vi.mocked(checkCodeAttemptLimit).mockResolvedValueOnce(limited);
+    expect(await callRegister({ code: "a1b-2c3" })).toEqual(limited);
+    expect(checkCodeAttemptLimit).toHaveBeenCalledWith(
+      undefined,
+      "register",
+      expect.any(Object),
+    );
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the shared budget store is unavailable", async () => {
+    const error = new Error("budget unavailable");
+    vi.mocked(checkCodeAttemptLimit).mockRejectedValueOnce(error);
+    await expect(callRegister({ code: "ABC123" })).rejects.toBe(error);
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -304,6 +338,7 @@ describe("registerDevice", () => {
 });
 
 describe("refreshDeviceToken", () => {
+  afterEach(() => expect(checkCodeAttemptLimit).not.toHaveBeenCalled());
   /**
    * Mint a real refresh token and stub the DEVICE# item it validates against.
    * @param {{ generation?: number }} [opts]

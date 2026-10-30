@@ -56,14 +56,14 @@ values are query-stripped again server-side. Adding an event or property means a
 - Globally: the forwarder is log-only whenever the PostHog project key is unset (same secret as
   error tracking, [feedback-ops.md §2](./feedback-ops.md)). Log-only still writes every event and
   its device properties to CloudWatch, so the device picture is available before egress is on.
-- WAF: `ClientEventsRateLimit` blocks an IP above 1000 requests per 5 minutes on this path.
-- Concurrency: the three intakes (errors, events, feedback) run in their own `gnp-<env>-intake`
-  Lambda with a reservation of 3, separate from the app api function. Each handler awaits its
-  PostHog forward before answering, so this reservation — not the per-IP WAF rule — is the
-  aggregate bound: a flood or a slow PostHog costs dropped beacons, never api capacity. The
-  event forwarder gives up after 1 s (`EVENT_FORWARD_TIMEOUT_MS`); errors and feedback keep 3 s.
+- WAF: `ClientEventsRateLimit` blocks an IP above 5,000 requests per 5 minutes on this path. The general WAF traffic budget can block first.
+- Concurrency: the three intakes (errors, events, feedback) run in their own `good-neighbor-app-<env>-intake`
+  Lambda with reserved concurrency of 50, separate from the app API function. Each handler
+  awaits its PostHog forward before answering. The reservation bounds concurrent intake work
+  across IPs; WAF bounds requests per IP. Slow PostHog responses can occupy the intake slots
+  and cause dropped beacons. The event forwarder gives up after 1 s (`EVENT_FORWARD_TIMEOUT_MS`); errors and feedback keep 3 s.
 
-## Is it working? (CloudWatch, intake Lambda log group `/aws/lambda/gnp-<env>-intake`)
+## Is it working? (CloudWatch, intake Lambda log group `/aws/lambda/good-neighbor-app-<env>-intake`)
 
 One structured line per event:
 
