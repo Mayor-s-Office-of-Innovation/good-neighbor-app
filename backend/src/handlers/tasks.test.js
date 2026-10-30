@@ -489,11 +489,13 @@ describe("simulated 311 status endpoints", () => {
         if (mixed) {
           const entry = JSON.parse(logged.mock.calls[0][0]);
           expect(entry).toMatchObject({
-            name: "TypeError",
+            name: "Sf311Error",
             message: "City ticket status unavailable",
           });
-          expect(entry.stack).toContain(
-            "at fetchCityStatus (sf311-status.js:42:7)",
+          // Network failures are normalized at the client boundary; preserve
+          // that failure location without exposing the original fetch message.
+          expect(entry.stack).toMatch(
+            /at fetchSf311 \(.*sf311-client\.js:\d+:\d+\)/,
           );
           expect(logged.mock.calls[0][0]).not.toContain(failure.message);
         }
