@@ -415,6 +415,30 @@ GSI4 (condition history by severity) and GSI5 (unresolved conditions) were remov
 `gsi4*` / `gsi5*` attributes as plain attributes. New conditions carry no index keys and
 are read by assessment prefix (AP15).
 
+`GET /v1/guidance/pending` recovers unanswered questions for the authenticated
+site from the existing GSI1 assessment timeline (AP14), including historical
+reports. Each response examines at most 25 assessments, filters for pending or
+manual-review reports, and retains the cursor even on an empty filtered page.
+The client follows every page. Before returning questions, the API reads the
+assessment and its conditions from the base table (AP15) with consistent reads,
+excluding superseded assessments and conditions already answered. It also reads
+the existing `ISSUE_DELETION#<checkId>:<artifactId>:<conditionId>` receipt
+consistently and excludes confirmed deletions and app-owned dismissals. When
+an expired analyzer result returns `unknown_analysis`, a verified condition in
+that Site's stored analysis can be dismissed with `state=dismissed`,
+`dismissedAt`, and `dismissalReason=analysis_unavailable`. This is distinct from
+an analyzer-confirmed rejection (`deletedAt`) and does not count as one.
+Unverified 404s remain errors. No migration
+or additional index is needed. Home merges these questions with local in-flight
+results and backend tasks without treating a sibling task as an answered question.
+Answers use the existing condition-answer transaction and original policy version.
+A pending-guidance read failure preserves live task/check reads and cached
+questions, exposes a retry, and prevents local-session retirement or snapshot
+replacement based on the incomplete recovery result. Expired analyzer results
+cannot be edited; the UI explains that a new description can be submitted.
+Analyzer retention and an independent historical-edit workflow are deferred.
+
+
 ## Access patterns
 
 Interactive access uses keyed reads and queries, often several paginated reads or

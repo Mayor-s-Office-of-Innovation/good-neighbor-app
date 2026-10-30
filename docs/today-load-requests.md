@@ -1,5 +1,36 @@
 # Today: requests on page load
 
+## Current reconciliation and guidance recovery
+
+The worked totals below describe the original task-list baseline. They exclude
+pending-guidance recovery and the authoritative validation reads described here;
+they should not be used as current full-page totals.
+
+Checks and the open worklist render before historical guidance is loaded. After
+that render, Home loads `/v1/guidance/pending` sequentially through all pages,
+including empty filtered pages, and displays each recovered page as it arrives.
+A loading status remains visible and the To-do count stays hidden until recovery
+finishes; a failure preserves live tasks and offers a retry. Superseded refreshes
+stop issuing further recovery pages.
+
+Retained local evidence and optimistic open-task confirmations with an assessment
+ID are withheld until their current
+`GET /v1/assessments/{assessmentId}/guidance` response arrives. These reads are
+deduplicated by assessment ID, with at most four concurrent requests, and do not
+wait for historical pagination. The response includes durable dismissal receipts
+and current task states, so a local question or task cannot reappear solely
+because it is absent from the open list. Offline snapshots remain available.
+
+Each task-list request now follows its GSI2 Query with strongly consistent primary
+`BatchGetItem` reads (up to 100 keys per batch), then batches the associated
+condition-deletion receipts. Dismissed, removed, and changed-status rows are
+excluded before priority sorting and applying the response limit. A guidance read
+uses the existing assessment GetItem, condition Query and task batches, plus a
+batch of dismissal receipts. Pending-guidance pages use their GSI1 Query followed
+by authoritative guidance and receipt reads. Total cost therefore depends on the
+number of historical pages, retained assessments, and returned tasks; none of
+these reads calls the analyzer.
+
 ## Request totals
 
 This example has **5 To-do tasks, 5 In-progress tasks, and 20 History tasks**.

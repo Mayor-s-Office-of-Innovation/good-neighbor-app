@@ -1325,6 +1325,20 @@ export async function answerCondition(opts) {
       tx.push(
         ...sf311Job(opts.tableName, opts.siteId, taskItem, "created", opts.env),
       );
+    const deletionKey = conditionDeletionKey(
+      opts.siteId,
+      assessmentItem,
+      conditionItem,
+    );
+    if (deletionKey)
+      tx.push({
+        ConditionCheck: {
+          TableName: opts.tableName,
+          Key: deletionKey,
+          ConditionExpression:
+            "attribute_not_exists(deletedAt) AND attribute_not_exists(dismissedAt)",
+        },
+      });
     try {
       await ddb.send(new TransactWriteCommand({ TransactItems: tx }));
       return {
@@ -1334,6 +1348,17 @@ export async function answerCondition(opts) {
         evaluation,
       };
     } catch (err) {
+      const reasons = /** @type {{CancellationReasons?: {Code?: string}[]}} */ (
+        err
+      )?.CancellationReasons;
+      if (
+        deletionKey &&
+        reasons?.[tx.length - 1]?.Code === "ConditionalCheckFailed"
+      )
+        throw namedError(
+          "ConditionDismissed",
+          "Condition has been dismissed; reload its guidance",
+        );
       if (
         err instanceof Error &&
         err.name === "TransactionCanceledException" &&
@@ -1962,7 +1987,7 @@ async function findOpenConditionTasks(opts) {
  * @param {Record<string, string>[]} opts.keys
  * @returns {Promise<Record<string, unknown>[]>}
  */
-async function batchGetAll({ tableName, keys }) {
+export async function batchGetAll({ tableName, keys }) {
   /** @type {Record<string, unknown>[]} */
   const items = [];
 
@@ -1994,4 +2019,68 @@ async function batchGetAll({ tableName, keys }) {
   }
 
   return items;
+}
+
+/** Receipt identity is evidence-scoped, independent of assessment revisions.
+ * @param {string} siteId @param {Record<string, any>} assessment @param {Record<string, any>} condition
+ */
+export function conditionDeletionKey(siteId, assessment, condition) {
+  const artifactId =
+    condition.source?.artifactIds?.[0] || condition.sourceArtifactIds?.[0];
+  const checkId = condition.checkId || assessment.checkId;
+  return artifactId && checkId && condition.conditionId
+    ? {
+        pk: `SITE#${siteId}`,
+        sk: `ISSUE_DELETION#${checkId}:${artifactId}:${condition.conditionId}`,
+      }
+    : null;
+}
+
+/** Project durable dismissals onto guidance without changing its stored policy outcome.
+ * @param {string} tableName @param {string} siteId
+ * @param {{assessment: Record<string, any> | null, conditions: Record<string, any>[], tasks: Record<string, any>[]}} guidance
+ */
+export async function withConditionDismissals(tableName, siteId, guidance) {
+  const keys = [...guidance.conditions, ...guidance.tasks].flatMap(
+    (condition) => {
+      const key = conditionDeletionKey(
+        siteId,
+        guidance.assessment || {},
+        condition,
+      );
+      return key ? [key] : [];
+    },
+  );
+  const receipts = keys.length
+    ? await batchGetAll({
+        tableName,
+        keys: [...new Map(keys.map((key) => [key.sk, key])).values()],
+      })
+    : [];
+  const dismissed = new Map(
+    receipts
+      .filter((row) => row.deletedAt || row.dismissedAt)
+      .map((row) => [row.sk, row]),
+  );
+  return {
+    ...guidance,
+    tasks: guidance.tasks.map((task) => {
+      const receipt = dismissed.get(
+        conditionDeletionKey(siteId, guidance.assessment || {}, task)?.sk,
+      );
+      if (!receipt) return task;
+      return {
+        ...task,
+        status: "superseded",
+        updatedAt: String(receipt.dismissedAt || receipt.deletedAt),
+      };
+    }),
+    conditions: guidance.conditions.map((condition) =>
+      dismissed.has(
+        conditionDeletionKey(siteId, guidance.assessment || {}, condition)?.sk,
+      )
+        ? { ...condition, status: "rejected", needsAnswer: null }
+        : condition,
+    ),
+  };
 }

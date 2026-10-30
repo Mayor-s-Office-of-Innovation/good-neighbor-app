@@ -95,3 +95,21 @@ describe("plural selection", () => {
     expect(new Intl.PluralRules(getLocaleTag()).select(1)).toBe("other");
   });
 });
+
+describe("capture rejection plurals", () => {
+  for (const locale of LOCALES) {
+    it(`renders singular and plural rejections in ${locale.id}`, async () => {
+      await setLocale(locale.id);
+      const { default: catalog } = await import(`./catalogs/${locale.id}.json`);
+      for (const count of [1, 2]) {
+        const category = new Intl.PluralRules(locale.tag).select(count);
+        expect(t("capture.files.rejectedMessage", { count })).toBe(
+          catalog[`capture.files.rejectedMessage.${category}`].replace(
+            "{count}",
+            String(count),
+          ),
+        );
+      }
+    });
+  }
+});

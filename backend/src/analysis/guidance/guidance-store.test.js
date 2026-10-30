@@ -2169,3 +2169,49 @@ describe("assessment refresh preserves unchanged conditions", () => {
     ).toHaveLength(1);
   });
 });
+
+it("atomically rejects an answer when another device confirms dismissal", async () => {
+  send.mockReset();
+  send.mockResolvedValueOnce({
+    Item: {
+      assessmentId: "a",
+      checkId: "check",
+      policyVersion: "actions-escalations-v3",
+    },
+  });
+  send.mockResolvedValueOnce({
+    Item: {
+      conditionId: "c",
+      status: "needs_answer",
+      analyzerCategory: "Unrecognized",
+      policyVersion: "actions-escalations-v3",
+      source: { artifactIds: ["artifact"] },
+    },
+  });
+  send.mockImplementationOnce(async (command) => {
+    const tx = command.input.TransactItems;
+    expect(tx.at(-1).ConditionCheck).toMatchObject({
+      Key: { pk: "SITE#site", sk: "ISSUE_DELETION#check:artifact:c" },
+      ConditionExpression:
+        "attribute_not_exists(deletedAt) AND attribute_not_exists(dismissedAt)",
+    });
+    throw Object.assign(new Error("dismissal won"), {
+      name: "TransactionCanceledException",
+      CancellationReasons: tx.map(
+        (/** @type {any} */ _, /** @type {number} */ i) => ({
+          Code: i === tx.length - 1 ? "ConditionalCheckFailed" : "None",
+        }),
+      ),
+    });
+  });
+  await expect(
+    answerCondition({
+      tableName: "table",
+      siteId: "site",
+      assessmentId: "a",
+      conditionId: "c",
+      answers: {},
+    }),
+  ).rejects.toMatchObject({ name: "ConditionDismissed" });
+  expect(send).toHaveBeenCalledTimes(3);
+});

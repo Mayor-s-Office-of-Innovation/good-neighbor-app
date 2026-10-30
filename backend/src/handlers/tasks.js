@@ -19,6 +19,10 @@ import {
   findServiceRequest,
   normalizeSf311Detail,
 } from "../integrations/sf311-status.js";
+import {
+  batchGetAll,
+  withConditionDismissals,
+} from "../analysis/guidance/guidance-store.js";
 import { activeCatalog } from "../analysis/guidance/catalog-registry.js";
 
 // A task's GSI2 sort key is date-first (`${createdAt}#${kind}#${severity}#${taskId}`)
@@ -89,7 +93,21 @@ export const listTasks = async (event) => {
     );
   }
 
-  const ranked = byWorklistPriority(result.Items ?? []);
+  // GSI membership may lag completion or dismissal on another device.
+  const current = await batchGetAll({
+    tableName: dynamoTable,
+    keys: [
+      ...new Set((result.Items ?? []).map((row) => String(row.taskId))),
+    ].map((id) => taskKey(siteId, id)),
+  });
+  const visible = await withConditionDismissals(dynamoTable, siteId, {
+    assessment: null,
+    conditions: [],
+    tasks: current,
+  });
+  const ranked = byWorklistPriority(
+    visible.tasks.filter((row) => row.status === status),
+  );
   const selected = limit ? ranked.slice(0, limit) : ranked;
   const tasks = await withResolutionProofForTasks(
     dynamoTable,

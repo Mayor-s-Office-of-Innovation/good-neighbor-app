@@ -1,3 +1,4 @@
+import { listPendingGuidance } from "../handlers/pending-guidance.js";
 import {
   getSystemStatus,
   getStatusEntries,
@@ -300,6 +301,7 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /v1/tasks/{taskId}/updates/{updateId}/document": documentTaskUpdate,
   "POST /v1/tasks/{taskId}/update-media": registerTaskUpdateMedia,
   // Assessment guidance workflow
+  "GET /v1/guidance/pending": listPendingGuidance,
   "POST /v1/assessments:evaluate": evaluateAssessment,
   "GET /v1/assessments/{assessmentId}/guidance": getGuidance,
   "POST /v1/assessments/{assessmentId}/conditions/{conditionId}/answers":

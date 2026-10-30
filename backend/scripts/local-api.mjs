@@ -1,3 +1,4 @@
+import { listPendingGuidance } from "../src/handlers/pending-guidance.js";
 import {
   listPeople,
   createPerson,
@@ -389,6 +390,7 @@ const routes = [
     "/v1/tasks/{taskId}/updates/{updateId}/document",
     documentTaskUpdate,
   ),
+  route("GET", "/v1/guidance/pending", listPendingGuidance),
   // Assessment guidance workflow
   route("POST", "/v1/assessments:evaluate", evaluateAssessment),
   route("GET", "/v1/assessments/{assessmentId}/guidance", getGuidance),

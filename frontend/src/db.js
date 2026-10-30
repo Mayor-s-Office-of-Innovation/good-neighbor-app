@@ -598,19 +598,28 @@ export async function deleteFinishedCheck(owningSiteId, checkId) {
   Cleared with every other local record on sign-out (resetLocalAppState). */
 /**
  * @param {string} siteId
- * @param {{ checks: any[], tasks: any[] }} lists
+ * @param {{ checks: any[], tasks: any[], pendingQuestions?: any[] }} lists
  */
-export function saveHomeSnapshot(siteId, { checks, tasks }) {
+export function saveHomeSnapshot(
+  siteId,
+  { checks, tasks, pendingQuestions = [] },
+) {
   return tx("review", "readwrite", (os) =>
     os.put(
-      { siteId, checks, tasks, savedAt: new Date().toISOString() },
+      {
+        siteId,
+        checks,
+        tasks,
+        pendingQuestions,
+        savedAt: new Date().toISOString(),
+      },
       `home:${siteId}`,
     ),
   );
 }
 /**
  * @param {string} siteId
- * @returns {Promise<{ siteId: string, checks: any[], tasks: any[], savedAt: string } | null>}
+ * @returns {Promise<{ siteId: string, checks: any[], tasks: any[], pendingQuestions?: any[], savedAt: string } | null>}
  */
 export async function getHomeSnapshot(siteId) {
   const snapshot = await tx("review", "readonly", (os) =>

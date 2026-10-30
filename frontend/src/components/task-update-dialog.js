@@ -517,6 +517,19 @@ export class TaskUpdateDialog extends HTMLElement {
     root.querySelector("[data-load-older]")?.addEventListener("click", () => {
       if (this._nextToken) void this._load(this._nextToken);
     });
+    for (const [button, picker] of [
+      ["[data-capture-camera]", "[data-update-camera]"],
+      ["[data-capture-upload]", "[data-update-gallery]"],
+    ]) {
+      const input = /** @type {HTMLInputElement | null} */ (
+        root.querySelector(picker)
+      );
+      root.querySelector(button)?.addEventListener("click", () => {
+        if (!input || this._busy) return;
+        input.value = "";
+        input.click();
+      });
+    }
     root.querySelector("[data-take-photo]")?.addEventListener("click", () => {
       /** @type {HTMLInputElement | null} */ (
         root.querySelector("[data-photos]")
@@ -560,13 +573,16 @@ export class TaskUpdateDialog extends HTMLElement {
         this._filePreviews.splice(index, 1);
         this._render();
         /** @type {HTMLElement | null} */ (
-          this.querySelector("[data-upload-photos]") ||
+          this.querySelector("[data-capture-upload]") ||
+            this.querySelector("[data-upload-photos]") ||
             this.querySelector("[data-photos]")
         )?.focus();
       });
     });
     root
-      .querySelectorAll("[data-photos], [data-upload-input]")
+      .querySelectorAll(
+        "[data-photos], [data-upload-input], [data-update-camera], [data-update-gallery]",
+      )
       .forEach((element) => {
         const input = /** @type {HTMLInputElement} */ (element);
         input.addEventListener("change", () => {
@@ -605,11 +621,13 @@ export class TaskUpdateDialog extends HTMLElement {
                 this._cityHelpNeeded === null);
           });
       });
-    root.querySelector("[data-add-note]")?.addEventListener("click", () => {
-      this._noteIndex = this._noteDrafts.findIndex((note) => !note.trim());
-      this._mode = "note-text";
-      this._render();
-    });
+    root
+      .querySelector("[data-add-note], [data-capture-text]")
+      ?.addEventListener("click", () => {
+        this._noteIndex = this._noteDrafts.findIndex((note) => !note.trim());
+        this._mode = "note-text";
+        this._render();
+      });
     root.querySelectorAll("[data-edit-note]").forEach((element) => {
       const button = /** @type {HTMLButtonElement} */ (element);
       button.addEventListener("click", () => {
@@ -676,7 +694,7 @@ export class TaskUpdateDialog extends HTMLElement {
   async _uploadFiles() {
     if (!this._task) return null;
     const button = /** @type {HTMLElement | null} */ (
-      this.querySelector?.("[data-upload-photos]")
+      this.querySelector?.("[data-capture-upload], [data-upload-photos]")
     );
     const status = /** @type {HTMLElement | null} */ (
       this.querySelector?.("[data-photo-upload-status]")

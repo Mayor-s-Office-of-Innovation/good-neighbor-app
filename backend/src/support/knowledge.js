@@ -16,6 +16,6 @@ export const guide = [
   },
 ];
 
-export const KNOWLEDGE_VERSION = "faq-v2-policy-2026-10-27-status-tickers";
+export const KNOWLEDGE_VERSION = "faq-v2-policy-2026-10-29-pending-guidance";
 export const sources = [...faq, ...guide, ...policy];
 export const sourceById = new Map(sources.map((entry) => [entry.id, entry]));

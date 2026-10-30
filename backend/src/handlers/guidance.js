@@ -5,6 +5,7 @@ import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveActorId, deriveSiteId } from "../lib/principal.js";
 import {
   answerCondition,
+  withConditionDismissals,
   completeTaskWithAppActions,
   getAssessmentGuidance,
   getPublishedAssessmentGuidance,
@@ -358,7 +359,10 @@ export const getGuidance = async (event) => {
   }
   if (!result.assessment)
     return jsonResponse(404, { error: "Assessment not found" });
-  return jsonResponse(200, result);
+  return jsonResponse(
+    200,
+    await withConditionDismissals(dynamoTable, siteId, result),
+  );
 };
 
 /**
@@ -388,18 +392,22 @@ async function recoverAnsweredCondition({
   conditionId,
   answers,
 }) {
-  const guidance = await getAssessmentGuidance({
+  const guidance = await withConditionDismissals(
     tableName,
     siteId,
-    assessmentId,
-  });
+    await getAssessmentGuidance({
+      tableName,
+      siteId,
+      assessmentId,
+    }),
+  );
   const condition = guidance.conditions.find(
     (item) => item.conditionId === conditionId,
   );
   if (
     !guidance.assessment ||
     !condition ||
-    condition.status === "needs_answer"
+    ["needs_answer", "rejected"].includes(String(condition.status))
   ) {
     return null;
   }
@@ -467,7 +475,10 @@ export const submitConditionAnswers = async (event) => {
     });
     return jsonResponse(200, result);
   } catch (err) {
-    if (err instanceof Error && err.name === "AssessmentRevisionConflict") {
+    if (
+      err instanceof Error &&
+      ["AssessmentRevisionConflict", "ConditionDismissed"].includes(err.name)
+    ) {
       return jsonResponse(409, { code: err.name, error: err.message });
     }
     if (err instanceof Error && err.name === "NotFound") {
