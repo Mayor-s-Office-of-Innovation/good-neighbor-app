@@ -125,10 +125,28 @@ test("complaint splash has a viewport divider and composer has a back caret", as
     "name",
     "xmark",
   );
-  const divider = await page.locator(".splash-rule").boundingBox();
-  if (!divider) throw new Error("Missing splash divider");
-  expect(Math.abs(divider.x)).toBeLessThan(2);
-  expect(divider.width).toBe(page.viewportSize()?.width);
+  const expectFullBleedDivider = async () => {
+    const divider = await page.locator(".splash-rule").boundingBox();
+    const body = await page.locator("body").boundingBox();
+    if (!divider || !body) throw new Error("Missing splash divider or body");
+    // 100vw includes classic scrollbar space; the centered excess is clipped
+    // by body. Check visible coverage, not an x=0 that only overlay bars give.
+    expect(divider.width).toBe(page.viewportSize()?.width);
+    expect(divider.x).toBeLessThanOrEqual(body.x + 1);
+    expect(divider.x + divider.width).toBeGreaterThanOrEqual(
+      body.x + body.width - 1,
+    );
+    expect(
+      Math.abs(divider.x + divider.width / 2 - body.x - body.width / 2),
+    ).toBeLessThan(2);
+  };
+  await expectFullBleedDivider();
+  // Exercise reserved edge space even on macOS with overlay scrollbars.
+  const gutter = await page.addStyleTag({
+    content: "html { padding-inline-end: 15px; }",
+  });
+  await expectFullBleedDivider();
+  await gutter.evaluate((element) => element.parentNode?.removeChild(element));
   await page.screenshot({
     animations: "disabled",
     path: "/tmp/ui-complaint-splash.png",
@@ -315,4 +333,94 @@ test("Reports closes at the right edge and resolved green follows the theme", as
     path: "/tmp/ui-reports-close-fixed.png",
     animations: "disabled",
   });
+});
+
+for (const leave of [false, true]) {
+  test(`Reports waits for access with Close usable (leave=${leave})`, async ({
+    page,
+  }) => {
+    await page.evaluate(async () => {
+      const load = (/** @type {string} */ path) => import(path);
+      await load("/src/components/reports-view.js");
+      const reports = /** @type {any} */ (
+        document.createElement("reports-view")
+      );
+      reports._requireManager = () =>
+        new Promise((resolve) => {
+          /** @type {any} */ (window).resolveReportAccess = resolve;
+        });
+      reports._loadCatalog = async () => {};
+      reports._mountSiteSwitcher = () => {};
+      reports._loadReport = async () => {
+        document.body.dataset.reportLoads = String(
+          Number(document.body.dataset.reportLoads || 0) + 1,
+        );
+        reports._render();
+      };
+      document.querySelector("main")?.append(reports);
+    });
+    await expect(page.locator(".reports__head")).toHaveAttribute("inert", "");
+    await expect(page.locator(".reports__body")).toHaveAttribute("inert", "");
+    await page.locator('[data-report-tab="issues"]').dispatchEvent("click");
+    await expect(page.locator("body")).not.toHaveAttribute("data-report-loads");
+    await page.locator("#reports-home").focus();
+    await expect(page.locator("#reports-home")).toBeFocused();
+    if (leave) {
+      await page.locator("#reports-home").click();
+      await expect(page).toHaveURL(/\/today$/);
+      await page
+        .locator("reports-view")
+        .evaluate((element) => element.remove());
+    }
+    await page.evaluate(() =>
+      /** @type {any} */ (window).resolveReportAccess(true),
+    );
+    if (leave) {
+      await expect(page.locator("body")).not.toHaveAttribute(
+        "data-report-loads",
+      );
+    } else {
+      await expect(page.locator("body")).toHaveAttribute(
+        "data-report-loads",
+        "1",
+      );
+      await expect(page.locator(".reports__head")).not.toHaveAttribute("inert");
+      await page.locator('[data-report-tab="issues"]').click();
+      await expect(page.locator("body")).toHaveAttribute(
+        "data-report-loads",
+        "2",
+      );
+    }
+  });
+}
+
+test("lazy navigation blocks the retained screen and unlocks the new screen", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.evaluate(() => {
+    const AppRoot = /** @type {any} */ (window.customElements.get("app-root"));
+    window.history.replaceState({}, "", "/today");
+    const root = new AppRoot();
+    const main = document.querySelector("main");
+    if (!main) throw new Error("Missing main");
+    main.innerHTML = '<button id="old-action">Old action</button>';
+    root._view = main;
+    root._restateScreenFocus = () => {};
+    root._loadRoute(
+      "/today",
+      () =>
+        new Promise((resolve) => {
+          /** @type {any} */ (window).finishRouteImport = resolve;
+        }),
+    );
+  });
+  await expect(page.locator("#old-action")).toBeVisible();
+  await expect(page.locator("main")).toHaveAttribute("inert", "");
+  await page.locator("#old-action").evaluate((element) => element.focus());
+  await expect(page.locator("#old-action")).not.toBeFocused();
+  await page.evaluate(() => /** @type {any} */ (window).finishRouteImport());
+  await expect(page.locator("main")).not.toHaveAttribute("inert");
+  await expect(page.locator("#old-action")).toHaveCount(0);
+  await expect(page.locator("today-view")).toHaveCount(1);
 });

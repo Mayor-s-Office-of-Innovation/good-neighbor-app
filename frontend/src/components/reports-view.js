@@ -98,6 +98,7 @@ class ReportsScreen extends HTMLElement {
   /** @returns {Promise<boolean>} whether the caller may continue */
   async _requireManager() {
     this._site = await getSite();
+    if (!this.isConnected) return false;
     if (!hasAdminAccess(this._site)) {
       navigate("/today");
       return false;
@@ -193,6 +194,7 @@ class ReportsView extends ReportsScreen {
     this._start = "";
     this._report = null;
     this._status = "loading";
+    this._accessReady = false;
     this._shown = RECORD_PAGE;
     this._shownTypes = TYPE_ROWS;
     this._generation = 0;
@@ -216,12 +218,14 @@ class ReportsView extends ReportsScreen {
     if (isDayKey(start)) this._start = start;
     this._render();
     if (!(await this._requireManager()) || !this.isConnected) return;
+    this._accessReady = true;
     announceScreenHeading(this, "[data-screen-focus]");
     void this._loadCatalog().then(() => this._mountSiteSwitcher("/reports"));
     await this._loadReport();
   }
 
   async _loadReport() {
+    if (!this._accessReady || !this.isConnected) return;
     const generation = ++this._generation;
     this._status = "loading";
     this._render();
@@ -342,6 +346,13 @@ class ReportsView extends ReportsScreen {
     this.querySelector("#reports-home")?.addEventListener("click", () =>
       navigate("/today"),
     );
+    if (!this._accessReady) {
+      for (const section of this.querySelectorAll(
+        ".reports__head, .reports__body",
+      ))
+        section.setAttribute("inert", "");
+      return;
+    }
     const tabs = this.querySelectorAll("[data-report-tab]");
     tabs.forEach((button) => {
       button.addEventListener("click", () =>

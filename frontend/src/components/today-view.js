@@ -1903,6 +1903,7 @@ class TodayView extends HTMLElement {
       )
         counts.todo = tabCounts.todo;
     }
+    if (this._homeModel?.pendingGuidanceFailed) delete counts.todo;
     this._tabCountSnapshot = { siteId: this._siteId, counts };
     return homeResults({
       historyGrouping: this._historyGrouping || "resolved",

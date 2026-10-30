@@ -503,6 +503,7 @@ export class AppRoot extends HTMLElement {
     const request = (this._routeLoad = {});
     if (!this._view.firstElementChild)
       this._view.innerHTML = `<p role="status">${escapeHtml(t("care.loading"))}</p>`;
+    this._view.inert = true;
     Promise.resolve()
       .then(load)
       .then(() => {
@@ -511,6 +512,7 @@ export class AppRoot extends HTMLElement {
       })
       .catch((error) => {
         if (this._routeLoad !== request || currentRoute() !== route) return;
+        this._view.inert = false;
         console.error("Route module failed to load", error);
         this._view.innerHTML = `<p role="alert">${escapeHtml(t("route.loadError"))}</p><button type="button" class="btn-ink" data-route-reload>${escapeHtml(t("route.reload"))}</button><button type="button" class="btn-outline" data-route-back>${escapeHtml(t("common.back"))}</button>`;
         // Reload obtains the current asset manifest and clears cached import failures.
@@ -597,6 +599,7 @@ export class AppRoot extends HTMLElement {
       if (currentRoute() !== route) return;
       this._swappedRoute = route;
       this._view.replaceChildren(document.createElement(tag));
+      this._view.inert = false;
       this._restateScreenFocus();
     };
     // Same-document View Transition: a cross-fade between sibling screens,
