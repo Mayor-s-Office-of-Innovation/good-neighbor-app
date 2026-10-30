@@ -16,7 +16,7 @@ duplicate checks with no matches, current guidance, and separate source photos.
 | Duplicate result reads | **270 GetItems** |
 | Other page data | **17 Queries + 2 GetItems + S site GetItems** |
 | Access checks | **Extra; depends on the auth cache and user role** |
-| Each repeat duplicate poll | **270 more GetItems** in this example |
+| Routine duplicate polling after settlement | **0 additional reads** in this example |
 
 These are read operations, not rows returned or billing units. A full reload
 repeats the reads. The count comes from code, not a live AWS measurement.
@@ -32,10 +32,10 @@ repeats the reads. The count comes from code, not a live AWS measurement.
 | Icons and other page assets | **Varies** | CloudFront; count depends on the browser and page content |
 | Direct browser calls to outside services | **0** | The backend calls PostHog and SF311 |
 | Backend calls to outside services | **1 if set up** | PostHog; no SF311 call in this example |
-| Repeat duplicate checks | **+1 batch about every 30 seconds** | All 30 tasks, for up to 15 minutes |
+| Repeat duplicate checks | **0 once all results settle** | Pending tasks only, with a 15-minute retry budget |
 
-That is **40 browser requests**, plus icons and other page assets. Add any repeat
-polls that come due while the page loads. One API call can make many database
+That is **40 browser requests**, plus icons and other page assets. Pending results can add repeat
+polls while the page loads. One API call can make many database
 reads. Those reads are not extra browser requests.
 
 Icons come from this site's `/icons/` path. Fonts come from the device. The
@@ -111,8 +111,8 @@ sequenceDiagram
     B->>A: 1 POST /v1/duplicates:batch (30 task IDs)
     A->>D: Many GetItem reads per task (reuse shared records)
     Note over A,D: No model call, SF311 call, or write in duplicate lookup
-    loop While page is visible, for up to 15 minutes
-        B->>A: Duplicate batches - settled 30s, pending 2s then 5s
+    loop While results are pending and page is visible, for up to 15 minutes
+        B->>A: Pending duplicate batches - 2s then 5s
         A->>D: Repeat reads for due task IDs
     end
 ```
@@ -145,8 +145,10 @@ per page load. Their reads are extra.
 
 ## Duplicate checks: current cost
 
-**A finished duplicate check still gets polled. Reloading the page starts those
-reads again.** Each poll reads saved results. It does not run the model again.
+**Finished duplicate checks are cached for the browser session and stop polling.
+A full reload starts their reads again.** Each lookup reads saved results; it does
+not run the model again. Navigation, page return, reconnect, and cache age alone
+do not refresh settled results.
 
 ### On initial load
 
@@ -162,7 +164,8 @@ it finds:
 | Check finished with no match, with current guidance and full records | **9 GetItems** before sharing reads with other items |
 | A person marked it as separate | **2 GetItems**: task and override |
 | Task is missing, or lacks fields needed for matching | **1 GetItem**: task |
-| Pending or unavailable | Varies with how far the lookup gets |
+| Pending, with analyzed source but no usable outcome yet | **7 GetItems**: task, override, analysis, result, incremental issue result, guidance pointer, condition |
+| Other pending or unavailable paths | Varies with how far validation gets |
 | Matched to another issue | Varies; also reads the linked issue and its records |
 
 The nine reads are for the task, override, analysis, duplicate result, photo,
@@ -176,54 +179,69 @@ For **30 items with finished checks and no matches**, each with its own records:
 | When | Browser API requests | DynamoDB reads for duplicate results |
 | --- | ---: | ---: |
 | First load | **1 batch** | **270**: 30 items × 9 reads |
-| Each repeat poll | **1 batch** | **270 again** |
+| After all results settle | **0 routine batches** | **0 routine reads** |
 | Next full page load | **1 new batch** | **270 again** |
 
 This is a worked case with one photo per task. Missing data can stop a lookup
 early. Linked issues can add
 reads. All of these costs are in addition to loading task lists and photos.
 
-Local checks of the real handler with fake data confirmed **9 reads for one
-item**, **270 for 30 separate photos**, and **270 again on a repeat call**.
-These checks did not contact AWS.
+Local tests of the real handler with synthetic data confirm **9 reads for one
+complete no-match item**, **270 for 30 separate photos**, and **7 for an ordinary
+pending item**. These checks do not contact AWS. Settled outcomes still validate
+artifact existence, observation revision, current guidance, and incremental
+positives. Pending work without a usable outcome skips the artifact and
+observation reads in the full path, but still checks that current guidance
+includes the task so removed or replaced tasks stop polling.
 
 ### While the page stays open
 
-The next poll is due after the last reply:
-
-| Result | Delay before the next poll |
+| Result | Next automatic lookup |
 | --- | --- |
-| Finished, with or without a match | **30 seconds** |
-| Separate, not applicable, missing, or unavailable | **30 seconds** |
+| Finished, with or without a match | None; cache the result |
+| Separate, not applicable, missing, or unavailable | None; cache the result |
 | Pending | **2 seconds** for the first 15 replies, then **5 seconds** |
-| Failed request | **15 seconds**; each wait has a 10-second limit |
+| Failed request | **15 seconds**; each request has a 10-second limit |
 
-With all 30 results ready, this adds about **2 API calls and 540 database reads
-per minute** in the worked case above. Fast replies allow about 30 polls over
-15 minutes, including the first: about **8,100 reads**. Slower replies reduce
-that total. If items have different due times, they can split into more calls.
+All 30 settled results therefore add **zero routine API calls and database reads
+per minute**, replacing approximately 2 calls and 540 reads per minute. This does
+not count explicit invalidations. Pending tasks continue in batches of up to 50;
+settled tasks are left out of those batches.
 
-Polling pauses while the page is hidden. Each watch ends after **15 minutes**.
-Leaving Today stops its watch. When no watchers remain, the current request is
-canceled. A task's duplicate check being finished does **not** stop its polling.
+Polling pauses while the page is hidden. Each subscription's retry budget ends
+after **15 minutes**, presenting remaining pending work as unavailable. The view
+stays subscribed to invalidation until it unmounts; an explicit invalidation
+starts a new retry budget. Overlapping subscriptions retain independent budgets.
+Leaving Today cancels its subscription, and the final unsubscribe aborts the
+current request. Cached results survive navigation within the same site/session.
 
-### On the next page load
+### When a result is read again
 
-A full reload clears the browser's in-memory poll state. Home fetches the task
-lists, starts a new watch, and asks for duplicate results again. The backend
-reads the records again, even if nothing changed. The 15-minute watch starts
-again too. There is no saved “already checked” flag that skips these reads.
+Successful local changes to analysis conditions, artifacts, guidance answers,
+task actions, resolution updates, or separation invalidate the site's cached
+results. Invalidation covers all cached dependents, including references through
+intermediate issues and currently unmounted tasks. Changed task versions observed
+by Home's normal task refresh also invalidate results; an unchanged refresh does
+not. In-flight responses from before an invalidation are discarded.
 
-The model's saved result does survive the reload. Reading it again is not a new
-model analysis.
+A full reload clears the in-memory cache and fetches results again. Site changes,
+UI disablement, and sign-out clear cached evidence. Late feature enablement starts
+subscriptions that were waiting for site settings.
+
+There is no age-based or return/reconnect-triggered duplicate refresh. Backend-only
+recovery or chain changes that do not change an observed task version are not
+pushed to an already settled view; they become visible after explicit invalidation
+or a full reload. Shared actions continue to revalidate their target on the backend.
+The cache does not establish action authority or persist model results itself.
 
 ### When no watch starts
 
-- If the UI flag is off, there are no duplicate calls. If backend matching is
-  off and no old links exist, the first batch reads 30 link keys, then stops.
-- The UI flag starts off. If task lists finish before site settings arrive,
-  no watch starts. Turning the flag on later does not start that skipped watch.
-  This path makes **18**, rather than 19, initial API calls that read the database.
+- If the UI flag stays off, there are no duplicate calls. Subscriptions wait for
+  settings rather than permanently skipping the watch when settings arrive late.
+- If backend matching is off and no old links exist, the first batch reads 30
+  link keys and stops polling. Its subscriptions remain available for explicit
+  invalidation. For larger worklists, later batches still run because they may
+  contain persisted links. Existing links remain authoritative for shared actions.
 
 ## What can change the totals?
 
@@ -280,7 +298,8 @@ adds no periodic timer and does not change the initial-load counts above.
 To-do needs open tasks. In-progress also needs completing and completed tasks,
 because completed 311 filings can still be in progress. History needs all five
 statuses because expired open and in-progress tasks can appear there. Only stale
-status lists are fetched. Unchanged task IDs retain their duplicate watch.
+status lists are fetched. Unchanged task IDs retain their duplicate watch; changed task versions invalidate
+cached duplicate results without replacing the subscription.
 
 The current list stays visible, with “Checking for updates…” after a short
 delay. Open dialogs hold the new list display until they close. Failed reads

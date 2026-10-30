@@ -1011,3 +1011,83 @@ describe("upload reservation boundaries", () => {
     },
   );
 });
+
+describe("duplicate mutation invalidation", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it.each([
+    [
+      "editAnalysisCondition",
+      [
+        "check",
+        "photo",
+        "condition",
+        { description: "Updated synthetic description" },
+      ],
+    ],
+    ["rejectAnalysisCondition", ["check", "photo", "condition", {}]],
+    ["deleteArtifact", ["check", "photo"]],
+    ["registerArtifact", ["check", { artifactId: "photo" }]],
+    ["evaluateAssessment", [{}]],
+    ["submitConditionAnswers", ["assessment", "condition", { answers: {} }]],
+    ["completeTask", ["task", {}]],
+    ["createTaskUpdate", ["task", { type: "resolved" }, "synthetic-request"]],
+    ["updateTaskAction", ["task", "rule"]],
+    [
+      "recordCustomTaskAction",
+      ["task", { text: "Synthetic action", resolved: true }],
+    ],
+  ])(
+    "invalidates after successful %s, but not failed writes",
+    async (name, args) => {
+      const api = await import("./api.js");
+      const db = await import("../db.js");
+      const siteRead = vi
+        .spyOn(db, "getSite")
+        .mockResolvedValue({ siteId: "synthetic-site" });
+      const { onDuplicateInvalidation } = await import(
+        "./duplicate-invalidation.js"
+      );
+      const changed = vi.fn();
+      const stop = onDuplicateInvalidation(changed);
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValueOnce(new Response("{}", { status: 400 }))
+          .mockResolvedValueOnce(new Response("{}", { status: 200 })),
+      );
+      try {
+        await expect(api[name](...args)).rejects.toBeInstanceOf(ApiError);
+        expect(changed).not.toHaveBeenCalled();
+        await api[name](...args);
+        expect(changed).toHaveBeenCalledOnce();
+      } finally {
+        stop();
+        siteRead.mockRestore();
+      }
+    },
+  );
+
+  it("does not invalidate for result reads or upload URL creation", async () => {
+    const { getDuplicateLinks, presignArtifact } = await import("./api.js");
+    const { onDuplicateInvalidation } = await import(
+      "./duplicate-invalidation.js"
+    );
+    const changed = vi.fn();
+    const stop = onDuplicateInvalidation(changed);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}", { status: 200 })),
+    );
+    try {
+      await getDuplicateLinks(["task"]);
+      await presignArtifact("check", {
+        contentType: "image/jpeg",
+        contentLength: 100,
+      });
+      expect(changed).not.toHaveBeenCalled();
+    } finally {
+      stop();
+    }
+  });
+});

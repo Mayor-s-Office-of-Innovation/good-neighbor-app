@@ -83,3 +83,25 @@ variable "alarm_emails" {
   type        = list(string)
   default     = ["aaron.hans@sf.gov"]
 }
+
+variable "enable_cloudwatch_omni" {
+  type        = bool
+  default     = false
+  description = "Provision the CloudWatch Omni domain and space scoped to this application's log groups."
+}
+
+variable "cloudwatch_omni_members" {
+  type = map(object({
+    principal_type = string
+    principal_id   = string
+    permission     = optional(string, "READ")
+  }))
+  default     = {}
+  description = "Omni space grants by name; see the module variable of the same name."
+}
+
+variable "cloudwatch_omni_sso_permission_sets" {
+  type        = map(string)
+  default     = {}
+  description = "Omni permission by Identity Center permission-set name; see the module variable of the same name."
+}
