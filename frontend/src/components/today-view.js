@@ -713,7 +713,12 @@ class TodayView extends HTMLElement {
     this._taskOverrides = readTaskStatusOverrides();
     this._homeFilter =
       this._homeFilter || normalizedHomeTab(requestedFilter || "");
-    this._activeProblem = null;
+    // A background refresh keeps the open dialog mounted; keep its selection too.
+    if (
+      previousSiteId !== this._siteId ||
+      !this.querySelector?.(".analysis-dialog[open]")
+    )
+      this._activeProblem = null;
     this._hasPerimeterDraft = await hasDraft("perimeter");
     if (generation !== this._homeRefreshGeneration) return;
     if (!duplicateUiEnabled()) this._duplicateLinks = new Map();

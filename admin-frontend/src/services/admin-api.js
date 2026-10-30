@@ -93,6 +93,12 @@ async function parseAdminResponse(path, init) {
 }
 
 export const adminApi = {
+  getSystemControls: () => adminFetch("/admin/v1/system-controls"),
+  updateSystemControls: (body) =>
+    adminFetch("/admin/v1/system-controls", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
   getSystemStatus: () => adminFetch("/admin/v1/system-status"),
   getStatusEntries: (site, kind, cursor) =>
     adminFetch(

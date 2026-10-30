@@ -1,3 +1,7 @@
+import {
+  getSystemControls,
+  putSystemControls,
+} from "../handlers/system-controls.js";
 import { listPendingGuidance } from "../handlers/pending-guidance.js";
 import {
   getSystemStatus,
@@ -317,6 +321,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   // served by the separate intake Lambda (lambda/intake.js) so a slow PostHog
   // forward can never hold this function's reserved executions.
   "GET /admin/v1/providers": listProviders,
+  "GET /admin/v1/system-controls": getSystemControls,
+  "PUT /admin/v1/system-controls": putSystemControls,
   "GET /admin/v1/system-status": getSystemStatus,
   "GET /admin/v1/system-status/{siteId}/{kind}": getStatusEntries,
   "GET /admin/v1/system-status/{siteId}/media/{checkId}/{artifactId}":

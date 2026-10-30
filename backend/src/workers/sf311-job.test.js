@@ -388,7 +388,14 @@ describe("tapped filing jobs (trigger: user_confirmed)", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
-  it("runs the user-confirmed actions and completes the task once filed", async () => {
+  it("runs user-confirmed actions even when global silent filing is disabled", async () => {
+    const original = send.getMockImplementation();
+    send.mockImplementation(async (command) =>
+      command instanceof GetCommand &&
+      command.input.Key?.pk === "SYSTEM#CONTROLS"
+        ? { Item: { enabled: false } }
+        : original?.(command),
+    );
     await runJob(filedMessage);
 
     expect(execute.mock.calls[0][1]).toMatchObject({
@@ -509,3 +516,34 @@ describe("tapped filing jobs (trigger: user_confirmed)", () => {
     expect(sendSqs).not.toHaveBeenCalled();
   });
 });
+
+it.each([
+  { enabled: false },
+  { enabled: true, epochStartedAt: "2026-10-30T12:00:00Z" },
+])(
+  "consumes disabled or old silent work without filing or closing: %j",
+  async (control) => {
+    task.createdAt = "2026-10-29T12:00:00Z";
+    task.status = "completed";
+    task.appActionResults = [ticket];
+    const original = send.getMockImplementation();
+    send.mockImplementation(async (command) =>
+      command instanceof GetCommand &&
+      command.input.Key?.pk === "SYSTEM#CONTROLS"
+        ? { Item: control }
+        : original?.(command),
+    );
+    await runJob(message);
+    expect(execute).not.toHaveBeenCalled();
+    expect(
+      send.mock.calls.some(
+        ([command]) =>
+          command instanceof UpdateCommand &&
+          command.input.Key?.sk === message.jobSk &&
+          command.input.ExpressionAttributeValues?.[":reason"] ===
+            "silent_filing_disabled",
+      ),
+    ).toBe(true);
+    expect(finalWrites).toHaveLength(0);
+  },
+);

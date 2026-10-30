@@ -3,10 +3,19 @@ import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 const mocks = vi.hoisted(() => ({
   send: vi.fn(),
+  readTask: vi.fn(),
   update: vi.fn(),
   latest: vi.fn(),
 }));
-vi.mock("../db.js", () => ({ ddb: { send: mocks.send } }));
+vi.mock("../db.js", () => ({
+  ddb: {
+    send: (/** @type {any} */ command) =>
+      command instanceof GetCommand &&
+      command.input.Key?.sk?.startsWith("TASK#")
+        ? mocks.readTask(command)
+        : mocks.send(command),
+  },
+}));
 vi.mock("../integrations/sf311-client.js", async (importOriginal) => ({
   ...(await importOriginal()),
   createSf311Client: () => ({
@@ -40,6 +49,7 @@ const update = () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.send.mockReset().mockResolvedValue({});
+  mocks.readTask.mockReset().mockResolvedValue({ Item: { appActions: [] } });
   mocks.update.mockReset().mockResolvedValue({ updateId: "city1" });
   mocks.latest.mockReset();
   vi.stubEnv("GNP_311_SUBMISSION_ENABLED", "true");
@@ -292,4 +302,54 @@ it("never sends or reconciles a synthetic reference, even on a legacy delivery r
   expect(mocks.send).not.toHaveBeenCalled();
   expect(mocks.update).not.toHaveBeenCalled();
   expect(mocks.latest).not.toHaveBeenCalled();
+});
+
+it("does not send a note for a silent ticket while globally disabled", async () => {
+  mocks.readTask.mockResolvedValue({
+    Item: {
+      createdAt: "2026-10-29T12:00:00Z",
+      appActions: [
+        {
+          code: "create_311_ticket",
+          payload: { executionTrigger: "task_created" },
+        },
+      ],
+    },
+  });
+  mocks.send.mockResolvedValue({ Item: { enabled: false } });
+  expect(await deliverCityHelpNote("table", "site", update())).toBe(true);
+  expect(mocks.latest).not.toHaveBeenCalled();
+  expect(mocks.update).not.toHaveBeenCalled();
+});
+
+it("still sends notes for a manual ticket on a task with an older silent workflow", async () => {
+  mocks.readTask.mockResolvedValue({
+    Item: {
+      appActions: [
+        {
+          code: "create_311_ticket",
+          payload: { executionTrigger: "task_created" },
+        },
+      ],
+      appActionResults: [
+        {
+          code: "create_311_ticket",
+          payload: {
+            executionTrigger: "user_confirmed",
+            tickets: [{ srNum: "123" }],
+          },
+        },
+      ],
+    },
+  });
+  mocks.send.mockResolvedValue({ Item: { enabled: false } });
+  expect(await deliverCityHelpNote("table", "site", update())).toBe(true);
+  expect(mocks.update).toHaveBeenCalledWith(payload);
+  expect(
+    mocks.send.mock.calls.some(
+      ([command]) =>
+        command instanceof GetCommand &&
+        command.input.Key?.pk === "SYSTEM#CONTROLS",
+    ),
+  ).toBe(false);
 });

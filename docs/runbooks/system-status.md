@@ -6,6 +6,30 @@ All sites, including inactive sites and sites without a check requirement, are
 included. The page refreshes on entry, when the tab becomes visible, and every
 60 seconds while visible. Counts are operational observations, not uptime probes.
 
+## Global silent filing control
+
+System status has Status and Control tabs. Status retains the reporting views.
+Control lets Compliance supervisors enable or disable silent 311 filing for all
+Sites. The default is Enabled. Both changes require confirmation; disabling uses
+a destructive confirmation. Changes use an optimistic revision to prevent stale
+overwrites and record the authenticated supervisor on the control row.
+
+Disabling stops background filing, attachments, reconciliation, closure, and
+City help notes for silent tickets. Manual user-confirmed filings and their notes
+are unaffected. Silent queue jobs are consumed without a City request. Re-enabling
+starts a new workflow epoch: only silent workflows for tasks created after that
+change are eligible. Old jobs, retries, and tickets never catch up. Previously
+filed silent tickets may remain open in 311. A request already sent before the
+change may finish; each subsequent City request rechecks the strongly consistent
+control and fails closed if it cannot be read. The field app has no disclosure or
+additional steps for this global control.
+
+The setting is stored at `SYSTEM#CONTROLS` / `SILENT_311`. The supervisor-only
+`GET` and `PUT /admin/v1/system-controls` endpoints work independently of reporting
+projection readiness. A failed save retains the draft; a conflicting save asks the
+supervisor to reload the current setting before trying again. The Control tab
+is not automatically refreshed, so background reporting cannot discard edits.
+
 ## Definitions and sources
 
 | View | Source and population | Window |

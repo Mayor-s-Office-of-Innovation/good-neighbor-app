@@ -1,3 +1,7 @@
+import {
+  getSystemControls,
+  putSystemControls,
+} from "../src/handlers/system-controls.js";
 import { listPendingGuidance } from "../src/handlers/pending-guidance.js";
 import {
   listPeople,
@@ -420,6 +424,8 @@ const routes = [
   route("POST", "/v1/feedback", feedbackHandler),
   route("GET", "/admin/v1/providers", listProviders),
   route("GET", "/admin/v1/session", getAdminSession),
+  route("GET", "/admin/v1/system-controls", getSystemControls),
+  route("PUT", "/admin/v1/system-controls", putSystemControls),
   route("GET", "/admin/v1/system-status", getSystemStatus),
   route("GET", "/admin/v1/system-status/{siteId}/{kind}", getStatusEntries),
   route(

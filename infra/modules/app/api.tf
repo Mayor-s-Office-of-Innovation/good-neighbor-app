@@ -85,6 +85,8 @@ locals {
     "POST /submissions",
     "GET /admin/v1/providers",
     "GET /admin/v1/session",
+    "GET /admin/v1/system-controls",
+    "PUT /admin/v1/system-controls",
     "GET /admin/v1/system-status",
     "GET /admin/v1/system-status/{siteId}/{kind}",
     "GET /admin/v1/system-status/{siteId}/media/{checkId}/{artifactId}",

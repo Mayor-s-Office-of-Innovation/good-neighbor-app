@@ -1,3 +1,8 @@
+import {
+  withSilent311Guard,
+  isSilent311Ticket,
+  Silent311Suppressed,
+} from "../domain/silent-311.js";
 import { openFiledTicketNumbers } from "../domain/open-filed-tickets.js";
 import { logServerError } from "../lib/log-server-error.js";
 import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
@@ -110,6 +115,35 @@ export function cityHelpNoteExists(body, payload) {
  * @returns {Promise<boolean>}
  */
 export async function deliverCityHelpNote(tableName, siteId, update) {
+  if (
+    !update.cityNotePayload ||
+    update.cityNoteStatus === "sent" ||
+    String(update.cityNotePayload.SRnum || "").startsWith("SIM-")
+  )
+    return true;
+  if (process.env.GNP_311_SUBMISSION_ENABLED !== "true") return false;
+  const { Item: task } = await ddb.send(
+    new GetCommand({
+      TableName: tableName,
+      Key: { pk: `SITE#${siteId}`, sk: `TASK#${update.taskId}` },
+      ConsistentRead: true,
+    }),
+  );
+  if (!task) return false;
+  if (!isSilent311Ticket(task, String(update.cityNotePayload.SRnum || "")))
+    return deliverCityHelpNoteInner(tableName, siteId, update);
+  try {
+    return await withSilent311Guard(String(task.createdAt || ""), () =>
+      deliverCityHelpNoteInner(tableName, siteId, update),
+    );
+  } catch (error) {
+    if (error instanceof Silent311Suppressed) return true;
+    throw error;
+  }
+}
+
+/** @param {string} tableName @param {string} siteId @param {Record<string, any>} update */
+async function deliverCityHelpNoteInner(tableName, siteId, update) {
   if (!update.cityNotePayload || update.cityNoteStatus === "sent") return true;
   if (String(update.cityNotePayload.SRnum || "").startsWith("SIM-"))
     return true;
@@ -209,6 +243,7 @@ export async function deliverCityHelpNote(tableName, siteId, update) {
     await state("sent");
     return true;
   } catch (error) {
+    if (error instanceof Silent311Suppressed) return true;
     logCityNoteFailure(stage, error, update);
     // Only explicit HUB validation rejections prove the note was not accepted.
     const rejected =
