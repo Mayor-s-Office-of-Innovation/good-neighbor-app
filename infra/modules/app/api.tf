@@ -134,6 +134,7 @@ locals {
     "POST /admin/v1/sites/{siteId}/letter:resend",
     "GET /admin/v1/sites/{siteId}/perimeter",
     "PUT /admin/v1/sites/{siteId}/perimeter",
+    "PUT /admin/v1/sites/{siteId}/deliberate-311",
     "GET /admin/v1/sites/{siteId}/manager-memberships",
     "POST /admin/v1/sites/{siteId}/manager-memberships",
     "PATCH /admin/v1/sites/{siteId}/manager-memberships/{membershipId}",

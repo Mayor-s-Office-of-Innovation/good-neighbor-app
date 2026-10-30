@@ -186,6 +186,7 @@ import {
   getSitePerimeter,
   listSiteTerms,
   putSitePerimeter,
+  putSiteDeliberate311,
   replaceSiteComplianceManagers,
   unassignSiteUser,
 } from "../src/handlers/admin-site-config.js";
@@ -502,6 +503,7 @@ const routes = [
   route("POST", "/admin/v1/sites/{siteId}/letter:resend", resendSiteLetter),
   route("GET", "/admin/v1/sites/{siteId}/perimeter", getSitePerimeter),
   route("PUT", "/admin/v1/sites/{siteId}/perimeter", putSitePerimeter),
+  route("PUT", "/admin/v1/sites/{siteId}/deliberate-311", putSiteDeliberate311),
   route(
     "GET",
     "/admin/v1/sites/{siteId}/manager-memberships",

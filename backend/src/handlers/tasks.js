@@ -1,3 +1,9 @@
+import { logServerError } from "../lib/log-server-error.js";
+import {
+  filedTicket,
+  isSimulated311Ticket,
+  simulated311Detail,
+} from "../domain/deliberate-311.js";
 import { withResolutionProofForTasks } from "../task-updates/resolution-proof.js";
 import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
@@ -98,17 +104,7 @@ const UPDATE_CACHE_MS = 60_000;
 
 /** @param {Record<string, any>} task @param {string} srNum */
 function taskHasTicket(task, srNum) {
-  const results = Array.isArray(task.appActionResults)
-    ? task.appActionResults
-    : [];
-  return results.some(
-    (result) =>
-      result?.code === "create_311_ticket" &&
-      Array.isArray(result?.payload?.tickets) &&
-      result.payload.tickets.some(
-        (/** @type {any} */ ticket) => String(ticket?.srNum ?? "") === srNum,
-      ),
-  );
+  return Boolean(filedTicket(task, srNum));
 }
 
 /** @param {import("../config.js").AppConfig} config */
@@ -171,6 +167,11 @@ export const get311RequestDetail = async (event) => {
   const task = result.Item;
   if (!task || !taskHasTicket(task, srNum))
     return jsonResponse(404, { error: "311 request not found" });
+  const ticket = filedTicket(task, srNum);
+  if (isSimulated311Ticket(ticket))
+    return jsonResponse(200, {
+      request: simulated311Detail(taskWithResponseWindow(task), ticket),
+    });
   const body = await latestUpdates(config);
   const record = findServiceRequest(body, srNum);
   if (!record)
@@ -240,9 +241,34 @@ export const get311RequestDetails = async (event) => {
     return jsonResponse(404, { error: "311 request not found" });
   }
 
-  const updates = await latestUpdates(config);
+  const tickets = normalized.map(({ srNum }, index) =>
+    filedTicket(tasks[index] || {}, srNum),
+  );
+  const needsCity = tickets.some((ticket) => !isSimulated311Ticket(ticket));
+  // Preserve simulated responses even if the City feed is unavailable.
+  const hasSimulated = tickets.some(isSimulated311Ticket);
+  const updates = needsCity
+    ? await latestUpdates(config).catch((error) => {
+        if (!hasSimulated) throw error;
+        logServerError(
+          "311 status feed",
+          new Error("City ticket status unavailable"),
+        );
+        return null;
+      })
+    : null;
   const results = normalized.flatMap(({ taskId, srNum }, index) => {
     const task = tasks[index];
+    if (isSimulated311Ticket(tickets[index]))
+      return [
+        {
+          taskId,
+          request: simulated311Detail(
+            taskWithResponseWindow(task || {}),
+            tickets[index],
+          ),
+        },
+      ];
     const record = findServiceRequest(updates, srNum);
     if (!task || !record) return [];
     return [

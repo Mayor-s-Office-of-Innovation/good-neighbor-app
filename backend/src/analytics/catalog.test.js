@@ -104,6 +104,25 @@ describe("every catalog query runs against the lake views", () => {
       ["Poor", 1, 50],
     ]);
   });
+  it("excludes simulated filings from City escalation counts and lists", async () => {
+    await conn.run(`CREATE OR REPLACE VIEW tasks AS
+      SELECT *, taskId AS shortId FROM (VALUES
+        ('site', 'real', 'open', 'city_escalation', 'litter', 1, 'escalation', '2026-10-30', current_date, '{}'),
+        ('site', 'sim', 'open', 'city_escalation', 'litter', 1, 'escalation', '2026-10-30', current_date, '{"deliberate311DeliveryMode":"simulated"}')
+      ) t(siteId, taskId, taskStatus, type, category, severity, kind, createdAt, date, raw)`);
+    const list = /** @type {any} */ (getQuery("open-escalations"));
+    expect(
+      (await runQuery("bucket-x", list.sql, bindParams(list, {}))).rows,
+    ).toHaveLength(1);
+    const counts = /** @type {any} */ (getQuery("open-tasks-by-site"));
+    const result = await runQuery(
+      "bucket-x",
+      counts.sql,
+      bindParams(counts, {}),
+    );
+    expect(result.rows[0][result.columns.indexOf("open_escalations")]).toBe(1);
+    expect(result.rows[0][result.columns.indexOf("open_tasks")]).toBe(2);
+  });
 });
 
 describe("bindParams", () => {

@@ -59,9 +59,17 @@ export function sf311Job(tableName, siteId, task, phase, env = process.env) {
  * @param {string} opts.taskId
  * @param {string} opts.actorId
  * @param {string} opts.now
+ * @param {string} [opts.deliveryMode]
  * @returns {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>[number]}
  */
-export function sf311FilingJob({ tableName, siteId, taskId, actorId, now }) {
+export function sf311FilingJob({
+  tableName,
+  siteId,
+  taskId,
+  actorId,
+  now,
+  deliveryMode,
+}) {
   return {
     Put: {
       TableName: tableName,
@@ -73,6 +81,7 @@ export function sf311FilingJob({ tableName, siteId, taskId, actorId, now }) {
         siteId,
         taskId,
         trigger: "user_confirmed",
+        ...(deliveryMode ? { deliveryMode } : {}),
         actorId,
         createdAt: now,
       },

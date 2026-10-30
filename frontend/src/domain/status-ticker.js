@@ -70,7 +70,14 @@ export function statusTicker(task, { history = false, now = Date.now() } = {}) {
     return state("scheduled", "progress", "calendar-check");
   if (filed && task.ticketStatus === "On hold")
     return state("onHold", "progress", "circle-pause");
-  if (filed) return state("filed", "progress", "paper-plane");
+  if (filed)
+    return state(
+      submitted311Ticket(task)?.deliveryMode === "simulated"
+        ? "simulatedFiled"
+        : "filed",
+      "progress",
+      "paper-plane",
+    );
   if (
     task.kind === "non_actionable_escalation" ||
     String(task.inProgressActionKind || "").startsWith("called") ||

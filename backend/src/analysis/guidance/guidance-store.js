@@ -1,3 +1,4 @@
+import { deliberate311Decision } from "../../domain/deliberate-311.js";
 import { sf311Job } from "./sf311-job.js";
 import {
   BatchGetCommand,
@@ -1398,6 +1399,17 @@ export async function completeTaskWithAppActions(opts) {
   ) {
     throw namedError("TaskCompletionInProgress", "Task completion in progress");
   }
+  const filingDecision =
+    opts.skipUserConfirmedActions !== true &&
+    hasUserConfirmed311Action(existing.Item) &&
+    is311SubmissionEnabled(opts.env ?? process.env)
+      ? await deliberate311Decision(
+          opts.tableName,
+          opts.siteId,
+          existing.Item,
+          now,
+        )
+      : undefined;
   if (
     opts.completionMethod === "311_filed" &&
     is311AsyncFilingEnabled(opts.env ?? process.env) &&
@@ -1414,6 +1426,7 @@ export async function completeTaskWithAppActions(opts) {
       siteId: opts.siteId,
       taskId: opts.taskId,
       task: existing.Item,
+      filingDecision,
       actorId: opts.actorId,
       duplicateChecks: opts.duplicateChecks,
       now: nowDate,
@@ -1454,6 +1467,12 @@ export async function completeTaskWithAppActions(opts) {
   }
   const claimed = {
     ...existing.Item,
+    ...(filingDecision
+      ? {
+          deliberate311DeliveryMode: filingDecision.mode,
+          deliberate311AcceptedAt: filingDecision.acceptedAt,
+        }
+      : {}),
     status: "completing",
     appActionStatus: "executing",
     completionStartedAt:
@@ -1475,6 +1494,7 @@ export async function completeTaskWithAppActions(opts) {
     new TransactWriteCommand({
       TransactItems: [
         ...(opts.duplicateChecks ?? []),
+        ...(filingDecision?.checks ?? []),
         {
           Put: {
             TableName: opts.tableName,

@@ -285,6 +285,18 @@ ticket index. Background jobs and durable integration checkpoints also live in
 - `appActions`: the rule's structured actions.
 - `appActionResults`: one result per action that ran.
 - `appActionStatus`: a rollup of the results.
+- `deliberate311DeliveryMode`: `production` or `simulated`, persisted on acceptance
+  together with `deliberate311AcceptedAt`. Retries keep the original mode. Async
+  user-confirmed outbox jobs also store `deliveryMode`.
+- Simulated ticket results contain `deliveryMode: "simulated"`, a stable `SIM-`
+  `srNum`, `submittedAt`, `closesAt` (five minutes later), and `closedReason: "1"`.
+  Status is derived on read rather than stored as a scheduled mutation. Provenance
+  remains in raw analytics exports; City-escalation queries exclude simulations.
+- Site metadata stores `deliberate311ProductionEnabled` (default `true`, including
+  legacy missing values). Only explicit `false` selects simulation; silent filings
+  are unaffected. Supervisor edits write a `site_deliberate_311_delivery_changed`
+  audit event atomically with the flag, retaining actor and previous/new values.
+
 - `maxAcceptableResponseHours`: the response window from the rule. Zero turns off overdue
   checks.
 

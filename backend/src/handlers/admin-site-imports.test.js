@@ -391,6 +391,7 @@ describe("Site CSV import", () => {
       ?.Item;
     if (!site) throw new Error("Expected a Site item");
     expect(site).toMatchObject({
+      deliberate311ProductionEnabled: true,
       siteType: "shelter",
       oversight: {
         managingCityDepartment: "Department of Public Health (DPH)",

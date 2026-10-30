@@ -1,3 +1,7 @@
+import {
+  isSimulated311Ticket,
+  simulated311Ticket,
+} from "../../domain/deliberate-311.js";
 import { createHash } from "node:crypto";
 import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../../db.js";
@@ -664,6 +668,26 @@ async function execute311Action({
     };
   }
 
+  // Resolve simulation before classifiers, City lookups or media publication.
+  if (
+    trigger === "user_confirmed" &&
+    task.deliberate311DeliveryMode === "simulated"
+  ) {
+    const tickets = [...priorTickets.values()];
+    if (tickets.some((ticket) => !isSimulated311Ticket(ticket)))
+      throw new Error("sf311_delivery_mode_conflict_requires_reconciliation");
+    return build311ActionResult({
+      action,
+      status: "submitted",
+      recordedAt: now,
+      tickets: tickets.length
+        ? tickets
+        : [simulated311Ticket(siteId, task, now)],
+    });
+  }
+  if ([...priorTickets.values()].some(isSimulated311Ticket))
+    throw new Error("sf311_delivery_mode_conflict_requires_reconciliation");
+
   const config = getConfig(/** @type {NodeJS.ProcessEnv} */ (env));
   const serviceCodeOrAction =
     /** @type {{ serviceCodeOrAction?: string | null }} */ (
@@ -999,7 +1023,8 @@ export function eligibleTicketsForClosure(priorResults) {
     if (result.status !== "submitted") continue;
     for (const ticket of ticketsFromActionResult(result)) {
       const serviceCode = String(ticket.serviceCode ?? "");
-      if (!serviceCode || !ticket.srNum) continue;
+      if (!serviceCode || !ticket.srNum || isSimulated311Ticket(ticket))
+        continue;
       if (String(ticket.responsibleAgency ?? "") !== GOOD_NEIGHBOR_AGENCY) {
         continue;
       }

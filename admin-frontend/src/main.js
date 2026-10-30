@@ -70,7 +70,7 @@ import {
 /**
  * @typedef {ReturnType<typeof getAdminConfig>} AdminConfig
  * @typedef {{ providerId: string, name: string, sites?: AdminSiteMembership[] }} AdminProvider
- * @typedef {{ siteId: string, complianceManagerIds?: string[], siteName?: string, name?: string, siteType?: string, address?: string, addressParts?: Record<string, string>, contactPerson?: Record<string, string>, primaryContact?: Record<string, string>, oversight?: Record<string, string>, compliance?: Record<string, string | number | boolean>, perimeter?: string, perimeterUpdatedAt?: string, perimeterUpdatedBy?: string, complianceLetters?: { current?: Record<string, string> | null, past?: Record<string, string>[] }, letterState?: string, geocodedAddress?: string, location?: { latitude?: number, longitude?: number }, sk?: string, providerId?: string, providerName?: string, leadProgramId?: string, programName?: string, primaryContactUserId?: string, status?: string, updatedAt?: string }} AdminSite
+ * @typedef {{ siteId: string, deliberate311ProductionEnabled?: boolean, complianceManagerIds?: string[], siteName?: string, name?: string, siteType?: string, address?: string, addressParts?: Record<string, string>, contactPerson?: Record<string, string>, primaryContact?: Record<string, string>, oversight?: Record<string, string>, compliance?: Record<string, string | number | boolean>, perimeter?: string, perimeterUpdatedAt?: string, perimeterUpdatedBy?: string, complianceLetters?: { current?: Record<string, string> | null, past?: Record<string, string>[] }, letterState?: string, geocodedAddress?: string, location?: { latitude?: number, longitude?: number }, sk?: string, providerId?: string, providerName?: string, leadProgramId?: string, programName?: string, primaryContactUserId?: string, status?: string, updatedAt?: string }} AdminSite
  * @typedef {{ siteId: string, siteName: string, status?: string }} AdminSiteMembership
  * @typedef {{ deviceId: string, label?: string, status?: string }} AdminDevice
  * @typedef {{ code: string, issuedTo: string, expiresAt: string }} AdminIssuedCode
@@ -399,6 +399,8 @@ class AdminApp extends HTMLElement {
     const destination = this.pendingSiteDestination;
     let saved = false;
     if (form.id === "site-details-form") saved = await this.updateSite(form);
+    if (form.id === "site-deliberate-311-form")
+      saved = await this.updateSiteDeliberate311(form);
     if (form.id === "site-oversight-form")
       saved = await this.updateOversight(form);
     if (form.id === "site-compliance-form")
@@ -1763,6 +1765,49 @@ class AdminApp extends HTMLElement {
     }
   }
 
+  /** @param {HTMLFormElement} form */
+  async updateSiteDeliberate311(form) {
+    if (!this.state.site || this.state.capabilities.createEntities !== true)
+      return false;
+    const site = this.state.site;
+    const select = form.querySelector(
+      'wa-select[name="deliberate-311-enabled"]',
+    );
+    const feedback = actionFeedback("admin.toast.siteSaved");
+    return withSaveFeedback(
+      form,
+      async () => {
+        const enabled = controlValue(form, "deliberate-311-enabled") === "true";
+        if (select) select.disabled = true;
+        try {
+          const result = await adminApi.updateSiteDeliberate311(site.siteId, {
+            deliberate311ProductionEnabled: enabled,
+            expectedUpdatedAt: site.updatedAt || "",
+          });
+          this.state.sites = upsertRecord(
+            this.state.sites,
+            { ...site, ...result.site },
+            "siteId",
+          );
+          if (this.state.site?.siteId === site.siteId)
+            this.state.site = { ...this.state.site, ...result.site };
+          syncDirtyForm(form, true);
+          feedback.success();
+          return true;
+        } finally {
+          if (select) select.disabled = false;
+        }
+      },
+      {
+        savingLabel: t("siteAdmin.edit.saving"),
+        onError: (error) => {
+          feedback.failure(error);
+          showFormSaveError(form, adminErrorMessage(error, t));
+        },
+      },
+    );
+  }
+
   /**
    * @param {HTMLFormElement} form
    * @param {"all" | "details" | "address" | "lead-program" | "site-manager"} [section]
@@ -2017,7 +2062,11 @@ class AdminApp extends HTMLElement {
         terms: "compliance",
         letters: "compliance",
         perimeter: "compliance",
-      }[requested] || requested;
+      }[requested] ||
+      (requested === "settings" &&
+      this.state.capabilities.createEntities !== true
+        ? "details"
+        : requested);
     const sameSite = this.state.site?.siteId === siteId;
     this.siteSectionLoads ||= new Map();
     if (!sameSite || refresh) this.siteSectionLoads.clear();
@@ -2113,14 +2162,18 @@ class AdminApp extends HTMLElement {
         String(item.sk || "").startsWith("ASSIGNED_USER#"),
       );
     }
-    this.state.assignedComplianceManagers = (site.items || [])
-      .filter((item) => String(item.sk || "").startsWith("COMPLIANCE_MANAGER#"))
-      .map((assignment) => ({
-        ...assignment,
-        ...this.state.programManagers.find(
-          (manager) => manager.userId === assignment.managerId,
-        ),
-      }));
+    if (section !== "settings" || !sameSite) {
+      this.state.assignedComplianceManagers = (site.items || [])
+        .filter((item) =>
+          String(item.sk || "").startsWith("COMPLIANCE_MANAGER#"),
+        )
+        .map((assignment) => ({
+          ...assignment,
+          ...this.state.programManagers.find(
+            (manager) => manager.userId === assignment.managerId,
+          ),
+        }));
+    }
     const people =
       peopleResult?.people || (sameSite ? this.state.people || [] : []);
     this.state.people = people;
@@ -4484,7 +4537,7 @@ class AdminApp extends HTMLElement {
       button.addEventListener("click", () => button.closest("dialog")?.close());
     });
     this.querySelectorAll(
-      "#admin-user-form, #site-oversight-form, #site-compliance-form, #site-perimeter-form, #site-manager-record-form, #provider-manager-record-form",
+      "#admin-user-form, #site-oversight-form, #site-compliance-form, #site-perimeter-form, #site-manager-record-form, #provider-manager-record-form, #site-deliberate-311-form",
     ).forEach((form) => {
       const sync = () => syncDirtyForm(form);
       syncDirtyForm(form, true);
@@ -4492,6 +4545,17 @@ class AdminApp extends HTMLElement {
       form.addEventListener("change", sync);
       form.addEventListener("reset", () => queueMicrotask(sync));
     });
+    this.querySelector("#site-deliberate-311-form")?.addEventListener(
+      "save-feedback-end",
+      (event) => syncDirtyForm(event.currentTarget),
+    );
+    this.querySelector("#site-deliberate-311-form")?.addEventListener(
+      "submit",
+      (event) => {
+        event.preventDefault();
+        void this.updateSiteDeliberate311(asForm(event.currentTarget));
+      },
+    );
     const providerDetailsForm = this.querySelector("#provider-details-form");
     if (providerDetailsForm instanceof HTMLFormElement) {
       const sync = () => syncProviderDetailsForm(providerDetailsForm);
@@ -5377,7 +5441,11 @@ class AdminApp extends HTMLElement {
         terms: "compliance",
         letters: "compliance",
         perimeter: "compliance",
-      }[requestedSection] || requestedSection;
+      }[requestedSection] ||
+      (requestedSection === "settings" &&
+      this.state.capabilities.createEntities !== true
+        ? "details"
+        : requestedSection);
     this.innerHTML = `
       <main class="admin" id="main-content" tabindex="-1">
         <header class="admin__header">
@@ -5467,7 +5535,7 @@ class AdminApp extends HTMLElement {
                     </p>
                   </div>
                 </div>
-                ${siteSectionNav(site.siteId, activeSiteSection)}
+                ${siteSectionNav(site.siteId, activeSiteSection, this.state.capabilities.createEntities === true)}
                 ${siteSectionView(this.state, activeSiteSection, siteSubview)}
                 ${discardChangesDialog()}
               </section>
@@ -5773,13 +5841,14 @@ function deactivateSiteSection(siteName) {
   </section>`;
 }
 
-/** @param {string} siteId @param {string} current */
-function siteSectionNav(siteId, current) {
+/** @param {string} siteId @param {string} current @param {boolean} [showAppSettings] */
+function siteSectionNav(siteId, current, showAppSettings = false) {
   const sections = [
     ["details", "Site details"],
     ["oversight", "Oversight"],
     ["compliance", "Compliance"],
     ["access", "App access"],
+    ...(showAppSettings ? [["settings", t("admin.sites.appSettings")]] : []),
   ];
   return `<nav class="entity-tabs" aria-label="Site sections">${sections
     .map(
@@ -5801,6 +5870,8 @@ function siteSectionView(state, section, subview = "") {
     return `${readOnly}${siteComplianceSummaryView(state)}${state.siteSaveMessage ? `<p class="success" role="status">${escapeHtml(state.siteSaveMessage)}</p>` : ""}${siteTermsView(state)}${siteLettersView(state)}${sitePerimeterView(state)}${complianceReasonsDialog()}`;
   }
   if (section === "access") return readOnly + siteAccessView(state);
+  if (section === "settings" && state.capabilities.createEntities === true)
+    return siteDeliberate311View(state);
   return `${readOnly}${siteEditor(state)}
     ${state.siteSaveMessage ? `<p id="site-save-status" class="success" role="status">${escapeHtml(state.siteSaveMessage)}</p>` : ""}
     ${state.capabilities.createEntities ? deactivateSiteSection(site.name) : ""}
@@ -7374,6 +7445,25 @@ function siteEditor(state) {
   ${leadProgramConfirmationDialog()}
   ${state.capabilities.createEntities && site.providerId ? createSiteProgramDialog() : ""}
   `;
+}
+
+/** @param {AdminState} state */
+function siteDeliberate311View(state) {
+  if (state.capabilities.createEntities !== true || !state.site) return "";
+  const enabled = state.site.deliberate311ProductionEnabled !== false;
+  return `<section class="subsection" aria-labelledby="site-deliberate-311-title">
+    <h2 id="site-deliberate-311-title">${escapeHtml(t("admin.sites.deliberate311.title"))}</h2>
+    <form id="site-deliberate-311-form" class="site-details-form" data-dirty-form aria-labelledby="site-deliberate-311-title">
+      <div class="form-grid form-grid--one">
+        <wa-select name="deliberate-311-enabled" value="${enabled}" label="${escapeHtml(t("admin.sites.deliberate311.label"))}" data-initial-value="${enabled}">
+          <wa-option value="true" ${enabled ? "selected" : ""}>${escapeHtml(t("admin.sites.deliberate311.production"))}</wa-option>
+          <wa-option value="false" ${enabled ? "" : "selected"}>${escapeHtml(t("admin.sites.deliberate311.simulated"))}</wa-option>
+        </wa-select>
+        <p>${escapeHtml(t("admin.sites.deliberate311.hint"))}</p>
+        <button class="btn-primary" type="submit" data-save-button disabled>${escapeHtml(t("common.save"))}</button>
+      </div>
+    </form>
+  </section>`;
 }
 
 function createSiteProgramDialog() {

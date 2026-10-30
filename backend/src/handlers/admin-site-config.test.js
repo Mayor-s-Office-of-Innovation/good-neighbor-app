@@ -942,3 +942,79 @@ it("rejects ambiguous legacy unassignment before deactivating any membership", a
   );
   expect(send.mock.calls).toHaveLength(4);
 });
+
+describe("supervisor deliberate 311 setting", () => {
+  it.each([undefined, "false", 0, null])(
+    "rejects a non-Boolean setting (%s)",
+    async (value) => {
+      const { putSiteDeliberate311 } = await import("./admin-site-config.js");
+      const response = await call(
+        putSiteDeliberate311,
+        event({ deliberate311ProductionEnabled: value }, { siteId: "site-1" }),
+      );
+      expect(response.statusCode).toBe(400);
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
+  it("denies Managers before accessing the Site", async () => {
+    const { putSiteDeliberate311 } = await import("./admin-site-config.js");
+    const request = event(
+      { deliberate311ProductionEnabled: false },
+      { siteId: "site-1" },
+    );
+    /** @type {any} */ (request).requestContext.authorizer.jwt.claims[
+      "cognito:groups"
+    ] = "compliance-manager";
+    expect((await call(putSiteDeliberate311, request)).statusCode).toBe(403);
+    expect(send).not.toHaveBeenCalled();
+  });
+  it("atomically audits disablement and checks the loaded Site version", async () => {
+    const { putSiteDeliberate311 } = await import("./admin-site-config.js");
+    send.mockResolvedValueOnce({
+      Item: { siteId: "site-1", updatedAt: "version", status: "active" },
+    });
+    const response = await call(
+      putSiteDeliberate311,
+      event(
+        { deliberate311ProductionEnabled: false, expectedUpdatedAt: "version" },
+        { siteId: "site-1" },
+      ),
+    );
+    expect(response.statusCode).toBe(200);
+    expect(
+      JSON.parse(String(response.body)).site.deliberate311ProductionEnabled,
+    ).toBe(false);
+    const items = send.mock.calls[1][0].input.TransactItems;
+    expect(items[0].Update).toMatchObject({
+      ConditionExpression: "attribute_exists(pk) AND updatedAt = :expected",
+      ExpressionAttributeValues: { ":expected": "version", ":enabled": false },
+    });
+    expect(items[1].Put.Item).toMatchObject({
+      eventType: "site_deliberate_311_delivery_changed",
+      previousEnabled: true,
+      enabled: false,
+      actor: "admin-1",
+    });
+  });
+  it("rejects stale settings without an audit write", async () => {
+    const { putSiteDeliberate311 } = await import("./admin-site-config.js");
+    send.mockResolvedValueOnce({
+      Item: { siteId: "site-1", updatedAt: "new-version" },
+    });
+    expect(
+      (
+        await call(
+          putSiteDeliberate311,
+          event(
+            {
+              deliberate311ProductionEnabled: false,
+              expectedUpdatedAt: "old-version",
+            },
+            { siteId: "site-1" },
+          ),
+        )
+      ).statusCode,
+    ).toBe(409);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+});

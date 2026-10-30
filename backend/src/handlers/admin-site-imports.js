@@ -518,6 +518,7 @@ async function applyOneRow(importId, row) {
         sk: "#META",
         type: "site",
         entityType: "SITE",
+        deliberate311ProductionEnabled: true,
         siteId: plan.site.id,
         name: source["Site name"],
         address: source["Site address"],

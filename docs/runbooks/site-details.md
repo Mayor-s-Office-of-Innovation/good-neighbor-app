@@ -97,3 +97,25 @@ outbox, PDF generation, and history are exercised together.
 The dev Site seed initializes an explicit synthetic `publicContact` with
 `if_not_exists`, preserving edits on subsequent runs. It does not derive public
 contact information from the legacy `contactPerson` field.
+
+## Deliberate 311 delivery
+
+Supervisors can use **Change 311 filing ability** under a Site's **App settings** tab,
+next to **App access**. Enabled
+sends user-launched requests to production 311; disabled creates simulated
+requests. New/imported Sites default to enabled, and legacy Sites without the
+setting are also enabled. Silent automatic notifications always use the real
+integration, subject to the existing global submission kill switch.
+
+Save changes before leaving. Concurrent Site edits return a conflict; reload the
+Site before retrying. The setting is version checked and audited. It applies only
+to newly accepted filings, including offline filings when they reach the backend.
+Retries and existing real or simulated tickets retain their original mode.
+
+Simulated requests display “Request filed (simulated)” in the open-ticket ticker.
+On the next normal status refresh five minutes after acceptance they return Closed,
+reason 1 (Resolved), using the existing closed-ticket UI. No actual City request,
+attachment or note is sent. Simulated closure does not resolve the underlying
+issue. Support can identify simulation from the ticket's stored delivery mode and
+`SIM-` reference. Analytics exclude simulations from City-escalation counts/lists
+while retaining ordinary task activity and raw provenance.

@@ -281,3 +281,15 @@ it("targets an open ticket after a partial closure and none after all close", ()
   });
   expect(cityHelpTicket(task)).toBe("");
 });
+
+it("never sends or reconciles a synthetic reference, even on a legacy delivery record", async () => {
+  expect(
+    await deliverCityHelpNote("table", "site", {
+      ...update(),
+      cityNotePayload: { ...payload, SRnum: "SIM-synthetic" },
+    }),
+  ).toBe(true);
+  expect(mocks.send).not.toHaveBeenCalled();
+  expect(mocks.update).not.toHaveBeenCalled();
+  expect(mocks.latest).not.toHaveBeenCalled();
+});

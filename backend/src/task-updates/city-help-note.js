@@ -111,6 +111,8 @@ export function cityHelpNoteExists(body, payload) {
  */
 export async function deliverCityHelpNote(tableName, siteId, update) {
   if (!update.cityNotePayload || update.cityNoteStatus === "sent") return true;
+  if (String(update.cityNotePayload.SRnum || "").startsWith("SIM-"))
+    return true;
   if (process.env.GNP_311_SUBMISSION_ENABLED !== "true") return false;
   const Key = taskUpdateKey(
     siteId,

@@ -341,6 +341,11 @@ export const adminApi = {
       method: "PATCH",
       body: JSON.stringify(values),
     }),
+  updateSiteDeliberate311: (siteId, values) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/deliberate-311`, {
+      method: "PUT",
+      body: JSON.stringify(values),
+    }),
   reassignSite: (siteId, providerId, leadProgramId, options = {}) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/reassign`, {
       method: "POST",
