@@ -33,10 +33,14 @@ test.describe("public complaints", () => {
     await expect(trigger).toHaveAttribute("aria-expanded", "false");
     await expect(menu).toBeHidden();
 
-    const triggerBox = await trigger.boundingBox();
-    expect(triggerBox).not.toBeNull();
-    expect(triggerBox?.width).toBe(54);
-    expect(triggerBox?.height).toBe(54);
+    // Home hydration can replace the trigger between visibility and layout
+    // reads. Re-resolve it until the rendered geometry is available.
+    await expect
+      .poll(async () => {
+        const box = await trigger.boundingBox();
+        return box ? { width: box.width, height: box.height } : null;
+      })
+      .toEqual({ width: 54, height: 54 });
     // Check each corner directly: Chromium can serialize the computed
     // border-radius shorthand as an empty string on some platforms.
     for (const corner of [
