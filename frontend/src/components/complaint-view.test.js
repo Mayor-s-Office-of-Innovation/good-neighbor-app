@@ -33,6 +33,7 @@ vi.stubGlobal(
   "HTMLElement",
   class {
     innerHTML = "";
+    isConnected = true;
     querySelector() {
       return null;
     }

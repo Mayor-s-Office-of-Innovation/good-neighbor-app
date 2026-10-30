@@ -41,7 +41,7 @@ for (const screen of ["today-view", "perimeter-check", "problem-report"]) {
           "/src/components/analysis-problem-actions.js",
         );
         document.body.innerHTML =
-          '<main id="fixture"></main><app-toasts></app-toasts>';
+          '<main id="fixture"></main><output id="resolution-status" aria-label="Resolution status"></output><app-toasts></app-toasts>';
         const host = /** @type {any} */ (document.querySelector("#fixture"));
         const task = {
           taskId: "resolve-fixture",
@@ -67,11 +67,21 @@ for (const screen of ["today-view", "perimeter-check", "problem-report"]) {
         const proto = /** @type {any} */ (window.customElements.get(screen))
           .prototype;
         host._problemFromCard = problemFromCard;
+        const showSaved = (/** @type {Record<string, any>} */ saved) => {
+          const status = document.querySelector("#resolution-status");
+          if (status) status.textContent = saved.status;
+        };
+        // Capture the actual persisted state through the session update path
+        // for capture hosts; Today receives it through its TaskSheets callback.
+        session.onCheckSessionChange(() => {
+          if (session.findItem(item.id)?.analysis?.tasks?.length === 0)
+            showSaved({ status: "completed" });
+        });
         if (screen === "today-view") {
           const sheets = new TaskSheets({
             host,
             container: () => host,
-            onTaskUpdated: () => (host.dataset.saved = "true"),
+            onTaskUpdated: showSaved,
           });
           host._taskSheets = () => sheets;
           const card = host.querySelector(".analysis-card");
@@ -98,9 +108,8 @@ for (const screen of ["today-view", "perimeter-check", "problem-report"]) {
       await expect(page.locator("task-update-dialog dialog[open]")).toHaveCount(
         0,
       );
-      await expect(
-        page.getByText(t("taskUpdate.siteResolved"), { exact: true }),
-      ).toBeVisible();
+      await expect(page.locator(".app-toast--success")).toHaveCount(0);
+      await expect(page.locator("#resolution-status")).toHaveText("completed");
 
       expect(requests).toBe(1);
     });

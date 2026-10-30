@@ -64,14 +64,8 @@ function save(receipt) {
       errors.delete(key);
       return result;
     } catch (error) {
-      if (!errors.has(key))
-        errors.set(
-          key,
-          showActionSaveErrorToast(() => {
-            errors.delete(key);
-            void recoverPhoneCompletions();
-          }),
-        );
+      if ((await getSite().catch(() => null))?.siteId === receipt.siteId)
+        showPhoneCompletionError(receipt.taskId, receipt.siteId);
       throw error;
     } finally {
       active.delete(key);
@@ -79,6 +73,24 @@ function save(receipt) {
   })();
   active.set(key, attempt);
   return attempt;
+}
+
+/** Reattach save-only recovery after a card repaint without redialing.
+ * @param {string} taskId
+ * @param {string} siteId
+ * @param {Element | null} [target]
+ */
+export function showPhoneCompletionError(taskId, siteId, target) {
+  const key = keyFor({ taskId, siteId });
+  if (!receipts.has(key)) return;
+  errors.get(key)?.close();
+  const retry = () => recoverPhoneCompletions();
+  errors.set(
+    key,
+    target
+      ? showActionSaveErrorToast(retry, target)
+      : showActionSaveErrorToast(retry),
+  );
 }
 
 /** Retry saves only for the active site; recovery never opens the dialer. */
@@ -128,4 +140,15 @@ export function startPhoneCompletionRecovery() {
     window.removeEventListener("online", resume);
     document.removeEventListener("visibilitychange", resume);
   };
+}
+
+/** Preserve failed save recovery when a refreshed worklist replaces its cards. */
+export function restorePhoneCompletionErrors(host, siteId) {
+  for (const [key, receipt] of receipts) {
+    if (!errors.has(key) || receipt.siteId !== siteId) continue;
+    const card = [...host.querySelectorAll("[data-task-id]")].find(
+      (node) => node.getAttribute("data-task-id") === receipt.taskId,
+    );
+    if (card) showPhoneCompletionError(receipt.taskId, receipt.siteId, card);
+  }
 }

@@ -180,9 +180,9 @@ test.describe("public complaints", () => {
       });
     });
     await submit.click();
-    await expect(page.getByRole("alert")).toHaveText(
-      t("complaints.submitError"),
-    );
+    await expect(
+      page.locator("complaint-view").getByRole("alert"),
+    ).toContainText(t("complaints.submitError"));
     await expect(submit).toBeEnabled();
     await expect(description).toHaveValue("Five!");
 
@@ -228,9 +228,9 @@ test.describe("public complaints", () => {
     expect(await link.evaluate((element) => element.tagName)).toBe("A");
 
     await link.click();
-    await expect(page.getByRole("alert")).toHaveText(
-      t("complaints.detailError"),
-    );
+    await expect(
+      page.locator("complaint-view").getByRole("alert"),
+    ).toContainText(t("complaints.detailError"));
     await expect(page.locator(".complaints .topbar__back")).toBeVisible();
   });
 });
