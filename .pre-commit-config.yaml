@@ -15,7 +15,14 @@ repos:
     rev: v1.92.3
     hooks:
       - id: terraform_fmt
+  - repo: local
+    hooks:
       - id: terraform_validate
+        name: Terraform validate (root configurations)
+        entry: bash infra/scripts/validate-terraform.sh
+        language: system
+        pass_filenames: false
+        files: '^(infra/.*\.(tf|tfvars|hcl)|infra/scripts/validate-terraform\.sh|\.pre-commit-config\.yaml)$'
   - repo: https://github.com/bridgecrewio/checkov
     rev: 3.2.252
     hooks:

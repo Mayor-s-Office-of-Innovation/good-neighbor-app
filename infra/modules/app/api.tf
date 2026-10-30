@@ -76,6 +76,7 @@ locals {
     "POST /v1/tasks/{taskId}/updates/{updateId}/document",
     "POST /v1/tasks/{taskId}/update-media",
     "GET /v1/tasks/{taskId}/311-requests/{srNum}",
+    "GET /v1/guidance/pending",
     "POST /v1/assessments:evaluate",
     "GET /v1/assessments/{assessmentId}/guidance",
     "POST /v1/assessments/{assessmentId}/conditions/{conditionId}/answers",

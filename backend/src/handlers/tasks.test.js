@@ -1,4 +1,8 @@
-import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  BatchGetCommand,
+  GetCommand,
+  QueryCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the Document Client so the handler's read hits a spy, not AWS.
@@ -98,6 +102,36 @@ describe("listTasks", () => {
       ],
     });
 
+    send.mockResolvedValueOnce({
+      Responses: {
+        "gnp-test-app": [
+          {
+            taskId: "t-low",
+            status: "open",
+            severity: 1,
+            createdAt: "2026-08-18",
+          },
+          {
+            taskId: "t-high-old",
+            status: "open",
+            severity: 4,
+            createdAt: "2026-08-10",
+          },
+          {
+            taskId: "t-high-new",
+            status: "open",
+            severity: 4,
+            createdAt: "2026-08-15",
+          },
+          {
+            taskId: "t-mid",
+            status: "open",
+            severity: 2,
+            createdAt: "2026-08-19",
+          },
+        ],
+      },
+    });
     const res = await invoke(readEvent({ siteClaim: "site-1" }));
 
     const order = /** @type {any[]} */ (JSON.parse(res.body).tasks).map(
@@ -130,6 +164,30 @@ describe("listTasks", () => {
       ],
     });
 
+    send.mockResolvedValueOnce({
+      Responses: {
+        "gnp-test-app": [
+          {
+            taskId: "t-new-low-1",
+            status: "open",
+            severity: 1,
+            createdAt: "2026-08-19",
+          },
+          {
+            taskId: "t-new-low-2",
+            status: "open",
+            severity: 1,
+            createdAt: "2026-08-18",
+          },
+          {
+            taskId: "t-old-high",
+            status: "open",
+            severity: 5,
+            createdAt: "2026-08-01",
+          },
+        ],
+      },
+    });
     const res = await invoke(
       readEvent({ siteClaim: "site-1", query: { limit: "2" } }),
     );
@@ -149,6 +207,9 @@ describe("listTasks", () => {
         { taskId: "t1", severity: 3, createdAt: "2026-08-19T00:00:00.000Z" },
       ],
       LastEvaluatedKey: { gsi2pk: "SITE#site-1#TASK#open" },
+    });
+    send.mockResolvedValueOnce({
+      Responses: { "gnp-test-app": [{ taskId: "t1", status: "open" }] },
     });
 
     const res = await invoke(readEvent({ siteClaim: "site-1" }));
@@ -321,4 +382,66 @@ it("reads fresh simulator statuses on consecutive requests while leaving the pro
     fetchSpy.mockRestore();
     vi.unstubAllEnvs();
   }
+});
+
+it("filters stale open-index entries using current site-owned task rows before ranking", async () => {
+  send.mockReset();
+  process.env.DYNAMO_TABLE = "gnp-test-app";
+  send.mockResolvedValueOnce({
+    Items: [{ taskId: "done" }, { taskId: "dismissed" }, { taskId: "live" }],
+  });
+  send.mockResolvedValueOnce({
+    Responses: {
+      "gnp-test-app": [
+        { taskId: "done", status: "completed" },
+        { taskId: "dismissed", status: "superseded" },
+        { taskId: "live", status: "open" },
+      ],
+    },
+  });
+  const result = await invoke(
+    readEvent({ siteClaim: "site-1", query: { limit: "1" } }),
+  );
+  expect(
+    JSON.parse(result.body).tasks.map((/** @type {any} */ task) => task.taskId),
+  ).toEqual(["live"]);
+  expect(send.mock.calls[1][0]).toBeInstanceOf(BatchGetCommand);
+  expect(send.mock.calls[1][0].input.RequestItems["gnp-test-app"]).toEqual({
+    Keys: ["done", "dismissed", "live"].map((id) => ({
+      pk: "SITE#site-1",
+      sk: `TASK#${id}`,
+    })),
+    ConsistentRead: true,
+  });
+});
+
+it("hides a durably dismissed task even while task cleanup is awaiting a retry", async () => {
+  send.mockReset();
+  process.env.DYNAMO_TABLE = "gnp-test-app";
+  send.mockResolvedValueOnce({ Items: [{ taskId: "dismissed" }] });
+  send.mockResolvedValueOnce({
+    Responses: {
+      "gnp-test-app": [
+        {
+          taskId: "dismissed",
+          status: "open",
+          checkId: "check",
+          conditionId: "c",
+          sourceArtifactIds: ["artifact"],
+        },
+      ],
+    },
+  });
+  send.mockResolvedValueOnce({
+    Responses: {
+      "gnp-test-app": [
+        {
+          sk: "ISSUE_DELETION#check:artifact:c",
+          dismissedAt: "2026-10-29T12:00:00Z",
+        },
+      ],
+    },
+  });
+  const result = await invoke(readEvent({ siteClaim: "site-1" }));
+  expect(JSON.parse(result.body).tasks).toEqual([]);
 });

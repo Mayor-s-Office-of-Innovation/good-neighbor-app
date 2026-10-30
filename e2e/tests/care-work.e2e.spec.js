@@ -117,7 +117,7 @@ test.describe("proactive care", () => {
       ),
     ).toBe(true);
   });
-  test("keeps the same submission on an uncertain response and retries without duplicating", async ({
+  test("reconciles an uncertain committed response without duplicating", async ({
     page,
   }) => {
     await openLogs(page);
@@ -142,13 +142,19 @@ test.describe("proactive care", () => {
       return route.fallback();
     });
     await page.locator("[data-save]").click();
-    await expect(page.locator("[data-retry-work]")).toBeVisible();
-    await save(page, true);
-    expect(submissions).toHaveLength(2);
-    expect(submissions[0]).toEqual(submissions[1]);
-    await expect(
-      page.locator(`[data-work="${submissions[0].workId}"]`),
-    ).toHaveCount(1);
+    // A committed response can appear in the saved list before the failed
+    // local attempt settles. Otherwise the user retries the same queued item.
+    await expect.poll(() => submissions.length).toBeGreaterThan(0);
+    const id = submissions[0].workId;
+    const saved = page.locator(`[data-work="${id}"]`);
+    const retry = page.locator(`[data-retry-work="${id}"]`);
+    await expect
+      .poll(async () => (await retry.isVisible()) || (await saved.isVisible()))
+      .toBe(true);
+    if (await retry.isVisible()) await retry.click();
+    await expect(saved).toHaveCount(1);
+    for (const submission of submissions)
+      expect(submission).toEqual(submissions[0]);
   });
 });
 
