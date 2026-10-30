@@ -38,7 +38,7 @@ export function taskUpdateDialogShell({ mode, state, content }) {
               >
                 <wa-icon name="chevron-left"></wa-icon>
               </button>`
-            : html`<span></span>`}
+            : "<span></span>"}
           <button
             class="btn-icon wa-plain"
             data-close

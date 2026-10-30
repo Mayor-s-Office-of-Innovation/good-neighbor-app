@@ -327,7 +327,7 @@ Add Notes contract (`UpdateType: 5`, `NumericSubType: 2`), not a closure update;
 the task remains in progress until the external resolution flow completes.
 
 The event and task are saved atomically before note delivery. `cityNoteStatus`
-tracks `pending`, `sending`, `sent`, or `unknown`; `cityNoteLeaseExpiresAt` gives
+tracks `pending`, `sending`, `sent`, `unknown`, or terminal `suppressed`; `cityNoteLeaseExpiresAt` gives
 one sender a 60-second lease. The client reuses the same idempotency key when
 retrying an unchanged draft. Successful retries reuse the event and do not
 resend the note. Explicit HUB validation rejections return to `pending`.
@@ -336,7 +336,9 @@ City feed using the SR, sending agency, note text, and effective time. If delive
 cannot be confirmed, the API returns `502` with `updateSaved: true`; it does not
 blindly resend an uncertain note. Such records may need operational investigation
 if the City feed never exposes the matching update. Sending respects
-`GNP_311_SUBMISSION_ENABLED`.
+`GNP_311_SUBMISSION_ENABLED`. Suppressed silent notes are never replayed or
+reported as sent. Suppression clears an owned or expired lease conditionally and
+never overwrites an active sender.
 
 `canBeInProgress` is snapshotted from the versioned guidance rule when the task is
 created. The first successful card action moves eligible tasks to `in_progress`; tasks
