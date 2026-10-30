@@ -4,6 +4,7 @@
  * @property {string} [complaintBucket]
  * @property {string} [complianceLetterBucket]
  * @property {string} [analysisQueueUrl]
+ * @property {string} [sf311QueueUrl]
  * @property {string} queueUrl
  * @property {string} dynamoTable
  * @property {string} [cognitoUserPoolId]
@@ -46,6 +47,7 @@ export function getConfig(env = process.env) {
 
   const config = /** @type {AppConfig} */ (required);
   if (env.ANALYSIS_QUEUE_URL) config.analysisQueueUrl = env.ANALYSIS_QUEUE_URL;
+  if (env.SF311_QUEUE_URL) config.sf311QueueUrl = env.SF311_QUEUE_URL;
   if (env.S3_COMPLAINT_BUCKET) {
     config.complaintBucket = env.S3_COMPLAINT_BUCKET;
   }

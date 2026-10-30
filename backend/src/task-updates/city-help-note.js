@@ -4,6 +4,7 @@ import {
   Silent311Suppressed,
 } from "../domain/silent-311.js";
 import { openFiledTicketNumbers } from "../domain/open-filed-tickets.js";
+import { reportSf311Failure } from "../integrations/sf311-observability.js";
 import { logServerError } from "../lib/log-server-error.js";
 import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { getConfig } from "../config.js";
@@ -23,6 +24,19 @@ import { findServiceRequest } from "../integrations/sf311-status.js";
  * @param {Record<string, any>} update
  */
 export function logCityNoteFailure(stage, error, update) {
+  reportSf311Failure(
+    "note",
+    stage === "reconciliation" && !(error instanceof Sf311Error)
+      ? "note_delivery_unknown"
+      : error instanceof Sf311Error
+        ? error.code
+        : undefined,
+    {
+      terminal: true,
+      taskId: update.taskId,
+      jobId: update.updateId,
+    },
+  );
   const safe = new Error(`City note ${stage} failed`);
   if (error instanceof Error) {
     safe.name = /^[\w.-]{1,80}$/.test(error.name) ? error.name : "Error";
@@ -34,6 +48,7 @@ export function logCityNoteFailure(stage, error, update) {
   const code = error instanceof Sf311Error ? String(error.code || "") : "";
   logServerError("city-note", safe, {
     extra: {
+      integration: "sf311",
       stage,
       taskId: update.taskId,
       updateId: update.updateId,

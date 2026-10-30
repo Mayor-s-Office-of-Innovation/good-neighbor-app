@@ -17,6 +17,7 @@ import { handler as translateArtifact } from "../workers/translate-artifact.js";
 import { handler as analyzeComplaint } from "../workers/analyze-complaint.js";
 import { TRANSLATE_MESSAGE_TYPE } from "../analysis/translate-enqueue.js";
 import { logServerError } from "../lib/log-server-error.js";
+import { logSf311JobError } from "../integrations/sf311-observability.js";
 
 /**
  * Pick the worker for a message by its shape (mirrors local-worker.mjs
@@ -111,9 +112,21 @@ export const handler = async (event, context) => {
         "";
       // Structured error convention (logServerError) — groupable + alarmable;
       // then batchItemFailures drives the SQS redrive as before.
-      logServerError(`worker ${messageId}`, result.reason, {
-        extra: { messageId },
-      });
+      const is311 =
+        "body" in failedRecord && pickHandler(failedRecord.body) === sf311Job;
+      if (is311) {
+        const record = /** @type {import("aws-lambda").SQSRecord} */ (
+          failedRecord
+        );
+        logSf311JobError(result.reason, {
+          messageId,
+          attempt: Number(record.attributes?.ApproximateReceiveCount),
+        });
+      } else {
+        logServerError(`worker ${messageId}`, result.reason, {
+          extra: { messageId },
+        });
+      }
       batchItemFailures.push({ itemIdentifier: messageId });
     } else if (result.value?.batchItemFailures) {
       // Child handlers may catch record errors and resolve with a partial-batch

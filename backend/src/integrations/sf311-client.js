@@ -4,6 +4,7 @@ import {
   SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
 import { getConfig } from "../config.js";
+import { observeSf311Request } from "./sf311-observability.js";
 
 const SOURCE_AGENCY = "76";
 const SENDING_AGENCY = "76";
@@ -374,13 +375,19 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
           request,
         });
       }
+      if (error instanceof TypeError) {
+        throw new Sf311Error("SF311 network request failed", {
+          code: "sf311_network_error",
+          request,
+        });
+      }
       throw error;
     } finally {
       timeout.cancel();
     }
   };
 
-  return {
+  const client = {
     async getLatestUpdatesBySourceAgency(agencyId = GOOD_NEIGHBOR_AGENCY) {
       if (!latestUpdatesUrl)
         throw new Error("SF311_LATEST_UPDATES_URL is required");
@@ -567,5 +574,32 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
         response: body,
       };
     },
+  };
+  return {
+    /** @param {string} [agencyId] */
+    getLatestUpdatesBySourceAgency: (agencyId) =>
+      observeSf311Request("status", () =>
+        client.getLatestUpdatesBySourceAgency(agencyId),
+      ),
+    /** @param {string} serviceCode */
+    lookupResponsibleAgency: (serviceCode) =>
+      observeSf311Request("agency_lookup", () =>
+        client.lookupResponsibleAgency(serviceCode),
+      ),
+    /** @param {Record<string, string>} payload */
+    createServiceRequest: (payload) =>
+      observeSf311Request("create", () => client.createServiceRequest(payload)),
+    /** @param {Record<string, string>} payload */
+    updateServiceRequest: (payload) =>
+      observeSf311Request(
+        payload.UpdateType === "11"
+          ? "close"
+          : payload.UpdateType === "8"
+            ? "attachment"
+            : payload.UpdateType === "5"
+              ? "note"
+              : "update",
+        () => client.updateServiceRequest(payload),
+      ),
   };
 }

@@ -19,8 +19,10 @@ to a production queue, purge a shared queue, or replay real 311/email actions as
 test data. A production incident redrive needs a diagnosed cause and an owner.
 
 The queues are `good-neighbor-app-<env>-analysis` (foreground captures),
-`good-neighbor-app-<env>-submissions` (background/legacy work), and their `-dlq`
-queues. Main analysis/submissions queues retain messages for four days; their
+`good-neighbor-app-<env>-submissions` (background/legacy work),
+`good-neighbor-app-<env>-311` (311 jobs), and their `-dlq` queues.
+See the [311 runbook](sf311.md) for reconciliation and legacy messages.
+These source queues retain messages for four days; their
 DLQs retain them for 14 days. They dead-letter after five receives. Treat
 approximate message counts as diagnostic signals rather than an exact inventory.
 Duplicate detection has its own queues and recovery semantics; use the

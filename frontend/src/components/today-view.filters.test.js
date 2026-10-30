@@ -275,6 +275,73 @@ describe("clear perimeter checks on home", () => {
     expect(overlapMarkup.match(/Your check was clear!/g)).toHaveLength(1);
   });
 
+  it("keeps a new clear result while older unanswered questions load", async () => {
+    freezeClock();
+    const view = await mount("?filter=todo");
+    const pendingSession = {
+      id: "clear-check",
+      status: "capture-complete",
+      startedAt: NEWER_TODAY,
+      items: [
+        {
+          id: "clear-photo",
+          analysis: { status: "analyzed", tasks: [], conditions: [] },
+        },
+      ],
+    };
+    const model = {
+      last: null,
+      checks: [],
+      latestStartedCheck: { id: pendingSession.id, startedAt: NEWER_TODAY },
+      tasks: [],
+      pendingSession,
+    };
+    expect(view._render(model).match(/analysis-card--clear/g)).toHaveLength(1);
+
+    const pendingQuestions = [
+      {
+        id: "older-question",
+        checkId: "older-check",
+        analysis: {
+          status: "analyzed",
+          assessment: { assessmentId: "older-assessment" },
+          tasks: [],
+          conditions: [
+            {
+              conditionId: "older-condition",
+              category: "Graffiti",
+              status: "needs_answer",
+              needsAnswer: { key: "provider_generated", options: [] },
+            },
+          ],
+        },
+      },
+    ];
+    const hydrated = view._render({ ...model, pendingQuestions });
+    expect(hydrated.match(/analysis-card--clear/g)).toHaveLength(1);
+    expect(hydrated).toContain(todayTitle(NEWER_TODAY));
+    expect(hydrated).toContain('data-condition-id="older-condition"');
+
+    // Once the saved header arrives, it replaces the local clear result.
+    const completed = {
+      id: pendingSession.id,
+      status: "submitted",
+      submittedAt: NEWER_TODAY,
+      issueCount: 0,
+    };
+    for (const pending of [pendingSession, null]) {
+      const saved = view._render({
+        ...model,
+        last: completed,
+        checks: [completed],
+        pendingSession: pending,
+        pendingQuestions,
+      });
+      expect(saved.match(/analysis-card--clear/g)).toHaveLength(1);
+      expect(saved).toContain('data-condition-id="older-condition"');
+    }
+  });
+
   it("shows the latest clear check only on To-do", async () => {
     freezeClock();
     const view = await mount("?filter=todo");

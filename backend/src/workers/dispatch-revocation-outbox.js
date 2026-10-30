@@ -62,7 +62,12 @@ export const handler = async (event) => {
     if (current.Item?.status !== "pending") continue;
     await sqs.send(
       new SendMessageCommand({
-        QueueUrl: config.queueUrl,
+        // Fallback keeps the local single-queue harness working. Deployed
+        // workers always receive SF311_QUEUE_URL from Terraform.
+        QueueUrl:
+          item.entityType === "SF311_OUTBOX"
+            ? config.sf311QueueUrl || config.queueUrl
+            : config.queueUrl,
         MessageBody: JSON.stringify(
           item.entityType === "SF311_OUTBOX"
             ? {

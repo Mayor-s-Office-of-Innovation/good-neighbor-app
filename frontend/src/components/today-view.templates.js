@@ -513,15 +513,13 @@ export function summaryBlock({ outsideRadius, label }) {
  *   hasPendingSession: boolean,
  *   recentCheckTime: string,
  *   recentItems: Array<object>,
- *   clearResultItems?: Array<object>,
- *   clearResultTime?: string,
  *   newTaskCards: Array<{ markup: string }>,
  *   newTaskCardsMarkup: string,
  *   newTaskCount: number,
  *   counts?: {newCount:number,duplicateCount:number},
  *   tabCounts?: Record<string, number>,
  *   activeClearCheck: { submittedAt?: string, startedAt?: string } | null,
- *   hasPendingClearResult: boolean,
+ *   pendingClearCheck?: { submittedAt?: string, startedAt?: string } | null,
  *   showActiveClearTray?: boolean,
  *   historyGrouping?: string,
  *   remainingStatus?: "pending" | "loaded" | "error",
@@ -538,15 +536,13 @@ export function homeResults({
   hasPendingSession,
   recentCheckTime,
   recentItems,
-  clearResultItems = recentItems,
-  clearResultTime = recentCheckTime,
   newTaskCards,
   newTaskCardsMarkup,
   newTaskCount,
   counts = { newCount: newTaskCount, duplicateCount: 0 },
   tabCounts = {},
   activeClearCheck,
-  hasPendingClearResult,
+  pendingClearCheck = null,
   showActiveClearTray = false,
   historyGroups,
   historyGrouping = "resolved",
@@ -557,6 +553,7 @@ export function homeResults({
   const hasVisibleCards =
     recentItems.length ||
     newTaskCount ||
+    Boolean(pendingClearCheck) ||
     Boolean(showActiveClearTray && activeClearCheck) ||
     historyGroups.length;
   // The In-progress and History lists load after the first paint (the open
@@ -565,9 +562,6 @@ export function homeResults({
   // cards; a failed load says so and offers a retry.
   const awaitingRemaining =
     homeFilter !== "todo" && remainingStatus !== "loaded";
-  const remainingItems = hasPendingClearResult
-    ? recentItems.filter((item) => !clearResultItems.includes(item))
-    : recentItems;
   const trayOptions = {
     id: "home-analysis-results",
     title: "",
@@ -580,12 +574,8 @@ export function homeResults({
   };
   return html`
     <div class="home-results">
-      ${hasPendingClearResult
-        ? analysisResultsTray(clearResultItems, pendingSessionId, {
-            ...trayOptions,
-            id: "home-clear-results",
-            checkTime: clearResultTime,
-          })
+      ${pendingClearCheck
+        ? clearCheckTray(pendingClearCheck, true)
         : showActiveClearTray && activeClearCheck
           ? clearCheckTray(activeClearCheck, true)
           : ""}
@@ -626,8 +616,8 @@ export function homeResults({
             >
           </div>`
         : ""}
-      ${remainingItems.length
-        ? analysisResultsTray(remainingItems, pendingSessionId, trayOptions)
+      ${recentItems.length
+        ? analysisResultsTray(recentItems, pendingSessionId, trayOptions)
         : ""}
       ${newTaskCount && !recentItems.length
         ? newTaskTray({

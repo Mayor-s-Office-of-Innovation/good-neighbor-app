@@ -1714,20 +1714,26 @@ class TodayView extends HTMLElement {
       )
     )
       displayRecentItems = [];
-    const visibleRecentItems =
-      this._homeFilter === "todo" ? displayRecentItems : [];
-    // Older recovered questions must not suppress this check's clear result.
-    const clearResultItems = visibleRecentItems.filter((item) =>
-      localRecentItems.some((local) => local.id === item.id),
-    );
+    // Only this check's evidence decides whether it is clear. Recovered
+    // questions from older checks must not hide its result while saving.
     const hasPendingClearResult =
       this._homeFilter === "todo" &&
       !pendingSuperseded &&
-      clearResultItems.length > 0 &&
-      clearResultItems.every(
+      !pendingHasTaskCards &&
+      allRecentItems.length > 0 &&
+      allRecentItems.every(
         (item) =>
           item.analysis?.status === "analyzed" && !hasProblemResults(item),
       );
+    const visibleRecentItems =
+      this._homeFilter !== "todo"
+        ? []
+        : hasPendingClearResult
+          ? displayRecentItems.filter(
+              (item) =>
+                item.analysis?.status !== "analyzed" || hasProblemResults(item),
+            )
+          : displayRecentItems;
     // A submitted check supersedes the prior result before analysis finishes.
     const newerSubmission =
       pendingSession &&
@@ -1779,11 +1785,10 @@ class TodayView extends HTMLElement {
             "",
         checks,
         recentItems: visibleRecentItems,
-        clearResultItems,
         newTaskEntries,
         visibleTasks,
         activeClearCheck,
-        hasPendingClearResult,
+        pendingClearCheck: hasPendingClearResult ? pendingSession : null,
         showActiveClearTray,
       }),
       showAnalysisDialogs: Boolean(hasPendingAssessment || hasResultCards),
@@ -1897,11 +1902,10 @@ class TodayView extends HTMLElement {
     recentCheckTime,
     checks,
     recentItems,
-    clearResultItems,
     newTaskEntries,
     visibleTasks,
     activeClearCheck,
-    hasPendingClearResult,
+    pendingClearCheck,
     showActiveClearTray,
   }) {
     const newTaskCards = this._newTaskCardEntries(newTaskEntries);
@@ -1937,11 +1941,6 @@ class TodayView extends HTMLElement {
       hasPendingSession: Boolean(pendingSession),
       recentCheckTime,
       recentItems,
-      clearResultItems,
-      clearResultTime:
-        pendingSession?.submittedAt ||
-        pendingSession?.startedAt ||
-        recentCheckTime,
       newTaskCards,
       newTaskCardsMarkup: sortAnalysisCards([...newTaskCards])
         .map((card) => card.markup)
@@ -1949,7 +1948,7 @@ class TodayView extends HTMLElement {
       newTaskCount: newTaskEntries.length,
       counts: duplicateCounts(newTaskEntries.map((e) => e.task)),
       activeClearCheck,
-      hasPendingClearResult,
+      pendingClearCheck,
       showActiveClearTray,
       historyGroups: this._historyGroups(visibleTasks, checks),
     });

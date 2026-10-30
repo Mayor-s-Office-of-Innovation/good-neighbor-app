@@ -7,6 +7,7 @@
 # cannot drift apart.
 locals {
   sf311_lambda_environment = {
+    SF311_QUEUE_URL                   = aws_sqs_queue.sf311.url
     SF311_MEDIA_BASE_URL              = "https://${var.sf311_media_domain_name}"
     GNP_311_SUBMISSION_ENABLED        = tostring(var.enable_311_submission)
     GNP_311_ASYNC_FILING              = tostring(var.enable_311_async_filing)
@@ -360,7 +361,7 @@ resource "aws_lambda_function" "worker" {
     }, local.sf311_lambda_environment, local.email_lambda_environment)
   }
 
-  depends_on = [aws_cloudwatch_log_group.worker]
+  depends_on = [aws_cloudwatch_log_group.worker, aws_iam_role_policy.worker]
   tags       = var.tags
 }
 
