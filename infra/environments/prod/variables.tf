@@ -130,3 +130,9 @@ variable "duplicate_alarm_route_confirmed" {
   type        = bool
   default     = false
 }
+
+variable "posthog_digest_route_confirmed" {
+  description = "Cut PostHog warnings over to the digest only after both forwarding paths and actual digest receipt are verified in this environment."
+  type        = bool
+  default     = false
+}

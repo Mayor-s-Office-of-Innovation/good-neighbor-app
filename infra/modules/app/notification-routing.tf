@@ -1,3 +1,11 @@
+# Keep the legacy forwarding notification behavior until both forwarding paths
+# and actual digest delivery have been verified in this environment.
+variable "posthog_digest_route_confirmed" {
+  description = "Enable two-of-three PostHog forwarding alarms with digest-only notifications after both forwarding paths and actual digest receipt are verified."
+  type        = bool
+  default     = false
+}
+
 # Keep the existing route until the new topic's subscriptions and delivery have
 # been verified. Set this per environment through CI only after that check.
 variable "duplicate_alarm_route_confirmed" {
@@ -49,7 +57,7 @@ data "archive_file" "warning_digest" {
 
 resource "aws_cloudwatch_log_group" "warning_digest" {
   name              = "/aws/lambda/${local.name_prefix}-warning-digest"
-  retention_in_days = 30
+  retention_in_days = 365
   kms_key_id        = aws_kms_key.app.arn
   tags              = var.tags
 }
@@ -63,30 +71,43 @@ resource "aws_iam_role" "warning_digest" {
 }
 
 resource "aws_iam_role_policy" "warning_digest" {
+  #checkov:skip=CKV_AWS_355:CloudWatch GetMetricData and X-Ray telemetry writes require wildcard resource scope.
   role = aws_iam_role.warning_digest.id
   policy = jsonencode({ Version = "2012-10-17", Statement = [
-    # GetMetricData does not support resource-level permissions. No logs, SQS,
-    # application table, media, or secrets access is granted to this function.
+    # GetMetricData does not support resource-level permissions. No application
+    # table, media, or secret reads; SQS access is send-only to its own DLQ.
     { Effect = "Allow", Action = ["cloudwatch:GetMetricData"], Resource = "*" },
     { Effect = "Allow", Action = ["cloudwatch:DescribeAlarms"], Resource = [
       aws_cloudwatch_metric_alarm.duplicate_dead_letters.arn,
       aws_cloudwatch_metric_alarm.duplicate_queue_backlog.arn
     ] },
     { Effect = "Allow", Action = ["sns:Publish"], Resource = aws_sns_topic.alarms.arn },
+    { Effect = "Allow", Action = ["sqs:SendMessage"], Resource = aws_sqs_queue.warning_digest_dlq.arn },
+    { Effect = "Allow", Action = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"], Resource = "*" },
     { Effect = "Allow", Action = ["kms:Decrypt", "kms:GenerateDataKey"], Resource = aws_kms_key.app.arn },
     { Effect = "Allow", Action = ["logs:CreateLogStream", "logs:PutLogEvents"], Resource = "${aws_cloudwatch_log_group.warning_digest.arn}:*" }
   ] })
 }
 
 resource "aws_lambda_function" "warning_digest" {
-  function_name    = "${local.name_prefix}-warning-digest"
-  role             = aws_iam_role.warning_digest.arn
-  runtime          = "nodejs24.x"
-  handler          = "index.handler"
-  filename         = data.archive_file.warning_digest.output_path
-  source_code_hash = data.archive_file.warning_digest.output_base64sha256
-  timeout          = 60
-  memory_size      = 128
+  #checkov:skip=CKV_AWS_117:No VPC-only resources; calls public CloudWatch and SNS AWS APIs, matching the existing app Lambda deployment model.
+  #checkov:skip=CKV_AWS_272:Code signing is not configured in the existing app deployment pipeline; use the same reviewed CI packaging path.
+  function_name                  = "${local.name_prefix}-warning-digest"
+  role                           = aws_iam_role.warning_digest.arn
+  runtime                        = "nodejs24.x"
+  handler                        = "index.handler"
+  filename                       = data.archive_file.warning_digest.output_path
+  source_code_hash               = data.archive_file.warning_digest.output_base64sha256
+  timeout                        = 60
+  memory_size                    = 128
+  reserved_concurrent_executions = 1
+  kms_key_arn                    = aws_kms_key.app.arn
+  dead_letter_config {
+    target_arn = aws_sqs_queue.warning_digest_dlq.arn
+  }
+  tracing_config {
+    mode = "Active"
+  }
   environment {
     variables = {
       ALARM_PREFIX     = local.name_prefix
@@ -156,6 +177,49 @@ resource "aws_cloudwatch_metric_alarm" "warning_digest_throttles" {
   alarm_description   = "The daily warning digest Lambda was throttled. Check account concurrency and async invocation delivery before assuming a quiet day."
   namespace           = "AWS/Lambda"
   metric_name         = "Throttles"
+  dimensions          = { FunctionName = aws_lambda_function.warning_digest.function_name }
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+  tags                = var.tags
+}
+
+resource "aws_sqs_queue" "warning_digest_dlq" {
+  name                      = "${local.name_prefix}-warning-digest-dlq"
+  message_retention_seconds = 1209600
+  kms_master_key_id         = aws_kms_key.app.arn
+  tags                      = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "warning_digest_dead_letters" {
+  alarm_name          = "${local.name_prefix}-warning-digest-dead-letters"
+  alarm_description   = "A scheduled warning digest exhausted Lambda retries. Diagnose the digest Lambda logs; do not replay it without checking whether SNS already accepted a partial attempt."
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  dimensions          = { QueueName = aws_sqs_queue.warning_digest_dlq.name }
+  statistic           = "Maximum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+  tags                = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "warning_digest_async_loss" {
+  for_each = {
+    async-events-dropped = "AsyncEventsDropped"
+    dead-letter-errors   = "DeadLetterErrors"
+  }
+  alarm_name          = "${local.name_prefix}-warning-digest-${each.key}"
+  alarm_description   = "The digest Lambda reported ${each.value}. Check async event age/retries and DLQ delivery permissions, KMS access, and queue health. Missing work is not recovered by a quiet metric period."
+  namespace           = "AWS/Lambda"
+  metric_name         = each.value
   dimensions          = { FunctionName = aws_lambda_function.warning_digest.function_name }
   statistic           = "Sum"
   period              = 300

@@ -3,7 +3,7 @@ import { handler } from "./warning-digest.js";
 
 const env = {
   ALARM_PREFIX: "example-dev",
-  DIGEST_TOPIC_ARN: "arn:aws:sns:us-west-2:123456789012:example-dev-alarms",
+  DIGEST_TOPIC_ARN: `arn:aws:sns:us-west-2:${"1".repeat(12)}:example-dev-alarms`,
   AWS_REGION: "us-west-2",
 };
 const event = { time: "2026-10-30T16:00:00Z" };

@@ -99,4 +99,5 @@ module "app" {
   frontend_domain_names           = [local.frontend_domain_name]
   frontend_certificate_arn        = aws_acm_certificate_validation.frontend.certificate_arn
   duplicate_alarm_route_confirmed = var.duplicate_alarm_route_confirmed
+  posthog_digest_route_confirmed  = var.posthog_digest_route_confirmed
 }

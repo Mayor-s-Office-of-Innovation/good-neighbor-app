@@ -201,7 +201,9 @@ test("identical attachments receive distinct artifacts in one task update", asyn
   });
   await page.locator('[data-mode="notes"]').click();
   const file = "e2e/fixtures/photos/input-1.jpg";
-  await page.locator("[data-photos]").setInputFiles([file, file]);
+  await page
+    .locator("[data-upload-input], [data-update-gallery]")
+    .setInputFiles([file, file]);
   await page.locator("[data-save-notes]").click();
   await expect.poll(() => savedPhotos?.length).toBe(2);
   expect(reservations.size).toBe(2);
