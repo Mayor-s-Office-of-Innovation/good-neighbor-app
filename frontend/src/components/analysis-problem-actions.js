@@ -8,7 +8,7 @@
   elements: they differ in how failures surface (inline error vs toast vs
   local delete) and how they refresh afterwards (re-render vs full reload).
 */
-import { ApiError, rejectAnalysisCondition } from "../services/api.js";
+import { rejectAnalysisCondition } from "../services/api.js";
 import { refreshEvidenceAnalysis } from "../services/photo-analysis.js";
 import { getCurrentCheck } from "../state/check-session.js";
 import { t } from "../i18n/i18n.js";
@@ -61,7 +61,7 @@ export function missingConditionMessage(problem, action) {
 
 /**
  * Reject a condition on the backend, then reconcile the local session:
- * - 404 (already gone): drop it locally if this is the current check
+ * - unconfirmed failures (including 404) propagate to the caller
  * - no assessment in the reply: drop it locally
  * - otherwise refresh the item's analysis from the reply; if that refresh
  *   fails, hand off to `onRefreshFailure`
@@ -73,23 +73,18 @@ export async function rejectProblemCondition(
   problem,
   { requestId, deleteLocally, onRefreshFailure },
 ) {
-  let result;
-  try {
-    result = await rejectAnalysisCondition(
-      problem.checkId,
-      problem.artifactId,
-      problem.conditionId,
-      {
-        reason: { key: "not_a_problem" },
-        ...(problem.taskId ? { taskId: problem.taskId } : {}),
-        caller: { request_id: requestId },
-      },
-    );
-  } catch (err) {
-    if (!(err instanceof ApiError) || err.status !== 404) throw err;
-    if (getCurrentCheck()?.id === problem.checkId) deleteLocally();
-    return;
-  }
+  // A 404 alone does not prove a durable dismissal. The backend returns 200
+  // only once a verified expired condition has an app-owned dismissal receipt.
+  const result = await rejectAnalysisCondition(
+    problem.checkId,
+    problem.artifactId,
+    problem.conditionId,
+    {
+      reason: { key: "not_a_problem" },
+      ...(problem.taskId ? { taskId: problem.taskId } : {}),
+      caller: { request_id: requestId },
+    },
+  );
   if (!result?.assessment) {
     deleteLocally();
     return;

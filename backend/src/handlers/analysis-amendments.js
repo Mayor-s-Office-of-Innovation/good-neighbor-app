@@ -306,9 +306,10 @@ export async function rejectAnalysisCondition(event) {
       rejected_condition_id: conditionId,
       already_rejected: true,
     };
-    if (!receipt.deletedAt) {
+    if (!receipt.deletedAt && !receipt.dismissedAt) {
       const client = await analyzerClient();
       let accepted = false;
+      let dismissed = false;
       try {
         result = await client.rejectCondition(context.analysisId, conditionId, {
           ...(reason ? { reason } : {}),
@@ -321,15 +322,34 @@ export async function rejectAnalysisCondition(event) {
         accepted = true;
       } catch (err) {
         if (
+          err instanceof AnalyzerError &&
+          err.status === 404 &&
+          err.code === "unknown_analysis" &&
+          knownConcern
+        ) {
+          // The site-owned stored analysis verifies this condition. Dismiss it
+          // locally without claiming the expired analyzer accepted a rejection.
+          dismissed = true;
+          result = {
+            analysis_id: context.analysisId,
+            condition_id: conditionId,
+            dismissed_locally: true,
+          };
+        } else if (
           !(err instanceof AnalyzerError) ||
           err.status !== 404 ||
           err.code !== "unknown_condition"
-        )
+        ) {
           throw err;
-        // Absence is not proof of a rejection today. Keep the pending attempt
-        // for reconciliation; cleanup below is still valid and retryable.
+        }
+        // Absence upstream does not confirm a durable app dismissal.
+        if (!accepted && !dismissed)
+          return jsonResponse(409, {
+            code: "RejectionUnconfirmed",
+            error: "Deletion is not confirmed; retry",
+          });
       }
-      if (accepted) {
+      if (accepted || dismissed) {
         const upstreamTime = result?.rejection?.created_at;
         const deletedAt =
           typeof upstreamTime === "string" &&
@@ -342,16 +362,24 @@ export async function rejectAnalysisCondition(event) {
           TableName: dynamoTable,
           Item: {
             ...receipt,
-            state: "confirmed",
-            deletedAt,
+            state: dismissed ? "dismissed" : "confirmed",
+            ...(dismissed
+              ? {
+                  dismissedAt: new Date().toISOString(),
+                  dismissalReason: "analysis_unavailable",
+                }
+              : { deletedAt }),
             category: knownConcern?.category || receipt.category,
-            result: {
-              analysis_id: context.analysisId,
-              rejected_condition_id: conditionId,
-              already_rejected: true,
-            },
+            result: dismissed
+              ? result
+              : {
+                  analysis_id: context.analysisId,
+                  rejected_condition_id: conditionId,
+                  already_rejected: true,
+                },
           },
-          ConditionExpression: "attribute_not_exists(deletedAt)",
+          ConditionExpression:
+            "attribute_not_exists(deletedAt) AND attribute_not_exists(dismissedAt)",
         });
         // Keep the accepted timestamp in memory across transient persistence
         // failures; never repeat the upstream rejection to retry this write.
