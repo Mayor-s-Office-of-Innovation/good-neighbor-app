@@ -66,7 +66,7 @@ test("connection banner remains above modal, recovers only when all services do,
   page,
 }) => {
   await page.evaluate(async () => {
-    const state = await import("/src/services/connection-state.js");
+    const state = await import("/src/services/backend-health.js");
     state.connectionFailed("api");
     state.connectionFailed("upload:example");
     document.querySelector("dialog").showModal();
@@ -80,14 +80,14 @@ test("connection banner remains above modal, recovers only when all services do,
       .evaluate((el) => el.matches(":popover-open")),
   ).toBe(true);
   await page.evaluate(async () =>
-    (await import("/src/services/connection-state.js")).connectionSucceeded(
+    (await import("/src/services/backend-health.js")).connectionSucceeded(
       "api",
     ),
   );
   await expect(banner).not.toContainText(t("notice.online"));
   await page.locator("[data-connection-retry]").click();
   await page.evaluate(async () =>
-    (await import("/src/services/connection-state.js")).connectionSucceeded(
+    (await import("/src/services/backend-health.js")).connectionSucceeded(
       "upload:example",
     ),
   );
@@ -309,7 +309,7 @@ test("recovered banner survives a modal repaint without restarting its expiry", 
 }) => {
   await page.clock.install();
   await page.evaluate(async () => {
-    const state = await import("/src/services/connection-state.js");
+    const state = await import("/src/services/backend-health.js");
     state.connectionFailed("api");
     document.querySelector("dialog").showModal();
     state.connectionSucceeded("api");
@@ -458,7 +458,7 @@ test("mobile wrapped banner reserves page and toast space without measurements",
     await import("/src/components/app-toasts.js");
     document.body.append(document.createElement("app-toasts"));
     const { connectionFailed } = await import(
-      "/src/services/connection-state.js"
+      "/src/services/backend-health.js"
     );
     connectionFailed("api");
     const { showToast } = await import("/src/state/toasts.js");
@@ -493,9 +493,7 @@ test("upload and auth recover through host checks without replaying writes", asy
     });
   }
   await page.evaluate(async () => {
-    const { connectionFetch } = await import(
-      "/src/services/connection-state.js"
-    );
+    const { connectionFetch } = await import("/src/services/backend-health.js");
     await connectionFetch(
       "https://uploads.example.test/object?signature=synthetic",
       { method: "PUT", body: "synthetic" },

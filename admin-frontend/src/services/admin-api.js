@@ -1,4 +1,4 @@
-import { connectionFetch } from "../../../frontend/src/services/connection-state.js";
+import { connectionFetch } from "../../../frontend/src/services/backend-health.js";
 import { createReadRequests } from "./read-requests.js";
 import { localRoleHeaders } from "../local-role.js";
 import { getFreshAdminToken, startAdminLogin } from "./admin-auth.js";

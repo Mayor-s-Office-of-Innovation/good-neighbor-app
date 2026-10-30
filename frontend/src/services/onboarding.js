@@ -1,4 +1,4 @@
-import { connectionFetch } from "./connection-state.js";
+import { connectionFetch } from "./backend-health.js";
 /*
   Site-code login client. The backend owns whether a code exists, is active, and
   which provider site it binds to; the frontend only formats the prompt and stores

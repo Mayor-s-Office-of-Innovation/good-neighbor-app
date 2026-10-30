@@ -3,7 +3,7 @@ import {
   connectionFailed,
   connectionSucceeded,
   connectionTarget,
-} from "./connection-state.js";
+} from "./backend-health.js";
 import { contentTypeFor } from "../domain/attachment-files.js";
 import { observePhotoStage, photoAttemptId } from "./photo-telemetry.js";
 import { clearTaskStatusOverrides } from "../state/task-status-overrides.js";

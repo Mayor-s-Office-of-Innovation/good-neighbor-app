@@ -3,7 +3,7 @@ let state;
 beforeEach(async () => {
   vi.resetModules();
   vi.stubGlobal("fetch", vi.fn());
-  state = await import("./connection-state.js");
+  state = await import("./backend-health.js");
 });
 afterEach(() => vi.unstubAllGlobals());
 test("HTTP validation, auth, throttling and server errors remain operation errors", async () => {

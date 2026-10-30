@@ -22,7 +22,6 @@ vi.mock("./submit-check.js", () => ({
   expectedArtifactCountForCheck: vi.fn(() => 1),
   finalizeCaptureScorecardInBackground: vi.fn(() => Promise.resolve({})),
 }));
-vi.mock("./backend-health.js", () => ({ onHealthChange: vi.fn() }));
 
 import { analyzeEvidenceItem } from "./photo-analysis.js";
 import { finalizeCaptureScorecardInBackground } from "./submit-check.js";

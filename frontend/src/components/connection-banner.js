@@ -5,7 +5,7 @@ import {
   onConnectionChange,
   retryConnection,
   startConnectionMonitoring,
-} from "../services/connection-state.js";
+} from "../services/backend-health.js";
 
 class ConnectionBanner extends HTMLElement {
   connectedCallback() {

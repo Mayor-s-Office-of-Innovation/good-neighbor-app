@@ -192,7 +192,6 @@ export function startCareSubmissionRecovery() {
   const resume = () => {
     void recoverCareSubmissions();
   };
-  window.addEventListener("online", resume);
   window.addEventListener("connectionretry", resume);
   window.addEventListener("pageshow", resume);
   window.addEventListener("sitebound", resume);

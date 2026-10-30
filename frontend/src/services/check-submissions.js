@@ -37,7 +37,6 @@ import {
   finalizeCaptureScorecardInBackground,
 } from "./submit-check.js";
 import { checkItems, itemHasLiveEvidence } from "../domain/check-completion.js";
-import { onHealthChange } from "./backend-health.js";
 
 /**
  * Every live item has reached the server, so the scorecard can be built.
@@ -127,7 +126,6 @@ export function startCheckSubmissionRecovery() {
   const resume = () => {
     void resumeCheckSubmissions();
   };
-  window.addEventListener("online", resume);
   window.addEventListener("connectionretry", resume);
   window.addEventListener("pageshow", resume);
   window.addEventListener("sitebound", resume);
@@ -136,11 +134,6 @@ export function startCheckSubmissionRecovery() {
   });
   window.addEventListener(EVIDENCE_SETTLED_EVENT, () => {
     void resumeCheckSubmissions({ uploads: false });
-  });
-  let lastHealth = "";
-  onHealthChange((state) => {
-    if (state === "healthy" && lastHealth === "outage") resume();
-    lastHealth = state;
   });
   resume();
 }

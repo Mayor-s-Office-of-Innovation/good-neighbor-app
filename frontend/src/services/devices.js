@@ -1,4 +1,4 @@
-import { connectionFetch } from "./connection-state.js";
+import { connectionFetch } from "./backend-health.js";
 /*
   devices.js — device registration + token refresh client (Option 4 device
   auth, docs/adr/0010-device-token-auth.md). Pure services: they call the API

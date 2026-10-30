@@ -1,4 +1,4 @@
-import { connectionFetch } from "./connection-state.js";
+import { connectionFetch } from "./backend-health.js";
 /*
   feedback.js — the one-call client for the in-app feedback form.
 

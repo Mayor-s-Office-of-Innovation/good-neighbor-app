@@ -1,5 +1,5 @@
 /*
-  connection-state.js — the UI surface for backend-health.js states
+  connection-status.js — the UI surface for backend-health.js states
   (api-response-integrity plan §3b).
 
   OUTAGE → the shared reachability banner; authentication remains separate.

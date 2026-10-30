@@ -1,4 +1,4 @@
-import { connectionFetch } from "../../../frontend/src/services/connection-state.js";
+import { connectionFetch } from "../../../frontend/src/services/backend-health.js";
 import { getAdminConfig } from "../config.js";
 
 const ACCESS_TOKEN_KEY = "good-neighbor-admin-access-token";
