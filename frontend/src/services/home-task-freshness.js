@@ -1,3 +1,4 @@
+import { duplicateTaskVersion } from "./duplicate-invalidation.js";
 import { t } from "../i18n/i18n.js";
 import { listTasks } from "./api.js";
 import { normalizedHomeTab } from "../domain/home-tasks.js";
@@ -113,12 +114,12 @@ export async function refreshActiveTab(view) {
         byId.set(task.taskId, task);
     }
     const tasks = view._reconcileConfirmedTasks([...byId.values()]);
-    const previousIds = view._homeModel.tasks
-      .map((task) => task.taskId)
+    const previousVersions = view._homeModel.tasks
+      .map((task) => JSON.stringify([task.taskId, duplicateTaskVersion(task)]))
       .sort()
       .join();
-    const nextIds = tasks
-      .map((task) => task.taskId)
+    const nextVersions = tasks
+      .map((task) => JSON.stringify([task.taskId, duplicateTaskVersion(task)]))
       .sort()
       .join();
     for (const result of succeeded)
@@ -149,7 +150,7 @@ export async function refreshActiveTab(view) {
         view.querySelector(selector)?.focus({ preventScroll: true });
     }
     window.scrollTo?.(scroll);
-    if (previousIds !== nextIds) view._watchDuplicates(tasks);
+    if (previousVersions !== nextVersions) view._watchDuplicates(tasks);
     void view._hydrateVisibleHomeTasks();
   })().finally(() => {
     for (const [status, entry] of batch.entries) {

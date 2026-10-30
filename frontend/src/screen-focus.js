@@ -22,6 +22,8 @@ export function announceScreenHeading(host, selector) {
     // Re-query inside the frame: the screen may have re-rendered (or
     // unmounted) since this call.
     if (!host.isConnected) return;
+    // An async arrival must not steal the keyboard from an actionable toast.
+    if (document.activeElement?.closest?.("app-toasts")) return;
     const target = host.querySelector(selector);
     if (target instanceof HTMLElement) target.focus();
   });
