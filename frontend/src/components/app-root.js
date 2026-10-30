@@ -1,4 +1,5 @@
 // @ts-nocheck -- lenient migration baseline (checkJs). Ratchet target: remove this line and add JSDoc types, one file per PR. See memory step2-gnp-port-scope.
+import { loadError } from "./load-error.js";
 import { startPhoneCompletionRecovery } from "../services/phone-completion.js";
 /*
   app-root — the shell. Enforces first-run site setup, renders the header, and swaps
@@ -66,10 +67,6 @@ import {
   keyboardViewport,
   revealEditable,
 } from "../services/keyboard-viewport.js";
-import {
-  showQueuedSiteSwitchSuccessToast,
-  showSiteSwitchSuccessToast,
-} from "../state/toasts.js";
 import {
   hasEnrollmentCredentials,
   isFatalSessionError,
@@ -328,7 +325,6 @@ export class AppRoot extends HTMLElement {
         switching_site: switchingSite,
       });
       if (!(await this._enterAppAfterBind())) return;
-      if (switchingSite) showSiteSwitchSuccessToast();
     });
   }
 
@@ -431,7 +427,6 @@ export class AppRoot extends HTMLElement {
     this._maybeWarnInAppBrowser();
     this._view = this.querySelector("#view");
     this._shell = this.querySelector(".app");
-    showQueuedSiteSwitchSuccessToast();
     this._maybeOfferInstall();
     // iOS Safari only, and only while not yet standalone: keep a handoff grant
     // in the manifest so an Add to Home Screen from any route carries the
@@ -514,7 +509,7 @@ export class AppRoot extends HTMLElement {
         if (this._routeLoad !== request || currentRoute() !== route) return;
         this._view.inert = false;
         console.error("Route module failed to load", error);
-        this._view.innerHTML = `<p role="alert">${escapeHtml(t("route.loadError"))}</p><button type="button" class="btn-ink" data-route-reload>${escapeHtml(t("route.reload"))}</button><button type="button" class="btn-outline" data-route-back>${escapeHtml(t("common.back"))}</button>`;
+        this._view.innerHTML = `${loadError(t("route.loadError"), { retryAttribute: "data-route-reload" })}<button type="button" class="btn-outline" data-route-back>${escapeHtml(t("common.back"))}</button>`;
         // Reload obtains the current asset manifest and clears cached import failures.
         this._view
           .querySelector("[data-route-reload]")

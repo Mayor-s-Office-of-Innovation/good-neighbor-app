@@ -1162,7 +1162,7 @@ describe("deferred In-progress / History lists", () => {
           view._homeModel.tasks.find((task) => task.taskId === queued.taskId),
         ).toMatchObject({ appActionStatus: "submitted" });
         expect(view._confirmedTasks.get(queued.taskId)).toBe(filedTask);
-        expect(getToasts()).toHaveLength(1);
+        expect(getToasts()).toHaveLength(0);
         expect(view._refreshAfterAction).toHaveBeenCalled();
 
         view._watchQueued311([filedTask]);

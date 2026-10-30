@@ -1,3 +1,4 @@
+import { loadError } from "./load-error.js";
 import { duplicateCountLabel } from "./duplicate-issue.templates.js";
 /*
   Presentational templates for <today-view>, the home hub. Pure
@@ -367,7 +368,7 @@ export function logoutDialog({ error, pending, unsent = {} }) {
             ${escapeHtml(t("today.logout.title"))}
           </h2>
           <p class="places-modal__text" id="logout-copy">
-            ${escapeHtml(t("today.logout.text"))}
+            ${escapeHtml(t("notice.signoutWarning"))}
           </p>
           ${lines.length
             ? html`<div class="logout-dialog__unsent" id="logout-unsent">
@@ -633,7 +634,10 @@ export function homeResults({
         : ""}
       ${awaitingRemaining
         ? remainingStatus === "error"
-          ? html`<p class="home-results__empty" role="status">
+          ? html`<p
+              class="app-error app-error--panel app-error--neutral"
+              role="alert"
+            >
               ${escapeHtml(t("today.remaining.error"))}
               <button
                 id="retry-remaining"
@@ -863,17 +867,7 @@ export function errorView({ identity }) {
               ${escapeHtml(identity.site)}
             </h1>
           </div>
-          <div class="lastlog">
-            <p class="lastlog__eyebrow">
-              ${escapeHtml(t("today.error.title"))}
-            </p>
-            <p class="lastlog__summary">${escapeHtml(t("today.error.text"))}</p>
-          </div>
-          <div class="home-actions">
-            <button id="retry" class="btn-ink" type="button">
-              ${escapeHtml(t("common.retry"))}
-            </button>
-          </div>
+          ${loadError(t("today.error.title"), { retryId: "retry" })}
         </div>
       </div>
     </div>

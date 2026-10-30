@@ -1,0 +1,151 @@
+/* Figma 4213:17069 / 4213:17197: compact icon and text, or entry message. */
+.app-error.app-error {
+  position: relative;
+  padding-inline-start: 1.25rem;
+  color: var(--notice-ink, var(--wa-color-danger-on-quiet, var(--c-hazard)));
+  font-family: var(--font-sans, sans-serif);
+  font-size: var(--wa-font-size-xs, 0.75rem);
+  line-height: 1.2;
+  text-align: start;
+}
+.app-error::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block-start: 0.1em;
+  inline-size: 0.9375rem;
+  block-size: 0.9375rem;
+  background: currentColor;
+  mask: url("/icons/triangle-exclamation.svg") center / contain no-repeat;
+}
+.app-error[hidden],
+.app-error:empty {
+  display: none;
+}
+.app-error.app-error--panel {
+  background: var(--wa-color-danger-fill-quiet, var(--c-hazard-bg));
+  border-radius: var(--radius, 0.75rem);
+  padding: 0.75rem 0.75rem 0.75rem 3.5rem;
+  font-size: var(--wa-font-size-m, 1rem);
+  line-height: 1.6;
+}
+.app-error--panel::before {
+  inset-inline-start: 1.125rem;
+  inset-block-start: 1rem;
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
+}
+.app-error--panel button {
+  display: block;
+  margin-block-start: 0.75rem;
+}
+.app-error--warning {
+  --notice-ink: var(--wa-color-warning-on-quiet, var(--c-flag));
+  background: var(--wa-color-warning-fill-quiet, var(--c-flag-bg));
+}
+.app-load-error {
+  display: flex;
+  min-block-size: 16rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  text-align: center;
+  color: var(--text);
+}
+.app-load-error > wa-icon {
+  color: var(--text-secondary);
+  font-size: 1.25rem;
+}
+.app-load-error > p {
+  margin: 0;
+}
+.app-load-error > strong {
+  font-size: 1.25rem;
+  line-height: 1.2;
+}
+.app-error--entry {
+  margin-inline-start: 0.75rem;
+}
+.app-connection-banner,
+.connection-banner-copy {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 110;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: calc(1.25rem + env(safe-area-inset-top, 0px)) 1.25rem 1.25rem;
+  background: var(--wa-color-neutral-fill-quiet, var(--group-grey, #e9eaea));
+  color: var(--text, #171717);
+  font-size: 0.875rem;
+  line-height: 1.2;
+}
+.app-connection-banner[hidden] {
+  display: none;
+}
+.app-connection-banner--online {
+  background: var(--wa-color-success-fill-quiet, var(--c-ok-bg));
+  color: var(--wa-color-success-on-quiet, var(--c-ok));
+}
+:is(.app-connection-banner, .connection-banner-copy) button {
+  margin-inline-start: auto;
+  flex-shrink: 0;
+  background: transparent;
+  border: 0;
+  padding: 0.5rem;
+  color: inherit;
+  text-decoration: underline;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+:is(.app-connection-banner, .connection-banner-copy) button[hidden] {
+  display: none;
+}
+.app-connection-banner button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.app-error--neutral {
+  --notice-ink: var(--text);
+  background: var(--surface-3);
+}
+.app-error--neutral::before {
+  mask-image: url("/icons/rotate.svg");
+}
+
+connection-banner[popover] {
+  position: fixed;
+  inset: 0 0 auto;
+  width: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+connection-banner[popover] .app-connection-banner {
+  position: static;
+}
+.connection-banner-space {
+  visibility: hidden;
+  pointer-events: none;
+  inline-size: 100%;
+}
+.connection-banner-space[hidden] {
+  display: none;
+}
+.connection-banner-space .connection-banner-copy {
+  position: static;
+}
+app-toasts:has(> .connection-banner-space:not([hidden])) {
+  padding-block-start: 0;
+  row-gap: 0;
+}
+app-toasts:has(> .connection-banner-space:not([hidden]))
+  .app-toast
+  + .app-toast {
+  margin-block-start: 0.75rem;
+}

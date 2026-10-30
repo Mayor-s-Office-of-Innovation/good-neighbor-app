@@ -1,3 +1,4 @@
+import { connectionFetch } from "./backend-health.js";
 import { parseRetryAfter } from "../lib/retry-after.js";
 /*
   devices.js — device registration + token refresh client (Option 4 device
@@ -48,7 +49,7 @@ const BASE = /** @type {any} */ (import.meta).env?.VITE_API_BASE ?? "";
  * @throws {InvalidSiteCodeError} on 401/404, else a network/5xx failure
  */
 export async function registerDevice(code, opts = {}) {
-  const res = await fetch(`${BASE}/v1/devices`, {
+  const res = await connectionFetch(`${BASE}/v1/devices`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -85,7 +86,7 @@ export async function registerDevice(code, opts = {}) {
  * @returns {Promise<DeviceSession>}
  */
 export async function redeemEnrollmentGrant(grantId, token, opts = {}) {
-  const res = await fetch(`${BASE}/app/v1/enrollment/redeem`, {
+  const res = await connectionFetch(`${BASE}/app/v1/enrollment/redeem`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -135,7 +136,7 @@ export async function redeemHandoffGrant(grantId, token) {
   /** @type {Response} */
   let res;
   try {
-    res = await fetch(`${BASE}/app/v1/session-handoff/redeem`, {
+    res = await connectionFetch(`${BASE}/app/v1/session-handoff/redeem`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ grantId, token }),
@@ -177,7 +178,7 @@ export async function refreshDeviceToken(refreshToken, attemptId) {
   /** @type {Response} */
   let res;
   try {
-    res = await fetch(`${BASE}/v1/devices/token:refresh`, {
+    res = await connectionFetch(`${BASE}/v1/devices/token:refresh`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({

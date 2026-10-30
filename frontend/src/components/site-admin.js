@@ -79,6 +79,10 @@ class SiteAdminView extends HTMLElement {
       announceScreenHeading(this, ".site-admin-header h1");
     } catch {
       this.innerHTML = errorView(t("siteAdmin.loadError"), true);
+      this.querySelector("[data-load-retry]")?.addEventListener(
+        "click",
+        () => void this.connectedCallback(),
+      );
       this._wireBack();
     }
   }
@@ -310,6 +314,10 @@ class SiteAccessView extends HTMLElement {
       announceScreenHeading(this, ".site-admin-header h1");
     } catch {
       this.innerHTML = errorView(t("access.loadError"));
+      this.querySelector("[data-load-retry]")?.addEventListener(
+        "click",
+        () => void this.connectedCallback(),
+      );
       this._wireBack();
     }
   }
@@ -704,6 +712,10 @@ class SiteAdminEdit extends HTMLElement {
         this.replaceChildren(document.createElement("site-info-editor"));
     } catch {
       this.innerHTML = errorView(t("siteAdmin.formLoadError"));
+      this.querySelector("[data-load-retry]")?.addEventListener(
+        "click",
+        () => void this.connectedCallback(),
+      );
       this.querySelector("[data-admin-back]")?.addEventListener("click", () =>
         backOrNavigate("/site-admin"),
       );

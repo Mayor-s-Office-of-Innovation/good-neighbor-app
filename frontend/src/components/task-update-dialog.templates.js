@@ -60,10 +60,12 @@ export function taskUpdateDialogShell({ mode, state, content }) {
         ${state === "loading"
           ? html`<p role="status">${translatedText("taskUpdate.loading")}</p>`
           : state === "error"
-            ? html`<p role="alert">${translatedText("taskUpdate.loadError")}</p>
+            ? html`<p class="app-error app-error--panel" role="alert">
+                  ${translatedText("taskUpdate.loadError")}
+                </p>
                 <button type="button" class="btn-outline" data-retry-timeline>
-                  ${translatedText("common.retry")}
-                </button>`
+                  ${translatedText("common.retry")}</button
+                >${content}`
             : content}
       </div>
     </dialog>
@@ -289,7 +291,7 @@ export function taskUpdateCapture({
     <h2 id="task-update-title">${escapeHtml(title)}</h2>
     ${results && task ? captureTaskIdentity(task) : ""}
     ${results && !pendingEvent
-      ? html`<p role="alert">
+      ? html`<p class="app-error app-error--panel" role="alert">
           ${translatedText("taskUpdate.capture.unattached")}
         </p>`
       : ""}

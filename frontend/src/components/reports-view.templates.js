@@ -1,3 +1,4 @@
+import { loadError } from "./load-error.js";
 import { artifactPhoto } from "./artifact-photo.templates.js";
 /*
   Presentational templates for <reports-view> and <reports-day-view>, the
@@ -179,16 +180,7 @@ export function loadingBlock() {
 }
 
 export function errorBlock() {
-  return html`<div class="reports__status" role="alert">
-    <p>${escapeHtml(t("reports.loadError"))}</p>
-    <button
-      class="btn-outline btn-outline--sm"
-      id="reports-retry"
-      type="button"
-    >
-      ${escapeHtml(t("common.retry"))}
-    </button>
-  </div>`;
+  return loadError(t("reports.loadError"), { retryId: "reports-retry" });
 }
 
 /* ---- Checks tab ---- */

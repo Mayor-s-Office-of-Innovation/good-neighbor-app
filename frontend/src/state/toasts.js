@@ -1,3 +1,4 @@
+import { showInlineError } from "../components/error-notice.js";
 /**
  * App-lifetime notifications. Timers survive route changes; nothing is persisted.
  * @typedef {object} ToastOptions
@@ -10,13 +11,12 @@
  * @property {() => void} [onDismiss]
  * @property {number} [duration]
  * @property {boolean} [focusAction]
+ * @property {Element | null} [target]
+ * @property {boolean} [warning]
+ * @property {string} [key] Stable operation identity for deduplication.
  */
 import { t } from "../i18n/i18n.js";
 import { getHealthState } from "../services/backend-health.js";
-import {
-  filing311State,
-  submitted311ServiceRequestNumber,
-} from "../domain/task-actions.js";
 
 /** @type {Set<() => void>} */
 const listeners = new Set();
@@ -43,6 +43,7 @@ function createToast(options) {
       clearTimeout(timer);
       toasts.splice(toasts.indexOf(toast), 1);
       // Remove the Undo affordance before saving can begin.
+      activateNext();
       emit();
       if (action) options.action?.run();
       else options.onDismiss?.();
@@ -74,15 +75,31 @@ function createToast(options) {
 
 /** @param {ToastOptions} options */
 export function showToast(options) {
-  const toast = createToast(options);
+  const key =
+    options.key ||
+    (!options.action && !options.onDismiss
+      ? `${options.title}:${options.message}`
+      : undefined);
+  const existing =
+    key && toasts.find((toast) => toast.key === key && !toast.onDismiss);
+  if (existing) return existing;
+  const toast = createToast({ ...options, key });
+  // Undo callbacks commit data on dismissal. Their lifecycle is unchanged.
+  if (!options.onDismiss) toast.pause("queue");
   toasts.push(toast);
+  activateNext();
   emit();
-  toast.resume();
+  if (options.onDismiss) toast.resume();
   return toast;
 }
 
+function activateNext() {
+  toasts.find((toast) => !toast.onDismiss)?.resume("queue");
+}
+
 export function getToasts() {
-  return [...toasts];
+  const first = toasts.find((toast) => !toast.onDismiss);
+  return toasts.filter((toast) => toast.onDismiss || toast === first);
 }
 
 /** @param {() => void} listener */
@@ -93,27 +110,26 @@ export function onToastsChange(listener) {
   };
 }
 
+/** @param {ToastOptions} options */
+export function showOperationError(options) {
+  const local = showInlineError(options.message, {
+    title: options.title,
+    target: options.target,
+    key: options.key || options.title,
+    retry: options.action?.run,
+    retryLabel: options.action?.label,
+    duration:
+      options.duration && options.duration > 0 ? options.duration : undefined,
+    warning: options.warning || options.tone === "info",
+  });
+  return local || showToast({ ...options, key: options.key });
+}
+
 /**
  * @param {string} [serviceRequestNumber]
  * @param {string} [title] the card's title, so a toast that lands after the
  *   user has moved on to other cards still says which ticket this is
  */
-export function show311SuccessToast(serviceRequestNumber = "", title = "") {
-  const number = serviceRequestNumber;
-  return showToast({
-    title: t("toast.ticketFiled.title"),
-    message: title
-      ? number
-        ? t("toast.ticketFiled.messageFor", { number, title })
-        : t("toast.ticketFiled.messageNoNumberFor", { title })
-      : number
-        ? t("toast.ticketFiled.message", { number })
-        : t("toast.ticketFiled.messageNoNumber"),
-    icon: "circle-check",
-    tone: "success",
-  });
-}
-
 /**
  * The toast for an accepted "File 311 ticket" tap: the ticket number when it
  * was filed in the request, "Filing with 311" when it was queued.
@@ -121,9 +137,7 @@ export function show311SuccessToast(serviceRequestNumber = "", title = "") {
  * @param {string} [title] the card's title
  */
 export function show311FilingToast(task, title = "") {
-  return filing311State(task) === "queued"
-    ? show311QueuedToast(title)
-    : show311SuccessToast(submitted311ServiceRequestNumber(task), title);
+  return show311QueuedToast(title);
 }
 
 /**
@@ -141,17 +155,9 @@ export function show311QueuedToast(title = "") {
   });
 }
 
-export function showComplaintLoggedToast() {
-  return showToast({
-    title: t("complaints.toast.logged"),
-    message: "",
-    icon: "circle-check",
-    tone: "success",
-  });
-}
-
-export function show311ErrorToast() {
-  return showToast({
+export function show311ErrorToast(target = null) {
+  return showOperationError({
+    target,
     title: t("toast.ticketFailed.title"),
     message: t("toast.ticketFailed.message"),
     icon: "triangle-exclamation",
@@ -159,21 +165,15 @@ export function show311ErrorToast() {
   });
 }
 
-export function showEditSavedToast() {
-  return showToast({
-    title: t("toast.editSaved.title"),
-    message: t("toast.editSaved.message"),
-    icon: "circle-check",
-    tone: "success",
-  });
-}
-
 /** @param {() => void} [retry] */
-export function showActionSaveErrorToast(retry) {
-  return showToast({
+export function showActionSaveErrorToast(retry, target = null) {
+  return showOperationError({
+    warning: true,
+    duration: 0,
     ...(retry
       ? { duration: 0, action: { label: t("common.retry"), run: retry } }
       : {}),
+    target,
     title: t("toast.actionSaveError.title"),
     message: t("toast.actionSaveError.message"),
     icon: "triangle-exclamation",
@@ -182,7 +182,7 @@ export function showActionSaveErrorToast(retry) {
 }
 
 export function showAnswerSaveErrorToast() {
-  return showToast({
+  return showOperationError({
     title: t("toast.answerSaveError.title"),
     message: t("toast.answerSaveError.message"),
     icon: "triangle-exclamation",
@@ -191,7 +191,8 @@ export function showAnswerSaveErrorToast() {
 }
 
 export function showDeletionRefreshToast() {
-  return showToast({
+  return showOperationError({
+    duration: 5000,
     title: t("toast.deletionRefresh.title"),
     message: t("toast.deletionRefresh.message"),
     icon: "circle-info",
@@ -199,26 +200,8 @@ export function showDeletionRefreshToast() {
   });
 }
 
-export function showSavedForLaterToast() {
-  return showToast({
-    title: t("toast.savedForLater.title"),
-    message: t("toast.savedForLater.message"),
-    icon: "circle-info",
-    tone: "info",
-  });
-}
-
-export function showOfflinePhotosToast() {
-  return showToast({
-    title: t("toast.offlinePhotos.title"),
-    message: t("toast.offlinePhotos.message"),
-    icon: "circle-info",
-    tone: "info",
-  });
-}
-
 export function showDeleteErrorToast() {
-  return showToast({
+  return showOperationError({
     title: t("toast.deleteError.title"),
     message: t("toast.deleteError.message"),
     icon: "triangle-exclamation",
@@ -227,7 +210,9 @@ export function showDeleteErrorToast() {
 }
 
 export function showEditErrorToast() {
-  return showToast({
+  return showOperationError({
+    warning: true,
+    duration: 0,
     title: t("toast.editError.title"),
     message: t("toast.editError.message"),
     icon: "triangle-exclamation",
@@ -236,7 +221,8 @@ export function showEditErrorToast() {
 }
 
 export function showEditRefreshErrorToast() {
-  return showToast({
+  return showOperationError({
+    duration: 5000,
     title: t("toast.editRefreshError.title"),
     message: t("toast.editRefreshError.message"),
     icon: "circle-info",
@@ -245,7 +231,7 @@ export function showEditRefreshErrorToast() {
 }
 
 export function showReanalysisErrorToast() {
-  return showToast({
+  return showOperationError({
     title: t("toast.reanalysisError.title"),
     message: t("toast.reanalysisError.message"),
     icon: "triangle-exclamation",
@@ -269,7 +255,9 @@ export function showTaskUpdateErrorToast(error, retry) {
     "updateSaved" in error.body &&
     error.body.updateSaved === true;
   const key = saved ? "toast.cityUpdateError" : "toast.taskUpdateError";
-  return showToast({
+  return showOperationError({
+    warning: true,
+    duration: 0,
     ...(retry
       ? { duration: 0, action: { label: t("common.retry"), run: retry } }
       : {}),
@@ -281,7 +269,7 @@ export function showTaskUpdateErrorToast(error, retry) {
 }
 
 export function showFeedbackErrorToast() {
-  return showToast({
+  return showOperationError({
     title: t("toast.feedbackError.title"),
     message: t("toast.feedbackError.message"),
     icon: "triangle-exclamation",
@@ -299,7 +287,7 @@ export function showFeedbackSuccessToast() {
 }
 
 export function showSiteAdminErrorToast() {
-  return showToast({
+  return showOperationError({
     title: t("toast.siteAdminError.title"),
     message: t("toast.siteAdminError.message"),
     icon: "triangle-exclamation",
@@ -307,17 +295,8 @@ export function showSiteAdminErrorToast() {
   });
 }
 
-export function showSiteAdminSuccessToast() {
-  return showToast({
-    title: t("toast.siteAdminSuccess.title"),
-    message: t("toast.siteAdminSuccess.message"),
-    icon: "circle-check",
-    tone: "success",
-  });
-}
-
 export function showSiteSwitchErrorToast() {
-  return showToast({
+  return showOperationError({
     title: t("toast.siteSwitchError.title"),
     message: t("toast.siteSwitchError.message"),
     icon: "triangle-exclamation",
@@ -332,7 +311,7 @@ export function showSiteSwitchErrorToast() {
  */
 export function showSiteCatalogErrorToast() {
   if (getHealthState() === "outage") return null;
-  return showToast({
+  return showOperationError({
     title: t("toast.siteCatalogError.title"),
     message: t("toast.siteCatalogError.message"),
     icon: "triangle-exclamation",
@@ -341,7 +320,7 @@ export function showSiteCatalogErrorToast() {
 }
 
 export function showSiteSwitchBlockedToast() {
-  return showToast({
+  return showOperationError({
     title: t("toast.siteSwitchBlocked.title"),
     message: t("toast.siteSwitchBlocked.message"),
     icon: "circle-info",
@@ -350,41 +329,10 @@ export function showSiteSwitchBlockedToast() {
 }
 
 export function showLanguageErrorToast() {
-  return showToast({
+  return showOperationError({
     title: t("toast.languageError.title"),
     message: t("toast.languageError.message"),
     icon: "triangle-exclamation",
     tone: "error",
   });
-}
-
-export function showSiteSwitchSuccessToast() {
-  return showToast({
-    title: t("toast.siteSwitchSuccess.title"),
-    message: "",
-    icon: "circle-check",
-    tone: "success",
-  });
-}
-
-const SITE_SWITCH_SUCCESS_KEY = "gnp:site-switch-success";
-
-export function queueSiteSwitchSuccessToast() {
-  try {
-    sessionStorage.setItem(SITE_SWITCH_SUCCESS_KEY, "1");
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export function showQueuedSiteSwitchSuccessToast() {
-  try {
-    if (sessionStorage.getItem(SITE_SWITCH_SUCCESS_KEY) !== "1") return false;
-    sessionStorage.removeItem(SITE_SWITCH_SUCCESS_KEY);
-    showSiteSwitchSuccessToast();
-    return true;
-  } catch {
-    return false;
-  }
 }
