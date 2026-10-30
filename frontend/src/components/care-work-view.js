@@ -1,3 +1,4 @@
+import { loadError } from "./load-error.js";
 import "./care-work.css";
 import { announceScreenHeading } from "../screen-focus.js";
 import {
@@ -232,7 +233,7 @@ export class CareWorkView extends HTMLElement {
     await render();
   }
   _loadError(retry) {
-    this.innerHTML = `${careHeader(t("care.title"))}<p role="alert">${escapeHtml(t("care.loadError"))}</p><button type="button" class="btn-outline" data-retry>${escapeHtml(t("care.retry"))}</button>`;
+    this.innerHTML = `${careHeader(t("care.title"))}${loadError(t("care.loadError"), { retryAttribute: "data-retry" })}`;
     this._bindBack("/care-work");
     this.querySelector("[data-retry]")?.addEventListener("click", retry);
   }

@@ -158,7 +158,9 @@ export async function dismissAllNewResults(page) {
     // Hydration can reorder cards after the identity read. Resolve this identity
     // again for the click instead of clicking whichever card is now first.
     const selected = tray.locator(`.analysis-card${selector}`);
-    await selected.locator('[data-analysis-action="delete"]').click();
+    // The local and backend card can overlap during hydration. Delete one
+    // representation of this condition, then require all of them to disappear.
+    await selected.first().locator('[data-analysis-action="delete"]').click();
     await page.locator("#analysis-delete-confirm").click();
     // Card counts can rise while other results load; only this card must leave.
     await expect(selected).toHaveCount(0, { timeout: 30_000 });

@@ -104,6 +104,9 @@ jobs:
       - name: Test issue update recovery in Chromium and WebKit
         run: npm run test:updates:ui
 
+      - name: Test error states and connectivity in Chromium and WebKit
+        run: npm run test:errors:ui
+
       # The offline-launch service worker exists only in a build, so this runs
       # against `vite preview` (npm run dev:offline), not the dev server.
       - name: Test offline launch

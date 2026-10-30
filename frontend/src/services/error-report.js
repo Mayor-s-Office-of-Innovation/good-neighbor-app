@@ -43,7 +43,11 @@ let windowSends = [];
  * @returns {void}
  */
 export function installErrorReporting() {
-  if (!enabledFor()) return;
+  if (
+    typeof globalThis.window?.addEventListener !== "function" ||
+    !enabledFor()
+  )
+    return;
   window.addEventListener("error", onErrorEvent);
   window.addEventListener("unhandledrejection", onUnhandledRejection);
 }

@@ -109,3 +109,45 @@ test("permission, server and conflict errors are not field validation", () => {
     assert.equal(notices.length, 1);
   }
 });
+
+test("routine visible saves are quiet; partial and refresh outcomes stay distinct inline", () => {
+  const notices = [],
+    inline = [];
+  const notify = (options) => {
+    notices.push(options);
+    return { close() {} };
+  };
+  const showInline = (message, options) => {
+    inline.push({ message, ...options });
+    return { close() {} };
+  };
+  const saved = createActionFeedback(
+    "admin.toast.siteSaved",
+    notify,
+    t,
+    showInline,
+  );
+  saved.success();
+  assert.equal(notices.length, 0);
+  saved.failure(new Error("network"));
+  assert.ok(inline[0].message.includes(t("admin.toast.refreshHelp")));
+  assert.equal(inline[0].duration, 5000);
+  const partial = createActionFeedback("operation", notify, t, showInline);
+  partial.changed();
+  partial.failure(new Error("network"));
+  assert.ok(inline[1].message.includes(t("admin.toast.partialHelp")));
+  assert.equal(inline[1].duration, undefined);
+});
+
+test("separate asynchronous operations do not suppress each other's notifications", () => {
+  const notices = [];
+  const notify = (options) => {
+    notices.push(options);
+    return { close() {} };
+  };
+  const first = createActionFeedback("admin.toast.invitationSent", notify, t);
+  const second = createActionFeedback("admin.toast.invitationSent", notify, t);
+  first.success();
+  second.success();
+  assert.notEqual(notices[0].key, notices[1].key);
+});

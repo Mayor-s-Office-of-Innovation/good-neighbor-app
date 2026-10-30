@@ -1,3 +1,7 @@
+import { startErrorPresentation } from "../../frontend/src/components/error-notice.js";
+import { mountConnectionBanner } from "../../frontend/src/components/connection-banner.js";
+startErrorPresentation();
+mountConnectionBanner();
 import { adminErrorMessage } from "./admin-error-messages.js";
 import { peopleDirectory } from "./people-directory.js";
 import {
