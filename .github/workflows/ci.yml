@@ -72,8 +72,8 @@ jobs:
       - name: Build
         run: npm run build
 
-  e2e:
-    name: E2E (Playwright)
+  e2e-ui:
+    name: E2E UI suites
     runs-on: ubuntu-latest
     container:
       # Keep the image version aligned with @playwright/test in e2e/package.json.
@@ -112,6 +112,42 @@ jobs:
       - name: Test offline launch
         run: npm run test:offline:e2e
 
+      - name: Upload UI test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-ui-results
+          path: e2e/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  e2e-main:
+    name: E2E main shard ${{ matrix.shard }}/2
+    runs-on: ubuntu-latest
+    strategy:
+      # Finish both shards so a failure still leaves a complete set of results.
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      options: --ipc=host
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Rewrite git protocol for npm git deps
+        run: git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+
+      - name: Install
+        run: npm ci
+
       # Browsers and their OS dependencies are in the image. The host runner's
       # Java installation is not available inside the job container.
       - name: Setup Java for local harness
@@ -133,8 +169,10 @@ jobs:
       - name: Copy env example
         run: cp .env.example .env.local
 
-      - name: Run e2e tests
-        run: npm run test:e2e
+      # Each job owns a fresh emulator stack. Keep one worker within a shard:
+      # the tests share a seeded site and the analyzer stub's current fixture.
+      - name: Run e2e shard
+        run: npm run e2e -w e2e -- --shard=${{ matrix.shard }}/2
 
       # Always, not only on failure: the HTML report holds ramp-check's
       # highlight screenshots for AAA findings, which warn without failing
@@ -143,12 +181,25 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: playwright-report
+          name: playwright-report-main-${{ matrix.shard }}
           path: |
             e2e/test-results/
             e2e/playwright-report/
           retention-days: 7
           if-no-files-found: ignore
+
+  e2e:
+    # Preserve the required check name while covering every shard and UI suite.
+    name: E2E (Playwright)
+    if: always()
+    needs: [e2e-main, e2e-ui]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all E2E jobs to pass
+        env:
+          MAIN_RESULT: ${{ needs.e2e-main.result }}
+          UI_RESULT: ${{ needs.e2e-ui.result }}
+        run: test "$MAIN_RESULT" = success && test "$UI_RESULT" = success
 
   perf:
     name: Performance budgets
