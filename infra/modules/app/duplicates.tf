@@ -19,7 +19,7 @@ variable "duplicate_comparison_requests_per_second" {
 # Isolated duplicate evaluation and reversible product links. No existing analysis handler or queue changes.
 variable "enable_duplicate_detection" {
   type        = bool
-  default     = false
+  default     = true
   description = "Enable isolated duplicate evaluation only after analyzer comparison deployment and key provisioning."
 }
 variable "duplicate_analyzer_base_url" {

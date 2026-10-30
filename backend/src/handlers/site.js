@@ -86,6 +86,7 @@ export const getSite = async (event) => {
     "perimeter",
     "complianceLetters",
     "addressParts",
+    "duplicateUiRolloutVersion",
   ]) {
     delete publicSite[field];
   }
@@ -97,7 +98,7 @@ export const getSite = async (event) => {
     // Presentation rollout is site-owned runtime configuration. Backend
     // matching remains independently controlled by the deployed
     // `enable_duplicate_detection` infrastructure flag.
-    duplicateDetection: storedFeatureFlags.duplicateDetection === true,
+    duplicateDetection: storedFeatureFlags.duplicateDetection !== false,
   };
   return jsonResponse(200, { site: publicSite });
 };

@@ -8,11 +8,13 @@ import { duplicateCountLabel } from "../components/duplicate-issue.templates.js"
 import { taskUpdateTimelineItem } from "../components/issue-updates.templates.js";
 import { t } from "../i18n/i18n.js";
 beforeEach(() => setDuplicateUiSite(null));
-it("defaults off and requires an explicit true value from the current site", () => {
+it("waits for site settings, then defaults on unless explicitly disabled", () => {
   expect(duplicateUiEnabled()).toBe(false);
   setDuplicateUiSite({ featureFlags: { duplicateDetection: true } });
   expect(duplicateUiEnabled()).toBe(true);
   setDuplicateUiSite({});
+  expect(duplicateUiEnabled()).toBe(true);
+  setDuplicateUiSite({ featureFlags: { duplicateDetection: false } });
   expect(duplicateUiEnabled()).toBe(false);
 });
 it("announces changes and unsubscribes listeners", () => {

@@ -221,19 +221,37 @@ lifecycle deletion must still be verified after deployment.
 ## Independent frontend rollout flag
 
 The public, authenticated site response includes
-`site.featureFlags.duplicateDetection`. It defaults to false and controls display
+`site.featureFlags.duplicateDetection`. It defaults to true and controls display
 only. It does not change the worker, persisted links, shared action routing or
 human separation overrides. The UI fails closed when fresh settings cannot be
 loaded; reload after changing the flag. Browser reloads fetch current settings.
 
 The flag is stored on the site's `SITE#<siteId>` / `#META` DynamoDB item as the
-boolean `featureFlags.duplicateDetection`. Missing, false, and non-boolean values
-all fail closed. Change the item through an authorized operational or admin path;
+boolean `featureFlags.duplicateDetection`. Only an explicit boolean false disables display; a missing flag defaults to enabled. Change the item through an authorized operational or admin path;
 the next site-settings request sees the change without a Terraform apply, Lambda
 deployment, or frontend build. Preserve any other keys already present in the
 `featureFlags` map when updating it.
 
-Keep the backend `enable_duplicate_detection` Terraform flag independent. Backend
+The shared dev/prod deployment workflow runs
+`backend/scripts/enable-duplicate-ui.mjs --apply` before publishing the frontend.
+It enables all existing Sites (including previously false flags), preserving other
+feature flags. Per-Site `duplicateUiRolloutVersion: 1` markers make interrupted
+runs resumable without changing already-migrated Sites. After the full apply
+succeeds, an environment-wide `MIGRATION#DUPLICATE_UI_V1 / #META` record with
+`completed: true` closes the rollout. Later dry runs and applies do not scan or
+modify Sites, including newly created Sites with an explicit operator rollback.
+The script defaults to dry-run, paginates the table, and fails on concurrent
+settings edits so it can safely resume. New Sites inherit the enabled API default.
+
+Successful explicit 311 filing collapses all matched observations into the
+canonical original in In progress, including observations generated after filing
+began. Evidence and underlying task records remain intact. Pending and failed
+filings retain their submission state; they are not shown as successful filings.
+State-only cache refreshes preserve confirmed relations while revalidating; edits
+to evidence and explicit separation discard them.
+
+The backend `enable_duplicate_detection` Terraform flag defaults to true in the
+module and dev environment; prod also explicitly enables it. Keep it independent. Backend
 on/UI off permits operational observation before exposing the experience; disabling
 the site flag affects presentation only and does not stop matching or unlink
 persisted results.

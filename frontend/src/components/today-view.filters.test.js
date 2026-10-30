@@ -2183,7 +2183,9 @@ describe("duplicate watch continuity", () => {
       view._watchDuplicates([
         { ...tasks[0], status: "completed", updatedAt: "v2" },
       ]);
-      expect(changed).toHaveBeenCalledExactlyOnceWith(view._siteId);
+      expect(changed).toHaveBeenCalledExactlyOnceWith(view._siteId, [
+        { ...tasks[0], status: "completed", updatedAt: "v2" },
+      ]);
       expect(duplicates.watch).toHaveBeenCalledOnce();
       view._watchDuplicates([
         { ...tasks[0], status: "completed", updatedAt: "v2" },

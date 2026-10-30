@@ -1,15 +1,17 @@
 // Keep mutation notifications independent of the polling/UI dependency graph.
 const listeners = new Set();
 
-/** @param {(originSiteId?: string) => void} listener */
+/** @param {(originSiteId?: string, tasks?: Record<string, any>[]) => void} listener */
 export function onDuplicateInvalidation(listener) {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
 
-/** @param {string} [originSiteId] */
-export function invalidateDuplicateIssues(originSiteId) {
-  for (const listener of listeners) listener(originSiteId);
+/** @param {string} [originSiteId]
+ * @param {Record<string, any>[]} [tasks]
+ */
+export function invalidateDuplicateIssues(originSiteId, tasks) {
+  for (const listener of listeners) listener(originSiteId, tasks);
 }
 
 /**
@@ -44,12 +46,19 @@ export function observeDuplicateTasks(siteId, tasks) {
     versionsSite = siteId;
   }
   let changed = false;
+  let evidenceChanged = false;
   for (const task of tasks) {
     if (!task.taskId) continue;
     const version = duplicateTaskVersion(task);
-    if (versions.has(task.taskId) && versions.get(task.taskId) !== version)
+    const previous = versions.get(task.taskId);
+    if (previous && previous !== version) {
       changed = true;
+      evidenceChanged ||=
+        JSON.stringify(JSON.parse(previous).slice(3)) !==
+        JSON.stringify(JSON.parse(version).slice(3));
+    }
     versions.set(task.taskId, version);
   }
-  if (changed) invalidateDuplicateIssues(siteId);
+  if (changed)
+    invalidateDuplicateIssues(siteId, evidenceChanged ? undefined : tasks);
 }
