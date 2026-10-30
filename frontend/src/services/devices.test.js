@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "./api-error.js";
 import {
+  registerDevice,
   redeemEnrollmentGrant,
   redeemHandoffGrant,
   refreshDeviceToken,
@@ -216,3 +217,44 @@ describe("redeemHandoffGrant", () => {
     });
   });
 });
+
+it("preserves registration throttling as a typed 429 even for a WAF response", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 429 }));
+  try {
+    await expect(registerDevice("ABC123")).rejects.toMatchObject({
+      name: "ApiError",
+      status: 429,
+      body: { error: "code_attempts_limited" },
+    });
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it.each(["registration", "redemption", "refresh"])(
+  "preserves 429 and Retry-After for %s without retrying",
+  async (kind) => {
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: "rate_limited" }), {
+        status: 429,
+        headers: { "Retry-After": "300" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    try {
+      const operation =
+        kind === "registration"
+          ? registerDevice("ABC123")
+          : kind === "redemption"
+            ? redeemEnrollmentGrant("synthetic-grant", "synthetic-token")
+            : refreshDeviceToken("synthetic-refresh");
+      await expect(operation).rejects.toMatchObject({
+        status: 429,
+        retryAfterMs: 300000,
+      });
+      expect(fetch).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  },
+);

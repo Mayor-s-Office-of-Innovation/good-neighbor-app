@@ -2,7 +2,6 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { URLSearchParams } from "node:url";
 import {
   GetCommand,
-  PutCommand,
   QueryCommand,
   TransactWriteCommand,
   UpdateCommand,
@@ -39,15 +38,10 @@ export const requestManagerAccess = async (event) => {
 
   const verifier = await emailHash(email);
   const now = new Date();
-  let limitedBy = "";
   // CloudFront does not reliably preserve the viewer IP in API Gateway's
   // sourceIp field; rate-limiting that value can throttle unrelated users who
   // share an edge. The keyed email verifier is stable and non-enumerating.
-  if (!(await acquireHourlyLimit(`EMAIL#${verifier}`, 3, now))) {
-    limitedBy = "email_hour";
-  } else if (!(await acquireCooldown(verifier, now))) {
-    limitedBy = "email_cooldown";
-  }
+  const limitedBy = await acquireRecoveryAttempt(verifier, now);
   if (limitedBy) {
     console.warn(
       JSON.stringify({ marker: "ManagerAccessThrottled", limitedBy }),
@@ -326,67 +320,78 @@ async function issueGrant(tableName, site, membership, now) {
   };
 }
 
-/** @param {string} subject @param {number} limit @param {Date} now */
-async function acquireHourlyLimit(subject, limit, now) {
+/**
+ * @param {string} verifier
+ * @param {Date} now
+ * @returns {Promise<"" | "email_hour" | "email_cooldown">} Rejection reason, or an acquired attempt.
+ */
+async function acquireRecoveryAttempt(verifier, now) {
+  const tableName = getDynamoTableName();
   const hour = now.toISOString().slice(0, 13);
-  try {
-    await ddb.send(
-      new UpdateCommand({
-        TableName: getDynamoTableName(),
-        Key: { pk: `MANAGER_ACCESS_RATE#${subject}`, sk: `HOUR#${hour}` },
-        UpdateExpression:
-          "SET expiresAt = :expiresAt, #type = :type ADD requestCount :one",
-        ConditionExpression:
-          "attribute_not_exists(requestCount) OR requestCount < :limit",
-        ExpressionAttributeNames: { "#type": "type" },
-        ExpressionAttributeValues: {
-          ":one": 1,
-          ":limit": limit,
-          ":type": "managerAccessRateLimit",
-          ":expiresAt": Math.floor(now.getTime() / 1000) + 2 * 60 * 60,
-        },
-      }),
-    );
-    return true;
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      error.name === "ConditionalCheckFailedException"
-    ) {
-      return false;
-    }
-    throw error;
-  }
-}
-
-/** @param {string} verifier @param {Date} now */
-async function acquireCooldown(verifier, now) {
   const nowIso = now.toISOString();
+  // Commit both guards together: cooldown rejections must not spend the hourly
+  // budget, and hourly rejections must not acquire a new cooldown. Keep the
+  // existing keys and calendar-hour window so deployed counters remain valid.
   try {
     await ddb.send(
-      new PutCommand({
-        TableName: getDynamoTableName(),
-        Item: {
-          pk: `MANAGER_ACCESS_REQUEST#${verifier}`,
-          sk: "#COOLDOWN",
-          type: "managerAccessRequestThrottle",
-          requestedAt: nowIso,
-          nextAllowedAt: new Date(now.getTime() + COOLDOWN_MS).toISOString(),
-          expiresAt: Math.floor(now.getTime() / 1000) + 60 * 60,
-        },
-        ConditionExpression:
-          "attribute_not_exists(pk) OR nextAllowedAt <= :now",
-        ExpressionAttributeValues: { ":now": nowIso },
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            Update: {
+              TableName: tableName,
+              Key: {
+                pk: `MANAGER_ACCESS_RATE#EMAIL#${verifier}`,
+                sk: `HOUR#${hour}`,
+              },
+              UpdateExpression:
+                "SET expiresAt = :expiresAt, #type = :type ADD requestCount :one",
+              ConditionExpression:
+                "attribute_not_exists(requestCount) OR requestCount < :limit",
+              ExpressionAttributeNames: { "#type": "type" },
+              ExpressionAttributeValues: {
+                ":one": 1,
+                ":limit": 3,
+                ":type": "managerAccessRateLimit",
+                ":expiresAt": Math.floor(now.getTime() / 1000) + 2 * 60 * 60,
+              },
+            },
+          },
+          {
+            Put: {
+              TableName: tableName,
+              Item: {
+                pk: `MANAGER_ACCESS_REQUEST#${verifier}`,
+                sk: "#COOLDOWN",
+                type: "managerAccessRequestThrottle",
+                requestedAt: nowIso,
+                nextAllowedAt: new Date(
+                  now.getTime() + COOLDOWN_MS,
+                ).toISOString(),
+                expiresAt: Math.floor(now.getTime() / 1000) + 60 * 60,
+              },
+              ConditionExpression:
+                "attribute_not_exists(pk) OR nextAllowedAt <= :now",
+              ExpressionAttributeValues: { ":now": nowIso },
+            },
+          },
+        ],
       }),
     );
-    return true;
+    return "";
   } catch (error) {
+    const reasons = /** @type {{CancellationReasons?: {Code?: string}[]}} */ (
+      error
+    )?.CancellationReasons;
     if (
       error instanceof Error &&
-      error.name === "ConditionalCheckFailedException"
+      error.name === "TransactionCanceledException"
     ) {
-      return false;
+      if (reasons?.[0]?.Code === "ConditionalCheckFailed") return "email_hour";
+      if (reasons?.[1]?.Code === "ConditionalCheckFailed")
+        return "email_cooldown";
     }
+    // Contention and database failures are not evidence of rate limiting.
+    // Fail closed without issuing links or attempting email delivery.
     throw error;
   }
 }

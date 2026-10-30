@@ -24,6 +24,13 @@ skips hook setup when `CI=true` or `CI=1`; CI security scans still run separatel
 Using `--ignore-scripts` bypasses this setup, so run `npm run setup:hooks` afterward.
 Do not set `CI=true` in your local shell to suppress setup failures.
 
+The Terraform validation hook checks the dev, prod, and production-state bootstrap
+roots whenever Terraform files change. The app child module is checked through both
+environment roots, which supply its required `aws.us_east_1` provider alias.
+Initialization disables the backend and keeps dependency lockfiles read-only; this
+check does not run plan or apply. Run it directly with
+`bash infra/scripts/validate-terraform.sh`.
+
 ### Checkov hook fails while building Python dependencies
 
 If hook initialization fails while compiling a dependency such as `pycares`,

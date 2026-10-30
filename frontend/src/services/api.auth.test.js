@@ -848,3 +848,51 @@ describe("refresh remains bound to its original enrollment", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 });
+
+it.each(["json", "html", "empty"])(
+  "keeps a %s 429 as throttling without refreshing or changing health",
+  async (bodyKind) => {
+    const { getHealthState } = await import("./backend-health.js");
+    const before = getHealthState();
+    const fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          bodyKind === "html"
+            ? "<html>Too many requests</html>"
+            : bodyKind === "json"
+              ? JSON.stringify({ error: "rate_limited" })
+              : "",
+          { status: 429, headers: { "Retry-After": "300" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetch);
+    await expect(listChecks()).rejects.toMatchObject({
+      name: "ApiError",
+      status: 429,
+      retryAfterMs: 300000,
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(refreshDeviceToken).not.toHaveBeenCalled();
+    expect(getHealthState()).toBe(before);
+    expect(site.token).toBe("access-1");
+  },
+);
+
+it("retains the session when a preflight refresh is throttled and the old token is rejected", async () => {
+  const { getHealthState } = await import("./backend-health.js");
+  const before = getHealthState();
+  site.tokenExpiresAt = Date.now() - 1000;
+  const limited = new ApiError("Refresh limited", {
+    status: 429,
+    retryAfterMs: 300000,
+  });
+  vi.mocked(refreshDeviceToken).mockRejectedValueOnce(limited);
+  const fetch = stubFetch([{ status: 401 }]);
+  vi.stubGlobal("fetch", fetch);
+  await expect(listChecks()).rejects.toBe(limited);
+  expect(refreshDeviceToken).toHaveBeenCalledOnce();
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(site.token).toBe("access-1");
+  expect(getHealthState()).toBe(before);
+});

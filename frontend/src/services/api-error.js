@@ -14,12 +14,17 @@ export class ApiError extends Error {
    * @param {object} [opts]
    * @param {number} [opts.status]  HTTP status (0 = network/transport failure)
    * @param {unknown} [opts.body]   parsed error body, when the server sent one
+   * @param {number} [opts.retryAfterMs] server-advised delay; never an automatic replay
    */
-  constructor(message, { status = 0, body = undefined } = {}) {
+  constructor(
+    message,
+    { status = 0, body = undefined, retryAfterMs = undefined } = {},
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.body = body;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 

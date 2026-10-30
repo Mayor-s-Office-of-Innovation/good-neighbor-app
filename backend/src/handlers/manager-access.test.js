@@ -358,7 +358,7 @@ describe("rolling-hour issuance serialization", () => {
     "admits only the final available grant under concurrent %s issuance",
     async (scope) => {
       const state = store(
-        recentGrants(scope === "manager" ? 24 : 39, (index) =>
+        recentGrants(scope === "manager" ? 99 : 199, (index) =>
           scope === "manager" ? "manager-1" : `manager-${index % 3}`,
         ),
       );
@@ -380,12 +380,12 @@ describe("rolling-hour issuance serialization", () => {
         ).error,
       ).toBe(`${scope}_grant_rate_limited`);
       expect(state.conflicts()).toBe(1);
-      expect(state.grants).toHaveLength(scope === "manager" ? 25 : 40);
+      expect(state.grants).toHaveLength(scope === "manager" ? 100 : 200);
     },
   );
 
   it("counts later pages and terminal statuses before issuing with a new guard", async () => {
-    store(recentGrants(25, () => "manager-1"));
+    store(recentGrants(100, () => "manager-1"));
     const result = await call(
       createStaffGrant,
       event({ body: { label: "Tablet" } }),
@@ -393,7 +393,7 @@ describe("rolling-hour issuance serialization", () => {
     expect(result.statusCode).toBe(429);
     expect(
       send.mock.calls.filter(([command]) => command instanceof QueryCommand),
-    ).toHaveLength(3);
+    ).toHaveLength(10);
     expect(
       send.mock.calls.some(
         ([command]) => command instanceof TransactWriteCommand,
@@ -402,7 +402,7 @@ describe("rolling-hour issuance serialization", () => {
   });
 
   it("excludes issuances older than the rolling hour", async () => {
-    const old = recentGrants(25, () => "manager-1").map((grant, index) => ({
+    const old = recentGrants(100, () => "manager-1").map((grant, index) => ({
       ...grant,
       sk: `STAFF_GRANT#${new Date(Date.now() - 61 * 60 * 1000).toISOString()}#${index}`,
     }));
@@ -417,7 +417,7 @@ describe("rolling-hour issuance serialization", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-10-22T18:01:00Z"));
     try {
-      store(recentGrants(25, () => "manager-1"));
+      store(recentGrants(100, () => "manager-1"));
       expect(
         (await call(createStaffGrant, event({ body: { label: "Tablet" } })))
           .statusCode,

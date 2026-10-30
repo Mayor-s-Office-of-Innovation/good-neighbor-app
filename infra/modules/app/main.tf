@@ -1313,6 +1313,12 @@ resource "aws_wafv2_web_acl" "web" {
     content_type = "APPLICATION_JSON"
   }
 
+  custom_response_body {
+    key          = "rate-limited"
+    content      = jsonencode({ error = "rate_limited" })
+    content_type = "APPLICATION_JSON"
+  }
+
   # CLOUDFRONT-scoped WAF must live in us-east-1 regardless of the app's region.
   provider = aws.us_east_1
 
@@ -1331,10 +1337,15 @@ resource "aws_wafv2_web_acl" "web" {
     action {
       block {
         custom_response {
-          response_code = 429
+          response_code            = 429
+          custom_response_body_key = "rate-limited"
           response_header {
             name  = "Retry-After"
             value = "300"
+          }
+          response_header {
+            name  = "Cache-Control"
+            value = "no-store"
           }
         }
       }
@@ -1485,18 +1496,35 @@ resource "aws_wafv2_web_acl" "web" {
     }
   }
 
+  # General viewer-IP budget covers static assets and API requests for up to
+  # 100 people sharing a public IP, including pending-result polling headroom.
+  # Endpoint budgets and application guards remain separate controls.
   rule {
     name     = "RateLimit"
     priority = 3
 
     action {
-      block {}
+      block {
+        custom_response {
+          response_code            = 429
+          custom_response_body_key = "rate-limited"
+          response_header {
+            name  = "Retry-After"
+            value = "300"
+          }
+          response_header {
+            name  = "Cache-Control"
+            value = "no-store"
+          }
+        }
+      }
     }
 
     statement {
       rate_based_statement {
-        aggregate_key_type = "IP"
-        limit              = 2000
+        aggregate_key_type    = "IP"
+        limit                 = 30000
+        evaluation_window_sec = 300
       }
     }
 
@@ -1507,24 +1535,35 @@ resource "aws_wafv2_web_acl" "web" {
     }
   }
 
-  # Per-path rate limits for the public, unauthenticated intakes (client-error
-  # reports + user feedback). API Gateway v2 has stage-level throttle only, so
-  # WAF rate-based rules with path scope-downs are the route-level guards the
-  # error-tracking and feedback plans call for — only these endpoints are
-  # bounded. Errors are rare + client-side deduped (100/5min/IP); honest
-  # feedback submissions are one-per-visit (20/5min/IP).
+  # Viewer-IP intake budgets allow shared-network bursts: 1,000 error reports
+  # and 100 feedback submissions per five minutes. The browser still deduplicates
+  # errors and caps itself at five reports per minute. These rules complement
+  # the general traffic budget, which may block first.
   rule {
     name     = "ClientErrorsRateLimit"
     priority = 4
 
     action {
-      block {}
+      block {
+        custom_response {
+          response_code            = 429
+          custom_response_body_key = "rate-limited"
+          response_header {
+            name  = "Retry-After"
+            value = "300"
+          }
+          response_header {
+            name  = "Cache-Control"
+            value = "no-store"
+          }
+        }
+      }
     }
 
     statement {
       rate_based_statement {
         aggregate_key_type = "IP"
-        limit              = 100
+        limit              = 1000
 
         scope_down_statement {
           byte_match_statement {
@@ -1554,13 +1593,26 @@ resource "aws_wafv2_web_acl" "web" {
     priority = 5
 
     action {
-      block {}
+      block {
+        custom_response {
+          response_code            = 429
+          custom_response_body_key = "rate-limited"
+          response_header {
+            name  = "Retry-After"
+            value = "300"
+          }
+          response_header {
+            name  = "Cache-Control"
+            value = "no-store"
+          }
+        }
+      }
     }
 
     statement {
       rate_based_statement {
         aggregate_key_type = "IP"
-        limit              = 20
+        limit              = 100
 
         scope_down_statement {
           byte_match_statement {
@@ -1585,25 +1637,35 @@ resource "aws_wafv2_web_acl" "web" {
     }
   }
 
-  # Device-auth bootstrap routes (ADR 0010): /v1/devices (register) and
-  # /v1/devices/token:refresh. Anonymous + keyed only by the 6-char site code,
-  # so WAF is the brute-force guard. Generous by design — several hundred
-  # clients across many sites/IPs: registration is once-per-device and refresh
-  # ~once per 30 days per device (plus rare 401 retries), so honest traffic is
-  # single digits per IP per 5 min. 300/5min/IP leaves >30x headroom while
-  # capping code-guessing at ~900k tries/5min (vs 1M codespace, unusable).
+  # Registration and refresh share 1,000 requests/viewer IP/five minutes.
+  # Registration also spends the application short-code budget, including when
+  # called directly at Gateway. Refresh uses a high-entropy token and stays
+  # outside that short-code budget; preserve its session-recovery protections.
   rule {
     name     = "DeviceAuthRateLimit"
     priority = 6
 
     action {
-      block {}
+      block {
+        custom_response {
+          response_code            = 429
+          custom_response_body_key = "rate-limited"
+          response_header {
+            name  = "Retry-After"
+            value = "300"
+          }
+          response_header {
+            name  = "Cache-Control"
+            value = "no-store"
+          }
+        }
+      }
     }
 
     statement {
       rate_based_statement {
         aggregate_key_type = "IP"
-        limit              = 300
+        limit              = 1000
 
         scope_down_statement {
           byte_match_statement {
@@ -1628,8 +1690,9 @@ resource "aws_wafv2_web_acl" "web" {
     }
   }
 
-  # Share a viewer-IP budget across short-code lookup and enrollment. The
-  # application also caps attempts globally to cover distributed/direct-origin traffic.
+  # Share a viewer-IP budget across registration, lookup and all enrollment redemptions
+  # (including long-token links). Application budgets cover short-code lookup,
+  # redemption and device registration, including direct-origin requests.
   rule {
     name     = "EnrollmentCodeRateLimit"
     priority = 9
@@ -1642,15 +1705,32 @@ resource "aws_wafv2_web_acl" "web" {
             name  = "Retry-After"
             value = "300"
           }
+          response_header {
+            name  = "Cache-Control"
+            value = "no-store"
+          }
         }
       }
     }
     statement {
       rate_based_statement {
         aggregate_key_type = "IP"
-        limit              = 60
+        limit              = 100
         scope_down_statement {
           or_statement {
+            statement {
+              byte_match_statement {
+                positional_constraint = "EXACTLY"
+                search_string         = "/v1/devices"
+                field_to_match {
+                  uri_path {}
+                }
+                text_transformation {
+                  priority = 0
+                  type     = "LOWERCASE"
+                }
+              }
+            }
             statement {
               byte_match_statement {
                 positional_constraint = "EXACTLY"
@@ -1697,13 +1777,26 @@ resource "aws_wafv2_web_acl" "web" {
     priority = 7
 
     action {
-      block {}
+      block {
+        custom_response {
+          response_code            = 429
+          custom_response_body_key = "rate-limited"
+          response_header {
+            name  = "Retry-After"
+            value = "300"
+          }
+          response_header {
+            name  = "Cache-Control"
+            value = "no-store"
+          }
+        }
+      }
     }
 
     statement {
       rate_based_statement {
         aggregate_key_type = "IP"
-        limit              = 20
+        limit              = 100
 
         scope_down_statement {
           byte_match_statement {
@@ -1728,22 +1821,34 @@ resource "aws_wafv2_web_acl" "web" {
     }
   }
 
-  # Client analytics intake (POST /v1/client-events). Honest traffic is one
-  # $pageview per route change plus a few app events per check, so even a
-  # field team behind one NAT stays far below 1000/5min/IP; the cap bounds a
-  # misbehaving client or a flood of forged events.
+  # Client analytics intake (POST /v1/client-events): 5,000 requests per
+  # viewer IP/five minutes for shared-network page views and app events.
+  # The general traffic budget may block first; rejected beacons are not retried.
   rule {
     name     = "ClientEventsRateLimit"
     priority = 8
 
     action {
-      block {}
+      block {
+        custom_response {
+          response_code            = 429
+          custom_response_body_key = "rate-limited"
+          response_header {
+            name  = "Retry-After"
+            value = "300"
+          }
+          response_header {
+            name  = "Cache-Control"
+            value = "no-store"
+          }
+        }
+      }
     }
 
     statement {
       rate_based_statement {
         aggregate_key_type = "IP"
-        limit              = 1000
+        limit              = 5000
 
         scope_down_statement {
           byte_match_statement {

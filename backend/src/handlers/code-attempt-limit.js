@@ -1,19 +1,39 @@
+import { createHash, timingSafeEqual } from "node:crypto";
+import { isIP } from "node:net";
 import { TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getDynamoTableName } from "../config.js";
 import { jsonResponse } from "../http.js";
 
-// One budget across both public short-code endpoints, including direct-origin
+// One budget across lookup, enrollment and device registration, including direct-origin
 // requests. Never trust forwarded IP headers or key this by a guessed code.
 const WINDOWS = [
-  { seconds: 300, limit: 300 },
-  { seconds: 86400, limit: 3000 },
+  { seconds: 300, limit: 1000 },
+  { seconds: 86400, limit: 10000 },
 ];
 
-/** @param {number} [now] @returns {Promise<import("aws-lambda").APIGatewayProxyResult | null>} */
-export async function checkCodeAttemptLimit(now = Date.now()) {
+/**
+ * @param {number} [now]
+ * @param {"lookup" | "redeem" | "register" | "unspecified"} [source]
+ * @param {import("aws-lambda").APIGatewayProxyEventV2} [event]
+ * @returns {Promise<import("aws-lambda").APIGatewayProxyResult | null>} Budget rejection, or admission.
+ */
+export async function checkCodeAttemptLimit(
+  now = Date.now(),
+  source = "unspecified",
+  event,
+) {
   const seconds = Math.floor(now / 1000);
-  const windows = WINDOWS.map((window) => ({
+  const sourceIp = codeAttemptSource(event);
+  const sourceKey = createHash("sha256").update(sourceIp).digest("hex");
+  const windows = [
+    ...WINDOWS.map((window) => ({ ...window, pk: "SHORT_CODE_ATTEMPTS" })),
+    ...WINDOWS.map((window) => ({
+      ...window,
+      limit: window.limit / 10,
+      pk: `SHORT_CODE_SOURCE#${sourceKey}`,
+    })),
+  ].map((window) => ({
     ...window,
     start: Math.floor(seconds / window.seconds) * window.seconds,
   }));
@@ -24,7 +44,7 @@ export async function checkCodeAttemptLimit(now = Date.now()) {
           Update: {
             TableName: getDynamoTableName(),
             Key: {
-              pk: "SHORT_CODE_ATTEMPTS",
+              pk: window.pk,
               sk: `${window.seconds}#${window.start}`,
             },
             UpdateExpression: "SET expiresAt = :ttl ADD requestCount :one",
@@ -39,6 +59,15 @@ export async function checkCodeAttemptLimit(now = Date.now()) {
         })),
       }),
     );
+    // Admission counts requests, not successful authentication. Only fixed
+    // route labels and budget outcomes are logged, never submitted credentials.
+    console.info(
+      JSON.stringify({
+        marker: "ShortCodeAttempt",
+        source,
+        outcome: "admitted",
+      }),
+    );
     return null;
   } catch (error) {
     const reasons = /** @type {{CancellationReasons?: {Code?: string}[]}} */ (
@@ -48,8 +77,16 @@ export async function checkCodeAttemptLimit(now = Date.now()) {
       !(error instanceof Error) ||
       error.name !== "TransactionCanceledException" ||
       !reasons?.some((reason) => reason.Code === "ConditionalCheckFailed")
-    )
+    ) {
+      console.warn(
+        JSON.stringify({
+          marker: "ShortCodeAttempt",
+          source,
+          outcome: "store_error",
+        }),
+      );
       throw error;
+    }
     const retryAfter = Math.max(
       ...windows.map((window, index) =>
         reasons[index]?.Code === "ConditionalCheckFailed"
@@ -57,7 +94,9 @@ export async function checkCodeAttemptLimit(now = Date.now()) {
           : 0,
       ),
     );
-    console.info(JSON.stringify({ marker: "ShortCodeThrottled", retryAfter }));
+    console.info(
+      JSON.stringify({ marker: "ShortCodeThrottled", source, retryAfter }),
+    );
     const response = jsonResponse(429, { error: "code_attempts_limited" });
     response.headers = {
       ...response.headers,
@@ -65,4 +104,27 @@ export async function checkCodeAttemptLimit(now = Date.now()) {
     };
     return response;
   }
+}
+
+/**
+ * Only the authenticated CloudFront origin may supply the viewer identity.
+ * Direct-origin callers use Gateway's transport source; forwarded headers are ignored.
+ * @param {import("aws-lambda").APIGatewayProxyEventV2} [event]
+ * @returns {string} Canonical source address, or a shared fail-closed fallback.
+ */
+export function codeAttemptSource(event) {
+  const configured = process.env.SHORT_CODE_ORIGIN_TOKEN;
+  const supplied = event?.headers?.["x-support-origin"];
+  const viewer = event?.headers?.["x-code-viewer-ip"];
+  const trusted =
+    configured &&
+    supplied &&
+    Buffer.byteLength(configured) === Buffer.byteLength(supplied) &&
+    timingSafeEqual(Buffer.from(configured), Buffer.from(supplied));
+  const address = trusted ? viewer : event?.requestContext?.http?.sourceIp;
+  if (!address || !isIP(address)) return "unknown";
+  // URL canonicalization collapses equivalent IPv6 spellings.
+  return isIP(address) === 6
+    ? new URL(`http://[${address}]/`).hostname
+    : address;
 }

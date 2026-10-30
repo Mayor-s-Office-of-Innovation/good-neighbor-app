@@ -98,6 +98,9 @@ jobs:
       - name: Test support dialog accessibility
         run: npm run test:support:ui
 
+      - name: Test upload reservation persistence in browser IndexedDB
+        run: node --test e2e/upload-reservation-storage.test.mjs
+
       - name: Test issue update recovery in Chromium and WebKit
         run: npm run test:updates:ui
 
@@ -254,7 +257,20 @@ jobs:
 
       - name: Initialize production backend bootstrap without backend
         working-directory: infra/bootstrap/prod-state
-        run: terraform init -backend=false
+        # Registry discovery can fail with a transient connection reset.
+        run: |
+          for attempt in 1 2 3; do
+            if terraform init -backend=false; then
+              exit 0
+            else
+              status=$?
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit "$status"
+            fi
+            echo "Terraform initialization failed; retrying in 10 seconds (attempt $attempt/3)."
+            sleep 10
+          done
 
       - name: Validate production backend bootstrap
         working-directory: infra/bootstrap/prod-state

@@ -720,3 +720,48 @@ export function deleteCareSubmission(siteId, workId) {
     os.delete(`care:${siteId}:${workId}`),
   );
 }
+
+/**
+ * Persist an upload retry identity before issuing a write-capable URL. Metadata
+ * only: no media or signed URLs. The same scoped file reuses its ID across tabs
+ * and reloads. Replacing bytes/type or reaching a new UTC day creates a new ID.
+ * @param {string} scope
+ * @param {string} fingerprint
+ * @param {string} [replaceId] Server rejected this expired ID.
+ * @returns {Promise<string>} Durable request identity.
+ */
+export async function getUploadRequestId(scope, fingerprint, replaceId) {
+  return tx(["site", "review"], "readwrite", async (siteStore, transaction) => {
+    const site = await reqToPromise(siteStore.get("current"));
+    if (!site?.siteId || !site.deviceId)
+      throw new Error("Upload session unavailable");
+    const os = transaction.objectStore("review");
+    const key = `upload:${site.siteId}:${site.deviceId}:${scope}:${fingerprint}`;
+    // Prune only upload metadata; avoid loading queued photo blobs from review.
+    const oldestDay = new Date(Date.now() - 2 * 86400000)
+      .toISOString()
+      .slice(0, 10);
+    await new Promise((resolve, reject) => {
+      const cursor = os.openCursor(
+        IDBKeyRange.bound("upload:", "upload:\uffff"),
+      );
+      cursor.onerror = () => reject(cursor.error);
+      cursor.onsuccess = () => {
+        const entry = cursor.result;
+        if (!entry) {
+          resolve(undefined);
+          return;
+        }
+        if (entry.value.day < oldestDay) entry.delete();
+        entry.continue();
+      };
+    });
+    const record = await reqToPromise(os.get(key));
+    const day = new Date().toISOString().slice(0, 10);
+    if (record?.day === day && record.requestId !== replaceId)
+      return record.requestId;
+    const requestId = crypto.randomUUID();
+    await reqToPromise(os.put({ requestId, day }, key));
+    return requestId;
+  });
+}
