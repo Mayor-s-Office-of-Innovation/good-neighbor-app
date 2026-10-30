@@ -8,6 +8,7 @@ import {
   MAX_FILES,
 } from "../domain/attachment-files.js";
 import "./complaint-view.css";
+import { reserveMediaUpload } from "../services/upload-reservation.js";
 import { currentRoute, navigate, setPopstateGuard } from "../router.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
@@ -538,10 +539,16 @@ ${escapeHtml(draft.description)}</textarea
         }
       }
       if (!entry.signed || entry.signedUntil <= Date.now()) {
-        entry.signed = await presignComplaintArtifact(
-          activeDraft.complaintId,
-          { contentType, contentLength: file.size, uploadRequestId: entry.id },
-          controller.signal,
+        entry.signed = await reserveMediaUpload(
+          `complaint:${activeDraft.complaintId}:attachment:${entry.id}`,
+          file,
+          (uploadRequestId) =>
+            presignComplaintArtifact(
+              activeDraft.complaintId,
+              { contentType, contentLength: file.size, uploadRequestId },
+              controller.signal,
+            ),
+          { contentType },
         );
         entry.signedUntil =
           Date.now() +

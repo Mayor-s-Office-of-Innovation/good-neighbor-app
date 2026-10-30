@@ -148,6 +148,7 @@ test("failed complaint deletion remains in its modal and can be cancelled or ret
     const { setSite } = await import("/src/db.js");
     await setSite("Example site", {
       siteId: "example",
+      deviceId: "synthetic-device",
       token: "synthetic-test-token",
     });
     await import("/src/components/complaint-view.js");
@@ -201,6 +202,7 @@ test("upload retry reuses its reservation and preserves the other attachment", a
     const { setSite } = await import("/src/db.js");
     await setSite("Example", {
       siteId: "example",
+      deviceId: "synthetic-device",
       token: "synthetic-test-token",
     });
     await import("/src/components/complaint-view.js");
@@ -358,6 +360,7 @@ test("overlapping complaint selections cannot exceed the five-file limit", async
       const { setSite } = await import("/src/db.js");
       await setSite("Example", {
         siteId: "example",
+        deviceId: "synthetic-device",
         token: "synthetic-test-token",
       });
       await import("/src/components/complaint-view.js");
@@ -427,6 +430,7 @@ for (const removal of [
       const { setSite } = await import("/src/db.js");
       await setSite("Example", {
         siteId: "example",
+        deviceId: "synthetic-device",
         token: "synthetic-test-token",
       });
       await import("/src/components/complaint-view.js");

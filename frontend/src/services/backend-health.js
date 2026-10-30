@@ -1,3 +1,4 @@
+import { parseRetryAfter } from "../lib/retry-after.js";
 /*
   backend-health.js — connection/auth state machine (api-response-integrity
   plan §3a/3b).
@@ -88,7 +89,8 @@ export function classifyApiFailure(err) {
   if (!(err instanceof Error) || err.name !== "ApiError")
     return getHealthState();
   const status = /** @type {any} */ (err).status;
-  // Non-JSON responses mean the pipe is broken REGARDLESS of status — an
+  if (status === 429) return getHealthState();
+  // Other non-JSON responses mean the pipe is broken — an
   // HTML 403 from an intermediary is a transport failure, not an auth
   // verdict. Check before status-based classification so a rewritten
   // response can never trigger the destructive AUTH recovery.
@@ -131,8 +133,12 @@ export async function probe() {
   const generation = failureGeneration;
   const target = connectionTarget(PROBE_PATH);
   endpoints.set(target.service, target.probeUrl);
-  if ((cooldowns.get(target.service) || 0) > Date.now())
+  if ((cooldowns.get(target.service) || 0) > Date.now()) {
+    scheduleProbe(
+      Math.min(2147483647, cooldowns.get(target.service) - Date.now()),
+    );
     return getHealthState();
+  }
   const seq = beginProbe(target.service);
   let response;
   let ok = false;
@@ -152,8 +158,14 @@ export async function probe() {
     generation !== failureGeneration
   )
     return getHealthState();
-  if (response?.status === 429) recordCooldown(target.service, response);
   clearRetryTimer();
+  if (response?.status === 429) {
+    recordCooldown(target.service, response);
+    scheduleProbe(
+      Math.min(2147483647, cooldowns.get(target.service) - Date.now()),
+    );
+    return getHealthState();
+  }
   if (ok) {
     connectionSucceeded(target.service, generation);
     if (failures.size) await retryConnection();
@@ -185,6 +197,7 @@ export function stopHealthMonitoring() {
   retryEnabled = false;
   stopConnectionMonitoring();
   clearRetryTimer();
+  cooldowns.clear();
   resetBackoff();
 }
 
@@ -220,7 +233,8 @@ function scheduleProbe(delay = BACKOFF_MS[backoffIndex]) {
   clearRetryTimer();
   retryTimer = setTimeout(() => {
     retryTimer = undefined;
-    void retryConnection();
+    if (failures.size) void retryConnection();
+    else void probe();
   }, delay);
 }
 
@@ -394,6 +408,7 @@ export async function connectionFetch(input, init = {}) {
     // Do not announce recovery from a CDN HTML fallback before the API
     // parser has a chance to classify it as an outage.
     if (
+      response.status !== 429 &&
       target.service.startsWith("api:") &&
       typeof response.clone === "function" &&
       (await response.clone().text()).trimStart().startsWith("<")
@@ -440,14 +455,7 @@ function stopConnectionMonitoring() {
 
 /** @param {string} service @param {Response} response */
 function recordCooldown(service, response) {
-  const advice = response.headers.get("retry-after");
-  const seconds = Number(advice);
   const delay =
-    advice && Number.isFinite(seconds)
-      ? seconds * 1000
-      : Math.max(0, Date.parse(advice || "") - Date.now());
-  cooldowns.set(
-    service,
-    Date.now() + (Number.isFinite(delay) ? Math.max(1000, delay) : 300000),
-  );
+    parseRetryAfter(response.headers?.get?.("retry-after")) ?? 300000;
+  cooldowns.set(service, Date.now() + Math.max(1000, delay));
 }

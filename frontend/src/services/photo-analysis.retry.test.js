@@ -415,6 +415,72 @@ describe("retryEvidenceItem", () => {
     });
   });
 
+  it("resumes analysis for the exact already-registered replay response", async () => {
+    const item = sessionItem({
+      upload: {
+        status: "uploaded",
+        artifactId: "artifact-1",
+        s3Key: "checks/site/check/a",
+        contentType: "image/jpeg",
+        contentLength: 1234,
+      },
+      analysis: {
+        status: "failed",
+        artifactId: "artifact-1",
+        failure: { leg: "analyze", uploaded: true, enqueued: true },
+      },
+    });
+    vi.mocked(getCurrentCheck).mockReturnValue(session(item));
+    vi.mocked(registerArtifact).mockRejectedValue(
+      new ApiError("Replay", {
+        status: 409,
+        body: { error: "artifact already registered" },
+      }),
+    );
+    vi.mocked(getCheck).mockResolvedValue(
+      /** @type {any} */ ({ analyses: [], artifacts: [] }),
+    );
+    retryEvidenceItem(item.id);
+    await vi.waitFor(() => expect(getCheck).toHaveBeenCalled());
+    expect(uploadArtifact).not.toHaveBeenCalled();
+  });
+
+  it("keeps non-replay registration conflicts as failures", async () => {
+    const item = sessionItem({
+      upload: {
+        status: "uploaded",
+        artifactId: "artifact-1",
+        s3Key: "checks/site/check/a",
+        contentType: "image/jpeg",
+        contentLength: 1234,
+      },
+      analysis: {
+        status: "failed",
+        artifactId: "artifact-1",
+        failure: { leg: "analyze", uploaded: true, enqueued: true },
+      },
+    });
+    vi.mocked(getCurrentCheck).mockReturnValue(session(item));
+    vi.mocked(registerArtifact).mockRejectedValue(
+      new ApiError("Conflict", {
+        status: 409,
+        body: { error: "Check already completed" },
+      }),
+    );
+    retryEvidenceItem(item.id);
+    await vi.waitFor(() =>
+      expect(updateItemAnalysis).toHaveBeenCalledWith(
+        item.id,
+        expect.objectContaining({
+          status: "failed",
+          failure: expect.objectContaining({ leg: "start", enqueued: false }),
+        }),
+      ),
+    );
+    expect(registerArtifact).toHaveBeenCalled();
+    expect(getCheck).not.toHaveBeenCalled();
+  });
+
   it("replays the pipeline when the failure is the upload leg itself", async () => {
     const item = sessionItem({
       upload: { status: "failed" },

@@ -1,4 +1,5 @@
 import { connectionFetch } from "../../../frontend/src/services/backend-health.js";
+import { parseRetryAfter } from "../../../frontend/src/lib/retry-after.js";
 import { createReadRequests } from "./read-requests.js";
 import { localRoleHeaders } from "../local-role.js";
 import { getFreshAdminToken, startAdminLogin } from "./admin-auth.js";
@@ -80,6 +81,9 @@ async function parseAdminResponse(path, init) {
   if (!res.ok) {
     const err = new Error(body.error || "admin_request_failed");
     /** @type {any} */ (err).status = res.status;
+    /** @type {any} */ (err).retryAfterMs = parseRetryAfter(
+      res.headers?.get?.("retry-after"),
+    );
     // Some routes (analytics) explain the failure; surface it for the UI.
     if (typeof body.message === "string") {
       /** @type {any} */ (err).detail = body.message;

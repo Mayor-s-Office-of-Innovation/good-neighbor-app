@@ -537,3 +537,54 @@ describe("shared probe ordering", () => {
     mod.stopHealthMonitoring();
   });
 });
+
+it("does not classify a throttled non-JSON API response as auth or outage", async () => {
+  const mod = await load();
+  expect(
+    mod.classifyApiFailure(
+      Object.assign(new Error("limited"), {
+        name: "ApiError",
+        status: 429,
+        body: { code: "non_json_response" },
+      }),
+    ),
+  ).toBe("healthy");
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it("keeps health state and delays probes through a 429 cooldown", async () => {
+  vi.useFakeTimers();
+  const mod = await load();
+  fetchMock
+    .mockResolvedValueOnce(
+      new Response("<html>Limited</html>", {
+        status: 429,
+        headers: { "Retry-After": "300" },
+      }),
+    )
+    .mockResolvedValue(new Response('{"ok":true}'));
+  try {
+    expect(await mod.probe()).toBe("healthy");
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(await mod.probe()).toBe("healthy");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(284999);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(mod.getHealthState()).toBe("healthy");
+  } finally {
+    mod.stopHealthMonitoring();
+  }
+});
+
+it("does not announce an outage for a throttled HTML API response", async () => {
+  const mod = await load();
+  fetchMock.mockResolvedValue(
+    new Response("<html>Limited</html>", { status: 429 }),
+  );
+  const response = await mod.connectionFetch("http://localhost/v1/tasks");
+  expect(response.status).toBe(429);
+  expect(mod.getHealthState()).toBe("healthy");
+  expect(mod.connectionSnapshot().disconnected).toBe(false);
+});

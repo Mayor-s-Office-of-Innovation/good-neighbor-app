@@ -1,4 +1,5 @@
 import { connectionFetch } from "./backend-health.js";
+import { parseRetryAfter } from "../lib/retry-after.js";
 /*
   devices.js — device registration + token refresh client (Option 4 device
   auth, docs/adr/0010-device-token-auth.md). Pure services: they call the API
@@ -58,6 +59,13 @@ export async function registerDevice(code, opts = {}) {
       ...(opts.label ? { label: opts.label } : {}),
     }),
   });
+  if (res.status === 429) {
+    throw new ApiError("Device registration rate limited", {
+      status: 429,
+      body: { error: "code_attempts_limited" },
+      retryAfterMs: parseRetryAfter(res.headers?.get?.("retry-after")),
+    });
+  }
   if (res.status === 401 || res.status === 404) {
     throw new InvalidSiteCodeError(res.status);
   }
@@ -99,6 +107,8 @@ export async function redeemEnrollmentGrant(grantId, token, opts = {}) {
           : `enrollment failed (${res.status})`,
       ),
       {
+        status: res.status,
+        retryAfterMs: parseRetryAfter(res.headers?.get?.("retry-after")),
         code:
           detail.error ||
           (res.status === 401 ? "invalid_enrollment_grant" : ""),
@@ -139,6 +149,7 @@ export async function redeemHandoffGrant(grantId, token) {
   if (!res.ok) {
     throw new ApiError(`handoff redemption failed (${res.status})`, {
       status: res.status,
+      retryAfterMs: parseRetryAfter(res.headers?.get?.("retry-after")),
     });
   }
   const body = await res.json();
@@ -184,7 +195,10 @@ export async function refreshDeviceToken(refreshToken, attemptId) {
       res.status === 401
         ? "refresh rejected — expired, revoked, or replayed"
         : `refresh failed (${res.status})`;
-    throw new ApiError(detail, { status: res.status });
+    throw new ApiError(detail, {
+      status: res.status,
+      retryAfterMs: parseRetryAfter(res.headers?.get?.("retry-after")),
+    });
   }
   const body = await res.json();
   assertSession(body);
