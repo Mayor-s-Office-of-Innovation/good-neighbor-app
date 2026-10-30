@@ -33,14 +33,24 @@ test.describe("public complaints", () => {
     await expect(trigger).toHaveAttribute("aria-expanded", "false");
     await expect(menu).toBeHidden();
 
-    // Home data hydration may replace the button between locator operations.
+    // Home hydration can replace the trigger between visibility and layout
+    // reads. Re-resolve it until the rendered geometry is available.
     await expect
       .poll(async () => {
         const box = await trigger.boundingBox();
         return box ? { width: box.width, height: box.height } : null;
       })
       .toEqual({ width: 54, height: 54 });
-    await expect(trigger).toHaveCSS("border-radius", "50%");
+    // Check each corner directly: Chromium can serialize the computed
+    // border-radius shorthand as an empty string on some platforms.
+    for (const corner of [
+      "top-left",
+      "top-right",
+      "bottom-right",
+      "bottom-left",
+    ]) {
+      await expect(trigger).toHaveCSS(`border-${corner}-radius`, "50%");
+    }
 
     await trigger.click();
     await expect(trigger).toHaveAttribute("aria-expanded", "true");

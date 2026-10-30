@@ -208,6 +208,6 @@ resource "aws_cloudwatch_metric_alarm" "duplicate_dead_letters" {
   comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "notBreaching"
   dimensions          = { QueueName = aws_sqs_queue.duplicates_dlq.name }
-  alarm_actions       = [aws_sns_topic.alarms.arn]
+  alarm_actions       = local.duplicate_alarm_actions
   tags                = var.tags
 }

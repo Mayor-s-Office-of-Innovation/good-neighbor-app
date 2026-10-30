@@ -1817,73 +1817,14 @@ describe("311 ticket closure", () => {
     });
   });
 
-  it("reconciles an expired lease without closing an already-closed SR again", async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ requests: [{ SRNum: "2000008106", Status: "4" }] }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
-      );
-    vi.stubGlobal("fetch", fetchImpl);
-
-    const results = await executeAppActions(
-      [{ code: "close_311_ticket", payload: {} }],
-      {
-        env: ENV,
-        now,
-        priorResults: [SUBMITTED_311_RESULT],
-        reconcile311Closures: true,
-      },
-    );
-
-    expect(results).toEqual([
-      {
-        code: "close_311_ticket",
-        status: "submitted",
-        payload: {
-          closures: [
-            {
-              serviceCode: "1.1.4.7.20.0",
-              srNum: "2000008106",
-              status: "closed",
-              reconciled: true,
-            },
-          ],
-        },
-        recordedAt: "2026-08-18T12:00:00.000Z",
-      },
-    ]);
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect(fetchImpl.mock.calls[0][1].method).toBe("GET");
-  });
-
-  it.each([
-    { ClosedReason: "8" },
-    {
-      ClosedReason: "1",
-      Updates: [
-        {
-          UpdateType: "11",
-          NumericSubType: "8",
-          EffectiveDate: "2026-08-18T12:00:00Z",
-        },
-      ],
-    },
-  ])(
-    "preserves the observed HUB reason during recovery: %j",
-    async (fields) => {
+  it.each(["sf311_closure_state_unknown", "sf311_timeout"])(
+    "retries a saved %s closure directly without consulting the updates feed",
+    async (reason) => {
       const fetchImpl = vi.fn().mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            requests: [{ SRNum: "2000008106", Status: "4", ...fields }],
-          }),
-          {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          },
-        ),
+        new Response(JSON.stringify({ UpdateID: 4321, return_code: 0 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
       );
       vi.stubGlobal("fetch", fetchImpl);
       const results = await executeAppActions(
@@ -1891,50 +1832,112 @@ describe("311 ticket closure", () => {
         {
           env: ENV,
           now,
-          priorResults: [SUBMITTED_311_RESULT],
-          reconcile311Closures: true,
+          priorResults: [
+            SUBMITTED_311_RESULT,
+            {
+              code: "close_311_ticket",
+              status: "failed",
+              recordedAt: now.toISOString(),
+              payload: {
+                closures: [
+                  {
+                    serviceCode: "1.1.4.7.20.0",
+                    srNum: "2000008106",
+                    status: "failed",
+                    reason,
+                  },
+                ],
+              },
+            },
+          ],
         },
       );
-      expect(results[0].payload?.closures).toEqual([
-        {
-          serviceCode: "1.1.4.7.20.0",
-          srNum: "2000008106",
-          closedReasonCode: "8",
-          status: "closed",
-          reconciled: true,
-        },
-      ]);
+      expect(results[0]).toMatchObject({
+        status: "submitted",
+        payload: { closures: [{ srNum: "2000008106", status: "closed" }] },
+      });
       expect(fetchImpl).toHaveBeenCalledTimes(1);
-      expect(fetchImpl.mock.calls[0][1].method).toBe("GET");
+      expect(fetchImpl.mock.calls[0][1].method).toBe("POST");
+      expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toMatchObject({
+        SRnum: "2000008106",
+        UpdateType: "11",
+        SendingAgency: "76",
+        NumericSubType: "1",
+      });
     },
   );
 
-  it("does not issue a duplicate close when recovery cannot find the SR", async () => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce(
-      new Response(JSON.stringify({ requests: [] }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    );
+  it("retries a lost closure response and skips the saved success thereafter", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("connection lost after request"))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ UpdateID: 4321, return_code: 0 }), {
+          status: 200,
+        }),
+      );
     vi.stubGlobal("fetch", fetchImpl);
+    const action = [{ code: "close_311_ticket", payload: {} }];
+    const first = await executeAppActions(action, {
+      env: ENV,
+      now,
+      priorResults: [SUBMITTED_311_RESULT],
+    });
+    expect(first[0].status).toBe("failed");
+    const second = await executeAppActions(action, {
+      env: ENV,
+      now,
+      priorResults: [SUBMITTED_311_RESULT, ...first],
+    });
+    expect(second[0].status).toBe("submitted");
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    for (const [, init] of fetchImpl.mock.calls) {
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(init.body)).toMatchObject({
+        UpdateType: "11",
+        SRnum: "2000008106",
+      });
+    }
+    await executeAppActions(action, {
+      env: ENV,
+      now,
+      priorResults: [SUBMITTED_311_RESULT, ...second],
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
 
-    const results = await executeAppActions(
-      [{ code: "close_311_ticket", payload: {} }],
-      {
-        env: ENV,
-        now,
-        priorResults: [SUBMITTED_311_RESULT],
-        reconcile311Closures: true,
-      },
-    );
-
-    expect(results[0]).toMatchObject({
+  it("keeps an unconfirmed closure failed until HUB returns success", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ UpdateID: 4321 }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ return_code: 0 }), { status: 200 }),
+      );
+    vi.stubGlobal("fetch", fetchImpl);
+    const actions = [{ code: "close_311_ticket", payload: {} }];
+    const failed = await executeAppActions(actions, {
+      env: ENV,
+      now,
+      priorResults: [SUBMITTED_311_RESULT],
+    });
+    expect(failed[0]).toMatchObject({
       status: "failed",
       payload: {
-        closures: [{ status: "failed", reason: "sf311_closure_state_unknown" }],
+        closures: [{ status: "failed", reason: "missing_return_code" }],
       },
     });
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const retried = await executeAppActions(actions, {
+      env: ENV,
+      now,
+      priorResults: [SUBMITTED_311_RESULT, ...failed],
+    });
+    expect(retried[0]).toMatchObject({
+      status: "submitted",
+      payload: { closures: [{ status: "closed" }] },
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
   it("closes every eligible ticket on classifier fan-out", async () => {

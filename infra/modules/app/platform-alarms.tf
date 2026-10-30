@@ -106,8 +106,8 @@ resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
     FunctionName = each.value.function
   }
 
-  alarm_actions = [aws_sns_topic.alarms.arn]
-  ok_actions    = [aws_sns_topic.alarms.arn]
+  alarm_actions = contains(["api", "authorizer"], each.key) ? [] : [aws_sns_topic.alarms.arn]
+  ok_actions    = contains(["api", "authorizer"], each.key) ? [] : [aws_sns_topic.alarms.arn]
 
   tags = var.tags
 }
@@ -131,8 +131,8 @@ resource "aws_cloudwatch_metric_alarm" "lambda_throttles" {
     FunctionName = each.value
   }
 
-  alarm_actions = [aws_sns_topic.alarms.arn]
-  ok_actions    = [aws_sns_topic.alarms.arn]
+  alarm_actions = contains(["api", "authorizer"], each.key) ? [] : [aws_sns_topic.alarms.arn]
+  ok_actions    = contains(["api", "authorizer"], each.key) ? [] : [aws_sns_topic.alarms.arn]
 
   tags = var.tags
 }
@@ -185,8 +185,8 @@ resource "aws_cloudwatch_metric_alarm" "api_5xx" {
     ApiId = aws_apigatewayv2_api.http.id
   }
 
-  alarm_actions = [aws_sns_topic.alarms.arn]
-  ok_actions    = [aws_sns_topic.alarms.arn]
+  alarm_actions = []
+  ok_actions    = []
 
   tags = var.tags
 }
