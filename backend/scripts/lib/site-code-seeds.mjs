@@ -12,6 +12,9 @@ export const devSiteCodeSeeds = [
     providerShortCode: "MOI",
     siteId: "city-hall",
     siteName: "City Hall",
+    address: "1 Dr Carlton B Goodlett Pl, San Francisco, CA 94102",
+    // Approximate local fixture point, not an authoritative geocode.
+    location: { latitude: 37.7793, longitude: -122.4193 },
     siteShortCode: "CIT",
     providerSiteId: "provider-site-city-hall",
     contactEmail: "cityhall@example.org",

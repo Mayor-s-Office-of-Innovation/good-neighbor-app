@@ -64,12 +64,12 @@ export class TaskUpdateDialog extends HTMLElement {
     this._noteDrafts = emptyTaskUpdateNotes();
     this._noteIndex = 0;
     /** @type {string[]} */
-    this._filePreviews = [];
+    this._previews = [];
     this._open = false;
     this._state = "idle";
     this._nextToken = null;
     /** @type {Map<File, Promise<string>>} */
-    this._fileUploads = new Map();
+    this._uploads = new Map();
     /** @type {Map<string, import("../services/task-evidence.js").MediaUrls>} */
     this._mediaUrls = new Map();
   }
@@ -358,7 +358,7 @@ export class TaskUpdateDialog extends HTMLElement {
         photosAllowed: this._task?.canUploadPhotos === true,
         files: this._files,
         notes: this._noteDrafts,
-        previews: this._filePreviews,
+        previews: this._previews,
         cityHelpNeeded: this._cityHelpNeeded,
       });
     if (this._mode === "note-text")
@@ -371,7 +371,7 @@ export class TaskUpdateDialog extends HTMLElement {
       });
     if (this._mode === "action-photos")
       return taskUpdateActionPhotos(
-        this._filePreviews,
+        this._previews,
         this._files,
         this._task?.canUploadPhotos === true,
       );
@@ -484,12 +484,13 @@ export class TaskUpdateDialog extends HTMLElement {
 
   /** @param {HTMLDialogElement} root */
   _wire(root) {
-    root
-      .querySelector("[data-cancel-save]")
-      ?.addEventListener("click", () => this._saveController?.abort());
-    root
-      .querySelector("[data-retry-timeline]")
-      ?.addEventListener("click", () => void this._load(this._retryToken));
+    /** @param {string} selector @param {() => void} action */
+    const onClick = (selector, action) =>
+      root
+        .querySelector(`[data-${selector}]`)
+        ?.addEventListener("click", action);
+    onClick("cancel-save", () => this._saveController?.abort());
+    onClick("retry-timeline", () => void this._load(this._retryToken));
     root.querySelectorAll("[data-city-help]").forEach((element) => {
       const button = /** @type {HTMLButtonElement} */ (element);
       button.addEventListener("click", () => {
@@ -513,7 +514,7 @@ export class TaskUpdateDialog extends HTMLElement {
         this._render();
       });
     });
-    root.querySelector("[data-load-older]")?.addEventListener("click", () => {
+    onClick("load-older", () => {
       if (this._nextToken) void this._load(this._nextToken);
     });
     for (const [button, picker] of [
@@ -529,18 +530,16 @@ export class TaskUpdateDialog extends HTMLElement {
         input.click();
       });
     }
-    root.querySelector("[data-take-photo]")?.addEventListener("click", () => {
+    onClick("take-photo", () => {
       /** @type {HTMLInputElement | null} */ (
         root.querySelector("[data-photos]")
       )?.click();
     });
-    root
-      .querySelector("[data-upload-photos]")
-      ?.addEventListener("click", () => {
-        /** @type {HTMLInputElement | null} */ (
-          root.querySelector("[data-upload-input]")
-        )?.click();
-      });
+    onClick("upload-photos", () => {
+      /** @type {HTMLInputElement | null} */ (
+        root.querySelector("[data-upload-input]")
+      )?.click();
+    });
     root.querySelectorAll(".task-update__photo--draft").forEach((image) => {
       const unavailable = () => {
         const draft = image.closest(".task-update__draft-photo");
@@ -566,10 +565,10 @@ export class TaskUpdateDialog extends HTMLElement {
         const index = Number(button.getAttribute("data-remove-photo"));
         const file = this._files[index];
         if (!file) return;
-        URL.revokeObjectURL(this._filePreviews[index]);
-        this._fileUploads.delete(file);
+        URL.revokeObjectURL(this._previews[index]);
+        this._uploads.delete(file);
         this._files.splice(index, 1);
-        this._filePreviews.splice(index, 1);
+        this._previews.splice(index, 1);
         this._render();
         /** @type {HTMLElement | null} */ (
           this.querySelector("[data-capture-upload]") ||
@@ -600,7 +599,7 @@ export class TaskUpdateDialog extends HTMLElement {
             return;
           }
           this._files = files;
-          this._filePreviews.push(
+          this._previews.push(
             ...selected.map((file) => URL.createObjectURL(file)),
           );
           this._render();
@@ -648,15 +647,15 @@ export class TaskUpdateDialog extends HTMLElement {
         );
         if (save) save.disabled = !this._noteDrafts[this._noteIndex].trim();
       });
-    root.querySelector("[data-clear-note]")?.addEventListener("click", () => {
+    onClick("clear-note", () => {
       this._noteDrafts[this._noteIndex] = "";
       this._render();
     });
-    root.querySelector("[data-save-note]")?.addEventListener("click", () => {
+    onClick("save-note", () => {
       this._mode = "notes";
       this._render();
     });
-    root.querySelector("[data-clear]")?.addEventListener("click", () => {
+    onClick("clear", () => {
       this._actionText = "";
       this._render();
     });
@@ -672,21 +671,10 @@ export class TaskUpdateDialog extends HTMLElement {
           ),
       );
     });
-    root
-      .querySelector("[data-save-notes]")
-      ?.addEventListener("click", () => void this._saveNotes(root));
-    root
-      .querySelector("[data-skip]")
-      ?.addEventListener(
-        "click",
-        () => void this._finishDocumentation(root, [], []),
-      );
-    root
-      .querySelector("[data-save-action]")
-      ?.addEventListener("click", () => void this._saveAction(root));
-    root
-      .querySelector("[data-skip-action]")
-      ?.addEventListener("click", () => void this._saveAction(root, true));
+    onClick("save-notes", () => void this._saveNotes(root));
+    onClick("skip", () => void this._finishDocumentation(root, [], []));
+    onClick("save-action", () => void this._saveAction(root));
+    onClick("skip-action", () => void this._saveAction(root, true));
   }
 
   /** @returns {Promise<string[] | null>} */
@@ -716,12 +704,11 @@ export class TaskUpdateDialog extends HTMLElement {
    * @returns {Promise<string>}
    */
   _uploadFile(file, task = this._task) {
-    const cached = this._fileUploads.get(file);
+    const cached = this._uploads.get(file);
     if (cached) return cached;
     const signal = this._saveController?.signal;
     const forget = () => {
-      if (this._fileUploads.get(file) === upload)
-        this._fileUploads.delete(file);
+      if (this._uploads.get(file) === upload) this._uploads.delete(file);
     };
     const upload = uploadTaskUpdatePhoto(
       task.taskId,
@@ -746,15 +733,15 @@ export class TaskUpdateDialog extends HTMLElement {
       })
       .finally(() => signal?.removeEventListener("abort", forget));
     signal?.addEventListener("abort", forget, { once: true });
-    this._fileUploads.set(file, upload);
+    this._uploads.set(file, upload);
     return upload;
   }
 
   _resetFiles() {
-    this._filePreviews.forEach((url) => URL.revokeObjectURL(url));
-    this._filePreviews = [];
+    this._previews.forEach((url) => URL.revokeObjectURL(url));
+    this._previews = [];
     this._files = [];
-    this._fileUploads.clear();
+    this._uploads.clear();
   }
 
   /** @param {HTMLElement} root */
@@ -914,8 +901,9 @@ export class TaskUpdateDialog extends HTMLElement {
     if (this._cityHelpNeeded !== undefined)
       body.cityHelpNeeded = this._cityHelpNeeded;
     const key = JSON.stringify(body);
-    if (!this._requests.has(key)) this._requests.set(key, crypto.randomUUID());
-    return createTaskUpdate(this._task.taskId, body, this._requests.get(key), {
+    const requestId = this._requests.get(key) || crypto.randomUUID();
+    this._requests.set(key, requestId);
+    return createTaskUpdate(this._task.taskId, body, requestId, {
       signal: this._saveController?.signal,
     });
   }

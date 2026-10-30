@@ -234,7 +234,8 @@ as task update events and every GSI sort key.
 | Current Provider Manager grant guard | `PROVIDER#<providerId>` | `PROVIDER_MANAGER_GRANT_CURRENT#<membershipId>` | Conditional singleton for one unexpired provider grant per membership. Redemption, cancellation, or replacement removes or changes the matching pointer atomically. |
 | Provider Manager enrollment | `PROVIDER#<providerId>` | `PROVIDER_MANAGER_ENROLLMENT#<enrollmentId>` | Directly addressable root lifecycle record for one physical device's all-or-nothing provider redemption. Stores the membership generation and up to 21 Site/binding pointers so a Supervisor can revoke every still-active projection in one transaction. List responses derive active/partial/revoked state from the authoritative physical-device and binding rows. |
 | Perimeter-check compliance period | `SITE#<siteId>` | `COMPLIANCE_TERMS#<effectiveStart>#<versionId>` | Immutable effective-dated period containing one or more reason codes, integer checks/day (1–8), a snapshotted `underEnhancedMonitoring` boolean (reason 6 only), and a snapshot of the selected Site manager plus the authenticated generator. The generator—not a client-nominated manager—appears as sender; Compliance managers must be assigned to the Site while supervisors may generate for any Site. Generator phone is required. Start is the server's current Pacific date; the user-facing end date is inclusive and is stored with an exclusive boundary. Reasons 1 or 6 require an end date. Missing expiry means indefinite. A version with an end date carries GSI3 keys (`COMPLIANCE_TERMS#OPEN` / `<expiresOnExclusive>#<siteId>#<versionId>`) until it ends or is superseded. |
-| SF311 job | `SITE#<siteId>` | `SF311_JOB#<taskId>#<phase>` | `SF311_OUTBOX`, committed with task creation, action override, resolution, or a "File 311 ticket" tap (phase `filed-<id>`, `trigger: "user_confirmed"`, `actorId`). Streams dispatches to SQS; status tracks pending/dispatched/retry/complete/failed and results retain ticket checkpoints. |
+| Global silent 311 control | `SYSTEM#CONTROLS` | `SILENT_311` | `enabled` (missing defaults true), optimistic `revision`, `epochStartedAt`, and authenticated `updatedBy`. Every transition advances the epoch; only new silent task workflows after enablement are eligible. No backlog replay. |
+| SF311 job | `SITE#<siteId>` | `SF311_JOB#<taskId>#<phase>` | `SF311_OUTBOX`, committed with task creation, action override, resolution, or a "File 311 ticket" tap (phase `filed-<id>`, `trigger: "user_confirmed"`, `actorId`). Streams dispatches to SQS; status tracks pending/dispatched/retry/complete/failed and results retain ticket checkpoints. Suppressed silent jobs finish `complete` with `suppressionReason: "silent_filing_disabled"`. |
 | SF311 worker state | `SITE#<siteId>` | `SF311_LOCK#<taskId>` | Expiring worker lease plus durable integration results shared across jobs. Separate from task snapshots so foreground updates cannot erase a filing checkpoint. |
 | Compliance-letter generation job | `SITE#<siteId>` | `LETTER_JOB#<createdAt>#<jobId>` | Transactional outbox item (`COMPLIANCE_LETTER_OUTBOX`) created with a perimeter-check period. DynamoDB Streams dispatches it to SQS; the worker renders the PDF, stores it in S3, and advances the Site letter state idempotently. |
 | Requirement-ended notice | `SITE#<siteId>` | `LETTER_JOB#ended-<termsVersionId>` | `COMPLIANCE_LETTER_OUTBOX`, `noticeOnly: true`; created atomically with manual cancellation or scheduled expiry. Copies the period's original email To/CC snapshot. Uses the existing delivery claim/receipt safeguards without a PDF or letter-history counter. |
@@ -285,6 +286,18 @@ ticket index. Background jobs and durable integration checkpoints also live in
 - `appActions`: the rule's structured actions.
 - `appActionResults`: one result per action that ran.
 - `appActionStatus`: a rollup of the results.
+- `deliberate311DeliveryMode`: `production` or `simulated`, persisted on acceptance
+  together with `deliberate311AcceptedAt`. Retries keep the original mode. Async
+  user-confirmed outbox jobs also store `deliveryMode`.
+- Simulated ticket results contain `deliveryMode: "simulated"`, a stable `SIM-`
+  `srNum`, `submittedAt`, `closesAt` (five minutes later), and `closedReason: "1"`.
+  Status is derived on read rather than stored as a scheduled mutation. Provenance
+  remains in raw analytics exports; City-escalation queries exclude simulations.
+- Site metadata stores `deliberate311ProductionEnabled` (default `true`, including
+  legacy missing values). Only explicit `false` selects simulation; silent filings
+  are unaffected. Supervisor edits write a `site_deliberate_311_delivery_changed`
+  audit event atomically with the flag, retaining actor and previous/new values.
+
 - `maxAcceptableResponseHours`: the response window from the rule. Zero turns off overdue
   checks.
 
@@ -314,7 +327,7 @@ Add Notes contract (`UpdateType: 5`, `NumericSubType: 2`), not a closure update;
 the task remains in progress until the external resolution flow completes.
 
 The event and task are saved atomically before note delivery. `cityNoteStatus`
-tracks `pending`, `sending`, `sent`, or `unknown`; `cityNoteLeaseExpiresAt` gives
+tracks `pending`, `sending`, `sent`, `unknown`, or terminal `suppressed`; `cityNoteLeaseExpiresAt` gives
 one sender a 60-second lease. The client reuses the same idempotency key when
 retrying an unchanged draft. Successful retries reuse the event and do not
 resend the note. Explicit HUB validation rejections return to `pending`.
@@ -323,7 +336,9 @@ City feed using the SR, sending agency, note text, and effective time. If delive
 cannot be confirmed, the API returns `502` with `updateSaved: true`; it does not
 blindly resend an uncertain note. Such records may need operational investigation
 if the City feed never exposes the matching update. Sending respects
-`GNP_311_SUBMISSION_ENABLED`.
+`GNP_311_SUBMISSION_ENABLED`. Suppressed silent notes are never replayed or
+reported as sent. Suppression clears an owned or expired lease conditionally and
+never overwrites an active sender.
 
 `canBeInProgress` is snapshotted from the versioned guidance rule when the task is
 created. The first successful card action moves eligible tasks to `in_progress`; tasks

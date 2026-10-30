@@ -1,3 +1,4 @@
+import { assertSilent311Allowed } from "../domain/silent-311.js";
 import {
   GetSecretValueCommand,
   SecretsManagerClient,
@@ -359,6 +360,7 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
    * @returns {Promise<Response>}
    */
   const fetchSf311 = async (url, init, operation, request) => {
+    await assertSilent311Allowed();
     const timeout = sf311TimeoutSignal();
     try {
       const requestInit = /** @type {Parameters<typeof fetch>[1]} */ ({

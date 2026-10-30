@@ -1,3 +1,8 @@
+import {
+  withSilent311Guard,
+  Silent311Suppressed,
+  isSilent311Task,
+} from "../domain/silent-311.js";
 import { ChangeMessageVisibilityCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { randomUUID } from "node:crypto";
 import {
@@ -218,6 +223,8 @@ export async function runJob(message, delivery = {}) {
   };
   try {
     let task = await read(key);
+    if (task && job.trigger !== "user_confirmed" && isSilent311Task(task))
+      await withSilent311Guard(String(task.createdAt || ""), async () => {});
     if (!task || task.status === "completing" || task.status === "resolving")
       throw new Error("SF311 task unavailable");
     for (const result of [
@@ -242,20 +249,30 @@ export async function runJob(message, delivery = {}) {
       });
       return;
     }
+    const guardedTask = task;
+    /** @template T @param {() => Promise<T>} run */
+    const guard = (run) =>
+      isSilent311Task(guardedTask)
+        ? withSilent311Guard(String(guardedTask.createdAt || ""), run)
+        : run();
+    await guard(async () => {});
     const alreadyFiled = results.some(
       (result) =>
         result.code === "create_311_ticket" && result.status === "submitted",
     );
     if (!["superseded", "deleted"].includes(task.status) && !alreadyFiled) {
-      const created = await executeAppActions(task.appActions || [], {
-        tableName,
-        siteId: message.siteId,
-        taskId: message.taskId,
-        task,
-        priorResults: results,
-        trigger: "task_created",
-        onCheckpoint: checkpoint,
-      });
+      const created = await guard(async () =>
+        executeAppActions(guardedTask.appActions || [], {
+          tableName,
+          siteId: message.siteId,
+          taskId: message.taskId,
+          task,
+          priorResults: results,
+          trigger: "task_created",
+          onCheckpoint: checkpoint,
+        }),
+      );
+      await guard(async () => {});
       for (const result of created) await checkpoint(result);
     }
     // A user may have finished the work while the City filing was underway.
@@ -267,17 +284,17 @@ export async function runJob(message, delivery = {}) {
       task.completionMethod !== "311_filed" &&
       eligibleTicketsForClosure(results).size
     ) {
-      const closed = await executeAppActions(
-        [{ code: "close_311_ticket", payload: {} }],
-        {
+      const closed = await guard(async () =>
+        executeAppActions([{ code: "close_311_ticket", payload: {} }], {
           tableName,
           siteId: message.siteId,
           taskId: message.taskId,
           task,
           priorResults: results,
           onCheckpoint: checkpoint,
-        },
+        }),
       );
+      await guard(async () => {});
       for (const result of closed) await checkpoint(result);
     }
     // Re-read after remote calls; only merge integration fields, never replace
@@ -361,6 +378,21 @@ export async function runJob(message, delivery = {}) {
         new Error("SF311 action failed; retry from durable checkpoint"),
         { sf311Reported: true },
       );
+  } catch (error) {
+    if (!(error instanceof Silent311Suppressed)) throw error;
+    await ddb.send(
+      new UpdateCommand({
+        TableName: tableName,
+        Key: jobKey,
+        UpdateExpression:
+          "SET #status = :complete, suppressionReason = :reason",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: {
+          ":complete": "complete",
+          ":reason": "silent_filing_disabled",
+        },
+      }),
+    );
   } finally {
     try {
       await ddb.send(

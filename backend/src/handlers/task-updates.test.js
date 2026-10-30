@@ -796,6 +796,50 @@ describe("task update handlers", () => {
       );
     },
   );
+  it("records simulated City-help choices without preparing or sending a City note", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          pk: "SITE#site-1",
+          sk: "TASK#task-1",
+          taskId: "task-1",
+          status: "in_progress",
+          updatedAt: "2026-10-26T19:41:25Z",
+          appActionResults: [
+            {
+              code: "create_311_ticket",
+              status: "submitted",
+              payload: {
+                tickets: [
+                  { srNum: "SIM-synthetic", deliveryMode: "simulated" },
+                ],
+              },
+            },
+          ],
+        },
+      })
+      .mockResolvedValue({});
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const response = await createTaskUpdate(
+      event({
+        type: "note_photo_update",
+        notes: ["Still present"],
+        photoKeys: [],
+        cityHelpNeeded: false,
+      }),
+    );
+    expect(response.statusCode, response.body).toBe(201);
+    expect(fetch).not.toHaveBeenCalled();
+    const items = send.mock.calls.flatMap(
+      ([command]) => command.input.TransactItems || [],
+    );
+    const update = items.find(
+      (/** @type {any} */ row) => row.Put?.Item.entityType === "task_update",
+    )?.Put?.Item;
+    expect(update).toMatchObject({ cityHelpNeeded: false });
+    expect(update.cityNotePayload).toBeUndefined();
+  });
   it.each(["completing", "completed"])(
     "updates a recoverable %s filing without resubmitting tickets",
     async (status) => {

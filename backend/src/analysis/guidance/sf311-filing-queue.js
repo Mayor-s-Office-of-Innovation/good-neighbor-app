@@ -22,6 +22,7 @@ import { sf311FilingJob } from "./sf311-job.js";
  * @param {Record<string, any>} opts.task Consistent read of the task.
  * @param {string} [opts.actorId]
  * @param {any[]} [opts.duplicateChecks]
+ * @param {{mode: string, acceptedAt: string, checks: any[]}} [opts.filingDecision]
  * @param {Date} opts.now
  * @returns {Promise<Record<string, unknown>>}
  */
@@ -34,6 +35,7 @@ export async function queue311Filing(opts) {
     taskId: opts.taskId,
     actorId: opts.actorId ?? "site-team",
     now,
+    deliveryMode: opts.filingDecision?.mode ?? task.deliberate311DeliveryMode,
   });
   if (
     task.status === "in_progress" &&
@@ -54,6 +56,12 @@ export async function queue311Filing(opts) {
 
   const queued = {
     ...task,
+    ...(opts.filingDecision
+      ? {
+          deliberate311DeliveryMode: opts.filingDecision.mode,
+          deliberate311AcceptedAt: opts.filingDecision.acceptedAt,
+        }
+      : {}),
     status: "in_progress",
     appActionStatus: "queued",
     inProgressAt: now,
@@ -76,6 +84,7 @@ export async function queue311Filing(opts) {
       new TransactWriteCommand({
         TransactItems: [
           ...(opts.duplicateChecks ?? []),
+          ...(opts.filingDecision?.checks ?? []),
           {
             Put: {
               TableName: opts.tableName,
@@ -117,16 +126,27 @@ async function requeue(opts, now, job) {
     await ddb.send(
       new TransactWriteCommand({
         TransactItems: [
+          ...(opts.duplicateChecks ?? []),
+          ...(opts.filingDecision?.checks ?? []),
           {
             Update: {
               TableName: opts.tableName,
               Key: taskKey(opts.siteId, opts.taskId),
               UpdateExpression:
-                "SET appActionStatus = :queued, updatedAt = :now",
+                "SET appActionStatus = :queued, updatedAt = :now" +
+                (opts.filingDecision
+                  ? ", deliberate311DeliveryMode = :mode, deliberate311AcceptedAt = :accepted"
+                  : ""),
               ConditionExpression:
                 "#status = :inProgress AND appActionStatus = :failed",
               ExpressionAttributeNames: { "#status": "status" },
               ExpressionAttributeValues: {
+                ...(opts.filingDecision
+                  ? {
+                      ":mode": opts.filingDecision.mode,
+                      ":accepted": opts.filingDecision.acceptedAt,
+                    }
+                  : {}),
                 ":queued": "queued",
                 ":failed": "failed",
                 ":inProgress": "in_progress",
@@ -143,7 +163,17 @@ async function requeue(opts, now, job) {
     if (current) return current;
     throw error;
   }
-  return { ...opts.task, appActionStatus: "queued", updatedAt: now };
+  return {
+    ...opts.task,
+    ...(opts.filingDecision
+      ? {
+          deliberate311DeliveryMode: opts.filingDecision.mode,
+          deliberate311AcceptedAt: opts.filingDecision.acceptedAt,
+        }
+      : {}),
+    appActionStatus: "queued",
+    updatedAt: now,
+  };
 }
 
 /**

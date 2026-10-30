@@ -1151,3 +1151,81 @@ export const resendSiteLetter = (event) =>
     }
     return jsonResponse(202, { queued: true, jobId: requestId });
   });
+
+/** Supervisor-owned delivery setting, atomically audited and version checked.
+ * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
+ */
+export const putSiteDeliberate311 = (event) =>
+  supervisorOnly(event, async (body) => {
+    const enabled = body.deliberate311ProductionEnabled;
+    if (typeof enabled !== "boolean")
+      return jsonResponse(400, { error: "boolean_required" });
+    const siteId = event.pathParameters?.siteId ?? "";
+    const tableName = getDynamoTableName();
+    const Key = { pk: `SITE#${siteId}`, sk: "#META" };
+    const { Item: site } = await ddb.send(
+      new GetCommand({ TableName: tableName, Key, ConsistentRead: true }),
+    );
+    if (!site || site.status === "inactive")
+      return jsonResponse(404, { error: "site_not_found" });
+    if (body.expectedUpdatedAt !== (site.updatedAt || ""))
+      return jsonResponse(409, { error: "site_changed" });
+    const now = new Date().toISOString();
+    const actor = adminPrincipal(event).subject;
+    try {
+      await ddb.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            {
+              Update: {
+                TableName: tableName,
+                Key,
+                UpdateExpression:
+                  "SET deliberate311ProductionEnabled = :enabled, updatedAt = :now",
+                ConditionExpression: site.updatedAt
+                  ? "attribute_exists(pk) AND updatedAt = :expected"
+                  : "attribute_exists(pk) AND attribute_not_exists(updatedAt)",
+                ExpressionAttributeValues: {
+                  ":enabled": enabled,
+                  ":now": now,
+                  ...(site.updatedAt ? { ":expected": site.updatedAt } : {}),
+                },
+              },
+            },
+            {
+              Put: {
+                TableName: tableName,
+                Item: {
+                  pk: Key.pk,
+                  sk: `AUDIT#${now}#${randomUUID()}`,
+                  type: "siteAuditEvent",
+                  eventType: "site_deliberate_311_delivery_changed",
+                  siteId,
+                  actor,
+                  createdAt: now,
+                  previousEnabled:
+                    site.deliberate311ProductionEnabled !== false,
+                  enabled,
+                },
+                ConditionExpression: "attribute_not_exists(pk)",
+              },
+            },
+          ],
+        }),
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.name === "TransactionCanceledException"
+      )
+        return jsonResponse(409, { error: "site_changed" });
+      throw error;
+    }
+    return jsonResponse(200, {
+      site: {
+        ...site,
+        deliberate311ProductionEnabled: enabled,
+        updatedAt: now,
+      },
+    });
+  });

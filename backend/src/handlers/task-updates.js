@@ -1,3 +1,4 @@
+import { filedTicket, isSimulated311Ticket } from "../domain/deliberate-311.js";
 import {
   storeTaskPhotoDisplay,
   InvalidTaskPhoto,
@@ -194,6 +195,7 @@ export const createTaskUpdate = async (event, retry = true) => {
   }
 
   const srNum = cityHelpTicket(task);
+  const simulated = srNum && isSimulated311Ticket(filedTicket(task, srNum));
   const informational = ["note_photo_update", "additional_action"].includes(
     input.type,
   );
@@ -205,7 +207,11 @@ export const createTaskUpdate = async (event, retry = true) => {
     return jsonResponse(400, {
       error: "City help choice requires a filed 311 request",
     });
-  if (input.cityHelpNeeded === false && !is311SubmissionEnabled(process.env))
+  if (
+    input.cityHelpNeeded === false &&
+    !simulated &&
+    !is311SubmissionEnabled(process.env)
+  )
     return jsonResponse(503, { error: "City updates are unavailable" });
 
   const transition = buildTaskUpdateTransition(task, input, {
@@ -237,7 +243,7 @@ export const createTaskUpdate = async (event, retry = true) => {
   }
   if (informational && srNum) {
     update.cityHelpNeeded = input.cityHelpNeeded;
-    if (input.cityHelpNeeded === false) {
+    if (input.cityHelpNeeded === false && !simulated) {
       try {
         update.cityNotePayload = await prepareCityHelpNote(
           dynamoTable,

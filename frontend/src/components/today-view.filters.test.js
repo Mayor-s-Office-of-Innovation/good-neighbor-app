@@ -2634,3 +2634,20 @@ it("does not apply a delayed question answer to a different site", async () => {
   expect(view._refreshAfterAction).not.toHaveBeenCalled();
   expect(answerUpdated).not.toHaveBeenCalled();
 });
+
+it("preserves the selected problem while a background refresh leaves its dialog open", async () => {
+  const view = await mount("?filter=todo");
+  const selected = {
+    checkId: "check",
+    artifactId: "artifact",
+    conditionId: "condition",
+  };
+  view._activeProblem = selected;
+  view.querySelector = (selector) =>
+    selector === ".analysis-dialog[open]" ? {} : null;
+  await view.connectedCallback();
+  expect(view._activeProblem).toBe(selected);
+  siteRead.mockResolvedValueOnce({ siteId: "another-site" });
+  await view.connectedCallback();
+  expect(view._activeProblem).toBeNull();
+});
