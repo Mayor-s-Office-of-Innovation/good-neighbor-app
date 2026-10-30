@@ -1,7 +1,9 @@
+// @ts-nocheck -- matches the surrounding frontend migration baseline.
+import { saveDraft, saveFinishedCheck } from "../db.js";
+import { observePhotoStage, photoAttemptId } from "./photo-telemetry.js";
 import { pollCheck } from "./check-polling.js";
 import { watchDuplicateIssues } from "./duplicate-issues.js";
 import { projectDuplicateTasks } from "../domain/duplicate-issues.js";
-// @ts-nocheck -- matches the surrounding frontend migration baseline.
 /*
   photo-analysis — incremental evidence pipeline for perimeter checks.
 
@@ -21,12 +23,13 @@ import {
   submitConditionAnswers,
   uploadArtifact,
   registerTextArtifact,
+  updateArtifactLocation,
   ApiError,
   contentTypeFromDataUrl,
   dataUrlToBlob,
   LEG,
 } from "./api.js";
-import { getCaptureDeviceLocation } from "./device-location.js";
+import { readCaptureDeviceLocation } from "./device-location.js";
 import {
   addItem,
   findCheckForItem,
@@ -84,6 +87,17 @@ function isHeld(check) {
  * step took and, after a failure, how long we waited overall.
  * @typedef {{ uploaded?: string, sent?: string, waiting?: string }} AnalysisStages
  */
+
+async function confirmLocalSave(check) {
+  if (!check || !isHeld(check)) return false;
+  try {
+    if (check?.status === "in-progress") await saveDraft(check);
+    else await saveFinishedCheck(check);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const active = new Set();
 const duplicateWatches = new Map();
@@ -300,6 +314,91 @@ function hasCoordinates(value) {
   );
 }
 
+// A location that arrived after upload still belongs on the photo's tasks.
+function withLocation(analysis, location) {
+  return hasCoordinates(analysis) || !hasCoordinates(location)
+    ? analysis
+    : {
+        ...analysis,
+        latitude: location.latitude,
+        longitude: location.longitude,
+      };
+}
+
+// An expired session, rejected token, timeout or throttling can pass later.
+const RETRIED_LOCATION_STATUSES = new Set([401, 403, 408, 429]);
+// A server that keeps failing gets this long; time offline doesn't count.
+const LOCATION_RETRY_MS = 10 * 60_000;
+/** @type {Set<string>} */
+const locationSendsInFlight = new Set();
+
+/**
+ * @param {string | null} itemId
+ * @param {string} checkId
+ * @param {string} artifactId
+ * @param {{ latitude: number, longitude: number, accuracyMeters?: number }} location
+ * @returns {Promise<boolean>} false while a retry is still due
+ */
+async function sendLocation(itemId, checkId, artifactId, location) {
+  // A GPS fix arriving during a recovery retry would send twice.
+  if (locationSendsInFlight.has(artifactId)) return false;
+  locationSendsInFlight.add(artifactId);
+  let settled = true;
+  try {
+    await updateArtifactLocation(checkId, artifactId, location);
+  } catch (err) {
+    console.warn("Could not send the photo's location", err?.status);
+    // check-submissions.js retries these; any other answer won't change.
+    if (isConnectionFailure(err)) {
+      settled = false;
+      // The server-error clock restarts once the phone is back online.
+      const item = itemId ? itemById(itemId) : null;
+      if (item?.locationRetryUntil)
+        updateItem(item.id, { locationRetryUntil: undefined });
+    } else if (
+      err?.status >= 500 ||
+      RETRIED_LOCATION_STATUSES.has(err?.status)
+    ) {
+      const item = itemId ? itemById(itemId) : null;
+      // Saved on the item so a reload doesn't restart the clock.
+      const until = item?.locationRetryUntil ?? Date.now() + LOCATION_RETRY_MS;
+      if (item && !item.locationRetryUntil)
+        updateItem(item.id, { locationRetryUntil: until });
+      settled = Date.now() >= until;
+    }
+  } finally {
+    locationSendsInFlight.delete(artifactId);
+  }
+  if (settled && itemId) updateItem(itemId, { locationUnsent: false });
+  return settled;
+}
+
+/**
+ * A late GPS fix the server hasn't confirmed yet.
+ * @param {any} item
+ */
+export function hasUnsentLocation(item) {
+  return Boolean(
+    item?.locationUnsent &&
+      hasCoordinates(item.location) &&
+      (item.analysis?.artifactId || item.upload?.artifactId),
+  );
+}
+
+/**
+ * @param {string} checkId
+ * @param {any} item
+ * @returns {Promise<boolean>}
+ */
+export function resendItemLocation(checkId, item) {
+  return sendLocation(
+    item.id,
+    checkId,
+    item.analysis?.artifactId || item.upload?.artifactId,
+    item.location,
+  );
+}
+
 async function guidanceFromAnalysis(checkId, artifactId, analysis) {
   const assessment = assessmentFromAnalysis({ checkId, artifactId, analysis });
   const guidance = await evaluateAssessment(assessment);
@@ -388,6 +487,11 @@ function assessmentFromRefreshedAnalysis({
 }
 
 async function evaluateArtifact(checkId, itemId, artifactId) {
+  const telemetry = {
+    check_id: checkId,
+    artifact_id: artifactId,
+    attempt_id: photoAttemptId(),
+  };
   updateItemAnalysis(itemId, {
     status: "analyzing",
     artifactId,
@@ -399,12 +503,19 @@ async function evaluateArtifact(checkId, itemId, artifactId) {
     },
   });
   const analysis = await withLeg("analyze", () =>
-    waitForArtifactAnalysis(checkId, artifactId),
+    observePhotoStage("analyze", telemetry, () =>
+      waitForArtifactAnalysis(checkId, artifactId),
+    ),
   );
   if (analysis.status && analysis.status !== "analyzed") {
+    const held = checkWithItem(itemId);
+    const retries = itemById(itemId)?.analysis?.retryCount || 0;
     updateItemAnalysis(itemId, {
       status: "failed",
       artifactId,
+      lastTriedAt: new Date().toISOString(),
+      localSaveConfirmed:
+        retries >= 3 && Boolean(held) && (await confirmLocalSave(held)),
       error: analysis.error?.message || "Analysis failed.",
       failure: {
         leg: "analyze",
@@ -417,7 +528,13 @@ async function evaluateArtifact(checkId, itemId, artifactId) {
   }
 
   const { assessment, guidance } = await withLeg("evaluate", () =>
-    guidanceFromAnalysis(checkId, artifactId, analysis),
+    observePhotoStage("evaluate", telemetry, () =>
+      guidanceFromAnalysis(
+        checkId,
+        artifactId,
+        withLocation(analysis, itemById(itemId)?.location),
+      ),
+    ),
   );
   updateItemAnalysis(itemId, {
     status: "analyzed",
@@ -524,6 +641,10 @@ export function retryEvidenceItem(itemId) {
   const check = checkWithItem(itemId);
   const item = sessionItem(check, itemId);
   if (!item) return;
+  updateItemAnalysis(itemId, {
+    retryCount: (item.analysis?.retryCount || 0) + 1,
+    lastTriedAt: new Date().toISOString(),
+  });
 
   const analysisArtifactId = item.analysis?.artifactId;
   const uploadArtifactId = item.upload?.artifactId;
@@ -567,9 +688,11 @@ export function retryEvidenceItem(itemId) {
         analyzeEvidenceItem(itemId);
       })
       .catch((err) => {
-        // 409 = already registered — the backend enqueued on that path too,
-        // so a poll is still the right next step.
-        if (/** @type {any} */ (err)?.status === 409) {
+        // Only this replay response confirms the backend re-enqueued analysis.
+        if (
+          err?.status === 409 &&
+          err?.body?.error === "artifact already registered"
+        ) {
           analyzeEvidenceItem(itemId);
           return;
         }
@@ -654,6 +777,59 @@ export async function removeEvidenceItem(itemId) {
   removeItem(itemId);
 }
 
+export async function refreshRecoveredQuestion(item, response) {
+  if (!response?.assessment) throw new Error("Missing amended assessment");
+  const refreshed = assessmentFromRefreshedAnalysis({
+    checkId: item.checkId,
+    artifactId: item.analysis.artifactId,
+    analysisId: response.analysis_id,
+    assessment: response.assessment,
+    // Amended coordinates win; persisted evidence coordinates are only a fallback.
+    location: hasCoordinates(response.assessment.metadata)
+      ? null
+      : hasCoordinates(item.location)
+        ? item.location
+        : item.analysis.conditions?.find((condition) =>
+            hasCoordinates(condition.source),
+          )?.source,
+  });
+  const guidance = await evaluateAmendedAssessment(
+    refreshed,
+    item.analysis.assessment.assessmentId,
+  );
+  if (!guidance) throw new Error("Missing amended guidance");
+  return guidance;
+}
+
+/** Reuse one amendment identity across bounded revision-conflict retries. */
+async function evaluateAmendedAssessment(
+  refreshed,
+  previousAssessmentId,
+  canPublish = () => true,
+) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await evaluateAssessment({ ...refreshed, previousAssessmentId });
+    } catch (err) {
+      if (
+        err?.status !== 409 ||
+        err?.body?.code !== "AssessmentRevisionConflict" ||
+        !previousAssessmentId
+      )
+        throw err;
+      const latest = await getAssessmentGuidance(previousAssessmentId);
+      if (!canPublish()) return null;
+      if (
+        latest.assessment?.assessmentId &&
+        latest.assessment.assessmentId !== previousAssessmentId
+      )
+        return latest;
+      if (!latest.assessment || attempt === 2) throw err;
+    }
+  }
+  return null;
+}
+
 export async function refreshEvidenceAnalysis(itemId, response, opts = {}) {
   const check = checkWithItem(itemId);
   if (!check) return;
@@ -672,38 +848,14 @@ export async function refreshEvidenceAnalysis(itemId, response, opts = {}) {
     assessment: response.assessment,
     location: item.location,
   });
-  let guidance;
-  let reconciled = false;
   const previousAssessmentId = item.analysis?.assessment?.assessmentId;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      guidance = await evaluateAssessment({
-        ...refreshed,
-        previousAssessmentId,
-      });
-      break;
-    } catch (err) {
-      if (
-        err?.status !== 409 ||
-        err?.body?.code !== "AssessmentRevisionConflict" ||
-        !previousAssessmentId
-      )
-        throw err;
-      const latest = await getAssessmentGuidance(previousAssessmentId);
-      if (!isHeld(check)) return;
-      if (latest.assessment?.assessmentId !== previousAssessmentId) {
-        // Another refresh won. Use its persisted analysis as well as guidance;
-        // never replay this older analyzer payload against the new predecessor.
-        guidance = latest;
-        reconciled = true;
-        break;
-      }
-      if (attempt === 2) throw err;
-      // Same predecessor: an answer changed. The backend reloads those answers
-      // on the next evaluation; the analyzer amendment is not repeated.
-    }
-  }
-  reconciled ||= Boolean(
+  const guidance = await evaluateAmendedAssessment(
+    refreshed,
+    previousAssessmentId,
+    () => isHeld(check),
+  );
+  if (!guidance) return;
+  const reconciled = Boolean(
     guidance.assessment?.assessmentId &&
       guidance.assessment.assessmentId !== refreshed.assessmentId,
   );
@@ -751,14 +903,32 @@ export async function analyzeNoIssueDescriptionEdit(itemId, text) {
   const item = sessionItem(check, itemId);
   if (!check || !item) return null;
 
+  const read = readCaptureDeviceLocation();
   await ensureRemoteCheck(check);
   const capturedAt = new Date().toISOString();
-  const location = await getCaptureDeviceLocation();
+  let location = read.atUpload();
   const artifactId = await registerTextArtifact(check.id, {
     text,
     capturedAt,
     ...(location ?? {}),
   });
+  let textItemId = null;
+  let lateUnsent = false;
+  if (!location) {
+    // GPS hadn't answered yet; send its fix if one comes within 10 s.
+    void read.later.then(async (late) => {
+      if (!late) return;
+      location = late;
+      lateUnsent = true;
+      if (textItemId)
+        updateItem(textItemId, { location: late, locationUnsent: true });
+      // textItemId can be set while this waits, so clear the flag here.
+      if (await sendLocation(null, check.id, artifactId, late)) {
+        lateUnsent = false;
+        if (textItemId) updateItem(textItemId, { locationUnsent: false });
+      }
+    });
+  }
   const analysis = await waitForArtifactAnalysis(check.id, artifactId);
   if (analysis.status && analysis.status !== "analyzed") {
     throw new ApiError("Analysis failed for edited description", {
@@ -769,7 +939,7 @@ export async function analyzeNoIssueDescriptionEdit(itemId, text) {
   const { guidance } = await guidanceFromAnalysis(
     check.id,
     artifactId,
-    analysis,
+    withLocation(analysis, location),
   );
   const hasProblems = Boolean(
     (guidance.tasks || []).length || (guidance.conditions || []).length,
@@ -789,8 +959,10 @@ export async function analyzeNoIssueDescriptionEdit(itemId, text) {
     text,
     uploadedAt: capturedAt,
     ...(location ? { location } : {}),
+    ...(lateUnsent ? { locationUnsent: true } : {}),
   });
   if (!textItem) return { status: "problems", artifactId };
+  textItemId = textItem.id;
   updateItem(textItem.id, {
     upload: { status: "uploaded", artifactId },
   });
@@ -814,6 +986,7 @@ export async function analyzeNoIssueDescriptionEdit(itemId, text) {
  * @param {string} conditionId
  * @param {string} answerKey
  * @param {unknown} answerValue
+ * @param {{assessment?: {assessmentId?: string, assessmentRevision?: number}, conditions?: any[], tasks?: any[]} | null} [publishedGuidance]
  * @returns {Promise<AnswerAnalysisQuestionResult>}
  */
 export async function answerAnalysisQuestion(
@@ -821,10 +994,13 @@ export async function answerAnalysisQuestion(
   conditionId,
   answerKey,
   answerValue,
+  publishedGuidance = null,
 ) {
   const check = checkWithItem(itemId);
   const item = sessionItem(check, itemId);
-  const assessmentId = item?.analysis?.assessment?.assessmentId;
+  const heldAssessmentId = item?.analysis?.assessment?.assessmentId;
+  const assessmentId =
+    publishedGuidance?.assessment?.assessmentId || heldAssessmentId;
   if (!check || !item || !assessmentId || !conditionId || !answerKey) {
     throw new ApiError("This item has no assessment to answer against.", {
       body: { code: "missing_assessment" },
@@ -840,7 +1016,7 @@ export async function answerAnalysisQuestion(
     if (err?.body?.code === "AssessmentRevisionConflict") {
       const latest = await getAssessmentGuidance(assessmentId);
       const currentId = itemById(itemId)?.analysis?.assessment?.assessmentId;
-      if (isHeld(check) && currentId === assessmentId)
+      if (isHeld(check) && currentId === heldAssessmentId)
         updateItemAnalysis(itemId, latest);
     }
     throw err;
@@ -849,17 +1025,25 @@ export async function answerAnalysisQuestion(
   const latestItem = itemById(itemId);
   if (
     !latestItem ||
-    latestItem.analysis?.assessment?.assessmentId !== assessmentId
+    latestItem.analysis?.assessment?.assessmentId !== heldAssessmentId
   )
     return result;
   if (
+    latestItem.analysis?.assessment?.assessmentId === assessmentId &&
     (result?.assessmentItem?.assessmentRevision ?? 0) <
-    (latestItem.analysis?.assessment?.assessmentRevision ?? 0)
+      (latestItem.analysis?.assessment?.assessmentRevision ?? 0)
   )
     return result;
   const condition = result?.conditionItem;
   const task = result?.taskItem;
-  const existingConditions = latestItem.analysis?.conditions || [];
+  const baseline =
+    !publishedGuidance ||
+    (latestItem.analysis?.assessment?.assessmentId === assessmentId &&
+      (latestItem.analysis.assessment.assessmentRevision || 0) >
+        (publishedGuidance.assessment?.assessmentRevision || 0))
+      ? latestItem.analysis
+      : publishedGuidance;
+  const existingConditions = baseline?.conditions || [];
   const nextConditions = existingConditions.map((candidate) =>
     candidate.conditionId === conditionId ? condition || candidate : candidate,
   );
@@ -870,7 +1054,7 @@ export async function answerAnalysisQuestion(
     nextConditions.push(condition);
   }
 
-  const nextTasks = (latestItem.analysis?.tasks || []).filter(
+  const nextTasks = (baseline?.tasks || []).filter(
     (candidate) => candidate.conditionId !== conditionId,
   );
   if (task) nextTasks.push(task);
@@ -895,15 +1079,17 @@ async function run(itemId) {
 
   const startedAt = Date.now();
   try {
-    const locationPromise = hasCoordinates(item.location)
-      ? Promise.resolve(item.location)
-      : getCaptureDeviceLocation();
+    const read =
+      hasCoordinates(item.location) ||
+      item.analysis?.artifactId ||
+      item.upload?.artifactId
+        ? null
+        : readCaptureDeviceLocation(
+            item.kind === "text" ? undefined : check.flowType,
+          );
+    const uploadLocation = () => (read ? read.atUpload() : item.location);
     updateItemAnalysis(itemId, { status: "queued" });
     await withLeg("start", () => ensureRemoteCheck(check));
-    const location = await locationPromise;
-    if (location && !hasCoordinates(item.location)) {
-      updateItem(itemId, { location });
-    }
     // An interrupted run may have completed the upload before analysis started:
     // the artifact coordinates then live only under `upload`. Adopt them here
     // so run() and the poll both see them instead of re-uploading.
@@ -921,7 +1107,7 @@ async function run(itemId) {
           registerTextArtifact(check.id, {
             text: item.text,
             capturedAt: item.uploadedAt,
-            ...(location ?? {}),
+            ...(uploadLocation() ?? {}),
           }),
         );
         updateItem(itemId, {
@@ -938,7 +1124,7 @@ async function run(itemId) {
           uploadArtifact(check.id, {
             dataUrl: item.dataUrl,
             capturedAt: item.uploadedAt,
-            ...(location ?? {}),
+            location: uploadLocation,
             ...(item.note ? { text: item.note } : {}),
             tag: item.id,
             onLeg: (leg) => {
@@ -969,6 +1155,16 @@ async function run(itemId) {
         updateItemAnalysis(itemId, { s3Key });
       }
     }
+    const sent = read?.atUpload();
+    if (sent) updateItem(itemId, { location: sent });
+    else if (read) {
+      // GPS hadn't answered yet; send its fix if one comes within 10 s.
+      void read.later.then((location) => {
+        if (!location) return;
+        updateItem(itemId, { location, locationUnsent: true });
+        return sendLocation(itemId, check.id, artifactId, location);
+      });
+    }
     await evaluateArtifact(check.id, itemId, artifactId);
   } catch (err) {
     // Pausing or leaving a check stops its poll; it is not an analysis failure.
@@ -990,6 +1186,7 @@ async function run(itemId) {
       });
       updateItemAnalysis(itemId, {
         status: "waiting",
+        localSaveConfirmed: await confirmLocalSave(check),
         error: undefined,
         failure: undefined,
       });
@@ -997,6 +1194,11 @@ async function run(itemId) {
     }
     console.error("analyzeEvidenceItem failed", err);
     const failure = describeFailure(err);
+    const retries = latestItem?.analysis?.retryCount || 0;
+    const savedForLater =
+      retries >= 3 &&
+      (err?.status === 0 || err?.status >= 500) &&
+      (await confirmLocalSave(check));
     updateItem(itemId, {
       upload: {
         ...(latestItem?.upload || item.upload || {}),
@@ -1005,6 +1207,8 @@ async function run(itemId) {
     });
     updateItemAnalysis(itemId, {
       status: "failed",
+      localSaveConfirmed: savedForLater,
+      lastTriedAt: new Date().toISOString(),
       error:
         err?.body?.code === "analyses_pending"
           ? "Analysis is taking longer than expected."

@@ -1,18 +1,32 @@
 import { invalidateDuplicateIssues } from "./duplicate-invalidation.js";
 import { setDuplicateUiSite } from "./feature-flags.js";
+import { getSite as readSite } from "../db.js";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 const api = vi.hoisted(() => ({ getDuplicateLinks: vi.fn() }));
 vi.mock("./api.js", () => api);
 vi.mock("../db.js", () => ({
   getSite: vi.fn(async () => ({ siteId: "site-1" })),
 }));
-import { watchDuplicateIssues } from "./duplicate-issues.js";
+import { watchDuplicateIssues as watch } from "./duplicate-issues.js";
+const stops = [];
+/**
+ * @param {Parameters<typeof watch>[0]} ids
+ * @param {Parameters<typeof watch>[1]} changed
+ * @returns {ReturnType<typeof watch>}
+ */
+function watchDuplicateIssues(ids, changed) {
+  const stop = watch(ids, changed);
+  stops.push(stop);
+  return stop;
+}
 beforeEach(() => {
   vi.useFakeTimers();
   vi.stubGlobal("document", { hidden: false });
   api.getDuplicateLinks.mockReset();
+  vi.mocked(readSite).mockReset().mockResolvedValue({ siteId: "site-1" });
 });
 afterEach(() => {
+  for (const stop of stops.splice(0)) stop();
   setDuplicateUiSite(null);
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -80,8 +94,9 @@ beforeEach(() =>
 it("does not poll when display is disabled and cancels in-flight publication when disabled", async () => {
   setDuplicateUiSite(null);
   const changed = vi.fn();
-  watchDuplicateIssues(["one"], changed);
+  const stopDisabled = watchDuplicateIssues(["one"], changed);
   await vi.advanceTimersByTimeAsync(2000);
+  stopDisabled();
   expect(api.getDuplicateLinks).not.toHaveBeenCalled();
   setDuplicateUiSite({ featureFlags: { duplicateDetection: true } });
   /** @type {(value:any)=>void} */ let resolve = () => {};
@@ -293,7 +308,8 @@ it("invalidates cached matches and ignores pre-separation responses with home st
       enabled: true,
       issues: [{ taskId: "one", state: "pending" }],
     });
-  await vi.advanceTimersByTimeAsync(30000);
+  invalidateDuplicateIssues();
+  await vi.advanceTimersByTimeAsync(0);
   invalidateDuplicateIssues();
   const stopPhoto = watchDuplicateIssues(["one"], photo);
   respond({ enabled: true, issues: [matched] });
@@ -422,4 +438,328 @@ it("aborts the last watcher's request before its replacement starts", async () =
   expect(replacement).not.toHaveBeenCalled();
   stopReplacement();
   expect(inFlight).toBe(0);
+});
+
+it("pauses all batches and new subscriptions for the server cooldown", async () => {
+  const random = vi.spyOn(Math, "random").mockReturnValue(0);
+  api.getDuplicateLinks
+    .mockRejectedValueOnce({ status: 429, retryAfterMs: 300000 })
+    .mockResolvedValue({ enabled: true, issues: [] });
+  const stop = watchDuplicateIssues(
+    Array.from({ length: 101 }, (_, i) => `task-${i}`),
+    vi.fn(),
+  );
+  let stopNew;
+  try {
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.getDuplicateLinks).toHaveBeenCalledOnce();
+    stopNew = watchDuplicateIssues(["new-task"], vi.fn());
+    invalidateDuplicateIssues();
+    await vi.advanceTimersByTimeAsync(299999);
+    expect(api.getDuplicateLinks).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(api.getDuplicateLinks).toHaveBeenCalledTimes(4);
+  } finally {
+    stop();
+    stopNew?.();
+    random.mockRestore();
+  }
+});
+
+it("uses a conservative cooldown when throttling has no retry advice and expires subscribers", async () => {
+  api.getDuplicateLinks.mockRejectedValue({ status: 429 });
+  const stop = watchDuplicateIssues(["one"], vi.fn());
+  try {
+    await vi.advanceTimersByTimeAsync(299999);
+    expect(api.getDuplicateLinks).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(610001);
+    const calls = api.getDuplicateLinks.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(600000);
+    expect(api.getDuplicateLinks).toHaveBeenCalledTimes(calls);
+  } finally {
+    stop();
+  }
+});
+
+it("stops settled rows while continuing only pending rows", async () => {
+  api.getDuplicateLinks.mockImplementation(async (ids) => ({
+    enabled: true,
+    issues: ids.map((taskId) => ({
+      taskId,
+      state: taskId === "waiting" ? "pending" : "complete",
+    })),
+  }));
+  watchDuplicateIssues(["done", "waiting"], vi.fn());
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(api.getDuplicateLinks.mock.calls[0][0]).toEqual(["done", "waiting"]);
+  expect(
+    api.getDuplicateLinks.mock.calls
+      .slice(1)
+      .every(([ids]) => ids.join() === "waiting"),
+  ).toBe(true);
+});
+
+it.each([
+  "complete",
+  "matched",
+  "separated",
+  "not_applicable",
+  "not_found",
+  "unavailable",
+])(
+  "reuses %s results across remounts without age-based refresh",
+  async (state) => {
+    api.getDuplicateLinks.mockResolvedValue({
+      enabled: true,
+      issues: [{ taskId: "one", state }],
+    });
+    const stop = watchDuplicateIssues(["one"], vi.fn());
+    await vi.advanceTimersByTimeAsync(0);
+    stop();
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+    const changed = vi.fn();
+    watchDuplicateIssues(["one"], changed);
+    await vi.advanceTimersByTimeAsync(16 * 60 * 1000);
+    expect(api.getDuplicateLinks).toHaveBeenCalledOnce();
+    expect(changed.mock.calls.at(-1)[0].get("one").state).toBe(state);
+  },
+);
+
+it("starts a waiting subscription when site settings enable the UI", async () => {
+  setDuplicateUiSite(null);
+  api.getDuplicateLinks.mockResolvedValue({
+    enabled: true,
+    issues: [{ taskId: "one", state: "complete" }],
+  });
+  const changed = vi.fn();
+  watchDuplicateIssues(["one"], changed);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(api.getDuplicateLinks).not.toHaveBeenCalled();
+  setDuplicateUiSite({ featureFlags: { duplicateDetection: true } });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(api.getDuplicateLinks).toHaveBeenCalledOnce();
+  expect(changed.mock.calls.at(-1)[0].get("one").state).toBe("complete");
+});
+
+it("keeps invalidation listening after the retry deadline and renews the budget", async () => {
+  api.getDuplicateLinks.mockResolvedValue({
+    enabled: true,
+    issues: [{ taskId: "one", state: "pending" }],
+  });
+  const changed = vi.fn();
+  watchDuplicateIssues(["one"], changed);
+  await vi.advanceTimersByTimeAsync(16 * 60 * 1000);
+  expect(changed.mock.calls.at(-1)[0].get("one").state).toBe("unavailable");
+  const calls = api.getDuplicateLinks.mock.calls.length;
+  invalidateDuplicateIssues();
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(api.getDuplicateLinks.mock.calls.length).toBe(calls + 2);
+  expect(changed.mock.calls.at(-1)[0].get("one").state).toBe("pending");
+});
+
+it("invalidates cached dependents even while unmounted and ignores another site's mutations", async () => {
+  api.getDuplicateLinks.mockImplementation(async (ids) => ({
+    enabled: true,
+    issues: ids.map((taskId) => ({
+      taskId,
+      state: "matched",
+      original: { taskId: "original" },
+    })),
+  }));
+  const stop = watchDuplicateIssues(["one", "two"], vi.fn());
+  await vi.advanceTimersByTimeAsync(0);
+  stop();
+  invalidateDuplicateIssues("other-site");
+  const stopAgain = watchDuplicateIssues(["one", "two"], vi.fn());
+  await vi.advanceTimersByTimeAsync(0);
+  expect(api.getDuplicateLinks).toHaveBeenCalledOnce();
+  stopAgain();
+  invalidateDuplicateIssues("site-1");
+  watchDuplicateIssues(["one", "two"], vi.fn());
+  await vi.advanceTimersByTimeAsync(0);
+  expect(api.getDuplicateLinks).toHaveBeenCalledTimes(2);
+  expect(api.getDuplicateLinks.mock.calls[1][0]).toEqual(["one", "two"]);
+});
+
+it("does not reuse cached rows after changing site with the UI still enabled", async () => {
+  const { getSite } = await import("../db.js");
+  api.getDuplicateLinks.mockResolvedValue({
+    enabled: true,
+    issues: [{ taskId: "one", state: "complete" }],
+  });
+  const stop = watchDuplicateIssues(["one"], vi.fn());
+  await vi.advanceTimersByTimeAsync(0);
+  stop();
+  vi.mocked(getSite).mockResolvedValue({ siteId: "site-2" });
+  const changed = vi.fn();
+  watchDuplicateIssues(["one"], changed);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(api.getDuplicateLinks).toHaveBeenCalledTimes(2);
+  expect(api.getDuplicateLinks.mock.calls[1][1].originSiteId).toBe("site-2");
+  vi.mocked(getSite).mockResolvedValue({ siteId: "site-1" });
+});
+
+it("publishes a cached missing row after remount without refetching", async () => {
+  api.getDuplicateLinks.mockResolvedValue({ enabled: true, issues: [] });
+  const stop = watchDuplicateIssues(["missing"], vi.fn());
+  await vi.advanceTimersByTimeAsync(0);
+  stop();
+  const changed = vi.fn();
+  watchDuplicateIssues(["missing"], changed);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(changed).toHaveBeenCalledOnce();
+  expect(changed.mock.calls[0][0].size).toBe(0);
+  expect(api.getDuplicateLinks).toHaveBeenCalledOnce();
+});
+
+it("does not abandon a new-site watch when its initial cache check is delayed", async () => {
+  const { getSite } = await import("../db.js");
+  api.getDuplicateLinks.mockImplementation(async (ids) => ({
+    enabled: true,
+    issues: ids.map((taskId) => ({ taskId, state: "complete" })),
+  }));
+  const stopOld = watchDuplicateIssues(["old"], vi.fn());
+  await vi.advanceTimersByTimeAsync(0);
+  stopOld();
+  /** @type {(site: {siteId: string}) => void} */
+  let release = () => {};
+  vi.mocked(getSite)
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    )
+    .mockResolvedValue({ siteId: "site-2" });
+  const changed = vi.fn();
+  watchDuplicateIssues(["new"], changed);
+  await vi.advanceTimersByTimeAsync(1);
+  release({ siteId: "site-2" });
+  await vi.advanceTimersByTimeAsync(1);
+  expect(api.getDuplicateLinks).toHaveBeenCalledTimes(2);
+  expect(changed.mock.calls.at(-1)[0].get("new").state).toBe("complete");
+  vi.mocked(getSite).mockResolvedValue({ siteId: "site-1" });
+});
+
+it("keeps a backend-disabled watch subscribed for explicit invalidation", async () => {
+  api.getDuplicateLinks
+    .mockResolvedValueOnce({ enabled: false, issues: [] })
+    .mockResolvedValue({
+      enabled: true,
+      issues: [{ taskId: "one", state: "complete" }],
+    });
+  const changed = vi.fn();
+  watchDuplicateIssues(["one"], changed);
+  await vi.advanceTimersByTimeAsync(1000);
+  invalidateDuplicateIssues("site-1");
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(api.getDuplicateLinks).toHaveBeenCalledTimes(2);
+  expect(changed.mock.calls.at(-1)[0].get("one").state).toBe("complete");
+});
+
+it("reads later batches for persisted links when an earlier batch is disabled", async () => {
+  api.getDuplicateLinks
+    .mockResolvedValueOnce({ enabled: false, issues: [] })
+    .mockResolvedValueOnce({
+      enabled: true,
+      issues: [
+        { taskId: "50", state: "matched", original: { taskId: "original" } },
+      ],
+    });
+  const changed = vi.fn();
+  watchDuplicateIssues(
+    Array.from({ length: 51 }, (_, i) => String(i)),
+    changed,
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  expect(api.getDuplicateLinks).toHaveBeenCalledTimes(2);
+  expect(changed.mock.calls.at(-1)[0].get("50").state).toBe("matched");
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(api.getDuplicateLinks).toHaveBeenCalledTimes(2);
+});
+
+it("backs off a failed cache-site verification without refetching settled results", async () => {
+  api.getDuplicateLinks.mockResolvedValue({
+    enabled: true,
+    issues: [{ taskId: "one", state: "complete" }],
+  });
+  const stop = watchDuplicateIssues(["one"], vi.fn());
+  await vi.advanceTimersByTimeAsync(0);
+  stop();
+  vi.mocked(readSite).mockRejectedValueOnce(
+    new Error("IndexedDB temporarily unavailable"),
+  );
+  const changed = vi.fn();
+  watchDuplicateIssues(["one"], changed);
+  await vi.advanceTimersByTimeAsync(14999);
+  expect(changed).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(changed.mock.calls.at(-1)[0].get("one").state).toBe("complete");
+  expect(api.getDuplicateLinks).toHaveBeenCalledOnce();
+});
+
+it("retains the server cooldown across the last unmount without refreshing settled rows", async () => {
+  const random = vi.spyOn(Math, "random").mockReturnValue(0);
+  api.getDuplicateLinks
+    .mockResolvedValueOnce({
+      enabled: true,
+      issues: [{ taskId: "settled", state: "complete" }],
+    })
+    .mockRejectedValueOnce({ status: 429, retryAfterMs: 300000 })
+    .mockResolvedValue({
+      enabled: true,
+      issues: [{ taskId: "pending", state: "complete" }],
+    });
+  try {
+    const stopSettled = watchDuplicateIssues(["settled"], vi.fn());
+    await vi.advanceTimersByTimeAsync(0);
+    const stopPending = watchDuplicateIssues(["pending"], vi.fn());
+    await vi.advanceTimersByTimeAsync(1);
+    expect(api.getDuplicateLinks).toHaveBeenCalledTimes(2);
+    stopSettled();
+    stopPending();
+    const changed = vi.fn();
+    watchDuplicateIssues(["settled", "pending"], changed);
+    await vi.advanceTimersByTimeAsync(299998);
+    expect(api.getDuplicateLinks).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(api.getDuplicateLinks).toHaveBeenCalledTimes(3);
+    expect(api.getDuplicateLinks.mock.calls[2][0]).toEqual(["pending"]);
+    expect(changed.mock.calls.at(-1)[0].get("settled").state).toBe("complete");
+  } finally {
+    random.mockRestore();
+  }
+});
+
+it("keeps a filed group collapsed while revalidating its cached relation", async () => {
+  const original = {
+    taskId: "original",
+    status: "open",
+    updatedAt: "2026-10-15T10:00:00Z",
+  };
+  api.getDuplicateLinks.mockResolvedValueOnce({
+    enabled: true,
+    issues: [{ taskId: "one", state: "matched", original }],
+  });
+  const changed = vi.fn();
+  const stop = watchDuplicateIssues(["one"], changed);
+  await vi.advanceTimersByTimeAsync(0);
+  const filed = {
+    ...original,
+    status: "in_progress",
+    updatedAt: "2026-10-15T11:00:00Z",
+    inProgressActionKind: "311_filed",
+    appActionResults: [{ code: "create_311_ticket", status: "submitted" }],
+  };
+  api.getDuplicateLinks.mockImplementationOnce(() => new Promise(() => {}));
+  invalidateDuplicateIssues("site-1", [filed]);
+  expect(changed.mock.calls.at(-1)[0].get("one")).toMatchObject({
+    state: "matched",
+    original: filed,
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  // Separation/evidence changes still discard the relation immediately.
+  invalidateDuplicateIssues("site-1");
+  expect(changed.mock.calls.at(-1)[0].get("one").state).toBe("pending");
+  stop();
 });

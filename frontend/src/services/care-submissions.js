@@ -7,6 +7,25 @@ import {
   putMediaWithProgress,
 } from "./api.js";
 
+let careSummaryTimer;
+const careCompletions = new Map();
+function summarizeCareCompletion(siteId) {
+  careCompletions.set(siteId, (careCompletions.get(siteId) || 0) + 1);
+  clearTimeout(careSummaryTimer);
+  careSummaryTimer = setTimeout(async () => {
+    const site = await getSite().catch(() => null);
+    const count = careCompletions.get(site?.siteId) || 0;
+    careCompletions.clear();
+    if (count > 1)
+      showToast({
+        title: t("notice.careBatch", { count }),
+        message: "",
+        key: `care:${site.siteId}`,
+        tone: "success",
+      });
+  }, 1000);
+}
+
 const active = new Map();
 const changed = () => window.dispatchEvent(new Event("caresubmissionschange"));
 
@@ -126,7 +145,7 @@ async function submit(record) {
         record.files = [];
         await saveCareSubmission(record, "update");
         if ((await getSite())?.siteId === record.siteId)
-          showToast({ title: t("care.success"), message: "", icon: "check" });
+          summarizeCareCompletion(record.siteId);
         break;
       } catch (error) {
         const expired = record.files.find(
@@ -173,7 +192,7 @@ export function startCareSubmissionRecovery() {
   const resume = () => {
     void recoverCareSubmissions();
   };
-  window.addEventListener("online", resume);
+  window.addEventListener("connectionretry", resume);
   window.addEventListener("pageshow", resume);
   window.addEventListener("sitebound", resume);
   resume();

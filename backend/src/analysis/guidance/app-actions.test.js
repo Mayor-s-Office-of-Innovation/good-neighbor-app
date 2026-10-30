@@ -341,6 +341,307 @@ describe("app action execution", () => {
     }
   });
 
+  it("logs when 311 falls back to the site point, without coordinates", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    send
+      .mockResolvedValueOnce({
+        Item: { location: { latitude: 37.7, longitude: -122.4 } },
+      })
+      .mockResolvedValue({ Items: [] });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ data: { return_code: "0", SRNum: "2000008106" } }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const run = (/** @type {Record<string, unknown>} */ task) =>
+      executeAppActions(
+        [
+          {
+            code: "create_311_ticket",
+            payload: {
+              serviceCodeOrAction: "1.1.4.7.20.0",
+              responsibleAgencyCode: "76",
+            },
+          },
+        ],
+        {
+          env: {
+            GNP_311_SUBMISSION_ENABLED: "true",
+            DYNAMO_TABLE: "table",
+            S3_UPLOAD_BUCKET: "bucket",
+            SQS_QUEUE_URL: "queue",
+            SF311_CREATESR_URL: "https://hub.example/createsr",
+            SF311_BASIC_AUTH_USER: "user",
+            SF311_BASIC_AUTH_PASS: "pass",
+          },
+          now,
+          tableName: "table",
+          siteId: "site",
+          task,
+        },
+      );
+    const fallbackLines = () =>
+      log.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.includes("LocationFallbackToSite"));
+    try {
+      await run({ taskId: "task", checkId: "check" });
+      expect(fallbackLines()).toHaveLength(1);
+      expect(JSON.parse(fallbackLines()[0])).toMatchObject({
+        marker: "LocationFallbackToSite",
+        siteId: "site",
+        taskId: "task",
+        checkId: "check",
+      });
+      expect(fallbackLines()[0]).not.toContain("37.7");
+
+      await run({
+        taskId: "task-2",
+        location: { latitude: 37.78, longitude: -122.41 },
+      });
+      expect(fallbackLines()).toHaveLength(1);
+    } finally {
+      log.mockRestore();
+      send.mockReset();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  /**
+   * File one 311 ticket for a task with the given source photos.
+   * @param {string[]} sourceArtifactIds
+   * @param {Record<string, unknown>} [source]
+   * @param {Record<string, unknown>} [location] the task's top-level location
+   * @returns {Promise<{ result: Record<string, unknown>, sent: string }>}
+   */
+  async function fileWithPhotos(sourceArtifactIds, source = {}, location) {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ data: { return_code: "0", SRNum: "2000008106" } }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchImpl);
+    const [result] = await executeAppActions(
+      [
+        {
+          code: "create_311_ticket",
+          payload: {
+            serviceCodeOrAction: "1.1.4.7.20.0",
+            responsibleAgencyCode: "76",
+          },
+        },
+      ],
+      {
+        env: {
+          GNP_311_SUBMISSION_ENABLED: "true",
+          DYNAMO_TABLE: "table",
+          S3_UPLOAD_BUCKET: "bucket",
+          SQS_QUEUE_URL: "queue",
+          SF311_CREATESR_URL: "https://hub.example/createsr",
+          SF311_BASIC_AUTH_USER: "user",
+          SF311_BASIC_AUTH_PASS: "pass",
+        },
+        now,
+        tableName: "table",
+        siteId: "site",
+        task: {
+          taskId: "task",
+          checkId: "check",
+          sourceArtifactIds,
+          source,
+          ...(location ? { location } : {}),
+        },
+      },
+    );
+    return { result, sent: JSON.stringify(fetchImpl.mock.calls) };
+  }
+
+  it("files 311 at the most accurate of several source photos", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    send.mockResolvedValueOnce({
+      Items: [
+        {
+          artifactId: "artifact-1",
+          latitude: 37.7001,
+          longitude: -122.4001,
+          accuracyMeters: 120,
+        },
+        {
+          artifactId: "artifact-2",
+          latitude: 37.7793,
+          longitude: -122.4192,
+          accuracyMeters: 9,
+        },
+      ],
+    });
+    try {
+      const { result, sent } = await fileWithPhotos([
+        "artifact-1",
+        "artifact-2",
+      ]);
+      expect(result.status).toBe("submitted");
+      expect(sent).toContain("37.7793");
+      expect(sent).not.toContain("37.7001");
+    } finally {
+      log.mockRestore();
+      send.mockReset();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("files 311 at a photo's fix that is more accurate than the task's", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    send.mockResolvedValueOnce({
+      Items: [
+        {
+          artifactId: "artifact-1",
+          latitude: 37.7793,
+          longitude: -122.4192,
+          accuracyMeters: 8,
+        },
+      ],
+    });
+    try {
+      const { result, sent } = await fileWithPhotos(["artifact-1"], {
+        latitude: 37.7001,
+        longitude: -122.4001,
+        accuracyMeters: 400,
+      });
+      expect(result.status).toBe("submitted");
+      expect(sent).toContain("37.7793");
+      expect(sent).not.toContain("37.7001");
+    } finally {
+      log.mockRestore();
+      send.mockReset();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("doesn't score a task's top-level location with its source accuracy", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    send.mockResolvedValueOnce({
+      Items: [
+        {
+          artifactId: "artifact-1",
+          latitude: 37.7793,
+          longitude: -122.4192,
+          accuracyMeters: 8,
+        },
+      ],
+    });
+    try {
+      const { sent } = await fileWithPhotos(
+        ["artifact-1"],
+        {
+          accuracyMeters: 5,
+        },
+        { latitude: 37.7001, longitude: -122.4001 },
+      );
+      expect(sent).toContain("37.7793");
+      expect(sent).not.toContain("37.7001");
+    } finally {
+      log.mockRestore();
+      send.mockReset();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("files 311 at a photo on a later page of the check's artifacts", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    send
+      .mockResolvedValueOnce({ Items: [], LastEvaluatedKey: { sk: "page-1" } })
+      .mockResolvedValueOnce({
+        Items: [
+          { artifactId: "artifact-1", latitude: 37.7793, longitude: -122.4192 },
+        ],
+      });
+    try {
+      const { result, sent } = await fileWithPhotos(["artifact-1"]);
+      expect(result.status).toBe("submitted");
+      expect(sent).toContain("37.7793");
+    } finally {
+      log.mockRestore();
+      send.mockReset();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("files 311 at a location sent after the task was written", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    send.mockResolvedValueOnce({
+      Items: [
+        {
+          artifactId: "artifact-1",
+          text: "Trash by the door",
+          latitude: 37.7793,
+          longitude: -122.4192,
+          accuracyMeters: 9,
+        },
+      ],
+    });
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ data: { return_code: "0", SRNum: "2000008106" } }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchImpl);
+    try {
+      const [result] = await executeAppActions(
+        [
+          {
+            code: "create_311_ticket",
+            payload: {
+              serviceCodeOrAction: "1.1.4.7.20.0",
+              responsibleAgencyCode: "76",
+            },
+          },
+        ],
+        {
+          env: {
+            GNP_311_SUBMISSION_ENABLED: "true",
+            DYNAMO_TABLE: "table",
+            S3_UPLOAD_BUCKET: "bucket",
+            SQS_QUEUE_URL: "queue",
+            SF311_CREATESR_URL: "https://hub.example/createsr",
+            SF311_BASIC_AUTH_USER: "user",
+            SF311_BASIC_AUTH_PASS: "pass",
+          },
+          now,
+          tableName: "table",
+          siteId: "site",
+          task: {
+            taskId: "task",
+            checkId: "check",
+            sourceArtifactIds: ["artifact-1"],
+            source: {},
+          },
+        },
+      );
+      expect(result.status).toBe("submitted");
+      expect(JSON.stringify(fetchImpl.mock.calls)).toContain("37.7793");
+      // One read of the artifact; the site's point is never needed.
+      expect(send).toHaveBeenCalledOnce();
+      expect(
+        log.mock.calls.some(([line]) =>
+          String(line).includes("LocationFallbackToSite"),
+        ),
+      ).toBe(false);
+    } finally {
+      log.mockRestore();
+      send.mockReset();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("records a failed 311 submission when config is incomplete", async () => {
     expect(
       await executeAppActions(
@@ -495,6 +796,68 @@ describe("app action execution", () => {
       getObjectBytes.mockReset();
       create311MediaLink.mockReset();
       vi.unstubAllGlobals();
+    }
+  });
+
+  it("finds classifier evidence on a later page of the check's artifacts", async () => {
+    send
+      .mockResolvedValueOnce({ Items: [], LastEvaluatedKey: { sk: "page-1" } })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            artifactId: "artifact-1",
+            s3Key: "checks/site-1/check-1/North/artifact-1",
+            contentType: "image/jpeg",
+          },
+        ],
+      });
+    getObjectBytes.mockResolvedValueOnce({
+      bytes: Buffer.from("image"),
+      contentType: "image/jpeg",
+    });
+    downscaleImage.mockResolvedValueOnce({
+      bytes: Buffer.from("resized-image"),
+      contentType: "image/jpeg",
+    });
+    getAnalyzerApiKey.mockResolvedValueOnce("analyzer-key");
+    const classifyEvidence = vi.fn().mockResolvedValueOnce({ labels: [] });
+    createAnalyzerClient.mockReturnValueOnce({ classifyEvidence });
+
+    try {
+      await executeAppActions(
+        [
+          {
+            code: "create_311_ticket",
+            payload: { serviceCodeOrAction: "Run graffiti analysis" },
+          },
+        ],
+        {
+          env: {
+            GNP_311_SUBMISSION_ENABLED: "true",
+            DYNAMO_TABLE: "table",
+            S3_UPLOAD_BUCKET: "bucket",
+            SQS_QUEUE_URL: "queue",
+            ANALYZER_BASE_URL: "https://analyzer.example.test",
+            ANALYZER_API_KEY: "analyzer-key",
+            SF311_CREATESR_URL: "https://hub.example.test/createsr",
+            SF311_AGENCY_LOOKUP_URL: "https://hub.example.test/lookup",
+            SF311_BASIC_AUTH_USER: "user",
+            SF311_BASIC_AUTH_PASS: "pass",
+          },
+          now,
+          tableName: "table",
+          siteId: "site-1",
+          task: {
+            taskId: "task-1",
+            checkId: "check-1",
+            description: "Graffiti",
+            sourceArtifactIds: ["artifact-1"],
+          },
+        },
+      );
+      expect(classifyEvidence).toHaveBeenCalled();
+    } finally {
+      send.mockReset();
     }
   });
 
@@ -698,6 +1061,7 @@ describe("app action execution", () => {
           },
         ],
       })
+      .mockResolvedValueOnce({ Items: [] })
       .mockResolvedValueOnce({
         Item: {
           location: {
@@ -706,7 +1070,6 @@ describe("app action execution", () => {
           },
         },
       })
-      .mockResolvedValueOnce({ Items: [] })
       .mockResolvedValueOnce({});
     getObjectBytes.mockResolvedValueOnce({
       bytes: Buffer.from("image"),
@@ -828,14 +1191,6 @@ describe("app action execution", () => {
   it("attaches source images to submitted SF311 service requests", async () => {
     send
       .mockResolvedValueOnce({
-        Item: {
-          location: {
-            latitude: 37.76656393517443,
-            longitude: -122.4213267021692,
-          },
-        },
-      })
-      .mockResolvedValueOnce({
         Items: [
           {
             artifactId: "artifact-1",
@@ -843,6 +1198,14 @@ describe("app action execution", () => {
             contentType: "image/jpeg",
           },
         ],
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          location: {
+            latitude: 37.76656393517443,
+            longitude: -122.4213267021692,
+          },
+        },
       });
     create311MediaLink.mockResolvedValueOnce(
       "https://uploads.example.test/image.jpg?X-Amz-Signature=secret",
@@ -962,14 +1325,6 @@ describe("app action execution", () => {
   it("keeps created SF311 tickets retryable when image attachment fails", async () => {
     send
       .mockResolvedValueOnce({
-        Item: {
-          location: {
-            latitude: 37.76656393517443,
-            longitude: -122.4213267021692,
-          },
-        },
-      })
-      .mockResolvedValueOnce({
         Items: [
           {
             artifactId: "artifact-1",
@@ -977,6 +1332,14 @@ describe("app action execution", () => {
             contentType: "image/jpeg",
           },
         ],
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          location: {
+            latitude: 37.76656393517443,
+            longitude: -122.4213267021692,
+          },
+        },
       });
     create311MediaLink.mockResolvedValueOnce(
       "https://uploads.example.test/image.jpg?X-Amz-Signature=secret",
@@ -1084,9 +1447,6 @@ describe("app action execution", () => {
       const url = `https://media.example/v1/311-media?token=${token}`;
       send
         .mockResolvedValueOnce({
-          Item: { location: { latitude: 37.7, longitude: -122.4 } },
-        })
-        .mockResolvedValueOnce({
           Items: [
             {
               artifactId: "artifact-1",
@@ -1094,6 +1454,9 @@ describe("app action execution", () => {
               contentType: "image/jpeg",
             },
           ],
+        })
+        .mockResolvedValueOnce({
+          Item: { location: { latitude: 37.7, longitude: -122.4 } },
         })
         .mockResolvedValue({});
       create311MediaLink.mockResolvedValueOnce(url);
@@ -1192,14 +1555,6 @@ describe("app action execution", () => {
   it("retries failed image attachments without recreating the SF311 ticket", async () => {
     send
       .mockResolvedValueOnce({
-        Item: {
-          location: {
-            latitude: 37.76656393517443,
-            longitude: -122.4213267021692,
-          },
-        },
-      })
-      .mockResolvedValueOnce({
         Items: [
           {
             artifactId: "artifact-1",
@@ -1207,6 +1562,14 @@ describe("app action execution", () => {
             contentType: "image/jpeg",
           },
         ],
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          location: {
+            latitude: 37.76656393517443,
+            longitude: -122.4213267021692,
+          },
+        },
       });
     create311MediaLink.mockResolvedValueOnce(
       "https://uploads.example.test/image.jpg?X-Amz-Signature=secret",
@@ -1454,73 +1817,14 @@ describe("311 ticket closure", () => {
     });
   });
 
-  it("reconciles an expired lease without closing an already-closed SR again", async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ requests: [{ SRNum: "2000008106", Status: "4" }] }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
-      );
-    vi.stubGlobal("fetch", fetchImpl);
-
-    const results = await executeAppActions(
-      [{ code: "close_311_ticket", payload: {} }],
-      {
-        env: ENV,
-        now,
-        priorResults: [SUBMITTED_311_RESULT],
-        reconcile311Closures: true,
-      },
-    );
-
-    expect(results).toEqual([
-      {
-        code: "close_311_ticket",
-        status: "submitted",
-        payload: {
-          closures: [
-            {
-              serviceCode: "1.1.4.7.20.0",
-              srNum: "2000008106",
-              status: "closed",
-              reconciled: true,
-            },
-          ],
-        },
-        recordedAt: "2026-08-18T12:00:00.000Z",
-      },
-    ]);
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect(fetchImpl.mock.calls[0][1].method).toBe("GET");
-  });
-
-  it.each([
-    { ClosedReason: "8" },
-    {
-      ClosedReason: "1",
-      Updates: [
-        {
-          UpdateType: "11",
-          NumericSubType: "8",
-          EffectiveDate: "2026-08-18T12:00:00Z",
-        },
-      ],
-    },
-  ])(
-    "preserves the observed HUB reason during recovery: %j",
-    async (fields) => {
+  it.each(["sf311_closure_state_unknown", "sf311_timeout"])(
+    "retries a saved %s closure directly without consulting the updates feed",
+    async (reason) => {
       const fetchImpl = vi.fn().mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            requests: [{ SRNum: "2000008106", Status: "4", ...fields }],
-          }),
-          {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          },
-        ),
+        new Response(JSON.stringify({ UpdateID: 4321, return_code: 0 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
       );
       vi.stubGlobal("fetch", fetchImpl);
       const results = await executeAppActions(
@@ -1528,50 +1832,112 @@ describe("311 ticket closure", () => {
         {
           env: ENV,
           now,
-          priorResults: [SUBMITTED_311_RESULT],
-          reconcile311Closures: true,
+          priorResults: [
+            SUBMITTED_311_RESULT,
+            {
+              code: "close_311_ticket",
+              status: "failed",
+              recordedAt: now.toISOString(),
+              payload: {
+                closures: [
+                  {
+                    serviceCode: "1.1.4.7.20.0",
+                    srNum: "2000008106",
+                    status: "failed",
+                    reason,
+                  },
+                ],
+              },
+            },
+          ],
         },
       );
-      expect(results[0].payload?.closures).toEqual([
-        {
-          serviceCode: "1.1.4.7.20.0",
-          srNum: "2000008106",
-          closedReasonCode: "8",
-          status: "closed",
-          reconciled: true,
-        },
-      ]);
+      expect(results[0]).toMatchObject({
+        status: "submitted",
+        payload: { closures: [{ srNum: "2000008106", status: "closed" }] },
+      });
       expect(fetchImpl).toHaveBeenCalledTimes(1);
-      expect(fetchImpl.mock.calls[0][1].method).toBe("GET");
+      expect(fetchImpl.mock.calls[0][1].method).toBe("POST");
+      expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toMatchObject({
+        SRnum: "2000008106",
+        UpdateType: "11",
+        SendingAgency: "76",
+        NumericSubType: "1",
+      });
     },
   );
 
-  it("does not issue a duplicate close when recovery cannot find the SR", async () => {
-    const fetchImpl = vi.fn().mockResolvedValueOnce(
-      new Response(JSON.stringify({ requests: [] }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    );
+  it("retries a lost closure response and skips the saved success thereafter", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("connection lost after request"))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ UpdateID: 4321, return_code: 0 }), {
+          status: 200,
+        }),
+      );
     vi.stubGlobal("fetch", fetchImpl);
+    const action = [{ code: "close_311_ticket", payload: {} }];
+    const first = await executeAppActions(action, {
+      env: ENV,
+      now,
+      priorResults: [SUBMITTED_311_RESULT],
+    });
+    expect(first[0].status).toBe("failed");
+    const second = await executeAppActions(action, {
+      env: ENV,
+      now,
+      priorResults: [SUBMITTED_311_RESULT, ...first],
+    });
+    expect(second[0].status).toBe("submitted");
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    for (const [, init] of fetchImpl.mock.calls) {
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(init.body)).toMatchObject({
+        UpdateType: "11",
+        SRnum: "2000008106",
+      });
+    }
+    await executeAppActions(action, {
+      env: ENV,
+      now,
+      priorResults: [SUBMITTED_311_RESULT, ...second],
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
 
-    const results = await executeAppActions(
-      [{ code: "close_311_ticket", payload: {} }],
-      {
-        env: ENV,
-        now,
-        priorResults: [SUBMITTED_311_RESULT],
-        reconcile311Closures: true,
-      },
-    );
-
-    expect(results[0]).toMatchObject({
+  it("keeps an unconfirmed closure failed until HUB returns success", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ UpdateID: 4321 }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ return_code: 0 }), { status: 200 }),
+      );
+    vi.stubGlobal("fetch", fetchImpl);
+    const actions = [{ code: "close_311_ticket", payload: {} }];
+    const failed = await executeAppActions(actions, {
+      env: ENV,
+      now,
+      priorResults: [SUBMITTED_311_RESULT],
+    });
+    expect(failed[0]).toMatchObject({
       status: "failed",
       payload: {
-        closures: [{ status: "failed", reason: "sf311_closure_state_unknown" }],
+        closures: [{ status: "failed", reason: "missing_return_code" }],
       },
     });
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const retried = await executeAppActions(actions, {
+      env: ENV,
+      now,
+      priorResults: [SUBMITTED_311_RESULT, ...failed],
+    });
+    expect(retried[0]).toMatchObject({
+      status: "submitted",
+      payload: { closures: [{ status: "closed" }] },
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
   it("closes every eligible ticket on classifier fan-out", async () => {

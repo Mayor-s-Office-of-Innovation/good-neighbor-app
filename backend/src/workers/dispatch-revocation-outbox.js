@@ -26,6 +26,21 @@ export const handler = async (event) => {
     );
     await projectStatus(item);
     if (record.eventName !== "INSERT") continue;
+    // Media registration itself is the durable event: no commit-then-enqueue gap.
+    if (item.entityType === "task_update_media") {
+      await sqs.send(
+        new SendMessageCommand({
+          QueueUrl: getConfig().queueUrl,
+          MessageBody: JSON.stringify({
+            type: "update_media_thumbnail",
+            pk: item.pk,
+            sk: item.sk,
+          }),
+        }),
+      );
+      continue;
+    }
+
     if (
       ![
         "REVOCATION_OUTBOX",
@@ -47,7 +62,12 @@ export const handler = async (event) => {
     if (current.Item?.status !== "pending") continue;
     await sqs.send(
       new SendMessageCommand({
-        QueueUrl: config.queueUrl,
+        // Fallback keeps the local single-queue harness working. Deployed
+        // workers always receive SF311_QUEUE_URL from Terraform.
+        QueueUrl:
+          item.entityType === "SF311_OUTBOX"
+            ? config.sf311QueueUrl || config.queueUrl
+            : config.queueUrl,
         MessageBody: JSON.stringify(
           item.entityType === "SF311_OUTBOX"
             ? {

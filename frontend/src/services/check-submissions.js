@@ -29,6 +29,8 @@ import {
 } from "../state/check-session.js";
 import {
   analyzeEvidenceItem,
+  hasUnsentLocation,
+  resendItemLocation,
   EVIDENCE_SETTLED_EVENT,
   shouldResumeEvidenceItem,
 } from "./photo-analysis.js";
@@ -37,7 +39,6 @@ import {
   finalizeCaptureScorecardInBackground,
 } from "./submit-check.js";
 import { checkItems, itemHasLiveEvidence } from "../domain/check-completion.js";
-import { onHealthChange } from "./backend-health.js";
 
 /**
  * Every live item has reached the server, so the scorecard can be built.
@@ -99,6 +100,10 @@ export async function resumeCheckSubmissions({ uploads = true } = {}) {
         if (item.analysis?.status === "waiting") waiting = true;
         if (uploads && !offline && shouldResumeEvidenceItem(item))
           analyzeEvidenceItem(item.id);
+        if (hasUnsentLocation(item)) {
+          waiting = true;
+          if (uploads && !offline) void resendItemLocation(check.id, item);
+        }
       }
       finalize(check);
     }
@@ -127,7 +132,7 @@ export function startCheckSubmissionRecovery() {
   const resume = () => {
     void resumeCheckSubmissions();
   };
-  window.addEventListener("online", resume);
+  window.addEventListener("connectionretry", resume);
   window.addEventListener("pageshow", resume);
   window.addEventListener("sitebound", resume);
   document.addEventListener("visibilitychange", () => {
@@ -135,11 +140,6 @@ export function startCheckSubmissionRecovery() {
   });
   window.addEventListener(EVIDENCE_SETTLED_EVENT, () => {
     void resumeCheckSubmissions({ uploads: false });
-  });
-  let lastHealth = "";
-  onHealthChange((state) => {
-    if (state === "healthy" && lastHealth === "outage") resume();
-    lastHealth = state;
   });
   resume();
 }

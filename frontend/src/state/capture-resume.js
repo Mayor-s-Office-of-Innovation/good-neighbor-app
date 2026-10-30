@@ -1,6 +1,6 @@
 /*
   capture-resume — put the user back on the capture screen when the document
-  died while the camera was open.
+  died while the camera or gallery was open.
 
   Field finding (2026-10): on older Android devices the browser process is
   killed while the camera app is in the foreground. When the user returns the
@@ -10,9 +10,9 @@
   are lost.
 
   A tiny localStorage marker bridges the gap: the capture screen writes
-  { route, at } when it hands off to the camera and removes it when the pick
-  comes back or the screen unmounts. A marker that is still present at boot
-  therefore means the document died abnormally. app-root reads it before the
+  { route, at } when it hands off to the camera or gallery and removes it when
+  the pick comes back, is cancelled, or the screen unmounts. A marker that is
+  still present at boot therefore means the document died abnormally. app-root reads it before the
   first render and, if a draft for that flow exists, replaces home with the
   capture route. The TTL keeps a marker from an hours-old crash from hijacking
   a deliberate visit to home.

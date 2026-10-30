@@ -1,4 +1,9 @@
 import {
+  getSystemControls,
+  putSystemControls,
+} from "../src/handlers/system-controls.js";
+import { listPendingGuidance } from "../src/handlers/pending-guidance.js";
+import {
   listPeople,
   createPerson,
   updatePerson,
@@ -41,6 +46,7 @@ import {
   presignUpload,
   registerArtifact,
   deleteArtifact,
+  updateArtifactLocation,
   presignMedia,
 } from "../src/handlers/artifacts.js";
 import {
@@ -185,6 +191,7 @@ import {
   getSitePerimeter,
   listSiteTerms,
   putSitePerimeter,
+  putSiteDeliberate311,
   replaceSiteComplianceManagers,
   unassignSiteUser,
 } from "../src/handlers/admin-site-config.js";
@@ -322,6 +329,11 @@ const routes = [
     "/v1/checks/{checkId}/artifacts/{artifactId}",
     deleteArtifact,
   ),
+  route(
+    "PATCH",
+    "/v1/checks/{checkId}/artifacts/{artifactId}/location",
+    updateArtifactLocation,
+  ),
   route("POST", "/v1/tasks/{taskId}/update-media", registerTaskUpdateMedia),
   route("POST", "/v1/checks/{checkId}/complete", completeCheck),
   route(
@@ -382,6 +394,7 @@ const routes = [
     "/v1/tasks/{taskId}/updates/{updateId}/document",
     documentTaskUpdate,
   ),
+  route("GET", "/v1/guidance/pending", listPendingGuidance),
   // Assessment guidance workflow
   route("POST", "/v1/assessments:evaluate", evaluateAssessment),
   route("GET", "/v1/assessments/{assessmentId}/guidance", getGuidance),
@@ -411,6 +424,8 @@ const routes = [
   route("POST", "/v1/feedback", feedbackHandler),
   route("GET", "/admin/v1/providers", listProviders),
   route("GET", "/admin/v1/session", getAdminSession),
+  route("GET", "/admin/v1/system-controls", getSystemControls),
+  route("PUT", "/admin/v1/system-controls", putSystemControls),
   route("GET", "/admin/v1/system-status", getSystemStatus),
   route("GET", "/admin/v1/system-status/{siteId}/{kind}", getStatusEntries),
   route(
@@ -496,6 +511,7 @@ const routes = [
   route("POST", "/admin/v1/sites/{siteId}/letter:resend", resendSiteLetter),
   route("GET", "/admin/v1/sites/{siteId}/perimeter", getSitePerimeter),
   route("PUT", "/admin/v1/sites/{siteId}/perimeter", putSitePerimeter),
+  route("PUT", "/admin/v1/sites/{siteId}/deliberate-311", putSiteDeliberate311),
   route(
     "GET",
     "/admin/v1/sites/{siteId}/manager-memberships",

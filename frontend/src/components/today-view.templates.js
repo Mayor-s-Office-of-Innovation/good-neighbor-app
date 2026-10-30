@@ -1,3 +1,4 @@
+import { loadError } from "./load-error.js";
 import { duplicateCountLabel } from "./duplicate-issue.templates.js";
 /*
   Presentational templates for <today-view>, the home hub. Pure
@@ -54,6 +55,7 @@ export function homeShell({
     <div class="home">
       <section class="home-region home-region--header">
         <div class="home-top-actions">
+          <site-switcher></site-switcher>
           ${settingsMenu({
             open: settingsMenuOpen,
             adminAccess,
@@ -301,6 +303,14 @@ export function languageDialog() {
     aria-describedby="language-copy"
   >
     <form class="places-modal__card" method="dialog">
+      <button
+        class="btn-circle-close language-dialog__close"
+        type="submit"
+        value=""
+        aria-label="${escapeAttr(t("common.close"))}"
+      >
+        <wa-icon name="xmark" aria-hidden="true"></wa-icon>
+      </button>
       <div class="places-modal__copy">
         <h2 class="places-modal__title" id="language-title">
           ${escapeHtml(t("today.language.title"))}
@@ -325,11 +335,6 @@ export function languageDialog() {
               </li>`,
           ).join("")}
         </ul>
-      </div>
-      <div class="places-modal__actions">
-        <button class="btn-ink places-modal__primary" type="submit" value="">
-          ${escapeHtml(t("common.close"))}
-        </button>
       </div>
     </form>
   </dialog>`;
@@ -363,7 +368,7 @@ export function logoutDialog({ error, pending, unsent = {} }) {
             ${escapeHtml(t("today.logout.title"))}
           </h2>
           <p class="places-modal__text" id="logout-copy">
-            ${escapeHtml(t("today.logout.text"))}
+            ${escapeHtml(t("notice.signoutWarning"))}
           </p>
           ${lines.length
             ? html`<div class="logout-dialog__unsent" id="logout-unsent">
@@ -419,7 +424,6 @@ export function logoutDialog({ error, pending, unsent = {} }) {
 export function heroBlock({ siteName, summary, checkLabel }) {
   return html`
     <div class="screen__sec home-lead">
-      <site-switcher></site-switcher>
       <div class="home-identity home-identity--with-summary">
         <h1 class="home-identity__site" tabindex="-1">
           ${escapeHtml(siteName)}
@@ -450,13 +454,13 @@ export function homeActions({ checkLabel }) {
           <wa-icon name="ellipsis" aria-hidden="true"></wa-icon>
         </button>
         <div class="home-action-menu" id="home-action-menu" role="menu" hidden>
-          <button type="button" role="menuitem" id="view-complaints">
-            <wa-icon name="bullhorn" aria-hidden="true"></wa-icon>
-            ${escapeHtml(t("today.actions.complaints"))}
-          </button>
           <button type="button" role="menuitem" id="report-problem">
             <wa-icon name="flag" aria-hidden="true"></wa-icon>
             ${escapeHtml(t("today.actions.report"))}
+          </button>
+          <button type="button" role="menuitem" id="view-complaints">
+            <wa-icon name="bullhorn" aria-hidden="true"></wa-icon>
+            ${escapeHtml(t("today.actions.complaints"))}
           </button>
           <button type="button" role="menuitem" id="view-care-work">
             <wa-icon name="broom" aria-hidden="true"></wa-icon>
@@ -515,10 +519,12 @@ export function summaryBlock({ outsideRadius, label }) {
  *   counts?: {newCount:number,duplicateCount:number},
  *   tabCounts?: Record<string, number>,
  *   activeClearCheck: { submittedAt?: string, startedAt?: string } | null,
- *   hasPendingClearResult: boolean,
+ *   pendingClearCheck?: { submittedAt?: string, startedAt?: string } | null,
  *   showActiveClearTray?: boolean,
  *   historyGrouping?: string,
  *   remainingStatus?: "pending" | "loaded" | "error",
+ *   pendingGuidanceFailed?: boolean,
+ *   pendingGuidanceLoading?: boolean,
  *   historyGroups: Array<{ checkTime: string | Date, cards: string, title?: string, compact?: boolean, counts?: any }>,
  * }} vm
  */
@@ -536,15 +542,18 @@ export function homeResults({
   counts = { newCount: newTaskCount, duplicateCount: 0 },
   tabCounts = {},
   activeClearCheck,
-  hasPendingClearResult,
+  pendingClearCheck = null,
   showActiveClearTray = false,
   historyGroups,
   historyGrouping = "resolved",
   remainingStatus = "loaded",
+  pendingGuidanceFailed = false,
+  pendingGuidanceLoading = false,
 }) {
   const hasVisibleCards =
     recentItems.length ||
     newTaskCount ||
+    Boolean(pendingClearCheck) ||
     Boolean(showActiveClearTray && activeClearCheck) ||
     historyGroups.length;
   // The In-progress and History lists load after the first paint (the open
@@ -565,12 +574,29 @@ export function homeResults({
   };
   return html`
     <div class="home-results">
-      ${hasPendingClearResult
-        ? analysisResultsTray(recentItems, pendingSessionId, trayOptions)
+      ${pendingClearCheck
+        ? clearCheckTray(pendingClearCheck, true)
         : showActiveClearTray && activeClearCheck
           ? clearCheckTray(activeClearCheck, true)
           : ""}
       ${taskTabs({ activeId: homeFilter, counts: tabCounts })}
+      ${homeFilter === "todo" && pendingGuidanceLoading
+        ? html`<p class="home-results__empty" role="status">
+            ${escapeHtml(t("common.loading"))}
+          </p>`
+        : ""}
+      ${homeFilter === "todo" && pendingGuidanceFailed
+        ? html`<p class="home-results__empty" role="status">
+            ${escapeHtml(t("today.questions.error"))}
+            <button
+              id="retry-guidance"
+              class="btn-outline home-results__retry"
+              type="button"
+            >
+              ${escapeHtml(t("common.retry"))}
+            </button>
+          </p>`
+        : ""}
       ${homeFilter === "history"
         ? html`<div class="history-grouping">
             <wa-select
@@ -590,7 +616,7 @@ export function homeResults({
             >
           </div>`
         : ""}
-      ${recentItems.length && !hasPendingClearResult
+      ${recentItems.length
         ? analysisResultsTray(recentItems, pendingSessionId, trayOptions)
         : ""}
       ${newTaskCount && !recentItems.length
@@ -609,7 +635,10 @@ export function homeResults({
         : ""}
       ${awaitingRemaining
         ? remainingStatus === "error"
-          ? html`<p class="home-results__empty" role="status">
+          ? html`<p
+              class="app-error app-error--panel app-error--neutral"
+              role="alert"
+            >
               ${escapeHtml(t("today.remaining.error"))}
               <button
                 id="retry-remaining"
@@ -621,9 +650,12 @@ export function homeResults({
             </p>`
           : pendingCards(1)
         : !hasVisibleCards
-          ? homeFilter === "todo" && !hasPendingSession
-            ? homeAllDonePanel()
-            : emptyResults({ homeFilter })
+          ? homeFilter === "todo" &&
+            (pendingGuidanceFailed || pendingGuidanceLoading)
+            ? ""
+            : homeFilter === "todo" && !hasPendingSession
+              ? homeAllDonePanel()
+              : emptyResults({ homeFilter })
           : ""}
     </div>
   `;
@@ -836,17 +868,7 @@ export function errorView({ identity }) {
               ${escapeHtml(identity.site)}
             </h1>
           </div>
-          <div class="lastlog">
-            <p class="lastlog__eyebrow">
-              ${escapeHtml(t("today.error.title"))}
-            </p>
-            <p class="lastlog__summary">${escapeHtml(t("today.error.text"))}</p>
-          </div>
-          <div class="home-actions">
-            <button id="retry" class="btn-ink" type="button">
-              ${escapeHtml(t("common.retry"))}
-            </button>
-          </div>
+          ${loadError(t("today.error.title"), { retryId: "retry" })}
         </div>
       </div>
     </div>

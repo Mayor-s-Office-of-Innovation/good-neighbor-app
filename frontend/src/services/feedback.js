@@ -1,3 +1,6 @@
+import { connectionFetch } from "./backend-health.js";
+import { ApiError } from "./api-error.js";
+import { parseRetryAfter } from "../lib/retry-after.js";
 /*
   feedback.js — the one-call client for the in-app feedback form.
 
@@ -44,14 +47,17 @@ export async function sendFeedback({ message, site }) {
     ts: new Date().toISOString(),
   };
 
-  const res = await fetch(`${BASE}/v1/feedback`, {
+  const res = await connectionFetch(`${BASE}/v1/feedback`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
     keepalive: true,
   });
   if (!res.ok) {
-    throw new Error(`Feedback POST failed: ${res.status}`);
+    throw new ApiError(`Feedback POST failed: ${res.status}`, {
+      status: res.status,
+      retryAfterMs: parseRetryAfter(res.headers?.get?.("retry-after")),
+    });
   }
 }
 

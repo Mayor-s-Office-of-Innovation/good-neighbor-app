@@ -14,7 +14,7 @@
 # nobody paged.
 resource "aws_cloudwatch_metric_alarm" "submissions_dlq_not_empty" {
   alarm_name          = "${local.name_prefix}-submissions-dlq-not-empty"
-  alarm_description   = "At least one submission/analyze/translate message exhausted its retries and is sitting in the dead-letter queue. Inspect the DLQ body (ids only, never media), find the matching logServerError lines in the worker log group, fix, then redrive from the SQS console. See docs/runbooks/observability.md."
+  alarm_description   = "Background work exhausted retries. New 311 jobs have their own 311-dlq alarm; historical 311 messages may remain here. Diagnose by job type and logs before recovery through the approved workflow. See docs/runbooks/sf311.md."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
   datapoints_to_alarm = 1
@@ -41,7 +41,7 @@ resource "aws_cloudwatch_metric_alarm" "submissions_dlq_not_empty" {
 # while the backlog is still recoverable.
 resource "aws_cloudwatch_metric_alarm" "submissions_queue_backlog" {
   alarm_name          = "${local.name_prefix}-submissions-queue-backlog"
-  alarm_description   = "The oldest message on the submissions queue has waited more than 10 minutes: the worker is behind (slow analyzer, concurrency cap, or repeated failures). Check AnalyzerLatencyMs and the worker error alarms."
+  alarm_description   = "The oldest background message is over 10 minutes old. Check the general worker and job type; new 311 jobs use a separate queue and backlog alarm. Historical 311 jobs can still drain here."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
   datapoints_to_alarm = 2
@@ -71,19 +71,21 @@ locals {
   # (uncaught throw, timeout, out-of-memory) — a superset of what the
   # logServerError filters see, since a timeout or OOM never reaches them.
   lambda_error_alarms = {
-    api        = { function = aws_lambda_function.api.function_name, threshold = 3 }
-    analysis   = { function = aws_lambda_function.analysis.function_name, threshold = 3 }
-    worker     = { function = aws_lambda_function.worker.function_name, threshold = 3 }
-    authorizer = { function = aws_lambda_function.authorizer.function_name, threshold = 3 }
-    intake     = { function = aws_lambda_function.intake.function_name, threshold = 5 }
+    api          = { function = aws_lambda_function.api.function_name, threshold = 3 }
+    analysis     = { function = aws_lambda_function.analysis.function_name, threshold = 3 }
+    worker       = { function = aws_lambda_function.worker.function_name, threshold = 3 }
+    "311-worker" = { function = aws_lambda_function.sf311.function_name, threshold = 1 }
+    authorizer   = { function = aws_lambda_function.authorizer.function_name, threshold = 3 }
+    intake       = { function = aws_lambda_function.intake.function_name, threshold = 5 }
   }
 
   # Watch both reserved capacity and shared account-pool exhaustion.
   lambda_throttle_alarms = {
-    api        = aws_lambda_function.api.function_name
-    authorizer = aws_lambda_function.authorizer.function_name
-    worker     = aws_lambda_function.worker.function_name
-    analysis   = aws_lambda_function.analysis.function_name
+    api          = aws_lambda_function.api.function_name
+    authorizer   = aws_lambda_function.authorizer.function_name
+    worker       = aws_lambda_function.worker.function_name
+    "311-worker" = aws_lambda_function.sf311.function_name
+    analysis     = aws_lambda_function.analysis.function_name
   }
 }
 
@@ -106,8 +108,8 @@ resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
     FunctionName = each.value.function
   }
 
-  alarm_actions = [aws_sns_topic.alarms.arn]
-  ok_actions    = [aws_sns_topic.alarms.arn]
+  alarm_actions = contains(["api", "authorizer"], each.key) ? [] : [aws_sns_topic.alarms.arn]
+  ok_actions    = contains(["api", "authorizer"], each.key) ? [] : [aws_sns_topic.alarms.arn]
 
   tags = var.tags
 }
@@ -131,8 +133,8 @@ resource "aws_cloudwatch_metric_alarm" "lambda_throttles" {
     FunctionName = each.value
   }
 
-  alarm_actions = [aws_sns_topic.alarms.arn]
-  ok_actions    = [aws_sns_topic.alarms.arn]
+  alarm_actions = contains(["api", "authorizer"], each.key) ? [] : [aws_sns_topic.alarms.arn]
+  ok_actions    = contains(["api", "authorizer"], each.key) ? [] : [aws_sns_topic.alarms.arn]
 
   tags = var.tags
 }
@@ -185,8 +187,8 @@ resource "aws_cloudwatch_metric_alarm" "api_5xx" {
     ApiId = aws_apigatewayv2_api.http.id
   }
 
-  alarm_actions = [aws_sns_topic.alarms.arn]
-  ok_actions    = [aws_sns_topic.alarms.arn]
+  alarm_actions = []
+  ok_actions    = []
 
   tags = var.tags
 }

@@ -233,7 +233,7 @@ describe("analysis amendments (check/artifact-addressed)", () => {
     });
   });
 
-  it("retires the task when the analyzer reports the condition was already removed", async () => {
+  it("keeps an unknown-condition rejection retryable until durably confirmed", async () => {
     analyzeReject.mockRejectedValueOnce(
       new AnalyzerError("Unknown condition", {
         code: "unknown_condition",
@@ -243,43 +243,14 @@ describe("analysis amendments (check/artifact-addressed)", () => {
     send.mockResolvedValueOnce({ Item: analysisItem() });
     send.mockResolvedValueOnce({});
     send.mockResolvedValueOnce({});
-    send.mockResolvedValueOnce({
-      Items: [
-        {
-          pk: "SITE#site-1",
-          sk: "TASK#task-1",
-          taskId: "task-1",
-          status: "open",
-          kind: "escalation",
-          severity: 3,
-          conditionId: "chk_01-art_1-001-litter",
-          checkId: "chk_01",
-          assessmentId: "chk_01-art_1",
-        },
-      ],
-    });
-    send.mockResolvedValueOnce({});
-
     const res = await invoke(amendEvent({}), rejectAnalysisCondition);
-
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body).code).toBe("RejectionUnconfirmed");
     expect(
-      send.mock.calls
-        .filter(([command]) => command instanceof PutCommand)
-        .map(([command]) => command.input.Item),
-    ).toEqual([expect.objectContaining({ state: "pending" })]);
-    expect(JSON.parse(res.body)).toMatchObject({
-      already_rejected: true,
-      rejected_condition_id: "chk_01-art_1-001-litter",
-    });
-    expect(send.mock.calls[4][0]).toBeInstanceOf(TransactWriteCommand);
-    expect(send.mock.calls[4][0].input.TransactItems[0].Put.Item).toMatchObject(
-      {
-        taskId: "task-1",
-        status: "superseded",
-        supersessionReason: "analysis_condition_rejected",
-      },
-    );
+      send.mock.calls.some(
+        ([command]) => command instanceof TransactWriteCommand,
+      ),
+    ).toBe(false);
   });
 
   it("retires a just-published task through strongly consistent primary-key reads", async () => {
@@ -500,5 +471,89 @@ describe("analysis amendments (check/artifact-addressed)", () => {
       expect.any(String),
       expect.anything(),
     );
+  });
+  it.each([true, false])(
+    "dismisses expired analyzer results only for a verified site-owned condition: %s",
+    async (verified) => {
+      /** @type {any} */ let receipt;
+      analyzeReject.mockRejectedValue(
+        new AnalyzerError("Expired", { status: 404, code: "unknown_analysis" }),
+      );
+      send.mockImplementation(async (command) => {
+        if (command instanceof GetCommand)
+          return {
+            Item: command.input.Key?.sk.includes("#ANALYSIS#")
+              ? {
+                  ...analysisItem(),
+                  concerns: verified
+                    ? [
+                        {
+                          conditionId: "chk_01-art_1-001-litter",
+                          category: "Litter",
+                        },
+                      ]
+                    : [],
+                }
+              : receipt,
+          };
+        if (command instanceof PutCommand) receipt = command.input.Item;
+        return { Items: [] };
+      });
+      const response = await invoke(amendEvent({}), rejectAnalysisCondition);
+      expect(response.statusCode).toBe(verified ? 200 : 404);
+      if (verified) {
+        expect(JSON.parse(response.body)).toMatchObject({
+          dismissed_locally: true,
+        });
+        expect(receipt).toMatchObject({
+          state: "dismissed",
+          dismissalReason: "analysis_unavailable",
+          pk: "SITE#site-1",
+        });
+        expect(receipt.dismissedAt).toBeTruthy();
+        expect(receipt).not.toHaveProperty("deletedAt");
+        const { statusRecords } = await import("../domain/system-status.js");
+        expect(statusRecords(receipt)).toEqual([]);
+        await invoke(amendEvent({}), rejectAnalysisCondition);
+        expect(analyzeReject).toHaveBeenCalledOnce();
+      } else {
+        expect(receipt.state).toBe("pending");
+        expect(receipt).not.toHaveProperty("dismissedAt");
+      }
+    },
+  );
+  it("does not report a historical dismissal as saved when its durable write fails", async () => {
+    /** @type {any} */ let receipt;
+    analyzeReject.mockRejectedValue(
+      new AnalyzerError("Expired", { status: 404, code: "unknown_analysis" }),
+    );
+    send.mockImplementation(async (command) => {
+      if (command instanceof GetCommand)
+        return {
+          Item: command.input.Key?.sk.includes("#ANALYSIS#")
+            ? {
+                ...analysisItem(),
+                concerns: [
+                  {
+                    conditionId: "chk_01-art_1-001-litter",
+                    category: "Litter",
+                  },
+                ],
+              }
+            : receipt,
+        };
+      if (command instanceof PutCommand) {
+        if (command.input.Item?.dismissedAt)
+          throw new Error("dismissal write failed");
+        receipt = command.input.Item;
+      }
+      return { Items: [] };
+    });
+    await expect(
+      invoke(amendEvent({}), rejectAnalysisCondition),
+    ).rejects.toThrow("dismissal write failed");
+    expect(receipt.state).toBe("pending");
+    expect(receipt).not.toHaveProperty("dismissedAt");
+    expect(analyzeReject).toHaveBeenCalledOnce();
   });
 });

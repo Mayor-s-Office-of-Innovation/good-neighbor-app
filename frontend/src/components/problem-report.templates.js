@@ -1,3 +1,5 @@
+import { captureClose } from "./perimeter-check.templates.js";
+import { captureControls } from "./capture-controls.templates.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
 import { analysisResultsTray } from "./analysis-results.templates.js";
@@ -5,22 +7,24 @@ import { analysisDialogs } from "./analysis-results.templates.js";
 
 export const shell = ({ title = t("problem.title.single") } = {}) => html`
   <div class="flow view-check check check-timeline single-issue">
-    <div class="check-timeline__topbar">
-      <span aria-hidden="true"></span>
-      <button class="check-timeline__close" id="cancel" type="button">
-        <span class="check-timeline__close-icon" aria-hidden="true"></span>
-        <span class="visually-hidden"
-          >${escapeHtml(t("problem.close.aria"))}</span
-        >
-      </button>
-    </div>
+    ${captureClose(t("problem.close.aria"))}
 
     <h1 class="check-timeline__title single-issue__title" tabindex="-1">
       ${escapeHtml(title)}
     </h1>
 
+    ${captureControls({ cameraId: "add-photo", textId: "describe-instead" })}
+    <input
+      type="file"
+      id="gallery-input"
+      class="capture-picker"
+      accept="image/*"
+      multiple
+      hidden
+    />
+
     <div
-      class="shotgrid"
+      class="shotgrid check-roll__grid"
       id="shotgrid"
       aria-label="${escapeAttr(t("problem.grid.aria"))}"
     ></div>
@@ -31,14 +35,6 @@ export const shell = ({ title = t("problem.title.single") } = {}) => html`
       role="status"
       aria-live="polite"
     ></div>
-
-    <button
-      class="btn-outline check-roll__describe"
-      id="describe-instead"
-      type="button"
-    >
-      ${escapeHtml(t("check.describeInstead"))}
-    </button>
 
     <div class="check-timeline__footer" id="problem-footer"></div>
 

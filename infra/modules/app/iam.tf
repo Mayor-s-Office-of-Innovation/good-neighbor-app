@@ -381,12 +381,6 @@ resource "aws_iam_role" "worker" {
 }
 
 data "aws_iam_policy_document" "worker" {
-  statement {
-    sid       = "FindExpiredComplianceTerms"
-    effect    = "Allow"
-    actions   = ["dynamodb:Scan"]
-    resources = [aws_dynamodb_table.app.arn]
-  }
   dynamic "statement" {
     for_each = var.enable_city_smtp_relay ? [] : [1]
     content {
@@ -501,7 +495,7 @@ data "aws_iam_policy_document" "worker" {
     sid       = "EnqueueRevocationReconciliation"
     effect    = "Allow"
     actions   = ["sqs:SendMessage"]
-    resources = [aws_sqs_queue.submissions.arn]
+    resources = [aws_sqs_queue.submissions.arn, aws_sqs_queue.sf311.arn]
   }
 
   statement {

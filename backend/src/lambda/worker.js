@@ -1,3 +1,4 @@
+import { handler as updateMediaThumbnail } from "../workers/update-media-thumbnail.js";
 import { handler as sf311Job } from "../workers/sf311-job.js";
 import { expireComplianceTerms } from "../workers/expire-compliance-terms.js";
 // Event-source entrypoint for the async worker. The demo /submissions, artifact
@@ -16,6 +17,7 @@ import { handler as translateArtifact } from "../workers/translate-artifact.js";
 import { handler as analyzeComplaint } from "../workers/analyze-complaint.js";
 import { TRANSLATE_MESSAGE_TYPE } from "../analysis/translate-enqueue.js";
 import { logServerError } from "../lib/log-server-error.js";
+import { logSf311JobError } from "../integrations/sf311-observability.js";
 
 /**
  * Pick the worker for a message by its shape (mirrors local-worker.mjs
@@ -29,6 +31,7 @@ import { logServerError } from "../lib/log-server-error.js";
 function pickHandler(body) {
   try {
     const msg = JSON.parse(body ?? "");
+    if (msg?.type === "update_media_thumbnail") return updateMediaThumbnail;
     if (msg?.type === "sf311_job") return sf311Job;
     if (msg?.type === "reconcile_site_revocation") {
       return reconcileSiteRevocation;
@@ -109,9 +112,21 @@ export const handler = async (event, context) => {
         "";
       // Structured error convention (logServerError) — groupable + alarmable;
       // then batchItemFailures drives the SQS redrive as before.
-      logServerError(`worker ${messageId}`, result.reason, {
-        extra: { messageId },
-      });
+      const is311 =
+        "body" in failedRecord && pickHandler(failedRecord.body) === sf311Job;
+      if (is311) {
+        const record = /** @type {import("aws-lambda").SQSRecord} */ (
+          failedRecord
+        );
+        logSf311JobError(result.reason, {
+          messageId,
+          attempt: Number(record.attributes?.ApproximateReceiveCount),
+        });
+      } else {
+        logServerError(`worker ${messageId}`, result.reason, {
+          extra: { messageId },
+        });
+      }
       batchItemFailures.push({ itemIdentifier: messageId });
     } else if (result.value?.batchItemFailures) {
       // Child handlers may catch record errors and resolve with a partial-batch

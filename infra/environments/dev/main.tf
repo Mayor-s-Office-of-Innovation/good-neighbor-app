@@ -4,7 +4,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 6.21"
+      version = "~> 6.71"
     }
     archive = {
       source  = "hashicorp/archive"
@@ -79,9 +79,13 @@ module "app" {
   # Measured saturation of the shared 3/s gate; production keeps the module default.
   duplicate_worker_maximum_concurrency = 20
   enable_duplicate_detection           = var.enable_duplicate_detection
+  enable_cloudwatch_omni               = var.enable_cloudwatch_omni
+  cloudwatch_omni_members              = var.cloudwatch_omni_members
+  cloudwatch_omni_sso_permission_sets  = var.cloudwatch_omni_sso_permission_sets
   analyzer_base_url                    = "https://ipipaqh985.execute-api.us-east-1.amazonaws.com/dev"
   enable_311_submission                = true
   enable_311_async_filing              = true
+  enable_support_chat                  = true
   # PostHog feedback survey (see docs/runbooks/feedback-ops.md §3): plain
   # identifiers, not secrets. The phc_ ingest key itself is set out-of-band
   # via put-secret-value on gnp-dev-posthog-project-api-key.
@@ -92,6 +96,8 @@ module "app" {
   sf311_media_domain_name = "media.${local.frontend_domain_name}"
   sf311_media_zone_id     = aws_route53_zone.frontend_subdomain.zone_id
 
-  frontend_domain_names    = [local.frontend_domain_name]
-  frontend_certificate_arn = aws_acm_certificate_validation.frontend.certificate_arn
+  frontend_domain_names           = [local.frontend_domain_name]
+  frontend_certificate_arn        = aws_acm_certificate_validation.frontend.certificate_arn
+  duplicate_alarm_route_confirmed = var.duplicate_alarm_route_confirmed
+  posthog_digest_route_confirmed  = var.posthog_digest_route_confirmed
 }

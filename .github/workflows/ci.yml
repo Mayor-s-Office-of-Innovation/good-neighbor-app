@@ -72,8 +72,8 @@ jobs:
       - name: Build
         run: npm run build
 
-  e2e:
-    name: E2E (Playwright)
+  e2e-ui:
+    name: E2E UI suites
     runs-on: ubuntu-latest
     container:
       # Keep the image version aligned with @playwright/test in e2e/package.json.
@@ -98,18 +98,60 @@ jobs:
       - name: Test support dialog accessibility
         run: npm run test:support:ui
 
+      - name: Test upload reservation persistence in browser IndexedDB
+        run: node --test e2e/upload-reservation-storage.test.mjs
+
       - name: Test issue update recovery in Chromium and WebKit
         run: npm run test:updates:ui
+
+      - name: Test error states and connectivity in Chromium and WebKit
+        run: npm run test:errors:ui
 
       # The offline-launch service worker exists only in a build, so this runs
       # against `vite preview` (npm run dev:offline), not the dev server.
       - name: Test offline launch
         run: npm run test:offline:e2e
 
+      - name: Upload UI test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-ui-results
+          path: e2e/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  e2e-main:
+    name: E2E main shard ${{ matrix.shard }}/2
+    runs-on: ubuntu-latest
+    strategy:
+      # Finish both shards so a failure still leaves a complete set of results.
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      options: --ipc=host
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Rewrite git protocol for npm git deps
+        run: git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+
+      - name: Install
+        run: npm ci
+
       # Browsers and their OS dependencies are in the image. The host runner's
       # Java installation is not available inside the job container.
       - name: Setup Java for local harness
-        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: "21"
@@ -127,8 +169,10 @@ jobs:
       - name: Copy env example
         run: cp .env.example .env.local
 
-      - name: Run e2e tests
-        run: npm run test:e2e
+      # Each job owns a fresh emulator stack. Keep one worker within a shard:
+      # the tests share a seeded site and the analyzer stub's current fixture.
+      - name: Run e2e shard
+        run: npm run e2e -w e2e -- --shard=${{ matrix.shard }}/2
 
       # Always, not only on failure: the HTML report holds ramp-check's
       # highlight screenshots for AAA findings, which warn without failing
@@ -137,12 +181,25 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: playwright-report
+          name: playwright-report-main-${{ matrix.shard }}
           path: |
             e2e/test-results/
             e2e/playwright-report/
           retention-days: 7
           if-no-files-found: ignore
+
+  e2e:
+    # Preserve the required check name while covering every shard and UI suite.
+    name: E2E (Playwright)
+    if: always()
+    needs: [e2e-main, e2e-ui]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all E2E jobs to pass
+        env:
+          MAIN_RESULT: ${{ needs.e2e-main.result }}
+          UI_RESULT: ${{ needs.e2e-ui.result }}
+        run: test "$MAIN_RESULT" = success && test "$UI_RESULT" = success
 
   perf:
     name: Performance budgets
@@ -254,7 +311,20 @@ jobs:
 
       - name: Initialize production backend bootstrap without backend
         working-directory: infra/bootstrap/prod-state
-        run: terraform init -backend=false
+        # Registry discovery can fail with a transient connection reset.
+        run: |
+          for attempt in 1 2 3; do
+            if terraform init -backend=false; then
+              exit 0
+            else
+              status=$?
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit "$status"
+            fi
+            echo "Terraform initialization failed; retrying in 10 seconds (attempt $attempt/3)."
+            sleep 10
+          done
 
       - name: Validate production backend bootstrap
         working-directory: infra/bootstrap/prod-state

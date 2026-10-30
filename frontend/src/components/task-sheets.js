@@ -15,7 +15,10 @@ import {
   slideCompletedCard,
 } from "./analysis-card-completion.js";
 import { createTaskUpdate } from "../services/api.js";
-import { showToast, showTaskUpdateErrorToast } from "../state/toasts.js";
+import {
+  showOperationError,
+  showTaskUpdateErrorToast,
+} from "../state/toasts.js";
 import { t } from "../i18n/i18n.js";
 
 /**
@@ -132,10 +135,20 @@ export class TaskSheets {
           release?.();
           this._options.onTaskUpdated?.(saved);
         }
+        return saved;
       } finally {
         release?.();
       }
     };
+    if (completion) {
+      const saved = await finish(true);
+      if (!saved) return;
+      if (this._updateDialog?._task?.taskId === task.taskId)
+        this._updateDialog?._dismiss?.();
+      await this._options.reload?.();
+      this._options.fallbackFocus?.()?.focus();
+      return;
+    }
     this._updateReturnFocus = { taskId: task.taskId, trigger };
     try {
       await this._loadUpdates();
@@ -176,8 +189,7 @@ export class TaskSheets {
         );
       });
       dialog.addEventListener("taskupdateclosed", async (event) => {
-        // Resolution documentation may still be saving after dismissal.
-        // Keep that controller single-use so another card cannot replace its state.
+        // Proof editors are single-use; a fresh open reloads the shared task state.
         if (/** @type {CustomEvent} */ (event).detail?.results) {
           dialog.remove();
           if (this._updateDialog === dialog) this._updateDialog = null;
@@ -202,7 +214,7 @@ export class TaskSheets {
     this._updateDialog._finishResolution = finish;
     this.mount();
     if (completion || mode === "results")
-      this._updateDialog.openResults(task, completion);
+      await this._updateDialog.openProof(task);
     else await this._updateDialog.open(this._resolve(task), mode);
   }
 
@@ -214,7 +226,8 @@ export class TaskSheets {
   async _formUnavailable(task, trigger, mode, completion, busy = false) {
     const saved = completion ? (await completion).task : null;
     if (completion && !saved) return;
-    showToast({
+    showOperationError({
+      key: `task-form:${task.taskId}`,
       title: t(
         busy
           ? "taskUpdate.finishCurrentForm"
@@ -269,12 +282,6 @@ export class TaskSheets {
           ...response.task,
           latestUpdateId: response.update.updateId,
         };
-        showToast({
-          title: t("taskUpdate.siteResolved"),
-          message: "",
-          icon: "circle-check",
-          tone: "success",
-        });
         return { task: saved };
       })
       .catch((error) => {

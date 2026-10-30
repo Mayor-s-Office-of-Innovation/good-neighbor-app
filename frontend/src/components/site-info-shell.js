@@ -1,35 +1,41 @@
+import { loadError } from "./load-error.js";
 import { t } from "../i18n/i18n.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
-/** @param {string} title */
-export function adminHeader(title) {
-  return html`<header class="site-admin-header">
+/** @param {string} title @param {boolean} [close] */
+export function adminHeader(title, close = false) {
+  return html`<header
+    class="site-admin-header ${close ? "site-admin-header--close" : ""}"
+  >
     <button
+      class="${close ? "btn-circle-close" : "btn-icon"}"
       data-admin-back
       type="button"
-      aria-label="${escapeAttr(t("common.back"))}"
+      aria-label="${escapeAttr(t(close ? "common.close" : "common.back"))}"
     >
-      <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
+      <wa-icon
+        name="${close ? "xmark" : "chevron-left"}"
+        aria-hidden="true"
+      ></wa-icon>
     </button>
     <h1 tabindex="-1">${escapeHtml(title)}</h1>
     <span aria-hidden="true"></span>
   </header>`;
 }
 
-/** @param {string} title */
-export function loadingView(title) {
+/** @param {string} title @param {boolean} [close] */
+export function loadingView(title, close = false) {
   return html`<div class="site-admin-page">
-    ${adminHeader(title)}
+    ${adminHeader(title, close)}
     <div class="site-admin-loading">
       <wa-spinner></wa-spinner> ${escapeHtml(t("common.loading"))}
     </div>
   </div>`;
 }
 
-/** @param {string} message */
-export function errorView(message) {
+/** @param {string} message @param {boolean} [close] */
+export function errorView(message, close = false) {
   return html`<div class="site-admin-page">
-    ${adminHeader(t("siteAdmin.title"))}
-    <p class="site-admin-load-error" role="alert">${escapeHtml(message)}</p>
+    ${adminHeader(t("siteAdmin.title"), close)} ${loadError(message)}
   </div>`;
 }
 

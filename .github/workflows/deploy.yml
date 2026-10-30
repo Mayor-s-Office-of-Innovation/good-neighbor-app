@@ -205,6 +205,20 @@ jobs:
           cat "$RUNNER_TEMP/people-migration-verification.json"
           jq -e '.people == 0 and (.conflicts | length) == 0' "$RUNNER_TEMP/people-migration-verification.json"
 
+      # Shared by dev and prod; complete the one-time Site rollout before
+      # publishing the frontend. Replays preserve later explicit rollbacks.
+      - name: Enable duplicate UI for existing sites
+        working-directory: ${{ github.workspace }}
+        env:
+          DYNAMO_TABLE: ${{ steps.tf.outputs.dynamo_table }}
+        run: |
+          set -euo pipefail
+          node backend/scripts/enable-duplicate-ui.mjs
+          node backend/scripts/enable-duplicate-ui.mjs --apply
+          node backend/scripts/enable-duplicate-ui.mjs > "$RUNNER_TEMP/duplicate-ui-verification.json"
+          cat "$RUNNER_TEMP/duplicate-ui-verification.json"
+          jq -e '.eligible == 0' "$RUNNER_TEMP/duplicate-ui-verification.json"
+
       - name: Seed dev site codes
         if: ${{ inputs.environment == 'dev' }}
         working-directory: ${{ github.workspace }}

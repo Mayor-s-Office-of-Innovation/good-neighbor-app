@@ -1,3 +1,10 @@
+import { logServerError } from "../lib/log-server-error.js";
+import {
+  filedTicket,
+  isSimulated311Ticket,
+  simulated311Detail,
+} from "../domain/deliberate-311.js";
+import { withResolutionProofForTasks } from "../task-updates/resolution-proof.js";
 import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
@@ -12,6 +19,10 @@ import {
   findServiceRequest,
   normalizeSf311Detail,
 } from "../integrations/sf311-status.js";
+import {
+  batchGetAll,
+  withConditionDismissals,
+} from "../analysis/guidance/guidance-store.js";
 import { activeCatalog } from "../analysis/guidance/catalog-registry.js";
 
 // A task's GSI2 sort key is date-first (`${createdAt}#${kind}#${severity}#${taskId}`)
@@ -82,8 +93,28 @@ export const listTasks = async (event) => {
     );
   }
 
-  const ranked = byWorklistPriority(result.Items ?? []);
-  return jsonResponse(200, { tasks: limit ? ranked.slice(0, limit) : ranked });
+  // GSI membership may lag completion or dismissal on another device.
+  const current = await batchGetAll({
+    tableName: dynamoTable,
+    keys: [
+      ...new Set((result.Items ?? []).map((row) => String(row.taskId))),
+    ].map((id) => taskKey(siteId, id)),
+  });
+  const visible = await withConditionDismissals(dynamoTable, siteId, {
+    assessment: null,
+    conditions: [],
+    tasks: current,
+  });
+  const ranked = byWorklistPriority(
+    visible.tasks.filter((row) => row.status === status),
+  );
+  const selected = limit ? ranked.slice(0, limit) : ranked;
+  const tasks = await withResolutionProofForTasks(
+    dynamoTable,
+    siteId,
+    selected,
+  );
+  return jsonResponse(200, { tasks });
 };
 
 const updateCache = new Map();
@@ -91,17 +122,7 @@ const UPDATE_CACHE_MS = 60_000;
 
 /** @param {Record<string, any>} task @param {string} srNum */
 function taskHasTicket(task, srNum) {
-  const results = Array.isArray(task.appActionResults)
-    ? task.appActionResults
-    : [];
-  return results.some(
-    (result) =>
-      result?.code === "create_311_ticket" &&
-      Array.isArray(result?.payload?.tickets) &&
-      result.payload.tickets.some(
-        (/** @type {any} */ ticket) => String(ticket?.srNum ?? "") === srNum,
-      ),
-  );
+  return Boolean(filedTicket(task, srNum));
 }
 
 /** @param {import("../config.js").AppConfig} config */
@@ -164,6 +185,11 @@ export const get311RequestDetail = async (event) => {
   const task = result.Item;
   if (!task || !taskHasTicket(task, srNum))
     return jsonResponse(404, { error: "311 request not found" });
+  const ticket = filedTicket(task, srNum);
+  if (isSimulated311Ticket(ticket))
+    return jsonResponse(200, {
+      request: simulated311Detail(taskWithResponseWindow(task), ticket),
+    });
   const body = await latestUpdates(config);
   const record = findServiceRequest(body, srNum);
   if (!record)
@@ -233,9 +259,42 @@ export const get311RequestDetails = async (event) => {
     return jsonResponse(404, { error: "311 request not found" });
   }
 
-  const updates = await latestUpdates(config);
+  const tickets = normalized.map(({ srNum }, index) =>
+    filedTicket(tasks[index] || {}, srNum),
+  );
+  const needsCity = tickets.some((ticket) => !isSimulated311Ticket(ticket));
+  // Preserve simulated responses even if the City feed is unavailable.
+  const hasSimulated = tickets.some(isSimulated311Ticket);
+  const updates = needsCity
+    ? await latestUpdates(config).catch((error) => {
+        if (!hasSimulated) throw error;
+        // Keep the failure location without logging upstream messages or payloads.
+        const safe = new Error("City ticket status unavailable");
+        const name =
+          error instanceof Error && /^[\w.-]{1,80}$/.test(error.name)
+            ? error.name
+            : "Error";
+        if (error instanceof Error)
+          safe.stack = `${name}: ${safe.message}\n${(error.stack || "")
+            .split("\n")
+            .filter((line) => /^\s+at /.test(line))
+            .join("\n")}`;
+        logServerError("311 status feed", safe, { extra: { name } });
+        return null;
+      })
+    : null;
   const results = normalized.flatMap(({ taskId, srNum }, index) => {
     const task = tasks[index];
+    if (isSimulated311Ticket(tickets[index]))
+      return [
+        {
+          taskId,
+          request: simulated311Detail(
+            taskWithResponseWindow(task || {}),
+            tickets[index],
+          ),
+        },
+      ];
     const record = findServiceRequest(updates, srNum);
     if (!task || !record) return [];
     return [

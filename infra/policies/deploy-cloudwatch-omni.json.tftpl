@@ -1,0 +1,73 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DiscoverIdentityCenterRoles",
+      "Effect": "Allow",
+      "Action": "iam:ListRoles",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ManageApplicationOmniStack",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:CreateStack",
+        "cloudformation:UpdateStack",
+        "cloudformation:DeleteStack",
+        "cloudformation:DescribeStacks",
+        "cloudformation:DescribeStackEvents",
+        "cloudformation:DescribeStackResource",
+        "cloudformation:DescribeStackResources",
+        "cloudformation:ListStackResources",
+        "cloudformation:GetTemplate",
+        "cloudformation:GetTemplateSummary",
+        "cloudformation:TagResource",
+        "cloudformation:UntagResource"
+      ],
+      "Resource": "arn:aws:cloudformation:${aws_region}:${account_id}:stack/${name_prefix}-cloudwatch-omni/*"
+    },
+    {
+      "Sid": "CreateRegionalDatasetIntegration",
+      "Effect": "Allow",
+      "Action": [
+        "observabilityadmin:CreateDatasetIntegration",
+        "observabilityadmin:TagResource"
+      ],
+      "Resource": "arn:aws:observabilityadmin:${aws_region}:${account_id}:dataset-integration/*"
+    },
+    {
+      "Sid": "ManageRegionalDatasetIntegration",
+      "Effect": "Allow",
+      "Action": [
+        "observabilityadmin:GetDatasetIntegration",
+        "observabilityadmin:UpdateDatasetIntegration",
+        "observabilityadmin:DeleteDatasetIntegration",
+        "observabilityadmin:UntagResource",
+        "observabilityadmin:ListTagsForResource"
+      ],
+      "Resource": "arn:aws:observabilityadmin:${aws_region}:${account_id}:dataset-integration/default"
+    },
+    {
+      "Sid": "PassOnlyApplicationOmniSpaceRole",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::${account_id}:role/${name_prefix}-omni-space-access",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "cloudwatch.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "PassOnlyApplicationDatasetRole",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::${account_id}:role/${name_prefix}-omni-dataset-forwarding",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "logs.amazonaws.com"
+        }
+      }
+    }
+  ]
+}

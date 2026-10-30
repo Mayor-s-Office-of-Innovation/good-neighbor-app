@@ -4,7 +4,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 6.21"
+      version = "~> 6.71"
     }
     archive = {
       source  = "hashicorp/archive"
@@ -74,6 +74,7 @@ module "app" {
   bedrock_model_id            = var.bedrock_model_id
   analyzer_base_url           = "https://xvcwo6m20a.execute-api.us-east-1.amazonaws.com/prod"
   duplicate_analyzer_base_url = "https://xvcwo6m20a.execute-api.us-east-1.amazonaws.com/prod"
+  enable_support_chat         = true
 
   # Good Neighbor - Prod feedback survey; identifiers only (key stored in Secrets Manager).
   feedback_survey_id   = "01a184ca-e77d-0000-d993-bb815ab74819"
@@ -100,6 +101,8 @@ module "app" {
   sf311_media_domain_name      = "media.${local.frontend_domain_name}"
   sf311_media_zone_id          = aws_route53_zone.goodneighbor.zone_id
 
-  frontend_domain_names    = local.frontend_domain_names
-  frontend_certificate_arn = aws_acm_certificate_validation.frontend.certificate_arn
+  frontend_domain_names           = local.frontend_domain_names
+  frontend_certificate_arn        = aws_acm_certificate_validation.frontend.certificate_arn
+  duplicate_alarm_route_confirmed = var.duplicate_alarm_route_confirmed
+  posthog_digest_route_confirmed  = var.posthog_digest_route_confirmed
 }

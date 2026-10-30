@@ -4,6 +4,8 @@
 // of the same rotation after a lost response or failed local save (ADR 0020).
 // Parent liveness and Site/membership authority apply to both paths.
 
+import { checkCodeAttemptLimit } from "./code-attempt-limit.js";
+import { normalizeSiteCode } from "./site-code.js";
 import {
   retryableRefresh,
   validRefreshAttempt,
@@ -89,6 +91,13 @@ export const registerDevice = async (event) => {
   if (!code.trim()) {
     return jsonResponse(400, { error: "missing_site_code" });
   }
+
+  // Cover direct registration as well as the browser's preceding code lookup.
+  // Malformed inputs cannot reach a credential lookup and spend no short-code budget.
+  if (normalizeSiteCode(code).length !== 6)
+    return jsonResponse(401, { error: "invalid_site_code" });
+  const limited = await checkCodeAttemptLimit(undefined, "register", event);
+  if (limited) return limited;
 
   const dynamoTable = getDynamoTableName();
   const now = new Date().toISOString();

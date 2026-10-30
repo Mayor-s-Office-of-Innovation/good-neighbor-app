@@ -243,3 +243,56 @@ it("validates endpoints per operation so UpdateSR works without creation setting
   );
   expect(fetchImpl).toHaveBeenCalledTimes(1);
 });
+
+it.each([
+  {},
+  { UpdateID: 123 },
+  { data: { UpdateID: 123 } },
+  { return_code: null },
+  { return_code: "" },
+])(
+  "rejects UpdateSR responses without explicit HUB confirmation: %j",
+  async (body) => {
+    const client = createSf311Client({
+      config: {
+        uploadBucket: "bucket",
+        queueUrl: "queue",
+        dynamoTable: "table",
+        sf311UpdateSrUrl: "https://hub.test/update",
+        sf311BasicAuthUser: "user",
+        sf311BasicAuthPass: "pass",
+      },
+      fetchImpl: vi
+        .fn()
+        .mockResolvedValue(new Response(JSON.stringify(body), { status: 200 })),
+    });
+    await expect(
+      client.updateServiceRequest({ SRnum: "123" }),
+    ).rejects.toMatchObject({
+      name: "Sf311Error",
+      code: "missing_return_code",
+    });
+  },
+);
+
+it.each([{ return_code: 0 }, { data: { return_code: "0" } }])(
+  "accepts explicitly confirmed UpdateSR without requiring an update ID: %j",
+  async (body) => {
+    const client = createSf311Client({
+      config: {
+        uploadBucket: "bucket",
+        queueUrl: "queue",
+        dynamoTable: "table",
+        sf311UpdateSrUrl: "https://hub.test/update",
+        sf311BasicAuthUser: "user",
+        sf311BasicAuthPass: "pass",
+      },
+      fetchImpl: vi
+        .fn()
+        .mockResolvedValue(new Response(JSON.stringify(body), { status: 200 })),
+    });
+    await expect(
+      client.updateServiceRequest({ SRnum: "123" }),
+    ).resolves.toMatchObject({ updateId: null });
+  },
+);

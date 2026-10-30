@@ -1,3 +1,4 @@
+import { captureControls } from "./capture-controls.templates.js";
 import { escapeHtml as e, escapeAttr as a, html } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
 import { formatTime } from "../i18n/dates.js";
@@ -30,6 +31,7 @@ export function careHeader(title, close = false) {
 export function careList(items, loading = false) {
   return html`${careHeader(t("care.title"), true)}
     <p class="care-subtitle">${e(t("care.subtitle"))}</p>
+    <hr class="splash-rule" />
     <button type="button" class="btn-ink care-cta" data-new>
       ${e(t("care.new"))}
     </button>
@@ -137,20 +139,21 @@ export function carePhotoPicker(files, busy = false) {
       type="file"
       accept="image/jpeg,image/png,image/webp"
       capture="environment"
-      multiple
       tabindex="-1"
       aria-label="${a(t("care.photo.add"))}"
       ${busy ? "disabled" : ""}
-    /><button
-      type="button"
-      class="btn-care photo-capture-tile care-photo-add"
-      data-add-photo
+    />
+    <input
+      id="care-gallery-input"
+      class="capture-picker"
+      type="file"
+      accept="image/jpeg,image/png,image/webp"
+      multiple
+      hidden
       ${busy ? "disabled" : ""}
-    >
-      <wa-icon name="camera" aria-hidden="true"></wa-icon>${e(
-        t("care.photo.add"),
-      )}
-    </button>
+    />
+    ${captureControls({ disabled: busy, showText: false })}
+
     <ul class="care-thumbnails" ${files.length ? "" : "hidden"}>
       ${files
         .map(
@@ -195,10 +198,7 @@ export function careCompose(draft, busy = false) {
   ></wa-textarea>`;
   return html`${careHeader(careKindLabel(draft.kind))}
     <div class="care-compose">
-      ${other ? note : ""}${carePhotoPicker(
-        draft.files,
-        busy || Boolean(draft.payload),
-      )}${other ? "" : note}
+      ${carePhotoPicker(draft.files, busy || Boolean(draft.payload))}${note}
       <p
         class="care-error"
         role="alert"
@@ -237,10 +237,13 @@ export function careDetail(work) {
                 data-photo-lightbox
                 data-photo-no-location
                 data-photo-time="${a(work.createdAt)}"
+                data-full-src="${a(photo.url)}"
               >
                 <img
-                  src="${a(photo.url)}"
+                  src="${a(photo.thumbnailUrl || photo.url)}"
                   alt="${a(t("care.photo.alt", { index: i + 1 }))}"
+                  loading="lazy"
+                  decoding="async"
                 />
               </button>`
             : "",

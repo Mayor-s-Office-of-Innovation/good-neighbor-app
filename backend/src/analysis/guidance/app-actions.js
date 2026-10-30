@@ -1,5 +1,9 @@
+import {
+  isSimulated311Ticket,
+  simulated311Ticket,
+} from "../../domain/deliberate-311.js";
 import { createHash } from "node:crypto";
-import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../../db.js";
 import { getObjectBytes } from "../../s3.js";
 import { create311MediaLink } from "../../integrations/sf311-media.js";
@@ -7,6 +11,9 @@ import { downscaleImage } from "../../media/downscale.js";
 import { getAnalyzerApiKey } from "../api-key.js";
 import { createAnalyzerClient } from "../analyzer-client.js";
 import { getConfig } from "../../config.js";
+import { emitMetrics } from "../../lib/metrics.js";
+import { reportSf311Results } from "../../integrations/sf311-observability.js";
+import { queryAllItems } from "../../lib/query-all-items.js";
 import {
   buildAttachmentUpdatePayload,
   buildCloseSrPayload,
@@ -21,11 +28,7 @@ import {
   parseServiceCodeOrAction,
   serviceCodesForClassifierLabels,
 } from "../../integrations/sf311-service-codes.js";
-import {
-  hasServiceRequestAttachment,
-  serviceRequestClosureReason,
-  serviceRequestClosureState,
-} from "../../integrations/sf311-status.js";
+import { hasServiceRequestAttachment } from "../../integrations/sf311-status.js";
 import {
   checkArtifactPrefix,
   siteMetaKey,
@@ -203,8 +206,8 @@ export function mergeAppActionResults(priorResults, result) {
 /**
  * Durably record an action result while the task is mid-completion, so a crash
  * or lease expiry after a side-effecting HUB call still leaves the persisted
- * record behind (HUB closure is non-idempotent; the persisted `closed` record
- * is our dedupe on lease-recovery retries). Merges `result` into `priorResults`
+ * record behind. Confirmed closures are skipped on lease-recovery retries;
+ * unconfirmed closures may safely be repeated. Merges `result` into `priorResults`
  * rather than replacing them, and — when the completion lease is known — pins
  * the write to that exact lease so a stale executor cannot checkpoint after its
  * lease was reclaimed.
@@ -353,11 +356,36 @@ function locationFromTask(task) {
  * @param {string} opts.tableName
  * @param {string} opts.siteId
  * @param {Record<string, unknown>} opts.task
+ * @param {Record<string, unknown>[]} opts.artifacts the task's source ART# rows
  * @returns {Promise<{ latitude: number, longitude: number } | null>}
  */
-async function resolveLocation({ tableName, siteId, task }) {
-  const taskLocation = locationFromTask(task);
-  if (taskLocation) return taskLocation;
+async function resolveLocation({ tableName, siteId, task, artifacts }) {
+  const order = /** @type {string[]} */ (task.sourceArtifactIds ?? []);
+  const source = /** @type {Record<string, unknown>} */ (task.source ?? {});
+  // Only source carries an accuracy; a top-level task.location has none.
+  const topLevel =
+    task.location && typeof task.location === "object"
+      ? coordinates(/** @type {Record<string, unknown>} */ (task.location))
+      : null;
+  const best = [
+    {
+      location: locationFromTask(task),
+      accuracy: topLevel
+        ? Infinity
+        : (finiteNumber(source.accuracyMeters) ?? Infinity),
+      rank: -1,
+    },
+    // A location sent after upload can land on the photo but miss the task.
+    ...artifacts.map((artifact) => ({
+      location: coordinates(artifact),
+      accuracy: finiteNumber(artifact.accuracyMeters) ?? Infinity,
+      rank: order.indexOf(String(artifact.artifactId ?? "")),
+    })),
+  ]
+    .filter((candidate) => candidate.location)
+    // Crews walk to this point, so the tightest fix wins.
+    .sort((a, b) => a.accuracy - b.accuracy || a.rank - b.rank)[0]?.location;
+  if (best) return best;
 
   const site = await ddb.send(
     new GetCommand({
@@ -370,7 +398,20 @@ async function resolveLocation({ tableName, siteId, task }) {
     site.Item?.location && typeof site.Item.location === "object"
       ? /** @type {Record<string, unknown>} */ (site.Item.location)
       : {};
-  return coordinates(location);
+  const siteLocation = coordinates(location);
+  if (siteLocation) {
+    // Shows how often 311 gets the site's address, not the photo's (#560).
+    emitMetrics({
+      marker: "LocationFallbackToSite",
+      metrics: [{ name: "LocationFallbackToSite", value: 1 }],
+      props: {
+        siteId,
+        taskId: String(task.taskId ?? ""),
+        checkId: String(task.checkId ?? ""),
+      },
+    });
+  }
+  return siteLocation;
 }
 
 /**
@@ -390,17 +431,15 @@ async function loadClassifierEvidence({ tableName, siteId, task, config }) {
       "No source image or text is available for 311 classifier analysis",
     );
   }
-  const result = await ddb.send(
-    new QueryCommand({
-      TableName: tableName,
-      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-      ExpressionAttributeValues: {
-        ":pk": `SITE#${siteId}`,
-        ":prefix": checkArtifactPrefix(String(task.checkId)),
-      },
-      ConsistentRead: true,
-    }),
-  );
+  const result = await queryAllItems({
+    TableName: tableName,
+    KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+    ExpressionAttributeValues: {
+      ":pk": `SITE#${siteId}`,
+      ":prefix": checkArtifactPrefix(String(task.checkId)),
+    },
+    ConsistentRead: true,
+  });
   const artifacts = (result.Items ?? []).filter((item) =>
     artifactIds.has(String(item.artifactId ?? "")),
   );
@@ -451,36 +490,25 @@ async function loadClassifierEvidence({ tableName, siteId, task, config }) {
  * @param {string} opts.tableName
  * @param {string} opts.siteId
  * @param {Record<string, unknown>} opts.task
- * @returns {Promise<Array<{ artifactId: string, s3Key: string }>>}
+ * @returns {Promise<Record<string, unknown>[]>}
  */
-async function imageArtifactsForTask({ tableName, siteId, task }) {
+async function sourceArtifactsForTask({ tableName, siteId, task }) {
   const artifactIds = new Set(
     /** @type {string[]} */ (task.sourceArtifactIds ?? []),
   );
   if (!task.checkId || artifactIds.size === 0) return [];
-  const result = await ddb.send(
-    new QueryCommand({
-      TableName: tableName,
-      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-      ExpressionAttributeValues: {
-        ":pk": `SITE#${siteId}`,
-        ":prefix": checkArtifactPrefix(String(task.checkId)),
-      },
-      ConsistentRead: true,
-    }),
+  const result = await queryAllItems({
+    TableName: tableName,
+    KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+    ExpressionAttributeValues: {
+      ":pk": `SITE#${siteId}`,
+      ":prefix": checkArtifactPrefix(String(task.checkId)),
+    },
+    ConsistentRead: true,
+  });
+  return result.Items.filter((item) =>
+    artifactIds.has(String(item.artifactId ?? "")),
   );
-  return (result.Items ?? [])
-    .filter(
-      (item) =>
-        artifactIds.has(String(item.artifactId ?? "")) &&
-        typeof item.s3Key === "string" &&
-        typeof item.contentType === "string" &&
-        String(item.contentType).startsWith("image/"),
-    )
-    .map((item) => ({
-      artifactId: String(item.artifactId),
-      s3Key: String(item.s3Key),
-    }));
 }
 
 /**
@@ -637,6 +665,26 @@ async function execute311Action({
     };
   }
 
+  // Resolve simulation before classifiers, City lookups or media publication.
+  if (
+    trigger === "user_confirmed" &&
+    task.deliberate311DeliveryMode === "simulated"
+  ) {
+    const tickets = [...priorTickets.values()];
+    if (tickets.some((ticket) => !isSimulated311Ticket(ticket)))
+      throw new Error("sf311_delivery_mode_conflict_requires_reconciliation");
+    return build311ActionResult({
+      action,
+      status: "submitted",
+      recordedAt: now,
+      tickets: tickets.length
+        ? tickets
+        : [simulated311Ticket(siteId, task, now)],
+    });
+  }
+  if ([...priorTickets.values()].some(isSimulated311Ticket))
+    throw new Error("sf311_delivery_mode_conflict_requires_reconciliation");
+
   const config = getConfig(/** @type {NodeJS.ProcessEnv} */ (env));
   const serviceCodeOrAction =
     /** @type {{ serviceCodeOrAction?: string | null }} */ (
@@ -698,7 +746,13 @@ async function execute311Action({
     };
   }
 
-  const location = await resolveLocation({ tableName, siteId, task });
+  const artifacts = await sourceArtifactsForTask({ tableName, siteId, task });
+  const location = await resolveLocation({
+    tableName,
+    siteId,
+    task,
+    artifacts,
+  });
   if (!location) {
     return {
       code: action.code,
@@ -710,11 +764,17 @@ async function execute311Action({
   }
 
   const sf311 = createSf311Client({ config });
-  const imageArtifacts = await imageArtifactsForTask({
-    tableName,
-    siteId,
-    task,
-  });
+  const imageArtifacts = artifacts
+    .filter(
+      (item) =>
+        typeof item.s3Key === "string" &&
+        typeof item.contentType === "string" &&
+        String(item.contentType).startsWith("image/"),
+    )
+    .map((item) => ({
+      artifactId: String(item.artifactId),
+      s3Key: String(item.s3Key),
+    }));
   /** @type {Array<Record<string, unknown>>} */
   const tickets = [];
   for (const serviceCode of serviceCodes) {
@@ -960,7 +1020,8 @@ export function eligibleTicketsForClosure(priorResults) {
     if (result.status !== "submitted") continue;
     for (const ticket of ticketsFromActionResult(result)) {
       const serviceCode = String(ticket.serviceCode ?? "");
-      if (!serviceCode || !ticket.srNum) continue;
+      if (!serviceCode || !ticket.srNum || isSimulated311Ticket(ticket))
+        continue;
       if (String(ticket.responsibleAgency ?? "") !== GOOD_NEIGHBOR_AGENCY) {
         continue;
       }
@@ -1012,7 +1073,6 @@ function buildCloseActionResult({
  * @param {string} [opts.taskId]
  * @param {string} [opts.completionLeaseExpiresAt]
  * @param {{ status: string, attribute: string, value: string }} [opts.executionLease]
- * @param {boolean} [opts.reconcile311Closures]
  * @param {(result: AppActionResult) => Promise<void>} [opts.onCheckpoint]
  * @returns {Promise<AppActionResult>}
  */
@@ -1026,7 +1086,6 @@ async function execute311ClosureAction({
   taskId = "",
   completionLeaseExpiresAt = "",
   executionLease,
-  reconcile311Closures = false,
   onCheckpoint,
 }) {
   const now = nowDate.toISOString();
@@ -1044,32 +1103,9 @@ async function execute311ClosureAction({
   }
 
   const sf311 = createSf311Client({ config });
-  let latestUpdates;
-  const needsReconciliation =
-    reconcile311Closures &&
-    [...eligible].some(
-      ([serviceCode]) =>
-        priorClosuresByServiceCode.get(serviceCode)?.status !== "closed",
-    );
-  if (needsReconciliation) {
-    try {
-      latestUpdates = await sf311.getLatestUpdatesBySourceAgency();
-    } catch (error) {
-      return buildCloseActionResult({
-        action,
-        status: "failed",
-        recordedAt: now,
-        closures: [...eligible].map(([serviceCode, { ticket }]) => ({
-          serviceCode,
-          srNum: String(ticket.srNum),
-          closedReasonCode: SILENT_TICKET_CLOSED_REASON,
-          status: "failed",
-          reason: "sf311_closure_reconciliation_failed",
-        })),
-        diagnostics: appActionErrorDiagnostics(error),
-      });
-    }
-  }
+  // 311 confirmed that owned tickets are absent from the latest-updates feed
+  // and repeating a closure is safe. Send directly; CreateSR and attachment
+  // recovery retain their separate uncertainty safeguards.
   /** @type {Array<Record<string, unknown>>} */
   const closures = [];
   /** Persist the current closure accumulator while this executor owns the lease. */
@@ -1102,41 +1138,10 @@ async function execute311ClosureAction({
   for (const [serviceCode, { ticket }] of eligible) {
     const priorClosure = priorClosuresByServiceCode.get(serviceCode);
     // Already closed on an earlier attempt: carry the record forward without
-    // another UpdateSR call (HUB closure is not idempotent on its side).
+    // another UpdateSR call. Unconfirmed closures can safely be retried.
     if (priorClosure && priorClosure.status === "closed") {
       closures.push({ ...priorClosure });
       continue;
-    }
-    if (needsReconciliation) {
-      const closureState = serviceRequestClosureState(
-        latestUpdates,
-        String(ticket.srNum),
-      );
-      if (closureState === "closed") {
-        const closedReasonCode = serviceRequestClosureReason(
-          latestUpdates,
-          String(ticket.srNum),
-        );
-        closures.push({
-          serviceCode,
-          srNum: String(ticket.srNum),
-          ...(closedReasonCode ? { closedReasonCode } : {}),
-          status: "closed",
-          reconciled: true,
-        });
-        if (!(await checkpoint())) break;
-        continue;
-      }
-      if (closureState === "unknown") {
-        closures.push({
-          serviceCode,
-          srNum: String(ticket.srNum),
-          closedReasonCode: SILENT_TICKET_CLOSED_REASON,
-          status: "failed",
-          reason: "sf311_closure_state_unknown",
-        });
-        continue;
-      }
     }
     try {
       const payload = buildCloseSrPayload({
@@ -1151,10 +1156,7 @@ async function execute311ClosureAction({
         status: "closed",
         ...(response.updateId ? { updateId: response.updateId } : {}),
       });
-      // Persist the closed record immediately: HUB closure is non-idempotent,
-      // so if this process dies (or the lease is lost) before the final task
-      // write, lease recovery must see `closed` here instead of re-closing
-      // the same SR from the original CreateSR result.
+      // Persist successful closures immediately to avoid unnecessary repeats.
       // If the lease was reclaimed, stop issuing further HUB updates because
       // this in-memory closure is not durably visible to the next executor.
       if (!(await checkpoint())) break;
@@ -1312,7 +1314,6 @@ function actionsForTrigger(appActions, trigger) {
  * @param {Date} [opts.now]
  * @param {string} [opts.completionLeaseExpiresAt]
  * @param {{ status: string, attribute: string, value: string }} [opts.executionLease]
- * @param {boolean} [opts.reconcile311Closures]
  * @param {(result: AppActionResult) => Promise<void>} [opts.onCheckpoint]
  * @returns {Promise<AppActionResult[]>}
  */
@@ -1402,7 +1403,6 @@ export async function executeAppActions(appActions, opts = {}) {
               taskId: opts.taskId ?? "",
               completionLeaseExpiresAt: opts.completionLeaseExpiresAt ?? "",
               executionLease: opts.executionLease,
-              reconcile311Closures: opts.reconcile311Closures,
               onCheckpoint: opts.onCheckpoint,
             }),
           );
@@ -1428,6 +1428,14 @@ export async function executeAppActions(appActions, opts = {}) {
         });
     }
   }
+  // Background jobs report after the durable outcome write, with retry context.
+  // Inline actions have no automatic job retry, so failures need attention now.
+  if (!opts.onCheckpoint)
+    reportSf311Results(results, {
+      terminal: true,
+      taskId: opts.taskId,
+      siteId: opts.siteId,
+    });
   return results;
 }
 

@@ -1,4 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { getUploadRequestId } from "../db.js";
+import { trackEvent } from "./analytics.js";
+vi.mock("./analytics.js", () => ({
+  trackEvent: vi.fn().mockResolvedValue(undefined),
+}));
 import {
   ApiError,
   dataUrlToBlob,
@@ -10,13 +15,21 @@ import {
   getCaptureGuidance,
   putMedia,
   putMediaWithProgress,
+  registerTextArtifact,
   rejectAnalysisCondition,
   REQUEST_TIMEOUT_MS,
   UPLOAD_STALL_MS,
+  updateArtifactLocation,
   toDevUploadUrl,
   waitForAnalyses,
   uploadTaskUpdatePhoto,
+  uploadArtifact,
 } from "./api.js";
+
+vi.mock("../db.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  getUploadRequestId: vi.fn().mockResolvedValue("durable-request-1"),
+}));
 
 /**
  * A fetch stub whose responses are driven by successive `getCheck` payloads.
@@ -160,6 +173,72 @@ describe("analysis amendments", () => {
   });
 });
 
+describe("registerTextArtifact", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("sends GPS accuracy only alongside coordinates", async () => {
+    /** @type {any} */ const fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 202,
+        text: () => Promise.resolve("{}"),
+      }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    await registerTextArtifact("chk_01", {
+      text: "Litter by the door",
+      latitude: 37.7793,
+      longitude: -122.4192,
+      accuracyMeters: 18,
+    });
+    await registerTextArtifact("chk_01", {
+      text: "Litter by the door",
+      accuracyMeters: 18,
+    });
+    const bodies = fetch.mock.calls.map(([, init]) => JSON.parse(init.body));
+    expect(bodies[0]).toMatchObject({
+      latitude: 37.7793,
+      longitude: -122.4192,
+      accuracyMeters: 18,
+    });
+    expect(bodies[1]).not.toHaveProperty("accuracyMeters");
+  });
+});
+
+describe("updateArtifactLocation", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("patches the artifact's location route with coordinates only", async () => {
+    /** @type {any} */ const fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve("{}"),
+      }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    await updateArtifactLocation("chk 01", "art/1", {
+      latitude: 37.7793,
+      longitude: -122.4192,
+      accuracyMeters: 18,
+    });
+    const [url, init] = fetch.mock.calls[0];
+    expect(String(url)).toMatch(
+      /\/v1\/checks\/chk%2001\/artifacts\/art%2F1\/location$/,
+    );
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body)).toEqual({
+      latitude: 37.7793,
+      longitude: -122.4192,
+      accuracyMeters: 18,
+    });
+  });
+});
+
 describe("non-JSON response handling (api-response-integrity plan §2a)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -259,44 +338,55 @@ describe("dataUrlToBlob", () => {
 
 describe("uploadTaskUpdatePhoto", () => {
   afterEach(() => vi.unstubAllGlobals());
-  it("uploads the original file and registers its type and byte length", async () => {
-    const file = new File([new Uint8Array([0, 255, 16, 128])], "result.jpg", {
-      type: "image/jpeg",
-    });
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            artifactId: "photo-1",
-            s3Key: "photos/photo-1",
-            uploadUrl: "https://upload.example.test/photo-1",
-            uploadHeaders: {},
-          }),
-        ),
-      )
-      .mockResolvedValueOnce(new Response(""))
-      .mockResolvedValueOnce(new Response("{}"));
-    vi.stubGlobal("fetch", fetch);
-    await expect(
-      uploadTaskUpdatePhoto("task-1", "check-1", {
-        file,
+  it.each([
+    ["result.jpg", "image/jpeg", "image/jpeg"],
+    ["result.heic", "", "image/heic"],
+    ["result.heif", "", "image/heif"],
+  ])(
+    "uploads %s with its original bytes and inferred content type",
+    async (name, type, contentType) => {
+      const file = new File([new Uint8Array([0, 255, 16, 128])], name, {
+        type,
+      });
+      const fetch = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              artifactId: "photo-1",
+              s3Key: "photos/photo-1",
+              uploadUrl: "https://upload.example.test/photo-1",
+              uploadHeaders: {},
+            }),
+          ),
+        )
+        .mockResolvedValueOnce(new Response(""))
+        .mockResolvedValueOnce(new Response("{}"));
+      vi.stubGlobal("fetch", fetch);
+      await expect(
+        uploadTaskUpdatePhoto("task-1", "check-1", {
+          file,
+          capturedAt: "2026-10-08T12:00:00Z",
+        }),
+      ).resolves.toEqual({ artifactId: "photo-1", s3Key: "photos/photo-1" });
+      expect(fetch).toHaveBeenCalledTimes(3);
+      expect(fetch.mock.calls[1][1]).toMatchObject({
+        method: "PUT",
+        body: file,
+      });
+      expect(JSON.parse(fetch.mock.calls[0][1].body)).toMatchObject({
+        contentType,
+        contentLength: 4,
+        uploadRequestId: "durable-request-1",
+      });
+      expect(JSON.parse(fetch.mock.calls[2][1].body)).toMatchObject({
+        artifactId: "photo-1",
+        contentType,
+        contentLength: 4,
         capturedAt: "2026-10-08T12:00:00Z",
-      }),
-    ).resolves.toEqual({ artifactId: "photo-1", s3Key: "photos/photo-1" });
-    expect(fetch).toHaveBeenCalledTimes(3);
-    expect(fetch.mock.calls[1][1]).toMatchObject({ method: "PUT", body: file });
-    expect(JSON.parse(fetch.mock.calls[0][1].body)).toMatchObject({
-      contentType: "image/jpeg",
-      contentLength: 4,
-    });
-    expect(JSON.parse(fetch.mock.calls[2][1].body)).toMatchObject({
-      artifactId: "photo-1",
-      contentType: "image/jpeg",
-      contentLength: 4,
-      capturedAt: "2026-10-08T12:00:00Z",
-    });
-  });
+      });
+    },
+  );
 });
 
 describe("capture guidance requests", () => {
@@ -596,6 +686,49 @@ it("cancels the progress upload without registering incomplete media", async () 
   }
 });
 
+it.each([
+  undefined,
+  {
+    randomUUID() {
+      throw new Error("unavailable");
+    },
+  },
+])(
+  "uploads and registers photos without a working UUID API (%s)",
+  async (cryptoApi) => {
+    // Durable upload fingerprinting needs Web Crypto; only the optional
+    // telemetry UUID API is unavailable in this scenario.
+    vi.stubGlobal("crypto", {
+      subtle: globalThis.crypto.subtle,
+      randomUUID: cryptoApi?.randomUUID,
+    });
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            artifactId: "artifact",
+            s3Key: "synthetic-key",
+            uploadUrl: "https://example.test/upload",
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(""))
+      .mockResolvedValueOnce(new Response("{}"));
+    vi.stubGlobal("fetch", fetch);
+    try {
+      await expect(
+        uploadArtifact("check", { dataUrl: "data:image/jpeg;base64,aGk=" }),
+      ).resolves.toMatchObject({ artifactId: "artifact" });
+      expect(fetch).toHaveBeenCalledTimes(3);
+      expect(fetch.mock.calls[1][1].method).toBe("PUT");
+      expect(fetch.mock.calls[2][0]).toBe("/v1/checks/check/artifacts");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
 describe("time limits on a weak connection", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -733,5 +866,228 @@ describe("time limits on a weak connection", () => {
       controller.abort();
       await expect(pending).rejects.toMatchObject({ name: "AbortError" });
     });
+  });
+});
+
+describe("uncertain media uploads", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it.each(["check", "task"])(
+    "reuses %s upload identity after a lost registration response and accepts an existing object",
+    async (kind) => {
+      const signed = {
+        artifactId: "photo-1",
+        s3Key: "photos/photo-1",
+        uploadUrl: "https://upload.example.test/photo-1",
+        uploadHeaders: {},
+      };
+      const fetch = vi
+        .fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify(signed)))
+        .mockResolvedValueOnce(new Response(""))
+        .mockRejectedValueOnce(new Error("lost registration response"))
+        .mockResolvedValueOnce(new Response(JSON.stringify(signed)))
+        .mockResolvedValueOnce(new Response("", { status: 412 }))
+        .mockResolvedValueOnce(
+          kind === "check"
+            ? new Response(
+                JSON.stringify({ error: "artifact already registered" }),
+                {
+                  status: 409,
+                  headers: { "content-type": "application/json" },
+                },
+              )
+            : new Response("{}"),
+        );
+      vi.stubGlobal("fetch", fetch);
+      const file = new File(["test"], "synthetic.jpg", { type: "image/jpeg" });
+      const upload = () =>
+        kind === "check"
+          ? uploadArtifact("check-1", {
+              dataUrl: "data:image/jpeg;base64,dGVzdA==",
+              tag: "evidence-1",
+              location: () => ({
+                latitude: 37.7793,
+                longitude: -122.4192,
+                accuracyMeters: 18,
+              }),
+            })
+          : uploadTaskUpdatePhoto("task-1", "check-1", { file });
+      await expect(upload()).rejects.toMatchObject({ status: 0 });
+      await expect(upload()).resolves.toMatchObject({ artifactId: "photo-1" });
+      expect(JSON.parse(fetch.mock.calls[0][1].body).uploadRequestId).toBe(
+        "durable-request-1",
+      );
+      expect(JSON.parse(fetch.mock.calls[3][1].body).uploadRequestId).toBe(
+        "durable-request-1",
+      );
+      expect(JSON.parse(fetch.mock.calls[5][1].body).artifactId).toBe(
+        "photo-1",
+      );
+      if (kind === "check") {
+        expect(JSON.parse(fetch.mock.calls[5][1].body)).toMatchObject({
+          latitude: 37.7793,
+          longitude: -122.4192,
+          accuracyMeters: 18,
+        });
+        expect(
+          vi
+            .mocked(trackEvent)
+            .mock.calls.slice(-6)
+            .map(([, props]) => [props.stage, props.outcome]),
+        ).toEqual([
+          ["presign", "started"],
+          ["presign", "completed"],
+          ["put", "started"],
+          ["put", "completed"],
+          ["register", "started"],
+          ["register", "completed"],
+        ]);
+      }
+    },
+  );
+});
+
+describe("upload reservation boundaries", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("keeps distinct same-content task attachments separate while reusing each retry scope", async () => {
+    vi.mocked(getUploadRequestId).mockClear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async (url) =>
+          new Response(
+            JSON.stringify(
+              String(url).endsWith("artifacts:presign")
+                ? {
+                    artifactId: "a",
+                    s3Key: "k",
+                    uploadUrl: "https://upload.example.test/a",
+                    uploadHeaders: {},
+                  }
+                : {},
+            ),
+          ),
+      ),
+    );
+    const first = new File(["identical"], "same.jpg", { type: "image/jpeg" });
+    const second = new File(["identical"], "same.jpg", { type: "image/jpeg" });
+    for (const file of [first, second, first])
+      await uploadTaskUpdatePhoto("task", "check", { file });
+    const calls = vi.mocked(getUploadRequestId).mock.calls;
+    expect(calls[0][0]).not.toBe(calls[1][0]);
+    expect(calls[0][0]).toBe(calls[2][0]);
+    expect(calls[0][1]).toBe(calls[1][1]);
+  });
+  it.each(["upload_reservation_conflict", "Check already completed"])(
+    "does not hide a registration conflict: %s",
+    async (error) => {
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValueOnce(
+            new Response(
+              JSON.stringify({
+                artifactId: "a",
+                s3Key: "k",
+                uploadUrl: "https://upload.example.test/a",
+              }),
+            ),
+          )
+          .mockResolvedValueOnce(new Response(""))
+          .mockResolvedValueOnce(
+            new Response(JSON.stringify({ error }), {
+              status: 409,
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+      );
+      await expect(
+        uploadArtifact("check", {
+          dataUrl: "data:image/jpeg;base64,dGVzdA==",
+          tag: "attachment",
+        }),
+      ).rejects.toMatchObject({ status: 409, body: { error } });
+    },
+  );
+});
+
+describe("duplicate mutation invalidation", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it.each([
+    [
+      "editAnalysisCondition",
+      [
+        "check",
+        "photo",
+        "condition",
+        { description: "Updated synthetic description" },
+      ],
+    ],
+    ["rejectAnalysisCondition", ["check", "photo", "condition", {}]],
+    ["deleteArtifact", ["check", "photo"]],
+    ["registerArtifact", ["check", { artifactId: "photo" }]],
+    ["evaluateAssessment", [{}]],
+    ["submitConditionAnswers", ["assessment", "condition", { answers: {} }]],
+    ["completeTask", ["task", {}]],
+    ["createTaskUpdate", ["task", { type: "resolved" }, "synthetic-request"]],
+    ["updateTaskAction", ["task", "rule"]],
+    [
+      "recordCustomTaskAction",
+      ["task", { text: "Synthetic action", resolved: true }],
+    ],
+  ])(
+    "invalidates after successful %s, but not failed writes",
+    async (name, args) => {
+      const api = await import("./api.js");
+      const db = await import("../db.js");
+      const siteRead = vi
+        .spyOn(db, "getSite")
+        .mockResolvedValue({ siteId: "synthetic-site" });
+      const { onDuplicateInvalidation } = await import(
+        "./duplicate-invalidation.js"
+      );
+      const changed = vi.fn();
+      const stop = onDuplicateInvalidation(changed);
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValueOnce(new Response("{}", { status: 400 }))
+          .mockResolvedValueOnce(new Response("{}", { status: 200 })),
+      );
+      try {
+        await expect(api[name](...args)).rejects.toBeInstanceOf(ApiError);
+        expect(changed).not.toHaveBeenCalled();
+        await api[name](...args);
+        expect(changed).toHaveBeenCalledOnce();
+      } finally {
+        stop();
+        siteRead.mockRestore();
+      }
+    },
+  );
+
+  it("does not invalidate for result reads or upload URL creation", async () => {
+    const { getDuplicateLinks, presignArtifact } = await import("./api.js");
+    const { onDuplicateInvalidation } = await import(
+      "./duplicate-invalidation.js"
+    );
+    const changed = vi.fn();
+    const stop = onDuplicateInvalidation(changed);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}", { status: 200 })),
+    );
+    try {
+      await getDuplicateLinks(["task"]);
+      await presignArtifact("check", {
+        contentType: "image/jpeg",
+        contentLength: 100,
+      });
+      expect(changed).not.toHaveBeenCalled();
+    } finally {
+      stop();
+    }
   });
 });

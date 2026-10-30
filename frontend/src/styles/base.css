@@ -147,6 +147,30 @@ html[data-route-transition="pop"]::view-transition-new(root) {
   animation: none;
 }
 
+@keyframes route-rise {
+  from {
+    transform: translateY(100%);
+  }
+}
+@keyframes route-dismiss {
+  to {
+    transform: translateY(100%);
+  }
+}
+html[data-route-transition="rise"]::view-transition-old(root) {
+  animation: 220ms ease-out both route-fade-out;
+}
+html[data-route-transition="rise"]::view-transition-new(root) {
+  animation: 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both route-rise;
+}
+html[data-route-transition="dismiss"]::view-transition-old(root) {
+  z-index: 1;
+  animation: 200ms ease-in both route-dismiss;
+}
+html[data-route-transition="dismiss"]::view-transition-new(root) {
+  animation: none;
+}
+
 /* Respect reduced-motion globally: kill non-essential transitions/animation.
    Policy and the list of sites this rule can't reach: docs/frontend-design-system.md
    "Motion". */
@@ -880,4 +904,84 @@ connection-status {
     opacity: 0.75;
     transform: none;
   }
+}
+
+/* Capture actions shared by check, problem, care and ordinary task updates. */
+.capture-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  width: 100%;
+}
+.capture-controls .capture-controls__camera {
+  display: flex;
+  width: 100%;
+  min-height: 4rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9375rem;
+  border-radius: var(--wa-border-radius-l, 1rem);
+  font-size: 1.25rem;
+  font-weight: 500;
+  padding: 0.9375rem 1.25rem;
+}
+.capture-controls__secondary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 0.625rem 0.6875rem;
+}
+.capture-controls__secondary .btn-outline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65625rem;
+  min-height: 2.75rem;
+  padding: 0.65625rem 0.875rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--text-secondary);
+  border-color: var(--wa-color-neutral-border-loud, var(--c-line));
+}
+.capture-controls button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.capture-picker[hidden] {
+  display: none;
+}
+
+/* Shared circle close control and viewport-wide splash divider. */
+.btn-circle-close {
+  appearance: none;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text);
+  box-shadow: none;
+  cursor: pointer;
+}
+.btn-circle-close wa-icon {
+  font-size: 1.25rem;
+}
+.btn-circle-close:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 3px;
+}
+.splash-rule {
+  width: 100vw;
+  max-width: none;
+  margin: 0 calc(50% - 50vw) 24px;
+  border: 0;
+  border-top: 1px solid var(--c-line);
 }

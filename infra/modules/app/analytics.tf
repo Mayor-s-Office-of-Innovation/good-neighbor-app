@@ -595,9 +595,10 @@ resource "aws_lambda_function" "analytics_query" {
   # second to answer with its own 504 rather than racing it.
   timeout     = 29
   kms_key_arn = aws_kms_key.app.arn
-  # A handful of admins clicking dashboards; a small cap bounds cost and keeps
-  # a runaway dashboard from stampeding S3. Raise if the admin page grows.
-  reserved_concurrent_executions = 3
+  # Allow concurrent admin queries while bounding analytics cost and S3 load.
+  # This shared reservation applies to both dev and prod; queries retain their
+  # existing memory, timeout, and read-only lake permissions.
+  reserved_concurrent_executions = 10
 
   tracing_config {
     mode = "Active"

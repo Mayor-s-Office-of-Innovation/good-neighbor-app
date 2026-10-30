@@ -1,4 +1,5 @@
 // @ts-nocheck -- lenient migration baseline (checkJs). Ratchet target: remove this line and add JSDoc types, one file per PR. See memory step2-gnp-port-scope.
+import { loadError } from "./load-error.js";
 import { startPhoneCompletionRecovery } from "../services/phone-completion.js";
 /*
   app-root — the shell. Enforces first-run site setup, renders the header, and swaps
@@ -66,10 +67,6 @@ import {
   keyboardViewport,
   revealEditable,
 } from "../services/keyboard-viewport.js";
-import {
-  showQueuedSiteSwitchSuccessToast,
-  showSiteSwitchSuccessToast,
-} from "../state/toasts.js";
 import {
   hasEnrollmentCredentials,
   isFatalSessionError,
@@ -172,6 +169,7 @@ export class AppRoot extends HTMLElement {
     this._stopPhoneRecovery?.();
     this._stopPhoneRecovery = startPhoneCompletionRecovery();
     this._onAuthSignout = () => {
+      setDuplicateUiSite(null);
       // Recovery is IN PROGRESS: the user chose sign-out, so the health
       // state must leave `auth` now — a freshly mounted connection-status on
       // the setup screen would otherwise re-open its modal over the site
@@ -327,7 +325,6 @@ export class AppRoot extends HTMLElement {
         switching_site: switchingSite,
       });
       if (!(await this._enterAppAfterBind())) return;
-      if (switchingSite) showSiteSwitchSuccessToast();
     });
   }
 
@@ -430,7 +427,6 @@ export class AppRoot extends HTMLElement {
     this._maybeWarnInAppBrowser();
     this._view = this.querySelector("#view");
     this._shell = this.querySelector(".app");
-    showQueuedSiteSwitchSuccessToast();
     this._maybeOfferInstall();
     // iOS Safari only, and only while not yet standalone: keep a handoff grant
     // in the manifest so an Add to Home Screen from any route carries the
@@ -500,7 +496,9 @@ export class AppRoot extends HTMLElement {
 
   _loadRoute(route, load) {
     const request = (this._routeLoad = {});
-    this._view.innerHTML = `<p role="status">${escapeHtml(t("care.loading"))}</p>`;
+    if (!this._view.firstElementChild)
+      this._view.innerHTML = `<p role="status">${escapeHtml(t("care.loading"))}</p>`;
+    this._view.inert = true;
     Promise.resolve()
       .then(load)
       .then(() => {
@@ -509,8 +507,9 @@ export class AppRoot extends HTMLElement {
       })
       .catch((error) => {
         if (this._routeLoad !== request || currentRoute() !== route) return;
+        this._view.inert = false;
         console.error("Route module failed to load", error);
-        this._view.innerHTML = `<p role="alert">${escapeHtml(t("route.loadError"))}</p><button type="button" class="btn-ink" data-route-reload>${escapeHtml(t("route.reload"))}</button><button type="button" class="btn-outline" data-route-back>${escapeHtml(t("common.back"))}</button>`;
+        this._view.innerHTML = `${loadError(t("route.loadError"), { retryAttribute: "data-route-reload" })}<button type="button" class="btn-outline" data-route-back>${escapeHtml(t("common.back"))}</button>`;
         // Reload obtains the current asset manifest and clears cached import failures.
         this._view
           .querySelector("[data-route-reload]")
@@ -595,6 +594,7 @@ export class AppRoot extends HTMLElement {
       if (currentRoute() !== route) return;
       this._swappedRoute = route;
       this._view.replaceChildren(document.createElement(tag));
+      this._view.inert = false;
       this._restateScreenFocus();
     };
     // Same-document View Transition: a cross-fade between sibling screens,
@@ -639,6 +639,8 @@ export class AppRoot extends HTMLElement {
     const view = this._view;
     if (!view) return;
     this._afterMount(() => {
+      // A toast may have focused Undo since this route announcement was queued.
+      if (document.activeElement?.closest?.("app-toasts")) return;
       const viewFocusPoint =
         view.querySelector("[data-screen-focus]") ||
         view.querySelector("h1[tabindex='-1']");

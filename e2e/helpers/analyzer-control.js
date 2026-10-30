@@ -6,7 +6,9 @@
   loopback HTTP (node side), not page context — the worker calls the stub
   server-to-server.
 */
-const STUB = "http://127.0.0.1:3101";
+import { E2E_URLS } from "./ports.js";
+
+const STUB = E2E_URLS.analyzer;
 
 /**
  * @param {"multi" | "excellent"} fixture

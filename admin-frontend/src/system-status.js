@@ -1,3 +1,4 @@
+import { loadError } from "../../frontend/src/components/load-error.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { navigate } from "./router.js";
 import { rulebookText } from "../../frontend/src/i18n/rulebook.js";
@@ -52,6 +53,12 @@ export function sparkline(values, ceiling) {
 
 class SystemStatus extends HTMLElement {
   data = null;
+  tab = "status";
+  control = null;
+  controlDraft = true;
+  controlError = "";
+  controlLoading = false;
+  controlSaving = false;
   filter = "all";
   sort = "name";
   pages = new Map();
@@ -67,6 +74,7 @@ class SystemStatus extends HTMLElement {
     this.viewPages.set(this.kind, this.pages);
     for (const siteId of this.busySites.keys()) this.invalidateSite(siteId);
     this.kind = kind;
+    if (kind) this.tab = "status";
     this.setAttribute("view", kind);
     this.pages = this.viewPages.get(kind) || new Map();
     this.filter = "all";
@@ -77,6 +85,8 @@ class SystemStatus extends HTMLElement {
   connectedCallback() {
     this.kind = this.getAttribute("view") || "";
     this.addEventListener("click", this.click);
+    this.addEventListener("keydown", this.tabKeys);
+    this.addEventListener("cancel", this.cancelDialog, true);
     this.addEventListener("change", this.change);
     this.addEventListener("close", this.closed, true);
     this.addEventListener("error", this.imageError, true);
@@ -90,6 +100,8 @@ class SystemStatus extends HTMLElement {
     clearInterval(this.timer);
     document.removeEventListener("visibilitychange", this.visibility);
     this.removeEventListener("click", this.click);
+    this.removeEventListener("keydown", this.tabKeys);
+    this.removeEventListener("cancel", this.cancelDialog, true);
     this.removeEventListener("change", this.change);
     this.removeEventListener("close", this.closed, true);
     this.removeEventListener("error", this.imageError, true);
@@ -103,13 +115,42 @@ class SystemStatus extends HTMLElement {
     event.target.replaceWith(message);
   };
   closed = () => {
+    if (this.controlSaving) return;
     this.previewSequence++;
     this.render();
   };
   visibility = () => {
     if (!document.hidden) this.refresh();
   };
+  cancelDialog = (event) => {
+    if (this.controlSaving && event.target.id === "silent-311-confirm")
+      event.preventDefault();
+  };
+  tabKeys = (event) => {
+    if (
+      event.target.getAttribute("role") !== "tab" ||
+      !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)
+    )
+      return;
+    event.preventDefault();
+    const tab =
+      event.key === "Home"
+        ? "status"
+        : event.key === "End"
+          ? "control"
+          : this.tab === "status"
+            ? "control"
+            : "status";
+    this.querySelector(`#status-tab-${tab}`)?.click();
+  };
   change = (event) => {
+    if (event.target.id === "silent-311-enabled") {
+      this.controlDraft = event.target.value === "true";
+      this.querySelector("#silent-311-save").disabled =
+        this.controlSaving ||
+        this.controlLoading ||
+        this.controlDraft === this.control?.enabled;
+    }
     if (event.target.id === "status-sort") {
       this.sort = event.target.value;
       this.render();
@@ -130,12 +171,39 @@ class SystemStatus extends HTMLElement {
     }
     const button = event.target.closest("button");
     if (!button) return;
+    if (button.dataset.statusTab) {
+      this.tab = button.dataset.statusTab;
+      this.render();
+      this.querySelector(`#status-tab-${this.tab}`)?.focus();
+      if (this.tab === "control" && !this.control) await this.loadControls();
+      return;
+    }
+    if (button.id === "silent-311-reload") return this.loadControls();
+    if (
+      button.id === "silent-311-save" &&
+      this.control &&
+      !this.controlLoading &&
+      !this.controlSaving
+    ) {
+      this.render();
+      const dialog = this.querySelector("#silent-311-confirm");
+      dialog.showModal();
+      dialog.querySelector("#silent-311-cancel")?.focus();
+      return;
+    }
+    if (button.id === "silent-311-cancel")
+      return this.querySelector("#silent-311-confirm")?.close();
+    if (button.id === "silent-311-confirm-save") return this.saveControls();
     if (button.dataset.filter) {
       this.filter = button.dataset.filter;
       this.render();
     }
     if (button.dataset.load) await this.loadSite(button.dataset.load);
-    if (button.id === "status-refresh") await this.refresh();
+    if (button.hasAttribute("data-load-retry")) await this.refresh();
+    if (button.id === "status-refresh") {
+      if (this.tab === "control") await this.loadControls();
+      else await this.refresh();
+    }
     if (button.dataset.preview)
       await this.preview(button.dataset.site, button.dataset.preview);
     if (button.id === "status-close") this.querySelector("dialog")?.close();
@@ -151,7 +219,7 @@ class SystemStatus extends HTMLElement {
     this.busySites.delete(siteId);
   }
   async refresh() {
-    if (this.loading) return;
+    if (this.tab === "control" || this.loading) return;
     this.loading = true;
     this.updateRefreshState();
     if (!this.data) this.render();
@@ -219,7 +287,11 @@ class SystemStatus extends HTMLElement {
     } finally {
       this.loading = false;
       this.updateRefreshState();
-      if (this.isConnected && !this.querySelector("dialog[open]"))
+      if (
+        this.isConnected &&
+        this.tab === "status" &&
+        !this.querySelector("dialog[open]")
+      )
         this.render();
     }
   }
@@ -284,6 +356,70 @@ class SystemStatus extends HTMLElement {
       body.innerHTML = `<p role="alert">${label("loadError")}</p>`;
     }
   }
+  async loadControls() {
+    if (this.controlLoading || this.controlSaving) return;
+    this.controlLoading = true;
+    this.controlError = "";
+    this.render();
+    try {
+      const result = await adminApi.getSystemControls();
+      if (!this.isConnected) return;
+      this.control = result.silent311;
+      this.controlDraft = this.control.enabled;
+    } catch {
+      this.controlError = t("admin.status.control.loadError");
+    } finally {
+      this.controlLoading = false;
+      if (this.isConnected) this.render();
+    }
+  }
+  async saveControls() {
+    if (this.controlSaving || this.controlLoading || !this.control) return;
+    this.controlSaving = true;
+    this.controlError = "";
+    const confirm = this.querySelector("#silent-311-confirm-save");
+    const cancel = this.querySelector("#silent-311-cancel");
+    confirm.disabled = cancel.disabled = true;
+    try {
+      const result = await adminApi.updateSystemControls({
+        enabled: this.controlDraft,
+        revision: this.control.revision,
+      });
+      this.control = result.silent311;
+      this.controlDraft = this.control.enabled;
+    } catch (error) {
+      this.controlError = t(
+        error?.status === 409
+          ? "admin.status.control.changed"
+          : "admin.status.control.saveError",
+      );
+    } finally {
+      this.controlSaving = false;
+      if (this.isConnected) {
+        this.querySelector("#silent-311-confirm")?.close();
+        this.render();
+        this.querySelector("#silent-311-reload")?.focus();
+      }
+    }
+  }
+  controlPanel() {
+    const key = "admin.status.control.";
+    return `<section role="tabpanel" id="status-panel-control" aria-labelledby="status-tab-control">
+      <h2>${e(t(key + "title"))}</h2><p>${e(t(key + "description"))}</p>
+      ${this.controlError ? `<p role="alert">${e(this.controlError)}</p>` : ""}
+      ${this.controlLoading ? `<p role="status">${label("loading")}</p>` : ""}
+      ${
+        this.control
+          ? `<wa-select id="silent-311-enabled" label="${e(t(key + "title"))}" value="${this.controlDraft}" ${this.controlSaving || this.controlLoading ? "disabled" : ""}>
+        <wa-option value="true" ${this.controlDraft ? "selected" : ""}>${e(t(key + "enabled"))}</wa-option><wa-option value="false" ${!this.controlDraft ? "selected" : ""}>${e(t(key + "disabled"))}</wa-option></wa-select>
+        <button id="silent-311-save" type="button" class="btn-primary" ${this.controlSaving || this.controlLoading || this.controlDraft === this.control.enabled ? "disabled" : ""}>${e(t("common.save"))}</button>`
+          : ""
+      }
+      <button id="silent-311-reload" type="button" class="btn-secondary" ${this.controlSaving || this.controlLoading ? "disabled" : ""}>${e(t(key + "reload"))}</button>
+      <dialog id="silent-311-confirm" class="status-dialog" aria-labelledby="silent-311-confirm-title"><h2 id="silent-311-confirm-title">${e(t(key + (this.controlDraft ? "confirmEnable" : "confirmDisable")))}</h2>
+      <button type="button" id="silent-311-cancel" class="btn-secondary">${e(t("common.cancel"))}</button><button type="button" id="silent-311-confirm-save" class="${this.controlDraft ? "btn-primary" : "btn-danger"}">${e(t(key + (this.controlDraft ? "enable" : "disable")))}</button></dialog>
+    </section>`;
+  }
   render() {
     const focus = document.activeElement?.id;
     const scrolls = new Map(
@@ -298,13 +434,22 @@ class SystemStatus extends HTMLElement {
     const row = (kind, value, state) =>
       `<a id="status-row-${kind}" class="status-row" data-status-route href="/system-status/${kind}">${state ? dot(kind, state) : ""}<span class="status-row-title">${label(kind)}</span><span class="status-row-value">${value}</span><span aria-hidden="true">›</span></a>${state ? `<wa-tooltip for="status-row-${kind}">${label(`${kind}Tooltip.${state}`)}</wa-tooltip>` : ""}`;
     this.innerHTML = `<section class="status-page" aria-labelledby="status-title"><a class="site-back-link" data-status-route href="${this.kind ? "/system-status" : "/sites"}">‹ ${this.kind ? label("title") : e(t("admin.breadcrumb.admin"))}</a><div class="panel__head"><h1 id="status-title" tabindex="-1">${label(this.kind || "title")}</h1><button class="btn-icon status-refresh" id="status-refresh" type="button" aria-busy="${this.loading}" aria-disabled="${this.loading}" aria-label="${label("refresh")}" title="${label("refresh")}"><wa-icon name="rotate" aria-hidden="true"></wa-icon></button></div>
-      ${this.error ? `<p role="alert">${e(this.error)}</p>` : ""}
+      <div class="entity-tabs status-tabs" role="tablist" aria-label="${label("title")}">${["status", "control"].map((tab) => `<button type="button" class="btn-secondary" role="tab" id="status-tab-${tab}" data-status-tab="${tab}" aria-selected="${this.tab === tab}" aria-controls="status-panel-${tab}" tabindex="${this.tab === tab ? 0 : -1}">${e(t(`admin.status.tab.${tab}`))}</button>`).join("")}</div>
+      ${
+        this.tab === "control"
+          ? this.controlPanel()
+          : `<section role="tabpanel" id="status-panel-status" aria-labelledby="status-tab-status">
+      ${this.error ? loadError(this.error, { partial: Boolean(data) }) : ""}
       ${
         !data
-          ? `<p role="status">${label(this.loading ? "loading" : "noData")}</p>`
+          ? this.error
+            ? ""
+            : `<p role="status">${label(this.loading ? "loading" : "noData")}</p>`
           : `
       <p class="muted">${e(t("admin.status.updated", { time: formatTime(data.now) }))}</p>
       ${this.kind ? this.details() : `<h2>${label("health")}</h2><div class="status-list">${row("network", percent(data.network.percent), data.network.state)}${row("analysis", percent(data.analysis.percent), data.analysis.state)}</div><p class="muted">${e(t("admin.status.pending", { count: data.pending }))}</p><h2>${label("activity")}</h2><div class="status-list">${activities.map((kind) => row(kind, kind === "duplicates" && !data.duplicatesAvailable && !total(kind) ? label("unavailable") : number(total(kind)))).join("")}</div>`}`
+      }
+      </section>`
       }
       <dialog class="status-dialog" aria-label="${label("preview")}"><button type="button" class="btn-secondary" id="status-close">${label("close")}</button><div class="status-preview-body"></div></dialog></section>`;
     if (focus)

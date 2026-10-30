@@ -23,6 +23,13 @@ flowchart LR
   worker --> media
   worker --> dynamodb
   worker --> analyzer["Street Conditions analyzer (external service)"]
+  dynamodb -. SF311_OUTBOX stream .-> worker
+  worker --> sf311Queue["SQS: 311 jobs"]
+  sf311Queue --> sf311Worker["Lambda: 311-worker (5 slots)"]
+  sf311Worker --> dynamodb
+  sf311Worker --> media
+  sf311Worker --> analyzer
+  sf311Worker --> hub["Oracle HUB (external 311 integration)"]
 ```
 
 The media bytes reach the analyzer only from the worker (base64, `store_input:false`);
@@ -50,12 +57,13 @@ are esbuild ESM outputs of `backend/scripts/build-lambdas.mjs`:
 | `-api` | API Gateway, sync | 512 MB | 29 s | Every route handler behind one dispatch; uses unreserved account concurrency |
 | `-authorizer` | API Gateway REQUEST authorizer | 256 MB | 5 s | Verifies the HS256 device token, pins `siteId`; verdicts cached 60 s by the gateway; reserved concurrency 200 |
 | `-worker` | SQS and DynamoDB outbox | 1024 MB | 300 s | Background translations, complaints, submissions and outbox jobs; also drains previously queued perimeter analyses |
+| `-311-worker` | Dedicated 311 SQS | 1024 MB | 300 s | Filing, attachments and closures; own role, reserved concurrency 5, batch size 1, event-source maximum concurrency 5 |
 | `-analysis` | Dedicated analysis SQS | 1024 MB | 300 s | Foreground photo/text analysis; reserved concurrency 500, batch size 1, event-source maximum concurrency 500 |
 
 Foreground evidence is routed using `ANALYSIS_QUEUE_URL`. When unset (local
 harness), it falls back to `SQS_QUEUE_URL`. Both functions reuse the worker bundle
 and IAM role; follow-up translations continue to use the background queue.
-Both queues have a zero-second batching window. The background mapping retains
+The analysis and submissions queues have a zero-second batching window. The background mapping retains
 batch size 10 and maximum concurrency 20. The foreground reservation prevents
 background work from occupying its 500 slots, but does not prewarm SQS pollers.
 
@@ -79,8 +87,8 @@ is drained before every exit, so it overlaps the analyzer's latency rather than 
 to it; it is independent of the analyzer's outcome, and a failure only means the card
 shows the original (`ThumbnailFailed` metric). `presignMedia` signs the recorded key as
 `thumbnailUrl` next to the original.
-sharp is esbuild-`external` and copied from node_modules into the worker bundle
-only (api/authorizer never import it).
+sharp is esbuild-`external` and copied from node_modules into each bundle that
+imports it, including the API, general worker, duplicate worker and 311 worker.
 
 ## Async analyze flow
 
@@ -206,9 +214,12 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
 - **Category resolution:** analyzer category labels → canonical rule categories via aliases;
   unresolved categories become `manual_review`, never a guess (safety-critical rules).
 - **Ticket location resolution:** capture requests a fresh device location for each photo or
-  text report and carries it through the condition/task; 311 filing uses that location first,
-  then the site's geocoded default location from `SITE#<siteId> / #META`. With neither it fails
-  the app action with a retryable `missing_location` result rather than guessing.
+  text report but never waits for it: a reading ready at upload rides along, and a later one
+  goes to `PATCH /v1/checks/{checkId}/artifacts/{artifactId}/location`, which updates the
+  `ART#` row and the photo's tasks not yet filed in one transaction. 311 filing uses the task's location, then
+  its source artifact's, then the site's geocoded default location from
+  `SITE#<siteId> / #META`. With none it fails the app action with a retryable
+  `missing_location` result rather than guessing.
 - **Classifier-backed 311 routing:** the app sends the task's source image to the constrained
   analyzer classifier when one exists, otherwise it sends the original text artifact. Images use
   the same orientation correction, 1568 px long-edge cap, flattening, and JPEG normalization as
@@ -222,10 +233,13 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   returns metadata only — it never places calls or files tickets itself. 311 tickets are filed
   and closed by the app-action layer (not the analyzer): informational tickets filed under the
   app's own agency id 76 are closed via `UpdateSR` when the task is completed through the done
-  path; tickets filed for city-handled work stay under the city's management. HUB closure is
-  non-idempotent, so each successful close is checkpointed onto the task (merged into
-  `appActionResults`, conditioned on the completion lease) before the next HUB call; lease
-  recovery then carries the durable `closed` record forward instead of re-closing the SR.
+  path; tickets filed for city-handled work stay under the city's management. The 311
+  team confirmed that repeated closure updates are safe and tickets owned by our
+  agency are absent from `GetLatestUpdatesBySourceAgency`. Closures therefore go
+  directly to `UpdateSR`, including retries after an uncertain response. Successful
+  closes are checkpointed onto the task (merged into `appActionResults`, conditioned
+  on the completion lease), and confirmed closures are skipped on recovery.
+  `CreateSR` remains non-idempotent: an uncertain creation must not be blindly retried.
 - **Task compatibility:** tasks keep `type: "onsite" | "city_escalation"` alongside the
   richer `kind`/`escalationChannel`/`appActions[]` fields.
 - **In-progress issue updates:** each versioned guidance rule snapshots
@@ -248,13 +262,13 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   reuses the private artifact/S3 read path but does not enqueue analyzer work.
 - **Automatic 311 work:** task creation (including clarification answers and action
   overrides) and resolution atomically write an `SF311_OUTBOX` item with
-  the task change. DynamoDB Streams dispatches it to the background worker queue;
+  the task change. DynamoDB Streams dispatches it to the dedicated 311 queue;
   the local harness polls the same outbox. Classification, ticket creation,
   attachment uploads, and automatic closure never gate these HTTP responses.
   `SF311_LOCK#<taskId>` stores a separate expiring worker lease and durable
   integration results, so foreground task replacements cannot erase checkpoints.
   Workers merge integration fields into the latest task without replacing user
-  status or notes. Transient failures retry through SQS and its existing DLQ,
+  status or notes. Transient failures retry through the 311 queue and its DLQ,
   using 30-second exponential backoff capped at 15 minutes. Lease contention
   waits at least until the active six-minute lease expires. This per-message
   delay leaves the queue's default processing visibility timeout unchanged.
@@ -273,7 +287,10 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   acceptance; missing or unavailable evidence leaves the attachment pending for
   reconciliation instead of resending. Operators must confirm acceptance or
   non-submission before correcting the durable checkpoint and redriving the job.
-  Closure retries reconcile City state.
+  Closure retries reconcile City state. Previously dispatched submissions messages
+  stay on their original queue and remain supported by the general worker.
+  Connection failures, blocked reconciliation and terminal action failures have
+  separate alarms; see the [311 runbook](runbooks/sf311.md).
 - **Tapped 311 filing (`GNP_311_ASYNC_FILING`, on in dev, off by default):** a "File 311
   ticket" tap makes no HUB call. One transaction moves the task to `in_progress` with
   `appActionStatus: "queued"` and writes an `SF311_OUTBOX` job with phase `filed-<id>`
@@ -290,6 +307,27 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   Explicit user-confirmed filing and City-help-note actions retain their existing
   confirmation semantics. The clarification UI shows “Updating issue” only while
   saving the answer, then renders the returned issue before refreshing metadata.
+- **Site-controlled deliberate 311 delivery:** `SITE#<id>/#META` stores
+  `deliberate311ProductionEnabled`. New and imported Sites explicitly default to
+  `true`; missing values also mean enabled. Only Boolean `false` simulates a
+  user-launched filing. Automatic `task_created` notifications are unaffected.
+  Acceptance consistently reads the setting and transactionally checks it while
+  persisting `deliberate311DeliveryMode` and `deliberate311AcceptedAt` on the task;
+  async filing jobs also carry `deliveryMode`. Retries retain that decision.
+  Simulated requests bypass classifiers, City APIs and media publication, and
+  retain a stable `SIM-` reference, submission timestamp and five-minute closure
+  timestamp in their ticket result. Both status endpoints derive Open/Closed
+  from that clock, returning closure reason `1` (Resolved) at the next normal
+  refresh. No scheduled job or extra client polling is needed. Existing task
+  resolution semantics are preserved. The open-ticket ticker reads “Request
+  filed (simulated)”; all other field-app copy and behavior remain unchanged.
+  City notes and automatic closure never send synthetic references to HUB.
+  City-escalation analytics exclude simulated filings; task activity remains
+  visible and raw lake records retain provenance.
+  Supervisors change the setting through `PUT /admin/v1/sites/{siteId}/deliberate-311`
+  with optimistic version checking and an atomic audit event. Flag changes
+  affect subsequent accepted filings only. The global submission kill switch
+  remains authoritative for all integration processing.
 - Endpoints: `POST /v1/assessments:evaluate`, `GET /v1/assessments/{id}/guidance`,
   `POST /v1/assessments/{id}/conditions/{id}/answers`, `POST /v1/tasks/{id}/complete`,
   `GET /v1/tasks/{id}/details`, `PATCH /v1/tasks/{id}/action`,
@@ -393,10 +431,40 @@ origins' own 403/404 JSON responses reach the viewer untouched.
 distribution: they apply to *every* origin, so an API 403/404 would be rewritten into
 `index.html` with status 200 — the 2026-09-14 dev incident (device-token authorizer denial
 → 200/HTML → the client treated the SPA as a successful API response). The client guards
-against this class of failure (non-JSON API body → `ApiError(non_json_response)` in
+against this class of failure (non-JSON API body other than a 429 → `ApiError(non_json_response)` in
 `services/api.js`; `services/backend-health.js` probes `/health` and surfaces
 OUTAGE/AUTH states), and CI's deploy smoke check fails if an API error response arrives
 as anything but JSON.
+
+WAF rate rules return **429**, JSON, `Retry-After: 300`, and `Cache-Control: no-store`.
+The general viewer-IP ceiling is 30,000 requests per five minutes, shared by static
+assets and API requests. It is sized for up to 100 people behind one public IP,
+assuming one browser tab per person. Source-based estimates allow roughly 19,300
+requests for 100 cold Today loads, pending duplicate polling, and one prolonged
+analysis per person; the remaining budget covers variable assets and interactions.
+This is a sizing allowance, not measured backend capacity; additional tabs or repeated
+work can consume it. Direct S3 photo transfers do not use this CloudFront budget.
+Endpoint viewer-IP budgets per five minutes are 1,000 for device registration/refresh,
+100 for manager recovery, 1,000 for client errors, 5,000 for client events, and 100 for
+feedback. They share the general traffic ceiling: a higher endpoint allowance does not
+raise that ceiling. Client error reporting retains its five-reports-per-minute browser cap.
+Enrollment keeps its `code_attempts_limited` error code; other rate rules use
+`rate_limited`. Managed-security and body-size blocks retain their own responses.
+The general rate rule can match before an endpoint rule, so clients classify throttling
+by HTTP status rather than assuming a route-specific error code. The five-minute advice
+is conservative, not a guarantee of admission if traffic continues.
+
+Field and admin errors retain normalized `retryAfterMs` metadata, accepting delta seconds
+or an HTTP date. A non-JSON 429 remains throttling, not an expired session or outage.
+Health probes retain their current health state on 429 and defer further probes through
+its cooldown. Duplicate-result polling pauses all batches, including new subscriptions and
+invalidation-triggered reads, until the cooldown plus positive jitter; subscriber deadlines
+still apply. Missing retry advice uses a five-minute cooldown. Other read errors retain their
+existing behavior. Writes, enrollment, recovery-email requests, and feedback are never
+replayed automatically because of a 429. Telemetry continues to drop rejected reports.
+
+These edge responses apply to static assets too. A throttled document or script cannot
+render an in-app wait message; no CloudFront error-page mapping substitutes a success page.
 
 ## Offline capture and sync
 

@@ -1,3 +1,4 @@
+import { loadError } from "./load-error.js";
 import "./care-work.css";
 import { announceScreenHeading } from "../screen-focus.js";
 import {
@@ -232,7 +233,7 @@ export class CareWorkView extends HTMLElement {
     await render();
   }
   _loadError(retry) {
-    this.innerHTML = `${careHeader(t("care.title"))}<p role="alert">${escapeHtml(t("care.loadError"))}</p><button type="button" class="btn-outline" data-retry>${escapeHtml(t("care.retry"))}</button>`;
+    this.innerHTML = `${careHeader(t("care.title"))}${loadError(t("care.loadError"), { retryAttribute: "data-retry" })}`;
     this._bindBack("/care-work");
     this.querySelector("[data-retry]")?.addEventListener("click", retry);
   }
@@ -253,10 +254,28 @@ export class CareWorkView extends HTMLElement {
     const input = /** @type {HTMLInputElement} */ (
       this.querySelector("#care-photo-input")
     );
-    this.querySelector("[data-add-photo]")?.addEventListener("click", () => {
-      if (!draft.payload) input.click();
-    });
+    this.querySelector("[data-capture-camera]")?.addEventListener(
+      "click",
+      () => {
+        if (!draft.payload) input.click();
+      },
+    );
     input.addEventListener("change", () => this._addFiles([...input.files]));
+    const gallery = /** @type {HTMLInputElement} */ (
+      this.querySelector("#care-gallery-input")
+    );
+    this.querySelector("[data-capture-upload]").addEventListener(
+      "click",
+      () => {
+        if (draft.payload || this._busy) return;
+        gallery.value = "";
+        gallery.click();
+      },
+    );
+    gallery.addEventListener("change", () =>
+      this._addFiles([...gallery.files]),
+    );
+
     this.querySelectorAll("[data-remove]").forEach((button) =>
       button.addEventListener("click", () => {
         if (draft.payload || this._busy) return;
@@ -272,6 +291,7 @@ export class CareWorkView extends HTMLElement {
     );
   }
   _addFiles(files) {
+    if (draft.payload || this._busy || !files.length) return;
     const selected = [...draft.files.map((entry) => entry.file), ...files];
     if (
       selected.length > MAX_CARE_PHOTOS ||
@@ -328,10 +348,11 @@ export class CareWorkView extends HTMLElement {
         work.photos.map(async (photo) => {
           if (photo.expiresAt <= Date.now() / 1000) return photo;
           try {
-            return {
-              ...photo,
-              url: (await getCarePhoto(workId, photo.photoId)).downloadUrl,
-            };
+            const { downloadUrl, thumbnailUrl } = await getCarePhoto(
+              workId,
+              photo.photoId,
+            );
+            return { ...photo, url: downloadUrl, thumbnailUrl };
           } catch (error) {
             return { ...photo, unavailable: error?.status !== 410 };
           }
@@ -342,6 +363,12 @@ export class CareWorkView extends HTMLElement {
       this._bindBack("/care-work");
       this.querySelectorAll(".care-detail-photos img").forEach((image) =>
         image.addEventListener("error", () => {
+          // Fall back once, so a missing thumbnail never leaves a broken image.
+          const original = image.closest("button")?.dataset.fullSrc;
+          if (original && image.getAttribute("src") !== original) {
+            image.setAttribute("src", original);
+            return;
+          }
           image.closest("button")?.remove();
           if (!this.querySelector(".care-photo-unavailable")) {
             const message = document.createElement("p");

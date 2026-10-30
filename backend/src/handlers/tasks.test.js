@@ -1,4 +1,8 @@
-import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  BatchGetCommand,
+  GetCommand,
+  QueryCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the Document Client so the handler's read hits a spy, not AWS.
@@ -98,6 +102,36 @@ describe("listTasks", () => {
       ],
     });
 
+    send.mockResolvedValueOnce({
+      Responses: {
+        "gnp-test-app": [
+          {
+            taskId: "t-low",
+            status: "open",
+            severity: 1,
+            createdAt: "2026-08-18",
+          },
+          {
+            taskId: "t-high-old",
+            status: "open",
+            severity: 4,
+            createdAt: "2026-08-10",
+          },
+          {
+            taskId: "t-high-new",
+            status: "open",
+            severity: 4,
+            createdAt: "2026-08-15",
+          },
+          {
+            taskId: "t-mid",
+            status: "open",
+            severity: 2,
+            createdAt: "2026-08-19",
+          },
+        ],
+      },
+    });
     const res = await invoke(readEvent({ siteClaim: "site-1" }));
 
     const order = /** @type {any[]} */ (JSON.parse(res.body).tasks).map(
@@ -130,6 +164,30 @@ describe("listTasks", () => {
       ],
     });
 
+    send.mockResolvedValueOnce({
+      Responses: {
+        "gnp-test-app": [
+          {
+            taskId: "t-new-low-1",
+            status: "open",
+            severity: 1,
+            createdAt: "2026-08-19",
+          },
+          {
+            taskId: "t-new-low-2",
+            status: "open",
+            severity: 1,
+            createdAt: "2026-08-18",
+          },
+          {
+            taskId: "t-old-high",
+            status: "open",
+            severity: 5,
+            createdAt: "2026-08-01",
+          },
+        ],
+      },
+    });
     const res = await invoke(
       readEvent({ siteClaim: "site-1", query: { limit: "2" } }),
     );
@@ -149,6 +207,9 @@ describe("listTasks", () => {
         { taskId: "t1", severity: 3, createdAt: "2026-08-19T00:00:00.000Z" },
       ],
       LastEvaluatedKey: { gsi2pk: "SITE#site-1#TASK#open" },
+    });
+    send.mockResolvedValueOnce({
+      Responses: { "gnp-test-app": [{ taskId: "t1", status: "open" }] },
     });
 
     const res = await invoke(readEvent({ siteClaim: "site-1" }));
@@ -321,4 +382,191 @@ it("reads fresh simulator statuses on consecutive requests while leaving the pro
     fetchSpy.mockRestore();
     vi.unstubAllEnvs();
   }
+});
+
+describe("simulated 311 status endpoints", () => {
+  const srNum = "SIM-test";
+  const ticket = {
+    srNum,
+    deliveryMode: "simulated",
+    submittedAt: "2026-10-30T12:00:00.000Z",
+    closesAt: "2026-10-30T12:05:00.000Z",
+    closedReason: "1",
+  };
+  const task = {
+    taskId: "task-1",
+    appActionResults: [
+      {
+        code: "create_311_ticket",
+        status: "submitted",
+        payload: { tickets: [ticket] },
+      },
+    ],
+  };
+  beforeEach(() => {
+    send.mockReset().mockResolvedValue({ Item: task });
+    vi.stubEnv("DYNAMO_TABLE", "table");
+    vi.stubEnv("S3_UPLOAD_BUCKET", "bucket");
+    vi.stubEnv("SQS_QUEUE_URL", "queue");
+    vi.stubEnv(
+      "SF311_LATEST_UPDATES_URL",
+      "http://127.0.0.1:3999/latest/{agencyID}",
+    );
+    vi.stubEnv("SF311_BASIC_AUTH_USER", "local");
+    vi.stubEnv("SF311_BASIC_AUTH_PASS", "local");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-30T12:05:00.000Z"));
+  });
+  it("serves owned simulated details without the City feed", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch");
+    try {
+      const response = await /** @type {any} */ (
+        get311RequestDetail(
+          /** @type {any} */ ({
+            ...readEvent({ siteClaim: "site-1" }),
+            pathParameters: { taskId: "task-1", srNum },
+          }),
+          /** @type {any} */ ({}),
+          () => {},
+        )
+      );
+      expect(JSON.parse(response.body).request).toMatchObject({
+        status: "Closed",
+        closedReason: "1",
+        closureReason: "Resolved",
+      });
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      fetch.mockRestore();
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+    }
+  });
+  it.each([false, true])(
+    "preserves simulated batch results during a City failure (mixed=%s)",
+    async (mixed) => {
+      const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+      const failure = new TypeError("Upstream response contains private data");
+      failure.stack = `${failure.name}: ${failure.message}\n    at fetchCityStatus (sf311-status.js:42:7)`;
+      const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(failure);
+      if (mixed)
+        send.mockResolvedValueOnce({ Item: task }).mockResolvedValueOnce({
+          Item: {
+            taskId: "real",
+            appActionResults: [
+              {
+                code: "create_311_ticket",
+                payload: { tickets: [{ srNum: "REAL-1" }] },
+              },
+            ],
+          },
+        });
+      try {
+        const response = await /** @type {any} */ (
+          get311RequestDetails(
+            /** @type {any} */ ({
+              ...readEvent({ siteClaim: "site-1" }),
+              body: JSON.stringify({
+                requests: [
+                  { taskId: "task-1", srNum },
+                  ...(mixed ? [{ taskId: "real", srNum: "REAL-1" }] : []),
+                ],
+              }),
+            }),
+            /** @type {any} */ ({}),
+            () => {},
+          )
+        );
+        expect(response.statusCode).toBe(200);
+        expect(JSON.parse(response.body).requests).toMatchObject([
+          {
+            taskId: "task-1",
+            request: { status: "Closed", closedReason: "1" },
+          },
+        ]);
+        expect(fetch).toHaveBeenCalledTimes(mixed ? 1 : 0);
+        expect(logged).toHaveBeenCalledTimes(mixed ? 1 : 0);
+        if (mixed) {
+          const entry = JSON.parse(logged.mock.calls[0][0]);
+          expect(entry).toMatchObject({
+            name: "Sf311Error",
+            message: "City ticket status unavailable",
+          });
+          // Network failures are normalized at the client boundary; preserve
+          // that failure location without exposing the original fetch message.
+          expect(entry.stack).toMatch(
+            /at fetchSf311 \(.*sf311-client\.js:\d+:\d+\)/,
+          );
+          expect(logged.mock.calls[0][0]).not.toContain(failure.message);
+        }
+      } finally {
+        logged.mockRestore();
+        fetch.mockRestore();
+        vi.useRealTimers();
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+});
+
+it("filters stale open-index entries using current site-owned task rows before ranking", async () => {
+  send.mockReset();
+  process.env.DYNAMO_TABLE = "gnp-test-app";
+  send.mockResolvedValueOnce({
+    Items: [{ taskId: "done" }, { taskId: "dismissed" }, { taskId: "live" }],
+  });
+  send.mockResolvedValueOnce({
+    Responses: {
+      "gnp-test-app": [
+        { taskId: "done", status: "completed" },
+        { taskId: "dismissed", status: "superseded" },
+        { taskId: "live", status: "open" },
+      ],
+    },
+  });
+  const result = await invoke(
+    readEvent({ siteClaim: "site-1", query: { limit: "1" } }),
+  );
+  expect(
+    JSON.parse(result.body).tasks.map((/** @type {any} */ task) => task.taskId),
+  ).toEqual(["live"]);
+  expect(send.mock.calls[1][0]).toBeInstanceOf(BatchGetCommand);
+  expect(send.mock.calls[1][0].input.RequestItems["gnp-test-app"]).toEqual({
+    Keys: ["done", "dismissed", "live"].map((id) => ({
+      pk: "SITE#site-1",
+      sk: `TASK#${id}`,
+    })),
+    ConsistentRead: true,
+  });
+});
+
+it("hides a durably dismissed task even while task cleanup is awaiting a retry", async () => {
+  send.mockReset();
+  process.env.DYNAMO_TABLE = "gnp-test-app";
+  send.mockResolvedValueOnce({ Items: [{ taskId: "dismissed" }] });
+  send.mockResolvedValueOnce({
+    Responses: {
+      "gnp-test-app": [
+        {
+          taskId: "dismissed",
+          status: "open",
+          checkId: "check",
+          conditionId: "c",
+          sourceArtifactIds: ["artifact"],
+        },
+      ],
+    },
+  });
+  send.mockResolvedValueOnce({
+    Responses: {
+      "gnp-test-app": [
+        {
+          sk: "ISSUE_DELETION#check:artifact:c",
+          dismissedAt: "2026-10-29T12:00:00Z",
+        },
+      ],
+    },
+  });
+  const result = await invoke(readEvent({ siteClaim: "site-1" }));
+  expect(JSON.parse(result.body).tasks).toEqual([]);
 });

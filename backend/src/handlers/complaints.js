@@ -22,6 +22,8 @@ import {
   presignPut,
   setObjectTags,
 } from "../s3.js";
+import { downscaleImage } from "../media/downscale.js";
+import { storeThumbnail, thumbnailKeyFor } from "../media/thumbnail.js";
 import {
   complaintArtifactKey,
   complaintArtifactPrefix,
@@ -35,6 +37,12 @@ import {
   MAX_DEVICE_DAILY_BYTES,
   quotaUpdate,
 } from "./artifacts.js";
+
+import {
+  reserveUpload,
+  reservationStatus,
+  uploadUrlLifetime,
+} from "./upload-reservations.js";
 
 const sqs = new SQSClient({});
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -60,6 +68,42 @@ const UUID =
 
 const mediaKey = (siteId, complaintId, artifactId) =>
   `complaints/${siteId}/${complaintId}/${artifactId}`;
+
+// Image artifacts get a thumbnail beside the original (media/thumbnail.js).
+// Both share one lifecycle tag and are deleted together. Only a key matching
+// the original's is trusted, so a bad row can't sign or delete another object.
+const isImage = (type) => type.startsWith("image/");
+const thumbKeyOf = (artifact) =>
+  artifact.thumbS3Key && artifact.thumbS3Key === thumbnailKeyFor(artifact.s3Key)
+    ? artifact.thumbS3Key
+    : undefined;
+const mediaKeysOf = (artifact) =>
+  [artifact.s3Key, thumbKeyOf(artifact)].filter(Boolean);
+const setComplaintMediaTags = (artifact, state) =>
+  Promise.all(
+    mediaKeysOf(artifact).map((key) =>
+      setObjectTags({ bucket: getComplaintBucket(), key, tags: { state } }),
+    ),
+  );
+
+// Best effort: without a thumbnail the detail screen shows the original.
+// storeThumbnail tags it `active`; it then joins the draft original at
+// `pending`, so an abandoned draft's thumbnail expires with it.
+const storeComplaintThumbnail = async (s3Key, bytes, contentType) => {
+  let thumbS3Key;
+  try {
+    const normalized = await downscaleImage(bytes, contentType);
+    thumbS3Key = await storeThumbnail({
+      bucket: getComplaintBucket(),
+      s3Key,
+      bytes: normalized.bytes,
+    });
+    await setComplaintMediaTags({ s3Key, thumbS3Key }, "pending");
+  } catch (error) {
+    console.warn("complaint thumbnail failed", { error });
+  }
+  return thumbS3Key;
+};
 
 const params = (event) => ({
   complaintId: event.pathParameters?.complaintId,
@@ -122,72 +166,104 @@ export async function presignComplaintArtifact(event) {
     body.contentLength > maxBytesFor(body.contentType)
   )
     return jsonResponse(400, { error: "invalid_content_length" });
-  const artifactId = randomUUID();
-  const s3Key = mediaKey(siteId, complaintId, artifactId);
+  let artifactId = randomUUID();
+  let s3Key = mediaKey(siteId, complaintId, artifactId);
   const now = new Date();
   const day = now.toISOString().slice(0, 10);
   const expiresAt = Math.floor(now.getTime() / 1000) + 86400;
   const bytes = Number(body.contentLength);
   const tableName = getConfig().dynamoTable;
+  let uploadExpiresIn = 300;
   try {
-    await ddb.send(
-      new TransactWriteCommand({
-        TransactItems: [
-          {
-            Update: {
-              TableName: tableName,
-              Key: complaintKey(siteId, complaintId),
-              UpdateExpression:
-                "SET #type = if_not_exists(#type, :type), complaintId = if_not_exists(complaintId, :complaintId), #status = if_not_exists(#status, :draft), createdAt = if_not_exists(createdAt, :now), createdBy = if_not_exists(createdBy, :actor), expiresAt = :expiresAt",
-              ConditionExpression:
-                "attribute_not_exists(pk) OR #status = :draft",
-              ExpressionAttributeNames: {
-                "#type": "type",
-                "#status": "status",
-              },
-              ExpressionAttributeValues: {
-                ":type": "complaint",
-                ":complaintId": complaintId,
-                ":draft": "draft",
-                ":now": now.toISOString(),
-                ":actor": deriveActorId(event),
-                ":expiresAt": expiresAt,
-              },
-            },
+    const writes = [
+      {
+        Update: {
+          TableName: tableName,
+          Key: complaintKey(siteId, complaintId),
+          UpdateExpression:
+            "SET #type = if_not_exists(#type, :type), complaintId = if_not_exists(complaintId, :complaintId), #status = if_not_exists(#status, :draft), createdAt = if_not_exists(createdAt, :now), createdBy = if_not_exists(createdBy, :actor), expiresAt = :expiresAt",
+          ConditionExpression: "attribute_not_exists(pk) OR #status = :draft",
+          ExpressionAttributeNames: {
+            "#type": "type",
+            "#status": "status",
           },
-          quotaUpdate({
-            tableName,
-            key: {
-              pk: sitePk(siteId),
-              sk: `MEDIA_QUOTA#${day}#COMPLAINT#${complaintId}`,
-            },
-            bytes,
-            maxBytes: MAX_TOTAL_BYTES,
-            countField: "reservedCount",
-            maxCount: MAX_FILES,
-            expiresAt,
-          }),
-          quotaUpdate({
-            tableName,
-            key: {
-              pk: sitePk(siteId),
-              sk: `MEDIA_QUOTA#${day}#DEVICE#${deriveActorId(event)}`,
-            },
-            bytes,
-            maxBytes: MAX_DEVICE_DAILY_BYTES,
-            countField: "reservedCount",
-            maxCount: MAX_DEVICE_DAILY_ARTIFACTS,
-            expiresAt,
-          }),
-        ],
+          ExpressionAttributeValues: {
+            ":type": "complaint",
+            ":complaintId": complaintId,
+            ":draft": "draft",
+            ":now": now.toISOString(),
+            ":actor": deriveActorId(event),
+            ":expiresAt": expiresAt,
+          },
+        },
+      },
+      quotaUpdate({
+        tableName,
+        key: {
+          pk: sitePk(siteId),
+          sk: `MEDIA_QUOTA#${day}#COMPLAINT#${complaintId}`,
+        },
+        bytes,
+        maxBytes: MAX_TOTAL_BYTES,
+        countField: "reservedCount",
+        maxCount: MAX_FILES,
+        expiresAt,
       }),
-    );
+      quotaUpdate({
+        tableName,
+        key: {
+          pk: sitePk(siteId),
+          sk: `MEDIA_QUOTA#${day}#DEVICE#${deriveActorId(event)}`,
+        },
+        bytes,
+        maxBytes: MAX_DEVICE_DAILY_BYTES,
+        countField: "reservedCount",
+        maxCount: MAX_DEVICE_DAILY_ARTIFACTS,
+        expiresAt,
+      }),
+    ];
+    const reservation = await reserveUpload({
+      requestId: body.uploadRequestId,
+      tableName,
+      writes,
+      reservation: {
+        pk: sitePk(siteId),
+        kind: "complaint",
+        parentId: complaintId,
+        createdBy: deriveActorId(event),
+        artifactId,
+        s3Key,
+        contentType: body.contentType,
+        contentLength: bytes,
+        createdAt: now.toISOString(),
+      },
+      parentGuard: {
+        ConditionCheck: {
+          TableName: tableName,
+          Key: complaintKey(siteId, complaintId),
+          ConditionExpression: "attribute_exists(pk) AND #status = :draft",
+          ExpressionAttributeNames: { "#status": "status" },
+          ExpressionAttributeValues: { ":draft": "draft" },
+        },
+      },
+    });
+    ({ artifactId, s3Key } = reservation);
+    uploadExpiresIn = uploadUrlLifetime(reservation);
   } catch (error) {
+    const status = reservationStatus(error);
+    if (status) return jsonResponse(status, { error: error.code });
     if (
       error?.name === "TransactionCanceledException" ||
       error?.name === "ConditionalCheckFailedException"
-    )
-      return jsonResponse(429, { error: "media_quota_exceeded" });
+    ) {
+      const quotaFailed = [1, 2].some(
+        (index) =>
+          error.CancellationReasons?.[index]?.Code === "ConditionalCheckFailed",
+      );
+      return quotaFailed
+        ? jsonResponse(429, { error: "media_quota_exceeded" })
+        : jsonResponse(409, { error: "upload_reservation_conflict" });
+    }
     throw error;
   }
   const uploadUrl = await presignPut({
@@ -196,14 +272,14 @@ export async function presignComplaintArtifact(event) {
     contentType: body.contentType,
     contentLength: body.contentLength,
     tagging: "state=pending",
-    expiresIn: 300,
+    expiresIn: uploadExpiresIn,
   });
   return jsonResponse(200, {
     artifactId,
     s3Key,
     uploadUrl,
     uploadHeaders: { "content-type": body.contentType, "if-none-match": "*" },
-    expiresIn: 300,
+    expiresIn: uploadExpiresIn,
   });
 }
 
@@ -246,12 +322,16 @@ export async function registerComplaintArtifact(event) {
     signatureValid = false;
   }
   if (!signatureValid) return jsonResponse(400, { error: "invalid_media" });
+  const thumbS3Key = isImage(body.contentType)
+    ? await storeComplaintThumbnail(expected, object.bytes, body.contentType)
+    : undefined;
   const item = {
     ...complaintArtifactKey(siteId, complaintId, body.artifactId),
     type: "complaintArtifact",
     complaintId,
     artifactId: body.artifactId,
     s3Key: expected,
+    ...(thumbS3Key ? { thumbS3Key } : {}),
     name: body.name.slice(0, 255),
     contentType: body.contentType,
     contentLength: body.contentLength,
@@ -357,13 +437,7 @@ export async function createComplaint(event) {
   // following transaction then publishes the header and extends every row's
   // retention atomically, so no pre-enqueue failure can strand `analyzing`.
   await Promise.all(
-    artifacts.map((artifact) =>
-      setObjectTags({
-        bucket: getComplaintBucket(),
-        key: artifact.s3Key,
-        tags: { state: "complaint" },
-      }),
-    ),
+    artifacts.map((artifact) => setComplaintMediaTags(artifact, "complaint")),
   );
   try {
     await ddb.send(
@@ -501,7 +575,7 @@ export async function getComplaint(event) {
   return jsonResponse(200, {
     complaint: header.Item,
     artifacts: artifacts.map((item) =>
-      withoutFields(item, ["s3Key", "pk", "sk"]),
+      withoutFields(item, ["s3Key", "thumbS3Key", "pk", "sk"]),
     ),
   });
 }
@@ -611,9 +685,9 @@ export async function deleteComplaint(event) {
   }
   const artifacts = await readArtifacts(siteId, complaintId);
   await Promise.all(
-    artifacts.map((a) =>
-      deleteObject({ bucket: getComplaintBucket(), key: a.s3Key }),
-    ),
+    artifacts
+      .flatMap(mediaKeysOf)
+      .map((key) => deleteObject({ bucket: getComplaintBucket(), key })),
   );
   await Promise.all([
     ...artifacts.map((a) =>
@@ -687,10 +761,11 @@ export async function deleteComplaintArtifact(event) {
       throw error;
     }
   }
-  await deleteObject({
-    bucket: getComplaintBucket(),
-    key: item.Item.s3Key,
-  });
+  await Promise.all(
+    mediaKeysOf(item.Item).map((key) =>
+      deleteObject({ bucket: getComplaintBucket(), key }),
+    ),
+  );
   try {
     await ddb.send(
       new TransactWriteCommand({
@@ -749,12 +824,12 @@ export async function presignComplaintMedia(event) {
   if (!header.Item || header.Item.status === "deleting")
     return jsonResponse(404, { error: "complaint_not_found" });
   if (!item.Item) return jsonResponse(404, { error: "artifact_not_found" });
-  return jsonResponse(200, {
-    downloadUrl: await presignGet({
-      bucket: getComplaintBucket(),
-      key: item.Item.s3Key,
-      expiresIn: 300,
-    }),
-    expiresIn: 300,
-  });
+  const sign = (key) =>
+    presignGet({ bucket: getComplaintBucket(), key, expiresIn: 300 });
+  const thumbKey = thumbKeyOf(item.Item);
+  const [downloadUrl, thumbnailUrl] = await Promise.all([
+    sign(item.Item.s3Key),
+    thumbKey ? sign(thumbKey).catch(() => undefined) : undefined,
+  ]);
+  return jsonResponse(200, { downloadUrl, thumbnailUrl, expiresIn: 300 });
 }

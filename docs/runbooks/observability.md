@@ -9,21 +9,100 @@ reporting and trails live data by about 6 hours.
 
 ## Who gets paged
 
-Both SNS topics subscribe the same `alarm_emails` list, set per environment in
+### Notification groups
+
+The shared app module configures both dev and prod:
+
+- `api-incident` combines gateway 5xx and API/authorizer Lambda error/throttle
+  alarms with OR. Child thresholds and evaluation periods stay unchanged; only
+  the composite sends ALARM/OK notifications. Further child transitions during
+  an active incident remain visible in CloudWatch without another email.
+- `server-errors` remains independently actionable: its metric combines API,
+  intake, analysis and background-worker errors. It can overlap an API incident;
+  removing it would lose aggregate coverage across those functions.
+- PostHog forwarding starts with its existing one-period alarms and direct
+  ALARM/OK notifications. `posthog_digest_route_confirmed` defaults to false in
+  each environment. After forwarding and digest receipt are verified as described
+  below, set it to true through CI to use two of three five-minute periods and
+  digest-only notifications. Count thresholds remain unchanged. Duplicate
+  candidate/worker warnings also feed the daily digest.
+- At 16:00 UTC daily, `warning-digest` summarizes the previous completed UTC day
+  of failure attempts and the current duplicate backlog/DLQ alarm states. It sends
+  to the main alarm topic only when warnings or unresolved queue alarms exist.
+  Retries count as attempts, not unique incidents. Missing observations do not
+  prove health. Scheduler/SNS retries may repeat a digest. Its Lambda error alarm
+  reports failed digest generation or publishing; separate alarms report Lambda
+  throttles, terminal EventBridge delivery failures, `AsyncEventsDropped`, and
+  `DeadLetterErrors`. Dropped-event and DLQ-delivery failure metrics notify even
+  when no message reaches the DLQ. These are failure signals,
+  not a heartbeat: a disabled rule or missing telemetry needs schedule/invocation
+  inspection. Exhausted Lambda retries go to the encrypted `warning-digest-dlq`
+  with an immediate nonempty-queue alarm. It retains failed schedule events for
+  14 days; inspect logs and prior SNS acceptance before replaying to avoid
+  duplicate emails. Digest logs retain one year. Inbox receipt still needs verification.
+- Duplicate backlog and dead letters notify immediately through the separate
+  encrypted `<prefix>-duplicate-alarms` topic. The same environment recipients
+  must confirm its additional email subscription. During rollout, the original
+  topic remains a fallback (`duplicate_alarm_route_confirmed = false`). After
+  verifying the new subscriptions and actual receipt, set that variable to true
+  in the environment configuration through CI. Until cutover, confirmed recipients
+  can receive an alert from both topics. Assign an incident owner;
+  daily digest reminders continue while queue alarms are unresolved.
+- Feedback arrivals keep their metrics and storage in PostHog Surveys, with no
+  operational arrival/recovery emails. Feedback-forwarding failures retain their
+  immediate failure coverage.
+
+Before CI deployment removes child actions, review the plan's composite membership
+and digest resources. After deployment, verify subscription confirmation, child and
+composite states, scheduled invocations, and an actual digest receipt during an
+agreed test window. Never manufacture a service failure to test routing.
+
+### PostHog digest cutover gate
+
+Keep `posthog_digest_route_confirmed = false` independently in dev and prod until
+all of the following have non-sensitive evidence recorded in the rollout issue or
+PR. The digest is already scheduled while the fallback remains active, so its
+receipt can be tested before suppressing direct forwarding alerts.
+
+1. Verify the AWS account/environment and the deployed intake configuration.
+   Confirm the PostHog host and secret reference are intended without printing
+   secret values. Both forwarders must use their PostHog-only configuration path;
+   the historical missing-upload-bucket failure must not recur under observed traffic.
+2. Verify successful event forwarding **and** client-error forwarding under recent
+   traffic or an agreed synthetic test. Confirm receipt in PostHog; a quiet alarm
+   or a successful unrelated forwarding path is insufficient. Do not generate a
+   real application failure to test error forwarding.
+3. Confirm the main SNS topic subscriptions and receipt of a real scheduled digest
+   containing known warning counts. Record the environment, verification window,
+   markers/counts, receipt acknowledgment and remaining limitations. AWS publish
+   success alone is insufficient. Do not attach raw logs, private events or secrets.
+4. Review the environment's CI plan, set the gate to true through the reviewed
+   configuration, and verify final routing after apply. If either forwarding or
+   digest delivery is unproven, retain the false default and its original direct
+   notifications. Reverting the gate restores those notifications and sensitivity.
+
+The analyzer is managed in the separate `street-conditions-analysis` repository.
+An active `HealthMissingRun` with no action is a monitoring gap until its owner
+confirms whether the scheduled check is still intended. Check the schedule,
+invocation history, health metric dimensions and responder before wiring actions
+or retiring that check through the analyzer's deployment pipeline. Resolution is
+tracked in [analyzer issue #61](https://github.com/Mayor-s-Office-of-Innovation/street-conditions-analysis/issues/61); app response ownership below does not establish analyzer ownership.
+
+The two core regional SNS topics subscribe the same `alarm_emails` list, set per environment in
 `infra/environments/<env>/variables.tf` and passed through `main.tf`. Every address gets one confirmation email **per
 topic** (two in total) and is silent until confirmed.
 
-| Topic | Region | Why it exists |
-|---|---|---|
-| `good-neighbor-app-<env>-alarms` | us-west-2 | every code-marker alarm (`alarms.tf`) and every platform alarm (`platform-alarms.tf`) |
+| Topic                                      | Region    | Why it exists                                                                              |
+| ------------------------------------------ | --------- | ------------------------------------------------------------------------------------------ |
+| `good-neighbor-app-<env>-alarms`           | us-west-2 | immediate core-service alarms, API incident composite, and daily warning digests      |
 | `good-neighbor-app-<env>-alarms-us-east-1` | us-east-1 | metrics that only exist there: the Route53 uptime check and the CloudFront-scoped WAF rule |
 
 Production response ownership is:
 
-| Responsibility | Responder |
-|---|---|
-| Primary: acknowledge, diagnose, coordinate recovery | `aaron.hans@sf.gov` |
-| Secondary: cover the primary and assist recovery | `beaudry.kock@sfgov.org` |
+| Responsibility                                      | Responder                |
+| --------------------------------------------------- | ------------------------ |
+| Primary: acknowledge, diagnose, coordinate recovery | `aaron.hans@sf.gov`      |
+| Secondary: cover the primary and assist recovery    | `beaudry.kock@sfgov.org` |
 
 SNS emails both people simultaneously. It does not wait for the primary, track
 acknowledgment, or escalate automatically. Record the incident owner and
@@ -105,16 +184,25 @@ alarm-status widget, which is same-region only; their metrics are the bottom row
 
 ## Platform alarms (`infra/modules/app/platform-alarms.tf`)
 
-| Alarm | Fires when | Look first |
-|---|---|---|
-| `submissions-dlq-not-empty` | ≥ 1 message in the dead-letter queue | SQS console → DLQ → poll a message (ids only, never media) → worker log group, `level = "ERROR"` around that time. Fix, then **Start DLQ redrive** on the queue. |
-| `submissions-queue-backlog` | oldest queued message > 10 min, 2 periods | `AnalyzerLatencyMs` p95 (slow analyzer) or `worker-lambda-errors` (redelivery churn). |
-| `<fn>-lambda-errors` | invocation errors on api / worker / authorizer / intake | the function's log group: `Task timed out`, `Runtime exited`, or a `level = "ERROR"` line. |
-| `<fn>-lambda-throttles` | any throttle on api / authorizer / worker | api: reservation is 10 in `lambda.tf`. worker: the event-source cap should make this impossible. |
-| `worker-duration-high` | worker p95 > 4 min (timeout 5 min) | analyzer latency; a timeout is the next step. |
-| `api-5xx` | > 5 gateway 5xx in 5 min | `api_gw` access-log group: filter `status >= 500`, read `integrationErr`. |
-| `dynamodb-throttles` | any read/write throttle on the app table | a hot `SITE#` partition; Contributor Insights or the api logs at that minute. |
-| `app-health-check` | `/health` unreachable from Route53 for 3 min (missing data counts) | CloudFront → API Gateway → api Lambda, in that order. |
+| Alarm                       | Fires when                                                         | Look first                                                                                                                                                       |
+| --------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `submissions-dlq-not-empty` | ≥ 1 message in the dead-letter queue                               | Inspect worker logs and job state, then follow [controlled recovery](recovery.md). Old 311 messages can remain here; console polling is not read-only. |
+| `submissions-queue-backlog` | oldest queued message > 10 min, 2 periods                          | `AnalyzerLatencyMs` p95 (slow analyzer) or `worker-lambda-errors` (redelivery churn).                                                                            |
+| `<fn>-lambda-errors`        | invocation errors on api / worker / authorizer / intake            | the function's log group: `Task timed out`, `Runtime exited`, or a `level = "ERROR"` line.                                                                       |
+| `<fn>-lambda-throttles`     | any throttle on api / authorizer / worker                          | api: reservation is 10 in `lambda.tf`. worker: the event-source cap should make this impossible.                                                                 |
+| `worker-duration-high`      | worker p95 > 4 min (timeout 5 min)                                 | analyzer latency; a timeout is the next step.                                                                                                                    |
+| `api-5xx`                   | > 5 gateway 5xx in 5 min                                           | `api_gw` access-log group: filter `status >= 500`, read `integrationErr`.                                                                                        |
+| `dynamodb-throttles`        | any read/write throttle on the app table                           | a hot `SITE#` partition; Contributor Insights or the api logs at that minute.                                                                                    |
+| `app-health-check`          | `/health` unreachable from Route53 for 3 min (missing data counts) | CloudFront → API Gateway → api Lambda, in that order.                                                                                                            |
+
+## 311 alarms and metrics
+
+[The 311 runbook](sf311.md) defines the dedicated queue/DLQ, connection,
+reconciliation and terminal-action alarms, including inline calls and legacy
+jobs. The alarm-status widget includes the new alarms; the fault-events chart
+uses five-minute EMF sums from `-app`. Counts represent events, not unique jobs
+or an unresolved backlog. Known handled 311 errors are excluded from generic
+`ServerError`; uncaught API and platform errors remain monitored.
 
 ## Business metrics (namespace `good-neighbor-app-<env>-app`)
 
@@ -124,17 +212,19 @@ the "which check" question the metric cannot. Dimensions are deliberately few:
 `Kind` (`photo` | `text`), `FlowType` (`perimeter` | `single-problem`),
 `EvidenceKind` (`photos` | `description` | `mixed` | `none`).
 
-| Metric | Dimensions | Emitted by | Meaning |
-|---|---|---|---|
-| `CheckStarted` | FlowType | `handlers/checks.js` createCheck | a new check header was written (idempotent replays do not count) |
-| `CheckCompleted` | FlowType; FlowType + EvidenceKind | `handlers/checks.js` completeCheck | the once-only closing write succeeded. Props: grade, issueCount, maxSeverity |
-| `CheckPhotoCount`, `CheckTextCount` | same as CheckCompleted | completeCheck | evidence counts of completed checks (Sum ÷ CheckCompleted = average evidence per check) |
-| `AnalysisCompleted` | Kind | `workers/analyze-artifact.js` | an ANALYSIS# item was stored for the first time |
-| `AnalyzerLatencyMs` | Kind | analyze worker | wall-clock of one analyzer call, **every outcome** (so p95 includes slow failures) |
-| `AnalysisFailed` | Kind | analyze worker `markFailed` | permanent failure recorded (analyzer 4xx, media rejected, unsupported type). Prop `reason` |
-| `AnalysisRetried` | Kind | analyze worker | transient analyzer failure; the message redelivers. Prop `reason` |
-| `AnalysisDuplicate` | Kind | analyze worker | a redelivered message found the analysis already stored |
-| `ThumbnailFailed` | Kind | analyze worker | the card thumbnail could not be stored (`reason: store`) or recorded on the ART# row (`reason: record`); the card keeps using the original. Props `reason`, `error` (SDK error name). Not an analysis failure |
+| Metric                              | Dimensions                        | Emitted by                                     | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ----------------------------------- | --------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CheckStarted`                      | FlowType                          | `handlers/checks.js` createCheck               | a new check header was written (idempotent replays do not count)                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `CheckCompleted`                    | FlowType; FlowType + EvidenceKind | `handlers/checks.js` completeCheck             | the once-only closing write succeeded. Props: grade, issueCount, maxSeverity                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `CheckPhotoCount`, `CheckTextCount` | same as CheckCompleted            | completeCheck                                  | evidence counts of completed checks (Sum ÷ CheckCompleted = average evidence per check)                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `AnalysisCompleted`                 | Kind                              | `workers/analyze-artifact.js`                  | an ANALYSIS# item was stored for the first time                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `AnalyzerLatencyMs`                 | Kind                              | analyze worker                                 | wall-clock of one analyzer call, **every outcome** (so p95 includes slow failures)                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `AnalysisFailed`                    | Kind                              | analyze worker `markFailed`                    | permanent failure recorded (analyzer 4xx, media rejected, unsupported type). Prop `reason`                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `AnalysisRetried`                   | Kind                              | analyze worker                                 | transient analyzer failure; the message redelivers. Prop `reason`                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `AnalysisDuplicate`                 | Kind                              | analyze worker                                 | a redelivered message found the analysis already stored                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `ThumbnailFailed`                   | Kind                              | analyze worker                                 | the card thumbnail could not be stored (`reason: store`) or recorded on the ART# row (`reason: record`); the card keeps using the original. Props `reason`, `error` (SDK error name). Not an analysis failure                                                                                                                                                                                                                                                                                                    |
+| `LocationFallbackToSite`            | —                                 | `analysis/guidance/app-actions.js`             | a 311 filing used the site's point because the task had no photo position. Props `siteId`, `taskId`, `checkId`                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `LateLocationAfterFiling`           | —                                 | `handlers/artifacts.js` updateArtifactLocation | a photo's late GPS fix arrived after its task was queued or filed for 311. Prop `filing`: `submitted` means the ticket kept the earlier point; `queued` means it may still get the fix, if the filing job reads the photo after this. Props `siteId`, `checkId`, `artifactId`, `taskId`. A task can be counted once per improving fix, so count distinct `taskId`. Expected near zero; if it shows up, late locations are a real problem and 311 tickets need a way to take a location that arrives after filing |
 
 Useful ratios (metric math): failure rate `AnalysisFailed / (AnalysisCompleted +
 AnalysisFailed)`; completion rate `CheckCompleted / CheckStarted`.
@@ -149,6 +239,56 @@ fields @timestamp, marker, Kind, AnalyzerLatencyMs, reason, checkId, artifactId,
 
 Local dev and tests print the same lines without the `_aws` envelope
 (`METRICS_NAMESPACE` unset), so nothing is ingested as a metric outside AWS.
+
+## CloudWatch Omni (`infra/modules/app/omni.tf`)
+
+Omni is AWS's web front end on the CloudWatch data this app already produces:
+plain-language queries across the Lambda and API Gateway log groups, service
+discovery, alerts to Slack or SNS, and shared investigation threads. It adds
+nothing to ingestion and changes nothing about the alarms, dashboard, or
+Logs Insights queries above. It is enabled per environment with
+`enable_cloudwatch_omni` (dev on, prod off).
+
+**Scope.** The AWS account hosts other applications, and Omni is scoped to an
+account and Region (one space, one Dataset integration). Isolation is in IAM:
+
+- `aws_iam_role.omni_forwarding` names each of this module's log groups in its
+  `logs:IntegrateWithDataset` statement. Only those forward into Omni. Adding a
+  Lambda means adding its log group to `local.omni_forwarded_log_group_arns`,
+  the same way new functions must be added to the alarm maps.
+- `aws_iam_role.omni_space_access` carries only `CloudWatchOmniSpaceAccessPolicy`.
+  The Context Graph policy is deliberately not attached; it inventories every
+  resource in the account.
+- Metrics are read straight from CloudWatch Metrics and cannot be narrowed per
+  namespace, so a space member can browse other applications' metrics.
+  Membership is therefore the control: grants live in `cloudwatch_omni_members`.
+
+**Signing in.** Sign in to the account the usual way (Identity Center, the
+PowerUserAccess permission set) and open CloudWatch → Omni → the space; the
+domain URL is also the `cloudwatch_omni_sign_in_url` output. That SSO sign-in
+is a shared IAM role named `AWSReservedSSO_PowerUserAccess_<hash>`, and the
+header shows it as `name / PowerUserAccess / <account id>`. Terraform looks the
+role up by permission-set name (`cloudwatch_omni_sso_permission_sets`) and
+grants it, so everyone who holds the set in that account can open the space.
+Grants for a single IAM role or user go in `cloudwatch_omni_members`. The CI
+deploy role is the first Space Admin automatically. Connecting the Identity
+Center instance itself to the domain (`cloudwatch_omni_identity_center_instance_arn`)
+is optional and needs the instance in the same Region as the domain; it is not
+required for SSO users to sign in.
+
+**Known limits, as of 2026-10-29.**
+
+- The first enablement backfills up to 7 days of logs, but not from log groups
+  encrypted with a customer managed key. All of ours are, so expect the space
+  to start empty and fill from the moment forwarding begins. Confirm forwarding
+  of KMS-encrypted log groups in dev before relying on it.
+- Omni alerts are a separate system from the CloudWatch alarms in this runbook
+  and do not appear in the console alarm list. Keep paging on the Terraform
+  alarms; use Omni alerts for exploration only until a decision is made.
+- The domain and space are created through a small CloudFormation stack
+  (`aws_cloudformation_stack.omni`) rather than the provider's Omni resources,
+  because only the CloudFormation types accept the CCSF tags today. Everything
+  else in the file is plain Terraform with `var.tags`.
 
 ## Verifying after a deploy
 

@@ -28,6 +28,16 @@ output "submission_queue_url" {
   value       = aws_sqs_queue.submissions.url
 }
 
+output "sf311_queue_url" {
+  description = "Dedicated queue for 311 filing and closure jobs."
+  value       = aws_sqs_queue.sf311.url
+}
+
+output "sf311_dlq_url" {
+  description = "311 jobs that exhausted queue retries."
+  value       = aws_sqs_queue.sf311_dlq.url
+}
+
 output "dynamodb_table_name" {
   description = "Single-table DynamoDB store name (DYNAMO_TABLE)."
   value       = aws_dynamodb_table.app.name
@@ -111,4 +121,14 @@ output "mail_manager_ingress_username" {
 output "duplicate_analyzer_key_secret_arn" {
   description = "Container for the separate comparison key, provisioned out-of-band."
   value       = aws_secretsmanager_secret.duplicate_analyzer_key.arn
+}
+
+output "cloudwatch_omni_sign_in_url" {
+  description = "CloudWatch Omni domain sign-in URL; null until enable_cloudwatch_omni is set."
+  value       = var.enable_cloudwatch_omni ? aws_cloudformation_stack.omni[0].outputs["DomainEndpointUrl"] : null
+}
+
+output "cloudwatch_omni_space_id" {
+  description = "CloudWatch Omni space id for this environment; null until enable_cloudwatch_omni is set."
+  value       = var.enable_cloudwatch_omni ? aws_cloudformation_stack.omni[0].outputs["SpaceId"] : null
 }

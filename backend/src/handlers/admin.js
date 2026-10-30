@@ -426,6 +426,7 @@ export const createSite = (event) =>
       sk: "#META",
       type: "site",
       entityType: "SITE",
+      deliberate311ProductionEnabled: true,
       siteId,
       name,
       address,
@@ -626,6 +627,7 @@ export const getAdminSite = (event) =>
     const prefixes = {
       details: ["ASSIGNED_USER#", "MANAGER_MEMBERSHIP#", "COMPLIANCE_MANAGER#"],
       oversight: ["COMPLIANCE_MANAGER#"],
+      settings: [],
       access: ["ASSIGNED_USER#", "MANAGER_MEMBERSHIP#", "COMPLIANCE_MANAGER#"],
       compliance: [
         "ASSIGNED_USER#",

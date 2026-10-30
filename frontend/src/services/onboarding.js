@@ -1,3 +1,5 @@
+import { connectionFetch } from "./backend-health.js";
+import { parseRetryAfter } from "../lib/retry-after.js";
 /*
   Site-code login client. The backend owns whether a code exists, is active, and
   which provider site it binds to; the frontend only formats the prompt and stores
@@ -23,7 +25,7 @@ const BASE = /** @type {any} */ (import.meta).env?.VITE_API_BASE ?? "";
 /**
  * Validate a setup code against the backend.
  * @param {string} code
- * @returns {Promise<{ok:true, code:string, providerSite:ProviderSite, enrollment?:false} | {ok:true, code:string, enrollment:true} | {ok:false, reason:'empty'|'invalid'|'network'|'limited'}>}
+ * @returns {Promise<{ok:true, code:string, providerSite:ProviderSite, enrollment?:false} | {ok:true, code:string, enrollment:true} | {ok:false, reason:'empty'|'invalid'|'network'|'limited', retryAfterMs?:number}>}
  */
 export async function validateSetupCode(code) {
   const formatted = formatSiteCode(code);
@@ -33,7 +35,7 @@ export async function validateSetupCode(code) {
 
   let response;
   try {
-    response = await fetch(`${BASE}/site-code`, {
+    response = await connectionFetch(`${BASE}/site-code`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ code: formatted }),
@@ -42,7 +44,16 @@ export async function validateSetupCode(code) {
     return { ok: false, reason: "network" };
   }
 
-  if (response.status === 429) return { ok: false, reason: "limited" };
+  if (response.status === 429) {
+    const retryAfterMs = parseRetryAfter(
+      response.headers?.get?.("retry-after"),
+    );
+    return {
+      ok: false,
+      reason: "limited",
+      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+    };
+  }
   if (response.status === 401 || response.status === 404) {
     return { ok: false, reason: "invalid" };
   }
@@ -84,7 +95,7 @@ export async function searchSites(query) {
 
   let response;
   try {
-    response = await fetch(
+    response = await connectionFetch(
       `${BASE}/v1/sites:search?q=${encodeURIComponent(q)}`,
     );
   } catch {
@@ -102,7 +113,7 @@ export async function searchSites(query) {
 /**
  * Request a setup code email for an approved site contact.
  * @param {{ siteId: string, email: string }} request
- * @returns {Promise<{ok:true, message:string} | {ok:false, reason:'invalid'|'network'}>}
+ * @returns {Promise<{ok:true, message:string} | {ok:false, reason:'invalid'|'network'|'limited', retryAfterMs?:number}>}
  */
 export async function requestSetupCode({ siteId, email }) {
   if (!siteId || !isPlausibleEmail(email)) {
@@ -111,7 +122,7 @@ export async function requestSetupCode({ siteId, email }) {
 
   let response;
   try {
-    response = await fetch(`${BASE}/v1/setup-codes:request`, {
+    response = await connectionFetch(`${BASE}/v1/setup-codes:request`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ siteId, email }),
@@ -120,6 +131,16 @@ export async function requestSetupCode({ siteId, email }) {
     return { ok: false, reason: "network" };
   }
 
+  if (response.status === 429) {
+    const retryAfterMs = parseRetryAfter(
+      response.headers?.get?.("retry-after"),
+    );
+    return {
+      ok: false,
+      reason: "limited",
+      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+    };
+  }
   if (response.status === 400) return { ok: false, reason: "invalid" };
   if (!response.ok) return { ok: false, reason: "network" };
   const data = await response.json().catch(() => null);
@@ -135,19 +156,29 @@ export async function requestSetupCode({ siteId, email }) {
 /**
  * Request Site Manager enrollment links without revealing membership state.
  * @param {string} email
- * @returns {Promise<{ok:true, message:string} | {ok:false, reason:'invalid'|'network'}>}
+ * @returns {Promise<{ok:true, message:string} | {ok:false, reason:'invalid'|'network'|'limited', retryAfterMs?:number}>}
  */
 export async function requestManagerAccess(email) {
   if (!isPlausibleEmail(email)) return { ok: false, reason: "invalid" };
   let response;
   try {
-    response = await fetch(`${BASE}/app/v1/manager-access/request`, {
+    response = await connectionFetch(`${BASE}/app/v1/manager-access/request`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email: String(email).trim() }),
     });
   } catch {
     return { ok: false, reason: "network" };
+  }
+  if (response.status === 429) {
+    const retryAfterMs = parseRetryAfter(
+      response.headers?.get?.("retry-after"),
+    );
+    return {
+      ok: false,
+      reason: "limited",
+      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+    };
   }
   if (response.status === 400) return { ok: false, reason: "invalid" };
   if (!response.ok) return { ok: false, reason: "network" };

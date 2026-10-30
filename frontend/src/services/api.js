@@ -1,3 +1,11 @@
+import {
+  connectionFetch,
+  connectionFailed,
+  connectionSucceeded,
+  connectionTarget,
+} from "./backend-health.js";
+import { parseRetryAfter } from "../lib/retry-after.js";
+import { observePhotoStage, photoAttemptId } from "./photo-telemetry.js";
 import { clearTaskStatusOverrides } from "../state/task-status-overrides.js";
 import { invalidateDuplicateIssues } from "./duplicate-invalidation.js";
 /*
@@ -16,6 +24,8 @@ import { invalidateDuplicateIssues } from "./duplicate-invalidation.js";
     - media bytes go straight to S3 via a presigned PUT — they never transit this API.
 */
 
+import { reserveMediaUpload } from "./upload-reservation.js";
+import { contentTypeFor } from "../domain/attachment-files.js";
 import { pollCheck } from "./check-polling.js";
 import { mark, span } from "./instrument.js";
 import { getSite, updateSiteSession, prepareRefreshAttempt } from "../db.js";
@@ -371,7 +381,7 @@ async function requestOnce(
   /** @type {Response} */
   let res;
   try {
-    res = await fetch(`${BASE}${path}`, {
+    res = await connectionFetch(`${BASE}${path}`, {
       method,
       headers: {
         ...(hasBody ? { "content-type": "application/json" } : {}),
@@ -401,21 +411,27 @@ async function requestOnce(
     try {
       parsed = JSON.parse(text);
     } catch {
-      // Non-JSON from a JSON API means an intermediary rewrote the response
-      // (e.g. a CDN error page served as 200) — a transport-grade failure,
-      // never a usable body. Empty body stays legal (204s exist).
-      const nonJson = new ApiError(
-        `Non-JSON response from ${method} ${path} (status ${res.status})`,
-        { status: res.status, body: { code: "non_json_response" } },
-      );
-      mark("api:non-json", { method, path, status: res.status });
-      reportClientEvent(
-        "non_json_response",
-        `Non-JSON ${res.status} from ${method} ${path}`,
-        { status: res.status },
-      );
-      classifyApiFailure(nonJson);
-      throw nonJson;
+      if (res.status === 429) {
+        // A throttling status remains throttling when an intermediary supplies
+        // HTML. Other non-JSON responses retain the outage integrity checks.
+        parsed = { error: "rate_limited" };
+      } else {
+        // Non-JSON from a JSON API means an intermediary rewrote the response
+        // (e.g. a CDN error page served as 200) — a transport-grade failure,
+        // never a usable body. Empty body stays legal (204s exist).
+        const nonJson = new ApiError(
+          `Non-JSON response from ${method} ${path} (status ${res.status})`,
+          { status: res.status, body: { code: "non_json_response" } },
+        );
+        mark("api:non-json", { method, path, status: res.status });
+        reportClientEvent(
+          "non_json_response",
+          `Non-JSON ${res.status} from ${method} ${path}`,
+          { status: res.status },
+        );
+        classifyApiFailure(nonJson);
+        throw nonJson;
+      }
     }
   }
 
@@ -483,6 +499,7 @@ async function requestOnce(
       {
         status: res.status,
         body: parsed,
+        retryAfterMs: parseRetryAfter(res.headers?.get?.("retry-after")),
       },
     );
     // Feed the health state machine (backend-health.js): 403 → AUTH, 0 →
@@ -491,6 +508,27 @@ async function requestOnce(
     classifyApiFailure(apiError);
     throw apiError;
   }
+  // These successful writes can change evidence, guidance or the original task
+  // embedded in a duplicate result. Invalidate the whole site because a cached
+  // original may be reached through an intermediate link. Reads never invalidate.
+  // Separation notifies after clearing local status overrides in its wrapper.
+  if (
+    method !== "GET" &&
+    ((/^\/v1\/checks\/[^/]+\/artifacts(?:$|\/)/.test(path) &&
+      !path.endsWith("/presign")) ||
+      /^\/v1\/assessments(?::evaluate$|\/[^/]+\/conditions\/[^/]+\/answers$)/.test(
+        path,
+      ) ||
+      /^\/v1\/tasks\/[^/]+\/(?:complete|custom-action|action|updates)$/.test(
+        path,
+      ))
+  )
+    invalidateDuplicateIssues(
+      requestSiteId,
+      /^\/v1\/tasks\/[^/]+\/complete$/.test(path) && parsed?.task
+        ? [parsed.task]
+        : undefined,
+    );
   return parsed;
 }
 
@@ -883,6 +921,7 @@ export function putMediaWithProgress(
       reject(new DOMException("Upload cancelled", "AbortError"));
       return;
     }
+    const transport = connectionTarget(uploadUrl);
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", toDevUploadUrl(uploadUrl));
     Object.entries(uploadHeaders).forEach(([name, value]) =>
@@ -905,25 +944,28 @@ export function putMediaWithProgress(
         onProgress(Math.round((event.loaded / event.total) * 100));
     });
     xhr.addEventListener("loadend", () => clearTimeout(stallTimer));
-    xhr.addEventListener("load", () =>
-      xhr.status >= 200 && xhr.status < 300
+    xhr.addEventListener("load", () => {
+      connectionSucceeded(transport.service);
+      return xhr.status >= 200 && xhr.status < 300
         ? resolve()
         : reject(
             new ApiError(`Media upload → ${xhr.status}`, {
               status: xhr.status,
             }),
-          ),
-    );
-    xhr.addEventListener("error", () =>
-      reject(new ApiError("Network error uploading media", { status: 0 })),
-    );
-    xhr.addEventListener("abort", () =>
-      reject(
+          );
+    });
+    xhr.addEventListener("error", () => {
+      connectionFailed(transport.service, transport.probeUrl);
+      reject(new ApiError("Network error uploading media", { status: 0 }));
+    });
+    xhr.addEventListener("abort", () => {
+      if (stalled) connectionFailed(transport.service, transport.probeUrl);
+      return reject(
         stalled
           ? new ApiError("Media upload stalled", { status: 0 })
           : new DOMException("Upload cancelled", "AbortError"),
-      ),
-    );
+      );
+    });
     watchStall();
     signal?.addEventListener("abort", () => xhr.abort(), { once: true });
     xhr.send(file);
@@ -936,7 +978,7 @@ export function putMediaWithProgress(
  * POST /v1/checks/{checkId}/artifacts:presign — mint an artifactId + S3 key and
  * a presigned PUT URL. content-type is pinned into the signature.
  * @param {string} checkId
- * @param {{ contentType: string, contentLength: number }} body
+ * @param {{ contentType: string, contentLength: number, uploadRequestId?: string }} body
  * @returns {Promise<{ artifactId: string, s3Key: string, contentType: string, contentLength: number, uploadHeaders: Record<string, string>, uploadUrl: string, expiresIn: number }>}
  */
 export function presignArtifact(checkId, body, { signal = undefined } = {}) {
@@ -953,7 +995,7 @@ export function presignArtifact(checkId, body, { signal = undefined } = {}) {
  * Stamps the active UI locale so the analyzer writes translated
  * labels/descriptions the device can show.
  * @param {string} checkId
- * @param {{ artifactId: string, s3Key?: string, contentType?: string, contentLength?: number, capturedAt?: string, latitude?: number, longitude?: number, text?: string, language?: string }} body
+ * @param {{ artifactId: string, s3Key?: string, contentType?: string, contentLength?: number, capturedAt?: string, latitude?: number, longitude?: number, accuracyMeters?: number, text?: string, language?: string }} body
  * @returns {Promise<{ artifactId: string, status: string }>}
  */
 export function registerArtifact(checkId, body) {
@@ -962,6 +1004,29 @@ export function registerArtifact(checkId, body) {
     `/v1/checks/${encodeURIComponent(checkId)}/artifacts`,
     {
       body: { language: getLocale(), ...body },
+    },
+  );
+}
+
+/**
+ * PATCH /v1/checks/{checkId}/artifacts/{artifactId}/location
+ * @param {string} checkId
+ * @param {string} artifactId
+ * @param {{ latitude: number, longitude: number, accuracyMeters?: number }} location
+ * @returns {Promise<{ artifactId: string, artifactUpdated: boolean, tasksUpdated: number }>}
+ */
+export function updateArtifactLocation(checkId, artifactId, location) {
+  return request(
+    "PATCH",
+    `/v1/checks/${encodeURIComponent(checkId)}/artifacts/${encodeURIComponent(artifactId)}/location`,
+    {
+      body: {
+        latitude: location.latitude,
+        longitude: location.longitude,
+        ...(Number.isFinite(location.accuracyMeters)
+          ? { accuracyMeters: location.accuracyMeters }
+          : {}),
+      },
     },
   );
 }
@@ -1008,7 +1073,7 @@ export async function putMedia(
   /** @type {Response} */
   let res;
   try {
-    res = await fetch(toDevUploadUrl(uploadUrl), {
+    res = await connectionFetch(toDevUploadUrl(uploadUrl), {
       method: "PUT",
       headers: { "content-type": contentType, ...uploadHeaders },
       body: blob,
@@ -1299,7 +1364,9 @@ export async function dataUrlToBlob(dataUrl) {
  * pinned S3 key, and validated media metadata so callers can persist enough state to re-drive the analysis
  * later (a retry re-registers the SAME artifact rather than re-uploading).
  * @param {string} checkId
- * @param {{ dataUrl: string, capturedAt?: string, latitude?: number, longitude?: number, text?: string, tag?: string, onLeg?: (leg: "presign" | "put" | "register") => void }} item
+ * @param {{ dataUrl: string, capturedAt?: string, location?: () => ({ latitude: number, longitude: number, accuracyMeters?: number } | null), text?: string, tag?: string, onLeg?: (leg: "presign" | "put" | "register") => void }} item
+ *   `location` is read just before register, so a reading that lands during
+ *   the upload still goes with the photo.
  *   `tag` is a caller-supplied label used only for perf traces (e.g. the item id).
  *   `onLeg` fires after each upload leg completes (see `LEG` below) so callers can
  *   show live progress and, on failure, know which leg broke.
@@ -1307,40 +1374,72 @@ export async function dataUrlToBlob(dataUrl) {
  */
 export async function uploadArtifact(
   checkId,
-  { dataUrl, capturedAt, latitude, longitude, text, tag, onLeg },
+  { dataUrl, capturedAt, location, text, tag, onLeg },
 ) {
   const art = tag ?? "photo";
+  const telemetry = { check_id: checkId, attempt_id: photoAttemptId() };
   const done = span("upload", { art });
 
   const contentType = contentTypeFromDataUrl(dataUrl);
   const blob = await dataUrlToBlob(dataUrl);
+  telemetry.photo_bytes = blob.size;
   const endPresign = span("upload.presign", { art });
-  const { artifactId, s3Key, uploadUrl, uploadHeaders } = await presignArtifact(
-    checkId,
-    {
-      contentType,
-      contentLength: blob.size,
-    },
-  );
+  const { artifactId, s3Key, uploadUrl, uploadHeaders } =
+    await observePhotoStage("presign", telemetry, () =>
+      reserveMediaUpload(
+        `check:${checkId}:${tag ?? "photo"}`,
+        blob,
+        (uploadRequestId) =>
+          presignArtifact(checkId, {
+            contentType,
+            contentLength: blob.size,
+            uploadRequestId,
+          }),
+      ),
+    );
+  telemetry.artifact_id = artifactId;
   endPresign({ artifactId });
   onLeg?.("presign");
 
   const endPut = span("upload.put", { art, bytes: blob.size });
-  await putMedia(uploadUrl, blob, contentType, uploadHeaders);
+  await observePhotoStage("put", telemetry, async () => {
+    try {
+      await putMedia(uploadUrl, blob, contentType, uploadHeaders);
+    } catch (error) {
+      if (error?.status !== 412) throw error;
+      // A lost successful PUT is verified by registration below.
+    }
+  });
   endPut();
   onLeg?.("put");
 
   const endRegister = span("upload.register", { art, artifactId });
-  await registerArtifact(checkId, {
-    artifactId,
-    s3Key,
-    contentType,
-    contentLength: blob.size,
-    ...(capturedAt ? { capturedAt } : {}),
-    ...(Number.isFinite(latitude) && Number.isFinite(longitude)
-      ? { latitude, longitude }
-      : {}),
-    ...(text ? { text } : {}),
+  const { latitude, longitude, accuracyMeters } = location?.() ?? {};
+  await observePhotoStage("register", telemetry, async () => {
+    try {
+      await registerArtifact(checkId, {
+        artifactId,
+        s3Key,
+        contentType,
+        contentLength: blob.size,
+        ...(capturedAt ? { capturedAt } : {}),
+        ...(Number.isFinite(latitude) && Number.isFinite(longitude)
+          ? {
+              latitude,
+              longitude,
+              ...(Number.isFinite(accuracyMeters) ? { accuracyMeters } : {}),
+            }
+          : {}),
+        ...(text ? { text } : {}),
+      });
+    } catch (error) {
+      if (
+        error?.status !== 409 ||
+        error?.body?.error !== "artifact already registered"
+      )
+        throw error;
+      // This exact replay response confirms registration and re-enqueues analysis.
+    }
   });
   endRegister();
   onLeg?.("register");
@@ -1348,6 +1447,10 @@ export async function uploadArtifact(
   done({ artifactId });
   return { artifactId, s3Key, contentType, contentLength: blob.size };
 }
+
+// Task-update attachment identity is local to each selected File object.
+/** @type {WeakMap<File, string>} */
+const taskUploadAttachmentIds = new WeakMap();
 
 /**
  * Upload documentation for a task update without registering it for analysis.
@@ -1363,24 +1466,41 @@ export async function uploadTaskUpdatePhoto(
   { signal = AbortSignal.timeout(120_000), onProgress } = {},
 ) {
   const blob = item.file;
-  const contentType = blob.type || "application/octet-stream";
-  const { artifactId, s3Key, uploadUrl, uploadHeaders } = await presignArtifact(
-    checkId,
-    {
-      contentType,
-      contentLength: blob.size,
-    },
-    { signal },
-  );
-  if (onProgress)
-    await putMediaWithProgress(
-      uploadUrl,
+  let attachmentId = taskUploadAttachmentIds.get(blob);
+  if (!attachmentId) {
+    attachmentId = crypto.randomUUID();
+    taskUploadAttachmentIds.set(blob, attachmentId);
+  }
+  const contentType = contentTypeFor(blob);
+  const { artifactId, s3Key, uploadUrl, uploadHeaders } =
+    await reserveMediaUpload(
+      `task:${taskId}:check:${checkId}:attachment:${attachmentId}`,
       blob,
-      { "content-type": contentType, ...uploadHeaders },
-      onProgress,
-      signal,
+      (uploadRequestId) =>
+        presignArtifact(
+          checkId,
+          {
+            contentType,
+            contentLength: blob.size,
+            uploadRequestId,
+          },
+          { signal },
+        ),
+      { contentType },
     );
-  else await putMedia(uploadUrl, blob, contentType, uploadHeaders, signal);
+  try {
+    if (onProgress)
+      await putMediaWithProgress(
+        uploadUrl,
+        blob,
+        { "content-type": contentType, ...uploadHeaders },
+        onProgress,
+        signal,
+      );
+    else await putMedia(uploadUrl, blob, contentType, uploadHeaders, signal);
+  } catch (error) {
+    if (error?.status !== 412) throw error;
+  }
   await registerTaskUpdateMedia(
     taskId,
     {
@@ -1399,19 +1519,23 @@ export async function uploadTaskUpdatePhoto(
 /**
  * Register validated text evidence without uploading media bytes.
  * @param {string} checkId
- * @param {{ text: string, capturedAt?: string, latitude?: number, longitude?: number }} item
+ * @param {{ text: string, capturedAt?: string, latitude?: number, longitude?: number, accuracyMeters?: number }} item
  * @returns {Promise<string>}
  */
 export async function registerTextArtifact(
   checkId,
-  { text, capturedAt, latitude, longitude },
+  { text, capturedAt, latitude, longitude, accuracyMeters },
 ) {
   const artifactId = crypto.randomUUID();
   await registerArtifact(checkId, {
     artifactId,
     ...(capturedAt ? { capturedAt } : {}),
     ...(Number.isFinite(latitude) && Number.isFinite(longitude)
-      ? { latitude, longitude }
+      ? {
+          latitude,
+          longitude,
+          ...(Number.isFinite(accuracyMeters) ? { accuracyMeters } : {}),
+        }
       : {}),
     text,
   });
@@ -1592,4 +1716,10 @@ export function getCarePhoto(workId, photoId) {
  */
 export function askSupport({ question, locale, signal }) {
   return request("POST", "/v1/support", { body: { question, locale }, signal });
+}
+
+/** @param {string | null} [nextToken] */
+export function listPendingGuidance(nextToken = null) {
+  const query = nextToken ? `?nextToken=${encodeURIComponent(nextToken)}` : "";
+  return request("GET", `/v1/guidance/pending${query}`);
 }

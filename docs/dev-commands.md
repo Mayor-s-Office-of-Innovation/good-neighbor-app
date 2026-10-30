@@ -24,6 +24,13 @@ skips hook setup when `CI=true` or `CI=1`; CI security scans still run separatel
 Using `--ignore-scripts` bypasses this setup, so run `npm run setup:hooks` afterward.
 Do not set `CI=true` in your local shell to suppress setup failures.
 
+The Terraform validation hook checks the dev, prod, and production-state bootstrap
+roots whenever Terraform files change. The app child module is checked through both
+environment roots, which supply its required `aws.us_east_1` provider alias.
+Initialization disables the backend and keeps dependency lockfiles read-only; this
+check does not run plan or apply. Run it directly with
+`bash infra/scripts/validate-terraform.sh`.
+
 ### Checkov hook fails while building Python dependencies
 
 If hook initialization fails while compiling a dependency such as `pycares`,
@@ -325,6 +332,15 @@ boots and tears down every process via `webServer`; the only prerequisite is
 | `npm run test:headed -w e2e` | Run **headed** in slow motion — the browser clicks and types at a watchable pace (200 ms/action) |
 | `npx playwright show-trace -w e2e` *(see below)* | Open the failure trace for a dead run |
 
+CI runs the main suite in two shards, each with its own emulator stack and one
+worker. The support, task-update, error-state, and offline UI suites run in a
+separate job alongside them. The required **E2E (Playwright)** check passes only
+when all three jobs pass.
+
+To reproduce one shard locally, use `npm run e2e -w e2e -- --shard=1/2` (or
+`--shard=2/2`). Run them one at a time locally; they use the same test ports.
+The usual `npm run test:e2e` still runs the whole main suite.
+
 Notes for debugging:
 
 - **Slow-mo pace:** `test:headed` sets `E2E_SLOW_MS=200` (ms between actions
@@ -338,18 +354,21 @@ Notes for debugging:
   per failing test). Open one with
   `npx playwright show-trace e2e/test-results/<dir>/trace.zip` — shows every
   click, network call, and DOM snapshot.
-- **The analyzer stub** (`e2e/helpers/analyzer-stub.mjs`, :3101) picks the
+- **The analyzer stub** (`e2e/helpers/analyzer-stub.mjs`, :3111 in the suite) picks the
   canned verdict per test: tests POST to `/__control` before uploading a photo
   (`multi` → several issue cards, `excellent` → clean). If a run behaves oddly,
   watch its console lines — `[analyzer-stub] /v1/analyses -> …` tells you which
   verdict was served.
-- **Developer data persists; E2E data is isolated.** DynamoDB Local stores files in
-  `backend/.local/dynamodb-data/`, but Playwright pins its backend and cleanup hooks
-  to `gnp-local-e2e`. Setup resets only that table's seeded code counters and tasks;
-  teardown deletes that disposable table. The suite refuses to reuse running
-  servers, so stop the dev stack before running it. Do not delete the shared
-  DynamoDB Local directory to repair an E2E login: that would also erase developer
-  tables. See [ADR 0006](adr/0006-docker-free-local-dev-harness.md).
+- **The suite runs its own stack beside `npm run dev`.** Every server and
+  emulator it starts has its own port (`e2e/helpers/ports.js`: API 3011, app
+  5183, DynamoDB Local 8010, ElasticMQ 9334, MinIO 9010, …), so a dev stack can
+  stay up while it runs and nothing is shared with it. Its DynamoDB Local runs
+  in memory, so every run starts from a freshly seeded `gnp-local-e2e` table and
+  leaves nothing behind. Its MinIO keeps files in `backend/.local/minio-data-e2e/`
+  and its SF311 fake logs to `backend/.local/sf311-requests-e2e.jsonl`. Setup
+  resets the seeded code counters and clears that log. Only one suite can run at a time:
+  a second one finds the ports taken and Playwright stops it before any test.
+  See [ADR 0006](adr/0006-docker-free-local-dev-harness.md).
 - Tests always get a **fresh browser context** (fresh IndexedDB), so each test
   re-runs the real site-code → device-registration flow; no shared login state.
 
@@ -390,8 +409,10 @@ Notes:
   The standard HTML reporter never opens automatically during this command.
   Stop local dev servers first; the suite starts its own isolated stack.
   The standard Playwright report is also generated: open it with
-  `cd e2e && npx playwright show-report`. In CI that standard report is in the `playwright-report` artifact on
-  every run, pass or fail. Blocking findings are red and numbered first, warnings
+  `cd e2e && npx playwright show-report`. In CI each shard's report is in its
+  `playwright-report-main-1` or `playwright-report-main-2` artifact on every run,
+  pass or fail. UI-only test results are in `playwright-ui-results`.
+  Blocking findings are red and numbered first, warnings
   (the AAA contrast gaps) blue. No flag is needed: ramp-check's default
   `screenshot` config captures any state with a blocking finding or a warning.
   To box only blocking findings add `screenshot: { warnings: false }` to

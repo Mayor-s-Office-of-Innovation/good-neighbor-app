@@ -28,6 +28,11 @@ test("checklist waits for confirmed save, recovers from failure, and opens compl
     route.fulfill({ json: { checks: [] } }),
   );
   let fail = true;
+  let releaseFailure = () => {};
+  /** @type {Promise<void>} */
+  const failedSave = new Promise((resolve) => {
+    releaseFailure = resolve;
+  });
   let release = () => {};
   /** @type {Promise<void>} */
   const saved = new Promise((resolve) => {
@@ -40,6 +45,7 @@ test("checklist waits for confirmed save, recovers from failure, and opens compl
   });
   await page.route("**/v1/tasks/completion-fixture/complete", async (route) => {
     if (fail) {
+      await failedSave;
       await route.fulfill({
         status: 500,
         json: { error: "test-save-failure" },
@@ -75,8 +81,14 @@ test("checklist waits for confirmed save, recovers from failure, and opens compl
     name: t("rulebook.button.pick-up-the-litter-5088"),
   });
   await checkbox.click();
-  await expect(checkbox).toBeChecked();
+  try {
+    await expect(checkbox).toBeChecked();
+    await expect(checkbox).toBeDisabled();
+  } finally {
+    releaseFailure();
+  }
   await expect(checkbox).not.toBeChecked();
+  await expect(checkbox).toBeEnabled();
   await expect(card).toBeVisible();
   fail = false;
   try {
@@ -92,10 +104,14 @@ test("checklist waits for confirmed save, recovers from failure, and opens compl
   await page.locator('[data-home-filter="history"]').click();
   await expect(card).toContainText(t("card.history.minutes", { count: 5 }));
   await expect(card.locator('[data-analysis-action="edit"]')).toHaveCount(0);
-  await expect(card.locator("[data-status-ticker]")).toHaveCount(0);
-  await card.getByRole("button").click();
+  await expect(
+    card.locator('[data-status-ticker="awaitingProof"]'),
+  ).toBeVisible();
+  await card
+    .getByRole("button", { name: t("taskUpdate.addProof"), exact: true })
+    .click();
   const dialog = page.locator("dialog.task-update[open]");
-  await expect(dialog).toContainText(t("taskUpdate.siteResolved"));
+  await expect(dialog).toContainText(t("taskUpdate.capture.resultsTitle"));
   await expect(dialog.locator("[data-status-ticker]")).toHaveCount(0);
   await expect(dialog.locator(".task-update__route")).toHaveCount(0);
   await expect(dialog.locator(".task-update__metadata")).toHaveCount(0);

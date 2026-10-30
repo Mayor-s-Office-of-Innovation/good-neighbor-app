@@ -74,7 +74,7 @@ variable "bedrock_model_id" {
 
 variable "enable_duplicate_detection" {
   type        = bool
-  default     = false
+  default     = true
   description = "Enable the isolated shadow matcher after the comparison endpoint and secret are provisioned."
 }
 
@@ -82,4 +82,38 @@ variable "alarm_emails" {
   description = "Email addresses subscribed to the CloudWatch alarm SNS topics (home region + us-east-1). Each address receives one confirmation email per topic. Empty = topics exist, nobody is notified."
   type        = list(string)
   default     = ["aaron.hans@sf.gov"]
+}
+
+variable "enable_cloudwatch_omni" {
+  type        = bool
+  default     = false
+  description = "Provision the CloudWatch Omni domain and space scoped to this application's log groups."
+}
+
+variable "cloudwatch_omni_members" {
+  type = map(object({
+    principal_type = string
+    principal_id   = string
+    permission     = optional(string, "READ")
+  }))
+  default     = {}
+  description = "Omni space grants by name; see the module variable of the same name."
+}
+
+variable "cloudwatch_omni_sso_permission_sets" {
+  type        = map(string)
+  default     = {}
+  description = "Omni permission by Identity Center permission-set name; see the module variable of the same name."
+}
+
+variable "duplicate_alarm_route_confirmed" {
+  description = "Remove the original duplicate-alarm notification fallback only after confirming the separate topic subscriptions and verifying delivery."
+  type        = bool
+  default     = false
+}
+
+variable "posthog_digest_route_confirmed" {
+  description = "Cut PostHog warnings over to the digest only after both forwarding paths and actual digest receipt are verified in this environment."
+  type        = bool
+  default     = false
 }

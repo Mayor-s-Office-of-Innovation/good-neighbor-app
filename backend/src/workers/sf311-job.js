@@ -1,3 +1,8 @@
+import {
+  withSilent311Guard,
+  Silent311Suppressed,
+  isSilent311Task,
+} from "../domain/silent-311.js";
 import { ChangeMessageVisibilityCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { randomUUID } from "node:crypto";
 import {
@@ -15,6 +20,11 @@ import {
   taskWorklistDateGsi,
 } from "../handlers/keys.js";
 import { logServerError } from "../lib/log-server-error.js";
+import {
+  reportSf311Failure,
+  reportSf311Results,
+  sf311Failure,
+} from "../integrations/sf311-observability.js";
 import {
   executeAppActions,
   eligibleTicketsForClosure,
@@ -35,9 +45,9 @@ const permanentReasons = new Set([
  * A tapped filing gives up on the queue's last delivery, so the task ends
  * `failed` (and the card offers retry) instead of the message reaching the
  * DLQ with the task stuck `queued`. Keep in sync with the submissions
- * queue's `maxReceiveCount` in infra/modules/app/lambda.tf.
+ * and dedicated 311 queues' `maxReceiveCount` in Terraform.
  */
-const MAX_FILING_ATTEMPTS = 5;
+export const MAX_FILING_ATTEMPTS = 5;
 
 /** @param {string | undefined} receiveCount
  * @param {number} [leaseWaitSeconds]
@@ -78,14 +88,36 @@ export function mergeBackgroundResult(prior, result) {
 /** @type {import("aws-lambda").SQSHandler} */
 export const handler = async (event) => {
   for (const record of event.Records) {
+    const attempt = Number(record.attributes?.ApproximateReceiveCount) || 1;
+    let message;
     try {
-      await runJob(JSON.parse(record.body), {
-        receiveCount: Number(record.attributes?.ApproximateReceiveCount) || 1,
+      message = JSON.parse(record.body);
+      await runJob(message, {
+        receiveCount: attempt,
       });
     } catch (error) {
+      if (!(/** @type {{sf311Reported?: boolean}} */ (error)?.sf311Reported)) {
+        reportSf311Failure("job", sf311Failure(error).reason, {
+          terminal: attempt >= MAX_FILING_ATTEMPTS,
+          attempt,
+          messageId: record.messageId,
+          jobId: message?.jobSk,
+          siteId: message?.siteId,
+          taskId: message?.taskId,
+        });
+      }
       // The dispatcher invokes us with one record and reports this rejection as
       // a partial batch failure. Never acknowledge a failed visibility update.
-      const { queueUrl } = getConfig();
+      const config = getConfig();
+      // Old messages still drain on submissions. A dedicated-queue URL must
+      // never be used with a receipt handle from the old queue.
+      const queueUrl =
+        config.sf311QueueUrl &&
+        record.eventSourceARN?.endsWith(
+          `:${config.sf311QueueUrl.split("/").pop()}`,
+        )
+          ? config.sf311QueueUrl
+          : config.queueUrl;
       const leaseWait = /** @type {{retryAfterSeconds?: number}} */ (error)
         ?.retryAfterSeconds;
       await sqs.send(
@@ -93,7 +125,7 @@ export const handler = async (event) => {
           QueueUrl: queueUrl,
           ReceiptHandle: record.receiptHandle,
           VisibilityTimeout: retryDelaySeconds(
-            record.attributes.ApproximateReceiveCount,
+            record.attributes?.ApproximateReceiveCount,
             leaseWait,
           ),
         }),
@@ -191,6 +223,8 @@ export async function runJob(message, delivery = {}) {
   };
   try {
     let task = await read(key);
+    if (task && job.trigger !== "user_confirmed" && isSilent311Task(task))
+      await withSilent311Guard(String(task.createdAt || ""), async () => {});
     if (!task || task.status === "completing" || task.status === "resolving")
       throw new Error("SF311 task unavailable");
     for (const result of [
@@ -215,20 +249,30 @@ export async function runJob(message, delivery = {}) {
       });
       return;
     }
+    const guardedTask = task;
+    /** @template T @param {() => Promise<T>} run */
+    const guard = (run) =>
+      isSilent311Task(guardedTask)
+        ? withSilent311Guard(String(guardedTask.createdAt || ""), run)
+        : run();
+    await guard(async () => {});
     const alreadyFiled = results.some(
       (result) =>
         result.code === "create_311_ticket" && result.status === "submitted",
     );
     if (!["superseded", "deleted"].includes(task.status) && !alreadyFiled) {
-      const created = await executeAppActions(task.appActions || [], {
-        tableName,
-        siteId: message.siteId,
-        taskId: message.taskId,
-        task,
-        priorResults: results,
-        trigger: "task_created",
-        onCheckpoint: checkpoint,
-      });
+      const created = await guard(async () =>
+        executeAppActions(guardedTask.appActions || [], {
+          tableName,
+          siteId: message.siteId,
+          taskId: message.taskId,
+          task,
+          priorResults: results,
+          trigger: "task_created",
+          onCheckpoint: checkpoint,
+        }),
+      );
+      await guard(async () => {});
       for (const result of created) await checkpoint(result);
     }
     // A user may have finished the work while the City filing was underway.
@@ -240,18 +284,17 @@ export async function runJob(message, delivery = {}) {
       task.completionMethod !== "311_filed" &&
       eligibleTicketsForClosure(results).size
     ) {
-      const closed = await executeAppActions(
-        [{ code: "close_311_ticket", payload: {} }],
-        {
+      const closed = await guard(async () =>
+        executeAppActions([{ code: "close_311_ticket", payload: {} }], {
           tableName,
           siteId: message.siteId,
           taskId: message.taskId,
           task,
           priorResults: results,
           onCheckpoint: checkpoint,
-          reconcile311Closures: true,
-        },
+        }),
       );
+      await guard(async () => {});
       for (const result of closed) await checkpoint(result);
     }
     // Re-read after remote calls; only merge integration fields, never replace
@@ -323,8 +366,33 @@ export async function runJob(message, delivery = {}) {
         ],
       }),
     );
+    reportSf311Results(results, {
+      terminal: terminal || (delivery.receiveCount ?? 1) >= MAX_FILING_ATTEMPTS,
+      attempt: delivery.receiveCount ?? 1,
+      jobId: message.jobSk,
+      taskId: message.taskId,
+      siteId: message.siteId,
+    });
     if (retry)
-      throw new Error("SF311 action failed; retry from durable checkpoint");
+      throw Object.assign(
+        new Error("SF311 action failed; retry from durable checkpoint"),
+        { sf311Reported: true },
+      );
+  } catch (error) {
+    if (!(error instanceof Silent311Suppressed)) throw error;
+    await ddb.send(
+      new UpdateCommand({
+        TableName: tableName,
+        Key: jobKey,
+        UpdateExpression:
+          "SET #status = :complete, suppressionReason = :reason",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: {
+          ":complete": "complete",
+          ":reason": "silent_filing_disabled",
+        },
+      }),
+    );
   } finally {
     try {
       await ddb.send(
@@ -552,6 +620,21 @@ async function fileUserConfirmed(ctx) {
     }),
   );
   if (!filed) {
+    const failureContext = {
+      terminal: !retry,
+      attempt: ctx.attempt,
+      jobId: jobKey.sk,
+      taskId,
+      siteId,
+    };
+    if (filing && ["failed", "partial"].includes(filing.status))
+      reportSf311Results([filing], failureContext);
+    else
+      reportSf311Failure(
+        "create",
+        filing?.reason ?? "app_action_failed",
+        failureContext,
+      );
     // Logged on every failed attempt, retried or not, so the reason HUB gave
     // is visible next to the worker's generic retry error.
     logServerError(
@@ -559,6 +642,7 @@ async function fileUserConfirmed(ctx) {
       new Error(String(filing?.reason ?? "app action failed")),
       {
         extra: {
+          integration: "sf311",
           eventType: "311_app_action_failed",
           taskId,
           siteId,
@@ -577,5 +661,9 @@ async function fileUserConfirmed(ctx) {
       },
     );
   }
-  if (retry) throw new Error("SF311 filing failed; retry from checkpoint");
+  if (retry)
+    throw Object.assign(
+      new Error("SF311 filing failed; retry from checkpoint"),
+      { sf311Reported: true },
+    );
 }

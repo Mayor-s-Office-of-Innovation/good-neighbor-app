@@ -1,3 +1,7 @@
+const updateMediaThumbnail = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock("../workers/update-media-thumbnail.js", () => ({
+  handler: updateMediaThumbnail,
+}));
 const { expireComplianceTerms } = vi.hoisted(() => ({
   expireComplianceTerms: vi.fn(),
 }));
@@ -58,6 +62,7 @@ function event(body) {
 
 describe("worker dispatch (pickHandler)", () => {
   beforeEach(() => {
+    sf311Job.mockClear();
     processSubmission.mockClear();
     analyzeArtifact.mockClear();
     reconcileSiteRevocation.mockClear();
@@ -88,6 +93,34 @@ describe("worker dispatch (pickHandler)", () => {
     ).resolves.toEqual({
       batchItemFailures: [],
     });
+  });
+
+  it("separates legacy 311 failures from general errors without logging upstream payloads", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const error = Object.assign(new Error("private upstream narrative"), {
+        name: "TransactionCanceledException",
+      });
+      const frame = "    at saveJob (file:///var/task/index.mjs:77:3)";
+      error.stack = `${error.name}: ${error.message}\n${frame}`;
+      sf311Job.mockRejectedValueOnce(error);
+      processSubmission.mockRejectedValueOnce(new Error("submission failed"));
+      await handler(event({ type: "sf311_job" }), /** @type {any} */ ({}));
+      await handler(event({ requestId: "synthetic" }), /** @type {any} */ ({}));
+      const entries = log.mock.calls.map(([line]) => JSON.parse(line));
+      expect(entries[0]).toMatchObject({
+        integration: "sf311",
+        messageId: "m1",
+        name: "TransactionCanceledException",
+      });
+      expect(entries[0].stack).toContain(frame);
+      expect(entries[1]).not.toHaveProperty("integration");
+      expect(JSON.stringify(entries)).not.toContain(
+        "private upstream narrative",
+      );
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("reports only failed records for SQS retry", async () => {
@@ -229,4 +262,16 @@ describe("worker dispatch (pickHandler)", () => {
 it("routes scheduled expiry invocations without expecting SQS records", async () => {
   await handler({ type: "expire_compliance_terms" }, /** @type {any} */ ({}));
   expect(expireComplianceTerms).toHaveBeenCalledTimes(1);
+});
+
+it("routes thumbnail jobs without invoking the analyzer", async () => {
+  await handler(
+    event({
+      type: "update_media_thumbnail",
+      pk: "SITE#site",
+      sk: "TASK#task#MEDIA#photo",
+    }),
+    /** @type {any} */ ({}),
+  );
+  expect(updateMediaThumbnail).toHaveBeenCalledTimes(1);
 });

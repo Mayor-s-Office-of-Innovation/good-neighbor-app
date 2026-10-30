@@ -18,6 +18,9 @@ const ELASTICMQ_VERSION = "1.7.1";
 const JAR_NAME = `elasticmq-server-all-${ELASTICMQ_VERSION}.jar`;
 const JAR_URL = `https://github.com/softwaremill/elasticmq/releases/download/v${ELASTICMQ_VERSION}/${JAR_NAME}`;
 
+// elasticmq.conf pins 9324; system properties override it for the e2e copy.
+const PORT = Number(process.env.LOCAL_MQ_PORT ?? 9324);
+
 const backendDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const localDir = join(backendDir, ".local");
 const jarPath = join(localDir, JAR_NAME);
@@ -45,11 +48,21 @@ async function ensureJar() {
 
 async function main() {
   await ensureJar();
-  console.log("[mq] starting ElasticMQ on :9324…");
+  console.log(`[mq] starting ElasticMQ on :${PORT}…`);
 
-  const child = spawn("java", [`-Dconfig.file=${confPath}`, "-jar", jarPath], {
-    stdio: "inherit",
-  });
+  const child = spawn(
+    "java",
+    [
+      `-Dconfig.file=${confPath}`,
+      `-Dnode-address.port=${PORT}`,
+      `-Drest-sqs.bind-port=${PORT}`,
+      "-jar",
+      jarPath,
+    ],
+    {
+      stdio: "inherit",
+    },
+  );
 
   let stopping = false;
   const shutdown = (signal) => {

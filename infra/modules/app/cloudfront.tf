@@ -43,7 +43,7 @@ function handler(event) {
   var request = event.request;
   var uri = request.uri;
 
-  if (uri.indexOf("/admin/v1/") === 0) {
+  if (uri === "/health" || uri.indexOf("/admin/v1/") === 0) {
     return request;
   }
 
@@ -87,12 +87,29 @@ resource "aws_cloudfront_function" "frontend_spa_rewrite" {
   EOT
 }
 
+# Overwrite caller input before forwarding a viewer identity to the API.
+resource "aws_cloudfront_function" "code_viewer_identity" {
+  name    = "${local.name_prefix}-code-viewer-identity"
+  runtime = "cloudfront-js-2.0"
+  comment = "Forward the transport viewer IP for authenticated origin rate limits."
+  publish = true
+  code    = <<-EOT
+function handler(event) {
+  event.request.headers["x-code-viewer-ip"] = { value: event.viewer.ip };
+  return event.request;
+}
+EOT
+}
+
 resource "aws_cloudfront_distribution" "frontend" {
   #checkov:skip=CKV_AWS_86:Standard access logs record every viewer IP for a year and nothing reads them; API Gateway access logs (no IP) and CloudFront metrics cover operations.
   #checkov:skip=CKV_AWS_310:Single-origin static SPA; origin failover is N/A until there is a second origin.
   #checkov:skip=CKV_AWS_374:Public citywide app — no geo restriction is intentional.
   #checkov:skip=CKV2_AWS_47:Log4j is covered by AWSManagedRulesKnownBadInputsRuleSet (active, non-override) on the attached WAF ACL.
   #checkov:skip=CKV2_AWS_42:Custom SSL is configured whenever frontend_domain_names is non-empty; the default certificate branch exists only for no-alias deployments.
+  # API rollout depends on this resource completing global viewer-header
+  # propagation; do not return as soon as CloudFront accepts the update.
+  wait_for_deployment = true
   enabled             = true
   is_ipv6_enabled     = true
   comment             = "${local.name_prefix} frontend"
@@ -149,6 +166,10 @@ resource "aws_cloudfront_distribution" "frontend" {
     cache_policy_id            = data.aws_cloudfront_cache_policy.disabled.id
     origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
     response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.code_viewer_identity.arn
+    }
   }
 
   ordered_cache_behavior {
@@ -161,6 +182,10 @@ resource "aws_cloudfront_distribution" "frontend" {
     cache_policy_id            = data.aws_cloudfront_cache_policy.disabled.id
     origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
     response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.code_viewer_identity.arn
+    }
   }
 
   ordered_cache_behavior {
@@ -173,6 +198,10 @@ resource "aws_cloudfront_distribution" "frontend" {
     cache_policy_id            = data.aws_cloudfront_cache_policy.disabled.id
     origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
     response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.code_viewer_identity.arn
+    }
   }
 
   ordered_cache_behavior {
@@ -269,6 +298,19 @@ resource "aws_cloudfront_distribution" "admin" {
       event_type   = "viewer-request"
       function_arn = aws_cloudfront_function.admin_spa_rewrite.arn
     }
+  }
+
+  # Same-origin recovery probes must reach JSON health, never the SPA fallback.
+  ordered_cache_behavior {
+    path_pattern               = "/health"
+    target_origin_id           = "api-gateway"
+    viewer_protocol_policy     = "redirect-to-https"
+    allowed_methods            = ["GET", "HEAD", "OPTIONS"]
+    cached_methods             = ["GET", "HEAD", "OPTIONS"]
+    compress                   = true
+    cache_policy_id            = data.aws_cloudfront_cache_policy.disabled.id
+    origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.admin_security.id
   }
 
   ordered_cache_behavior {

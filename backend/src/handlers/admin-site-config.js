@@ -27,6 +27,7 @@ import {
   supervisorOnly,
 } from "../lib/admin-auth.js";
 import { pacificToday } from "../lib/pacific-dates.js";
+import { complianceTermsExpiryGsi } from "./keys.js";
 
 /** Replace the Compliance managers assigned to one Site. */
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
@@ -227,6 +228,7 @@ export const createSiteTerms = (event) =>
         new GetCommand({
           TableName: tableName,
           Key: { pk: `SITE#${siteId}`, sk: "#META" },
+          ConsistentRead: true,
         }),
       ),
       readCompliancePeriods(siteId, tableName).then((Items) => ({ Items })),
@@ -375,6 +377,18 @@ export const createSiteTerms = (event) =>
     const termsVersionId = randomUUID();
     const observedLatestVersion =
       siteResult.Item.latestComplianceTermsVersionId;
+    // The Site record and the terms list are two reads, not one snapshot. If
+    // the record names a latest version the list does not contain, a creation
+    // landed between them: stop rather than build on a partial view, which
+    // would leave that version unshortened and still in the GSI3 expiry index.
+    if (
+      observedLatestVersion !== undefined &&
+      !(termsResult.Items ?? []).some(
+        (item) => item.termsVersionId === observedLatestVersion,
+      )
+    ) {
+      return jsonResponse(409, { error: "terms_write_conflict" });
+    }
     const actor = adminPrincipal(event).subject || "central-admin";
     const [email, leadProgramResult] = await Promise.all([
       complianceLetterEmail(
@@ -405,6 +419,11 @@ export const createSiteTerms = (event) =>
       effectiveStart,
       ...(periodEnd ? { periodEnd } : {}),
       ...(expiresOnExclusive ? { expiresOnExclusive } : {}),
+      // Sparse GSI3 entry for the scheduled expiry sweep. Open-ended terms
+      // never expire on their own, so they stay out of the index.
+      ...(expiresOnExclusive
+        ? complianceTermsExpiryGsi(siteId, expiresOnExclusive, termsVersionId)
+        : {}),
       status: termsStatus(effectiveStart, expiresOnExclusive),
       createdAt: now,
       createdBy: actor,
@@ -490,8 +509,10 @@ export const createSiteTerms = (event) =>
         Update: {
           TableName: tableName,
           Key: { pk: String(prior.pk), sk: String(prior.sk) },
+          // The superseded version leaves the expiry index (GSI3): the sweep
+          // only closes a site's latest version, so it could never act on it.
           UpdateExpression:
-            "SET expiresOnExclusive = :expiry, updatedAt = :now",
+            "SET expiresOnExclusive = :expiry, updatedAt = :now REMOVE gsi3pk, gsi3sk",
           ConditionExpression:
             "attribute_not_exists(expiresOnExclusive) OR expiresOnExclusive > :expiry",
           ExpressionAttributeValues: { ":expiry": effectiveStart, ":now": now },
@@ -1129,4 +1150,82 @@ export const resendSiteLetter = (event) =>
         return jsonResponse(409, { error: "current_letter_changed" });
     }
     return jsonResponse(202, { queued: true, jobId: requestId });
+  });
+
+/** Supervisor-owned delivery setting, atomically audited and version checked.
+ * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
+ */
+export const putSiteDeliberate311 = (event) =>
+  supervisorOnly(event, async (body) => {
+    const enabled = body.deliberate311ProductionEnabled;
+    if (typeof enabled !== "boolean")
+      return jsonResponse(400, { error: "boolean_required" });
+    const siteId = event.pathParameters?.siteId ?? "";
+    const tableName = getDynamoTableName();
+    const Key = { pk: `SITE#${siteId}`, sk: "#META" };
+    const { Item: site } = await ddb.send(
+      new GetCommand({ TableName: tableName, Key, ConsistentRead: true }),
+    );
+    if (!site || site.status === "inactive")
+      return jsonResponse(404, { error: "site_not_found" });
+    if (body.expectedUpdatedAt !== (site.updatedAt || ""))
+      return jsonResponse(409, { error: "site_changed" });
+    const now = new Date().toISOString();
+    const actor = adminPrincipal(event).subject;
+    try {
+      await ddb.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            {
+              Update: {
+                TableName: tableName,
+                Key,
+                UpdateExpression:
+                  "SET deliberate311ProductionEnabled = :enabled, updatedAt = :now",
+                ConditionExpression: site.updatedAt
+                  ? "attribute_exists(pk) AND updatedAt = :expected"
+                  : "attribute_exists(pk) AND attribute_not_exists(updatedAt)",
+                ExpressionAttributeValues: {
+                  ":enabled": enabled,
+                  ":now": now,
+                  ...(site.updatedAt ? { ":expected": site.updatedAt } : {}),
+                },
+              },
+            },
+            {
+              Put: {
+                TableName: tableName,
+                Item: {
+                  pk: Key.pk,
+                  sk: `AUDIT#${now}#${randomUUID()}`,
+                  type: "siteAuditEvent",
+                  eventType: "site_deliberate_311_delivery_changed",
+                  siteId,
+                  actor,
+                  createdAt: now,
+                  previousEnabled:
+                    site.deliberate311ProductionEnabled !== false,
+                  enabled,
+                },
+                ConditionExpression: "attribute_not_exists(pk)",
+              },
+            },
+          ],
+        }),
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.name === "TransactionCanceledException"
+      )
+        return jsonResponse(409, { error: "site_changed" });
+      throw error;
+    }
+    return jsonResponse(200, {
+      site: {
+        ...site,
+        deliberate311ProductionEnabled: enabled,
+        updatedAt: now,
+      },
+    });
   });

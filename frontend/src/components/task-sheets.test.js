@@ -11,7 +11,7 @@ vi.mock("./analysis-card-completion.js", () => ({
 }));
 vi.mock("../services/api.js", () => ({ createTaskUpdate: save }));
 vi.mock("../state/toasts.js", () => ({
-  showToast: toast,
+  showOperationError: toast,
   showTaskUpdateErrorToast: errorToast,
 }));
 import { TaskSheets } from "./task-sheets.js";
@@ -51,6 +51,7 @@ function fixture() {
   const dialog = {
     addEventListener: vi.fn(),
     openResults: vi.fn(),
+    openProof: vi.fn(),
     open: vi.fn(),
     remove: vi.fn(),
   };
@@ -83,31 +84,18 @@ it("starts saving before the dialog module loads and shows immediate pending fee
   expect(f.dialog.openResults).not.toHaveBeenCalled();
   module.resolve({});
   await opening;
-  expect(f.dialog.openResults).toHaveBeenCalledOnce();
-  expect(f.onTaskUpdated).not.toHaveBeenCalled();
-  const close = f.dialog.addEventListener.mock.calls.find(
-    ([name]) => name === "taskupdateclosed",
-  )[1];
-  await close({ detail: { results: true } });
+  expect(f.dialog.openResults).not.toHaveBeenCalled();
   expect(f.onTaskUpdated).toHaveBeenCalledWith(
-    expect.objectContaining({ status: "completed", latestUpdateId: "update" }),
+    expect.objectContaining({ status: "completed" }),
   );
+  expect(f.reload).toHaveBeenCalledOnce();
 });
-it("reports successful resolution despite a missing module and retries only documentation", async () => {
+it("resolves without loading the documentation module", async () => {
   const f = fixture();
-  const load = vi
-    .spyOn(f.sheets, "_loadUpdates")
-    .mockRejectedValue(new Error("missing chunk"));
+  const load = vi.spyOn(f.sheets, "_loadUpdates");
   await f.sheets.openUpdates(task, f.button, "resolve");
+  expect(load).not.toHaveBeenCalled();
   expect(f.onTaskUpdated).toHaveBeenCalledOnce();
-  expect(errorToast).not.toHaveBeenCalled();
-  const notice = toast.mock.calls.at(-1)?.[0];
-  expect(notice.title).toBe(t("taskUpdate.formUnavailableResolved"));
-  load.mockResolvedValue(/** @type {any} */ ({}));
-  notice.action.run();
-  await vi.waitFor(() => expect(f.dialog.openResults).toHaveBeenCalled());
-  expect(save).toHaveBeenCalledOnce();
-  expect(f.dialog.openResults.mock.calls[0][0].latestUpdateId).toBe("update");
 });
 it("keeps the same idempotency key when retrying an uncertain save", async () => {
   const f = fixture();
@@ -139,13 +127,12 @@ it("preserves another form's unsaved work and offers documentation-only recovery
     _task: { taskId: "other" },
     _hasUnsavedDraft: () => true,
     openResults: vi.fn(),
+    openProof: vi.fn(),
   };
   await f.sheets.openUpdates(task, f.button, "resolve");
   expect(f.onTaskUpdated).toHaveBeenCalledOnce();
   expect(f.sheets._updateDialog.openResults).not.toHaveBeenCalled();
-  expect(toast.mock.calls.at(-1)?.[0].title).toBe(
-    t("taskUpdate.finishCurrentForm"),
-  );
+  expect(f.sheets._updateDialog._open).toBe(true);
 });
 
 it.each(["timeline", "resolve", "results"])(
@@ -195,22 +182,14 @@ it("joins the save refresh on close and restores focus after it finishes", async
   await vi.waitFor(() => expect(f.sheets._focusCard).toHaveBeenCalledOnce());
 });
 
-it("waits for a dismissed resolution to save before reloading", async () => {
+it("waits for resolution to save before reloading", async () => {
   const f = fixture();
   const pending = deferred();
   save.mockReturnValue(pending.promise);
-  vi.spyOn(f.sheets, "_loadUpdates").mockResolvedValue(/** @type {any} */ ({}));
-  await f.sheets.openUpdates(task, f.button, "resolve");
-  const closing = listener(
-    f.dialog,
-    "taskupdateclosed",
-  )({ detail: { results: true } });
+  const opening = f.sheets.openUpdates(task, f.button, "resolve");
   expect(f.reload).not.toHaveBeenCalled();
   pending.resolve(saved);
-  await closing;
-  expect(f.onTaskUpdated).toHaveBeenCalledWith(
-    expect.objectContaining({ status: "completed" }),
-  );
+  await opening;
   expect(f.reload).toHaveBeenCalledOnce();
 });
 
@@ -235,7 +214,7 @@ it("keeps the saved documentation target when the worklist still has an older ta
   const completed = { ...saved.task, latestUpdateId: saved.update.updateId };
   await f.sheets.openUpdates(completed, f.button, "results");
   expect(save).not.toHaveBeenCalled();
-  expect(f.dialog.openResults).toHaveBeenCalledWith(completed, null);
+  expect(f.dialog.openProof).toHaveBeenCalledWith(completed);
 });
 
 it.each(["open", "completed"])(
@@ -253,11 +232,8 @@ it.each(["open", "completed"])(
     );
     await f.sheets.openUpdates(fresh, f.button, "resolve");
     expect(save).toHaveBeenCalledOnce();
-    expect(f.dialog.openResults).toHaveBeenCalledWith(
-      fresh,
-      expect.any(Promise),
-    );
-    expect(f.reload).not.toHaveBeenCalled();
+    expect(f.dialog.openResults).not.toHaveBeenCalled();
+    expect(f.reload).toHaveBeenCalledOnce();
   },
 );
 
@@ -292,13 +268,10 @@ it.each([0, 408, 500])(
     f.sheets._options.resolveTask = () => saved.task;
     load.mockResolvedValue(/** @type {any} */ ({}));
     errorToast.mock.calls[0][1]();
-    await vi.waitFor(() => expect(f.dialog.openResults).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(f.reload).toHaveBeenCalledOnce());
     expect(save).toHaveBeenCalledTimes(2);
     expect(save.mock.calls[1][2]).toBe(firstKey);
-    const completion = f.dialog.openResults.mock.calls[0][1];
-    await expect(completion).resolves.toMatchObject({
-      task: { status: "completed", latestUpdateId: "update" },
-    });
+    f.reload.mockClear();
     // Confirmed attempts must not authorize new resolves of terminal tasks.
     await f.sheets.openUpdates(task, f.button, "resolve");
     expect(save).toHaveBeenCalledTimes(2);

@@ -33,15 +33,21 @@ test.describe("public complaints", () => {
     await expect(trigger).toHaveAttribute("aria-expanded", "false");
     await expect(menu).toBeHidden();
 
-    const triggerBox = await trigger.boundingBox();
-    expect(triggerBox).not.toBeNull();
-    expect(triggerBox?.width).toBe(54);
-    expect(triggerBox?.height).toBe(54);
-    expect(
-      await trigger.evaluate(
-        (element) => window.getComputedStyle(element).borderRadius,
-      ),
-    ).toBe("50%");
+    // Background home refreshes can replace nodes between visibility and layout
+    // reads. Retry measurements against the current DOM without relaxing size.
+    await expect
+      .poll(() => trigger.boundingBox())
+      .toMatchObject({ width: 54, height: 54 });
+    // Check each corner directly: Chromium can serialize the computed
+    // border-radius shorthand as an empty string on some platforms.
+    for (const corner of [
+      "top-left",
+      "top-right",
+      "bottom-right",
+      "bottom-left",
+    ]) {
+      await expect(trigger).toHaveCSS(`border-${corner}-radius`, "50%");
+    }
 
     await trigger.click();
     await expect(trigger).toHaveAttribute("aria-expanded", "true");
@@ -62,21 +68,19 @@ test.describe("public complaints", () => {
       [complaintAction, complaintIcon],
       [issueAction, issueIcon],
     ]) {
-      const buttonBox = await button.boundingBox();
-      const iconBox = await icon.boundingBox();
-      expect(buttonBox).not.toBeNull();
-      expect(iconBox).not.toBeNull();
-      expect((iconBox?.x ?? 0) - (buttonBox?.x ?? 0)).toBeLessThan(20);
-      expect(
-        await button.evaluate(
-          (element) => window.getComputedStyle(element).justifyContent,
-        ),
-      ).toBe("flex-start");
+      await expect
+        .poll(async () => {
+          const buttonBox = await button.boundingBox();
+          const iconBox = await icon.boundingBox();
+          return buttonBox && iconBox ? iconBox.x - buttonBox.x : null;
+        })
+        .toBeLessThan(20);
+      await expect(button).toHaveCSS("justify-content", "flex-start");
     }
 
-    await expect(complaintAction).toBeFocused();
-    await page.keyboard.press("ArrowDown");
     await expect(issueAction).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(complaintAction).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(menu).toBeHidden();
     await expect(trigger).toBeFocused();
@@ -94,9 +98,9 @@ test.describe("public complaints", () => {
       page.getByRole("heading", { name: t("complaints.title") }),
     ).toBeVisible();
 
-    const back = page.locator(".complaints .topbar__back");
-    await expect(back).toHaveAccessibleName(t("common.back"));
-    await expect(back.locator('wa-icon[name="chevron-left"]')).toBeVisible();
+    const back = page.locator(".complaints .care-back");
+    await expect(back).toHaveAccessibleName(t("common.close"));
+    await expect(back.locator('wa-icon[name="xmark"]')).toBeVisible();
 
     const logButton = page.locator("#log-complaint");
     const empty = page.locator(".complaints__empty");
@@ -119,7 +123,7 @@ test.describe("public complaints", () => {
     ).toBeVisible();
     await expect(page.locator(".complaint-compose [data-back]")).toHaveCount(0);
     await expect(page.locator("#close-complaint")).toHaveAccessibleName(
-      t("common.close"),
+      t("common.back"),
     );
     await expect(page.locator(".complaint-upload-copy")).toContainText(
       t("complaints.upload.title"),
@@ -171,15 +175,28 @@ test.describe("public complaints", () => {
       });
     });
     await submit.click();
-    await expect(page.getByRole("alert")).toHaveText(
-      t("complaints.submitError"),
-    );
+    await expect(
+      page.locator("complaint-view").getByRole("alert"),
+    ).toContainText(t("complaints.submitError"));
     await expect(submit).toBeEnabled();
     await expect(description).toHaveValue("Five!");
 
     await page.locator("#close-complaint").click();
     await expect(page).toHaveURL(/\/complaints$/);
     await expect(empty).toBeVisible();
+
+    await logButton.click();
+    await page.locator("#describe-complaint").click();
+    await description.fill("Synthetic complaint for navigation regression");
+    await page.route("**/v1/complaints", (route) =>
+      route.request().method() === "POST"
+        ? route.fulfill({ json: { complaintId: "synthetic" } })
+        : route.fallback(),
+    );
+    await submit.click();
+    await expect(page).toHaveURL(/\/complaints$/);
+    await back.click();
+    await expect(page).toHaveURL(/\/today(?:\?filter=todo)?$/);
   });
 
   test("uses native detail links and renders a recoverable missing-detail state", async ({
@@ -219,9 +236,9 @@ test.describe("public complaints", () => {
     expect(await link.evaluate((element) => element.tagName)).toBe("A");
 
     await link.click();
-    await expect(page.getByRole("alert")).toHaveText(
-      t("complaints.detailError"),
-    );
+    await expect(
+      page.locator("complaint-view").getByRole("alert"),
+    ).toContainText(t("complaints.detailError"));
     await expect(page.locator(".complaints .topbar__back")).toBeVisible();
   });
 });

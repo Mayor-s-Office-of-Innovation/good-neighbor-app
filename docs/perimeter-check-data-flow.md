@@ -69,7 +69,7 @@ sequenceDiagram
 
   Note over Staff,UI: /check — capture screen
   Staff->>UI: taps Add photo in the photo roll (or Describe instead → one text item)
-  Note over UI: item added to session → its own pipeline starts immediately<br/>(device location is fetched best-effort, 2s cap, and rides along)
+  Note over UI: item added to session → its own pipeline starts immediately<br/>(GPS starts when staff tap Start, asking for permission then if needed;<br/>device location is read best-effort and never delays the upload;<br/>a reading that lands later goes to PATCH .../artifacts/{artifactId}/location)
   UI->>API: POST /v1/checks (checkId as idempotency-key)<br/>once per run, lazily on the first item
   API->>DB: Put CHECK# header {status:"in_progress"}
   UI->>API: POST .../artifacts:presign {contentType, contentLength}
@@ -242,7 +242,7 @@ from the analysis (photo-analysis.js `assessmentFromAnalysis` — the ids are
 |---|---|---|
 | `POST /v1/assessments:evaluate` | TransactWrite | see below |
 | ↳ assessment | Put ASSESSMENT# (conditional) | `sk ASSESSMENT#0d6d1a4e…-<uuid>` · `{status:"tasks_created", policyVersion:"actions-escalations-v3", grade:"Poor", assessmentRevision:0, summary:{totalConditions:1, conditionsResolvedToTasks:1, openTaskCount:1, escalationCount:1, …}}` |
-| ↳ condition | Put COND# (conditional) | `sk ASSESSMENT#0d6d1a4e…-<uuid>#COND#<uuid>-001-graffiti` · `{status:"tasks_created", analyzerCategory:"Graffiti", canonicalCategory:"Graffiti", severity:2, userFriendlyLabel:"Graffiti", source:{latitude, longitude, positionDescriptor:"perimeter"}, answers:{onsite:false}, taskIds:[<taskId>], resolvedToTasks:true, selectedRuleId:"GRAFFITI-2", needsAnswer:null}` (+ GSI4/GSI5 stamps) |
+| ↳ condition | Put COND# (conditional) | `sk ASSESSMENT#0d6d1a4e…-<uuid>#COND#<uuid>-001-graffiti` · `{status:"tasks_created", analyzerCategory:"Graffiti", canonicalCategory:"Graffiti", severity:2, userFriendlyLabel:"Graffiti", source:{latitude, longitude, positionDescriptor:"perimeter"}, answers:{onsite:false}, taskIds:[<taskId>], resolvedToTasks:true, selectedRuleId:"GRAFFITI-2", needsAnswer:null}` |
 | ↳ task | Put TASK# (conditional) | `sk TASK#<uuid>` · `{shortId:"MOI-CCA-001", status:"open", kind:"escalation", type:"city_escalation", ruleId:"GRAFFITI-2", policyVersion, category:"Graffiti", userFriendlyLabel:"Graffiti", severity:2, label:"Ask the City to clean the graffiti.", guidance:"If the graffiti is not on your property…", appActions:[create_311_ticket…], conditionId, assessmentId, checkId, sourceArtifactIds:[<uuid>]}` (+ GSI1 task timeline and GSI2 worklist stamps) |
 
 The task's **shortId** is minted before the transaction: the store reads the site's
@@ -316,8 +316,8 @@ covers the gating).
 
 | API call | DB write | Record (abbreviated) |
 |---|---|---|
-| `assessments:evaluate` (at capture) | Put COND# | `sk ASSESSMENT#…#COND#<uuid>-001-aggressive-animals` · `{status:"needs_answer", needsAnswer:{key:"affiliated", prompt:"Is this animal owned by a site client or resident?", options:[{label:"Yes", value:true},{label:"No", value:false}]}, answers:{}, taskIds:[]}` (+ GSI5 unresolved stamp) |
-| `POST /v1/assessments/{id}/conditions/{cid}/answers {answers:{affiliated:false}}` **(user taps "No" on the card)** | TransactWrite | same COND# now `{status:"tasks_created", answers:{affiliated:false}, taskIds:[<newTaskId>], resolvedToTasks:true, needsAnswer:null, selectedRuleId:"ANIMAL-2", outcome:{kind:"non_actionable_escalation", …}}` — GSI5 stamp removed; new TASK# `{shortId:"MOI-CCA-002", kind:"non_actionable_escalation", ruleId:"ANIMAL-2", …}` minted; assessment summary deltas applied (conditionsNeedAnswer −1, openTaskCount +1) in the same transaction, guarded by `assessmentRevision` and `attribute_not_exists(supersededByAssessmentId)` |
+| `assessments:evaluate` (at capture) | Put COND# | `sk ASSESSMENT#…#COND#<uuid>-001-aggressive-animals` · `{status:"needs_answer", needsAnswer:{key:"affiliated", prompt:"Is this animal owned by a site client or resident?", options:[{label:"Yes", value:true},{label:"No", value:false}]}, answers:{}, taskIds:[]}` |
+| `POST /v1/assessments/{id}/conditions/{cid}/answers {answers:{affiliated:false}}` **(user taps "No" on the card)** | TransactWrite | same COND# now `{status:"tasks_created", answers:{affiliated:false}, taskIds:[<newTaskId>], resolvedToTasks:true, needsAnswer:null, selectedRuleId:"ANIMAL-2", outcome:{kind:"non_actionable_escalation", …}}`; new TASK# `{shortId:"MOI-CCA-002", kind:"non_actionable_escalation", ruleId:"ANIMAL-2", …}` minted; assessment summary deltas applied (conditionsNeedAnswer −1, openTaskCount +1) in the same transaction, guarded by `assessmentRevision` and `attribute_not_exists(supersededByAssessmentId)` |
 
   Answering replaces the condition in the client session
   (photo-analysis.js `answerAnalysisQuestion`), so the card re-renders as the task card
@@ -500,7 +500,7 @@ the lineage publication never retires a mid-`completing` task (§ 3).
 | Completion rule (client-side only) | — | frontend/src/domain/check-completion.js `isPerimeterCheckComplete` (1 photo or 1 qualifying description); perimeter-check.js `_done` / `_finishCheck`, templates `progressLine` / `footer` |
 | Describe instead (one text item per check) | backend/src/handlers/artifacts.js `registerArtifact` (text, no s3Key) | frontend/src/components/describe-instead.js `_onContinue` → photo-analysis.js `analyzeEvidenceItem` |
 | Presign / register artifact | backend/src/handlers/artifacts.js `presignUpload`, `registerArtifact` (S3 key `checks/<siteId>/<checkId>/<artifactId>`; legacy place fields ignored) | frontend/src/services/api.js `uploadArtifact`, `registerTextArtifact` (photo-analysis.js `run`) |
-| Device location (per item) | — | frontend/src/services/device-location.js `getCaptureDeviceLocation` (2s best-effort; 311 falls back to the site's geocoded `#META` location) |
+| Device location (per item) | backend/src/handlers/artifacts.js `updateArtifactLocation` (a reading that arrived after upload) | frontend/src/services/device-location.js `readCaptureDeviceLocation` (never delays the upload; 311 falls back to the source artifact's location, then the site's geocoded `#META` location) |
 | Per-item analysis | backend/src/workers/analyze-artifact.js (+ media/downscale.js) | frontend/src/services/photo-analysis.js `analyzeEvidenceItem` → `waitForArtifactAnalysis` |
 | Failed-card retry | — | photo-analysis.js `retryEvidenceItem` (re-register same artifactId → fresh analyze) |
 | Per-item guidance evaluate → tasks | backend/src/handlers/guidance.js `evaluateAssessment` → analysis/guidance/guidance-store.js `storeEvaluatedAssessment` (+ `allocateTaskShortIds`) | frontend/src/services/photo-analysis.js `guidanceFromAnalysis` |

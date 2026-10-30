@@ -27,7 +27,10 @@ const CONSOLE_PORT = Number(process.env.LOCAL_MINIO_CONSOLE_PORT ?? 9001);
 const backendDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const localDir = join(backendDir, ".local");
 const binPath = join(localDir, "minio");
-const dataDir = join(localDir, "minio-data");
+// The e2e suite points this at its own folder so it never shares a data dir
+// with the dev MinIO.
+const dataDir =
+  process.env.LOCAL_MINIO_DATA_DIR ?? join(localDir, "minio-data");
 
 /**
  * Map Node's platform/arch to MinIO's release asset segment (`<os>-<arch>`).

@@ -1,3 +1,4 @@
+import { CaptureFileQueue } from "../services/capture-files.js";
 import { resolveSessionTask } from "./session-task-resolution.js";
 import { openSessionDuplicate } from "./duplicate-issue-launcher.js";
 import { captureLabels } from "./capture-analysis.templates.js";
@@ -14,6 +15,7 @@ import {
 import "./perimeter-check.css";
 import "./problem-report.css";
 import {
+  showToast,
   show311FilingToast,
   show311ErrorToast,
   showActionSaveErrorToast,
@@ -22,7 +24,6 @@ import {
   showDeleteErrorToast,
   showEditErrorToast,
   showEditRefreshErrorToast,
-  showEditSavedToast,
   showReanalysisErrorToast,
 } from "../state/toasts.js";
 import { requestId, setBusy, setDialogError } from "../lib/dialog-controls.js";
@@ -78,8 +79,11 @@ import {
   setAnalyzingOpen,
 } from "../state/check-session.js";
 import { shell, analysisSection } from "./problem-report.templates.js";
-import { shotTile, addTile, footer } from "./perimeter-check.templates.js";
-import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
+import { shotTile, footer } from "./perimeter-check.templates.js";
+import {
+  setQuestionAnswerBusy,
+  showQuestionAnswerUpdated,
+} from "./analysis-answer-controls.js";
 
 /**
  * @typedef {{ siteId?: string, providerSiteId?: string, id?: string, name?: string, address?: string }} SiteRecord
@@ -90,6 +94,8 @@ import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 class ProblemReport extends HTMLElement {
   constructor() {
     super();
+    this._captureReadVersion = 0;
+    this._captureFiles = new CaptureFileQueue();
     /** @type {SiteRecord | null} */
     this._site = null;
     /** @type {string} */
@@ -98,8 +104,6 @@ class ProblemReport extends HTMLElement {
     this._checkId = "";
     /** @type {HTMLInputElement | null} */
     this._fileInput = null;
-    /** @type {FileReader | null} */
-    this._fileReader = null;
     this._finishing = false;
     this._unsubscribe = null;
     this._activeProblem = null;
@@ -225,6 +229,22 @@ class ProblemReport extends HTMLElement {
       this._onGridClick(e),
     );
     this._fileInput.addEventListener("change", () => this._onFilePicked());
+    this.querySelector("#add-photo").addEventListener("click", () =>
+      this._openCamera(),
+    );
+    const gallery = /** @type {HTMLInputElement} */ (
+      this.querySelector("#gallery-input")
+    );
+    this.querySelector("[data-capture-upload]").addEventListener(
+      "click",
+      () => {
+        gallery.value = "";
+        markCameraOpen("/problem");
+        gallery.click();
+      },
+    );
+    gallery.addEventListener("change", () => this._onFilePicked(gallery));
+    this._fileInput.oncancel = gallery.oncancel = clearCameraOpen;
 
     this._render();
     // Async-init announcement: the heading may not exist at route-mount time.
@@ -254,42 +274,36 @@ class ProblemReport extends HTMLElement {
   }
 
   /** @returns {void} */
-  _onFilePicked() {
+  _onFilePicked(input = this._fileInput) {
     clearCameraOpen();
-    if (!this._fileInput) return;
-    const file = this._fileInput.files && this._fileInput.files[0];
-    if (!file) return;
-    void trackEvent("photo_picked", {
-      flow: "single-problem",
-      photo_bytes: file.size,
-      photo_type: file.type,
-    });
-    if (this._fileReader?.readyState === FileReader.LOADING) {
-      this._fileReader.abort();
-    }
+    const files = [...(input?.files || [])];
+    if (!files.length) return;
     const originCheckId = this._checkId;
-    const reader = new FileReader();
-    this._fileReader = reader;
-    reader.onload = () => {
-      if (
-        !this.isConnected ||
-        !isCurrentSession(originCheckId, "single-problem")
-      ) {
-        this._fileReader = null;
-        return;
-      }
-      this._fileReader = null;
-      if (typeof reader.result === "string") {
-        this._addPhoto(reader.result);
-      }
-    };
-    reader.onerror = () => {
-      this._fileReader = null;
-    };
-    reader.onabort = () => {
-      this._fileReader = null;
-    };
-    reader.readAsDataURL(file);
+    const version = this._captureReadVersion;
+    const rejected = this._captureFiles.enqueue(
+      files,
+      getItems(),
+      () =>
+        this.isConnected &&
+        !this._finishing &&
+        version === this._captureReadVersion &&
+        isCurrentSession(originCheckId, "single-problem"),
+      (dataUrl) => this._addPhoto(dataUrl),
+      () => this._render(),
+    );
+    if (rejected)
+      showToast({
+        title: t("capture.files.rejectedTitle"),
+        message: t("capture.files.rejectedMessage", { count: rejected }),
+        tone: "warning",
+        duration: 0,
+      });
+    for (const file of files)
+      void trackEvent("photo_picked", {
+        flow: "single-problem",
+        photo_bytes: file.size,
+        photo_type: file.type,
+      });
   }
 
   /** @param {string} dataUrl */
@@ -363,9 +377,7 @@ class ProblemReport extends HTMLElement {
     const grid = this.querySelector("#shotgrid");
     if (!grid) return;
     grid.classList.toggle("shotgrid--empty", items.length === 0);
-    const tile = addTile(items.length === 0);
-    grid.innerHTML =
-      tile + items.map((item, index) => shotTile(item, index)).join("");
+    grid.innerHTML = items.map((item, index) => shotTile(item, index)).join("");
   }
 
   /** @returns {EvidenceItem[]} */
@@ -424,7 +436,7 @@ class ProblemReport extends HTMLElement {
     container.innerHTML = footer({
       items,
       analyzingOpen: getAnalyzingOpen(),
-      complete: hasLiveEvidence(getCurrentCheck()),
+      complete: !this._captureFiles.busy && hasLiveEvidence(getCurrentCheck()),
       doneId: "submit-report",
       doneLabel: t("common.done"),
     });
@@ -433,7 +445,7 @@ class ProblemReport extends HTMLElement {
   /** @returns {Promise<void>} */
   async _done() {
     const check = getCurrentCheck();
-    if (!hasLiveEvidence(check)) {
+    if (this._captureFiles.busy || !hasLiveEvidence(check)) {
       this._syncControls();
       return;
     }
@@ -634,7 +646,6 @@ class ProblemReport extends HTMLElement {
       this._analysisEditDialog?.close();
       this._activeProblem = null;
       this._render();
-      showEditSavedToast();
     } catch (err) {
       console.error("edit analysis condition failed", err);
       showEditErrorToast();
@@ -654,10 +665,7 @@ class ProblemReport extends HTMLElement {
     }
 
     if (problem.actionKind === "escalation") {
-      openOverlayDialog(
-        /** @type {HTMLDialogElement} */ (this._analysisProgressDialog),
-        "analysis-progress",
-      );
+      show311FilingToast(problem);
       try {
         const result = await completeCardAction(problem.taskId, {
           completionMethod: "311_filed",
@@ -668,7 +676,6 @@ class ProblemReport extends HTMLElement {
           return;
         }
         this._markProblemResolved(problem);
-        show311FilingToast(result.task);
       } catch (err) {
         console.error("escalation failed", err);
         this._analysisProgressDialog?.close();
@@ -710,6 +717,7 @@ class ProblemReport extends HTMLElement {
         answerValue,
       );
       this._render();
+      showQuestionAnswerUpdated(this, problem.conditionId);
     } catch (err) {
       console.error("answer condition failed", err);
       showAnswerSaveErrorToast();
@@ -738,12 +746,11 @@ class ProblemReport extends HTMLElement {
 
   /** @returns {void} */
   disconnectedCallback() {
+    this._captureReadVersion += 1;
+    this._captureFiles = new CaptureFileQueue();
     // Only an abnormal document death leaves the marker behind.
     clearCameraOpen();
     this._initGeneration += 1;
-    if (this._fileReader?.readyState === FileReader.LOADING) {
-      this._fileReader.abort();
-    }
     this._cleanupSubscription();
   }
 }

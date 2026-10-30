@@ -1,3 +1,4 @@
+import { withResolutionProofForTasks } from "../task-updates/resolution-proof.js";
 /*
   Site manager reports — the read side of the Checks / Issues / Actions
   views. Manager-only, site-scoped by the token, and served straight from
@@ -66,6 +67,9 @@ const TASK_PROJECTION = [
   "userFriendlyLabel",
   "label",
   "latestUpdateLabel",
+  "latestUpdateId",
+  "proofAddedAt",
+  "canBeInProgress",
   "completionMethod",
   "inProgressActionKind",
   "agency",
@@ -332,7 +336,7 @@ export const getTasksReport = async (event) => {
   return jsonResponse(200, {
     period,
     today,
-    tasks,
+    tasks: await withResolutionProofForTasks(tableName, siteId, tasks),
     asOf,
     previous: { ...previous, count: previousIssues.length, byType },
   });

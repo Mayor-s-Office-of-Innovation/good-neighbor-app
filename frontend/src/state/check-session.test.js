@@ -222,7 +222,7 @@ describe("pre-Phase-2 records (places map)", () => {
     expect(check).not.toHaveProperty("places");
   });
 
-  it("leaves a current-shape draft as it is", async () => {
+  it("opens the analyzer for a draft without an explicit preference", async () => {
     const { getDraft } = await import("../db.js");
     vi.mocked(getDraft).mockResolvedValueOnce({
       id: "current-check",
@@ -236,7 +236,7 @@ describe("pre-Phase-2 records (places map)", () => {
     const check = /** @type {any} */ (await loadDraft("perimeter"));
 
     expect(check.items.map((item) => item.id)).toEqual(["a", "b"]);
-    expect(check.analyzingOpen).toBe(false);
+    expect(check.analyzingOpen).toBe(true);
   });
 });
 

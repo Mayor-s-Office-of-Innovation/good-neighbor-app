@@ -1,3 +1,5 @@
+import { connectionFetch } from "../../../frontend/src/services/backend-health.js";
+import { parseRetryAfter } from "../../../frontend/src/lib/retry-after.js";
 import { createReadRequests } from "./read-requests.js";
 import { localRoleHeaders } from "../local-role.js";
 import { getFreshAdminToken, startAdminLogin } from "./admin-auth.js";
@@ -35,7 +37,7 @@ async function authenticatedFetch(path, init = {}) {
   const signal = init.signal
     ? AbortSignal.any([init.signal, timeout])
     : timeout;
-  const res = await fetch(`${config.apiBase}${path}`, {
+  const res = await connectionFetch(`${config.apiBase}${path}`, {
     ...init,
     signal,
     headers: {
@@ -79,6 +81,9 @@ async function parseAdminResponse(path, init) {
   if (!res.ok) {
     const err = new Error(body.error || "admin_request_failed");
     /** @type {any} */ (err).status = res.status;
+    /** @type {any} */ (err).retryAfterMs = parseRetryAfter(
+      res.headers?.get?.("retry-after"),
+    );
     // Some routes (analytics) explain the failure; surface it for the UI.
     if (typeof body.message === "string") {
       /** @type {any} */ (err).detail = body.message;
@@ -89,6 +94,12 @@ async function parseAdminResponse(path, init) {
 }
 
 export const adminApi = {
+  getSystemControls: () => adminFetch("/admin/v1/system-controls"),
+  updateSystemControls: (body) =>
+    adminFetch("/admin/v1/system-controls", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
   getSystemStatus: () => adminFetch("/admin/v1/system-status"),
   getStatusEntries: (site, kind, cursor) =>
     adminFetch(
@@ -337,6 +348,11 @@ export const adminApi = {
       method: "PATCH",
       body: JSON.stringify(values),
     }),
+  updateSiteDeliberate311: (siteId, values) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/deliberate-311`, {
+      method: "PUT",
+      body: JSON.stringify(values),
+    }),
   reassignSite: (siteId, providerId, leadProgramId, options = {}) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/reassign`, {
       method: "POST",
@@ -453,7 +469,7 @@ export const adminApi = {
       },
     ),
   uploadComplianceLetter: async (uploadUrl, file) => {
-    const response = await fetch(uploadUrl, {
+    const response = await connectionFetch(uploadUrl, {
       method: "PUT",
       headers: { "content-type": "application/pdf" },
       body: file,

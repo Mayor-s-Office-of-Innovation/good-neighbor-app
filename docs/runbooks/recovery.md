@@ -19,8 +19,10 @@ to a production queue, purge a shared queue, or replay real 311/email actions as
 test data. A production incident redrive needs a diagnosed cause and an owner.
 
 The queues are `good-neighbor-app-<env>-analysis` (foreground captures),
-`good-neighbor-app-<env>-submissions` (background/legacy work), and their `-dlq`
-queues. Main analysis/submissions queues retain messages for four days; their
+`good-neighbor-app-<env>-submissions` (background/legacy work),
+`good-neighbor-app-<env>-311` (311 jobs), and their `-dlq` queues.
+See the [311 runbook](sf311.md) for reconciliation and legacy messages.
+These source queues retain messages for four days; their
 DLQs retain them for 14 days. They dead-letter after five receives. Treat
 approximate message counts as diagnostic signals rather than an exact inventory.
 Duplicate detection has its own queues and recovery semantics; use the
@@ -59,6 +61,29 @@ Duplicate detection has its own queues and recovery semantics; use the
 8. Record time to detection, diagnosis, correction, and recovery. Remove only
    known synthetic fixtures using supported app cleanup after the drill. Do not
    delete real evidence, empty shared DLQs, or shorten queue retention.
+
+### SF311 closure recovery
+
+The 311 team confirmed that tickets owned by our agency (76) do not appear in
+`GetLatestUpdatesBySourceAgency`, and repeating a closure update is safe. The
+worker sends eligible owned-ticket closures directly to `UpdateSR`; it does not
+use that feed as a prerequisite. A failed or interrupted closure may be retried,
+while a saved successful closure is skipped. HTTP 200 alone is insufficient:
+`UpdateSR` must return an explicit `return_code = 0` before a closure is recorded
+as successful. Missing confirmation leaves the closure failed and retryable.
+Tickets owned by other agencies
+remain outside this automatic closure path.
+
+After deploying the fix through CI, identify affected closure-only jobs by their
+saved successful creation and unresolved closure checkpoints. Confirm their task
+state and ownership before replay; retain the existing job keys and checkpoints
+so recovery does not create another ticket. Use the controlled DLQ process above;
+do not move an entire mixed queue or discard unresolved closures. Verify the job
+reaches `complete` and its closure checkpoint records success after replay.
+
+This permission to repeat closures does **not** apply to `CreateSR` or attachment
+updates. `CreateSR` is non-idempotent; preserve pending/uncertain creation
+checkpoints and reconcile them rather than blindly issuing another creation.
 
 ## Database point-in-time recovery
 

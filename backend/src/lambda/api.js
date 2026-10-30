@@ -1,4 +1,9 @@
 import {
+  getSystemControls,
+  putSystemControls,
+} from "../handlers/system-controls.js";
+import { listPendingGuidance } from "../handlers/pending-guidance.js";
+import {
   getSystemStatus,
   getStatusEntries,
   getStatusMedia,
@@ -40,6 +45,7 @@ import {
   presignUpload,
   registerArtifact,
   deleteArtifact,
+  updateArtifactLocation,
   presignMedia,
 } from "../handlers/artifacts.js";
 import {
@@ -177,6 +183,7 @@ import {
   getSitePerimeter,
   listSiteTerms,
   putSitePerimeter,
+  putSiteDeliberate311,
   replaceSiteComplianceManagers,
   unassignSiteUser,
 } from "../handlers/admin-site-config.js";
@@ -259,6 +266,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /v1/checks/{checkId}/artifacts:presign": presignUpload,
   "POST /v1/checks/{checkId}/artifacts": registerArtifact,
   "DELETE /v1/checks/{checkId}/artifacts/{artifactId}": deleteArtifact,
+  "PATCH /v1/checks/{checkId}/artifacts/{artifactId}/location":
+    updateArtifactLocation,
   "POST /v1/checks/{checkId}/complete": completeCheck,
   "GET /v1/checks/{checkId}/artifacts/{artifactId}/media": presignMedia,
   "GET /v1/checks/{checkId}/artifacts/{artifactId}/duplicates":
@@ -296,6 +305,7 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /v1/tasks/{taskId}/updates/{updateId}/document": documentTaskUpdate,
   "POST /v1/tasks/{taskId}/update-media": registerTaskUpdateMedia,
   // Assessment guidance workflow
+  "GET /v1/guidance/pending": listPendingGuidance,
   "POST /v1/assessments:evaluate": evaluateAssessment,
   "GET /v1/assessments/{assessmentId}/guidance": getGuidance,
   "POST /v1/assessments/{assessmentId}/conditions/{conditionId}/answers":
@@ -311,6 +321,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   // served by the separate intake Lambda (lambda/intake.js) so a slow PostHog
   // forward can never hold this function's reserved executions.
   "GET /admin/v1/providers": listProviders,
+  "GET /admin/v1/system-controls": getSystemControls,
+  "PUT /admin/v1/system-controls": putSystemControls,
   "GET /admin/v1/system-status": getSystemStatus,
   "GET /admin/v1/system-status/{siteId}/{kind}": getStatusEntries,
   "GET /admin/v1/system-status/{siteId}/media/{checkId}/{artifactId}":
@@ -368,6 +380,7 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /admin/v1/sites/{siteId}/letter:resend": resendSiteLetter,
   "GET /admin/v1/sites/{siteId}/perimeter": getSitePerimeter,
   "PUT /admin/v1/sites/{siteId}/perimeter": putSitePerimeter,
+  "PUT /admin/v1/sites/{siteId}/deliberate-311": putSiteDeliberate311,
   "GET /admin/v1/sites/{siteId}/manager-memberships": listManagerMemberships,
   "POST /admin/v1/sites/{siteId}/manager-memberships": createManagerMembership,
   "PATCH /admin/v1/sites/{siteId}/manager-memberships/{membershipId}":

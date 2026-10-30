@@ -245,6 +245,7 @@ describe("provider and site management", () => {
         Item: {
           pk: "SITE#provider-one-main-site",
           sk: "#META",
+          deliberate311ProductionEnabled: true,
         },
         ConditionExpression:
           "attribute_not_exists(pk) AND attribute_not_exists(sk)",
@@ -1647,7 +1648,7 @@ it("directory summaries paginate provider memberships and exclude document signi
   expect(presignGet).not.toHaveBeenCalled();
 });
 
-it.each(["details", "oversight", "access", "status"])(
+it.each(["details", "oversight", "access", "status", "settings"])(
   "lightweight %s site reads omit document signing and unrelated partitions",
   async (view) => {
     presignGet.mockClear();
@@ -1677,6 +1678,7 @@ it.each(["details", "oversight", "access", "status"])(
       .map(([c]) => c.input.ExpressionAttributeValues[":prefix"]);
     expect(prefixes).not.toContain("COMPLIANCE_TERMS#");
     if (view === "status") expect(prefixes).toContain("LETTER_JOB#");
+    if (view === "settings") expect(prefixes).toEqual([]);
   },
 );
 

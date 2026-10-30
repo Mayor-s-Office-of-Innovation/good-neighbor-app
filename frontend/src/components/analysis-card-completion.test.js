@@ -6,22 +6,21 @@ import {
 } from "./analysis-card-completion.js";
 import { completeTask } from "../services/api.js";
 import { getSite } from "../db.js";
-import { showActionSaveErrorToast, showToast } from "../state/toasts.js";
+import { showActionSaveErrorToast } from "../state/toasts.js";
 vi.mock("../services/phone-completion.js", () => ({
+  showPhoneCompletionError: vi.fn(),
   savePhoneCompletion: (taskId) =>
     completeTask(taskId, { completionMethod: "manual" }).catch((error) => {
       showActionSaveErrorToast();
       throw error;
     }),
 }));
-vi.mock("./task-update-dialog.js", () => ({}));
 vi.mock("../db.js", () => ({
   getSite: vi.fn(async () => ({ siteId: "site" })),
 }));
 vi.mock("../services/api.js", () => ({ completeTask: vi.fn() }));
 vi.mock("../state/toasts.js", () => ({
   showActionSaveErrorToast: vi.fn(),
-  showToast: vi.fn(),
 }));
 let host, card, button, callbacks, shell, animation;
 beforeEach(() => {
@@ -30,11 +29,13 @@ beforeEach(() => {
   const attrs = new Map();
   button = {
     disabled: false,
+    focus: vi.fn(),
     setAttribute: (k, v) => attrs.set(k, v),
     getAttribute: (k) => attrs.get(k),
   };
   card = {
     isConnected: true,
+    querySelector: () => button,
     querySelectorAll: () => [button],
     getAttribute: () => "task",
     setAttribute: vi.fn(),
@@ -44,6 +45,7 @@ beforeEach(() => {
   host = {
     isConnected: true,
     contains: () => false,
+    querySelectorAll: () => [card],
     querySelector: () => null,
   };
   callbacks = { onSaved: vi.fn(), render: vi.fn() };
@@ -137,40 +139,16 @@ it.each(["rejected", "unconfirmed"])(
     expect(showActionSaveErrorToast).toHaveBeenCalledOnce();
   },
 );
-it("keeps a completed card waiting until the results dialog closes", async () => {
-  const task = {
-    taskId: "task",
-    status: "completed",
-    canBeInProgress: false,
-    latestUpdateId: "update",
-  };
-  vi.mocked(completeTask).mockResolvedValue({ task, resultsPending: true });
-  let close = () => {};
-  const dialog = {
-    addEventListener: vi.fn((type, callback) => {
-      close = callback;
-    }),
-    openResults: vi.fn(),
-    remove: vi.fn(),
-  };
-  vi.stubGlobal("document", {
-    createElement: () => dialog,
-    body: { append: vi.fn() },
+it("animates completion without opening documentation even when results are pending", async () => {
+  vi.mocked(completeTask).mockResolvedValue({
+    task: { status: "completed", canBeInProgress: false },
+    resultsPending: true,
   });
-  document.body.append = vi.fn();
-  const finished = vi.fn();
-  const saving = completeCardAction("task", {
-    completionMethod: "manual",
-  }).then(finished);
+  toggleCardCompletion(host, card, button, callbacks);
   await vi.advanceTimersByTimeAsync(0);
-  expect(dialog.openResults).toHaveBeenCalledWith(task, null);
-  expect(finished).not.toHaveBeenCalled();
-  close();
-  await saving;
-  expect(dialog.remove).toHaveBeenCalledOnce();
-  expect(finished).toHaveBeenCalledWith({ task, resultsPending: true });
+  expect(callbacks.onSaved).toHaveBeenCalledOnce();
+  expect(callbacks.render).toHaveBeenCalledOnce();
 });
-
 it("does not reopen capture for a replay whose results are closed", async () => {
   const result = {
     task: {
@@ -252,250 +230,14 @@ it("leaves failed phone saves retryable without checkbox semantics", async () =>
   expect(showActionSaveErrorToast).toHaveBeenCalledOnce();
 });
 
-function resultsDialogStub() {
-  const dialog = {
-    addEventListener: vi.fn((type, callback) => {
-      dialog.close = callback;
-    }),
-    close: () => {},
-    openResults: vi.fn(),
-    remove: vi.fn(),
-  };
-  return dialog;
-}
-
-it("opens the results prompt at tap time and lets the response arrive behind it", async () => {
-  const task = { taskId: "task", canBeInProgress: false, checkId: "check" };
-  let resolveSave = (value) => {
-    void value;
-  };
-  vi.mocked(completeTask).mockReturnValue(
-    new Promise((resolve) => {
-      resolveSave = resolve;
-    }),
-  );
-  const dialog = resultsDialogStub();
-  vi.stubGlobal("document", {
-    createElement: (tag) => (tag === "task-update-dialog" ? dialog : shell),
-    activeElement: button,
-    body: { append: vi.fn() },
-  });
-  toggleCardCompletion(host, card, button, { ...callbacks, task });
-  await vi.advanceTimersByTimeAsync(0);
-  expect(document.body.append).toHaveBeenCalledWith(dialog);
-  const [promptedTask, completion] = dialog.openResults.mock.calls[0];
-  expect(promptedTask).toBe(task);
-  expect(completion).toBeInstanceOf(Promise);
-  expect(card.before).not.toHaveBeenCalled();
-  const saved = {
-    task: { taskId: "task", status: "completed", latestUpdateId: "update" },
-    resultsPending: true,
-  };
-  resolveSave(saved);
-  await expect(completion).resolves.toEqual({ task: saved.task });
-  // The card waits for the prompt to close before it slides away.
-  expect(card.before).not.toHaveBeenCalled();
-  dialog.close();
-  await vi.advanceTimersByTimeAsync(0);
-  expect(dialog.remove).toHaveBeenCalledOnce();
-  expect(card.before).toHaveBeenCalled();
-  await vi.advanceTimersByTimeAsync(0);
-  expect(callbacks.onSaved).toHaveBeenCalledWith(saved.task);
-});
-
-it("tells the prompt when the action failed or produced no results", async () => {
-  const task = { taskId: "task", canBeInProgress: false };
-  const dialog = resultsDialogStub();
-  vi.stubGlobal("document", {
-    createElement: () => dialog,
-    activeElement: button,
-    body: { append: vi.fn() },
-  });
-  vi.mocked(completeTask).mockRejectedValue(new Error("offline"));
-  const failing = completeCardAction(
-    "task",
-    { completionMethod: "manual" },
-    { task },
-  );
-  await vi.advanceTimersByTimeAsync(0);
-  await expect(dialog.openResults.mock.calls[0][1]).resolves.toEqual({
-    task: null,
-    failed: true,
-  });
-  dialog.close();
-  await expect(failing).rejects.toThrow("offline");
-
-  vi.mocked(completeTask).mockResolvedValue({
-    task: { status: "in_progress" },
-    resultsPending: false,
-  });
-  const quiet = completeCardAction(
-    "task",
-    { completionMethod: "manual" },
-    { task },
-  );
-  await vi.advanceTimersByTimeAsync(0);
-  await expect(dialog.openResults.mock.calls[1][1]).resolves.toEqual({
-    task: null,
-  });
-  dialog.close();
-  await expect(quiet).resolves.toEqual({
-    task: { status: "in_progress" },
-    resultsPending: false,
-  });
-});
-
-it("shows results prompts one at a time, in tap order", async () => {
-  const dialogs = [resultsDialogStub(), resultsDialogStub()];
-  let created = 0;
-  vi.stubGlobal("document", {
-    createElement: () => dialogs[created++],
-    activeElement: button,
-    body: { append: vi.fn() },
-  });
-  vi.mocked(completeTask).mockResolvedValue({
-    task: { status: "completed" },
-    resultsPending: true,
-  });
-  const tasks = [
-    { taskId: "first", canBeInProgress: false },
-    { taskId: "second", canBeInProgress: false },
-  ];
-  tasks.forEach(
-    (task) =>
-      void completeCardAction(
-        task.taskId,
-        { completionMethod: "manual" },
-        { task },
-      ),
-  );
-  await vi.advanceTimersByTimeAsync(0);
-  expect(completeTask).toHaveBeenCalledTimes(2);
-  expect(dialogs[0].openResults).toHaveBeenCalledWith(
-    tasks[0],
-    expect.any(Promise),
-  );
-  expect(created).toBe(1);
-  dialogs[0].close();
-  await vi.advanceTimersByTimeAsync(0);
-  expect(created).toBe(2);
-  expect(dialogs[1].openResults).toHaveBeenCalledWith(
-    tasks[1],
-    expect.any(Promise),
-  );
-  // Drain the module-level queue so later tests start with no open prompt.
-  dialogs[1].close();
-  await vi.advanceTimersByTimeAsync(0);
-});
-
-it("reports a queued card's failure without waiting for the open prompt", async () => {
-  const dialogs = [resultsDialogStub(), resultsDialogStub()];
-  let created = 0;
-  vi.stubGlobal("document", {
-    createElement: () => dialogs[created++],
-    activeElement: button,
-    body: { append: vi.fn() },
-  });
-  const tasks = [
-    { taskId: "first", canBeInProgress: false },
-    { taskId: "second", canBeInProgress: false },
-  ];
-  vi.mocked(completeTask).mockResolvedValueOnce({
-    task: { status: "completed" },
-    resultsPending: true,
-  });
-  void completeCardAction(
-    "first",
-    { completionMethod: "manual" },
-    { task: tasks[0] },
-  );
-  await vi.advanceTimersByTimeAsync(0);
-  expect(created).toBe(1);
-  vi.mocked(completeTask).mockRejectedValueOnce(new Error("offline"));
-  const failing = completeCardAction(
-    "second",
-    { completionMethod: "manual" },
-    { task: tasks[1] },
-  );
-  // The first prompt is still open; the second card hears back anyway.
-  await expect(failing).rejects.toThrow("offline");
-  dialogs[0].close();
-  await vi.advanceTimersByTimeAsync(0);
-  // Its turn in the queue is skipped: no second prompt is ever created.
-  expect(created).toBe(1);
-});
-
-it("skips the prompt for actions the backend never documents", async () => {
-  vi.mocked(completeTask).mockResolvedValue({
-    task: { status: "in_progress" },
-  });
+it("deduplicates concurrent saves without opening a modal", async () => {
   const create = vi.spyOn(document, "createElement");
-  await completeCardAction(
-    "task",
-    { completionMethod: "manual" },
-    { task: { taskId: "task", canBeInProgress: true } },
-  );
-  await completeCardAction(
-    "task",
-    { completionMethod: "311_filed" },
-    { task: { taskId: "task", canBeInProgress: false } },
-  );
+  const first = completeCardAction("task", { completionMethod: "manual" });
+  const second = completeCardAction("task", { completionMethod: "manual" });
+  await Promise.all([first, second]);
+  expect(completeTask).toHaveBeenCalledOnce();
   expect(create).not.toHaveBeenCalled();
 });
-
-it("keeps a successful save when opening results fails and retries only the prompt", async () => {
-  const task = {
-    taskId: "recover",
-    status: "completed",
-    latestUpdateId: "event",
-  };
-  vi.mocked(completeTask).mockResolvedValue({ task, resultsPending: true });
-  const dialog = resultsDialogStub();
-  dialog.openResults.mockImplementationOnce(() => {
-    throw new Error("render failed");
-  });
-  vi.stubGlobal("document", {
-    createElement: () => dialog,
-    body: { append: vi.fn() },
-  });
-  await expect(
-    completeCardAction("recover", { completionMethod: "manual" }),
-  ).resolves.toEqual({ task, resultsPending: true });
-  expect(dialog.remove).toHaveBeenCalledOnce();
-  expect(showActionSaveErrorToast).not.toHaveBeenCalled();
-  const retry = vi.mocked(showToast).mock.calls[0][0].action.run();
-  await vi.advanceTimersByTimeAsync(0);
-  expect(dialog.openResults).toHaveBeenLastCalledWith(task, null);
-  dialog.close();
-  await retry;
-  expect(completeTask).toHaveBeenCalledOnce();
-});
-
-it("deduplicates requests and prompts for the same task across card instances", async () => {
-  const task = { taskId: "shared", canBeInProgress: false };
-  vi.mocked(completeTask).mockResolvedValue({ task, resultsPending: true });
-  const dialog = resultsDialogStub();
-  vi.stubGlobal("document", {
-    createElement: () => dialog,
-    body: { append: vi.fn() },
-  });
-  const first = completeCardAction(
-    "shared",
-    { completionMethod: "manual" },
-    { task },
-  );
-  const second = completeCardAction(
-    "shared",
-    { completionMethod: "manual" },
-    { task: { ...task } },
-  );
-  await vi.advanceTimersByTimeAsync(0);
-  expect(completeTask).toHaveBeenCalledOnce();
-  expect(dialog.openResults).toHaveBeenCalledOnce();
-  dialog.close();
-  expect(await first).toEqual(await second);
-});
-
 it("does not share completion requests across sites", async () => {
   vi.mocked(getSite)
     .mockResolvedValueOnce({ siteId: "one" })
@@ -517,7 +259,7 @@ it("does not share completion requests across sites", async () => {
   );
 });
 
-it("does not hide a real save failure when the prompt also fails", async () => {
+it("preserves the original save failure without loading the optional dialog", async () => {
   vi.mocked(completeTask).mockRejectedValue(new Error("save failed"));
   vi.stubGlobal("document", {
     createElement: () => {
@@ -525,12 +267,7 @@ it("does not hide a real save failure when the prompt also fails", async () => {
     },
   });
   await expect(
-    completeCardAction(
-      "failed",
-      { completionMethod: "manual" },
-      { task: { canBeInProgress: false } },
-    ),
+    completeCardAction("failed", { completionMethod: "manual" }),
   ).rejects.toThrow("save failed");
   await vi.advanceTimersByTimeAsync(0);
-  expect(showToast).not.toHaveBeenCalled();
 });

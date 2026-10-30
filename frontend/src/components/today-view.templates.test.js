@@ -164,7 +164,7 @@ describe("homeResults", () => {
     newTaskCardsMarkup: "",
     newTaskCount: 0,
     activeClearCheck: null,
-    hasPendingClearResult: false,
+    pendingClearCheck: null,
     historyGroups: [],
   };
 
@@ -259,7 +259,7 @@ describe("errorView", () => {
     expect(markup).toContain("home-identity__org");
     expect(markup).toContain('id="retry"');
     expect(markup).toContain(escapeHtml(t("today.error.title")));
-    expect(markup).toContain(escapeHtml(t("today.error.text")));
+    expect(markup).toContain(escapeHtml(t("notice.loadHelp")));
     expect(markup).toContain(escapeHtml(t("common.retry")));
   });
 });

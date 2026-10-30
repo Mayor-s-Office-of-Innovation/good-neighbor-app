@@ -77,13 +77,22 @@ export function isOutsideSiteRadius(position, site) {
 
 /**
  * Decide whether a local pending/review session has been superseded by backend history.
- * @param {{ id: string, status?: string, submittedAt?: string, items?: Array<{analysis?: {status?: string, tasks?: Array<{taskId?: string, conditionId?: string, assessmentId?: string}>, conditions?: Array<{conditionId?: string}>}}> } | null} session
+ * @param {{ id: string, status?: string, submittedAt?: string, items?: Array<{locationUnsent?: boolean, upload?: {artifactId?: string}, analysis?: {artifactId?: string, status?: string, tasks?: Array<{taskId?: string, conditionId?: string, assessmentId?: string}>, conditions?: Array<{conditionId?: string, status?: string}>, assessment?: {assessmentId?: string}}}> } | null} session
  * @param {Array<{ id: string, status?: string, submittedAt?: string }>} submitted
  * @param {Array<{taskId?: string, conditionId?: string, assessmentId?: string}>} [tasks]
  * @returns {boolean}
  */
 export function isStalePendingSession(session, submitted, tasks = []) {
   if (!session) return false;
+  // Clearing the session would drop a late GPS fix that is still being resent.
+  if (
+    session.items?.some(
+      (item) =>
+        item.locationUnsent &&
+        (item.analysis?.artifactId || item.upload?.artifactId),
+    )
+  )
+    return false;
   if (session.status === "capture-complete") {
     // The backend check can be submitted before per-artifact guidance has
     // finished. Keep the local results alive until every captured item has
@@ -141,6 +150,7 @@ export function isTaskExpired(task, now = Date.now()) {
  * @param {Record<string, any>} task
  */
 export function taskResolution(task) {
+  const proof = task.status === "completed" && Boolean(task.proofAddedAt);
   const explicit =
     task.completionMethod === "site_team_resolved" ||
     task.latestUpdateLabel === "Resolved";
@@ -151,12 +161,14 @@ export function taskResolution(task) {
     );
   const resolvedAt = task.resolvedAt || task.resolved_at || "";
   return {
-    confirmed: explicit || (!actionOnly && Boolean(resolvedAt)),
-    at: explicit
-      ? resolvedAt || task.completedAt || task.completed_at || ""
-      : actionOnly
-        ? ""
-        : resolvedAt,
+    confirmed: proof || explicit || (!actionOnly && Boolean(resolvedAt)),
+    at: proof
+      ? task.completedAt || task.completed_at || resolvedAt
+      : explicit
+        ? resolvedAt || task.completedAt || task.completed_at || ""
+        : actionOnly
+          ? ""
+          : resolvedAt,
   };
 }
 
@@ -330,24 +342,25 @@ export function hasProblemResults(item) {
 export function sessionProblemItemHasBackendCards(item, tasks) {
   const backendTasks = Array.isArray(tasks) ? tasks : [];
   const localTasks = item?.analysis?.tasks || [];
-  if (localTasks.length) {
-    return localTasks.every((localTask) =>
+  const localConditions = item?.analysis?.conditions || [];
+  if (!localTasks.length && !localConditions.length) return false;
+  return (
+    localTasks.every((localTask) =>
       backendTasks.some((backendTask) =>
         sameProblemCard(localTask, backendTask),
       ),
-    );
-  }
-  const localConditions = item?.analysis?.conditions || [];
-  if (localConditions.length) {
-    return localConditions.every((condition) =>
-      backendTasks.some(
+    ) &&
+    localConditions.every((condition) => {
+      if (["completed", "rejected"].includes(condition.status)) return true;
+      return backendTasks.some(
         (backendTask) =>
           condition.conditionId &&
-          condition.conditionId === backendTask.conditionId,
-      ),
-    );
-  }
-  return false;
+          condition.conditionId === backendTask.conditionId &&
+          (!item.analysis?.assessment?.assessmentId ||
+            backendTask.assessmentId === item.analysis.assessment.assessmentId),
+      );
+    })
+  );
 }
 
 function sameProblemCard(localTask, backendTask) {
@@ -459,4 +472,13 @@ export function splitSiteIdentity(name) {
     }
   }
   return null;
+}
+
+/** Explicitly completed cards need evidence of the result, never expiry alone. */
+export function needsResolutionProof(task) {
+  return (
+    task.status === "completed" &&
+    (taskResolution(task).confirmed || task.canBeInProgress === false) &&
+    !task.proofAddedAt
+  );
 }

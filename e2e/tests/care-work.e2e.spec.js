@@ -1,5 +1,6 @@
 import { test, expect } from "../helpers/harness.js";
 import { t } from "../helpers/i18n.js";
+import { E2E_URLS } from "../helpers/ports.js";
 import { PHOTO_CLEAR } from "../helpers/fixtures.js";
 
 /**
@@ -56,9 +57,8 @@ test.describe("proactive care", () => {
     await choose(page, "power_washed");
     await expect(page.locator("[data-save]")).toBeEnabled();
     const work = await save(page);
-    await expect(
-      page.getByText(t("care.success"), { exact: true }),
-    ).toBeVisible();
+    await expect(page.locator(`[data-work="${work.workId}"]`)).toBeVisible();
+    await expect(page.locator(".app-toast--success")).toHaveCount(0);
     await page.locator(`[data-work="${work.workId}"]`).click();
     await expect(page.locator("care-work-view h1")).toHaveText(
       t("care.kind.powerWashed"),
@@ -116,7 +116,7 @@ test.describe("proactive care", () => {
       ),
     ).toBe(true);
   });
-  test("keeps the same submission on an uncertain response and retries without duplicating", async ({
+  test("reconciles an uncertain committed response without duplicating", async ({
     page,
   }) => {
     await openLogs(page);
@@ -130,18 +130,30 @@ test.describe("proactive care", () => {
       if (!dropped) {
         dropped = true;
         await route.fetch();
+        // Deliver the lost response after the list has mounted and started
+        // queue recovery, so this scenario exercises the explicit Retry action.
+        await expect(page.locator(".care-days")).toHaveAttribute(
+          "aria-busy",
+          "false",
+        );
         return route.abort("failed");
       }
       return route.fallback();
     });
     await page.locator("[data-save]").click();
-    await expect(page.locator("[data-retry-work]")).toBeVisible();
-    await save(page, true);
-    expect(submissions).toHaveLength(2);
-    expect(submissions[0]).toEqual(submissions[1]);
-    await expect(
-      page.locator(`[data-work="${submissions[0].workId}"]`),
-    ).toHaveCount(1);
+    // A committed response can appear in the saved list before the failed
+    // local attempt settles. Otherwise the user retries the same queued item.
+    await expect.poll(() => submissions.length).toBeGreaterThan(0);
+    const id = submissions[0].workId;
+    const saved = page.locator(`[data-work="${id}"]`);
+    const retry = page.locator(`[data-retry-work="${id}"]`);
+    await expect
+      .poll(async () => (await retry.isVisible()) || (await saved.isVisible()))
+      .toBe(true);
+    if (await retry.isVisible()) await retry.click();
+    await expect(saved).toHaveCount(1);
+    for (const submission of submissions)
+      expect(submission).toEqual(submissions[0]);
   });
 });
 
@@ -282,7 +294,7 @@ test("proactive care retries a failed list request and shows an actionable empty
   );
   await page.locator("#home-action-menu-trigger").click();
   await page.locator("#view-care-work").click();
-  await expect(page.locator("care-work-view [role=alert]")).toHaveText(
+  await expect(page.locator("care-work-view [role=alert]")).toContainText(
     t("care.loadError"),
   );
   fail = false;
@@ -318,7 +330,7 @@ test("proactive care preserves read-only notes when photos expire and recovers a
   });
   await openLogs(page);
   await page.locator('[data-work="expired-photo-log"]').click();
-  await expect(page.locator("care-work-view [role=alert]")).toHaveText(
+  await expect(page.locator("care-work-view [role=alert]")).toContainText(
     t("care.loadError"),
   );
   fail = false;
@@ -348,7 +360,7 @@ async function expireCareReservations(workId) {
   );
   const client = DynamoDBDocumentClient.from(
     new DynamoDBClient({
-      endpoint: "http://127.0.0.1:8000",
+      endpoint: E2E_URLS.ddb,
       region: "us-east-1",
       credentials: { accessKeyId: "local", secretAccessKey: "local" },
     }),
@@ -421,7 +433,7 @@ test("proactive care replaces five expired uploads without waiting for quota TTL
   await openLogs(page);
   await choose(page, "power_washed");
   await page
-    .locator("#care-photo-input")
+    .locator("#care-gallery-input")
     .setInputFiles(Array(5).fill(PHOTO_CLEAR));
   let expired = false;
   /** @type {Record<string, any>[]} */
@@ -560,7 +572,7 @@ test("failed care screen download provides reload recovery", async ({
   );
   await page.locator("#home-action-menu-trigger").click();
   await page.locator("#view-care-work").click();
-  await expect(page.locator("#view [role=alert]")).toHaveText(
+  await expect(page.locator("#view > [role=alert]")).toContainText(
     t("route.loadError"),
   );
   await page.unroute("**/components/care-work-view.js*");

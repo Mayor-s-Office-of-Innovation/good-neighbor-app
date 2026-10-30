@@ -94,6 +94,26 @@ describe("isStalePendingSession", () => {
     ).toBe(true);
   });
 
+  it("keeps a finished check while a late location is still unsent", async () => {
+    const { isStalePendingSession } = await import("../domain/home-tasks.js");
+
+    expect(
+      isStalePendingSession(
+        {
+          id: "chk_1",
+          status: "capture-complete",
+          items: [
+            {
+              locationUnsent: true,
+              analysis: { status: "analyzed", artifactId: "art_1" },
+            },
+          ],
+        },
+        [{ id: "chk_1", status: "submitted" }],
+      ),
+    ).toBe(false);
+  });
+
   it("clears a capture-complete session once the same backend check is completed", async () => {
     const { isStalePendingSession } = await import("../domain/home-tasks.js");
 
@@ -762,7 +782,7 @@ it("reconciles TaskSheets updates before reloading, including after dismissal", 
   const dialog = {
     addEventListener: (name, handler) => listeners.set(name, handler),
     open: vi.fn(),
-    openResults: vi.fn(),
+    openProof: vi.fn(),
     remove: vi.fn(),
   };
   const originalCreate = document.createElement;
@@ -1228,3 +1248,35 @@ it("does not turn bucket overrides or pending filing states into resolve permiss
     if (status === "open") expect(markup).toContain('data-action="file311"');
   }
 });
+
+it.each(["in_progress", "completed"])(
+  "keeps checklist result %s through stale post-animation refreshes",
+  async (status) => {
+    await import("./today-view.js");
+    const View = /** @type {any} */ (
+      vi
+        .mocked(customElements.define)
+        .mock.calls.find(([name]) => name === "today-view")[1]
+    );
+    const view = new View();
+    const open = {
+      taskId: "a",
+      status: "open",
+      updatedAt: "2026-10-28T10:00:00Z",
+    };
+    const saved = { ...open, status, updatedAt: "2026-10-28T11:00:00Z" };
+    view._homeModel = { tasks: [open] };
+    view._duplicateLinks = new Map();
+    // A prior silent-filing response must not overwrite the checklist result.
+    view._confirmedTasks = new Map([["a", open]]);
+    view._applyTaskResult("a", saved);
+    expect(view._reconcileConfirmedTasks([open], true)).toEqual([saved]);
+    expect(view._reconcileConfirmedTasks([], true)).toEqual([saved]);
+    expect(
+      view._homeTasks(view._reconcileConfirmedTasks([open]))[0].homeStatus,
+    ).not.toBe("needs_action");
+    expect(view._confirmedTasks.has("a")).toBe(true);
+    expect(view._reconcileConfirmedTasks([saved], true)).toEqual([saved]);
+    expect(view._confirmedTasks.has("a")).toBe(false);
+  },
+);

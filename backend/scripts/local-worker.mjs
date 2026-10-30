@@ -1,3 +1,4 @@
+import { handler as updateMediaThumbnail } from "../src/workers/update-media-thumbnail.js";
 import { handler as sf311Job } from "../src/workers/sf311-job.js";
 import { projectStatus, statusRecords } from "../src/domain/system-status.js";
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
@@ -64,6 +65,7 @@ function summarizeError(err) {
 function pickHandler(body) {
   try {
     const msg = JSON.parse(body ?? "");
+    if (msg?.type === "update_media_thumbnail") return updateMediaThumbnail;
     if (msg?.type === "sf311_job") return sf311Job;
     if (msg?.type === "reconcile_site_revocation") {
       return reconcileSiteRevocation;
@@ -166,6 +168,7 @@ async function projectLocalStatus() {
     statusInitialized = true;
   }
 }
+const thumbnailDispatched = new Set();
 async function dispatchPendingOutbox() {
   let lastEvaluatedKey;
   do {
@@ -173,13 +176,14 @@ async function dispatchPendingOutbox() {
       new ScanCommand({
         TableName: getConfig().dynamoTable,
         FilterExpression:
-          "#status = :pending AND (#entityType = :revocation OR #entityType = :letter OR #entityType = :sf311)",
+          "(#status = :pending AND (#entityType = :revocation OR #entityType = :letter OR #entityType = :sf311)) OR (#entityType = :media AND attribute_not_exists(thumbS3Key))",
         ExpressionAttributeNames: {
           "#status": "status",
           "#entityType": "entityType",
         },
         ExpressionAttributeValues: {
           ":pending": "pending",
+          ":media": "task_update_media",
           ":revocation": "REVOCATION_OUTBOX",
           ":letter": "COMPLIANCE_LETTER_OUTBOX",
           ":sf311": "SF311_OUTBOX",
@@ -188,6 +192,12 @@ async function dispatchPendingOutbox() {
       }),
     );
     for (const item of result.Items ?? []) {
+      const mediaKey = `${item.pk}:${item.sk}`;
+      if (
+        item.entityType === "task_update_media" &&
+        thumbnailDispatched.has(mediaKey)
+      )
+        continue;
       await dispatchOutbox(
         /** @type {import("aws-lambda").DynamoDBStreamEvent} */ ({
           Records: [
@@ -201,6 +211,8 @@ async function dispatchPendingOutbox() {
         /** @type {any} */ ({}),
         () => {},
       );
+      if (item.entityType === "task_update_media")
+        thumbnailDispatched.add(mediaKey);
       console.log(`[worker] dispatched local outbox item ${item.sk}`);
     }
     lastEvaluatedKey = result.LastEvaluatedKey;

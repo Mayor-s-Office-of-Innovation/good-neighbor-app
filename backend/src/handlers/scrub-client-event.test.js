@@ -45,6 +45,31 @@ describe("scrubClientEvent", () => {
     }
   });
 
+  it("keeps photo location diagnostics but never coordinates", () => {
+    const out = scrubClientEvent({
+      event: "photo_location",
+      id: "u",
+      properties: {
+        flow: "perimeter",
+        location_outcome: "acquired",
+        location_wait_ms: 4200,
+        location_accuracy_m: 18,
+        location_sent_with_upload: false,
+        permission_state: "granted",
+        latitude: 37.7793,
+        longitude: -122.4192,
+      },
+    });
+    expect(out?.properties).toEqual({
+      flow: "perimeter",
+      location_outcome: "acquired",
+      location_wait_ms: 4200,
+      location_accuracy_m: 18,
+      location_sent_with_upload: false,
+      permission_state: "granted",
+    });
+  });
+
   it("rejects unknown events, missing ids, and non-objects", () => {
     expect(scrubClientEvent({ event: "$autocapture", id: "u" })).toBeNull();
     expect(scrubClientEvent({ event: "$pageview" })).toBeNull();
@@ -90,4 +115,43 @@ describe("scrubProperties", () => {
   it("ignores prototype keys", () => {
     expect(scrubProperties(Object.create({ flow: "perimeter" }))).toEqual({});
   });
+});
+
+it("accepts bounded photo diagnostics and strips private or malformed fields", () => {
+  const properties = {
+    check_id: "11111111-1111-4111-8111-111111111111",
+    attempt_id: "22222222-2222-4222-8222-222222222222",
+    artifact_id: "https://example.test?signature=PRIVATE",
+    stage: "put",
+    outcome: "failed",
+    elapsed_ms: 30000,
+    http_status: 0,
+    online: false,
+    visibility: "hidden",
+    upload_url: "PRIVATE",
+    error: "PRIVATE",
+  };
+  const result = scrubClientEvent({
+    event: "photo_pipeline",
+    id: "device",
+    properties,
+  });
+  expect(result?.properties).toEqual({
+    check_id: properties.check_id,
+    attempt_id: properties.attempt_id,
+    stage: "put",
+    outcome: "failed",
+    elapsed_ms: 30000,
+    http_status: 0,
+    online: false,
+    visibility: "hidden",
+  });
+  expect(
+    scrubProperties({
+      stage: "PRIVATE",
+      outcome: "PRIVATE",
+      elapsed_ms: -1,
+      online: "PRIVATE",
+    }),
+  ).toEqual({});
 });

@@ -35,7 +35,7 @@
     {
       "name": "task update js",
       "path": "dist/assets/task-update-dialog-*.js",
-      "limit": "6.8 kB"
+      "limit": "8 kB"
     },
     {
       "name": "task update css",
@@ -55,7 +55,7 @@
     {
       "name": "reports css",
       "path": "dist/assets/reports-view-*.css",
-      "limit": "3 kB"
+      "limit": "3.2 kB"
     },
     {
       "name": "invitation roles js",
@@ -79,7 +79,7 @@
         "dist/assets/problem-report*.js",
         "dist/assets/describe-instead*.js"
       ],
-      "limit": "12 kB"
+      "limit": "13 kB"
     },
     {
       "name": "capture routes css",

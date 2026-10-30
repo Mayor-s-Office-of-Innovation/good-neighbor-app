@@ -23,6 +23,7 @@ bracket the hand-off.
 | `site_setup_completed` | `app-root` on `sitebound` | `switching_site` |
 | `camera_opened` | `perimeter-check` / `problem-report` `_openCamera` | `flow` |
 | `photo_picked` | the file input's `change` | `flow`, `photo_bytes`, `photo_type` |
+| `photo_location` | `services/device-location.js` once the capture's position read settles, per photo | `flow`, `location_outcome` (`acquired` / `timeout` / `denied` / `unavailable` / `skipped`), `location_wait_ms` (until the read settles, which may be after the upload), `location_accuracy_m` (rounded; acquired only), `location_sent_with_upload` (acquired only: true if the location went with the photo, false if it followed by PATCH), `permission_state` (`granted` / `prompt` / `denied` / `unsupported`). Never coordinates |
 | `capture_resumed` | `app-root` boot when a check is auto-resumed after a relaunch | `route`, `flow`, `marker_age_s`, `navigation_type`, `landing_path`, `$referring_domain` |
 | `handoff_grant_issued` | `services/session-handoff.js` when iOS Safari mints a Home Screen handoff grant | — |
 | `handoff_redeemed` | `app-root` on the installed app's first launch, after the grant bought a session | — |
@@ -55,14 +56,14 @@ values are query-stripped again server-side. Adding an event or property means a
 - Globally: the forwarder is log-only whenever the PostHog project key is unset (same secret as
   error tracking, [feedback-ops.md §2](./feedback-ops.md)). Log-only still writes every event and
   its device properties to CloudWatch, so the device picture is available before egress is on.
-- WAF: `ClientEventsRateLimit` blocks an IP above 1000 requests per 5 minutes on this path.
-- Concurrency: the three intakes (errors, events, feedback) run in their own `gnp-<env>-intake`
-  Lambda with a reservation of 3, separate from the app api function. Each handler awaits its
-  PostHog forward before answering, so this reservation — not the per-IP WAF rule — is the
-  aggregate bound: a flood or a slow PostHog costs dropped beacons, never api capacity. The
-  event forwarder gives up after 1 s (`EVENT_FORWARD_TIMEOUT_MS`); errors and feedback keep 3 s.
+- WAF: `ClientEventsRateLimit` blocks an IP above 5,000 requests per 5 minutes on this path. The general WAF traffic budget can block first.
+- Concurrency: the three intakes (errors, events, feedback) run in their own `good-neighbor-app-<env>-intake`
+  Lambda with reserved concurrency of 50, separate from the app API function. Each handler
+  awaits its PostHog forward before answering. The reservation bounds concurrent intake work
+  across IPs; WAF bounds requests per IP. Slow PostHog responses can occupy the intake slots
+  and cause dropped beacons. The event forwarder gives up after 1 s (`EVENT_FORWARD_TIMEOUT_MS`); errors and feedback keep 3 s.
 
-## Is it working? (CloudWatch, intake Lambda log group `/aws/lambda/gnp-<env>-intake`)
+## Is it working? (CloudWatch, intake Lambda log group `/aws/lambda/good-neighbor-app-<env>-intake`)
 
 One structured line per event:
 
@@ -110,3 +111,45 @@ Previously failed beacons are not automatically replayed.
 
 `npm run dev` (backend harness) serves `POST /v1/client-events` and the Vite proxy forwards it,
 so beacons land in the harness log. Under vitest the service is off unless forced on.
+
+## Photo upload and analysis diagnosis
+
+`photo_pipeline` events trace `presign` → `put` → `register` → `analyze` →
+`evaluate`. Each stage emits `started` and `completed` or `failed`; analysis also
+reports `backend_failed`, `timeout`, or `cancelled`. A stage still pending after
+30 seconds emits one `slow` event. This observes the existing pipeline without
+changing its timeouts or retry behavior.
+
+Use `attempt_id` to group upload-stage events; retries receive a fresh ID. Use
+`check_id` and `artifact_id` to join registration, analysis, and worker logs.
+Analysis/evaluation receive a separate attempt ID so re-polling is distinguishable.
+`elapsed_ms` measures that stage, `photo_bytes` is the upload size, and
+`http_status` is the failure response status (0 means no HTTP status available).
+`online` is the browser's connectivity hint, not proof of internet access;
+`visibility` records whether the document was visible when the event was emitted.
+Existing browser, OS, connection-type, and release fields accompany every event.
+No image content, location, free-form error, S3 key, or signed URL is included.
+
+In CloudWatch, select the dev/prod intake Lambda log group:
+
+```
+fields @timestamp, marker, properties.check_id, properties.artifact_id,
+  properties.attempt_id, properties.stage, properties.outcome,
+  properties.elapsed_ms, properties.http_status, properties.online,
+  properties.visibility, properties.photo_bytes
+| filter event = "photo_pipeline"
+| sort @timestamp asc
+```
+
+In PostHog, filter the `photo_pipeline` event by `check_id` or `artifact_id`, then
+inspect stages/outcomes and compare browser/release cohorts. `put` completed with
+no `register` completion localizes the gap between upload and enqueue. An
+`analyze` timeout with a successful worker result points to result retrieval;
+`backend_failed` indicates the worker recorded a failed analysis.
+
+Delivery is best effort through the existing analytics intake and respects
+`gnp:analytics=off`. An offline/killed browser may lose events; a missing terminal
+event alone does not prove failure. Slow-event timers can be delayed while the
+browser is suspended. Compare against S3 object metadata and worker logs. CloudWatch
+retains accepted events even if PostHog forwarding fails. Deploy the intake
+allowlist before or alongside the frontend; older intakes drop the new event.

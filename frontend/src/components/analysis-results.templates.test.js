@@ -1377,7 +1377,7 @@ describe("waiting for connection", () => {
     );
     expect(markup).toContain("analysis-card--waiting");
     expect(markup).toContain(escapeHtml(t("card.waiting.title")));
-    expect(markup).toContain(escapeHtml(t("card.waiting.message")));
+    expect(markup).toContain(escapeHtml(t("notice.keepOpen")));
     expect(markup).not.toContain("analysis-card--failed");
     expect(markup).not.toContain("analysis-card--pending");
   });
@@ -1397,3 +1397,53 @@ describe("waiting for connection", () => {
     expect(markup).not.toContain("analysis-card__media--placeholder");
   });
 });
+
+it("only claims saved on phone after a confirmed local write, including repeated online failures", () => {
+  const photo = {
+    id: "local",
+    kind: "photo",
+    dataUrl: "data:image/jpeg;base64,AAAA",
+  };
+  const [unconfirmed] = analysisCards(
+    item({ ...photo, analysis: { status: "waiting" } }),
+    "check",
+  );
+  expect(unconfirmed).not.toContain(escapeHtml(t("notice.savedOnPhone")));
+  const [saved] = analysisCards(
+    item({
+      ...photo,
+      analysis: {
+        status: "failed",
+        localSaveConfirmed: true,
+        retryCount: 3,
+        failure: { leg: "analyze" },
+      },
+    }),
+    "check",
+  );
+  expect(saved).toContain(escapeHtml(t("notice.savedOnPhone")));
+  expect(saved).toContain(escapeHtml(t("notice.savedRetryHelp")));
+  expect(saved).not.toContain(escapeHtml(t("notice.savedHelp")));
+  expect(saved).toContain('data-analysis-action="retry"');
+});
+it.each([false, true])(
+  "shows Add proof for either completion path and removes it after saving (%s)",
+  (canBeInProgress) => {
+    const task = {
+      taskId: "proof",
+      status: "completed",
+      canBeInProgress,
+      completionMethod: canBeInProgress ? "site_team_resolved" : "manual",
+    };
+    const render = (task) =>
+      taskAnalysisCard({ task, action: null, statusLabel: "", history: true });
+    expect(render(task)).toContain('data-action="add-proof"');
+    expect(render(task)).toContain(t("taskUpdate.addProof"));
+    expect(render({ ...task, proofAddedAt: "2026-10-28" })).not.toContain(
+      'data-action="add-proof"',
+    );
+    expect(
+      render({ ...task, status: "open", createdAt: "2020-01-01" }),
+    ).not.toContain('data-action="add-proof"');
+  },
+);

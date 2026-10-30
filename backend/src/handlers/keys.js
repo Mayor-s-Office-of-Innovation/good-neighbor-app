@@ -206,19 +206,22 @@ export const checkArtifactPrefix = (checkId) => `CHECK#${checkId}#ART#`;
 // (infra/modules/app/main.tf) and the local harness (scripts/lib/ensure-infra.mjs)
 // both create them uppercase, and DynamoDB index names are case-sensitive, so
 // these constants must be uppercase too. GSI1 backs timelines (checks,
-// assessments, tasks, and task updates, each in its own partition per site),
-// GSI2 backs the per-status staff worklist, and GSI4/GSI5 back condition
-// review queues that nothing reads yet.
+// assessments, tasks, task updates, complaints, and care work, each in its own
+// partition per site), GSI2 backs the per-status staff worklist, and GSI3 backs
+// cross-site sparse queues (today only the compliance-terms expiry sweep). GSI4
+// and GSI5 (condition review queues) were removed in 2026-10; nothing read them.
 export const GSI1_NAME = "GSI1";
 
 /** The per-status worklist index (AP10); see taskWorklistDateGsi. */
 export const GSI2_NAME = "GSI2";
 
-/** Conditions by site/date/severity. */
-export const GSI4_NAME = "GSI4";
-
-/** Sparse index for conditions not yet fully translated into tasks. */
-export const GSI5_NAME = "GSI5";
+/**
+ * Cross-site sparse queues, one partition per entity type. Today it holds only
+ * each site's latest open compliance terms that have an end date, so the
+ * scheduled expiry sweep is one bounded query instead of a table scan; see
+ * complianceTermsExpiryGsi.
+ */
+export const GSI3_NAME = "GSI3";
 
 /**
  * GSI1 (checks timeline) attributes for a check header. Sparse — only headers
@@ -363,42 +366,26 @@ export const taskWorklistDateGsi = (
   gsi2sk: `${createdAt}#${kind}#${severity}#${taskId}`,
 });
 
-/**
- * GSI4 attributes for condition timeline reads by severity.
- * @param {string} siteId
- * @param {number} severity
- * @param {string} reportedAt ISO-8601 timestamp
- * @param {string} assessmentId
- * @param {string} conditionId
- * @returns {{ gsi4pk: string, gsi4sk: string }}
- */
-export const conditionTimelineGsi = (
-  siteId,
-  severity,
-  reportedAt,
-  assessmentId,
-  conditionId,
-) => ({
-  gsi4pk: `SITE#${siteId}#CONDITION#SEV#${severity}`,
-  gsi4sk: `${reportedAt}#${assessmentId}#${conditionId}`,
-});
+/** The GSI3 partition holding every site's latest open, end-dated compliance terms. */
+export const COMPLIANCE_TERMS_OPEN_PK = "COMPLIANCE_TERMS#OPEN";
 
 /**
- * GSI5 attributes for unresolved condition reads.
+ * GSI3 attributes for a compliance terms version the scheduled expiry sweep
+ * still has to close. Sparse: stamped at creation only when the version has an
+ * end date, and removed when it ends or is superseded by a newer version (the
+ * sweep only closes a site's latest version, so a superseded one could never
+ * be acted on). The sort key is day-first, so `gsi3sk < <tomorrow's day key>`
+ * lists every version whose end date has passed.
  * @param {string} siteId
- * @param {number} severity
- * @param {string} reportedAt ISO-8601 timestamp
- * @param {string} assessmentId
- * @param {string} conditionId
- * @returns {{ gsi5pk: string, gsi5sk: string }}
+ * @param {string} expiresOnExclusive Pacific day key: the day after the last required day
+ * @param {string} termsVersionId
+ * @returns {{ gsi3pk: string, gsi3sk: string }}
  */
-export const unresolvedConditionGsi = (
+export const complianceTermsExpiryGsi = (
   siteId,
-  severity,
-  reportedAt,
-  assessmentId,
-  conditionId,
+  expiresOnExclusive,
+  termsVersionId,
 ) => ({
-  gsi5pk: `SITE#${siteId}#CONDITION#UNRESOLVED`,
-  gsi5sk: `${reportedAt}#SEV#${severity}#${assessmentId}#${conditionId}`,
+  gsi3pk: COMPLIANCE_TERMS_OPEN_PK,
+  gsi3sk: `${expiresOnExclusive}#${siteId}#${termsVersionId}`,
 });

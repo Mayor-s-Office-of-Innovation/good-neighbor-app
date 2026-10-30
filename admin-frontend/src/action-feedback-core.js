@@ -3,9 +3,29 @@ import {
   creationConflictTitle,
 } from "./admin-error-messages.js";
 const reported = new WeakSet();
+let operationSequence = 0;
 
 /** Notifications belong to user operations, not individual API requests. */
-export function createActionFeedback(successKey, showToast, t) {
+const quietSuccess = new Set([
+  "admin.toast.providerSaved",
+  "admin.toast.providerManagerSaved",
+  "admin.toast.staffSaved",
+  "admin.toast.staffAdded",
+  "admin.toast.siteSaved",
+  "admin.toast.oversightSaved",
+  "admin.toast.perimeterSaved",
+  "admin.toast.managerSaved",
+  "admin.profile.saved",
+  "admin.toast.providerCreated",
+  "admin.toast.programCreated",
+  "admin.toast.optionCreated",
+  "admin.toast.siteCreated",
+  "admin.toast.programAssigned",
+  "admin.toast.managerAssigned",
+]);
+
+export function createActionFeedback(successKey, showToast, t, inlineError) {
+  const operationKey = `admin:${successKey}:${++operationSequence}`;
   let changed = false;
   let completed = false;
   let failed = false;
@@ -16,7 +36,10 @@ export function createActionFeedback(successKey, showToast, t) {
     },
     success(key = successKey, tone = "success", params = {}) {
       completed = true;
+      if (tone === "success" && quietSuccess.has(key)) return;
+      notification?.close();
       notification = showToast({
+        key: operationKey,
         title: t(key, params),
         message: "",
         tone,
@@ -51,6 +74,20 @@ export function createActionFeedback(successKey, showToast, t) {
       )
         return;
       notification?.close();
+      const localMessage = completed
+        ? `${t("admin.toast.refreshFailed")} ${t("admin.toast.refreshHelp")}`
+        : changed
+          ? `${t("admin.toast.partial")} ${t("admin.toast.partialHelp")}`
+          : message || adminErrorMessage(error, t);
+      if (
+        inlineAvailable &&
+        inlineError?.(localMessage, {
+          key: operationKey,
+          warning: changed || completed,
+          ...(completed ? { duration: 5000 } : {}),
+        })
+      )
+        return;
       if (!changed && !completed && creationConflictTitle(error)) {
         showToast({
           title: t(creationConflictTitle(error)),

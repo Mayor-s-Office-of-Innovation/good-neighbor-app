@@ -16,13 +16,14 @@ vi.mock("./photo-analysis.js", async (importOriginal) => {
     analyzeEvidenceItem: vi.fn(),
     EVIDENCE_SETTLED_EVENT: actual.EVIDENCE_SETTLED_EVENT,
     shouldResumeEvidenceItem: actual.shouldResumeEvidenceItem,
+    hasUnsentLocation: actual.hasUnsentLocation,
+    resendItemLocation: vi.fn(async () => true),
   };
 });
 vi.mock("./submit-check.js", () => ({
   expectedArtifactCountForCheck: vi.fn(() => 1),
   finalizeCaptureScorecardInBackground: vi.fn(() => Promise.resolve({})),
 }));
-vi.mock("./backend-health.js", () => ({ onHealthChange: vi.fn() }));
 
 import { analyzeEvidenceItem } from "./photo-analysis.js";
 import { finalizeCaptureScorecardInBackground } from "./submit-check.js";
@@ -155,6 +156,32 @@ describe("retry while items wait", () => {
       expect(analyze).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(1);
       expect(analyze).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("re-sends an analyzed photo's unsent late location until it lands", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { queue } = await freshQueue();
+      const analysis = await import("./photo-analysis.js");
+      const resend = vi.mocked(analysis.resendItemLocation);
+      const item = {
+        ...uploaded("1"),
+        location: { latitude: 37.7793, longitude: -122.4192 },
+        locationUnsent: true,
+      };
+      held.finished = [finishedCheck("a", [item])];
+      await queue.resumeCheckSubmissions();
+      expect(resend).toHaveBeenCalledWith("a", item);
+
+      await vi.advanceTimersByTimeAsync(queue.WAITING_RETRY_MS);
+      expect(resend).toHaveBeenCalledTimes(2);
+      item.locationUnsent = false;
+      await vi.advanceTimersByTimeAsync(queue.WAITING_RETRY_MS * 3);
+      expect(resend).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();
     }

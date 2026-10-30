@@ -36,7 +36,7 @@
   sketch in the data-model doc; Athena remains a future add-on over the same Parquet), plus
   the dedicated analytics-query Lambda + canned query catalog behind the admin Analytics page.
 - **[ADR 0014](./adr/0014-remove-places-photo-roll.md)** — the perimeter check as a flat
-  photo roll: no per-site places setup, completion at three photos or one description
+  photo roll: no per-site places setup, completion at one live photo or one description (three photos recommended)
   (client-side rule), text as a full alternative to photos.
 - **[ADR 0015](./adr/0015-compliance-admin-roles.md)** — Compliance manager and
   Compliance supervisor authorization, Cognito lifecycle safeguards, and the
@@ -54,13 +54,16 @@
 
 ## Operations
 
+- **[Omni deployment permissions](./runbooks/deploy-cloudwatch-omni.md)** — external
+  deployment-role permissions for SSO role discovery, the Omni stack and Dataset integration.
+
 - **[Shared Site details](./runbooks/site-details.md)** — public contacts, assigned manager profiles, perimeter edits, migration, and propagation checks.
 
 - **[Deployment quota permissions](./runbooks/deploy-service-quotas.md)** — repair externally owned deployment-role permissions for API Gateway quota reads.
 
 - **[Support chat](./runbooks/support-chat.md)** — FAQ sources, isolated model access, privacy, evaluation and rollout.
 
-- **[Alert delivery](./runbooks/observability.md)** — production responders, both regional SNS confirmations, isolated alarm-delivery drills, and diagnosis.
+- **[Alert delivery](./runbooks/observability.md)** — production responders, both regional SNS confirmations, isolated alarm-delivery drills, and diagnosis, plus the CloudWatch Omni scope and sign-in notes.
 - **[Recovery drills](./runbooks/recovery.md)** — controlled DLQ diagnosis/redrive, isolated DynamoDB PITR restore, recovery limits, and cleanup.
 
 - **[System status](./runbooks/system-status.md)** — supervisor dashboard metric definitions, reporting projections, initialization, and verification.
@@ -114,6 +117,8 @@
   Renders every button state, all tokens with live values (light + dark), and the
   deliberate divergences from off-the-shelf Web Awesome — using the real `tokens.css` /
   `base.css` and component sheets, so it can't drift from the app.
+
+- **[runbooks/sf311.md](./runbooks/sf311.md)** — dedicated 311 queue and alarms, safe diagnosis, metric definitions, legacy jobs and rollout/recovery.
 
 ## Process & security
 

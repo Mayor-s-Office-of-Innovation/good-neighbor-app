@@ -313,3 +313,121 @@ for (const obsoleteFails of [false, true]) {
     await expect(page.locator("[data-load]")).toHaveCount(0);
   });
 }
+
+test("global silent filing control confirms both directions, cancels safely, and preserves failed drafts", async ({
+  page,
+}) => {
+  const errors = /** @type {string[]} */ ([]);
+  page.on("pageerror", (error) => errors.push(error.message));
+  await setup(page);
+  let saved = { enabled: true, revision: 0 };
+  let fail = false;
+  const writes =
+    /** @type {Array<{enabled: boolean, revision: number}>} */ ([]);
+  await page.route("**/admin/v1/system-controls", (route) => {
+    if (route.request().method() === "PUT") {
+      const body = route.request().postDataJSON();
+      writes.push(body);
+      if (fail)
+        return route.fulfill({
+          status: 409,
+          json: { error: "control_changed" },
+        });
+      saved = { enabled: body.enabled, revision: saved.revision + 1 };
+    }
+    return route.fulfill({ json: { silent311: saved } });
+  });
+  await page.goto("/system-status");
+  const statusTab = page.getByRole("tab", {
+    name: t("admin.status.tab.status"),
+    exact: true,
+  });
+  await expect(statusTab).toHaveAttribute("aria-selected", "true");
+  await statusTab.focus();
+  await page.keyboard.press("ArrowRight");
+  const panel = page.locator("#status-panel-control");
+  await expect(panel).toBeVisible();
+  const select = page.locator("#silent-311-enabled");
+  const save = page.locator("#silent-311-save");
+  await expect(select).toHaveJSProperty("value", "true");
+  await expect(save).toBeDisabled();
+  await select.click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await save.click();
+  const dialog = page.locator("#silent-311-confirm");
+  await expect(dialog).toContainText(t("admin.status.control.confirmDisable"));
+  await expect(page.locator("#silent-311-confirm-save")).toHaveClass(
+    /btn-danger/,
+  );
+  await page.locator("#silent-311-cancel").click();
+  expect(writes).toHaveLength(0);
+  await expect(select).toHaveJSProperty("value", "false");
+  await save.click();
+  await page.locator("#silent-311-confirm-save").click();
+  await expect(save).toBeDisabled();
+  expect(writes).toEqual([{ enabled: false, revision: 0 }]);
+  await select.click();
+  await page.keyboard.press("Home");
+  await page.keyboard.press("Enter");
+  await save.click();
+  await expect(dialog).toContainText(t("admin.status.control.confirmEnable"));
+  await expect(page.locator("#silent-311-confirm-save")).toHaveClass(
+    /btn-primary/,
+  );
+  fail = true;
+  await page.locator("#silent-311-confirm-save").click();
+  await expect(panel.getByRole("alert")).toHaveText(
+    t("admin.status.control.changed"),
+  );
+  await expect(select).toHaveJSProperty("value", "true");
+  await expect(save).toBeEnabled();
+  await page.locator("#silent-311-reload").click();
+  await expect(select).toHaveJSProperty("value", "false");
+  fail = false;
+  await select.click();
+  await page.keyboard.press("Home");
+  await page.keyboard.press("Enter");
+  await save.click();
+  await page.locator("#silent-311-confirm-save").click();
+  await expect(save).toBeDisabled();
+  expect(saved.enabled).toBe(true);
+  const accessibility = await new AxeBuilder({ page })
+    .include(".status-page")
+    .analyze();
+  expect(accessibility.violations).toEqual([]);
+  expect(errors).toEqual([]);
+  await page.screenshot({ path: "/private/tmp/silent-filing-control.png" });
+});
+
+test("silent filing cannot be edited or saved while reloading its revision", async ({
+  page,
+}) => {
+  await setup(page);
+  let reads = 0;
+  let release = () => {};
+  const pending = new Promise((resolve) => {
+    release = () => resolve(undefined);
+  });
+  await page.route("**/admin/v1/system-controls", async (route) => {
+    if (++reads > 1) await pending;
+    await route.fulfill({
+      json: { silent311: { enabled: true, revision: 0 } },
+    });
+  });
+  await page.goto("/system-status");
+  await page.locator("#status-tab-control").click();
+  const select = page.locator("#silent-311-enabled");
+  await expect(select).toHaveJSProperty("disabled", false);
+  await select.click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#silent-311-save")).toBeEnabled();
+  await page.locator("#silent-311-reload").click();
+  await expect(select).toHaveJSProperty("disabled", true);
+  await expect(page.locator("#silent-311-save")).toBeDisabled();
+  release();
+  await expect(select).toHaveJSProperty("disabled", false);
+  await expect(select).toHaveJSProperty("value", "true");
+  await expect(page.locator("#silent-311-save")).toBeDisabled();
+});

@@ -89,7 +89,7 @@ describe("probe + state machine", () => {
     const mod = await load();
     fetchMock.mockReturnValueOnce(Promise.reject(new Error("x")));
     fetchMock.mockReturnValue(
-      Promise.resolve({ ok: true, text: () => Promise.resolve("{}") }),
+      Promise.resolve({ ok: true, text: () => Promise.resolve('{"ok":true}') }),
     );
 
     await mod.probe();
@@ -101,7 +101,7 @@ describe("probe + state machine", () => {
   it("a healthy probe does NOT clear AUTH (only re-binding does)", async () => {
     const mod = await load();
     fetchMock.mockReturnValue(
-      Promise.resolve({ ok: true, text: () => Promise.resolve("{}") }),
+      Promise.resolve({ ok: true, text: () => Promise.resolve('{"ok":true}') }),
     );
 
     mod.classifyApiFailure(
@@ -208,7 +208,7 @@ describe("classifyApiFailure", () => {
   it("maps non_json_response (any status) → OUTAGE and probes immediately", async () => {
     const mod = await load();
     fetchMock.mockReturnValue(
-      Promise.resolve({ ok: true, text: () => Promise.resolve("{}") }),
+      Promise.resolve({ ok: true, text: () => Promise.resolve('{"ok":true}') }),
     );
     const err = Object.assign(new Error("html"), {
       name: "ApiError",
@@ -250,7 +250,7 @@ describe("monitoring wiring", () => {
   it("re-probes on visibilitychange when returning to the app", async () => {
     const mod = await load();
     fetchMock.mockReturnValue(
-      Promise.resolve({ ok: true, text: () => Promise.resolve("{}") }),
+      Promise.resolve({ ok: true, text: () => Promise.resolve('{"ok":true}') }),
     );
 
     mod.startHealthMonitoring();
@@ -265,7 +265,7 @@ describe("monitoring wiring", () => {
   it("does not re-probe while hidden", async () => {
     const mod = await load();
     fetchMock.mockReturnValue(
-      Promise.resolve({ ok: true, text: () => Promise.resolve("{}") }),
+      Promise.resolve({ ok: true, text: () => Promise.resolve('{"ok":true}') }),
     );
 
     mod.startHealthMonitoring();
@@ -374,7 +374,7 @@ describe("concurrent probes (fix 9 — generation guard)", () => {
     const b = mod.probe();
     // B completes healthy.
     await Promise.resolve();
-    resolvers[1]("{}");
+    resolvers[1]('{"ok":true}');
     await b;
     expect(mod.getHealthState()).toBe("healthy");
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -408,8 +408,183 @@ describe("concurrent probes (fix 9 — generation guard)", () => {
     expect(mod.getHealthState()).toBe("outage");
 
     // A (stale) completes healthy — it must NOT clear the newer outage.
-    resolvers[0]("{}");
+    resolvers[0]('{"ok":true}');
     await a;
     expect(mod.getHealthState()).toBe("outage");
   });
+});
+
+describe("shared reachability", () => {
+  it("keeps auth independent while the banner tracks transport recovery", async () => {
+    const mod = await load();
+    const changes = vi.fn();
+    mod.onConnectionChange(changes);
+    mod.classifyApiFailure(
+      Object.assign(new Error("expired"), { name: "ReauthRequiredError" }),
+    );
+    mod.connectionFailed("api:test", "/health");
+    expect(mod.getHealthState()).toBe("auth");
+    expect(mod.connectionSnapshot().disconnected).toBe(true);
+    mod.clearAuthState();
+    expect(mod.getHealthState()).toBe("outage");
+    fetchMock.mockResolvedValue(new Response('{"ok":true}'));
+    await mod.retryConnection();
+    expect(mod.getHealthState()).toBe("healthy");
+    expect(changes).toHaveBeenLastCalledWith({ disconnected: false });
+  });
+
+  it("does not announce recovery for an HTML API response", async () => {
+    const mod = await load();
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal("window", { dispatchEvent });
+    mod.connectionFailed("api:http://localhost", "http://localhost/health");
+    fetchMock.mockResolvedValue(new Response("<html>CDN fallback</html>"));
+    await mod.connectionFetch("http://localhost/v1/tasks");
+    expect(mod.getHealthState()).toBe("outage");
+    expect(dispatchEvent).not.toHaveBeenCalled();
+  });
+
+  it("uses one recovery event when the boot probe clears an outage", async () => {
+    const mod = await load();
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal("window", { dispatchEvent });
+    mod.connectionFailed("api:http://localhost", "http://localhost/health");
+    fetchMock.mockResolvedValue(new Response('{"ok":true}'));
+    await mod.probe();
+    expect(mod.getHealthState()).toBe("healthy");
+    expect(dispatchEvent).toHaveBeenCalledTimes(1);
+  });
+});
+
+it("shares Retry-After between recovery and visibility probes", async () => {
+  const mod = await load();
+  mod.connectionFailed("api:http://localhost", "http://localhost/health");
+  fetchMock.mockResolvedValue(
+    new Response(null, { status: 429, headers: { "Retry-After": "300" } }),
+  );
+  await mod.retryConnection();
+  await mod.probe();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(mod.getHealthState()).toBe("outage");
+  mod.stopHealthMonitoring();
+});
+
+it("does not start retry timers before monitoring is requested", async () => {
+  vi.useFakeTimers();
+  const mod = await load();
+  mod.connectionFailed("api:test", "/health");
+  expect(mod.getHealthState()).toBe("outage");
+  expect(vi.getTimerCount()).toBe(0);
+  fetchMock.mockRejectedValue(new TypeError("offline"));
+  await mod.probe();
+  expect(vi.getTimerCount()).toBe(1);
+  mod.stopHealthMonitoring();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+describe("shared probe ordering", () => {
+  it.each(["http", "network"])(
+    "ignores an older %s failure after retry recovery",
+    async (kind) => {
+      vi.useFakeTimers();
+      const mod = await load();
+      const dispatchEvent = vi.fn();
+      vi.stubGlobal("window", { dispatchEvent });
+      let finish = () => {};
+      fetchMock.mockImplementationOnce(
+        () =>
+          new Promise((resolve, reject) => {
+            finish = () =>
+              kind === "network"
+                ? reject(new TypeError("offline"))
+                : resolve(new Response("down", { status: 503 }));
+          }),
+      );
+      mod.connectionFailed("api:http://localhost", "http://localhost/health");
+      const old = mod.probe();
+      fetchMock.mockResolvedValue(new Response('{"ok":true}'));
+      await mod.retryConnection();
+      expect(mod.getHealthState()).toBe("healthy");
+      finish();
+      await old;
+      expect(mod.getHealthState()).toBe("healthy");
+      expect(mod.connectionSnapshot().disconnected).toBe(false);
+      expect(dispatchEvent).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+      mod.stopHealthMonitoring();
+    },
+  );
+
+  it("ignores an old retry body after a newer visibility probe fails", async () => {
+    const mod = await load();
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal("window", { dispatchEvent });
+    /** @type {(body: string) => void} */
+    let finish = () => {};
+    const body = new Promise((resolve) => {
+      finish = resolve;
+    });
+    mod.connectionFailed("api:http://localhost", "http://localhost/health");
+    fetchMock.mockResolvedValueOnce({ ok: true, text: () => body });
+    const old = mod.retryConnection();
+    await Promise.resolve();
+    fetchMock.mockResolvedValue(new Response("down", { status: 503 }));
+    await mod.probe();
+    finish('{"ok":true}');
+    await old;
+    expect(mod.getHealthState()).toBe("outage");
+    expect(dispatchEvent).not.toHaveBeenCalled();
+    mod.stopHealthMonitoring();
+  });
+});
+
+it("does not classify a throttled non-JSON API response as auth or outage", async () => {
+  const mod = await load();
+  expect(
+    mod.classifyApiFailure(
+      Object.assign(new Error("limited"), {
+        name: "ApiError",
+        status: 429,
+        body: { code: "non_json_response" },
+      }),
+    ),
+  ).toBe("healthy");
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it("keeps health state and delays probes through a 429 cooldown", async () => {
+  vi.useFakeTimers();
+  const mod = await load();
+  fetchMock
+    .mockResolvedValueOnce(
+      new Response("<html>Limited</html>", {
+        status: 429,
+        headers: { "Retry-After": "300" },
+      }),
+    )
+    .mockResolvedValue(new Response('{"ok":true}'));
+  try {
+    expect(await mod.probe()).toBe("healthy");
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(await mod.probe()).toBe("healthy");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(284999);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(mod.getHealthState()).toBe("healthy");
+  } finally {
+    mod.stopHealthMonitoring();
+  }
+});
+
+it("does not announce an outage for a throttled HTML API response", async () => {
+  const mod = await load();
+  fetchMock.mockResolvedValue(
+    new Response("<html>Limited</html>", { status: 429 }),
+  );
+  const response = await mod.connectionFetch("http://localhost/v1/tasks");
+  expect(response.status).toBe(429);
+  expect(mod.getHealthState()).toBe("healthy");
+  expect(mod.connectionSnapshot().disconnected).toBe(false);
 });

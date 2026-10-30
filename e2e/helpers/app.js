@@ -1,13 +1,14 @@
 /*
   UI helpers for the Good Neighbor field app. Everything here drives the real
   user paths — site-code entry, the flat photo roll capture screen, and the
-  home results tray — against the local harness (backend :3001 behind the Vite
-  proxy on :5173).
+  home results tray — against the local harness (backend behind the Vite
+  proxy; ports in helpers/ports.js).
 */
 import { expect } from "@playwright/test";
 import { t } from "./i18n.js";
 import { SITE_CODE, SITE_NAME } from "./fixtures.js";
 import { typeDelay, isSlowMo } from "./pace.js";
+import { resetCodeAttemptBudget } from "./code-attempt-budget.mjs";
 
 /**
  * Bind a fresh browser context to the seeded site through the real code-entry
@@ -18,6 +19,8 @@ import { typeDelay, isSlowMo } from "./pace.js";
  * @param {{ siteCode?: string, siteName?: string }} [options]
  */
 export async function bindSite(page, options = {}) {
+  // The suite is serial; isolate login budgets just like browser storage.
+  await resetCodeAttemptBudget();
   const siteCode = options.siteCode || SITE_CODE;
   const siteName = options.siteName || SITE_NAME;
   await page.goto("/");
@@ -108,7 +111,7 @@ export function newResultsTray(page) {
  * Dismiss every generated card in the NEW results tray via its trash button.
  * Delete flow: trash (data-analysis-action="delete") → confirm dialog →
  * rejectAnalysisCondition → the card hides behind a 5s undo toast, and the
- * tray re-renders. Always drive the FIRST remaining card; when the last card's
+ * tray re-renders. Pin each selected card by its evidence identity; when the last
  * deletion lands, the empty tray renders its "resolved or deleted" placeholder,
  * so expect the section to lose its cards.
  *
@@ -121,7 +124,10 @@ export function newResultsTray(page) {
  */
 export async function dismissAllNewResults(page) {
   const tray = newResultsTray(page);
-  const cards = tray.locator(".analysis-card");
+  // Clear/empty placeholders are cards too, but cannot be dismissed.
+  const cards = tray.locator(
+    '.analysis-card:has([data-analysis-action="delete"])',
+  );
   await expect(cards.first()).toBeVisible({ timeout: 30_000 });
 
   /** Count the tray twice, 400ms apart; settle when the count stops changing. */
@@ -135,43 +141,30 @@ export async function dismissAllNewResults(page) {
     }
   }
 
-  /** The set of card identities currently in the tray. */
-  async function cardKeys() {
-    return (
-      await tray
-        .locator(".analysis-card")
-        .evaluateAll((els) =>
-          els.map((el) =>
-            [
-              el.getAttribute("data-artifact-id"),
-              el.getAttribute("data-condition-id"),
-            ].join("|"),
-          ),
-        )
-    ).sort();
-  }
-
   let seen = 0;
   for (;;) {
     const count = await settledCount();
     if (count === 0) break;
     seen = Math.max(seen, count);
-    const first = cards.first();
-    const key = await first.evaluate((el) =>
-      [
-        el.getAttribute("data-artifact-id"),
-        el.getAttribute("data-condition-id"),
-      ].join("|"),
+    const selector = await cards.first().evaluate((el) =>
+      ["data-check-id", "data-artifact-id", "data-condition-id", "data-task-id"]
+        .map((attribute) => {
+          const value = el.getAttribute(attribute);
+          if (value === null) throw new Error(`Card is missing ${attribute}`);
+          return `[${attribute}="${window.CSS.escape(value)}"]`;
+        })
+        .join(""),
     );
-    await first.locator('[data-analysis-action="delete"]').click();
+    // Hydration can reorder cards after the identity read. Resolve this identity
+    // again for the click instead of clicking whichever card is now first.
+    // Include the task id: one condition can produce several task cards.
+    const selected = tray.locator(`.analysis-card${selector}`);
+    // The local and backend card can overlap during hydration. Delete one
+    // representation of this card, then require all of them to disappear.
+    await selected.first().locator('[data-analysis-action="delete"]').click();
     await page.locator("#analysis-delete-confirm").click();
-    // The deletion landed when THIS card leaves the tray (identity, not total:
-    // late-hydrating task cards can raise the count while we're deleting).
-    await expect
-      .poll(async () => !(await cardKeys()).includes(key), {
-        timeout: 30_000,
-      })
-      .toBe(true);
+    // Card counts can rise while other results load; only this card must leave.
+    await expect(selected).toHaveCount(0, { timeout: 30_000 });
   }
   await expect(cards).toHaveCount(0);
   return seen;
@@ -239,5 +232,7 @@ export async function openHistoryWithTrays(page) {
     page.locator(".analysis-tray--history .analysis-tray__check-title").first(),
   ).toBeVisible();
   await expect(page.locator(".analysis-card--clear")).toHaveCount(0);
-  await expect(page.locator('[data-status-ticker="resolved"]')).toBeVisible();
+  await expect(
+    page.locator('[data-status-ticker="awaitingProof"]'),
+  ).toBeVisible();
 }

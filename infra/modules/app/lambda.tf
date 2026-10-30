@@ -7,6 +7,7 @@
 # cannot drift apart.
 locals {
   sf311_lambda_environment = {
+    SF311_QUEUE_URL                   = aws_sqs_queue.sf311.url
     SF311_MEDIA_BASE_URL              = "https://${var.sf311_media_domain_name}"
     GNP_311_SUBMISSION_ENABLED        = tostring(var.enable_311_submission)
     GNP_311_ASYNC_FILING              = tostring(var.enable_311_async_filing)
@@ -181,6 +182,7 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = merge({
+      SHORT_CODE_ORIGIN_TOKEN     = aws_secretsmanager_secret_version.support_origin.secret_string
       DUPLICATE_DETECTION_ENABLED = tostring(var.enable_duplicate_detection)
       DYNAMO_TABLE                = aws_dynamodb_table.app.name
       COGNITO_USER_POOL_ID        = aws_cognito_user_pool.users.id
@@ -204,8 +206,14 @@ resource "aws_lambda_function" "api" {
     }, local.sf311_lambda_environment, local.email_lambda_environment)
   }
 
-  depends_on = [aws_cloudwatch_log_group.api]
-  tags       = var.tags
+  # The source limiter trusts the viewer header only after the edge has
+  # overwritten it. Wait for propagation before updating API code/configuration,
+  # so old edge requests cannot enter a shared missing-identity bucket.
+  depends_on = [
+    aws_cloudwatch_log_group.api,
+    aws_cloudfront_distribution.frontend,
+  ]
+  tags = var.tags
 }
 
 # Best-effort public intakes: client errors, client analytics events, user
@@ -353,7 +361,7 @@ resource "aws_lambda_function" "worker" {
     }, local.sf311_lambda_environment, local.email_lambda_environment)
   }
 
-  depends_on = [aws_cloudwatch_log_group.worker]
+  depends_on = [aws_cloudwatch_log_group.worker, aws_iam_role_policy.worker]
   tags       = var.tags
 }
 

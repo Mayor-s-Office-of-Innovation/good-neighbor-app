@@ -19,7 +19,10 @@ import { fileURLToPath } from "node:url";
 
 import DynamoDbLocal from "dynamodb-local";
 
-const PORT = 8000;
+const PORT = Number(process.env.LOCAL_DDB_PORT ?? 8000);
+// The e2e suite runs its own throwaway copy (LOCAL_DDB_IN_MEMORY=true) beside
+// the dev one, so nothing it writes outlives the run.
+const IN_MEMORY = process.env.LOCAL_DDB_IN_MEMORY === "true";
 
 const backendDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 DynamoDbLocal.configureInstaller({
@@ -27,11 +30,15 @@ DynamoDbLocal.configureInstaller({
 });
 
 async function main() {
-  // A null dbPath makes the launcher use -inMemory, losing all local records
-  // whenever the dev stack restarts. Keep data alongside the other local stores.
-  const dataPath = join(backendDir, ".local", "dynamodb-data");
-  await mkdir(dataPath, { recursive: true });
-  console.log(`[ddb] starting DynamoDB Local on :${PORT} (JRE 17+ required)…`);
+  // A null dbPath makes the launcher use -inMemory. The dev copy keeps its data
+  // alongside the other local stores so records survive a restart.
+  const dataPath = IN_MEMORY
+    ? null
+    : join(backendDir, ".local", "dynamodb-data");
+  if (dataPath) await mkdir(dataPath, { recursive: true });
+  console.log(
+    `[ddb] starting DynamoDB Local on :${PORT}${IN_MEMORY ? " (in memory)" : ""} (JRE 17+ required)…`,
+  );
   await DynamoDbLocal.launch(PORT, dataPath, ["-sharedDb"]);
   console.log(`[ddb] DynamoDB Local ready on http://localhost:${PORT}`);
 

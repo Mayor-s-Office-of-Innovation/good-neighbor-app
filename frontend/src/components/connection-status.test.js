@@ -251,24 +251,15 @@ describe("permission and session dialog recovery", () => {
   });
 });
 
-describe("outage toast lifecycle", () => {
-  it("shows once per outage period and re-arms after a healthy transition", async () => {
+describe("outage communication", () => {
+  it("leaves connection loss to the shared banner without opening an authentication dialog", async () => {
     const { default: ConnectionStatus } = await load();
-    const { showOfflinePhotosToast } = await import("../state/toasts.js");
     const el = await mount(ConnectionStatus);
-
     healthModule.state = "outage";
     el._sync();
-    expect(showOfflinePhotosToast).toHaveBeenCalledTimes(1);
-
-    el._sync();
-    expect(showOfflinePhotosToast).toHaveBeenCalledTimes(1);
-
+    expect(el.querySelector("#conn-auth-dialog").open).toBe(false);
     healthModule.state = "healthy";
     el._sync();
-
-    healthModule.state = "outage";
-    el._sync();
-    expect(showOfflinePhotosToast).toHaveBeenCalledTimes(2);
+    expect(el.querySelector("#conn-auth-dialog").open).toBe(false);
   });
 });

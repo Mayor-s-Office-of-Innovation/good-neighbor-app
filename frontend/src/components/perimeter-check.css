@@ -146,7 +146,7 @@
   display: block;
   width: 1rem;
   height: 1rem;
-  background-color: var(--ink);
+  background-color: currentColor;
   -webkit-mask-image: url(/icons/xmark.svg);
   mask-image: url(/icons/xmark.svg);
   -webkit-mask-repeat: no-repeat;
@@ -353,4 +353,17 @@
 .check-timeline__done:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+.check-timeline {
+  gap: 1.25rem;
+}
+.check-roll__grid:empty {
+  display: none;
+}
+
+.check-timeline .check-timeline__done:not(:disabled) {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--on-ink);
 }

@@ -245,17 +245,15 @@ GSI1 assessments timeline.
 
 One per concern in the assessment. `conditionId` is the concern's position plus its
 category slug. `outcome` is a copy of the matched rule's outcome at the time, so the
-condition still reads correctly if the rule changes later. `gsi4pk` and `gsi4sk` put it in
-the GSI4 condition history. It has no `gsi5pk`, because it was resolved into a task. A
-condition that still needs an answer carries `gsi5pk` / `gsi5sk` too, which puts it in the
-GSI5 unresolved queue.
+condition still reads correctly if the rule changes later. Conditions carry no index
+keys; they are read by assessment prefix (AP15). Items written before 2026-10-28 may
+still carry `gsi4*` / `gsi5*` attributes from the removed GSI4 and GSI5 indexes. They
+are plain attributes now.
 
 ```json
 {
   "pk": "SITE#bayview-haven",
   "sk": "ASSESSMENT#c1a7e2d4-55b3-4f0e-8a9d-2b6c7d8e9f01#COND#001-feces-and-urine",
-  "gsi4pk": "SITE#bayview-haven#CONDITION#SEV#3",
-  "gsi4sk": "2026-09-30T15:03:27.000Z#c1a7e2d4-55b3-4f0e-8a9d-2b6c7d8e9f01#001-feces-and-urine",
   "entityType": "CONDITION",
   "conditionId": "001-feces-and-urine",
   "assessmentId": "c1a7e2d4-55b3-4f0e-8a9d-2b6c7d8e9f01",

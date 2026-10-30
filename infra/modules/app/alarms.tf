@@ -16,6 +16,9 @@ variable "alarm_emails" {
 locals {
   error_namespace    = "${local.name_prefix}-errors"
   security_namespace = "${local.name_prefix}-security"
+  # Handled 311 outcomes have their own EMF alarms, including legacy jobs.
+  # Preserve errors without an integration field and all other integrations.
+  server_error_filter_pattern = "{ $.level = \"ERROR\" && ($.integration NOT EXISTS || $.integration != \"sf311\") }"
 }
 
 resource "aws_sns_topic" "alarms" {
@@ -54,8 +57,8 @@ resource "aws_cloudwatch_metric_alarm" "client_error_forward_failed" {
   alarm_name          = "${local.name_prefix}-client-error-forward-failed"
   alarm_description   = "Client-error forwarder to PostHog is failing (ingest down, egress broken, or secret misread). Errors still reach CloudWatch; fix forwarding so contributors regain visibility."
   comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  datapoints_to_alarm = 1
+  evaluation_periods  = var.posthog_digest_route_confirmed ? 3 : 1
+  datapoints_to_alarm = var.posthog_digest_route_confirmed ? 2 : 1
   metric_name         = "ClientErrorForwardFailed"
   namespace           = local.error_namespace
   period              = 300
@@ -63,8 +66,8 @@ resource "aws_cloudwatch_metric_alarm" "client_error_forward_failed" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
 
-  alarm_actions = [aws_sns_topic.alarms.arn]
-  ok_actions    = [aws_sns_topic.alarms.arn]
+  alarm_actions = var.posthog_digest_route_confirmed ? [] : [aws_sns_topic.alarms.arn]
+  ok_actions    = var.posthog_digest_route_confirmed ? [] : [aws_sns_topic.alarms.arn]
 
   tags = var.tags
 }
@@ -123,8 +126,8 @@ resource "aws_cloudwatch_metric_alarm" "client_event_forward_failed" {
   alarm_name          = "${local.name_prefix}-client-event-forward-failed"
   alarm_description   = "Client analytics forwarder to PostHog is failing (ingest slow/down, egress broken, or secret misread). Events still land in CloudWatch with their device properties; fix forwarding so PostHog page views resume. Threshold is higher than the error twin because page views are frequent and the forwarder's 1 s budget trips first under PostHog latency."
   comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  datapoints_to_alarm = 1
+  evaluation_periods  = var.posthog_digest_route_confirmed ? 3 : 1
+  datapoints_to_alarm = var.posthog_digest_route_confirmed ? 2 : 1
   metric_name         = "ClientEventForwardFailed"
   namespace           = local.error_namespace
   period              = 300
@@ -132,8 +135,8 @@ resource "aws_cloudwatch_metric_alarm" "client_event_forward_failed" {
   threshold           = 10
   treat_missing_data  = "notBreaching"
 
-  alarm_actions = [aws_sns_topic.alarms.arn]
-  ok_actions    = [aws_sns_topic.alarms.arn]
+  alarm_actions = var.posthog_digest_route_confirmed ? [] : [aws_sns_topic.alarms.arn]
+  ok_actions    = var.posthog_digest_route_confirmed ? [] : [aws_sns_topic.alarms.arn]
 
   tags = var.tags
 }
@@ -174,7 +177,7 @@ resource "aws_cloudwatch_metric_alarm" "client_event_dropped" {
 resource "aws_cloudwatch_log_metric_filter" "intake_server_errors" {
   name           = "${local.name_prefix}-intake-server-errors"
   log_group_name = aws_cloudwatch_log_group.intake.name
-  pattern        = "{ $.level = \"ERROR\" }"
+  pattern        = local.server_error_filter_pattern
 
   metric_transformation {
     name          = "ServerError"
@@ -189,7 +192,7 @@ resource "aws_cloudwatch_log_metric_filter" "intake_server_errors" {
 resource "aws_cloudwatch_log_metric_filter" "api_server_errors" {
   name           = "${local.name_prefix}-api-server-errors"
   log_group_name = aws_cloudwatch_log_group.api.name
-  pattern        = "{ $.level = \"ERROR\" }"
+  pattern        = local.server_error_filter_pattern
 
   metric_transformation {
     name          = "ServerError"
@@ -201,9 +204,8 @@ resource "aws_cloudwatch_log_metric_filter" "api_server_errors" {
 
 # --- user feedback filters (docs/runbooks/feedback-ops.md) --------------------
 
-# Every valid feedback submission logs one FeedbackReceived line. The alarm is
-# the notification: ≥1 per 5-min bucket emails the SNS topic (recipients are
-# console-managed per environment — see the plan's Decisions).
+# Every valid feedback submission logs one FeedbackReceived line. Arrival metrics
+# and alarm state remain available without operational notification actions.
 resource "aws_cloudwatch_log_metric_filter" "feedback_received" {
   name           = "${local.name_prefix}-feedback-received"
   log_group_name = aws_cloudwatch_log_group.intake.name
@@ -235,8 +237,8 @@ resource "aws_cloudwatch_metric_alarm" "feedback_received" {
   threshold           = 1
   treat_missing_data  = "notBreaching"
 
-  alarm_actions = [aws_sns_topic.alarms.arn]
-  ok_actions    = [aws_sns_topic.alarms.arn]
+  alarm_actions = []
+  ok_actions    = []
 
   tags = var.tags
 }
@@ -315,7 +317,7 @@ resource "aws_cloudwatch_metric_alarm" "feedback_forward_failed" {
 resource "aws_cloudwatch_log_metric_filter" "worker_errors" {
   name           = "${local.name_prefix}-worker-server-errors"
   log_group_name = aws_cloudwatch_log_group.worker.name
-  pattern        = "{ $.level = \"ERROR\" }"
+  pattern        = local.server_error_filter_pattern
 
   metric_transformation {
     name          = "ServerError"
@@ -385,58 +387,10 @@ resource "aws_cloudwatch_metric_alarm" "media_quota_exceeded" {
   tags                = var.tags
 }
 
-# 311 app actions return a stored failure result rather than throwing. Capture
-# that explicit operational event from both execution paths: automatic filings
-# run in the worker, while user-confirmed filings run in the API Lambda.
-resource "aws_cloudwatch_log_metric_filter" "api_311_action_failures" {
-  name           = "${local.name_prefix}-api-311-action-failures"
-  log_group_name = aws_cloudwatch_log_group.api.name
-  pattern        = "{ $.eventType = \"311_app_action_failed\" }"
-
-  metric_transformation {
-    name          = "Sf311ActionFailed"
-    namespace     = local.error_namespace
-    value         = "1"
-    default_value = "0"
-  }
-}
-
-resource "aws_cloudwatch_log_metric_filter" "worker_311_action_failures" {
-  name           = "${local.name_prefix}-worker-311-action-failures"
-  log_group_name = aws_cloudwatch_log_group.worker.name
-  pattern        = "{ $.eventType = \"311_app_action_failed\" }"
-
-  metric_transformation {
-    name          = "Sf311ActionFailed"
-    namespace     = local.error_namespace
-    value         = "1"
-    default_value = "0"
-  }
-}
-
-resource "aws_cloudwatch_metric_alarm" "sf311_action_failed" {
-  alarm_name          = "${local.name_prefix}-311-action-failed"
-  alarm_description   = "A 311 filing action failed. Search API and worker logs for eventType=311_app_action_failed and inspect the safe failure reason."
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  datapoints_to_alarm = 1
-  threshold           = 1
-  period              = 300
-  namespace           = local.error_namespace
-  metric_name         = "Sf311ActionFailed"
-  statistic           = "Sum"
-  treat_missing_data  = "notBreaching"
-
-  alarm_actions = [aws_sns_topic.alarms.arn]
-  ok_actions    = [aws_sns_topic.alarms.arn]
-
-  tags = var.tags
-}
-
 # Combined "the api or worker is failing now" page.
 resource "aws_cloudwatch_metric_alarm" "server_error_rate" {
   alarm_name          = "${local.name_prefix}-server-errors"
-  alarm_description   = "Uncaught server errors logged by the logServerError convention (api or worker) — see docs/todo/client-error-tracking-plan.md Phase 4."
+  alarm_description   = "Server errors from the API, intake, general worker or analysis worker. Known handled 311 errors use their dedicated action/connection/reconciliation alarms. See docs/runbooks/observability.md and docs/runbooks/sf311.md."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
   threshold           = 5
@@ -616,7 +570,7 @@ resource "aws_cloudwatch_metric_alarm" "revocation_operation_partial" {
 resource "aws_cloudwatch_log_metric_filter" "analysis_worker_errors" {
   name           = "${local.name_prefix}-analysis-server-errors"
   log_group_name = aws_cloudwatch_log_group.analysis.name
-  pattern        = "{ $.level = \"ERROR\" }"
+  pattern        = local.server_error_filter_pattern
 
   metric_transformation {
     name          = "ServerError"
@@ -634,19 +588,6 @@ resource "aws_cloudwatch_log_metric_filter" "analysis_media_rejected" {
   metric_transformation {
     name          = "MediaRejected"
     namespace     = local.security_namespace
-    value         = "1"
-    default_value = "0"
-  }
-}
-
-resource "aws_cloudwatch_log_metric_filter" "analysis_311_action_failures" {
-  name           = "${local.name_prefix}-analysis-311-action-failures"
-  log_group_name = aws_cloudwatch_log_group.analysis.name
-  pattern        = "{ $.eventType = \"311_app_action_failed\" }"
-
-  metric_transformation {
-    name          = "Sf311ActionFailed"
-    namespace     = local.error_namespace
     value         = "1"
     default_value = "0"
   }

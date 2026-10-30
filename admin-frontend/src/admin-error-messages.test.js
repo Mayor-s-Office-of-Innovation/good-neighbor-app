@@ -72,3 +72,9 @@ test("unknown server errors do not leak codes or override partial-save messaging
   );
   assert.equal(notices[0].title, t("admin.toast.partial"));
 });
+
+test("stale site settings explain how to recover instead of a generic failure", () => {
+  const error = Object.assign(new Error("site_changed"), { status: 409 });
+  assert.equal(adminErrorMessage(error, t), t("admin.errors.siteChanged"));
+  assert.notEqual(adminErrorMessage(error, t), t("admin.toast.requestFailed"));
+});

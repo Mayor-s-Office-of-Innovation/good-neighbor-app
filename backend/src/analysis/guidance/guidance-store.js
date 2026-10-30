@@ -1,3 +1,4 @@
+import { deliberate311Decision } from "../../domain/deliberate-311.js";
 import { sf311Job } from "./sf311-job.js";
 import {
   BatchGetCommand,
@@ -13,7 +14,6 @@ import {
   assessmentConditionPrefix,
   assessmentTimelineGsi,
   conditionKey,
-  conditionTimelineGsi,
   GSI2_NAME,
   siteMetaKey,
   taskDisplayCounterKey,
@@ -25,7 +25,6 @@ import {
   taskUpdateTimelineGsi,
   taskWorklistPk,
   taskWorklistDateGsi,
-  unresolvedConditionGsi,
 } from "../../handlers/keys.js";
 import { evaluateCondition } from "./evaluator.js";
 import {
@@ -360,7 +359,6 @@ function buildConditionItem({
   taskIds,
   now,
 }) {
-  const unresolved = evaluation.kind !== "outcome";
   const base = {
     ...conditionKey(siteId, assessmentId, conditionId),
     entityType: "CONDITION",
@@ -400,29 +398,11 @@ function buildConditionItem({
     resolvedToTasks: evaluation.kind === "outcome",
     needsAnswer:
       evaluation.kind === "needs_answer" ? evaluation.question : null,
-    ...conditionTimelineGsi(
-      siteId,
-      condition.severity,
-      reportedAt,
-      assessmentId,
-      conditionId,
-    ),
     createdAt: now,
     updatedAt: now,
   };
 
-  return unresolved
-    ? {
-        ...base,
-        ...unresolvedConditionGsi(
-          siteId,
-          condition.severity,
-          reportedAt,
-          assessmentId,
-          conditionId,
-        ),
-      }
-    : base;
+  return base;
 }
 
 /**
@@ -642,25 +622,7 @@ export async function storeEvaluatedAssessment(input, options) {
         ...(translations ? { translations } : {}),
         ...conditionKey(input.siteId, input.assessmentId, conditionId),
         assessmentId: input.assessmentId,
-        ...conditionTimelineGsi(
-          input.siteId,
-          condition.severity,
-          reportedAt,
-          input.assessmentId,
-          conditionId,
-        ),
       };
-      if (prior.gsi5pk)
-        Object.assign(
-          preserved,
-          unresolvedConditionGsi(
-            input.siteId,
-            condition.severity,
-            reportedAt,
-            input.assessmentId,
-            conditionId,
-          ),
-        );
       retainedConditionIds.add(conditionId);
       conditionItems.push(preserved);
       for (const task of priorTasks) {
@@ -1062,6 +1024,112 @@ export async function getPublishedAssessmentGuidance(opts) {
 }
 
 /**
+ * @param {Record<string, unknown>} task
+ * @param {string} artifactId
+ */
+function isFromArtifact(task, artifactId) {
+  // The guidance API can write tasks that name no photo; they used to get the fix.
+  const ids = /** @type {string[]} */ (task.sourceArtifactIds ?? []);
+  return ids.length === 0 || ids.includes(artifactId);
+}
+
+/**
+ * Transaction items that copy a photo's late location to its tasks not yet sent
+ * to 311.
+ * @param {object} opts
+ * @param {string} opts.tableName
+ * @param {string} opts.siteId
+ * @param {string} opts.checkId
+ * @param {string} opts.artifactId
+ * @param {{ latitude: number, longitude: number, accuracyMeters?: number }} opts.location
+ * @param {(tasks: { taskId: string, state: "queued" | "submitted" }[]) => void} [opts.onFiled] gets the tasks already queued or filed for 311
+ * @returns {Promise<NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>>}
+ */
+export async function artifactTaskLocationUpdates({
+  tableName,
+  siteId,
+  checkId,
+  artifactId,
+  location,
+  onFiled,
+}) {
+  const pointer = await ddb.send(
+    new GetCommand({
+      TableName: tableName,
+      Key: currentAssessmentKey(siteId, checkId, artifactId),
+      ConsistentRead: true,
+    }),
+  );
+  if (typeof pointer.Item?.assessmentId !== "string") return [];
+  const { tasks } = await getAssessmentGuidance({
+    tableName,
+    siteId,
+    assessmentId: pointer.Item.assessmentId,
+  });
+  const hasAccuracy = location.accuracyMeters !== undefined;
+  /** @param {Record<string, unknown>} task */
+  const submitted = (task) =>
+    hasSubmitted311ActionResult(
+      /** @type {import("./app-actions.js").AppActionResult[]} */ (
+        task.appActionResults ?? []
+      ),
+    );
+  /** @param {Record<string, unknown>} task */
+  const filed = (task) =>
+    task.inProgressActionKind === "311_filed" || submitted(task);
+  // One assessment can hold tasks from other photos via the API.
+  const own = tasks.filter((task) => isFromArtifact(task, artifactId));
+  onFiled?.(
+    own.filter(filed).map((task) => ({
+      taskId: String(task.taskId),
+      state: submitted(task) ? "submitted" : "queued",
+    })),
+  );
+  return own
+    .filter(
+      (task) =>
+        ["open", "in_progress"].includes(String(task.status)) && !filed(task),
+    )
+    .map((task) => ({
+      Update: {
+        TableName: tableName,
+        Key: taskKey(siteId, String(task.taskId)),
+        // Bumping updatedAt makes a writer holding an older copy fail its check.
+        UpdateExpression: `SET #source.#lat = :lat, #source.#lng = :lng${
+          hasAccuracy ? ", #source.#acc = :acc" : ""
+        }, updatedAt = :now`,
+        // A filing that started after the read above keeps its location.
+        ConditionExpression:
+          "attribute_exists(#source) AND #status IN (:open, :inProgress) AND " +
+          "(attribute_not_exists(inProgressActionKind) OR inProgressActionKind <> :filed) AND " +
+          (task.updatedAt
+            ? "updatedAt = :updatedAt"
+            : "attribute_not_exists(updatedAt)") +
+          (hasAccuracy
+            ? " AND (attribute_not_exists(#source.#lat) OR attribute_not_exists(#source.#acc) OR #source.#acc > :acc)"
+            : " AND attribute_not_exists(#source.#lat)"),
+        ExpressionAttributeNames: {
+          "#source": "source",
+          "#status": "status",
+          "#lat": "latitude",
+          "#lng": "longitude",
+          ...(hasAccuracy ? { "#acc": "accuracyMeters" } : {}),
+        },
+        ExpressionAttributeValues: {
+          ":lat": location.latitude,
+          ":lng": location.longitude,
+          ...(hasAccuracy ? { ":acc": location.accuracyMeters } : {}),
+          ":open": "open",
+          ":inProgress": "in_progress",
+          ":filed": "311_filed",
+          ...(task.updatedAt ? { ":updatedAt": task.updatedAt } : {}),
+          ":now": new Date().toISOString(),
+        },
+      },
+    }));
+}
+
+/**
  * @param {object} opts
  * @param {string} opts.tableName
  * @param {string} opts.siteId
@@ -1211,14 +1279,6 @@ export async function answerCondition(opts) {
         evaluation.kind === "needs_answer" ? evaluation.question : null,
       updatedAt: now,
     };
-    if (evaluation.kind === "outcome") {
-      const sparseCondition = /** @type {Record<string, unknown>} */ (
-        updatedCondition
-      );
-      delete sparseCondition.gsi5pk;
-      delete sparseCondition.gsi5sk;
-    }
-
     const priorRevision = Number(assessmentItem.assessmentRevision ?? 0);
     const updatedAssessment = applyAssessmentConditionDelta({
       assessment: assessmentItem,
@@ -1265,6 +1325,20 @@ export async function answerCondition(opts) {
       tx.push(
         ...sf311Job(opts.tableName, opts.siteId, taskItem, "created", opts.env),
       );
+    const deletionKey = conditionDeletionKey(
+      opts.siteId,
+      assessmentItem,
+      conditionItem,
+    );
+    if (deletionKey)
+      tx.push({
+        ConditionCheck: {
+          TableName: opts.tableName,
+          Key: deletionKey,
+          ConditionExpression:
+            "attribute_not_exists(deletedAt) AND attribute_not_exists(dismissedAt)",
+        },
+      });
     try {
       await ddb.send(new TransactWriteCommand({ TransactItems: tx }));
       return {
@@ -1274,6 +1348,17 @@ export async function answerCondition(opts) {
         evaluation,
       };
     } catch (err) {
+      const reasons = /** @type {{CancellationReasons?: {Code?: string}[]}} */ (
+        err
+      )?.CancellationReasons;
+      if (
+        deletionKey &&
+        reasons?.[tx.length - 1]?.Code === "ConditionalCheckFailed"
+      )
+        throw namedError(
+          "ConditionDismissed",
+          "Condition has been dismissed; reload its guidance",
+        );
       if (
         err instanceof Error &&
         err.name === "TransactionCanceledException" &&
@@ -1339,6 +1424,17 @@ export async function completeTaskWithAppActions(opts) {
   ) {
     throw namedError("TaskCompletionInProgress", "Task completion in progress");
   }
+  const filingDecision =
+    opts.skipUserConfirmedActions !== true &&
+    hasUserConfirmed311Action(existing.Item) &&
+    is311SubmissionEnabled(opts.env ?? process.env)
+      ? await deliberate311Decision(
+          opts.tableName,
+          opts.siteId,
+          existing.Item,
+          now,
+        )
+      : undefined;
   if (
     opts.completionMethod === "311_filed" &&
     is311AsyncFilingEnabled(opts.env ?? process.env) &&
@@ -1355,6 +1451,7 @@ export async function completeTaskWithAppActions(opts) {
       siteId: opts.siteId,
       taskId: opts.taskId,
       task: existing.Item,
+      filingDecision,
       actorId: opts.actorId,
       duplicateChecks: opts.duplicateChecks,
       now: nowDate,
@@ -1395,6 +1492,12 @@ export async function completeTaskWithAppActions(opts) {
   }
   const claimed = {
     ...existing.Item,
+    ...(filingDecision
+      ? {
+          deliberate311DeliveryMode: filingDecision.mode,
+          deliberate311AcceptedAt: filingDecision.acceptedAt,
+        }
+      : {}),
     status: "completing",
     appActionStatus: "executing",
     completionStartedAt:
@@ -1416,6 +1519,7 @@ export async function completeTaskWithAppActions(opts) {
     new TransactWriteCommand({
       TransactItems: [
         ...(opts.duplicateChecks ?? []),
+        ...(filingDecision?.checks ?? []),
         {
           Put: {
             TableName: opts.tableName,
@@ -1498,8 +1602,8 @@ export async function completeTaskWithAppActions(opts) {
         new Error(String(result.reason ?? "app action failed")),
         {
           extra: {
-            ...(result.code === "create_311_ticket"
-              ? { eventType: "311_app_action_failed" }
+            ...(["create_311_ticket", "close_311_ticket"].includes(result.code)
+              ? { eventType: "311_app_action_failed", integration: "sf311" }
               : {}),
             taskId: opts.taskId,
             siteId: opts.siteId,
@@ -1522,7 +1626,7 @@ export async function completeTaskWithAppActions(opts) {
         : "completed",
     ...(appActionFailed || canBeInProgress
       ? {}
-      : { completedAt: now, resolvedAt: now }),
+      : { completedAt: now, resolvedAt: now, proofAddedAt: null }),
     ...(appActionFailed || canBeInProgress
       ? {}
       : { completionMethod: opts.completionMethod ?? "user_confirmed" }),
@@ -1883,7 +1987,7 @@ async function findOpenConditionTasks(opts) {
  * @param {Record<string, string>[]} opts.keys
  * @returns {Promise<Record<string, unknown>[]>}
  */
-async function batchGetAll({ tableName, keys }) {
+export async function batchGetAll({ tableName, keys }) {
   /** @type {Record<string, unknown>[]} */
   const items = [];
 
@@ -1915,4 +2019,68 @@ async function batchGetAll({ tableName, keys }) {
   }
 
   return items;
+}
+
+/** Receipt identity is evidence-scoped, independent of assessment revisions.
+ * @param {string} siteId @param {Record<string, any>} assessment @param {Record<string, any>} condition
+ */
+export function conditionDeletionKey(siteId, assessment, condition) {
+  const artifactId =
+    condition.source?.artifactIds?.[0] || condition.sourceArtifactIds?.[0];
+  const checkId = condition.checkId || assessment.checkId;
+  return artifactId && checkId && condition.conditionId
+    ? {
+        pk: `SITE#${siteId}`,
+        sk: `ISSUE_DELETION#${checkId}:${artifactId}:${condition.conditionId}`,
+      }
+    : null;
+}
+
+/** Project durable dismissals onto guidance without changing its stored policy outcome.
+ * @param {string} tableName @param {string} siteId
+ * @param {{assessment: Record<string, any> | null, conditions: Record<string, any>[], tasks: Record<string, any>[]}} guidance
+ */
+export async function withConditionDismissals(tableName, siteId, guidance) {
+  const keys = [...guidance.conditions, ...guidance.tasks].flatMap(
+    (condition) => {
+      const key = conditionDeletionKey(
+        siteId,
+        guidance.assessment || {},
+        condition,
+      );
+      return key ? [key] : [];
+    },
+  );
+  const receipts = keys.length
+    ? await batchGetAll({
+        tableName,
+        keys: [...new Map(keys.map((key) => [key.sk, key])).values()],
+      })
+    : [];
+  const dismissed = new Map(
+    receipts
+      .filter((row) => row.deletedAt || row.dismissedAt)
+      .map((row) => [row.sk, row]),
+  );
+  return {
+    ...guidance,
+    tasks: guidance.tasks.map((task) => {
+      const receipt = dismissed.get(
+        conditionDeletionKey(siteId, guidance.assessment || {}, task)?.sk,
+      );
+      if (!receipt) return task;
+      return {
+        ...task,
+        status: "superseded",
+        updatedAt: String(receipt.dismissedAt || receipt.deletedAt),
+      };
+    }),
+    conditions: guidance.conditions.map((condition) =>
+      dismissed.has(
+        conditionDeletionKey(siteId, guidance.assessment || {}, condition)?.sk,
+      )
+        ? { ...condition, status: "rejected", needsAnswer: null }
+        : condition,
+    ),
+  };
 }

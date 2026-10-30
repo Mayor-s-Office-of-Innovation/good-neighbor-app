@@ -1,3 +1,12 @@
+import { filedTicket, isSimulated311Ticket } from "../domain/deliberate-311.js";
+import {
+  storeTaskPhotoDisplay,
+  InvalidTaskPhoto,
+} from "../media/task-photo.js";
+import {
+  canAddResolutionProof,
+  withResolutionProof,
+} from "../task-updates/resolution-proof.js";
 import {
   cityHelpTicket,
   logCityNoteFailure,
@@ -38,6 +47,8 @@ const ALLOWED_CONTENT_TYPES = new Set([
   "image/jpeg",
   "image/png",
   "image/webp",
+  "image/heic",
+  "image/heif",
 ]);
 
 /** @param {any} event @returns {Record<string, any> | null} */
@@ -117,7 +128,7 @@ export const getTaskUpdates = async (event) => {
   return jsonResponse(200, {
     ...detail(
       {
-        ...task,
+        ...(await withResolutionProof(dynamoTable, siteId, task)),
         canUploadPhotos: ["in_progress", "completed"].includes(check?.status),
       },
       timelinePage.items,
@@ -160,7 +171,15 @@ export const createTaskUpdate = async (event, retry = true) => {
       update: priorUpdate,
     });
   }
-  if (!canUpdateTask(task)) {
+  const proof = input.type === "resolution_proof";
+  if (proof) {
+    const current = await withResolutionProof(dynamoTable, siteId, task);
+    if (!canAddResolutionProof(task) || current.proofAddedAt)
+      return jsonResponse(409, {
+        error: "Task cannot accept resolution proof",
+      });
+  }
+  if (!proof && !canUpdateTask(task)) {
     const legacyRetry = await readLegacyUpdateById(
       dynamoTable,
       siteId,
@@ -176,6 +195,7 @@ export const createTaskUpdate = async (event, retry = true) => {
   }
 
   const srNum = cityHelpTicket(task);
+  const simulated = srNum && isSimulated311Ticket(filedTicket(task, srNum));
   const informational = ["note_photo_update", "additional_action"].includes(
     input.type,
   );
@@ -187,7 +207,11 @@ export const createTaskUpdate = async (event, retry = true) => {
     return jsonResponse(400, {
       error: "City help choice requires a filed 311 request",
     });
-  if (input.cityHelpNeeded === false && !is311SubmissionEnabled(process.env))
+  if (
+    input.cityHelpNeeded === false &&
+    !simulated &&
+    !is311SubmissionEnabled(process.env)
+  )
     return jsonResponse(503, { error: "City updates are unavailable" });
 
   const transition = buildTaskUpdateTransition(task, input, {
@@ -199,9 +223,27 @@ export const createTaskUpdate = async (event, retry = true) => {
     return jsonResponse(transition.statusCode, { error: transition.error });
   const { update, task: updated } = transition;
   const now = update.occurredAt;
+  if (proof) {
+    for (const artifactId of update.photoKeys || []) {
+      const { media, pointer } = await readTaskUpdateMediaRegistration({
+        tableName: dynamoTable,
+        siteId,
+        checkId: task.checkId,
+        taskId,
+        artifactId,
+      });
+      if (
+        !media ||
+        !pointer ||
+        pointer.taskId !== taskId ||
+        media.artifactId !== artifactId
+      )
+        return jsonResponse(400, { error: "Invalid proof media" });
+    }
+  }
   if (informational && srNum) {
     update.cityHelpNeeded = input.cityHelpNeeded;
-    if (input.cityHelpNeeded === false) {
+    if (input.cityHelpNeeded === false && !simulated) {
       try {
         update.cityNotePayload = await prepareCityHelpNote(
           dynamoTable,
@@ -218,7 +260,7 @@ export const createTaskUpdate = async (event, retry = true) => {
   }
   // The compare-and-swap below prevents a late worker or another user from
   // overwriting recovery. Preserve all ticket references and filing failures.
-  if (task.status !== "in_progress") {
+  if (!proof && task.status !== "in_progress") {
     updated.inProgressAt ||= task.notifiedAt || task.updatedAt || now;
     if (updated.status === "in_progress") {
       delete updated.completedAt;
@@ -404,6 +446,19 @@ export const registerTaskUpdateMedia = async (event) => {
     });
     return jsonResponse(422, { error: "media_metadata_mismatch" });
   }
+  let displayS3Key;
+  try {
+    displayS3Key = await storeTaskPhotoDisplay({
+      bucket: uploadBucket,
+      key: s3Key,
+      contentType,
+      contentLength,
+    });
+  } catch (error) {
+    if (error instanceof InvalidTaskPhoto)
+      return jsonResponse(422, { error: "invalid_photo" });
+    throw error;
+  }
   let alreadyRegistered = false;
   try {
     await writeTaskUpdateMedia({
@@ -415,6 +470,7 @@ export const registerTaskUpdateMedia = async (event) => {
       s3Key,
       contentType,
       contentLength,
+      displayS3Key,
       capturedAt:
         typeof input.capturedAt === "string"
           ? input.capturedAt
@@ -463,6 +519,7 @@ export const registerTaskUpdateMedia = async (event) => {
     key: s3Key,
     tags: { state: "registered" },
   });
+  // The durable media INSERT is dispatched to the background thumbnail worker.
   return jsonResponse(alreadyRegistered ? 200 : 201, {
     artifactId,
     status: "registered",

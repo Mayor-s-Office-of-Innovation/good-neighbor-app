@@ -11,6 +11,8 @@ export const EVENTS = /** @type {const} */ ([
   "capture_resumed",
   "camera_opened",
   "photo_picked",
+  "photo_pipeline",
+  "photo_location",
   // Home Screen session handoff (frontend services/session-handoff.js).
   "handoff_grant_issued",
   "handoff_redeemed",
@@ -52,7 +54,22 @@ export const PROPERTY_KEYS = /** @type {const} */ ([
   "switching_site",
   "photo_bytes",
   "photo_type",
+  "check_id",
+  "artifact_id",
+  "attempt_id",
+  "stage",
+  "outcome",
+  "elapsed_ms",
+  "http_status",
+  "online",
+  "visibility",
   "reason",
+  // photo_location (#560); no coordinates, to keep locations private.
+  "location_outcome",
+  "location_wait_ms",
+  "location_accuracy_m",
+  "location_sent_with_upload",
+  "permission_state",
 ]);
 const URL_KEYS = new Set(["$current_url", "$pathname", "landing_path"]);
 
@@ -134,6 +151,39 @@ export function scrubProperties(raw) {
   for (const key of PROPERTY_KEYS) {
     if (!Object.hasOwn(props, key)) continue;
     const value = props[key];
+    if (
+      ["check_id", "artifact_id", "attempt_id"].includes(key) &&
+      (typeof value !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          value,
+        ))
+    )
+      continue;
+    /** @type {Record<string, readonly string[]>} */
+    const enums = {
+      stage: ["presign", "put", "register", "analyze", "evaluate"],
+      outcome: [
+        "started",
+        "slow",
+        "completed",
+        "failed",
+        "backend_failed",
+        "timeout",
+        "cancelled",
+      ],
+      visibility: ["visible", "hidden", "prerender", "unknown"],
+    };
+    if (
+      Object.hasOwn(enums, key) &&
+      (typeof value !== "string" || !enums[key].includes(value))
+    )
+      continue;
+    if (
+      ["elapsed_ms", "http_status"].includes(key) &&
+      (typeof value !== "number" || !Number.isFinite(value) || value < 0)
+    )
+      continue;
+    if (key === "online" && typeof value !== "boolean") continue;
     if (typeof value === "string") {
       const capped = truncateString(value, MAX_PROPERTY_STRING);
       const clean = URL_KEYS.has(key) ? stripQueryString(capped) : capped;

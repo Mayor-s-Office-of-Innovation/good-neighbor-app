@@ -17,7 +17,11 @@ vi.mock("@aws-sdk/client-sqs", async (original) => ({
 }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 vi.mock("../config.js", () => ({
-  getConfig: () => ({ dynamoTable: "test", queueUrl: "queue" }),
+  getConfig: () => ({
+    dynamoTable: "test",
+    queueUrl: "queue",
+    sf311QueueUrl: "https://sqs.example/311",
+  }),
 }));
 vi.mock("../analysis/guidance/app-actions.js", async (original) => ({
   ...(await original()),
@@ -147,6 +151,45 @@ it("closes an informational ticket if the user finishes while filing is running"
     "close_311_ticket",
   ]);
 });
+it("finishes a replayed closure job without creating its ticket again", async () => {
+  task.status = "completed";
+  task.completionMethod = "manual";
+  const failed = {
+    code: "close_311_ticket",
+    status: "failed",
+    payload: {
+      closures: [
+        {
+          serviceCode: "code",
+          srNum: "123",
+          status: "failed",
+          reason: "sf311_closure_state_unknown",
+        },
+      ],
+    },
+  };
+  job = { status: "retry", results: [ticket, failed] };
+  task.appActionResults = [ticket, failed];
+  execute.mockResolvedValueOnce([
+    {
+      code: "close_311_ticket",
+      status: "submitted",
+      payload: {
+        closures: [{ serviceCode: "code", srNum: "123", status: "closed" }],
+      },
+    },
+  ]);
+  await runJob(message);
+  expect(execute).toHaveBeenCalledOnce();
+  expect(execute.mock.calls[0][0]).toEqual([
+    { code: "close_311_ticket", payload: {} },
+  ]);
+  expect(job.status).toBe("complete");
+  expect(task.appActionResults[0].payload.tickets[0].srNum).toBe("123");
+  await runJob(message);
+  expect(execute).toHaveBeenCalledOnce();
+});
+
 it("does not close tickets filed explicitly for City-owned work", async () => {
   task.status = "completed";
   task.completionMethod = "311_filed";
@@ -245,6 +288,94 @@ it("delays transient failures without acknowledging them", async () => {
     ReceiptHandle: "receipt",
     VisibilityTimeout: 120,
   });
+});
+
+it.each([
+  ["arn:aws:sqs:us-west-2:ACCOUNT_ID:311", "https://sqs.example/311"],
+  ["arn:aws:sqs:us-west-2:ACCOUNT_ID:submissions", "queue"],
+])(
+  "backs off a receipt on its actual source queue: %s",
+  async (eventSourceARN, expectedQueue) => {
+    execute.mockRejectedValue(new Error("Transient failure"));
+    await expect(
+      handler(
+        /** @type {any} */ ({
+          Records: [
+            {
+              eventSourceARN,
+              messageId: "message",
+              body: JSON.stringify(message),
+              receiptHandle: "receipt",
+              attributes: { ApproximateReceiveCount: "2" },
+            },
+          ],
+        }),
+        /** @type {any} */ ({}),
+        () => {},
+      ),
+    ).rejects.toThrow("Transient failure");
+    expect(sendSqs.mock.calls[0][0].input).toMatchObject({
+      QueueUrl: expectedQueue,
+      ReceiptHandle: "receipt",
+      VisibilityTimeout: 60,
+    });
+  },
+);
+
+it("reports exhausted closure reconciliation once per action with its durable job ID", async () => {
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  task.status = "completed";
+  task.completionMethod = "manual";
+  task.appActionResults = [ticket];
+  execute.mockResolvedValue([
+    {
+      code: "close_311_ticket",
+      status: "failed",
+      payload: {
+        closures: [{ status: "failed", reason: "sf311_closure_state_unknown" }],
+      },
+    },
+  ]);
+  try {
+    await expect(deliver("5")).rejects.toThrow("retry from durable checkpoint");
+    const failures = log.mock.calls
+      .map(([line]) => JSON.parse(String(line)))
+      .filter((entry) => entry.marker === "Sf311ActionFailure");
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({
+      Operation: "close",
+      jobId: message.jobSk,
+      attempt: 5,
+      Sf311ReconciliationBlocked: 1,
+      Sf311ActionFailed: 0,
+    });
+    expect(job.status).toBe("retry");
+  } finally {
+    log.mockRestore();
+  }
+});
+
+it("alerts on a permanent failure even though the job is acknowledged", async () => {
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  execute.mockResolvedValue([
+    { code: "create_311_ticket", status: "failed", reason: "missing_location" },
+  ]);
+  try {
+    await deliver();
+    expect(job.status).toBe("failed");
+    expect(sendSqs).not.toHaveBeenCalled();
+    expect(
+      log.mock.calls.map(([line]) => JSON.parse(String(line))),
+    ).toContainEqual(
+      expect.objectContaining({
+        Operation: "create",
+        Sf311ActionFailed: 1,
+        outcome: "needs_attention",
+      }),
+    );
+  } finally {
+    log.mockRestore();
+  }
 });
 
 it("waits for a competing worker lease before retrying", async () => {
@@ -388,7 +519,14 @@ describe("tapped filing jobs (trigger: user_confirmed)", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
-  it("runs the user-confirmed actions and completes the task once filed", async () => {
+  it("runs user-confirmed actions even when global silent filing is disabled", async () => {
+    const original = send.getMockImplementation();
+    send.mockImplementation(async (command) =>
+      command instanceof GetCommand &&
+      command.input.Key?.pk === "SYSTEM#CONTROLS"
+        ? { Item: { enabled: false } }
+        : original?.(command),
+    );
     await runJob(filedMessage);
 
     expect(execute.mock.calls[0][1]).toMatchObject({
@@ -453,6 +591,28 @@ describe("tapped filing jobs (trigger: user_confirmed)", () => {
     );
   });
 
+  it("alarms on an acknowledged filing with no action result", async () => {
+    execute.mockResolvedValueOnce([]);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await runJob(filedMessage);
+      expect(job.status).toBe("failed");
+      expect(taskSet()).toMatchObject({ appActionStatus: "failed" });
+      const events = log.mock.calls.map(([line]) => JSON.parse(line));
+      expect(
+        events.filter((event) => event.marker === "Sf311ActionFailure"),
+      ).toEqual([
+        expect.objectContaining({
+          Operation: "create",
+          Sf311ActionFailed: 1,
+          reason: "app_action_failed",
+        }),
+      ]);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it.each([
     "missing_location",
     "sf311_creation_uncertain_requires_reconciliation",
@@ -509,3 +669,34 @@ describe("tapped filing jobs (trigger: user_confirmed)", () => {
     expect(sendSqs).not.toHaveBeenCalled();
   });
 });
+
+it.each([
+  { enabled: false },
+  { enabled: true, epochStartedAt: "2026-10-30T12:00:00Z" },
+])(
+  "consumes disabled or old silent work without filing or closing: %j",
+  async (control) => {
+    task.createdAt = "2026-10-29T12:00:00Z";
+    task.status = "completed";
+    task.appActionResults = [ticket];
+    const original = send.getMockImplementation();
+    send.mockImplementation(async (command) =>
+      command instanceof GetCommand &&
+      command.input.Key?.pk === "SYSTEM#CONTROLS"
+        ? { Item: control }
+        : original?.(command),
+    );
+    await runJob(message);
+    expect(execute).not.toHaveBeenCalled();
+    expect(
+      send.mock.calls.some(
+        ([command]) =>
+          command instanceof UpdateCommand &&
+          command.input.Key?.sk === message.jobSk &&
+          command.input.ExpressionAttributeValues?.[":reason"] ===
+            "silent_filing_disabled",
+      ),
+    ).toBe(true);
+    expect(finalWrites).toHaveLength(0);
+  },
+);
