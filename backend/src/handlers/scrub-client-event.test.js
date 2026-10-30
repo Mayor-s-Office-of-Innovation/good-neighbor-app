@@ -45,6 +45,31 @@ describe("scrubClientEvent", () => {
     }
   });
 
+  it("keeps photo location diagnostics but never coordinates", () => {
+    const out = scrubClientEvent({
+      event: "photo_location",
+      id: "u",
+      properties: {
+        flow: "perimeter",
+        location_outcome: "acquired",
+        location_wait_ms: 4200,
+        location_accuracy_m: 18,
+        location_sent_with_upload: false,
+        permission_state: "granted",
+        latitude: 37.7793,
+        longitude: -122.4192,
+      },
+    });
+    expect(out?.properties).toEqual({
+      flow: "perimeter",
+      location_outcome: "acquired",
+      location_wait_ms: 4200,
+      location_accuracy_m: 18,
+      location_sent_with_upload: false,
+      permission_state: "granted",
+    });
+  });
+
   it("rejects unknown events, missing ids, and non-objects", () => {
     expect(scrubClientEvent({ event: "$autocapture", id: "u" })).toBeNull();
     expect(scrubClientEvent({ event: "$pageview" })).toBeNull();

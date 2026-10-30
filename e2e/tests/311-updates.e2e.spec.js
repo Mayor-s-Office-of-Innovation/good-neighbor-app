@@ -1,6 +1,7 @@
 // @ts-check
 import { test, expect } from "../helpers/harness.js";
 import { t } from "../helpers/i18n.js";
+import { E2E_URLS } from "../helpers/ports.js";
 import { PHOTO_ISSUES } from "../helpers/fixtures.js";
 
 /** Stateful API boundary fixture: browser reloads must fetch the saved events. */
@@ -78,7 +79,7 @@ async function filedTicket(
       json: {
         artifactId: "update-photo",
         s3Key: "fixture/photo.jpg",
-        uploadUrl: `http://127.0.0.1:${process.env.E2E_APP_PORT ?? 5173}/e2e-photo-upload`,
+        uploadUrl: `${E2E_URLS.app}/e2e-photo-upload`,
       },
     }),
   );
@@ -93,9 +94,7 @@ async function filedTicket(
     "**/v1/checks/311-update-check/artifacts/update-photo/media",
     (route) =>
       route.fulfill({
-        json: {
-          downloadUrl: `http://127.0.0.1:${process.env.E2E_APP_PORT ?? 5173}/e2e-photo.jpg`,
-        },
+        json: { downloadUrl: `${E2E_URLS.app}/e2e-photo.jpg` },
       }),
   );
   await page.route("**/e2e-photo.jpg", (route) =>

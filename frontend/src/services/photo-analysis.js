@@ -22,12 +22,13 @@ import {
   submitConditionAnswers,
   uploadArtifact,
   registerTextArtifact,
+  updateArtifactLocation,
   ApiError,
   contentTypeFromDataUrl,
   dataUrlToBlob,
   LEG,
 } from "./api.js";
-import { getCaptureDeviceLocation } from "./device-location.js";
+import { readCaptureDeviceLocation } from "./device-location.js";
 import {
   addItem,
   findCheckForItem,
@@ -301,6 +302,91 @@ function hasCoordinates(value) {
   );
 }
 
+// A location that arrived after upload still belongs on the photo's tasks.
+function withLocation(analysis, location) {
+  return hasCoordinates(analysis) || !hasCoordinates(location)
+    ? analysis
+    : {
+        ...analysis,
+        latitude: location.latitude,
+        longitude: location.longitude,
+      };
+}
+
+// An expired session, rejected token, timeout or throttling can pass later.
+const RETRIED_LOCATION_STATUSES = new Set([401, 403, 408, 429]);
+// A server that keeps failing gets this long; time offline doesn't count.
+const LOCATION_RETRY_MS = 10 * 60_000;
+/** @type {Set<string>} */
+const locationSendsInFlight = new Set();
+
+/**
+ * @param {string | null} itemId
+ * @param {string} checkId
+ * @param {string} artifactId
+ * @param {{ latitude: number, longitude: number, accuracyMeters?: number }} location
+ * @returns {Promise<boolean>} false while a retry is still due
+ */
+async function sendLocation(itemId, checkId, artifactId, location) {
+  // A GPS fix arriving during a recovery retry would send twice.
+  if (locationSendsInFlight.has(artifactId)) return false;
+  locationSendsInFlight.add(artifactId);
+  let settled = true;
+  try {
+    await updateArtifactLocation(checkId, artifactId, location);
+  } catch (err) {
+    console.warn("Could not send the photo's location", err?.status);
+    // check-submissions.js retries these; any other answer won't change.
+    if (isConnectionFailure(err)) {
+      settled = false;
+      // The server-error clock restarts once the phone is back online.
+      const item = itemId ? itemById(itemId) : null;
+      if (item?.locationRetryUntil)
+        updateItem(item.id, { locationRetryUntil: undefined });
+    } else if (
+      err?.status >= 500 ||
+      RETRIED_LOCATION_STATUSES.has(err?.status)
+    ) {
+      const item = itemId ? itemById(itemId) : null;
+      // Saved on the item so a reload doesn't restart the clock.
+      const until = item?.locationRetryUntil ?? Date.now() + LOCATION_RETRY_MS;
+      if (item && !item.locationRetryUntil)
+        updateItem(item.id, { locationRetryUntil: until });
+      settled = Date.now() >= until;
+    }
+  } finally {
+    locationSendsInFlight.delete(artifactId);
+  }
+  if (settled && itemId) updateItem(itemId, { locationUnsent: false });
+  return settled;
+}
+
+/**
+ * A late GPS fix the server hasn't confirmed yet.
+ * @param {any} item
+ */
+export function hasUnsentLocation(item) {
+  return Boolean(
+    item?.locationUnsent &&
+      hasCoordinates(item.location) &&
+      (item.analysis?.artifactId || item.upload?.artifactId),
+  );
+}
+
+/**
+ * @param {string} checkId
+ * @param {any} item
+ * @returns {Promise<boolean>}
+ */
+export function resendItemLocation(checkId, item) {
+  return sendLocation(
+    item.id,
+    checkId,
+    item.analysis?.artifactId || item.upload?.artifactId,
+    item.location,
+  );
+}
+
 async function guidanceFromAnalysis(checkId, artifactId, analysis) {
   const assessment = assessmentFromAnalysis({ checkId, artifactId, analysis });
   const guidance = await evaluateAssessment(assessment);
@@ -426,7 +512,11 @@ async function evaluateArtifact(checkId, itemId, artifactId) {
 
   const { assessment, guidance } = await withLeg("evaluate", () =>
     observePhotoStage("evaluate", telemetry, () =>
-      guidanceFromAnalysis(checkId, artifactId, analysis),
+      guidanceFromAnalysis(
+        checkId,
+        artifactId,
+        withLocation(analysis, itemById(itemId)?.location),
+      ),
     ),
   );
   updateItemAnalysis(itemId, {
@@ -761,14 +851,32 @@ export async function analyzeNoIssueDescriptionEdit(itemId, text) {
   const item = sessionItem(check, itemId);
   if (!check || !item) return null;
 
+  const read = readCaptureDeviceLocation();
   await ensureRemoteCheck(check);
   const capturedAt = new Date().toISOString();
-  const location = await getCaptureDeviceLocation();
+  let location = read.atUpload();
   const artifactId = await registerTextArtifact(check.id, {
     text,
     capturedAt,
     ...(location ?? {}),
   });
+  let textItemId = null;
+  let lateUnsent = false;
+  if (!location) {
+    // GPS hadn't answered yet; send its fix if one comes within 10 s.
+    void read.later.then(async (late) => {
+      if (!late) return;
+      location = late;
+      lateUnsent = true;
+      if (textItemId)
+        updateItem(textItemId, { location: late, locationUnsent: true });
+      // textItemId can be set while this waits, so clear the flag here.
+      if (await sendLocation(null, check.id, artifactId, late)) {
+        lateUnsent = false;
+        if (textItemId) updateItem(textItemId, { locationUnsent: false });
+      }
+    });
+  }
   const analysis = await waitForArtifactAnalysis(check.id, artifactId);
   if (analysis.status && analysis.status !== "analyzed") {
     throw new ApiError("Analysis failed for edited description", {
@@ -779,7 +887,7 @@ export async function analyzeNoIssueDescriptionEdit(itemId, text) {
   const { guidance } = await guidanceFromAnalysis(
     check.id,
     artifactId,
-    analysis,
+    withLocation(analysis, location),
   );
   const hasProblems = Boolean(
     (guidance.tasks || []).length || (guidance.conditions || []).length,
@@ -799,8 +907,10 @@ export async function analyzeNoIssueDescriptionEdit(itemId, text) {
     text,
     uploadedAt: capturedAt,
     ...(location ? { location } : {}),
+    ...(lateUnsent ? { locationUnsent: true } : {}),
   });
   if (!textItem) return { status: "problems", artifactId };
+  textItemId = textItem.id;
   updateItem(textItem.id, {
     upload: { status: "uploaded", artifactId },
   });
@@ -905,15 +1015,17 @@ async function run(itemId) {
 
   const startedAt = Date.now();
   try {
-    const locationPromise = hasCoordinates(item.location)
-      ? Promise.resolve(item.location)
-      : getCaptureDeviceLocation();
+    const read =
+      hasCoordinates(item.location) ||
+      item.analysis?.artifactId ||
+      item.upload?.artifactId
+        ? null
+        : readCaptureDeviceLocation(
+            item.kind === "text" ? undefined : check.flowType,
+          );
+    const uploadLocation = () => (read ? read.atUpload() : item.location);
     updateItemAnalysis(itemId, { status: "queued" });
     await withLeg("start", () => ensureRemoteCheck(check));
-    const location = await locationPromise;
-    if (location && !hasCoordinates(item.location)) {
-      updateItem(itemId, { location });
-    }
     // An interrupted run may have completed the upload before analysis started:
     // the artifact coordinates then live only under `upload`. Adopt them here
     // so run() and the poll both see them instead of re-uploading.
@@ -931,7 +1043,7 @@ async function run(itemId) {
           registerTextArtifact(check.id, {
             text: item.text,
             capturedAt: item.uploadedAt,
-            ...(location ?? {}),
+            ...(uploadLocation() ?? {}),
           }),
         );
         updateItem(itemId, {
@@ -948,7 +1060,7 @@ async function run(itemId) {
           uploadArtifact(check.id, {
             dataUrl: item.dataUrl,
             capturedAt: item.uploadedAt,
-            ...(location ?? {}),
+            location: uploadLocation,
             ...(item.note ? { text: item.note } : {}),
             tag: item.id,
             onLeg: (leg) => {
@@ -978,6 +1090,16 @@ async function run(itemId) {
         });
         updateItemAnalysis(itemId, { s3Key });
       }
+    }
+    const sent = read?.atUpload();
+    if (sent) updateItem(itemId, { location: sent });
+    else if (read) {
+      // GPS hadn't answered yet; send its fix if one comes within 10 s.
+      void read.later.then((location) => {
+        if (!location) return;
+        updateItem(itemId, { location, locationUnsent: true });
+        return sendLocation(itemId, check.id, artifactId, location);
+      });
     }
     await evaluateArtifact(check.id, itemId, artifactId);
   } catch (err) {

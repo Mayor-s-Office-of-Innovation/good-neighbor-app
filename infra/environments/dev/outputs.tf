@@ -87,3 +87,8 @@ output "mail_manager_ingress_username" {
   description = "Authenticated Mail Manager SMTP username after relay enablement."
   value       = module.app.mail_manager_ingress_username
 }
+
+output "cloudwatch_omni_sign_in_url" {
+  description = "CloudWatch Omni sign-in URL for dev; null until enabled."
+  value       = module.app.cloudwatch_omni_sign_in_url
+}

@@ -10,9 +10,11 @@ import {
   getCaptureGuidance,
   putMedia,
   putMediaWithProgress,
+  registerTextArtifact,
   rejectAnalysisCondition,
   REQUEST_TIMEOUT_MS,
   UPLOAD_STALL_MS,
+  updateArtifactLocation,
   toDevUploadUrl,
   waitForAnalyses,
   uploadTaskUpdatePhoto,
@@ -158,6 +160,72 @@ describe("analysis amendments", () => {
     expect(url).toBe(
       "/v1/checks/ch%20k/artifacts/art%2F1/conditions/cond%231/reject",
     );
+  });
+});
+
+describe("registerTextArtifact", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("sends GPS accuracy only alongside coordinates", async () => {
+    /** @type {any} */ const fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 202,
+        text: () => Promise.resolve("{}"),
+      }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    await registerTextArtifact("chk_01", {
+      text: "Litter by the door",
+      latitude: 37.7793,
+      longitude: -122.4192,
+      accuracyMeters: 18,
+    });
+    await registerTextArtifact("chk_01", {
+      text: "Litter by the door",
+      accuracyMeters: 18,
+    });
+    const bodies = fetch.mock.calls.map(([, init]) => JSON.parse(init.body));
+    expect(bodies[0]).toMatchObject({
+      latitude: 37.7793,
+      longitude: -122.4192,
+      accuracyMeters: 18,
+    });
+    expect(bodies[1]).not.toHaveProperty("accuracyMeters");
+  });
+});
+
+describe("updateArtifactLocation", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("patches the artifact's location route with coordinates only", async () => {
+    /** @type {any} */ const fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve("{}"),
+      }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    await updateArtifactLocation("chk 01", "art/1", {
+      latitude: 37.7793,
+      longitude: -122.4192,
+      accuracyMeters: 18,
+    });
+    const [url, init] = fetch.mock.calls[0];
+    expect(String(url)).toMatch(
+      /\/v1\/checks\/chk%2001\/artifacts\/art%2F1\/location$/,
+    );
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body)).toEqual({
+      latitude: 37.7793,
+      longitude: -122.4192,
+      accuracyMeters: 18,
+    });
   });
 });
 
@@ -772,5 +840,85 @@ describe("time limits on a weak connection", () => {
       controller.abort();
       await expect(pending).rejects.toMatchObject({ name: "AbortError" });
     });
+  });
+});
+
+describe("duplicate mutation invalidation", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it.each([
+    [
+      "editAnalysisCondition",
+      [
+        "check",
+        "photo",
+        "condition",
+        { description: "Updated synthetic description" },
+      ],
+    ],
+    ["rejectAnalysisCondition", ["check", "photo", "condition", {}]],
+    ["deleteArtifact", ["check", "photo"]],
+    ["registerArtifact", ["check", { artifactId: "photo" }]],
+    ["evaluateAssessment", [{}]],
+    ["submitConditionAnswers", ["assessment", "condition", { answers: {} }]],
+    ["completeTask", ["task", {}]],
+    ["createTaskUpdate", ["task", { type: "resolved" }, "synthetic-request"]],
+    ["updateTaskAction", ["task", "rule"]],
+    [
+      "recordCustomTaskAction",
+      ["task", { text: "Synthetic action", resolved: true }],
+    ],
+  ])(
+    "invalidates after successful %s, but not failed writes",
+    async (name, args) => {
+      const api = await import("./api.js");
+      const db = await import("../db.js");
+      const siteRead = vi
+        .spyOn(db, "getSite")
+        .mockResolvedValue({ siteId: "synthetic-site" });
+      const { onDuplicateInvalidation } = await import(
+        "./duplicate-invalidation.js"
+      );
+      const changed = vi.fn();
+      const stop = onDuplicateInvalidation(changed);
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValueOnce(new Response("{}", { status: 400 }))
+          .mockResolvedValueOnce(new Response("{}", { status: 200 })),
+      );
+      try {
+        await expect(api[name](...args)).rejects.toBeInstanceOf(ApiError);
+        expect(changed).not.toHaveBeenCalled();
+        await api[name](...args);
+        expect(changed).toHaveBeenCalledOnce();
+      } finally {
+        stop();
+        siteRead.mockRestore();
+      }
+    },
+  );
+
+  it("does not invalidate for result reads or upload URL creation", async () => {
+    const { getDuplicateLinks, presignArtifact } = await import("./api.js");
+    const { onDuplicateInvalidation } = await import(
+      "./duplicate-invalidation.js"
+    );
+    const changed = vi.fn();
+    const stop = onDuplicateInvalidation(changed);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}", { status: 200 })),
+    );
+    try {
+      await getDuplicateLinks(["task"]);
+      await presignArtifact("check", {
+        contentType: "image/jpeg",
+        contentLength: 100,
+      });
+      expect(changed).not.toHaveBeenCalled();
+    } finally {
+      stop();
+    }
   });
 });

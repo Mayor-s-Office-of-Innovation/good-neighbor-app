@@ -493,6 +493,22 @@ async function requestOnce(
     classifyApiFailure(apiError);
     throw apiError;
   }
+  // These successful writes can change evidence, guidance or the original task
+  // embedded in a duplicate result. Invalidate the whole site because a cached
+  // original may be reached through an intermediate link. Reads never invalidate.
+  // Separation notifies after clearing local status overrides in its wrapper.
+  if (
+    method !== "GET" &&
+    ((/^\/v1\/checks\/[^/]+\/artifacts(?:$|\/)/.test(path) &&
+      !path.endsWith("/presign")) ||
+      /^\/v1\/assessments(?::evaluate$|\/[^/]+\/conditions\/[^/]+\/answers$)/.test(
+        path,
+      ) ||
+      /^\/v1\/tasks\/[^/]+\/(?:complete|custom-action|action|updates)$/.test(
+        path,
+      ))
+  )
+    invalidateDuplicateIssues(requestSiteId);
   return parsed;
 }
 
@@ -955,7 +971,7 @@ export function presignArtifact(checkId, body, { signal = undefined } = {}) {
  * Stamps the active UI locale so the analyzer writes translated
  * labels/descriptions the device can show.
  * @param {string} checkId
- * @param {{ artifactId: string, s3Key?: string, contentType?: string, contentLength?: number, capturedAt?: string, latitude?: number, longitude?: number, text?: string, language?: string }} body
+ * @param {{ artifactId: string, s3Key?: string, contentType?: string, contentLength?: number, capturedAt?: string, latitude?: number, longitude?: number, accuracyMeters?: number, text?: string, language?: string }} body
  * @returns {Promise<{ artifactId: string, status: string }>}
  */
 export function registerArtifact(checkId, body) {
@@ -964,6 +980,29 @@ export function registerArtifact(checkId, body) {
     `/v1/checks/${encodeURIComponent(checkId)}/artifacts`,
     {
       body: { language: getLocale(), ...body },
+    },
+  );
+}
+
+/**
+ * PATCH /v1/checks/{checkId}/artifacts/{artifactId}/location
+ * @param {string} checkId
+ * @param {string} artifactId
+ * @param {{ latitude: number, longitude: number, accuracyMeters?: number }} location
+ * @returns {Promise<{ artifactId: string, artifactUpdated: boolean, tasksUpdated: number }>}
+ */
+export function updateArtifactLocation(checkId, artifactId, location) {
+  return request(
+    "PATCH",
+    `/v1/checks/${encodeURIComponent(checkId)}/artifacts/${encodeURIComponent(artifactId)}/location`,
+    {
+      body: {
+        latitude: location.latitude,
+        longitude: location.longitude,
+        ...(Number.isFinite(location.accuracyMeters)
+          ? { accuracyMeters: location.accuracyMeters }
+          : {}),
+      },
     },
   );
 }
@@ -1301,7 +1340,9 @@ export async function dataUrlToBlob(dataUrl) {
  * pinned S3 key, and validated media metadata so callers can persist enough state to re-drive the analysis
  * later (a retry re-registers the SAME artifact rather than re-uploading).
  * @param {string} checkId
- * @param {{ dataUrl: string, capturedAt?: string, latitude?: number, longitude?: number, text?: string, tag?: string, onLeg?: (leg: "presign" | "put" | "register") => void }} item
+ * @param {{ dataUrl: string, capturedAt?: string, location?: () => ({ latitude: number, longitude: number, accuracyMeters?: number } | null), text?: string, tag?: string, onLeg?: (leg: "presign" | "put" | "register") => void }} item
+ *   `location` is read just before register, so a reading that lands during
+ *   the upload still goes with the photo.
  *   `tag` is a caller-supplied label used only for perf traces (e.g. the item id).
  *   `onLeg` fires after each upload leg completes (see `LEG` below) so callers can
  *   show live progress and, on failure, know which leg broke.
@@ -1309,7 +1350,7 @@ export async function dataUrlToBlob(dataUrl) {
  */
 export async function uploadArtifact(
   checkId,
-  { dataUrl, capturedAt, latitude, longitude, text, tag, onLeg },
+  { dataUrl, capturedAt, location, text, tag, onLeg },
 ) {
   const art = tag ?? "photo";
   const telemetry = { check_id: checkId, attempt_id: photoAttemptId() };
@@ -1338,6 +1379,7 @@ export async function uploadArtifact(
   onLeg?.("put");
 
   const endRegister = span("upload.register", { art, artifactId });
+  const { latitude, longitude, accuracyMeters } = location?.() ?? {};
   await observePhotoStage("register", telemetry, () =>
     registerArtifact(checkId, {
       artifactId,
@@ -1346,7 +1388,11 @@ export async function uploadArtifact(
       contentLength: blob.size,
       ...(capturedAt ? { capturedAt } : {}),
       ...(Number.isFinite(latitude) && Number.isFinite(longitude)
-        ? { latitude, longitude }
+        ? {
+            latitude,
+            longitude,
+            ...(Number.isFinite(accuracyMeters) ? { accuracyMeters } : {}),
+          }
         : {}),
       ...(text ? { text } : {}),
     }),
@@ -1408,19 +1454,23 @@ export async function uploadTaskUpdatePhoto(
 /**
  * Register validated text evidence without uploading media bytes.
  * @param {string} checkId
- * @param {{ text: string, capturedAt?: string, latitude?: number, longitude?: number }} item
+ * @param {{ text: string, capturedAt?: string, latitude?: number, longitude?: number, accuracyMeters?: number }} item
  * @returns {Promise<string>}
  */
 export async function registerTextArtifact(
   checkId,
-  { text, capturedAt, latitude, longitude },
+  { text, capturedAt, latitude, longitude, accuracyMeters },
 ) {
   const artifactId = crypto.randomUUID();
   await registerArtifact(checkId, {
     artifactId,
     ...(capturedAt ? { capturedAt } : {}),
     ...(Number.isFinite(latitude) && Number.isFinite(longitude)
-      ? { latitude, longitude }
+      ? {
+          latitude,
+          longitude,
+          ...(Number.isFinite(accuracyMeters) ? { accuracyMeters } : {}),
+        }
       : {}),
     text,
   });

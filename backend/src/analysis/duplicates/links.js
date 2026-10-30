@@ -117,6 +117,46 @@ export async function duplicateForTask(table, site, task, reader) {
     result?.invalidatedAt ??
     analysis.analyzedAt;
   const pending = { state: "pending", pendingSince };
+  const incremental = await get({
+    pk: analysisKey.pk,
+    sk: `DUP_ISSUE#${id}#${revision}#${task.conditionId}`,
+  });
+  const row =
+    incremental?.possibleDuplicate === true &&
+    (!result?.invalidatedAt || incremental.updatedAt > result.invalidatedAt)
+      ? incremental
+      : result?.conditionResults?.find(
+          (/** @type {Item} */ c) => c.conditionId === task.conditionId,
+        );
+  const hasMatch =
+    row?.possibleDuplicate === true && row.matchStrength === "strong";
+  const outcome = {
+    pendingSince,
+    state:
+      result?.recoveryRequestedAt &&
+      (!result.evaluatedAt || result.recoveryRequestedAt > result.evaluatedAt)
+        ? "pending"
+        : isIncompleteCondition(row)
+          ? "unavailable"
+          : (row?.status === "evaluated" && row.possibleDuplicate === false) ||
+              result?.processingState === "complete" ||
+              result?.status === "evaluated"
+            ? "complete"
+            : "pending",
+  };
+  // No usable outcome yet: avoid artifact/projection reads. Incremental
+  // positives still take precedence, even while the observation is pending.
+  // Every settled outcome below retains the complete current-source validation.
+  if (!hasMatch && outcome.state === "pending") {
+    const current = await taskForIssue(
+      site,
+      { observationId: id, conditionId: task.conditionId },
+      get,
+    );
+    return current?.taskId === task.taskId
+      ? pending
+      : { state: "not_applicable" };
+  }
   const artifact = await get({
     pk: analysisKey.pk,
     sk: `CHECK#${task.checkId}#ART#${artifactId}`,
@@ -137,33 +177,7 @@ export async function duplicateForTask(table, site, task, reader) {
     get,
   );
   if (current?.taskId !== task.taskId) return { state: "not_applicable" };
-  const incremental = await get({
-    pk: analysisKey.pk,
-    sk: `DUP_ISSUE#${id}#${revision}#${task.conditionId}`,
-  });
-  const row =
-    incremental?.possibleDuplicate === true &&
-    (!result?.invalidatedAt || incremental.updatedAt > result.invalidatedAt)
-      ? incremental
-      : result?.conditionResults?.find(
-          (/** @type {Item} */ c) => c.conditionId === task.conditionId,
-        );
-  if (row?.possibleDuplicate !== true || row.matchStrength !== "strong")
-    return {
-      pendingSince,
-      state:
-        result?.recoveryRequestedAt &&
-        (!result.evaluatedAt || result.recoveryRequestedAt > result.evaluatedAt)
-          ? "pending"
-          : isIncompleteCondition(row)
-            ? "unavailable"
-            : (row?.status === "evaluated" &&
-                  row.possibleDuplicate === false) ||
-                result?.processingState === "complete" ||
-                result?.status === "evaluated"
-              ? "complete"
-              : "pending",
-    };
+  if (!hasMatch) return outcome;
   const [directCheck, directArtifact, extra] = String(
     row.duplicateOf?.observationId,
   ).split(":");
