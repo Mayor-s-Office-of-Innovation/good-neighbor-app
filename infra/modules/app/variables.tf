@@ -283,3 +283,61 @@ variable "enable_alarm_delivery_drills" {
   type        = bool
   default     = false
 }
+
+variable "enable_cloudwatch_omni" {
+  description = "Provision a CloudWatch Omni domain and space that forward only this module's log groups (omni.tf). Off until dev proves it."
+  type        = bool
+  default     = false
+}
+
+variable "cloudwatch_omni_domain_name" {
+  description = "Omni domain name, which becomes the team sign-in URL and must be unique across all CloudWatch domains. Empty uses the application/environment name prefix."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.cloudwatch_omni_domain_name == "" || (can(regex("^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$", var.cloudwatch_omni_domain_name)) && !strcontains(var.cloudwatch_omni_domain_name, "--"))
+    error_message = "Omni domain name must be empty or 3-63 lowercase letters, digits, and single hyphens, beginning and ending with a letter or digit."
+  }
+}
+
+variable "cloudwatch_omni_identity_center_instance_arn" {
+  description = "IAM Identity Center instance ARN to add IdP sign-in to the Omni domain. Must live in the same Region as the domain. Empty keeps IAM-only sign-in."
+  type        = string
+  default     = ""
+}
+
+variable "cloudwatch_omni_members" {
+  description = "Omni space grants by name: principal type (IAM_ROLE, IAM_USER, IDC_USER, IDC_GROUP), principal id (role ARN or Identity Center id), and permission (READ, READ_WRITE_DELETE, SPACE_ADMIN)."
+  type = map(object({
+    principal_type = string
+    principal_id   = string
+    permission     = optional(string, "READ")
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue([
+      for m in values(var.cloudwatch_omni_members) :
+      contains(["IAM_ROLE", "IAM_USER", "IDC_USER", "IDC_GROUP"], m.principal_type)
+      && contains(["READ", "READ_WRITE_DELETE", "SPACE_ADMIN"], m.permission)
+    ])
+    error_message = "Each Omni member needs principal_type IAM_ROLE, IAM_USER, IDC_USER, or IDC_GROUP and permission READ, READ_WRITE_DELETE, or SPACE_ADMIN."
+  }
+}
+
+variable "cloudwatch_omni_sso_permission_sets" {
+  description = "Omni space permission (READ, READ_WRITE_DELETE, SPACE_ADMIN) by IAM Identity Center permission-set name, for example { PowerUserAccess = \"READ_WRITE_DELETE\" }. Grants the shared AWSReservedSSO role for each set, so everyone holding it in this account can sign in."
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition     = alltrue([for p in values(var.cloudwatch_omni_sso_permission_sets) : contains(["READ", "READ_WRITE_DELETE", "SPACE_ADMIN"], p)])
+    error_message = "Each Omni SSO permission must be READ, READ_WRITE_DELETE, or SPACE_ADMIN."
+  }
+
+  validation {
+    condition     = alltrue([for k in keys(var.cloudwatch_omni_sso_permission_sets) : can(regex("^[A-Za-z0-9+=,.@_-]{1,32}$", k))])
+    error_message = "Each key must be an IAM Identity Center permission-set name (1-32 characters of letters, digits, and + = , . @ _ -)."
+  }
+}
