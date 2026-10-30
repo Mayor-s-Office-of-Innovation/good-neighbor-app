@@ -465,6 +465,7 @@
   "analysis.missingCondition.noCoordinates.deleted": "A este resultado le faltan las coordenadas de la evidencia original, así que no se puede eliminar. Tome una foto nueva e inténtelo de nuevo.",
   "analysis.missingCondition.noCoordinates.edited": "A este resultado le faltan las coordenadas de la evidencia original, así que no se puede editar. Tome una foto nueva e inténtelo de nuevo.",
   "analysis.progressDialog.title": "Presentando la solicitud",
+  "analysis.question.updated": "Problema actualizado",
   "analysis.question.updating": "Actualizando el problema",
   "analysis.successDialog.resolved": "marcado como resuelto.",
   "analysis.successDialog.text": "Registramos su acción. Este elemento ahora está {resolved}",

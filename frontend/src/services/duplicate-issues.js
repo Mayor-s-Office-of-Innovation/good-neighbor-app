@@ -3,7 +3,7 @@ import { duplicateUiEnabled, onDuplicateUiChange } from "./feature-flags.js";
 import { getDuplicateLinks } from "./api.js";
 import { getSite } from "../db.js";
 
-/** @typedef {{ids: string[], onChange: (links: Map<string, Record<string, any>>) => void, started: number, previous: string, expiry?: ReturnType<typeof setTimeout>}} Subscriber */
+/** @typedef {{ids: string[], onChange: (links: Map<string, Record<string, any>>) => void, expired: boolean, ready: boolean, siteCheckDue: number, previous: string, expiry?: ReturnType<typeof setTimeout>}} Subscriber */
 /** @typedef {{due: number, polls: number, row?: Record<string, any>}} Task */
 /** @type {Set<Subscriber>} */
 const subscribers = new Set();
@@ -15,36 +15,30 @@ let running = false;
 let activeController;
 let generation = 0;
 let siteId;
-let unsubscribe;
-let unsubscribeInvalidation;
 
 function stop(subscriber) {
   if (!subscribers.delete(subscriber)) return;
   clearTimeout(subscriber.expiry);
-  const wanted = new Set([...subscribers].flatMap((s) => s.ids));
-  for (const id of tasks.keys()) if (!wanted.has(id)) tasks.delete(id);
-  if (!subscribers.size) {
+  if (![...subscribers].some((s) => !s.expired)) {
     generation++;
     clearTimeout(timer);
     activeController?.abort();
     running = false;
-    siteId = undefined;
-    unsubscribe?.();
-    unsubscribe = undefined;
-    unsubscribeInvalidation?.();
-    unsubscribeInvalidation = undefined;
   }
+  schedule();
 }
 
 function clear() {
+  tasks.clear();
+  siteId = undefined;
   for (const subscriber of [...subscribers]) {
     stop(subscriber);
     subscriber.onChange(new Map());
   }
 }
 
-function publish(subscriber, expired = false) {
-  if (!subscribers.has(subscriber)) return;
+function publish(subscriber) {
+  if (!subscribers.has(subscriber) || !subscriber.ready) return;
   // Callers replace their entire map: publish only once every requested ID
   // has a result, including an explicit missing row from a successful batch.
   if (!subscriber.ids.every((id) => Object.hasOwn(tasks.get(id) || {}, "row")))
@@ -53,7 +47,7 @@ function publish(subscriber, expired = false) {
     const row = tasks.get(id)?.row;
     return row
       ? [
-          expired && row.state === "pending"
+          subscriber.expired && row.state === "pending"
             ? { ...row, state: "unavailable" }
             : row,
         ]
@@ -69,8 +63,45 @@ function publish(subscriber, expired = false) {
 function schedule() {
   if (running || !subscribers.size) return;
   clearTimeout(timer);
-  const next = Math.min(...[...tasks.values()].map((task) => task.due));
+  if (!duplicateUiEnabled()) return;
+  const next = Math.min(
+    ...activeTasks().map(([, task]) => task.due),
+    ...[...subscribers]
+      .filter((s) => !s.expired && !s.ready)
+      .map((s) => s.siteCheckDue),
+  );
+  if (!Number.isFinite(next)) return;
   timer = setTimeout(run, Math.max(0, next - Date.now()));
+}
+
+/**
+ * Only active retry budgets can schedule work; settled rows have no due time.
+ * @returns {[string, Task][]}
+ */
+function activeTasks() {
+  const wanted = new Set(
+    [...subscribers].filter((s) => !s.expired && s.ready).flatMap((s) => s.ids),
+  );
+  return [...tasks].filter(([id]) => wanted.has(id));
+}
+
+/** @param {Subscriber} subscriber */
+function renew(subscriber) {
+  clearTimeout(subscriber.expiry);
+  subscriber.expired = false;
+  subscriber.expiry = setTimeout(
+    () => {
+      subscriber.expired = true;
+      publish(subscriber);
+      if (![...subscribers].some((s) => !s.expired)) {
+        generation++;
+        activeController?.abort();
+        running = false;
+      }
+      schedule();
+    },
+    15 * 60 * 1000,
+  );
 }
 
 async function run() {
@@ -81,19 +112,30 @@ async function run() {
     if (generation !== activeGeneration) return;
     const currentSiteId = site?.siteId || "";
     if (siteId !== undefined && siteId !== currentSiteId) {
-      clear();
-      return;
+      tasks.clear();
+      for (const subscriber of subscribers) {
+        subscriber.previous = "";
+        for (const id of subscriber.ids)
+          tasks.set(id, { due: Date.now(), polls: 0 });
+      }
     }
     siteId = currentSiteId;
-    const due = [...tasks].filter(([, task]) => task.due <= Date.now());
+    // Verify the binding and publish cached rows through this single bounded
+    // path. A separate initialization read could race and abandon a new watch.
+    for (const subscriber of subscribers) {
+      subscriber.ready = true;
+      publish(subscriber);
+    }
+    const due = activeTasks().filter(([, task]) => task.due <= Date.now());
     if (document.hidden) {
       for (const [, task] of due) task.due = Date.now() + 2000;
       return;
     }
     for (let i = 0; i < due.length; i += 50) {
+      const wanted = new Set(activeTasks().map(([id]) => id));
       const batch = due
         .slice(i, i + 50)
-        .filter(([id, task]) => tasks.get(id) === task);
+        .filter(([id, task]) => wanted.has(id) && tasks.get(id) === task);
       if (!batch.length) continue;
       try {
         const { result, currentSite } = await bounded(async (signal) => {
@@ -109,26 +151,30 @@ async function run() {
           clear();
           return;
         }
-        if (!result.enabled) {
-          clear();
-          return;
-        }
         for (const [id, task] of batch) {
           if (tasks.get(id) !== task) continue;
-          task.row = result.issues.find((row) => row.taskId === id);
+          // Disabled rows are settled, but the subscription stays alive for
+          // invalidation. Later batches may still contain persisted links.
+          task.row = result.enabled
+            ? result.issues.find((row) => row.taskId === id)
+            : undefined;
           const delay = task.polls++ < 15 ? 2000 : 5000;
           task.due =
-            Date.now() + (task.row?.state === "pending" ? delay : 30000);
+            task.row?.state === "pending" ? Date.now() + delay : Infinity;
         }
         for (const subscriber of [...subscribers]) publish(subscriber);
       } catch {
         if (generation !== activeGeneration) return;
-        for (const [, task] of batch) task.due = Date.now() + 15000;
+        for (const [id, task] of batch)
+          if (tasks.get(id) === task) task.due = Date.now() + 15000;
       }
     }
   } catch {
     if (generation !== activeGeneration) return;
-    for (const task of tasks.values()) task.due = Date.now() + 15000;
+    for (const [, task] of activeTasks())
+      if (Number.isFinite(task.due)) task.due = Date.now() + 15000;
+    for (const subscriber of subscribers)
+      if (!subscriber.ready) subscriber.siteCheckDue = Date.now() + 15000;
   } finally {
     if (generation === activeGeneration) {
       running = false;
@@ -138,55 +184,43 @@ async function run() {
 }
 
 /**
- * Share site-bound batches across home and photo cards; subscriptions expire independently.
+ * Share site-bound batches and session cache. Retry budgets expire independently;
+ * subscriptions stay mounted for explicit invalidation. No age-based refresh.
  * @param {string[]} taskIds
  * @param {(links: Map<string, Record<string, any>>) => void} onChange
  */
 export function watchDuplicateIssues(taskIds, onChange) {
   const ids = [...new Set(taskIds)].filter(Boolean);
-  if (!duplicateUiEnabled() || !ids.length) return () => {};
+  if (!ids.length) return () => {};
   /** @type {Subscriber} */
-  const subscriber = { ids, onChange, started: Date.now(), previous: "" };
+  const subscriber = {
+    ids,
+    onChange,
+    expired: false,
+    ready: false,
+    siteCheckDue: Date.now(),
+    previous: "",
+  };
   subscribers.add(subscriber);
-  subscriber.expiry = setTimeout(
-    () => {
-      try {
-        publish(subscriber, true);
-      } finally {
-        stop(subscriber);
-      }
-    },
-    15 * 60 * 1000,
-  );
+  if (duplicateUiEnabled()) renew(subscriber);
   for (const id of ids)
     if (!tasks.has(id)) tasks.set(id, { due: Date.now(), polls: 0 });
-  if (!unsubscribe)
-    unsubscribe = onDuplicateUiChange(() => {
-      if (!duplicateUiEnabled()) clear();
-    });
-  if (!unsubscribeInvalidation)
-    unsubscribeInvalidation = onDuplicateInvalidation(
-      invalidateDuplicateIssues,
-    );
-  // Publish cached rows asynchronously so callers can install their stop handle.
-  const activeGeneration = generation;
-  void getSite()
-    .then((site) => {
-      if (generation !== activeGeneration || !subscribers.has(subscriber))
-        return;
-      if (siteId !== undefined && (site?.siteId || "") !== siteId) {
-        clear();
-        return;
-      }
-      if (ids.some((id) => tasks.get(id)?.row)) publish(subscriber);
-    })
-    .catch(() => {});
+  // The scheduled run verifies the site before publishing, asynchronously so
+  // callers can install their stop handle. Cache hits do not make API calls.
   schedule();
   return () => stop(subscriber);
 }
 
-/** Discard cached matches and pre-mutation responses after a successful separation. */
-function invalidateDuplicateIssues() {
+/**
+ * Invalidate the site's cache, including dependents and currently unmounted tasks.
+ * @param {string} [originSiteId]
+ */
+function invalidateDuplicateIssues(originSiteId) {
+  if (originSiteId && siteId !== undefined && originSiteId !== siteId) return;
+  generation++;
+  clearTimeout(timer);
+  activeController?.abort();
+  running = false;
   for (const id of tasks.keys()) {
     // Replacing the record also invalidates batches holding the old object.
     tasks.set(id, {
@@ -195,9 +229,37 @@ function invalidateDuplicateIssues() {
       row: { taskId: id, state: "pending" },
     });
   }
-  for (const subscriber of [...subscribers]) publish(subscriber);
+  for (const subscriber of [...subscribers]) {
+    if (duplicateUiEnabled()) {
+      renew(subscriber);
+      publish(subscriber);
+    }
+  }
   schedule();
 }
+
+// Keep cache invalidation alive between mounts. Disabling the UI clears cached
+// evidence but retains subscriptions so late site settings can start them.
+onDuplicateInvalidation(invalidateDuplicateIssues);
+onDuplicateUiChange(() => {
+  generation++;
+  clearTimeout(timer);
+  activeController?.abort();
+  running = false;
+  tasks.clear();
+  siteId = undefined;
+  for (const subscriber of subscribers) {
+    clearTimeout(subscriber.expiry);
+    subscriber.previous = "";
+    subscriber.ready = false;
+    subscriber.siteCheckDue = Date.now();
+    subscriber.onChange(new Map());
+    for (const id of subscriber.ids)
+      tasks.set(id, { due: Date.now(), polls: 0 });
+    if (duplicateUiEnabled()) renew(subscriber);
+  }
+  schedule();
+});
 
 /** Bound both network and local-storage waits so one batch cannot stall the service.
  * @template T

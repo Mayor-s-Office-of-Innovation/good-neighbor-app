@@ -342,7 +342,12 @@ export async function rejectAnalysisCondition(event) {
         ) {
           throw err;
         }
-        // unknown_condition remains an unconfirmed attempt, as before.
+        // Absence upstream does not confirm a durable app dismissal.
+        if (!accepted && !dismissed)
+          return jsonResponse(409, {
+            code: "RejectionUnconfirmed",
+            error: "Deletion is not confirmed; retry",
+          });
       }
       if (accepted || dismissed) {
         const upstreamTime = result?.rejection?.created_at;

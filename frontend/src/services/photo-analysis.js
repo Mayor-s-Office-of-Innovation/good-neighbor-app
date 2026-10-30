@@ -963,6 +963,7 @@ export async function analyzeNoIssueDescriptionEdit(itemId, text) {
  * @param {string} conditionId
  * @param {string} answerKey
  * @param {unknown} answerValue
+ * @param {{assessment?: {assessmentId?: string, assessmentRevision?: number}, conditions?: any[], tasks?: any[]} | null} [publishedGuidance]
  * @returns {Promise<AnswerAnalysisQuestionResult>}
  */
 export async function answerAnalysisQuestion(
@@ -970,10 +971,13 @@ export async function answerAnalysisQuestion(
   conditionId,
   answerKey,
   answerValue,
+  publishedGuidance = null,
 ) {
   const check = checkWithItem(itemId);
   const item = sessionItem(check, itemId);
-  const assessmentId = item?.analysis?.assessment?.assessmentId;
+  const heldAssessmentId = item?.analysis?.assessment?.assessmentId;
+  const assessmentId =
+    publishedGuidance?.assessment?.assessmentId || heldAssessmentId;
   if (!check || !item || !assessmentId || !conditionId || !answerKey) {
     throw new ApiError("This item has no assessment to answer against.", {
       body: { code: "missing_assessment" },
@@ -989,7 +993,7 @@ export async function answerAnalysisQuestion(
     if (err?.body?.code === "AssessmentRevisionConflict") {
       const latest = await getAssessmentGuidance(assessmentId);
       const currentId = itemById(itemId)?.analysis?.assessment?.assessmentId;
-      if (isHeld(check) && currentId === assessmentId)
+      if (isHeld(check) && currentId === heldAssessmentId)
         updateItemAnalysis(itemId, latest);
     }
     throw err;
@@ -998,17 +1002,25 @@ export async function answerAnalysisQuestion(
   const latestItem = itemById(itemId);
   if (
     !latestItem ||
-    latestItem.analysis?.assessment?.assessmentId !== assessmentId
+    latestItem.analysis?.assessment?.assessmentId !== heldAssessmentId
   )
     return result;
   if (
+    latestItem.analysis?.assessment?.assessmentId === assessmentId &&
     (result?.assessmentItem?.assessmentRevision ?? 0) <
-    (latestItem.analysis?.assessment?.assessmentRevision ?? 0)
+      (latestItem.analysis?.assessment?.assessmentRevision ?? 0)
   )
     return result;
   const condition = result?.conditionItem;
   const task = result?.taskItem;
-  const existingConditions = latestItem.analysis?.conditions || [];
+  const baseline =
+    !publishedGuidance ||
+    (latestItem.analysis?.assessment?.assessmentId === assessmentId &&
+      (latestItem.analysis.assessment.assessmentRevision || 0) >
+        (publishedGuidance.assessment?.assessmentRevision || 0))
+      ? latestItem.analysis
+      : publishedGuidance;
+  const existingConditions = baseline?.conditions || [];
   const nextConditions = existingConditions.map((candidate) =>
     candidate.conditionId === conditionId ? condition || candidate : candidate,
   );
@@ -1019,7 +1031,7 @@ export async function answerAnalysisQuestion(
     nextConditions.push(condition);
   }
 
-  const nextTasks = (latestItem.analysis?.tasks || []).filter(
+  const nextTasks = (baseline?.tasks || []).filter(
     (candidate) => candidate.conditionId !== conditionId,
   );
   if (task) nextTasks.push(task);

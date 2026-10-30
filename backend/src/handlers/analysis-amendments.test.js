@@ -233,7 +233,7 @@ describe("analysis amendments (check/artifact-addressed)", () => {
     });
   });
 
-  it("retires the task when the analyzer reports the condition was already removed", async () => {
+  it("keeps an unknown-condition rejection retryable until durably confirmed", async () => {
     analyzeReject.mockRejectedValueOnce(
       new AnalyzerError("Unknown condition", {
         code: "unknown_condition",
@@ -243,43 +243,14 @@ describe("analysis amendments (check/artifact-addressed)", () => {
     send.mockResolvedValueOnce({ Item: analysisItem() });
     send.mockResolvedValueOnce({});
     send.mockResolvedValueOnce({});
-    send.mockResolvedValueOnce({
-      Items: [
-        {
-          pk: "SITE#site-1",
-          sk: "TASK#task-1",
-          taskId: "task-1",
-          status: "open",
-          kind: "escalation",
-          severity: 3,
-          conditionId: "chk_01-art_1-001-litter",
-          checkId: "chk_01",
-          assessmentId: "chk_01-art_1",
-        },
-      ],
-    });
-    send.mockResolvedValueOnce({});
-
     const res = await invoke(amendEvent({}), rejectAnalysisCondition);
-
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body).code).toBe("RejectionUnconfirmed");
     expect(
-      send.mock.calls
-        .filter(([command]) => command instanceof PutCommand)
-        .map(([command]) => command.input.Item),
-    ).toEqual([expect.objectContaining({ state: "pending" })]);
-    expect(JSON.parse(res.body)).toMatchObject({
-      already_rejected: true,
-      rejected_condition_id: "chk_01-art_1-001-litter",
-    });
-    expect(send.mock.calls[4][0]).toBeInstanceOf(TransactWriteCommand);
-    expect(send.mock.calls[4][0].input.TransactItems[0].Put.Item).toMatchObject(
-      {
-        taskId: "task-1",
-        status: "superseded",
-        supersessionReason: "analysis_condition_rejected",
-      },
-    );
+      send.mock.calls.some(
+        ([command]) => command instanceof TransactWriteCommand,
+      ),
+    ).toBe(false);
   });
 
   it("retires a just-published task through strongly consistent primary-key reads", async () => {

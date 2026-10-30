@@ -771,3 +771,80 @@ it("resolves a replaced assessment through the current pointer", async () => {
   expect(response.statusCode).toBe(200);
   expect(parse(response).assessment.assessmentId).toBe("latest");
 });
+
+it.each(["deletedAt", "dismissedAt"])(
+  "projects %s receipts onto guidance returned to retained local cards",
+  async (field) => {
+    send.mockReset();
+    process.env.DYNAMO_TABLE = "table";
+    send.mockResolvedValueOnce({
+      Item: { assessmentId: "a", checkId: "check" },
+    });
+    send.mockResolvedValueOnce({
+      Items: [
+        {
+          conditionId: "c",
+          status: "needs_answer",
+          needsAnswer: { key: "question" },
+          source: { artifactIds: ["artifact"] },
+        },
+      ],
+    });
+    send.mockResolvedValueOnce({
+      Responses: {
+        table: [
+          {
+            pk: "SITE#site-1",
+            sk: "ISSUE_DELETION#check:artifact:c",
+            [field]: "2026-10-29T12:00:00Z",
+          },
+        ],
+      },
+    });
+    const result = await invoke(
+      getGuidance,
+      event({ pathParameters: { assessmentId: "a" } }),
+    );
+    expect(parse(result).conditions[0]).toMatchObject({
+      status: "rejected",
+      needsAnswer: null,
+    });
+    expect(send.mock.calls[2][0].input.RequestItems.table.ConsistentRead).toBe(
+      true,
+    );
+  },
+);
+
+it("does not recover a previously answered condition as success after dismissal", async () => {
+  send.mockReset();
+  process.env.DYNAMO_TABLE = "table";
+  const assessment = { assessmentId: "a", checkId: "check" };
+  const condition = {
+    conditionId: "c",
+    status: "completed",
+    answers: { onsite: false },
+    source: { artifactIds: ["artifact"] },
+  };
+  send.mockResolvedValueOnce({ Item: assessment });
+  send.mockResolvedValueOnce({ Item: condition });
+  send.mockResolvedValueOnce({ Item: assessment });
+  send.mockResolvedValueOnce({ Items: [condition] });
+  send.mockResolvedValueOnce({
+    Responses: {
+      table: [
+        {
+          sk: "ISSUE_DELETION#check:artifact:c",
+          dismissedAt: "2026-10-29T12:00:00Z",
+        },
+      ],
+    },
+  });
+  const result = await invoke(
+    submitConditionAnswers,
+    event({
+      pathParameters: { assessmentId: "a", conditionId: "c" },
+      body: { answers: { onsite: false } },
+    }),
+  );
+  expect(result.statusCode).toBe(409);
+});

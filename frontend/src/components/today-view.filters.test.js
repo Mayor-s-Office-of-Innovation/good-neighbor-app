@@ -34,6 +34,12 @@ function freezeClock() {
 const todayTitle = (iso) =>
   escapeHtml(t("analysis.checkTitle.today", { time: formatTime(iso) }));
 
+const answerUpdated = vi.hoisted(() => vi.fn());
+vi.mock("./analysis-answer-controls.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  showQuestionAnswerUpdated: answerUpdated,
+}));
+
 const session = vi.hoisted(() => ({ current: null }));
 const subscribeSession = vi.hoisted(() =>
   vi.fn((listener) => {
@@ -67,6 +73,11 @@ const catalog = vi.hoisted(() => ({
   listBoundSites: vi.fn(),
   listTasks: vi.fn(),
   listPendingGuidance: vi.fn(async () => ({ guidance: [], nextToken: null })),
+  getAssessmentGuidance: vi.fn(async () => ({
+    assessment: null,
+    conditions: [],
+    tasks: [],
+  })),
   submitConditionAnswers: vi.fn(),
   editAnalysisCondition: vi.fn(),
   listChecks: vi.fn(),
@@ -89,8 +100,13 @@ vi.mock("../services/api.js", () => ({
   listChecks: catalog.listChecks,
   listTasks: catalog.listTasks,
   listPendingGuidance: catalog.listPendingGuidance,
+  getAssessmentGuidance: catalog.getAssessmentGuidance,
   submitConditionAnswers: catalog.submitConditionAnswers,
   editAnalysisCondition: catalog.editAnalysisCondition,
+}));
+const duplicates = vi.hoisted(() => ({ watch: vi.fn(() => vi.fn()) }));
+vi.mock("../services/duplicate-issues.js", () => ({
+  watchDuplicateIssues: duplicates.watch,
 }));
 const queued311 = vi.hoisted(() => ({
   stop: vi.fn(),
@@ -124,6 +140,7 @@ vi.mock("../dialog-history.js", () => ({
 
 let TodayView;
 beforeEach(() => {
+  answerUpdated.mockClear();
   windowListeners.get("authsignout")?.();
   setDuplicateUiSite(null);
   siteRead.mockResolvedValue({ siteId: "site-1" });
@@ -131,6 +148,9 @@ beforeEach(() => {
   catalog.listBoundSites.mockReset().mockResolvedValue([]);
   catalog.listTasks.mockReset().mockResolvedValue({ tasks: [] });
   catalog.listChecks.mockReset().mockResolvedValue({ checks: [] });
+  catalog.getAssessmentGuidance
+    .mockReset()
+    .mockResolvedValue({ assessment: null, conditions: [], tasks: [] });
   catalog.listPendingGuidance
     .mockReset()
     .mockResolvedValue({ guidance: [], nextToken: null });
@@ -192,12 +212,15 @@ async function mount(search) {
   window.location.search = search;
   navigateMock.mockClear();
   const view = new TodayView();
-  view._renderHome = vi.fn();
+  view._renderHome = vi.fn((model) => {
+    view._homeModel = model;
+  });
   view._hydrateVisibleHomeTasks = vi.fn();
   await view.connectedCallback();
   // The In-progress / History lists load after the first paint; settle them
   // so tests see the complete worklist state.
   await view._remainingLoad;
+  await view._pendingGuidanceLoad;
   return view;
 }
 
@@ -529,7 +552,9 @@ describe("site location prompt", () => {
     expect(view._pendingLocationRender).toBe(true);
     expect(render).not.toHaveBeenCalled();
 
-    view._renderHome = vi.fn();
+    view._renderHome = vi.fn((model) => {
+      view._homeModel = model;
+    });
     view._onLocationDialogClosed({ changingSite: false });
     expect(view._locationPrompt).toBeNull();
     expect(view._renderHome).toHaveBeenCalledWith(model);
@@ -540,7 +565,9 @@ describe("site location prompt", () => {
     view._homeModel = { tasks: [] };
     view._locationPrompt = { flowType: "perimeter", launcher: null };
     view._pendingLocationRender = true;
-    view._renderHome = vi.fn();
+    view._renderHome = vi.fn((model) => {
+      view._homeModel = model;
+    });
     view._onLocationDialogClosed({ changingSite: true });
     expect(view._renderHome).not.toHaveBeenCalled();
     expect(view._pendingLocationRender).toBe(false);
@@ -651,7 +678,9 @@ describe("logout", () => {
   it("keeps the session active and shows a retryable error when cleanup fails", async () => {
     const view = new TodayView();
     view._homeModel = { tasks: [] };
-    view._renderHome = vi.fn();
+    view._renderHome = vi.fn((model) => {
+      view._homeModel = model;
+    });
     logout.clearSiteSession.mockRejectedValueOnce(
       new Error("IndexedDB failed"),
     );
@@ -763,7 +792,9 @@ describe("pre-data skeleton", () => {
       }),
     );
     const view = new TodayView();
-    view._renderHome = vi.fn();
+    view._renderHome = vi.fn((model) => {
+      view._homeModel = model;
+    });
     view._hydrateVisibleHomeTasks = vi.fn();
     const loading = view.connectedCallback();
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -792,7 +823,7 @@ describe("pre-data skeleton", () => {
     release();
     await loading;
     await view._remainingLoad;
-    expect(view._renderHome).toHaveBeenCalledOnce();
+    expect(view._renderHome.mock.calls[0][0].pendingGuidanceLoading).toBe(true);
   });
 
   it("does not repaint the skeleton on a refresh that already has a model", async () => {
@@ -1484,7 +1515,7 @@ describe("worklist refresh focus", () => {
     // from this screen follows an action and re-fetches every list.
     await view.connectedCallback();
     await view._remainingLoad;
-    expect(view._renderHome).toHaveBeenCalledTimes(4);
+    expect(view._renderHome.mock.calls.length).toBeGreaterThanOrEqual(4);
     expect(heading.focus).toHaveBeenCalledOnce();
     expect(scrollTop).toBe(850);
     view.disconnectedCallback();
@@ -1523,7 +1554,9 @@ describe("restored duplicate links", () => {
       view._hydrateVisibleHomeTasks = vi.fn();
       view._hydrate311CardStatuses = vi.fn();
       const pending = view.connectedCallback();
-      expect(view._renderHome).toHaveBeenCalledOnce();
+      expect(view._renderHome.mock.calls[0][0].pendingGuidanceLoading).toBe(
+        true,
+      );
       release({ siteId: "site-1" });
       await pending;
       view.disconnectedCallback();
@@ -1545,7 +1578,9 @@ describe("restored duplicate links", () => {
       stash();
       windowListeners.get(event)();
       const view = await mount("?filter=todo");
-      expect(view._renderHome).toHaveBeenCalledOnce();
+      expect(view._renderHome.mock.calls[0][0].pendingGuidanceLoading).toBe(
+        true,
+      );
       expect(view._duplicateLinks.size).toBe(0);
       view.disconnectedCallback();
     },
@@ -1958,7 +1993,7 @@ it.each([true, false])(
   },
 );
 
-it("keeps live tasks and cached questions when only guidance fails, without retiring local evidence", async () => {
+it("keeps live tasks and withholds unverified cached questions when guidance fails", async () => {
   const { saveHomeSnapshot } = await import("../db.js");
   const { clearSubmittedSession } = await import("../state/check-session.js");
   const view = await mount("?filter=todo");
@@ -1988,6 +2023,7 @@ it("keeps live tasks and cached questions when only guidance fails, without reti
   session.current = {
     id: "old-check",
     status: "capture-complete",
+    scorecardDone: true,
     items: [{ ...pending, id: "local" }],
   };
   catalog.listChecks.mockResolvedValue({
@@ -2000,11 +2036,15 @@ it("keeps live tasks and cached questions when only guidance fails, without reti
   vi.mocked(saveHomeSnapshot).mockClear();
   vi.mocked(clearSubmittedSession).mockClear();
   view._renderError = vi.fn();
+  catalog.getAssessmentGuidance.mockRejectedValueOnce(
+    new Error("guidance down"),
+  );
   await view.connectedCallback();
+  await view._pendingGuidanceLoad;
   const model = view._renderHome.mock.calls.at(-1)[0];
   expect(model).toMatchObject({
     tasks: [task],
-    pendingQuestions: [pending],
+    pendingQuestions: [],
     pendingGuidanceFailed: true,
   });
   expect(view._offline).toBeNull();
@@ -2019,6 +2059,7 @@ it("keeps live tasks and cached questions when only guidance fails, without reti
     nextToken: null,
   });
   await view.connectedCallback();
+  await view._pendingGuidanceLoad;
   expect(view._renderHome.mock.calls.at(-1)[0].pendingGuidanceFailed).toBe(
     false,
   );
@@ -2033,6 +2074,7 @@ it("does not leak cached questions across a site switch when guidance fails", as
   siteRead.mockResolvedValue({ siteId: "site-2" });
   catalog.listPendingGuidance.mockRejectedValueOnce(new Error("guidance down"));
   await view.connectedCallback();
+  await view._pendingGuidanceLoad;
   expect(view._renderHome.mock.calls.at(-1)[0].pendingQuestions).toEqual([]);
 });
 
@@ -2120,4 +2162,311 @@ it("keeps the resolution-proof History badge visible when guidance recovery fail
   )?.[1];
   expect(historyTab).toContain('class="home-tabs__count"');
   expect(historyTab).toMatch(/>1<\/span/);
+});
+
+describe("duplicate watch continuity", () => {
+  it("keeps unchanged watches and invalidates changed server tasks", async () => {
+    const { onDuplicateInvalidation } = await import(
+      "../services/duplicate-invalidation.js"
+    );
+    duplicates.watch.mockClear();
+    const changed = vi.fn();
+    const stop = onDuplicateInvalidation(changed);
+    const view = new TodayView();
+    view._siteId = "watch-continuity-site";
+    const tasks = [{ taskId: "one", status: "open", updatedAt: "v1" }];
+    try {
+      view._watchDuplicates(tasks);
+      view._watchDuplicates(tasks.map((task) => ({ ...task })));
+      expect(duplicates.watch).toHaveBeenCalledOnce();
+      expect(changed).not.toHaveBeenCalled();
+      view._watchDuplicates([
+        { ...tasks[0], status: "completed", updatedAt: "v2" },
+      ]);
+      expect(changed).toHaveBeenCalledExactlyOnceWith(view._siteId);
+      expect(duplicates.watch).toHaveBeenCalledOnce();
+      view._watchDuplicates([
+        { ...tasks[0], status: "completed", updatedAt: "v2" },
+        { taskId: "two" },
+      ]);
+      expect(duplicates.watch).toHaveBeenCalledTimes(2);
+      // A newly mounted view still observes the versions associated with the
+      // session cache, rather than treating the changed row as its first read.
+      view._stopDuplicates?.();
+      const remount = new TodayView();
+      remount._siteId = view._siteId;
+      remount._watchDuplicates([{ ...tasks[0], updatedAt: "v3" }]);
+      expect(changed).toHaveBeenCalledTimes(2);
+      remount._stopDuplicates?.();
+    } finally {
+      stop();
+      view._stopDuplicates?.();
+    }
+  });
+});
+
+it("renders live tasks before historical recovery finishes and publishes each recovered page", async () => {
+  const view = await mount("?filter=todo");
+  const task = { taskId: "live", status: "open", createdAt: NEWER_TODAY };
+  catalog.listTasks.mockImplementation(async ({ status }) => ({
+    tasks: status === "open" ? [task] : [],
+  }));
+  const condition = {
+    conditionId: "question",
+    status: "needs_answer",
+    needsAnswer: { key: "provider_generated", options: [] },
+  };
+  /** @type {(value: any) => void} */
+  let release = () => {};
+  catalog.listPendingGuidance
+    .mockResolvedValueOnce({
+      guidance: [
+        {
+          assessment: { assessmentId: "a", checkId: "check" },
+          conditions: [condition],
+        },
+      ],
+      nextToken: "older",
+    })
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+  await view.connectedCallback();
+  await vi.waitFor(() => expect(release).toBeDefined());
+  expect(view._homeModel.tasks).toEqual([task]);
+  expect(view._homeModel.pendingQuestions).toHaveLength(1);
+  expect(view._homeModel.pendingGuidanceLoading).toBe(true);
+  expect(view._render(view._homeModel)).toContain(t("common.loading"));
+  release({ guidance: [], nextToken: null });
+  await view._pendingGuidanceLoad;
+  expect(view._homeModel.pendingGuidanceLoading).toBe(false);
+  expect(view._homeModel.pendingQuestions).toHaveLength(1);
+});
+
+it.each(["completed", "superseded"])(
+  "never renders a retained %s task as actionable while History is delayed",
+  async (status) => {
+    const view = await mount("?filter=todo");
+    const task = {
+      taskId: "old-task",
+      conditionId: "old-condition",
+      assessmentId: "a",
+      status: "open",
+      createdAt: NEWER_TODAY,
+    };
+    session.current = {
+      id: "check",
+      status: "capture-complete",
+      scorecardDone: true,
+      items: [
+        {
+          id: "local",
+          analysis: {
+            status: "analyzed",
+            assessment: { assessmentId: "a" },
+            conditions: [],
+            tasks: [task],
+          },
+        },
+      ],
+    };
+    const releases = [];
+    catalog.listTasks.mockImplementation(async ({ status }) =>
+      status === "open"
+        ? { tasks: [] }
+        : new Promise((resolve) => {
+            releases.push(() => resolve({ tasks: [] }));
+          }),
+    );
+    catalog.getAssessmentGuidance.mockResolvedValueOnce({
+      assessment: { assessmentId: "a", checkId: "check" },
+      conditions: [],
+      tasks: [{ ...task, status }],
+    });
+    view._renderHome.mockClear();
+    await view.connectedCallback();
+    expect(view._renderHome.mock.calls[0][0].localGuidancePending).toBe(true);
+    await view._pendingGuidanceLoad;
+    expect(view._homeModel.tasks[0].status).toBe(status);
+    expect(view._render(view._homeModel)).not.toContain(
+      'data-task-id="old-task"',
+    );
+    releases.forEach((release) => release());
+    await view._remainingLoad;
+    view.disconnectedCallback();
+  },
+);
+
+it("ignores historical recovery from an earlier refresh on the same site", async () => {
+  const view = await mount("?filter=todo");
+  /** @type {(value: any) => void} */
+  let release = () => {};
+  catalog.listPendingGuidance.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  await view.connectedCallback();
+  const old = view._pendingGuidanceLoad;
+  await view.connectedCallback();
+  await view._pendingGuidanceLoad;
+  release({
+    guidance: [
+      {
+        assessment: { assessmentId: "old" },
+        conditions: [{ conditionId: "stale" }],
+      },
+    ],
+    nextToken: null,
+  });
+  await old;
+  expect(view._homeModel.pendingQuestions).toEqual([]);
+});
+
+it("preserves backend check headers in the offline snapshot after background recovery", async () => {
+  const { saveHomeSnapshot } = await import("../db.js");
+  const view = await mount("?filter=todo");
+  const checks = [
+    {
+      checkId: "check",
+      status: "completed",
+      startedAt: OLDER_TODAY,
+      completedAt: NEWER_TODAY,
+    },
+  ];
+  catalog.listChecks.mockResolvedValueOnce({ checks });
+  vi.mocked(saveHomeSnapshot).mockClear();
+  await view.connectedCallback();
+  await view._pendingGuidanceLoad;
+  expect(saveHomeSnapshot).toHaveBeenLastCalledWith(
+    "site-1",
+    expect.objectContaining({ checks }),
+  );
+});
+
+it("retires an optimistic open task after another device dismisses it", async () => {
+  const view = await mount("?filter=todo");
+  const task = {
+    taskId: "confirmed",
+    assessmentId: "a",
+    status: "open",
+    updatedAt: OLDER_TODAY,
+  };
+  view._confirmedTasks = new Map([[task.taskId, task]]);
+  catalog.getAssessmentGuidance.mockResolvedValueOnce({
+    assessment: { assessmentId: "a" },
+    conditions: [],
+    tasks: [{ ...task, status: "superseded", updatedAt: NEWER_TODAY }],
+  });
+  await view.connectedCallback();
+  expect(view._reconcileConfirmedTasks([], false, false)).toEqual([]);
+  await view._pendingGuidanceLoad;
+  expect(view._confirmedTasks.has(task.taskId)).toBe(false);
+  expect(view._homeTasks(view._homeModel.tasks)).toEqual([]);
+});
+
+it("updates a no-task answer locally before refreshing the worklist", async () => {
+  const analysis = await import("../services/photo-analysis.js");
+  const answered = {
+    conditionId: "question",
+    status: "completed",
+    needsAnswer: null,
+  };
+  const save = vi.spyOn(analysis, "answerAnalysisQuestion").mockResolvedValue({
+    assessmentItem: { assessmentId: "a", assessmentRevision: 2 },
+    conditionItem: answered,
+    taskItem: null,
+  });
+  try {
+    const view = await mount("?filter=todo");
+    const item = {
+      id: "local",
+      analysis: {
+        status: "analyzed",
+        assessment: { assessmentId: "a", assessmentRevision: 1 },
+        conditions: [
+          {
+            conditionId: "question",
+            status: "needs_answer",
+            needsAnswer: { key: "provider_generated", options: [] },
+          },
+        ],
+        tasks: [],
+      },
+    };
+    view._homeModel = {
+      tasks: [],
+      pendingSession: { id: "check", items: [item] },
+      pendingQuestions: [],
+      localGuidancePending: false,
+    };
+    view.querySelectorAll = () => [];
+    view._setInlineProblemError = vi.fn();
+    view._refreshAfterAction = vi.fn(async () => {});
+    const button = new HTMLButtonElement();
+    button.getAttribute = (name) =>
+      name === "data-answer-key" ? "provider_generated" : "true";
+    await view._answerAnalysisQuestion(
+      { itemId: "local", conditionId: "question" },
+      button,
+    );
+    expect(save).toHaveBeenCalledWith(
+      "local",
+      "question",
+      "provider_generated",
+      true,
+      item.analysis,
+    );
+    expect(view._homeModel.pendingSession.items[0].analysis.conditions).toEqual(
+      [answered],
+    );
+  } finally {
+    save.mockRestore();
+  }
+});
+
+it("does not apply a delayed question answer to a different site", async () => {
+  const view = await mount("?filter=todo");
+  view._homeModel = {
+    tasks: [],
+    pendingQuestions: [
+      { id: "recovered", analysis: { assessment: { assessmentId: "a" } } },
+    ],
+  };
+  view._localQuestionItemId = vi.fn(async () => null);
+  view.querySelectorAll = () => [];
+  view._setInlineProblemError = vi.fn();
+  view._refreshAfterAction = vi.fn(async () => {});
+  const button = new HTMLButtonElement();
+  button.getAttribute = (name) =>
+    name === "data-answer-key" ? "provider_generated" : "true";
+  /** @type {(value:any)=>void} */ let release = () => {};
+  catalog.submitConditionAnswers.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  const pending = view._answerAnalysisQuestion(
+    { itemId: "recovered", conditionId: "question" },
+    button,
+  );
+  await vi.waitFor(() =>
+    expect(catalog.submitConditionAnswers).toHaveBeenCalled(),
+  );
+  view._siteId = "site-2";
+  view._homeModel = { tasks: [], pendingQuestions: [] };
+  release({
+    assessmentItem: { assessmentId: "a" },
+    conditionItem: { conditionId: "question", status: "completed" },
+    taskItem: { taskId: "site-1-task", status: "open" },
+  });
+  await pending;
+  expect(view._homeModel.tasks).toEqual([]);
+  expect(view._refreshAfterAction).not.toHaveBeenCalled();
+  expect(answerUpdated).not.toHaveBeenCalled();
 });

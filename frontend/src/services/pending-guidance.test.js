@@ -1,9 +1,15 @@
 import { beforeEach, expect, it, vi } from "vitest";
 const list = vi.hoisted(() => vi.fn());
-vi.mock("./api.js", () => ({ listPendingGuidance: list }));
-const { loadPendingQuestionItems, mergePendingQuestionItems } = await import(
-  "./pending-guidance.js"
-);
+const read = vi.hoisted(() => vi.fn());
+vi.mock("./api.js", () => ({
+  listPendingGuidance: list,
+  getAssessmentGuidance: read,
+}));
+const {
+  loadPendingQuestionItems,
+  mergePendingQuestionItems,
+  reconcileLocalGuidance,
+} = await import("./pending-guidance.js");
 const { sessionProblemItemHasBackendCards, isStalePendingSession } =
   await import("../domain/home-tasks.js");
 const condition = {
@@ -20,7 +26,10 @@ const group = {
   assessment: { assessmentId: "assessment", checkId: "old-check" },
   conditions: [condition],
 };
-beforeEach(() => list.mockReset());
+beforeEach(() => {
+  list.mockReset();
+  read.mockReset();
+});
 it("recovers questions from older reports across empty pages without local state", async () => {
   list
     .mockResolvedValueOnce({ guidance: [], nextToken: "next" })
@@ -154,4 +163,110 @@ it("drops terminal local conditions without dropping unanswered siblings or loca
       [],
     ),
   ).toEqual([]);
+});
+
+it("publishes recovered pages before historical pagination finishes", async () => {
+  /** @type {(value: any) => void} */
+  let release = () => {};
+  list
+    .mockResolvedValueOnce({ guidance: [group], nextToken: "older" })
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+  const onPage = vi.fn();
+  const loading = loadPendingQuestionItems(onPage);
+  await vi.waitFor(() => expect(onPage).toHaveBeenCalledOnce());
+  expect(onPage.mock.calls[0][0][0].analysis.conditions).toEqual([condition]);
+  release({ guidance: [], nextToken: null });
+  expect(await loading).toHaveLength(1);
+});
+it.each(["rejected", "completed"])(
+  "replaces retained local questions with authoritative %s state",
+  async (status) => {
+    read.mockResolvedValueOnce({
+      ...group,
+      conditions: [{ ...condition, status, needsAnswer: null }],
+      tasks: [],
+    });
+    const items = await reconcileLocalGuidance([
+      { id: "local", analysis: { status: "analyzed", ...group, tasks: [] } },
+    ]);
+    expect(mergePendingQuestionItems(items, [], [])).toEqual([]);
+  },
+);
+it("adopts task completion or supersession from another device", async () => {
+  const task = {
+    taskId: "task",
+    conditionId: "bulky",
+    assessmentId: "assessment",
+    status: "open",
+  };
+  read.mockResolvedValueOnce({
+    ...group,
+    conditions: [],
+    tasks: [{ ...task, status: "superseded" }],
+  });
+  const items = await reconcileLocalGuidance([
+    { id: "local", analysis: { status: "analyzed", ...group, tasks: [task] } },
+  ]);
+  expect(items[0].analysis.tasks[0].status).toBe("superseded");
+  expect(mergePendingQuestionItems(items, [], items[0].analysis.tasks)).toEqual(
+    [],
+  );
+});
+it("does not silently reuse local questions when validation fails", async () => {
+  read.mockRejectedValueOnce(new Error("unavailable"));
+  await expect(reconcileLocalGuidance([{ analysis: group }])).rejects.toThrow(
+    "unavailable",
+  );
+});
+
+it.each([false, true])(
+  "does not overwrite a local assessment advanced during validation (new identity: %s)",
+  async (changedId) => {
+    const item = {
+      id: "local",
+      analysis: {
+        status: "analyzed",
+        assessment: { assessmentId: "a", assessmentRevision: 1 },
+        conditions: [condition],
+        tasks: [],
+      },
+    };
+    /** @type {(value:any)=>void} */ let release = () => {};
+    read.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const loading = reconcileLocalGuidance([item]);
+    item.analysis.assessment = {
+      assessmentId: changedId ? "successor" : "a",
+      assessmentRevision: 2,
+    };
+    release({
+      assessment: { assessmentId: "a", assessmentRevision: 1 },
+      conditions: [],
+      tasks: [],
+    });
+    const result = await loading;
+    expect(result).toEqual([item]);
+    expect(result[0].analysis.assessment.assessmentRevision).toBe(2);
+  },
+);
+
+it("stops historical pagination after its refresh becomes obsolete", async () => {
+  let active = true;
+  list.mockResolvedValueOnce({ guidance: [], nextToken: "more" });
+  await loadPendingQuestionItems(
+    () => {
+      active = false;
+    },
+    () => active,
+  );
+  expect(list).toHaveBeenCalledOnce();
 });

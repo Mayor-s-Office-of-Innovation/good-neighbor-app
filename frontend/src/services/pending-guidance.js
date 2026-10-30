@@ -1,12 +1,20 @@
-import { listPendingGuidance } from "./api.js";
+import { listPendingGuidance, getAssessmentGuidance } from "./api.js";
 
-/** Read every bounded page, including empty filtered pages. */
-export async function loadPendingQuestionItems() {
+/** Read every bounded page, including empty filtered pages.
+ * @param {(items: any[]) => void} [onPage]
+ * @param {() => boolean} [shouldContinue]
+ */
+export async function loadPendingQuestionItems(
+  onPage,
+  shouldContinue = () => true,
+) {
   const items = new Map();
   const seen = new Set();
   let nextToken = null;
   do {
+    if (!shouldContinue()) break;
     const page = await listPendingGuidance(nextToken);
+    if (!shouldContinue()) break;
     for (const { assessment, conditions } of page.guidance || []) {
       for (const condition of conditions || []) {
         const id = `pending:${assessment.assessmentId}:${condition.conditionId}`;
@@ -26,6 +34,7 @@ export async function loadPendingQuestionItems() {
         });
       }
     }
+    onPage?.([...items.values()]);
     nextToken = page.nextToken || null;
     if (nextToken && seen.has(nextToken))
       throw new Error("Repeated guidance cursor");
@@ -77,4 +86,57 @@ export function mergePendingQuestionItems(localItems, pendingItems, tasks) {
     ];
   });
   return [...merged, ...pendingItems];
+}
+
+/** Revalidate server-backed local evidence without waiting for historical pagination.
+ * Four concurrent reads bound load even for a retained check with many artifacts.
+ * Failed reads propagate: the caller keeps unverified cards non-actionable.
+ * @param {any[]} items
+ * @param {() => boolean} [shouldContinue]
+ */
+export async function reconcileLocalGuidance(
+  items,
+  shouldContinue = () => true,
+) {
+  const originals = items.map((item) => ({
+    item,
+    assessmentId: item.analysis?.assessment?.assessmentId,
+    revision: item.analysis?.assessment?.assessmentRevision || 0,
+  }));
+  const ids = [
+    ...new Set(
+      originals.map(({ assessmentId }) => assessmentId).filter(Boolean),
+    ),
+  ];
+  const guidance = new Map();
+  for (let start = 0; start < ids.length; start += 4) {
+    if (!shouldContinue()) return [];
+    await Promise.all(
+      ids.slice(start, start + 4).map(async (id) => {
+        try {
+          guidance.set(id, await getAssessmentGuidance(id));
+        } catch (error) {
+          if (error?.status !== 404) throw error;
+          guidance.set(id, null);
+        }
+      }),
+    );
+  }
+  return originals.flatMap(({ item, assessmentId: id, revision }) => {
+    if (!id) return [item];
+    // An answer or edit can advance the held item during the read. Never
+    // mistake that new identity for a missing assessment or roll it back.
+    const held = item.analysis?.assessment;
+    if (held?.assessmentId !== id || (held?.assessmentRevision || 0) > revision)
+      return [item];
+    const current = guidance.get(id);
+    if (
+      current?.assessment?.assessmentId === id &&
+      (current.assessment.assessmentRevision || 0) <
+        (held?.assessmentRevision || 0)
+    )
+      return [item];
+    if (!current?.assessment) return [];
+    return [{ ...item, analysis: { ...item.analysis, ...current } }];
+  });
 }

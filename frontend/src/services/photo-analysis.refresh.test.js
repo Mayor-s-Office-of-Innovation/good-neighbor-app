@@ -395,3 +395,48 @@ it("bounds recovered-edit conflict retries", async () => {
   );
   expect(evaluateAssessment).toHaveBeenCalledTimes(3);
 });
+
+it("persists a no-task answer against validated successor guidance without losing sibling conditions", async () => {
+  const check = {
+    id: "check",
+    items: [
+      {
+        id: "item",
+        analysis: {
+          assessment: { assessmentId: "old", assessmentRevision: 9 },
+          conditions: [{ conditionId: "outdated" }],
+          tasks: [],
+        },
+      },
+    ],
+  };
+  vi.mocked(getCurrentCheck).mockReturnValue(/** @type {any} */ (check));
+  const sibling = { conditionId: "sibling", status: "needs_answer" };
+  const answered = {
+    conditionId: "question",
+    status: "completed",
+    needsAnswer: null,
+  };
+  vi.mocked(submitConditionAnswers).mockResolvedValue({
+    assessmentItem: { assessmentId: "current", assessmentRevision: 2 },
+    conditionItem: answered,
+    taskItem: null,
+    evaluation: null,
+  });
+  await answerAnalysisQuestion("item", "question", "provider_generated", true, {
+    assessment: { assessmentId: "current", assessmentRevision: 1 },
+    conditions: [{ conditionId: "question", status: "needs_answer" }, sibling],
+    tasks: [],
+  });
+  expect(submitConditionAnswers).toHaveBeenCalledWith("current", "question", {
+    answers: { provider_generated: true },
+  });
+  expect(updateItemAnalysis).toHaveBeenCalledWith(
+    "item",
+    expect.objectContaining({
+      assessment: { assessmentId: "current", assessmentRevision: 2 },
+      conditions: [answered, sibling],
+      tasks: [],
+    }),
+  );
+});
