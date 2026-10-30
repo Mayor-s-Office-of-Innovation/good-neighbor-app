@@ -490,3 +490,9 @@
     margin-top: -1.25rem;
   }
 }
+
+/* Retained timeline content follows the retry control after a page error.
+   Only a header at the top of the sheet may overlap its padding. */
+[data-retry-timeline] + .task-update__header:has(> h2) {
+  margin-top: 0;
+}

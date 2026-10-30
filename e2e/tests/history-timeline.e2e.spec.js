@@ -115,41 +115,46 @@ test("History timeline errors offer a working retry on the same card", async ({
   await expect(dialog).toContainText("Recovered timeline activity");
 });
 
-test("retrying an older History page retains earlier pages", async ({
-  page,
-}) => {
-  let fail = true;
-  await page.route("**/v1/tasks/history-timeline/updates*", (route) => {
-    const token = new URL(route.request().url()).searchParams.get("nextToken");
-    if (token === "page3" && fail)
-      return route.fulfill({ status: 503, json: { error: "offline" } });
-    const index = token === "page3" ? 3 : token === "page2" ? 2 : 1;
-    return route.fulfill({
-      json: {
-        task,
-        updates: [
-          {
-            updateId: `event-${index}`,
-            type: "note",
-            occurredAt: task.completedAt,
-            text: `Activity page ${index}`,
-          },
-        ],
-        nextToken: index < 3 ? `page${index + 1}` : null,
-      },
+for (const width of [390, 1280]) {
+  test(`retrying an older History page retains earlier pages at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    let fail = true;
+    await page.route("**/v1/tasks/history-timeline/updates*", (route) => {
+      const token = new URL(route.request().url()).searchParams.get(
+        "nextToken",
+      );
+      if (token === "page3" && fail)
+        return route.fulfill({ status: 503, json: { error: "offline" } });
+      const index = token === "page3" ? 3 : token === "page2" ? 2 : 1;
+      return route.fulfill({
+        json: {
+          task,
+          updates: [
+            {
+              updateId: `event-${index}`,
+              type: "note",
+              occurredAt: task.completedAt,
+              text: `Activity page ${index}`,
+            },
+          ],
+          nextToken: index < 3 ? `page${index + 1}` : null,
+        },
+      });
     });
+    await history(page);
+    const dialog = page.locator("dialog.task-update[open]");
+    await dialog.locator("[data-load-older]").click();
+    await expect(dialog).toContainText("Activity page 2");
+    await dialog.locator("[data-load-older]").click();
+    await expect(dialog.locator("[data-retry-timeline]")).toBeVisible();
+    fail = false;
+    await dialog.locator("[data-retry-timeline]").click();
+    for (const index of [1, 2, 3])
+      await expect(dialog).toContainText(`Activity page ${index}`);
   });
-  await history(page);
-  const dialog = page.locator("dialog.task-update[open]");
-  await dialog.locator("[data-load-older]").click();
-  await expect(dialog).toContainText("Activity page 2");
-  await dialog.locator("[data-load-older]").click();
-  await expect(dialog.locator("[data-retry-timeline]")).toBeVisible();
-  fail = false;
-  await dialog.locator("[data-retry-timeline]").click();
-  for (const index of [1, 2, 3])
-    await expect(dialog).toContainText(`Activity page ${index}`);
-});
+}
 
 test("City enrichment preserves focus on a later photo", async ({ page }) => {
   let release = () => {};

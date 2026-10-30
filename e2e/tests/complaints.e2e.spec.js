@@ -39,11 +39,7 @@ test.describe("public complaints", () => {
         return box && { width: box.width, height: box.height };
       })
       .toEqual({ width: 54, height: 54 });
-    expect(
-      await trigger.evaluate(
-        (element) => window.getComputedStyle(element).borderRadius,
-      ),
-    ).toBe("50%");
+    await expect(trigger).toHaveCSS("border-radius", "50%");
 
     await trigger.click();
     await expect(trigger).toHaveAttribute("aria-expanded", "true");
