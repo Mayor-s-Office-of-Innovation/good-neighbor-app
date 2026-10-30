@@ -519,7 +519,8 @@ describe("shared probe ordering", () => {
     const mod = await load();
     const dispatchEvent = vi.fn();
     vi.stubGlobal("window", { dispatchEvent });
-    let finish = (body = "") => {};
+    /** @type {(body: string) => void} */
+    let finish = () => {};
     const body = new Promise((resolve) => {
       finish = resolve;
     });
