@@ -1,3 +1,4 @@
+import { hasSubmitted311Ticket } from "./task-actions.js";
 import { duplicateUiEnabled } from "../services/feature-flags.js";
 /** @typedef {Record<string, any>} Issue */
 /** Derive presentation from the original's current action state; never discard evidence.
@@ -15,11 +16,31 @@ export function projectDuplicateTasks(tasks, links, now = Date.now()) {
   const all = new Map(tasks.map((t) => [t.taskId, t]));
   const sourceIds = new Set(tasks.map((task) => task.taskId));
   for (const [sourceId, link] of links)
-    if (sourceIds.has(sourceId) && link.state === "matched" && link.original)
-      all.set(link.original.taskId, {
-        ...all.get(link.original.taskId),
-        ...link.original,
-      });
+    if (sourceIds.has(sourceId) && link.state === "matched" && link.original) {
+      const current = all.get(link.original.taskId);
+      // A cached link must not undo a newer filing/worklist response.
+      const latest =
+        current?.updatedAt &&
+        (!link.original.updatedAt ||
+          current.updatedAt > link.original.updatedAt)
+          ? current
+          : link.original;
+      const merged = { ...current, ...link.original, ...latest };
+      if (current?.updatedAt === link.original.updatedAt) {
+        // Background integration writes do not advance the task timestamp.
+        // Keep the newest integration snapshot, including its summary status.
+        const currentResults = current?.appActionResults || [];
+        const linkedResults = link.original.appActionResults || [];
+        const integration =
+          integrationTime(currentResults) > integrationTime(linkedResults) ||
+          (currentResults.length > 0 && linkedResults.length === 0)
+            ? current
+            : link.original;
+        merged.appActionResults = integration.appActionResults || [];
+        merged.appActionStatus = integration.appActionStatus;
+      }
+      all.set(link.original.taskId, merged);
+    }
   const sightings = new Map();
   for (const [sourceId, link] of links) {
     if (
@@ -50,6 +71,13 @@ export function projectDuplicateTasks(tasks, links, now = Date.now()) {
       original.inProgressAt || original.completedAt || original.updatedAt || "",
     );
     const reportedAt = Date.parse(link.generatedAt || task.createdAt || "");
+    // A filed group has one actionable original, even when a related
+    // observation arrived after the filing started.
+    if (
+      hasSubmitted311Ticket(original) &&
+      original.inProgressActionKind === "311_filed"
+    )
+      return [];
     const compact =
       acted &&
       task.status === "open" &&
@@ -89,4 +117,15 @@ export function projectDuplicateTasks(tasks, links, now = Date.now()) {
 export function duplicateCounts(tasks) {
   const duplicate = tasks.filter((t) => t.duplicate).length;
   return { newCount: tasks.length - duplicate, duplicateCount: duplicate };
+}
+
+/** @param {Array<{recordedAt?: string}>} results */
+function integrationTime(results) {
+  return results.reduce(
+    (latest, result) =>
+      result.recordedAt && result.recordedAt > latest
+        ? result.recordedAt
+        : latest,
+    "",
+  );
 }

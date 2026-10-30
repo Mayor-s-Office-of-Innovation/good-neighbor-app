@@ -74,7 +74,7 @@ variable "bedrock_model_id" {
 
 variable "enable_duplicate_detection" {
   type        = bool
-  default     = false
+  default     = true
   description = "Enable the isolated shadow matcher after the comparison endpoint and secret are provisioned."
 }
 

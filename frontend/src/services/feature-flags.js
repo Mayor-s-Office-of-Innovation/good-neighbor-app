@@ -4,7 +4,8 @@ let enabled = false;
 const listeners = new Set();
 /** @param {{featureFlags?:{duplicateDetection?:boolean}}|null|undefined} site */
 export function setDuplicateUiSite(site) {
-  const next = site?.featureFlags?.duplicateDetection === true;
+  const next =
+    Boolean(site) && site?.featureFlags?.duplicateDetection !== false;
   if (next === enabled) return;
   enabled = next;
   for (const listener of listeners) listener();

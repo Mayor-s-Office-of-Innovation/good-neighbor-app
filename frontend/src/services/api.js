@@ -523,7 +523,12 @@ async function requestOnce(
         path,
       ))
   )
-    invalidateDuplicateIssues(requestSiteId);
+    invalidateDuplicateIssues(
+      requestSiteId,
+      /^\/v1\/tasks\/[^/]+\/complete$/.test(path) && parsed?.task
+        ? [parsed.task]
+        : undefined,
+    );
   return parsed;
 }
 
