@@ -20,17 +20,22 @@ import {
 
 import { analysisScanner } from "./capture-analysis.templates.js";
 
+/** Shared close control for both capture routes. @param {string} label */
+export const captureClose = (label) =>
+  html`<div class="check-timeline__topbar">
+    <button
+      class="btn-circle-close check-timeline__close"
+      id="cancel"
+      type="button"
+      aria-label="${escapeAttr(label)}"
+    >
+      <span class="check-timeline__close-icon" aria-hidden="true"></span>
+    </button>
+  </div>`;
+
 export const shell = () => html`
   <div class="flow view-check check check-timeline check-roll">
-    <div class="check-timeline__topbar">
-      <span aria-hidden="true"></span>
-      <button class="check-timeline__close" id="cancel" type="button">
-        <span class="check-timeline__close-icon" aria-hidden="true"></span>
-        <span class="visually-hidden"
-          >${escapeHtml(t("check.close.aria"))}</span
-        >
-      </button>
-    </div>
+    ${captureClose(t("check.close.aria"))}
 
     <h1
       class="check-timeline__title"
@@ -201,7 +206,7 @@ export function footer({
         : problemSummaryLabel(problems);
   return html`
     <button
-      class="check-timeline__done"
+      class="check-timeline__done btn-ink"
       id="${escapeAttr(doneId)}"
       type="button"
       ${complete ? "" : "disabled"}

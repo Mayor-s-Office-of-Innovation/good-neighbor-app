@@ -49,28 +49,36 @@ test.describe("today view", () => {
     });
   }
 
-  test("centers the site selector in the view", async ({ page }) => {
-    await bindSite(page);
+  for (const width of [390, 1280]) {
+    test(`keeps the site selector beside Settings at ${width}px`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 891 });
+      await bindSite(page);
 
-    const lead = page.locator(".home-lead");
-    const selector = lead.locator("site-switcher");
-    await expect(selector).toBeVisible();
+      const header = page.locator(".home-top-actions");
+      const selector = header.locator("site-switcher");
+      await expect(selector).toBeVisible();
+      await expect(header.locator("#home-settings")).toBeVisible();
 
-    await expect
-      .poll(() =>
-        selector.evaluate((selector) => {
-          const element = selector.closest(".home-lead");
-          if (!element) return Infinity;
-          const leadBox = element.getBoundingClientRect();
-          const selectorBox = selector.getBoundingClientRect();
-          return Math.abs(
-            leadBox.left +
-              leadBox.width / 2 -
-              selectorBox.left -
-              selectorBox.width / 2,
-          );
-        }),
-      )
-      .toBeLessThan(1);
-  });
+      await expect
+        .poll(() =>
+          selector.evaluate((selector) => {
+            const settings =
+              selector.parentElement?.querySelector("#home-settings");
+            if (!settings) return Infinity;
+            const settingsBox = settings.getBoundingClientRect();
+            const selectorBox = selector.getBoundingClientRect();
+            if (selectorBox.right > settingsBox.left) return Infinity;
+            return Math.abs(
+              settingsBox.top +
+                settingsBox.height / 2 -
+                selectorBox.top -
+                selectorBox.height / 2,
+            );
+          }),
+        )
+        .toBeLessThan(1);
+    });
+  }
 });

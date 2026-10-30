@@ -28,7 +28,7 @@
 }
 
 .complaints .topbar__back wa-icon,
-.complaint-compose__close wa-icon {
+.complaint-compose__back wa-icon {
   font-size: 1.25rem;
 }
 
@@ -107,10 +107,10 @@
   scroll-padding-block: 6rem;
 }
 
-.complaint-compose__close {
+.complaint-compose__back {
   appearance: none;
   display: grid;
-  align-self: flex-end;
+  align-self: flex-start;
   width: 44px;
   height: 44px;
   min-width: 44px;
@@ -126,7 +126,7 @@
   cursor: pointer;
 }
 
-.complaint-compose__close:focus-visible,
+.complaint-compose__back:focus-visible,
 .complaint-upload-button:focus-within,
 .complaint-describe-link:focus-visible {
   outline: 2px solid var(--brand-blue);

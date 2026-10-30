@@ -10,12 +10,7 @@ import { artifactPhoto } from "./artifact-photo.templates.js";
 import { t } from "../i18n/i18n.js";
 import { formatMonthDay, formatTime } from "../i18n/dates.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
-import {
-  attributionDialog,
-  languageDialog,
-  logoutDialog,
-  settingsMenu,
-} from "./today-view.templates.js";
+
 import { taskAnalysisCard } from "./analysis-results.templates.js";
 import {
   issueTrend,
@@ -63,62 +58,37 @@ export const TYPE_ROWS = 5;
  *   heading: string,
  *   body: string,
  *   tab: string,
- *   settingsMenuOpen?: boolean,
- *   logoutError?: string,
- *   logoutPending?: boolean,
- *   logoutUnsent?: { checks?: number, careLogs?: number },
  * }} vm
  *   `body` is already-rendered markup for the active tab.
  */
-export function reportsShell({
-  heading,
-  body,
-  tab,
-  settingsMenuOpen = false,
-  logoutError = "",
-  logoutPending = false,
-  logoutUnsent = {},
-}) {
-  return html`
-    <div class="home reports">
-      <section class="home-region home-region--header">
-        <div class="home-top-actions reports__top">
-          <a
-            class="reports-back"
-            id="reports-home"
-            href="/today"
-            aria-label="${escapeAttr(t("reports.backHome"))}"
-          >
-            <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
-          </a>
-          ${settingsMenu({ open: settingsMenuOpen, adminAccess: true })}
-          <feedback-dialog
-            class="feedback-dialog"
-            hide-trigger
-          ></feedback-dialog>
-        </div>
-        <div class="screen screen--today-hero reports__head">
-          <site-switcher></site-switcher>
-          <h1 class="reports__title" tabindex="-1" data-screen-focus>
-            ${escapeHtml(heading)}
-          </h1>
-          ${reportTabs({ activeId: tab })}
-        </div>
-      </section>
-      <section
-        class="home-region home-region--results reports__body"
-        aria-live="polite"
-      >
-        ${body}
-      </section>
-      ${attributionDialog()} ${languageDialog()}
-      ${logoutDialog({
-        error: logoutError,
-        pending: logoutPending,
-        unsent: logoutUnsent,
-      })}
-    </div>
-  `;
+export function reportsShell({ heading, body, tab }) {
+  return html` <div class="home reports">
+    <section class="home-region home-region--header">
+      <div class="home-top-actions reports__top">
+        <button
+          class="btn-circle-close"
+          id="reports-home"
+          type="button"
+          aria-label="${escapeAttr(t("common.close"))}"
+        >
+          <wa-icon name="xmark" aria-hidden="true"></wa-icon>
+        </button>
+      </div>
+      <div class="screen screen--today-hero reports__head">
+        <site-switcher></site-switcher>
+        <h1 class="reports__title" tabindex="-1" data-screen-focus>
+          ${escapeHtml(heading)}
+        </h1>
+        ${reportTabs({ activeId: tab })}
+      </div>
+    </section>
+    <section
+      class="home-region home-region--results reports__body"
+      aria-live="polite"
+    >
+      ${body}
+    </section>
+  </div>`;
 }
 
 /**
