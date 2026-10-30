@@ -1753,6 +1753,56 @@ describe("attention badges and newer submissions", () => {
     ).toBe(2);
   });
 
+  it("keeps a new clear result visible alongside older recovered questions", async () => {
+    freezeClock();
+    const view = await mount("?filter=todo");
+    const markup = view._render({
+      checks: [],
+      tasks: [],
+      pendingSession: {
+        id: "new-clear",
+        status: "capture-complete",
+        startedAt: NEWER_TODAY,
+        items: [
+          {
+            id: "clear-photo",
+            analysis: { status: "analyzed", conditions: [], tasks: [] },
+          },
+        ],
+      },
+      pendingQuestions: [
+        {
+          id: "old-question",
+          checkId: "old-check",
+          analysis: {
+            status: "analyzed",
+            checkId: "old-check",
+            artifactId: "old-artifact",
+            assessment: {
+              assessmentId: "old-assessment",
+              checkId: "old-check",
+            },
+            tasks: [],
+            conditions: [
+              {
+                conditionId: "old-condition",
+                status: "needs_answer",
+                user_friendly_label: "Older unanswered issue",
+                needsAnswer: {
+                  key: "on_site",
+                  prompt: "Is this on site property?",
+                  options: [],
+                },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    expect(markup).toContain(t("card.clear.title"));
+    expect(markup).toContain('data-condition-id="old-condition"');
+  });
+
   it("removes the old notice while a newer local submission is analyzing", async () => {
     freezeClock();
     const view = await mount("?filter=todo");

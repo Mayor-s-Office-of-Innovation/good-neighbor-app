@@ -1234,6 +1234,14 @@ class TodayView extends HTMLElement {
     const focusedActionId = previousActionMenu?.contains(document.activeElement)
       ? document.activeElement?.id
       : null;
+    // Preserve a keyboard user's phone action across background card hydration.
+    const focused = document.activeElement;
+    const phoneCard = focused?.closest?.(".analysis-card[data-task-id]");
+    const phoneNumber = focused?.getAttribute("data-phone-number");
+    const phoneFocus =
+      phoneCard && this.contains(phoneCard) && phoneNumber
+        ? `.analysis-card[data-task-id="${CSS.escape(phoneCard.getAttribute("data-task-id") || "")}"] button[data-phone-number="${CSS.escape(phoneNumber)}"]`
+        : "";
     this._homeMarkup = markup;
     this.innerHTML = markup;
     this._tabRefreshStatus?.();
@@ -1537,6 +1545,11 @@ class TodayView extends HTMLElement {
       setQuestionAnswerBusy(this, conditionId, true);
     }
 
+    if (phoneFocus) {
+      const replacement = this.querySelector(phoneFocus);
+      if (replacement instanceof HTMLElement)
+        replacement.focus({ preventScroll: true });
+    }
     this._restoreFocusAfterRender();
     const requestedIssue = new URLSearchParams(window.location.search).get(
       "issue",

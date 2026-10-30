@@ -124,7 +124,10 @@ export function newResultsTray(page) {
  */
 export async function dismissAllNewResults(page) {
   const tray = newResultsTray(page);
-  const cards = tray.locator(".analysis-card");
+  // Clear/empty placeholders are cards too, but cannot be dismissed.
+  const cards = tray.locator(
+    '.analysis-card:has([data-analysis-action="delete"])',
+  );
   await expect(cards.first()).toBeVisible({ timeout: 30_000 });
 
   /** Count the tray twice, 400ms apart; settle when the count stops changing. */
@@ -143,23 +146,21 @@ export async function dismissAllNewResults(page) {
     const count = await settledCount();
     if (count === 0) break;
     seen = Math.max(seen, count);
-    const selector = await cards
-      .filter({ has: page.locator('[data-analysis-action="delete"]') })
-      .first()
-      .evaluate((el) =>
-        ["data-check-id", "data-artifact-id", "data-condition-id"]
-          .map((attribute) => {
-            const value = el.getAttribute(attribute);
-            if (!value) throw new Error(`Card is missing ${attribute}`);
-            return `[${attribute}="${window.CSS.escape(value)}"]`;
-          })
-          .join(""),
-      );
+    const selector = await cards.first().evaluate((el) =>
+      ["data-check-id", "data-artifact-id", "data-condition-id", "data-task-id"]
+        .map((attribute) => {
+          const value = el.getAttribute(attribute);
+          if (value === null) throw new Error(`Card is missing ${attribute}`);
+          return `[${attribute}="${window.CSS.escape(value)}"]`;
+        })
+        .join(""),
+    );
     // Hydration can reorder cards after the identity read. Resolve this identity
     // again for the click instead of clicking whichever card is now first.
+    // Include the task id: one condition can produce several task cards.
     const selected = tray.locator(`.analysis-card${selector}`);
     // The local and backend card can overlap during hydration. Delete one
-    // representation of this condition, then require all of them to disappear.
+    // representation of this card, then require all of them to disappear.
     await selected.first().locator('[data-analysis-action="delete"]').click();
     await page.locator("#analysis-delete-confirm").click();
     // Card counts can rise while other results load; only this card must leave.
