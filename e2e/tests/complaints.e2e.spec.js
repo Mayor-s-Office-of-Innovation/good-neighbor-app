@@ -33,15 +33,12 @@ test.describe("public complaints", () => {
     await expect(trigger).toHaveAttribute("aria-expanded", "false");
     await expect(menu).toBeHidden();
 
-    const triggerBox = await trigger.boundingBox();
-    expect(triggerBox).not.toBeNull();
-    expect(triggerBox?.width).toBe(54);
-    expect(triggerBox?.height).toBe(54);
-    expect(
-      await trigger.evaluate(
-        (element) => window.getComputedStyle(element).borderRadius,
-      ),
-    ).toBe("50%");
+    // Background home refreshes can replace nodes between visibility and layout
+    // reads. Retry measurements against the current DOM without relaxing size.
+    await expect
+      .poll(() => trigger.boundingBox())
+      .toMatchObject({ width: 54, height: 54 });
+    await expect(trigger).toHaveCSS("border-radius", "50%");
 
     await trigger.click();
     await expect(trigger).toHaveAttribute("aria-expanded", "true");
@@ -62,16 +59,14 @@ test.describe("public complaints", () => {
       [complaintAction, complaintIcon],
       [issueAction, issueIcon],
     ]) {
-      const buttonBox = await button.boundingBox();
-      const iconBox = await icon.boundingBox();
-      expect(buttonBox).not.toBeNull();
-      expect(iconBox).not.toBeNull();
-      expect((iconBox?.x ?? 0) - (buttonBox?.x ?? 0)).toBeLessThan(20);
-      expect(
-        await button.evaluate(
-          (element) => window.getComputedStyle(element).justifyContent,
-        ),
-      ).toBe("flex-start");
+      await expect
+        .poll(async () => {
+          const buttonBox = await button.boundingBox();
+          const iconBox = await icon.boundingBox();
+          return buttonBox && iconBox ? iconBox.x - buttonBox.x : null;
+        })
+        .toBeLessThan(20);
+      await expect(button).toHaveCSS("justify-content", "flex-start");
     }
 
     await expect(complaintAction).toBeFocused();
