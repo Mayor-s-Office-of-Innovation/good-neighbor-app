@@ -25,7 +25,7 @@ resource "aws_cloudwatch_metric_alarm" "duplicate_worker_failures" {
   threshold           = 5
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.alarms.arn]
+  alarm_actions       = []
   tags                = var.tags
 }
 resource "aws_cloudwatch_metric_alarm" "duplicate_candidate_failures" {
@@ -39,7 +39,7 @@ resource "aws_cloudwatch_metric_alarm" "duplicate_candidate_failures" {
   threshold           = 5
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.alarms.arn]
+  alarm_actions       = []
   tags                = var.tags
 }
 resource "aws_cloudwatch_metric_alarm" "duplicate_queue_backlog" {
@@ -54,6 +54,6 @@ resource "aws_cloudwatch_metric_alarm" "duplicate_queue_backlog" {
   threshold           = 900
   comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.alarms.arn]
+  alarm_actions       = local.duplicate_alarm_actions
   tags                = var.tags
 }

@@ -1,7 +1,7 @@
 # Support chat
 
 Get help opens from the top-right Settings menu as the full-screen `/help` route.
-Back returns to the preceding screen (or Home on a direct load). It answers
+The circle-X close button returns to the preceding screen (or Home on a direct load). It answers
 independent questions using the reviewed FAQ v2, the supplied final Good Neighbor Policy, and a small public app guide.
 No conversation is stored; leaving Help clears responses and aborts pending requests. The UI keeps at most ten
 exchanges in memory and sends only the current question and selected language.

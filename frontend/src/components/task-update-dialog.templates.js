@@ -24,29 +24,35 @@ function translatedText(key) {
   return escapeHtml(t(key));
 }
 
+const closeButton = () =>
+  html`<button
+    type="button"
+    class="btn-circle-close"
+    data-close
+    aria-label="${translatedText("common.close")}"
+  >
+    <wa-icon name="xmark" aria-hidden="true"></wa-icon>
+  </button>`;
+
 /** @param {{ mode: string, state: string, content: string }} view */
 export function taskUpdateDialogShell({ mode, state, content }) {
   const showBack = mode === "note-text" || mode === "action-photos";
   return html`<dialog class="task-update" aria-labelledby="task-update-title">
       <div class="task-update__sheet">
-        <header class="task-update__header">
-          ${showBack
-            ? html`<button
-                class="btn-icon wa-plain"
-                data-back
-                aria-label="${escapeAttr(t("common.back"))}"
-              >
-                <wa-icon name="chevron-left"></wa-icon>
-              </button>`
-            : "<span></span>"}
-          <button
-            class="btn-icon wa-plain"
-            data-close
-            aria-label="${escapeAttr(t("common.close"))}"
-          >
-            <wa-icon name="xmark"></wa-icon>
-          </button>
-        </header>
+        ${mode === "timeline" && state === "ready"
+          ? ""
+          : html`<header class="task-update__header">
+              ${showBack
+                ? html`<button
+                    class="btn-icon wa-plain"
+                    data-back
+                    aria-label="${translatedText("common.back")}"
+                  >
+                    <wa-icon name="chevron-left"></wa-icon>
+                  </button>`
+                : ""}
+              ${closeButton()}
+            </header>`}
         <p role="status" data-save-status></p>
         <button type="button" class="btn-outline" data-cancel-save hidden>
           ${translatedText("common.cancel")}
@@ -178,12 +184,14 @@ export function taskUpdateTimeline({
     analyzerTitle ||
     rulebookText(task.category) ||
     t("taskUpdate.fallbackTitle");
-  return html`<section class="task-update__summary">
-      ${statusTickerMarkup(task, { now: now.getTime() })}
+  return html`<header class="task-update__header">
+      ${statusTickerMarkup(task, { now: now.getTime() })} ${closeButton()}
+      <h2 id="task-update-title">${escapeHtml(title)}</h2>
+    </header>
+    <section class="task-update__summary">
       <p class="task-update__location">
         ${escapeHtml(String(address).split(/\r?\n|,/)[0])}
       </p>
-      <h2 id="task-update-title">${escapeHtml(title)}</h2>
       <p class="task-update__description">
         ${escapeHtml(task.description || "")}
       </p>

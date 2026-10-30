@@ -1,11 +1,10 @@
 # Duplicate detection: continuation handoff
 
-**Current implementation (October 15):** The experiment has progressed to locally
-implemented product integration, still undeployed and feature-gated. See
-[ADR 0017](adr/0017-duplicate-issue-links.md) and the
-[operations runbook](runbooks/duplicate-detection.md) for the current behavior.
-They supersede the historical advisory-only, images-required and capture-time
-choices below. The current 72-hour window uses **issue generation time**.
+**Historical experiment handoff:** Duplicate processing is now deployed in dev and
+prod. Use the [operations runbook](runbooks/duplicate-detection.md) and environment
+configuration for current behavior and activation. The undeployed descriptions
+below record earlier experiment stages. The current 72-hour window uses **issue
+generation time**.
 
 
 Recorded October 9, 2026, for continuation on another machine with another agent.

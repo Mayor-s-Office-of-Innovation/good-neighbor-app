@@ -27,11 +27,7 @@ import {
   parseServiceCodeOrAction,
   serviceCodesForClassifierLabels,
 } from "../../integrations/sf311-service-codes.js";
-import {
-  hasServiceRequestAttachment,
-  serviceRequestClosureReason,
-  serviceRequestClosureState,
-} from "../../integrations/sf311-status.js";
+import { hasServiceRequestAttachment } from "../../integrations/sf311-status.js";
 import {
   checkArtifactPrefix,
   siteMetaKey,
@@ -209,8 +205,8 @@ export function mergeAppActionResults(priorResults, result) {
 /**
  * Durably record an action result while the task is mid-completion, so a crash
  * or lease expiry after a side-effecting HUB call still leaves the persisted
- * record behind (HUB closure is non-idempotent; the persisted `closed` record
- * is our dedupe on lease-recovery retries). Merges `result` into `priorResults`
+ * record behind. Confirmed closures are skipped on lease-recovery retries;
+ * unconfirmed closures may safely be repeated. Merges `result` into `priorResults`
  * rather than replacing them, and — when the completion lease is known — pins
  * the write to that exact lease so a stale executor cannot checkpoint after its
  * lease was reclaimed.
@@ -1076,7 +1072,6 @@ function buildCloseActionResult({
  * @param {string} [opts.taskId]
  * @param {string} [opts.completionLeaseExpiresAt]
  * @param {{ status: string, attribute: string, value: string }} [opts.executionLease]
- * @param {boolean} [opts.reconcile311Closures]
  * @param {(result: AppActionResult) => Promise<void>} [opts.onCheckpoint]
  * @returns {Promise<AppActionResult>}
  */
@@ -1090,7 +1085,6 @@ async function execute311ClosureAction({
   taskId = "",
   completionLeaseExpiresAt = "",
   executionLease,
-  reconcile311Closures = false,
   onCheckpoint,
 }) {
   const now = nowDate.toISOString();
@@ -1108,32 +1102,9 @@ async function execute311ClosureAction({
   }
 
   const sf311 = createSf311Client({ config });
-  let latestUpdates;
-  const needsReconciliation =
-    reconcile311Closures &&
-    [...eligible].some(
-      ([serviceCode]) =>
-        priorClosuresByServiceCode.get(serviceCode)?.status !== "closed",
-    );
-  if (needsReconciliation) {
-    try {
-      latestUpdates = await sf311.getLatestUpdatesBySourceAgency();
-    } catch (error) {
-      return buildCloseActionResult({
-        action,
-        status: "failed",
-        recordedAt: now,
-        closures: [...eligible].map(([serviceCode, { ticket }]) => ({
-          serviceCode,
-          srNum: String(ticket.srNum),
-          closedReasonCode: SILENT_TICKET_CLOSED_REASON,
-          status: "failed",
-          reason: "sf311_closure_reconciliation_failed",
-        })),
-        diagnostics: appActionErrorDiagnostics(error),
-      });
-    }
-  }
+  // 311 confirmed that owned tickets are absent from the latest-updates feed
+  // and repeating a closure is safe. Send directly; CreateSR and attachment
+  // recovery retain their separate uncertainty safeguards.
   /** @type {Array<Record<string, unknown>>} */
   const closures = [];
   /** Persist the current closure accumulator while this executor owns the lease. */
@@ -1166,41 +1137,10 @@ async function execute311ClosureAction({
   for (const [serviceCode, { ticket }] of eligible) {
     const priorClosure = priorClosuresByServiceCode.get(serviceCode);
     // Already closed on an earlier attempt: carry the record forward without
-    // another UpdateSR call (HUB closure is not idempotent on its side).
+    // another UpdateSR call. Unconfirmed closures can safely be retried.
     if (priorClosure && priorClosure.status === "closed") {
       closures.push({ ...priorClosure });
       continue;
-    }
-    if (needsReconciliation) {
-      const closureState = serviceRequestClosureState(
-        latestUpdates,
-        String(ticket.srNum),
-      );
-      if (closureState === "closed") {
-        const closedReasonCode = serviceRequestClosureReason(
-          latestUpdates,
-          String(ticket.srNum),
-        );
-        closures.push({
-          serviceCode,
-          srNum: String(ticket.srNum),
-          ...(closedReasonCode ? { closedReasonCode } : {}),
-          status: "closed",
-          reconciled: true,
-        });
-        if (!(await checkpoint())) break;
-        continue;
-      }
-      if (closureState === "unknown") {
-        closures.push({
-          serviceCode,
-          srNum: String(ticket.srNum),
-          closedReasonCode: SILENT_TICKET_CLOSED_REASON,
-          status: "failed",
-          reason: "sf311_closure_state_unknown",
-        });
-        continue;
-      }
     }
     try {
       const payload = buildCloseSrPayload({
@@ -1215,10 +1155,7 @@ async function execute311ClosureAction({
         status: "closed",
         ...(response.updateId ? { updateId: response.updateId } : {}),
       });
-      // Persist the closed record immediately: HUB closure is non-idempotent,
-      // so if this process dies (or the lease is lost) before the final task
-      // write, lease recovery must see `closed` here instead of re-closing
-      // the same SR from the original CreateSR result.
+      // Persist successful closures immediately to avoid unnecessary repeats.
       // If the lease was reclaimed, stop issuing further HUB updates because
       // this in-memory closure is not durably visible to the next executor.
       if (!(await checkpoint())) break;
@@ -1376,7 +1313,6 @@ function actionsForTrigger(appActions, trigger) {
  * @param {Date} [opts.now]
  * @param {string} [opts.completionLeaseExpiresAt]
  * @param {{ status: string, attribute: string, value: string }} [opts.executionLease]
- * @param {boolean} [opts.reconcile311Closures]
  * @param {(result: AppActionResult) => Promise<void>} [opts.onCheckpoint]
  * @returns {Promise<AppActionResult[]>}
  */
@@ -1466,7 +1402,6 @@ export async function executeAppActions(appActions, opts = {}) {
               taskId: opts.taskId ?? "",
               completionLeaseExpiresAt: opts.completionLeaseExpiresAt ?? "",
               executionLease: opts.executionLease,
-              reconcile311Closures: opts.reconcile311Closures,
               onCheckpoint: opts.onCheckpoint,
             }),
           );

@@ -348,6 +348,13 @@ if (typeof document !== "undefined") {
  * is a level below its parent path and carries a back arrow to it.
  */
 const ROOT_LEVEL_ROUTES = new Set(["/today", "/check", "/problem"]);
+const SHEET_ROUTES = new Set([
+  "/care-work",
+  "/complaints",
+  "/site-admin",
+  "/reports",
+  "/help",
+]);
 
 /** @param {string} route */
 function routeLevel(route) {
@@ -357,17 +364,21 @@ function routeLevel(route) {
 }
 
 /**
- * Which way a route swap moves: a screen with a back arrow slides in from
- * the right over its parent ("push") and slides back out on the way up
- * ("pop"); screens at the same level, and the X-closed capture flows, cross-
- * fade. The level is the path depth, with the home hub and the capture
- * flows pinned to the root level so /today → /reports pushes.
+ * Top-level sheets rise and dismiss vertically. Their descendants push/pop
+ * horizontally; sibling routes and capture roots cross-fade.
  * @param {string | null} from the route on screen, null on first paint
  * @param {string} to
- * @returns {"push" | "pop" | "fade"}
+ * @returns {"push" | "pop" | "fade" | "rise" | "dismiss"}
  */
 export function routeTransitionDirection(from, to) {
   if (from == null) return "fade";
+  const source = from.split("?")[0].replace(/\/+$/, "");
+  const target = to.split("?")[0].replace(/\/+$/, "");
+  if (source === target) return "fade";
+  if (SHEET_ROUTES.has(target) && !source.startsWith(`${target}/`))
+    return "rise";
+  if (SHEET_ROUTES.has(source) && !target.startsWith(`${source}/`))
+    return "dismiss";
   const delta = routeLevel(to) - routeLevel(from);
   return delta > 0 ? "push" : delta < 0 ? "pop" : "fade";
 }

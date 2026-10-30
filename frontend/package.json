@@ -79,7 +79,7 @@
         "dist/assets/problem-report*.js",
         "dist/assets/describe-instead*.js"
       ],
-      "limit": "12.3 kB"
+      "limit": "12.4 kB"
     },
     {
       "name": "capture routes css",

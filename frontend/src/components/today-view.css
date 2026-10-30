@@ -807,3 +807,39 @@ html.wa-dark .home-results__complete-content img {
     font-size: var(--wa-font-size-xl, 1.5625rem);
   }
 }
+
+.home-top-actions > site-switcher {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: center;
+}
+.home-top-actions > .home-settings-wrap {
+  flex: 0 0 44px;
+}
+.home-top-actions > feedback-dialog[hide-trigger] {
+  display: contents;
+}
+.home-results__empty,
+[data-task-refresh-status] {
+  text-align: center;
+}
+[data-task-refresh-status] {
+  display: block;
+}
+.language-dialog__close {
+  align-self: flex-end;
+}
+.language-dialog .places-modal__card {
+  width: 100%;
+  min-width: 0;
+  gap: 16px;
+}
+.language-list li {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+}
+.language-list__option {
+  text-align: center;
+  min-height: 44px;
+}

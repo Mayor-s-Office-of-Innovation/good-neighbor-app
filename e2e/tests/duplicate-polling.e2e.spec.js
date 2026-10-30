@@ -109,6 +109,7 @@ test("Home polls only pending rows, reuses settled results on return and reconne
   expect(state.batches).toHaveLength(count);
 
   await mutate(page);
+  // Mutation invalidation schedules the next batch on the browser clock.
   await page.clock.runFor(1);
   await expect.poll(() => state.batches.length).toBe(count + 1);
   expect([...(state.batches.at(-1) ?? [])].sort()).toEqual([
@@ -130,6 +131,7 @@ test("Home keeps listening for mutations after its pending retry budget expires"
   expect(state.batches).toHaveLength(count);
   state.pending = false;
   await mutate(page);
+  // Mutation invalidation schedules the next batch on the browser clock.
   await page.clock.runFor(1);
   await expect.poll(() => state.batches.length).toBe(count + 1);
   await expect(waiting).toContainText(t("card.ticker.needsAction"));

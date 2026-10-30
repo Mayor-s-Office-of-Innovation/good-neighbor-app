@@ -504,18 +504,8 @@
 }
 
 .reports__top {
-  justify-content: flex-start;
+  justify-content: flex-end;
   margin-bottom: 0;
-}
-
-/* Back link left, gear right; the feedback sheet element in between takes
-   no space, so it must not be a third flex item splitting the row. */
-.reports__top .home-settings-wrap {
-  margin-left: auto;
-}
-
-.reports__top feedback-dialog {
-  display: contents;
 }
 
 /* The design draws no rule under the tab row. */

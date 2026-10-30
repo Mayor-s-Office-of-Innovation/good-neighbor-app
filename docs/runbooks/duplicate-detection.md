@@ -2,6 +2,11 @@
 
 ## Deployment status and order
 
+Duplicate processing is deployed in dev and prod. Environment configuration and
+the deployed event-source mappings determine activation; the module default is
+not evidence that a particular environment is disabled. The sequence below is
+the provisioning/redeployment procedure, not a claim that live queues are unused.
+
 Use the repositories' CI pipelines; do not run Terraform plan/apply locally.
 
 1. Deploy the analyzer comparison handler/contract and infrastructure first. Its
@@ -221,19 +226,37 @@ lifecycle deletion must still be verified after deployment.
 ## Independent frontend rollout flag
 
 The public, authenticated site response includes
-`site.featureFlags.duplicateDetection`. It defaults to false and controls display
+`site.featureFlags.duplicateDetection`. It defaults to true and controls display
 only. It does not change the worker, persisted links, shared action routing or
 human separation overrides. The UI fails closed when fresh settings cannot be
 loaded; reload after changing the flag. Browser reloads fetch current settings.
 
 The flag is stored on the site's `SITE#<siteId>` / `#META` DynamoDB item as the
-boolean `featureFlags.duplicateDetection`. Missing, false, and non-boolean values
-all fail closed. Change the item through an authorized operational or admin path;
+boolean `featureFlags.duplicateDetection`. Only an explicit boolean false disables display; a missing flag defaults to enabled. Change the item through an authorized operational or admin path;
 the next site-settings request sees the change without a Terraform apply, Lambda
 deployment, or frontend build. Preserve any other keys already present in the
 `featureFlags` map when updating it.
 
-Keep the backend `enable_duplicate_detection` Terraform flag independent. Backend
+The shared dev/prod deployment workflow runs
+`backend/scripts/enable-duplicate-ui.mjs --apply` before publishing the frontend.
+It enables all existing Sites (including previously false flags), preserving other
+feature flags. Per-Site `duplicateUiRolloutVersion: 1` markers make interrupted
+runs resumable without changing already-migrated Sites. After the full apply
+succeeds, an environment-wide `MIGRATION#DUPLICATE_UI_V1 / #META` record with
+`completed: true` closes the rollout. Later dry runs and applies do not scan or
+modify Sites, including newly created Sites with an explicit operator rollback.
+The script defaults to dry-run, paginates the table, and fails on concurrent
+settings edits so it can safely resume. New Sites inherit the enabled API default.
+
+Successful explicit 311 filing collapses all matched observations into the
+canonical original in In progress, including observations generated after filing
+began. Evidence and underlying task records remain intact. Pending and failed
+filings retain their submission state; they are not shown as successful filings.
+State-only cache refreshes preserve confirmed relations while revalidating; edits
+to evidence and explicit separation discard them.
+
+The backend `enable_duplicate_detection` Terraform flag defaults to true in the
+module and dev environment; prod also explicitly enables it. Keep it independent. Backend
 on/UI off permits operational observation before exposing the experience; disabling
 the site flag affects presentation only and does not stop matching or unlink
 persisted results.
@@ -386,7 +409,7 @@ batch failed schema validation in the 32-worker cohort after both analyzer
 assessments. The worker retained failed-candidate diagnostics; treat this as an
 incomplete search rather than a clean negative. The observation does not establish
 that concurrency caused the model failure. Raising concurrency does not remediate
-either issue. Keep production detection disabled until the matching
+either issue. Before further production expansion, ensure the matching
 controls and incomplete-batch behavior have been investigated and validated.
 
 
@@ -400,9 +423,9 @@ production stage prepares 128 comparison Lambda slots and a four-request/second,
 burst-eight dedicated comparison usage plan. Normal analysis controls are separate.
 Account/model quotas and Lambda reservation headroom remain deployment prerequisites.
 
-`enable_duplicate_detection = false` remains explicit in production. No Site flags
-are changed by this configuration. Promotion can install the prepared configuration
-without starting duplicate jobs. Do not raise traffic or enable detection until the
+Production configuration now enables `enable_duplicate_detection`. Site flags
+control presentation separately from background processing. For a future staged
+rollout, deploy with processing disabled until the
 representative dev load tests and controlled fanout/recovery checks,
 matching-quality review and production permission/quota checks are accepted.
 Backend activation applies to every Site: the dispatcher and worker do not enforce

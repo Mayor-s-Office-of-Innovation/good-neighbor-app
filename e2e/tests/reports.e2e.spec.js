@@ -126,27 +126,9 @@ test.describe("site manager reports", () => {
     await expect(page).toHaveURL(/\/reports(\?|$)/);
     await expect(page.locator(".reports__records")).toBeVisible();
 
-    // The gear menu is here too, and the back link returns home.
-    await page.locator("#home-settings").click();
-    const menu = page.getByRole("menu", { name: t("today.settings.aria") });
-    await expect(menu.getByRole("menuitem")).toHaveText([
-      t("access.title"),
-      t("today.settings.siteAdmin"),
-      t("today.settings.reports"),
-      t("support.title"),
-      t("today.settings.feedback"),
-      t("today.settings.language"),
-      t("today.settings.attributions"),
-      t("today.settings.logout"),
-    ]);
-    await menu
-      .getByRole("menuitem", { name: t("today.settings.attributions") })
-      .click();
-    const attributions = page.locator("#attributions-dialog");
-    await expect(attributions).toBeVisible();
-    await attributions.getByRole("button", { name: t("common.close") }).click();
-    await expect(attributions).toBeHidden();
-    await page.getByRole("link", { name: t("reports.backHome") }).click();
+    // Closing Reports returns home even after drilling into a day and back.
+    await expect(page.locator("#home-settings")).toHaveCount(0);
+    await page.locator("#reports-home").click();
     await expect(page).toHaveURL(/\/today(?:\?filter=todo)?$/);
     await expect(page.locator("#start-check")).toBeVisible();
   });

@@ -265,7 +265,6 @@ export async function runJob(message, delivery = {}) {
           task,
           priorResults: results,
           onCheckpoint: checkpoint,
-          reconcile311Closures: true,
         }),
       );
       await guard(async () => {});

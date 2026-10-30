@@ -51,7 +51,11 @@ test.describe("perimeter check", () => {
       ".home-results .analysis-tray--new .analysis-card--clear",
     );
     await expect(newClearCard).toHaveCount(1, { timeout: 90_000 });
-    await expect(newClearCard).toContainText(t("card.clear.title"));
+    // A local clear card can appear before its completed header reaches the
+    // next home refresh. Give the durable result the same budget as its arrival.
+    await expect(newClearCard).toContainText(t("card.clear.title"), {
+      timeout: 90_000,
+    });
     await expect(newClearCard.locator("..")).toContainText(
       tPattern("analysis.checkTitle.today"),
     );

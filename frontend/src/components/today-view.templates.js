@@ -55,6 +55,7 @@ export function homeShell({
     <div class="home">
       <section class="home-region home-region--header">
         <div class="home-top-actions">
+          <site-switcher></site-switcher>
           ${settingsMenu({
             open: settingsMenuOpen,
             adminAccess,
@@ -302,6 +303,14 @@ export function languageDialog() {
     aria-describedby="language-copy"
   >
     <form class="places-modal__card" method="dialog">
+      <button
+        class="btn-circle-close language-dialog__close"
+        type="submit"
+        value=""
+        aria-label="${escapeAttr(t("common.close"))}"
+      >
+        <wa-icon name="xmark" aria-hidden="true"></wa-icon>
+      </button>
       <div class="places-modal__copy">
         <h2 class="places-modal__title" id="language-title">
           ${escapeHtml(t("today.language.title"))}
@@ -326,11 +335,6 @@ export function languageDialog() {
               </li>`,
           ).join("")}
         </ul>
-      </div>
-      <div class="places-modal__actions">
-        <button class="btn-ink places-modal__primary" type="submit" value="">
-          ${escapeHtml(t("common.close"))}
-        </button>
       </div>
     </form>
   </dialog>`;
@@ -420,7 +424,6 @@ export function logoutDialog({ error, pending, unsent = {} }) {
 export function heroBlock({ siteName, summary, checkLabel }) {
   return html`
     <div class="screen__sec home-lead">
-      <site-switcher></site-switcher>
       <div class="home-identity home-identity--with-summary">
         <h1 class="home-identity__site" tabindex="-1">
           ${escapeHtml(siteName)}
@@ -451,13 +454,13 @@ export function homeActions({ checkLabel }) {
           <wa-icon name="ellipsis" aria-hidden="true"></wa-icon>
         </button>
         <div class="home-action-menu" id="home-action-menu" role="menu" hidden>
-          <button type="button" role="menuitem" id="view-complaints">
-            <wa-icon name="bullhorn" aria-hidden="true"></wa-icon>
-            ${escapeHtml(t("today.actions.complaints"))}
-          </button>
           <button type="button" role="menuitem" id="report-problem">
             <wa-icon name="flag" aria-hidden="true"></wa-icon>
             ${escapeHtml(t("today.actions.report"))}
+          </button>
+          <button type="button" role="menuitem" id="view-complaints">
+            <wa-icon name="bullhorn" aria-hidden="true"></wa-icon>
+            ${escapeHtml(t("today.actions.complaints"))}
           </button>
           <button type="button" role="menuitem" id="view-care-work">
             <wa-icon name="broom" aria-hidden="true"></wa-icon>
