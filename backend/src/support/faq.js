@@ -178,7 +178,7 @@ export const faq = [
   {
     id: "FAQ-36",
     title: "What do the three tabs mean?",
-    text: "“To do” shows issues needing an initial action and unanswered follow-up questions. Questions remain after finishing a check, reloading, or starting a later check. If questions cannot refresh, available tasks stay visible and a message offers a retry. “In progress” shows issues that remain open after an action or escalation. “History” contains completed and other past outcomes. Appearing in History does not prove that an issue was resolved. History shows “Resolved” for explicitly resolved issues; other past outcomes may have no status note. Open the issue’s timeline to review recorded actions and updates.",
+    text: "“To do” shows issues needing an initial action and unanswered follow-up questions. Questions remain after finishing a check, reloading, or starting a later check. If questions cannot refresh while online, unverified questions are temporarily hidden, available tasks stay visible, and a message offers a retry. “In progress” shows issues that remain open after an action or escalation. “History” contains completed and other past outcomes. Appearing in History does not prove that an issue was resolved. History shows “Resolved” for explicitly resolved issues; other past outcomes may have no status note. Open the issue’s timeline to review recorded actions and updates.",
   },
   {
     id: "FAQ-37",

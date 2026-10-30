@@ -84,10 +84,24 @@ for (const resolution of ["answer", "dismiss"])
             error: "Original analysis unavailable",
           },
         });
-      if (url.pathname === "/v1/guidance/pending" && guidanceFailed)
+      if (
+        [
+          "/v1/guidance/pending",
+          "/v1/assessments/old-assessment/guidance",
+        ].includes(url.pathname) &&
+        guidanceFailed
+      )
         return route.fulfill({
           status: 503,
           json: { error: "Guidance temporarily unavailable" },
+        });
+      if (url.pathname === "/v1/assessments/old-assessment/guidance")
+        return route.fulfill({
+          json: {
+            assessment,
+            conditions: answered ? [] : [question],
+            tasks: answers ? [task] : [],
+          },
         });
       if (url.pathname === "/v1/guidance/pending")
         return route.fulfill({
@@ -188,7 +202,8 @@ for (const resolution of ["answer", "dismiss"])
     await page.reload();
     await mount();
     await expect(page.locator("#retry-guidance")).toBeVisible();
-    await expect(card).toHaveCount(1);
+    // Online questions must be revalidated before they can be acted on.
+    await expect(card).toHaveCount(0);
     await expect(page.locator('[data-task-id="live-task"]')).toBeVisible();
     guidanceFailed = false;
     await page.locator("#retry-guidance").click();
