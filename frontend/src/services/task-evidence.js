@@ -252,6 +252,20 @@ export function invalidateMediaUrls(
     MEDIA_FAILURES.delete(key);
 }
 
+/** Share a transient image-error cooldown across remounts. An img error does
+ * not expose an HTTP status, so it must remain recoverable on reconnect.
+ * @param {string} checkId @param {string} artifactId
+ */
+export function deferMediaRecovery(checkId, artifactId) {
+  const key = `${checkId}:${artifactId}`;
+  MEDIA_FAILURES.set(key, {
+    error: Object.assign(new Error("Image temporarily unavailable"), {
+      status: 0,
+    }),
+    retryAt: Date.now() + 5000,
+  });
+}
+
 /** Avoid repeating doomed requests on each card rerender. Missing media may be
  * restored, so this negative result expires rather than becoming permanent.
  * @param {string} checkId @param {string} artifactId

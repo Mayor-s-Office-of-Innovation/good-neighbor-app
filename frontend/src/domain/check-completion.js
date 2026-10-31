@@ -35,7 +35,7 @@ export const MIN_DESCRIPTION_LENGTH = 20;
 export const MIN_TEXT_EVIDENCE_LENGTH = 5;
 
 /**
- * @typedef {{ id: string, kind?: string, text?: string,
+ * @typedef {{ id: string, kind?: string, text?: string, deletionPending?: boolean,
  *   upload?: { status?: string, artifactId?: string },
  *   analysis?: { status?: string, artifactId?: string, recovery?: {state?: string, nextAttemptAt?: number}, sourceAnalysis?: { shotType?: string } } }} EvidenceItem
  * @typedef {{ items?: EvidenceItem[] } | null | undefined} SessionCheck

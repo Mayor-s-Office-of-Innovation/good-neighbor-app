@@ -874,8 +874,7 @@ it("turns hard-timeout dead letters into observable exhaustion without analysis"
       Records: [
         {
           messageId: "dead",
-          eventSourceARN:
-            "arn:aws:sqs:us-east-1:000000000000:test-analysis-dlq",
+          eventSourceARN: `arn:aws:sqs:us-east-1:${"0".repeat(12)}:test-analysis-dlq`,
           body: JSON.stringify({
             ...baseMsg,
             analysisGeneration: "generation-1",

@@ -1228,3 +1228,40 @@ describe("expired uploaded object recovery", () => {
     expect(fetch).toHaveBeenCalledTimes(4);
   });
 });
+
+describe("text registration response recovery", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("accepts only an exact duplicate after a lost successful reply", async () => {
+    const { registerTextArtifact } = await import("./api.js");
+    const fetch = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("lost reply"))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "artifact already registered" }), {
+          status: 409,
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "Check already completed" }), {
+          status: 409,
+        }),
+      );
+    vi.stubGlobal("fetch", fetch);
+    const evidence = {
+      artifactId: "persisted-text",
+      text: "Synthetic litter report",
+    };
+    await expect(registerTextArtifact("check", evidence)).rejects.toThrow();
+    await expect(registerTextArtifact("check", evidence)).resolves.toBe(
+      "persisted-text",
+    );
+    expect(
+      fetch.mock.calls
+        .slice(0, 2)
+        .map(([, init]) => JSON.parse(init.body).artifactId),
+    ).toEqual(["persisted-text", "persisted-text"]);
+    await expect(registerTextArtifact("check", evidence)).rejects.toMatchObject(
+      { status: 409 },
+    );
+  });
+});

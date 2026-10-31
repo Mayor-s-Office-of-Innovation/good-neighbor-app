@@ -680,6 +680,7 @@
   "common.no": "No",
   "common.opensNewTab": "{label} (opens in a new tab)",
   "common.retry": "Try again",
+  "common.retrying": "Retrying…",
   "common.save": "Save",
   "common.undo": "Undo",
   "common.yes": "Yes",

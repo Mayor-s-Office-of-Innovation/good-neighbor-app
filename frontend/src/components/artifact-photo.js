@@ -1,6 +1,7 @@
 import {
   cachedMediaUrls,
   invalidateMediaUrls,
+  deferMediaRecovery,
 } from "../services/task-evidence.js";
 import { connectionAvailable } from "../services/evidence-recovery.js";
 import { escapeAttr } from "../lib/html.js";
@@ -25,6 +26,7 @@ export class ArtifactPhoto extends HTMLElement {
     if (!this._trigger?.getAttribute("data-full-src")) this._setTrigger("");
     const generation = this._generation;
     this._attempts = 0;
+    this._imageAttempts = 0;
     this._visible = !globalThis.IntersectionObserver;
     this._onReturn = () => {
       if (!document.hidden && this._visible) void this._refresh();
@@ -171,6 +173,7 @@ export class ArtifactPhoto extends HTMLElement {
       return;
     }
     clearTimeout(this._timer);
+    if (checkId && artifactId) deferMediaRecovery(checkId, artifactId);
     this._missing();
     // An image error does not expose an HTTP status: never cache it as a 404.
     if (++this._imageAttempts < 3) this._schedule(5000);

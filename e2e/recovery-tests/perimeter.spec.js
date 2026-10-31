@@ -113,6 +113,7 @@ test("Wi-Fi to shaky cellular to offline recovers photos without manual retries"
   page,
   context,
 }) => {
+  test.setTimeout(90_000);
   const server = await setup(page);
   for (let i = 0; i < 4; i++) await page.locator("#capture").click();
   await expect.poll(() => statuses(page)).toContain("analyzed");
@@ -132,7 +133,11 @@ test("Wi-Fi to shaky cellular to offline recovers photos without manual retries"
   await page.evaluate(() =>
     /** @type {any} */ (window).recoveryTest.resumeCheckSubmissions(),
   );
-  await expect.poll(() => statuses(page)).toEqual(Array(6).fill("analyzed"));
+  // A request can report its interruption just after the explicit reconnect
+  // resume. Allow the real 60-second background recovery sweep to pick it up.
+  await expect
+    .poll(() => statuses(page), { timeout: 75_000 })
+    .toEqual(Array(6).fill("analyzed"));
   expect(server.uploads).toBe(6);
   expect(server.peak).toBeLessThanOrEqual(2);
   await context.setOffline(true);

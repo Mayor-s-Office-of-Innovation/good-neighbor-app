@@ -205,6 +205,7 @@ export function finalizeCaptureScorecardInBackground(
   // verifies every registered artifact, so use the current local coverage target.
   if (check?.status === "capture-complete")
     expectedArtifacts = expectedArtifactCountForCheck(check);
+  if (checkItems(check).some((item) => item.deletionPending)) return null;
   if (check?.status === "capture-complete" && expectedArtifacts === 0) {
     // There is nothing to synthesize. Keep failed local cards available for
     // deletion, but do not create an empty, misleadingly clear scorecard.
@@ -244,6 +245,14 @@ export function finalizeCaptureScorecardInBackground(
   if (manual && recovery?.state !== "manual") return null;
   saveNotices.get(checkId)?.close();
   saveNotices.delete(checkId);
+  if (manual)
+    saveNotices.set(
+      checkId,
+      showInlineError(t("common.retrying"), {
+        key: `check-save:${checkId}`,
+        warning: true,
+      }),
+    );
   const run = Promise.resolve()
     .then(async () => {
       await updateCheckRecovery(checkId, {

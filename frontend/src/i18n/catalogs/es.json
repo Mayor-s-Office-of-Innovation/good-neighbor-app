@@ -680,6 +680,7 @@
   "common.no": "No",
   "common.opensNewTab": "{label} (se abre en una pestaña nueva)",
   "common.retry": "Intentar de nuevo",
+  "common.retrying": "Reintentando…",
   "common.save": "Guardar",
   "common.undo": "Deshacer",
   "common.yes": "Sí",

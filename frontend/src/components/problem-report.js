@@ -1,3 +1,4 @@
+import { showInlineError } from "./error-notice.js";
 import { CaptureFileQueue } from "../services/capture-files.js";
 import { resolveSessionTask } from "./session-task-resolution.js";
 import { openSessionDuplicate } from "./duplicate-issue-launcher.js";
@@ -50,6 +51,7 @@ import {
   analyzeNoIssueDescriptionEdit,
   refreshEvidenceAnalysis,
   retryEvidenceItem,
+  removeEvidenceItem,
 } from "../services/photo-analysis.js";
 import { editAnalysisCondition } from "../services/api.js";
 import {
@@ -507,6 +509,16 @@ class ProblemReport extends HTMLElement {
         } else if (action === "retry") {
           if (problem.itemId && retryEvidenceItem(problem.itemId))
             target.setAttribute("disabled", "");
+        } else if (action === "delete-failed-item") {
+          if (!problem.itemId || target.hasAttribute("disabled")) return;
+          target.setAttribute("disabled", "");
+          void removeEvidenceItem(problem.itemId).catch(() => {
+            target.removeAttribute("disabled");
+            showInlineError(t("card.failed.deleteError"), {
+              target: this,
+              key: "delete-failed-item",
+            });
+          });
         } else if (action === "remove-item") {
           const item = findItem(problem.itemId);
           if (item && item.upload?.status !== "uploaded")

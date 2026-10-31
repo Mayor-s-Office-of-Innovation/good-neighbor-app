@@ -270,7 +270,7 @@ test("question focus restoration distinguishes photos with the same condition", 
   const focused = await page.evaluate(async () => {
     const path = "/src/components/today-view.js";
     await import(path);
-    const Base = /** @type {any} */ (customElements.get("today-view"));
+    const Base = /** @type {any} */ (window.customElements.get("today-view"));
     const host = document.querySelector("#host");
     if (!host) throw new Error("Missing host");
     const anchor = host.querySelector('[data-item-id="photo-B"]');

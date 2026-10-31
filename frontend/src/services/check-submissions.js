@@ -30,6 +30,7 @@ import {
 } from "../state/check-session.js";
 import {
   analyzeEvidenceItem,
+  removeEvidenceItem,
   reconcileFailedEvidence,
   hasUnsentLocation,
   resendItemLocation,
@@ -49,9 +50,10 @@ import { checkItems, itemHasLiveEvidence } from "../domain/check-completion.js";
 export function readyForScorecard(check) {
   return checkItems(check).every(
     (item) =>
-      !itemHasLiveEvidence(item) ||
-      item.analysis?.status === "analyzed" ||
-      item.analysis?.recovery?.state === "blocked",
+      !item.deletionPending &&
+      (!itemHasLiveEvidence(item) ||
+        item.analysis?.status === "analyzed" ||
+        item.analysis?.recovery?.state === "blocked"),
   );
 }
 
@@ -102,6 +104,12 @@ export async function resumeCheckSubmissions({ uploads = true } = {}) {
       if (uploads && !offline)
         await reconcileFailedEvidence(check).catch(() => {});
       for (const item of checkItems(check)) {
+        if (item.deletionPending) {
+          waiting = true;
+          if (uploads && !offline)
+            void removeEvidenceItem(item.id).catch(() => {});
+          continue;
+        }
         if (item.analysis?.status === "waiting") waiting = true;
         if (item.analysis?.recovery?.state === "scheduled") {
           waiting = true;

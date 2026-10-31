@@ -196,6 +196,7 @@ async function withLeg(leg, work) {
 export async function reconcileFailedEvidence(check) {
   const candidates = (check.items || []).filter(
     (item) =>
+      !item.deletionPending &&
       item.analysis?.status === "failed" &&
       item.analysis?.failure?.leg === "analyze" &&
       item.analysis?.artifactId &&
@@ -632,6 +633,7 @@ export function analyzeEvidenceItem(itemId, { manual = false } = {}) {
   const item = itemById(itemId);
   if (!item || active.has(itemId)) return;
   if (manual && !canManuallyRetry(item)) return;
+  if (item.deletionPending) return;
   if (!manual && item.analysis?.status && !shouldResumeEvidenceItem(item))
     return;
   active.add(itemId); // Claim synchronously, before any mutation or await.
@@ -679,6 +681,7 @@ export function isConnectionFailure(err) {
  * @param {any} item
  */
 export function shouldResumeEvidenceItem(item) {
+  if (item?.deletionPending) return false;
   const status = item?.analysis?.status;
   const recovery = item?.analysis?.recovery;
   if (["manual", "blocked"].includes(recovery?.state)) return false;
@@ -765,13 +768,45 @@ export function removeEvidenceItem(itemId) {
   removingEvidence.add(itemId);
   const pending = Promise.resolve()
     .then(async () => {
+      const wasPending = item.deletionPending;
+      updateItem(itemId, { deletionPending: true });
+      if (!(await confirmLocalSave(check))) {
+        updateItem(itemId, { deletionPending: wasPending });
+        throw new Error("Could not save evidence removal");
+      }
       if (artifactId) {
         try {
           await deleteArtifact(check.id, artifactId, {
             originSiteId: check.siteId,
           });
         } catch (error) {
-          if (error?.status !== 404) throw error;
+          if (error?.status !== 404) {
+            const rejected =
+              error?.status >= 400 &&
+              error.status < 500 &&
+              ![408, 429].includes(error.status);
+            if (!rejected) throw error;
+            // A previous interrupted DELETE may already have succeeded. A
+            // rejection of its replay cannot establish whether the item exists.
+            let alreadyDeleted = false;
+            if (wasPending) {
+              const detail = await getCheck(check.id, {
+                originSiteId: check.siteId,
+              });
+              if (!Array.isArray(detail.artifacts)) throw error;
+              alreadyDeleted = !detail.artifacts.some(
+                (entry) => entry.artifactId === artifactId,
+              );
+            }
+            if (!alreadyDeleted) {
+              updateItem(itemId, { deletionPending: false });
+              if (!(await confirmLocalSave(check))) {
+                updateItem(itemId, { deletionPending: true });
+                throw new Error("Could not save evidence removal");
+              }
+              throw error;
+            }
+          }
         }
       }
       const index = check.items.indexOf(item);

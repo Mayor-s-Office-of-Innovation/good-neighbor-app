@@ -11,6 +11,7 @@ export function connectionAvailable() {
 
 /** @param {any} item */
 export function canManuallyRetry(item) {
+  if (item?.deletionPending) return false;
   return (
     connectionAvailable() &&
     !removingEvidence.has(item?.id) &&

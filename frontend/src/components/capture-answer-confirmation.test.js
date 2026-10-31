@@ -3,6 +3,7 @@ const feedback = vi.hoisted(() => ({
   busy: vi.fn(),
   show: vi.fn(),
   answer: vi.fn(async () => ({})),
+  remove: vi.fn(async () => {}),
 }));
 vi.mock("./analysis-answer-controls.js", () => ({
   setQuestionAnswerBusy: feedback.busy,
@@ -11,6 +12,7 @@ vi.mock("./analysis-answer-controls.js", () => ({
 vi.mock("../services/photo-analysis.js", async (importOriginal) => ({
   ...(await importOriginal()),
   answerAnalysisQuestion: feedback.answer,
+  removeEvidenceItem: feedback.remove,
 }));
 let component;
 let reportComponent;
@@ -95,5 +97,56 @@ it.each(["perimeter", "report"])(
     feedback.show.mock.calls[1][2].onComplete();
     expect(view._render).toHaveBeenCalledOnce();
     expect(view._answeringConditionIds.size).toBe(0);
+  },
+);
+
+it.each([false, true])(
+  "problem-report failed-card deletion handles repeated activation and failure=%s",
+  async (fail) => {
+    vi.stubGlobal("Element", HTMLButtonElement);
+    const button = new HTMLButtonElement();
+    /** @type {(event: { currentTarget: HTMLButtonElement }) => void} */
+    let handler = () => {
+      throw new Error("Missing handler");
+    };
+    let disabled = false;
+    button.addEventListener = (_, listener) => {
+      handler = listener;
+    };
+    button.getAttribute = () => "delete-failed-item";
+    button.closest = () => ({});
+    button.hasAttribute = () => disabled;
+    button.setAttribute = () => {
+      disabled = true;
+    };
+    button.removeAttribute = () => {
+      disabled = false;
+    };
+    /** @type {() => void} */
+    let settle = () => {
+      throw new Error("Missing pending deletion");
+    };
+    feedback.remove.mockImplementationOnce(
+      () =>
+        new Promise((resolve, reject) => {
+          settle = fail
+            ? () => reject(new Error("synthetic failure"))
+            : resolve;
+        }),
+    );
+    const view = {
+      querySelectorAll: () => [button],
+      _problemFromCard: () => ({ itemId: "failed-photo" }),
+    };
+    reportComponent.prototype._wireAnalysisCards.call(view);
+    handler({ currentTarget: button });
+    handler({ currentTarget: button });
+    expect(feedback.remove).toHaveBeenCalledOnce();
+    expect(feedback.remove).toHaveBeenCalledWith("failed-photo");
+    expect(disabled).toBe(true);
+    settle();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(disabled).toBe(!fail);
   },
 );

@@ -14,6 +14,7 @@ const {
   needsTaskEvidenceHydration,
   invalidateMediaUrls,
   markMediaUnavailable,
+  deferMediaRecovery,
 } = await import("./task-evidence.js");
 
 const detail = {
@@ -315,4 +316,29 @@ it("hydrates photo and text question evidence without eagerly signing media", as
     analysis: { artifactId: "p1" },
   });
   expect(result[1]).toMatchObject({ kind: "text", text: "Sidewalk clear." });
+});
+
+it("shares transient image cooldowns until expiry or explicit reconnect", async () => {
+  vi.useFakeTimers();
+  try {
+    getMediaUrl.mockResolvedValue({
+      downloadUrl: "/synthetic-photo",
+      expiresIn: 300,
+    });
+    deferMediaRecovery("cooldown", "expiry");
+    await expect(cachedMediaUrls("cooldown", "expiry")).rejects.toMatchObject({
+      status: 0,
+    });
+    await vi.advanceTimersByTimeAsync(5001);
+    await expect(cachedMediaUrls("cooldown", "expiry")).resolves.toMatchObject({
+      downloadUrl: "/synthetic-photo",
+    });
+    deferMediaRecovery("cooldown", "reconnect");
+    invalidateMediaUrls("cooldown", "reconnect", { retryFailures: true });
+    await expect(
+      cachedMediaUrls("cooldown", "reconnect"),
+    ).resolves.toMatchObject({ downloadUrl: "/synthetic-photo" });
+  } finally {
+    vi.useRealTimers();
+  }
 });

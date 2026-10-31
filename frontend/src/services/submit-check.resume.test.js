@@ -276,3 +276,26 @@ it("settles unregistered terminal failures but preserves their local cards", asy
   expect(session.clearSubmittedSession).not.toHaveBeenCalled();
   expect(check.items).toHaveLength(1);
 });
+
+it("waits for deletion confirmation even when the remaining evidence count is zero", async () => {
+  const session = await import("../state/check-session.js");
+  const { finalizeCaptureScorecardInBackground } = await import(
+    "./submit-check.js"
+  );
+  getCurrentCheck.mockReturnValue({
+    id: "deleting-check",
+    status: "capture-complete",
+    items: [
+      {
+        kind: "photo",
+        deletionPending: true,
+        analysis: { status: "failed", recovery: { state: "blocked" } },
+      },
+    ],
+  });
+  vi.mocked(session.clearSubmittedSession).mockClear();
+  completeCheck.mockClear();
+  expect(finalizeCaptureScorecardInBackground("deleting-check")).toBeNull();
+  expect(completeCheck).not.toHaveBeenCalled();
+  expect(session.clearSubmittedSession).not.toHaveBeenCalled();
+});

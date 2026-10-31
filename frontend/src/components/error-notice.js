@@ -66,12 +66,16 @@ export function showInlineError(message, options = {}) {
         return;
       retrying = true;
       retry.disabled = true;
+      retry.textContent = t("common.retrying");
+      retry.setAttribute("aria-busy", "true");
       try {
         await options.retry?.();
       } catch {
         /* The operation retains its contextual failure state. */
       } finally {
         retrying = false;
+        retry.textContent = options.retryLabel || t("common.retry");
+        retry.removeAttribute("aria-busy");
         refresh();
       }
     });

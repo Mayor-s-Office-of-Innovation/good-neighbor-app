@@ -680,6 +680,7 @@
   "common.no": "否",
   "common.opensNewTab": "{label}（在新分頁開啟）",
   "common.retry": "再試一次",
+  "common.retrying": "正在重試…",
   "common.save": "儲存",
   "common.undo": "復原",
   "common.yes": "是",

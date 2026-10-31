@@ -74,6 +74,7 @@ let sequence = 0;
 function photo(extra = {}) {
   const item = {
     id: `item-${++sequence}`,
+    deletionPending: /** @type {boolean | undefined} */ (undefined),
     kind: "photo",
     dataUrl: "data:image/jpeg;base64,AA",
     analysis: { status: "idle" },
@@ -383,5 +384,134 @@ it("restores the failed card when its removal cannot be saved", async () => {
   await expect(removeEvidenceItem(item.id)).rejects.toThrow(
     "Could not save evidence removal",
   );
+  expect(held.check.items).toContain(item);
+});
+
+it("saves deletion intent before deleting and replays it after local removal fails", async () => {
+  const item = photo({
+    upload: { status: "uploaded", artifactId: "artifact" },
+    analysis: {
+      status: "failed",
+      artifactId: "artifact",
+      recovery: { state: "blocked" },
+    },
+  });
+  vi.mocked(saveDraft)
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(new Error("storage unavailable"));
+  vi.mocked(deleteArtifact).mockImplementationOnce(async () => {
+    expect(item.deletionPending).toBe(true);
+    expect(saveDraft).toHaveBeenCalled();
+    return { artifactId: "artifact", status: "deleted" };
+  });
+  await expect(removeEvidenceItem(item.id)).rejects.toThrow(
+    "Could not save evidence removal",
+  );
+  expect(held.check.items).toContain(item);
+  expect(item.deletionPending).toBe(true);
+  expect(shouldResumeEvidenceItem(item)).toBe(false);
+  vi.mocked(deleteArtifact).mockRejectedValueOnce(
+    Object.assign(new Error("already deleted"), { status: 404 }),
+  );
+  await removeEvidenceItem(item.id);
+  expect(held.check.items).toHaveLength(0);
+  expect(deleteArtifact).toHaveBeenCalledTimes(2);
+});
+it("never deletes remotely when its intent cannot be saved", async () => {
+  const item = photo({
+    upload: { status: "uploaded", artifactId: "artifact" },
+    analysis: { status: "failed" },
+  });
+  vi.mocked(saveDraft).mockRejectedValueOnce(new Error("storage unavailable"));
+  await expect(removeEvidenceItem(item.id)).rejects.toThrow();
+  expect(deleteArtifact).not.toHaveBeenCalled();
+  expect(item.deletionPending).toBeUndefined();
+});
+
+it.each([400, 401, 403, 409, 410, 422])(
+  "clears a definitively rejected deletion (%s) durably and retains the card",
+  async (status) => {
+    const item = photo({
+      upload: { status: "uploaded", artifactId: "artifact" },
+      analysis: {
+        status: "failed",
+        artifactId: "artifact",
+        recovery: { state: "blocked" },
+      },
+    });
+    vi.mocked(deleteArtifact).mockRejectedValueOnce(
+      Object.assign(new Error("rejected"), { status }),
+    );
+    await expect(removeEvidenceItem(item.id)).rejects.toThrow("rejected");
+    expect(item.deletionPending).toBe(false);
+    expect(held.check.items).toContain(item);
+    expect(held.saved.at(-1).items[0].deletionPending).toBe(false);
+  },
+);
+it.each([0, 408, 429, 503])(
+  "preserves deletion intent for an unresolved response (%s)",
+  async (status) => {
+    const item = photo({
+      upload: { status: "uploaded", artifactId: "artifact" },
+    });
+    vi.mocked(deleteArtifact).mockRejectedValueOnce(
+      Object.assign(new Error("uncertain"), { status }),
+    );
+    await expect(removeEvidenceItem(item.id)).rejects.toThrow("uncertain");
+    expect(item.deletionPending).toBe(true);
+  },
+);
+it("keeps deletion pending when its definitive rejection cannot be persisted", async () => {
+  const item = photo({
+    upload: { status: "uploaded", artifactId: "artifact" },
+  });
+  vi.mocked(saveDraft)
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(new Error("storage unavailable"));
+  vi.mocked(deleteArtifact).mockRejectedValueOnce(
+    Object.assign(new Error("rejected"), { status: 409 }),
+  );
+  await expect(removeEvidenceItem(item.id)).rejects.toThrow(
+    "Could not save evidence removal",
+  );
+  expect(item.deletionPending).toBe(true);
+});
+it.each([false, true])(
+  "reconciles a rejected replay against server evidence, exists=%s",
+  async (exists) => {
+    const item = photo({
+      deletionPending: true,
+      upload: { status: "uploaded", artifactId: "artifact" },
+    });
+    vi.mocked(getCheck).mockResolvedValueOnce({
+      check: {},
+      analyses: [],
+      artifacts: exists ? [{ artifactId: "artifact" }] : [],
+    });
+    vi.mocked(deleteArtifact).mockRejectedValueOnce(
+      Object.assign(new Error("rejected"), { status: 409 }),
+    );
+    const pending = removeEvidenceItem(item.id);
+    if (exists) {
+      await expect(pending).rejects.toThrow("rejected");
+      expect(item.deletionPending).toBe(false);
+      expect(held.check.items).toContain(item);
+    } else {
+      await pending;
+      expect(held.check.items).toHaveLength(0);
+    }
+  },
+);
+it("retains unresolved deletion when the server cannot confirm whether its replay already succeeded", async () => {
+  const item = photo({
+    deletionPending: true,
+    upload: { status: "uploaded", artifactId: "artifact" },
+  });
+  vi.mocked(getCheck).mockRejectedValueOnce(new Error("offline"));
+  vi.mocked(deleteArtifact).mockRejectedValueOnce(
+    Object.assign(new Error("rejected"), { status: 409 }),
+  );
+  await expect(removeEvidenceItem(item.id)).rejects.toThrow();
+  expect(item.deletionPending).toBe(true);
   expect(held.check.items).toContain(item);
 });

@@ -1630,22 +1630,30 @@ export async function registerTextArtifact(
     originSiteId,
   },
 ) {
-  await registerArtifact(
-    checkId,
-    {
-      artifactId,
-      ...(capturedAt ? { capturedAt } : {}),
-      ...(Number.isFinite(latitude) && Number.isFinite(longitude)
-        ? {
-            latitude,
-            longitude,
-            ...(Number.isFinite(accuracyMeters) ? { accuracyMeters } : {}),
-          }
-        : {}),
-      text,
-    },
-    { originSiteId },
-  );
+  try {
+    await registerArtifact(
+      checkId,
+      {
+        artifactId,
+        ...(capturedAt ? { capturedAt } : {}),
+        ...(Number.isFinite(latitude) && Number.isFinite(longitude)
+          ? {
+              latitude,
+              longitude,
+              ...(Number.isFinite(accuracyMeters) ? { accuracyMeters } : {}),
+            }
+          : {}),
+        text,
+      },
+      { originSiteId },
+    );
+  } catch (error) {
+    if (
+      error?.status !== 409 ||
+      error?.body?.error !== "artifact already registered"
+    )
+      throw error;
+  }
   return artifactId;
 }
 
