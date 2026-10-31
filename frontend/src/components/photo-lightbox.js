@@ -131,14 +131,29 @@ customElements.define("photo-lightbox", PhotoLightbox);
  * @param {Element | null} [screen] Screen that owned the trigger when clicked.
  */
 export async function openPhotoLightbox(host, trigger, screen = trigger) {
-  const isCurrent = () =>
-    host.isConnected &&
-    trigger.isConnected &&
-    screen?.isConnected &&
-    host.contains(screen) &&
-    screen.contains(trigger);
+  if (!host.isConnected || !screen?.isConnected || !host.contains(screen))
+    return;
+  const mediaKey = trigger
+    .querySelector("capture-photo")
+    ?.getAttribute("data-media-key");
+  const isCurrent = () => {
+    if (!host.isConnected || !screen?.isConnected || !host.contains(screen))
+      return false;
+    if (trigger.isConnected && screen.contains(trigger)) return true;
+    // A render may replace the button while keeping the same photo. Only a
+    // live replacement with the same durable identity can finish this request.
+    const replacement =
+      mediaKey &&
+      [...screen.querySelectorAll("capture-photo")]
+        .find((photo) => photo.getAttribute("data-media-key") === mediaKey)
+        ?.closest("[data-photo-lightbox]");
+    if (!(replacement instanceof HTMLElement) || !screen.contains(replacement))
+      return false;
+    trigger = replacement;
+    return true;
+  };
   if (!isCurrent()) return;
-  const image = trigger.querySelector("img");
+  let image = trigger.querySelector("img");
   if (!(image instanceof HTMLImageElement)) return;
   const capture =
     /** @type {import("./capture-photo.js").CapturePhoto | null} */ (
@@ -150,6 +165,11 @@ export async function openPhotoLightbox(host, trigger, screen = trigger) {
   }
   const original = capture ? await capture.original().catch(() => null) : null;
   if (!isCurrent()) {
+    original?.release();
+    return;
+  }
+  image = trigger.querySelector("img");
+  if (!(image instanceof HTMLImageElement)) {
     original?.release();
     return;
   }

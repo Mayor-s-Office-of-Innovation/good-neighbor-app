@@ -113,7 +113,12 @@ test("unavailable history and unclassified photos retain useful guidance; failed
       json: { error: { code: "invalid_request" } },
     }),
   );
+  const rejectedUpload = page.waitForResponse(
+    (response) =>
+      response.url().includes("artifacts:presign") && response.status() === 400,
+  );
   await addPhoto(page, PHOTO_CLEAR);
+  await rejectedUpload;
   await expect(page.locator(".shot")).toHaveCount(1);
   await expect(count).toBeHidden();
   await expect(title).toHaveText(t("check.title"));
