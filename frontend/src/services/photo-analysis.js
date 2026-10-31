@@ -1,3 +1,4 @@
+import { needsRegistrationRepair } from "../domain/check-completion.js";
 import {
   connectionAvailable,
   removingEvidence,
@@ -565,7 +566,9 @@ async function evaluateArtifact(checkId, itemId, artifactId) {
     },
   });
   const analysis =
-    itemById(itemId)?.analysis?.sourceAnalysis ||
+    ((!itemById(itemId)?.analysis?.repairingRegistration ||
+      itemById(itemId)?.analysis?.sourceAnalysis?.artifactId === artifactId) &&
+      itemById(itemId)?.analysis?.sourceAnalysis) ||
     (await withLeg("analyze", () =>
       observePhotoStage("analyze", telemetry, () =>
         waitForArtifactAnalysis(checkId, artifactId, {
@@ -584,6 +587,7 @@ async function evaluateArtifact(checkId, itemId, artifactId) {
         attempts: 0,
       },
       serverGeneration: analysis.analysisGeneration || artifactId,
+      repairingRegistration: undefined,
       error: analysis.error?.message || "Analysis failed.",
       failure: {
         leg: "analyze",
@@ -617,6 +621,7 @@ async function evaluateArtifact(checkId, itemId, artifactId) {
   );
   updateItemAnalysis(itemId, {
     status: "analyzed",
+    repairingRegistration: undefined,
     recovery: undefined,
     artifactId,
     checkId,
@@ -694,6 +699,7 @@ export function shouldResumeEvidenceItem(item) {
   if (["manual", "blocked"].includes(recovery?.state)) return false;
   if (recovery?.nextAttemptAt > Date.now()) return false;
   return (
+    needsRegistrationRepair(item) ||
     ["idle", "queued", "analyzing", "waiting"].includes(status) ||
     (status === "failed" && (!recovery || recovery.state === "scheduled"))
   );
@@ -1159,6 +1165,32 @@ async function run(itemId, manual = false) {
     }
     if (!connectionAvailable())
       throw Object.assign(new Error("Connection unavailable"), { status: 0 });
+    if (needsRegistrationRepair(item)) {
+      // Reuse persisted identity only; never guess between unrelated photos.
+      const detail = await getCheck(check.id, {
+        originSiteId: check.siteId,
+      }).catch((error) => {
+        if (error.status === 404) return null;
+        throw error;
+      });
+      await assertOwner();
+      const knownId =
+        item.upload?.artifactId || item.analysis?.sourceAnalysis?.artifactId;
+      const artifact =
+        knownId &&
+        detail?.artifacts?.find((entry) => entry.artifactId === knownId);
+      if (artifact) {
+        updateItemAnalysis(itemId, { artifactId: artifact.artifactId });
+        updateItem(itemId, {
+          upload: {
+            ...item.upload,
+            status: "uploaded",
+            artifactId: artifact.artifactId,
+          },
+        });
+      }
+      updateItemAnalysis(itemId, { repairingRegistration: true });
+    }
     const recovery = manual
       ? { ...item.analysis?.recovery, attempts: 0 }
       : item.analysis?.recovery;

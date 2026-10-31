@@ -202,3 +202,20 @@ export function completionStatus(check) {
 export function canSubmitDescription(text) {
   return String(text || "").trim().length >= MIN_DESCRIPTION_LENGTH;
 }
+
+/** Confirmed registration, excluding an upload reservation. @param {any} item */
+export function hasRegisteredArtifact(item) {
+  return Boolean(
+    item.analysis?.artifactId ||
+      (item.upload?.status === "uploaded" && item.upload?.artifactId),
+  );
+}
+
+/** Legacy completed evidence still needs its missing registration repaired. @param {any} item */
+export function needsRegistrationRepair(item) {
+  return Boolean(
+    item.analysis?.status === "analyzed" &&
+      itemHasLiveEvidence(item) &&
+      !hasRegisteredArtifact(item),
+  );
+}

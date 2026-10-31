@@ -671,3 +671,60 @@ it("does not charge pending observation against its budget after losing connecti
     attempts: 2,
   });
 });
+
+it("repairs restored analyzed evidence once and does not reuse unregistered cached analysis", async () => {
+  const item = photo({
+    analysis: {
+      status: "analyzed",
+      sourceAnalysis: { artifactId: "old", status: "analyzed", concerns: [] },
+    },
+  });
+  expect(analyzeEvidenceItem(item.id)).toBe(true);
+  expect(analyzeEvidenceItem(item.id)).toBeUndefined();
+  await vi.waitFor(() => expect(item.analysis.artifactId).toBe("artifact"));
+  await vi.waitFor(() => expect(item.analysis.status).toBe("analyzed"));
+  expect(item.analysis.repairingRegistration).toBeUndefined();
+  expect(item.analysis.sourceAnalysis.artifactId).toBe("artifact");
+  expect(uploadArtifact).toHaveBeenCalledTimes(1);
+});
+
+it("adopts a registered saved identity without uploading restored evidence again", async () => {
+  const item = photo({
+    upload: { status: "uploading", artifactId: "artifact" },
+    analysis: { status: "analyzed" },
+  });
+  vi.mocked(getCheck).mockResolvedValue({
+    check: {},
+    artifacts: [{ artifactId: "artifact" }],
+    analyses: [successful],
+  });
+  analyzeEvidenceItem(item.id);
+  await vi.waitFor(() => expect(item.analysis.artifactId).toBe("artifact"));
+  await vi.waitFor(() => expect(item.analysis.status).toBe("analyzed"));
+  expect(uploadArtifact).not.toHaveBeenCalled();
+});
+
+it("retains registration repair identity through an interrupted analysis retry", async () => {
+  const item = photo({
+    analysis: {
+      status: "analyzed",
+      sourceAnalysis: { artifactId: "old", status: "analyzed", concerns: [] },
+    },
+  });
+  vi.mocked(getCheck)
+    .mockResolvedValueOnce({ check: {}, artifacts: [], analyses: [] })
+    .mockRejectedValueOnce(
+      Object.assign(new Error("temporary"), { status: 503 }),
+    );
+  analyzeEvidenceItem(item.id);
+  await vi.waitFor(() =>
+    expect(item.analysis.recovery?.state).toBe("scheduled"),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(item.analysis.repairingRegistration).toBe(true);
+  item.analysis.recovery.nextAttemptAt = Date.now() - 1;
+  analyzeEvidenceItem(item.id);
+  await vi.waitFor(() => expect(item.analysis.status).toBe("analyzed"));
+  expect(item.analysis.sourceAnalysis.artifactId).toBe("artifact");
+  expect(uploadArtifact).toHaveBeenCalledTimes(1);
+});

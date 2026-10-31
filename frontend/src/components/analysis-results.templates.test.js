@@ -1616,3 +1616,32 @@ it("uses a neutral placeholder until source evidence type is known", () => {
   expect(card).toContain('name="image"');
   expect(card).not.toContain('name="file-lines"');
 });
+
+it("keeps existing results visible and inert while registration is repaired", () => {
+  const cards = analysisCards(
+    {
+      id: "restored",
+      kind: "photo",
+      analysis: {
+        status: "queued",
+        repairingRegistration: true,
+        recovery: { state: "working" },
+        tasks: [
+          {
+            taskId: "task",
+            category: "Litter",
+            label: "Pick up litter",
+            userFriendlyLabel: "Litter near gate",
+            guidance: "Pick up the litter",
+            kind: "self",
+          },
+        ],
+        conditions: [],
+      },
+    },
+    "check",
+  );
+  expect(cards.join("")).toContain("Litter near gate");
+  expect(cards.join("")).toContain('aria-busy="true" inert');
+  expect(cards.join("")).not.toContain("analysis-card--pending");
+});

@@ -263,3 +263,20 @@ it("does not use overdue item or finalization deadlines for an offline timer", a
     vi.useRealTimers();
   }
 });
+
+it("holds finalization for restored analyzed evidence without registration", async () => {
+  const item = {
+    id: "restored",
+    kind: "photo",
+    dataUrl: "data:image/jpeg;base64,AA",
+    analysis: { status: "analyzed" },
+  };
+  const check = finishedCheck("restored", [item]);
+  expect(readyForScorecard(check)).toBe(false);
+  held.finished = [check];
+  await resumeCheckSubmissions();
+  expect(analyzeEvidenceItem).toHaveBeenCalledWith("restored");
+  expect(finalizeCaptureScorecardInBackground).not.toHaveBeenCalled();
+  item.analysis.artifactId = "registered";
+  expect(readyForScorecard(check)).toBe(true);
+});

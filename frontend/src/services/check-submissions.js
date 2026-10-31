@@ -41,7 +41,12 @@ import {
   expectedArtifactCountForCheck,
   finalizeCaptureScorecardInBackground,
 } from "./submit-check.js";
-import { checkItems, itemHasLiveEvidence } from "../domain/check-completion.js";
+import {
+  hasRegisteredArtifact,
+  needsRegistrationRepair,
+  checkItems,
+  itemHasLiveEvidence,
+} from "../domain/check-completion.js";
 
 /**
  * Every live item has guidance or a permanent terminal result.
@@ -52,7 +57,7 @@ export function readyForScorecard(check) {
     (item) =>
       !item.deletionPending &&
       (!itemHasLiveEvidence(item) ||
-        item.analysis?.status === "analyzed" ||
+        (item.analysis?.status === "analyzed" && hasRegisteredArtifact(item)) ||
         item.analysis?.recovery?.state === "blocked"),
   );
 }
@@ -110,7 +115,11 @@ export async function resumeCheckSubmissions({ uploads = true } = {}) {
             void removeEvidenceItem(item.id).catch(() => {});
           continue;
         }
-        if (item.analysis?.status === "waiting") waiting = true;
+        if (
+          item.analysis?.status === "waiting" ||
+          needsRegistrationRepair(item)
+        )
+          waiting = true;
         if (item.analysis?.recovery?.state === "scheduled") {
           waiting = true;
           if (!offline)

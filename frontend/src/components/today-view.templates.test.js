@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { t } from "../i18n/i18n.js";
 import { escapeHtml } from "../lib/html.js";
@@ -27,6 +27,32 @@ describe("homeActions", () => {
 });
 
 describe("settingsMenu", () => {
+  it("describes the menu with a non-interactive sibling release footer", () => {
+    vi.stubEnv("VITE_RELEASE_VERSION", "v0.2.2");
+    try {
+      const markup = settingsMenu({ open: true });
+      const actions = markup.slice(
+        markup.indexOf('role="menu"'),
+        markup.indexOf('class="home-settings-footer"'),
+      );
+      expect(actions).toContain('aria-describedby="settings-release-version"');
+      expect(actions).toContain('id="settings-logout"');
+      expect(actions.trim()).toMatch(/<\/div>\s*<div$/);
+      expect(actions).not.toContain('id="settings-release-version"');
+      const footer = markup.slice(
+        markup.indexOf('class="home-settings-footer"'),
+      );
+      expect(footer).toContain('id="settings-release-version"');
+      expect(footer).toContain("v0.2.2");
+      expect(footer).not.toMatch(/tabindex|role="menuitem"/);
+      expect(settingsMenu({ open: false })).not.toContain(
+        'id="settings-release-version"',
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("renders the menu only while open", () => {
     expect(settingsMenu({ open: false })).not.toContain('role="menu"');
     const open = settingsMenu({ open: true, adminAccess: true });

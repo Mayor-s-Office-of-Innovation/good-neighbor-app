@@ -115,6 +115,7 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.webp";
  * @property {string} [noIssuesDescription]
  * @property {string} [error]
  * @property {string} [lastTriedAt]
+ * @property {boolean} [repairingRegistration]
  * @property {boolean} [localSaveConfirmed]
  * @property {any} [recovery]
  * @property {number} [retryCount]
@@ -431,7 +432,22 @@ export function analysisCards(item, sessionCheckId, options = {}) {
  * @param {{ siteName?: string, siteAddress?: string }} [options]
  * @returns {AnalysisCardEntry[]}
  */
-function analysisCardEntries(
+function analysisCardEntries(evidence, sessionCheckId, options = {}) {
+  const entries = renderAnalysisCardEntries(evidence, sessionCheckId, options);
+  if (
+    !evidence.analysis?.repairingRegistration ||
+    evidence.analysis?.recovery?.state !== "working"
+  )
+    return entries;
+  return entries.map((entry) => ({
+    ...entry,
+    markup: entry.markup.replace("<article", '<article aria-busy="true" inert'),
+  }));
+}
+
+/** @param {AnalysisItem} evidence @param {string} sessionCheckId
+ * @param {{siteName?: string, siteAddress?: string}} options */
+function renderAnalysisCardEntries(
   evidence,
   sessionCheckId,
   { siteName = "", siteAddress = "" } = {},
@@ -445,6 +461,19 @@ function analysisCardEntries(
       evidence.analysis?.georeferencedAddress ||
       "",
   };
+  // Keep existing results mounted visually while repairing their registration.
+  if (
+    item.analysis?.repairingRegistration &&
+    item.analysis?.recovery?.state === "working" &&
+    (item.analysis.tasks?.length ||
+      item.analysis.conditions?.length ||
+      item.analysis.sourceAnalysis)
+  )
+    item.analysis = {
+      ...item.analysis,
+      status: "analyzed",
+      recovery: undefined,
+    };
   const status = item.analysis?.status || "idle";
   const itemTime = item.uploadedAt || item.createdAt || "";
   if (
