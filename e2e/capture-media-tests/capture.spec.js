@@ -1,4 +1,4 @@
-/* global localStorage, File, Blob, IDBObjectStore, DOMException, Event, customElements, HTMLElement */
+/* global localStorage, File, Blob, IDBObjectStore, DOMException, Event, customElements, HTMLElement, structuredClone */
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
@@ -579,4 +579,173 @@ test("photo click waits for the lazy component to register", async ({
     return { waited, calls, open: host.querySelector("dialog").open };
   });
   expect(result).toEqual({ waited: true, calls: 1, open: true });
+});
+
+test("stale-tab photo admission preserves deletions and newer metadata on later saves", async ({
+  page,
+  context,
+}) => {
+  await page.evaluate(async () => {
+    await window.session.addCapturedPhoto(
+      new File(["old"], "old.jpg", { type: "image/jpeg" }),
+    );
+  });
+  const other = await context.newPage();
+  await other.route("**/__capture_test", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: "<html><body></body></html>",
+    }),
+  );
+  await other.goto("/__capture_test");
+  await other.evaluate(async () => {
+    const db = await import("/src/db.js");
+    const check = await db.getDraft("perimeter");
+    const key = check.items[0].media.key;
+    check.analyzingOpen = false;
+    await db.saveDraft(check);
+    check.items = [];
+    await db.deleteCapturePhoto(check, key);
+  });
+  const result = await page.evaluate(async () => {
+    const { db, session } = window;
+    const photo = await session.addCapturedPhoto(
+      new File(["new"], "new.jpg", { type: "image/jpeg" }),
+    );
+    const afterAdmission = await db.getDraft("perimeter");
+    session.updateItemAnalysis(photo.id, { status: "waiting" });
+    await db.saveDraft(session.getCurrentCheck());
+    const later = await db.getDraft("perimeter");
+    return {
+      admitted: afterAdmission.items.map((i) => i.id),
+      later: later.items.map((i) => i.id),
+      expected: [photo.id],
+      newerFlag: later.analyzingOpen,
+      identity: session.getCurrentCheck().items[0] === photo,
+      bytes: await (await db.getCaptureMedia(photo.media.key)).original.text(),
+    };
+  });
+  expect(result.admitted).toEqual(result.expected);
+  expect(result.later).toEqual(result.expected);
+  expect(result.newerFlag).toBe(false);
+  expect(result.identity).toBe(true);
+  expect(result.bytes).toBe("new");
+  await other.close();
+});
+
+test("stale photo removal preserves a concurrent admission", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { db, session } = window;
+    const first = await session.addCapturedPhoto(
+      new File(["first"], "first.jpg", { type: "image/jpeg" }),
+    );
+    const stale = structuredClone(await db.getDraft("perimeter"));
+    const second = await session.addCapturedPhoto(
+      new File(["second"], "second.jpg", { type: "image/jpeg" }),
+    );
+    stale.items = [];
+    await db.deleteCapturePhoto(stale, first.media.key);
+    await db.saveDraft(stale);
+    const saved = await db.getDraft("perimeter");
+    return {
+      ids: saved.items.map((i) => i.id),
+      expected: [second.id],
+      removed: !(await db.getCaptureMedia(first.media.key)),
+    };
+  });
+  expect(result.ids).toEqual(result.expected);
+  expect(result.removed).toBe(true);
+});
+
+for (const stage of ["definition", "original"]) {
+  test(`removed photo cannot open after awaiting ${stage}`, async ({
+    page,
+  }) => {
+    const result = await page.evaluate(async (stage) => {
+      const { openPhotoLightbox } = await import(
+        "/src/components/photo-lightbox.js"
+      );
+      const host = document.querySelector("#test");
+      host.innerHTML =
+        '<section><button data-photo-lightbox><capture-photo><img alt="Synthetic"></capture-photo></button></section>';
+      const screen = host.querySelector("section");
+      const trigger = screen.querySelector("button");
+      let resolveOriginal, started;
+      const began = new Promise((resolve) => {
+        started = resolve;
+      });
+      const pending = new Promise((resolve) => {
+        resolveOriginal = resolve;
+      });
+      let calls = 0,
+        released = 0;
+      const define = () =>
+        customElements.define(
+          "capture-photo",
+          class extends HTMLElement {
+            original() {
+              calls++;
+              started();
+              return pending;
+            }
+          },
+        );
+      if (stage === "original") define();
+      const opening = openPhotoLightbox(host, trigger, screen);
+      if (stage === "original") await began;
+      trigger.remove();
+      if (stage === "definition") define();
+      resolveOriginal({
+        src: "blob:synthetic",
+        release() {
+          released++;
+        },
+      });
+      await opening;
+      return { opened: !!host.querySelector("dialog"), calls, released };
+    }, stage);
+    expect(result).toEqual({
+      opened: false,
+      calls: stage === "original" ? 1 : 0,
+      released: stage === "original" ? 1 : 0,
+    });
+  });
+}
+
+test("admission rebase retains upload progress changed while its transaction is pending", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { db, session } = window;
+    const first = await session.addCapturedPhoto(
+      new File(["first"], "first.jpg", { type: "image/jpeg" }),
+    );
+    const put = IDBObjectStore.prototype.put;
+    let changed = false;
+    IDBObjectStore.prototype.put = function (...args) {
+      const request = put.apply(this, args);
+      if (this.name === "captureMedia" && !changed) {
+        changed = true;
+        session.updateItemAnalysis(first.id, { status: "waiting" });
+      }
+      return request;
+    };
+    try {
+      await session.addCapturedPhoto(
+        new File(["second"], "second.jpg", { type: "image/jpeg" }),
+      );
+    } finally {
+      IDBObjectStore.prototype.put = put;
+    }
+    await db.saveDraft(session.getCurrentCheck());
+    const saved = await db.getDraft("perimeter");
+    return {
+      count: saved.items.length,
+      status: saved.items[0].analysis.status,
+      identity: session.getCurrentCheck().items[0] === first,
+    };
+  });
+  expect(result).toEqual({ count: 2, status: "waiting", identity: true });
 });

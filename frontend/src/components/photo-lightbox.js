@@ -131,8 +131,13 @@ customElements.define("photo-lightbox", PhotoLightbox);
  * @param {Element | null} [screen] Screen that owned the trigger when clicked.
  */
 export async function openPhotoLightbox(host, trigger, screen = trigger) {
-  if (!host.isConnected || !screen?.isConnected || !host.contains(screen))
-    return;
+  const isCurrent = () =>
+    host.isConnected &&
+    trigger.isConnected &&
+    screen?.isConnected &&
+    host.contains(screen) &&
+    screen.contains(trigger);
+  if (!isCurrent()) return;
   const image = trigger.querySelector("img");
   if (!(image instanceof HTMLImageElement)) return;
   const capture =
@@ -141,11 +146,10 @@ export async function openPhotoLightbox(host, trigger, screen = trigger) {
     );
   if (capture) {
     await customElements.whenDefined("capture-photo");
-    if (!host.isConnected || !screen?.isConnected || !host.contains(screen))
-      return;
+    if (!isCurrent()) return;
   }
   const original = capture ? await capture.original().catch(() => null) : null;
-  if (!host.isConnected || !screen?.isConnected || !host.contains(screen)) {
+  if (!isCurrent()) {
     original?.release();
     return;
   }
@@ -157,6 +161,7 @@ export async function openPhotoLightbox(host, trigger, screen = trigger) {
   if (!src) {
     if (capture) {
       const { showToast } = await import("../state/toasts.js");
+      if (!isCurrent()) return;
       showToast({
         title: t("card.evidence.unavailable"),
         message: "",

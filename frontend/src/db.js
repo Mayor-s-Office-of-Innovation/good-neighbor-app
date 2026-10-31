@@ -799,6 +799,7 @@ export function deleteCaptureMedia(key) {
  * @param {any} check @param {any} item @param {Blob} original
  */
 export function saveCapturePhoto(check, item, original) {
+  const before = captureSnapshot(check);
   const store = check.status === "in-progress" ? "draft" : "review";
   return tx([store, "captureMedia"], "readwrite", async (os, transaction) => {
     const migrating = typeof item.dataUrl === "string";
@@ -825,17 +826,16 @@ export function saveCapturePhoto(check, item, original) {
     );
     // Discard/sign-out or another session must not be undone by a late capture.
     if (saved?.id !== check.id || !check.items.includes(item)) return false;
-    const prior = (
-      saved.items ||
-      Object.values(saved.places || {}).flatMap((place) => place.items || [])
-    ).find((i) => i.id === item.id);
+    const savedItems = captureItems(saved);
+    const prior = savedItems.find((i) => i.id === item.id);
     if (migrating && !prior) return false;
     if (migrating && prior.media) {
       Object.assign(item, prior);
       delete item.dataUrl;
-      return true;
+      return { ...saved, items: savedItems };
     }
-    const source = migrating && Array.isArray(saved.items) ? saved : check;
+    const source = { ...saved, items: savedItems };
+    if (!prior) source.items = [...source.items, item];
     const record = {
       ...source,
       mediaVersion: 1,
@@ -847,13 +847,16 @@ export function saveCapturePhoto(check, item, original) {
         return rest;
       }),
     };
+    delete record.places;
+    delete record.placeOrder;
+    delete record.activePlaceIndex;
     transaction.objectStore("captureMedia").put({
       key: item.media.key,
       siteId: check.siteId,
       checkId: check.id,
       itemId: item.id,
       flowType: check.flowType,
-      ...(item.upload?.status === "uploaded" ? {} : { original }),
+      ...((prior || item).upload?.status === "uploaded" ? {} : { original }),
       contentType: item.media.type,
       contentLength: item.media.size,
     });
@@ -869,8 +872,61 @@ export function saveCapturePhoto(check, item, original) {
           os.delete(keys[i]);
       }
     } else os.put(record, finishedCheckKey(check.siteId, check.id));
+    return record;
+  }).then((saved) => {
+    if (!saved) return false;
+    reconcileCaptureCheck(check, before, saved);
     return true;
   });
+}
+
+// Retain item identity for active uploads. Rebase the caller after commit so its
+// next metadata save cannot write the stale pre-admission snapshot back. Changes
+// made locally while the transaction was pending still belong to that caller.
+function captureSnapshot(check) {
+  return { ...check, items: check.items.map((item) => ({ ...item })) };
+}
+
+function captureItems(check) {
+  if (Array.isArray(check.items)) return check.items;
+  const places = check.places || {};
+  return [
+    ...new Set([...(check.placeOrder || []), ...Object.keys(places)]),
+  ].flatMap((id) => places[id]?.items || []);
+}
+
+function reconcileCaptureFields(target, before, saved) {
+  for (const field of new Set([
+    ...Object.keys(before),
+    ...Object.keys(saved),
+  ])) {
+    if (field === "items" || !Object.is(target[field], before[field])) continue;
+    if (Object.hasOwn(saved, field)) target[field] = saved[field];
+    else delete target[field];
+  }
+}
+
+function reconcileCaptureCheck(check, before, saved) {
+  const local = new Map(check.items.map((item) => [item.id, item]));
+  const previous = new Map(before.items.map((item) => [item.id, item]));
+  const persisted = new Set(saved.items.map((item) => item.id));
+  const items = saved.items.flatMap((item) => {
+    const current = local.get(item.id);
+    // A local removal while the transaction was pending must also win.
+    if (!current && previous.has(item.id)) return [];
+    if (!current) return [item];
+    reconcileCaptureFields(current, previous.get(item.id) || {}, item);
+    return [current];
+  });
+  for (const item of check.items) {
+    if (
+      !persisted.has(item.id) &&
+      (!previous.has(item.id) || item.captureSaving)
+    )
+      items.push(item);
+  }
+  reconcileCaptureFields(check, before, saved);
+  check.items = items;
 }
 
 /** Cache a thumbnail only while the registered item still exists. Commit eviction with the thumbnail.
@@ -960,6 +1016,7 @@ export function releaseCaptureOriginal(key, artifactId) {
  * @param {string} key
  */
 export function deleteCapturePhoto(check, key) {
+  const before = captureSnapshot(check);
   const store = check.status === "in-progress" ? "draft" : "review";
   return tx([store, "captureMedia"], "readwrite", async (os, transaction) => {
     const lookup =
@@ -968,15 +1025,21 @@ export function deleteCapturePhoto(check, key) {
         : finishedCheckKey(check.siteId, check.id);
     const saved = await reqToPromise(os.get(lookup));
     if (saved?.id === check.id) {
-      os.put(captureMetadata(check), lookup);
+      saved.items = captureItems(saved).filter(
+        (item) => item.media?.key !== key,
+      );
+      os.put(captureMetadata(saved), lookup);
       if (store === "draft") {
         const current = await reqToPromise(
           os.get(draftKey(undefined, check.siteId)),
         );
         if (current?.id === check.id)
-          os.put(captureMetadata(check), draftKey(undefined, check.siteId));
+          os.put(captureMetadata(saved), draftKey(undefined, check.siteId));
       }
     }
     transaction.objectStore("captureMedia").delete(key);
+    return saved?.id === check.id ? saved : null;
+  }).then((saved) => {
+    if (saved) reconcileCaptureCheck(check, before, saved);
   });
 }
