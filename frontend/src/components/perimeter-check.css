@@ -30,6 +30,11 @@
   margin-bottom: 1rem;
 }
 
+/* Keep keyed wrappers out of layout so their tiles remain grid items. */
+.shotgrid__entry {
+  display: contents;
+}
+
 /* Empty place: the lone ＋ tile stands centered instead of tiling. */
 .shotgrid--empty {
   display: flex;
@@ -357,6 +362,11 @@
 
 .check-timeline {
   gap: 1.25rem;
+}
+
+/* Keep the stable results container from adding an empty flex item or gap. */
+#capture-tray-slot {
+  display: contents;
 }
 .check-roll__grid:empty {
   display: none;

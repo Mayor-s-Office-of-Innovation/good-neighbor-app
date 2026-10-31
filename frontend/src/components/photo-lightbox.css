@@ -94,3 +94,16 @@
     max-width: calc(100vw - 2.5rem);
   }
 }
+
+.photo-lightbox [hidden] {
+  display: none;
+}
+.photo-lightbox__image-wrap {
+  min-width: 8rem;
+  min-height: 4.5rem;
+}
+.photo-lightbox__recovery {
+  max-width: 28rem;
+  padding: 0 1.25rem 1rem;
+  text-align: center;
+}

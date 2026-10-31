@@ -1364,7 +1364,7 @@ export async function dataUrlToBlob(dataUrl) {
  * pinned S3 key, and validated media metadata so callers can persist enough state to re-drive the analysis
  * later (a retry re-registers the SAME artifact rather than re-uploading).
  * @param {string} checkId
- * @param {{ dataUrl: string, capturedAt?: string, location?: () => ({ latitude: number, longitude: number, accuracyMeters?: number } | null), text?: string, tag?: string, onLeg?: (leg: "presign" | "put" | "register") => void }} item
+ * @param {{ dataUrl?: string, blob?: Blob, capturedAt?: string, location?: () => ({ latitude: number, longitude: number, accuracyMeters?: number } | null), text?: string, tag?: string, onLeg?: (leg: "presign" | "put" | "register") => void }} item
  *   `location` is read just before register, so a reading that lands during
  *   the upload still goes with the photo.
  *   `tag` is a caller-supplied label used only for perf traces (e.g. the item id).
@@ -1374,14 +1374,18 @@ export async function dataUrlToBlob(dataUrl) {
  */
 export async function uploadArtifact(
   checkId,
-  { dataUrl, capturedAt, location, text, tag, onLeg },
+  { dataUrl, blob: original, capturedAt, location, text, tag, onLeg },
 ) {
   const art = tag ?? "photo";
   const telemetry = { check_id: checkId, attempt_id: photoAttemptId() };
   const done = span("upload", { art });
 
-  const contentType = contentTypeFromDataUrl(dataUrl);
-  const blob = await dataUrlToBlob(dataUrl);
+  const contentType = original
+    ? UPLOADABLE_TYPES.has(original.type)
+      ? original.type
+      : "image/jpeg"
+    : contentTypeFromDataUrl(dataUrl);
+  const blob = original || (await dataUrlToBlob(dataUrl));
   telemetry.photo_bytes = blob.size;
   const endPresign = span("upload.presign", { art });
   const { artifactId, s3Key, uploadUrl, uploadHeaders } =

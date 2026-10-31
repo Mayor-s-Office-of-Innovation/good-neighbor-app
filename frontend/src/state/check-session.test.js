@@ -6,6 +6,9 @@ let nextId = 1;
 vi.mock("../db.js", () => ({
   newId: () => `test-check-id-${nextId++}`,
   saveDraft: vi.fn(),
+  saveCapturePhoto: vi.fn(),
+  deleteCapturePhoto: vi.fn(async () => {}),
+  deleteCaptureMedia: vi.fn(async () => {}),
   clearDraft: vi.fn(),
   getDraft: vi.fn(async () => null),
   saveFinishedCheck: vi.fn((check) => {
@@ -345,5 +348,67 @@ describe("several finished checks", () => {
     session.markScorecardDone(first.check.id);
     expect(first.check.scorecardDone).toBe(true);
     expect(saveFinishedCheck).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("capture admission across session replacement", () => {
+  beforeEach(async () => {
+    const session = await import("./check-session.js");
+    session.discardInMemorySession();
+    vi.clearAllMocks();
+  });
+
+  it("cleans a committed photo when another check replaces the admitting session", async () => {
+    const session = await import("./check-session.js");
+    const db = await import("../db.js");
+    /** @type {(value: boolean) => void} */
+    let complete = () => {};
+    vi.mocked(db.saveCapturePhoto).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    );
+    const old = session.startCheck("site-1");
+    const admission = session.addCapturedPhoto(
+      new File(["test"], "synthetic.jpg", { type: "image/jpeg" }),
+    );
+    const key = old.items[0].media.key;
+    const next = session.startCheck("site-1");
+    vi.mocked(db.saveDraft).mockClear();
+    complete(true);
+    expect(await admission).toBeNull();
+    expect(db.deleteCapturePhoto).toHaveBeenCalledWith(old, key);
+    expect(old.items).toEqual([]);
+    expect(session.getCurrentCheck()).toBe(next);
+    expect(db.saveDraft).not.toHaveBeenCalled();
+  });
+
+  it("does not persist or announce an inactive check after admission fails", async () => {
+    const session = await import("./check-session.js");
+    const db = await import("../db.js");
+    /** @type {(error: Error) => void} */
+    let fail = () => {};
+    vi.mocked(db.saveCapturePhoto).mockImplementationOnce(
+      () =>
+        new Promise((resolve, reject) => {
+          fail = reject;
+        }),
+    );
+    const old = session.startCheck("site-1");
+    const admission = session.addCapturedPhoto(
+      new File(["test"], "synthetic.jpg", { type: "image/jpeg" }),
+    );
+    const next = session.startCheck("site-1");
+    vi.mocked(db.saveDraft).mockClear();
+    const listener = vi.fn();
+    const unsubscribe = session.onCheckSessionChange(listener);
+    fail(new Error("Synthetic quota failure"));
+    await expect(admission).rejects.toThrow("Synthetic quota failure");
+    unsubscribe();
+    expect(old.items).toEqual([]);
+    expect(session.getCurrentCheck()).toBe(next);
+    expect(db.saveDraft).not.toHaveBeenCalled();
+    expect(listener).not.toHaveBeenCalled();
   });
 });
