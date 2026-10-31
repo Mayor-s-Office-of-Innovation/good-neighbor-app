@@ -178,6 +178,7 @@ import { switchToBoundSite } from "../services/site-switch.js";
 import { getLocale, setLocale, t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
 import {
+  finishQuestionAnswerFocus,
   setQuestionAnswerBusy,
   showQuestionAnswerUpdated,
 } from "./analysis-answer-controls.js";
@@ -3117,6 +3118,7 @@ class TodayView extends HTMLElement {
   }
 
   _finishQuestionConfirmation(conditionId, siteId, generation) {
+    finishQuestionAnswerFocus(this, conditionId);
     this._answeringConditionIds.delete(conditionId);
     if (
       !this.isConnected ||

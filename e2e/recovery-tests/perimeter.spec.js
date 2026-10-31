@@ -27,7 +27,9 @@ async function setup(page) {
   const server = {
     interrupted: false,
     complete: false,
+    loseNextUploadReply: false,
     uploads: 0,
+    stored: new Set(),
     active: 0,
     peak: 0,
     artifacts: new Map(),
@@ -54,8 +56,15 @@ async function setup(page) {
     server.active++;
     server.peak = Math.max(server.peak, server.active);
     await new Promise((resolve) => setTimeout(resolve, 100));
+    server.stored.add(
+      new URL(route.request().url()).pathname.split("/").at(-1),
+    );
     server.uploads++;
     server.active--;
+    if (server.loseNextUploadReply) {
+      server.loseNextUploadReply = false;
+      return route.abort("internetdisconnected");
+    }
     await route.fulfill({ status: 200, body: "" });
   });
   await page.route("**/v1/**", async (route) => {
@@ -81,6 +90,11 @@ async function setup(page) {
     }
     if (path.endsWith("/artifacts")) {
       const body = request.postDataJSON();
+      if (body.s3Key && !server.stored.has(body.artifactId))
+        return route.fulfill({
+          status: 409,
+          json: { error: "media_upload_missing" },
+        });
       server.artifacts.set(body.artifactId, body);
       server.registrations++;
       return route.fulfill({
@@ -121,6 +135,21 @@ async function statuses(page) {
       .items.map((/** @type {any} */ item) => item.analysis.status),
   );
 }
+
+test("a stored photo with a lost PUT reply is verified without retransmitting bytes", async ({
+  page,
+}) => {
+  const server = await setup(page);
+  server.complete = true;
+  server.loseNextUploadReply = true;
+  await page.locator("#capture").click();
+  await expect
+    .poll(() => statuses(page), { timeout: 75_000 })
+    .toEqual(["analyzed"]);
+  expect(server.uploads).toBe(1);
+  expect(server.stored.size).toBe(1);
+  expect(server.registrations).toBe(1);
+});
 
 test("Wi-Fi to shaky cellular to offline recovers photos without manual retries", async ({
   page,

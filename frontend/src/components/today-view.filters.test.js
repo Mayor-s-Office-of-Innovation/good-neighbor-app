@@ -35,9 +35,11 @@ const todayTitle = (iso) =>
   escapeHtml(t("analysis.checkTitle.today", { time: formatTime(iso) }));
 
 const answerUpdated = vi.hoisted(() => vi.fn());
+const finishAnswerFocus = vi.hoisted(() => vi.fn());
 vi.mock("./analysis-answer-controls.js", async (importOriginal) => ({
   ...(await importOriginal()),
   showQuestionAnswerUpdated: answerUpdated,
+  finishQuestionAnswerFocus: finishAnswerFocus,
 }));
 
 const session = vi.hoisted(() => ({ current: null }));
@@ -2647,4 +2649,24 @@ it("preserves the selected problem while a background refresh leaves its dialog 
   siteRead.mockResolvedValueOnce({ siteId: "another-site" });
   await view.connectedCallback();
   expect(view._activeProblem).toBeNull();
+});
+
+it("cleans up each completed home answer even while another confirmation holds the render", () => {
+  finishAnswerFocus.mockClear();
+  const view = {
+    isConnected: true,
+    _siteId: "example",
+    _homeRefreshGeneration: 1,
+    _answeringConditionIds: new Set(["first", "second"]),
+    _renderHome: vi.fn(),
+  };
+  TodayView.prototype._finishQuestionConfirmation.call(
+    view,
+    "first",
+    "example",
+    1,
+  );
+  expect(finishAnswerFocus).toHaveBeenCalledWith(view, "first");
+  expect(view._renderHome).not.toHaveBeenCalled();
+  expect(view._answeringConditionIds.has("second")).toBe(true);
 });

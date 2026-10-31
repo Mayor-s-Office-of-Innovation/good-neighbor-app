@@ -73,6 +73,19 @@ function trackAnswerFocus(root, conditionId, itemId = "") {
   });
 }
 
+/** End focus tracking without unlocking an accepted answer's controls.
+ * @param {Document | HTMLElement | ShadowRoot} root
+ * @param {string} conditionId
+ * @param {{itemId?: string}} [options]
+ */
+export function finishQuestionAnswerFocus(
+  root,
+  conditionId,
+  { itemId = "" } = {},
+) {
+  focusSessions.get(root)?.get(answerIdentity(conditionId, itemId))?.finish();
+}
+
 /** Replace one condition's answer controls with progress until the request settles.
  * Buttons remain in the DOM so failures can restore the original choices.
  * @param {Document | HTMLElement | ShadowRoot} root
@@ -121,7 +134,7 @@ export function setQuestionAnswerBusy(
         </span>`,
       );
   }
-  if (!busy) focusSessions.get(root)?.get(identity)?.finish();
+  if (!busy) finishQuestionAnswerFocus(root, conditionId, { itemId });
 }
 
 /** @type {WeakMap<HTMLElement, Map<string, () => void>>} */

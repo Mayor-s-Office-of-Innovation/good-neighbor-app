@@ -101,6 +101,7 @@ import {
   analyzingSection,
 } from "./perimeter-check.templates.js";
 import {
+  finishQuestionAnswerFocus,
   setQuestionAnswerBusy,
   showQuestionAnswerUpdated,
 } from "./analysis-answer-controls.js";
@@ -609,6 +610,9 @@ class PerimeterCheck extends HTMLElement {
     let confirmationPending = false;
     const finish = (confirmed = false) => {
       if (confirmed) {
+        finishQuestionAnswerFocus(this, problem.conditionId, {
+          itemId: problem.itemId,
+        });
         // Keep the accepted question locked until the batch can render. Another
         // answer's confirmation may still be holding the original DOM in place.
         const entry = this._answeringConditionIds.get(identity);

@@ -1,11 +1,13 @@
 import { beforeAll, beforeEach, expect, it, vi } from "vitest";
 const feedback = vi.hoisted(() => ({
+  finishFocus: vi.fn(),
   busy: vi.fn(),
   show: vi.fn(),
   answer: vi.fn(async () => ({})),
   remove: vi.fn(async () => {}),
 }));
 vi.mock("./analysis-answer-controls.js", () => ({
+  finishQuestionAnswerFocus: feedback.finishFocus,
   setQuestionAnswerBusy: feedback.busy,
   showQuestionAnswerUpdated: feedback.show,
 }));
@@ -88,6 +90,9 @@ it.each(["perimeter", "report"])(
     await prototype._answerProblemQuestion.call(view, first, button);
     await prototype._answerProblemQuestion.call(view, second, button);
     feedback.show.mock.calls[0][2].onComplete();
+    expect(feedback.finishFocus).toHaveBeenCalledWith(view, "shared", {
+      itemId: "photo-1",
+    });
     expect(view._render).not.toHaveBeenCalled();
     expect(feedback.busy.mock.calls.every((call) => call[2] === true)).toBe(
       true,
