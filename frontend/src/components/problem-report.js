@@ -1,4 +1,7 @@
 import { showInlineError } from "./error-notice.js";
+import { reportCaughtError } from "../services/error-report.js";
+import { loadError } from "./load-error.js";
+import { escapeHtml } from "../lib/html.js";
 import { CaptureFileQueue } from "../services/capture-files.js";
 import { resolveSessionTask } from "./session-task-resolution.js";
 import { openSessionDuplicate } from "./duplicate-issue-launcher.js";
@@ -123,6 +126,27 @@ class ProblemReport extends HTMLElement {
   async connectedCallback() {
     const initGeneration = ++this._initGeneration;
     this._cleanupSubscription();
+    this.innerHTML = `<p role="status">${escapeHtml(t("care.loading"))}</p>`;
+    try {
+      await this._initialize(initGeneration);
+    } catch (error) {
+      if (!this._isCurrentInit(initGeneration)) return;
+      this._cleanupSubscription();
+      reportCaughtError(error);
+      console.error("Single issue initialization failed", error);
+      this.innerHTML = `${loadError(t("route.loadError"))}<button type="button" class="btn-outline" data-startup-back>${escapeHtml(t("common.back"))}</button>`;
+      this.querySelector("[data-load-retry]")?.addEventListener(
+        "click",
+        () => void this.connectedCallback(),
+      );
+      this.querySelector("[data-startup-back]")?.addEventListener("click", () =>
+        replaceRoute("/today"),
+      );
+    }
+  }
+
+  /** @param {number} initGeneration */
+  async _initialize(initGeneration) {
     // A boot that lands here directly has no interrupted hand-off to resume.
     clearCameraOpen();
     /** @type {SiteRecord | null} */

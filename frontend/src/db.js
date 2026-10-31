@@ -34,7 +34,12 @@ let _dbPromise = null;
 
 function openDb() {
   if (_dbPromise) return _dbPromise;
-  _dbPromise = new Promise((resolve, reject) => {
+  const opening = new Promise((resolve, reject) => {
+    let failed = false;
+    const fail = (error) => {
+      failed = true;
+      reject(error);
+    };
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
@@ -61,29 +66,60 @@ function openDb() {
     };
     req.onsuccess = () => {
       const db = req.result;
+      // A blocked open can succeed after its caller has already received an error.
+      if (failed) {
+        db.close();
+        return;
+      }
+      const invalidate = () => {
+        if (_dbPromise === opening) _dbPromise = null;
+      };
+      db.onclose = invalidate;
       // If another tab later requests a newer version, don't wedge its upgrade —
       // close this connection so the version change can proceed.
-      db.onversionchange = () => db.close();
+      db.onversionchange = () => {
+        invalidate();
+        db.close();
+      };
       resolve(db);
     };
-    req.onerror = () => reject(req.error);
+    req.onerror = () => fail(req.error);
     // A stale connection in another tab is holding the old version open. Surface it
     // rather than hanging silently; the versionchange handler above prevents it.
     req.onblocked = () =>
-      reject(
+      fail(
         new Error(
           "IndexedDB upgrade blocked — close other tabs of this app and reload.",
         ),
       );
   });
-  return _dbPromise;
+  _dbPromise = opening;
+  void opening.catch(() => {
+    if (_dbPromise === opening) _dbPromise = null;
+  });
+  return opening;
 }
 
-function tx(store, mode, fn) {
-  return openDb().then(
+function tx(store, mode, fn, retry = true) {
+  const opening = openDb();
+  return opening.then(
     (db) =>
       new Promise((resolve, reject) => {
-        const t = db.transaction(store, mode);
+        let t;
+        try {
+          t = db.transaction(store, mode);
+        } catch (error) {
+          if (error?.name !== "InvalidStateError") {
+            reject(error);
+            return;
+          }
+          // No transaction started, so retrying cannot replay a write.
+          if (_dbPromise === opening) _dbPromise = null;
+          db.close();
+          if (retry) resolve(tx(store, mode, fn, false));
+          else reject(error);
+          return;
+        }
         const os = t.objectStore(Array.isArray(store) ? store[0] : store);
         let result;
         Promise.resolve()

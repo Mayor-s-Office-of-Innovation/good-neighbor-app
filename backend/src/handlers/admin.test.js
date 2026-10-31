@@ -210,77 +210,84 @@ describe("provider and site management", () => {
     });
   });
 
-  it("creates sites under providers", async () => {
-    send
-      .mockResolvedValueOnce({
-        Item: {
-          providerId: "provider-one",
-          name: "Provider One",
-          status: "active",
-        },
-      })
-      .mockResolvedValue({});
+  it.each(["shelter", "other"])(
+    "creates sites under providers with type %s",
+    async (siteType) => {
+      send
+        .mockResolvedValueOnce({
+          Item: {
+            providerId: "provider-one",
+            name: "Provider One",
+            status: "active",
+          },
+        })
+        .mockResolvedValue({});
 
-    const res = await call(
-      createSite,
-      event(
-        {
-          name: "Main Site",
-          address: "1 Dr Carlton B Goodlett Pl, San Francisco, CA 94102",
-        },
-        "central-admin",
-        {
-          providerId: "provider-one",
-        },
-      ),
-    );
+      const res = await call(
+        createSite,
+        event(
+          {
+            name: "Main Site",
+            siteType,
+            address: "1 Dr Carlton B Goodlett Pl, San Francisco, CA 94102",
+          },
+          "central-admin",
+          {
+            providerId: "provider-one",
+          },
+        ),
+      );
 
-    expect(res.statusCode).toBe(201);
-    expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
-    expect(send.mock.calls[1][0]).toBeInstanceOf(TransactWriteCommand);
-    const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[1][0]);
-    expect(tx.input.TransactItems).toHaveLength(3);
-    expect(tx.input.TransactItems?.[0]).toMatchObject({
-      Put: {
-        Item: {
-          pk: "SITE#provider-one-main-site",
-          sk: "#META",
-          deliberate311ProductionEnabled: true,
+      expect(res.statusCode).toBe(201);
+      expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
+      expect(send.mock.calls[1][0]).toBeInstanceOf(TransactWriteCommand);
+      const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[1][0]);
+      expect(tx.input.TransactItems).toHaveLength(3);
+      expect(tx.input.TransactItems?.[0]).toMatchObject({
+        Put: {
+          Item: {
+            pk: "SITE#provider-one-main-site",
+            sk: "#META",
+            deliberate311ProductionEnabled: true,
+            siteType,
+          },
+          ConditionExpression:
+            "attribute_not_exists(pk) AND attribute_not_exists(sk)",
         },
-        ConditionExpression:
-          "attribute_not_exists(pk) AND attribute_not_exists(sk)",
-      },
-    });
-    // Sites no longer carry a places list (docs/plan-remove-places.md).
-    expect(tx.input.TransactItems?.[0]?.Put?.Item).not.toHaveProperty("places");
-    expect(tx.input.TransactItems?.[1]).toMatchObject({
-      Put: {
-        Item: {
-          pk: "PROVIDER#provider-one",
-          sk: "SITE#provider-one-main-site",
+      });
+      // Sites no longer carry a places list (docs/plan-remove-places.md).
+      expect(tx.input.TransactItems?.[0]?.Put?.Item).not.toHaveProperty(
+        "places",
+      );
+      expect(tx.input.TransactItems?.[1]).toMatchObject({
+        Put: {
+          Item: {
+            pk: "PROVIDER#provider-one",
+            sk: "SITE#provider-one-main-site",
+          },
+          ConditionExpression:
+            "attribute_not_exists(pk) AND attribute_not_exists(sk)",
         },
-        ConditionExpression:
-          "attribute_not_exists(pk) AND attribute_not_exists(sk)",
-      },
-    });
-    expect(tx.input.TransactItems?.[2]).toMatchObject({
-      Put: {
-        Item: {
-          pk: "SITE_SEARCH#ACTIVE",
-          sk: "main site#provider-one-main-site",
+      });
+      expect(tx.input.TransactItems?.[2]).toMatchObject({
+        Put: {
+          Item: {
+            pk: "SITE_SEARCH#ACTIVE",
+            sk: "main site#provider-one-main-site",
+          },
+          ConditionExpression:
+            "attribute_not_exists(pk) AND attribute_not_exists(sk)",
         },
-        ConditionExpression:
-          "attribute_not_exists(pk) AND attribute_not_exists(sk)",
-      },
-    });
-    expect(JSON.parse(res.body).site).toMatchObject({
-      siteId: "provider-one-main-site",
-      providerId: "provider-one",
-      name: "Main Site",
-      address: "1 Dr Carlton B Goodlett Pl, San Francisco, CA 94102",
-      location: { latitude: 37.7793, longitude: -122.4192 },
-    });
-  });
+      });
+      expect(JSON.parse(res.body).site).toMatchObject({
+        siteId: "provider-one-main-site",
+        providerId: "provider-one",
+        name: "Main Site",
+        address: "1 Dr Carlton B Goodlett Pl, San Francisco, CA 94102",
+        location: { latitude: 37.7793, longitude: -122.4192 },
+      });
+    },
+  );
 
   it("creates the program-to-site relationship in the site transaction", async () => {
     send
@@ -1001,60 +1008,68 @@ describe("provider and site management", () => {
     });
   });
 
-  it("updates provider membership and public search records when renaming sites", async () => {
-    send
-      .mockResolvedValueOnce({
-        Item: {
-          siteId: "site-1",
-          name: "City Hall",
-          providerId: "provider-one",
-          providerName: "Provider One",
-          providerSiteId: "provider-site-1",
-          status: "active",
-        },
-      })
-      .mockResolvedValueOnce({});
+  it.each(["shelter", "other"])(
+    "updates site type %s and related records when renaming sites",
+    async (siteType) => {
+      send
+        .mockResolvedValueOnce({
+          Item: {
+            siteId: "site-1",
+            name: "City Hall",
+            providerId: "provider-one",
+            providerName: "Provider One",
+            providerSiteId: "provider-site-1",
+            status: "active",
+          },
+        })
+        .mockResolvedValueOnce({});
 
-    const res = await call(
-      updateSite,
-      event(
-        { name: "Civic Center", address: "1 Dr Carlton B Goodlett Pl" },
-        "central-admin",
-        { siteId: "site-1" },
-      ),
-    );
+      const res = await call(
+        updateSite,
+        event(
+          {
+            name: "Civic Center",
+            siteType,
+            address: "1 Dr Carlton B Goodlett Pl",
+          },
+          "central-admin",
+          { siteId: "site-1" },
+        ),
+      );
 
-    expect(res.statusCode).toBe(200);
-    const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[1][0]);
-    expect(tx).toBeInstanceOf(TransactWriteCommand);
-    expect(tx.input.TransactItems?.[1]).toMatchObject({
-      Update: {
-        Key: { pk: "PROVIDER#provider-one", sk: "SITE#site-1" },
-        UpdateExpression: expect.stringContaining("siteName"),
-      },
-    });
-    expect(tx.input.TransactItems?.[2]).toMatchObject({
-      Delete: {
-        Key: { pk: "SITE_SEARCH#ACTIVE", sk: "city hall#site-1" },
-      },
-    });
-    expect(tx.input.TransactItems?.[3]).toMatchObject({
-      Put: {
-        Item: {
-          pk: "SITE_SEARCH#ACTIVE",
-          sk: "civic center#site-1",
-          siteName: "Civic Center",
-          label: "Civic Center (Provider One)",
-          searchText: "civic center provider one",
+      expect(res.statusCode).toBe(200);
+      const tx = /** @type {TransactWriteCommand} */ (send.mock.calls[1][0]);
+      expect(tx).toBeInstanceOf(TransactWriteCommand);
+      expect(tx.input.TransactItems?.[1]).toMatchObject({
+        Update: {
+          Key: { pk: "PROVIDER#provider-one", sk: "SITE#site-1" },
+          UpdateExpression: expect.stringContaining("siteName"),
         },
-      },
-    });
-    expect(JSON.parse(res.body).site).toMatchObject({
-      siteId: "site-1",
-      name: "Civic Center",
-      address: "1 Dr Carlton B Goodlett Pl",
-    });
-  });
+      });
+      expect(tx.input.TransactItems?.[2]).toMatchObject({
+        Delete: {
+          Key: { pk: "SITE_SEARCH#ACTIVE", sk: "city hall#site-1" },
+        },
+      });
+      expect(tx.input.TransactItems?.[3]).toMatchObject({
+        Put: {
+          Item: {
+            pk: "SITE_SEARCH#ACTIVE",
+            sk: "civic center#site-1",
+            siteName: "Civic Center",
+            label: "Civic Center (Provider One)",
+            searchText: "civic center provider one",
+          },
+        },
+      });
+      expect(JSON.parse(res.body).site).toMatchObject({
+        siteId: "site-1",
+        name: "Civic Center",
+        siteType,
+        address: "1 Dr Carlton B Goodlett Pl",
+      });
+    },
+  );
 
   it("requires an address when creating a site", async () => {
     const res = await call(

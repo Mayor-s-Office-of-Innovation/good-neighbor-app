@@ -1979,9 +1979,12 @@ function normalizePhone(value) {
 /** @param {unknown} value */
 function normalizeSiteType(value) {
   const siteType = cleanText(value);
-  return ["permanent_supportive_housing", "shelter", "drop_in"].includes(
-    siteType,
-  )
+  return [
+    "permanent_supportive_housing",
+    "shelter",
+    "drop_in",
+    "other",
+  ].includes(siteType)
     ? siteType
     : "";
 }
