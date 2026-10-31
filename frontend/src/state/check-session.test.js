@@ -347,3 +347,45 @@ describe("several finished checks", () => {
     expect(saveFinishedCheck).toHaveBeenCalledTimes(1);
   });
 });
+
+it("upgrades legacy failures to automatic recovery without resetting exhausted budgets", async () => {
+  const { clearCheck, loadDraft } = await import("./check-session.js");
+  const { getDraft } = await import("../db.js");
+  clearCheck();
+  vi.mocked(getDraft).mockResolvedValueOnce(
+    /** @type {any} */ ({
+      id: "recovery-migration",
+      siteId: "site-1",
+      flowType: "perimeter",
+      status: "in-progress",
+      items: [
+        {
+          id: "legacy-failure",
+          kind: "photo",
+          dataUrl: "data:image/jpeg;base64,AA",
+          analysis: { status: "failed", failure: { leg: "upload" } },
+        },
+        {
+          id: "exhausted",
+          kind: "photo",
+          analysis: {
+            status: "failed",
+            recovery: { stage: "upload", state: "manual", attempts: 3 },
+          },
+        },
+      ],
+    }),
+  );
+  const check = await loadDraft("perimeter");
+  expect(check.items[0].analysis.recovery).toMatchObject({
+    stage: "upload",
+    state: "scheduled",
+    attempts: 0,
+  });
+  expect(check.items[1].analysis.recovery).toEqual({
+    stage: "upload",
+    state: "manual",
+    attempts: 3,
+  });
+  clearCheck();
+});

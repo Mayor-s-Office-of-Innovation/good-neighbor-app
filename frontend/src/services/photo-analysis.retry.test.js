@@ -1,510 +1,387 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-vi.mock("./api.js", () => ({
-  createCheck: vi.fn(),
-  evaluateAssessment: vi.fn(),
-  getAssessmentGuidance: vi.fn(),
-  getCheck: vi.fn(),
-  registerArtifact: vi.fn(),
-  submitConditionAnswers: vi.fn(),
-  uploadArtifact: vi.fn(),
-  registerTextArtifact: vi.fn(),
-  contentTypeFromDataUrl: vi.fn(() => "image/png"),
-  dataUrlToBlob: vi.fn(async () => new Blob(["old-session-photo"])),
-  ApiError: class ApiError extends Error {
-    constructor(message, opts = {}) {
-      super(message);
-      this.status = opts.status;
-      this.body = opts.body;
-    }
-  },
-  LEG: { PRESIGN: "presign", PUT: "put", REGISTER: "register" },
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+const held = vi.hoisted(() => ({ check: null, saved: [] }));
+vi.mock("../db.js", () => ({
+  saveDraft: vi.fn(async (check) => {
+    held.saved.push(structuredClone(check));
+  }),
+  saveFinishedCheck: vi.fn(async () => {}),
+  getSite: vi.fn(async () => ({ siteId: "site" })),
+}));
+vi.mock("./backend-health.js", () => ({ getHealthState: () => "healthy" }));
+vi.mock("./device-location.js", () => ({
+  readCaptureDeviceLocation: () => ({
+    atUpload: () => null,
+    later: Promise.resolve(null),
+  }),
 }));
 vi.mock("../state/check-session.js", () => ({
-  findCheckForItem: vi.fn(() => null),
-  getCheck: vi.fn(() => null),
-  getCurrentCheck: vi.fn(),
-  updateItem: vi.fn(),
-  updateItemAnalysis: vi.fn(),
+  getCurrentCheck: () => held.check,
+  removeItem: vi.fn((id) => {
+    held.check.items = held.check.items.filter((item) => item.id !== id);
+  }),
+  getCheck: () => held.check,
+  findCheckForItem: () => held.check,
+  updateItem: (id, patch) =>
+    Object.assign(
+      held.check.items.find((item) => item.id === id),
+      patch,
+    ),
+  updateItemAnalysis: (id, patch) => {
+    const item = held.check.items.find((item) => item.id === id);
+    item.analysis = { ...item.analysis, ...patch };
+  },
 }));
-
+vi.mock("./api.js", () => ({
+  createCheck: vi.fn(async () => {}),
+  deleteArtifact: vi.fn(async () => ({})),
+  getCheck: vi.fn(),
+  evaluateAssessment: vi.fn(async () => ({
+    assessment: {},
+    tasks: [],
+    conditions: [],
+  })),
+  registerArtifact: vi.fn(async () => ({})),
+  uploadArtifact: vi.fn(),
+  registerTextArtifact: vi.fn(async () => "text-artifact"),
+  contentTypeFromDataUrl: () => "image/jpeg",
+  dataUrlToBlob: async () => new Blob(["synthetic"]),
+  LEG: { PUT: "put" },
+  ApiError: class extends Error {
+    constructor(message, options = {}) {
+      super(message);
+      Object.assign(this, options);
+    }
+  },
+}));
 import {
   getCheck,
+  deleteArtifact,
   registerArtifact,
-  registerTextArtifact,
   uploadArtifact,
-  ApiError,
+  evaluateAssessment,
 } from "./api.js";
+import { saveDraft } from "../db.js";
 import {
-  getCurrentCheck,
-  updateItem,
-  updateItemAnalysis,
-} from "../state/check-session.js";
-import { retryEvidenceItem } from "./photo-analysis.js";
+  analyzeEvidenceItem,
+  retryEvidenceItem,
+  reconcileFailedEvidence,
+  removeEvidenceItem,
+  shouldResumeEvidenceItem,
+} from "./photo-analysis.js";
+import { cancelCheckPolling } from "./check-polling.js";
 
-beforeEach(() => vi.resetAllMocks());
+let sequence = 0;
+function photo(extra = {}) {
+  const item = {
+    id: `item-${++sequence}`,
+    kind: "photo",
+    dataUrl: "data:image/jpeg;base64,AA",
+    analysis: { status: "idle" },
+    ...extra,
+  };
+  held.check = {
+    id: "check",
+    siteId: "site",
+    status: "in-progress",
+    remoteStarted: true,
+    items: [item],
+  };
+  return item;
+}
+const successful = { artifactId: "artifact", status: "analyzed", concerns: [] };
+beforeEach(() => {
+  vi.clearAllMocks();
+  held.saved = [];
+  vi.stubGlobal("navigator", { onLine: true });
+  vi.mocked(uploadArtifact).mockReset().mockResolvedValue({
+    artifactId: "artifact",
+    s3Key: "synthetic-key",
+    contentType: "image/jpeg",
+    contentLength: 9,
+  });
+  vi.mocked(getCheck)
+    .mockReset()
+    .mockResolvedValue({ check: {}, analyses: [successful], artifacts: [] });
+  vi.mocked(evaluateAssessment)
+    .mockReset()
+    .mockResolvedValue({ assessment: {}, conditions: [], tasks: [] });
+  vi.mocked(registerArtifact)
+    .mockReset()
+    .mockResolvedValue({ artifactId: "artifact", status: "queued" });
+});
 afterEach(async () => {
-  const { cancelCheckPolling } = await import("./check-polling.js");
   cancelCheckPolling("check");
   await new Promise((resolve) => setTimeout(resolve, 0));
   vi.unstubAllGlobals();
 });
 
-// Unique item id per test: photo-analysis dedupes concurrent runs on the item
-// id, and a previous test's still-pending poll would swallow the next test's
-// run otherwise.
-let testSeq = 0;
-
-function sessionItem(overrides = {}) {
-  return {
-    id: `item-${++testSeq}`,
-    kind: "photo",
-    uploadedAt: "2026-09-15T10:00:00Z",
-    analysis: { status: "failed" },
-    upload: { status: "failed" },
-    ...overrides,
-  };
-}
-
-// Loose fixtures — the mocked module surface is intentionally partial.
-/** @returns {any} */
-function session(checkItem) {
-  return { id: "check", items: [checkItem] };
-}
-
-describe("retryEvidenceItem", () => {
-  it.each([
-    undefined,
-    {
-      randomUUID() {
-        throw new Error("unavailable");
-      },
+it("persists evidence before uploading and completes without a tap", async () => {
+  const item = photo();
+  vi.mocked(uploadArtifact).mockImplementationOnce(async () => {
+    expect(held.saved[0].items[0].dataUrl).toBe(item.dataUrl);
+    return {
+      artifactId: "artifact",
+      s3Key: "synthetic-key",
+      contentType: "image/jpeg",
+      contentLength: 9,
+    };
+  });
+  analyzeEvidenceItem(item.id);
+  await vi.waitFor(() => expect(item.analysis.status).toBe("analyzed"));
+  expect(item.analysis.recovery).toBeUndefined();
+});
+it("automatically retries a server upload failure within the budget", async () => {
+  const item = photo();
+  vi.mocked(uploadArtifact).mockRejectedValueOnce(
+    Object.assign(new Error("unavailable"), { status: 503 }),
+  );
+  analyzeEvidenceItem(item.id);
+  await vi.waitFor(() =>
+    expect(item.analysis.recovery?.state).toBe("scheduled"),
+  );
+  expect(retryEvidenceItem(item.id)).toBeUndefined();
+  expect(shouldResumeEvidenceItem(item)).toBe(false);
+  item.analysis.recovery.nextAttemptAt = Date.now() - 1;
+  analyzeEvidenceItem(item.id);
+  await vi.waitFor(() => expect(item.analysis.status).toBe("analyzed"));
+  expect(uploadArtifact).toHaveBeenCalledTimes(2);
+});
+it("exhausts automatic retries, then accepts only one manual cycle", async () => {
+  const item = photo({
+    analysis: {
+      status: "queued",
+      recovery: { stage: "upload", attempts: 3, state: "scheduled" },
     },
-  ])("resumes polling without a working UUID API (%s)", async (cryptoApi) => {
-    vi.stubGlobal("crypto", cryptoApi);
-    const item = sessionItem({
-      upload: {
-        status: "uploaded",
-        artifactId: "artifact-1",
-        contentType: "image/jpeg",
-        contentLength: 1234,
+  });
+  vi.mocked(uploadArtifact).mockRejectedValueOnce(
+    Object.assign(new Error("unavailable"), { status: 503 }),
+  );
+  analyzeEvidenceItem(item.id);
+  await vi.waitFor(() => expect(item.analysis.recovery?.state).toBe("manual"));
+  expect(shouldResumeEvidenceItem(item)).toBe(false);
+  expect(retryEvidenceItem(item.id)).toBe(true);
+  expect(retryEvidenceItem(item.id)).toBeUndefined();
+  await vi.waitFor(() => expect(item.analysis.status).toBe("analyzed"));
+  expect(uploadArtifact).toHaveBeenCalledTimes(2);
+});
+it("pauses a network interruption without consuming the budget and resumes", async () => {
+  const item = photo();
+  vi.mocked(uploadArtifact).mockRejectedValueOnce(
+    Object.assign(new Error("offline"), { status: 0 }),
+  );
+  analyzeEvidenceItem(item.id);
+  await vi.waitFor(() => expect(item.analysis.status).toBe("waiting"));
+  expect(item.analysis.recovery.attempts || 0).toBe(0);
+  vi.stubGlobal("navigator", { onLine: false });
+  expect(retryEvidenceItem(item.id)).toBeUndefined();
+  vi.stubGlobal("navigator", { onLine: true });
+  analyzeEvidenceItem(item.id);
+  await vi.waitFor(() => expect(item.analysis.status).toBe("analyzed"));
+});
+it("does not reset an exhausted budget on reconnection", () => {
+  const item = photo({
+    analysis: {
+      status: "failed",
+      recovery: { stage: "upload", attempts: 3, state: "manual" },
+    },
+  });
+  vi.stubGlobal("navigator", { onLine: false });
+  expect(retryEvidenceItem(item.id)).toBeUndefined();
+  vi.stubGlobal("navigator", { onLine: true });
+  expect(shouldResumeEvidenceItem(item)).toBe(false);
+  expect(item.analysis.recovery.attempts).toBe(3);
+});
+it("keeps registration checkpoints when another upload attempt begins", async () => {
+  const upload = {
+    status: "uploading",
+    artifactId: "artifact",
+    s3Key: "synthetic-key",
+    bytesUploaded: true,
+  };
+  const item = photo({ upload });
+  analyzeEvidenceItem(item.id);
+  await vi.waitFor(() => expect(uploadArtifact).toHaveBeenCalled());
+  expect(vi.mocked(uploadArtifact).mock.calls[0][1].checkpoint).toMatchObject({
+    bytesUploaded: true,
+    artifactId: "artifact",
+  });
+  await vi.waitFor(() => expect(item.analysis.status).toBe("analyzed"));
+});
+it("retries guidance without uploading or restarting analysis", async () => {
+  const item = photo({
+    upload: { status: "uploaded", artifactId: "artifact" },
+    analysis: {
+      status: "queued",
+      sourceAnalysis: successful,
+      recovery: { stage: "evaluate", state: "scheduled", attempts: 1 },
+    },
+  });
+  analyzeEvidenceItem(item.id);
+  await vi.waitFor(() => expect(item.analysis.status).toBe("analyzed"));
+  expect(getCheck).not.toHaveBeenCalled();
+  expect(registerArtifact).not.toHaveBeenCalled();
+  expect(uploadArtifact).not.toHaveBeenCalled();
+});
+it("exposes server exhaustion and restarts it once with a persisted identity", async () => {
+  const item = photo({
+    upload: {
+      status: "uploaded",
+      artifactId: "artifact",
+      contentType: "image/jpeg",
+      contentLength: 9,
+    },
+  });
+  vi.mocked(getCheck).mockResolvedValueOnce({
+    check: {},
+    artifacts: [],
+    analyses: [
+      {
+        artifactId: "artifact",
+        status: "failed",
+        retryable: true,
+        analysisGeneration: "generation-1",
       },
-      analysis: { status: "failed", artifactId: "artifact-1" },
-    });
-    vi.mocked(getCurrentCheck).mockReturnValue(session(item));
-    vi.mocked(getCheck).mockResolvedValue(
-      /** @type {any} */ ({ analyses: [], artifacts: [] }),
-    );
+    ],
+  });
+  analyzeEvidenceItem(item.id);
+  await vi.waitFor(() => expect(item.analysis.recovery?.state).toBe("manual"));
+  retryEvidenceItem(item.id);
+  retryEvidenceItem(item.id);
+  await vi.waitFor(() => expect(item.analysis.status).toBe("analyzed"));
+  expect(registerArtifact).toHaveBeenCalledTimes(1);
+  const request = vi.mocked(registerArtifact).mock.calls[0][1];
+  expect(request.expectedGeneration).toBe("generation-1");
+  expect(
+    held.saved.some(
+      (check) =>
+        check.items[0].analysis.restartRequestId === request.retryRequestId,
+    ),
+  ).toBe(true);
+  expect(uploadArtifact).not.toHaveBeenCalled();
+});
+it("does not offer another attempt for permanent server failure", async () => {
+  const item = photo({
+    upload: { status: "uploaded", artifactId: "artifact" },
+  });
+  vi.mocked(getCheck).mockResolvedValueOnce({
+    check: {},
+    artifacts: [],
+    analyses: [{ artifactId: "artifact", status: "failed", retryable: false }],
+  });
+  analyzeEvidenceItem(item.id);
+  await vi.waitFor(() => expect(item.analysis.recovery?.state).toBe("blocked"));
+  expect(retryEvidenceItem(item.id)).toBeUndefined();
+});
+it("does not upload when local saving fails", async () => {
+  const item = photo();
+  vi.mocked(saveDraft).mockRejectedValueOnce(new Error("storage full"));
+  analyzeEvidenceItem(item.id);
+  await vi.waitFor(() => expect(item.analysis.recovery?.stage).toBe("storage"));
+  expect(item.analysis.localSaveConfirmed).toBe(false);
+  expect(uploadArtifact).not.toHaveBeenCalled();
+});
+it("leaves an old uploaded artifact in observation rather than blindly re-enqueueing", async () => {
+  const item = photo({
+    upload: { status: "uploaded", artifactId: "artifact" },
+    analysis: { status: "failed", failure: { leg: "analyze" } },
+  });
+  analyzeEvidenceItem(item.id);
+  await vi.waitFor(() => expect(item.analysis.status).toBe("analyzed"));
+  expect(registerArtifact).not.toHaveBeenCalled();
+  expect(uploadArtifact).not.toHaveBeenCalled();
+});
 
-    retryEvidenceItem(item.id);
-    await vi.waitFor(() => {
-      // The poll looks at the backend before its first sleep.
-      expect(getCheck).toHaveBeenCalledWith(
-        "check",
-        expect.objectContaining({ signal: expect.any(AbortSignal) }),
-      );
-    });
+it("reconciles late server success without restarting analysis or uploading", async () => {
+  const item = photo({
+    analysis: {
+      status: "failed",
+      artifactId: "artifact",
+      failure: { leg: "analyze" },
+      serverGeneration: "old",
+      recovery: { state: "manual", stage: "analyze" },
+    },
+  });
+  await reconcileFailedEvidence(held.check);
+  await vi.waitFor(() => expect(item.analysis.status).toBe("analyzed"));
+  expect(uploadArtifact).not.toHaveBeenCalled();
+  expect(registerArtifact).not.toHaveBeenCalled();
+});
+it("does not replace an exhausted result with success from an older generation", async () => {
+  const item = photo({
+    analysis: {
+      status: "failed",
+      artifactId: "artifact",
+      failure: { leg: "analyze" },
+      recovery: { state: "manual", stage: "analyze" },
+    },
+  });
+  vi.mocked(getCheck).mockResolvedValue({
+    check: {},
+    artifacts: [{ artifactId: "artifact", analysisGeneration: "new" }],
+    analyses: [{ ...successful, analysisGeneration: "old" }],
+  });
+  await reconcileFailedEvidence(held.check);
+  expect(item.analysis.recovery.state).toBe("manual");
+  expect(registerArtifact).not.toHaveBeenCalled();
+});
 
-    // Straight back to polling; no re-upload.
-    expect(updateItemAnalysis).toHaveBeenCalledWith(
-      item.id,
-      expect.objectContaining({
-        status: "analyzing",
-        error: undefined,
-        failure: undefined,
+it("keeps failed evidence when deletion fails and removes it after a successful retry", async () => {
+  const item = photo({
+    analysis: {
+      status: "failed",
+      artifactId: "artifact",
+      recovery: { state: "blocked" },
+    },
+  });
+  vi.mocked(deleteArtifact).mockRejectedValueOnce(
+    Object.assign(new Error("offline"), { status: 0 }),
+  );
+  await expect(removeEvidenceItem(item.id)).rejects.toThrow("offline");
+  expect(held.check.items).toContain(item);
+  await removeEvidenceItem(item.id);
+  expect(held.check.items).toHaveLength(0);
+});
+
+it("removes local-only failed evidence offline without a server request", async () => {
+  const item = photo({ analysis: { status: "failed" } });
+  vi.stubGlobal("navigator", { onLine: false });
+  await removeEvidenceItem(item.id);
+  expect(held.check.items).toHaveLength(0);
+  expect(deleteArtifact).not.toHaveBeenCalled();
+});
+it("keeps uploaded evidence offline and deduplicates deletion once connected", async () => {
+  const item = photo({
+    upload: { status: "uploaded", artifactId: "artifact" },
+    analysis: { status: "failed", failure: { uploaded: false } },
+  });
+  vi.stubGlobal("navigator", { onLine: false });
+  await expect(removeEvidenceItem(item.id)).rejects.toThrow();
+  expect(held.check.items).toContain(item);
+  expect(deleteArtifact).not.toHaveBeenCalled();
+  vi.stubGlobal("navigator", { onLine: true });
+  /** @type {(value: any) => void} */
+  let complete = () => {
+    throw new Error("Deletion has not started");
+  };
+  vi.mocked(deleteArtifact).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        complete = resolve;
       }),
-    );
-    expect(updateItem).not.toHaveBeenCalled();
-    expect(uploadArtifact).not.toHaveBeenCalled();
-  });
-
-  it("replays the whole pipeline for a failed upload", async () => {
-    const item = sessionItem();
-    vi.mocked(getCurrentCheck).mockReturnValue(session(item));
-    vi.mocked(getCheck).mockResolvedValue(
-      /** @type {any} */ ({ analyses: [], artifacts: [] }),
-    );
-    vi.mocked(uploadArtifact).mockResolvedValue(
-      /** @type {any} */ ({ artifactId: "artifact-2", s3Key: "checks/s/c/b" }),
-    );
-
-    retryEvidenceItem(item.id);
-    await vi.waitFor(() => {
-      expect(uploadArtifact).toHaveBeenCalled();
-    });
-
-    expect(updateItem).toHaveBeenCalledWith(
-      item.id,
-      expect.objectContaining({
-        upload: expect.objectContaining({ status: "failed" }),
-      }),
-    );
-    expect(updateItemAnalysis).toHaveBeenCalledWith(
-      item.id,
-      expect.objectContaining({ status: "queued" }),
-    );
-  });
-
-  it("re-registers text evidence on retry", async () => {
-    const item = sessionItem({ kind: "text", text: "Litter by the door" });
-    vi.mocked(getCurrentCheck).mockReturnValue(session(item));
-    vi.mocked(getCheck).mockResolvedValue(
-      /** @type {any} */ ({ analyses: [], artifacts: [] }),
-    );
-    vi.mocked(registerTextArtifact).mockResolvedValue("artifact-3");
-
-    retryEvidenceItem(item.id);
-    await vi.waitFor(() => {
-      expect(registerTextArtifact).toHaveBeenCalled();
-    });
-    expect(updateItemAnalysis).toHaveBeenCalledWith(
-      item.id,
-      expect.objectContaining({ status: "queued" }),
-    );
-  });
-
-  it("ignores unknown items", () => {
-    vi.mocked(getCurrentCheck).mockReturnValue(session(sessionItem()));
-    retryEvidenceItem("ghost");
-    expect(updateItemAnalysis).not.toHaveBeenCalled();
-    expect(getCheck).not.toHaveBeenCalled();
-  });
-
-  it("records upload failures with the leg, what succeeded, and the wait", async () => {
-    const item = sessionItem();
-    vi.mocked(getCurrentCheck).mockReturnValue(session(item));
-    vi.mocked(getCheck).mockResolvedValue(
-      /** @type {any} */ ({ analyses: [], artifacts: [] }),
-    );
-    const boom = Object.assign(
-      new ApiError("Media upload → 503 Service Unavailable", { status: 503 }),
-      { leg: "upload" },
-    );
-    vi.mocked(uploadArtifact).mockRejectedValue(boom);
-
-    retryEvidenceItem(item.id);
-    await vi.waitFor(() => {
-      expect(updateItemAnalysis).toHaveBeenCalledWith(
-        item.id,
-        expect.objectContaining({
-          status: "failed",
-          error: "Could not analyze this item.",
-          failure: expect.objectContaining({
-            leg: "upload",
-            uploaded: false,
-            enqueued: false,
-            waitedMs: expect.any(Number),
-          }),
-        }),
-      );
-    });
-  });
-
-  it("keeps an item waiting, not failed, when there is no connection", async () => {
-    const item = sessionItem();
-    vi.mocked(getCurrentCheck).mockReturnValue(session(item));
-    vi.mocked(uploadArtifact).mockRejectedValue(
-      new ApiError("Network error uploading media: offline", { status: 0 }),
-    );
-
-    retryEvidenceItem(item.id);
-    await vi.waitFor(() => {
-      expect(updateItemAnalysis).toHaveBeenCalledWith(
-        item.id,
-        expect.objectContaining({ status: "waiting", failure: undefined }),
-      );
-    });
-    expect(updateItem).toHaveBeenLastCalledWith(
-      item.id,
-      expect.objectContaining({
-        upload: expect.objectContaining({ status: "pending" }),
-      }),
-    );
-    expect(updateItemAnalysis).not.toHaveBeenCalledWith(
-      item.id,
-      expect.objectContaining({ status: "failed" }),
-    );
-  });
-
-  it("records analyzer timeouts with uploaded/enqueued true and the waited time", async () => {
-    vi.useFakeTimers();
-    try {
-      const item = sessionItem({
-        upload: {
-          status: "uploaded",
-          artifactId: "artifact-1",
-          contentType: "image/jpeg",
-          contentLength: 1234,
-        },
-        analysis: { status: "failed", artifactId: "artifact-1" },
-      });
-      vi.mocked(getCurrentCheck).mockReturnValue(session(item));
-      vi.mocked(getCheck).mockResolvedValue(
-        /** @type {any} */ ({ analyses: [], artifacts: [] }),
-      );
-
-      retryEvidenceItem(item.id);
-      // Drain the poll loop through its 180s deadline; the thrown
-      // analyses_pending lands in run()'s failure record.
-      await vi.runAllTimersAsync();
-
-      const failureCall = vi
-        .mocked(updateItemAnalysis)
-        .mock.calls.find(([, patch]) => patch?.failure?.leg === "analyze");
-      expect(failureCall).toBeTruthy();
-      const [, patch] = failureCall;
-      expect(patch).toEqual(
-        expect.objectContaining({
-          status: "failed",
-          error: "Analysis is taking longer than expected.",
-          failure: expect.objectContaining({
-            leg: "analyze",
-            uploaded: true,
-            enqueued: true,
-            waitedMs: expect.any(Number),
-          }),
-        }),
-      );
-      // The 180s poll ceiling is what we waited.
-      expect(patch.failure.waitedMs).toBeGreaterThanOrEqual(180000);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("re-enqueues via registerArtifact for an analyze-leg failure (no re-upload)", async () => {
-    const item = sessionItem({
-      upload: {
-        status: "uploaded",
-        artifactId: "artifact-1",
-        s3Key: "checks/s/c/a",
-        contentType: "image/jpeg",
-        contentLength: 1234,
-      },
-      analysis: {
-        status: "failed",
-        artifactId: "artifact-1",
-        s3Key: "checks/s/c/a",
-        failure: { leg: "analyze", uploaded: true, enqueued: true },
-      },
-    });
-    vi.mocked(getCurrentCheck).mockReturnValue(session(item));
-    vi.mocked(registerArtifact).mockResolvedValue(
-      /** @type {any} */ ({ artifactId: "artifact-1", status: "queued" }),
-    );
-
-    retryEvidenceItem(item.id);
-    await vi.waitFor(() => {
-      expect(registerArtifact).toHaveBeenCalledWith(
-        "check",
-        expect.objectContaining({
-          artifactId: "artifact-1",
-          s3Key: "checks/s/c/a",
-          contentType: "image/jpeg",
-          contentLength: 1234,
-        }),
-      );
-    });
-    // Same artifact re-driven: no new upload, no new artifact id.
-    expect(uploadArtifact).not.toHaveBeenCalled();
-    expect(updateItemAnalysis).toHaveBeenCalledWith(
-      item.id,
-      expect.objectContaining({ status: "analyzing", failure: undefined }),
-    );
-  });
-
-  it("seeds upload-only artifact coordinates and re-enqueues on retry", async () => {
-    const item = sessionItem({
-      upload: {
-        status: "uploaded",
-        artifactId: "artifact-1",
-        s3Key: "checks/s/c/a",
-        contentType: "image/webp",
-        contentLength: 5678,
-      },
-      analysis: {
-        status: "failed",
-        failure: { leg: "analyze", uploaded: true, enqueued: true },
-      },
-    });
-    vi.mocked(getCurrentCheck).mockReturnValue(session(item));
-    vi.mocked(registerArtifact).mockResolvedValue(
-      /** @type {any} */ ({ artifactId: "artifact-1", status: "queued" }),
-    );
-
-    retryEvidenceItem(item.id);
-    await vi.waitFor(() => {
-      expect(registerArtifact).toHaveBeenCalledWith(
-        "check",
-        expect.objectContaining({
-          artifactId: "artifact-1",
-          contentType: "image/webp",
-          contentLength: 5678,
-        }),
-      );
-    });
-    // upload.artifactId is adopted into analysis so run()/poll can see it.
-    expect(updateItemAnalysis).toHaveBeenCalledWith(
-      item.id,
-      expect.objectContaining({ artifactId: "artifact-1" }),
-    );
-  });
-
-  it("derives required media metadata for an older persisted session", async () => {
-    const item = sessionItem({
-      dataUrl: "data:image/png;base64,b2xkLXNlc3Npb24tcGhvdG8=",
-      upload: {
-        status: "uploaded",
-        artifactId: "artifact-legacy",
-        s3Key: "checks/s/c/legacy",
-      },
-      analysis: {
-        status: "failed",
-        artifactId: "artifact-legacy",
-        failure: { leg: "analyze", uploaded: true, enqueued: true },
-      },
-    });
-    vi.mocked(getCurrentCheck).mockReturnValue(session(item));
-    vi.mocked(registerArtifact).mockResolvedValue(
-      /** @type {any} */ ({ artifactId: "artifact-legacy", status: "queued" }),
-    );
-
-    retryEvidenceItem(item.id);
-
-    await vi.waitFor(() => {
-      expect(registerArtifact).toHaveBeenCalledWith(
-        "check",
-        expect.objectContaining({
-          artifactId: "artifact-legacy",
-          contentType: "image/png",
-          contentLength: 17,
-        }),
-      );
-    });
-  });
-
-  it("records a re-register failure back onto the failed card", async () => {
-    const item = sessionItem({
-      upload: { status: "uploaded", artifactId: "artifact-1" },
-      analysis: {
-        status: "failed",
-        artifactId: "artifact-1",
-        failure: { leg: "analyze", uploaded: true, enqueued: true },
-      },
-    });
-    vi.mocked(getCurrentCheck).mockReturnValue(session(item));
-    vi.mocked(registerArtifact).mockRejectedValue(
-      new ApiError("Network error calling POST /v1/checks/check/artifacts", {
-        status: 0,
-      }),
-    );
-
-    retryEvidenceItem(item.id);
-    await vi.waitFor(() => {
-      expect(updateItemAnalysis).toHaveBeenCalledWith(
-        item.id,
-        expect.objectContaining({
-          status: "failed",
-          failure: expect.objectContaining({
-            leg: "start",
-            uploaded: true,
-            enqueued: false,
-          }),
-        }),
-      );
-    });
-  });
-
-  it("resumes analysis for the exact already-registered replay response", async () => {
-    const item = sessionItem({
-      upload: {
-        status: "uploaded",
-        artifactId: "artifact-1",
-        s3Key: "checks/site/check/a",
-        contentType: "image/jpeg",
-        contentLength: 1234,
-      },
-      analysis: {
-        status: "failed",
-        artifactId: "artifact-1",
-        failure: { leg: "analyze", uploaded: true, enqueued: true },
-      },
-    });
-    vi.mocked(getCurrentCheck).mockReturnValue(session(item));
-    vi.mocked(registerArtifact).mockRejectedValue(
-      new ApiError("Replay", {
-        status: 409,
-        body: { error: "artifact already registered" },
-      }),
-    );
-    vi.mocked(getCheck).mockResolvedValue(
-      /** @type {any} */ ({ analyses: [], artifacts: [] }),
-    );
-    retryEvidenceItem(item.id);
-    await vi.waitFor(() => expect(getCheck).toHaveBeenCalled());
-    expect(uploadArtifact).not.toHaveBeenCalled();
-  });
-
-  it("keeps non-replay registration conflicts as failures", async () => {
-    const item = sessionItem({
-      upload: {
-        status: "uploaded",
-        artifactId: "artifact-1",
-        s3Key: "checks/site/check/a",
-        contentType: "image/jpeg",
-        contentLength: 1234,
-      },
-      analysis: {
-        status: "failed",
-        artifactId: "artifact-1",
-        failure: { leg: "analyze", uploaded: true, enqueued: true },
-      },
-    });
-    vi.mocked(getCurrentCheck).mockReturnValue(session(item));
-    vi.mocked(registerArtifact).mockRejectedValue(
-      new ApiError("Conflict", {
-        status: 409,
-        body: { error: "Check already completed" },
-      }),
-    );
-    retryEvidenceItem(item.id);
-    await vi.waitFor(() =>
-      expect(updateItemAnalysis).toHaveBeenCalledWith(
-        item.id,
-        expect.objectContaining({
-          status: "failed",
-          failure: expect.objectContaining({ leg: "start", enqueued: false }),
-        }),
-      ),
-    );
-    expect(registerArtifact).toHaveBeenCalled();
-    expect(getCheck).not.toHaveBeenCalled();
-  });
-
-  it("replays the pipeline when the failure is the upload leg itself", async () => {
-    const item = sessionItem({
-      upload: { status: "failed" },
-      analysis: {
-        status: "failed",
-        failure: { leg: "upload", uploaded: false, enqueued: false },
-      },
-    });
-    vi.mocked(getCurrentCheck).mockReturnValue(session(item));
-    vi.mocked(getCheck).mockResolvedValue(
-      /** @type {any} */ ({ analyses: [], artifacts: [] }),
-    );
-    vi.mocked(uploadArtifact).mockResolvedValue(
-      /** @type {any} */ ({ artifactId: "artifact-5", s3Key: "checks/s/c/e" }),
-    );
-
-    retryEvidenceItem(item.id);
-    await vi.waitFor(() => {
-      expect(uploadArtifact).toHaveBeenCalled();
-    });
-    expect(registerArtifact).not.toHaveBeenCalled();
-    expect(updateItemAnalysis).toHaveBeenCalledWith(
-      item.id,
-      expect.objectContaining({ status: "queued" }),
-    );
-  });
+  );
+  const pending = removeEvidenceItem(item.id);
+  const again = removeEvidenceItem(item.id);
+  expect(again).toBe(pending);
+  await vi.waitFor(() => expect(deleteArtifact).toHaveBeenCalledOnce());
+  complete({});
+  await pending;
+  expect(held.check.items).toHaveLength(0);
+});
+it("restores the failed card when its removal cannot be saved", async () => {
+  const item = photo({ analysis: { status: "failed" } });
+  vi.mocked(saveDraft).mockRejectedValueOnce(new Error("storage unavailable"));
+  await expect(removeEvidenceItem(item.id)).rejects.toThrow(
+    "Could not save evidence removal",
+  );
+  expect(held.check.items).toContain(item);
 });

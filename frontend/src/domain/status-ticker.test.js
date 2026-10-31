@@ -279,3 +279,17 @@ it("clears the proof ticker only after evidence is saved and excludes expiry-onl
   ).toBe("resolved");
   expect(ticker({ status: "open", createdAt: "2026-10-01" }).key).toBe("");
 });
+
+it("prioritizes clarification over age and duplicate metadata", () => {
+  expect(
+    ticker({
+      status: "needs_answer",
+      createdAt: "2020-01-01",
+      duplicate: true,
+    }),
+  ).toMatchObject({
+    key: "needsClarification",
+    tone: "warning",
+    icon: "circle-exclamation",
+  });
+});

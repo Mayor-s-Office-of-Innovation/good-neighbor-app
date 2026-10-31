@@ -241,9 +241,15 @@ function consumeMedia(entry, key, signal) {
 /** Invalidate one failed image, never another artifact or an in-flight signer.
  * @param {string} checkId @param {string} artifactId
  */
-export function invalidateMediaUrls(checkId, artifactId) {
+export function invalidateMediaUrls(
+  checkId,
+  artifactId,
+  { retryFailures = false } = {},
+) {
   const key = `${checkId}:${artifactId}`;
   if (!MEDIA_URL_CACHE.get(key)?.pending) MEDIA_URL_CACHE.delete(key);
+  if (retryFailures && MEDIA_FAILURES.get(key)?.error?.status !== 404)
+    MEDIA_FAILURES.delete(key);
 }
 
 /** Avoid repeating doomed requests on each card rerender. Missing media may be
@@ -290,4 +296,33 @@ export function mergeHydratedTasks(tasks, hydratedTasks) {
       .map((task) => [task.taskId, task]),
   );
   return tasks.map((task) => hydratedById.get(task.taskId) || task);
+}
+
+/** Restore photo/text identity for server-backed pending questions. Media signing
+ * remains owned by artifact-photo, including retries after reconnecting.
+ * @param {any[]} items
+ */
+export async function hydratePendingQuestionEvidence(items) {
+  const checks = new Map();
+  await Promise.all(
+    [...new Set(items.map((item) => item.checkId).filter(Boolean))].map(
+      async (id) => {
+        checks.set(id, await cachedCheckArtifacts(id));
+      },
+    ),
+  );
+  return items.map((item) => {
+    const artifact = (checks.get(item.checkId) || []).find(
+      (entry) => entry.artifactId === item.analysis?.artifactId,
+    );
+    if (!artifact) return item;
+    return {
+      ...item,
+      kind: artifact.contentType?.startsWith("image/") ? "photo" : "text",
+      placeName: artifact.placeName || item.placeName,
+      georeferencedAddress:
+        artifact.georeferencedAddress || item.georeferencedAddress,
+      text: artifact.text || item.text,
+    };
+  });
 }

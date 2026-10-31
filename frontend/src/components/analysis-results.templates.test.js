@@ -1,5 +1,5 @@
 import { setDuplicateUiSite } from "../services/feature-flags.js";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t, setLocale } from "../i18n/i18n.js";
 import { formatNumericDate, formatTime, formatWeekday } from "../i18n/dates.js";
@@ -363,7 +363,7 @@ describe("analysis result summaries", () => {
     );
 
     expect(cards).toHaveLength(1);
-    expect(cards[0]).toContain(t("card.title.moreDetails"));
+    expect(cards[0]).toContain("Blocking access");
     expect(cards[0]).toContain(`>${t("card.meta.new")}</span>`);
     expect(cards[0]).not.toContain("long-assessment-id");
   });
@@ -414,7 +414,7 @@ describe("analysis result summaries", () => {
 
     expect(cards).toHaveLength(2);
     expect(cards[0]).toContain("Litter");
-    expect(cards[1]).toContain(t("card.title.moreDetails"));
+    expect(cards[1]).toContain("Dangerous animals");
     expect(cards[1]).toContain(
       "Is this animal owned by a site client or resident?",
     );
@@ -467,7 +467,7 @@ describe("analysis result summaries", () => {
     );
   });
 
-  it("renders a clarifying question instead of a generic condition title", () => {
+  it("renders a clarifying question with its issue-specific condition title", () => {
     const cards = analysisCards(
       {
         id: "item_1",
@@ -498,12 +498,11 @@ describe("analysis result summaries", () => {
     );
 
     expect(cards).toHaveLength(1);
-    expect(cards[0]).toContain(t("card.title.moreDetails"));
+    expect(cards[0]).toContain("Dangerous animals");
     expect(cards[0]).toContain("Dogs are off-leash near traffic.");
     expect(cards[0]).toContain(
       "Is this animal owned by a site client or resident?",
     );
-    expect(cards[0]).not.toContain("Dangerous animals");
     expect(cards[0]).toContain('data-analysis-action="answer"');
     expect(cards[0]).toContain('data-answer-key="affiliated"');
     expect(cards[0]).not.toContain(t("card.title.fallback"));
@@ -639,7 +638,7 @@ describe("pending progress cards", () => {
       "check_1",
     )[0];
 
-    expect(card).toContain(escapeHtml(t("card.pending.title")));
+    expect(card).toContain(escapeHtml(t("card.recovery.uploading")));
     expect(card).toContain("15th St");
     expect(card).toContain("analysis-card__skeleton--route");
     expect(card).toContain("analysis-card__skeleton--button");
@@ -695,6 +694,7 @@ describe("failed cards", () => {
         upload: { status: "uploaded", artifactId: "artifact_1" },
         analysis: {
           status: "failed",
+          recovery: { state: "manual", attempts: 3 },
           artifactId: "artifact_1",
           error: "Analysis is taking longer than expected.",
           failure: {
@@ -730,6 +730,7 @@ describe("failed cards", () => {
         upload: { status: "failed" },
         analysis: {
           status: "failed",
+          recovery: { state: "manual", attempts: 3 },
           error: "Could not analyze this item.",
           failure: {
             leg: "upload",
@@ -744,7 +745,7 @@ describe("failed cards", () => {
 
     expect(card).toContain(escapeHtml(t("card.failed.uploadTitle")));
     expect(card).toContain(escapeHtml(t("card.failed.reason.upload")));
-    expect(card).toContain('data-analysis-action="remove-item"');
+    expect(card).toContain('data-analysis-action="delete-failed-item"');
     // The "Waited …" sentence minus its duration: must be absent under a second.
     const [waitedPrefix] = t("card.failed.waited", { duration: "\0" }).split(
       "\0",
@@ -752,7 +753,7 @@ describe("failed cards", () => {
     expect(card).not.toContain(escapeHtml(waitedPrefix.trim()));
   });
 
-  it("keeps an analyzer-side failure retryable without the remove affordance", () => {
+  it("keeps an analyzer-side failure retryable with the same delete affordance", () => {
     const card = analysisCards(
       item({
         id: "item_1",
@@ -760,6 +761,7 @@ describe("failed cards", () => {
         placeName: "15th St",
         analysis: {
           status: "failed",
+          recovery: { state: "manual", attempts: 3 },
           artifactId: "artifact_1",
           failure: {
             leg: "analyze",
@@ -782,7 +784,7 @@ describe("failed cards", () => {
       ),
     );
     expect(card).toContain('data-analysis-action="retry"');
-    expect(card).not.toContain('data-analysis-action="remove-item"');
+    expect(card).toContain('data-analysis-action="delete-failed-item"');
   });
 });
 
@@ -1416,13 +1418,14 @@ it("only claims saved on phone after a confirmed local write, including repeated
         status: "failed",
         localSaveConfirmed: true,
         retryCount: 3,
+        recovery: { state: "manual", attempts: 3 },
         failure: { leg: "analyze" },
       },
     }),
     "check",
   );
-  expect(saved).toContain(escapeHtml(t("notice.savedOnPhone")));
-  expect(saved).toContain(escapeHtml(t("notice.savedRetryHelp")));
+  expect(saved).not.toContain(escapeHtml(t("notice.savedOnPhone")));
+  expect(saved).toContain(escapeHtml(t("card.failed.analysisTitle")));
   expect(saved).not.toContain(escapeHtml(t("notice.savedHelp")));
   expect(saved).toContain('data-analysis-action="retry"');
 });
@@ -1447,3 +1450,107 @@ it.each([false, true])(
     ).not.toContain('data-action="add-proof"');
   },
 );
+
+it("identifies an unreadable photo, shows its evidence and allows deletion", () => {
+  const markup = analysisCards(
+    item({
+      id: "failed-photo",
+      kind: "photo",
+      dataUrl: "data:image/png;base64,AA",
+      analysis: {
+        status: "failed",
+        failure: { leg: "analyze", uploaded: true, code: "undecodable_input" },
+        recovery: { state: "blocked" },
+      },
+    }),
+    "check",
+  ).join("");
+  expect(markup).toContain(escapeHtml(t("card.failed.unreadableTitle")));
+  expect(markup).toContain(escapeHtml(t("card.failed.unreadableBody")));
+  expect(markup).toContain("artifact-photo");
+  expect(markup).toContain('data-analysis-action="delete-failed-item"');
+  expect(markup).not.toContain('data-analysis-action="retry"');
+});
+
+it("uses the existing saved design for persisted recovery while offline", () => {
+  vi.stubGlobal("navigator", { onLine: false });
+  const [markup] = analysisCards(
+    item({
+      id: "saved",
+      kind: "photo",
+      dataUrl: "data:image/png;base64,AA",
+      analysis: {
+        status: "waiting",
+        localSaveConfirmed: true,
+        recovery: { state: "waiting", stage: "upload" },
+      },
+    }),
+    "check",
+  );
+  expect(markup).toContain("data:image/svg+xml,");
+  expect(markup).not.toContain("/images/error-states/saved-photo.svg");
+  expect(markup).toContain(escapeHtml(t("notice.savedOnPhone")));
+  expect(markup).not.toContain('data-analysis-action="retry"');
+  vi.unstubAllGlobals();
+});
+
+it("shows a clarification warning and the friendly issue title on question cards", () => {
+  const [markup] = analysisCards(
+    item({
+      id: "photo",
+      kind: "photo",
+      analysis: {
+        status: "analyzed",
+        conditions: [
+          {
+            conditionId: "litter",
+            category: "Technical category",
+            userFriendlyLabel: "Trash on the sidewalk",
+            needsAnswer: {
+              key: "affiliated",
+              prompt: "From this site?",
+              options: [],
+            },
+          },
+        ],
+        tasks: [],
+      },
+    }),
+    "check",
+  );
+  expect(markup).toContain("Trash on the sidewalk");
+  expect(markup).not.toContain(t("card.title.moreDetails"));
+  expect(markup).toContain(escapeHtml(t("card.ticker.needsClarification")));
+  expect(markup).toContain("status-ticker--warning");
+  expect(markup).toContain('name="circle-exclamation"');
+});
+
+it("offers one delete action despite contradictory upload flags and explains offline cleanup", () => {
+  vi.stubGlobal("navigator", { onLine: false });
+  try {
+    const [markup] = analysisCards(
+      item({
+        id: "failed",
+        kind: "photo",
+        upload: { status: "uploaded", artifactId: "artifact" },
+        analysis: {
+          status: "failed",
+          failure: { leg: "upload", uploaded: false },
+          recovery: { state: "manual" },
+        },
+      }),
+      "check",
+    );
+    expect(
+      markup.match(/data-analysis-action="delete-failed-item"/g),
+    ).toHaveLength(1);
+    expect(markup).toContain(escapeHtml(t("card.failed.deleteOffline")));
+    expect(markup).toMatch(
+      /data-analysis-action="delete-failed-item"[^>]*disabled/,
+    );
+    expect(markup).not.toContain('data-analysis-action="remove-item"');
+    expect(markup).not.toContain('data-analysis-action="retry"');
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

@@ -18,6 +18,12 @@ export function statusTicker(task, { history = false, now = Date.now() } = {}) {
     icon,
     count,
   });
+  if (
+    !history &&
+    task.status !== "completed" &&
+    (task.needsAnswer || task.status === "needs_answer")
+  )
+    return state("needsClarification", "warning");
   if (history || task.status === "completed" || isTaskExpired(task, now)) {
     if (needsResolutionProof(task))
       return state("awaitingProof", "warning", "file-circle-check");

@@ -1,8 +1,8 @@
 import {
   cachedMediaUrls,
   invalidateMediaUrls,
-  markMediaUnavailable,
 } from "../services/task-evidence.js";
+import { connectionAvailable } from "../services/evidence-recovery.js";
 import { escapeAttr } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
 import "./artifact-photo.css";
@@ -14,6 +14,8 @@ export class ArtifactPhoto extends HTMLElement {
   _onImageError = () => void this._recover();
   _onImageLoad = () => {
     this._imageRefreshed = false;
+    this._failed = false;
+    this._imageAttempts = 0;
   };
   connectedCallback() {
     this._generation = (this._generation || 0) + 1;
@@ -27,6 +29,21 @@ export class ArtifactPhoto extends HTMLElement {
     this._onReturn = () => {
       if (!document.hidden && this._visible) void this._refresh();
     };
+    this._onConnection = () => {
+      if (!connectionAvailable()) return;
+      this._attempts = 0;
+      this._imageAttempts = 0;
+      this._imageRefreshed = false;
+      this._triedOriginal = false;
+      if (this._failed) {
+        invalidateMediaUrls(this.dataset.checkId, this.dataset.artifactId, {
+          retryFailures: true,
+        });
+        if (this._visible && !document.hidden) void this._refresh();
+      }
+    };
+    window.addEventListener("online", this._onConnection);
+    window.addEventListener("connectionretry", this._onConnection);
     document.addEventListener("visibilitychange", this._onReturn);
     queueMicrotask(() => {
       if (!this.isConnected || generation !== this._generation) return;
@@ -44,12 +61,17 @@ export class ArtifactPhoto extends HTMLElement {
       } else void this._refresh();
     });
   }
+  connectedMoveCallback() {
+    /* Keep media ownership during state-preserving card moves. */
+  }
   disconnectedCallback() {
     this._generation++;
     this._readController?.abort();
     clearTimeout(this._timer);
     this._observer?.disconnect();
     document.removeEventListener("visibilitychange", this._onReturn);
+    window.removeEventListener("online", this._onConnection);
+    window.removeEventListener("connectionretry", this._onConnection);
   }
   _schedule(delay) {
     clearTimeout(this._timer);
@@ -64,14 +86,19 @@ export class ArtifactPhoto extends HTMLElement {
     if (this._busy || !this.isConnected || !this._image) return;
     const { checkId, artifactId } = this.dataset;
     const local = this._image.dataset.src || "";
-    if (/^(blob:|data:)/.test(local)) {
+    if (!this._localFailed && /^(blob:|data:)/.test(local)) {
       this._show(local, local);
       return;
     }
     if (!checkId || !artifactId) {
-      const src = this._image.dataset.src;
+      const src = this._localFailed ? "" : this._image.dataset.src;
       if (src) this._show(src, this.dataset.original || src);
       else this._missing();
+      return;
+    }
+    if (!connectionAvailable()) {
+      this._failed = true;
+      this._missing();
       return;
     }
     this._busy = true;
@@ -96,7 +123,7 @@ export class ArtifactPhoto extends HTMLElement {
       this._missing();
       // Automatic API retries are bounded. A later navigation can try again,
       // subject to the shared failure backoff (including unavailable media).
-      if (++this._attempts < 3) this._schedule(5000);
+      if (connectionAvailable() && ++this._attempts < 3) this._schedule(5000);
     } finally {
       if (generation === this._generation) this._busy = false;
     }
@@ -109,10 +136,20 @@ export class ArtifactPhoto extends HTMLElement {
     this.removeAttribute("data-unavailable");
     this._placeholder?.remove();
     this._setTrigger(original || src);
+    if (this._failed && this._image.getAttribute("src") === src)
+      this._image.removeAttribute("src");
     if (this._image.getAttribute("src") !== src) this._image.src = src;
   }
   async _recover() {
+    this._failed = true;
+    if (/^(blob:|data:)/.test(this._image?.getAttribute("src") || ""))
+      this._localFailed = true;
     if (!this.isConnected || this._busy) return;
+    if (!connectionAvailable()) {
+      clearTimeout(this._timer);
+      this._missing();
+      return;
+    }
     const { checkId, artifactId } = this.dataset;
     // One fresh signing attempt, then the original if just the thumbnail failed.
     // Never bounce thumbnail -> original -> thumbnail indefinitely.
@@ -133,11 +170,13 @@ export class ArtifactPhoto extends HTMLElement {
       this._show(this._original, this._original);
       return;
     }
-    if (checkId && artifactId) markMediaUnavailable(checkId, artifactId);
     clearTimeout(this._timer);
     this._missing();
+    // An image error does not expose an HTTP status: never cache it as a 404.
+    if (++this._imageAttempts < 3) this._schedule(5000);
   }
   _missing() {
+    this._failed = true;
     this.setAttribute("data-unavailable", "");
     if (!this._placeholder?.isConnected) {
       this.insertAdjacentHTML(

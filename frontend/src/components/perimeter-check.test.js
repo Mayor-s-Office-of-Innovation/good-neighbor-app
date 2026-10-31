@@ -34,7 +34,7 @@ describe("shouldResumeEvidenceItem", () => {
     ).toBe(true);
   });
 
-  it("does not retry failed photos before upload succeeds", async () => {
+  it("recovers legacy failed photos through the bounded retry policy", async () => {
     const { shouldResumeEvidenceItem } = await import("./perimeter-check.js");
 
     expect(
@@ -43,7 +43,7 @@ describe("shouldResumeEvidenceItem", () => {
         upload: { status: "failed" },
         analysis: { status: "failed" },
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 

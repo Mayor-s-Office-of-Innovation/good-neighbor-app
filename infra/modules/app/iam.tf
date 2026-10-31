@@ -481,7 +481,7 @@ data "aws_iam_policy_document" "worker" {
       "sqs:DeleteMessage",
       "sqs:GetQueueAttributes",
     ]
-    resources = [aws_sqs_queue.submissions.arn, aws_sqs_queue.analysis.arn]
+    resources = [aws_sqs_queue.submissions.arn, aws_sqs_queue.analysis.arn, aws_sqs_queue.analysis_dlq.arn]
   }
 
   statement {

@@ -1699,7 +1699,7 @@ describe("restored duplicate links", () => {
   );
 });
 
-it("paints a saved clarification before the background worklist refresh completes", async () => {
+it("holds a saved clarification without reloading the worklist during an answer", async () => {
   const view = await mount("?filter=todo");
   const updated = { id: "check-one", status: "capture-complete", items: [] };
   view._homeModel = { tasks: [], pendingSession: { id: "check-one" } };
@@ -1712,10 +1712,7 @@ it("paints a saved clarification before the background worklist refresh complete
     tasks: [],
     pendingSession: updated,
   });
-  expect(view.connectedCallback).toHaveBeenCalledOnce();
-  expect(view._renderHome.mock.invocationCallOrder[0]).toBeLessThan(
-    view.connectedCallback.mock.invocationCallOrder[0],
-  );
+  expect(view.connectedCallback).not.toHaveBeenCalled();
   view._renderHome.mockClear();
   listener({ ...updated, id: "different-check" });
   expect(view._renderHome).not.toHaveBeenCalled();

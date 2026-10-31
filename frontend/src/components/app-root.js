@@ -509,7 +509,7 @@ export class AppRoot extends HTMLElement {
         if (this._routeLoad !== request || currentRoute() !== route) return;
         this._view.inert = false;
         console.error("Route module failed to load", error);
-        this._view.innerHTML = `${loadError(t("route.loadError"), { retryAttribute: "data-route-reload" })}<button type="button" class="btn-outline" data-route-back>${escapeHtml(t("common.back"))}</button>`;
+        this._view.innerHTML = `<div class="app-route-load-error">${loadError(t("route.loadError"), { retryAttribute: "data-route-reload" })}<div class="app-route-load-error__actions"><button type="button" class="btn-outline btn-outline--sm" data-route-back>${escapeHtml(t("common.back"))}</button></div></div>`;
         // Reload obtains the current asset manifest and clears cached import failures.
         this._view
           .querySelector("[data-route-reload]")

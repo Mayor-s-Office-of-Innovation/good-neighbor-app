@@ -44,7 +44,13 @@ function loadSharp() {
  * the worker's terminal failed-marker path (like `input_too_large`), never a
  * redelivery.
  */
-export class DownscaleError extends Error {}
+export class DownscaleError extends Error {
+  /** @param {string} message @param {string} [code] */
+  constructor(message, code = "undecodable_input") {
+    super(message);
+    this.code = code;
+  }
+}
 
 /**
  * @typedef {object} DownscaleResult
@@ -95,8 +101,9 @@ export async function downscaleImage(bytes, contentType) {
       detectedType === contentType ||
       (detectedType === "image/heic" && contentType === "image/heif");
     if (!detectedType || !declaredMatches) {
-      throw new Error(
-        `declared type ${contentType} does not match decoded type ${detectedType ?? "unknown"}`,
+      throw new DownscaleError(
+        `Undecodable image input (${contentType}): declared type ${contentType} does not match decoded type ${detectedType ?? "unknown"}`,
+        detectedType ? "image_type_mismatch" : "undecodable_input",
       );
     }
     if (
@@ -120,6 +127,7 @@ export async function downscaleImage(bytes, contentType) {
       .jpeg({ quality: JPEG_QUALITY })
       .toBuffer({ resolveWithObject: true });
   } catch (err) {
+    if (err instanceof DownscaleError) throw err;
     throw new DownscaleError(
       `Undecodable image input (${contentType}): ${err instanceof Error ? err.message : String(err)}`,
     );

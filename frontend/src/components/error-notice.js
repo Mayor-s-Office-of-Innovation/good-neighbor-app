@@ -1,9 +1,10 @@
+import { onHealthChange } from "../services/backend-health.js";
 import "./error-notice.css";
 import { t } from "../i18n/i18n.js";
 
 /** Display an error beside the live operation, never discard the user's draft.
  * @param {string} message
- * @param {{title?: string, target?: Element | null, key?: string, duration?: number, warning?: boolean, retryLabel?: string, retry?: () => unknown}} [options]
+ * @param {{title?: string, target?: Element | null, key?: string, duration?: number, warning?: boolean, retryLabel?: string, retry?: () => unknown, retryAvailable?: () => boolean}} [options]
  */
 export function showInlineError(message, options = {}) {
   if (
@@ -38,19 +39,40 @@ export function showInlineError(message, options = {}) {
   const copy = document.createElement("span");
   copy.textContent = message;
   notice.append(copy);
+  let unsubscribe;
   if (options.retry) {
     const retry = document.createElement("button");
     retry.type = "button";
     retry.className = "btn-outline btn-outline--sm";
     retry.textContent = options.retryLabel || t("common.retry");
+    let retrying = false;
+    const refresh = () => {
+      if (!notice.isConnected) {
+        unsubscribe?.();
+        return;
+      }
+      retry.disabled =
+        retrying ||
+        (options.retryAvailable ? !options.retryAvailable() : false);
+    };
+    retry.disabled =
+      retrying || (options.retryAvailable ? !options.retryAvailable() : false);
+    if (options.retryAvailable) unsubscribe = onHealthChange(refresh);
     retry.addEventListener("click", async () => {
+      if (
+        retry.disabled ||
+        (options.retryAvailable && !options.retryAvailable())
+      )
+        return;
+      retrying = true;
       retry.disabled = true;
       try {
         await options.retry?.();
       } catch {
         /* The operation retains its contextual failure state. */
       } finally {
-        retry.disabled = false;
+        retrying = false;
+        refresh();
       }
     });
     notice.append(retry);
@@ -58,7 +80,12 @@ export function showInlineError(message, options = {}) {
   target.prepend(notice);
   decorateError(notice);
   if (options.duration) setTimeout(() => notice.remove(), options.duration);
-  return { close: () => notice.remove() };
+  return {
+    close: () => {
+      unsubscribe?.();
+      notice.remove();
+    },
+  };
 }
 
 /** Standardize authored and dynamically inserted errors without replacing their controls.

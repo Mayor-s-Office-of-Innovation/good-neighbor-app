@@ -124,3 +124,11 @@ it("rejects a late result after the active site changes", async () => {
     expect.objectContaining({ originSiteId: "site-a" }),
   );
 });
+
+it("does not read a check under a different active site before polling starts", async () => {
+  const read = vi.fn();
+  await expect(
+    pollCheck("check", read, (value) => value, { originSiteId: "site-b" }),
+  ).rejects.toMatchObject({ name: "AbortError" });
+  expect(read).not.toHaveBeenCalled();
+});

@@ -482,13 +482,34 @@ export async function getDraft(flowType) {
   );
   return legacy?.siteId === siteId ? legacy : null;
 }
-export async function saveDraft(check) {
-  const siteId = check?.siteId || (await getSite())?.siteId || "";
-  await tx("draft", "readwrite", (os) => {
-    os.put(check, draftKey(undefined, siteId));
-    if (check?.flowType) os.put(check, draftKey(check.flowType, siteId));
+const checkWrites = new Map();
+/** Serialize snapshots so a slower earlier write cannot erase a newer checkpoint.
+ * @param {any} check @param {(snapshot: any) => Promise<any>} write
+ */
+function writeCheck(check, write) {
+  const snapshot = structuredClone(check);
+  const key = check.siteId || check.id;
+  const pending = (checkWrites.get(key) || Promise.resolve())
+    .catch(() => {})
+    .then(() => write(snapshot));
+  checkWrites.set(key, pending);
+  void pending
+    .finally(() => {
+      if (checkWrites.get(key) === pending) checkWrites.delete(key);
+    })
+    .catch(() => {});
+  return pending;
+}
+export function saveDraft(check) {
+  return writeCheck(check, async (snapshot) => {
+    const siteId = snapshot?.siteId || (await getSite())?.siteId || "";
+    await tx("draft", "readwrite", (os) => {
+      os.put(snapshot, draftKey(undefined, siteId));
+      if (snapshot?.flowType)
+        os.put(snapshot, draftKey(snapshot.flowType, siteId));
+    });
+    return snapshot;
   });
-  return check;
 }
 
 async function deleteDraftIfMatches(os, key, checkId) {
@@ -520,6 +541,9 @@ export async function clearDraft(flowOrOpts, maybeCheckId) {
     flowOrOpts && typeof flowOrOpts === "object"
       ? flowOrOpts.checkId
       : maybeCheckId;
+  // Drain this check's queued snapshots before deleting its draft. Scoped
+  // deletion cannot erase a newer capture started while those writes finish.
+  await Promise.allSettled([...checkWrites.values()]);
   return tx("draft", "readwrite", async (os) => {
     await deleteDraftIfMatches(os, draftKey(flowType, siteId), checkId);
     if (siteId) {
@@ -575,13 +599,16 @@ export async function listFinishedChecks(owningSiteId) {
     (a.submittedAt || "").localeCompare(b.submittedAt || ""),
   );
 }
-export async function saveFinishedCheck(check) {
-  const siteId = check?.siteId || (await getSite())?.siteId || "";
-  await tx("review", "readwrite", (os) =>
-    os.put(check, finishedCheckKey(siteId, check.id)),
-  );
-  return check;
+export function saveFinishedCheck(check) {
+  return writeCheck(check, async (snapshot) => {
+    const siteId = snapshot?.siteId || (await getSite())?.siteId || "";
+    await tx("review", "readwrite", (os) =>
+      os.put(snapshot, finishedCheckKey(siteId, snapshot.id)),
+    );
+    return snapshot;
+  });
 }
+
 /**
  * @param {string} owningSiteId
  * @param {string} checkId
@@ -589,6 +616,7 @@ export async function saveFinishedCheck(check) {
 export async function deleteFinishedCheck(owningSiteId, checkId) {
   const siteId = owningSiteId || (await getSite())?.siteId || "";
   if (!checkId) return;
+  await Promise.resolve(checkWrites.get(siteId || checkId)).catch(() => {});
   return tx("review", "readwrite", (os) =>
     os.delete(finishedCheckKey(siteId, checkId)),
   );

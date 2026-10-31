@@ -973,3 +973,17 @@ For legacy completed tasks without the summary field, worklist/detail reads insp
 the latest completion event's notes/photos. Earlier progress evidence and an empty
 closed documentation window do not count. Expiry alone never requires proof.
 The History badge, Add proof button, and orange ticker use this shared summary.
+
+### Artifact analysis recovery fields
+
+New `ART` records include `analysisGeneration` (initially the artifact ID),
+`analysisStatus` (`queued`, `running`, `succeeded`, `exhausted`, or
+`permanent_failure`), and a temporary `analysisLeaseUntil` epoch-millisecond
+value while running. Terminal `ANALYSIS` records carry the matching generation;
+failed analyses include `retryable`, true only for exhausted transient work.
+Artifact status and analysis publication are one transaction. Restart changes
+the generation only if the expected generation is exhausted; the request's
+stable retry identity becomes the new generation. Reads and completion ignore
+analyses from a prior generation. Records without these fields retain legacy
+behavior; a legacy exhaustion marker can be adopted into the new protocol only
+after its failed/retryable state is verified transactionally.

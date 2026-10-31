@@ -33,14 +33,14 @@ export function cancelCheckPolling(checkId) {
  * @param {string} checkId
  * @param {(checkId: string, options: {signal: AbortSignal, originSiteId: string}) => Promise<CheckSnapshot>} read
  * @param {(snapshot: CheckSnapshot) => T | undefined} inspect
- * @param {{intervalMs?: number}} [options]
+ * @param {{intervalMs?: number, originSiteId?: string}} [options]
  * @returns {Promise<T>}
  */
 export async function pollCheck(
   checkId,
   read,
   inspect,
-  { intervalMs = 2000 } = {},
+  { intervalMs = 2000, originSiteId: expectedSiteId = "" } = {},
 ) {
   const pending = { canceled: false };
   const joins = joining.get(checkId) || new Set();
@@ -52,7 +52,9 @@ export async function pollCheck(
   if (pending.canceled) {
     throw new DOMException("Check polling canceled", "AbortError");
   }
-  const originSiteId = site?.siteId || "";
+  if (expectedSiteId && site?.siteId !== expectedSiteId)
+    throw new DOMException("Site changed before polling", "AbortError");
+  const originSiteId = expectedSiteId || site?.siteId || "";
   const key = JSON.stringify([originSiteId, checkId]);
   let poll = polls.get(key);
   const fresh = !poll;

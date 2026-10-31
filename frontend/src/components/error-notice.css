@@ -149,3 +149,14 @@ app-toasts:has(> .connection-banner-space:not([hidden]))
   + .app-toast {
   margin-block-start: 0.75rem;
 }
+
+/* The route container expands its direct children. Keep recovery controls
+   inside an action row so buttons retain their intrinsic dimensions. */
+.app-route-load-error {
+  padding: 1rem;
+}
+.app-route-load-error__actions {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}

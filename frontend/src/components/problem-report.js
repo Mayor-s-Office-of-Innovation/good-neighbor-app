@@ -113,7 +113,7 @@ class ProblemReport extends HTMLElement {
     this._analysisEditDialog = null;
     this._analysisEditDescription = null;
     this._initGeneration = 0;
-    this._answeringConditionIds = new Set();
+    this._answeringConditionIds = new Map();
   }
 
   /** @returns {Promise<void>} */
@@ -400,8 +400,11 @@ class ProblemReport extends HTMLElement {
           )
         : "";
     this._wireAnalysisCards();
-    for (const conditionId of this._answeringConditionIds) {
-      setQuestionAnswerBusy(this, conditionId, true);
+    for (const {
+      itemId,
+      conditionId,
+    } of this._answeringConditionIds.values()) {
+      setQuestionAnswerBusy(this, conditionId, true, { itemId });
     }
   }
 
@@ -413,6 +416,8 @@ class ProblemReport extends HTMLElement {
 
   /** @returns {void} */
   _render() {
+    // Keep the answered question present until its confirmation has been seen.
+    if (this._answeringConditionIds.size) return;
     if (isDeletingAnalysisCard(this) || isCompletingAnalysisCard(this)) return;
     this._renderTitle();
     this._renderShots();
@@ -500,7 +505,8 @@ class ProblemReport extends HTMLElement {
         } else if (action === "answer") {
           this._answerProblemQuestion(problem, target);
         } else if (action === "retry") {
-          if (problem.itemId) retryEvidenceItem(problem.itemId);
+          if (problem.itemId && retryEvidenceItem(problem.itemId))
+            target.setAttribute("disabled", "");
         } else if (action === "remove-item") {
           const item = findItem(problem.itemId);
           if (item && item.upload?.status !== "uploaded")
@@ -705,10 +711,38 @@ class ProblemReport extends HTMLElement {
       showAnswerSaveErrorToast();
       return;
     }
-    if (this._answeringConditionIds.has(problem.conditionId)) return;
+    const identity = JSON.stringify([problem.itemId, problem.conditionId]);
+    if (this._answeringConditionIds.has(identity)) return;
 
-    this._answeringConditionIds.add(problem.conditionId);
-    setQuestionAnswerBusy(this, problem.conditionId, true);
+    this._answeringConditionIds.set(identity, {
+      itemId: problem.itemId,
+      conditionId: problem.conditionId,
+    });
+    setQuestionAnswerBusy(this, problem.conditionId, true, {
+      itemId: problem.itemId,
+    });
+    let confirmationPending = false;
+    const finish = (confirmed = false) => {
+      if (confirmed) {
+        // Keep the accepted question locked until the batch can render. Another
+        // answer's confirmation may still be holding the original DOM in place.
+        const entry = this._answeringConditionIds.get(identity);
+        if (entry) entry.confirmed = true;
+      } else {
+        this._answeringConditionIds.delete(identity);
+        setQuestionAnswerBusy(this, problem.conditionId, false, {
+          itemId: problem.itemId,
+        });
+      }
+      if (
+        [...this._answeringConditionIds.values()].some(
+          (entry) => !entry.confirmed,
+        )
+      )
+        return;
+      this._answeringConditionIds.clear();
+      if (this.isConnected) this._render();
+    };
     try {
       await answerAnalysisQuestion(
         problem.itemId,
@@ -716,14 +750,16 @@ class ProblemReport extends HTMLElement {
         answerKey,
         answerValue,
       );
-      this._render();
-      showQuestionAnswerUpdated(this, problem.conditionId);
+      showQuestionAnswerUpdated(this, problem.conditionId, {
+        itemId: problem.itemId,
+        onComplete: () => finish(true),
+      });
+      confirmationPending = true;
     } catch (err) {
       console.error("answer condition failed", err);
       showAnswerSaveErrorToast();
     } finally {
-      this._answeringConditionIds.delete(problem.conditionId);
-      setQuestionAnswerBusy(this, problem.conditionId, false);
+      if (!confirmationPending) finish();
     }
   }
 

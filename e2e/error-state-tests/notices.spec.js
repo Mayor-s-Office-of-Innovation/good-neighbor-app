@@ -258,9 +258,8 @@ test("error cards retain the supplied illustrations at their intrinsic geometry"
             id: "saved",
             kind: "photo",
             analysis: {
-              status: "failed",
+              status: "waiting",
               localSaveConfirmed: true,
-              retryCount: 3,
             },
           },
           "synthetic",

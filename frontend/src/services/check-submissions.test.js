@@ -8,12 +8,16 @@ vi.mock("../db.js", () => ({
 vi.mock("../state/check-session.js", () => ({
   getCurrentCheck: () => held.inProgress,
   loadFinishedChecks: vi.fn(async () => [...held.finished]),
-  markScorecardDone: vi.fn(),
+  markScorecardDone: vi.fn((id) => {
+    const check = held.finished.find((entry) => entry.id === id);
+    if (check) check.scorecardDone = true;
+  }),
 }));
 vi.mock("./photo-analysis.js", async (importOriginal) => {
   const actual = /** @type {any} */ (await importOriginal());
   return {
     analyzeEvidenceItem: vi.fn(),
+    reconcileFailedEvidence: vi.fn(async () => {}),
     EVIDENCE_SETTLED_EVENT: actual.EVIDENCE_SETTLED_EVENT,
     shouldResumeEvidenceItem: actual.shouldResumeEvidenceItem,
     hasUnsentLocation: actual.hasUnsentLocation,

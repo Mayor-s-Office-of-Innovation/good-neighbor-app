@@ -498,3 +498,10 @@ save a cancelled draft.
 The lazy task-update bundle has a 6.8 kB Brotli budget, including cancellation,
 progress feedback, and stable native-dialog rendering. No new runtime dependency
 is required for this flow.
+
+Perimeter retry and connectivity scenarios (Chromium and WebKit, local mocked
+API with real browser storage and recovery services):
+
+```sh
+npm run test:recovery:ui
+```

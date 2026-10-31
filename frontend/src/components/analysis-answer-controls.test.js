@@ -249,7 +249,9 @@ it.each([false, true])(
     );
     try {
       focus(card);
-      showQuestionAnswerUpdated(root, "one");
+      const completed = vi.fn(() => expect(card.overlay).toBeNull());
+      showQuestionAnswerUpdated(root, "one", { onComplete: completed });
+      expect(completed).not.toHaveBeenCalled();
       if (movedAway) focus(outside);
       original.isConnected = false;
       card = makeCard();
@@ -259,6 +261,7 @@ it.each([false, true])(
       expect(card.focus).toHaveBeenCalledTimes(movedAway ? 0 : 1);
       await vi.advanceTimersByTimeAsync(2000);
       expect(listeners.size).toBe(0);
+      expect(completed).toHaveBeenCalledOnce();
     } finally {
       vi.useRealTimers();
     }

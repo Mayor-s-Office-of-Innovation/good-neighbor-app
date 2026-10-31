@@ -31,7 +31,8 @@
     "test:offline:e2e": "playwright test -c e2e/offline-shell.config.js",
     "test:support:ui": "playwright test -c e2e/support.config.js",
     "test:updates:ui": "playwright test -c e2e/task-updates.config.js",
-    "test:errors:ui": "playwright test -c e2e/error-states.config.js"
+    "test:errors:ui": "playwright test -c e2e/error-states.config.js",
+    "test:recovery:ui": "playwright test -c e2e/recovery.config.js"
   },
   "devDependencies": {
     "js-yaml": "4.3.2",

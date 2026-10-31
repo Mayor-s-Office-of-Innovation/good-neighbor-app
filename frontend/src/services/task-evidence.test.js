@@ -1,3 +1,4 @@
+import { getCheck } from "./api.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const getMediaUrl = vi.fn();
@@ -8,6 +9,7 @@ vi.mock("./api.js", () => ({
 
 const {
   hydrateTaskEvidenceFromCheck,
+  hydratePendingQuestionEvidence,
   cachedMediaUrls,
   needsTaskEvidenceHydration,
   invalidateMediaUrls,
@@ -288,4 +290,29 @@ it("bounds a stalled shared signer and allows an immediate fresh attempt", async
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("hydrates photo and text question evidence without eagerly signing media", async () => {
+  vi.mocked(getCheck).mockResolvedValueOnce({ check: {}, ...detail });
+  const result = await hydratePendingQuestionEvidence([
+    {
+      id: "photo-question",
+      checkId: "pending-check",
+      kind: "unknown",
+      analysis: { artifactId: "p1" },
+    },
+    {
+      id: "text-question",
+      checkId: "pending-check",
+      kind: "unknown",
+      analysis: { artifactId: "d1" },
+    },
+  ]);
+  expect(result[0]).toMatchObject({
+    kind: "photo",
+    georeferencedAddress: "15th St",
+    checkId: "pending-check",
+    analysis: { artifactId: "p1" },
+  });
+  expect(result[1]).toMatchObject({ kind: "text", text: "Sidewalk clear." });
 });
