@@ -606,3 +606,68 @@ it("awaits atomic media removal after durable remote-deletion checkpoint", async
   expect(deleteCapturePhoto).toHaveBeenCalledWith(held.check, "synthetic");
   expect(held.check.items).toEqual([]);
 });
+
+it("bounds pending observation and manually resumes without uploading or restarting", async () => {
+  const item = photo({
+    upload: { status: "uploaded", artifactId: "artifact" },
+    analysis: {
+      status: "analyzing",
+      artifactId: "artifact",
+      serverGeneration: "generation",
+    },
+  });
+  vi.mocked(getCheck).mockRejectedValue(
+    Object.assign(new Error("pending"), { body: { code: "analyses_pending" } }),
+  );
+  for (let cycle = 0; cycle < 4; cycle++) {
+    expect(analyzeEvidenceItem(item.id)).toBe(true);
+    await vi.waitFor(() =>
+      expect(item.analysis.recovery?.state).toBe(
+        cycle === 3 ? "manual" : "scheduled",
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (cycle < 3) item.analysis.recovery.nextAttemptAt = Date.now() - 1;
+  }
+  expect(item.analysis.status).toBe("failed");
+  expect(held.saved.at(-1).items[0].analysis.recovery).toMatchObject({
+    stage: "observe",
+    state: "manual",
+    attempts: 3,
+  });
+  expect(shouldResumeEvidenceItem(item)).toBe(false);
+  vi.mocked(getCheck).mockResolvedValue({
+    check: {},
+    analyses: [successful],
+    artifacts: [],
+  });
+  expect(retryEvidenceItem(item.id)).toBe(true);
+  expect(retryEvidenceItem(item.id)).toBeUndefined();
+  await vi.waitFor(() => expect(item.analysis.status).toBe("analyzed"));
+  expect(uploadArtifact).not.toHaveBeenCalled();
+  expect(registerArtifact).not.toHaveBeenCalled();
+});
+
+it("does not charge pending observation against its budget after losing connection", async () => {
+  const item = photo({
+    upload: { status: "uploaded", artifactId: "artifact" },
+    analysis: {
+      status: "analyzing",
+      artifactId: "artifact",
+      recovery: { stage: "observe", state: "scheduled", attempts: 2 },
+    },
+  });
+  vi.mocked(getCheck).mockImplementation(async () => {
+    vi.stubGlobal("navigator", { onLine: false });
+    throw Object.assign(new Error("pending"), {
+      body: { code: "analyses_pending" },
+    });
+  });
+  analyzeEvidenceItem(item.id);
+  await vi.waitFor(() => expect(item.analysis.status).toBe("waiting"));
+  expect(item.analysis.recovery).toMatchObject({
+    stage: "observe",
+    state: "waiting",
+    attempts: 2,
+  });
+});

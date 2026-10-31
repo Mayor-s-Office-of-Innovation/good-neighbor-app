@@ -99,6 +99,7 @@ export class ArtifactPhoto extends HTMLElement {
       return;
     }
     if (!connectionAvailable()) {
+      if (this._hasLoadedImage()) return;
       this._failed = true;
       this._missing();
       return;
@@ -122,7 +123,7 @@ export class ArtifactPhoto extends HTMLElement {
       return true;
     } catch {
       if (!this.isConnected || generation !== this._generation) return;
-      this._missing();
+      if (!this._hasLoadedImage()) this._missing();
       // Automatic API retries are bounded. A later navigation can try again,
       // subject to the shared failure backoff (including unavailable media).
       if (connectionAvailable() && ++this._attempts < 3) this._schedule(5000);
@@ -177,6 +178,11 @@ export class ArtifactPhoto extends HTMLElement {
     this._missing();
     // An image error does not expose an HTTP status: never cache it as a 404.
     if (++this._imageAttempts < 3) this._schedule(5000);
+  }
+  _hasLoadedImage() {
+    return (
+      !this._failed && this._image?.complete && this._image.naturalWidth > 0
+    );
   }
   _missing() {
     this._failed = true;

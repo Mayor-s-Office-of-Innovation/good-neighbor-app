@@ -235,3 +235,31 @@ it("allows finalization again after a rejected deletion is durably cleared", () 
   ]);
   expect(readyForScorecard(check)).toBe(true);
 });
+
+it("does not use overdue item or finalization deadlines for an offline timer", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    vi.resetModules();
+    const queue = await import("./check-submissions.js");
+    const db = await import("../db.js");
+    const item = waiting("offline");
+    item.analysis = {
+      status: "analyzing",
+      recovery: { state: "scheduled", nextAttemptAt: 1 },
+    };
+    held.finished = [
+      finishedCheck("offline", [item], {
+        finalizationRecovery: { state: "scheduled", nextAttemptAt: 1 },
+      }),
+    ];
+    vi.stubGlobal("navigator", { onLine: false });
+    await queue.resumeCheckSubmissions();
+    vi.mocked(db.getSite).mockClear();
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(db.getSite).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(db.getSite).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});

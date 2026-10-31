@@ -1607,7 +1607,7 @@ function recoveryCard(item, mode) {
         : "card.recovery.unsaved"
       : stage === "evaluate"
         ? "card.recovery.retryGuidance"
-        : ["analyze", "restart"].includes(stage)
+        : ["analyze", "observe", "restart"].includes(stage)
           ? "card.recovery.observing"
           : "card.recovery.retryUpload";
   return html`<article

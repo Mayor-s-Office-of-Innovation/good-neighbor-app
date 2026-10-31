@@ -2689,7 +2689,9 @@ it.each([
 ])(
   "applies only current photo hydration while the model changes (%s)",
   async (change) => {
-    let release = (_tasks) => {};
+    let release = (_tasks) => {
+      void _tasks;
+    };
     hydrateEvidence.mockImplementationOnce(
       () =>
         new Promise((resolve) => {

@@ -50,6 +50,23 @@ test("failed photos reload the same URL after reconnect without rerendering", as
     1,
   );
   expect(imageRequests).toBeGreaterThan(before);
+  await page.context().setOffline(true);
+  await page.evaluate(() =>
+    document.dispatchEvent(new window.Event("visibilitychange")),
+  );
+  await expect(page.locator("artifact-photo")).not.toHaveAttribute(
+    "data-unavailable",
+  );
+  await expect(page.locator("artifact-photo img")).toBeVisible();
+  await page
+    .locator("artifact-photo")
+    .evaluate((element) => (element.style.marginTop = "3000px"));
+  await page.waitForTimeout(100);
+  await page.locator("artifact-photo").scrollIntoViewIfNeeded();
+  await expect(page.locator("artifact-photo img")).toBeVisible();
+  await expect(page.locator("artifact-photo")).not.toHaveAttribute(
+    "data-unavailable",
+  );
 });
 
 test("to-do photos survive a guidance refresh while signing is in flight", async ({

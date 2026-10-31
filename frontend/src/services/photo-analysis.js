@@ -1351,15 +1351,22 @@ async function run(itemId, manual = false) {
     if (err?.name === "AbortError") return;
     const latestItem = itemById(itemId);
     if (!latestItem || !isHeld(check)) return;
-    if (err?.body?.code === "analyses_pending") {
+    if (err?.body?.code === "analyses_pending" && connectionAvailable()) {
+      const recovery = failedRecovery(
+        latestItem.analysis?.recovery,
+        "observe",
+        err,
+      );
+      if (recovery.state === "scheduled")
+        recovery.nextAttemptAt = Math.max(
+          recovery.nextAttemptAt,
+          Date.now() + 15_000,
+        );
       updateItemAnalysis(itemId, {
-        status: "analyzing",
-        recovery: {
-          stage: "analyze",
-          state: "scheduled",
-          attempts: 0,
-          nextAttemptAt: Date.now() + 15_000,
-        },
+        status: recovery.state === "manual" ? "failed" : "analyzing",
+        recovery,
+        lastTriedAt: new Date().toISOString(),
+        failure: { leg: "analyze", uploaded: true, code: "analyses_pending" },
       });
     } else if (err?.leg === "storage") {
       updateItemAnalysis(itemId, {

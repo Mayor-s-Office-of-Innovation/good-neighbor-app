@@ -1,3 +1,4 @@
+import { connectionAvailable } from "../services/evidence-recovery.js";
 import "./photo-lightbox.css";
 import {
   formatPhotoDateTime,
@@ -250,7 +251,13 @@ export async function openPhotoLightbox(host, trigger, screen = trigger) {
     cancel();
     return;
   }
+  const offlinePreview =
+    !original?.src &&
+    !connectionAvailable() &&
+    image.complete &&
+    image.naturalWidth > 0;
   const src =
+    (offlinePreview ? image.currentSrc || image.src : "") ||
     original?.src ||
     trigger.dataset.fullSrc ||
     image.currentSrc ||
@@ -276,9 +283,11 @@ export async function openPhotoLightbox(host, trigger, screen = trigger) {
     address: trigger.dataset.photoAddress || "",
     capturedAt: trigger.dataset.photoTime || "",
     hideLocation: trigger.hasAttribute("data-photo-no-location"),
-    previewOnly: original
-      ? Boolean("previewOnly" in original && original.previewOnly)
-      : Boolean(capture),
+    previewOnly:
+      offlinePreview ||
+      (original
+        ? Boolean("previewOnly" in original && original.previewOnly)
+        : Boolean(capture)),
     trigger,
   };
   const retry = /** @type {HTMLButtonElement} */ (

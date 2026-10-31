@@ -113,13 +113,14 @@ export async function resumeCheckSubmissions({ uploads = true } = {}) {
         if (item.analysis?.status === "waiting") waiting = true;
         if (item.analysis?.recovery?.state === "scheduled") {
           waiting = true;
-          delay = Math.min(
-            delay,
-            Math.max(
-              1000,
-              (item.analysis.recovery.nextAttemptAt || 0) - Date.now(),
-            ),
-          );
+          if (!offline)
+            delay = Math.min(
+              delay,
+              Math.max(
+                1000,
+                (item.analysis.recovery.nextAttemptAt || 0) - Date.now(),
+              ),
+            );
         }
         if (uploads && !offline && shouldResumeEvidenceItem(item))
           analyzeEvidenceItem(item.id);
@@ -136,14 +137,15 @@ export async function resumeCheckSubmissions({ uploads = true } = {}) {
         !["manual", "blocked"].includes(check.finalizationRecovery?.state)
       ) {
         waiting = true;
-        delay = Math.min(
-          delay,
-          Math.max(
-            1000,
-            (check.finalizationRecovery?.nextAttemptAt ||
-              Date.now() + WAITING_RETRY_MS) - Date.now(),
-          ),
-        );
+        if (!offline)
+          delay = Math.min(
+            delay,
+            Math.max(
+              1000,
+              (check.finalizationRecovery?.nextAttemptAt ||
+                Date.now() + WAITING_RETRY_MS) - Date.now(),
+            ),
+          );
       }
     }
     scheduleRetry(waiting, delay);
@@ -154,8 +156,9 @@ export async function resumeCheckSubmissions({ uploads = true } = {}) {
 
 /** @param {boolean} waiting */
 function scheduleRetry(waiting, delay = WAITING_RETRY_MS) {
-  if (!waiting) return;
   clearTimeout(retryTimer);
+  retryTimer = undefined;
+  if (!waiting) return;
   retryTimer = setTimeout(() => {
     retryTimer = undefined;
     // A hidden page retries on `pageshow` / visibility instead.
