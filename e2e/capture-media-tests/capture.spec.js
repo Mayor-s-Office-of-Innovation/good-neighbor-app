@@ -372,6 +372,20 @@ test("pipeline retains unacknowledged uploads and releases confirmed originals w
     route.fulfill({ json: { check: {}, artifacts: [], analyses: [] } }),
   );
   await page.evaluate(async () => {
+    // WebKit's request inspector omits Blob bodies. Observe the actual fetch
+    // input as well, without replacing the request or skipping network checks.
+    const fetch = window.fetch.bind(window);
+    window.uploadBytes = [];
+    window.fetch = async (input, init) => {
+      if (
+        String(input).endsWith("/synthetic-put") &&
+        init?.body instanceof Blob
+      )
+        window.uploadBytes.push([
+          ...new Uint8Array(await init.body.arrayBuffer()),
+        ]);
+      return fetch(input, init);
+    };
     const { session } = window;
     window.item = await session.addCapturedPhoto(
       new File([new Uint8Array([0, 17, 128, 255])], "synthetic.jpg", {
@@ -404,8 +418,12 @@ test("pipeline retains unacknowledged uploads and releases confirmed originals w
   expect(await page.evaluate(() => window.item.analysis.status)).toBe(
     "analyzing",
   );
-  expect([...puts[0]]).toEqual([0, 17, 128, 255]);
-  expect([...puts.at(-1)]).toEqual([0, 17, 128, 255]);
+  expect(puts.length).toBeGreaterThan(0);
+  const bytes = await page.evaluate(() => window.uploadBytes);
+  expect(bytes).toHaveLength(puts.length);
+  for (const body of bytes) expect(body).toEqual([0, 17, 128, 255]);
+  for (const body of puts.filter(Boolean))
+    expect([...body]).toEqual([0, 17, 128, 255]);
 });
 
 test("finished-check and sign-out cleanup remove original and thumbnail records", async ({
