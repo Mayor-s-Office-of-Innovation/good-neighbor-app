@@ -1572,3 +1572,47 @@ it("animates the upload retry status using the shared decorative ellipsis", () =
   );
   expect(markup).toContain('class="ellipsis-dots" aria-hidden="true"');
 });
+
+it.each([false, true])(
+  "keeps known photo evidence recoverable without a URL (readOnly=%s)",
+  (readOnly) => {
+    const card = taskAnalysisCard({
+      task: {
+        taskId: "task",
+        checkId: "check",
+        sourceArtifactIds: ["photo"],
+        evidence: { kind: "photo", artifactId: "photo" },
+        mediaState: "retry",
+      },
+      action: null,
+      statusLabel: "",
+      readOnly,
+    });
+    expect(card).toContain("<artifact-photo");
+    expect(card).toContain('data-artifact-id="photo"');
+    expect(card).not.toContain('name="file-lines"');
+  },
+);
+it("keeps true text evidence as a document", () => {
+  const card = taskAnalysisCard({
+    task: {
+      taskId: "task",
+      checkId: "check",
+      evidence: { kind: "text", text: "Synthetic description" },
+    },
+    action: null,
+    statusLabel: "",
+  });
+  expect(card).toContain('name="file-lines"');
+  expect(card).not.toContain("<artifact-photo");
+});
+
+it("uses a neutral placeholder until source evidence type is known", () => {
+  const card = taskAnalysisCard({
+    task: { taskId: "task", checkId: "check", sourceArtifactIds: ["unknown"] },
+    action: null,
+    statusLabel: "",
+  });
+  expect(card).toContain('name="image"');
+  expect(card).not.toContain('name="file-lines"');
+});

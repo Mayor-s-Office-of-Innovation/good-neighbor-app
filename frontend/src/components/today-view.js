@@ -1208,7 +1208,8 @@ class TodayView extends HTMLElement {
         "mediaState",
         "mediaRetryAt",
       ])
-        if (!task[key] && old[key]) cached[key] = old[key];
+        if (!Object.hasOwn(task, key) && Object.hasOwn(old, key))
+          cached[key] = old[key];
       return Object.keys(cached).length ? { ...task, ...cached } : task;
     });
     if (tasks.some((task, index) => task !== model.tasks[index]))
@@ -1606,6 +1607,8 @@ class TodayView extends HTMLElement {
     const model = this._homeModel;
     if (!model) return;
     const hydrationGeneration = ++this._hydrationGeneration;
+    const siteId = this._siteId;
+    const refreshGeneration = this._homeRefreshGeneration;
     const visibleTasks = visibleTaskEntriesForHydration(
       this._homeTasks(model.tasks),
       this._homeFilter,
@@ -1618,15 +1621,18 @@ class TodayView extends HTMLElement {
     if (
       hydrationGeneration !== this._hydrationGeneration ||
       !this.isConnected ||
-      this._homeModel !== model
+      this._siteId !== siteId ||
+      this._homeRefreshGeneration !== refreshGeneration ||
+      !this._homeModel
     ) {
       return;
     }
-    const tasks = mergeHydratedTasks(model.tasks, hydratedTasks);
+    const current = this._homeModel;
+    const tasks = mergeHydratedTasks(current.tasks, hydratedTasks);
     this._sheets?.updateTask(
       tasks.find((task) => task.taskId === this._sheets?.ticketTaskId),
     );
-    this._renderHome({ ...model, tasks });
+    this._renderHome({ ...current, tasks });
   }
 
   _render({

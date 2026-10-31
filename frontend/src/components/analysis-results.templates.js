@@ -143,6 +143,7 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.webp";
 
 /**
  * @typedef {object} TaskEvidence
+ * @property {"photo" | "text"} [kind]
  * @property {string} [artifactId]
  * @property {string} [placeName]
  * @property {string} [georeferencedAddress]
@@ -151,6 +152,9 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.webp";
 
 /**
  * @typedef {object} HomeTask
+ * @property {string} [mediaState]
+ * @property {number} [mediaRetryAt]
+ * @property {number} [mediaExpiresAt]
  * @property {boolean} [duplicateHidden]
  * @property {any} [duplicate]
  * @property {number} [duplicateSeenCount]
@@ -632,6 +636,9 @@ export function taskAnalysisCard({
       task.status,
     );
   const mediaUrl = taskMediaUrl(task);
+  const mediaArtifactId = taskMediaArtifactId(task);
+  const unknownEvidence =
+    !task.evidence?.kind && !mediaUrl && Boolean(mediaArtifactId);
   // `positionDescriptor` is deliberately not a fallback: since ADR 0014 it is
   // a fixed literal, not a location.
   const placeName =
@@ -639,7 +646,11 @@ export function taskAnalysisCard({
   const evidenceText = task.evidence?.text || task.text || "";
   const pseudoItem = {
     id: task.taskId || "",
-    kind: mediaUrl || readOnly || action?.kind === "view311" ? "photo" : "text",
+    kind:
+      task.evidence?.kind ||
+      (mediaUrl || unknownEvidence || readOnly || action?.kind === "view311"
+        ? "photo"
+        : "text"),
     dataUrl: mediaUrl,
     fullDataUrl: task.mediaUrl || mediaUrl,
     text: evidenceText,
@@ -651,7 +662,7 @@ export function taskAnalysisCard({
     createdAt: task.createdAt || task.created_at || task.updatedAt || "",
     checkId: task.checkId || "",
     analysis: {
-      artifactId: taskMediaArtifactId(task),
+      artifactId: mediaArtifactId,
       assessment: {},
       sourceAnalysis: {},
     },
@@ -698,7 +709,11 @@ export function taskAnalysisCard({
           (task.updatedAt || task.ticketUpdatedAt)
         ? updatedCardTime(task.updatedAt || task.ticketUpdatedAt)
         : "",
-    mediaPlaceholder: (readOnly || action?.kind === "view311") && !mediaUrl,
+    mediaPlaceholder:
+      unknownEvidence ||
+      ((readOnly || action?.kind === "view311") &&
+        !mediaUrl &&
+        task.evidence?.kind !== "photo"),
     shortId: taskDisplayReference(task),
     filingNote: readOnly ? "" : filing311FailureMessage(task),
   });

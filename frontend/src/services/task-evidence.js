@@ -309,7 +309,28 @@ export function mergeHydratedTasks(tasks, hydratedTasks) {
       .filter((task) => task?.taskId)
       .map((task) => [task.taskId, task]),
   );
-  return tasks.map((task) => hydratedById.get(task.taskId) || task);
+  return tasks.map((task) => {
+    const hydrated = hydratedById.get(task.taskId);
+    if (
+      !hydrated ||
+      hydrated.checkId !== task.checkId ||
+      taskArtifactIds(hydrated).join() !== taskArtifactIds(task).join()
+    )
+      return task;
+    // Hydration owns evidence only. Current status, edits and guidance may have
+    // changed while signing was in flight; removed tasks must stay removed.
+    const evidence = {};
+    for (const key of [
+      "evidence",
+      "mediaUrl",
+      "thumbnailUrl",
+      "mediaExpiresAt",
+      "mediaState",
+      "mediaRetryAt",
+    ])
+      if (Object.hasOwn(hydrated, key)) evidence[key] = hydrated[key];
+    return { ...task, ...evidence };
+  });
 }
 
 /** Restore photo/text identity for server-backed pending questions. Media signing

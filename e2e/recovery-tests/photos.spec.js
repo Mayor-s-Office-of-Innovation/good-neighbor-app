@@ -51,3 +51,88 @@ test("failed photos reload the same URL after reconnect without rerendering", as
   );
   expect(imageRequests).toBeGreaterThan(before);
 });
+
+test("to-do photos survive a guidance refresh while signing is in flight", async ({
+  page,
+}) => {
+  let release = () => {};
+  const signing = new Promise((resolve) => {
+    release = () => resolve(undefined);
+  });
+  await page.route("**/__todo_photo_test", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: `<html><body><main id="cards"></main><script type="module">
+    import '/src/components/today-view.js';
+    import '/src/components/artifact-photo.js';
+    import {setSite} from '/src/db.js';
+    import {taskAnalysisCard} from '/src/components/analysis-results.templates.js';
+    await setSite('Synthetic',{siteId:'example',deviceId:'synthetic-device',token:'synthetic-test-token'});
+    const task = {taskId:'task',checkId:'check',sourceArtifactIds:['photo'],status:'open',description:'Synthetic original'};
+    const view = {_siteId:'example',_homeRefreshGeneration:1,_hydrationGeneration:0,isConnected:true,_homeFilter:'todo',_homeModel:{tasks:[task]},_homeTasks:tasks=>tasks.map(task=>({task,homeStatus:'needs_action'})),_renderHome:model=>{
+      window.published=model;
+      document.querySelector('#cards').innerHTML=model.tasks.map(task=>taskAnalysisCard({task,action:null})).join('');
+    }};
+    const pending=customElements.get('today-view').prototype._hydrateVisibleHomeTasks.call(view);
+    view._homeModel={tasks:[{...task,description:'Synthetic edit',status:'in_progress'}],pendingGuidanceLoading:false};
+    await pending;
+    window.ready=true;
+  </script></body></html>`,
+    }),
+  );
+  await page.route("**/v1/checks/check", (route) =>
+    route.fulfill({
+      json: {
+        artifacts: [
+          {
+            artifactId: "photo",
+            s3Key: "synthetic",
+            contentType: "image/jpeg",
+          },
+        ],
+        analyses: [],
+      },
+    }),
+  );
+  await page.route(
+    "**/v1/checks/check/artifacts/photo/media",
+    async (route) => {
+      await signing;
+      await route.fulfill({
+        json: {
+          downloadUrl: "http://127.0.0.1:5182/todo-photo",
+          expiresIn: 300,
+        },
+      });
+    },
+  );
+  await page.route("**/todo-photo", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>',
+    }),
+  );
+  const requested = page.waitForRequest(
+    "**/v1/checks/check/artifacts/photo/media",
+  );
+  await page.goto("/__todo_photo_test");
+  await requested;
+  release();
+  await page.waitForFunction(() => /** @type {any} */ (window).ready);
+  await expect(page.locator("artifact-photo img")).toHaveJSProperty(
+    "naturalWidth",
+    1,
+  );
+  await expect(page.locator('wa-icon[name="file-lines"]')).toHaveCount(0);
+  expect(
+    await page.evaluate(() => ({
+      status: /** @type {any} */ (window).published.tasks[0].status,
+      description: /** @type {any} */ (window).published.tasks[0].description,
+      loading: /** @type {any} */ (window).published.pendingGuidanceLoading,
+    })),
+  ).toEqual({
+    status: "in_progress",
+    description: "Synthetic edit",
+    loading: false,
+  });
+});

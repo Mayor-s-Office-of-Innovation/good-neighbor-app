@@ -34,6 +34,12 @@ function freezeClock() {
 const todayTitle = (iso) =>
   escapeHtml(t("analysis.checkTitle.today", { time: formatTime(iso) }));
 
+const hydrateEvidence = vi.hoisted(() => vi.fn(async () => []));
+vi.mock("../services/task-evidence.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  hydrateTaskEvidence: hydrateEvidence,
+}));
+
 const answerUpdated = vi.hoisted(() => vi.fn());
 const finishAnswerFocus = vi.hoisted(() => vi.fn());
 vi.mock("./analysis-answer-controls.js", async (importOriginal) => ({
@@ -143,6 +149,7 @@ vi.mock("../dialog-history.js", () => ({
 let TodayView;
 beforeEach(() => {
   answerUpdated.mockClear();
+  hydrateEvidence.mockReset().mockResolvedValue([]);
   windowListeners.get("authsignout")?.();
   setDuplicateUiSite(null);
   siteRead.mockResolvedValue({ siteId: "site-1" });
@@ -2670,3 +2677,83 @@ it("cleans up each completed home answer even while another confirmation holds t
   expect(view._renderHome).not.toHaveBeenCalled();
   expect(view._answeringConditionIds.has("second")).toBe(true);
 });
+
+it.each([
+  "publish",
+  "site",
+  "refresh",
+  "request",
+  "removed",
+  "artifact",
+  "disconnected",
+])(
+  "applies only current photo hydration while the model changes (%s)",
+  async (change) => {
+    let release = (_tasks) => {};
+    hydrateEvidence.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const task = {
+      taskId: "photo-task",
+      checkId: "photo-check",
+      sourceArtifactIds: ["original"],
+      status: "open",
+      description: "Original",
+    };
+    const view = {
+      _homeModel: { tasks: [task] },
+      _hydrationGeneration: 0,
+      _siteId: "site",
+      _homeRefreshGeneration: 1,
+      isConnected: true,
+      _homeFilter: "todo",
+      _homeTasks: (tasks) =>
+        tasks.map((task) => ({ task, homeStatus: "needs_action" })),
+      _renderHome: vi.fn(),
+    };
+    const pending = TodayView.prototype._hydrateVisibleHomeTasks.call(view);
+    const currentTask = {
+      ...task,
+      status: "in_progress",
+      description: "Edited while signing",
+    };
+    view._homeModel = { tasks: [currentTask], pendingGuidanceLoading: false };
+    if (change === "site") view._siteId = "other";
+    if (change === "refresh") view._homeRefreshGeneration++;
+    if (change === "request") view._hydrationGeneration++;
+    if (change === "removed") view._homeModel.tasks = [];
+    if (change === "artifact") currentTask.sourceArtifactIds = ["replacement"];
+    if (change === "disconnected") view.isConnected = false;
+    release([
+      {
+        ...task,
+        evidence: { kind: "photo", artifactId: "original" },
+        mediaUrl: "https://cdn.example.test/photo",
+        mediaState: "ready",
+      },
+    ]);
+    await pending;
+    if (["site", "refresh", "request", "disconnected"].includes(change)) {
+      expect(view._renderHome).not.toHaveBeenCalled();
+    } else {
+      const model = view._renderHome.mock.calls[0][0];
+      expect(model.pendingGuidanceLoading).toBe(false);
+      if (change === "removed") expect(model.tasks).toEqual([]);
+      else {
+        expect(model.tasks[0]).toMatchObject({
+          status: "in_progress",
+          description: "Edited while signing",
+        });
+        if (change === "artifact")
+          expect(model.tasks[0].mediaUrl).toBeUndefined();
+        else
+          expect(model.tasks[0].mediaUrl).toBe(
+            "https://cdn.example.test/photo",
+          );
+      }
+    }
+  },
+);
