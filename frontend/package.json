@@ -122,12 +122,17 @@
         "dist/assets/capture-photo-*.js",
         "dist/assets/capture-media-*.js"
       ],
-      "limit": "2 kB"
+      "limit": "2.5 kB"
     },
     {
       "name": "capture photo css",
       "path": "dist/assets/capture-photo-*.css",
       "limit": "300 B"
+    },
+    {
+      "name": "capture preview worker js",
+      "path": "dist/assets/capture-preview.worker-*.js",
+      "limit": "600 B"
     }
   ],
   "dependencies": {

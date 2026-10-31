@@ -850,3 +850,178 @@ test("Blob storage failures fall back to binary bytes and survive reload", async
     text: "synthetic thumbnail",
   });
 });
+
+test("worker preview appears before upload, survives reload, and yields to server thumbnail", async ({
+  page,
+}) => {
+  const key = await page.evaluate(async () => {
+    await import("/src/components/capture-photo.js");
+    const canvas = document.createElement("canvas");
+    canvas.width = 1200;
+    canvas.height = 900;
+    canvas.getContext("2d").fillRect(0, 0, 1200, 900);
+    const blob = await new Promise((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg"),
+    );
+    const item = await window.session.addCapturedPhoto(
+      new File([blob], "synthetic.jpg", { type: "image/jpeg" }),
+    );
+    document.querySelector("#test").innerHTML =
+      `<capture-photo data-media-key='${item.media.key}' data-check-id="${window.check.id}"><img hidden alt="Synthetic preview"><span data-photo-placeholder>Pending</span></capture-photo>`;
+    return item.media.key;
+  });
+  const preview = page.locator("capture-photo img");
+  await expect(preview).toBeVisible();
+  await expect
+    .poll(() =>
+      preview.evaluate((img) => [img.naturalWidth, img.naturalHeight]),
+    )
+    .toEqual([480, 360]);
+  await page.reload();
+  const result = await page.evaluate(async (key) => {
+    const db = await import("/src/db.js");
+    const check = await db.getDraft("perimeter");
+    const preview = await db.getLocalCapturePreview(key);
+    const before = await db.getCaptureMedia(key);
+    check.items[0].upload = {
+      status: "uploaded",
+      artifactId: "synthetic-artifact",
+    };
+    await db.saveDraft(check);
+    await db.releaseCaptureOriginal(key, "synthetic-artifact");
+    const released = await db.getCaptureMedia(key);
+    const retained = await db.getLocalCapturePreview(key);
+    await db.cacheCaptureThumbnail(key, "synthetic-artifact", preview);
+    return {
+      previewBytes: preview.size,
+      pendingOriginal: !!before.original,
+      releasedOriginal: !!released.original,
+      retained: !!retained,
+      localAfter: !!(await db.getLocalCapturePreview(key)),
+      late: await db.cacheLocalCapturePreview(key, preview),
+    };
+  }, key);
+  expect(result.previewBytes).toBeLessThan(256 * 1024);
+  expect(result).toMatchObject({
+    pendingOriginal: true,
+    releasedOriginal: false,
+    retained: true,
+    localAfter: false,
+    late: false,
+  });
+});
+
+test("removing a photo deletes its local preview and rejects a late worker result", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { db, session, check } = window;
+    const item = await session.addCapturedPhoto(
+      new File(["synthetic"], "synthetic.jpg", { type: "image/jpeg" }),
+    );
+    const preview = new Blob(["small preview"], { type: "image/jpeg" });
+    const cached = await db.cacheLocalCapturePreview(item.media.key, preview);
+    await db.deleteCapturePhoto(check, item.media.key);
+    return {
+      cached,
+      preview: !!(await db.getLocalCapturePreview(item.media.key)),
+      late: await db.cacheLocalCapturePreview(item.media.key, preview),
+    };
+  });
+  expect(result).toEqual({ cached: true, preview: false, late: false });
+});
+
+test("local preview displays during a stalled server request and its URL is revoked on replacement", async ({
+  page,
+}) => {
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/v1/checks/**/artifacts/**/media", async (route) => {
+    await gate;
+    await route.fulfill({
+      json: {
+        thumbnailUrl: "http://127.0.0.1:5179/synthetic-thumbnail",
+        expiresIn: 300,
+      },
+    });
+  });
+  await page.route("**/synthetic-thumbnail", (route) =>
+    route.fulfill({
+      contentType: "image/png",
+      body: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=",
+        "base64",
+      ),
+    }),
+  );
+  await page.evaluate(async () => {
+    const { db, session } = window;
+    const canvas = document.createElement("canvas");
+    canvas.width = 900;
+    canvas.height = 1200;
+    const blob = await new Promise((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg"),
+    );
+    const item = await session.addCapturedPhoto(
+      new File([blob], "synthetic.jpg", { type: "image/jpeg" }),
+    );
+    session.updateItem(item.id, {
+      upload: { status: "uploaded", artifactId: "synthetic-artifact" },
+    });
+    await db.saveDraft(window.check);
+    const { capturePhoto } = await import(
+      "/src/components/capture-photo.templates.js"
+    );
+    document.querySelector("#test").innerHTML = capturePhoto(
+      item,
+      "Synthetic preview",
+    );
+    await import("/src/components/capture-photo.js");
+    window.revoked = [];
+    const revoke = URL.revokeObjectURL;
+    URL.revokeObjectURL = (url) => {
+      window.revoked.push(url);
+      revoke(url);
+    };
+    window.previewKey = item.media.key;
+  });
+  const img = page.locator("capture-photo img");
+  await expect
+    .poll(() => img.evaluate((img) => [img.naturalWidth, img.naturalHeight]))
+    .toEqual([360, 480]);
+  const localURL = await img.getAttribute("src");
+  release();
+  await expect.poll(() => img.evaluate((img) => img.naturalWidth)).toBe(1);
+  expect(
+    await page.evaluate((url) => window.revoked.includes(url), localURL),
+  ).toBe(true);
+  expect(
+    await page.evaluate(() =>
+      window.db.getLocalCapturePreview(window.previewKey),
+    ),
+  ).toBeNull();
+});
+
+test("unsupported workers leave durable capture available without main-thread decoding", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    window.Worker = undefined;
+    const { queueCapturePreview } = await import(
+      "/src/services/capture-preview.js"
+    );
+    const item = await window.session.addCapturedPhoto(
+      new File(["original"], "synthetic.jpg", { type: "image/jpeg" }),
+    );
+    queueCapturePreview(item.media.key);
+    return {
+      original: await (
+        await window.db.getCaptureMedia(item.media.key)
+      ).original.text(),
+      preview: await window.db.getLocalCapturePreview(item.media.key),
+    };
+  });
+  expect(result).toEqual({ original: "original", preview: null });
+});

@@ -1,5 +1,6 @@
 import { captureThumbnail } from "../services/capture-media.js";
-import { getCaptureMedia } from "../db.js";
+import { getCaptureMedia, getLocalCapturePreview } from "../db.js";
+import { queueCapturePreview } from "../services/capture-preview.js";
 import {
   cachedMediaUrls,
   invalidateMediaUrls,
@@ -16,6 +17,10 @@ export class CapturePhoto extends HTMLElement {
   _timer = null;
   _visible = false;
   _busy = false;
+  _serverPreview = false;
+  _onPreview = (event) => {
+    if (event.detail.key === this.dataset.mediaKey) void this._loadLocal();
+  };
   _onReturn = () => {
     if (this._visible && !document.hidden) {
       this._attempts = 0;
@@ -34,6 +39,7 @@ export class CapturePhoto extends HTMLElement {
       if (this._visible && !document.hidden) void this._refresh();
     });
     this._observer.observe(this);
+    window.addEventListener("capture-preview-ready", this._onPreview);
     window.addEventListener("online", this._onReturn);
     document.addEventListener("visibilitychange", this._onReturn);
   }
@@ -41,8 +47,37 @@ export class CapturePhoto extends HTMLElement {
     this._attempts = 0;
     if (this.isConnected && this._visible) void this._refresh();
   }
+  async _loadLocal() {
+    if (this._url || !this._image || !this.isConnected) return;
+    const generation = this._generation;
+    const key = this.dataset.mediaKey;
+    try {
+      const preview = await getLocalCapturePreview(key);
+      if (
+        generation !== this._generation ||
+        key !== this.dataset.mediaKey ||
+        !this.isConnected ||
+        this._url
+      )
+        return;
+      if (preview) this._show(preview);
+      else queueCapturePreview(key);
+    } catch {
+      /* Local previews are best-effort. */
+    }
+  }
+  _show(blob) {
+    const previous = this._url;
+    this._url = URL.createObjectURL(blob);
+    this._image.src = this._url;
+    this._image.hidden = false;
+    this._placeholder.hidden = true;
+    if (previous) URL.revokeObjectURL(previous);
+  }
   async _refresh() {
-    if (this._busy || this._url || !this._image || !this.isConnected) return;
+    if (!this._image || !this.isConnected) return;
+    void this._loadLocal();
+    if (this._busy || this._serverPreview) return;
     this._busy = true;
     const generation = this._generation;
     const artifactId = this.dataset.artifactId || "";
@@ -54,10 +89,8 @@ export class CapturePhoto extends HTMLElement {
       );
       if (generation !== this._generation || !this.isConnected) return;
       if (thumbnail) {
-        this._url = URL.createObjectURL(thumbnail);
-        this._image.src = this._url;
-        this._image.hidden = false;
-        this._placeholder.hidden = true;
+        this._serverPreview = true;
+        this._show(thumbnail);
         return;
       }
     } catch {
@@ -98,12 +131,15 @@ export class CapturePhoto extends HTMLElement {
       }
     }
     const media = await getCaptureMedia(mediaKey);
-    const blob = media?.original || media?.thumbnail;
+    const blob =
+      media?.original ||
+      media?.thumbnail ||
+      (await getLocalCapturePreview(mediaKey));
     if (!blob) return null;
     const src = URL.createObjectURL(blob);
     return {
       src,
-      previewOnly: !media.original,
+      previewOnly: !media?.original,
       release: () => URL.revokeObjectURL(src),
     };
   }
@@ -111,10 +147,12 @@ export class CapturePhoto extends HTMLElement {
     this._generation++;
     clearTimeout(this._timer);
     this._observer?.disconnect();
+    window.removeEventListener("capture-preview-ready", this._onPreview);
     window.removeEventListener("online", this._onReturn);
     document.removeEventListener("visibilitychange", this._onReturn);
     if (this._url) URL.revokeObjectURL(this._url);
     this._url = "";
+    this._serverPreview = false;
   }
 }
 customElements.define("capture-photo", CapturePhoto);

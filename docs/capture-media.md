@@ -29,17 +29,27 @@ thumbnail caching and retains the same original-release and deletion rules.
   persisted, the original is deleted locally. Thumbnail readiness does not delay
   this cleanup. Interrupted registration retains the original and existing upload
   reservation identity so retry remains possible.
-- A visible capture tile requests only the server thumbnail. Missing thumbnails
-  show a placeholder and use bounded retries; they never trigger a full-original
-  download. Successful thumbnails are cached locally as small Blobs.
+- A visible capture tile queues a local JPEG preview while requesting the server
+  thumbnail independently. One worker job per tab decodes an already-local original,
+  shrinks its long edge to at most 480 pixels, and encodes JPEG at quality 0.75.
+  Queue entries contain keys, not Files. The full bitmap is closed before encoding;
+  workers terminate when idle, hidden, or after a five-second timeout.
+- Local previews (at most 256 KiB each) live in separate IndexedDB records and
+  survive offline reloads without loading originals for display. A successful
+  server-thumbnail cache write atomically deletes the local preview. The component
+  replaces and revokes its old object URL. Neither preview path delays uploads.
+- Unsupported workers/codecs, timeouts, or preview failures leave the existing
+  placeholder/server-thumbnail path working. There is no main-thread resizing
+  fallback and no full-original download for a tile. Server thumbnails use bounded
+  retries and are cached locally.
 - A lightbox action obtains the original from S3 on demand. Offline, an unsent
   original or cached thumbnail can be used; thumbnail-only viewing is labeled.
   Closing/removing the lightbox releases its image reference and any object URL.
 - Removing an item, clearing a completed/discarded check, and sign-out clean up
   the applicable media records. Switching sites preserves outstanding drafts.
 
-An online check can temporarily have no local preview after original cleanup and
-before its server thumbnail arrives. A subsequent loss of connectivity does not
+If best-effort local generation fails or upload cleanup wins the race before it
+starts, a check can temporarily have no preview before its server thumbnail arrives. A subsequent loss of connectivity does not
 restore the original locally: the evidence is safely registered in S3 and the
 thumbnail can be fetched when connectivity returns.
 
@@ -61,7 +71,8 @@ share in-flight requests and a short failure backoff; each component has bounded
 retry attempts, and fetches have a time limit.
 
 Status saves write check metadata only. Original bytes are read for pending
-uploads or explicit full-image viewing, not loaded into the session or copied on
+uploads, one-at-a-time worker preview generation, or explicit full-image viewing,
+not loaded into the session or copied on
 each analysis notification. No image contents or signed URLs are persisted in
 check metadata or emitted by the performance harness.
 
@@ -105,6 +116,47 @@ original cleanup, interrupted registration, cached thumbnails, no original
 fallback, legacy migration, quota failure, deletion races, multi-check cleanup,
 stable image/focus identity, and a mounted offline capture view.
 
+## Local-preview cost experiment
+
+`e2e/preview-cost.mjs` is an isolated synthetic benchmark, not a production
+preview feature. It requires the existing Playwright Chromium installation and
+no app server, account, uploaded photos, or network service. It compares base64,
+full-size Blob URLs, a 480-pixel main-thread canvas thumbnail, and 480/320-pixel
+worker thumbnails using `createImageBitmap` and `OffscreenCanvas`. The worker
+fully decodes the source before drawing a small canvas, matching the production
+path that must discover source dimensions. Older experiment results used known
+fixture dimensions and resize-at-decode; do not compare those as identical code.
+
+```sh
+mkdir -p e2e/test-results/preview-cost
+node e2e/preview-cost.mjs --rates=1,4 --repeats=3 --count=11 > e2e/test-results/preview-cost/12mp.json
+node e2e/preview-cost.mjs --rates=1,4 --repeats=3 --count=3 --size=6000x4000 > e2e/test-results/preview-cost/24mp.json
+```
+
+Inputs are deterministic noise JPEGs (quality 0.35); generation is excluded from
+measurements. Each strategy uses a fresh browser context, processes photos
+sequentially, and retains all preview elements until completion to simulate
+slow uploads. Mode ordering rotates between repetitions. Source files are held
+identically in all modes. Worker startup is included in the first photo's time;
+bitmaps, canvases, workers, and object URLs are released after use. Output image
+dimensions are checked. The script prints progress to stderr and JSON to stdout.
+
+Results separate preparation time from decoding/display time (two animation
+frames after image decode), and report animation-frame gaps, 16 ms timer lateness,
+and main-thread long tasks. These are wall-clock and responsiveness measurements,
+not CPU utilization, energy use, or actual tap/camera-launch latency. Retained
+preview payload sizes are measured; decoded pixel-byte figures are arithmetic
+estimates, **not RAM/GPU measurements**. Original-file storage, uploads, and the
+old full-grid rerenders are excluded, so this isolates preview strategies rather
+than reproducing the entire former application.
+
+CPU throttling is a main-thread stress experiment, not an older-phone emulator;
+worker and native decoder throttling can differ. A worker avoiding long tasks
+still consumes CPU and transient decode memory. Real Android/iOS device profiling
+with concurrent uploads is required before claiming phone performance or peak
+memory improvements. Lower-resolution thumbnails reduce retained bytes but may
+not substantially reduce source-image decoding time.
+
 ## Deployment compatibility
 
 Version 7 readers and writers ship together. Older open connections receive a
@@ -116,5 +168,6 @@ safely drained first. The existing S3 GET CORS and CSP policies cover thumbnail
 fetches and object-URL display; no infrastructure change is needed.
 
 The capture route JavaScript budget is 13.5 kB Brotli (previously 13 kB) to cover
-incremental rendering. Separate 2 kB JavaScript and 300-byte CSS limits cover the
-lazy capture media/thumbnail modules. No dependency was added.
+incremental rendering. Separate 2.5 kB JavaScript and 300-byte CSS limits cover the
+lazy capture media/thumbnail modules; a 600-byte limit covers the worker. The
+worker is a same-origin asset included in the offline-shell precache. No dependency was added.

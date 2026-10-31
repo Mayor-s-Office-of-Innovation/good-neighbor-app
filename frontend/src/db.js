@@ -805,7 +805,10 @@ export function getCaptureMedia(key) {
 
 /** @param {string} key */
 export function deleteCaptureMedia(key) {
-  return tx("captureMedia", "readwrite", (os) => os.delete(key));
+  return tx("captureMedia", "readwrite", (os) => {
+    os.delete(key);
+    os.delete(localPreviewKey(key));
+  });
 }
 
 // Some WebKit versions cannot persist Blob/File values. Keep Blob storage on
@@ -1006,6 +1009,7 @@ function cacheCaptureThumbnailRecord(
       const metadata = { ...existing };
       delete metadata.original;
       media.put({ ...metadata, thumbnail, thumbnailContentType });
+      media.delete(localPreviewKey(key));
       return true;
     },
   );
@@ -1085,8 +1089,65 @@ export function deleteCapturePhoto(check, key) {
       }
     }
     transaction.objectStore("captureMedia").delete(key);
+    transaction.objectStore("captureMedia").delete(localPreviewKey(key));
     return saved?.id === check.id ? saved : null;
   }).then((saved) => {
     if (saved) reconcileCaptureCheck(check, before, saved);
   });
+}
+
+function localPreviewKey(key) {
+  return JSON.stringify(["local-preview", key]);
+}
+
+/** Read only the small preview record, never the pending original. @param {string} key */
+export function getLocalCapturePreview(key) {
+  return tx("captureMedia", "readonly", (os) =>
+    reqToPromise(os.get(localPreviewKey(key))),
+  ).then((record) => {
+    if (!record) return null;
+    return record.preview instanceof ArrayBuffer
+      ? new Blob([record.preview], { type: record.contentType })
+      : record.preview;
+  });
+}
+
+/** Do not recreate a removed photo or replace a server thumbnail. @param {string} key @param {Blob} preview */
+export function cacheLocalCapturePreview(key, preview) {
+  return writeCaptureBlob(preview, (stored) =>
+    tx(
+      ["captureMedia", "draft", "review"],
+      "readwrite",
+      async (media, transaction) => {
+        const existing = await reqToPromise(media.get(key));
+        if (!existing || existing.thumbnail) return false;
+        const draft = await reqToPromise(
+          transaction
+            .objectStore("draft")
+            .get(draftKey(existing.flowType, existing.siteId)),
+        );
+        const review = await reqToPromise(
+          transaction
+            .objectStore("review")
+            .get(finishedCheckKey(existing.siteId, existing.checkId)),
+        );
+        const check = draft?.id === existing.checkId ? draft : review;
+        if (
+          !check?.items?.some(
+            (item) => item.id === existing.itemId && item.media?.key === key,
+          )
+        )
+          return false;
+        media.put({
+          key: localPreviewKey(key),
+          siteId: existing.siteId,
+          checkId: existing.checkId,
+          itemId: existing.itemId,
+          preview: stored,
+          contentType: preview.type,
+        });
+        return true;
+      },
+    ),
+  );
 }

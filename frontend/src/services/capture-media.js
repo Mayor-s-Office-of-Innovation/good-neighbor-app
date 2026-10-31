@@ -61,6 +61,7 @@ const retryAfter = new Map();
  * @returns {Promise<Blob|null>}
  */
 export function captureThumbnail(key, checkId, artifactId) {
+  if (!artifactId) return Promise.resolve(null);
   if (pending.has(key)) return pending.get(key);
   const work = (async () => {
     let media = await getCaptureMedia(key);
