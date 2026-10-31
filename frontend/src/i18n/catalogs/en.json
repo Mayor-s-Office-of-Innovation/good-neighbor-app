@@ -301,6 +301,7 @@
   "admin.sites.deliberate311.title": "Change 311 filing ability",
   "admin.sites.giveAppAccess": "Give app access",
   "admin.sites.readOnly": "Read-only: only supervisors and compliance managers assigned to this site can make changes.",
+  "admin.sites.typeOther": "Other",
   "admin.sites.updatePerimeterChecks": "Update perimeter checks",
   "admin.status.actions": "Actions",
   "admin.status.activity": "Activity",

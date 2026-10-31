@@ -7375,6 +7375,7 @@ function siteTypeSelect(value) {
     ["permanent_supportive_housing", "Permanent supportive housing"],
     ["shelter", "Shelter"],
     ["drop_in", "Drop-in"],
+    ["other", t("admin.sites.typeOther")],
   ];
   return `<wa-select name="site-type" label="Site type">
     ${options.map(([optionValue, label]) => `<wa-option value="${optionValue}" ${optionValue === value ? "selected" : ""}>${label}</wa-option>`).join("")}
