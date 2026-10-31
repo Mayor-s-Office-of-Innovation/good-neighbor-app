@@ -224,6 +224,22 @@
   color: var(--wa-color-danger-on-quiet, #b30532);
 }
 
+.home-settings-divider {
+  width: auto;
+  margin: 0.375rem 1rem;
+  border: 0;
+  border-top: 1px solid var(--c-line);
+}
+
+.home-settings-version {
+  margin: 0;
+  padding: 0.375rem 1rem;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .home-settings-menu wa-icon {
   flex: 0 0 var(--wa-font-size-s, 0.875rem);
   width: var(--wa-font-size-s, 0.875rem);

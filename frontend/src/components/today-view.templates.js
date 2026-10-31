@@ -228,6 +228,10 @@ export function settingsMenu({ open, adminAccess = false, disabled = false }) {
               ></wa-icon>
               ${escapeHtml(t("today.settings.logout"))}
             </button>
+            <hr class="home-settings-divider" />
+            <p class="home-settings-version" id="settings-release-version">
+              ${escapeHtml(import.meta.env.VITE_RELEASE_VERSION || "dev")}
+            </p>
           </div>`
         : ""}
     </div>
