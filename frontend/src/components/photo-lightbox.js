@@ -145,6 +145,13 @@ customElements.define("photo-lightbox", PhotoLightbox);
 export async function openPhotoLightbox(host, trigger, screen = trigger) {
   if (!host.isConnected || !screen?.isConnected || !host.contains(screen))
     return;
+  // Programmatic callers must honor disabled controls before creating a viewer
+  // or cancelling another photo's pending request.
+  if (
+    trigger.matches(":disabled") ||
+    trigger.getAttribute("aria-disabled") === "true"
+  )
+    return;
   const existing = host.querySelector("photo-lightbox");
   const lightbox =
     existing instanceof PhotoLightbox
