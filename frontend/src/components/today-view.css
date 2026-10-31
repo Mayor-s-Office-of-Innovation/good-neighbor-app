@@ -808,13 +808,19 @@ html.wa-dark .home-results__complete-content img {
   }
 }
 
+/* Balance Settings with equal space on the left so the selector centers on the page. */
+.home-top-actions:has(> site-switcher) {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+}
 .home-top-actions > site-switcher {
-  flex: 1 1 auto;
+  grid-column: 2;
   min-width: 0;
   text-align: center;
 }
 .home-top-actions > .home-settings-wrap {
-  flex: 0 0 44px;
+  grid-column: 3;
+  justify-self: end;
 }
 .home-top-actions > feedback-dialog[hide-trigger] {
   display: contents;
