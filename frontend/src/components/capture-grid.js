@@ -15,7 +15,7 @@ export function renderCaptureGrid(grid, photos, description) {
     if (!text) {
       text = document.createElement("div");
       text.setAttribute("data-description-slot", "");
-      text.setAttribute("style", "display:contents");
+      text.className = "shotgrid__entry";
       grid.prepend(text);
     }
     if (grid.firstElementChild !== text) grid.prepend(text);
@@ -30,6 +30,7 @@ export function renderCaptureGrid(grid, photos, description) {
     let entry = entries.get(item.id);
     if (!entry) {
       const element = document.createElement("div");
+      element.className = "shotgrid__entry";
       entry = { element };
       entries.set(item.id, entry);
     }
@@ -68,8 +69,6 @@ export function renderCaptureGrid(grid, photos, description) {
     const old = preview.querySelector(".capture-scanner");
     if (scanner && !old) preview.insertAdjacentHTML("beforeend", scanner);
     if (!scanner && old) old.remove();
-    // The wrapper uses display:contents so the original tile remains the grid item.
-    entry.element.style.display = "contents";
     if (entry.element !== cursor) grid.insertBefore(entry.element, cursor);
     cursor = entry.element.nextElementSibling;
   }

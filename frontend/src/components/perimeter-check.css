@@ -30,6 +30,11 @@
   margin-bottom: 1rem;
 }
 
+/* Keep keyed wrappers out of layout so their tiles remain grid items. */
+.shotgrid__entry {
+  display: contents;
+}
+
 /* Empty place: the lone ＋ tile stands centered instead of tiling. */
 .shotgrid--empty {
   display: flex;
