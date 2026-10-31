@@ -95,6 +95,9 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Test capture media storage and rendering
+        run: npm run test:capture:ui -w frontend
+
       - name: Test support dialog accessibility
         run: npm run test:support:ui
 

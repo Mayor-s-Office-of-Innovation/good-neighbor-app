@@ -81,12 +81,14 @@ for (const name of [
     const chooser = await chooserPromise;
     expect(await chooser.element().getAttribute("capture")).toBe("environment");
     await chooser.setFiles(photos[0]);
+    // Capture tiles can show a placeholder until the server thumbnail arrives.
+    // Assert the preview control, which exists for both pending and loaded photos.
     const previews = page.locator(
       name === "care-work-view"
         ? ".care-thumbnails img"
         : name === "task-update-dialog"
           ? ".task-update__photo--draft"
-          : ".shot__img",
+          : ".shot__preview",
     );
     await expect(previews).toHaveCount(1);
     const galleryPromise = page.waitForEvent("filechooser");
@@ -123,7 +125,7 @@ for (const name of [
               ?.getBoundingClientRect();
             const preview = document
               .querySelector(
-                ".shot__img, .care-thumbnails img, .task-update__photo--draft",
+                ".shot__preview, .care-thumbnails img, .task-update__photo--draft",
               )
               ?.getBoundingClientRect();
             return Boolean(
