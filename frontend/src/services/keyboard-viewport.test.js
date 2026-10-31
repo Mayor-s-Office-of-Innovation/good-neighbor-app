@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import {
   deepActiveElement,
   isEditable,
@@ -70,17 +70,28 @@ describe("deepActiveElement", () => {
 
 describe("focused field clearance after Safari keyboard resize", () => {
   const viewport = { height: 400, offsetTop: 60, scale: 1 };
+  beforeEach(() => {
+    vi.stubGlobal("window", { scrollBy: vi.fn() });
+    vi.stubGlobal("ShadowRoot", class {});
+  });
+  afterEach(() => vi.unstubAllGlobals());
   function field(top, bottom) {
-    return {
+    return /** @type {any} */ ({
+      parentElement: null,
+      getRootNode: () => ({}),
       getBoundingClientRect: () => ({ top, bottom, height: bottom - top }),
       scrollIntoView: vi.fn(),
-    };
+    });
   }
   it("reveals an obscured field when the visual viewport shrinks", () => {
     const active = field(500, 600);
     revealEditable(active, viewport);
     expect(active.scrollIntoView).toHaveBeenCalledWith({
-      block: "center",
+      block: "nearest",
+      behavior: "instant",
+    });
+    expect(window.scrollBy).toHaveBeenCalledWith({
+      top: 156,
       behavior: "instant",
     });
   });
@@ -94,7 +105,7 @@ describe("focused field clearance after Safari keyboard resize", () => {
     const active = field(500, 1100);
     revealEditable(active, viewport);
     expect(active.scrollIntoView).toHaveBeenCalledWith({
-      block: "start",
+      block: "nearest",
       behavior: "instant",
     });
     const visibleTop = field(76, 676);

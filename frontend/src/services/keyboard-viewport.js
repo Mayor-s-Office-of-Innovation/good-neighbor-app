@@ -57,21 +57,52 @@ export function keyboardViewport(viewport, layoutHeight, editing) {
   return { height, top: Math.max(0, Math.round(viewport.offsetTop)) };
 }
 
-/** Reveal a focused field after the keyboard animation changes the viewport.
- * @param {{ getBoundingClientRect: () => {top: number, bottom: number, height: number}, scrollIntoView: (options: ScrollIntoViewOptions) => void } | null} active
+/** Reveal a field inside the visual viewport, including nested modal scrollers.
+ * scrollIntoView alone targets the layout viewport, which can extend below iOS's keyboard.
+ * @param {Element | null} active
  * @param {{height: number, offsetTop: number, scale: number} | null | undefined} viewport
  */
 export function revealEditable(active, viewport) {
   if (!active || !viewport || viewport.scale !== 1) return;
-  const rect = active.getBoundingClientRect();
   const top = viewport.offsetTop + 16;
   const bottom = viewport.offsetTop + viewport.height - 16;
-  // A tall textarea cannot fit completely: reveal its beginning without
-  // repeatedly centering it on each Safari pan event.
-  const tall = rect.height > bottom - top;
-  if (rect.top < top || (tall ? rect.top > bottom - 48 : rect.bottom > bottom))
-    active.scrollIntoView({
-      block: tall ? "start" : "center",
-      behavior: "instant",
-    });
+  const displacement = () => {
+    const rect = active.getBoundingClientRect();
+    if (rect.top < top) return rect.top - top;
+    if (rect.height > bottom - top) return Math.max(0, rect.top - top);
+    return Math.max(0, rect.bottom - bottom);
+  };
+  if (!displacement()) return;
+  // First expose the field inside any clipping ancestors, then correct against
+  // the actual visible area, rather than centering in the full layout viewport.
+  active.scrollIntoView({ block: "nearest", behavior: "instant" });
+  /** @type {Element | null} */
+  let parent = active.parentElement;
+  let node = active;
+  while (node) {
+    if (!parent) {
+      const root = node.getRootNode();
+      parent = root instanceof ShadowRoot ? root.host : null;
+    }
+    if (!parent) break;
+    if (
+      parent.scrollHeight > parent.clientHeight &&
+      /auto|scroll|hidden/.test(getComputedStyle(parent).overflowY)
+    ) {
+      // Preserve visibility inside this scroller. Any remaining movement must
+      // come from an outer scroller, rather than clipping the editor here.
+      const field = active.getBoundingClientRect();
+      const bounds = parent.getBoundingClientRect();
+      const innerTop = bounds.top + parent.clientTop;
+      const innerBottom = innerTop + parent.clientHeight;
+      const delta = displacement();
+      parent.scrollTop +=
+        delta > 0
+          ? Math.min(delta, Math.max(0, field.top - innerTop))
+          : Math.max(delta, Math.min(0, field.bottom - innerBottom));
+    }
+    node = parent;
+    parent = parent.parentElement;
+  }
+  window.scrollBy({ top: displacement(), behavior: "instant" });
 }

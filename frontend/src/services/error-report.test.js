@@ -421,3 +421,22 @@ describe("capture + payload", () => {
     void mod;
   });
 });
+
+describe("caught failures", () => {
+  it("reports scrubbed errors once and respects the opt-out", async () => {
+    storage["gnp:errors"] = "on";
+    const mod = await import("./error-report.js");
+    const error = new Error("Synthetic startup failure");
+    error.stack = "Error at https://example.test/app.js?private=value";
+    mod.reportCaughtError(error);
+    mod.reportCaughtError(error);
+    expect(sendBeacon).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(await beaconBlobs[0].text());
+    expect(payload.type).toBe("Error");
+    expect(payload.message).toBe(error.message);
+    expect(payload.stack).not.toContain("private=value");
+    storage["gnp:errors"] = "off";
+    mod.reportCaughtError(new Error("Another failure"));
+    expect(sendBeacon).toHaveBeenCalledTimes(1);
+  });
+});
