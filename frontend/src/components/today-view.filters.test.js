@@ -35,9 +35,11 @@ const todayTitle = (iso) =>
   escapeHtml(t("analysis.checkTitle.today", { time: formatTime(iso) }));
 
 const answerUpdated = vi.hoisted(() => vi.fn());
+const finishAnswerFocus = vi.hoisted(() => vi.fn());
 vi.mock("./analysis-answer-controls.js", async (importOriginal) => ({
   ...(await importOriginal()),
   showQuestionAnswerUpdated: answerUpdated,
+  finishQuestionAnswerFocus: finishAnswerFocus,
 }));
 
 const session = vi.hoisted(() => ({ current: null }));
@@ -1699,7 +1701,7 @@ describe("restored duplicate links", () => {
   );
 });
 
-it("paints a saved clarification before the background worklist refresh completes", async () => {
+it("holds a saved clarification without reloading the worklist during an answer", async () => {
   const view = await mount("?filter=todo");
   const updated = { id: "check-one", status: "capture-complete", items: [] };
   view._homeModel = { tasks: [], pendingSession: { id: "check-one" } };
@@ -1712,10 +1714,7 @@ it("paints a saved clarification before the background worklist refresh complete
     tasks: [],
     pendingSession: updated,
   });
-  expect(view.connectedCallback).toHaveBeenCalledOnce();
-  expect(view._renderHome.mock.invocationCallOrder[0]).toBeLessThan(
-    view.connectedCallback.mock.invocationCallOrder[0],
-  );
+  expect(view.connectedCallback).not.toHaveBeenCalled();
   view._renderHome.mockClear();
   listener({ ...updated, id: "different-check" });
   expect(view._renderHome).not.toHaveBeenCalled();
@@ -2650,4 +2649,24 @@ it("preserves the selected problem while a background refresh leaves its dialog 
   siteRead.mockResolvedValueOnce({ siteId: "another-site" });
   await view.connectedCallback();
   expect(view._activeProblem).toBeNull();
+});
+
+it("cleans up each completed home answer even while another confirmation holds the render", () => {
+  finishAnswerFocus.mockClear();
+  const view = {
+    isConnected: true,
+    _siteId: "example",
+    _homeRefreshGeneration: 1,
+    _answeringConditionIds: new Set(["first", "second"]),
+    _renderHome: vi.fn(),
+  };
+  TodayView.prototype._finishQuestionConfirmation.call(
+    view,
+    "first",
+    "example",
+    1,
+  );
+  expect(finishAnswerFocus).toHaveBeenCalledWith(view, "first");
+  expect(view._renderHome).not.toHaveBeenCalled();
+  expect(view._answeringConditionIds.has("second")).toBe(true);
 });

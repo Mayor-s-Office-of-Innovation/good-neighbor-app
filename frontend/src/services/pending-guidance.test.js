@@ -1,4 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
+vi.mock("./task-evidence.js", () => ({
+  hydratePendingQuestionEvidence: vi.fn(async (items) => items),
+}));
 const list = vi.hoisted(() => vi.fn());
 const read = vi.hoisted(() => vi.fn());
 vi.mock("./api.js", () => ({
@@ -269,4 +272,68 @@ it("stops historical pagination after its refresh becomes obsolete", async () =>
     () => active,
   );
   expect(list).toHaveBeenCalledOnce();
+});
+
+it("keeps the captured photo when a server question replaces its local condition", () => {
+  const local = {
+    id: "local",
+    kind: "photo",
+    dataUrl: "data:image/webp;base64,AA",
+    analysis: {
+      status: "analyzed",
+      artifactId: "photo",
+      assessment: group.assessment,
+      conditions: [condition],
+      tasks: [],
+    },
+  };
+  const pending = {
+    id: "pending",
+    kind: "unknown",
+    checkId: "old-check",
+    analysis: {
+      artifactId: "photo",
+      assessment: group.assessment,
+      conditions: [condition],
+    },
+  };
+  const result = mergePendingQuestionItems([local], [pending], []);
+  expect(result).toHaveLength(1);
+  expect(result[0]).toMatchObject({
+    id: "pending",
+    kind: "photo",
+    dataUrl: local.dataUrl,
+  });
+  expect(result[0].analysis).toBe(pending.analysis);
+});
+
+it("preserves Blob media references on recovered server questions", () => {
+  const media = { key: "synthetic", type: "image/jpeg", size: 8 };
+  const remote = {
+    id: "remote",
+    kind: "photo",
+    checkId: "check",
+    analysis: {
+      assessment: { assessmentId: "synthetic-assessment" },
+      artifactId: "artifact",
+      status: "analyzed",
+      conditions: [condition],
+    },
+  };
+  const local = {
+    id: "local",
+    kind: "photo",
+    checkId: "check",
+    media,
+    analysis: {
+      assessment: { assessmentId: "synthetic-assessment" },
+      artifactId: "artifact",
+      status: "analyzed",
+      conditions: [condition],
+    },
+  };
+  const items = mergePendingQuestionItems([local], [remote], []);
+  expect(
+    items.some((item) => item.media === media && item.checkId === "check"),
+  ).toBe(true);
 });

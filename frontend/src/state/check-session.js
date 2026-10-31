@@ -25,6 +25,7 @@
   their check by item id and an older check keeps saving its upload/analysis
   progress after a new check starts (services/check-submissions.js drives them).
 */
+import { onHealthChange } from "../services/backend-health.js";
 import { cancelCheckPolling } from "../services/check-polling.js";
 import { completeFirstPerimeterCheck } from "../services/install-prompt.js";
 import {
@@ -81,11 +82,23 @@ function normalizeCheck(check) {
   return {
     ...rest,
     flowType: normalizeFlowType(check.flowType),
-    // Legacy evidence may omit its parent ID; media requests require it.
-    items: normalizeItems(check).map((item) => ({
-      ...item,
-      checkId: check.id,
-    })),
+    items: normalizeItems(check).map((original) => {
+      const item = { ...original, checkId: check.id };
+      return item.analysis?.status === "failed" && !item.analysis.recovery
+        ? {
+            ...item,
+            analysis: {
+              ...item.analysis,
+              recovery: {
+                stage: item.analysis.failure?.leg || "upload",
+                state: "scheduled",
+                attempts: 0,
+                nextAttemptAt: 0,
+              },
+            },
+          }
+        : item;
+    }),
     analyzingOpen:
       check.analyzingOpen == null ? true : Boolean(check.analyzingOpen),
   };
@@ -103,9 +116,9 @@ const listeners = new Set();
 function persist(check = current) {
   if (!check) return;
   if (check.status === "in-progress") {
-    void saveDraft(check);
+    void Promise.resolve(saveDraft(check)).catch(() => {});
   } else {
-    void saveFinishedCheck(check);
+    void Promise.resolve(saveFinishedCheck(check)).catch(() => {});
   }
 }
 
@@ -392,12 +405,13 @@ export async function addCapturedPhoto(file) {
   return record;
 }
 
-export function removeItem(itemId) {
+export function removeItem(itemId, { mediaDeleted = false } = {}) {
   const check = checkForItem(itemId) || current;
   if (!check) return;
   const removed = check.items.find((i) => i.id === itemId);
   check.items = check.items.filter((i) => i.id !== itemId);
-  if (removed?.media) void deleteCapturePhoto(check, removed.media.key);
+  if (removed?.media && !mediaDeleted)
+    void deleteCapturePhoto(check, removed.media.key);
   else persist(check);
   emit(check);
 }
@@ -482,7 +496,11 @@ export function markCaptureComplete({
     current.expectedArtifacts = expectedArtifacts;
   }
   persist();
-  void clearDraft({ flowType: current.flowType, siteId: current.siteId });
+  void clearDraft({
+    flowType: current.flowType,
+    siteId: current.siteId,
+    checkId: current.id,
+  });
   emit();
   return current;
 }
@@ -528,8 +546,8 @@ export function clearCheck() {
   const siteId = current?.siteId;
   const checkId = current?.id;
   current = null;
-  void clearDraft({ flowType, siteId });
-  if (flowType) void clearDraft({ siteId });
+  void clearDraft({ flowType, siteId, checkId });
+  if (flowType) void clearDraft({ siteId, checkId });
   if (checkId) void deleteFinishedCheck(siteId, checkId);
   emit();
 }
@@ -560,3 +578,19 @@ export async function pauseCheck() {
   finished.clear();
   emit();
 }
+
+/** Persist check-level recovery before another finalization attempt. */
+export async function updateCheckRecovery(checkId, recovery) {
+  const check = current?.id === checkId ? current : finished.get(checkId);
+  if (!check) return;
+  check.finalizationRecovery = recovery;
+  if (check.status === "in-progress") await saveDraft(check);
+  else await saveFinishedCheck(check);
+  emit(check);
+}
+
+// Connection changes also change whether a rendered recovery action is usable.
+onHealthChange(() => {
+  if (current) emit(current);
+  for (const check of finished.values()) emit(check);
+});

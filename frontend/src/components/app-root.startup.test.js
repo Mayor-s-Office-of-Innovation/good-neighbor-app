@@ -58,6 +58,7 @@ vi.mock("../services/session-handoff.js", () => ({
   uninstallHandoffManifest: vi.fn(),
 }));
 vi.mock("../services/backend-health.js", () => ({
+  onHealthChange: vi.fn(() => () => {}),
   clearAuthState: setup.clearAuthState,
   startHealthMonitoring: vi.fn(),
   stopHealthMonitoring: vi.fn(),
@@ -555,6 +556,12 @@ it("shows recovery controls when a route module fails instead of leaving a blank
   expect(root._view.innerHTML).toContain('role="status"');
   await flush();
   expect(root._view.innerHTML).toContain('role="alert"');
+  expect(root._view.innerHTML).toContain(
+    'class="app-route-load-error__actions"',
+  );
+  expect(root._view.innerHTML).toContain(
+    'class="btn-outline btn-outline--sm" data-route-back',
+  );
   expect(root._view.inert).toBe(false);
   expect(handlers["[data-route-reload]"]).toBeTypeOf("function");
   expect(handlers["[data-route-back]"]).toBeTypeOf("function");

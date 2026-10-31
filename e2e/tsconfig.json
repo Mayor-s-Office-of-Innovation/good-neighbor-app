@@ -20,6 +20,8 @@
     "task-update-tests/**/*.js",
     "task-updates.config.js",
     "offline-shell-tests/**/*.js",
-    "offline-shell.config.js"
+    "offline-shell.config.js",
+    "recovery-tests/**/*.js",
+    "recovery.config.js"
   ]
 }

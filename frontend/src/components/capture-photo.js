@@ -41,6 +41,7 @@ export class CapturePhoto extends HTMLElement {
     this._observer.observe(this);
     window.addEventListener("capture-preview-ready", this._onPreview);
     window.addEventListener("online", this._onReturn);
+    window.addEventListener("connectionretry", this._onReturn);
     document.addEventListener("visibilitychange", this._onReturn);
   }
   attributeChangedCallback() {
@@ -154,6 +155,7 @@ export class CapturePhoto extends HTMLElement {
     this._observer?.disconnect();
     window.removeEventListener("capture-preview-ready", this._onPreview);
     window.removeEventListener("online", this._onReturn);
+    window.removeEventListener("connectionretry", this._onReturn);
     document.removeEventListener("visibilitychange", this._onReturn);
     if (this._url) URL.revokeObjectURL(this._url);
     this._url = "";

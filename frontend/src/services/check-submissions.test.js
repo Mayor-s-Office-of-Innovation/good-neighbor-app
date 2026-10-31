@@ -8,12 +8,17 @@ vi.mock("../db.js", () => ({
 vi.mock("../state/check-session.js", () => ({
   getCurrentCheck: () => held.inProgress,
   loadFinishedChecks: vi.fn(async () => [...held.finished]),
-  markScorecardDone: vi.fn(),
+  markScorecardDone: vi.fn((id) => {
+    const check = held.finished.find((entry) => entry.id === id);
+    if (check) check.scorecardDone = true;
+  }),
 }));
 vi.mock("./photo-analysis.js", async (importOriginal) => {
   const actual = /** @type {any} */ (await importOriginal());
   return {
     analyzeEvidenceItem: vi.fn(),
+    removeEvidenceItem: vi.fn(async () => {}),
+    reconcileFailedEvidence: vi.fn(async () => {}),
     EVIDENCE_SETTLED_EVENT: actual.EVIDENCE_SETTLED_EVENT,
     shouldResumeEvidenceItem: actual.shouldResumeEvidenceItem,
     hasUnsentLocation: actual.hasUnsentLocation,
@@ -25,7 +30,7 @@ vi.mock("./submit-check.js", () => ({
   finalizeCaptureScorecardInBackground: vi.fn(() => Promise.resolve({})),
 }));
 
-import { analyzeEvidenceItem } from "./photo-analysis.js";
+import { analyzeEvidenceItem, removeEvidenceItem } from "./photo-analysis.js";
 import { finalizeCaptureScorecardInBackground } from "./submit-check.js";
 import { markScorecardDone } from "../state/check-session.js";
 import {
@@ -200,4 +205,33 @@ describe("retry while items wait", () => {
       vi.useRealTimers();
     }
   });
+});
+
+it("does not finalize a check with an unresolved deletion", () => {
+  expect(
+    readyForScorecard(
+      finishedCheck("pending-delete", [
+        { ...uploaded("1"), deletionPending: true },
+      ]),
+    ),
+  ).toBe(false);
+});
+
+it("replays a durable deletion on recovery without uploading or finalizing it", async () => {
+  held.finished = [
+    finishedCheck("pending-delete", [
+      { ...uploaded("1"), deletionPending: true },
+    ]),
+  ];
+  await resumeCheckSubmissions();
+  expect(removeEvidenceItem).toHaveBeenCalledWith("1");
+  expect(analyzeEvidenceItem).not.toHaveBeenCalled();
+  expect(finalizeCaptureScorecardInBackground).not.toHaveBeenCalled();
+});
+
+it("allows finalization again after a rejected deletion is durably cleared", () => {
+  const check = finishedCheck("rejected-delete", [
+    { ...uploaded("1"), deletionPending: false },
+  ]);
+  expect(readyForScorecard(check)).toBe(true);
 });

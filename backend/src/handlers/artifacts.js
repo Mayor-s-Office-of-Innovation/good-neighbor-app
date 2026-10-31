@@ -1,3 +1,4 @@
+import { restartAnalysis } from "../analysis/artifact-recovery.js";
 import { randomUUID } from "node:crypto";
 import {
   DeleteCommand,
@@ -16,6 +17,7 @@ import { artifactTaskLocationUpdates } from "../analysis/guidance/guidance-store
 import { queryAllItems } from "../lib/query-all-items.js";
 import { emitMetrics } from "../lib/metrics.js";
 import {
+  analysisKey,
   artifactKey,
   checkArtifactPrefix,
   checkHeaderKey,
@@ -365,8 +367,10 @@ export const registerArtifact = async (event) => {
     accuracyMeters,
     text,
     language,
+    retryRequestId,
+    expectedGeneration,
   } =
-    /** @type {{ artifactId?: unknown, s3Key?: unknown, contentType?: unknown, contentLength?: unknown, capturedAt?: unknown, latitude?: unknown, longitude?: unknown, accuracyMeters?: unknown, text?: unknown, language?: unknown }} */ (
+    /** @type {{ artifactId?: unknown, s3Key?: unknown, contentType?: unknown, contentLength?: unknown, capturedAt?: unknown, latitude?: unknown, longitude?: unknown, accuracyMeters?: unknown, text?: unknown, language?: unknown, retryRequestId?: unknown, expectedGeneration?: unknown }} */ (
       body ?? {}
     );
 
@@ -474,6 +478,8 @@ export const registerArtifact = async (event) => {
     ...(hasS3Key ? { s3Key } : {}),
     capturedAt: capturedAtValue,
     receivedAt: now,
+    analysisGeneration: artifactId,
+    analysisStatus: "queued",
     ...(hasCoordinates ? { latitude, longitude } : {}),
     ...(hasAccuracy ? { accuracyMeters } : {}),
     ...(typeof contentType === "string" ? { contentType } : {}),
@@ -498,17 +504,109 @@ export const registerArtifact = async (event) => {
       err instanceof Error &&
       err.name === "ConditionalCheckFailedException"
     ) {
-      // The ART item already exists — but the Put and the SQS send below are not
-      // atomic, so a PRIOR attempt may have persisted the item then failed before
-      // enqueuing (or its 202 was lost and the client retried). We can't tell
-      // "already queued" from "persisted but never queued", so we fall through and
-      // (re)enqueue anyway rather than returning here. The worker's ANALYSIS# write
-      // is conditional/idempotent, so a duplicate analyze message is harmless —
-      // and NOT re-enqueuing would strand an artifact that exists-but-was-never-
-      // queued, hanging the client's waitForAnalyses poll until it times out.
+      // Reconcile the stored lifecycle below. Queued registrations may replay
+      // a lost send; running/terminal generations are never blindly restarted.
       alreadyRegistered = true;
     } else {
       throw err;
+    }
+  }
+
+  /** @type {Record<string, any>} */
+  let queuedItem = item;
+  if (alreadyRegistered) {
+    const { Item: stored } = await ddb.send(
+      new GetCommand({
+        TableName: dynamoTable,
+        Key: artifactKey(siteId, checkId, artifactId),
+        ConsistentRead: true,
+      }),
+    );
+    if (!stored) return jsonResponse(409, { error: "artifact_unavailable" });
+    queuedItem = stored;
+    if (retryRequestId !== undefined) {
+      if (
+        typeof retryRequestId !== "string" ||
+        retryRequestId.length > 128 ||
+        !retryRequestId ||
+        typeof expectedGeneration !== "string" ||
+        retryRequestId === expectedGeneration
+      )
+        return jsonResponse(400, { error: "invalid_analysis_restart" });
+      // Old queued messages acquire the recovery protocol only after a durable
+      // exhaustion marker, never merely because an observation timed out.
+      if (!stored.analysisGeneration && expectedGeneration === artifactId) {
+        const { Item: failure } = await ddb.send(
+          new GetCommand({
+            TableName: dynamoTable,
+            Key: analysisKey(siteId, checkId, artifactId),
+            ConsistentRead: true,
+          }),
+        );
+        if (failure?.status !== "failed" || failure?.retryable !== true)
+          return jsonResponse(409, { error: "analysis_restart_unavailable" });
+        try {
+          await ddb.send(
+            new TransactWriteCommand({
+              TransactItems: [
+                {
+                  ConditionCheck: {
+                    TableName: dynamoTable,
+                    Key: analysisKey(siteId, checkId, artifactId),
+                    ConditionExpression:
+                      "#status = :failed AND retryable = :yes",
+                    ExpressionAttributeNames: { "#status": "status" },
+                    ExpressionAttributeValues: {
+                      ":failed": "failed",
+                      ":yes": true,
+                    },
+                  },
+                },
+                {
+                  Update: {
+                    TableName: dynamoTable,
+                    Key: artifactKey(siteId, checkId, artifactId),
+                    UpdateExpression:
+                      "SET analysisGeneration = :generation, analysisStatus = :exhausted",
+                    ConditionExpression:
+                      "attribute_not_exists(analysisGeneration)",
+                    ExpressionAttributeValues: {
+                      ":generation": artifactId,
+                      ":exhausted": "exhausted",
+                    },
+                  },
+                },
+              ],
+            }),
+          );
+        } catch (error) {
+          if (
+            !(error instanceof Error) ||
+            error.name !== "TransactionCanceledException"
+          )
+            throw error;
+        }
+      }
+      if (
+        !(await restartAnalysis(
+          dynamoTable,
+          artifactKey(siteId, checkId, artifactId),
+          retryRequestId,
+          expectedGeneration,
+        ))
+      )
+        return jsonResponse(409, { error: "analysis_restart_unavailable" });
+      queuedItem = {
+        ...stored,
+        analysisGeneration: retryRequestId,
+        analysisStatus: "queued",
+      };
+    } else if (stored.analysisStatus && stored.analysisStatus !== "queued") {
+      return jsonResponse(200, {
+        artifactId,
+        status: stored.analysisStatus,
+        analysisGeneration: stored.analysisGeneration,
+      });
     }
   }
 
@@ -522,9 +620,9 @@ export const registerArtifact = async (event) => {
     });
   }
 
-  // Media bytes NEVER travel through the queue — only the S3 key the worker
-  // will fetch, downscale, and forward to the analyzer. Enqueued on BOTH the fresh
-  // and the already-registered path (see above) so analysis is always driven.
+  // Media bytes NEVER travel through the queue. Initial/queued registration
+  // and explicit exhausted restarts enqueue coordinates; worker leases suppress
+  // duplicate sends of the same generation.
   await sqs.send(
     new SendMessageCommand({
       QueueUrl: analysisQueueUrl || queueUrl,
@@ -532,10 +630,15 @@ export const registerArtifact = async (event) => {
         siteId,
         checkId,
         artifactId,
-        capturedAt: capturedAtValue,
-        ...(hasCoordinates ? { latitude, longitude } : {}),
-        ...(hasS3Key ? { s3Key } : {}),
-        ...(hasText ? { text: normalizedText } : {}),
+        capturedAt: queuedItem.capturedAt,
+        ...(queuedItem.analysisGeneration
+          ? { analysisGeneration: queuedItem.analysisGeneration }
+          : {}),
+        ...(Number.isFinite(queuedItem.latitude)
+          ? { latitude: queuedItem.latitude, longitude: queuedItem.longitude }
+          : {}),
+        ...(queuedItem.s3Key ? { s3Key: queuedItem.s3Key } : {}),
+        ...(queuedItem.text ? { text: queuedItem.text } : {}),
         ...(languageValue ? { language: languageValue } : {}),
       }),
     }),
@@ -543,7 +646,7 @@ export const registerArtifact = async (event) => {
 
   // Keep 409 on replay so the client still learns this was a duplicate; the
   // enqueue above means treating that 409 as success is now safe.
-  return alreadyRegistered
+  return alreadyRegistered && !retryRequestId
     ? jsonResponse(409, { error: "artifact already registered" })
     : jsonResponse(202, { artifactId, status: "queued" });
 };
@@ -753,7 +856,8 @@ export const updateArtifactLocation = async (event) => {
  * the coverage gate never blocks on it.
  *
  * Idempotent: deleting an unknown artifact (already deleted, never registered)
- * 404s. Completed checks are not editable — the scorecard is already folded.
+ * 404s. Completed checks only allow removal of permanently failed evidence, which
+ * contributed nothing to the folded scorecard.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const deleteArtifact = async (event) => {
@@ -780,7 +884,16 @@ export const deleteArtifact = async (event) => {
   const header = (headerResult.Items ?? [])[0];
   if (!header) return jsonResponse(404, { error: "Check not found" });
   if (header.status === "completed") {
-    return jsonResponse(409, { error: "Check already completed" });
+    const failure = await ddb.send(
+      new GetCommand({
+        TableName: dynamoTable,
+        Key: analysisKey(siteId, checkId, artifactId),
+        ConsistentRead: true,
+      }),
+    );
+    // Failed evidence contributed nothing to the completed scorecard.
+    if (failure.Item?.status !== "failed" || failure.Item?.retryable !== false)
+      return jsonResponse(409, { error: "Check already completed" });
   }
 
   const result = await ddb.send(

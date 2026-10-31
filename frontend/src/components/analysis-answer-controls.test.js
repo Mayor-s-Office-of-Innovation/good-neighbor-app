@@ -1,5 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
+import {
+  finishQuestionAnswerFocus,
+  setQuestionAnswerBusy,
+} from "./analysis-answer-controls.js";
 import { t } from "../i18n/i18n.js";
 
 class Button {
@@ -249,7 +252,9 @@ it.each([false, true])(
     );
     try {
       focus(card);
-      showQuestionAnswerUpdated(root, "one");
+      const completed = vi.fn(() => expect(card.overlay).toBeNull());
+      showQuestionAnswerUpdated(root, "one", { onComplete: completed });
+      expect(completed).not.toHaveBeenCalled();
       if (movedAway) focus(outside);
       original.isConnected = false;
       card = makeCard();
@@ -259,8 +264,43 @@ it.each([false, true])(
       expect(card.focus).toHaveBeenCalledTimes(movedAway ? 0 : 1);
       await vi.advanceTimersByTimeAsync(2000);
       expect(listeners.size).toBe(0);
+      expect(completed).toHaveBeenCalledOnce();
     } finally {
       vi.useRealTimers();
     }
   },
 );
+
+it("finishes focus tracking once without unlocking accepted answer buttons", () => {
+  vi.stubGlobal("HTMLButtonElement", Button);
+  vi.stubGlobal("HTMLElement", Button);
+  const disconnect = vi.fn();
+  vi.stubGlobal(
+    "MutationObserver",
+    class {
+      observe() {}
+      disconnect = disconnect;
+    },
+  );
+  const { root, buttons } = fixture();
+  Object.assign(buttons[0], {
+    matches: () => true,
+    hasAttribute: (name) => name === "hidden" && buttons[0].hidden,
+  });
+  const doc = {
+    activeElement: buttons[0],
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  };
+  Object.defineProperty(root, "ownerDocument", { value: doc });
+  setQuestionAnswerBusy(root, "one", true);
+  expect(doc.addEventListener).toHaveBeenCalledOnce();
+  finishQuestionAnswerFocus(root, "one");
+  finishQuestionAnswerFocus(root, "one");
+  expect(disconnect).toHaveBeenCalledOnce();
+  expect(doc.removeEventListener).toHaveBeenCalledWith(
+    "focusin",
+    doc.addEventListener.mock.calls[0][1],
+  );
+  expect(buttons[0].hidden && buttons[0].disabled).toBe(true);
+});

@@ -1,3 +1,11 @@
+import { connectionAvailable, failedRecovery } from "./evidence-recovery.js";
+import {
+  getCheck as getHeldCheck,
+  getCurrentCheck,
+  updateCheckRecovery,
+  markScorecardDone,
+  clearSubmittedSession,
+} from "../state/check-session.js";
 // @ts-nocheck -- lenient migration baseline (checkJs). See memory step2-gnp-port-scope.
 import { showInlineError } from "../components/error-notice.js";
 /*
@@ -103,13 +111,19 @@ export function submitErrorMessage(err) {
   return t(leg[causeOf(err)] ?? leg.default);
 }
 
-async function finalizeCaptureScorecard(checkId, { expectedArtifacts } = {}) {
+async function finalizeCaptureScorecard(
+  checkId,
+  { expectedArtifacts = undefined, originSiteId = undefined } = {},
+) {
   startRun("captureScorecard", { checkId });
   const endAnalyze = span("captureScorecard:wait", {
     expected: expectedArtifacts,
   });
   const last = await withLeg("analyze", () =>
-    waitForAnalyses(checkId, { expected: expectedArtifacts }),
+    waitForAnalyses(checkId, {
+      expected: expectedArtifacts,
+      ...(originSiteId ? { originSiteId } : {}),
+    }),
   );
   endAnalyze({
     analyzed: last.analyses.length,
@@ -117,7 +131,11 @@ async function finalizeCaptureScorecard(checkId, { expectedArtifacts } = {}) {
   });
 
   const endComplete = span("captureScorecard:completeCheck");
-  const completion = await withLeg("complete", () => completeCheck(checkId));
+  const completion = await withLeg("complete", () =>
+    originSiteId
+      ? completeCheck(checkId, { originSiteId })
+      : completeCheck(checkId),
+  );
   endComplete({ grade: completion?.grade, issues: completion?.issueCount });
   mark("captureScorecard:done", {
     expectedArtifacts: last.artifacts.length,
@@ -144,34 +162,134 @@ export function expectedArtifactCountForCheck(check) {
   return checkItems(check).filter((item) => itemHasLiveEvidence(item)).length;
 }
 
+function showSaveRecovery(checkId, expectedArtifacts, target = null) {
+  saveNotices.get(checkId)?.close();
+  saveNotices.set(
+    checkId,
+    showInlineError(t("notice.saveFailed"), {
+      key: `check-save:${checkId}`,
+      target,
+      warning: true,
+      retryLabel: t("notice.retrySaving"),
+      retryAvailable: () => connectionAvailable(),
+      retry: () =>
+        finalizeCaptureScorecardInBackground(checkId, {
+          expectedArtifacts,
+          manual: true,
+        }),
+    }),
+  );
+}
+
+/** Reattach durable failures after Home replaces its contents. */
+export function restoreFinalizationNotices(check, target) {
+  const ids = new Set([
+    ...saveNotices.keys(),
+    ...(check?.id ? [check.id] : []),
+  ]);
+  for (const id of ids) {
+    const held = getHeldCheck(id) || (check?.id === id ? check : null);
+    if (held?.finalizationRecovery?.state === "manual")
+      showSaveRecovery(id, held.expectedArtifacts, target);
+  }
+}
+
 export function finalizeCaptureScorecardInBackground(
   checkId,
-  { expectedArtifacts } = {},
+  { expectedArtifacts = undefined, manual = false } = {},
 ) {
+  const check =
+    getHeldCheck(checkId) ||
+    (getCurrentCheck()?.id === checkId ? getCurrentCheck() : null);
+  // Recovery/removal can change the live set after Finish. The backend still
+  // verifies every registered artifact, so use the current local coverage target.
+  if (check?.status === "capture-complete")
+    expectedArtifacts = expectedArtifactCountForCheck(check);
+  if (checkItems(check).some((item) => item.deletionPending)) return null;
+  if (check?.status === "capture-complete" && expectedArtifacts === 0) {
+    // There is nothing to synthesize. Keep failed local cards available for
+    // deletion, but do not create an empty, misleadingly clear scorecard.
+    return (async () => {
+      await updateCheckRecovery(checkId, undefined);
+      markScorecardDone(checkId);
+      saveNotices.get(checkId)?.close();
+      saveNotices.delete(checkId);
+      if (checkItems(check).length === 0) await clearSubmittedSession(checkId);
+      return null;
+    })();
+  }
+  const recovery = check?.finalizationRecovery;
+  if (recovery?.state === "manual")
+    showSaveRecovery(checkId, expectedArtifacts);
+  if (!connectionAvailable()) return null;
+  if (
+    check &&
+    checkItems(check).some(
+      (item) =>
+        itemHasLiveEvidence(item) &&
+        item.analysis?.status !== "analyzed" &&
+        item.analysis?.recovery?.state !== "blocked",
+    )
+  )
+    return null;
+  if (
+    !manual &&
+    (["manual", "blocked"].includes(recovery?.state) ||
+      recovery?.nextAttemptAt > Date.now())
+  )
+    return null;
   if (!checkId || expectedArtifacts === 0) return null;
   if (pendingScorecardFinalizations.has(checkId)) {
     return pendingScorecardFinalizations.get(checkId);
   }
-  const run = finalizeCaptureScorecard(checkId, { expectedArtifacts })
-    .then((result) => {
+  if (manual && recovery?.state !== "manual") return null;
+  saveNotices.get(checkId)?.close();
+  saveNotices.delete(checkId);
+  if (manual)
+    saveNotices.set(
+      checkId,
+      showInlineError(t("common.retrying"), {
+        key: `check-save:${checkId}`,
+        warning: true,
+      }),
+    );
+  const run = Promise.resolve()
+    .then(async () => {
+      await updateCheckRecovery(checkId, {
+        ...recovery,
+        ...(manual ? { attempts: 0 } : {}),
+        state: "working",
+        nextAttemptAt: undefined,
+      });
+      return finalizeCaptureScorecard(checkId, {
+        expectedArtifacts,
+        originSiteId: check?.siteId,
+      });
+    })
+    .then(async (result) => {
+      await updateCheckRecovery(checkId, undefined);
       saveNotices.get(checkId)?.close();
       saveNotices.delete(checkId);
       return result;
     })
-    .catch((err) => {
-      console.error("finalizeCaptureScorecard failed", err);
-      saveNotices.set(
-        checkId,
-        showInlineError(t("notice.saveFailed"), {
-          key: `check-save:${checkId}`,
-          warning: true,
-          retryLabel: t("notice.retrySaving"),
-          retry: () =>
-            finalizeCaptureScorecardInBackground(checkId, {
-              expectedArtifacts,
-            }),
-        }),
-      );
+    .catch(async (err) => {
+      const previous = manual ? { ...recovery, attempts: 0 } : recovery;
+      const next =
+        err?.name === "AbortError" ||
+        err?.name === "SiteBindingChangedError" ||
+        !connectionAvailable() ||
+        causeOf(err) === "network"
+          ? { ...previous, state: "waiting" }
+          : causeOf(err) === "pending"
+            ? {
+                ...previous,
+                state: "scheduled",
+                nextAttemptAt: Date.now() + 15_000,
+              }
+            : failedRecovery(previous, "complete", err);
+      await updateCheckRecovery(checkId, next);
+      saveNotices.get(checkId)?.close();
+      if (next.state === "manual") showSaveRecovery(checkId, expectedArtifacts);
       throw err;
     })
     .finally(() => {

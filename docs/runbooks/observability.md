@@ -299,3 +299,38 @@ required for SSO users to sign in.
 4. Use the isolated production delivery drill above to verify notification routing.
    Use the [recovery runbook](recovery.md) for a synthetic dev DLQ rehearsal.
    Never purge a shared queue as a test-cleanup shortcut.
+
+## Perimeter analysis exhaustion and recovery rollout
+
+The analysis worker publishes `AnalysisExhausted` (Kind photo/text) when its last
+transient delivery fails or the dedicated analysis DLQ consumer records a hard
+timeout. These alarms cover terminal failures even when the DLQ is drained
+quickly. `AnalysisFailed` now includes both permanent failures and exhausted
+transient work. The DLQ backlog alarm indicates that exhaustion publication may
+itself be failing. Exhaustion consumption never calls the analyzer and needs no
+analyzer credential. It acknowledges a message only after its terminal marker
+is persisted or a newer/terminal generation makes it stale.
+
+Deploy the backend worker, registration handler, check reads, IAM, and exhaustion
+mapping through CI before enabling the updated frontend. New ART generations
+and retryable failure fields are additive. Allow old worker invocations to drain
+before exercising restart recovery, since already-running old code does not
+implement the new generation fence. Inspect pre-rollout work on the legacy
+submissions queue/DLQ using the existing recovery procedure; the new consumer
+only owns the dedicated analysis DLQ.
+
+In dev, verify a transient last-delivery failure and an isolated hard-timeout
+DLQ delivery produce `analysisStatus=exhausted` and a matching failed analysis.
+Verify a manual restart reuses media, starts one new generation, and ignores a
+late old-generation result. Do not log or export message bodies, media, or signed
+URLs during diagnosis. The dedicated analysis DLQ is now consumed to publish
+terminal states; recovery is through an explicit exhausted-artifact restart,
+not routine DLQ redrive. Existing recovery drills that inject directly into this
+DLQ must account for its consumer.
+
+Promote the frontend only after those checks pass. Validate the cellular handoff
+and offline browser scenarios with `npx playwright test -c e2e/recovery.config.js`.
+Client budgets and checkpoints remain on device if sending pauses. Keep the
+additive backend support deployed if rolling back the frontend; preserve local
+records. Rolling back the backend's generation support while new-generation
+work is active is unsafe: stop promotion and drain/reconcile that work first.

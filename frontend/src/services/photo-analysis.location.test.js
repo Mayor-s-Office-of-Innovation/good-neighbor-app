@@ -2,6 +2,11 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const location = { latitude: 37.7793, longitude: -122.4192 };
 
+vi.mock("../db.js", () => ({
+  saveDraft: vi.fn(async () => {}),
+  saveFinishedCheck: vi.fn(async () => {}),
+  getSite: vi.fn(async () => ({})),
+}));
 vi.mock("./api.js", () => ({
   createCheck: vi.fn(),
   evaluateAssessment: vi.fn(),

@@ -35,9 +35,9 @@ export const MIN_DESCRIPTION_LENGTH = 20;
 export const MIN_TEXT_EVIDENCE_LENGTH = 5;
 
 /**
- * @typedef {{ id: string, kind?: string, text?: string,
+ * @typedef {{ id: string, kind?: string, text?: string, deletionPending?: boolean,
  *   upload?: { status?: string, artifactId?: string },
- *   analysis?: { status?: string, artifactId?: string, sourceAnalysis?: { shotType?: string } } }} EvidenceItem
+ *   analysis?: { status?: string, artifactId?: string, recovery?: {state?: string, nextAttemptAt?: number}, sourceAnalysis?: { shotType?: string } } }} EvidenceItem
  * @typedef {{ items?: EvidenceItem[] } | null | undefined} SessionCheck
  */
 
@@ -46,8 +46,8 @@ export const MIN_TEXT_EVIDENCE_LENGTH = 5;
  *
  * Completion counts LIVE evidence only: an artifact must exist (or be
  * plausibly on its way) for the backend to include it in the scorecard. An
- * item that permanently failed its upload with nothing registered (no
- * artifactId anywhere) can never produce one — Finish counting it would
+ * item that permanently failed its upload with nothing registered (a
+ * reservation ID alone is insufficient) can never produce one — Finish counting it would
  * complete a check whose backend artifact set can never reach the expected
  * count, hanging the background finalization until timeout.
  *
@@ -60,8 +60,16 @@ export const MIN_TEXT_EVIDENCE_LENGTH = 5;
  */
 export function itemCountsTowardCompletion(item) {
   if (!item || ("captureSaving" in item && item.captureSaving)) return false;
-  if (item.analysis?.artifactId || item.upload?.artifactId) return true;
-  if (item.analysis?.status === "failed") return false;
+  // A presign reservation has an ID before an ART# row exists on the server.
+  if (
+    item.analysis?.artifactId ||
+    (item.upload?.artifactId && item.upload.status === "uploaded")
+  )
+    return true;
+  if (item.analysis?.status === "failed")
+    return Boolean(
+      item.analysis?.recovery && item.analysis.recovery.state !== "blocked",
+    );
   return true;
 }
 

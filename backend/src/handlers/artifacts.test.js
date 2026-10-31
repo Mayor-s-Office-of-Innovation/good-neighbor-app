@@ -519,6 +519,7 @@ describe("registerArtifact", () => {
     expect(msg.input.QueueUrl).toBe("queue");
     const body = JSON.parse(msg.input.MessageBody);
     expect(body).toEqual({
+      analysisGeneration: "art_1",
       siteId: "site-1",
       checkId: "chk_01",
       artifactId: "art_1",
@@ -645,6 +646,14 @@ describe("registerArtifact", () => {
         name: "ConditionalCheckFailedException",
       }),
     );
+    ddbSend.mockResolvedValueOnce({
+      Item: {
+        ...validBody,
+        capturedAt: validBody.capturedAt,
+        analysisGeneration: "art_1",
+        analysisStatus: "queued",
+      },
+    });
     sqsSend.mockResolvedValueOnce({});
 
     const res = await callRegister(
@@ -667,6 +676,91 @@ describe("registerArtifact", () => {
       checkId: "chk_01",
       s3Key: "checks/site-1/chk_01/art_1",
     });
+  });
+
+  it("does not re-enqueue registration replays while analysis is running", async () => {
+    ddbSend.mockRejectedValueOnce(
+      Object.assign(new Error("exists"), {
+        name: "ConditionalCheckFailedException",
+      }),
+    );
+    ddbSend.mockResolvedValueOnce({
+      Item: {
+        ...validBody,
+        analysisGeneration: "art_1",
+        analysisStatus: "running",
+      },
+    });
+    const res = await callRegister(
+      artifactEvent({
+        checkId: "chk_01",
+        siteClaim: "site-1",
+        body: validBody,
+      }),
+    );
+    expect(res.statusCode).toBe(200);
+    expect(sqsSend).not.toHaveBeenCalled();
+  });
+
+  it("queues a new generation for an explicit exhausted restart and acknowledges success", async () => {
+    ddbSend.mockRejectedValueOnce(
+      Object.assign(new Error("exists"), {
+        name: "ConditionalCheckFailedException",
+      }),
+    );
+    ddbSend.mockResolvedValueOnce({
+      Item: {
+        ...validBody,
+        analysisGeneration: "art_1",
+        analysisStatus: "exhausted",
+      },
+    });
+    ddbSend.mockResolvedValueOnce({});
+    const res = await callRegister(
+      artifactEvent({
+        checkId: "chk_01",
+        siteClaim: "site-1",
+        body: {
+          ...validBody,
+          retryRequestId: "restart-1",
+          expectedGeneration: "art_1",
+        },
+      }),
+    );
+    expect(res.statusCode).toBe(202);
+    expect(
+      JSON.parse(sqsSend.mock.calls[0][0].input.MessageBody).analysisGeneration,
+    ).toBe("restart-1");
+  });
+
+  it("rejects a competing restart without queueing another generation", async () => {
+    const conflict = Object.assign(new Error("exists"), {
+      name: "ConditionalCheckFailedException",
+    });
+    ddbSend
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({
+        Item: {
+          ...validBody,
+          analysisGeneration: "restart-2",
+          analysisStatus: "running",
+        },
+      })
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce({ Item: { analysisGeneration: "restart-2" } });
+    const res = await callRegister(
+      artifactEvent({
+        checkId: "chk_01",
+        siteClaim: "site-1",
+        body: {
+          ...validBody,
+          retryRequestId: "restart-1",
+          expectedGeneration: "art_1",
+        },
+      }),
+    );
+    expect(res.statusCode).toBe(409);
+    expect(sqsSend).not.toHaveBeenCalled();
   });
 
   it("requires artifactId", async () => {
@@ -728,6 +822,7 @@ describe("registerArtifact", () => {
 
     const msg = JSON.parse(sqsSend.mock.calls[0][0].input.MessageBody);
     expect(msg).toEqual({
+      analysisGeneration: "art_text_1",
       siteId: "site-1",
       checkId: "chk_01",
       artifactId: "art_text_1",
@@ -904,6 +999,8 @@ describe("deleteArtifact", () => {
       Items: [{ sk: "CHECK#chk_01", status: "completed" }],
     });
 
+    ddbSend.mockResolvedValueOnce({ Item: { status: "analyzed" } });
+
     const res = await callDelete(
       deleteEvent({
         checkId: "chk_01",
@@ -913,7 +1010,28 @@ describe("deleteArtifact", () => {
     );
 
     expect(res.statusCode).toBe(409);
-    expect(ddbSend).toHaveBeenCalledTimes(1);
+    expect(ddbSend).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows deleting permanently failed evidence from a completed check", async () => {
+    ddbSend.mockResolvedValueOnce({ Items: [{ status: "completed" }] });
+    ddbSend.mockResolvedValueOnce({
+      Item: { status: "failed", retryable: false },
+    });
+    ddbSend.mockResolvedValueOnce({
+      Items: [{ sk: "CHECK#chk_01#ART#art_1", artifactId: "art_1" }],
+    });
+    const response = await callDelete(
+      deleteEvent({
+        checkId: "chk_01",
+        artifactId: "art_1",
+        siteClaim: "site-1",
+      }),
+    );
+    expect(response.statusCode).toBe(200);
+    expect(ddbSend.mock.calls[1][0]).toBeInstanceOf(GetCommand);
+    expect(ddbSend.mock.calls[1][0].input.ConsistentRead).toBe(true);
+    expect(ddbSend.mock.calls[3][0]).toBeInstanceOf(DeleteCommand);
   });
 
   it("404s when no ART# item matches the artifactId (idempotent replay)", async () => {

@@ -78,9 +78,10 @@
       "path": [
         "dist/assets/perimeter-check*.js",
         "dist/assets/problem-report*.js",
-        "dist/assets/describe-instead*.js"
+        "dist/assets/describe-instead*.js",
+        "dist/assets/capture-card-actions*.js"
       ],
-      "limit": "13.5 kB"
+      "limit": "13.75 kB"
     },
     {
       "name": "capture routes css",

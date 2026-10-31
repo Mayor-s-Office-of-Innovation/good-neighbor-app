@@ -16,6 +16,6 @@ export const guide = [
   },
 ];
 
-export const KNOWLEDGE_VERSION = "faq-v2-policy-2026-10-30-ui-navigation";
+export const KNOWLEDGE_VERSION = "faq-v2-policy-2026-10-31-retry-recovery";
 export const sources = [...faq, ...guide, ...policy];
 export const sourceById = new Map(sources.map((entry) => [entry.id, entry]));

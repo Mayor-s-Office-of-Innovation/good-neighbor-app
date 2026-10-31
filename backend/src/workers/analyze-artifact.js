@@ -1,3 +1,10 @@
+import {
+  claimAnalysis,
+  publishAnalysis,
+  releaseAnalysis,
+  recoveryConflict,
+  MAX_ANALYSIS_DELIVERIES,
+} from "../analysis/artifact-recovery.js";
 // Analyze worker: the async half of the perimeter-check media path. For each
 // enqueued artifact it reads the uploaded media from S3, downscales it (seam),
 // base64-encodes it, calls the Street Conditions analyzer, and persists the
@@ -76,6 +83,7 @@ function metricIds(msg) {
  * @property {string} siteId
  * @property {string} checkId
  * @property {string} artifactId
+ * @property {string} [analysisGeneration]
  * @property {string} [s3Key]
  * @property {string} [text] supplemental note captured with the photo
  * @property {string} [capturedAt] ISO-8601, this photo's capture time
@@ -174,10 +182,11 @@ async function bumpHeaderCounters({
  * @param {object} params
  * @param {string} params.dynamoTable
  * @param {AnalyzeMessage} params.msg
+ * @param {boolean} [params.exhausted]
  * @param {AnalyzerError} params.err
  * @returns {Promise<void>}
  */
-async function markFailed({ dynamoTable, msg, err }) {
+async function markFailed({ dynamoTable, msg, err, exhausted = false }) {
   const item = {
     ...analysisKey(msg.siteId, msg.checkId, msg.artifactId),
     checkId: msg.checkId,
@@ -186,6 +195,7 @@ async function markFailed({ dynamoTable, msg, err }) {
       ? { latitude: msg.latitude, longitude: msg.longitude }
       : {}),
     status: "failed",
+    retryable: exhausted,
     error: {
       ...(err.code ? { code: err.code } : {}),
       ...(err.status ? { status: err.status } : {}),
@@ -194,21 +204,24 @@ async function markFailed({ dynamoTable, msg, err }) {
     analyzedAt: new Date().toISOString(),
   };
   try {
-    await ddb.send(
-      new PutCommand({
-        TableName: dynamoTable,
-        Item: item,
-        ConditionExpression: "attribute_not_exists(sk)",
-      }),
-    );
+    if (msg.analysisGeneration)
+      await publishAnalysis(
+        dynamoTable,
+        msg,
+        item,
+        exhausted ? "exhausted" : "permanent_failure",
+      );
+    else
+      await ddb.send(
+        new PutCommand({
+          TableName: dynamoTable,
+          Item: item,
+          ConditionExpression: "attribute_not_exists(sk)",
+        }),
+      );
   } catch (putErr) {
     // Already recorded (success or a prior failure marker) — nothing to do.
-    if (
-      !(
-        putErr instanceof Error &&
-        putErr.name === "ConditionalCheckFailedException"
-      )
-    ) {
+    if (!recoveryConflict(putErr)) {
       throw putErr;
     }
     return;
@@ -218,7 +231,10 @@ async function markFailed({ dynamoTable, msg, err }) {
   emitMetrics({
     marker: "AnalysisFailed",
     dimensions: { Kind: evidenceKindOf(msg) },
-    metrics: [{ name: "AnalysisFailed", value: 1 }],
+    metrics: [
+      { name: "AnalysisFailed", value: 1 },
+      ...(exhausted ? [{ name: "AnalysisExhausted", value: 1 }] : []),
+    ],
     props: {
       ...metricIds(msg),
       reason:
@@ -344,13 +360,15 @@ async function analyzeArtifact(
           siteId: msg.siteId,
           checkId: msg.checkId,
           artifactId: msg.artifactId,
-          reason: "undecodable_input",
+          reason: err.code || "undecodable_input",
         }),
       );
       await markFailed({
         dynamoTable,
         msg,
-        err: new AnalyzerError(err.message, { code: "undecodable_input" }),
+        err: new AnalyzerError(err.message, {
+          code: err.code || "undecodable_input",
+        }),
       });
       return;
     }
@@ -434,7 +452,7 @@ async function analyzeArtifact(
     response = await client.analyze({
       metadata: buildMetadata(msg),
       media,
-      requestId: `${msg.checkId}#${msg.artifactId}`,
+      requestId: `${msg.checkId}#${msg.artifactId}${msg.analysisGeneration ? `#${msg.analysisGeneration}` : ""}`,
       appId: "good-neighbor-app",
       ...(msg.language ? { language: msg.language } : {}),
     });
@@ -512,23 +530,24 @@ async function analyzeArtifact(
     analyzedAt: new Date().toISOString(),
   };
   try {
-    await ddb.send(
-      new PutCommand({
-        TableName: dynamoTable,
-        Item: item,
-        // Fresh slot, OR the slot holds a failed marker (retry recovery).
-        // NOT an existing success: a redelivered message must never double-
-        // write (it would re-stamp analyzedAt and re-run the counters).
-        ConditionExpression: "attribute_not_exists(sk) OR #st = :failed",
-        ExpressionAttributeNames: { "#st": "status" },
-        ExpressionAttributeValues: { ":failed": "failed" },
-      }),
-    );
+    if (msg.analysisGeneration)
+      await publishAnalysis(dynamoTable, msg, item, "succeeded");
+    else
+      await ddb.send(
+        new PutCommand({
+          TableName: dynamoTable,
+          Item: item,
+          // Fresh slot, OR the slot holds a failed marker (retry recovery).
+          // NOT an existing success: a redelivered message must never double-
+          // write (it would re-stamp analyzedAt and re-run the counters).
+          ConditionExpression:
+            "(attribute_not_exists(sk) OR #st = :failed) AND attribute_not_exists(analysisGeneration)",
+          ExpressionAttributeNames: { "#st": "status" },
+          ExpressionAttributeValues: { ":failed": "failed" },
+        }),
+      );
   } catch (err) {
-    if (
-      err instanceof Error &&
-      err.name === "ConditionalCheckFailedException"
-    ) {
+    if (recoveryConflict(err)) {
       // Redelivery: already analyzed. Don't double-count the counters.
       await thumbnailPromise;
       emitMetrics({
@@ -605,6 +624,32 @@ export const handler = async (event) => {
     analyzerBaseUrl,
     reverseGeocodingEnabled,
   } = getConfig();
+  if (
+    event.Records.every((record) =>
+      record.eventSourceARN?.endsWith("-analysis-dlq"),
+    )
+  ) {
+    const results = await Promise.allSettled(
+      event.Records.map(async (record) => {
+        const msg = JSON.parse(record.body);
+        await markFailed({
+          dynamoTable,
+          msg,
+          exhausted: true,
+          err: new AnalyzerError("Analysis retry budget exhausted.", {
+            code: "analysis_exhausted",
+          }),
+        });
+      }),
+    );
+    return {
+      batchItemFailures: results.flatMap((result, index) =>
+        result.status === "rejected"
+          ? [{ itemIdentifier: event.Records[index].messageId }]
+          : [],
+      ),
+    };
+  }
   if (!analyzerBaseUrl) {
     throw new Error(
       "Missing required environment variable ANALYZER_BASE_URL for the analyze worker",
@@ -624,13 +669,46 @@ export const handler = async (event) => {
   const settled = await Promise.allSettled(
     event.Records.map(async (record) => {
       const msg = /** @type {AnalyzeMessage} */ (JSON.parse(record.body));
-      await analyzeArtifact(msg, {
-        client,
-        dynamoTable,
-        uploadBucket,
-        queueUrl,
-        reverseGeocodingEnabled: reverseGeocodingEnabled === true,
-      });
+      // DLQ deliveries cover hard timeouts and failures before the analyzer call.
+      if (record.eventSourceARN?.endsWith("-analysis-dlq")) {
+        await markFailed({
+          dynamoTable,
+          msg,
+          exhausted: true,
+          err: new AnalyzerError("Analysis retry budget exhausted.", {
+            code: "analysis_exhausted",
+          }),
+        });
+        return;
+      }
+      if (!(await claimAnalysis(dynamoTable, msg))) return;
+      try {
+        await analyzeArtifact(msg, {
+          client,
+          dynamoTable,
+          uploadBucket,
+          queueUrl,
+          reverseGeocodingEnabled: reverseGeocodingEnabled === true,
+        });
+      } catch (error) {
+        if (
+          Number(record.attributes?.ApproximateReceiveCount || 1) >=
+            MAX_ANALYSIS_DELIVERIES &&
+          msg.analysisGeneration
+        ) {
+          await markFailed({
+            dynamoTable,
+            msg,
+            exhausted: true,
+            err: new AnalyzerError("Analysis retry budget exhausted.", {
+              code: "analysis_exhausted",
+            }),
+          });
+          return;
+        }
+        await releaseAnalysis(dynamoTable, msg);
+        throw error;
+      }
     }),
   );
 

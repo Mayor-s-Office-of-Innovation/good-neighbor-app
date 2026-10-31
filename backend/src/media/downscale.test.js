@@ -159,3 +159,20 @@ describe("downscaleImage", () => {
     expect(result.bytes.length).toBeLessThan(1_000_000);
   });
 });
+
+it("distinguishes a readable WebP with the wrong label from corrupt bytes", async () => {
+  const bytes = await sharp({
+    create: { width: 2, height: 2, channels: 3, background: "white" },
+  })
+    .webp()
+    .toBuffer();
+  await expect(downscaleImage(bytes, "image/jpeg")).rejects.toMatchObject({
+    code: "image_type_mismatch",
+  });
+  await expect(downscaleImage(bytes, "image/webp")).resolves.toMatchObject({
+    contentType: "image/jpeg",
+  });
+  await expect(
+    downscaleImage(Buffer.from("invalid"), "image/jpeg"),
+  ).rejects.toMatchObject({ code: "undecodable_input" });
+});
