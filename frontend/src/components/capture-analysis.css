@@ -13,7 +13,8 @@
 .capture-scanner__band {
   position: absolute;
   inset-inline: 5px;
-  height: 18px;
+  top: 0;
+  height: 100%;
   color: var(--capture-scanner-ink);
   animation: capture-scan 2s ease-in-out infinite alternate;
 }
@@ -49,10 +50,10 @@
 }
 @keyframes capture-scan {
   from {
-    top: 0;
+    transform: translateY(0);
   }
   to {
-    top: calc(100% - 18px);
+    transform: translateY(calc(100% - 18px));
   }
 }
 .capture-labels {

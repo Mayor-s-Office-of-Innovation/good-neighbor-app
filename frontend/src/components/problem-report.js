@@ -96,6 +96,7 @@ import {
 class ProblemReport extends HTMLElement {
   constructor() {
     super();
+    this._shotGridMarkup = null;
     this._captureReadVersion = 0;
     this._captureFiles = new CaptureFileQueue();
     /** @type {SiteRecord | null} */
@@ -156,6 +157,7 @@ class ProblemReport extends HTMLElement {
     });
 
     this.innerHTML = shell({ title: this._titleText() });
+    this._shotGridMarkup = null;
     this._fileInput = /** @type {HTMLInputElement | null} */ (
       this.querySelector("#file-input")
     );
@@ -379,7 +381,14 @@ class ProblemReport extends HTMLElement {
     const grid = this.querySelector("#shotgrid");
     if (!grid) return;
     grid.classList.toggle("shotgrid--empty", items.length === 0);
-    grid.innerHTML = items.map((item, index) => shotTile(item, index)).join("");
+    const gridMarkup = items
+      .map((item, index) => shotTile(item, index))
+      .join("");
+    // Preserve images and running scanners when only recovery state changed.
+    if (gridMarkup !== this._shotGridMarkup) {
+      grid.innerHTML = gridMarkup;
+      this._shotGridMarkup = gridMarkup;
+    }
   }
 
   /** @returns {EvidenceItem[]} */

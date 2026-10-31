@@ -505,3 +505,25 @@ API with real browser storage and recovery services):
 ```sh
 npm run test:recovery:ui
 ```
+
+
+### Real-device testing through ngrok (local harness only)
+
+The phone must reach both the frontend/API and local photo storage through the
+HTTPS tunnel. A plain backend start signs uploads for localhost, which refers
+back to the phone when opened there.
+
+1. Start the frontend with `npm run dev:frontend`.
+2. Start `ngrok http http://127.0.0.1:5173`.
+3. Stop any already-running local backend stack, then run `npm run dev:ngrok`
+   instead of `npm run dev`.
+4. Open the tunnel URL on the phone. After switching an existing session from
+   the plain local backend, reload the app without clearing its saved data so
+   previously queued uploads can obtain reachable upload URLs.
+
+`dev:ngrok` reads the local ngrok inspector, selects the HTTPS tunnel targeting
+port 5173, and supplies `S3_PUBLIC_PRESIGN_ENDPOINT` only to the local backend
+processes it starts. It requires a loopback `AWS_ENDPOINT_URL_S3` for MinIO and
+refuses unrelated or ambiguous tunnels. It does not edit `.env.local`, change
+ordinary local development, or affect deployed dev/prod. Restart this command
+if the tunnel URL changes. Keep the tunnel and frontend running while testing.

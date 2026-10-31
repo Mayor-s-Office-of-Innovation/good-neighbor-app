@@ -131,3 +131,45 @@ describe("presignGet endpoints", () => {
     );
   });
 });
+
+it("uses the public endpoint for local PUT signatures while storage operations keep the private client", async () => {
+  vi.resetModules();
+  vi.stubEnv("AWS_ENDPOINT_URL_S3", "http://localhost:9000");
+  vi.stubEnv("S3_PUBLIC_PRESIGN_ENDPOINT", "https://device.example.test");
+  const { presignPut, putObject } = await import("./s3.js");
+  getSignedUrl.mockResolvedValue("https://device.example.test/synthetic");
+  await presignPut({
+    bucket: "uploads",
+    key: "synthetic",
+    contentType: "image/jpeg",
+  });
+  expect(getSignedUrl.mock.calls[0][0].options).toEqual({
+    endpoint: "https://device.example.test",
+    forcePathStyle: true,
+  });
+  await putObject({
+    bucket: "uploads",
+    key: "synthetic",
+    body: Buffer.from("synthetic"),
+    contentType: "image/jpeg",
+  });
+  expect(
+    /** @type {{ options: object }} */ (send.mock.contexts.at(-1)).options,
+  ).toEqual({ forcePathStyle: true });
+});
+
+it("keeps ordinary localhost PUT signing unchanged without an ngrok override", async () => {
+  vi.resetModules();
+  vi.stubEnv("AWS_ENDPOINT_URL_S3", "http://localhost:9000");
+  vi.stubEnv("S3_PUBLIC_PRESIGN_ENDPOINT", "");
+  const { presignPut } = await import("./s3.js");
+  getSignedUrl.mockResolvedValue("http://localhost:9000/synthetic");
+  await presignPut({
+    bucket: "uploads",
+    key: "synthetic",
+    contentType: "image/jpeg",
+  });
+  expect(getSignedUrl.mock.calls[0][0].options).toEqual({
+    forcePathStyle: true,
+  });
+});

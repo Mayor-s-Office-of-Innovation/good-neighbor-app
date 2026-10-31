@@ -1435,7 +1435,8 @@ export async function uploadArtifact(
   telemetry.photo_bytes = blob.size;
   const endPresign = span("upload.presign", { art });
   const reservation =
-    checkpoint?.artifactId && checkpoint?.bytesUploaded
+    checkpoint?.artifactId &&
+    (checkpoint?.bytesUploaded || checkpoint?.putUncertain)
       ? checkpoint
       : await observePhotoStage("presign", telemetry, () =>
           reserveMediaUpload(
@@ -1456,29 +1457,45 @@ export async function uploadArtifact(
     contentType,
     contentLength: blob.size,
     bytesUploaded: Boolean(checkpoint?.bytesUploaded),
+    putUncertain: Boolean(checkpoint?.putUncertain),
   });
   telemetry.artifact_id = artifactId;
   endPresign({ artifactId });
   onLeg?.("presign");
 
+  let bytesConfirmed =
+    Boolean(checkpoint?.bytesUploaded) && !checkpoint?.putUncertain;
   const endPut = span("upload.put", { art, bytes: blob.size });
-  if (!checkpoint?.bytesUploaded)
+  if (!checkpoint?.bytesUploaded && !checkpoint?.putUncertain) {
+    // Persist before sending: losing the response or closing the app leaves the
+    // outcome uncertain, rather than permission to immediately send bytes again.
+    await onCheckpoint?.({
+      artifactId,
+      s3Key,
+      contentType,
+      contentLength: blob.size,
+      bytesUploaded: false,
+      putUncertain: true,
+    });
     await observePhotoStage("put", telemetry, async () => {
       try {
         await putMedia(uploadUrl, blob, contentType, uploadHeaders);
+        bytesConfirmed = true;
       } catch (error) {
         if (error?.status !== 412) throw error;
         // A lost successful PUT is verified by registration below.
       }
     });
+  }
   endPut();
-  onLeg?.("put");
+  if (bytesConfirmed) onLeg?.("put");
   await onCheckpoint?.({
     artifactId,
     s3Key,
     contentType,
     contentLength: blob.size,
-    bytesUploaded: true,
+    bytesUploaded: bytesConfirmed,
+    putUncertain: !bytesConfirmed,
   });
 
   const endRegister = span("upload.register", { art, artifactId });
@@ -1486,27 +1503,43 @@ export async function uploadArtifact(
   try {
     await observePhotoStage("register", telemetry, async () => {
       try {
-        await registerArtifact(
-          checkId,
-          {
-            artifactId,
-            s3Key,
-            contentType,
-            contentLength: blob.size,
-            ...(capturedAt ? { capturedAt } : {}),
-            ...(Number.isFinite(latitude) && Number.isFinite(longitude)
-              ? {
-                  latitude,
-                  longitude,
-                  ...(Number.isFinite(accuracyMeters)
-                    ? { accuracyMeters }
-                    : {}),
-                }
-              : {}),
-            ...(text ? { text } : {}),
-          },
-          { originSiteId },
-        );
+        for (let verification = 0; ; verification++) {
+          try {
+            await registerArtifact(
+              checkId,
+              {
+                artifactId,
+                s3Key,
+                contentType,
+                contentLength: blob.size,
+                ...(capturedAt ? { capturedAt } : {}),
+                ...(Number.isFinite(latitude) && Number.isFinite(longitude)
+                  ? {
+                      latitude,
+                      longitude,
+                      ...(Number.isFinite(accuracyMeters)
+                        ? { accuracyMeters }
+                        : {}),
+                    }
+                  : {}),
+                ...(text ? { text } : {}),
+              },
+              { originSiteId },
+            );
+            break;
+          } catch (error) {
+            if (
+              !checkpoint?.putUncertain ||
+              verification >= 2 ||
+              error?.status !== 409 ||
+              error?.body?.error !== "media_upload_missing"
+            )
+              throw error;
+            // A disconnected PUT can still be finishing at storage. Bound the
+            // settling window; all other failures retain the uncertain checkpoint.
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+          }
+        }
       } catch (error) {
         if (
           error?.status !== 409 ||
@@ -1520,12 +1553,16 @@ export async function uploadArtifact(
     if (
       error?.status !== 409 ||
       error?.body?.error !== "media_upload_missing" ||
-      !checkpoint?.bytesUploaded
+      !(checkpoint?.bytesUploaded || checkpoint?.putUncertain)
     )
       throw error;
     // A long offline pause can outlive the stored object. Re-upload the retained
     // bytes; presigning rotates expired reservations. This repair runs once.
-    await onCheckpoint?.({ ...checkpoint, bytesUploaded: false });
+    await onCheckpoint?.({
+      ...checkpoint,
+      bytesUploaded: false,
+      putUncertain: false,
+    });
     return uploadArtifact(checkId, {
       dataUrl,
       capturedAt,
@@ -1537,6 +1574,15 @@ export async function uploadArtifact(
       originSiteId,
     });
   }
+  await onCheckpoint?.({
+    artifactId,
+    s3Key,
+    contentType,
+    contentLength: blob.size,
+    bytesUploaded: true,
+    putUncertain: false,
+  });
+  if (!bytesConfirmed) onLeg?.("put");
   endRegister();
   onLeg?.("register");
 

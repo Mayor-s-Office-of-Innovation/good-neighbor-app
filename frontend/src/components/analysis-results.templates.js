@@ -1594,7 +1594,11 @@ function recoveryCard(item, mode) {
     data-item-id="${escapeAttr(item.id || "")}"
   >
     <div class="analysis-error__body">
-      <p role="status">${escapeHtml(t(key))}</p>
+      <p role="status">
+        ${escapeHtml(
+          mode === "retrying" ? t(key).replace(/[.…]+$/u, "") : t(key),
+        )}${mode === "retrying" ? animatedEllipsis() : ""}
+      </p>
       ${evidencePreview(item)}
     </div>
   </article>`;

@@ -966,6 +966,127 @@ describe("upload reservation boundaries", () => {
     );
     expect(fetch.mock.calls[0][1].method).toBe("POST");
   });
+  it.each(["stored", "missing", "unreachable", "mismatch"])(
+    "verifies an uncertain PUT before resending: %s",
+    async (outcome) => {
+      const onLeg = vi.fn();
+      let probes = 0;
+      const methods = [];
+      const fetch = vi.fn(async (url, init) => {
+        methods.push(init.method);
+        if (String(url).endsWith("artifacts:presign"))
+          return new Response(
+            JSON.stringify({
+              artifactId: "a",
+              s3Key: "k",
+              uploadUrl: "https://upload.example.test/a",
+            }),
+          );
+        if (init.method === "PUT") return new Response("");
+        probes++;
+        if (probes <= 3) expect(onLeg).not.toHaveBeenCalledWith("put");
+        if (outcome === "unreachable") throw new Error("unreachable");
+        if (outcome === "mismatch")
+          return new Response(
+            JSON.stringify({ error: "media_metadata_mismatch" }),
+            { status: 422 },
+          );
+        if (outcome === "missing" && probes <= 3)
+          return new Response(
+            JSON.stringify({ error: "media_upload_missing" }),
+            { status: 409 },
+          );
+        return new Response("{}");
+      });
+      vi.stubGlobal("fetch", fetch);
+      const onCheckpoint = vi.fn(async () => {});
+      const upload = uploadArtifact("check", {
+        dataUrl: "data:image/jpeg;base64,dGVzdA==",
+        checkpoint: {
+          artifactId: "a",
+          s3Key: "k",
+          putUncertain: true,
+          bytesUploaded: false,
+        },
+        onCheckpoint,
+        onLeg,
+      });
+      if (outcome === "unreachable" || outcome === "mismatch") {
+        await expect(upload).rejects.toThrow();
+        expect(methods).toEqual(["POST"]);
+        expect(onLeg).not.toHaveBeenCalledWith("put");
+        expect(onCheckpoint).not.toHaveBeenCalledWith(
+          expect.objectContaining({ bytesUploaded: true }),
+        );
+      } else {
+        await upload;
+        expect(onLeg.mock.calls.filter(([leg]) => leg === "put")).toHaveLength(
+          1,
+        );
+        expect(methods).toEqual(
+          outcome === "stored"
+            ? ["POST"]
+            : ["POST", "POST", "POST", "POST", "PUT", "POST"],
+        );
+        expect(onCheckpoint).toHaveBeenLastCalledWith(
+          expect.objectContaining({ bytesUploaded: true, putUncertain: false }),
+        );
+      }
+    },
+  );
+  it.each([true, false])(
+    "waits for verification after a PUT returns 412 (valid=%s)",
+    async (valid) => {
+      const onLeg = vi.fn();
+      const onCheckpoint = vi.fn(async () => {});
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url, init) => {
+          if (String(url).endsWith("artifacts:presign"))
+            return new Response(
+              JSON.stringify({
+                artifactId: "a",
+                s3Key: "k",
+                uploadUrl: "https://upload.example.test/a",
+              }),
+            );
+          if (init.method === "PUT") return new Response("", { status: 412 });
+          expect(onLeg).not.toHaveBeenCalledWith("put");
+          expect(onCheckpoint).not.toHaveBeenCalledWith(
+            expect.objectContaining({ bytesUploaded: true }),
+          );
+          return valid
+            ? new Response("{}")
+            : new Response(
+                JSON.stringify({ error: "media_metadata_mismatch" }),
+                { status: 422 },
+              );
+        }),
+      );
+      const upload = uploadArtifact("check", {
+        dataUrl: "data:image/jpeg;base64,dGVzdA==",
+        onLeg,
+        onCheckpoint,
+      });
+      if (valid) {
+        await upload;
+        expect(onLeg.mock.calls.map(([leg]) => leg)).toEqual([
+          "presign",
+          "put",
+          "register",
+        ]);
+        expect(onCheckpoint).toHaveBeenLastCalledWith(
+          expect.objectContaining({ bytesUploaded: true, putUncertain: false }),
+        );
+      } else {
+        await expect(upload).rejects.toThrow();
+        expect(onLeg).not.toHaveBeenCalledWith("put");
+        expect(onCheckpoint).toHaveBeenLastCalledWith(
+          expect.objectContaining({ bytesUploaded: false, putUncertain: true }),
+        );
+      }
+    },
+  );
   it("keeps distinct same-content task attachments separate while reusing each retry scope", async () => {
     vi.mocked(getUploadRequestId).mockClear();
     vi.stubGlobal(
@@ -1125,8 +1246,6 @@ describe("mislabeled image recovery", () => {
       .fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(signed)))
       .mockRejectedValueOnce(new Error("connection interrupted"))
-      .mockResolvedValueOnce(new Response(JSON.stringify(signed)))
-      .mockResolvedValueOnce(new Response(""))
       .mockResolvedValueOnce(new Response("{}"));
     vi.stubGlobal("fetch", fetch);
     /** @type {any} */
@@ -1141,7 +1260,11 @@ describe("mislabeled image recovery", () => {
         },
       });
     await expect(upload()).rejects.toThrow();
+    expect(checkpoint.putUncertain).toBe(true);
     await upload();
+    expect(
+      fetch.mock.calls.filter(([, init]) => init?.method === "PUT"),
+    ).toHaveLength(1);
     for (const call of fetch.mock.calls.filter(
       ([, init]) => init?.method === "PUT",
     )) {

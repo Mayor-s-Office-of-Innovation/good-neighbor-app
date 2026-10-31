@@ -110,6 +110,7 @@ import { trackEvent } from "../services/analytics.js";
 class PerimeterCheck extends HTMLElement {
   constructor() {
     super();
+    this._shotGridMarkup = null;
     this._captureReadVersion = 0;
     this._captureFiles = new CaptureFileQueue();
     this._answeringConditionIds = new Map();
@@ -142,6 +143,7 @@ class PerimeterCheck extends HTMLElement {
       if (this.isConnected && !this._finishing) this._render();
     });
     this.innerHTML = shell();
+    this._shotGridMarkup = null;
     this._fileInput = this.querySelector("#file-input");
     this._cancelDialog = this.querySelector("#cancel-check-dialog");
     this._analysisDeleteDialog = this.querySelector("#analysis-delete-dialog");
@@ -811,7 +813,14 @@ class PerimeterCheck extends HTMLElement {
       "shotgrid--empty",
       photos.length === 0 && !description,
     );
-    grid.innerHTML = photoGrid(photos, description);
+    const gridMarkup = photoGrid(photos, description);
+    // Recovery checkpoints change session state without changing this strip.
+    // Keep its images and running scanners alive across those updates. Keyed
+    // reconciliation of actual tile changes belongs to the photo-grid work.
+    if (gridMarkup !== this._shotGridMarkup) {
+      grid.innerHTML = gridMarkup;
+      this._shotGridMarkup = gridMarkup;
+    }
 
     const evidence = getItems();
     this.querySelector("#capture-labels").innerHTML = captureLabels(getItems());

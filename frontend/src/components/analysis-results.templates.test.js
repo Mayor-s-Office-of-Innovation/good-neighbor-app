@@ -1554,3 +1554,21 @@ it("offers one delete action despite contradictory upload flags and explains off
     vi.unstubAllGlobals();
   }
 });
+
+it("animates the upload retry status using the shared decorative ellipsis", () => {
+  const [markup] = analysisCards(
+    item({
+      kind: "photo",
+      upload: { status: "uploading" },
+      analysis: {
+        status: "queued",
+        recovery: { state: "working", stage: "upload", attempts: 1 },
+      },
+    }),
+    "check",
+  );
+  expect(markup).toContain(
+    escapeHtml(t("card.recovery.retryUpload").replace(/[.…]+$/u, "")),
+  );
+  expect(markup).toContain('class="ellipsis-dots" aria-hidden="true"');
+});
