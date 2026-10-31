@@ -11,6 +11,7 @@ import {setSite,saveDraft} from '/src/db.js';
 import {analyzeEvidenceItem,retryEvidenceItem} from '/src/services/photo-analysis.js';
 import {startCheckSubmissionRecovery,resumeCheckSubmissions} from '/src/services/check-submissions.js';
 import {analysisCards} from '/src/components/analysis-results.templates.js';
+import {startHealthMonitoring} from '/src/services/backend-health.js';
 await setSite('Example site',{siteId:'example',deviceId:'synthetic-device',token:'synthetic-test-token'});
 await state.loadDraft('perimeter');
 if(!state.getCurrentCheck()) state.startCheck('example');
@@ -18,7 +19,7 @@ const render=()=>{const check=state.getCurrentCheck(); document.querySelector('#
 state.onCheckSessionChange(render); render();
 document.querySelector('#capture').onclick=()=>{const item=state.addItem({kind:'photo',dataUrl:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3ioAAAAASUVORK5CYII='}); analyzeEvidenceItem(item.id);};
 document.querySelector('#cards').onclick=(event)=>{const button=event.target.closest('[data-analysis-action="retry"]'); if(button&&retryEvidenceItem(button.closest('[data-item-id]').dataset.itemId)) button.disabled=true;};
-/** @type {any} */ (window).recoveryTest={state,saveDraft,resumeCheckSubmissions}; startCheckSubmissionRecovery(); /** @type {any} */ (window).ready=true;
+/** @type {any} */ (window).recoveryTest={state,saveDraft,resumeCheckSubmissions}; startCheckSubmissionRecovery(); startHealthMonitoring(); /** @type {any} */ (window).ready=true;
 </script></body></html>`;
 
 /** @param {import("@playwright/test").Page} page */
@@ -35,6 +36,18 @@ async function setup(page) {
   };
   await page.route("**/__recovery_test", (route) =>
     route.fulfill({ contentType: "text/html", body: harness }),
+  );
+  // The real shell starts health monitoring. Its probes must stay inside this
+  // synthetic backend too, rather than reaching a developer's local API.
+  await page.route("**/health", (route) =>
+    server.interrupted
+      ? route.abort("internetdisconnected")
+      : route.fulfill({ json: { ok: true } }),
+  );
+  await page.route("http://127.0.0.1:5182/", (route) =>
+    server.interrupted
+      ? route.abort("internetdisconnected")
+      : route.fulfill({ status: 200, body: "" }),
   );
   await page.route("**/synthetic-upload/*", async (route) => {
     if (server.interrupted) return route.abort("internetdisconnected");
@@ -130,11 +143,8 @@ test("Wi-Fi to shaky cellular to offline recovers photos without manual retries"
   await expect(page.locator('[data-analysis-action="retry"]')).toHaveCount(0);
   server.interrupted = false;
   server.complete = true;
-  await page.evaluate(() =>
-    /** @type {any} */ (window).recoveryTest.resumeCheckSubmissions(),
-  );
-  // A request can report its interruption just after the explicit reconnect
-  // resume. Allow the real 60-second background recovery sweep to pick it up.
+  // Recovery is driven by the real health probe and connectionretry event;
+  // no manual retry or direct queue invocation announces reconnection here.
   await expect
     .poll(() => statuses(page), { timeout: 75_000 })
     .toEqual(Array(6).fill("analyzed"));
