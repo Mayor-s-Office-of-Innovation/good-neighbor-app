@@ -1,4 +1,4 @@
-/* global localStorage, File, Blob, IDBObjectStore, DOMException, Event, customElements, HTMLElement, structuredClone */
+/* global localStorage, File, Blob, IDBDatabase, IDBObjectStore, DOMException, Event, customElements, HTMLElement, structuredClone */
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
@@ -1025,3 +1025,174 @@ test("unsupported workers leave durable capture available without main-thread de
   });
   expect(result).toEqual({ original: "original", preview: null });
 });
+
+test("session replacement after admission commits removes orphan bytes without replacing the new draft", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { db, session, check } = window;
+    const transaction = IDBDatabase.prototype.transaction;
+    let next;
+    let key;
+    IDBDatabase.prototype.transaction = function (stores, ...args) {
+      const tx = transaction.call(this, stores, ...args);
+      if (
+        Array.isArray(stores) &&
+        stores.includes("captureMedia") &&
+        stores.includes("draft")
+      ) {
+        tx.addEventListener(
+          "complete",
+          () => {
+            IDBDatabase.prototype.transaction = transaction;
+            key = check.items[0].media.key;
+            next = session.startCheck("synthetic-site");
+          },
+          { once: true },
+        );
+      }
+      return tx;
+    };
+    try {
+      const admitted = await session.addCapturedPhoto(
+        new File(["original"], "synthetic.jpg", { type: "image/jpeg" }),
+      );
+      const draft = await db.getDraft("perimeter");
+      return {
+        admitted,
+        correctDraft: draft.id === next.id,
+        media: !!(await db.getCaptureMedia(key)),
+        oldItems: check.items.length,
+      };
+    } finally {
+      IDBDatabase.prototype.transaction = transaction;
+    }
+  });
+  expect(result).toEqual({
+    admitted: null,
+    correctDraft: true,
+    media: false,
+    oldItems: 0,
+  });
+});
+
+test("failed admission cannot restore the old draft after a new session starts", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { db, session, check } = window;
+    const put = IDBObjectStore.prototype.put;
+    let next;
+    IDBObjectStore.prototype.put = function (value, ...args) {
+      if (this.name === "captureMedia") {
+        IDBObjectStore.prototype.put = put;
+        next = session.startCheck("synthetic-site");
+        throw new DOMException("Synthetic quota failure", "QuotaExceededError");
+      }
+      return put.call(this, value, ...args);
+    };
+    let error;
+    try {
+      await session.addCapturedPhoto(
+        new File(["original"], "synthetic.jpg", { type: "image/jpeg" }),
+      );
+    } catch (caught) {
+      error = caught.name;
+    } finally {
+      IDBObjectStore.prototype.put = put;
+    }
+    const draft = await db.getDraft("perimeter");
+    return {
+      error,
+      correctDraft: draft.id === next.id,
+      oldItems: check.items.length,
+    };
+  });
+  expect(result).toEqual({
+    error: "QuotaExceededError",
+    correctDraft: true,
+    oldItems: 0,
+  });
+});
+
+for (const migrated of [false, true]) {
+  test(`registered legacy photo without item.checkId loads server thumbnail (already migrated: ${migrated})`, async ({
+    page,
+  }) => {
+    const checkId = await page.evaluate(async (migrated) => {
+      const { db, check } = window;
+      const item = {
+        id: "legacy-registered",
+        kind: "photo",
+        dataUrl: "data:image/jpeg;base64,aGVsbG8=",
+        upload: { status: "uploaded", artifactId: "synthetic-artifact" },
+      };
+      check.items = [item];
+      await db.saveDraft(check);
+      if (migrated) {
+        item.media = {
+          key: JSON.stringify([check.siteId, check.id, item.id]),
+          size: 5,
+          type: "image/jpeg",
+        };
+        await db.saveCapturePhoto(
+          check,
+          item,
+          new Blob([], { type: "image/jpeg" }),
+        );
+        delete item.checkId;
+        delete item.dataUrl;
+        await db.saveDraft(check);
+      }
+      return check.id;
+    }, migrated);
+    let requestedCheck;
+    await page.route("**/v1/checks/**/artifacts/**/media", (route) => {
+      requestedCheck = new URL(route.request().url()).pathname
+        .split("/checks/")[1]
+        .split("/")[0];
+      return route.fulfill({
+        json: {
+          thumbnailUrl: "http://127.0.0.1:5179/legacy-thumbnail",
+          expiresIn: 300,
+        },
+      });
+    });
+    await page.route("**/legacy-thumbnail", (route) =>
+      route.fulfill({
+        contentType: "image/png",
+        body: Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=",
+          "base64",
+        ),
+      }),
+    );
+    await page.reload();
+    const state = await page.evaluate(async () => {
+      const db = await import("/src/db.js");
+      const session = await import("/src/state/check-session.js");
+      const check = await session.loadDraft("perimeter");
+      const item = check.items[0];
+      const { capturePhoto } = await import(
+        "/src/components/capture-photo.templates.js"
+      );
+      document.querySelector("#test").innerHTML = capturePhoto(
+        item,
+        "Synthetic legacy preview",
+      );
+      await import("/src/components/capture-photo.js");
+      return {
+        checkId: item.checkId,
+        inline: !!item.dataUrl,
+        original: !!(await db.getCaptureMedia(item.media.key)).original,
+      };
+    });
+    expect(state).toEqual({ checkId, inline: false, original: false });
+    await expect
+      .poll(() =>
+        page.locator("capture-photo img").evaluate((img) => img.naturalWidth),
+      )
+      .toBe(1);
+    expect(requestedCheck).toBe(checkId);
+  });
+}

@@ -880,7 +880,7 @@ function saveCapturePhotoRecord(check, item, original) {
       mediaVersion: 1,
       items: source.items.map((i) => {
         if (i.id !== item.id) return i;
-        const rest = { ...i, media: item.media };
+        const rest = { ...i, checkId: check.id, media: item.media };
         delete rest.dataUrl;
         delete rest.captureSaving;
         return rest;

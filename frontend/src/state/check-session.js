@@ -81,7 +81,11 @@ function normalizeCheck(check) {
   return {
     ...rest,
     flowType: normalizeFlowType(check.flowType),
-    items: normalizeItems(check),
+    // Legacy evidence may omit its parent ID; media requests require it.
+    items: normalizeItems(check).map((item) => ({
+      ...item,
+      checkId: check.id,
+    })),
     analyzingOpen:
       check.analyzingOpen == null ? true : Boolean(check.analyzingOpen),
   };
@@ -366,8 +370,10 @@ export async function addCapturedPhoto(file) {
     }
   } catch (error) {
     check.items = check.items.filter((i) => i.id !== id);
-    persist(check);
-    emit(check);
+    if (current === check) {
+      persist(check);
+      emit(check);
+    }
     throw error;
   }
   delete record.captureSaving;
@@ -375,7 +381,13 @@ export async function addCapturedPhoto(file) {
     await deleteCaptureMedia(record.media.key);
     return null;
   }
-  if (current !== check) return null;
+  if (current !== check) {
+    // Admission may have committed before a new session replaced this draft.
+    // Remove only this photo and its bytes; never overwrite the newer draft.
+    await deleteCapturePhoto(check, record.media.key);
+    check.items = check.items.filter((i) => i.id !== id);
+    return null;
+  }
   emit(check);
   return record;
 }
