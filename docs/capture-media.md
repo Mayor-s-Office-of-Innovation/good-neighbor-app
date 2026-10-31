@@ -23,6 +23,9 @@ thumbnail caching and retains the same original-release and deletion rules.
 - Admission atomically saves the original Blob and its draft reference before
   announcing a saved photo. A storage failure removes the pending item and offers
   translated guidance to retake it after addressing storage availability.
+  Background metadata saves exclude uncommitted admissions. A metadata save
+  queued behind a successful admission preserves that transaction's committed
+  reference, even before the in-memory saving marker has been cleared.
 - Pending originals survive app close and interrupted uploads. The persisted
   initial state is queued so a reload before upload starts is recoverable.
 - After upload **and artifact registration** succeed and the acknowledgement is
@@ -45,6 +48,10 @@ thumbnail caching and retains the same original-release and deletion rules.
 - A lightbox action obtains the original from S3 on demand. Offline, an unsent
   original or cached thumbnail can be used; thumbnail-only viewing is labeled.
   Closing/removing the lightbox releases its image reference and any object URL.
+  Only the latest selection may open; closing the viewer or leaving its screen
+  cancels pending URL requests. If the original image download fails or times out,
+  the viewer uses a labeled saved preview when available and offers Retry.
+  Retrying a capture photo requests a fresh signed URL.
 - Removing an item, clearing a completed/discarded check, and sign-out clean up
   the applicable media records. Switching sites preserves outstanding drafts.
 

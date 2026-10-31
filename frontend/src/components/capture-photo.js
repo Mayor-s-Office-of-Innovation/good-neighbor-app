@@ -118,28 +118,33 @@ export class CapturePhoto extends HTMLElement {
       );
     }
   }
-  /** Fetch an original URL only for an explicit lightbox action. */
-  async original() {
+  /** Fetch an original URL only for an explicit lightbox action.
+   * @param {{signal?: AbortSignal, previewOnly?: boolean}} [options]
+   */
+  async original({ signal, previewOnly = false } = {}) {
     const { mediaKey, checkId, artifactId } = this.dataset;
-    if (artifactId && navigator.onLine !== false) {
+    signal?.throwIfAborted();
+    if (!previewOnly && artifactId && navigator.onLine !== false) {
       try {
         invalidateMediaUrls(checkId, artifactId);
-        const urls = await cachedMediaUrls(checkId, artifactId);
+        const urls = await cachedMediaUrls(checkId, artifactId, { signal });
         return { src: urls.downloadUrl, release: () => {} };
       } catch {
         /* Offline recovery can use the pending original or cached thumbnail. */
       }
     }
+    signal?.throwIfAborted();
     const media = await getCaptureMedia(mediaKey);
     const blob =
-      media?.original ||
+      (!previewOnly && media?.original) ||
       media?.thumbnail ||
       (await getLocalCapturePreview(mediaKey));
+    signal?.throwIfAborted();
     if (!blob) return null;
     const src = URL.createObjectURL(blob);
     return {
       src,
-      previewOnly: !media?.original,
+      previewOnly: previewOnly || !media?.original,
       release: () => URL.revokeObjectURL(src),
     };
   }

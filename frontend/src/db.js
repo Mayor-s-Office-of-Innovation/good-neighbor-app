@@ -490,8 +490,11 @@ export async function getDraft(flowType) {
 }
 export async function saveDraft(check) {
   const siteId = check?.siteId || (await getSite())?.siteId || "";
-  await tx("draft", "readwrite", (os) => {
-    const saved = captureMetadata(check);
+  await tx("draft", "readwrite", async (os) => {
+    const previous = check.items?.some((item) => item.captureSaving)
+      ? await reqToPromise(os.get(draftKey(check.flowType, siteId)))
+      : null;
+    const saved = captureMetadata(check, previous);
     os.put(saved, draftKey(undefined, siteId));
     if (check?.flowType) os.put(saved, draftKey(check.flowType, siteId));
   });
@@ -584,9 +587,13 @@ export async function listFinishedChecks(owningSiteId) {
 }
 export async function saveFinishedCheck(check) {
   const siteId = check?.siteId || (await getSite())?.siteId || "";
-  await tx("review", "readwrite", (os) =>
-    os.put(captureMetadata(check), finishedCheckKey(siteId, check.id)),
-  );
+  await tx("review", "readwrite", async (os) => {
+    const key = finishedCheckKey(siteId, check.id);
+    const previous = check.items?.some((item) => item.captureSaving)
+      ? await reqToPromise(os.get(key))
+      : null;
+    os.put(captureMetadata(check, previous), key);
+  });
   return check;
 }
 /**
@@ -1015,16 +1022,33 @@ function cacheCaptureThumbnailRecord(
   );
 }
 
-/** @param {any} check */
-function captureMetadata(check) {
+/** @param {any} check @param {any} [previous] */
+function captureMetadata(check, previous) {
+  // A queued progress save can run after admission commits but before its
+  // caller clears captureSaving. Retain only references already committed by
+  // that atomic admission, never references from another check.
+  const admitted = new Map(
+    (previous?.id === check.id ? previous.items || [] : []).map((item) => [
+      item.id,
+      item,
+    ]),
+  );
   return {
     ...check,
     ...(check.items?.some((item) => item.media) ? { mediaVersion: 1 } : {}),
-    items: check.items?.map((item) => {
-      const saved = { ...item };
-      delete saved.captureSaving;
-      return saved;
-    }),
+    items: check.items
+      ?.flatMap((item) =>
+        item.captureSaving
+          ? admitted.has(item.id)
+            ? [admitted.get(item.id)]
+            : []
+          : [item],
+      )
+      .map((item) => {
+        const saved = { ...item };
+        delete saved.captureSaving;
+        return saved;
+      }),
   };
 }
 

@@ -1,4 +1,4 @@
-/* global localStorage, File, Blob, IDBDatabase, IDBObjectStore, DOMException, Event, customElements, HTMLElement, structuredClone */
+/* global TextEncoder, localStorage, File, Blob, IDBDatabase, IDBObjectStore, DOMException, Event, customElements, HTMLElement, structuredClone */
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
@@ -722,7 +722,7 @@ for (const stage of ["definition", "original"]) {
         },
       });
       await opening;
-      return { opened: !!host.querySelector("dialog"), calls, released };
+      return { opened: !!host.querySelector("dialog")?.open, calls, released };
     }, stage);
     expect(result).toEqual({
       opened: false,
@@ -1196,3 +1196,257 @@ for (const migrated of [false, true]) {
     expect(requestedCheck).toBe(checkId);
   });
 }
+
+test("background saves exclude admission waiting for binary fallback; bytes and reference commit together", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { db, session, check } = window;
+    const text = session.addItem({ kind: "text", text: "Synthetic note" });
+    await db.saveDraft(check);
+    let release, began;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise((resolve) => {
+      began = resolve;
+    });
+    const file = new File(["durable bytes"], "synthetic.jpg", {
+      type: "image/jpeg",
+    });
+    file.arrayBuffer = async () => {
+      began();
+      await gate;
+      return new TextEncoder().encode("durable bytes").buffer;
+    };
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (value, ...args) {
+      if (this.name === "captureMedia" && value.original instanceof Blob) {
+        IDBObjectStore.prototype.put = put;
+        throw new DOMException("Blob/File preparation failed", "UnknownError");
+      }
+      return put.call(this, value, ...args);
+    };
+    try {
+      const admission = session.addCapturedPhoto(file);
+      await started;
+      const pending = check.items.find((item) => item.captureSaving);
+      session.updateItemAnalysis(text.id, { status: "waiting" });
+      await db.saveDraft(check);
+      const before = await db.getDraft("perimeter");
+      const missing = !(await db.getCaptureMedia(pending.media.key));
+      release();
+      const admitted = await admission;
+      const after = await db.getDraft("perimeter");
+      return {
+        before: before.items.map((item) => item.id),
+        expected: [text.id],
+        missing,
+        after: after.items.length,
+        bytes: await (
+          await db.getCaptureMedia(admitted.media.key)
+        ).original.text(),
+      };
+    } finally {
+      IDBObjectStore.prototype.put = put;
+      release();
+    }
+  });
+  expect(result.before).toEqual(result.expected);
+  expect(result).toMatchObject({
+    missing: true,
+    after: 2,
+    bytes: "durable bytes",
+  });
+});
+
+test("latest photo wins; close and screen removal cancel pending selections", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { openPhotoLightbox } = await import(
+      "/src/components/photo-lightbox.js"
+    );
+    const host = document.querySelector("#test");
+    host.innerHTML =
+      '<section><button data-photo-lightbox><capture-photo data-id="a"><img alt="A"></capture-photo></button><button data-photo-lightbox><capture-photo data-id="b"><img alt="B"></capture-photo></button></section>';
+    const screen = host.querySelector("section");
+    const [a, b] = screen.querySelectorAll("button");
+    const calls = [];
+    let released = 0;
+    customElements.define(
+      "capture-photo",
+      class extends HTMLElement {
+        original({ signal }) {
+          return new Promise((resolve) => calls.push({ signal, resolve }));
+        }
+      },
+    );
+    const src =
+      "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+    const complete = (index) =>
+      calls[index].resolve({
+        src,
+        release() {
+          released++;
+        },
+      });
+    const first = openPhotoLightbox(host, a, screen);
+    await Promise.resolve();
+    const second = openPhotoLightbox(host, b, screen);
+    await Promise.resolve();
+    complete(1);
+    await second;
+    complete(0);
+    await first;
+    const latest = host.querySelector("photo-lightbox img").alt;
+    const third = openPhotoLightbox(host, a, screen);
+    await Promise.resolve();
+    host.querySelector("photo-lightbox").close();
+    complete(2);
+    await third;
+    const closed = !host.querySelector("dialog").open;
+    const fourth = openPhotoLightbox(host, a, screen);
+    await Promise.resolve();
+    screen.remove();
+    await Promise.resolve();
+    complete(3);
+    await fourth;
+    return {
+      latest,
+      closed,
+      aborted: calls.every((call) => call.signal.aborted),
+      released,
+    };
+  });
+  expect(result).toEqual({
+    latest: "B",
+    closed: true,
+    aborted: true,
+    released: 4,
+  });
+});
+
+test("failed full-image download uses saved preview; Retry requests a fresh original", async ({
+  page,
+}) => {
+  let requests = 0;
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=",
+    "base64",
+  );
+  await page.route("**/v1/checks/**/artifacts/**/media", (route) => {
+    requests++;
+    return route.fulfill({
+      json: {
+        downloadUrl: `http://127.0.0.1:5179/full-attempt-${requests}`,
+        expiresIn: 300,
+      },
+    });
+  });
+  await page.route("**/full-attempt-*", (route) =>
+    route.request().url().endsWith("-1")
+      ? route.fulfill({ status: 403, body: "Synthetic expired download" })
+      : route.fulfill({ contentType: "image/png", body: png }),
+  );
+  await page.evaluate(async () => {
+    const { db, session, check } = window;
+    const item = await session.addCapturedPhoto(
+      new File(["original"], "synthetic.jpg", { type: "image/jpeg" }),
+    );
+    session.updateItem(item.id, {
+      upload: { status: "uploaded", artifactId: "synthetic-artifact" },
+    });
+    await db.saveDraft(check);
+    const canvas = document.createElement("canvas");
+    canvas.width = 20;
+    canvas.height = 10;
+    const preview = await new Promise((resolve) =>
+      canvas.toBlob(resolve, "image/png"),
+    );
+    await db.cacheCaptureThumbnail(
+      item.media.key,
+      "synthetic-artifact",
+      preview,
+    );
+    const { capturePhoto } = await import(
+      "/src/components/capture-photo.templates.js"
+    );
+    const host = document.querySelector("#test");
+    host.innerHTML =
+      "<button data-photo-lightbox>" +
+      capturePhoto(item, "Synthetic photo") +
+      "</button>";
+    await import("/src/components/capture-photo.js");
+    const { openPhotoLightbox } = await import(
+      "/src/components/photo-lightbox.js"
+    );
+    await openPhotoLightbox(host, host.querySelector("button"));
+  });
+  await expect
+    .poll(() =>
+      page.locator("photo-lightbox img").evaluate((img) => img.naturalWidth),
+    )
+    .toBe(20);
+  const label = await page.evaluate(async () =>
+    (await import("/src/i18n/i18n.js")).t("lightbox.previewOnly"),
+  );
+  await expect(page.locator(".photo-lightbox__caption")).toContainText(label);
+  await expect(page.locator("[data-photo-retry]")).toBeVisible();
+  const accessibility = await new AxeBuilder({ page })
+    .include("photo-lightbox")
+    .analyze();
+  expect(accessibility.violations).toEqual([]);
+  await page.locator("[data-photo-retry]").focus();
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(() =>
+      page.locator("photo-lightbox img").evaluate((img) => img.naturalWidth),
+    )
+    .toBe(1);
+  expect(requests).toBe(2);
+  await expect(page.locator(".photo-lightbox__recovery")).toBeHidden();
+  await expect(page.locator(".photo-lightbox__caption")).not.toContainText(
+    label,
+  );
+  await page.keyboard.press("Escape");
+  await expect(page.locator("photo-lightbox dialog")).not.toBeVisible();
+});
+
+test("progress save queued behind admission preserves its committed reference", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { db, session, check } = window;
+    const text = session.addItem({ kind: "text", text: "Synthetic note" });
+    await db.saveDraft(check);
+    const put = IDBObjectStore.prototype.put;
+    let progress;
+    IDBObjectStore.prototype.put = function (value, ...args) {
+      if (this.name === "captureMedia") {
+        IDBObjectStore.prototype.put = put;
+        text.analysis = { status: "waiting" };
+        progress = db.saveDraft(check);
+      }
+      return put.call(this, value, ...args);
+    };
+    try {
+      const photo = await session.addCapturedPhoto(
+        new File(["bytes"], "synthetic.jpg", { type: "image/jpeg" }),
+      );
+      await progress;
+      const saved = await db.getDraft("perimeter");
+      return {
+        ids: saved.items.map((item) => item.id),
+        expected: [text.id, photo.id],
+        bytes: await (
+          await db.getCaptureMedia(photo.media.key)
+        ).original.text(),
+      };
+    } finally {
+      IDBObjectStore.prototype.put = put;
+    }
+  });
+  expect(result.ids).toEqual(result.expected);
+  expect(result.bytes).toBe("bytes");
+});
