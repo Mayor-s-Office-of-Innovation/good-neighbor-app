@@ -261,6 +261,7 @@ export class AppRoot extends HTMLElement {
     viewport.addEventListener("scroll", this._onKeyboardViewport);
     document.addEventListener("focusin", this._onKeyboardViewport);
     document.addEventListener("focusout", this._onKeyboardViewport);
+    document.addEventListener("input", this._onKeyboardViewport);
   }
 
   _stopKeyboardViewportSync() {
@@ -275,16 +276,35 @@ export class AppRoot extends HTMLElement {
     );
     document.removeEventListener("focusin", this._onKeyboardViewport);
     document.removeEventListener("focusout", this._onKeyboardViewport);
+    document.removeEventListener("input", this._onKeyboardViewport);
     this._onKeyboardViewport = null;
+    document.documentElement.removeAttribute("data-keyboard-open");
+    document.documentElement.style.removeProperty("--editable-viewport-height");
+    document.documentElement.style.removeProperty("--editable-viewport-top");
     this._applyKeyboardViewport(null);
   }
 
   _syncKeyboardViewport() {
     const active = deepActiveElement(document);
     const editing = isEditable(active);
-    this._applyKeyboardViewport(
-      keyboardViewport(window.visualViewport, window.innerHeight, editing),
+    document.documentElement.style.setProperty(
+      "--editable-viewport-height",
+      `${window.visualViewport?.height || window.innerHeight}px`,
     );
+    const box = keyboardViewport(
+      window.visualViewport,
+      window.innerHeight,
+      editing || document.documentElement.hasAttribute("data-keyboard-open"),
+    );
+    document.documentElement.toggleAttribute(
+      "data-keyboard-open",
+      Boolean(box),
+    );
+    document.documentElement.style.setProperty(
+      "--editable-viewport-top",
+      `${box?.top || 0}px`,
+    );
+    this._applyKeyboardViewport(box);
     if (editing && window.visualViewport?.scale === 1) {
       requestAnimationFrame(() => {
         if (deepActiveElement(document) !== active) return;

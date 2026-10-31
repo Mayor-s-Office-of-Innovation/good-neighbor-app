@@ -985,3 +985,28 @@ connection-status {
   border: 0;
   border-top: 1px solid var(--c-line);
 }
+
+/* Keep multiline editors scrollable within the area above the mobile keyboard. */
+html[data-keyboard-open] textarea,
+html[data-keyboard-open] wa-textarea::part(textarea) {
+  max-height: calc(var(--editable-viewport-height, 100svh) - 3rem);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Top-layer dialogs otherwise remain centered behind an overlay keyboard. */
+html[data-keyboard-open] dialog:focus-within {
+  top: calc(var(--editable-viewport-top, 0px) + 1rem);
+  bottom: auto;
+  margin-block: 0;
+  max-height: calc(var(--editable-viewport-height) - 2rem);
+  overflow-y: auto;
+}
+
+/* Short pages still need enough scroll range to lift their last field above
+   a keyboard that overlays, rather than resizes, the layout viewport. */
+html[data-keyboard-open] body {
+  height: auto;
+  min-height: 100%;
+  padding-bottom: max(0px, calc(100vh - var(--editable-viewport-height)));
+}
