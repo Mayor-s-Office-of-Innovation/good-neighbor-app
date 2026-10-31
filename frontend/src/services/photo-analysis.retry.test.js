@@ -6,6 +6,9 @@ vi.mock("../db.js", () => ({
   }),
   saveFinishedCheck: vi.fn(async () => {}),
   getSite: vi.fn(async () => ({ siteId: "site" })),
+  getCaptureMedia: vi.fn(),
+  releaseCaptureOriginal: vi.fn(async () => {}),
+  deleteCapturePhoto: vi.fn(async () => {}),
 }));
 vi.mock("./backend-health.js", () => ({ getHealthState: () => "healthy" }));
 vi.mock("./device-location.js", () => ({
@@ -60,7 +63,12 @@ import {
   uploadArtifact,
   evaluateAssessment,
 } from "./api.js";
-import { saveDraft } from "../db.js";
+import {
+  saveDraft,
+  getCaptureMedia,
+  releaseCaptureOriginal,
+  deleteCapturePhoto,
+} from "../db.js";
 import {
   analyzeEvidenceItem,
   retryEvidenceItem,
@@ -514,4 +522,87 @@ it("retains unresolved deletion when the server cannot confirm whether its repla
   await expect(removeEvidenceItem(item.id)).rejects.toThrow();
   expect(item.deletionPending).toBe(true);
   expect(held.check.items).toContain(item);
+});
+
+it.each([false, true])(
+  "retains Blob originals until registration is durable (save fails=%s)",
+  async (saveFails) => {
+    const original = new Blob(["original"], { type: "image/jpeg" });
+    vi.mocked(getCaptureMedia).mockResolvedValueOnce({ original });
+    const item = photo({
+      dataUrl: undefined,
+      media: { key: "synthetic", size: original.size, type: original.type },
+    });
+    vi.mocked(uploadArtifact).mockImplementationOnce(
+      async (_checkId, options) => {
+        expect(options.blob).toBe(original);
+        expect(options.originSiteId).toBe("site");
+        expect(releaseCaptureOriginal).not.toHaveBeenCalled();
+        await options.onCheckpoint({
+          artifactId: "artifact",
+          s3Key: "synthetic-key",
+          bytesUploaded: true,
+        });
+        if (saveFails)
+          vi.mocked(saveDraft).mockRejectedValueOnce(
+            new Error("Synthetic storage failure"),
+          );
+        return {
+          artifactId: "artifact",
+          s3Key: "synthetic-key",
+          contentType: "image/jpeg",
+          contentLength: original.size,
+        };
+      },
+    );
+    analyzeEvidenceItem(item.id);
+    await vi.waitFor(() =>
+      expect(item.analysis.status).toBe(saveFails ? "failed" : "analyzed"),
+    );
+    if (saveFails) expect(releaseCaptureOriginal).not.toHaveBeenCalled();
+    else {
+      expect(releaseCaptureOriginal).toHaveBeenCalledWith(
+        "synthetic",
+        "artifact",
+      );
+      expect(
+        held.saved.some(
+          (check) => check.items[0].upload?.status === "uploaded",
+        ),
+      ).toBe(true);
+    }
+  },
+);
+it("continues analysis when optional Blob cleanup fails", async () => {
+  vi.mocked(getCaptureMedia).mockResolvedValueOnce({
+    original: new Blob(["original"]),
+  });
+  vi.mocked(releaseCaptureOriginal).mockRejectedValueOnce(
+    new Error("Synthetic cleanup failure"),
+  );
+  const item = photo({
+    media: { key: "synthetic", size: 8, type: "image/jpeg" },
+  });
+  analyzeEvidenceItem(item.id);
+  await vi.waitFor(() => expect(item.analysis.status).toBe("analyzed"));
+});
+it("awaits atomic media removal after durable remote-deletion checkpoint", async () => {
+  const item = photo({
+    media: { key: "synthetic", size: 8, type: "image/jpeg" },
+    upload: { status: "uploaded", artifactId: "artifact" },
+    analysis: {
+      status: "failed",
+      recovery: { state: "blocked", stage: "analyze" },
+    },
+  });
+  vi.mocked(deleteCapturePhoto).mockImplementationOnce(async () => {
+    expect(held.saved.some((check) => check.items[0]?.deletionPending)).toBe(
+      true,
+    );
+    expect(deleteArtifact).toHaveBeenCalled();
+    expect(held.check.items).toContain(item);
+  });
+  await removeEvidenceItem(item.id);
+  expect(deleteCapturePhoto).toHaveBeenCalledWith(held.check, "synthetic");
+  expect(held.check.items).toEqual([]);
 });

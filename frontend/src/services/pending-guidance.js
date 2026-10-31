@@ -108,6 +108,9 @@ export function mergePendingQuestionItems(localItems, pendingItems, tasks) {
     return {
       ...item,
       kind: local.kind || item.kind,
+      ...(local.media
+        ? { media: local.media, checkId: local.checkId || item.checkId }
+        : {}),
       dataUrl: local.dataUrl || item.dataUrl,
       fullDataUrl: local.fullDataUrl || item.fullDataUrl,
       placeName: local.placeName || item.placeName,

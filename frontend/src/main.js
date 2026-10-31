@@ -35,11 +35,16 @@ mountConnectionBanner();
 import "./services/error-report.js";
 // Load photo renewal and its styles only when a screen renders a photo.
 // Observe until the first instance; defining the element upgrades all instances.
+const photoModules = new Set();
 const photoObserver = new MutationObserver(loadArtifactPhotos);
 function loadArtifactPhotos() {
-  if (!document.querySelector("artifact-photo")) return;
-  photoObserver.disconnect();
-  void import("./components/artifact-photo.js");
+  for (const tag of ["artifact-photo", "capture-photo"]) {
+    if (photoModules.has(tag) || !document.querySelector(tag)) continue;
+    photoModules.add(tag);
+    if (tag === "artifact-photo") void import("./components/artifact-photo.js");
+    else void import("./components/capture-photo.js");
+  }
+  if (photoModules.size === 2) photoObserver.disconnect();
 }
 photoObserver.observe(document.body, { childList: true, subtree: true });
 loadArtifactPhotos();

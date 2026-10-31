@@ -157,3 +157,37 @@ it("settles failed readers and allows the next selection", async () => {
   await queue.tail;
   expect(photo).toHaveBeenCalledWith("data:retry");
 });
+
+it("binary capture awaits durable admission and reserves bytes while saving", async () => {
+  const queue = new CaptureFileQueue(true);
+  vi.stubGlobal(
+    "FileReader",
+    class {
+      constructor() {
+        throw new Error("No base64 on binary captures");
+      }
+    },
+  );
+  const file = new File(["original"], "synthetic.jpg", { type: "image/jpeg" });
+  /** @type {() => void} */
+  let finish = () => {};
+  const save = vi.fn(
+    () =>
+      new Promise((resolve) => {
+        finish = () => resolve(undefined);
+      }),
+  );
+  queue.enqueue(
+    [file],
+    [],
+    () => true,
+    save,
+    () => {},
+  );
+  await Promise.resolve();
+  expect(queue.busy).toBe(true);
+  expect(save).toHaveBeenCalledWith(file);
+  finish?.();
+  await queue.tail;
+  expect(queue.busy).toBe(false);
+});

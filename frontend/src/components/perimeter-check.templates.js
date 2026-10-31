@@ -1,3 +1,4 @@
+import { capturePhoto } from "./capture-photo.templates.js";
 import { captureControls } from "./capture-controls.templates.js";
 /*
   Presentational templates for <perimeter-check>.
@@ -263,11 +264,13 @@ export const shotTile = (item, index) => html`
         item.uploadedAt || item.createdAt || item.capturedAt || "",
       )}"
     >
-      <img
-        class="shot__img"
-        src="${escapeAttr(item.dataUrl)}"
-        alt="${escapeAttr(t("check.photo.alt", { index: index + 1 }))}"
-      />
+      ${item.media
+        ? capturePhoto(item, t("check.photo.alt", { index: index + 1 }))
+        : html`<img
+            class="shot__img"
+            src="${escapeAttr(item.dataUrl)}"
+            alt="${escapeAttr(t("check.photo.alt", { index: index + 1 }))}"
+          />`}
       ${analysisScanner(item)}
     </button>
     <button

@@ -1232,98 +1232,113 @@ describe("duplicate mutation invalidation", () => {
 
 describe("mislabeled image recovery", () => {
   afterEach(() => vi.unstubAllGlobals());
-  it("preserves WebP bytes and uses WebP metadata across an interrupted PUT", async () => {
-    // Synthetic RIFF/WebP header: signature detection does not decode pixels.
-    const bytes = new Uint8Array([82, 73, 70, 70, 4, 0, 0, 0, 87, 69, 66, 80]);
-    const dataUrl = `data:image/jpeg;base64,${btoa(String.fromCharCode(...bytes))}`;
-    const signed = {
-      artifactId: "webp-photo",
-      s3Key: "synthetic/webp",
-      uploadUrl: "https://upload.example.test/webp",
-      uploadHeaders: {},
-    };
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify(signed)))
-      .mockRejectedValueOnce(new Error("connection interrupted"))
-      .mockResolvedValueOnce(new Response("{}"));
-    vi.stubGlobal("fetch", fetch);
-    /** @type {any} */
-    let checkpoint;
-    const upload = () =>
-      uploadArtifact("check-webp", {
-        dataUrl,
-        tag: "webp-photo",
-        checkpoint,
-        onCheckpoint: async (next) => {
-          checkpoint = next;
-        },
-      });
-    await expect(upload()).rejects.toThrow();
-    expect(checkpoint.putUncertain).toBe(true);
-    await upload();
-    expect(
-      fetch.mock.calls.filter(([, init]) => init?.method === "PUT"),
-    ).toHaveLength(1);
-    for (const call of fetch.mock.calls.filter(
-      ([, init]) => init?.method === "PUT",
-    )) {
-      const body = call[1].body;
-      expect(body.type).toBe("image/webp");
-      expect(new Uint8Array(await body.arrayBuffer())).toEqual(bytes);
-    }
-    const registration = JSON.parse(fetch.mock.calls.at(-1)[1].body);
-    expect(registration.contentType).toBe("image/webp");
-    expect(registration.contentLength).toBe(bytes.length);
-    expect(checkpoint?.bytesUploaded).toBe(true);
-  });
+  it.each(["dataUrl", "blob"])(
+    "preserves WebP bytes and metadata across an interrupted PUT (%s)",
+    async (source) => {
+      // Synthetic RIFF/WebP header: signature detection does not decode pixels.
+      const bytes = new Uint8Array([
+        82, 73, 70, 70, 4, 0, 0, 0, 87, 69, 66, 80,
+      ]);
+      const dataUrl = `data:image/jpeg;base64,${btoa(String.fromCharCode(...bytes))}`;
+      const signed = {
+        artifactId: "webp-photo",
+        s3Key: "synthetic/webp",
+        uploadUrl: "https://upload.example.test/webp",
+        uploadHeaders: {},
+      };
+      const fetch = vi
+        .fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify(signed)))
+        .mockRejectedValueOnce(new Error("connection interrupted"))
+        .mockResolvedValueOnce(new Response("{}"));
+      vi.stubGlobal("fetch", fetch);
+      /** @type {any} */
+      let checkpoint;
+      const upload = () =>
+        uploadArtifact("check-webp", {
+          ...(source === "blob"
+            ? { blob: new Blob([bytes], { type: "image/jpeg" }) }
+            : { dataUrl }),
+          tag: "webp-photo",
+          checkpoint,
+          onCheckpoint: async (next) => {
+            checkpoint = next;
+          },
+        });
+      await expect(upload()).rejects.toThrow();
+      expect(checkpoint.putUncertain).toBe(true);
+      await upload();
+      expect(
+        fetch.mock.calls.filter(([, init]) => init?.method === "PUT"),
+      ).toHaveLength(1);
+      for (const call of fetch.mock.calls.filter(
+        ([, init]) => init?.method === "PUT",
+      )) {
+        const body = call[1].body;
+        expect(call[1].headers["content-type"]).toBe("image/webp");
+        expect(new Uint8Array(await body.arrayBuffer())).toEqual(bytes);
+      }
+      const registration = JSON.parse(fetch.mock.calls.at(-1)[1].body);
+      expect(registration.contentType).toBe("image/webp");
+      expect(registration.contentLength).toBe(bytes.length);
+      expect(checkpoint?.bytesUploaded).toBe(true);
+    },
+  );
 });
 
 describe("expired uploaded object recovery", () => {
   afterEach(() => vi.unstubAllGlobals());
-  it("reuploads retained bytes when registration says a checkpointed object is missing", async () => {
-    const signed = {
-      artifactId: "replacement",
-      s3Key: "synthetic/replacement",
-      uploadUrl: "https://upload.example.test/replacement",
-      uploadHeaders: {},
-    };
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ error: "media_upload_missing" }), {
-          status: 409,
+  it.each(["dataUrl", "blob"])(
+    "reuploads retained bytes when a checkpointed object is missing (%s)",
+    async (source) => {
+      const signed = {
+        artifactId: "replacement",
+        s3Key: "synthetic/replacement",
+        uploadUrl: "https://upload.example.test/replacement",
+        uploadHeaders: {},
+      };
+      const fetch = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ error: "media_upload_missing" }), {
+            status: 409,
+          }),
+        )
+        .mockResolvedValueOnce(new Response(JSON.stringify(signed)))
+        .mockResolvedValueOnce(new Response(""))
+        .mockResolvedValueOnce(new Response("{}"));
+      vi.stubGlobal("fetch", fetch);
+      const onCheckpoint = vi.fn(async () => {});
+      const result = await uploadArtifact("check", {
+        ...(source === "blob"
+          ? { blob: new Blob(["test"], { type: "image/jpeg" }) }
+          : { dataUrl: "data:image/jpeg;base64,dGVzdA==" }),
+        tag: "photo",
+        checkpoint: {
+          artifactId: "expired",
+          s3Key: "synthetic/expired",
+          bytesUploaded: true,
+        },
+        onCheckpoint,
+      });
+      expect(result.artifactId).toBe("replacement");
+      expect(onCheckpoint).toHaveBeenCalledWith(
+        expect.objectContaining({
+          artifactId: "expired",
+          bytesUploaded: false,
         }),
-      )
-      .mockResolvedValueOnce(new Response(JSON.stringify(signed)))
-      .mockResolvedValueOnce(new Response(""))
-      .mockResolvedValueOnce(new Response("{}"));
-    vi.stubGlobal("fetch", fetch);
-    const onCheckpoint = vi.fn(async () => {});
-    const result = await uploadArtifact("check", {
-      dataUrl: "data:image/jpeg;base64,dGVzdA==",
-      tag: "photo",
-      checkpoint: {
-        artifactId: "expired",
-        s3Key: "synthetic/expired",
-        bytesUploaded: true,
-      },
-      onCheckpoint,
-    });
-    expect(result.artifactId).toBe("replacement");
-    expect(onCheckpoint).toHaveBeenCalledWith(
-      expect.objectContaining({ artifactId: "expired", bytesUploaded: false }),
-    );
-    expect(fetch.mock.calls.map(([, init]) => init.method)).toEqual([
-      "POST",
-      "POST",
-      "PUT",
-      "POST",
-    ]);
-    expect(JSON.parse(fetch.mock.calls.at(-1)[1].body).artifactId).toBe(
-      "replacement",
-    );
-  });
+      );
+      expect(fetch.mock.calls.map(([, init]) => init.method)).toEqual([
+        "POST",
+        "POST",
+        "PUT",
+        "POST",
+      ]);
+      expect(JSON.parse(fetch.mock.calls.at(-1)[1].body).artifactId).toBe(
+        "replacement",
+      );
+    },
+  );
   it("does not loop when a newly uploaded object is also missing", async () => {
     const signed = {
       artifactId: "replacement",
@@ -1387,4 +1402,42 @@ describe("text registration response recovery", () => {
       { status: 409 },
     );
   });
+});
+
+it("uploads the original binary file without base64 conversion", async () => {
+  const original = new File(
+    [new Uint8Array([0, 17, 128, 255])],
+    "synthetic.jpg",
+    { type: "image/jpeg" },
+  );
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          artifactId: "binary-artifact",
+          s3Key: "synthetic-key",
+          uploadUrl: "https://example.test/upload",
+        }),
+      ),
+    )
+    .mockResolvedValueOnce(new Response(""))
+    .mockResolvedValueOnce(new Response("{}"));
+  vi.stubGlobal("fetch", fetch);
+  vi.stubGlobal("atob", () => {
+    throw new Error("New captures must not decode base64");
+  });
+  try {
+    const result = await uploadArtifact("check", { blob: original });
+    expect(fetch.mock.calls[1][1].body).toBe(original);
+    expect([
+      ...new Uint8Array(await fetch.mock.calls[1][1].body.arrayBuffer()),
+    ]).toEqual([0, 17, 128, 255]);
+    expect(result).toMatchObject({
+      contentType: "image/jpeg",
+      contentLength: 4,
+    });
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

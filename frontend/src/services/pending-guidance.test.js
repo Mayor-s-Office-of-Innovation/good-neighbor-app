@@ -306,3 +306,34 @@ it("keeps the captured photo when a server question replaces its local condition
   });
   expect(result[0].analysis).toBe(pending.analysis);
 });
+
+it("preserves Blob media references on recovered server questions", () => {
+  const media = { key: "synthetic", type: "image/jpeg", size: 8 };
+  const remote = {
+    id: "remote",
+    kind: "photo",
+    checkId: "check",
+    analysis: {
+      assessment: { assessmentId: "synthetic-assessment" },
+      artifactId: "artifact",
+      status: "analyzed",
+      conditions: [condition],
+    },
+  };
+  const local = {
+    id: "local",
+    kind: "photo",
+    checkId: "check",
+    media,
+    analysis: {
+      assessment: { assessmentId: "synthetic-assessment" },
+      artifactId: "artifact",
+      status: "analyzed",
+      conditions: [condition],
+    },
+  };
+  const items = mergePendingQuestionItems([local], [remote], []);
+  expect(
+    items.some((item) => item.media === media && item.checkId === "check"),
+  ).toBe(true);
+});

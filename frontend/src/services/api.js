@@ -1354,10 +1354,8 @@ export function contentTypeFromDataUrl(dataUrl) {
   if (comma >= 0 && /;base64/i.test(dataUrl.slice(0, comma))) {
     try {
       const signature = atob(dataUrl.slice(comma + 1, comma + 1 + 16));
-      if (signature.startsWith("\xff\xd8\xff")) return "image/jpeg";
-      if (signature.startsWith("\x89PNG\r\n\x1a\n")) return "image/png";
-      if (signature.startsWith("RIFF") && signature.slice(8, 12) === "WEBP")
-        return "image/webp";
+      const detected = imageSignatureType(signature);
+      if (detected) return detected;
     } catch {
       // Full data URL decoding retains responsibility for malformed input.
     }
@@ -1365,6 +1363,28 @@ export function contentTypeFromDataUrl(dataUrl) {
   const m = /^data:([^;,]+)[;,]/.exec(dataUrl || "");
   const type = m ? m[1] : "image/jpeg";
   return UPLOADABLE_TYPES.has(type) ? type : "image/jpeg";
+}
+
+/** @param {string} signature */
+function imageSignatureType(signature) {
+  if (signature.startsWith("\xff\xd8\xff")) return "image/jpeg";
+  if (signature.startsWith("\x89PNG\r\n\x1a\n")) return "image/png";
+  if (signature.startsWith("RIFF") && signature.slice(8, 12) === "WEBP")
+    return "image/webp";
+  return "";
+}
+
+/** Read only the signature; retain the original bytes without re-encoding.
+ * @param {Blob} blob
+ */
+export async function contentTypeFromBlob(blob) {
+  const signature = String.fromCharCode(
+    ...new Uint8Array(await blob.slice(0, 12).arrayBuffer()),
+  );
+  return (
+    imageSignatureType(signature) ||
+    (UPLOADABLE_TYPES.has(blob.type) ? blob.type : "image/jpeg")
+  );
 }
 
 /**
@@ -1404,7 +1424,7 @@ export async function dataUrlToBlob(dataUrl) {
  * pinned S3 key, and validated media metadata so callers can persist enough state to re-drive the analysis
  * later (a retry re-registers the SAME artifact rather than re-uploading).
  * @param {string} checkId
- * @param {{ dataUrl: string, capturedAt?: string, location?: () => ({ latitude: number, longitude: number, accuracyMeters?: number } | null), text?: string, tag?: string, originSiteId?: string, checkpoint?: any, onCheckpoint?: (checkpoint: any) => Promise<void>, onLeg?: (leg: "presign" | "put" | "register") => void }} item
+ * @param {{ dataUrl?: string, blob?: Blob, capturedAt?: string, location?: () => ({ latitude: number, longitude: number, accuracyMeters?: number } | null), text?: string, tag?: string, originSiteId?: string, checkpoint?: any, onCheckpoint?: (checkpoint: any) => Promise<void>, onLeg?: (leg: "presign" | "put" | "register") => void }} item
  *   `location` is read just before register, so a reading that lands during
  *   the upload still goes with the photo.
  *   `tag` is a caller-supplied label used only for perf traces (e.g. the item id).
@@ -1416,6 +1436,7 @@ export async function uploadArtifact(
   checkId,
   {
     dataUrl,
+    blob: original,
     capturedAt,
     location,
     text,
@@ -1430,8 +1451,10 @@ export async function uploadArtifact(
   const telemetry = { check_id: checkId, attempt_id: photoAttemptId() };
   const done = span("upload", { art });
 
-  const contentType = contentTypeFromDataUrl(dataUrl);
-  const blob = await dataUrlToBlob(dataUrl);
+  const contentType = original
+    ? await contentTypeFromBlob(original)
+    : contentTypeFromDataUrl(dataUrl);
+  const blob = original || (await dataUrlToBlob(dataUrl));
   telemetry.photo_bytes = blob.size;
   const endPresign = span("upload.presign", { art });
   const reservation =
@@ -1565,6 +1588,7 @@ export async function uploadArtifact(
     });
     return uploadArtifact(checkId, {
       dataUrl,
+      blob: original,
       capturedAt,
       location,
       text,

@@ -59,7 +59,7 @@ export const MIN_TEXT_EVIDENCE_LENGTH = 5;
  * @returns {boolean}
  */
 export function itemCountsTowardCompletion(item) {
-  if (!item) return false;
+  if (!item || ("captureSaving" in item && item.captureSaving)) return false;
   // A presign reservation has an ID before an ART# row exists on the server.
   if (
     item.analysis?.artifactId ||
@@ -76,7 +76,7 @@ export function itemCountsTowardCompletion(item) {
 /**
  * Whether a live item has enough local or registered evidence to contribute an
  * artifact to this submission.
- * @param {EvidenceItem & { dataUrl?: string }} item
+ * @param {EvidenceItem & { dataUrl?: string, media?: object }} item
  * @returns {boolean}
  */
 export function itemHasLiveEvidence(item) {
@@ -84,6 +84,7 @@ export function itemHasLiveEvidence(item) {
     itemCountsTowardCompletion(item) &&
       (item.kind === "text" ||
         item.dataUrl ||
+        item.media ||
         item.upload?.artifactId ||
         item.analysis?.artifactId),
   );

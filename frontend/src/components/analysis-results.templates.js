@@ -6,6 +6,7 @@ import {
   removingEvidence,
   connectionAvailable,
 } from "../services/evidence-recovery.js";
+import { capturePhoto } from "./capture-photo.templates.js";
 import { needsResolutionProof } from "../domain/home-tasks.js";
 import { artifactPhoto } from "./artifact-photo.templates.js";
 import { cardDescription } from "./card-description.js";
@@ -125,6 +126,7 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.webp";
  * @typedef {object} AnalysisItem
  * @property {string} [id]
  * @property {"photo" | "text" | string} [kind]
+ * @property {{key: string}} [media]
  * @property {string} [dataUrl]
  * @property {string} [text]
  * @property {string} [placeName] label under the evidence preview; legacy items
@@ -1268,20 +1270,24 @@ function imagePreview(item) {
       <button
         type="button"
         data-photo-lightbox
-        disabled
-        data-full-src="${escapeAttr(item.fullDataUrl || item.dataUrl)}"
+        ${item.media ? "" : "disabled"}
+        data-full-src="${escapeAttr(
+          item.media ? "" : item.fullDataUrl || item.dataUrl,
+        )}"
         data-photo-address="${escapeAttr(address)}"
         data-photo-time="${escapeAttr(capturedAt)}"
       >
-        ${artifactPhoto({
-          src: item.dataUrl,
-          original: item.fullDataUrl,
-          checkId: item.checkId,
-          artifactId: item.analysis?.artifactId,
-          alt: t("card.evidence.alt", {
-            place: placeName || t("card.evidence.siteFallback"),
-          }),
-        })}
+        ${item.media
+          ? capturePhoto(item, t("lightbox.image.alt"))
+          : artifactPhoto({
+              src: item.dataUrl,
+              original: item.fullDataUrl,
+              checkId: item.checkId,
+              artifactId: item.analysis?.artifactId,
+              alt: t("card.evidence.alt", {
+                place: placeName || t("card.evidence.siteFallback"),
+              }),
+            })}
       </button>
     </div>
   `;

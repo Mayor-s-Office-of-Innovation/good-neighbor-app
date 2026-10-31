@@ -1,3 +1,5 @@
+import { renderCaptureGrid } from "./capture-grid.js";
+import { answerCaptureQuestion } from "./capture-card-actions.js";
 import { showInlineError } from "./error-notice.js";
 import { reportCaughtError } from "../services/error-report.js";
 import { loadError } from "./load-error.js";
@@ -23,7 +25,6 @@ import {
   show311FilingToast,
   show311ErrorToast,
   showActionSaveErrorToast,
-  showAnswerSaveErrorToast,
   showDeletionRefreshToast,
   showDeleteErrorToast,
   showEditErrorToast,
@@ -49,7 +50,6 @@ import { trackEvent } from "../services/analytics.js";
 import { openOverlayDialog, awaitOverlayUnwind } from "../dialog-history.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import {
-  answerAnalysisQuestion,
   analyzeEvidenceItem,
   analyzeNoIssueDescriptionEdit,
   refreshEvidenceAnalysis,
@@ -84,12 +84,8 @@ import {
   setAnalyzingOpen,
 } from "../state/check-session.js";
 import { shell, analysisSection } from "./problem-report.templates.js";
-import { shotTile, footer } from "./perimeter-check.templates.js";
-import {
-  finishQuestionAnswerFocus,
-  setQuestionAnswerBusy,
-  showQuestionAnswerUpdated,
-} from "./analysis-answer-controls.js";
+import { footer } from "./perimeter-check.templates.js";
+import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 
 /**
  * @typedef {{ siteId?: string, providerSiteId?: string, id?: string, name?: string, address?: string }} SiteRecord
@@ -100,7 +96,6 @@ import {
 class ProblemReport extends HTMLElement {
   constructor() {
     super();
-    this._shotGridMarkup = null;
     this._captureReadVersion = 0;
     this._captureFiles = new CaptureFileQueue();
     /** @type {SiteRecord | null} */
@@ -182,7 +177,6 @@ class ProblemReport extends HTMLElement {
     });
 
     this.innerHTML = shell({ title: this._titleText() });
-    this._shotGridMarkup = null;
     this._fileInput = /** @type {HTMLInputElement | null} */ (
       this.querySelector("#file-input")
     );
@@ -401,19 +395,12 @@ class ProblemReport extends HTMLElement {
   /** @returns {void} */
   _renderShots() {
     // The shot grid is photo-only: typed descriptions are items too, but they
-    // render as analysis cards below (shotTile assumes item.dataUrl is an img src).
+    // render as analysis cards below.
     const items = this._photoItems();
     const grid = this.querySelector("#shotgrid");
     if (!grid) return;
     grid.classList.toggle("shotgrid--empty", items.length === 0);
-    const gridMarkup = items
-      .map((item, index) => shotTile(item, index))
-      .join("");
-    // Preserve images and running scanners when only recovery state changed.
-    if (gridMarkup !== this._shotGridMarkup) {
-      grid.innerHTML = gridMarkup;
-      this._shotGridMarkup = gridMarkup;
-    }
+    renderCaptureGrid(grid, items, null, false);
   }
 
   /** @returns {EvidenceItem[]} */
@@ -750,66 +737,7 @@ class ProblemReport extends HTMLElement {
   }
 
   async _answerProblemQuestion(problem, button) {
-    if (!(button instanceof HTMLButtonElement)) return;
-    const answerKey = button.getAttribute("data-answer-key") || "";
-    const answerValue = button.getAttribute("data-answer-value") === "true";
-    if (!problem.itemId || !problem.conditionId || !answerKey) {
-      showAnswerSaveErrorToast();
-      return;
-    }
-    const identity = JSON.stringify([problem.itemId, problem.conditionId]);
-    if (this._answeringConditionIds.has(identity)) return;
-
-    this._answeringConditionIds.set(identity, {
-      itemId: problem.itemId,
-      conditionId: problem.conditionId,
-    });
-    setQuestionAnswerBusy(this, problem.conditionId, true, {
-      itemId: problem.itemId,
-    });
-    let confirmationPending = false;
-    const finish = (confirmed = false) => {
-      if (confirmed) {
-        finishQuestionAnswerFocus(this, problem.conditionId, {
-          itemId: problem.itemId,
-        });
-        // Keep the accepted question locked until the batch can render. Another
-        // answer's confirmation may still be holding the original DOM in place.
-        const entry = this._answeringConditionIds.get(identity);
-        if (entry) entry.confirmed = true;
-      } else {
-        this._answeringConditionIds.delete(identity);
-        setQuestionAnswerBusy(this, problem.conditionId, false, {
-          itemId: problem.itemId,
-        });
-      }
-      if (
-        [...this._answeringConditionIds.values()].some(
-          (entry) => !entry.confirmed,
-        )
-      )
-        return;
-      this._answeringConditionIds.clear();
-      if (this.isConnected) this._render();
-    };
-    try {
-      await answerAnalysisQuestion(
-        problem.itemId,
-        problem.conditionId,
-        answerKey,
-        answerValue,
-      );
-      showQuestionAnswerUpdated(this, problem.conditionId, {
-        itemId: problem.itemId,
-        onComplete: () => finish(true),
-      });
-      confirmationPending = true;
-    } catch (err) {
-      console.error("answer condition failed", err);
-      showAnswerSaveErrorToast();
-    } finally {
-      if (!confirmationPending) finish();
-    }
+    return answerCaptureQuestion(this, problem, button);
   }
 
   _markProblemResolved(problem) {
