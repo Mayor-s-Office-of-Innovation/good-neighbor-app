@@ -4,6 +4,10 @@ export default defineConfig({
   outputDir: "./test-results/capture-media",
   workers: 1,
   timeout: 60000,
+  projects: [
+    { name: "chromium", use: { browserName: "chromium" } },
+    { name: "webkit", use: { browserName: "webkit" } },
+  ],
   use: {
     baseURL: "http://127.0.0.1:5179",
     viewport: { width: 390, height: 844 },

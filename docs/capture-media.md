@@ -13,6 +13,13 @@ IndexedDB version 7 adds `captureMedia`, separate from draft/review metadata.
 Each media record is scoped to its site, check, and item. New check items carry a
 small `media` reference with original byte length and content type, not image data.
 
+Browsers that reject IndexedDB Blob/File storage with the specific WebKit
+preparation error retry using binary ArrayBuffers. Conversion happens outside the
+transaction, one photo at a time; no base64 is produced. Reads reconstruct Blobs
+with their original media type. Blob-capable browsers keep their existing path,
+and quota or other storage errors still fail admission. The fallback also covers
+thumbnail caching and retains the same original-release and deletion rules.
+
 - Admission atomically saves the original Blob and its draft reference before
   announcing a saved photo. A storage failure removes the pending item and offers
   translated guidance to retake it after addressing storage availability.

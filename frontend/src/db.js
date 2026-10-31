@@ -107,7 +107,8 @@ function tx(store, mode, fn) {
             },
           );
         t.oncomplete = () => resolve(result);
-        t.onerror = () => reject(t.error);
+        t.onerror = (event) =>
+          reject(/** @type {IDBRequest} */ (event.target)?.error || t.error);
         t.onabort = () => reject(t.error);
       }),
   );
@@ -787,7 +788,19 @@ export async function getUploadRequestId(scope, fingerprint, replaceId) {
 
 /** @param {string} key */
 export function getCaptureMedia(key) {
-  return tx("captureMedia", "readonly", (os) => reqToPromise(os.get(key)));
+  return tx("captureMedia", "readonly", (os) => reqToPromise(os.get(key))).then(
+    (media) => {
+      if (media?.original instanceof ArrayBuffer)
+        media.original = new Blob([media.original], {
+          type: media.contentType,
+        });
+      if (media?.thumbnail instanceof ArrayBuffer)
+        media.thumbnail = new Blob([media.thumbnail], {
+          type: media.thumbnailContentType,
+        });
+      return media;
+    },
+  );
 }
 
 /** @param {string} key */
@@ -795,10 +808,33 @@ export function deleteCaptureMedia(key) {
   return tx("captureMedia", "readwrite", (os) => os.delete(key));
 }
 
+// Some WebKit versions cannot persist Blob/File values. Keep Blob storage on
+// capable browsers; convert one photo only after that specific failure. Retry
+// outside the failed transaction so identity/deletion checks run again.
+let captureBlobStorage = true;
+async function writeCaptureBlob(blob, write) {
+  if (captureBlobStorage) {
+    try {
+      return await write(blob);
+    } catch (error) {
+      if (error?.name !== "UnknownError" || !/Blob\/File/i.test(error.message))
+        throw error;
+      captureBlobStorage = false;
+    }
+  }
+  return write(await blob.arrayBuffer());
+}
+
 /** Atomically admit original bytes and their check reference. No binary data in check records.
  * @param {any} check @param {any} item @param {Blob} original
  */
 export function saveCapturePhoto(check, item, original) {
+  return writeCaptureBlob(original, (stored) =>
+    saveCapturePhotoRecord(check, item, stored),
+  );
+}
+
+function saveCapturePhotoRecord(check, item, original) {
   const before = captureSnapshot(check);
   const store = check.status === "in-progress" ? "draft" : "review";
   return tx([store, "captureMedia"], "readwrite", async (os, transaction) => {
@@ -933,6 +969,17 @@ function reconcileCaptureCheck(check, before, saved) {
  * @param {string} key @param {string} artifactId @param {Blob} thumbnail
  */
 export function cacheCaptureThumbnail(key, artifactId, thumbnail) {
+  return writeCaptureBlob(thumbnail, (stored) =>
+    cacheCaptureThumbnailRecord(key, artifactId, stored, thumbnail.type),
+  );
+}
+
+function cacheCaptureThumbnailRecord(
+  key,
+  artifactId,
+  thumbnail,
+  thumbnailContentType,
+) {
   return tx(
     ["captureMedia", "draft", "review"],
     "readwrite",
@@ -958,7 +1005,7 @@ export function cacheCaptureThumbnail(key, artifactId, thumbnail) {
         return false;
       const metadata = { ...existing };
       delete metadata.original;
-      media.put({ ...metadata, thumbnail });
+      media.put({ ...metadata, thumbnail, thumbnailContentType });
       return true;
     },
   );

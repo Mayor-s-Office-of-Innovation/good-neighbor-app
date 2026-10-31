@@ -749,3 +749,86 @@ test("admission rebase retains upload progress changed while its transaction is 
   });
   expect(result).toEqual({ count: 2, status: "waiting", identity: true });
 });
+
+test("Blob storage failures fall back to binary bytes and survive reload", async ({
+  page,
+}) => {
+  const key = await page.evaluate(async () => {
+    const { session } = window;
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (value, ...args) {
+      if (
+        this.name === "captureMedia" &&
+        (value.original instanceof Blob || value.thumbnail instanceof Blob)
+      )
+        throw new DOMException(
+          "Error preparing Blob/File data to be stored in object store",
+          "UnknownError",
+        );
+      return put.call(this, value, ...args);
+    };
+    try {
+      const item = await session.addCapturedPhoto(
+        new File([new Uint8Array([0, 17, 128, 255])], "synthetic.jpg", {
+          type: "image/jpeg",
+        }),
+      );
+      return item.media.key;
+    } finally {
+      IDBObjectStore.prototype.put = put;
+    }
+  });
+  await page.reload();
+  const original = await page.evaluate(async (key) => {
+    const db = await import("/src/db.js");
+    const media = await db.getCaptureMedia(key);
+    return {
+      type: media.original.type,
+      bytes: [...new Uint8Array(await media.original.arrayBuffer())],
+    };
+  }, key);
+  expect(original).toEqual({ type: "image/jpeg", bytes: [0, 17, 128, 255] });
+  await page.evaluate(async (key) => {
+    const db = await import("/src/db.js");
+    const check = await db.getDraft("perimeter");
+    check.items[0].upload = {
+      status: "uploaded",
+      artifactId: "synthetic-artifact",
+    };
+    await db.saveDraft(check);
+    await db.releaseCaptureOriginal(key, "synthetic-artifact");
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (value, ...args) {
+      if (this.name === "captureMedia" && value.thumbnail instanceof Blob)
+        throw new DOMException(
+          "Error preparing Blob/File data to be stored in object store",
+          "UnknownError",
+        );
+      return put.call(this, value, ...args);
+    };
+    try {
+      await db.cacheCaptureThumbnail(
+        key,
+        "synthetic-artifact",
+        new Blob(["synthetic thumbnail"], { type: "image/webp" }),
+      );
+    } finally {
+      IDBObjectStore.prototype.put = put;
+    }
+  }, key);
+  await page.reload();
+  const cached = await page.evaluate(async (key) => {
+    const db = await import("/src/db.js");
+    const media = await db.getCaptureMedia(key);
+    return {
+      original: !!media.original,
+      type: media.thumbnail.type,
+      text: await media.thumbnail.text(),
+    };
+  }, key);
+  expect(cached).toEqual({
+    original: false,
+    type: "image/webp",
+    text: "synthetic thumbnail",
+  });
+});
