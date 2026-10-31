@@ -7,6 +7,12 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PORT = Number(process.env.LOCAL_SF311_PORT ?? 3999);
+// Slow mode: delay every HUB route (not /health or /requests) by this many
+// milliseconds to exercise the client's per-operation timeouts locally.
+const DELAY_MS = Math.max(
+  0,
+  Number(process.env.LOCAL_SF311_DELAY_MS ?? 0) || 0,
+);
 const SERVICE_CAPABILITIES = ["latest-updates-v1"];
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const LOG_PATH = resolve(
@@ -95,6 +101,9 @@ const server = createServer(async (req, res) => {
   }
 
   try {
+    if (DELAY_MS && !["/health", "/requests"].includes(url.pathname)) {
+      await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
+    }
     if (method === "GET" && url.pathname === "/health") {
       sendJson(res, 200, {
         ok: true,
@@ -278,6 +287,8 @@ server.on("error", async (err) => {
 
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`[sf311] fake server listening on http://127.0.0.1:${PORT}`);
+  if (DELAY_MS)
+    console.log(`[sf311] slow mode: every HUB route waits ${DELAY_MS} ms`);
   console.log(`[sf311] CreateSR URL: http://127.0.0.1:${PORT}/createsr`);
   console.log(`[sf311] UpdateSR URL: http://127.0.0.1:${PORT}/updatesr`);
   console.log(`[sf311] lookup URL:   http://127.0.0.1:${PORT}/lookup`);
