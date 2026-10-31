@@ -1847,6 +1847,7 @@ function importedSiteType(value) {
     ["drop-in", "drop_in"],
     ["drop in", "drop_in"],
     ["shelter", "shelter"],
+    ["other", "other"],
   ]).get(normalized(value));
 }
 
