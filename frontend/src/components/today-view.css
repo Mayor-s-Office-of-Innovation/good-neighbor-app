@@ -190,6 +190,12 @@
   box-shadow: var(--shadow-lift);
 }
 
+.home-settings-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
 .home-settings-menu button,
 .home-settings-menu a {
   appearance: none;
