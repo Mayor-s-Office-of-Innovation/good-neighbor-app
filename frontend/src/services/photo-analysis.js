@@ -1,5 +1,15 @@
+import { needsRegistrationRepair } from "../domain/check-completion.js";
+import {
+  connectionAvailable,
+  removingEvidence,
+  canManuallyRetry,
+  failedRecovery,
+  withUploadSlot,
+} from "./evidence-recovery.js";
 // @ts-nocheck -- matches the surrounding frontend migration baseline.
 import {
+  getSite,
+  deleteCapturePhoto,
   releaseCaptureOriginal,
   getCaptureMedia,
   saveDraft,
@@ -171,33 +181,6 @@ function slugify(value) {
 }
 
 /**
- * Reduce a pipeline failure to what the card should say: which step broke, what
- * had already succeeded, and how long we waited before giving up.
- * @param {unknown} err
- * @returns {{ leg: "start" | "upload" | "analyze" | "evaluate" | string, uploaded: boolean, enqueued: boolean, waitedMs?: number }}
- */
-function describeFailure(err) {
-  const body = /** @type {any} */ (err)?.body ?? {};
-  // The analyzer poll timed out: upload + enqueue both succeeded, and the
-  // deadline tells the user exactly how long we waited.
-  if (body?.code === "analyses_pending") {
-    return {
-      leg: "analyze",
-      uploaded: true,
-      enqueued: true,
-      waitedMs: POLL_TIMEOUT_MS,
-    };
-  }
-  const leg = /** @type {any} */ (err)?.leg;
-  // Analyzer/guidance legs imply upload + enqueue already succeeded.
-  if (leg === "analyze" || leg === "evaluate") {
-    return { leg, uploaded: true, enqueued: true };
-  }
-  if (leg) return { leg, uploaded: false, enqueued: false };
-  return { leg: "start", uploaded: false, enqueued: false };
-}
-
-/**
  * Stamp `err.leg` (first leg wins — a nested call's more specific tag keeps
  * its own) so failure records name the step that broke. Same convention as
  * services/submit-check.js `withLeg`.
@@ -217,16 +200,76 @@ async function withLeg(leg, work) {
   }
 }
 
+/** Reconcile terminal local cards using reads only; never enqueue a new generation. */
+export async function reconcileFailedEvidence(check) {
+  const candidates = (check.items || []).filter(
+    (item) =>
+      !item.deletionPending &&
+      item.analysis?.status === "failed" &&
+      item.analysis?.failure?.leg === "analyze" &&
+      item.analysis?.artifactId &&
+      !active.has(item.id),
+  );
+  if (!candidates.length || !connectionAvailable()) return;
+  const detail = await getCheck(check.id, { originSiteId: check.siteId });
+  if (!isHeld(check) || (await getSite())?.siteId !== check.siteId) return;
+  for (const item of candidates) {
+    if (active.has(item.id) || item.analysis?.status !== "failed") continue;
+    const artifact = (detail.artifacts || []).find(
+      (entry) => entry.artifactId === item.analysis.artifactId,
+    );
+    const analysis = (detail.analyses || []).find(
+      (entry) =>
+        entry.artifactId === item.analysis.artifactId &&
+        entry.status === "analyzed" &&
+        (!artifact?.analysisGeneration ||
+          entry.analysisGeneration === artifact.analysisGeneration),
+    );
+    if (!analysis) {
+      const failed = (detail.analyses || []).find(
+        (entry) =>
+          entry.artifactId === item.analysis.artifactId &&
+          entry.status === "failed" &&
+          (!artifact?.analysisGeneration ||
+            entry.analysisGeneration === artifact.analysisGeneration),
+      );
+      if (
+        failed?.error?.code &&
+        failed.error.code !== item.analysis.failure?.code
+      )
+        updateItemAnalysis(item.id, {
+          failure: { ...item.analysis.failure, code: failed.error.code },
+        });
+      continue;
+    }
+    updateItemAnalysis(item.id, {
+      sourceAnalysis: analysis,
+      serverGeneration: undefined,
+      restartRequestId: undefined,
+      recovery: { stage: "evaluate", state: "scheduled", attempts: 0 },
+    });
+    analyzeEvidenceItem(item.id);
+  }
+}
+
 async function ensureRemoteCheck(check) {
   if (check.remoteStarted) return;
-  await createCheck(check.id, { flowType: check.flowType });
+  await createCheck(
+    check.id,
+    { flowType: check.flowType },
+    { originSiteId: check.siteId },
+  );
   check.remoteStarted = true;
 }
 
 async function waitForArtifactAnalysis(
   checkId,
   artifactId,
-  { timeoutMs = POLL_TIMEOUT_MS, intervalMs = POLL_INTERVAL_MS } = {},
+  {
+    timeoutMs = POLL_TIMEOUT_MS,
+    intervalMs = POLL_INTERVAL_MS,
+    originSiteId = undefined,
+  } = {},
 ) {
   const deadline = Date.now() + timeoutMs;
   return pollCheck(
@@ -236,7 +279,15 @@ async function waitForArtifactAnalysis(
       const analysis = (last.analyses || []).find(
         (item) => item.artifactId === artifactId,
       );
-      if (analysis) return analysis;
+      const artifact = (last.artifacts || []).find(
+        (candidate) => candidate.artifactId === artifactId,
+      );
+      if (
+        analysis &&
+        (!artifact?.analysisGeneration ||
+          analysis.analysisGeneration === artifact.analysisGeneration)
+      )
+        return analysis;
       if (Date.now() >= deadline) {
         throw new ApiError(`Analysis still processing for ${artifactId}`, {
           body: { code: "analyses_pending", artifactId },
@@ -244,7 +295,7 @@ async function waitForArtifactAnalysis(
       }
       return undefined;
     },
-    { intervalMs },
+    { intervalMs, originSiteId },
   );
 }
 
@@ -404,9 +455,16 @@ export function resendItemLocation(checkId, item) {
   );
 }
 
-async function guidanceFromAnalysis(checkId, artifactId, analysis) {
+async function guidanceFromAnalysis(
+  checkId,
+  artifactId,
+  analysis,
+  originSiteId = undefined,
+) {
   const assessment = assessmentFromAnalysis({ checkId, artifactId, analysis });
-  const guidance = await evaluateAssessment(assessment);
+  const guidance = originSiteId
+    ? await evaluateAssessment(assessment, { originSiteId })
+    : await evaluateAssessment(assessment);
   return { analysis, assessment, guidance };
 }
 
@@ -507,42 +565,64 @@ async function evaluateArtifact(checkId, itemId, artifactId) {
       sent: new Date().toISOString(),
     },
   });
-  const analysis = await withLeg("analyze", () =>
-    observePhotoStage("analyze", telemetry, () =>
-      waitForArtifactAnalysis(checkId, artifactId),
-    ),
-  );
+  const analysis =
+    ((!itemById(itemId)?.analysis?.repairingRegistration ||
+      itemById(itemId)?.analysis?.sourceAnalysis?.artifactId === artifactId) &&
+      itemById(itemId)?.analysis?.sourceAnalysis) ||
+    (await withLeg("analyze", () =>
+      observePhotoStage("analyze", telemetry, () =>
+        waitForArtifactAnalysis(checkId, artifactId, {
+          originSiteId: checkWithItem(itemId)?.siteId,
+        }),
+      ),
+    ));
   if (analysis.status && analysis.status !== "analyzed") {
-    const held = checkWithItem(itemId);
-    const retries = itemById(itemId)?.analysis?.retryCount || 0;
     updateItemAnalysis(itemId, {
       status: "failed",
       artifactId,
       lastTriedAt: new Date().toISOString(),
-      localSaveConfirmed:
-        retries >= 3 && Boolean(held) && (await confirmLocalSave(held)),
+      recovery: {
+        stage: "analyze",
+        state: analysis.retryable === true ? "manual" : "blocked",
+        attempts: 0,
+      },
+      serverGeneration: analysis.analysisGeneration || artifactId,
+      repairingRegistration: undefined,
       error: analysis.error?.message || "Analysis failed.",
       failure: {
         leg: "analyze",
         uploaded: true,
         enqueued: true,
         backendError: true,
+        code: analysis.error?.code,
       },
     });
     return;
   }
 
+  const recovery = itemById(itemId)?.analysis?.recovery;
+  updateItemAnalysis(itemId, {
+    sourceAnalysis: analysis,
+    recovery: {
+      stage: "evaluate",
+      state: "working",
+      attempts: recovery?.stage === "evaluate" ? recovery.attempts || 0 : 0,
+    },
+  });
   const { assessment, guidance } = await withLeg("evaluate", () =>
     observePhotoStage("evaluate", telemetry, () =>
       guidanceFromAnalysis(
         checkId,
         artifactId,
         withLocation(analysis, itemById(itemId)?.location),
+        checkWithItem(itemId)?.siteId,
       ),
     ),
   );
   updateItemAnalysis(itemId, {
     status: "analyzed",
+    repairingRegistration: undefined,
+    recovery: undefined,
     artifactId,
     checkId,
     sourceAnalysis: analysis,
@@ -561,19 +641,23 @@ async function evaluateArtifact(checkId, itemId, artifactId) {
  * the perimeter check's resume path.
  * @param {string} itemId
  */
-export function analyzeEvidenceItem(itemId) {
-  if (active.has(itemId)) return;
-  active.add(itemId);
-  void runOnce(itemId)
-    .catch(() => {
-      /* run() records its own failures on the item. */
-    })
+export function analyzeEvidenceItem(itemId, { manual = false } = {}) {
+  const item = itemById(itemId);
+  if (!item || active.has(itemId)) return;
+  if (manual && !canManuallyRetry(item)) return;
+  if (item.deletionPending) return;
+  if (!manual && item.analysis?.status && !shouldResumeEvidenceItem(item))
+    return;
+  active.add(itemId); // Claim synchronously, before any mutation or await.
+  void runOnce(itemId, manual)
+    .catch(() => {})
     .finally(() => {
       active.delete(itemId);
       globalThis.dispatchEvent?.(
         new CustomEvent(EVIDENCE_SETTLED_EVENT, { detail: { itemId } }),
       );
     });
+  return true;
 }
 
 /** Fired on window after each item run ends, however it ended. */
@@ -585,11 +669,11 @@ export const EVIDENCE_SETTLED_EVENT = "checkevidencesettled";
  * upload, and replaying it would register a duplicate artifact.
  * @param {string} itemId
  */
-function runOnce(itemId) {
+function runOnce(itemId, manual) {
   const locks = globalThis.navigator?.locks;
-  if (!locks) return run(itemId);
+  if (!locks) return run(itemId, manual);
   return locks.request(`check-item:${itemId}`, { ifAvailable: true }, (lock) =>
-    lock ? run(itemId) : undefined,
+    lock ? run(itemId, manual) : undefined,
   );
 }
 
@@ -609,118 +693,26 @@ export function isConnectionFailure(err) {
  * @param {any} item
  */
 export function shouldResumeEvidenceItem(item) {
-  if (item?.captureSaving) return false;
-  const analysisStatus = item?.analysis?.status;
-  const hasArtifact = Boolean(
-    item?.analysis?.artifactId || item?.upload?.artifactId,
-  );
-  const hasUploadedArtifact = Boolean(
-    item?.upload?.status === "uploaded" && hasArtifact,
-  );
-  const isRetryableTextRegistration = Boolean(
-    item?.kind === "text" && analysisStatus === "failed" && !hasArtifact,
-  );
-  return Boolean(
-    (analysisStatus === "idle" && Boolean(item?.media || item?.dataUrl)) ||
-      ["queued", "analyzing", "waiting"].includes(analysisStatus) ||
-      (analysisStatus === "failed" &&
-        (hasUploadedArtifact || isRetryableTextRegistration)),
+  if (item?.captureSaving || item?.deletionPending) return false;
+  const status = item?.analysis?.status;
+  const recovery = item?.analysis?.recovery;
+  if (["manual", "blocked"].includes(recovery?.state)) return false;
+  if (recovery?.nextAttemptAt > Date.now()) return false;
+  return (
+    needsRegistrationRepair(item) ||
+    ["idle", "queued", "analyzing", "waiting"].includes(status) ||
+    (status === "failed" && (!recovery || recovery.state === "scheduled"))
   );
 }
 
 /**
- * Manual retry from a failed card.
- *
- * - A failed ANALYZE leg (timeout or backend error): the artifact is already
- *   registered, so we re-drive via `registerArtifact` with the SAME artifactId
- *   (+ s3Key) — the backend re-enqueues on that path by design, so the worker
- *   makes a fresh analyzer call instead of the client re-polling a dead
- *   message or an old failure marker.
- * - A failed UPLOAD leg (or any missing artifact): replay the whole pipeline.
- * - An upload-only state (interrupt between PUT and analysis-start): seed the
- *   persisted `upload.artifactId`/`s3Key` into `analysis` so the poll path can
- *   see it (run() reads only `analysis.artifactId`).
- *
- * All paths reuse `analyzeEvidenceItem`'s idempotent-run guard.
+ * Start one bounded recovery cycle after automatic recovery is exhausted.
+ * A server restart requires a confirmed exhausted generation; other stages
+ * resume from their saved checkpoint. Ownership is claimed before any work.
  * @param {string} itemId
  */
 export function retryEvidenceItem(itemId) {
-  const check = checkWithItem(itemId);
-  const item = sessionItem(check, itemId);
-  if (!item) return;
-  updateItemAnalysis(itemId, {
-    retryCount: (item.analysis?.retryCount || 0) + 1,
-    lastTriedAt: new Date().toISOString(),
-  });
-
-  const analysisArtifactId = item.analysis?.artifactId;
-  const uploadArtifactId = item.upload?.artifactId;
-  const artifactId = analysisArtifactId || uploadArtifactId;
-  const isUploadLeg = item.analysis?.failure?.leg === "upload";
-  const analyzeLegFailure = Boolean(
-    !isUploadLeg &&
-      artifactId &&
-      (item.analysis?.failure || item.analysis?.status === "failed"),
-  );
-
-  if (analyzeLegFailure) {
-    // Seed the artifact coordinates so run() and the poll both see them.
-    if (uploadArtifactId && !analysisArtifactId) {
-      updateItemAnalysis(itemId, {
-        artifactId: uploadArtifactId,
-        ...(item.upload?.s3Key ? { s3Key: item.upload.s3Key } : {}),
-      });
-    }
-    updateItemAnalysis(itemId, {
-      status: "analyzing",
-      error: undefined,
-      failure: undefined,
-    });
-    // Re-register the same artifact: conditional write + always-enqueue on
-    // the backend means a fresh analyze message with zero new upload. Then
-    // run the pipeline again — run() adopts the coordinates and polls.
-    void withLeg("start", async () => {
-      const mediaMetadata = await retryMediaMetadata(item);
-      return registerArtifact(check.id, {
-        artifactId: analysisArtifactId || uploadArtifactId,
-        s3Key: item.analysis?.s3Key || item.upload?.s3Key,
-        ...mediaMetadata,
-        capturedAt: item.uploadedAt,
-        ...(hasCoordinates(item.location) ? item.location : {}),
-        ...(item.kind === "text" ? { text: item.text } : {}),
-        ...(item.note ? { text: item.note } : {}),
-      });
-    })
-      .then(() => {
-        analyzeEvidenceItem(itemId);
-      })
-      .catch((err) => {
-        // Only this replay response confirms the backend re-enqueued analysis.
-        if (
-          err?.status === 409 &&
-          err?.body?.error === "artifact already registered"
-        ) {
-          analyzeEvidenceItem(itemId);
-          return;
-        }
-        console.error("retryEvidenceItem re-register failed", err);
-        updateItemAnalysis(itemId, {
-          status: "failed",
-          error: "Could not restart the analysis. Please try again.",
-          failure: { leg: "start", uploaded: true, enqueued: false },
-        });
-      });
-    return;
-  }
-
-  // Upload-leg failure (or never got far enough): replay the pipeline.
-  updateItem(itemId, { upload: { status: "failed" } });
-  updateItemAnalysis(itemId, {
-    status: "queued",
-    error: undefined,
-    failure: undefined,
-  });
-  analyzeEvidenceItem(itemId);
+  return analyzeEvidenceItem(itemId, { manual: true });
 }
 
 /**
@@ -775,15 +767,82 @@ async function retryMediaMetadata(item) {
  * @param {string} itemId
  * @returns {Promise<void>}
  */
-export async function removeEvidenceItem(itemId) {
+const evidenceRemovals = new Map();
+export function removeEvidenceItem(itemId) {
+  if (evidenceRemovals.has(itemId)) return evidenceRemovals.get(itemId);
   const check = checkWithItem(itemId);
   const item = sessionItem(check, itemId);
-  if (!check || !item) return;
+  if (!check || !item) return Promise.resolve();
   const artifactId = item.analysis?.artifactId || item.upload?.artifactId;
-  if (artifactId) {
-    await deleteArtifact(check.id, artifactId);
-  }
-  removeItem(itemId);
+  if (artifactId && !connectionAvailable())
+    return Promise.reject(
+      new Error("Connection required to delete uploaded evidence"),
+    );
+  if (active.has(itemId))
+    return Promise.reject(new Error("Evidence is still processing"));
+  removingEvidence.add(itemId);
+  const pending = Promise.resolve()
+    .then(async () => {
+      const wasPending = item.deletionPending;
+      updateItem(itemId, { deletionPending: true });
+      if (!(await confirmLocalSave(check))) {
+        updateItem(itemId, { deletionPending: wasPending });
+        throw new Error("Could not save evidence removal");
+      }
+      if (artifactId) {
+        try {
+          await deleteArtifact(check.id, artifactId, {
+            originSiteId: check.siteId,
+          });
+        } catch (error) {
+          if (error?.status !== 404) {
+            const rejected =
+              error?.status >= 400 &&
+              error.status < 500 &&
+              ![408, 429].includes(error.status);
+            if (!rejected) throw error;
+            // A previous interrupted DELETE may already have succeeded. A
+            // rejection of its replay cannot establish whether the item exists.
+            let alreadyDeleted = false;
+            if (wasPending) {
+              const detail = await getCheck(check.id, {
+                originSiteId: check.siteId,
+              });
+              if (!Array.isArray(detail.artifacts)) throw error;
+              alreadyDeleted = !detail.artifacts.some(
+                (entry) => entry.artifactId === artifactId,
+              );
+            }
+            if (!alreadyDeleted) {
+              updateItem(itemId, { deletionPending: false });
+              if (!(await confirmLocalSave(check))) {
+                updateItem(itemId, { deletionPending: true });
+                throw new Error("Could not save evidence removal");
+              }
+              throw error;
+            }
+          }
+        }
+      }
+      const index = check.items.indexOf(item);
+      if (item.media) {
+        await deleteCapturePhoto(check, item.media.key);
+        removeItem(itemId, { mediaDeleted: true });
+      } else removeItem(itemId);
+      if (!(await confirmLocalSave(check))) {
+        check.items.splice(Math.max(0, index), 0, item);
+        updateItemAnalysis(itemId, {});
+        throw new Error("Could not save evidence removal");
+      }
+    })
+    .finally(() => {
+      evidenceRemovals.delete(itemId);
+      removingEvidence.delete(itemId);
+      if (itemById(itemId)) updateItemAnalysis(itemId, {});
+    });
+  evidenceRemovals.set(itemId, pending);
+  updateItemAnalysis(itemId, {});
+  return pending;
 }
 
 export async function refreshRecoveredQuestion(item, response) {
@@ -1081,13 +1140,98 @@ export async function answerAnalysisQuestion(
   return result;
 }
 
-async function run(itemId) {
+async function run(itemId, manual = false) {
   const check = checkWithItem(itemId);
   const item = sessionItem(check, itemId);
   if (!check || !item) return;
 
+  const assertOwner = async () => {
+    if (
+      !isHeld(check) ||
+      (check.siteId && (await getSite())?.siteId !== check.siteId)
+    )
+      throw new DOMException("Check owner changed", "AbortError");
+  };
   const startedAt = Date.now();
   try {
+    await assertOwner();
+    if (!(await confirmLocalSave(check))) {
+      updateItemAnalysis(itemId, {
+        status: "failed",
+        localSaveConfirmed: false,
+        recovery: { stage: "storage", state: "manual", attempts: 0 },
+      });
+      return;
+    }
+    if (!connectionAvailable())
+      throw Object.assign(new Error("Connection unavailable"), { status: 0 });
+    if (needsRegistrationRepair(item)) {
+      // Reuse persisted identity only; never guess between unrelated photos.
+      const detail = await getCheck(check.id, {
+        originSiteId: check.siteId,
+      }).catch((error) => {
+        if (error.status === 404) return null;
+        throw error;
+      });
+      await assertOwner();
+      const knownId =
+        item.upload?.artifactId || item.analysis?.sourceAnalysis?.artifactId;
+      const artifact =
+        knownId &&
+        detail?.artifacts?.find((entry) => entry.artifactId === knownId);
+      if (artifact) {
+        updateItemAnalysis(itemId, { artifactId: artifact.artifactId });
+        updateItem(itemId, {
+          upload: {
+            ...item.upload,
+            status: "uploaded",
+            artifactId: artifact.artifactId,
+          },
+        });
+      }
+      updateItemAnalysis(itemId, { repairingRegistration: true });
+    }
+    const recovery = manual
+      ? { ...item.analysis?.recovery, attempts: 0 }
+      : item.analysis?.recovery;
+    updateItemAnalysis(itemId, {
+      status: "queued",
+      localSaveConfirmed: true,
+      recovery: { ...recovery, state: "working", nextAttemptAt: undefined },
+    });
+    if (
+      (manual || item.analysis?.restartRequestId) &&
+      item.analysis?.serverGeneration &&
+      ["analyze", "restart"].includes(recovery?.stage)
+    ) {
+      const retryRequestId = item.analysis.restartRequestId || photoAttemptId();
+      updateItemAnalysis(itemId, { restartRequestId: retryRequestId });
+      if (!(await confirmLocalSave(check)))
+        throw Object.assign(new Error("Storage unavailable"), {
+          leg: "storage",
+          status: 400,
+        });
+      const metadata = await retryMediaMetadata(item);
+      await withLeg("restart", () =>
+        registerArtifact(
+          check.id,
+          {
+            artifactId: item.analysis.artifactId || item.upload?.artifactId,
+            s3Key: item.analysis.s3Key || item.upload?.s3Key,
+            ...metadata,
+            ...(item.kind === "text" ? { text: item.text } : {}),
+            retryRequestId,
+            expectedGeneration: item.analysis.serverGeneration,
+          },
+          { originSiteId: check.siteId },
+        ),
+      );
+      updateItemAnalysis(itemId, {
+        sourceAnalysis: undefined,
+        serverGeneration: undefined,
+        restartRequestId: undefined,
+      });
+    }
     const read =
       hasCoordinates(item.location) ||
       item.analysis?.artifactId ||
@@ -1098,147 +1242,201 @@ async function run(itemId) {
           );
     const uploadLocation = () => (read ? read.atUpload() : item.location);
     updateItemAnalysis(itemId, { status: "queued" });
-    await withLeg("start", () => ensureRemoteCheck(check));
-    // An interrupted run may have completed the upload before analysis started:
-    // the artifact coordinates then live only under `upload`. Adopt them here
-    // so run() and the poll both see them instead of re-uploading.
-    let artifactId = item.analysis?.artifactId || item.upload?.artifactId;
-    if (artifactId && !item.analysis?.artifactId) {
-      updateItemAnalysis(itemId, {
-        artifactId,
-        ...(item.upload?.s3Key ? { s3Key: item.upload.s3Key } : {}),
-      });
-    }
-    if (!artifactId) {
-      if (item.kind === "text") {
-        updateItem(itemId, { upload: { status: "uploading" } });
-        artifactId = await withLeg("upload", () =>
-          registerTextArtifact(check.id, {
-            text: item.text,
-            capturedAt: item.uploadedAt,
-            ...(uploadLocation() ?? {}),
-          }),
-        );
-        updateItem(itemId, {
-          upload: { status: "uploaded", artifactId },
+    const artifactId = await withUploadSlot(async () => {
+      await assertOwner();
+      if (item.kind === "photo" && item.upload?.status !== "uploaded")
+        updateItem(itemId, { upload: { ...item.upload, status: "uploading" } });
+      await withLeg("start", () => ensureRemoteCheck(check));
+      // An interrupted run may have completed the upload before analysis started:
+      // the artifact coordinates then live only under `upload`. Adopt them here
+      // so run() and the poll both see them instead of re-uploading.
+      let artifactId =
+        item.analysis?.artifactId ||
+        (item.upload?.status === "uploaded"
+          ? item.upload?.artifactId
+          : undefined);
+      if (artifactId && !item.analysis?.artifactId) {
+        updateItemAnalysis(itemId, {
+          artifactId,
+          ...(item.upload?.s3Key ? { s3Key: item.upload.s3Key } : {}),
         });
-      } else {
-        updateItem(itemId, { upload: { status: "uploading" } });
-        let original = item.media
-          ? (await getCaptureMedia(item.media.key))?.original
-          : null;
-        if (item.media && !original)
-          throw new Error("Pending original is unavailable");
-        const {
-          artifactId: uploadedId,
-          s3Key,
-          contentType,
-          contentLength,
-        } = await withLeg("upload", () =>
-          uploadArtifact(check.id, {
-            ...(original ? { blob: original } : { dataUrl: item.dataUrl }),
-            capturedAt: item.uploadedAt,
-            location: uploadLocation,
-            ...(item.note ? { text: item.note } : {}),
-            tag: item.id,
-            onLeg: (leg) => {
-              if (leg === LEG.PUT) {
-                // Bytes reached S3 — the card's "Photo uploaded" check.
-                updateItemAnalysis(itemId, {
-                  stages: { uploaded: new Date().toISOString() },
-                });
-              }
-              // presign/register are sub-second steps; the "sent to analyzer"
-              // stamp lands when evaluateArtifact takes over, which is the
-              // point the user cares about.
+      }
+      if (!artifactId) {
+        if (item.kind === "text") {
+          updateItem(itemId, {
+            upload: { ...item.upload, status: "uploading" },
+          });
+          const textArtifactId = item.upload?.artifactId || photoAttemptId();
+          updateItem(itemId, {
+            upload: {
+              ...item.upload,
+              artifactId: textArtifactId,
+              status: "uploading",
             },
-          }),
-        );
-        original = null;
-        artifactId = uploadedId;
-        // Persist the s3Key with the artifact: retry re-registers the SAME
-        // artifact from these coordinates (no new upload, no new object).
-        updateItem(itemId, {
-          upload: {
-            status: "uploaded",
-            artifactId,
+          });
+          if (!(await confirmLocalSave(check)))
+            throw Object.assign(new Error("Storage unavailable"), {
+              leg: "storage",
+              status: 400,
+            });
+          artifactId = await withLeg("upload", () =>
+            registerTextArtifact(check.id, {
+              artifactId: textArtifactId,
+              originSiteId: check.siteId,
+              text: item.text,
+              capturedAt: item.uploadedAt,
+              ...(uploadLocation() ?? {}),
+            }),
+          );
+          updateItem(itemId, {
+            upload: { status: "uploaded", artifactId },
+          });
+        } else {
+          updateItem(itemId, {
+            upload: { ...item.upload, status: "uploading" },
+          });
+          let original = item.media
+            ? (await getCaptureMedia(item.media.key))?.original
+            : null;
+          if (item.media && !original)
+            throw Object.assign(new Error("Pending original is unavailable"), {
+              leg: "storage",
+              status: 400,
+            });
+          const {
+            artifactId: uploadedId,
             s3Key,
             contentType,
             contentLength,
-          },
-        });
-        updateItemAnalysis(itemId, { s3Key });
+          } = await withLeg("upload", () =>
+            uploadArtifact(check.id, {
+              ...(original ? { blob: original } : { dataUrl: item.dataUrl }),
+              capturedAt: item.uploadedAt,
+              location: uploadLocation,
+              ...(item.note ? { text: item.note } : {}),
+              tag: item.id,
+              checkpoint: item.upload,
+              originSiteId: check.siteId,
+              onCheckpoint: async (checkpoint) => {
+                updateItem(itemId, {
+                  upload: { ...checkpoint, status: "uploading" },
+                });
+                if (!(await confirmLocalSave(check)))
+                  throw Object.assign(new Error("Storage unavailable"), {
+                    leg: "storage",
+                    status: 400,
+                  });
+              },
+              onLeg: (leg) => {
+                if (leg === LEG.PUT) {
+                  // Bytes reached S3 — the card's "Photo uploaded" check.
+                  updateItemAnalysis(itemId, {
+                    stages: { uploaded: new Date().toISOString() },
+                  });
+                }
+                // presign/register are sub-second steps; the "sent to analyzer"
+                // stamp lands when evaluateArtifact takes over, which is the
+                // point the user cares about.
+              },
+            }),
+          );
+          original = null;
+          artifactId = uploadedId;
+          // Persist the s3Key with the artifact: retry re-registers the SAME
+          // artifact from these coordinates (no new upload, no new object).
+          updateItem(itemId, {
+            upload: {
+              status: "uploaded",
+              artifactId,
+              s3Key,
+              contentType,
+              contentLength,
+            },
+          });
+          updateItemAnalysis(itemId, { s3Key });
+        }
       }
-    }
-    if (item.media && item.upload?.status === "uploaded")
-      await releaseCaptureOriginal(item.media.key, artifactId);
-    const sent = read?.atUpload();
-    if (sent) updateItem(itemId, { location: sent });
-    else if (read) {
-      // GPS hadn't answered yet; send its fix if one comes within 10 s.
-      void read.later.then((location) => {
-        if (!location) return;
-        updateItem(itemId, { location, locationUnsent: true });
-        return sendLocation(itemId, check.id, artifactId, location);
+      const sent = read?.atUpload();
+      if (sent) updateItem(itemId, { location: sent });
+      else if (read) {
+        // GPS hadn't answered yet; send its fix if one comes within 10 s.
+        void read.later.then((location) => {
+          if (!location) return;
+          updateItem(itemId, { location, locationUnsent: true });
+          return sendLocation(itemId, check.id, artifactId, location);
+        });
+      }
+      return artifactId;
+    });
+    if (!(await confirmLocalSave(check)))
+      throw Object.assign(new Error("Storage unavailable"), {
+        leg: "storage",
+        status: 400,
       });
-    }
+    await assertOwner();
+    if (item.media && item.upload?.status === "uploaded")
+      // Cleanup failure leaves recoverable bytes; it must not stop analysis.
+      await releaseCaptureOriginal(item.media.key, artifactId).catch(() => {});
     await evaluateArtifact(check.id, itemId, artifactId);
   } catch (err) {
     // Pausing or leaving a check stops its poll; it is not an analysis failure.
     if (err?.name === "AbortError") return;
     const latestItem = itemById(itemId);
-    const hasUploadedArtifact = Boolean(
-      latestItem?.upload?.status === "uploaded" &&
-        (latestItem?.analysis?.artifactId || latestItem?.upload?.artifactId),
-    );
-    // No connection is not a failure: the item stays saved on the device,
-    // still counts toward Finish, and check-submissions.js resumes it when
-    // the connection is back. run() picks up from whatever already landed.
-    if (isConnectionFailure(err)) {
-      updateItem(itemId, {
-        upload: {
-          ...(latestItem?.upload || item.upload || {}),
-          status: hasUploadedArtifact ? "uploaded" : "pending",
-        },
+    if (!latestItem || !isHeld(check)) return;
+    if (err?.body?.code === "analyses_pending" && connectionAvailable()) {
+      const recovery = failedRecovery(
+        latestItem.analysis?.recovery,
+        "observe",
+        err,
+      );
+      if (recovery.state === "scheduled")
+        recovery.nextAttemptAt = Math.max(
+          recovery.nextAttemptAt,
+          Date.now() + 15_000,
+        );
+      updateItemAnalysis(itemId, {
+        status: recovery.state === "manual" ? "failed" : "analyzing",
+        recovery,
+        lastTriedAt: new Date().toISOString(),
+        failure: { leg: "analyze", uploaded: true, code: "analyses_pending" },
       });
+    } else if (err?.leg === "storage") {
+      updateItemAnalysis(itemId, {
+        status: "failed",
+        localSaveConfirmed: false,
+        recovery: { stage: "storage", state: "manual", attempts: 0 },
+      });
+    } else if (isConnectionFailure(err) || !connectionAvailable()) {
       updateItemAnalysis(itemId, {
         status: "waiting",
         localSaveConfirmed: await confirmLocalSave(check),
+        recovery: {
+          ...latestItem.analysis?.recovery,
+          state: "waiting",
+          nextAttemptAt: undefined,
+        },
         error: undefined,
         failure: undefined,
       });
-      return;
+    } else {
+      const stage = err?.leg || "start";
+      const recovery = failedRecovery(
+        latestItem.analysis?.recovery,
+        stage,
+        err,
+      );
+      updateItemAnalysis(itemId, {
+        status: recovery.state === "scheduled" ? "queued" : "failed",
+        recovery,
+        lastTriedAt: new Date().toISOString(),
+        failure: {
+          leg: stage === "restart" ? "analyze" : stage,
+          uploaded: latestItem.upload?.status === "uploaded",
+          waitedMs: Date.now() - startedAt,
+        },
+      });
     }
-    console.error("analyzeEvidenceItem failed", err);
-    const failure = describeFailure(err);
-    const retries = latestItem?.analysis?.retryCount || 0;
-    const savedForLater =
-      retries >= 3 &&
-      (err?.status === 0 || err?.status >= 500) &&
-      (await confirmLocalSave(check));
-    updateItem(itemId, {
-      upload: {
-        ...(latestItem?.upload || item.upload || {}),
-        status: hasUploadedArtifact ? "uploaded" : "failed",
-      },
-    });
-    updateItemAnalysis(itemId, {
-      status: "failed",
-      localSaveConfirmed: savedForLater,
-      lastTriedAt: new Date().toISOString(),
-      error:
-        err?.body?.code === "analyses_pending"
-          ? "Analysis is taking longer than expected."
-          : "Could not analyze this item.",
-      failure: {
-        // What the card reports: which step broke, what had succeeded, and
-        // how long we waited before giving up.
-        leg: failure.leg,
-        uploaded: hasUploadedArtifact || failure.uploaded,
-        enqueued: failure.enqueued,
-        waitedMs: Date.now() - startedAt,
-      },
-    });
+    await confirmLocalSave(check);
   }
 }
 

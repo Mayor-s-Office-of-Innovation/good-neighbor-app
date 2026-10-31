@@ -3,17 +3,25 @@ import { html, escapeHtml } from "../lib/html.js";
 
 /** @type {WeakMap<object, Map<string, { finish: () => void }>>} */
 const focusSessions = new WeakMap();
+/** @param {Element} node @param {string} itemId */
+const matchesItem = (node, itemId) =>
+  !itemId ||
+  node.closest(".analysis-card")?.getAttribute("data-item-id") === itemId;
+const answerIdentity = (conditionId, itemId) =>
+  JSON.stringify([itemId, conditionId]);
 
 /** Keep ownership only while focus remains in this answer's replacement UI.
- * @param {Document | HTMLElement | ShadowRoot} root @param {string} conditionId
+ * @param {Document | HTMLElement | ShadowRoot} root @param {string} conditionId @param {string} [itemId]
  */
-function trackAnswerFocus(root, conditionId) {
+function trackAnswerFocus(root, conditionId, itemId = "") {
+  const identity = answerIdentity(conditionId, itemId);
   const doc = root.ownerDocument;
   if (!doc) return;
   const active = doc.activeElement;
   if (
     !(active instanceof HTMLButtonElement) ||
     active.getAttribute("data-condition-id") !== conditionId ||
+    !matchesItem(active, itemId) ||
     !active.matches('[data-analysis-action="answer"]')
   )
     return;
@@ -26,7 +34,9 @@ function trackAnswerFocus(root, conditionId) {
   const restore = (finished = false) => {
     if (!owned) return;
     const elements = [...root.querySelectorAll("[data-condition-id]")].filter(
-      (el) => el.getAttribute("data-condition-id") === conditionId,
+      (el) =>
+        el.getAttribute("data-condition-id") === conditionId &&
+        matchesItem(el, itemId),
     );
     const button = elements.find(
       (el) =>
@@ -53,14 +63,27 @@ function trackAnswerFocus(root, conditionId) {
   observer.observe(root, { childList: true, subtree: true });
   let sessions = focusSessions.get(root);
   if (!sessions) focusSessions.set(root, (sessions = new Map()));
-  sessions.set(conditionId, {
+  sessions.set(identity, {
     finish() {
       restore(true);
       observer.disconnect();
       doc.removeEventListener("focusin", onFocus);
-      sessions.delete(conditionId);
+      sessions.delete(identity);
     },
   });
+}
+
+/** End focus tracking without unlocking an accepted answer's controls.
+ * @param {Document | HTMLElement | ShadowRoot} root
+ * @param {string} conditionId
+ * @param {{itemId?: string}} [options]
+ */
+export function finishQuestionAnswerFocus(
+  root,
+  conditionId,
+  { itemId = "" } = {},
+) {
+  focusSessions.get(root)?.get(answerIdentity(conditionId, itemId))?.finish();
 }
 
 /** Replace one condition's answer controls with progress until the request settles.
@@ -68,18 +91,26 @@ function trackAnswerFocus(root, conditionId) {
  * @param {Document | HTMLElement | ShadowRoot} root
  * @param {string} conditionId
  * @param {boolean} busy
+ * @param {{itemId?: string}} [options]
  * @returns {void}
  */
-export function setQuestionAnswerBusy(root, conditionId, busy) {
-  if (busy && !focusSessions.get(root)?.has(conditionId))
-    trackAnswerFocus(root, conditionId);
+export function setQuestionAnswerBusy(
+  root,
+  conditionId,
+  busy,
+  { itemId = "" } = {},
+) {
+  const identity = answerIdentity(conditionId, itemId);
+  if (busy && !focusSessions.get(root)?.has(identity))
+    trackAnswerFocus(root, conditionId, itemId);
   const groups = new Set();
   for (const button of root.querySelectorAll(
     '[data-analysis-action="answer"]',
   )) {
     if (
       !(button instanceof HTMLButtonElement) ||
-      button.getAttribute("data-condition-id") !== conditionId
+      button.getAttribute("data-condition-id") !== conditionId ||
+      !matchesItem(button, itemId)
     )
       continue;
     button.disabled = busy;
@@ -103,7 +134,7 @@ export function setQuestionAnswerBusy(root, conditionId, busy) {
         </span>`,
       );
   }
-  if (!busy) focusSessions.get(root)?.get(conditionId)?.finish();
+  if (!busy) finishQuestionAnswerFocus(root, conditionId, { itemId });
 }
 
 /** @type {WeakMap<HTMLElement, Map<string, () => void>>} */
@@ -114,11 +145,17 @@ const confirmations = new WeakMap();
  * are inert; rerenders retain the confirmation without repeating its announcement.
  * @param {HTMLElement} root
  * @param {string} conditionId
+ * @param {{onComplete?: () => void, itemId?: string}} [options]
  */
-export function showQuestionAnswerUpdated(root, conditionId) {
+export function showQuestionAnswerUpdated(
+  root,
+  conditionId,
+  { onComplete = () => {}, itemId = "" } = {},
+) {
+  const identity = answerIdentity(conditionId, itemId);
   let sessions = confirmations.get(root);
   if (!sessions) confirmations.set(root, (sessions = new Map()));
-  sessions.get(conditionId)?.();
+  sessions.get(identity)?.();
   /** @type {Map<HTMLElement, boolean>} */
   const covered = new Map();
   const doc = root.ownerDocument;
@@ -142,7 +179,11 @@ export function showQuestionAnswerUpdated(root, conditionId) {
     for (const card of root.querySelectorAll(
       ".analysis-card[data-condition-id]",
     )) {
-      if (card.getAttribute("data-condition-id") !== conditionId) continue;
+      if (
+        card.getAttribute("data-condition-id") !== conditionId ||
+        !matchesItem(card, itemId)
+      )
+        continue;
       if (!card.querySelector(".analysis-card__updated")) {
         card.insertAdjacentHTML(
           "beforeend",
@@ -187,7 +228,10 @@ export function showQuestionAnswerUpdated(root, conditionId) {
     }
   };
   const observer = new MutationObserver(paint);
+  let finished = false;
   const finish = () => {
+    if (finished) return;
+    finished = true;
     clearTimeout(timer);
     observer.disconnect();
     doc?.removeEventListener("focusin", onFocus);
@@ -195,13 +239,17 @@ export function showQuestionAnswerUpdated(root, conditionId) {
     for (const card of root.querySelectorAll(
       ".analysis-card[data-condition-id]",
     )) {
-      if (card.getAttribute("data-condition-id") === conditionId)
+      if (
+        card.getAttribute("data-condition-id") === conditionId &&
+        matchesItem(card, itemId)
+      )
         card.querySelector(".analysis-card__updated")?.remove();
     }
-    sessions.delete(conditionId);
+    sessions.delete(identity);
+    onComplete();
   };
   const timer = setTimeout(finish, 2000);
-  sessions.set(conditionId, finish);
+  sessions.set(identity, finish);
   paint();
   observer.observe(root, { childList: true, subtree: true });
 }

@@ -1,3 +1,5 @@
+import { reconcileHomeResults } from "./home-card-reconcile.js";
+import { showInlineError } from "./error-notice.js";
 import {
   loadPendingQuestionItems,
   mergePendingQuestionItems,
@@ -79,6 +81,7 @@ import {
   submitConditionAnswers,
   editAnalysisCondition,
   get311RequestDetails,
+  getAssessmentGuidance,
 } from "../services/api.js";
 import {
   answerAnalysisQuestion,
@@ -86,6 +89,7 @@ import {
   refreshEvidenceAnalysis,
   refreshRecoveredQuestion,
   retryEvidenceItem,
+  removeEvidenceItem,
 } from "../services/photo-analysis.js";
 import { adaptCheckHeader } from "../domain/check-adapter.js";
 import {
@@ -145,7 +149,6 @@ import {
   clearSubmittedSession,
   discardInMemorySession,
   pauseCheck,
-  removeItem,
   rejectConditionLocally,
   resolveConditionLocally,
 } from "../state/check-session.js";
@@ -175,10 +178,14 @@ import { switchToBoundSite } from "../services/site-switch.js";
 import { getLocale, setLocale, t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
 import {
+  finishQuestionAnswerFocus,
   setQuestionAnswerBusy,
   showQuestionAnswerUpdated,
 } from "./analysis-answer-controls.js";
-import { finalizeCaptureScorecardInBackground } from "../services/submit-check.js";
+import {
+  finalizeCaptureScorecardInBackground,
+  restoreFinalizationNotices,
+} from "../services/submit-check.js";
 import { isConnectionFailure } from "../services/photo-analysis.js";
 import { getHomeSnapshot, saveHomeSnapshot } from "../db.js";
 import {
@@ -291,6 +298,7 @@ function sessionRefreshKey(session) {
 }
 
 class TodayView extends HTMLElement {
+  _wiredCards = new WeakSet();
   constructor() {
     super();
     this._cardDeletedHandler = (event) => {
@@ -517,7 +525,7 @@ class TodayView extends HTMLElement {
           this._homeModel?.pendingSession?.id !== session.id
         )
           return;
-        void this.connectedCallback();
+        if (!this._answeringConditionIds.size) void this.connectedCallback();
       });
     }
     if (!this._onlineReload) {
@@ -1200,12 +1208,14 @@ class TodayView extends HTMLElement {
         "mediaState",
         "mediaRetryAt",
       ])
-        if (!task[key] && old[key]) cached[key] = old[key];
+        if (!Object.hasOwn(task, key) && Object.hasOwn(old, key))
+          cached[key] = old[key];
       return Object.keys(cached).length ? { ...task, ...cached } : task;
     });
     if (tasks.some((task, index) => task !== model.tasks[index]))
       model = { ...model, tasks };
     this._homeModel = model;
+    if (this._answeringConditionIds.size) return;
     this._watchQueued311(model.tasks);
     // Keep the native dialog and its action buttons mounted while a location
     // decision is pending. A background location update can otherwise replace
@@ -1230,8 +1240,10 @@ class TodayView extends HTMLElement {
     // action metadata) at click time.
     this._tasksById = new Map(model.tasks.map((t) => [t.taskId, t]));
     const markup = this._render(model);
-    if (markup === this._homeMarkup && this.querySelector(":scope > .home"))
+    if (markup === this._homeMarkup && this.querySelector(":scope > .home")) {
+      this._restoreQuestionAnchor();
       return;
+    }
     // Background list/evidence updates must not dismiss an open action menu
     // or strand keyboard focus when its DOM is replaced.
     const previousActionMenu = /** @type {HTMLElement | null} */ (
@@ -1249,8 +1261,29 @@ class TodayView extends HTMLElement {
       phoneCard && this.contains(phoneCard) && phoneNumber
         ? `.analysis-card[data-task-id="${CSS.escape(phoneCard.getAttribute("data-task-id") || "")}"] button[data-phone-number="${CSS.escape(phoneNumber)}"]`
         : "";
+    const reconciled = reconcileHomeResults(
+      this,
+      this._homeMarkup || "",
+      markup,
+    );
     this._homeMarkup = markup;
+    if (reconciled) {
+      restoreFinalizationNotices(model.pendingSession, this);
+      this._wireCards();
+      this._applyBusyCards();
+      restorePhoneCompletionErrors(this, this._siteId);
+      if (phoneFocus) {
+        const replacement = this.querySelector(phoneFocus);
+        if (replacement instanceof HTMLElement)
+          replacement.focus({ preventScroll: true });
+      }
+      for (const conditionId of this._answeringConditionIds)
+        setQuestionAnswerBusy(this, conditionId, true);
+      this._restoreQuestionAnchor();
+      return;
+    }
     this.innerHTML = markup;
+    restoreFinalizationNotices(model.pendingSession, this);
     this._tabRefreshStatus?.();
 
     // Hand the bound site id to the feedback sheet so submissions carry it as
@@ -1546,6 +1579,7 @@ class TodayView extends HTMLElement {
       },
     );
     this._wireCards();
+    this._restoreQuestionAnchor();
     this._applyBusyCards();
     restorePhoneCompletionErrors(this, this._siteId);
     for (const conditionId of this._answeringConditionIds) {
@@ -1573,6 +1607,8 @@ class TodayView extends HTMLElement {
     const model = this._homeModel;
     if (!model) return;
     const hydrationGeneration = ++this._hydrationGeneration;
+    const siteId = this._siteId;
+    const refreshGeneration = this._homeRefreshGeneration;
     const visibleTasks = visibleTaskEntriesForHydration(
       this._homeTasks(model.tasks),
       this._homeFilter,
@@ -1585,15 +1621,18 @@ class TodayView extends HTMLElement {
     if (
       hydrationGeneration !== this._hydrationGeneration ||
       !this.isConnected ||
-      this._homeModel !== model
+      this._siteId !== siteId ||
+      this._homeRefreshGeneration !== refreshGeneration ||
+      !this._homeModel
     ) {
       return;
     }
-    const tasks = mergeHydratedTasks(model.tasks, hydratedTasks);
+    const current = this._homeModel;
+    const tasks = mergeHydratedTasks(current.tasks, hydratedTasks);
     this._sheets?.updateTask(
       tasks.find((task) => task.taskId === this._sheets?.ticketTaskId),
     );
-    this._renderHome({ ...model, tasks });
+    this._renderHome({ ...current, tasks });
   }
 
   _render({
@@ -1937,6 +1976,12 @@ class TodayView extends HTMLElement {
       remainingStatus: this._tabListStatus?.() || remainingStatus,
       siteName: this._site?.name || "",
       siteAddress: this._site?.address || "",
+      finalizationPending:
+        pendingSession?.status === "capture-complete" &&
+        !pendingSession.scorecardDone &&
+        !["manual", "blocked"].includes(
+          pendingSession.finalizationRecovery?.state,
+        ),
       pendingSessionId: pendingSession?.id || "",
       hasPendingSession: Boolean(pendingSession),
       recentCheckTime,
@@ -2511,7 +2556,10 @@ class TodayView extends HTMLElement {
   }
 
   _wireCards() {
+    this._wiredCards ??= new WeakSet();
     this.querySelectorAll(".duplicate-earlier-link").forEach((link) => {
+      if (this._wiredCards.has(link)) return;
+      this._wiredCards.add(link);
       link.addEventListener("click", (event) => {
         if (!(event instanceof MouseEvent)) return;
         if (
@@ -2531,12 +2579,14 @@ class TodayView extends HTMLElement {
     ).forEach((card) => {
       const taskId = card.getAttribute("data-task-id");
       const task = this._tasksById.get(taskId);
-      if (!task) return;
+      if (!task || this._wiredCards.has(card)) return;
       this._wireCardButtons(card, task);
     });
     this.querySelectorAll(
       ":scope > .home > .home-region--results .analysis-card",
     ).forEach((card) => {
+      if (this._wiredCards.has(card)) return;
+      this._wiredCards.add(card);
       if (!card.querySelector("[data-analysis-action]")) return;
       const taskId = card.getAttribute("data-task-id");
       const task = taskId ? this._tasksById.get(taskId) || null : null;
@@ -2603,18 +2653,20 @@ class TodayView extends HTMLElement {
       } else this._resolveAnalysisProblem(problem, card);
     } else if (action === "answer") {
       this._answerAnalysisQuestion(problem, btn);
+    } else if (action === "delete-failed-item") {
+      if (!problem.itemId || btn.disabled) return;
+      btn.disabled = true;
+      void removeEvidenceItem(problem.itemId).catch(() => {
+        btn.disabled = false;
+        showInlineError(t("card.failed.deleteError"), {
+          target: this,
+          key: "delete-failed-item",
+        });
+      });
     } else if (action === "retry") {
-      if (problem.itemId) retryEvidenceItem(problem.itemId);
-    } else if (action === "remove-item") {
-      if (problem.itemId) this._removeFailedItem(problem);
+      if (problem.itemId && retryEvidenceItem(problem.itemId))
+        btn.setAttribute("disabled", "");
     }
-  }
-
-  /** Drop a failed, never-uploaded item from the pending session. */
-  _removeFailedItem(problem) {
-    const item = this._sessionItem(problem);
-    if (!item || item.upload?.status === "uploaded") return;
-    removeItem(problem.itemId);
   }
 
   // Home cards may be backed by a backend task; fill any coordinates the
@@ -2902,9 +2954,27 @@ class TodayView extends HTMLElement {
 
     const answerSiteId = this._siteId;
     const answerGeneration = this._homeRefreshGeneration;
+    const questions = [
+      ...this.querySelectorAll(".analysis-card[data-condition-id]"),
+    ].filter((card) => card.querySelector('[data-analysis-action="answer"]'));
+    const currentIndex = questions.indexOf(button.closest?.(".analysis-card"));
+    const nextQuestion =
+      questions[currentIndex + 1] ||
+      questions[currentIndex - 1] ||
+      questions[currentIndex];
+    this._questionAnchor = nextQuestion
+      ? {
+          id: nextQuestion.getAttribute("data-condition-id"),
+          itemId: nextQuestion.getAttribute("data-item-id"),
+          checkId: nextQuestion.getAttribute("data-check-id"),
+          top: nextQuestion.getBoundingClientRect().top,
+          keyboard: button.matches?.(":focus-visible"),
+        }
+      : null;
     this._answeringConditionIds.add(problem.conditionId);
     setQuestionAnswerBusy(this, problem.conditionId, true);
     this._setInlineProblemError(problem, "");
+    let confirmationPending = false;
     try {
       const persisted = (this._homeModel?.pendingQuestions || []).find(
         (item) => item.id === problem.itemId,
@@ -3012,24 +3082,150 @@ class TodayView extends HTMLElement {
           this._confirmedTasks.set(result.taskItem.taskId, result.taskItem);
           this._applyTaskResult(result.taskItem.taskId, result.taskItem);
         }
-        await this._refreshAfterAction();
+        const assessmentId = result.assessmentItem?.assessmentId || expectedId;
+        if (assessmentId)
+          void this._quietQuestionRefresh(
+            assessmentId,
+            result.assessmentItem?.assessmentRevision || 0,
+          );
       }
       if (
         answerSiteId === this._siteId &&
         answerGeneration === this._homeRefreshGeneration
-      )
-        showQuestionAnswerUpdated(this, problem.conditionId);
+      ) {
+        showQuestionAnswerUpdated(this, problem.conditionId, {
+          itemId: problem.itemId,
+          onComplete: () =>
+            this._finishQuestionConfirmation(
+              problem.conditionId,
+              answerSiteId,
+              answerGeneration,
+            ),
+        });
+        confirmationPending = true;
+      }
     } catch (err) {
       if (
         answerSiteId !== this._siteId ||
         answerGeneration !== this._homeRefreshGeneration
       )
         return;
+      this._questionAnchor = null;
       console.error("answer condition failed", err);
       showAnswerSaveErrorToast();
     } finally {
-      this._answeringConditionIds.delete(problem.conditionId);
-      setQuestionAnswerBusy(this, problem.conditionId, false);
+      if (!confirmationPending) {
+        this._answeringConditionIds.delete(problem.conditionId);
+        if (!this._answeringConditionIds.size && this._homeModel)
+          this._renderHome(this._homeModel);
+        setQuestionAnswerBusy(this, problem.conditionId, false);
+      }
+    }
+  }
+
+  _finishQuestionConfirmation(conditionId, siteId, generation) {
+    finishQuestionAnswerFocus(this, conditionId);
+    this._answeringConditionIds.delete(conditionId);
+    if (
+      !this.isConnected ||
+      this._siteId !== siteId ||
+      this._homeRefreshGeneration !== generation
+    )
+      return;
+    // Another visible confirmation still owns the current order.
+    if (this._answeringConditionIds.size) return;
+    const active = document.activeElement;
+    if (
+      this._questionAnchor?.keyboard &&
+      active &&
+      active !== document.body &&
+      active.closest(".analysis-card")?.getAttribute("data-condition-id") !==
+        conditionId
+    )
+      this._questionAnchor.keyboard = false;
+    const anchorCard =
+      this._questionAnchor &&
+      [...this.querySelectorAll(".analysis-card[data-condition-id]")].find(
+        (card) =>
+          card.getAttribute("data-condition-id") === this._questionAnchor.id &&
+          card.getAttribute("data-item-id") === this._questionAnchor.itemId &&
+          card.getAttribute("data-check-id") === this._questionAnchor.checkId,
+      );
+    if (anchorCard)
+      this._questionAnchor.top = anchorCard.getBoundingClientRect().top;
+    this._renderHome(this._homeModel);
+    setQuestionAnswerBusy(this, conditionId, false);
+  }
+
+  _restoreQuestionAnchor() {
+    const anchor = this._questionAnchor;
+    if (!anchor) return;
+    this._questionAnchor = null;
+    const card = [
+      ...this.querySelectorAll(".analysis-card[data-condition-id]"),
+    ].find(
+      (node) =>
+        node.getAttribute("data-condition-id") === anchor.id &&
+        node.getAttribute("data-item-id") === anchor.itemId &&
+        node.getAttribute("data-check-id") === anchor.checkId,
+    );
+    if (!card) {
+      const next = this.querySelector(".analysis-card button:not([disabled])");
+      if (anchor.keyboard && next instanceof HTMLElement)
+        next.focus({ preventScroll: true });
+      return;
+    }
+    window.scrollBy({
+      top: card.getBoundingClientRect().top - anchor.top,
+      behavior: "instant",
+    });
+    if (anchor.keyboard) {
+      const button = card.querySelector("button:not([disabled])");
+      if (button instanceof HTMLElement) button.focus({ preventScroll: true });
+    }
+  }
+
+  async _quietQuestionRefresh(assessmentId, revision) {
+    const siteId = this._siteId;
+    const generation = this._guidanceGeneration;
+    try {
+      const latest = await getAssessmentGuidance(assessmentId);
+      if (
+        !this.isConnected ||
+        this._siteId !== siteId ||
+        generation !== this._guidanceGeneration ||
+        latest.assessment?.assessmentId !== assessmentId ||
+        !this._homeModel ||
+        (latest.assessment?.assessmentRevision || 0) < revision
+      )
+        return;
+      // The answer response already supplied the new task. Refresh remaining
+      // questions without clearing the list or introducing loading placeholders.
+      const pendingQuestions = this._homeModel.pendingQuestions.flatMap(
+        (item) => {
+          if (item.analysis.assessment.assessmentId !== assessmentId)
+            return [item];
+          const id = item.analysis.conditions[0]?.conditionId;
+          const condition = (latest.conditions || []).find(
+            (entry) => entry.conditionId === id,
+          );
+          return condition?.status === "needs_answer"
+            ? [
+                {
+                  ...item,
+                  analysis: {
+                    ...item.analysis,
+                    assessment: latest.assessment,
+                    conditions: [condition],
+                  },
+                },
+              ]
+            : [];
+        },
+      );
+      this._renderHome({ ...this._homeModel, pendingQuestions });
+    } catch {
+      /* The authoritative answer remains visible; later refreshes reconcile. */
     }
   }
 

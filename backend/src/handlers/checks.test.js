@@ -921,6 +921,33 @@ describe("getCheck", () => {
     expect(payload.analyses[0].sk).toBe("CHECK#chk_01#ANALYSIS#art_1");
   });
 
+  it("uses a current snapshot and hides an old failure after restart", async () => {
+    send.mockResolvedValueOnce({
+      Items: [
+        { sk: "CHECK#chk_01", checkId: "chk_01", status: "in_progress" },
+        {
+          sk: "CHECK#chk_01#ART#art_1",
+          artifactId: "art_1",
+          analysisGeneration: "restart-1",
+        },
+        {
+          sk: "CHECK#chk_01#ANALYSIS#art_1",
+          artifactId: "art_1",
+          status: "failed",
+          analysisGeneration: "initial",
+        },
+      ],
+    });
+    const response = await /** @type {any} */ (
+      getCheck(
+        readEvent({ siteClaim: "site-1", checkId: "chk_01" }),
+        /** @type {any} */ ({}),
+        () => {},
+      )
+    );
+    expect(send.mock.calls[0][0].input.ConsistentRead).toBe(true);
+    expect(JSON.parse(response.body).analyses).toEqual([]);
+  });
   it("404s when the header is absent (children but no header)", async () => {
     send.mockResolvedValueOnce({
       Items: [{ sk: "CHECK#chk_01#ART#north#art_1", artifactId: "art_1" }],

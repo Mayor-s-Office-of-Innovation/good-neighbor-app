@@ -8,12 +8,17 @@ vi.mock("../db.js", () => ({
 vi.mock("../state/check-session.js", () => ({
   getCurrentCheck: () => held.inProgress,
   loadFinishedChecks: vi.fn(async () => [...held.finished]),
-  markScorecardDone: vi.fn(),
+  markScorecardDone: vi.fn((id) => {
+    const check = held.finished.find((entry) => entry.id === id);
+    if (check) check.scorecardDone = true;
+  }),
 }));
 vi.mock("./photo-analysis.js", async (importOriginal) => {
   const actual = /** @type {any} */ (await importOriginal());
   return {
     analyzeEvidenceItem: vi.fn(),
+    removeEvidenceItem: vi.fn(async () => {}),
+    reconcileFailedEvidence: vi.fn(async () => {}),
     EVIDENCE_SETTLED_EVENT: actual.EVIDENCE_SETTLED_EVENT,
     shouldResumeEvidenceItem: actual.shouldResumeEvidenceItem,
     hasUnsentLocation: actual.hasUnsentLocation,
@@ -25,7 +30,7 @@ vi.mock("./submit-check.js", () => ({
   finalizeCaptureScorecardInBackground: vi.fn(() => Promise.resolve({})),
 }));
 
-import { analyzeEvidenceItem } from "./photo-analysis.js";
+import { analyzeEvidenceItem, removeEvidenceItem } from "./photo-analysis.js";
 import { finalizeCaptureScorecardInBackground } from "./submit-check.js";
 import { markScorecardDone } from "../state/check-session.js";
 import {
@@ -200,4 +205,78 @@ describe("retry while items wait", () => {
       vi.useRealTimers();
     }
   });
+});
+
+it("does not finalize a check with an unresolved deletion", () => {
+  expect(
+    readyForScorecard(
+      finishedCheck("pending-delete", [
+        { ...uploaded("1"), deletionPending: true },
+      ]),
+    ),
+  ).toBe(false);
+});
+
+it("replays a durable deletion on recovery without uploading or finalizing it", async () => {
+  held.finished = [
+    finishedCheck("pending-delete", [
+      { ...uploaded("1"), deletionPending: true },
+    ]),
+  ];
+  await resumeCheckSubmissions();
+  expect(removeEvidenceItem).toHaveBeenCalledWith("1");
+  expect(analyzeEvidenceItem).not.toHaveBeenCalled();
+  expect(finalizeCaptureScorecardInBackground).not.toHaveBeenCalled();
+});
+
+it("allows finalization again after a rejected deletion is durably cleared", () => {
+  const check = finishedCheck("rejected-delete", [
+    { ...uploaded("1"), deletionPending: false },
+  ]);
+  expect(readyForScorecard(check)).toBe(true);
+});
+
+it("does not use overdue item or finalization deadlines for an offline timer", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    vi.resetModules();
+    const queue = await import("./check-submissions.js");
+    const db = await import("../db.js");
+    const item = waiting("offline");
+    item.analysis = {
+      status: "analyzing",
+      recovery: { state: "scheduled", nextAttemptAt: 1 },
+    };
+    held.finished = [
+      finishedCheck("offline", [item], {
+        finalizationRecovery: { state: "scheduled", nextAttemptAt: 1 },
+      }),
+    ];
+    vi.stubGlobal("navigator", { onLine: false });
+    await queue.resumeCheckSubmissions();
+    vi.mocked(db.getSite).mockClear();
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(db.getSite).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(db.getSite).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("holds finalization for restored analyzed evidence without registration", async () => {
+  const item = {
+    id: "restored",
+    kind: "photo",
+    dataUrl: "data:image/jpeg;base64,AA",
+    analysis: { status: "analyzed" },
+  };
+  const check = finishedCheck("restored", [item]);
+  expect(readyForScorecard(check)).toBe(false);
+  held.finished = [check];
+  await resumeCheckSubmissions();
+  expect(analyzeEvidenceItem).toHaveBeenCalledWith("restored");
+  expect(finalizeCaptureScorecardInBackground).not.toHaveBeenCalled();
+  item.analysis.artifactId = "registered";
+  expect(readyForScorecard(check)).toBe(true);
 });

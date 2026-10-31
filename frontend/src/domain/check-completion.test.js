@@ -243,3 +243,21 @@ describe("photos saved with no connection", () => {
     expect(isPerimeterCheckComplete({ items: [WAITING_PHOTO] })).toBe(true);
   });
 });
+
+it("counts a reserved upload only while registration remains recoverable", () => {
+  const item = {
+    id: "reserved",
+    kind: "photo",
+    dataUrl: "data:,",
+    upload: { status: "uploading", artifactId: "reservation" },
+    analysis: { status: "failed", recovery: { state: "blocked" } },
+  };
+  expect(itemHasLiveEvidence(item)).toBe(false);
+  item.analysis.recovery.state = "manual";
+  expect(itemHasLiveEvidence(item)).toBe(true);
+  item.analysis.recovery.state = "scheduled";
+  expect(itemHasLiveEvidence(item)).toBe(true);
+  item.analysis.recovery.state = "blocked";
+  item.upload.status = "uploaded";
+  expect(itemHasLiveEvidence(item)).toBe(true);
+});

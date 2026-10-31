@@ -1,4 +1,6 @@
 // @ts-nocheck -- lenient migration baseline (checkJs).
+import { answerCaptureQuestion } from "./capture-card-actions.js";
+import { showInlineError } from "./error-notice.js";
 import { patchHtml } from "../lib/patch-html.js";
 import { renderCaptureGrid } from "./capture-grid.js";
 import { CaptureFileQueue } from "../services/capture-files.js";
@@ -28,7 +30,6 @@ import {
   show311FilingToast,
   show311ErrorToast,
   showActionSaveErrorToast,
-  showAnswerSaveErrorToast,
   showDeleteErrorToast,
   showEditErrorToast,
   showEditRefreshErrorToast,
@@ -52,7 +53,6 @@ import { openOverlayDialog, awaitOverlayUnwind } from "../dialog-history.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import { mark } from "../services/instrument.js";
 import {
-  answerAnalysisQuestion,
   analyzeNoIssueDescriptionEdit,
   analyzeEvidenceItem,
   shouldResumeEvidenceItem,
@@ -100,10 +100,7 @@ import {
   footer,
   analyzingSection,
 } from "./perimeter-check.templates.js";
-import {
-  setQuestionAnswerBusy,
-  showQuestionAnswerUpdated,
-} from "./analysis-answer-controls.js";
+import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 import { markCameraOpen, clearCameraOpen } from "../state/capture-resume.js";
 import { trackEvent } from "../services/analytics.js";
 
@@ -112,7 +109,7 @@ class PerimeterCheck extends HTMLElement {
     super();
     this._captureReadVersion = 0;
     this._captureFiles = new CaptureFileQueue(true);
-    this._answeringConditionIds = new Set();
+    this._answeringConditionIds = new Map();
   }
 
   async connectedCallback() {
@@ -345,16 +342,27 @@ class PerimeterCheck extends HTMLElement {
       openSessionDuplicate(button, this);
       return;
     }
+    if (action === "delete-failed-item") {
+      const button = target.closest("button");
+      const itemId = button
+        ?.closest("[data-item-id]")
+        ?.getAttribute("data-item-id");
+      if (!itemId || button.disabled) return;
+      button.disabled = true;
+      void removeEvidenceItem(itemId).catch(() => {
+        button.disabled = false;
+        showInlineError(t("card.failed.deleteError"), {
+          target: this,
+          key: "delete-failed-item",
+        });
+      });
+      return;
+    }
     if (action === "retry") {
       const card = button.closest(".analysis-card");
       const itemId = card?.getAttribute("data-item-id") || "";
-      if (itemId) retryEvidenceItem(itemId);
-      return;
-    }
-    if (action === "remove-item") {
-      const card = button.closest(".analysis-card");
-      const itemId = card?.getAttribute("data-item-id") || "";
-      if (itemId) this._removeFailedItem(itemId);
+      if (itemId && retryEvidenceItem(itemId))
+        button.setAttribute("disabled", "");
       return;
     }
 
@@ -577,45 +585,11 @@ class PerimeterCheck extends HTMLElement {
   }
 
   async _answerProblemQuestion(problem, button) {
-    if (!(button instanceof HTMLButtonElement)) return;
-    const answerKey = button.getAttribute("data-answer-key") || "";
-    const answerValue = button.getAttribute("data-answer-value") === "true";
-    if (!problem.itemId || !problem.conditionId || !answerKey) {
-      showAnswerSaveErrorToast();
-      return;
-    }
-    if (this._answeringConditionIds.has(problem.conditionId)) return;
-
-    this._answeringConditionIds.add(problem.conditionId);
-    setQuestionAnswerBusy(this, problem.conditionId, true);
-    try {
-      await answerAnalysisQuestion(
-        problem.itemId,
-        problem.conditionId,
-        answerKey,
-        answerValue,
-      );
-      this._render();
-      showQuestionAnswerUpdated(this, problem.conditionId);
-    } catch (err) {
-      console.error("answer condition failed", err);
-      showAnswerSaveErrorToast();
-    } finally {
-      this._answeringConditionIds.delete(problem.conditionId);
-      setQuestionAnswerBusy(this, problem.conditionId, false);
-    }
+    return answerCaptureQuestion(this, problem, button);
   }
 
   _markProblemResolved(problem) {
     if (resolveConditionLocally(problem)) this._render();
-  }
-
-  /** Drop a failed, never-uploaded photo from the session entirely. */
-  _removeFailedItem(itemId) {
-    const item = findItem(itemId);
-    if (!item) return;
-    if (item.upload?.status === "uploaded") return;
-    removeItem(itemId);
   }
 
   /**
@@ -773,6 +747,8 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _render() {
+    // Keep the answered question present until its confirmation has been seen.
+    if (this._answeringConditionIds.size) return;
     if (isDeletingAnalysisCard(this) || isCompletingAnalysisCard(this)) return;
     const check = getCurrentCheck();
     if (!check) return;
@@ -823,8 +799,11 @@ class PerimeterCheck extends HTMLElement {
           })
         : "",
     );
-    for (const conditionId of this._answeringConditionIds) {
-      setQuestionAnswerBusy(this, conditionId, true);
+    for (const {
+      itemId,
+      conditionId,
+    } of this._answeringConditionIds.values()) {
+      setQuestionAnswerBusy(this, conditionId, true, { itemId });
     }
     if (!this._elapsedTicker) this._startElapsedTicker();
   }

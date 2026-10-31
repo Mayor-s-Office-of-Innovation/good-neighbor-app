@@ -178,3 +178,8 @@ The capture route JavaScript budget is 13.5 kB Brotli (previously 13 kB) to cove
 incremental rendering. Separate 2.5 kB JavaScript and 300-byte CSS limits cover the
 lazy capture media/thumbnail modules; a 600-byte limit covers the worker. The
 worker is a same-origin asset included in the offline-shell precache. No dependency was added.
+
+The combined capture routes have a 13.75 kB Brotli budget after integration with
+bounded upload recovery and question confirmations. The shared question handler
+and keyed grid avoid duplicate implementations; the budget includes any separate
+capture-card-actions chunk. The eager main bundle retains its existing limit.

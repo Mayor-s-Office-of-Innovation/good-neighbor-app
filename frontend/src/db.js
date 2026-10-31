@@ -524,17 +524,38 @@ export async function getDraft(flowType) {
   );
   return legacy?.siteId === siteId ? legacy : null;
 }
-export async function saveDraft(check) {
-  const siteId = check?.siteId || (await getSite())?.siteId || "";
-  await tx("draft", "readwrite", async (os) => {
-    const previous = check.items?.some((item) => item.captureSaving)
-      ? await reqToPromise(os.get(draftKey(check.flowType, siteId)))
-      : null;
-    const saved = captureMetadata(check, previous);
-    os.put(saved, draftKey(undefined, siteId));
-    if (check?.flowType) os.put(saved, draftKey(check.flowType, siteId));
+const checkWrites = new Map();
+/** Serialize snapshots so a slower earlier write cannot erase a newer checkpoint.
+ * @param {any} check @param {(snapshot: any) => Promise<any>} write
+ */
+function writeCheck(check, write) {
+  const snapshot = structuredClone(check);
+  const key = check.siteId || check.id;
+  const pending = (checkWrites.get(key) || Promise.resolve())
+    .catch(() => {})
+    .then(() => write(snapshot));
+  checkWrites.set(key, pending);
+  void pending
+    .finally(() => {
+      if (checkWrites.get(key) === pending) checkWrites.delete(key);
+    })
+    .catch(() => {});
+  return pending;
+}
+export function saveDraft(check) {
+  return writeCheck(check, async (snapshot) => {
+    const siteId = snapshot?.siteId || (await getSite())?.siteId || "";
+    await tx("draft", "readwrite", async (os) => {
+      const previous = snapshot.items?.some((item) => item.captureSaving)
+        ? await reqToPromise(os.get(draftKey(snapshot.flowType, siteId)))
+        : null;
+      const saved = captureMetadata(snapshot, previous);
+      os.put(saved, draftKey(undefined, siteId));
+      if (snapshot?.flowType)
+        os.put(saved, draftKey(snapshot.flowType, siteId));
+    });
+    return snapshot;
   });
-  return check;
 }
 
 async function deleteDraftIfMatches(os, key, checkId) {
@@ -566,6 +587,9 @@ export async function clearDraft(flowOrOpts, maybeCheckId) {
     flowOrOpts && typeof flowOrOpts === "object"
       ? flowOrOpts.checkId
       : maybeCheckId;
+  // Drain this check's queued snapshots before deleting its draft. Scoped
+  // deletion cannot erase a newer capture started while those writes finish.
+  await Promise.allSettled([...checkWrites.values()]);
   return tx("draft", "readwrite", async (os) => {
     await deleteDraftIfMatches(os, draftKey(flowType, siteId), checkId);
     if (siteId) {
@@ -621,17 +645,20 @@ export async function listFinishedChecks(owningSiteId) {
     (a.submittedAt || "").localeCompare(b.submittedAt || ""),
   );
 }
-export async function saveFinishedCheck(check) {
-  const siteId = check?.siteId || (await getSite())?.siteId || "";
-  await tx("review", "readwrite", async (os) => {
-    const key = finishedCheckKey(siteId, check.id);
-    const previous = check.items?.some((item) => item.captureSaving)
-      ? await reqToPromise(os.get(key))
-      : null;
-    os.put(captureMetadata(check, previous), key);
+export function saveFinishedCheck(check) {
+  return writeCheck(check, async (snapshot) => {
+    const siteId = snapshot?.siteId || (await getSite())?.siteId || "";
+    await tx("review", "readwrite", async (os) => {
+      const key = finishedCheckKey(siteId, snapshot.id);
+      const previous = snapshot.items?.some((item) => item.captureSaving)
+        ? await reqToPromise(os.get(key))
+        : null;
+      os.put(captureMetadata(snapshot, previous), key);
+    });
+    return snapshot;
   });
-  return check;
 }
+
 /**
  * @param {string} owningSiteId
  * @param {string} checkId
@@ -639,6 +666,7 @@ export async function saveFinishedCheck(check) {
 export async function deleteFinishedCheck(owningSiteId, checkId) {
   const siteId = owningSiteId || (await getSite())?.siteId || "";
   if (!checkId) return;
+  await Promise.resolve(checkWrites.get(siteId || checkId)).catch(() => {});
   return tx(
     ["review", "captureMedia"],
     "readwrite",
@@ -875,8 +903,10 @@ async function writeCaptureBlob(blob, write) {
  * @param {any} check @param {any} item @param {Blob} original
  */
 export function saveCapturePhoto(check, item, original) {
+  // Serialize the transaction, not optional binary preparation: metadata saves
+  // must still run while a browser's Blob fallback is preparing the bytes.
   return writeCaptureBlob(original, (stored) =>
-    saveCapturePhotoRecord(check, item, stored),
+    writeCheck(check, () => saveCapturePhotoRecord(check, item, stored)),
   );
 }
 
@@ -1127,6 +1157,10 @@ export function releaseCaptureOriginal(key, artifactId) {
  * @param {string} key
  */
 export function deleteCapturePhoto(check, key) {
+  return writeCheck(check, () => deleteCapturePhotoRecord(check, key));
+}
+
+function deleteCapturePhotoRecord(check, key) {
   const before = captureSnapshot(check);
   const store = check.status === "in-progress" ? "draft" : "review";
   return tx([store, "captureMedia"], "readwrite", async (os, transaction) => {

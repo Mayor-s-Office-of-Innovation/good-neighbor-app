@@ -62,6 +62,7 @@ test("original is durable, metadata-only saves, registration releases bytes befo
         contentLength: original.size,
       },
     });
+    await db.saveDraft(check);
     await db.releaseCaptureOriginal(item.media.key, "synthetic-artifact");
     const released = await db.getCaptureMedia(item.media.key);
     const tiny = new Blob(["thumbnail"], { type: "image/webp" });
@@ -392,6 +393,15 @@ test("pipeline retains unacknowledged uploads and releases confirmed originals w
         type: "image/jpeg",
       }),
     );
+    // Manual retry is offered only after the automatic budget is exhausted.
+    session.updateItemAnalysis(window.item.id, {
+      recovery: {
+        stage: "upload",
+        state: "scheduled",
+        attempts: 3,
+        nextAttemptAt: 0,
+      },
+    });
     const pipeline = await import("/src/services/photo-analysis.js");
     window.pipeline = pipeline;
     pipeline.analyzeEvidenceItem(window.item.id);
@@ -1449,4 +1459,106 @@ test("progress save queued behind admission preserves its committed reference", 
   });
   expect(result.ids).toEqual(result.expected);
   expect(result.bytes).toBe("bytes");
+});
+
+test("health-monitor recovery revives exhausted thumbnails without a browser online event", async ({
+  page,
+}) => {
+  let available = false;
+  let attempts = 0;
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=",
+    "base64",
+  );
+  await page.route("**/v1/checks/**/artifacts/**/media", (route) =>
+    route.fulfill({
+      json: {
+        downloadUrl: "http://127.0.0.1:5179/unused-original",
+        thumbnailUrl: "http://127.0.0.1:5179/reconnect-thumbnail",
+        expiresIn: 300,
+      },
+    }),
+  );
+  await page.route("**/reconnect-thumbnail", (route) => {
+    attempts++;
+    return available
+      ? route.fulfill({ contentType: "image/png", body: png })
+      : route.fulfill({ status: 503, body: "Synthetic temporary failure" });
+  });
+  await page.evaluate(async () => {
+    const { db, session, check } = window;
+    const item = await session.addCapturedPhoto(
+      new File(["original"], "synthetic.jpg", { type: "image/jpeg" }),
+    );
+    session.updateItem(item.id, {
+      upload: { status: "uploaded", artifactId: "artifact" },
+    });
+    await db.saveDraft(check);
+    const { capturePhoto } = await import(
+      "/src/components/capture-photo.templates.js"
+    );
+    document.querySelector("#test").innerHTML = capturePhoto(
+      item,
+      "Synthetic photo",
+    );
+    await import("/src/components/capture-photo.js");
+  });
+  await expect.poll(() => attempts).toBe(1);
+  await page.evaluate(() => {
+    const photo = document.querySelector("capture-photo");
+    photo._attempts = 6;
+    window.clearTimeout(photo._timer);
+  });
+  // Let the shared thumbnail-request throttle expire before signalling recovery.
+  await page.waitForTimeout(4100);
+  available = true;
+  await page.evaluate(() => window.dispatchEvent(new Event("connectionretry")));
+  await expect
+    .poll(() =>
+      page.locator("capture-photo img").evaluate((img) => img.naturalWidth),
+    )
+    .toBe(1);
+  expect(attempts).toBe(2);
+});
+
+test("single-issue grid preserves capture order and existing images through updates", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { renderCaptureGrid } = await import(
+      "/src/components/capture-grid.js"
+    );
+    const grid = document.querySelector("#test");
+    const photo = (id) => ({
+      id,
+      kind: "photo",
+      dataUrl:
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=",
+      analysis: { status: "queued" },
+    });
+    const photos = [photo("first"), photo("second")];
+    renderCaptureGrid(grid, photos, null, false);
+    const image = grid.querySelector("img");
+    const band = grid.querySelector(".capture-scanner__band");
+    photos[0].analysis.status = "analyzing";
+    photos.push(photo("third"));
+    renderCaptureGrid(grid, photos, null, false);
+    const unchanged =
+      image === grid.querySelector("img") &&
+      band === grid.querySelector(".capture-scanner__band");
+    photos[0].analysis.status = "analyzed";
+    renderCaptureGrid(grid, photos, null, false);
+    return {
+      unchanged,
+      order: [...grid.querySelectorAll("[data-del]")].map((button) =>
+        button.getAttribute("data-del"),
+      ),
+      scanners: grid.querySelectorAll(".capture-scanner").length,
+    };
+  });
+  expect(result).toEqual({
+    unchanged: true,
+    order: ["first", "second", "third"],
+    scanners: 2,
+  });
 });

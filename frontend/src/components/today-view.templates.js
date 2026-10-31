@@ -1,3 +1,4 @@
+import { connectionAvailable } from "../services/evidence-recovery.js";
 import { loadError } from "./load-error.js";
 import { duplicateCountLabel } from "./duplicate-issue.templates.js";
 /*
@@ -522,6 +523,7 @@ export function summaryBlock({ outsideRadius, label }) {
  *   homeFilter: string,
  *   siteName: string,
  *   siteAddress: string,
+ *   finalizationPending?: boolean,
  *   pendingSessionId: string,
  *   hasPendingSession: boolean,
  *   recentCheckTime: string,
@@ -542,6 +544,7 @@ export function summaryBlock({ outsideRadius, label }) {
  * }} vm
  */
 export function homeResults({
+  finalizationPending = false,
   homeFilter,
   siteName,
   siteAddress,
@@ -587,6 +590,9 @@ export function homeResults({
   };
   return html`
     <div class="home-results">
+      ${finalizationPending && connectionAvailable()
+        ? `<p role="status">${escapeHtml(t("notice.finishingCheck"))}</p>`
+        : ""}
       ${pendingClearCheck
         ? clearCheckTray(pendingClearCheck, true)
         : showActiveClearTray && activeClearCheck

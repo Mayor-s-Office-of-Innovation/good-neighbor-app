@@ -11,10 +11,11 @@ resource "aws_sqs_queue" "analysis" {
 }
 
 resource "aws_sqs_queue" "analysis_dlq" {
-  name                      = "${local.name_prefix}-analysis-dlq"
-  kms_master_key_id         = aws_kms_key.app.arn
-  message_retention_seconds = 1209600
-  tags                      = var.tags
+  name                       = "${local.name_prefix}-analysis-dlq"
+  visibility_timeout_seconds = 1800
+  kms_master_key_id          = aws_kms_key.app.arn
+  message_retention_seconds  = 1209600
+  tags                       = var.tags
 }
 
 resource "aws_sqs_queue_redrive_policy" "analysis" {
@@ -67,10 +68,24 @@ resource "aws_lambda_event_source_mapping" "analysis" {
   batch_size                         = 1
   maximum_batching_window_in_seconds = 0
   function_response_types            = ["ReportBatchItemFailures"]
-  # Exactly one analysis per invocation; reservation matches this sole trigger.
+  # One analysis per invocation; reserve two of the 500 slots for exhaustion.
   # This is a ceiling, not provisioned/warm SQS polling capacity.
   scaling_config {
-    maximum_concurrency = 500
+    maximum_concurrency = 498
+  }
+  tags       = var.tags
+  depends_on = [aws_iam_role_policy.worker]
+}
+
+# Consume exhausted deliveries only to publish the durable terminal marker.
+# The worker recognizes this source and never calls the analyzer for it.
+resource "aws_lambda_event_source_mapping" "analysis_exhaustion" {
+  event_source_arn        = aws_sqs_queue.analysis_dlq.arn
+  function_name           = aws_lambda_function.analysis.arn
+  batch_size              = 1
+  function_response_types = ["ReportBatchItemFailures"]
+  scaling_config {
+    maximum_concurrency = 2
   }
   tags       = var.tags
   depends_on = [aws_iam_role_policy.worker]

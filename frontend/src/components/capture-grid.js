@@ -3,8 +3,13 @@ import { analysisScanner } from "./capture-analysis.templates.js";
 import { patchHtml } from "../lib/patch-html.js";
 
 const grids = new WeakMap();
-/** Keep the roll's images mounted across progress updates. @param {Element} grid @param {any[]} photos @param {any} description */
-export function renderCaptureGrid(grid, photos, description) {
+/** Keep the roll's images mounted across progress updates. @param {Element} grid @param {any[]} photos @param {any} description @param {boolean} [newestFirst] */
+export function renderCaptureGrid(
+  grid,
+  photos,
+  description,
+  newestFirst = true,
+) {
   let entries = grids.get(grid);
   if (!entries) {
     entries = new Map();
@@ -23,9 +28,9 @@ export function renderCaptureGrid(grid, photos, description) {
   } else text?.remove();
   const wanted = new Set();
   let cursor = description ? text.nextElementSibling : grid.firstElementChild;
-  for (const [item, index] of [...photos.entries()]
-    .reverse()
-    .map(([i, p]) => [p, i])) {
+  const ordered = [...photos.entries()];
+  if (newestFirst) ordered.reverse();
+  for (const [index, item] of ordered) {
     wanted.add(item.id);
     let entry = entries.get(item.id);
     if (!entry) {

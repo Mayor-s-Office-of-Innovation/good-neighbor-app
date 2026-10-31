@@ -351,6 +351,50 @@ describe("several finished checks", () => {
   });
 });
 
+it("upgrades legacy failures to automatic recovery without resetting exhausted budgets", async () => {
+  const { saveCapturePhoto } = await import("../db.js");
+  vi.mocked(saveCapturePhoto).mockResolvedValueOnce(true);
+  const { clearCheck, loadDraft } = await import("./check-session.js");
+  const { getDraft } = await import("../db.js");
+  clearCheck();
+  vi.mocked(getDraft).mockResolvedValueOnce(
+    /** @type {any} */ ({
+      id: "recovery-migration",
+      siteId: "site-1",
+      flowType: "perimeter",
+      status: "in-progress",
+      items: [
+        {
+          id: "legacy-failure",
+          kind: "photo",
+          dataUrl: "data:image/jpeg;base64,AA",
+          analysis: { status: "failed", failure: { leg: "upload" } },
+        },
+        {
+          id: "exhausted",
+          kind: "photo",
+          analysis: {
+            status: "failed",
+            recovery: { stage: "upload", state: "manual", attempts: 3 },
+          },
+        },
+      ],
+    }),
+  );
+  const check = await loadDraft("perimeter");
+  expect(check.items[0].analysis.recovery).toMatchObject({
+    stage: "upload",
+    state: "scheduled",
+    attempts: 0,
+  });
+  expect(check.items[1].analysis.recovery).toEqual({
+    stage: "upload",
+    state: "manual",
+    attempts: 3,
+  });
+  clearCheck();
+});
+
 describe("capture admission across session replacement", () => {
   beforeEach(async () => {
     const session = await import("./check-session.js");

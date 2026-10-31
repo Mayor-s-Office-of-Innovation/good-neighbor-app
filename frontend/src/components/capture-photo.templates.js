@@ -7,7 +7,9 @@ export function capturePhoto(item, alt) {
     data-media-key="${escapeAttr(item.media.key)}"
     data-check-id="${escapeAttr(item.checkId)}"
     data-artifact-id="${escapeAttr(
-      item.upload?.artifactId || item.analysis?.artifactId || "",
+      item.analysis?.artifactId ||
+        (item.upload?.status === "uploaded" ? item.upload.artifactId : "") ||
+        "",
     )}"
   >
     <img hidden alt="${escapeAttr(alt)}" decoding="async" />
