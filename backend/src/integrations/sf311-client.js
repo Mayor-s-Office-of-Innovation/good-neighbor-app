@@ -12,7 +12,16 @@ const SENDING_AGENCY = "76";
 // these tickets are eligible for closure (HUB return code 26 rejects updates
 // from any agency other than the SR's responsible agency).
 export const GOOD_NEIGHBOR_AGENCY = SOURCE_AGENCY;
-const SF311_REQUEST_TIMEOUT_MS = 10_000;
+/**
+ * Per-operation HUB timeouts. Reads (agency lookup, latest updates) are safe
+ * to abandon and repeat, so they stay short. Writes (CreateSR, UpdateSR) are
+ * sent at most once: a timeout after sending leaves the outcome uncertain and
+ * costs a person to resolve, and most slow answers are a busy HUB rather than
+ * a dead one, so writes get a long budget. The 311 worker runs 300 s; a
+ * three-photo filing (lookup + CreateSR + three attachments) stays under it.
+ * @type {Readonly<{ read: number, write: number }>}
+ */
+export const SF311_TIMEOUTS = Object.freeze({ read: 10_000, write: 60_000 });
 
 /** @type {SecretsManagerClient | undefined} */
 let secretsClient;
@@ -297,18 +306,14 @@ export class Sf311Error extends Error {
 }
 
 /**
+ * A plain timer-backed signal (not `AbortSignal.timeout`) so the timer is
+ * cleared when the response arrives and fake timers can drive it in tests.
+ * @param {number} timeoutMs
  * @returns {{ signal: unknown, cancel: () => void }}
  */
-function sf311TimeoutSignal() {
-  const abortSignal = globalThis.AbortSignal;
-  if (typeof abortSignal?.timeout === "function") {
-    return {
-      signal: abortSignal.timeout(SF311_REQUEST_TIMEOUT_MS),
-      cancel: () => {},
-    };
-  }
+function sf311TimeoutSignal(timeoutMs) {
   const controller = new globalThis.AbortController();
-  const timer = setTimeout(() => controller.abort(), SF311_REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   return {
     signal: controller.signal,
     cancel: () => clearTimeout(timer),
@@ -330,9 +335,16 @@ function isAbortError(error) {
  * @param {object} options
  * @param {import("../config.js").AppConfig} [options.config]
  * @param {typeof fetch} [options.fetchImpl]
+ * @param {Partial<typeof SF311_TIMEOUTS>} [options.timeouts] Override a
+ *   budget for a caller with less time than the worker (see city-help-note).
  * @returns {{ lookupResponsibleAgency: (serviceCode: string) => Promise<string>, createServiceRequest: (payload: Record<string, string>) => Promise<{ srNum: string, response: unknown }>, updateServiceRequest: (payload: Record<string, string>) => Promise<{ updateId: string | null, response: unknown }>, getLatestUpdatesBySourceAgency: (agencyId?: string) => Promise<unknown> }}
  */
-export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
+export function createSf311Client({
+  config = getConfig(),
+  fetchImpl = fetch,
+  timeouts = {},
+}) {
+  const budget = { ...SF311_TIMEOUTS, ...timeouts };
   const createSrUrl = config.sf311CreateSrUrl;
   const updateSrUrl = config.sf311UpdateSrUrl;
   const agencyLookupUrl = config.sf311AgencyLookupUrl;
@@ -356,12 +368,13 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
    * @param {string} url
    * @param {Record<string, unknown>} init
    * @param {string} operation
-   * @param {unknown} [request]
+   * @param {unknown} request
+   * @param {keyof typeof SF311_TIMEOUTS} kind
    * @returns {Promise<Response>}
    */
-  const fetchSf311 = async (url, init, operation, request) => {
+  const fetchSf311 = async (url, init, operation, request, kind) => {
     await assertSilent311Allowed();
-    const timeout = sf311TimeoutSignal();
+    const timeout = sf311TimeoutSignal(budget[kind]);
     try {
       const requestInit = /** @type {Parameters<typeof fetch>[1]} */ ({
         ...init,
@@ -406,6 +419,7 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
         },
         "latest updates",
         { agencyId },
+        "read",
       );
       const body = await readJson(res);
       const data =
@@ -446,6 +460,7 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
         },
         "agency lookup",
         { serviceCode },
+        "read",
       );
       const body = await readJson(res);
       if (!res.ok) {
@@ -485,6 +500,7 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
         },
         "CreateSR",
         payload,
+        "write",
       );
       const body = await readJson(res);
       const data =
@@ -543,6 +559,7 @@ export function createSf311Client({ config = getConfig(), fetchImpl = fetch }) {
         },
         "UpdateSR",
         payload,
+        "write",
       );
       const body = await readJson(res);
       const data =

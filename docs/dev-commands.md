@@ -260,6 +260,16 @@ To run the fake endpoint separately:
 npm run local:sf311 -w backend
 ```
 
+To rehearse a slow HUB, set `LOCAL_SF311_DELAY_MS` and every HUB route (not
+`/health` or `/requests`) waits that long before answering. The client gives
+reads 10 s and writes 60 s (`SF311_TIMEOUTS` in
+`backend/src/integrations/sf311-client.js`), so `LOCAL_SF311_DELAY_MS=15000`
+times out the status feed while filings still succeed:
+
+```bash
+LOCAL_SF311_DELAY_MS=15000 npm run local:sf311 -w backend
+```
+
 Then start the local API with these env overrides:
 
 ```bash

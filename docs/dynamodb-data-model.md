@@ -374,8 +374,9 @@ number.
   `failed`. A failed closure never blocks task completion. See
   [guidance workflow](./architecture.md#guidance-workflow-rule-driven-tasks). Background
   processing checkpoints integration results in `SF311_LOCK#` and the job, then
-  merges them into the latest task. Closure retries reconcile City state rather
-  than assuming a lost response means the close failed.
+  merges them into the latest task. Closure retries resend `UpdateSR` for any
+  closure not recorded as `closed` (repeating a closure is safe per the 311
+  team); they do not read the latest-updates feed.
 
 ### One query pattern reads a whole check
 
