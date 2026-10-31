@@ -1,3 +1,7 @@
+import {
+  getSystemControls,
+  putSystemControls,
+} from "../handlers/system-controls.js";
 import { listPendingGuidance } from "../handlers/pending-guidance.js";
 import {
   getSystemStatus,
@@ -179,6 +183,7 @@ import {
   getSitePerimeter,
   listSiteTerms,
   putSitePerimeter,
+  putSiteDeliberate311,
   replaceSiteComplianceManagers,
   unassignSiteUser,
 } from "../handlers/admin-site-config.js";
@@ -316,6 +321,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   // served by the separate intake Lambda (lambda/intake.js) so a slow PostHog
   // forward can never hold this function's reserved executions.
   "GET /admin/v1/providers": listProviders,
+  "GET /admin/v1/system-controls": getSystemControls,
+  "PUT /admin/v1/system-controls": putSystemControls,
   "GET /admin/v1/system-status": getSystemStatus,
   "GET /admin/v1/system-status/{siteId}/{kind}": getStatusEntries,
   "GET /admin/v1/system-status/{siteId}/media/{checkId}/{artifactId}":
@@ -373,6 +380,7 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "POST /admin/v1/sites/{siteId}/letter:resend": resendSiteLetter,
   "GET /admin/v1/sites/{siteId}/perimeter": getSitePerimeter,
   "PUT /admin/v1/sites/{siteId}/perimeter": putSitePerimeter,
+  "PUT /admin/v1/sites/{siteId}/deliberate-311": putSiteDeliberate311,
   "GET /admin/v1/sites/{siteId}/manager-memberships": listManagerMemberships,
   "POST /admin/v1/sites/{siteId}/manager-memberships": createManagerMembership,
   "PATCH /admin/v1/sites/{siteId}/manager-memberships/{membershipId}":

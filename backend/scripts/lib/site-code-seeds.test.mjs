@@ -74,6 +74,27 @@ describe("seedSiteCodes", () => {
     }
   });
 
+  it("seeds a City Hall fallback point without overwriting local location edits", async () => {
+    const send = vi.fn(async () => ({}));
+    await seedSiteCodes({ send }, "gnp-test-app");
+    const site = send.mock.calls
+      .map(([command]) => command.input)
+      .find(
+        (input) =>
+          input.Key?.pk === "SITE#city-hall" && input.Key?.sk === "#META",
+      );
+    expect(site.ExpressionAttributeValues[":location"]).toEqual({
+      latitude: 37.7793,
+      longitude: -122.4193,
+    });
+    expect(site.UpdateExpression).toContain(
+      "#location = if_not_exists(#location, :location)",
+    );
+    expect(site.UpdateExpression).toContain(
+      "#address = if_not_exists(#address, :address)",
+    );
+  });
+
   it("seeds 640 Jones with its Census-geocoded address for local proximity checks", async () => {
     const send = vi.fn(async () => ({}));
     await seedSiteCodes({ send }, "gnp-test-app");

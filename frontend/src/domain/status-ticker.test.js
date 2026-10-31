@@ -293,3 +293,27 @@ it("prioritizes clarification over age and duplicate metadata", () => {
     icon: "circle-exclamation",
   });
 });
+
+it("labels only an open simulated filing and preserves closure/progress precedence", () => {
+  const task = {
+    ...filed,
+    appActionResults: [
+      {
+        code: "create_311_ticket",
+        payload: {
+          tickets: [{ srNum: "SIM-test", deliveryMode: "simulated" }],
+        },
+      },
+    ],
+  };
+  expect(ticker(task).key).toBe("simulatedFiled");
+  expect(ticker({ ...task, ticketStatus: "Closed" }).key).toBe("cityClosed");
+  expect(
+    ticker({
+      ...task,
+      inProgressActionKind: "311_filed",
+      appActionStatus: "queued",
+    }).key,
+  ).toBe("filing");
+  expect(ticker(filed).key).toBe("filed");
+});

@@ -1361,12 +1361,16 @@ describe("completeTaskWithAppActions with async 311 filing", () => {
       siteId: "site-1",
       taskId: "task-1",
       task: existing,
+      filingDecision: expect.objectContaining({
+        mode: "production",
+        acceptedAt: now.toISOString(),
+      }),
       actorId: "user-1",
       duplicateChecks: undefined,
       now,
     });
-    // Only the task read: no claim, no HUB call, no final write.
-    expect(send).toHaveBeenCalledTimes(1);
+    // Read the task and Site flag; no claim, HUB call or final write.
+    expect(send).toHaveBeenCalledTimes(2);
   });
 
   it("keeps the in-request path while 311 submission is off", async () => {

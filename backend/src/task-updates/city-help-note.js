@@ -1,3 +1,8 @@
+import {
+  withSilent311Guard,
+  isSilent311Ticket,
+  Silent311Suppressed,
+} from "../domain/silent-311.js";
 import { openFiledTicketNumbers } from "../domain/open-filed-tickets.js";
 import { reportSf311Failure } from "../integrations/sf311-observability.js";
 import { logServerError } from "../lib/log-server-error.js";
@@ -125,7 +130,87 @@ export function cityHelpNoteExists(body, payload) {
  * @returns {Promise<boolean>}
  */
 export async function deliverCityHelpNote(tableName, siteId, update) {
-  if (!update.cityNotePayload || update.cityNoteStatus === "sent") return true;
+  if (
+    !update.cityNotePayload ||
+    ["sent", "suppressed"].includes(update.cityNoteStatus) ||
+    String(update.cityNotePayload.SRnum || "").startsWith("SIM-")
+  )
+    return true;
+  if (process.env.GNP_311_SUBMISSION_ENABLED !== "true") return false;
+  const { Item: task } = await ddb.send(
+    new GetCommand({
+      TableName: tableName,
+      Key: { pk: `SITE#${siteId}`, sk: `TASK#${update.taskId}` },
+      ConsistentRead: true,
+    }),
+  );
+  if (!task) return false;
+  if (!isSilent311Ticket(task, String(update.cityNotePayload.SRnum || "")))
+    return deliverCityHelpNoteInner(tableName, siteId, update);
+  try {
+    return await withSilent311Guard(String(task.createdAt || ""), () =>
+      deliverCityHelpNoteInner(tableName, siteId, update),
+    );
+  } catch (error) {
+    if (error instanceof Silent311Suppressed)
+      return suppressCityHelpNote(tableName, siteId, update);
+    throw error;
+  }
+}
+
+/** Suppress only unclaimed work or an expired lease we observed; never steal delivery.
+ * @param {string} tableName @param {string} siteId @param {Record<string, any>} update
+ */
+async function suppressCityHelpNote(tableName, siteId, update) {
+  const lease = update.cityNoteLeaseExpiresAt;
+  const now = new Date().toISOString();
+  if (lease && !(Date.parse(lease) <= Date.parse(now))) return false;
+  try {
+    await ddb.send(
+      new UpdateCommand({
+        TableName: tableName,
+        Key: taskUpdateKey(
+          siteId,
+          update.taskId,
+          update.occurredAt,
+          update.updateId,
+        ),
+        UpdateExpression:
+          "SET cityNoteStatus = :suppressed REMOVE cityNoteLeaseExpiresAt",
+        ConditionExpression:
+          "cityNoteStatus = :prior AND " +
+          (lease
+            ? "cityNoteLeaseExpiresAt = :lease AND cityNoteLeaseExpiresAt <= :now"
+            : "attribute_not_exists(cityNoteLeaseExpiresAt)"),
+        ExpressionAttributeValues: {
+          ":suppressed": "suppressed",
+          ":prior": update.cityNoteStatus,
+          ...(lease ? { ":lease": lease, ":now": now } : {}),
+        },
+      }),
+    );
+    update.cityNoteStatus = "suppressed";
+    delete update.cityNoteLeaseExpiresAt;
+    return true;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.name === "ConditionalCheckFailedException"
+    )
+      return false;
+    throw error;
+  }
+}
+
+/** @param {string} tableName @param {string} siteId @param {Record<string, any>} update */
+async function deliverCityHelpNoteInner(tableName, siteId, update) {
+  if (
+    !update.cityNotePayload ||
+    ["sent", "suppressed"].includes(update.cityNoteStatus)
+  )
+    return true;
+  if (String(update.cityNotePayload.SRnum || "").startsWith("SIM-"))
+    return true;
   if (process.env.GNP_311_SUBMISSION_ENABLED !== "true") return false;
   const Key = taskUpdateKey(
     siteId,
@@ -162,6 +247,7 @@ export async function deliverCityHelpNote(tableName, siteId, update) {
       }),
     );
     update.cityNoteStatus = status;
+    delete update.cityNoteLeaseExpiresAt;
   };
   let client;
   let stage = "configuration";
@@ -222,6 +308,10 @@ export async function deliverCityHelpNote(tableName, siteId, update) {
     await state("sent");
     return true;
   } catch (error) {
+    if (error instanceof Silent311Suppressed) {
+      await state("suppressed");
+      return true;
+    }
     logCityNoteFailure(stage, error, update);
     // Only explicit HUB validation rejections prove the note was not accepted.
     const rejected =

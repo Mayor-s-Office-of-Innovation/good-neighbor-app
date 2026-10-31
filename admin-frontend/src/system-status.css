@@ -160,3 +160,27 @@
     opacity: 0.5;
   }
 }
+
+.status-tabs {
+  margin-block: 1rem;
+}
+.status-tabs button {
+  border-radius: 0;
+  background: transparent;
+  border: 0;
+  border-block-end: 3px solid transparent;
+  padding: 10px 14px;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+.status-tabs button[aria-selected="true"] {
+  border-block-end-color: var(--ink);
+  color: var(--text);
+}
+#status-panel-control wa-select {
+  display: block;
+  max-width: 24rem;
+  margin-block: 1.5rem;
+}

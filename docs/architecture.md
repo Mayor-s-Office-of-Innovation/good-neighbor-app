@@ -307,6 +307,27 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   Explicit user-confirmed filing and City-help-note actions retain their existing
   confirmation semantics. The clarification UI shows “Updating issue” only while
   saving the answer, then renders the returned issue before refreshing metadata.
+- **Site-controlled deliberate 311 delivery:** `SITE#<id>/#META` stores
+  `deliberate311ProductionEnabled`. New and imported Sites explicitly default to
+  `true`; missing values also mean enabled. Only Boolean `false` simulates a
+  user-launched filing. Automatic `task_created` notifications are unaffected.
+  Acceptance consistently reads the setting and transactionally checks it while
+  persisting `deliberate311DeliveryMode` and `deliberate311AcceptedAt` on the task;
+  async filing jobs also carry `deliveryMode`. Retries retain that decision.
+  Simulated requests bypass classifiers, City APIs and media publication, and
+  retain a stable `SIM-` reference, submission timestamp and five-minute closure
+  timestamp in their ticket result. Both status endpoints derive Open/Closed
+  from that clock, returning closure reason `1` (Resolved) at the next normal
+  refresh. No scheduled job or extra client polling is needed. Existing task
+  resolution semantics are preserved. The open-ticket ticker reads “Request
+  filed (simulated)”; all other field-app copy and behavior remain unchanged.
+  City notes and automatic closure never send synthetic references to HUB.
+  City-escalation analytics exclude simulated filings; task activity remains
+  visible and raw lake records retain provenance.
+  Supervisors change the setting through `PUT /admin/v1/sites/{siteId}/deliberate-311`
+  with optimistic version checking and an atomic audit event. Flag changes
+  affect subsequent accepted filings only. The global submission kill switch
+  remains authoritative for all integration processing.
 - Endpoints: `POST /v1/assessments:evaluate`, `GET /v1/assessments/{id}/guidance`,
   `POST /v1/assessments/{id}/conditions/{id}/answers`, `POST /v1/tasks/{id}/complete`,
   `GET /v1/tasks/{id}/details`, `PATCH /v1/tasks/{id}/action`,

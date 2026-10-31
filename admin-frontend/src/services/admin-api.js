@@ -94,6 +94,12 @@ async function parseAdminResponse(path, init) {
 }
 
 export const adminApi = {
+  getSystemControls: () => adminFetch("/admin/v1/system-controls"),
+  updateSystemControls: (body) =>
+    adminFetch("/admin/v1/system-controls", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
   getSystemStatus: () => adminFetch("/admin/v1/system-status"),
   getStatusEntries: (site, kind, cursor) =>
     adminFetch(
@@ -340,6 +346,11 @@ export const adminApi = {
   updateSite: (siteId, values) =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}`, {
       method: "PATCH",
+      body: JSON.stringify(values),
+    }),
+  updateSiteDeliberate311: (siteId, values) =>
+    adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/deliberate-311`, {
+      method: "PUT",
       body: JSON.stringify(values),
     }),
   reassignSite: (siteId, providerId, leadProgramId, options = {}) =>

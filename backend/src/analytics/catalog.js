@@ -213,7 +213,7 @@ ORDER BY max(gradeScore) DESC NULLS LAST`,
     sql: `SELECT t.siteId,
        any_value(s.name) AS site,
        count(*) FILTER (t.taskStatus = 'open') AS open_tasks,
-       count(*) FILTER (t.taskStatus = 'open' AND t.type = 'city_escalation') AS open_escalations,
+       count(*) FILTER (t.taskStatus = 'open' AND t.type = 'city_escalation' AND coalesce(t.raw->>'$.deliberate311DeliveryMode', 'production') <> 'simulated') AS open_escalations,
        count(*) FILTER (t.taskStatus = 'completed') AS completed
 FROM tasks t
 LEFT JOIN sites s ON s.siteId = t.siteId
@@ -240,6 +240,7 @@ FROM tasks t
 LEFT JOIN sites s ON s.siteId = t.siteId
 WHERE t.taskStatus = 'open'
   AND t.type = 'city_escalation'
+  AND coalesce(t.raw->>'$.deliberate311DeliveryMode', 'production') <> 'simulated'
 ORDER BY t.severity DESC NULLS LAST, t.createdAt
 LIMIT 200`,
   },

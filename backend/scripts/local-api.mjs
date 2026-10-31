@@ -1,3 +1,7 @@
+import {
+  getSystemControls,
+  putSystemControls,
+} from "../src/handlers/system-controls.js";
 import { listPendingGuidance } from "../src/handlers/pending-guidance.js";
 import {
   listPeople,
@@ -187,6 +191,7 @@ import {
   getSitePerimeter,
   listSiteTerms,
   putSitePerimeter,
+  putSiteDeliberate311,
   replaceSiteComplianceManagers,
   unassignSiteUser,
 } from "../src/handlers/admin-site-config.js";
@@ -419,6 +424,8 @@ const routes = [
   route("POST", "/v1/feedback", feedbackHandler),
   route("GET", "/admin/v1/providers", listProviders),
   route("GET", "/admin/v1/session", getAdminSession),
+  route("GET", "/admin/v1/system-controls", getSystemControls),
+  route("PUT", "/admin/v1/system-controls", putSystemControls),
   route("GET", "/admin/v1/system-status", getSystemStatus),
   route("GET", "/admin/v1/system-status/{siteId}/{kind}", getStatusEntries),
   route(
@@ -504,6 +511,7 @@ const routes = [
   route("POST", "/admin/v1/sites/{siteId}/letter:resend", resendSiteLetter),
   route("GET", "/admin/v1/sites/{siteId}/perimeter", getSitePerimeter),
   route("PUT", "/admin/v1/sites/{siteId}/perimeter", putSitePerimeter),
+  route("PUT", "/admin/v1/sites/{siteId}/deliberate-311", putSiteDeliberate311),
   route(
     "GET",
     "/admin/v1/sites/{siteId}/manager-memberships",

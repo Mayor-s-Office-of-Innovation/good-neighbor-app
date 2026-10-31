@@ -316,3 +316,25 @@ for (const [status, message, succeeds] of [
     }
   });
 }
+
+test("App settings loads only metadata and preserves cached Site assignments", async () => {
+  const { api, calls } = siteApi();
+  const { app, location } = fixture(api);
+  app.state.capabilities.createEntities = true;
+  await app.openSite("s", false, false);
+  app.state.assignedComplianceManagers = [{ managerId: "synthetic-manager" }];
+  location.search = "?section=settings";
+  await app.openSite("s", false, false);
+  assert.deepEqual(calls, ["details", "listPeople", "settings"]);
+  assert.equal(
+    app.state.assignedComplianceManagers[0].managerId,
+    "synthetic-manager",
+  );
+  location.search = "";
+  await app.openSite("s", false, false);
+  assert.equal(calls.length, 3);
+  assert.equal(
+    app.state.assignedComplianceManagers[0].managerId,
+    "synthetic-manager",
+  );
+});

@@ -3,10 +3,19 @@ import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 const mocks = vi.hoisted(() => ({
   send: vi.fn(),
+  readTask: vi.fn(),
   update: vi.fn(),
   latest: vi.fn(),
 }));
-vi.mock("../db.js", () => ({ ddb: { send: mocks.send } }));
+vi.mock("../db.js", () => ({
+  ddb: {
+    send: (/** @type {any} */ command) =>
+      command instanceof GetCommand &&
+      command.input.Key?.sk?.startsWith("TASK#")
+        ? mocks.readTask(command)
+        : mocks.send(command),
+  },
+}));
 vi.mock("../integrations/sf311-client.js", async (importOriginal) => ({
   ...(await importOriginal()),
   createSf311Client: () => ({
@@ -40,6 +49,7 @@ const update = () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.send.mockReset().mockResolvedValue({});
+  mocks.readTask.mockReset().mockResolvedValue({ Item: { appActions: [] } });
   mocks.update.mockReset().mockResolvedValue({ updateId: "city1" });
   mocks.latest.mockReset();
   vi.stubEnv("GNP_311_SUBMISSION_ENABLED", "true");
@@ -281,4 +291,170 @@ it("targets an open ticket after a partial closure and none after all close", ()
     payload: { closures: [{ srNum: "456", status: "closed" }] },
   });
   expect(cityHelpTicket(task)).toBe("");
+});
+
+it("never sends or reconciles a synthetic reference, even on a legacy delivery record", async () => {
+  expect(
+    await deliverCityHelpNote("table", "site", {
+      ...update(),
+      cityNotePayload: { ...payload, SRnum: "SIM-synthetic" },
+    }),
+  ).toBe(true);
+  expect(mocks.send).not.toHaveBeenCalled();
+  expect(mocks.update).not.toHaveBeenCalled();
+  expect(mocks.latest).not.toHaveBeenCalled();
+});
+
+it("does not send a note for a silent ticket while globally disabled", async () => {
+  mocks.readTask.mockResolvedValue({
+    Item: {
+      createdAt: "2026-10-29T12:00:00Z",
+      appActions: [
+        {
+          code: "create_311_ticket",
+          payload: { executionTrigger: "task_created" },
+        },
+      ],
+    },
+  });
+  mocks.send.mockResolvedValue({ Item: { enabled: false } });
+  expect(await deliverCityHelpNote("table", "site", update())).toBe(true);
+  expect(mocks.latest).not.toHaveBeenCalled();
+  expect(mocks.update).not.toHaveBeenCalled();
+});
+
+it("still sends notes for a manual ticket on a task with an older silent workflow", async () => {
+  mocks.readTask.mockResolvedValue({
+    Item: {
+      appActions: [
+        {
+          code: "create_311_ticket",
+          payload: { executionTrigger: "task_created" },
+        },
+      ],
+      appActionResults: [
+        {
+          code: "create_311_ticket",
+          payload: {
+            executionTrigger: "user_confirmed",
+            tickets: [{ srNum: "123" }],
+          },
+        },
+      ],
+    },
+  });
+  mocks.send.mockResolvedValue({ Item: { enabled: false } });
+  expect(await deliverCityHelpNote("table", "site", update())).toBe(true);
+  expect(mocks.update).toHaveBeenCalledWith(payload);
+  expect(
+    mocks.send.mock.calls.some(
+      ([command]) =>
+        command instanceof GetCommand &&
+        command.input.Key?.pk === "SYSTEM#CONTROLS",
+    ),
+  ).toBe(false);
+});
+
+function silentTask() {
+  mocks.readTask.mockResolvedValue({
+    Item: {
+      createdAt: "2026-10-29T12:00:00Z",
+      appActions: [
+        {
+          code: "create_311_ticket",
+          payload: { executionTrigger: "task_created" },
+        },
+      ],
+    },
+  });
+}
+
+it("durably suppresses pending silent notes and completes subsequent calls without reads", async () => {
+  silentTask();
+  mocks.send.mockResolvedValue({ Item: { enabled: false } });
+  const event = update();
+  expect(await deliverCityHelpNote("table", "site", event)).toBe(true);
+  expect(event.cityNoteStatus).toBe("suppressed");
+  const write = mocks.send.mock.calls.filter(
+    ([command]) => command instanceof UpdateCommand,
+  )[0][0].input;
+  expect(write.ConditionExpression).toBe(
+    "cityNoteStatus = :prior AND attribute_not_exists(cityNoteLeaseExpiresAt)",
+  );
+  expect(write.ExpressionAttributeValues).toEqual({
+    ":suppressed": "suppressed",
+    ":prior": "pending",
+  });
+  mocks.send.mockClear();
+  mocks.readTask.mockClear();
+  expect(await deliverCityHelpNote("table", "site", event)).toBe(true);
+  expect(mocks.send).not.toHaveBeenCalled();
+  expect(mocks.readTask).not.toHaveBeenCalled();
+  expect(mocks.update).not.toHaveBeenCalled();
+});
+
+it("does not overwrite another active delivery or a concurrent state change", async () => {
+  silentTask();
+  mocks.send.mockResolvedValue({ Item: { enabled: false } });
+  expect(
+    await deliverCityHelpNote("table", "site", {
+      ...update(),
+      cityNoteStatus: "sending",
+      cityNoteLeaseExpiresAt: new Date(Date.now() + 60000).toISOString(),
+    }),
+  ).toBe(false);
+  expect(
+    mocks.send.mock.calls.some(([command]) => command instanceof UpdateCommand),
+  ).toBe(false);
+  mocks.send.mockImplementation(async (command) => {
+    if (command instanceof UpdateCommand)
+      throw Object.assign(new Error("race"), {
+        name: "ConditionalCheckFailedException",
+      });
+    return { Item: { enabled: false } };
+  });
+  const event = update();
+  expect(await deliverCityHelpNote("table", "site", event)).toBe(false);
+  expect(event.cityNoteStatus).toBe("pending");
+  expect(mocks.update).not.toHaveBeenCalled();
+});
+
+it("suppresses an expired attempt without reconciling or claiming it was sent", async () => {
+  silentTask();
+  mocks.send.mockResolvedValue({ Item: { enabled: false } });
+  const event = {
+    ...update(),
+    cityNoteStatus: "unknown",
+    cityNoteLeaseExpiresAt: "2020-01-01T00:00:00.000Z",
+  };
+  expect(await deliverCityHelpNote("table", "site", event)).toBe(true);
+  expect(event.cityNoteStatus).toBe("suppressed");
+  expect(event.cityNoteLeaseExpiresAt).toBeUndefined();
+  const write = mocks.send.mock.calls.filter(
+    ([command]) => command instanceof UpdateCommand,
+  )[0][0].input;
+  expect(write.ConditionExpression).toContain(
+    "cityNoteLeaseExpiresAt = :lease AND cityNoteLeaseExpiresAt <= :now",
+  );
+  expect(mocks.latest).not.toHaveBeenCalled();
+});
+
+it("checkpoints suppression after claiming with the owned lease", async () => {
+  silentTask();
+  const { Silent311Suppressed } = await import("../domain/silent-311.js");
+  mocks.update.mockRejectedValue(new Silent311Suppressed());
+  const event = update();
+  expect(await deliverCityHelpNote("table", "site", event)).toBe(true);
+  expect(event.cityNoteStatus).toBe("suppressed");
+  const writes = mocks.send.mock.calls
+    .filter(([command]) => command instanceof UpdateCommand)
+    .map(([command]) => command.input);
+  expect(writes).toHaveLength(2);
+  expect(writes[1].ExpressionAttributeValues[":status"]).toBe("suppressed");
+  expect(writes[1].ExpressionAttributeValues[":lease"]).toBe(
+    writes[0].ExpressionAttributeValues[":lease"],
+  );
+  expect(writes[1].ConditionExpression).toBe(
+    "cityNoteStatus = :sending AND cityNoteLeaseExpiresAt = :lease",
+  );
 });
