@@ -105,6 +105,15 @@ function handoffFailureReason(err) {
   return "storage";
 }
 
+/** Avoid invalidating styles when viewport values have not changed.
+ * @param {CSSStyleDeclaration} style @param {string} name @param {string} value
+ */
+function syncViewportProperty(style, name, value) {
+  if (style.getPropertyValue(name) === value) return;
+  if (value) style.setProperty(name, value);
+  else style.removeProperty(name);
+}
+
 export class AppRoot extends HTMLElement {
   /** @type {string | null} the route the view last swapped to */
   _swappedRoute = null;
@@ -287,22 +296,25 @@ export class AppRoot extends HTMLElement {
   _syncKeyboardViewport() {
     const active = deepActiveElement(document);
     const editing = isEditable(active);
-    document.documentElement.style.setProperty(
-      "--editable-viewport-height",
-      `${window.visualViewport?.height || window.innerHeight}px`,
-    );
+    const root = document.documentElement;
+    const wasOpen = root.hasAttribute("data-keyboard-open");
     const box = keyboardViewport(
       window.visualViewport,
       window.innerHeight,
-      editing || document.documentElement.hasAttribute("data-keyboard-open"),
+      editing || wasOpen,
     );
-    document.documentElement.toggleAttribute(
-      "data-keyboard-open",
-      Boolean(box),
+    if (wasOpen !== Boolean(box))
+      root.toggleAttribute("data-keyboard-open", Boolean(box));
+    const syncing = editing || Boolean(box);
+    syncViewportProperty(
+      root.style,
+      "--editable-viewport-height",
+      syncing ? `${window.visualViewport?.height || window.innerHeight}px` : "",
     );
-    document.documentElement.style.setProperty(
+    syncViewportProperty(
+      root.style,
       "--editable-viewport-top",
-      `${box?.top || 0}px`,
+      syncing ? `${box?.top || 0}px` : "",
     );
     this._applyKeyboardViewport(box);
     if (editing && window.visualViewport?.scale === 1) {
@@ -315,13 +327,16 @@ export class AppRoot extends HTMLElement {
 
   /** @param {{ height: number, top: number } | null} box */
   _applyKeyboardViewport(box) {
-    if (!box) {
-      this.style.removeProperty("--app-viewport-height");
-      this.style.removeProperty("--app-viewport-top");
-      return;
-    }
-    this.style.setProperty("--app-viewport-height", `${box.height}px`);
-    this.style.setProperty("--app-viewport-top", `${box.top}px`);
+    syncViewportProperty(
+      this.style,
+      "--app-viewport-height",
+      box ? `${box.height}px` : "",
+    );
+    syncViewportProperty(
+      this.style,
+      "--app-viewport-top",
+      box ? `${box.top}px` : "",
+    );
   }
 
   _renderSetup(options = {}) {

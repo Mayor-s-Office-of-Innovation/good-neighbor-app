@@ -610,3 +610,97 @@ it("keeps the old view inert when a superseded import fails", async () => {
   await flush();
   expect(root._renderView).toHaveBeenCalledOnce();
 });
+
+describe("keyboard viewport style updates", () => {
+  function style() {
+    const values = new Map();
+    return {
+      getPropertyValue: (name) => values.get(name) || "",
+      setProperty: vi.fn((name, value) => values.set(name, value)),
+      removeProperty: vi.fn((name) => values.delete(name)),
+    };
+  }
+
+  async function shell() {
+    const keyboard = await import("../services/keyboard-viewport.js");
+    const root = {
+      style: style(),
+      open: false,
+      hasAttribute: () => root.open,
+      toggleAttribute: vi.fn((_, open) => {
+        root.open = open;
+      }),
+    };
+    vi.stubGlobal("document", { documentElement: root });
+    vi.stubGlobal("window", {
+      innerHeight: 844,
+      visualViewport: { height: 500, offsetTop: 90, scale: 1 },
+    });
+    vi.stubGlobal("requestAnimationFrame", vi.fn());
+    const view = {
+      style: style(),
+      _applyKeyboardViewport: AppRoot.prototype._applyKeyboardViewport,
+    };
+    const sync = () => AppRoot.prototype._syncKeyboardViewport.call(view);
+    return { keyboard, root, view, sync };
+  }
+
+  it("does not mutate viewport styles or attributes during ordinary scrolling", async () => {
+    const { keyboard, root, view, sync } = await shell();
+    vi.mocked(keyboard.isEditable).mockReturnValue(false);
+    vi.mocked(keyboard.keyboardViewport).mockReturnValue(null);
+    sync();
+    sync();
+    for (const target of [root.style, view.style]) {
+      expect(target.setProperty).not.toHaveBeenCalled();
+      expect(target.removeProperty).not.toHaveBeenCalled();
+    }
+    expect(root.toggleAttribute).not.toHaveBeenCalled();
+  });
+
+  it("updates changed keyboard values, follows closing pan after blur, and clears once", async () => {
+    const { keyboard, root, view, sync } = await shell();
+    vi.mocked(keyboard.isEditable).mockReturnValue(true);
+    vi.mocked(keyboard.keyboardViewport).mockReturnValue({
+      height: 500,
+      top: 90,
+    });
+    sync();
+    sync();
+    expect(root.style.setProperty).toHaveBeenCalledTimes(2);
+    expect(view.style.setProperty).toHaveBeenCalledTimes(2);
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(2);
+    vi.mocked(keyboard.isEditable).mockReturnValue(false);
+    vi.mocked(keyboard.keyboardViewport).mockReturnValue({
+      height: 500,
+      top: 60,
+    });
+    sync();
+    expect(root.style.getPropertyValue("--editable-viewport-top")).toBe("60px");
+    expect(keyboard.keyboardViewport).toHaveBeenLastCalledWith(
+      window.visualViewport,
+      844,
+      true,
+    );
+    vi.mocked(keyboard.keyboardViewport).mockReturnValue(null);
+    sync();
+    sync();
+    expect(root.style.removeProperty).toHaveBeenCalledTimes(2);
+    expect(view.style.removeProperty).toHaveBeenCalledTimes(2);
+    expect(root.toggleAttribute).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps editable viewport sizing when the browser also resizes its layout viewport", async () => {
+    const { keyboard, root, view, sync } = await shell();
+    vi.mocked(keyboard.isEditable).mockReturnValue(true);
+    vi.mocked(keyboard.keyboardViewport).mockReturnValue(null);
+    sync();
+    expect(root.style.getPropertyValue("--editable-viewport-height")).toBe(
+      "500px",
+    );
+    expect(view.style.setProperty).not.toHaveBeenCalled();
+    vi.mocked(keyboard.isEditable).mockReturnValue(false);
+    sync();
+    expect(root.style.getPropertyValue("--editable-viewport-height")).toBe("");
+  });
+});
