@@ -85,6 +85,7 @@ export const analysisSection = (
   siteAddress = "",
 ) =>
   analysisResultsTray(items, checkId, {
+    flowType: "single-problem",
     ariaLabel: t("problem.analysis.aria"),
     emptyText: t("analysis.tray.empty"),
     siteName,

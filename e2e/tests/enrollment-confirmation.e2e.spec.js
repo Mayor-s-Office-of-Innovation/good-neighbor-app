@@ -26,7 +26,29 @@ test("opening an enrollment link does not consume it; keyboard confirmation subm
     page.getByText(
       t("setup.enrollment.supportReference", { reference: "test-reference" }),
     ),
-  ).toBeVisible();
+  ).toHaveCount(0);
+});
+
+test("unexpected enrollment failures retain a diagnostic support reference", async ({
+  page,
+}) => {
+  await page.route("**/app/v1/enrollment/redeem", (route) =>
+    route.fulfill({
+      status: 400,
+      json: {
+        error: "unexpected_enrollment_error",
+        requestId: "test-reference",
+      },
+    }),
+  );
+  await page.goto("/#enrollment_grant=test-grant&enrollment_token=test-secret");
+  await page.locator("#confirm-enrollment").click();
+  await expect(page.getByRole("alert")).toHaveText(
+    t("setup.enrollment.failed"),
+  );
+  await expect(page.locator("[data-support-reference]")).toHaveText(
+    t("setup.enrollment.supportReference", { reference: "test-reference" }),
+  );
 });
 
 test("manual enrollment requires a code and explicit submission", async ({

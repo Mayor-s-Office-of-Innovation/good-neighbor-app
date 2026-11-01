@@ -105,6 +105,8 @@ export class CareWorkView extends HTMLElement {
     } else if (this._route === "/care-work") {
       clearDraft();
       window.addEventListener("caresubmissionschange", this._refreshPending);
+      window.addEventListener("online", this._refreshPending);
+      window.addEventListener("offline", this._refreshPending);
       void recoverCareSubmissions();
       await this._loadList();
     } else {
@@ -116,8 +118,12 @@ export class CareWorkView extends HTMLElement {
     void this._loadList();
   };
   _listVersion = 0;
+  _remoteWork = new Map();
+  _remoteSiteId = "";
   disconnectedCallback() {
     window.removeEventListener("caresubmissionschange", this._refreshPending);
+    window.removeEventListener("online", this._refreshPending);
+    window.removeEventListener("offline", this._refreshPending);
     this._controller?.abort();
     this._removeGuard?.();
     window.removeEventListener("beforeunload", this._beforeUnload);
@@ -175,11 +181,17 @@ export class CareWorkView extends HTMLElement {
   }
   async _loadList() {
     const version = ++this._listVersion;
-    const items = new Map();
-    const remoteIds = new Set();
+    if (this._remoteSiteId !== this._siteId) {
+      this._remoteWork.clear();
+      this._remoteSiteId = this._siteId;
+    }
+    const items = new Map(this._remoteWork);
+    const remoteIds = new Set(this._remoteWork.keys());
     let failed = false;
     let storageFailed = false;
     const render = async () => {
+      items.clear();
+      for (const [id, work] of this._remoteWork) items.set(id, work);
       try {
         for (const record of await listCareSubmissions(this._siteId)) {
           if (record.status === "saved" && remoteIds.has(record.workId)) {
@@ -195,7 +207,11 @@ export class CareWorkView extends HTMLElement {
         storageFailed = true;
       }
       if (!this.isConnected || version !== this._listVersion) return;
-      this.innerHTML = careList([...items.values()]);
+      this.innerHTML = careList(
+        [...items.values()],
+        false,
+        navigator.onLine === false,
+      );
       if (failed || storageFailed)
         this.insertAdjacentHTML(
           "beforeend",
@@ -216,17 +232,23 @@ export class CareWorkView extends HTMLElement {
       );
     };
     await render();
+    // Connectivity changes still refresh local queue labels, but retain the
+    // last complete server snapshot while the network is unavailable.
+    if (navigator.onLine === false) return;
     try {
+      const nextItems = new Map();
       let nextToken = "";
       do {
         const page = await listCareWork(nextToken);
         if (!this.isConnected || version !== this._listVersion) return;
         page.work.forEach((item) => {
-          items.set(item.workId, item);
-          remoteIds.add(item.workId);
+          nextItems.set(item.workId, item);
         });
         nextToken = page.nextToken || "";
       } while (nextToken);
+      this._remoteWork = nextItems;
+      remoteIds.clear();
+      for (const id of nextItems.keys()) remoteIds.add(id);
     } catch {
       failed = true;
     }

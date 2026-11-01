@@ -28,7 +28,7 @@ export function careHeader(title, close = false) {
     <h1 tabindex="-1">${e(title)}</h1>
   </header>`;
 }
-export function careList(items, loading = false) {
+export function careList(items, loading = false, offline = false) {
   return html`${careHeader(t("care.title"), true)}
     <p class="care-subtitle">${e(t("care.subtitle"))}</p>
     <hr class="splash-rule" />
@@ -56,29 +56,39 @@ export function careList(items, loading = false) {
                         .map(
                           (item) =>
                             html`<li>
-                              <button
-                                type="button"
-                                class="btn-care care-row"
-                                ${item.status
-                                  ? "disabled"
-                                  : `data-work="${a(item.workId)}"`}
-                              >
-                                <strong>${e(careTitle(item))}</strong
-                                ><time datetime="${a(item.createdAt)}"
-                                  >${e(formatTime(item.createdAt))}</time
+                              <div class="care-row-shell">
+                                <button
+                                  type="button"
+                                  class="btn-care care-row"
+                                  ${item.status
+                                    ? "disabled"
+                                    : `data-work="${a(item.workId)}"`}
                                 >
-                              </button>
-                              ${item.status
-                                ? html`<p role="status">
-                                    ${e(
-                                      t(
-                                        item.status === "failed"
-                                          ? "care.needsRetry"
-                                          : "care.saving",
-                                      ),
-                                    )}
-                                  </p>`
-                                : ""}
+                                  <strong>${e(careTitle(item))}</strong
+                                  ><time datetime="${a(item.createdAt)}"
+                                    >${e(formatTime(item.createdAt))}</time
+                                  >
+                                </button>
+                                ${item.status
+                                  ? html`<span
+                                      class="care-row__status"
+                                      role="status"
+                                    >
+                                      ${item.status !== "failed" && !offline
+                                        ? '<wa-spinner aria-hidden="true"></wa-spinner>'
+                                        : ""}
+                                      ${e(
+                                        t(
+                                          item.status === "failed"
+                                            ? "care.needsRetry"
+                                            : offline
+                                              ? "card.recovery.offline"
+                                              : "care.savingShort",
+                                        ),
+                                      )}
+                                    </span>`
+                                  : ""}
+                              </div>
                               ${item.status === "failed"
                                 ? html`<button
                                     type="button"

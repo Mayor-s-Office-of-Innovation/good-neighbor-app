@@ -131,3 +131,14 @@ support-view {
   outline: 2px solid var(--brand-blue);
   outline-offset: 3px;
 }
+
+.support__question-error {
+  color: var(--wa-color-danger-on-quiet, var(--c-hazard));
+}
+.support [data-clear-question] {
+  display: block;
+  margin-block-start: 0.5rem;
+}
+.support [data-clear-question][hidden] {
+  display: none;
+}

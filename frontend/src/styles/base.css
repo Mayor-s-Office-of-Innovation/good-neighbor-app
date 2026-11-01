@@ -620,6 +620,25 @@ theme-toggle {
   margin: 0;
 }
 
+.btn-danger {
+  appearance: none;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--danger-button-bg);
+  color: var(--danger-button-text);
+  font: inherit;
+  font-weight: 700;
+  min-height: 46px;
+  height: auto;
+  padding: 0.7rem 2.3rem;
+  cursor: pointer;
+}
+
+.btn-danger:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 3px;
+}
+
 .btn-ink:focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 3px;

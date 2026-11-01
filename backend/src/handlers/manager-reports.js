@@ -270,14 +270,19 @@ export const getChecksReport = async (event) => {
     requirement,
     days: current.days.map((day) => ({
       ...day,
-      checks: day.checkIds.map((checkId) => {
-        const header = checksById.get(checkId);
-        return {
-          checkId,
-          startedAt: header?.startedAt || header?.completedAt || "",
-          photoCount: Number(header?.photoCount) || 0,
-        };
-      }),
+      checkIds: day.checkIds.filter(
+        (id) => checksById.get(id)?.flowType !== "single-problem",
+      ),
+      checks: day.checkIds
+        .filter((id) => checksById.get(id)?.flowType !== "single-problem")
+        .map((checkId) => {
+          const header = checksById.get(checkId);
+          return {
+            checkId,
+            startedAt: header?.startedAt || header?.completedAt || "",
+            photoCount: Number(header?.photoCount) || 0,
+          };
+        }),
     })),
     totals: current.totals,
     previous: { ...previous, totals: prior.totals },

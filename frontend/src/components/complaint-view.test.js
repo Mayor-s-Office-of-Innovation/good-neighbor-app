@@ -2,6 +2,7 @@ import { afterAll, afterEach, expect, it, vi } from "vitest";
 import { t } from "../i18n/i18n.js";
 
 vi.mock("../services/api.js", () => ({
+  listComplaints: vi.fn(),
   getComplaint: vi.fn(),
   getComplaintMediaUrl: vi.fn(),
   presignComplaintArtifact: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock("../router.js", () => ({
   setPopstateGuard: vi.fn(),
 }));
 const {
+  listComplaints,
   getComplaint,
   getComplaintMediaUrl,
   presignComplaintArtifact,
@@ -151,4 +153,51 @@ it("shows an image attachment as a thumbnail that opens the original", async () 
     "error",
     expect.any(Function),
   );
+});
+
+it.each(["success", "failure"])(
+  "ignores a late complaints load after disconnect (%s)",
+  async (outcome) => {
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    /** @type {() => void} */
+    let finish = () => {
+      throw new Error("Request not initialized");
+    };
+    const pending = new Promise((resolve, reject) => {
+      finish = () =>
+        outcome === "success"
+          ? resolve({ complaints: [] })
+          : reject(new Error("network"));
+    });
+    vi.mocked(listComplaints).mockReturnValue(pending);
+    const view = new View();
+    view._bindBack = vi.fn();
+    const loading = view._renderList();
+    view.isConnected = false;
+    view.disconnectedCallback();
+    const markup = view.innerHTML;
+    finish();
+    await loading;
+    expect(view.innerHTML).toBe(markup);
+    expect(view._bindBack).toHaveBeenCalledOnce();
+    expect(window.addEventListener).not.toHaveBeenCalled();
+  },
+);
+
+it("does not attach sticky-header observers or listeners on a detached view", () => {
+  const observer = vi.fn();
+  vi.stubGlobal("ResizeObserver", observer);
+  vi.stubGlobal("window", {
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  });
+  const view = new View();
+  view.isConnected = false;
+  view.querySelector = vi.fn();
+  view._observeStickyHeader();
+  expect(observer).not.toHaveBeenCalled();
+  expect(window.addEventListener).not.toHaveBeenCalled();
 });

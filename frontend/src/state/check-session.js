@@ -516,6 +516,7 @@ export function markScorecardDone(checkId) {
   if (!check || check.status === "in-progress" || check.scorecardDone) return;
   check.scorecardDone = true;
   persist(check);
+  emit(check);
 }
 
 /**

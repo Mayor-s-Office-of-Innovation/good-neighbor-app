@@ -4,7 +4,7 @@ import { t } from "../i18n/i18n.js";
 
 /** Display an error beside the live operation, never discard the user's draft.
  * @param {string} message
- * @param {{title?: string, target?: Element | null, key?: string, duration?: number, warning?: boolean, retryLabel?: string, retry?: () => unknown, retryAvailable?: () => boolean}} [options]
+ * @param {{title?: string, target?: Element | null, key?: string, duration?: number, retainRetryOnExpiry?: boolean, expired?: boolean, warning?: boolean, retryLabel?: string, retry?: () => unknown, retryAvailable?: () => boolean}} [options]
  */
 export function showInlineError(message, options = {}) {
   if (
@@ -83,8 +83,23 @@ export function showInlineError(message, options = {}) {
   }
   target.prepend(notice);
   decorateError(notice);
-  if (options.duration) setTimeout(() => notice.remove(), options.duration);
+  const expire = () => {
+    if (options.retainRetryOnExpiry && options.retry) {
+      // The notification expires, but a paused operation still needs its action.
+      for (const child of [...notice.childNodes]) {
+        if (!(child instanceof HTMLButtonElement)) child.remove();
+      }
+      notice.className = "app-recovery-actions";
+      notice.removeAttribute("role");
+    } else {
+      unsubscribe?.();
+      notice.remove();
+    }
+  };
+  if (options.expired) expire();
+  else if (options.duration) setTimeout(expire, options.duration);
   return {
+    isConnected: () => notice.isConnected,
     close: () => {
       unsubscribe?.();
       notice.remove();

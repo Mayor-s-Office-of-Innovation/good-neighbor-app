@@ -103,7 +103,7 @@ function enterCodeView({ value, error, checking, reference }) {
       </p>
 
       ${reference
-        ? html`<p>
+        ? html`<p data-support-reference>
             ${escapeHtml(t("setup.enrollment.supportReference", { reference }))}
           </p>`
         : ""}
@@ -241,7 +241,7 @@ export function enrollmentView({ checking, error, reference = "" }) {
           ${escapeHtml(error)}
         </p>
         ${reference
-          ? html`<p>
+          ? html`<p data-support-reference>
               ${escapeHtml(
                 t("setup.enrollment.supportReference", { reference }),
               )}

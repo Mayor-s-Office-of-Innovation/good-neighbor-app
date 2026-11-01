@@ -3,18 +3,19 @@ care-work-view {
 }
 .app--chromeless .app__main:has(> care-work-view) {
   padding: 0;
+  padding-block-start: max(1rem, env(safe-area-inset-top));
 }
 .care-work {
   box-sizing: border-box;
   width: 100%;
   max-width: 460px;
   margin-inline: auto;
-  padding: 64px 24px 32px;
+  padding: 1.5rem 24px 32px;
   color: var(--text);
 }
 .care-header__nav {
   display: flex;
-  margin-bottom: 48px;
+  margin-bottom: 1.125rem;
 }
 .care-header__nav--close {
   justify-content: flex-end;
@@ -297,4 +298,40 @@ care-work-view {
 
 .care-photo-section {
   min-width: 0;
+}
+
+.care-row__status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+}
+.care-row__status wa-spinner {
+  flex-shrink: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .care-row__status wa-spinner::part(spinner) {
+    animation: none;
+  }
+}
+
+.care-row-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+.care-row-shell .care-row {
+  min-inline-size: 0;
+  white-space: normal;
+  border-bottom: 0;
+}
+.care-row-shell .care-row strong {
+  max-inline-size: 100%;
+}
+.care-row-shell {
+  border-bottom: 1px solid var(--c-line);
+}
+.care-row-shell .care-row__status {
+  justify-self: end;
+  max-inline-size: 100%;
+  padding-block-end: 0.625rem;
 }

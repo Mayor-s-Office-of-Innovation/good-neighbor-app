@@ -14,6 +14,7 @@ vi.mock("../state/toasts.js", () => ({
   showOperationError: toast,
   showTaskUpdateErrorToast: errorToast,
 }));
+import { slideCompletedCard } from "./analysis-card-completion.js";
 import { TaskSheets } from "./task-sheets.js";
 import { t } from "../i18n/i18n.js";
 class Button {
@@ -297,3 +298,21 @@ it.each([400, 403, 409, 429])(
     expect(save).toHaveBeenCalledOnce();
   },
 );
+
+it("keeps the resolved action pending through its exit instead of flashing idle", async () => {
+  const f = fixture();
+  const animation = deferred();
+  const card = { isConnected: true };
+  f.button.closest = () => card;
+  vi.mocked(slideCompletedCard).mockImplementationOnce(async () => {
+    expect(f.button.disabled).toBe(true);
+    expect(f.button.textContent).toBe(t("taskUpdate.resolving"));
+    await animation.promise;
+  });
+  const opening = f.sheets.openUpdates(task, f.button, "resolve");
+  await vi.waitFor(() => expect(slideCompletedCard).toHaveBeenCalledWith(card));
+  expect(f.onTaskUpdated).not.toHaveBeenCalled();
+  animation.resolve(undefined);
+  await opening;
+  expect(f.onTaskUpdated).toHaveBeenCalledOnce();
+});

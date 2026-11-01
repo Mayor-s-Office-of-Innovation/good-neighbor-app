@@ -160,3 +160,22 @@ app-toasts:has(> .connection-banner-space:not([hidden]))
   justify-content: center;
   align-items: flex-start;
 }
+
+:is(.app-connection-banner, .connection-banner-copy)
+  button[aria-busy="true"]:not([hidden]) {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: wait;
+  text-decoration: none;
+}
+:is(.app-connection-banner, .connection-banner-copy) wa-spinner {
+  font-size: 1rem;
+  --indicator-color: currentColor;
+}
+
+.app-recovery-actions {
+  display: flex;
+  justify-content: flex-start;
+  padding: 0.75rem;
+}

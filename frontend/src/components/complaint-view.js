@@ -76,6 +76,12 @@ class ComplaintView extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._headerObserver?.disconnect();
+    window.removeEventListener("resize", this._updateStickyHeader);
+    window.visualViewport?.removeEventListener(
+      "resize",
+      this._updateStickyHeader,
+    );
     for (const controller of this._aborters?.values() || []) controller.abort();
     clearTimeout(this._pollTimer);
     window.removeEventListener("beforeunload", this._beforeUnload);
@@ -83,22 +89,45 @@ class ComplaintView extends HTMLElement {
   }
 
   _topbar(title) {
-    return html`<header class="topbar">
-      <button
-        class="topbar__back"
-        type="button"
-        data-back
-        aria-label="${escapeAttr(t("common.back"))}"
-      >
-        <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
-      </button>
-      <div class="topbar__titles">
-        <h1 class="topbar__title" tabindex="-1">${escapeHtml(title)}</h1>
-      </div>
-    </header>`;
+    return careHeader(title);
+  }
+
+  // Header height depends on translated copy and text size. Measure it rather
+  // than guessing a viewport breakpoint that can still obscure the list.
+  _updateStickyHeader = () => {
+    const header = this.querySelector(".complaints__sticky");
+    if (!header) return;
+    const height = header.getBoundingClientRect().height;
+    const viewport = window.visualViewport?.height || window.innerHeight;
+    const safeTop = parseFloat(getComputedStyle(header).insetBlockStart) || 0;
+    const fits = height <= Math.max(0, viewport - safeTop) / 2;
+    header.toggleAttribute("data-static", !fits);
+    this.style.setProperty(
+      "--complaints-header-height",
+      fits ? `${height + safeTop + 16}px` : "0px",
+    );
+  };
+
+  _observeStickyHeader() {
+    if (!this.isConnected) return;
+    const header = this.querySelector(".complaints__sticky");
+    if (!header && !this._headerObserver) return;
+    this._headerObserver?.disconnect();
+    window.removeEventListener("resize", this._updateStickyHeader);
+    window.visualViewport?.removeEventListener(
+      "resize",
+      this._updateStickyHeader,
+    );
+    if (!header) return;
+    this._headerObserver = new ResizeObserver(this._updateStickyHeader);
+    this._headerObserver.observe(header);
+    window.addEventListener("resize", this._updateStickyHeader);
+    window.visualViewport?.addEventListener("resize", this._updateStickyHeader);
+    this._updateStickyHeader();
   }
 
   _bindBack(fallback = "/today") {
+    this._observeStickyHeader();
     this.querySelector("[data-back]")?.addEventListener("click", () => {
       if (draft?.uploading && !window.confirm(t("complaints.upload.leave")))
         return;
@@ -108,31 +137,37 @@ class ComplaintView extends HTMLElement {
   }
 
   async _renderList({ focusHeading = true, restoreFocus = "" } = {}) {
+    if (!this.isConnected) return;
     if (!this.querySelector(".complaints__list")) {
       this.innerHTML = html`<div class="care-work complaints">
-        ${careHeader(t("complaints.title"), true)}
-        <p class="care-subtitle">${escapeHtml(t("complaints.subtitle"))}</p>
-        <hr class="splash-rule" />
-        <button class="btn-ink complaints__new" type="button" disabled>
-          ${escapeHtml(t("complaints.log"))}
-        </button>
+        <div class="complaints__sticky">
+          ${careHeader(t("complaints.title"), true)}
+          <p class="care-subtitle">${escapeHtml(t("complaints.subtitle"))}</p>
+          <hr class="splash-rule" />
+          <button class="btn-ink complaints__new" type="button" disabled>
+            ${escapeHtml(t("complaints.log"))}
+          </button>
+        </div>
         <p class="hint" role="status">${escapeHtml(t("common.loading"))}</p>
       </div>`;
       this._bindBack();
     }
     try {
       const { complaints = [] } = await listComplaints();
+      if (!this.isConnected) return;
       this.innerHTML = html`<div class="care-work complaints">
-        ${careHeader(t("complaints.title"), true)}
-        <p class="care-subtitle">${escapeHtml(t("complaints.subtitle"))}</p>
-        <hr class="splash-rule" />
-        <button
-          class="btn-ink complaints__new"
-          id="log-complaint"
-          type="button"
-        >
-          ${escapeHtml(t("complaints.log"))}
-        </button>
+        <div class="complaints__sticky">
+          ${careHeader(t("complaints.title"), true)}
+          <p class="care-subtitle">${escapeHtml(t("complaints.subtitle"))}</p>
+          <hr class="splash-rule" />
+          <button
+            class="btn-ink complaints__new"
+            id="log-complaint"
+            type="button"
+          >
+            ${escapeHtml(t("complaints.log"))}
+          </button>
+        </div>
         ${this._listActionError
           ? `<p class="complaint-compose__error" role="alert">${escapeHtml(t(this._listActionError))}</p>`
           : ""}
@@ -178,20 +213,23 @@ class ComplaintView extends HTMLElement {
       if (restoreFocus) this.querySelector(restoreFocus)?.focus();
       else if (focusHeading) this.querySelector("h1")?.focus();
     } catch {
+      if (!this.isConnected) return;
       this.innerHTML = html`<div class="care-work complaints">
-        ${careHeader(t("complaints.title"), true)}
-        <p class="care-subtitle">${escapeHtml(t("complaints.subtitle"))}</p>
-        <hr class="splash-rule" />
-        <button
-          class="btn-ink complaints__new"
-          type="button"
-          data-new-complaint
-        >
-          ${escapeHtml(t("complaints.log"))}
-        </button>
-        ${loadError(t("complaints.loadError"), {
-          retryAttribute: "data-retry-list",
-        })}
+        <div class="complaints__sticky">
+          ${careHeader(t("complaints.title"), true)}
+          <p class="care-subtitle">${escapeHtml(t("complaints.subtitle"))}</p>
+          <hr class="splash-rule" />
+          <button
+            class="btn-ink complaints__new"
+            type="button"
+            data-new-complaint
+          >
+            ${escapeHtml(t("complaints.log"))}
+          </button>
+          ${loadError(t("complaints.loadError"), {
+            retryAttribute: "data-retry-list",
+          })}
+        </div>
       </div>`;
       this._bindBack();
       this.querySelector("[data-retry-list]")?.addEventListener(
@@ -359,11 +397,11 @@ class ComplaintView extends HTMLElement {
       ${draft.describing
         ? this._descriptionField()
         : html`<button
-            class="complaint-describe-link"
+            class="btn-outline complaint-describe-button"
             id="describe-complaint"
             type="button"
           >
-            <wa-icon name="pen" aria-hidden="true"></wa-icon>
+            <wa-icon name="keyboard" aria-hidden="true"></wa-icon>
             ${escapeHtml(t("complaints.describe"))}
           </button>`}
       ${draft.submitError
@@ -383,16 +421,16 @@ class ComplaintView extends HTMLElement {
     );
     this.querySelector("#describe-complaint")?.addEventListener("click", () => {
       draft.describing = true;
-      this._renderDraft();
+      // Keep uploads and the rest of the composer mounted. The shell owns
+      // keyboard-aware revealing; a second smooth scroll fights iOS panning.
+      const button = this.querySelector("#describe-complaint");
+      button?.insertAdjacentHTML("beforebegin", this._descriptionField());
+      button?.remove();
       const textarea = this.querySelector("#complaint-description");
-      textarea?.focus();
-      textarea?.scrollIntoView({
-        behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)")
-          .matches
-          ? "auto"
-          : "smooth",
-        block: "center",
-      });
+      this._bindDescription();
+      // The shell deliberately skips revealing zoomed views. Let the browser
+      // reveal the field there (and when VisualViewport is unavailable).
+      textarea?.focus({ preventScroll: window.visualViewport?.scale === 1 });
     });
     this.querySelector("#complaint-files").addEventListener("change", (event) =>
       this._selectFiles([...event.target.files]),
@@ -419,6 +457,11 @@ class ComplaintView extends HTMLElement {
     this.querySelector("#submit-complaint").addEventListener("click", () =>
       this._submit(),
     );
+    this._bindDescription();
+    this.querySelector("h1")?.focus();
+  }
+
+  _bindDescription() {
     const textarea = this.querySelector("#complaint-description");
     textarea?.addEventListener("input", () => {
       draft.description = textarea.value.slice(0, DESCRIPTION_MAX);
@@ -433,7 +476,6 @@ class ComplaintView extends HTMLElement {
           (!filesReady && draft.description.trim().length < 5);
       }
     });
-    this.querySelector("h1")?.focus();
   }
 
   _descriptionField() {

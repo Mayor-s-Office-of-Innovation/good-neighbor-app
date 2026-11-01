@@ -301,8 +301,19 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   permanent failures, outcomes that need reconciliation, and the fifth delivery mark the
   filing `failed`, leaving the task `in_progress`. A repeat tap returns the task; a tap on a
   failed filing queues a new job.
-  Action-selection overrides atomically check the worker lock and refuse changes
-  while it is claimed or holds durable results. Progress updates compare integration
+  Action-selection overrides atomically compare the task and worker-result snapshots.
+  They allow settled silent filings and definitive rejections once the results are
+  reflected on the task, preserving all ticket references and checkpoints. Active
+  worker claims, uncertain outcomes, and executed user actions still block edits.
+  Expired worker leases permit edits only with settled results; the transaction
+  checks the observed lease token and expiry so a newly claimed lease blocks the edit.
+  Missing or malformed lease expiry remains blocked.
+  Silent and deliberate filing results are kept separately; a deliberate filing
+  after a silent one uses its own source request ID and cannot reuse the silent ticket.
+  Its first deliberate acceptance reads the Site delivery setting independently of
+  silent history. Background jobs retain all results but do not retry proven no-ticket
+  silent failures after the action is replaced, or count deliberate failures as their
+  own. Uncertain outcomes remain protected. Progress updates compare integration
   results as well as task state and retry once from a fresh read on conflict.
   Explicit user-confirmed filing and City-help-note actions retain their existing
   confirmation semantics. The clarification UI shows “Updating issue” only while
@@ -420,6 +431,48 @@ then a confirmed completion uses the same slide-and-collapse animation on To-do
 and In-progress before the card moves to History. Notes and photos save in the
 background. Worklist refreshes preserve hydrated evidence and leave open sheets
 and unchanged card markup mounted, avoiding refresh flicker.
+
+Task-list responses include evidence type and artifact identity from a batched,
+site-scoped artifact read. History uses a document icon for text, a photo preview
+for images, and a neutral placeholder for unknown evidence. Media hydration keeps
+that selected artifact identity so a later fetch cannot change the evidence type.
+
+Single-issue reports share the analysis pipeline with perimeter checks, but keep
+`flowType` through saved check adaptation and Home rendering. A clear single-issue
+result uses the no-concerns message without the perimeter check's add-issue offer.
+Site-manager check headlines, calendar bands, weekly bars, and check detail lists
+count only perimeter checks. Issue reporting still includes single-issue findings;
+the CSV keeps perimeter completions and single-issue reports in separate columns.
+
+While Home is visible and online, it refreshes check summaries and the four task
+status lists every ten seconds. Concurrent reads share an in-flight batch;
+returning to the app refreshes immediately, and reconnect reloads the saved view.
+A downward touch pull or mouse drag on card padding below the tabs at the top
+of the page, or an upward wheel/trackpad overscroll there, reloads the Home lists and pending guidance. Pulling displaces
+only the list below the tabs with resistance and reveals a refresh indicator.
+Releasing past the threshold holds a spinner until the request finishes, then
+settles the list without changing its scroll position. Short or cancelled pulls
+settle without a request. Wheel gestures release after a short quiet interval,
+since browsers expose no trackpad release event. Reduced-motion settings suppress
+the settling animation and use a static loading indicator. Home owns a single
+pull-refresh state and shared promise. Its label is rendered below the icon from
+that state, so list rerenders cannot clear it. Check summaries, task lists, and
+pending guidance must all finish successfully before the indicator collapses;
+partial failure retains successful updates and presents one retry message.
+While that failure is displayed, the background poll retries the full batch,
+including guidance, and clears the message and pull offset only after success.
+Background list refreshes are silent. Initial guidance loading uses skeletons,
+not a separate loading label. Timers and
+gesture listeners are removed when Home unmounts. This adds up to five list requests
+per ten seconds per visible Home instance (150 requests per five minutes), before
+changed-card hydration; include this traffic when revisiting shared-IP WAF sizing.
+
+A note/photo update composed before another device resolves an issue can append
+to the resolved task. Its resolution timestamps, completion method, and proof
+remain intact, and the append does not enqueue another resolution job or send a
+City-help cancellation. A concurrent write conflict reloads the task and rebuilds
+the transition once; idempotency prevents duplicate timeline entries. Recoverable
+311 filing completions retain their separate existing recovery behavior.
 
 The provider frontend's CloudFront distribution has **no error-page mapping**. SPA deep links
 (`/check`, `/today`, …) resolve via a viewer-request function (`aws_cloudfront_function.frontend_spa_rewrite`,
@@ -702,5 +755,17 @@ Finished checks wait for evidence guidance or permanent terminal failures before
 finalizing. Check-level finalization has its own durable client retry budget.
 Recoverable failed uploads remain in the expected evidence count. An exhausted
 finalization offers Retry saving; connectivity and operation guards also apply
-to that control. These rules do not change task-update, phone-completion, form,
+to that control. The warning expires after five seconds, but its retry button
+remains until the operation is retried or completed. These rules do not change task-update, phone-completion, form,
 or 311 recovery policies.
+
+Assessment publication budgets the evaluated DynamoDB transaction before
+allocating task display IDs. It counts the assessment, current pointer, unique
+evidence-deletion guards, actual condition and task writes, filing outbox jobs,
+and any predecessor, retirement, or translation updates. It does not reserve
+filing jobs for actions that need no background job. The assembled transaction
+is checked again against the 100-operation ceiling. Oversized inputs are
+rejected without truncating conditions or splitting atomic publication; the
+64 KiB request limit still applies. A replay whose recalculated transaction is
+too large first checks for already-published guidance and returns that result
+using the existing visibility and dismissal rules.

@@ -38,20 +38,6 @@ export const shell = ({
             >${escapeHtml(t("describe.back.aria"))}</span
           >
         </button>
-        <span aria-hidden="true"></span>
-        <button
-          class="describe__close describe__close--dismiss"
-          id="describe-dismiss"
-          type="button"
-        >
-          <span
-            class="describe__close-icon describe__close-icon--dismiss"
-            aria-hidden="true"
-          ></span>
-          <span class="visually-hidden"
-            >${escapeHtml(t("describe.close.aria"))}</span
-          >
-        </button>
       </div>
 
       <div class="describe__main">
@@ -123,19 +109,20 @@ export const shell = ({
           </p>
           <div class="describe-modal__actions">
             <button
-              class="describe-modal__secondary"
-              type="submit"
-              value="stay"
-            >
-              ${escapeHtml(t("common.keepEditing"))}
-            </button>
-            <button
-              class="describe-modal__primary"
+              class="btn-ink describe-modal__primary"
               id="describe-discard"
               type="submit"
               value="discard"
             >
               ${escapeHtml(t("common.discardChanges"))}
+            </button>
+            <button
+              class="btn-outline describe-modal__secondary"
+              type="submit"
+              value="stay"
+              autofocus
+            >
+              ${escapeHtml(t("common.keepEditing"))}
             </button>
           </div>
         </form>

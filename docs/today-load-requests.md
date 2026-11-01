@@ -31,6 +31,30 @@ by authoritative guidance and receipt reads. Total cost therefore depends on the
 number of historical pages, retained assessments, and returned tasks; none of
 these reads calls the analyzer.
 
+## Background refresh cadence
+
+Home polls check summaries and all four task statuses once per minute while
+visible and online. A successful batch makes subsequent focus/visibility events
+no-ops for 30 seconds. Repeated events join an in-flight batch. Failed automatic
+batches back off for 2 minutes, then 4 minutes, then 5 minutes. Manual pull-to-refresh
+remains available during backoff. Reconnect requests a targeted batch including
+pending guidance, without rerunning Home initialization. Ticket-status refresh on
+return has a separate one-minute cooldown.
+
+A normal timer batch makes at most five list requests (four task statuses and one
+check list), before any changed-task evidence or duplicate follow-up work. These
+are code-derived limits, not measured production cost: database fanout still
+depends on rows, evidence and pending guidance. Measure API volume, DynamoDB
+consumption, latency and browser rendering on representative sites before
+shortening this interval. Offline snapshots and pending-write reconciliation
+remain necessary even with automatic refresh.
+
+Background data can arrive while a user is interacting, but rendering is deferred
+through open dialogs, menus, focused editors, selections, drags and active scrolls.
+Deferred rendering resumes after the interaction ends. Pull gestures only install
+non-passive touch movement listeners for eligible sequences; ordinary wheel
+scrolling must end before a separate overscroll gesture can refresh.
+
 ## Request totals
 
 This example has **5 To-do tasks, 5 In-progress tasks, and 20 History tasks**.

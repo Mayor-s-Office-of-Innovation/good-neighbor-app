@@ -108,3 +108,44 @@ test("site revocation sends the site ID and confirmation to the API", async () =
   );
   assert.deepEqual(calls, [["s", "Site One"]]);
 });
+
+for (const change of ["none", "abort", "away-and-back", "site", "disconnect"]) {
+  test(`device confirmation rejects stale context: ${change}`, async () => {
+    let resolve;
+    const calls = [];
+    const start = source.indexOf("  async revokeDevice(deviceId)");
+    const end = source.indexOf("  async revokeAllSiteDevices(form)", start);
+    const actions = vm.runInNewContext(`({${source.slice(start, end)}})`, {
+      AbortController,
+      t: (key) => key,
+      actionFeedback: () => ({ success() {}, failure() {} }),
+      confirmDeviceRevocation: () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+      adminApi: { revokeDevice: async (...args) => calls.push(args) },
+    });
+    const app = {
+      isConnected: true,
+      state: {
+        site: { siteId: "synthetic-site", name: "Synthetic site" },
+        devices: [],
+      },
+      refreshSiteAccess: async () => false,
+      render() {},
+    };
+    const pending = actions.revokeDevice.call(app, "synthetic-device");
+    assert.equal(calls.length, 0);
+    if (change === "abort") app.deviceRevocationController.abort();
+    if (change === "away-and-back") app.navigationGeneration = 2;
+    if (change === "site") app.state.site = { siteId: "other-site" };
+    if (change === "disconnect") app.isConnected = false;
+    resolve(true);
+    await pending;
+    assert.deepEqual(
+      calls,
+      change === "none" ? [["synthetic-site", "synthetic-device"]] : [],
+    );
+    assert.equal(app.deviceRevocationController, null);
+  });
+}

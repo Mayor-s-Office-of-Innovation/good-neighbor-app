@@ -19,7 +19,8 @@
 
 .describe__bar {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: 1fr;
+  justify-items: start;
   align-items: center;
   gap: 1rem;
   width: 100%;
@@ -151,11 +152,8 @@
 
 .describe__field::placeholder {
   color: var(--wa-form-control-placeholder-color);
-  font-family: var(--wa-font-family-body);
-  font-size: var(--wa-font-size-l);
-  font-style: normal;
-  font-weight: var(--wa-font-weight-body);
-  line-height: 1.6;
+  font: inherit;
+  line-height: inherit;
 }
 
 .describe__field:focus-visible {
@@ -317,8 +315,8 @@
 
 .describe-modal__primary {
   border: 0;
-  background: var(--ink);
-  color: var(--on-ink);
+  background: var(--wa-color-danger-fill-loud, var(--c-hazard));
+  color: var(--wa-color-danger-on-loud, #fff);
 }
 
 @media (max-width: 479px) {

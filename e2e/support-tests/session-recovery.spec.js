@@ -390,7 +390,8 @@ test("QR modules and finder corners stay black and scannable in both themes", as
   const cardBox = await details.boundingBox();
   if (!headerBox || !cardBox) throw new Error("Enrollment card is not visible");
   expect(cardBox.y).toBeGreaterThanOrEqual(headerBox.y + headerBox.height);
-  expect(cardBox.y).toBeLessThanOrEqual(headerBox.y + headerBox.height + 9);
+  await expect(details.locator("summary")).toBeInViewport();
+  await expect(qr).toBeInViewport();
   const accessibility = await new AxeBuilder({ page })
     .include(".site-access-ready")
     .analyze();

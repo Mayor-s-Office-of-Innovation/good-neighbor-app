@@ -48,7 +48,10 @@ import { navigate, replaceRoute } from "../router.js";
 import { markCameraOpen, clearCameraOpen } from "../state/capture-resume.js";
 import { trackEvent } from "../services/analytics.js";
 import { openOverlayDialog, awaitOverlayUnwind } from "../dialog-history.js";
-import { announceScreenHeading } from "../screen-focus.js";
+import {
+  announceScreenHeading,
+  revealCaptureResults,
+} from "../screen-focus.js";
 import {
   analyzeEvidenceItem,
   analyzeNoIssueDescriptionEdit,
@@ -64,7 +67,6 @@ import {
 import { isAccepted311Filing } from "../domain/task-actions.js";
 import { hasEvidence, hasLiveEvidence } from "../domain/check-completion.js";
 import {
-  ensureProblemReport,
   startProblemReport,
   loadDraft,
   clearCheck,
@@ -152,18 +154,23 @@ class ProblemReport extends HTMLElement {
       this._site?.siteId || this._site?.providerSiteId || this._site?.id || "";
 
     let check = getCurrentCheck();
-    if (!check) {
+    if (
+      !check ||
+      check.status !== "in-progress" ||
+      check.siteId !== this._siteId
+    ) {
       check = (await loadDraft("single-problem")) || null;
       if (!this._isCurrentInit(initGeneration)) return;
     }
-    if (!check) {
-      ensureProblemReport(this._siteId);
+    if (!check || check.siteId !== this._siteId) {
+      startProblemReport(this._siteId);
     } else if (getFlowType() !== "single-problem") {
       startProblemReport(this._siteId);
     }
     this._checkId = getCurrentCheck()?.id || "";
 
-    const unsubscribe = onCheckSessionChange(() => {
+    const unsubscribe = onCheckSessionChange((changed) => {
+      if (changed && changed.id !== this._checkId) return;
       if (this.isConnected && !this._finishing) this._render();
     });
     if (!this._isCurrentInit(initGeneration)) {
@@ -351,11 +358,9 @@ class ProblemReport extends HTMLElement {
     }
     const toggle = target.closest("#toggle-analyzing");
     if (toggle) {
-      setAnalyzingOpen(!getAnalyzingOpen());
-      const replacement = this.querySelector("#toggle-analyzing");
-      if (replacement instanceof HTMLElement) {
-        replacement.focus({ preventScroll: true });
-      }
+      const opening = !getAnalyzingOpen();
+      setAnalyzingOpen(opening);
+      revealCaptureResults(this, opening);
     }
   }
 
@@ -369,8 +374,13 @@ class ProblemReport extends HTMLElement {
     }
     const del = target.closest("[data-del]");
     if (del) {
-      removeItem(del.getAttribute("data-del"));
-      this._render();
+      void removeEvidenceItem(del.getAttribute("data-del")).catch(() => {
+        showInlineError(t("card.failed.deleteError"), {
+          target: this,
+          key: "delete-evidence",
+          duration: 5000,
+        });
+      });
     }
   }
 
@@ -538,6 +548,7 @@ class ProblemReport extends HTMLElement {
             showInlineError(t("card.failed.deleteError"), {
               target: this,
               key: "delete-failed-item",
+              duration: 5000,
             });
           });
         } else if (action === "remove-item") {

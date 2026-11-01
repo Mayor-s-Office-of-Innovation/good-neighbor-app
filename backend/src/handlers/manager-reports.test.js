@@ -172,6 +172,10 @@ describe("getChecksReport", () => {
         ["2026-10-03", "upcoming"],
       ],
     );
+    expect(body.days[3].checkIds).not.toContain("g");
+    expect(
+      body.days[3].checks.map((/** @type {any} */ check) => check.checkId),
+    ).not.toContain("g");
     expect(body.days[3]).toMatchObject({
       completed: 1,
       reports: 1,
