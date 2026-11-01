@@ -606,3 +606,50 @@ test("touch listeners attach only for eligible gestures and wheel momentum canno
     momentumCalls: 0,
   });
 });
+
+test("wheel pulls cross card descendants but cancel on controls and nested scrollers", async ({
+  page,
+}) => {
+  await page.route("**/__wheel_targets", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: '<html><body style="margin:0"><main><div class="home-tabs" style="height:40px">Tabs</div><section class="home-region--results"><article><h2>Title</h2><p>Description</p><button>Action</button><div id="nested" style="height:40px;overflow:auto"><div style="height:200px">Nested</div></div></article></section><section class="home-region--results" id="other">Other region</section></main></body></html>',
+    }),
+  );
+  await page.goto("/__wheel_targets");
+  const result = await page.evaluate(async () => {
+    const path = "/src/services/home-refresh.js";
+    const { installHomeRefresh } = await import(path);
+    const host = document.querySelector("main");
+    if (!host) throw new Error("Missing host");
+    let calls = 0;
+    const stop = installHomeRefresh(host, async () => {
+      calls++;
+    });
+    const wheel = (/** @type {string} */ selector) => {
+      const target = host.querySelector(selector);
+      if (!target) throw new Error("Missing target");
+      target.dispatchEvent(
+        new window.WheelEvent("wheel", {
+          bubbles: true,
+          clientY: 100,
+          deltaY: -80,
+        }),
+      );
+    };
+    wheel("h2");
+    wheel("p");
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const crossed = calls;
+    for (const target of ["button", "#nested", "#other"]) {
+      wheel("h2");
+      wheel(target);
+      wheel("p");
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+    const blocked = calls;
+    stop();
+    return { crossed, blocked };
+  });
+  expect(result).toEqual({ crossed: 1, blocked: 1 });
+});

@@ -1,3 +1,8 @@
+import {
+  evidenceDeletionKey,
+  evidenceIds,
+  retractableTask,
+} from "../analysis/guidance/evidence-deletion.js";
 import { definitiveSilentFailure } from "../domain/silent-311-results.js";
 import {
   withSilent311Guard,
@@ -283,7 +288,20 @@ export async function runJob(message, delivery = {}) {
           ),
       ),
     );
-    if (!["superseded", "deleted"].includes(task.status) && !alreadyFiled) {
+    // Read after claiming the lease: cleanup uses that same lease to exclude
+    // workers before superseding a task. A durable deletion intent also stops
+    // queued work while cleanup is awaiting retry.
+    const ids = evidenceIds(task);
+    const evidenceRemoved =
+      task.checkId &&
+      ids.length === 1 &&
+      retractableTask(task, ids[0]) &&
+      (await read(evidenceDeletionKey(message.siteId, task.checkId, ids[0])));
+    if (
+      !["superseded", "deleted"].includes(task.status) &&
+      !alreadyFiled &&
+      !evidenceRemoved
+    ) {
       const created = await guard(async () =>
         executeAppActions(guardedTask.appActions || [], {
           tableName,

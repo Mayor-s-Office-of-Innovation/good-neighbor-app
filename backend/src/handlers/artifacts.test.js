@@ -1015,6 +1015,40 @@ describe("deleteArtifact", () => {
     });
   });
 
+  it("retains the deletion marker but reports pending while filing owns the task", async () => {
+    mockCheckWithArtifact();
+    ddbSend.mockResolvedValueOnce({}); // durable marker and artifact removal
+    ddbSend.mockResolvedValueOnce({
+      Items: [
+        {
+          pk: "SITE#site-1",
+          sk: "TASK#task",
+          taskId: "task",
+          status: "open",
+          checkId: "chk_01",
+          sourceArtifactIds: ["art_1"],
+        },
+      ],
+    });
+    ddbSend.mockResolvedValueOnce({ Item: { sf311Lease: "worker" } });
+    const res = await callDelete(
+      deleteEvent({
+        checkId: "chk_01",
+        artifactId: "art_1",
+        siteClaim: "site-1",
+      }),
+    );
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body).code).toBe("EvidenceDeletionPending");
+    const writes = ddbSend.mock.calls
+      .map(([c]) => c)
+      .filter((c) => c instanceof TransactWriteCommand);
+    expect(writes).toHaveLength(1);
+    expect(writes[0].input.TransactItems?.[1].Put?.Item?.sk).toBe(
+      'EVIDENCE_DELETION#["chk_01","art_1"]',
+    );
+  });
+
   it("404s when the check header does not exist for this site", async () => {
     ddbSend.mockResolvedValueOnce({ Items: [] });
 

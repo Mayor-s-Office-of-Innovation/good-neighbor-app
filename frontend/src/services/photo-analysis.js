@@ -795,6 +795,10 @@ export function removeEvidenceItem(itemId) {
             originSiteId: check.siteId,
           });
         } catch (error) {
+          // The artifact is already gone, but task cleanup is still waiting
+          // for filing to settle. Keep durable intent for the retry queue;
+          // artifact absence alone cannot confirm this deletion is complete.
+          if (error?.body?.code === "EvidenceDeletionPending") throw error;
           if (error?.status !== 404) {
             const rejected =
               error?.status >= 400 &&

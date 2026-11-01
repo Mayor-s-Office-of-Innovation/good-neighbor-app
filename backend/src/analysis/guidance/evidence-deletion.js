@@ -1,3 +1,5 @@
+import { inactiveSf311Lease } from "../../domain/sf311-lease.js";
+import { definitiveSilentFailure } from "../../domain/silent-311-results.js";
 import { GetCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../../db.js";
 import { queryAllItems } from "../../lib/query-all-items.js";
@@ -32,6 +34,20 @@ export function evidenceIds(row) {
   return [...new Set(row.sourceArtifactIds || row.source?.artifactIds || [])];
 }
 
+/** Only outcomes proving no external effect are safe to retract.
+ * @param {Record<string, any>[]} results
+ */
+function retractableResults(results) {
+  return results.every(
+    (result) =>
+      !/uncertain|reconciliation/.test(String(result.reason || "")) &&
+      (["skipped", "not_configured", "requires_user_action"].includes(
+        result.status,
+      ) ||
+        definitiveSilentFailure(result)),
+  );
+}
+
 /** Do not retract work with independent evidence or recorded actions.
  * @param {Record<string, any>} task @param {string} artifactId
  */
@@ -48,9 +64,7 @@ export function retractableTask(task, artifactId) {
     !task.resolvedAt &&
     !task.inProgressAt &&
     !task.inProgressActionKind &&
-    !(task.appActionResults || []).some((/** @type {any} */ result) =>
-      ["submitted", "succeeded", "partial"].includes(result.status),
-    )
+    retractableResults(task.appActionResults || [])
   );
 }
 
@@ -79,6 +93,20 @@ export async function retractEvidenceTasks({
     for (let attempt = 0; ; attempt++) {
       if (!retractableTask(task, artifactId)) break;
       const now = new Date().toISOString();
+      const lockKey = { pk: task.pk, sk: `SF311_LOCK#${task.taskId}` };
+      const { Item: lock } = await ddb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: lockKey,
+          ConsistentRead: true,
+        }),
+      );
+      const leaseGuard = inactiveSf311Lease(lock, now);
+      if (!leaseGuard || !retractableResults(lock?.results || []))
+        throw Object.assign(
+          new Error("Evidence cleanup is waiting for filing to settle"),
+          { name: "EvidenceDeletionPending" },
+        );
       try {
         await ddb.send(
           new TransactWriteCommand({
@@ -118,6 +146,29 @@ export async function retractEvidenceTasks({
                       : {}),
                     ...(task.updatedAt ? { ":version": task.updatedAt } : {}),
                   },
+                },
+              },
+              {
+                ConditionCheck: {
+                  TableName: tableName,
+                  Key: lockKey,
+                  ConditionExpression:
+                    leaseGuard.ConditionExpression +
+                    " AND " +
+                    (lock?.results !== undefined
+                      ? "results = :lockResults"
+                      : "attribute_not_exists(results)"),
+                  ...(lock?.results !== undefined ||
+                  Object.keys(leaseGuard.ExpressionAttributeValues).length
+                    ? {
+                        ExpressionAttributeValues: {
+                          ...leaseGuard.ExpressionAttributeValues,
+                          ...(lock?.results !== undefined
+                            ? { ":lockResults": lock.results }
+                            : {}),
+                        },
+                      }
+                    : {}),
                 },
               },
             ],

@@ -124,6 +124,30 @@ it("files in the background, persists the result, and skips duplicate delivery",
   await runJob(message);
   expect(execute).toHaveBeenCalledOnce();
 });
+
+it.each([false, true])(
+  "checks evidence deletion after claiming its lease (deleted: %s)",
+  async (deleted) => {
+    task.checkId = "check";
+    task.sourceArtifactIds = ["photo"];
+    const original = send.getMockImplementation();
+    if (!original) throw new Error("Missing mock implementation");
+    send.mockImplementation(async (command) => {
+      if (
+        command instanceof GetCommand &&
+        command.input.Key?.sk.startsWith("EVIDENCE_DELETION#")
+      ) {
+        expect(lock.sf311Lease).toBeTruthy();
+        expect(command.input.ConsistentRead).toBe(true);
+        return deleted ? { Item: { deletedAt: "now" } } : {};
+      }
+      return original(command);
+    });
+    await runJob(message);
+    expect(execute).toHaveBeenCalledTimes(deleted ? 0 : 1);
+    expect(job.status).toBe("complete");
+  },
+);
 it("closes an informational ticket if the user finishes while filing is running", async () => {
   execute
     .mockImplementationOnce(async (_actions, options) => {

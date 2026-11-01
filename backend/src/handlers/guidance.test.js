@@ -627,6 +627,7 @@ describe("guidance handlers", () => {
         source: { artifactIds: ["art-1"] },
       },
     });
+    send.mockResolvedValueOnce({}); // evidence is still present
     mockTaskShortIdAllocation({
       providerShortCode: "CHC",
       siteShortCode: "730",
@@ -643,7 +644,7 @@ describe("guidance handlers", () => {
     );
 
     expect(res.statusCode).toBe(200);
-    const tx = send.mock.calls[4][0];
+    const tx = send.mock.calls[5][0];
     expect(tx).toBeInstanceOf(TransactWriteCommand);
     const assessment = tx.input.TransactItems[0].Put.Item;
     expect(assessment).toMatchObject({

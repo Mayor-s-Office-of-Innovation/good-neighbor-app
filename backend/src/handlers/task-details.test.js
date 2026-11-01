@@ -36,7 +36,15 @@ vi.mock("../db.js", () => ({
         if (guard?.Key.sk.startsWith("SF311_LOCK#")) {
           const lock = state.items.get(`${guard.Key.pk}|${guard.Key.sk}`);
           if (
-            lock?.sf311Lease ||
+            (lock?.sf311Lease &&
+              !(
+                lock.sf311Lease ===
+                  guard.ExpressionAttributeValues?.[":observedLease"] &&
+                lock.sf311LeaseExpiresAt ===
+                  guard.ExpressionAttributeValues?.[":leaseExpires"] &&
+                lock.sf311LeaseExpiresAt <
+                  guard.ExpressionAttributeValues?.[":leaseNow"]
+              )) ||
             !isDeepStrictEqual(
               lock?.results,
               guard.ExpressionAttributeValues?.[":lockResults"],
@@ -352,6 +360,42 @@ function settledTask(result) {
   );
   put({ pk: "SITE#site", sk: "SF311_LOCK#root", results: [result] });
 }
+
+it.each([
+  "expired",
+  "active",
+  "missing-expiry",
+  "malformed-expiry",
+  "reclaimed",
+])(
+  "permits only a settled result with a safely expired lease: %s",
+  async (mode) => {
+    const result = silentResult();
+    settledTask(result);
+    const lock = state.items.get("SITE#site|SF311_LOCK#root");
+    lock.sf311Lease = "old-worker";
+    if (mode !== "missing-expiry")
+      lock.sf311LeaseExpiresAt =
+        mode === "malformed-expiry"
+          ? "bad"
+          : mode === "active"
+            ? "2999-01-01T00:00:00.000Z"
+            : "2020-01-01T00:00:00.000Z";
+    if (mode === "reclaimed")
+      state.beforeTransaction = () => {
+        lock.sf311Lease = "new-worker";
+        lock.sf311LeaseExpiresAt = "2999-01-01T00:00:00.000Z";
+      };
+    const response = await updateTaskAction(
+      event("root", { ruleId: "LITTER-2" }),
+    );
+    expect(response.statusCode).toBe(mode === "expired" ? 200 : 409);
+    expect(state.items.get("SITE#site|TASK#root").appActionResults).toEqual([
+      result,
+    ]);
+    expect(lock.results).toEqual([result]);
+  },
+);
 
 it.each(["submitted", "rejected", "preflight"])(
   "allows settled silent %s while preserving task and lock results",

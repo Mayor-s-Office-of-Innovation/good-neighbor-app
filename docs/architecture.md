@@ -305,6 +305,9 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   They allow settled silent filings and definitive rejections once the results are
   reflected on the task, preserving all ticket references and checkpoints. Active
   worker claims, uncertain outcomes, and executed user actions still block edits.
+  Expired worker leases permit edits only with settled results; the transaction
+  checks the observed lease token and expiry so a newly claimed lease blocks the edit.
+  Missing or malformed lease expiry remains blocked.
   Silent and deliberate filing results are kept separately; a deliberate filing
   after a silent one uses its own source request ID and cannot reuse the silent ticket.
   Its first deliberate acceptance reads the Site delivery setting independently of

@@ -153,8 +153,23 @@ export function installHomeRefresh(host, refresh) {
       wheelBlocked = !eligible(event.target, event.clientY);
     }
     wheelAt = now;
+    // Child elements may change as the pointer moves (or the list pulls down).
+    // Recheck only target transitions; a blocked burst stays blocked.
+    if (event.target !== wheelTarget) {
+      const previousRegion =
+        wheelTarget instanceof Element &&
+        wheelTarget.closest(".home-region--results");
+      const nextRegion =
+        event.target instanceof Element &&
+        event.target.closest(".home-region--results");
+      if (
+        nextRegion !== previousRegion ||
+        !eligible(event.target, event.clientY)
+      )
+        wheelBlocked = true;
+      wheelTarget = event.target;
+    }
     if (
-      event.target !== wheelTarget ||
       event.ctrlKey ||
       event.metaKey ||
       event.deltaY >= 0 ||

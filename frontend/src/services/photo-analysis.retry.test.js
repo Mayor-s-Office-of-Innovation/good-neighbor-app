@@ -475,6 +475,42 @@ it.each([0, 408, 429, 503])(
     expect(item.deletionPending).toBe(true);
   },
 );
+it.each([false, true])(
+  "retries pending server cleanup without inferring success from artifact absence (replay=%s)",
+  async (wasPending) => {
+    const item = photo({
+      deletionPending: wasPending,
+      upload: { status: "uploaded", artifactId: "artifact" },
+    });
+    vi.mocked(getCheck).mockResolvedValueOnce({
+      check: {},
+      analyses: [],
+      artifacts: [],
+    });
+    const pendingError = Object.assign(new Error("cleanup pending"), {
+      status: 409,
+      body: { code: "EvidenceDeletionPending" },
+    });
+    vi.mocked(deleteArtifact)
+      .mockRejectedValueOnce(pendingError)
+      .mockRejectedValueOnce(pendingError)
+      .mockResolvedValueOnce({ artifactId: "artifact", status: "deleted" });
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await expect(removeEvidenceItem(item.id)).rejects.toBe(pendingError);
+      expect(item.deletionPending).toBe(true);
+      expect(held.saved.at(-1).items[0].deletionPending).toBe(true);
+      expect(held.check.items).toContain(item);
+      expect(getCheck).not.toHaveBeenCalled();
+      expect(deleteCapturePhoto).not.toHaveBeenCalled();
+    }
+    await removeEvidenceItem(item.id);
+    expect(deleteArtifact).toHaveBeenCalledTimes(3);
+    expect(held.check.items).toHaveLength(0);
+    expect(held.saved.at(-1).items).toHaveLength(0);
+  },
+);
+
 it("keeps deletion pending when its definitive rejection cannot be persisted", async () => {
   const item = photo({
     upload: { status: "uploaded", artifactId: "artifact" },

@@ -974,12 +974,22 @@ export const deleteArtifact = async (event) => {
   );
   // Retried even when the artifact is already absent: an interrupted cleanup
   // must not strand generated tasks forever.
-  await retractEvidenceTasks({
-    tableName: dynamoTable,
-    siteId,
-    checkId,
-    artifactId,
-  });
+  try {
+    await retractEvidenceTasks({
+      tableName: dynamoTable,
+      siteId,
+      checkId,
+      artifactId,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "EvidenceDeletionPending")
+      return jsonResponse(409, {
+        code: "EvidenceDeletionPending",
+        error:
+          "Evidence cleanup is waiting for filing to settle. Please retry.",
+      });
+    throw error;
+  }
 
   return jsonResponse(200, { artifactId, status: "deleted" });
 };

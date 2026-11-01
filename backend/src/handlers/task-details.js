@@ -1,3 +1,4 @@
+import { inactiveSf311Lease } from "../domain/sf311-lease.js";
 import { definitiveSilentFailure } from "../domain/silent-311-results.js";
 import { isDeepStrictEqual } from "node:util";
 import { sf311Job } from "../analysis/guidance/sf311-job.js";
@@ -247,9 +248,10 @@ export const updateTaskAction = async (event) => {
     /** @type {import("../analysis/guidance/app-actions.js").AppActionResult[]} */ (
       task.appActionResults || []
     );
+  const leaseGuard = inactiveSf311Lease(lock, new Date().toISOString());
   // A checkpoint not yet reflected on the task is not a settled outcome.
   if (
-    lock?.sf311Lease ||
+    !leaseGuard ||
     !editableActionResults(lock?.results || []) ||
     (lock?.results || []).some(
       (/** @type {Record<string, any>} */ result) =>
@@ -308,13 +310,20 @@ export const updateTaskAction = async (event) => {
               // The worker claims this item before reading the action selection.
               // Compare the durable checkpoint as well as the task snapshot.
               ConditionExpression:
-                "attribute_not_exists(sf311Lease) AND " +
+                leaseGuard.ConditionExpression +
+                " AND " +
                 (lock?.results !== undefined
                   ? "results = :lockResults"
                   : "attribute_not_exists(results)"),
-              ...(lock?.results !== undefined
+              ...(lock?.results !== undefined ||
+              Object.keys(leaseGuard.ExpressionAttributeValues).length
                 ? {
-                    ExpressionAttributeValues: { ":lockResults": lock.results },
+                    ExpressionAttributeValues: {
+                      ...leaseGuard.ExpressionAttributeValues,
+                      ...(lock?.results !== undefined
+                        ? { ":lockResults": lock.results }
+                        : {}),
+                    },
                   }
                 : {}),
             },

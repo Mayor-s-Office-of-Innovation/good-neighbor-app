@@ -1241,16 +1241,15 @@ export async function answerCondition(opts) {
     const originalEvidence = evidenceIds(conditionItem);
     const survivingEvidence = [];
     for (const artifactId of originalEvidence) {
-      const removed =
-        checkId && originalEvidence.length > 1
-          ? await ddb.send(
-              new GetCommand({
-                TableName: opts.tableName,
-                Key: evidenceDeletionKey(opts.siteId, checkId, artifactId),
-                ConsistentRead: true,
-              }),
-            )
-          : { Item: undefined };
+      const removed = checkId
+        ? await ddb.send(
+            new GetCommand({
+              TableName: opts.tableName,
+              Key: evidenceDeletionKey(opts.siteId, checkId, artifactId),
+              ConsistentRead: true,
+            }),
+          )
+        : { Item: undefined };
       if (!removed.Item) survivingEvidence.push(artifactId);
     }
     if (originalEvidence.length && !survivingEvidence.length)
@@ -1442,12 +1441,31 @@ export async function answerCondition(opts) {
           "ConditionDismissed",
           "Condition has been dismissed; reload its guidance",
         );
-      if (
-        err instanceof Error &&
-        err.name === "TransactionCanceledException" &&
-        attempt < 2
-      ) {
-        continue;
+      if (err instanceof Error && err.name === "TransactionCanceledException") {
+        // Re-evaluate surviving sources on retry, including when DynamoDB
+        // omits cancellation reasons. Never classify unrelated conflicts as deletion.
+        if (attempt < 2) continue;
+        if (checkId && originalEvidence.length) {
+          const removed = await Promise.all(
+            originalEvidence.map(
+              async (id) =>
+                (
+                  await ddb.send(
+                    new GetCommand({
+                      TableName: opts.tableName,
+                      Key: evidenceDeletionKey(opts.siteId, checkId, id),
+                      ConsistentRead: true,
+                    }),
+                  )
+                ).Item,
+            ),
+          );
+          if (removed.every(Boolean))
+            throw namedError(
+              "ConditionDismissed",
+              "Supporting evidence has been deleted",
+            );
+        }
       }
       throw err;
     }
@@ -2124,15 +2142,16 @@ export async function withConditionDismissals(tableName, siteId, guidance) {
       return key ? [key] : [];
     },
   );
-  const evidenceKeys = [...guidance.conditions, ...guidance.tasks].flatMap(
-    (row) => {
-      const checkId = row.checkId || guidance.assessment?.checkId;
-      const ids = evidenceIds(row);
-      return checkId && ids.length === 1
-        ? [evidenceDeletionKey(siteId, String(checkId), ids[0])]
-        : [];
-    },
-  );
+  const evidenceKeys = [
+    ...guidance.conditions,
+    ...guidance.tasks.filter((task) => evidenceIds(task).length === 1),
+  ].flatMap((row) => {
+    const checkId = row.checkId || guidance.assessment?.checkId;
+    const ids = evidenceIds(row);
+    return checkId
+      ? ids.map((id) => evidenceDeletionKey(siteId, String(checkId), id))
+      : [];
+  });
   keys.push(...evidenceKeys);
   const receipts = keys.length
     ? await batchGetAll({
@@ -2167,14 +2186,16 @@ export async function withConditionDismissals(tableName, siteId, guidance) {
       };
     }),
     conditions: guidance.conditions.map((condition) =>
-      (evidenceIds(condition).length === 1 &&
+      (evidenceIds(condition).length > 0 &&
         (condition.checkId || guidance.assessment?.checkId) &&
-        dismissed.has(
-          evidenceDeletionKey(
-            siteId,
-            condition.checkId || guidance.assessment?.checkId,
-            evidenceIds(condition)[0],
-          ).sk,
+        evidenceIds(condition).every((id) =>
+          dismissed.has(
+            evidenceDeletionKey(
+              siteId,
+              condition.checkId || guidance.assessment?.checkId,
+              id,
+            ).sk,
+          ),
         )) ||
       dismissed.has(
         conditionDeletionKey(siteId, guidance.assessment || {}, condition)?.sk,
