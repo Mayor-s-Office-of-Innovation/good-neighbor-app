@@ -110,6 +110,20 @@ function onUnhandledRejection(e) {
 }
 
 /**
+ * Report a caught failure through the same scrubbed, rate-limited pipeline.
+ * @param {unknown} error
+ * @returns {void}
+ */
+export function reportCaughtError(error) {
+  if (!enabledFor()) return;
+  report(
+    "Error",
+    error instanceof Error ? error.message : "Unknown caught error",
+    error instanceof Error ? error.stack : undefined,
+  );
+}
+
+/**
  * App-level incident reporting (api-response-integrity plan §3c): the global
  * listeners above only catch uncaught errors — deliberate detections (non-JSON
  * API responses, health-probe failures, auth death) must be reported

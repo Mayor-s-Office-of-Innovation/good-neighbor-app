@@ -375,7 +375,7 @@ resource "aws_cloudwatch_metric_alarm" "app_health_check" {
 
 resource "aws_cloudwatch_metric_alarm" "analysis_dlq_not_empty" {
   alarm_name          = "${local.name_prefix}-analysis-dlq-not-empty"
-  alarm_description   = "At least one foreground analysis message exhausted its retries in ${aws_sqs_queue.analysis_dlq.name}. Use the messageId to find structured errors in ${aws_cloudwatch_log_group.analysis.name}, fix the cause, then redrive the analysis DLQ. See docs/runbooks/observability.md."
+  alarm_description   = "At least one foreground analysis message exhausted its retries in ${aws_sqs_queue.analysis_dlq.name}. The exhaustion consumer should publish a terminal artifact status and drain this queue. Check structured errors in ${aws_cloudwatch_log_group.analysis.name} if it remains nonempty. See docs/runbooks/observability.md."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
   datapoints_to_alarm = 1
@@ -440,4 +440,22 @@ resource "aws_cloudwatch_metric_alarm" "analysis_duration_high" {
   ok_actions    = [aws_sns_topic.alarms.arn]
 
   tags = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "analysis_exhausted" {
+  for_each            = toset(["photo", "text"])
+  alarm_name          = "${local.name_prefix}-analysis-exhausted-${each.key}"
+  alarm_description   = "Analysis exhausted its retry budget. Terminal artifact status enables safe user recovery; inspect AnalysisFailed logs before restarting."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  threshold           = 1
+  period              = 300
+  namespace           = local.ns
+  metric_name         = "AnalysisExhausted"
+  statistic           = "Sum"
+  treat_missing_data  = "notBreaching"
+  dimensions          = { Kind = each.key }
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+  ok_actions          = [aws_sns_topic.alarms.arn]
+  tags                = var.tags
 }

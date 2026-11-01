@@ -6,7 +6,7 @@
     - site   (keyPath 'id')   : current binding plus one saved binding per site
     - draft  (out-of-line)    : the in-progress check (per-site keys), so a
                                 walk survives reload / app-close and can be resumed
-                                from home. Photos ride inline as JPEG data-URLs.
+                                from home. New perimeter photos use media references; legacy data URLs migrate on resume.
     - review (out-of-line)    : the just-submitted check awaiting the reviewer's
                                 Continue (per-site key). Kept separate from `draft`
                                 so home never offers to "Resume" it, and so the
@@ -28,16 +28,26 @@ const DB_NAME = "conditions-reporter";
 // store (submitted checks are backend-sourced; the store's only remaining writer was
 // the retired ?demo seed). v4 added the `draft` store. Deletions/creations below are
 // idempotent, so any older version converges.
-const DB_VERSION = 6;
+// v7: pending originals and server thumbnails are separate from check metadata.
+const DB_VERSION = 7;
 
 let _dbPromise = null;
 
 function openDb() {
   if (_dbPromise) return _dbPromise;
-  _dbPromise = new Promise((resolve, reject) => {
+  const opening = new Promise((resolve, reject) => {
+    let failed = false;
+    const fail = (error) => {
+      failed = true;
+      reject(error);
+    };
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
+      if (!db.objectStoreNames.contains("captureMedia")) {
+        const media = db.createObjectStore("captureMedia", { keyPath: "key" });
+        media.createIndex("check", ["siteId", "checkId"]);
+      }
       if (!db.objectStoreNames.contains("site")) {
         db.createObjectStore("site", { keyPath: "id" });
       }
@@ -61,29 +71,60 @@ function openDb() {
     };
     req.onsuccess = () => {
       const db = req.result;
+      // A blocked open can succeed after its caller has already received an error.
+      if (failed) {
+        db.close();
+        return;
+      }
+      const invalidate = () => {
+        if (_dbPromise === opening) _dbPromise = null;
+      };
+      db.onclose = invalidate;
       // If another tab later requests a newer version, don't wedge its upgrade —
       // close this connection so the version change can proceed.
-      db.onversionchange = () => db.close();
+      db.onversionchange = () => {
+        invalidate();
+        db.close();
+      };
       resolve(db);
     };
-    req.onerror = () => reject(req.error);
+    req.onerror = () => fail(req.error);
     // A stale connection in another tab is holding the old version open. Surface it
     // rather than hanging silently; the versionchange handler above prevents it.
     req.onblocked = () =>
-      reject(
+      fail(
         new Error(
           "IndexedDB upgrade blocked — close other tabs of this app and reload.",
         ),
       );
   });
-  return _dbPromise;
+  _dbPromise = opening;
+  void opening.catch(() => {
+    if (_dbPromise === opening) _dbPromise = null;
+  });
+  return opening;
 }
 
-function tx(store, mode, fn) {
-  return openDb().then(
+function tx(store, mode, fn, retry = true) {
+  const opening = openDb();
+  return opening.then(
     (db) =>
       new Promise((resolve, reject) => {
-        const t = db.transaction(store, mode);
+        let t;
+        try {
+          t = db.transaction(store, mode);
+        } catch (error) {
+          if (error?.name !== "InvalidStateError") {
+            reject(error);
+            return;
+          }
+          // No transaction started, so retrying cannot replay a write.
+          if (_dbPromise === opening) _dbPromise = null;
+          db.close();
+          if (retry) resolve(tx(store, mode, fn, false));
+          else reject(error);
+          return;
+        }
         const os = t.objectStore(Array.isArray(store) ? store[0] : store);
         let result;
         Promise.resolve()
@@ -102,7 +143,8 @@ function tx(store, mode, fn) {
             },
           );
         t.oncomplete = () => resolve(result);
-        t.onerror = () => reject(t.error);
+        t.onerror = (event) =>
+          reject(/** @type {IDBRequest} */ (event.target)?.error || t.error);
         t.onabort = () => reject(t.error);
       }),
   );
@@ -482,13 +524,38 @@ export async function getDraft(flowType) {
   );
   return legacy?.siteId === siteId ? legacy : null;
 }
-export async function saveDraft(check) {
-  const siteId = check?.siteId || (await getSite())?.siteId || "";
-  await tx("draft", "readwrite", (os) => {
-    os.put(check, draftKey(undefined, siteId));
-    if (check?.flowType) os.put(check, draftKey(check.flowType, siteId));
+const checkWrites = new Map();
+/** Serialize snapshots so a slower earlier write cannot erase a newer checkpoint.
+ * @param {any} check @param {(snapshot: any) => Promise<any>} write
+ */
+function writeCheck(check, write) {
+  const snapshot = structuredClone(check);
+  const key = check.siteId || check.id;
+  const pending = (checkWrites.get(key) || Promise.resolve())
+    .catch(() => {})
+    .then(() => write(snapshot));
+  checkWrites.set(key, pending);
+  void pending
+    .finally(() => {
+      if (checkWrites.get(key) === pending) checkWrites.delete(key);
+    })
+    .catch(() => {});
+  return pending;
+}
+export function saveDraft(check) {
+  return writeCheck(check, async (snapshot) => {
+    const siteId = snapshot?.siteId || (await getSite())?.siteId || "";
+    await tx("draft", "readwrite", async (os) => {
+      const previous = snapshot.items?.some((item) => item.captureSaving)
+        ? await reqToPromise(os.get(draftKey(snapshot.flowType, siteId)))
+        : null;
+      const saved = captureMetadata(snapshot, previous);
+      os.put(saved, draftKey(undefined, siteId));
+      if (snapshot?.flowType)
+        os.put(saved, draftKey(snapshot.flowType, siteId));
+    });
+    return snapshot;
   });
-  return check;
 }
 
 async function deleteDraftIfMatches(os, key, checkId) {
@@ -520,6 +587,9 @@ export async function clearDraft(flowOrOpts, maybeCheckId) {
     flowOrOpts && typeof flowOrOpts === "object"
       ? flowOrOpts.checkId
       : maybeCheckId;
+  // Drain this check's queued snapshots before deleting its draft. Scoped
+  // deletion cannot erase a newer capture started while those writes finish.
+  await Promise.allSettled([...checkWrites.values()]);
   return tx("draft", "readwrite", async (os) => {
     await deleteDraftIfMatches(os, draftKey(flowType, siteId), checkId);
     if (siteId) {
@@ -575,13 +645,20 @@ export async function listFinishedChecks(owningSiteId) {
     (a.submittedAt || "").localeCompare(b.submittedAt || ""),
   );
 }
-export async function saveFinishedCheck(check) {
-  const siteId = check?.siteId || (await getSite())?.siteId || "";
-  await tx("review", "readwrite", (os) =>
-    os.put(check, finishedCheckKey(siteId, check.id)),
-  );
-  return check;
+export function saveFinishedCheck(check) {
+  return writeCheck(check, async (snapshot) => {
+    const siteId = snapshot?.siteId || (await getSite())?.siteId || "";
+    await tx("review", "readwrite", async (os) => {
+      const key = finishedCheckKey(siteId, snapshot.id);
+      const previous = snapshot.items?.some((item) => item.captureSaving)
+        ? await reqToPromise(os.get(key))
+        : null;
+      os.put(captureMetadata(snapshot, previous), key);
+    });
+    return snapshot;
+  });
 }
+
 /**
  * @param {string} owningSiteId
  * @param {string} checkId
@@ -589,8 +666,18 @@ export async function saveFinishedCheck(check) {
 export async function deleteFinishedCheck(owningSiteId, checkId) {
   const siteId = owningSiteId || (await getSite())?.siteId || "";
   if (!checkId) return;
-  return tx("review", "readwrite", (os) =>
-    os.delete(finishedCheckKey(siteId, checkId)),
+  await Promise.resolve(checkWrites.get(siteId || checkId)).catch(() => {});
+  return tx(
+    ["review", "captureMedia"],
+    "readwrite",
+    async (os, transaction) => {
+      os.delete(finishedCheckKey(siteId, checkId));
+      const media = transaction.objectStore("captureMedia");
+      const keys = await reqToPromise(
+        media.index("check").getAllKeys([siteId, checkId]),
+      );
+      for (const key of keys) media.delete(key);
+    },
   );
 }
 
@@ -629,10 +716,14 @@ export async function getHomeSnapshot(siteId) {
 }
 
 export async function resetLocalAppState() {
-  await tx(["site", "draft", "review"], "readwrite", (_, transaction) => {
-    for (const store of ["site", "draft", "review"])
-      transaction.objectStore(store).clear();
-  });
+  await tx(
+    ["site", "draft", "review", "captureMedia"],
+    "readwrite",
+    (_, transaction) => {
+      for (const store of ["site", "draft", "review", "captureMedia"])
+        transaction.objectStore(store).clear();
+    },
+  );
 }
 
 // Every write validates identity and revision in the same transaction as the put.
@@ -764,4 +855,393 @@ export async function getUploadRequestId(scope, fingerprint, replaceId) {
     await reqToPromise(os.put({ requestId, day }, key));
     return requestId;
   });
+}
+
+/** @param {string} key */
+export function getCaptureMedia(key) {
+  return tx("captureMedia", "readonly", (os) => reqToPromise(os.get(key))).then(
+    (media) => {
+      if (media?.original instanceof ArrayBuffer)
+        media.original = new Blob([media.original], {
+          type: media.contentType,
+        });
+      if (media?.thumbnail instanceof ArrayBuffer)
+        media.thumbnail = new Blob([media.thumbnail], {
+          type: media.thumbnailContentType,
+        });
+      return media;
+    },
+  );
+}
+
+/** @param {string} key */
+export function deleteCaptureMedia(key) {
+  return tx("captureMedia", "readwrite", (os) => {
+    os.delete(key);
+    os.delete(localPreviewKey(key));
+  });
+}
+
+// Some WebKit versions cannot persist Blob/File values. Keep Blob storage on
+// capable browsers; convert one photo only after that specific failure. Retry
+// outside the failed transaction so identity/deletion checks run again.
+let captureBlobStorage = true;
+async function writeCaptureBlob(blob, write) {
+  if (captureBlobStorage) {
+    try {
+      return await write(blob);
+    } catch (error) {
+      if (error?.name !== "UnknownError" || !/Blob\/File/i.test(error.message))
+        throw error;
+      captureBlobStorage = false;
+    }
+  }
+  return write(await blob.arrayBuffer());
+}
+
+/** Atomically admit original bytes and their check reference. No binary data in check records.
+ * @param {any} check @param {any} item @param {Blob} original
+ */
+export function saveCapturePhoto(check, item, original) {
+  // Serialize the transaction, not optional binary preparation: metadata saves
+  // must still run while a browser's Blob fallback is preparing the bytes.
+  return writeCaptureBlob(original, (stored) =>
+    writeCheck(check, () => saveCapturePhotoRecord(check, item, stored)),
+  );
+}
+
+function saveCapturePhotoRecord(check, item, original) {
+  const before = captureSnapshot(check);
+  const store = check.status === "in-progress" ? "draft" : "review";
+  return tx([store, "captureMedia"], "readwrite", async (os, transaction) => {
+    const migrating = typeof item.dataUrl === "string";
+    const keys =
+      store === "draft"
+        ? [
+            ...new Set([
+              draftKey(check.flowType, check.siteId),
+              ...(migrating
+                ? [
+                    draftKey(undefined, check.siteId),
+                    draftKey(check.flowType),
+                    "current",
+                  ]
+                : []),
+            ]),
+          ]
+        : [finishedCheckKey(check.siteId, check.id)];
+    const copies = await Promise.all(
+      keys.map((key) => reqToPromise(os.get(key))),
+    );
+    const saved = copies.find(
+      (record) => record?.id === check.id && record.siteId === check.siteId,
+    );
+    // Discard/sign-out or another session must not be undone by a late capture.
+    if (saved?.id !== check.id || !check.items.includes(item)) return false;
+    const savedItems = captureItems(saved);
+    const prior = savedItems.find((i) => i.id === item.id);
+    if (migrating && !prior) return false;
+    if (migrating && prior.media) {
+      Object.assign(item, prior);
+      delete item.dataUrl;
+      return { ...saved, items: savedItems };
+    }
+    const source = { ...saved, items: savedItems };
+    if (!prior) source.items = [...source.items, item];
+    const record = {
+      ...source,
+      mediaVersion: 1,
+      items: source.items.map((i) => {
+        if (i.id !== item.id) return i;
+        const rest = { ...i, checkId: check.id, media: item.media };
+        delete rest.dataUrl;
+        delete rest.captureSaving;
+        return rest;
+      }),
+    };
+    delete record.places;
+    delete record.placeOrder;
+    delete record.activePlaceIndex;
+    transaction.objectStore("captureMedia").put({
+      key: item.media.key,
+      siteId: check.siteId,
+      checkId: check.id,
+      itemId: item.id,
+      flowType: check.flowType,
+      ...((prior || item).upload?.status === "uploaded" ? {} : { original }),
+      contentType: item.media.type,
+      contentLength: item.media.size,
+    });
+    if (store === "draft") {
+      os.put(record, draftKey(undefined, check.siteId));
+      os.put(record, draftKey(check.flowType, check.siteId));
+      for (let i = 0; i < keys.length; i++) {
+        if (
+          copies[i]?.id === check.id &&
+          copies[i]?.siteId === check.siteId &&
+          !keys[i].startsWith("site:")
+        )
+          os.delete(keys[i]);
+      }
+    } else os.put(record, finishedCheckKey(check.siteId, check.id));
+    return record;
+  }).then((saved) => {
+    if (!saved) return false;
+    reconcileCaptureCheck(check, before, saved);
+    return true;
+  });
+}
+
+// Retain item identity for active uploads. Rebase the caller after commit so its
+// next metadata save cannot write the stale pre-admission snapshot back. Changes
+// made locally while the transaction was pending still belong to that caller.
+function captureSnapshot(check) {
+  return { ...check, items: check.items.map((item) => ({ ...item })) };
+}
+
+function captureItems(check) {
+  if (Array.isArray(check.items)) return check.items;
+  const places = check.places || {};
+  return [
+    ...new Set([...(check.placeOrder || []), ...Object.keys(places)]),
+  ].flatMap((id) => places[id]?.items || []);
+}
+
+function reconcileCaptureFields(target, before, saved) {
+  for (const field of new Set([
+    ...Object.keys(before),
+    ...Object.keys(saved),
+  ])) {
+    if (field === "items" || !Object.is(target[field], before[field])) continue;
+    if (Object.hasOwn(saved, field)) target[field] = saved[field];
+    else delete target[field];
+  }
+}
+
+function reconcileCaptureCheck(check, before, saved) {
+  const local = new Map(check.items.map((item) => [item.id, item]));
+  const previous = new Map(before.items.map((item) => [item.id, item]));
+  const persisted = new Set(saved.items.map((item) => item.id));
+  const items = saved.items.flatMap((item) => {
+    const current = local.get(item.id);
+    // A local removal while the transaction was pending must also win.
+    if (!current && previous.has(item.id)) return [];
+    if (!current) return [item];
+    reconcileCaptureFields(current, previous.get(item.id) || {}, item);
+    return [current];
+  });
+  for (const item of check.items) {
+    if (
+      !persisted.has(item.id) &&
+      (!previous.has(item.id) || item.captureSaving)
+    )
+      items.push(item);
+  }
+  reconcileCaptureFields(check, before, saved);
+  check.items = items;
+}
+
+/** Cache a thumbnail only while the registered item still exists. Commit eviction with the thumbnail.
+ * @param {string} key @param {string} artifactId @param {Blob} thumbnail
+ */
+export function cacheCaptureThumbnail(key, artifactId, thumbnail) {
+  return writeCaptureBlob(thumbnail, (stored) =>
+    cacheCaptureThumbnailRecord(key, artifactId, stored, thumbnail.type),
+  );
+}
+
+function cacheCaptureThumbnailRecord(
+  key,
+  artifactId,
+  thumbnail,
+  thumbnailContentType,
+) {
+  return tx(
+    ["captureMedia", "draft", "review"],
+    "readwrite",
+    async (media, transaction) => {
+      const existing = await reqToPromise(media.get(key));
+      if (!existing) return false;
+      const draft = await reqToPromise(
+        transaction
+          .objectStore("draft")
+          .get(draftKey(existing.flowType, existing.siteId)),
+      );
+      const review = await reqToPromise(
+        transaction
+          .objectStore("review")
+          .get(finishedCheckKey(existing.siteId, existing.checkId)),
+      );
+      const check = draft?.id === existing.checkId ? draft : review;
+      const item = check?.items?.find((i) => i.id === existing.itemId);
+      if (
+        item?.upload?.status !== "uploaded" ||
+        item.upload.artifactId !== artifactId
+      )
+        return false;
+      const metadata = { ...existing };
+      delete metadata.original;
+      media.put({ ...metadata, thumbnail, thumbnailContentType });
+      media.delete(localPreviewKey(key));
+      return true;
+    },
+  );
+}
+
+/** @param {any} check @param {any} [previous] */
+function captureMetadata(check, previous) {
+  // A queued progress save can run after admission commits but before its
+  // caller clears captureSaving. Retain only references already committed by
+  // that atomic admission, never references from another check.
+  const admitted = new Map(
+    (previous?.id === check.id ? previous.items || [] : []).map((item) => [
+      item.id,
+      item,
+    ]),
+  );
+  return {
+    ...check,
+    ...(check.items?.some((item) => item.media) ? { mediaVersion: 1 } : {}),
+    items: check.items
+      ?.flatMap((item) =>
+        item.captureSaving
+          ? admitted.has(item.id)
+            ? [admitted.get(item.id)]
+            : []
+          : [item],
+      )
+      .map((item) => {
+        const saved = { ...item };
+        delete saved.captureSaving;
+        return saved;
+      }),
+  };
+}
+
+/** Release original bytes as soon as registration is durably acknowledged, regardless of thumbnail readiness.
+ * @param {string} key @param {string} artifactId
+ */
+export function releaseCaptureOriginal(key, artifactId) {
+  return tx(
+    ["captureMedia", "draft", "review"],
+    "readwrite",
+    async (media, transaction) => {
+      const existing = await reqToPromise(media.get(key));
+      if (!existing?.original) return;
+      const draft = await reqToPromise(
+        transaction
+          .objectStore("draft")
+          .get(draftKey(existing.flowType, existing.siteId)),
+      );
+      const review = await reqToPromise(
+        transaction
+          .objectStore("review")
+          .get(finishedCheckKey(existing.siteId, existing.checkId)),
+      );
+      const check = draft?.id === existing.checkId ? draft : review;
+      const item = check?.items?.find((i) => i.id === existing.itemId);
+      if (
+        item?.upload?.status !== "uploaded" ||
+        item.upload.artifactId !== artifactId
+      )
+        return;
+      const metadata = { ...existing };
+      delete metadata.original;
+      media.put(metadata);
+    },
+  );
+}
+
+/** Remove a photo reference and its bytes together, so a failed save cannot strand a live reference.
+ * @param {any} check
+ * @param {string} key
+ */
+export function deleteCapturePhoto(check, key) {
+  return writeCheck(check, () => deleteCapturePhotoRecord(check, key));
+}
+
+function deleteCapturePhotoRecord(check, key) {
+  const before = captureSnapshot(check);
+  const store = check.status === "in-progress" ? "draft" : "review";
+  return tx([store, "captureMedia"], "readwrite", async (os, transaction) => {
+    const lookup =
+      store === "draft"
+        ? draftKey(check.flowType, check.siteId)
+        : finishedCheckKey(check.siteId, check.id);
+    const saved = await reqToPromise(os.get(lookup));
+    if (saved?.id === check.id) {
+      saved.items = captureItems(saved).filter(
+        (item) => item.media?.key !== key,
+      );
+      os.put(captureMetadata(saved), lookup);
+      if (store === "draft") {
+        const current = await reqToPromise(
+          os.get(draftKey(undefined, check.siteId)),
+        );
+        if (current?.id === check.id)
+          os.put(captureMetadata(saved), draftKey(undefined, check.siteId));
+      }
+    }
+    transaction.objectStore("captureMedia").delete(key);
+    transaction.objectStore("captureMedia").delete(localPreviewKey(key));
+    return saved?.id === check.id ? saved : null;
+  }).then((saved) => {
+    if (saved) reconcileCaptureCheck(check, before, saved);
+  });
+}
+
+function localPreviewKey(key) {
+  return JSON.stringify(["local-preview", key]);
+}
+
+/** Read only the small preview record, never the pending original. @param {string} key */
+export function getLocalCapturePreview(key) {
+  return tx("captureMedia", "readonly", (os) =>
+    reqToPromise(os.get(localPreviewKey(key))),
+  ).then((record) => {
+    if (!record) return null;
+    return record.preview instanceof ArrayBuffer
+      ? new Blob([record.preview], { type: record.contentType })
+      : record.preview;
+  });
+}
+
+/** Do not recreate a removed photo or replace a server thumbnail. @param {string} key @param {Blob} preview */
+export function cacheLocalCapturePreview(key, preview) {
+  return writeCaptureBlob(preview, (stored) =>
+    tx(
+      ["captureMedia", "draft", "review"],
+      "readwrite",
+      async (media, transaction) => {
+        const existing = await reqToPromise(media.get(key));
+        if (!existing || existing.thumbnail) return false;
+        const draft = await reqToPromise(
+          transaction
+            .objectStore("draft")
+            .get(draftKey(existing.flowType, existing.siteId)),
+        );
+        const review = await reqToPromise(
+          transaction
+            .objectStore("review")
+            .get(finishedCheckKey(existing.siteId, existing.checkId)),
+        );
+        const check = draft?.id === existing.checkId ? draft : review;
+        if (
+          !check?.items?.some(
+            (item) => item.id === existing.itemId && item.media?.key === key,
+          )
+        )
+          return false;
+        media.put({
+          key: localPreviewKey(key),
+          siteId: existing.siteId,
+          checkId: existing.checkId,
+          itemId: existing.itemId,
+          preview: stored,
+          contentType: preview.type,
+        });
+        return true;
+      },
+    ),
+  );
 }

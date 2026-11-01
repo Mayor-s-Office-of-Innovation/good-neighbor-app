@@ -1,3 +1,4 @@
+import { connectionAvailable } from "./evidence-recovery.js";
 /*
   Background sender for checks and problem reports — the check counterpart of
   care-submissions.js. Evidence items are already saved on the device as they
@@ -15,7 +16,7 @@
 
   Triggers: app start, `online`, `pageshow`, returning to the app,
   `sitebound`, the backend coming back (backend-health.js), and a retry every
-  minute while items wait (a weak signal may never fire `online`). Each
+  minute while items wait, or the next persisted retry due time. Each
   finished item run re-checks only the scorecards, never restarts uploads, so
   an offline device cannot spin.
   Like care work, sending pauses while the app is closed: there is no
@@ -29,6 +30,8 @@ import {
 } from "../state/check-session.js";
 import {
   analyzeEvidenceItem,
+  removeEvidenceItem,
+  reconcileFailedEvidence,
   hasUnsentLocation,
   resendItemLocation,
   EVIDENCE_SETTLED_EVENT,
@@ -38,17 +41,24 @@ import {
   expectedArtifactCountForCheck,
   finalizeCaptureScorecardInBackground,
 } from "./submit-check.js";
-import { checkItems, itemHasLiveEvidence } from "../domain/check-completion.js";
+import {
+  hasRegisteredArtifact,
+  needsRegistrationRepair,
+  checkItems,
+  itemHasLiveEvidence,
+} from "../domain/check-completion.js";
 
 /**
- * Every live item has reached the server, so the scorecard can be built.
+ * Every live item has guidance or a permanent terminal result.
  * @param {any} check
  */
 export function readyForScorecard(check) {
   return checkItems(check).every(
     (item) =>
-      !itemHasLiveEvidence(item) ||
-      Boolean(item.analysis?.artifactId || item.upload?.artifactId),
+      !item.deletionPending &&
+      (!itemHasLiveEvidence(item) ||
+        (item.analysis?.status === "analyzed" && hasRegisteredArtifact(item)) ||
+        item.analysis?.recovery?.state === "blocked"),
   );
 }
 
@@ -57,8 +67,7 @@ function finalize(check) {
   if (check.status !== "capture-complete" || check.scorecardDone) return;
   if (!readyForScorecard(check)) return;
   const run = finalizeCaptureScorecardInBackground(check.id, {
-    expectedArtifacts:
-      check.expectedArtifacts ?? expectedArtifactCountForCheck(check),
+    expectedArtifacts: expectedArtifactCountForCheck(check),
   });
   void run?.then(
     () => markScorecardDone(check.id),
@@ -93,11 +102,35 @@ export async function resumeCheckSubmissions({ uploads = true } = {}) {
   try {
     const site = await getSite();
     if (!site?.siteId) return;
-    const offline = globalThis.navigator?.onLine === false;
+    const offline = !connectionAvailable();
     let waiting = false;
+    let delay = WAITING_RETRY_MS;
     for (const check of await heldChecks(site)) {
+      if (uploads && !offline)
+        await reconcileFailedEvidence(check).catch(() => {});
       for (const item of checkItems(check)) {
-        if (item.analysis?.status === "waiting") waiting = true;
+        if (item.deletionPending) {
+          waiting = true;
+          if (uploads && !offline)
+            void removeEvidenceItem(item.id).catch(() => {});
+          continue;
+        }
+        if (
+          item.analysis?.status === "waiting" ||
+          needsRegistrationRepair(item)
+        )
+          waiting = true;
+        if (item.analysis?.recovery?.state === "scheduled") {
+          waiting = true;
+          if (!offline)
+            delay = Math.min(
+              delay,
+              Math.max(
+                1000,
+                (item.analysis.recovery.nextAttemptAt || 0) - Date.now(),
+              ),
+            );
+        }
         if (uploads && !offline && shouldResumeEvidenceItem(item))
           analyzeEvidenceItem(item.id);
         if (hasUnsentLocation(item)) {
@@ -106,22 +139,41 @@ export async function resumeCheckSubmissions({ uploads = true } = {}) {
         }
       }
       finalize(check);
+      await Promise.resolve();
+      if (
+        check.status === "capture-complete" &&
+        !check.scorecardDone &&
+        !["manual", "blocked"].includes(check.finalizationRecovery?.state)
+      ) {
+        waiting = true;
+        if (!offline)
+          delay = Math.min(
+            delay,
+            Math.max(
+              1000,
+              (check.finalizationRecovery?.nextAttemptAt ||
+                Date.now() + WAITING_RETRY_MS) - Date.now(),
+            ),
+          );
+      }
     }
-    scheduleRetry(waiting);
+    scheduleRetry(waiting, delay);
   } catch {
     /* Storage failure must not prevent app startup. */
   }
 }
 
 /** @param {boolean} waiting */
-function scheduleRetry(waiting) {
-  if (!waiting || retryTimer) return;
+function scheduleRetry(waiting, delay = WAITING_RETRY_MS) {
+  clearTimeout(retryTimer);
+  retryTimer = undefined;
+  if (!waiting) return;
   retryTimer = setTimeout(() => {
     retryTimer = undefined;
     // A hidden page retries on `pageshow` / visibility instead.
     if (globalThis.document?.visibilityState === "hidden") return;
     void resumeCheckSubmissions();
-  }, WAITING_RETRY_MS);
+  }, delay);
 }
 
 let started = false;
@@ -133,6 +185,7 @@ export function startCheckSubmissionRecovery() {
     void resumeCheckSubmissions();
   };
   window.addEventListener("connectionretry", resume);
+  window.addEventListener("online", resume);
   window.addEventListener("pageshow", resume);
   window.addEventListener("sitebound", resume);
   document.addEventListener("visibilitychange", () => {

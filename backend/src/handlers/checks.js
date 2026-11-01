@@ -221,7 +221,7 @@ export const completeCheck = async (event) => {
   const artifactPrefix = checkArtifactPrefix(checkId);
   const analysisPrefix = checkAnalysisPrefix(checkId);
   const artifacts = items.filter((it) => it.sk.startsWith(artifactPrefix));
-  const analyses = items.filter((it) => it.sk.startsWith(analysisPrefix));
+  const analyses = currentAnalyses(items, analysisPrefix, artifacts);
 
   // Coverage: every registered artifact must have SOME ANALYSIS# item (analyzed
   // or failed marker). Skip when already completed so re-completion stays a
@@ -478,7 +478,7 @@ export const getCheck = async (event) => {
   const checkId = event.pathParameters?.checkId;
   if (!checkId) return jsonResponse(400, { error: "Missing checkId" });
 
-  const items = await queryAllCheckItems(dynamoTable, siteId, checkId);
+  const items = await queryAllCheckItems(dynamoTable, siteId, checkId, true);
   const headerSk = checkHeaderKey(siteId, checkId).sk;
   const header = items.find((it) => it.sk === headerSk);
   if (!header) return jsonResponse(404, { error: "Check not found" });
@@ -488,6 +488,26 @@ export const getCheck = async (event) => {
   return jsonResponse(200, {
     check: header,
     artifacts: items.filter((it) => it.sk.startsWith(artifactPrefix)),
-    analyses: items.filter((it) => it.sk.startsWith(analysisPrefix)),
+    analyses: currentAnalyses(
+      items,
+      analysisPrefix,
+      items.filter((it) => it.sk.startsWith(checkArtifactPrefix(checkId))),
+    ),
   });
 };
+
+/** Exclude a previous generation while its replacement is pending.
+ * @param {any[]} items @param {string} prefix @param {any[]} artifacts
+ */
+function currentAnalyses(items, prefix, artifacts) {
+  return items.filter(
+    (it) =>
+      it.sk.startsWith(prefix) &&
+      artifacts.every(
+        (artifact) =>
+          artifact.artifactId !== it.artifactId ||
+          !artifact.analysisGeneration ||
+          artifact.analysisGeneration === it.analysisGeneration,
+      ),
+  );
+}

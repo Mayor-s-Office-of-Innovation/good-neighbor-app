@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { captureLabels } from "./capture-analysis.templates.js";
 import { shotTile } from "./perimeter-check.templates.js";
 import { t } from "../i18n/i18n.js";
+import { capturePhoto } from "./capture-photo.templates.js";
 
 const photo = (status, conditions = []) => ({
   id: "photo",
@@ -111,5 +112,17 @@ describe("capture analysis feedback", () => {
       expect(markup).toContain(`${icon}-light.png`);
       expect(markup).toContain(`${icon}-dark.png`);
     },
+  );
+});
+
+it("does not request server previews for a presign reservation", () => {
+  const item = {
+    media: { key: "synthetic" },
+    upload: { artifactId: "reservation", status: "uploading" },
+  };
+  expect(capturePhoto(item, "Synthetic")).toContain('data-artifact-id=""');
+  item.upload.status = "uploaded";
+  expect(capturePhoto(item, "Synthetic")).toContain(
+    'data-artifact-id="reservation"',
   );
 });

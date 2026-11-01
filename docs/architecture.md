@@ -657,3 +657,50 @@ button always requests a fresh result.
 Regression checks include `npm run test:admin`, backend tests, and
 `npm run test:status:e2e` (dashboard loading/navigation and System Status browser
 tests). Request counts are a diagnostic, not a production latency guarantee.
+
+### Perimeter evidence recovery
+
+Perimeter photos and text use the existing device-held check records as their
+recovery queue. Evidence and recovery checkpoints are confirmed in IndexedDB
+before network work; check snapshots are written in order. A failed local write
+must never be presented as a confirmed device save.
+
+`evidence-recovery.js` limits photo transfer pipelines (reservation, S3 PUT,
+registration) to two concurrent slots. The queue is FIFO in a tab and uses two
+origin-wide Web Lock slots where supported. Browsers without Web Locks retain
+the per-tab limit and server idempotency protection. Polling and guidance do not
+hold a transfer slot. Per-item ownership is acquired before manual or automatic
+work, and requests remain bound to their original site.
+
+Transient client-stage failures receive three automatic retries after the
+initial attempt, with jittered exponential delays starting at two seconds and
+respect for Retry-After. Recovery records retain stage, attempts, state, and next
+attempt time across reloads. Connection interruptions pause this budget. App
+startup, restoration, connection recovery, and scheduled due times resume work;
+closed apps do not send. An exhausted budget remains exhausted after reconnect.
+Manual recovery starts one new bounded cycle and cannot overlap an active run.
+Permanent failures do not expose a generic Retry.
+
+The upload reservation identity is stable. Once bytes are confirmed uploaded,
+recovery skips the PUT and retries registration. Text artifact identities are
+saved before registration. Successful analysis is retained before guidance, so
+guidance recovery does not request another analysis. Polling windows time out
+after three minutes, then schedule observation again after 15 seconds; timing
+out never restarts server analysis. The existing per-check poll shares reads.
+
+Artifacts carry an analysis generation and lifecycle status. Workers claim a
+bounded lease, and atomically publish the analysis plus its terminal artifact
+status with a generation condition. Transient server failures retain SQS's five
+delivery budget. A final failed delivery, or the analysis DLQ consumer after a
+hard timeout, publishes retryable exhaustion. Permanent failures publish a
+non-retryable failure. The existing check read excludes results from older
+generations. Explicit restart uses a persisted request identity, accepts only an
+exhausted generation, and safely replays a lost response. Registration replay
+while analysis is running or complete does not request another analysis.
+
+Finished checks wait for evidence guidance or permanent terminal failures before
+finalizing. Check-level finalization has its own durable client retry budget.
+Recoverable failed uploads remain in the expected evidence count. An exhausted
+finalization offers Retry saving; connectivity and operation guards also apply
+to that control. These rules do not change task-update, phone-completion, form,
+or 311 recovery policies.

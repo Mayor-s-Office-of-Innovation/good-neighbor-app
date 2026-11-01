@@ -35,9 +35,9 @@ export const MIN_DESCRIPTION_LENGTH = 20;
 export const MIN_TEXT_EVIDENCE_LENGTH = 5;
 
 /**
- * @typedef {{ id: string, kind?: string, text?: string,
+ * @typedef {{ id: string, kind?: string, text?: string, deletionPending?: boolean,
  *   upload?: { status?: string, artifactId?: string },
- *   analysis?: { status?: string, artifactId?: string, sourceAnalysis?: { shotType?: string } } }} EvidenceItem
+ *   analysis?: { status?: string, artifactId?: string, recovery?: {state?: string, nextAttemptAt?: number}, sourceAnalysis?: { shotType?: string } } }} EvidenceItem
  * @typedef {{ items?: EvidenceItem[] } | null | undefined} SessionCheck
  */
 
@@ -46,8 +46,8 @@ export const MIN_TEXT_EVIDENCE_LENGTH = 5;
  *
  * Completion counts LIVE evidence only: an artifact must exist (or be
  * plausibly on its way) for the backend to include it in the scorecard. An
- * item that permanently failed its upload with nothing registered (no
- * artifactId anywhere) can never produce one — Finish counting it would
+ * item that permanently failed its upload with nothing registered (a
+ * reservation ID alone is insufficient) can never produce one — Finish counting it would
  * complete a check whose backend artifact set can never reach the expected
  * count, hanging the background finalization until timeout.
  *
@@ -59,16 +59,24 @@ export const MIN_TEXT_EVIDENCE_LENGTH = 5;
  * @returns {boolean}
  */
 export function itemCountsTowardCompletion(item) {
-  if (!item) return false;
-  if (item.analysis?.artifactId || item.upload?.artifactId) return true;
-  if (item.analysis?.status === "failed") return false;
+  if (!item || ("captureSaving" in item && item.captureSaving)) return false;
+  // A presign reservation has an ID before an ART# row exists on the server.
+  if (
+    item.analysis?.artifactId ||
+    (item.upload?.artifactId && item.upload.status === "uploaded")
+  )
+    return true;
+  if (item.analysis?.status === "failed")
+    return Boolean(
+      item.analysis?.recovery && item.analysis.recovery.state !== "blocked",
+    );
   return true;
 }
 
 /**
  * Whether a live item has enough local or registered evidence to contribute an
  * artifact to this submission.
- * @param {EvidenceItem & { dataUrl?: string }} item
+ * @param {EvidenceItem & { dataUrl?: string, media?: object }} item
  * @returns {boolean}
  */
 export function itemHasLiveEvidence(item) {
@@ -76,6 +84,7 @@ export function itemHasLiveEvidence(item) {
     itemCountsTowardCompletion(item) &&
       (item.kind === "text" ||
         item.dataUrl ||
+        item.media ||
         item.upload?.artifactId ||
         item.analysis?.artifactId),
   );
@@ -192,4 +201,21 @@ export function completionStatus(check) {
  */
 export function canSubmitDescription(text) {
   return String(text || "").trim().length >= MIN_DESCRIPTION_LENGTH;
+}
+
+/** Confirmed registration, excluding an upload reservation. @param {any} item */
+export function hasRegisteredArtifact(item) {
+  return Boolean(
+    item.analysis?.artifactId ||
+      (item.upload?.status === "uploaded" && item.upload?.artifactId),
+  );
+}
+
+/** Legacy completed evidence still needs its missing registration repaired. @param {any} item */
+export function needsRegistrationRepair(item) {
+  return Boolean(
+    item.analysis?.status === "analyzed" &&
+      itemHasLiveEvidence(item) &&
+      !hasRegisteredArtifact(item),
+  );
 }

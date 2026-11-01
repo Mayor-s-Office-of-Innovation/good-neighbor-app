@@ -303,7 +303,7 @@ export const faq = [
   {
     id: "FAQ-61",
     title: "Analysis or upload is stuck. Should I start again?",
-    text: "Check the connection and use “Try again” if available. Check the home screen for an existing record before creating another report. If all else fails, reload the page in your browser.",
+    text: "Keep the app open and check your connection. The app automatically retries interrupted uploads and analysis when possible, and waits while you are offline. If automatic retries are exhausted, use “Try again” when it becomes available. Retry continues from the failed step; you do not need to take the same photo again. The retry control is unavailable while offline or while a retry is already running. Check the home screen for an existing record before creating another report. If all else fails, reload the page in your browser.",
   },
   {
     id: "FAQ-62",

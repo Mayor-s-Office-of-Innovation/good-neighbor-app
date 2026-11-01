@@ -105,6 +105,43 @@ describe("Site CSV import", () => {
     expect(send.mock.calls.at(-1)?.[0]).toBeInstanceOf(BatchWriteCommand);
   });
 
+  it.each(["Other", " OTHER "])(
+    "previews %s sites and reuses repeated program managers",
+    async (siteType) => {
+      const first = [...baseValues];
+      first[4] = siteType;
+      const second = [...first];
+      second[2] = "Second Site";
+      second[3] = "2 Main St San Francisco CA 94102";
+      const response = await call(
+        previewSiteImport,
+        event({ csv: makeCsv([first, second]) }),
+      );
+      expect(response.statusCode).toBe(201);
+      expect(JSON.parse(String(response.body)).counts).toMatchObject({
+        acceptable: 2,
+        conflict: 0,
+        invalid: 0,
+      });
+      const rows = send.mock.calls
+        .filter(([command]) => command instanceof BatchWriteCommand)
+        .flatMap(([command]) => command.input.RequestItems["gnp-test-app"])
+        .map((request) => request.PutRequest.Item)
+        .filter((row) => row.plan);
+      expect(rows.map((row) => row.plan.site.siteType)).toEqual([
+        "other",
+        "other",
+      ]);
+      expect(rows.map((row) => row.plan.complianceManager.action)).toEqual([
+        "create",
+        "reuse",
+      ]);
+      expect(rows[0].plan.complianceManager.id).toBe(
+        rows[1].plan.complianceManager.id,
+      );
+    },
+  );
+
   it("rejects the old Contact headers", async () => {
     const oldCsv = [
       "Provider,Program,Site name,Site address,Contact first name,Contact last name,Contact phone,Contact extension,Contact email",
@@ -335,76 +372,81 @@ describe("Site CSV import", () => {
     ).toBe("create");
   });
 
-  it("applies Site, Compliance-manager, and Provider-manager relationships atomically", async () => {
-    const row = /** @type {any} */ (importRow());
-    let rowQueryCount = 0;
-    send.mockImplementation(async (command) => {
-      if (command instanceof GetCommand)
-        return {
-          Item: {
-            previewVersion: "preview-1",
-            previewExpiresAt: "2099-01-01T00:00:00.000Z",
-            counts: { create: 1 },
-            fileName: "sites.csv",
-          },
-        };
-      if (command instanceof QueryCommand) {
-        rowQueryCount += 1;
-        return {
-          Items: rowQueryCount === 1 ? [row] : [{ ...row, outcome: "applied" }],
-        };
+  it.each(["shelter", "other"])(
+    "applies %s Site and manager relationships atomically",
+    async (siteType) => {
+      const row = /** @type {any} */ (importRow());
+      row.plan.site.siteType = siteType;
+      let rowQueryCount = 0;
+      send.mockImplementation(async (command) => {
+        if (command instanceof GetCommand)
+          return {
+            Item: {
+              previewVersion: "preview-1",
+              previewExpiresAt: "2099-01-01T00:00:00.000Z",
+              counts: { create: 1 },
+              fileName: "sites.csv",
+            },
+          };
+        if (command instanceof QueryCommand) {
+          rowQueryCount += 1;
+          return {
+            Items:
+              rowQueryCount === 1 ? [row] : [{ ...row, outcome: "applied" }],
+          };
+        }
+        return {};
+      });
+      geocodeAddress.mockResolvedValueOnce({
+        latitude: 37.78,
+        longitude: -122.42,
+        matchedAddress: "1 MAIN ST, SAN FRANCISCO, CA 94102",
+      });
+      const response = await call(
+        applySiteImport,
+        event(
+          { previewVersion: "preview-1", idempotencyKey: "apply-1" },
+          { importId: "import-1" },
+        ),
+      );
+      expect(response.statusCode).toBe(200);
+      const transaction = send.mock.calls
+        .map(([command]) => command)
+        .find((command) => command instanceof TransactWriteCommand);
+      if (!(transaction instanceof TransactWriteCommand)) {
+        throw new Error("Expected an import transaction");
       }
-      return {};
-    });
-    geocodeAddress.mockResolvedValueOnce({
-      latitude: 37.78,
-      longitude: -122.42,
-      matchedAddress: "1 MAIN ST, SAN FRANCISCO, CA 94102",
-    });
-    const response = await call(
-      applySiteImport,
-      event(
-        { previewVersion: "preview-1", idempotencyKey: "apply-1" },
-        { importId: "import-1" },
-      ),
-    );
-    expect(response.statusCode).toBe(200);
-    const transaction = send.mock.calls
-      .map(([command]) => command)
-      .find((command) => command instanceof TransactWriteCommand);
-    if (!(transaction instanceof TransactWriteCommand)) {
-      throw new Error("Expected an import transaction");
-    }
-    const items = transaction.input.TransactItems;
-    if (!items) throw new Error("Expected transaction items");
-    expect(
-      items.some(
-        (item) => item.Put?.Item?.type === "siteComplianceManagerAssignment",
-      ),
-    ).toBe(true);
-    expect(
-      items.some(
-        (item) => item.Put?.Item?.type === "providerManagerMembership",
-      ),
-    ).toBe(true);
-    const site = items.find((item) => item.Put?.Item?.type === "site")?.Put
-      ?.Item;
-    if (!site) throw new Error("Expected a Site item");
-    expect(site).toMatchObject({
-      deliberate311ProductionEnabled: true,
-      siteType: "shelter",
-      oversight: {
-        managingCityDepartment: "Department of Public Health (DPH)",
-      },
-    });
-    expect(site.primaryContactUserId).toBe(importRow().plan.contact.id);
-    expect(site.primaryContact).toEqual({
-      firstName: "Sam",
-      lastName: "Lee",
-      phone: "415-555-0100",
-      email: "sam@example.org",
-    });
-  });
+      const items = transaction.input.TransactItems;
+      if (!items) throw new Error("Expected transaction items");
+      expect(
+        items.some(
+          (item) => item.Put?.Item?.type === "siteComplianceManagerAssignment",
+        ),
+      ).toBe(true);
+      expect(
+        items.some(
+          (item) => item.Put?.Item?.type === "providerManagerMembership",
+        ),
+      ).toBe(true);
+      const site = items.find((item) => item.Put?.Item?.type === "site")?.Put
+        ?.Item;
+      if (!site) throw new Error("Expected a Site item");
+      expect(site).toMatchObject({
+        deliberate311ProductionEnabled: true,
+        siteType,
+        oversight: {
+          managingCityDepartment: "Department of Public Health (DPH)",
+        },
+      });
+      expect(site.primaryContactUserId).toBe(importRow().plan.contact.id);
+      expect(site.primaryContact).toEqual({
+        firstName: "Sam",
+        lastName: "Lee",
+        phone: "415-555-0100",
+        email: "sam@example.org",
+      });
+    },
+  );
 
   it.each([true, false])(
     "backfills reused Site metadata with assignPrimary=%s",

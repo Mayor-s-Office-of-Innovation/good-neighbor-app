@@ -1,3 +1,12 @@
+/// <reference types="vite/client" />
+import savedPhotoSvg from "../assets/saved-photo.svg?raw";
+const savedPhotoSrc = `data:image/svg+xml,${encodeURIComponent(savedPhotoSvg)}`;
+import {
+  canManuallyRetry,
+  removingEvidence,
+  connectionAvailable,
+} from "../services/evidence-recovery.js";
+import { capturePhoto } from "./capture-photo.templates.js";
 import { needsResolutionProof } from "../domain/home-tasks.js";
 import { artifactPhoto } from "./artifact-photo.templates.js";
 import { cardDescription } from "./card-description.js";
@@ -106,16 +115,19 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.webp";
  * @property {string} [noIssuesDescription]
  * @property {string} [error]
  * @property {string} [lastTriedAt]
+ * @property {boolean} [repairingRegistration]
  * @property {boolean} [localSaveConfirmed]
+ * @property {any} [recovery]
  * @property {number} [retryCount]
  * @property {AnalysisStages} [stages] progress checkpoints (uploaded / sent ISO stamps)
- * @property {{ leg?: string, uploaded?: boolean, enqueued?: boolean, waitedMs?: number, backendError?: boolean }} [failure]
+ * @property {{ leg?: string, uploaded?: boolean, enqueued?: boolean, waitedMs?: number, backendError?: boolean, code?: string }} [failure]
  */
 
 /**
  * @typedef {object} AnalysisItem
  * @property {string} [id]
  * @property {"photo" | "text" | string} [kind]
+ * @property {{key: string}} [media]
  * @property {string} [dataUrl]
  * @property {string} [text]
  * @property {string} [placeName] label under the evidence preview; legacy items
@@ -132,6 +144,7 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.webp";
 
 /**
  * @typedef {object} TaskEvidence
+ * @property {"photo" | "text"} [kind]
  * @property {string} [artifactId]
  * @property {string} [placeName]
  * @property {string} [georeferencedAddress]
@@ -140,6 +153,9 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.webp";
 
 /**
  * @typedef {object} HomeTask
+ * @property {string} [mediaState]
+ * @property {number} [mediaRetryAt]
+ * @property {number} [mediaExpiresAt]
  * @property {boolean} [duplicateHidden]
  * @property {any} [duplicate]
  * @property {number} [duplicateSeenCount]
@@ -416,7 +432,22 @@ export function analysisCards(item, sessionCheckId, options = {}) {
  * @param {{ siteName?: string, siteAddress?: string }} [options]
  * @returns {AnalysisCardEntry[]}
  */
-function analysisCardEntries(
+function analysisCardEntries(evidence, sessionCheckId, options = {}) {
+  const entries = renderAnalysisCardEntries(evidence, sessionCheckId, options);
+  if (
+    !evidence.analysis?.repairingRegistration ||
+    evidence.analysis?.recovery?.state !== "working"
+  )
+    return entries;
+  return entries.map((entry) => ({
+    ...entry,
+    markup: entry.markup.replace("<article", '<article aria-busy="true" inert'),
+  }));
+}
+
+/** @param {AnalysisItem} evidence @param {string} sessionCheckId
+ * @param {{siteName?: string, siteAddress?: string}} options */
+function renderAnalysisCardEntries(
   evidence,
   sessionCheckId,
   { siteName = "", siteAddress = "" } = {},
@@ -430,8 +461,36 @@ function analysisCardEntries(
       evidence.analysis?.georeferencedAddress ||
       "",
   };
+  // Keep existing results mounted visually while repairing their registration.
+  if (
+    item.analysis?.repairingRegistration &&
+    item.analysis?.recovery?.state === "working" &&
+    (item.analysis.tasks?.length ||
+      item.analysis.conditions?.length ||
+      item.analysis.sourceAnalysis)
+  )
+    item.analysis = {
+      ...item.analysis,
+      status: "analyzed",
+      recovery: undefined,
+    };
   const status = item.analysis?.status || "idle";
   const itemTime = item.uploadedAt || item.createdAt || "";
+  if (
+    !connectionAvailable() &&
+    ["failed", "waiting", "queued", "analyzing"].includes(status) &&
+    !(
+      status === "failed" &&
+      ["manual", "blocked"].includes(item.analysis?.recovery?.state)
+    )
+  )
+    return [{ markup: waitingCard(item, true), createdAt: itemTime }];
+  if (
+    item.analysis?.recovery?.state === "scheduled" ||
+    (item.analysis?.recovery?.state === "working" &&
+      item.analysis?.recovery?.attempts > 0)
+  )
+    return [{ markup: recoveryCard(item, "retrying"), createdAt: itemTime }];
   if (status === "failed") {
     return [{ markup: failedCard(item), createdAt: itemTime }];
   }
@@ -565,9 +624,7 @@ export function clearCheckCard() {
  */
 function conditionEvidenceCard(item, sessionCheckId, condition) {
   return completedEvidenceCard(item, sessionCheckId, {
-    title: condition.needsAnswer
-      ? t("card.title.moreDetails")
-      : displayCategory(condition) || t("card.title.fallback"),
+    title: displayCategory(condition) || t("card.title.fallback"),
     description:
       displayDescription(condition) || t("card.description.fallback"),
     action: "",
@@ -608,6 +665,9 @@ export function taskAnalysisCard({
       task.status,
     );
   const mediaUrl = taskMediaUrl(task);
+  const mediaArtifactId = taskMediaArtifactId(task);
+  const unknownEvidence =
+    !task.evidence?.kind && !mediaUrl && Boolean(mediaArtifactId);
   // `positionDescriptor` is deliberately not a fallback: since ADR 0014 it is
   // a fixed literal, not a location.
   const placeName =
@@ -615,7 +675,11 @@ export function taskAnalysisCard({
   const evidenceText = task.evidence?.text || task.text || "";
   const pseudoItem = {
     id: task.taskId || "",
-    kind: mediaUrl || readOnly || action?.kind === "view311" ? "photo" : "text",
+    kind:
+      task.evidence?.kind ||
+      (mediaUrl || unknownEvidence || readOnly || action?.kind === "view311"
+        ? "photo"
+        : "text"),
     dataUrl: mediaUrl,
     fullDataUrl: task.mediaUrl || mediaUrl,
     text: evidenceText,
@@ -627,7 +691,7 @@ export function taskAnalysisCard({
     createdAt: task.createdAt || task.created_at || task.updatedAt || "",
     checkId: task.checkId || "",
     analysis: {
-      artifactId: taskMediaArtifactId(task),
+      artifactId: mediaArtifactId,
       assessment: {},
       sourceAnalysis: {},
     },
@@ -674,7 +738,11 @@ export function taskAnalysisCard({
           (task.updatedAt || task.ticketUpdatedAt)
         ? updatedCardTime(task.updatedAt || task.ticketUpdatedAt)
         : "",
-    mediaPlaceholder: (readOnly || action?.kind === "view311") && !mediaUrl,
+    mediaPlaceholder:
+      unknownEvidence ||
+      ((readOnly || action?.kind === "view311") &&
+        !mediaUrl &&
+        task.evidence?.kind !== "photo"),
     shortId: taskDisplayReference(task),
     filingNote: readOnly ? "" : filing311FailureMessage(task),
   });
@@ -729,6 +797,18 @@ function taskMetaLabel(task, isNew) {
 
 function pendingCard(item) {
   const place = cardPlace(item);
+  const stage = item.analysis?.recovery?.stage;
+  const title =
+    stage === "evaluate"
+      ? "card.recovery.guidance"
+      : item.kind === "photo" &&
+          item.analysis?.status !== "analyzing" &&
+          item.upload?.status !== "uploaded" &&
+          !item.analysis?.artifactId
+        ? item.upload?.status === "uploading"
+          ? "card.recovery.uploading"
+          : "card.recovery.queued"
+        : "card.pending.title";
   return html`
     <article class="analysis-card analysis-card--pending analysis-card--new">
       <div class="analysis-card__panel">
@@ -741,7 +821,7 @@ function pendingCard(item) {
             <p class="analysis-card__place">
               ${escapeHtml(place || t("card.place.placeholder"))}
             </p>
-            <h3>${escapeHtml(t("card.pending.title"))}${animatedEllipsis()}</h3>
+            <h3>${escapeHtml(t(title))}${animatedEllipsis()}</h3>
             <div class="analysis-card__skeleton-copy" aria-hidden="true">
               <span
                 class="analysis-card__skeleton analysis-card__skeleton--wide"
@@ -775,7 +855,7 @@ function waitingCard(item, offline = true) {
   >
     <div class="analysis-error__body">
       <img
-        src="/images/error-states/saved-photo.svg"
+        src="${escapeAttr(savedPhotoSrc)}"
         alt=""
         class="analysis-saved__illustration"
       />
@@ -815,11 +895,16 @@ function waitingCard(item, offline = true) {
  * @returns {string}
  */
 function failedCard(item) {
-  if (item.analysis?.localSaveConfirmed && item.analysis?.retryCount >= 3)
-    return waitingCard(item, false);
   const failure = item.analysis?.failure || {};
   const upload = failure.leg === "upload";
   const stamp = item.analysis?.lastTriedAt || item.uploadedAt;
+  const blocked = item.analysis?.recovery?.state === "blocked";
+  const deleteOffline =
+    Boolean(item.analysis?.artifactId || item.upload?.artifactId) &&
+    !connectionAvailable();
+  const deleting = removingEvidence.has(item.id);
+  const unreadable =
+    item.kind === "photo" && failure.code === "undecodable_input";
   return html`<article
     class="analysis-card analysis-card--failed analysis-card--new"
     data-item-id="${escapeAttr(item.id || "")}"
@@ -827,9 +912,18 @@ function failedCard(item) {
     <div class="analysis-error__header">
       <wa-icon name="triangle-exclamation" aria-hidden="true"></wa-icon
       ><strong>${escapeHtml(t("notice.error"))}</strong>
-      ${item.kind === "photo" && !failure.uploaded
-        ? `<button class="btn-icon" type="button" data-analysis-action="remove-item" aria-label="${escapeAttr(t("card.failed.removePhoto.aria"))}"><wa-icon name="xmark" aria-hidden="true"></wa-icon></button>`
-        : ""}
+      <button
+        class="btn-icon"
+        type="button"
+        data-analysis-action="delete-failed-item"
+        aria-label="${escapeAttr(t("card.failed.delete"))}"
+        ${deleteOffline || deleting ? "disabled" : ""}
+        ${deleteOffline
+          ? `title="${escapeAttr(t("card.failed.deleteOffline"))}"`
+          : ""}
+      >
+        <wa-icon name="xmark" aria-hidden="true"></wa-icon>
+      </button>
     </div>
     <div class="analysis-error__body">
       <img
@@ -841,23 +935,35 @@ function failedCard(item) {
       />
       <h3>
         ${escapeHtml(
-          t(upload ? "card.failed.uploadTitle" : "card.failed.analysisTitle"),
+          t(
+            unreadable
+              ? "card.failed.unreadableTitle"
+              : upload
+                ? "card.failed.uploadTitle"
+                : "card.failed.analysisTitle",
+          ),
         )}
       </h3>
       <p>
-        ${escapeHtml(failureReasonLine(failure, item))}${failure.waitedMs &&
-        formatWaited(failure.waitedMs)
+        ${escapeHtml(
+          item.analysis?.recovery?.stage === "storage"
+            ? t("card.recovery.unsaved")
+            : unreadable
+              ? t("card.failed.unreadableBody")
+              : blocked
+                ? t("card.recovery.blocked")
+                : failureReasonLine(failure, item),
+        )}${failure.waitedMs && formatWaited(failure.waitedMs)
           ? ` ${escapeHtml(t("card.failed.waited", { duration: formatWaited(failure.waitedMs) }))}`
           : ""}
       </p>
-      <button
-        class="btn-outline btn-outline--sm"
-        type="button"
-        data-analysis-action="retry"
-      >
-        ${escapeHtml(t("notice.retry"))}
-      </button>
-      ${upload ? evidencePreview(item) : ""}
+      ${canManuallyRetry(item)
+        ? `<button class="btn-outline btn-outline--sm" type="button" data-analysis-action="retry">${escapeHtml(t("notice.retry"))}</button>`
+        : ""}
+      ${item.kind === "photo" ? evidencePreview(item) : ""}
+      ${deleteOffline
+        ? `<p role="status">${escapeHtml(t("card.failed.deleteOffline"))}</p>`
+        : ""}
     </div>
     ${stamp
       ? `<p class="analysis-error__time">${escapeHtml(t("card.failed.lastTried", { time: formatTime(stamp) }))}</p>`
@@ -980,12 +1086,14 @@ function completedEvidenceCard(
             </button>`
           : ""}
         ${statusTickerMarkup(
-          tickerTask || {
-            kind: actionKind,
-            phoneNumber,
-            duplicate: duplicateNote,
-            duplicateCheckState,
-          },
+          question
+            ? { ...(tickerTask || {}), needsAnswer: question }
+            : tickerTask || {
+                kind: actionKind,
+                phoneNumber,
+                duplicate: duplicateNote,
+                duplicateCheckState,
+              },
         )}
         <div class="analysis-card__layout">
           <div class="analysis-card__content">
@@ -1206,20 +1314,24 @@ function imagePreview(item) {
       <button
         type="button"
         data-photo-lightbox
-        disabled
-        data-full-src="${escapeAttr(item.fullDataUrl || item.dataUrl)}"
+        ${item.media ? "" : "disabled"}
+        data-full-src="${escapeAttr(
+          item.media ? "" : item.fullDataUrl || item.dataUrl,
+        )}"
         data-photo-address="${escapeAttr(address)}"
         data-photo-time="${escapeAttr(capturedAt)}"
       >
-        ${artifactPhoto({
-          src: item.dataUrl,
-          original: item.fullDataUrl,
-          checkId: item.checkId,
-          artifactId: item.analysis?.artifactId,
-          alt: t("card.evidence.alt", {
-            place: placeName || t("card.evidence.siteFallback"),
-          }),
-        })}
+        ${item.media
+          ? capturePhoto(item, t("lightbox.image.alt"))
+          : artifactPhoto({
+              src: item.dataUrl,
+              original: item.fullDataUrl,
+              checkId: item.checkId,
+              artifactId: item.analysis?.artifactId,
+              alt: t("card.evidence.alt", {
+                place: placeName || t("card.evidence.siteFallback"),
+              }),
+            })}
       </button>
     </div>
   `;
@@ -1508,5 +1620,36 @@ function historyCard(task, readOnly = false) {
           </button>
         </div>`
       : ""}
+  </article>`;
+}
+
+/** Persisted recovery drives presentation independently of the last failure.
+ * @param {AnalysisItem} item @param {string} mode
+ */
+function recoveryCard(item, mode) {
+  const saved = item.analysis?.localSaveConfirmed;
+  const stage = item.analysis?.recovery?.stage;
+  const key =
+    mode === "offline"
+      ? saved
+        ? "card.recovery.offline"
+        : "card.recovery.unsaved"
+      : stage === "evaluate"
+        ? "card.recovery.retryGuidance"
+        : ["analyze", "observe", "restart"].includes(stage)
+          ? "card.recovery.observing"
+          : "card.recovery.retryUpload";
+  return html`<article
+    class="analysis-card analysis-card--waiting analysis-card--new"
+    data-item-id="${escapeAttr(item.id || "")}"
+  >
+    <div class="analysis-error__body">
+      <p role="status">
+        ${escapeHtml(
+          mode === "retrying" ? t(key).replace(/[.…]+$/u, "") : t(key),
+        )}${mode === "retrying" ? animatedEllipsis() : ""}
+      </p>
+      ${evidencePreview(item)}
+    </div>
   </article>`;
 }

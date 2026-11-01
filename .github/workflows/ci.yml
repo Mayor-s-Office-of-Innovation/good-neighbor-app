@@ -95,6 +95,9 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Test capture media storage and rendering
+        run: npm run test:capture:ui -w frontend
+
       - name: Test support dialog accessibility
         run: npm run test:support:ui
 
@@ -106,6 +109,9 @@ jobs:
 
       - name: Test error states and connectivity in Chromium and WebKit
         run: npm run test:errors:ui
+
+      - name: Perimeter recovery scenarios (Chromium and WebKit)
+        run: npm run test:recovery:ui
 
       # The offline-launch service worker exists only in a build, so this runs
       # against `vite preview` (npm run dev:offline), not the dev server.

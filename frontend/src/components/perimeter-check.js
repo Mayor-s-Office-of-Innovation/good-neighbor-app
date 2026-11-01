@@ -1,4 +1,8 @@
 // @ts-nocheck -- lenient migration baseline (checkJs).
+import { answerCaptureQuestion } from "./capture-card-actions.js";
+import { showInlineError } from "./error-notice.js";
+import { patchHtml } from "../lib/patch-html.js";
+import { renderCaptureGrid } from "./capture-grid.js";
 import { CaptureFileQueue } from "../services/capture-files.js";
 import { resolveSessionTask } from "./session-task-resolution.js";
 import { openSessionDuplicate } from "./duplicate-issue-launcher.js";
@@ -26,7 +30,6 @@ import {
   show311FilingToast,
   show311ErrorToast,
   showActionSaveErrorToast,
-  showAnswerSaveErrorToast,
   showDeleteErrorToast,
   showEditErrorToast,
   showEditRefreshErrorToast,
@@ -50,7 +53,6 @@ import { openOverlayDialog, awaitOverlayUnwind } from "../dialog-history.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import { mark } from "../services/instrument.js";
 import {
-  answerAnalysisQuestion,
   analyzeNoIssueDescriptionEdit,
   analyzeEvidenceItem,
   shouldResumeEvidenceItem,
@@ -81,7 +83,7 @@ import {
   getItems,
   getCurrentCheck,
   getFlowType,
-  addItem,
+  addCapturedPhoto,
   removeItem,
   isCurrentSession,
   getAnalyzingOpen,
@@ -95,14 +97,10 @@ import {
 import {
   shell,
   progressLine,
-  photoGrid,
   footer,
   analyzingSection,
 } from "./perimeter-check.templates.js";
-import {
-  setQuestionAnswerBusy,
-  showQuestionAnswerUpdated,
-} from "./analysis-answer-controls.js";
+import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 import { markCameraOpen, clearCameraOpen } from "../state/capture-resume.js";
 import { trackEvent } from "../services/analytics.js";
 
@@ -110,8 +108,8 @@ class PerimeterCheck extends HTMLElement {
   constructor() {
     super();
     this._captureReadVersion = 0;
-    this._captureFiles = new CaptureFileQueue();
-    this._answeringConditionIds = new Set();
+    this._captureFiles = new CaptureFileQueue(true);
+    this._answeringConditionIds = new Map();
   }
 
   async connectedCallback() {
@@ -137,8 +135,9 @@ class PerimeterCheck extends HTMLElement {
     this._deletionUnsub = onDeletionsChange(() => {
       if (this.isConnected && !this._finishing) this._render();
     });
-    this._unsubscribe = onCheckSessionChange(() => {
-      if (this.isConnected && !this._finishing) this._render();
+    this._unsubscribe = onCheckSessionChange((changed) => {
+      if (changed && changed.id !== this._checkId) return;
+      if (this.isConnected && !this._finishing) this._requestRender();
     });
     this.innerHTML = shell();
     this._fileInput = this.querySelector("#file-input");
@@ -343,16 +342,27 @@ class PerimeterCheck extends HTMLElement {
       openSessionDuplicate(button, this);
       return;
     }
+    if (action === "delete-failed-item") {
+      const button = target.closest("button");
+      const itemId = button
+        ?.closest("[data-item-id]")
+        ?.getAttribute("data-item-id");
+      if (!itemId || button.disabled) return;
+      button.disabled = true;
+      void removeEvidenceItem(itemId).catch(() => {
+        button.disabled = false;
+        showInlineError(t("card.failed.deleteError"), {
+          target: this,
+          key: "delete-failed-item",
+        });
+      });
+      return;
+    }
     if (action === "retry") {
       const card = button.closest(".analysis-card");
       const itemId = card?.getAttribute("data-item-id") || "";
-      if (itemId) retryEvidenceItem(itemId);
-      return;
-    }
-    if (action === "remove-item") {
-      const card = button.closest(".analysis-card");
-      const itemId = card?.getAttribute("data-item-id") || "";
-      if (itemId) this._removeFailedItem(itemId);
+      if (itemId && retryEvidenceItem(itemId))
+        button.setAttribute("disabled", "");
       return;
     }
 
@@ -575,45 +585,11 @@ class PerimeterCheck extends HTMLElement {
   }
 
   async _answerProblemQuestion(problem, button) {
-    if (!(button instanceof HTMLButtonElement)) return;
-    const answerKey = button.getAttribute("data-answer-key") || "";
-    const answerValue = button.getAttribute("data-answer-value") === "true";
-    if (!problem.itemId || !problem.conditionId || !answerKey) {
-      showAnswerSaveErrorToast();
-      return;
-    }
-    if (this._answeringConditionIds.has(problem.conditionId)) return;
-
-    this._answeringConditionIds.add(problem.conditionId);
-    setQuestionAnswerBusy(this, problem.conditionId, true);
-    try {
-      await answerAnalysisQuestion(
-        problem.itemId,
-        problem.conditionId,
-        answerKey,
-        answerValue,
-      );
-      this._render();
-      showQuestionAnswerUpdated(this, problem.conditionId);
-    } catch (err) {
-      console.error("answer condition failed", err);
-      showAnswerSaveErrorToast();
-    } finally {
-      this._answeringConditionIds.delete(problem.conditionId);
-      setQuestionAnswerBusy(this, problem.conditionId, false);
-    }
+    return answerCaptureQuestion(this, problem, button);
   }
 
   _markProblemResolved(problem) {
     if (resolveConditionLocally(problem)) this._render();
-  }
-
-  /** Drop a failed, never-uploaded photo from the session entirely. */
-  _removeFailedItem(itemId) {
-    const item = findItem(itemId);
-    if (!item) return;
-    if (item.upload?.status === "uploaded") return;
-    removeItem(itemId);
   }
 
   /**
@@ -712,6 +688,7 @@ class PerimeterCheck extends HTMLElement {
   _onFilePicked(input = this._fileInput) {
     clearCameraOpen();
     const files = [...(input?.files || [])];
+    if (input) input.value = "";
     if (!files.length) return;
     if (input === this._fileInput)
       mark("camera:picked", { bytes: files[0].size, type: files[0].type });
@@ -726,7 +703,7 @@ class PerimeterCheck extends HTMLElement {
         version === this._captureReadVersion &&
         isCurrentSession(originCheckId, "perimeter"),
       (dataUrl) => this._addPhoto(dataUrl),
-      () => this._render(),
+      () => this._requestRender(),
     );
     if (rejected)
       showToast({
@@ -743,16 +720,35 @@ class PerimeterCheck extends HTMLElement {
       });
   }
 
-  _addPhoto(dataUrl) {
-    const record = addItem({ kind: "photo", dataUrl });
-    if (record) {
-      setAnalyzingOpen(true);
-      analyzeEvidenceItem(record.id);
+  async _addPhoto(file) {
+    try {
+      const record = await addCapturedPhoto(file);
+      if (record) {
+        setAnalyzingOpen(true);
+        analyzeEvidenceItem(record.id);
+      }
+    } catch {
+      showToast({
+        title: t("capture.saveFailed.title"),
+        message: t("capture.saveFailed.message"),
+        tone: "warning",
+        duration: 0,
+      });
     }
-    this._render();
+    this._requestRender();
+  }
+
+  _requestRender() {
+    if (this._renderFrame) return;
+    this._renderFrame = requestAnimationFrame(() => {
+      this._renderFrame = null;
+      if (this.isConnected && !this._finishing) this._render();
+    });
   }
 
   _render() {
+    // Keep the answered question present until its confirmation has been seen.
+    if (this._answeringConditionIds.size) return;
     if (isDeletingAnalysisCard(this) || isCompletingAnalysisCard(this)) return;
     const check = getCurrentCheck();
     if (!check) return;
@@ -764,47 +760,59 @@ class PerimeterCheck extends HTMLElement {
       check,
       check.captureGuidanceContext?.titleKey,
     );
-    this.querySelector(".check-timeline__title").textContent = t(
-      guidance.titleKey,
-    );
+    const title = this.querySelector(".check-timeline__title");
+    const titleText = t(guidance.titleKey);
+    if (title.textContent !== titleText) title.textContent = titleText;
     const progress = this.querySelector("#check-progress");
     progress.hidden = guidance.photos === 0;
-    progress.innerHTML = progressLine(guidance);
+    patchHtml(progress, progressLine(guidance));
     const grid = this.querySelector("#shotgrid");
     grid.classList.toggle(
       "shotgrid--empty",
       photos.length === 0 && !description,
     );
-    grid.innerHTML = photoGrid(photos, description);
+    renderCaptureGrid(grid, photos, description);
 
     const evidence = getItems();
-    this.querySelector("#capture-labels").innerHTML = captureLabels(getItems());
-    this.querySelector("#check-footer").innerHTML = footer({
-      items: evidence,
-      analyzingOpen: getAnalyzingOpen(),
-      complete: !this._captureFiles.busy && status.complete,
-    });
-    const existingTray = this.querySelector("#analysis-tray");
-    existingTray?.remove();
-    if (getAnalyzingOpen() && evidence.length) {
-      this.querySelector("#check-footer").insertAdjacentHTML(
-        "afterend",
-        analyzingSection(evidence, check.id, {
-          startedAt: check.startedAt,
-          siteName: this._site?.name || "",
-          siteAddress: this._site?.address || "",
-        }),
-      );
+    patchHtml(this.querySelector("#capture-labels"), captureLabels(getItems()));
+    patchHtml(
+      this.querySelector("#check-footer"),
+      footer({
+        items: evidence,
+        analyzingOpen: getAnalyzingOpen(),
+        complete: !this._captureFiles.busy && status.complete,
+      }),
+    );
+    let tray = this.querySelector("#capture-tray-slot");
+    if (!tray) {
+      tray = document.createElement("div");
+      tray.id = "capture-tray-slot";
+      this.querySelector("#check-footer").after(tray);
     }
-    for (const conditionId of this._answeringConditionIds) {
-      setQuestionAnswerBusy(this, conditionId, true);
+    patchHtml(
+      tray,
+      getAnalyzingOpen() && evidence.length
+        ? analyzingSection(evidence, check.id, {
+            startedAt: check.startedAt,
+            siteName: this._site?.name || "",
+            siteAddress: this._site?.address || "",
+          })
+        : "",
+    );
+    for (const {
+      itemId,
+      conditionId,
+    } of this._answeringConditionIds.values()) {
+      setQuestionAnswerBusy(this, conditionId, true, { itemId });
     }
-    this._startElapsedTicker();
+    if (!this._elapsedTicker) this._startElapsedTicker();
   }
 
   disconnectedCallback() {
+    if (this._renderFrame) cancelAnimationFrame(this._renderFrame);
+    this._renderFrame = null;
     this._captureReadVersion += 1;
-    this._captureFiles = new CaptureFileQueue();
+    this._captureFiles = new CaptureFileQueue(true);
     this._guidanceAbort?.abort();
     // Only an abnormal document death leaves the marker behind.
     clearCameraOpen();

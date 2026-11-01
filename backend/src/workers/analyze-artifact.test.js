@@ -329,7 +329,7 @@ describe("analyze-artifact worker", () => {
     const put = ddbSend.mock.calls[0][0];
     expect(put).toBeInstanceOf(PutCommand);
     expect(put.input.ConditionExpression).toBe(
-      "attribute_not_exists(sk) OR #st = :failed",
+      "(attribute_not_exists(sk) OR #st = :failed) AND attribute_not_exists(analysisGeneration)",
     );
     expect(put.input.ExpressionAttributeNames).toEqual({ "#st": "status" });
     expect(put.input.ExpressionAttributeValues).toEqual({
@@ -581,7 +581,7 @@ describe("analyze-artifact worker", () => {
     await invoke(baseMsg);
     const put = ddbSend.mock.calls[0][0];
     expect(put.input.ConditionExpression).toBe(
-      "attribute_not_exists(sk) OR #st = :failed",
+      "(attribute_not_exists(sk) OR #st = :failed) AND attribute_not_exists(analysisGeneration)",
     );
 
     // Second delivery against an already-analyzed slot → conditional reject →
@@ -819,4 +819,89 @@ describe("analyze-artifact worker", () => {
       artifactId: "art_text_1",
     });
   });
+});
+
+it("publishes generation-fenced success for the recovery protocol", async () => {
+  getObjectBytes.mockResolvedValue({
+    bytes: Buffer.from("synthetic"),
+    contentType: "image/jpeg",
+  });
+  analyze.mockResolvedValue(singleLowConcernResponse);
+  ddbSend.mockResolvedValue({});
+  await invoke({ ...baseMsg, analysisGeneration: "generation-1" });
+  const transaction = ddbSend.mock.calls
+    .map(([command]) => command.input)
+    .find((input) => input.TransactItems);
+  expect(
+    transaction.TransactItems[0].Update.ExpressionAttributeValues[":status"],
+  ).toBe("succeeded");
+  expect(transaction.TransactItems[1].Put.Item.analysisGeneration).toBe(
+    "generation-1",
+  );
+});
+it("records exhaustion on the final transient delivery", async () => {
+  analyze.mockRejectedValueOnce(
+    new AnalyzerError("unavailable", { status: 503, retryable: true }),
+  );
+  const result = await handler(
+    /** @type {any} */ ({
+      Records: [
+        {
+          messageId: "last",
+          attributes: { ApproximateReceiveCount: "5" },
+          body: JSON.stringify({
+            ...baseMsg,
+            analysisGeneration: "generation-1",
+          }),
+        },
+      ],
+    }),
+    /** @type {any} */ ({}),
+    () => {},
+  );
+  expect(/** @type {any} */ (result).batchItemFailures).toEqual([]);
+  const transaction = ddbSend.mock.calls
+    .map(([command]) => command.input)
+    .find((input) => input.TransactItems);
+  expect(
+    transaction.TransactItems[0].Update.ExpressionAttributeValues[":status"],
+  ).toBe("exhausted");
+  expect(transaction.TransactItems[1].Put.Item.retryable).toBe(true);
+});
+it("turns hard-timeout dead letters into observable exhaustion without analysis", async () => {
+  await handler(
+    /** @type {any} */ ({
+      Records: [
+        {
+          messageId: "dead",
+          eventSourceARN: `arn:aws:sqs:us-east-1:${"0".repeat(12)}:test-analysis-dlq`,
+          body: JSON.stringify({
+            ...baseMsg,
+            analysisGeneration: "generation-1",
+          }),
+        },
+      ],
+    }),
+    /** @type {any} */ ({}),
+    () => {},
+  );
+  expect(analyze).not.toHaveBeenCalled();
+  const transaction = ddbSend.mock.calls
+    .map(([command]) => command.input)
+    .find((input) => input.TransactItems);
+  expect(
+    transaction.TransactItems[0].Update.ExpressionAttributeValues[":status"],
+  ).toBe("exhausted");
+});
+it("discards late results after the active generation changes", async () => {
+  ddbSend.mockImplementation(async (command) => {
+    if (command.input.TransactItems)
+      throw Object.assign(new Error("stale"), {
+        name: "TransactionCanceledException",
+        CancellationReasons: [{ Code: "ConditionalCheckFailed" }],
+      });
+    return {};
+  });
+  await invoke({ ...baseMsg, analysisGeneration: "generation-1" });
+  expect(enqueueTranslateArtifact).not.toHaveBeenCalled();
 });

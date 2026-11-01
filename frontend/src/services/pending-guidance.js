@@ -1,3 +1,4 @@
+import { hydratePendingQuestionEvidence } from "./task-evidence.js";
 import { listPendingGuidance, getAssessmentGuidance } from "./api.js";
 
 /** Read every bounded page, including empty filtered pages.
@@ -20,7 +21,7 @@ export async function loadPendingQuestionItems(
         const id = `pending:${assessment.assessmentId}:${condition.conditionId}`;
         items.set(id, {
           id,
-          kind: "text",
+          kind: "unknown",
           checkId: assessment.checkId,
           createdAt: condition.createdAt,
           analysis: {
@@ -35,6 +36,15 @@ export async function loadPendingQuestionItems(
       }
     }
     onPage?.([...items.values()]);
+    if (items.size) {
+      const hydrated = await hydratePendingQuestionEvidence([
+        ...items.values(),
+      ]);
+      if (!shouldContinue()) return [];
+      const changed = hydrated.some((item) => items.get(item.id) !== item);
+      for (const item of hydrated) items.set(item.id, item);
+      if (changed) onPage?.(hydrated);
+    }
     nextToken = page.nextToken || null;
     if (nextToken && seen.has(nextToken))
       throw new Error("Repeated guidance cursor");
@@ -85,7 +95,30 @@ export function mergePendingQuestionItems(localItems, pendingItems, tasks) {
       { ...item, analysis: { ...analysis, conditions, tasks: localTasks } },
     ];
   });
-  return [...merged, ...pendingItems];
+  const questions = pendingItems.map((item) => {
+    const artifactId = item.analysis?.artifactId;
+    const local = localItems.find(
+      (candidate) =>
+        artifactId &&
+        (candidate.analysis?.artifactId || candidate.upload?.artifactId) ===
+          artifactId,
+    );
+    if (!local) return item;
+    // Keep server guidance authoritative while retaining the captured preview.
+    return {
+      ...item,
+      kind: local.kind || item.kind,
+      ...(local.media
+        ? { media: local.media, checkId: local.checkId || item.checkId }
+        : {}),
+      dataUrl: local.dataUrl || item.dataUrl,
+      fullDataUrl: local.fullDataUrl || item.fullDataUrl,
+      placeName: local.placeName || item.placeName,
+      georeferencedAddress:
+        local.georeferencedAddress || item.georeferencedAddress,
+    };
+  });
+  return [...merged, ...questions];
 }
 
 /** Revalidate server-backed local evidence without waiting for historical pagination.

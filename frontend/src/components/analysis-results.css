@@ -1305,10 +1305,17 @@ artifact-photo img {
   inline-size: 58px;
   block-size: 58px;
 }
+html.wa-dark .analysis-saved__illustration,
+html.wa-dark .analysis-error__illustration {
+  filter: invert(1);
+}
 .analysis-error__body [data-analysis-action="retry"] {
   background: var(--wa-color-danger-fill-quiet, var(--c-hazard-bg));
   color: var(--wa-color-danger-on-quiet, var(--c-hazard));
   border: 0;
+}
+.analysis-error__body > [data-analysis-action="retry"] + .analysis-card__media {
+  margin-block-start: 1rem;
 }
 .analysis-error__time {
   padding: 0.25rem 1.75rem;

@@ -244,6 +244,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           RELEASE_SHA: ${{ github.sha }}
+          VITE_RELEASE_VERSION: ${{ github.event.release.tag_name || (github.ref_type == 'tag' && github.ref_name) || 'dev' }}
         run: npm run build -w @good-neighbor/frontend
 
       - name: Configure admin frontend

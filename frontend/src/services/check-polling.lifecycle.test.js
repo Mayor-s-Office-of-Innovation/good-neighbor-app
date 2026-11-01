@@ -39,6 +39,12 @@ afterEach(() => {
 
 it("finishes the submitted check while a new capture is active", async () => {
   const previous = startCheck("site-1");
+  previous.items.push({
+    id: "ready",
+    kind: "text",
+    text: "Synthetic evidence",
+    analysis: { status: "analyzed", artifactId: "artifact" },
+  });
   markCaptureComplete();
   /** @type {(snapshot: any) => void} */
   let respond = () => {
@@ -57,7 +63,9 @@ it("finishes the submitted check while a new capture is active", async () => {
   const next = startCheck("site-1");
   respond({ check: {}, artifacts: [{}], analyses: [{}] });
   await finalized;
-  expect(completeCheck).toHaveBeenCalledWith(previous.id);
+  expect(completeCheck).toHaveBeenCalledWith(previous.id, {
+    originSiteId: "site-1",
+  });
   expect(getCurrentCheck()).toBe(next);
   cancelCheckPolling(previous.id);
 });

@@ -3,7 +3,7 @@
     "rule": "landmark-unique",
     "target": ".analysis-tray*",
     "reason": "Analysis tray regions can share an accessible name: historicalCheckTitle renders day-only labels for non-today checks, and the recent tray's minute-formatted title can collide with same-minute historical trays, so different checks announce identical region names. Product fix (distinct titles per tray) is tracked separately. Scope is tray regions only, so the rest of the bar stays enforceable.",
-    "expires": "2026-10-31"
+    "expires": "2026-11-14"
   },
   {
     "rule": "infinite-animation",

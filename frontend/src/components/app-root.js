@@ -105,6 +105,15 @@ function handoffFailureReason(err) {
   return "storage";
 }
 
+/** Avoid invalidating styles when viewport values have not changed.
+ * @param {CSSStyleDeclaration} style @param {string} name @param {string} value
+ */
+function syncViewportProperty(style, name, value) {
+  if (style.getPropertyValue(name) === value) return;
+  if (value) style.setProperty(name, value);
+  else style.removeProperty(name);
+}
+
 export class AppRoot extends HTMLElement {
   /** @type {string | null} the route the view last swapped to */
   _swappedRoute = null;
@@ -261,6 +270,7 @@ export class AppRoot extends HTMLElement {
     viewport.addEventListener("scroll", this._onKeyboardViewport);
     document.addEventListener("focusin", this._onKeyboardViewport);
     document.addEventListener("focusout", this._onKeyboardViewport);
+    document.addEventListener("input", this._onKeyboardViewport);
   }
 
   _stopKeyboardViewportSync() {
@@ -275,16 +285,38 @@ export class AppRoot extends HTMLElement {
     );
     document.removeEventListener("focusin", this._onKeyboardViewport);
     document.removeEventListener("focusout", this._onKeyboardViewport);
+    document.removeEventListener("input", this._onKeyboardViewport);
     this._onKeyboardViewport = null;
+    document.documentElement.removeAttribute("data-keyboard-open");
+    document.documentElement.style.removeProperty("--editable-viewport-height");
+    document.documentElement.style.removeProperty("--editable-viewport-top");
     this._applyKeyboardViewport(null);
   }
 
   _syncKeyboardViewport() {
     const active = deepActiveElement(document);
     const editing = isEditable(active);
-    this._applyKeyboardViewport(
-      keyboardViewport(window.visualViewport, window.innerHeight, editing),
+    const root = document.documentElement;
+    const wasOpen = root.hasAttribute("data-keyboard-open");
+    const box = keyboardViewport(
+      window.visualViewport,
+      window.innerHeight,
+      editing || wasOpen,
     );
+    if (wasOpen !== Boolean(box))
+      root.toggleAttribute("data-keyboard-open", Boolean(box));
+    const syncing = editing || Boolean(box);
+    syncViewportProperty(
+      root.style,
+      "--editable-viewport-height",
+      syncing ? `${window.visualViewport?.height || window.innerHeight}px` : "",
+    );
+    syncViewportProperty(
+      root.style,
+      "--editable-viewport-top",
+      syncing ? `${box?.top || 0}px` : "",
+    );
+    this._applyKeyboardViewport(box);
     if (editing && window.visualViewport?.scale === 1) {
       requestAnimationFrame(() => {
         if (deepActiveElement(document) !== active) return;
@@ -295,13 +327,16 @@ export class AppRoot extends HTMLElement {
 
   /** @param {{ height: number, top: number } | null} box */
   _applyKeyboardViewport(box) {
-    if (!box) {
-      this.style.removeProperty("--app-viewport-height");
-      this.style.removeProperty("--app-viewport-top");
-      return;
-    }
-    this.style.setProperty("--app-viewport-height", `${box.height}px`);
-    this.style.setProperty("--app-viewport-top", `${box.top}px`);
+    syncViewportProperty(
+      this.style,
+      "--app-viewport-height",
+      box ? `${box.height}px` : "",
+    );
+    syncViewportProperty(
+      this.style,
+      "--app-viewport-top",
+      box ? `${box.top}px` : "",
+    );
   }
 
   _renderSetup(options = {}) {
@@ -509,7 +544,7 @@ export class AppRoot extends HTMLElement {
         if (this._routeLoad !== request || currentRoute() !== route) return;
         this._view.inert = false;
         console.error("Route module failed to load", error);
-        this._view.innerHTML = `${loadError(t("route.loadError"), { retryAttribute: "data-route-reload" })}<button type="button" class="btn-outline" data-route-back>${escapeHtml(t("common.back"))}</button>`;
+        this._view.innerHTML = `<div class="app-route-load-error">${loadError(t("route.loadError"), { retryAttribute: "data-route-reload" })}<div class="app-route-load-error__actions"><button type="button" class="btn-outline btn-outline--sm" data-route-back>${escapeHtml(t("common.back"))}</button></div></div>`;
         // Reload obtains the current asset manifest and clears cached import failures.
         this._view
           .querySelector("[data-route-reload]")

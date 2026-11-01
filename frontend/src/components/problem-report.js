@@ -1,3 +1,9 @@
+import { renderCaptureGrid } from "./capture-grid.js";
+import { answerCaptureQuestion } from "./capture-card-actions.js";
+import { showInlineError } from "./error-notice.js";
+import { reportCaughtError } from "../services/error-report.js";
+import { loadError } from "./load-error.js";
+import { escapeHtml } from "../lib/html.js";
 import { CaptureFileQueue } from "../services/capture-files.js";
 import { resolveSessionTask } from "./session-task-resolution.js";
 import { openSessionDuplicate } from "./duplicate-issue-launcher.js";
@@ -19,7 +25,6 @@ import {
   show311FilingToast,
   show311ErrorToast,
   showActionSaveErrorToast,
-  showAnswerSaveErrorToast,
   showDeletionRefreshToast,
   showDeleteErrorToast,
   showEditErrorToast,
@@ -45,11 +50,11 @@ import { trackEvent } from "../services/analytics.js";
 import { openOverlayDialog, awaitOverlayUnwind } from "../dialog-history.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import {
-  answerAnalysisQuestion,
   analyzeEvidenceItem,
   analyzeNoIssueDescriptionEdit,
   refreshEvidenceAnalysis,
   retryEvidenceItem,
+  removeEvidenceItem,
 } from "../services/photo-analysis.js";
 import { editAnalysisCondition } from "../services/api.js";
 import {
@@ -79,11 +84,8 @@ import {
   setAnalyzingOpen,
 } from "../state/check-session.js";
 import { shell, analysisSection } from "./problem-report.templates.js";
-import { shotTile, footer } from "./perimeter-check.templates.js";
-import {
-  setQuestionAnswerBusy,
-  showQuestionAnswerUpdated,
-} from "./analysis-answer-controls.js";
+import { footer } from "./perimeter-check.templates.js";
+import { setQuestionAnswerBusy } from "./analysis-answer-controls.js";
 
 /**
  * @typedef {{ siteId?: string, providerSiteId?: string, id?: string, name?: string, address?: string }} SiteRecord
@@ -113,13 +115,34 @@ class ProblemReport extends HTMLElement {
     this._analysisEditDialog = null;
     this._analysisEditDescription = null;
     this._initGeneration = 0;
-    this._answeringConditionIds = new Set();
+    this._answeringConditionIds = new Map();
   }
 
   /** @returns {Promise<void>} */
   async connectedCallback() {
     const initGeneration = ++this._initGeneration;
     this._cleanupSubscription();
+    this.innerHTML = `<p role="status">${escapeHtml(t("care.loading"))}</p>`;
+    try {
+      await this._initialize(initGeneration);
+    } catch (error) {
+      if (!this._isCurrentInit(initGeneration)) return;
+      this._cleanupSubscription();
+      reportCaughtError(error);
+      console.error("Single issue initialization failed", error);
+      this.innerHTML = `${loadError(t("route.loadError"))}<button type="button" class="btn-outline" data-startup-back>${escapeHtml(t("common.back"))}</button>`;
+      this.querySelector("[data-load-retry]")?.addEventListener(
+        "click",
+        () => void this.connectedCallback(),
+      );
+      this.querySelector("[data-startup-back]")?.addEventListener("click", () =>
+        replaceRoute("/today"),
+      );
+    }
+  }
+
+  /** @param {number} initGeneration */
+  async _initialize(initGeneration) {
     // A boot that lands here directly has no interrupted hand-off to resume.
     clearCameraOpen();
     /** @type {SiteRecord | null} */
@@ -372,12 +395,12 @@ class ProblemReport extends HTMLElement {
   /** @returns {void} */
   _renderShots() {
     // The shot grid is photo-only: typed descriptions are items too, but they
-    // render as analysis cards below (shotTile assumes item.dataUrl is an img src).
+    // render as analysis cards below.
     const items = this._photoItems();
     const grid = this.querySelector("#shotgrid");
     if (!grid) return;
     grid.classList.toggle("shotgrid--empty", items.length === 0);
-    grid.innerHTML = items.map((item, index) => shotTile(item, index)).join("");
+    renderCaptureGrid(grid, items, null, false);
   }
 
   /** @returns {EvidenceItem[]} */
@@ -400,8 +423,11 @@ class ProblemReport extends HTMLElement {
           )
         : "";
     this._wireAnalysisCards();
-    for (const conditionId of this._answeringConditionIds) {
-      setQuestionAnswerBusy(this, conditionId, true);
+    for (const {
+      itemId,
+      conditionId,
+    } of this._answeringConditionIds.values()) {
+      setQuestionAnswerBusy(this, conditionId, true, { itemId });
     }
   }
 
@@ -413,6 +439,8 @@ class ProblemReport extends HTMLElement {
 
   /** @returns {void} */
   _render() {
+    // Keep the answered question present until its confirmation has been seen.
+    if (this._answeringConditionIds.size) return;
     if (isDeletingAnalysisCard(this) || isCompletingAnalysisCard(this)) return;
     this._renderTitle();
     this._renderShots();
@@ -500,7 +528,18 @@ class ProblemReport extends HTMLElement {
         } else if (action === "answer") {
           this._answerProblemQuestion(problem, target);
         } else if (action === "retry") {
-          if (problem.itemId) retryEvidenceItem(problem.itemId);
+          if (problem.itemId && retryEvidenceItem(problem.itemId))
+            target.setAttribute("disabled", "");
+        } else if (action === "delete-failed-item") {
+          if (!problem.itemId || target.hasAttribute("disabled")) return;
+          target.setAttribute("disabled", "");
+          void removeEvidenceItem(problem.itemId).catch(() => {
+            target.removeAttribute("disabled");
+            showInlineError(t("card.failed.deleteError"), {
+              target: this,
+              key: "delete-failed-item",
+            });
+          });
         } else if (action === "remove-item") {
           const item = findItem(problem.itemId);
           if (item && item.upload?.status !== "uploaded")
@@ -698,33 +737,7 @@ class ProblemReport extends HTMLElement {
   }
 
   async _answerProblemQuestion(problem, button) {
-    if (!(button instanceof HTMLButtonElement)) return;
-    const answerKey = button.getAttribute("data-answer-key") || "";
-    const answerValue = button.getAttribute("data-answer-value") === "true";
-    if (!problem.itemId || !problem.conditionId || !answerKey) {
-      showAnswerSaveErrorToast();
-      return;
-    }
-    if (this._answeringConditionIds.has(problem.conditionId)) return;
-
-    this._answeringConditionIds.add(problem.conditionId);
-    setQuestionAnswerBusy(this, problem.conditionId, true);
-    try {
-      await answerAnalysisQuestion(
-        problem.itemId,
-        problem.conditionId,
-        answerKey,
-        answerValue,
-      );
-      this._render();
-      showQuestionAnswerUpdated(this, problem.conditionId);
-    } catch (err) {
-      console.error("answer condition failed", err);
-      showAnswerSaveErrorToast();
-    } finally {
-      this._answeringConditionIds.delete(problem.conditionId);
-      setQuestionAnswerBusy(this, problem.conditionId, false);
-    }
+    return answerCaptureQuestion(this, problem, button);
   }
 
   _markProblemResolved(problem) {

@@ -241,9 +241,29 @@ function consumeMedia(entry, key, signal) {
 /** Invalidate one failed image, never another artifact or an in-flight signer.
  * @param {string} checkId @param {string} artifactId
  */
-export function invalidateMediaUrls(checkId, artifactId) {
+export function invalidateMediaUrls(
+  checkId,
+  artifactId,
+  { retryFailures = false } = {},
+) {
   const key = `${checkId}:${artifactId}`;
   if (!MEDIA_URL_CACHE.get(key)?.pending) MEDIA_URL_CACHE.delete(key);
+  if (retryFailures && MEDIA_FAILURES.get(key)?.error?.status !== 404)
+    MEDIA_FAILURES.delete(key);
+}
+
+/** Share a transient image-error cooldown across remounts. An img error does
+ * not expose an HTTP status, so it must remain recoverable on reconnect.
+ * @param {string} checkId @param {string} artifactId
+ */
+export function deferMediaRecovery(checkId, artifactId) {
+  const key = `${checkId}:${artifactId}`;
+  MEDIA_FAILURES.set(key, {
+    error: Object.assign(new Error("Image temporarily unavailable"), {
+      status: 0,
+    }),
+    retryAt: Date.now() + 5000,
+  });
 }
 
 /** Avoid repeating doomed requests on each card rerender. Missing media may be
@@ -289,5 +309,55 @@ export function mergeHydratedTasks(tasks, hydratedTasks) {
       .filter((task) => task?.taskId)
       .map((task) => [task.taskId, task]),
   );
-  return tasks.map((task) => hydratedById.get(task.taskId) || task);
+  return tasks.map((task) => {
+    const hydrated = hydratedById.get(task.taskId);
+    if (
+      !hydrated ||
+      hydrated.checkId !== task.checkId ||
+      taskArtifactIds(hydrated).join() !== taskArtifactIds(task).join()
+    )
+      return task;
+    // Hydration owns evidence only. Current status, edits and guidance may have
+    // changed while signing was in flight; removed tasks must stay removed.
+    const evidence = {};
+    for (const key of [
+      "evidence",
+      "mediaUrl",
+      "thumbnailUrl",
+      "mediaExpiresAt",
+      "mediaState",
+      "mediaRetryAt",
+    ])
+      if (Object.hasOwn(hydrated, key)) evidence[key] = hydrated[key];
+    return { ...task, ...evidence };
+  });
+}
+
+/** Restore photo/text identity for server-backed pending questions. Media signing
+ * remains owned by artifact-photo, including retries after reconnecting.
+ * @param {any[]} items
+ */
+export async function hydratePendingQuestionEvidence(items) {
+  const checks = new Map();
+  await Promise.all(
+    [...new Set(items.map((item) => item.checkId).filter(Boolean))].map(
+      async (id) => {
+        checks.set(id, await cachedCheckArtifacts(id));
+      },
+    ),
+  );
+  return items.map((item) => {
+    const artifact = (checks.get(item.checkId) || []).find(
+      (entry) => entry.artifactId === item.analysis?.artifactId,
+    );
+    if (!artifact) return item;
+    return {
+      ...item,
+      kind: artifact.contentType?.startsWith("image/") ? "photo" : "text",
+      placeName: artifact.placeName || item.placeName,
+      georeferencedAddress:
+        artifact.georeferencedAddress || item.georeferencedAddress,
+      text: artifact.text || item.text,
+    };
+  });
 }

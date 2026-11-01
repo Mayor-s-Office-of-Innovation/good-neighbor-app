@@ -662,9 +662,14 @@ export function revokeManagerDeviceBinding(bindingId) {
  * @param {{ flowType?: "perimeter" | "single-problem" }} [body]
  * @returns {Promise<{ checkId: string, status: string, startedAt?: string }>}
  */
-export function createCheck(checkId, body = {}) {
+export function createCheck(
+  checkId,
+  body = {},
+  { originSiteId = undefined } = {},
+) {
   return request("POST", "/v1/checks", {
     headers: { "idempotency-key": checkId },
+    originSiteId,
     body,
   });
 }
@@ -676,8 +681,10 @@ export function createCheck(checkId, body = {}) {
  * @param {string} checkId
  * @returns {Promise<{ checkId: string, status: string, grade: (string|null), issueCount: number, maxSeverity: number }>}
  */
-export function completeCheck(checkId) {
-  return request("POST", `/v1/checks/${encodeURIComponent(checkId)}/complete`);
+export function completeCheck(checkId, { originSiteId = undefined } = {}) {
+  return request("POST", `/v1/checks/${encodeURIComponent(checkId)}/complete`, {
+    originSiteId,
+  });
 }
 
 /**
@@ -686,9 +693,13 @@ export function completeCheck(checkId) {
  * @param {any} assessment
  * @returns {Promise<{ assessment: any, conditions: any[], tasks: any[] }>}
  */
-export function evaluateAssessment(assessment) {
+export function evaluateAssessment(
+  assessment,
+  { originSiteId = undefined } = {},
+) {
   return request("POST", "/v1/assessments:evaluate", {
     body: { ...assessment },
+    originSiteId,
   });
 }
 
@@ -981,11 +992,15 @@ export function putMediaWithProgress(
  * @param {{ contentType: string, contentLength: number, uploadRequestId?: string }} body
  * @returns {Promise<{ artifactId: string, s3Key: string, contentType: string, contentLength: number, uploadHeaders: Record<string, string>, uploadUrl: string, expiresIn: number }>}
  */
-export function presignArtifact(checkId, body, { signal = undefined } = {}) {
+export function presignArtifact(
+  checkId,
+  body,
+  { signal = undefined, originSiteId = undefined } = {},
+) {
   return request(
     "POST",
     `/v1/checks/${encodeURIComponent(checkId)}/artifacts:presign`,
-    { body, signal },
+    { body, signal, originSiteId },
   );
 }
 
@@ -995,15 +1010,20 @@ export function presignArtifact(checkId, body, { signal = undefined } = {}) {
  * Stamps the active UI locale so the analyzer writes translated
  * labels/descriptions the device can show.
  * @param {string} checkId
- * @param {{ artifactId: string, s3Key?: string, contentType?: string, contentLength?: number, capturedAt?: string, latitude?: number, longitude?: number, accuracyMeters?: number, text?: string, language?: string }} body
+ * @param {{ artifactId: string, s3Key?: string, contentType?: string, contentLength?: number, capturedAt?: string, latitude?: number, longitude?: number, accuracyMeters?: number, text?: string, language?: string, retryRequestId?: string, expectedGeneration?: string }} body
  * @returns {Promise<{ artifactId: string, status: string }>}
  */
-export function registerArtifact(checkId, body) {
+export function registerArtifact(
+  checkId,
+  body,
+  { originSiteId = undefined } = {},
+) {
   return request(
     "POST",
     `/v1/checks/${encodeURIComponent(checkId)}/artifacts`,
     {
       body: { language: getLocale(), ...body },
+      originSiteId,
     },
   );
 }
@@ -1040,10 +1060,15 @@ export function updateArtifactLocation(checkId, artifactId, location) {
  * @param {string} artifactId
  * @returns {Promise<{ artifactId: string, status: string }>}
  */
-export function deleteArtifact(checkId, artifactId) {
+export function deleteArtifact(
+  checkId,
+  artifactId,
+  { originSiteId = undefined } = {},
+) {
   return request(
     "DELETE",
     `/v1/checks/${encodeURIComponent(checkId)}/artifacts/${encodeURIComponent(artifactId)}`,
+    { originSiteId },
   );
 }
 
@@ -1319,20 +1344,52 @@ export async function completeTask(taskId, body = {}, options = {}) {
 const UPLOADABLE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 /**
- * Parse the MIME type out of a `data:` URL (`data:image/jpeg;base64,...`).
- * Falls back to image/jpeg — the capture pipeline only produces JPEGs.
+ * Detect supported image signatures before trusting the data URL label.
+ * Reads at most 12 bytes; does not decode pixels or re-encode the image.
  * @param {string} dataUrl
  * @returns {string}
  */
 export function contentTypeFromDataUrl(dataUrl) {
+  const comma = (dataUrl || "").indexOf(",");
+  if (comma >= 0 && /;base64/i.test(dataUrl.slice(0, comma))) {
+    try {
+      const signature = atob(dataUrl.slice(comma + 1, comma + 1 + 16));
+      const detected = imageSignatureType(signature);
+      if (detected) return detected;
+    } catch {
+      // Full data URL decoding retains responsibility for malformed input.
+    }
+  }
   const m = /^data:([^;,]+)[;,]/.exec(dataUrl || "");
   const type = m ? m[1] : "image/jpeg";
   return UPLOADABLE_TYPES.has(type) ? type : "image/jpeg";
 }
 
+/** @param {string} signature */
+function imageSignatureType(signature) {
+  if (signature.startsWith("\xff\xd8\xff")) return "image/jpeg";
+  if (signature.startsWith("\x89PNG\r\n\x1a\n")) return "image/png";
+  if (signature.startsWith("RIFF") && signature.slice(8, 12) === "WEBP")
+    return "image/webp";
+  return "";
+}
+
+/** Read only the signature; retain the original bytes without re-encoding.
+ * @param {Blob} blob
+ */
+export async function contentTypeFromBlob(blob) {
+  const signature = String.fromCharCode(
+    ...new Uint8Array(await blob.slice(0, 12).arrayBuffer()),
+  );
+  return (
+    imageSignatureType(signature) ||
+    (UPLOADABLE_TYPES.has(blob.type) ? blob.type : "image/jpeg")
+  );
+}
+
 /**
  * Turn a `data:` URL back into a Blob for the presigned PUT. The whole app stores
- * photos inline as JPEG data-URLs (`item.dataUrl`); this reconstitutes the bytes.
+ * photos inline as data-URLs (`item.dataUrl`); this reconstitutes the bytes.
  *
  * Decoded in-process rather than via `fetch(dataUrl)`: browsers subject `data:`
  * fetches to the `connect-src` CSP directive, which is deliberately locked to the
@@ -1345,7 +1402,10 @@ export async function dataUrlToBlob(dataUrl) {
   if (comma === -1) throw new ApiError("Malformed data URL", { status: 0 });
   const header = dataUrl.slice(0, comma);
   const data = dataUrl.slice(comma + 1);
-  const contentType = /^data:([^;,]+)/.exec(header)?.[1] || "image/jpeg";
+  const declaredType = /^data:([^;,]+)/.exec(header)?.[1] || "image/jpeg";
+  const contentType = declaredType.startsWith("image/")
+    ? contentTypeFromDataUrl(dataUrl)
+    : declaredType;
 
   if (!/;base64/i.test(header)) {
     // Non-base64 (URL-encoded) data URL — decode as UTF-8 text.
@@ -1364,7 +1424,7 @@ export async function dataUrlToBlob(dataUrl) {
  * pinned S3 key, and validated media metadata so callers can persist enough state to re-drive the analysis
  * later (a retry re-registers the SAME artifact rather than re-uploading).
  * @param {string} checkId
- * @param {{ dataUrl: string, capturedAt?: string, location?: () => ({ latitude: number, longitude: number, accuracyMeters?: number } | null), text?: string, tag?: string, onLeg?: (leg: "presign" | "put" | "register") => void }} item
+ * @param {{ dataUrl?: string, blob?: Blob, capturedAt?: string, location?: () => ({ latitude: number, longitude: number, accuracyMeters?: number } | null), text?: string, tag?: string, originSiteId?: string, checkpoint?: any, onCheckpoint?: (checkpoint: any) => Promise<void>, onLeg?: (leg: "presign" | "put" | "register") => void }} item
  *   `location` is read just before register, so a reading that lands during
  *   the upload still goes with the photo.
  *   `tag` is a caller-supplied label used only for perf traces (e.g. the item id).
@@ -1374,73 +1434,179 @@ export async function dataUrlToBlob(dataUrl) {
  */
 export async function uploadArtifact(
   checkId,
-  { dataUrl, capturedAt, location, text, tag, onLeg },
+  {
+    dataUrl,
+    blob: original,
+    capturedAt,
+    location,
+    text,
+    tag,
+    onLeg,
+    checkpoint,
+    onCheckpoint,
+    originSiteId,
+  },
 ) {
   const art = tag ?? "photo";
   const telemetry = { check_id: checkId, attempt_id: photoAttemptId() };
   const done = span("upload", { art });
 
-  const contentType = contentTypeFromDataUrl(dataUrl);
-  const blob = await dataUrlToBlob(dataUrl);
+  const contentType = original
+    ? await contentTypeFromBlob(original)
+    : contentTypeFromDataUrl(dataUrl);
+  const blob = original || (await dataUrlToBlob(dataUrl));
   telemetry.photo_bytes = blob.size;
   const endPresign = span("upload.presign", { art });
-  const { artifactId, s3Key, uploadUrl, uploadHeaders } =
-    await observePhotoStage("presign", telemetry, () =>
-      reserveMediaUpload(
-        `check:${checkId}:${tag ?? "photo"}`,
-        blob,
-        (uploadRequestId) =>
-          presignArtifact(checkId, {
-            contentType,
-            contentLength: blob.size,
-            uploadRequestId,
-          }),
-      ),
-    );
+  const reservation =
+    checkpoint?.artifactId &&
+    (checkpoint?.bytesUploaded || checkpoint?.putUncertain)
+      ? checkpoint
+      : await observePhotoStage("presign", telemetry, () =>
+          reserveMediaUpload(
+            `check:${checkId}:${tag ?? "photo"}`,
+            blob,
+            (uploadRequestId) =>
+              presignArtifact(
+                checkId,
+                { contentType, contentLength: blob.size, uploadRequestId },
+                { originSiteId },
+              ),
+          ),
+        );
+  const { artifactId, s3Key, uploadUrl, uploadHeaders } = reservation;
+  await onCheckpoint?.({
+    artifactId,
+    s3Key,
+    contentType,
+    contentLength: blob.size,
+    bytesUploaded: Boolean(checkpoint?.bytesUploaded),
+    putUncertain: Boolean(checkpoint?.putUncertain),
+  });
   telemetry.artifact_id = artifactId;
   endPresign({ artifactId });
   onLeg?.("presign");
 
+  let bytesConfirmed =
+    Boolean(checkpoint?.bytesUploaded) && !checkpoint?.putUncertain;
   const endPut = span("upload.put", { art, bytes: blob.size });
-  await observePhotoStage("put", telemetry, async () => {
-    try {
-      await putMedia(uploadUrl, blob, contentType, uploadHeaders);
-    } catch (error) {
-      if (error?.status !== 412) throw error;
-      // A lost successful PUT is verified by registration below.
-    }
-  });
+  if (!checkpoint?.bytesUploaded && !checkpoint?.putUncertain) {
+    // Persist before sending: losing the response or closing the app leaves the
+    // outcome uncertain, rather than permission to immediately send bytes again.
+    await onCheckpoint?.({
+      artifactId,
+      s3Key,
+      contentType,
+      contentLength: blob.size,
+      bytesUploaded: false,
+      putUncertain: true,
+    });
+    await observePhotoStage("put", telemetry, async () => {
+      try {
+        await putMedia(uploadUrl, blob, contentType, uploadHeaders);
+        bytesConfirmed = true;
+      } catch (error) {
+        if (error?.status !== 412) throw error;
+        // A lost successful PUT is verified by registration below.
+      }
+    });
+  }
   endPut();
-  onLeg?.("put");
+  if (bytesConfirmed) onLeg?.("put");
+  await onCheckpoint?.({
+    artifactId,
+    s3Key,
+    contentType,
+    contentLength: blob.size,
+    bytesUploaded: bytesConfirmed,
+    putUncertain: !bytesConfirmed,
+  });
 
   const endRegister = span("upload.register", { art, artifactId });
   const { latitude, longitude, accuracyMeters } = location?.() ?? {};
-  await observePhotoStage("register", telemetry, async () => {
-    try {
-      await registerArtifact(checkId, {
-        artifactId,
-        s3Key,
-        contentType,
-        contentLength: blob.size,
-        ...(capturedAt ? { capturedAt } : {}),
-        ...(Number.isFinite(latitude) && Number.isFinite(longitude)
-          ? {
-              latitude,
-              longitude,
-              ...(Number.isFinite(accuracyMeters) ? { accuracyMeters } : {}),
-            }
-          : {}),
-        ...(text ? { text } : {}),
-      });
-    } catch (error) {
-      if (
-        error?.status !== 409 ||
-        error?.body?.error !== "artifact already registered"
-      )
-        throw error;
-      // This exact replay response confirms registration and re-enqueues analysis.
-    }
+  try {
+    await observePhotoStage("register", telemetry, async () => {
+      try {
+        for (let verification = 0; ; verification++) {
+          try {
+            await registerArtifact(
+              checkId,
+              {
+                artifactId,
+                s3Key,
+                contentType,
+                contentLength: blob.size,
+                ...(capturedAt ? { capturedAt } : {}),
+                ...(Number.isFinite(latitude) && Number.isFinite(longitude)
+                  ? {
+                      latitude,
+                      longitude,
+                      ...(Number.isFinite(accuracyMeters)
+                        ? { accuracyMeters }
+                        : {}),
+                    }
+                  : {}),
+                ...(text ? { text } : {}),
+              },
+              { originSiteId },
+            );
+            break;
+          } catch (error) {
+            if (
+              !checkpoint?.putUncertain ||
+              verification >= 2 ||
+              error?.status !== 409 ||
+              error?.body?.error !== "media_upload_missing"
+            )
+              throw error;
+            // A disconnected PUT can still be finishing at storage. Bound the
+            // settling window; all other failures retain the uncertain checkpoint.
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+          }
+        }
+      } catch (error) {
+        if (
+          error?.status !== 409 ||
+          error?.body?.error !== "artifact already registered"
+        )
+          throw error;
+        // This exact replay response confirms registration; server lifecycle owns analysis.
+      }
+    });
+  } catch (error) {
+    if (
+      error?.status !== 409 ||
+      error?.body?.error !== "media_upload_missing" ||
+      !(checkpoint?.bytesUploaded || checkpoint?.putUncertain)
+    )
+      throw error;
+    // A long offline pause can outlive the stored object. Re-upload the retained
+    // bytes; presigning rotates expired reservations. This repair runs once.
+    await onCheckpoint?.({
+      ...checkpoint,
+      bytesUploaded: false,
+      putUncertain: false,
+    });
+    return uploadArtifact(checkId, {
+      dataUrl,
+      blob: original,
+      capturedAt,
+      location,
+      text,
+      tag,
+      onLeg,
+      onCheckpoint,
+      originSiteId,
+    });
+  }
+  await onCheckpoint?.({
+    artifactId,
+    s3Key,
+    contentType,
+    contentLength: blob.size,
+    bytesUploaded: true,
+    putUncertain: false,
   });
+  if (!bytesConfirmed) onLeg?.("put");
   endRegister();
   onLeg?.("register");
 
@@ -1519,26 +1685,45 @@ export async function uploadTaskUpdatePhoto(
 /**
  * Register validated text evidence without uploading media bytes.
  * @param {string} checkId
- * @param {{ text: string, capturedAt?: string, latitude?: number, longitude?: number, accuracyMeters?: number }} item
+ * @param {{ text: string, capturedAt?: string, latitude?: number, longitude?: number, accuracyMeters?: number, artifactId?: string, originSiteId?: string }} item
  * @returns {Promise<string>}
  */
 export async function registerTextArtifact(
   checkId,
-  { text, capturedAt, latitude, longitude, accuracyMeters },
-) {
-  const artifactId = crypto.randomUUID();
-  await registerArtifact(checkId, {
-    artifactId,
-    ...(capturedAt ? { capturedAt } : {}),
-    ...(Number.isFinite(latitude) && Number.isFinite(longitude)
-      ? {
-          latitude,
-          longitude,
-          ...(Number.isFinite(accuracyMeters) ? { accuracyMeters } : {}),
-        }
-      : {}),
+  {
     text,
-  });
+    capturedAt,
+    latitude,
+    longitude,
+    accuracyMeters,
+    artifactId = crypto.randomUUID(),
+    originSiteId,
+  },
+) {
+  try {
+    await registerArtifact(
+      checkId,
+      {
+        artifactId,
+        ...(capturedAt ? { capturedAt } : {}),
+        ...(Number.isFinite(latitude) && Number.isFinite(longitude)
+          ? {
+              latitude,
+              longitude,
+              ...(Number.isFinite(accuracyMeters) ? { accuracyMeters } : {}),
+            }
+          : {}),
+        text,
+      },
+      { originSiteId },
+    );
+  } catch (error) {
+    if (
+      error?.status !== 409 ||
+      error?.body?.error !== "artifact already registered"
+    )
+      throw error;
+  }
   return artifactId;
 }
 
@@ -1571,12 +1756,17 @@ export const LEG = { PRESIGN: "presign", PUT: "put", REGISTER: "register" };
  * @param {string} checkId
  * When `expected` is omitted, the first read is a best-effort fallback for older
  * pending sessions that do not have a persisted upload count.
- * @param {{ expected?: number, timeoutMs?: number, intervalMs?: number }} opts
+ * @param {{ expected?: number, timeoutMs?: number, intervalMs?: number, originSiteId?: string }} opts
  * @returns {Promise<{ check: any, artifacts: any[], analyses: any[] }>}
  */
 export async function waitForAnalyses(
   checkId,
-  { expected, timeoutMs = 180000, intervalMs = 2000 } = {},
+  {
+    expected,
+    timeoutMs = 180000,
+    intervalMs = 2000,
+    originSiteId = undefined,
+  } = {},
 ) {
   const deadline = Date.now() + timeoutMs;
   mark("wait:start", {
@@ -1625,7 +1815,7 @@ export async function waitForAnalyses(
       }
       return undefined;
     },
-    { intervalMs },
+    { intervalMs, originSiteId },
   );
 }
 

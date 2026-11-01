@@ -14,8 +14,9 @@
   removal kept items under `places[placeId].items`; `normalizeCheck` flattens
   those on load so a mid-walk device resumes cleanly.
 
-  The item API stays kind-agnostic on purpose ({kind:'photo', dataUrl} /
-  {kind:'text', text}) so post-MVP capture kinds don't require a reshaping.
+  New perimeter photos carry small media references; pending originals and cached
+  server thumbnails live separately in IndexedDB. Legacy data URLs remain readable
+  and are migrated on resume. Text stays inline.
 
   Finished checks: Done keeps the check (status `capture-complete`) until its
   uploads and scorecard land, so several can wait at once when checks are
@@ -24,10 +25,14 @@
   their check by item id and an older check keeps saving its upload/analysis
   progress after a new check starts (services/check-submissions.js drives them).
 */
+import { onHealthChange } from "../services/backend-health.js";
 import { cancelCheckPolling } from "../services/check-polling.js";
 import { completeFirstPerimeterCheck } from "../services/install-prompt.js";
 import {
   newId,
+  saveCapturePhoto,
+  deleteCaptureMedia,
+  deleteCapturePhoto,
   saveDraft,
   clearDraft,
   getDraft,
@@ -77,7 +82,23 @@ function normalizeCheck(check) {
   return {
     ...rest,
     flowType: normalizeFlowType(check.flowType),
-    items: normalizeItems(check),
+    items: normalizeItems(check).map((original) => {
+      const item = { ...original, checkId: check.id };
+      return item.analysis?.status === "failed" && !item.analysis.recovery
+        ? {
+            ...item,
+            analysis: {
+              ...item.analysis,
+              recovery: {
+                stage: item.analysis.failure?.leg || "upload",
+                state: "scheduled",
+                attempts: 0,
+                nextAttemptAt: 0,
+              },
+            },
+          }
+        : item;
+    }),
     analyzingOpen:
       check.analyzingOpen == null ? true : Boolean(check.analyzingOpen),
   };
@@ -95,9 +116,9 @@ const listeners = new Set();
 function persist(check = current) {
   if (!check) return;
   if (check.status === "in-progress") {
-    void saveDraft(check);
+    void Promise.resolve(saveDraft(check)).catch(() => {});
   } else {
-    void saveFinishedCheck(check);
+    void Promise.resolve(saveFinishedCheck(check)).catch(() => {});
   }
 }
 
@@ -211,6 +232,8 @@ export async function loadDraft(flowType) {
   }
   retireCurrent();
   current = normalizeCheck(draft);
+  const { migrateCaptureMedia } = await import("../services/capture-media.js");
+  await migrateCaptureMedia(current);
   return current;
 }
 
@@ -253,7 +276,12 @@ export async function loadFinishedChecks(siteId) {
   const owner = siteId || current?.siteId;
   for (const saved of await listFinishedChecks(owner)) {
     if (current?.id === saved.id || finished.has(saved.id)) continue;
-    finished.set(saved.id, normalizeCheck(saved));
+    const check = normalizeCheck(saved);
+    const { migrateCaptureMedia } = await import(
+      "../services/capture-media.js"
+    );
+    await migrateCaptureMedia(check);
+    finished.set(saved.id, check);
   }
   return [
     ...finished.values(),
@@ -329,11 +357,62 @@ export function addItem(item) {
   return record;
 }
 
-export function removeItem(itemId) {
+/** Persist the original before announcing a captured photo. @param {File} file */
+export async function addCapturedPhoto(file) {
+  const check = current;
+  if (!check || check.status !== "in-progress") return null;
+  const id = newId();
+  const record = {
+    id,
+    checkId: check.id,
+    kind: "photo",
+    uploadedAt: new Date().toISOString(),
+    media: {
+      key: JSON.stringify([check.siteId, check.id, id]),
+      size: file.size,
+      type: file.type,
+    },
+    analysis: { status: "queued" },
+    captureSaving: true,
+  };
+  check.items.push(record);
+  try {
+    if (!(await saveCapturePhoto(check, record, file))) {
+      check.items = check.items.filter((i) => i.id !== id);
+      return null;
+    }
+  } catch (error) {
+    check.items = check.items.filter((i) => i.id !== id);
+    if (current === check) {
+      persist(check);
+      emit(check);
+    }
+    throw error;
+  }
+  delete record.captureSaving;
+  if (!check.items.includes(record)) {
+    await deleteCaptureMedia(record.media.key);
+    return null;
+  }
+  if (current !== check) {
+    // Admission may have committed before a new session replaced this draft.
+    // Remove only this photo and its bytes; never overwrite the newer draft.
+    await deleteCapturePhoto(check, record.media.key);
+    check.items = check.items.filter((i) => i.id !== id);
+    return null;
+  }
+  emit(check);
+  return record;
+}
+
+export function removeItem(itemId, { mediaDeleted = false } = {}) {
   const check = checkForItem(itemId) || current;
   if (!check) return;
+  const removed = check.items.find((i) => i.id === itemId);
   check.items = check.items.filter((i) => i.id !== itemId);
-  persist(check);
+  if (removed?.media && !mediaDeleted)
+    void deleteCapturePhoto(check, removed.media.key);
+  else persist(check);
   emit(check);
 }
 
@@ -417,7 +496,11 @@ export function markCaptureComplete({
     current.expectedArtifacts = expectedArtifacts;
   }
   persist();
-  void clearDraft({ flowType: current.flowType, siteId: current.siteId });
+  void clearDraft({
+    flowType: current.flowType,
+    siteId: current.siteId,
+    checkId: current.id,
+  });
   emit();
   return current;
 }
@@ -463,8 +546,8 @@ export function clearCheck() {
   const siteId = current?.siteId;
   const checkId = current?.id;
   current = null;
-  void clearDraft({ flowType, siteId });
-  if (flowType) void clearDraft({ siteId });
+  void clearDraft({ flowType, siteId, checkId });
+  if (flowType) void clearDraft({ siteId, checkId });
   if (checkId) void deleteFinishedCheck(siteId, checkId);
   emit();
 }
@@ -495,3 +578,19 @@ export async function pauseCheck() {
   finished.clear();
   emit();
 }
+
+/** Persist check-level recovery before another finalization attempt. */
+export async function updateCheckRecovery(checkId, recovery) {
+  const check = current?.id === checkId ? current : finished.get(checkId);
+  if (!check) return;
+  check.finalizationRecovery = recovery;
+  if (check.status === "in-progress") await saveDraft(check);
+  else await saveFinishedCheck(check);
+  emit(check);
+}
+
+// Connection changes also change whether a rendered recovery action is usable.
+onHealthChange(() => {
+  if (current) emit(current);
+  for (const check of finished.values()) emit(check);
+});
