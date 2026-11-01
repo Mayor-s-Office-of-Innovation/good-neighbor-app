@@ -25,6 +25,9 @@
   --app-content-max-width: 550px;
   --capture-scanner-ink: #fff;
   --capture-category-bg: #fff;
+  /* Stable destructive fill: white text stays above 4.5:1 in both themes. */
+  --danger-button-bg: #b42318;
+  --danger-button-text: #fff;
 
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
     Arial, sans-serif;

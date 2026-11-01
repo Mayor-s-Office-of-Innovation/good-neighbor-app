@@ -32,6 +32,38 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator("support-view h1")).toHaveText(t("support.title"));
 });
 
+test("Ask requires 20 trimmed characters and resets to guidance after sending", async ({
+  page,
+}) => {
+  let requests = 0;
+  await page.route("**/v1/support", (route) => {
+    requests++;
+    return route.fulfill({
+      json: { outcome: "unknown", answer: "", sources: [] },
+    });
+  });
+  const field = page.locator("support-view textarea");
+  const send = page.locator("[data-send]");
+  const hint = page.locator("[data-question-hint]");
+  await expect(send).toBeDisabled();
+  await expect(hint).toHaveText(t("support.questionHint"));
+  await expect(hint).not.toHaveClass(/support__question-error/);
+  await field.fill("  " + "a".repeat(19) + "  ");
+  await expect(send).toBeDisabled();
+  await expect(hint).toHaveText(t("support.questionTooShort"));
+  await expect(hint).toHaveClass(/support__question-error/);
+  expect(requests).toBe(0);
+  await field.fill("a".repeat(20));
+  await expect(send).toBeEnabled();
+  await expect(hint).not.toHaveClass(/support__question-error/);
+  await send.click();
+  await expect(page.locator(".support__turn")).toHaveCount(1);
+  expect(requests).toBe(1);
+  await expect(field).toHaveValue("");
+  await expect(send).toBeDisabled();
+  await expect(hint).toHaveText(t("support.questionHint"));
+});
+
 test("Help is a screen in the navigation stack and clears on leaving", async ({
   page,
 }) => {
@@ -40,7 +72,7 @@ test("Help is a screen in the navigation stack and clears on leaving", async ({
   await page.route("**/v1/support", (route) =>
     route.fulfill({ json: { outcome: "unknown", answer: "", sources: [] } }),
   );
-  await page.locator("support-view textarea").fill("Question");
+  await page.locator("support-view textarea").fill("How do I finish my check?");
   await page.locator("[data-send]").click();
   await expect(page.locator(".support__turn")).toHaveCount(1);
   await page.locator("support-view [data-back]").click();
@@ -69,7 +101,10 @@ test("responses cite sources, collapse, delete and clear", async ({ page }) => {
       },
     }),
   );
-  for (const question of ["First question", "Second question"]) {
+  for (const question of [
+    "How do I finish my first check?",
+    "How do I finish my second check?",
+  ]) {
     await page.locator("support-view textarea").fill(question);
     await page.locator("[data-send]").click();
     await expect(page.locator(".support__turn").last()).toContainText(question);
@@ -118,7 +153,9 @@ test("shows safe fallbacks and email", async ({ page }) => {
             : { json: { outcome, answer: "", sources: [] } },
       ),
     );
-    await page.locator("support-view textarea").fill("Help me");
+    await page
+      .locator("support-view textarea")
+      .fill("Please help me finish my check");
     await page.locator("[data-send]").click();
     await expect(page.locator(".support__turn").last()).toContainText(
       t(`support.${outcome === "off_topic" ? "offTopic" : outcome}`),
@@ -147,7 +184,7 @@ test("leaving aborts pending answers and prevents stale updates", async ({
       .fulfill({ json: { outcome: "unknown", answer: "", sources: [] } })
       .catch(() => {});
   });
-  await page.locator("support-view textarea").fill("Question");
+  await page.locator("support-view textarea").fill("How do I finish my check?");
   await page.locator("[data-send]").click();
   await expect.poll(() => count).toBe(1);
   await expect(page.locator("[data-send]")).toBeDisabled();

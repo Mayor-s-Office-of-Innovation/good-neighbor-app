@@ -166,7 +166,8 @@ class ProblemReport extends HTMLElement {
     }
     this._checkId = getCurrentCheck()?.id || "";
 
-    const unsubscribe = onCheckSessionChange(() => {
+    const unsubscribe = onCheckSessionChange((changed) => {
+      if (changed && changed.id !== this._checkId) return;
       if (this.isConnected && !this._finishing) this._render();
     });
     if (!this._isCurrentInit(initGeneration)) {

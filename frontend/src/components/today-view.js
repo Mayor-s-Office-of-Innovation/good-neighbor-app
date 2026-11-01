@@ -323,6 +323,8 @@ class TodayView extends HTMLElement {
     this._pullRefreshPromise = null;
     /** @type {(() => "pending" | "loaded" | "error") | null} */
     this._tabListStatus = null;
+    /** @type {{ promise: Promise<void> | null } | null} */
+    this._tabRefreshBatch = null;
     this._tabRefreshEpoch = 0;
     this._homeRefreshQueued = false;
     this._homeRefreshGeneration = 0;
@@ -981,7 +983,7 @@ class TodayView extends HTMLElement {
           this._applyTaskResult(task.taskId, task);
           if (filing311State(task) === "failed") show311ErrorToast();
 
-          void this._refreshAfterAction();
+          void this._refreshAfter311();
         })
       : null;
   }
@@ -3595,7 +3597,7 @@ class TodayView extends HTMLElement {
         // the remaining lists) keeps the card there if a reload's open-list
         // read lands before the worklist index has caught up.
         this._setTaskOverride(savedId, "in_progress");
-        void this._refreshAfterAction();
+        void this._refreshAfter311();
       });
     }
   }
@@ -3679,6 +3681,59 @@ class TodayView extends HTMLElement {
   _refreshAfterAction() {
     if (this._homeModel) this._renderHome(this._homeModel);
     return this.connectedCallback();
+  }
+
+  /** A filing changes task lists, not the whole home screen. Keep confirmed
+   * cards visible while refreshing and leave other tabs stale until opened. */
+  _refreshAfter311() {
+    for (const status of this._taskListFreshness.keys())
+      this._taskListFreshness.set(status, 0);
+    if (this._homeModel) this._renderHome(this._homeModel);
+    const siteId = this._siteId;
+    const generation = this._homeRefreshGeneration;
+    const previous = this._filingRefresh;
+    if (
+      previous &&
+      previous.siteId === siteId &&
+      previous.generation === generation
+    ) {
+      previous.dirty = true;
+      return previous.promise;
+    }
+    const entry = { siteId, generation, dirty: true, promise: null };
+    this._filingRefresh = entry;
+    const current = () =>
+      this.isConnected &&
+      this._siteId === siteId &&
+      this._homeRefreshGeneration === generation;
+    const run = async () => {
+      while (current() && entry.dirty) {
+        let blockers;
+        while (
+          current() &&
+          (blockers = [
+            this._homeRefresh,
+            this._remainingRefresh,
+            this._tabRefreshBatch?.promise,
+          ].filter(Boolean)).length
+        ) {
+          await Promise.allSettled(blockers);
+        }
+        if (!current()) return;
+        // Reads started before filing may have stamped their lists fresh.
+        // Invalidate after they settle and coalesce all filings seen so far.
+        entry.dirty = false;
+        for (const status of this._taskListFreshness.keys())
+          this._taskListFreshness.set(status, 0);
+        await this._refreshActiveTab();
+        // A home load can begin while the lazy refresh module is loading.
+        if (this._homeRefresh || this._remainingRefresh) entry.dirty = true;
+      }
+    };
+    entry.promise = run().finally(() => {
+      if (this._filingRefresh === entry) this._filingRefresh = null;
+    });
+    return entry.promise;
   }
 
   /**

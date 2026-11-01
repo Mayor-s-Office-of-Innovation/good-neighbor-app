@@ -182,13 +182,15 @@ class SiteAdminEdit extends HTMLElement {
         <dialog
           class="places-modal site-admin-discard-dialog"
           id="site-admin-discard-dialog"
+          aria-labelledby="site-admin-discard-title"
+          aria-describedby="site-admin-discard-text"
         >
           <form class="places-modal__card" method="dialog">
             <div class="places-modal__copy">
-              <h2 class="places-modal__title">
+              <h2 class="places-modal__title" id="site-admin-discard-title">
                 ${escapeHtml(t("siteAdmin.discard.title"))}
               </h2>
-              <p class="places-modal__text">
+              <p class="places-modal__text" id="site-admin-discard-text">
                 ${escapeHtml(t("siteAdmin.discard.text"))}
               </p>
             </div>
@@ -197,7 +199,7 @@ class SiteAdminEdit extends HTMLElement {
                 ${escapeHtml(t("common.keepEditing"))}
               </button>
               <button
-                class="places-modal__danger"
+                class="btn-danger"
                 id="site-admin-discard"
                 value="discard"
               >

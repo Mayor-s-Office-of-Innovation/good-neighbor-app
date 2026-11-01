@@ -12,6 +12,7 @@ import {
 } from "./provider-manager-directory.js";
 import { localRoleEnabled, getLocalRole, setLocalRole } from "./local-role.js";
 import { actionFeedback, notifyAdmin } from "./action-feedback.js";
+import { confirmDeviceRevocation } from "./device-revocation-dialog.js";
 import "../../frontend/src/components/app-toasts.js";
 import {
   captureComplianceDraft,
@@ -301,6 +302,7 @@ class AdminApp extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this.deviceRevocationController?.abort();
     this.directorySearchDebounce?.cancel();
     this.removeEventListener("click", this.routeClick);
     window.removeEventListener("popstate", this.routeChanged);
@@ -334,6 +336,8 @@ class AdminApp extends HTMLElement {
   };
 
   routeChanged = () => {
+    this.navigationGeneration = (this.navigationGeneration || 0) + 1;
+    this.deviceRevocationController?.abort();
     this.directorySearchDebounce?.cancel();
     const destination = window.location.pathname + window.location.search;
     if (
@@ -3346,28 +3350,44 @@ class AdminApp extends HTMLElement {
    */
   async revokeDevice(deviceId) {
     const feedback = actionFeedback("admin.toast.accessRemoved");
+    this.deviceRevocationController?.abort();
+    const controller = new AbortController();
+    this.deviceRevocationController = controller;
+    const generation = this.navigationGeneration || 0;
     try {
       if (!this.state.site) return;
       const device = this.state.devices.find(
         (item) => (item.bindingId || item.deviceId) === deviceId,
       );
-      const label = device?.label || "this device";
+      const label = device?.label || t("admin.devices.unnamedDevice");
+      const siteId = this.state.site.siteId;
       if (
-        !globalThis.confirm(
-          `Remove access for ${label} from ${this.state.site.name}? This ends this Site binding immediately. Other Site bindings on the same physical device are not affected.`,
-        )
+        !(await confirmDeviceRevocation(label, this.state.site.name, {
+          signal: controller.signal,
+        }))
       ) {
         return;
       }
-      const siteId = this.state.site.siteId;
+      if (
+        controller.signal.aborted ||
+        !this.isConnected ||
+        (this.navigationGeneration || 0) !== generation ||
+        this.state.site?.siteId !== siteId
+      )
+        return;
       await adminApi.revokeDevice(siteId, deviceId);
       feedback.success();
       if ((await this.refreshSiteAccess(siteId, false)) === false) return;
-      this.state.revocationMessage = `Access for ${label} was removed from this Site.`;
+      this.state.revocationMessage = t("admin.devices.revokedMessage", {
+        name: label,
+      });
       this.render();
     } catch (error) {
       feedback.failure(error);
       throw error;
+    } finally {
+      if (this.deviceRevocationController === controller)
+        this.deviceRevocationController = null;
     }
   }
 
