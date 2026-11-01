@@ -175,6 +175,10 @@ jobs:
       - name: Copy env example
         run: cp .env.example .env.local
 
+      - name: Test program manager import transactions
+        if: matrix.shard == 1
+        run: npm run test:site-imports -w backend
+
       # Each job owns a fresh emulator stack. Keep one worker within a shard:
       # the tests share a seeded site and the analyzer stub's current fixture.
       - name: Run e2e shard
