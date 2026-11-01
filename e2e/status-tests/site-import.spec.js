@@ -29,6 +29,26 @@ test.beforeEach(async ({ page }) => {
 
 /** @type {Array<[number, string, string]>} */
 const rejections = [
+  [
+    400,
+    JSON.stringify({ error: "invalid_encoding" }),
+    "admin.import.invalidEncoding",
+  ],
+  [
+    400,
+    JSON.stringify({ error: "unreadable_csv" }),
+    "admin.import.unreadableCsv",
+  ],
+  [
+    400,
+    JSON.stringify({ error: "invalid_headers" }),
+    "admin.import.invalidHeaders",
+  ],
+  [
+    400,
+    JSON.stringify({ error: "invalid_row_count" }),
+    "admin.import.invalidRowCount",
+  ],
   [403, "<html>Request blocked</html>", "admin.errors.requestBlocked"],
   [413, "<html>Payload too large</html>", "admin.errors.requestTooLarge"],
   [

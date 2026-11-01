@@ -90,3 +90,32 @@ test("request rejections give localized recovery instructions", () => {
     );
   }
 });
+
+for (const locale of ["en", "es", "fil", "vi", "zh-Hant"]) {
+  test(`CSV validation errors give specific recovery instructions in ${locale}`, () => {
+    const catalog = JSON.parse(
+      readFileSync(
+        new URL(
+          `../../frontend/src/i18n/catalogs/${locale}.json`,
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    );
+    const t = (key) => catalog[key];
+    for (const [code, key] of [
+      ["invalid_encoding", "invalidEncoding"],
+      ["unreadable_csv", "unreadableCsv"],
+      ["invalid_headers", "invalidHeaders"],
+      ["invalid_row_count", "invalidRowCount"],
+    ]) {
+      const error = Object.assign(new Error(code), { status: 400 });
+      const message = adminErrorMessage(error, t);
+      assert.equal(message, t(`admin.import.${key}`));
+      assert.equal(typeof message, "string");
+      assert.ok(message.length > 0);
+      assert.notEqual(message, t("admin.toast.requestFailed"));
+      assert.notEqual(message, code);
+    }
+  });
+}
