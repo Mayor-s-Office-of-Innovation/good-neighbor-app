@@ -111,11 +111,12 @@ class ComplaintView extends HTMLElement {
     if (!header) return;
     const height = header.getBoundingClientRect().height;
     const viewport = window.visualViewport?.height || window.innerHeight;
-    const fits = height <= viewport / 2;
+    const safeTop = parseFloat(getComputedStyle(header).insetBlockStart) || 0;
+    const fits = height <= Math.max(0, viewport - safeTop) / 2;
     header.toggleAttribute("data-static", !fits);
     this.style.setProperty(
       "--complaints-header-height",
-      fits ? `${height + 16}px` : "0px",
+      fits ? `${height + safeTop + 16}px` : "0px",
     );
   };
 

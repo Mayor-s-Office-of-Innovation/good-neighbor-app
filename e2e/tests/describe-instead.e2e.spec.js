@@ -125,7 +125,8 @@ test.describe("describe instead", () => {
 
     // Unsaved changes are protected by an opaque modal that does not visually
     // merge with the editor underneath it.
-    await page.locator("#describe-dismiss").click();
+    await page.locator("#describe-dismiss").focus();
+    await page.keyboard.press("Enter");
     const discardDialog = page.locator("#describe-exit-modal");
     await expect(discardDialog).toBeVisible();
     await expect(discardDialog).toHaveAttribute(
@@ -136,7 +137,13 @@ test.describe("describe instead", () => {
       "background-color",
       "rgba(0, 0, 0, 0)",
     );
-    await discardDialog.locator(".describe-modal__secondary").click();
+    await expect(
+      discardDialog.locator(".describe-modal__secondary"),
+    ).toBeFocused();
+    await expect(
+      discardDialog.locator(".describe-modal__actions button").first(),
+    ).toHaveAttribute("id", "describe-discard");
+    await page.keyboard.press("Enter");
     await expect(discardDialog).not.toBeVisible();
     await expect(field).toHaveValue(DESCRIPTION);
 

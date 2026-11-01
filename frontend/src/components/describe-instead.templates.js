@@ -134,6 +134,7 @@ export const shell = ({
               class="btn-outline describe-modal__secondary"
               type="submit"
               value="stay"
+              autofocus
             >
               ${escapeHtml(t("common.keepEditing"))}
             </button>

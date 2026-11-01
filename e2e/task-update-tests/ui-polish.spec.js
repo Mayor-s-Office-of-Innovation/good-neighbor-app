@@ -459,8 +459,12 @@ test("complaints keep the title and action visible when a long list scrolls", as
   await page.evaluate(() => window.scrollTo(0, 700));
   const title = await page.locator(".care-header h1").boundingBox();
   const button = await page.locator("#log-complaint").boundingBox();
-  expect(title?.y).toBeGreaterThanOrEqual(0);
-  expect(button && button.y + button.height).toBeLessThan(844);
+  const viewport = page.viewportSize();
+  if (!title || !button || !viewport)
+    throw new Error("Missing header geometry");
+  expect(title.y).toBeGreaterThanOrEqual(0);
+  expect(button.y).toBeGreaterThanOrEqual(0);
+  expect(button.y + button.height).toBeLessThanOrEqual(viewport.height);
   await expect(page.locator(".care-header__nav")).toHaveCSS(
     "margin-bottom",
     "18px",
@@ -651,4 +655,67 @@ test("going offline preserves the care logs already displayed", async ({
     "true",
   );
   await expect(page.locator('[data-work="synthetic-saved"]')).toBeVisible();
+});
+
+test("sticky complaints header reserves and paints the safe-area band", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(async () => {
+    window.history.replaceState({}, "", "/complaints");
+    const path = "/src/components/complaint-view.js";
+    await import(path);
+    const main = document.querySelector("main");
+    if (!main) throw new Error("Missing fixture main");
+    main.append(document.createElement("complaint-view"));
+  });
+  await expect(page.locator("#log-complaint")).toBeVisible();
+  await page.evaluate(() => {
+    const header = document.querySelector(".complaints__sticky");
+    const list = document.querySelector(".complaints__list");
+    if (!(header instanceof window.HTMLElement) || !list)
+      throw new Error("Missing complaints layout");
+    // Device emulation doesn't supply a nonzero CSS safe-area inset.
+    header.style.setProperty("--complaints-safe-top", "48px");
+    list.innerHTML = Array.from(
+      { length: 30 },
+      (_, index) => `<p style="height:60px">Synthetic complaint ${index}</p>`,
+    ).join("");
+    window.dispatchEvent(new window.Event("resize"));
+    window.scrollTo(0, 700);
+  });
+  const header = page.locator(".complaints__sticky");
+  await expect(header).toHaveCSS("position", "sticky");
+  await expect.poll(async () => (await header.boundingBox())?.y).toBe(48);
+  const geometry = await header.evaluate((element) => {
+    const band = window.getComputedStyle(element, "::before");
+    const host = element.closest("complaint-view");
+    if (!host) throw new Error("Missing complaints host");
+    return {
+      height: element.getBoundingClientRect().height,
+      margin: parseFloat(
+        window
+          .getComputedStyle(host)
+          .getPropertyValue("--complaints-header-height"),
+      ),
+      bandHeight: band.height,
+      bandColor: band.backgroundColor,
+      headerColor: window.getComputedStyle(element).backgroundColor,
+    };
+  });
+  expect(geometry.bandHeight).toBe("48px");
+  expect(geometry.bandColor).toBe(geometry.headerColor);
+  expect(geometry.margin).toBeCloseTo(geometry.height + 48 + 16, 1);
+  await page.setViewportSize({
+    width: 390,
+    height: Math.floor(geometry.height * 2 + 48) - 2,
+  });
+  await expect(header).toHaveCSS("position", "static");
+  await expect
+    .poll(() =>
+      header.evaluate(
+        (element) => window.getComputedStyle(element, "::before").display,
+      ),
+    )
+    .toBe("none");
 });
