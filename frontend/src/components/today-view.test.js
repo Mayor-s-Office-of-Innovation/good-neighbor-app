@@ -5,6 +5,8 @@ import { t } from "../i18n/i18n.js";
 import { escapeHtml } from "../lib/html.js";
 
 beforeAll(() => {
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  vi.stubGlobal("requestAnimationFrame", vi.fn());
   vi.stubGlobal("HTMLElement", class {});
   vi.stubGlobal("window", {
     addEventListener: vi.fn(),
@@ -904,6 +906,77 @@ describe("return-to-app task freshness", () => {
     return { view, api };
   }
 
+  it("coalesces return events, throttles successful polling, and backs off failures", async () => {
+    const { view } = await fixture();
+    /** @type {(value: boolean) => void} */
+    let finish = () => {
+      throw new Error("Missing refresh resolver");
+    };
+    view._refreshChecks = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    view._refreshActiveTab = vi.fn(async () => true);
+    const first = view._refreshHomeLists();
+    const second = view._refreshHomeLists();
+    await Promise.resolve();
+    expect(view._refreshChecks).toHaveBeenCalledTimes(1);
+    if (!finish) throw new Error("Missing refresh resolver");
+    finish(true);
+    await Promise.all([first, second]);
+    await view._refreshHomeLists();
+    expect(view._refreshChecks).toHaveBeenCalledTimes(1);
+    view._lastBackgroundRefresh = 0;
+    view._refreshChecks.mockResolvedValue(false);
+    await view._refreshHomeLists();
+    expect(view._nextBackgroundRefresh - Date.now()).toBeGreaterThan(110_000);
+    await view._refreshHomeLists(0);
+    expect(view._refreshChecks).toHaveBeenCalledTimes(2);
+  });
+
+  it("includes guidance when reconnect arrives during a list refresh", async () => {
+    const { view } = await fixture();
+    /** @type {(value: boolean) => void} */
+    let finish = () => {};
+    view._refreshChecks = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    view._refreshActiveTab = vi.fn(async () => true);
+    view._refreshFromPull = vi.fn(async () => {});
+    const pending = view._refreshHomeLists();
+    await Promise.resolve();
+    view._reconnectRefreshNeeded = true;
+    const reconnect = view._refreshHomeLists(0);
+    finish(true);
+    await Promise.all([pending, reconnect]);
+    expect(view._refreshFromPull).toHaveBeenCalledExactlyOnceWith({
+      background: true,
+    });
+  });
+
+  it("reconnect refreshes data once without reinitializing Home", async () => {
+    const { view } = await fixture();
+    view._reconnectRefreshNeeded = true;
+    view.connectedCallback = vi.fn();
+    view._refreshFromPull = vi.fn(async () => {});
+    await Promise.all([view._refreshHomeLists(0), view._refreshHomeLists(0)]);
+    expect(view._refreshFromPull).toHaveBeenCalledExactlyOnceWith({
+      background: true,
+    });
+    expect(view.connectedCallback).not.toHaveBeenCalled();
+    expect(view._homeFilter).toBe("todo");
+    view._refreshFromPull.mockRejectedValue(new Error("offline again"));
+    view._reconnectRefreshNeeded = true;
+    await view._refreshHomeLists(0);
+    expect(view._pullRefreshState).not.toBe("failed");
+    expect(view._homeModel.tasks).toHaveLength(2);
+  });
+
   it("coordinates one pull batch through guidance completion and retains cards on partial failure", async () => {
     const { view, api } = await fixture();
     view.dispatchEvent = vi.fn();
@@ -954,6 +1027,8 @@ describe("return-to-app task freshness", () => {
         expect(view._pullRefreshState).toBe("failed");
         view._homeModel.pendingGuidanceFailed = false;
       });
+      expect(view._nextBackgroundRefresh).toBeGreaterThan(Date.now());
+      view._nextBackgroundRefresh = 0; // scheduled retry is now due
       await view._refreshHomeLists(0);
       expect(view._pullRefreshState).toBe("idle");
       expect(view.dispatchEvent.mock.lastCall[0].type).toBe(

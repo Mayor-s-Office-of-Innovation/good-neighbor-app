@@ -10,7 +10,14 @@ export function installHomeRefresh(host, refresh) {
   let lastFailed = false;
   let disposed = false;
   let wheelTimer;
+  let frame;
   const paintPull = (pixels, pulling = true) => {
+    cancelAnimationFrame(frame);
+    if (pulling) {
+      frame = requestAnimationFrame(() => paint(pixels, pulling));
+    } else paint(pixels, pulling);
+  };
+  const paint = (pixels, pulling) => {
     const offset = Math.min(104, pixels * 0.65);
     host.style.setProperty("--home-pull-offset", `${offset}px`);
     host.style.setProperty(
@@ -47,6 +54,8 @@ export function installHomeRefresh(host, refresh) {
       pending ||
       disposed ||
       window.scrollY > 0 ||
+      host.querySelector('[role="menu"]:not([hidden])') ||
+      window.getSelection()?.toString() ||
       document.querySelector("dialog[open]")
     )
       return false;
@@ -95,7 +104,10 @@ export function installHomeRefresh(host, refresh) {
       )
         return;
     }
+    cancel();
     mouseDown = true;
+    window.addEventListener("mousemove", mouseMove);
+    window.addEventListener("mouseup", mouseEnd);
     start = { x: event.clientX, y: event.clientY };
     distance = 0;
     event.preventDefault();
@@ -126,25 +138,40 @@ export function installHomeRefresh(host, refresh) {
   let wheelDistance = 0;
   let wheelAt = 0;
   let wheelTriggered = false;
+  let wheelBlocked = false;
+  let wheelEvents = 0;
+  let wheelTarget;
   const wheel = (event) => {
     const now = performance.now();
-    if (now - wheelAt > 350) {
+    if (!wheelAt || now - wheelAt > 350) {
       wheelDistance = 0;
+      wheelEvents = 0;
+      wheelTarget = event.target;
       wheelTriggered = false;
+      // Eligibility is fixed at gesture start. Scrolling up to the boundary
+      // must end before a new deliberate overscroll gesture can refresh.
+      wheelBlocked = !eligible(event.target, event.clientY);
     }
     wheelAt = now;
     if (
+      event.target !== wheelTarget ||
       event.ctrlKey ||
       event.metaKey ||
       event.deltaY >= 0 ||
       Math.abs(event.deltaX) > Math.abs(event.deltaY) ||
-      !eligible(event.target, event.clientY)
-    ) {
+      window.scrollY > 0 ||
+      document.querySelector("dialog[open]") ||
+      pending ||
+      start
+    )
+      wheelBlocked = true;
+    if (wheelBlocked) {
       wheelDistance = 0;
       clearTimeout(wheelTimer);
-      if (!pending) settle();
+      if (!pending && !start) settle();
       return;
     }
+    wheelEvents++;
     if (wheelTriggered) return;
     const unit =
       event.deltaMode === 1
@@ -160,7 +187,12 @@ export function installHomeRefresh(host, refresh) {
     // the trackpad/wheel gesture; inertia cannot enqueue a second refresh.
     wheelTimer = setTimeout(() => {
       if (disposed || pending) return;
-      if (wheelDistance >= 120) {
+      if (
+        wheelDistance >= 120 &&
+        wheelEvents >= 2 &&
+        !document.querySelector("dialog[open]") &&
+        window.scrollY === 0
+      ) {
         wheelTriggered = true;
         void run();
       } else settle();
@@ -168,32 +200,30 @@ export function installHomeRefresh(host, refresh) {
     }, 160);
   };
   const begin = (event) => {
-    start = null;
-    distance = 0;
-    if (
-      pending ||
-      event.touches.length !== 1 ||
-      window.scrollY > 0 ||
-      document.querySelector("dialog[open]")
-    )
-      return;
-    const target = event.target;
-    if (
-      !(target instanceof Element) ||
-      !target.closest(".home-region--results") ||
-      target.closest(
-        "button, a, input, textarea, select, [contenteditable], wa-textarea, wa-input",
-      )
-    )
-      return;
-    const tabs = host.querySelector(".home-tabs");
+    cancel();
+    if (event.touches.length !== 1) return;
     const touch = event.touches[0];
-    if (!tabs || touch.clientY < tabs.getBoundingClientRect().bottom) return;
+    if (!eligible(event.target, touch.clientY)) return;
     start = { x: touch.clientX, y: touch.clientY };
+    // Only eligible touch sequences need a scroll-blocking listener.
+    host.addEventListener("touchmove", move, { passive: false });
+    window.addEventListener("touchend", end);
+    window.addEventListener("touchcancel", cancel);
+  };
+  const detach = () => {
+    host.removeEventListener("touchmove", move);
+    window.removeEventListener("touchend", end);
+    window.removeEventListener("touchcancel", cancel);
+    window.removeEventListener("mousemove", mouseMove);
+    window.removeEventListener("mouseup", mouseEnd);
   };
   const move = (event) => {
     if (!start) return;
-    if (event.touches.length !== 1 || window.scrollY > 0) {
+    if (
+      event.touches.length !== 1 ||
+      window.scrollY > 0 ||
+      document.querySelector("dialog[open]")
+    ) {
       cancel();
       return;
     }
@@ -208,9 +238,10 @@ export function installHomeRefresh(host, refresh) {
     }
     distance = Math.max(0, dy);
     if (distance > 12 && event.cancelable) event.preventDefault();
-    paintPull(distance);
+    if (distance > 12) paintPull(distance);
   };
   const end = () => {
+    detach();
     const ready = start && distance >= 72;
     start = null;
     distance = 0;
@@ -218,6 +249,8 @@ export function installHomeRefresh(host, refresh) {
     else if (!pending) settle();
   };
   const cancel = () => {
+    detach();
+    mouseDown = false;
     start = null;
     distance = 0;
     clearTimeout(wheelTimer);
@@ -229,16 +262,13 @@ export function installHomeRefresh(host, refresh) {
   };
   host.addEventListener("home-refresh-recovered", recovered);
   host.addEventListener("mousedown", mouseBegin);
-  window.addEventListener("mousemove", mouseMove);
-  window.addEventListener("mouseup", mouseEnd);
   window.addEventListener("blur", blur);
   host.addEventListener("wheel", wheel, { passive: true });
   host.addEventListener("touchstart", begin, { passive: true });
-  host.addEventListener("touchmove", move, { passive: false });
-  host.addEventListener("touchend", end);
-  host.addEventListener("touchcancel", cancel);
   return () => {
     disposed = true;
+    detach();
+    cancelAnimationFrame(frame);
     clearTimeout(wheelTimer);
     paintPull(0, false);
     host.removeEventListener("home-refresh-recovered", recovered);

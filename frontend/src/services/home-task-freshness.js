@@ -127,7 +127,10 @@ export async function refreshActiveTab(
     const action = active?.getAttribute("data-action");
     const filter = active?.getAttribute("data-home-filter");
     const scroll = { left: window.scrollX, top: window.scrollY };
-    view._renderHome({ ...view._homeModel, tasks });
+    view._renderHome(
+      { ...view._homeModel, tasks },
+      { preserveInteraction: true },
+    );
     if (active && !active.isConnected) {
       const selector =
         taskId && action

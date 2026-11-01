@@ -228,6 +228,8 @@ test("desktop mouse and wheel pulls refresh without hijacking controls, text or 
     );
   });
   await expect(page.locator("body")).toHaveAttribute("data-calls", "1");
+  // A separate gesture after the preceding scroll has stopped can refresh.
+  await page.waitForTimeout(400);
   // At the page boundary, one wheel gesture produces one refresh despite inertia.
   await page.evaluate(() => {
     for (let i = 0; i < 8; i++)
@@ -430,4 +432,177 @@ test("expired save notification retains a keyboard-accessible retry action", asy
   expect(
     (await new AxeBuilder({ page }).include("main").analyze()).violations,
   ).toEqual([]);
+});
+
+test("background paints wait for editors, menus, selection, dragging and scrolling", async ({
+  page,
+}) => {
+  await page.route("**/__interaction", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: '<html><body><main><input value="Unsaved draft"><p>Keep this selection</p><div role="menu" hidden>Actions</div><article>Original card</article></main><dialog><input value="Dialog draft"></dialog></body></html>',
+    }),
+  );
+  await page.goto("/__interaction");
+  const result = await page.evaluate(async () => {
+    const path = "/src/services/home-interaction.js";
+    const { installHomeInteractionGuard } = await import(path);
+    const host = document.querySelector("main");
+    if (!host) throw new Error("Missing host");
+    const input = host.querySelector("input");
+    if (!input) throw new Error("Missing input");
+    let paints = 0;
+    const guard = installHomeInteractionGuard(host, () => {
+      if (!guard.busy()) paints++;
+    });
+    input.focus();
+    const editing = guard.busy();
+    const menu = host.querySelector('[role="menu"]');
+    if (!(menu instanceof window.HTMLElement)) throw new Error("Missing menu");
+    input.blur();
+    menu.hidden = false;
+    const menuBusy = guard.busy();
+    menu.hidden = true;
+    const range = document.createRange();
+    const paragraph = host.querySelector("p");
+    if (!paragraph) throw new Error("Missing paragraph");
+    range.selectNodeContents(paragraph);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    const selected = guard.busy();
+    window.getSelection()?.removeAllRanges();
+    host.dispatchEvent(
+      new window.PointerEvent("pointerdown", { bubbles: true }),
+    );
+    const dragging = guard.busy();
+    window.dispatchEvent(new window.PointerEvent("pointerup"));
+    window.dispatchEvent(new window.Event("scroll"));
+    const scrolling = guard.busy();
+    const dialog = document.querySelector("dialog");
+    if (!dialog) throw new Error("Missing dialog");
+    dialog.showModal();
+    const modal = guard.busy();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const paintsDuringModal = paints;
+    dialog.close();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const finished = !guard.busy() && paints > 0;
+    const draft = input.value;
+    guard.dispose();
+    return {
+      editing,
+      menuBusy,
+      selected,
+      dragging,
+      scrolling,
+      modal,
+      paintsDuringModal,
+      finished,
+      draft,
+    };
+  });
+  expect(result).toEqual({
+    editing: true,
+    menuBusy: true,
+    selected: true,
+    dragging: true,
+    scrolling: true,
+    modal: true,
+    paintsDuringModal: 0,
+    finished: true,
+    draft: "Unsaved draft",
+  });
+});
+
+test("touch listeners attach only for eligible gestures and wheel momentum cannot refresh", async ({
+  page,
+}) => {
+  await page.route("**/__gesture_scope", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: '<html><body style="margin:0"><main><section class="home-region--results"><div class="home-tabs" style="height:40px">Tabs</div><button>Action</button><article style="height:4000px"><div id="nested" style="height:60px;overflow:auto"><div style="height:300px">Nested content</div></div></article></section></main></body></html>',
+    }),
+  );
+  await page.goto("/__gesture_scope");
+  const result = await page.evaluate(async () => {
+    const path = "/src/services/home-refresh.js";
+    const { installHomeRefresh } = await import(path);
+    const host = document.querySelector("main");
+    if (!host) throw new Error("Missing host");
+    const article = host.querySelector("article");
+    if (!article) throw new Error("Missing article");
+    let moves = 0;
+    let calls = 0;
+    const add = host.addEventListener.bind(host),
+      remove = host.removeEventListener.bind(host);
+    const active = new Set();
+    // Track installed movement callbacks rather than counting redundant removals.
+    host.addEventListener = (
+      /** @type {string} */ type,
+      /** @type {EventListenerOrEventListenerObject} */ listener,
+      /** @type {any} */ opts,
+    ) => {
+      if (type === "touchmove") {
+        active.add(listener);
+        moves++;
+      }
+      add(type, listener, opts);
+    };
+    host.removeEventListener = (
+      /** @type {string} */ type,
+      /** @type {EventListenerOrEventListenerObject} */ listener,
+      /** @type {any} */ opts,
+    ) => {
+      if (type === "touchmove") active.delete(listener);
+      remove(type, listener, opts);
+    };
+    const stop = installHomeRefresh(host, async () => {
+      calls++;
+    });
+    const touch = (
+      /** @type {Element | null} */ target,
+      /** @type {string} */ type,
+      /** @type {number} */ y,
+    ) => {
+      const event = new window.Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "touches", {
+        value: [{ clientX: 10, clientY: y }],
+      });
+      if (!target) throw new Error("Missing gesture target");
+      target.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    touch(host.querySelector("button"), "touchstart", 70);
+    touch(host.querySelector("#nested"), "touchstart", 100);
+    const ineligible = moves;
+    touch(article, "touchstart", 150);
+    const attached = active.size;
+    const prevented = touch(article, "touchmove", 240);
+    touch(article, "touchcancel", 240);
+    const detached = active.size;
+    window.scrollTo(0, 100);
+    const wheel = () =>
+      article.dispatchEvent(
+        new window.WheelEvent("wheel", {
+          bubbles: true,
+          clientY: 200,
+          deltaY: -80,
+        }),
+      );
+    wheel();
+    window.scrollTo(0, 0);
+    wheel();
+    wheel();
+    await new Promise((resolve) => setTimeout(resolve, 220));
+    const momentumCalls = calls;
+    stop();
+    return { ineligible, attached, prevented, detached, momentumCalls };
+  });
+  expect(result).toEqual({
+    ineligible: 0,
+    attached: 1,
+    prevented: true,
+    detached: 0,
+    momentumCalls: 0,
+  });
 });

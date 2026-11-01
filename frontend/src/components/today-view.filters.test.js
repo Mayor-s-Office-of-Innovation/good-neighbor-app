@@ -172,6 +172,8 @@ beforeEach(() => {
   });
 });
 beforeAll(async () => {
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  vi.stubGlobal("requestAnimationFrame", vi.fn());
   vi.stubGlobal("HTMLButtonElement", class {});
   vi.stubGlobal(
     "HTMLElement",
