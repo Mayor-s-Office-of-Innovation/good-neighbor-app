@@ -86,6 +86,21 @@ function patch(live, desired, cards) {
   }
   let cursor = live.firstChild;
   for (const next of [...desired.childNodes]) {
+    // Status paragraphs above the tabs can disappear after finalization. Do
+    // not replace live tab controls merely because their sibling position moved.
+    if (
+      next instanceof Element &&
+      next.matches(".home-tabs") &&
+      live instanceof Element
+    ) {
+      const tabs = live.querySelector(":scope > .home-tabs");
+      if (tabs) {
+        patch(tabs, next, cards);
+        if (tabs !== cursor) live.insertBefore(tabs, cursor);
+        cursor = tabs.nextSibling;
+        continue;
+      }
+    }
     const id = key(next);
     const held = id && cards.get(id);
     if (

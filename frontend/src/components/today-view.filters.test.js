@@ -172,10 +172,14 @@ beforeEach(() => {
   });
 });
 beforeAll(async () => {
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  vi.stubGlobal("requestAnimationFrame", vi.fn());
   vi.stubGlobal("HTMLButtonElement", class {});
   vi.stubGlobal(
     "HTMLElement",
     class {
+      style = { setProperty() {} };
+      toggleAttribute() {}
       addEventListener() {}
       removeEventListener() {}
     },
@@ -944,6 +948,74 @@ describe("deferred In-progress / History lists", () => {
     return view;
   }
 
+  it.each(["_remainingRefresh", "_homeRefresh", "batch"])(
+    "coalesces filing refreshes after %s settles and expires its freshness",
+    async (blocker) => {
+      const view = liveView("?filter=todo");
+      view._siteId = "synthetic-site";
+      view._homeModel = { tasks: [], checks: [] };
+      view._refreshActiveTab = vi.fn(async () => {});
+      let release = () => {};
+      const pending = new Promise((resolve) => {
+        release = () => resolve(undefined);
+      }).finally(() => {
+        if (blocker === "batch") view._tabRefreshBatch = null;
+        else view[blocker] = null;
+        view._taskListFreshness.set("open", Date.now());
+      });
+      if (blocker === "batch") view._tabRefreshBatch = { promise: pending };
+      else view[blocker] = pending;
+      const refresh = view._refreshAfter311();
+      expect(view._refreshAfter311()).toBe(refresh);
+      expect(view._refreshActiveTab).not.toHaveBeenCalled();
+      release();
+      await refresh;
+      expect(view._refreshActiveTab).toHaveBeenCalledTimes(1);
+      expect(view._taskListFreshness.get("open")).toBe(0);
+    },
+  );
+
+  it.each(["site", "generation", "disconnect"])(
+    "abandons a queued filing refresh after a %s change",
+    async (change) => {
+      const view = liveView("?filter=todo");
+      view._siteId = "synthetic-site";
+      view._homeModel = { tasks: [], checks: [] };
+      view._refreshActiveTab = vi.fn(async () => {});
+      let release = () => {};
+      view._remainingRefresh = new Promise((resolve) => {
+        release = () => resolve(undefined);
+      });
+      const refresh = view._refreshAfter311();
+      if (change === "site") view._siteId = "other-site";
+      if (change === "generation") view._homeRefreshGeneration++;
+      if (change === "disconnect") view.isConnected = false;
+      release();
+      await refresh;
+      expect(view._refreshActiveTab).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refreshes again when another filing completes during the current read", async () => {
+    const view = liveView("?filter=todo");
+    view._homeModel = { tasks: [], checks: [] };
+    let release = () => {};
+    view._refreshActiveTab = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            release = () => resolve(undefined);
+          }),
+      )
+      .mockResolvedValue(undefined);
+    const refresh = view._refreshAfter311();
+    expect(view._refreshAfter311()).toBe(refresh);
+    release();
+    await refresh;
+    expect(view._refreshActiveTab).toHaveBeenCalledTimes(2);
+  });
+
   it.each([false, true])(
     "keeps failed 311 filing available to retry when the worklist lands after failure: %s",
     async (loadAfterFailure) => {
@@ -1211,7 +1283,7 @@ describe("deferred In-progress / History lists", () => {
       getToasts().forEach((toast) => toast.close());
       const view = liveView("?filter=inprogress");
       view._siteId = "site-1";
-      view._refreshAfterAction = vi.fn();
+      view._refreshAfter311 = vi.fn();
       const queued = tapped("queued");
       view._homeModel = { tasks: [queued, doneTask], checks: [] };
 
@@ -1239,7 +1311,7 @@ describe("deferred In-progress / History lists", () => {
         ).toMatchObject({ appActionStatus: "submitted" });
         expect(view._confirmedTasks.get(queued.taskId)).toBe(filedTask);
         expect(getToasts()).toHaveLength(0);
-        expect(view._refreshAfterAction).toHaveBeenCalled();
+        expect(view._refreshAfter311).toHaveBeenCalled();
 
         view._watchQueued311([filedTask]);
         expect(queued311.stop).toHaveBeenCalledTimes(1);
@@ -2409,7 +2481,7 @@ it("renders live tasks before historical recovery finishes and publishes each re
   expect(view._homeModel.tasks).toEqual([task]);
   expect(view._homeModel.pendingQuestions).toHaveLength(1);
   expect(view._homeModel.pendingGuidanceLoading).toBe(true);
-  expect(view._render(view._homeModel)).toContain(t("common.loading"));
+  expect(view._render(view._homeModel)).not.toContain(t("common.loading"));
   release({ guidance: [], nextToken: null });
   await view._pendingGuidanceLoad;
   expect(view._homeModel.pendingGuidanceLoading).toBe(false);

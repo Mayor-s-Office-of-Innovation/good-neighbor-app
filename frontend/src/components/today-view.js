@@ -1,3 +1,5 @@
+import { installHomeInteractionGuard } from "../services/home-interaction.js";
+import { installHomeRefresh } from "../services/home-refresh.js";
 import { reconcileHomeResults } from "./home-card-reconcile.js";
 import { showInlineError } from "./error-notice.js";
 import {
@@ -299,6 +301,7 @@ function sessionRefreshKey(session) {
 
 class TodayView extends HTMLElement {
   _wiredCards = new WeakSet();
+  _wiredTabs = new WeakSet();
   constructor() {
     super();
     this._cardDeletedHandler = (event) => {
@@ -314,10 +317,14 @@ class TodayView extends HTMLElement {
     this._homeRefresh = null;
     this._taskListFreshness = new Map();
     this._tabRefreshes = new Map();
-    /** @type {(() => void) | null} */
-    this._tabRefreshStatus = null;
+    /** @type {string} */
+    this._pullRefreshState = "idle";
+    this._pullRefreshId = 0;
+    this._pullRefreshPromise = null;
     /** @type {(() => "pending" | "loaded" | "error") | null} */
     this._tabListStatus = null;
+    /** @type {{ promise: Promise<void> | null } | null} */
+    this._tabRefreshBatch = null;
     this._tabRefreshEpoch = 0;
     this._homeRefreshQueued = false;
     this._homeRefreshGeneration = 0;
@@ -367,9 +374,16 @@ class TodayView extends HTMLElement {
     this._311StatusByTaskId = new Map();
     this._311StatusGeneration = 0;
     this._refresh311OnReturn = () => {
-      this._refresh311Statuses();
-      void this._refreshChecks();
-      void this._refreshActiveTab();
+      void this._refreshHomeLists(30_000);
+      if (
+        this.isConnected &&
+        document.visibilityState !== "hidden" &&
+        navigator.onLine !== false &&
+        Date.now() - (this._last311ReturnRefresh || 0) >= 60_000
+      ) {
+        this._last311ReturnRefresh = Date.now();
+        this._refresh311Statuses();
+      }
     };
     this._checksRefreshTimer = null;
     this._checksRefreshing = false;
@@ -389,6 +403,17 @@ class TodayView extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._pullRefreshId++;
+    this._pullRefreshState = "idle";
+    this._pullRefreshPromise = null;
+    this._stopHomeRefresh?.();
+    this._stopHomeRefresh = null;
+    this._interactionGuard?.dispose();
+    this._interactionGuard = null;
+    this._backgroundRefreshPromise = null;
+    this._lastBackgroundRefresh = 0;
+    this._backgroundFailures = 0;
+    this._nextBackgroundRefresh = 0;
     clearInterval(this._checksRefreshTimer);
     this._checksRefreshTimer = null;
     this._tabRefreshEpoch++;
@@ -430,9 +455,15 @@ class TodayView extends HTMLElement {
   }
 
   connectedCallback() {
+    this._interactionGuard ??= installHomeInteractionGuard(this, () =>
+      this._flushDialogRender(),
+    );
+    this._stopHomeRefresh ??= installHomeRefresh(this, () =>
+      this._refreshFromPull(),
+    );
     this._checksRefreshTimer ??= setInterval(() => {
-      void this._refreshChecks();
-    }, 30_000);
+      void this._refreshHomeLists(60_000);
+    }, 60_000);
     if (this._homeRefresh) {
       this._homeRefreshQueued = true;
       return this._homeRefresh;
@@ -496,7 +527,7 @@ class TodayView extends HTMLElement {
       this._locationUnsub = onDeviceLocationChange((location) => {
         this._deviceLocation = location;
         if (this.isConnected && this._homeModel) {
-          this._renderHome(this._homeModel);
+          this._renderHome(this._homeModel, { preserveInteraction: true });
         }
       });
       void refreshGrantedDeviceLocation();
@@ -531,7 +562,8 @@ class TodayView extends HTMLElement {
     if (!this._onlineReload) {
       // Offline home is a saved snapshot: reload the live lists on reconnect.
       this._onlineReload = () => {
-        if (this._offline && this.isConnected) void this.connectedCallback();
+        this._reconnectRefreshNeeded = true;
+        void this._refreshHomeLists(0);
       };
       window.addEventListener("online", this._onlineReload);
     }
@@ -793,7 +825,7 @@ class TodayView extends HTMLElement {
     const publish = (patch) => {
       if (!current()) return;
       model = { ...model, ...(this._homeModel || {}), ...patch };
-      this._renderHome(model);
+      this._renderHome(model, { preserveInteraction: true });
     };
     const localItems = this._sessionItems(initialModel.pendingSession);
     const confirmedItems = [...(this._confirmedTasks?.values() || [])]
@@ -951,7 +983,7 @@ class TodayView extends HTMLElement {
           this._applyTaskResult(task.taskId, task);
           if (filing311State(task) === "failed") show311ErrorToast();
 
-          void this._refreshAfterAction();
+          void this._refreshAfter311();
         })
       : null;
   }
@@ -975,7 +1007,10 @@ class TodayView extends HTMLElement {
       (links) => {
         if (!this.isConnected || this._siteId !== siteId) return;
         this._duplicateLinks = links;
-        if (document.querySelector("dialog[open]")) {
+        if (
+          this.querySelector(":scope > .home dialog[open]") ||
+          document.querySelector?.("dialog[open]")
+        ) {
           this._duplicatesNeedRender = true;
           return;
         }
@@ -984,7 +1019,7 @@ class TodayView extends HTMLElement {
           !isCompletingAnalysisCard(this) &&
           !isDeletingAnalysisCard(this)
         )
-          this._renderHome(this._homeModel);
+          this._renderHome(this._homeModel, { preserveInteraction: true });
       },
     );
     stopPrevious?.();
@@ -1017,7 +1052,7 @@ class TodayView extends HTMLElement {
       console.error("listTasks (remaining) failed", err);
       if (!stillCurrent()) return;
       this._remainingStatus = "error";
-      this._renderHome(this._homeModel);
+      this._renderHome(this._homeModel, { preserveInteraction: true });
       // The open list is all we have; watch and hydrate that much.
       this._watchDuplicates(this._homeModel.tasks);
       void this._hydrate311CardStatuses(this._homeModel.tasks);
@@ -1039,7 +1074,7 @@ class TodayView extends HTMLElement {
     this._remainingLoadedAt = Date.now();
     for (const status of ["in_progress", "completing", "completed"])
       this._taskListFreshness.set(status, Date.now());
-    this._renderHome({ ...model, tasks });
+    this._renderHome({ ...model, tasks }, { preserveInteraction: true });
     this._watchDuplicates(tasks);
     void this._hydrate311CardStatuses(tasks);
     void this._hydrateVisibleHomeTasks();
@@ -1052,7 +1087,7 @@ class TodayView extends HTMLElement {
       !this._homeModel ||
       this._checksRefreshing
     )
-      return;
+      return false;
     const siteId = this._siteId;
     this._checksRefreshing = true;
     try {
@@ -1080,24 +1115,195 @@ class TodayView extends HTMLElement {
         JSON.stringify(latestStartedCheck) ===
           JSON.stringify(this._homeModel.latestStartedCheck)
       )
-        return;
+        return true;
       // Use the latest model so a background response cannot undo local actions.
-      this._renderHome({
-        ...this._homeModel,
-        checks,
-        last: checks[0],
-        latestStartedCheck,
-      });
+      this._renderHome(
+        {
+          ...this._homeModel,
+          checks,
+          last: checks[0],
+          latestStartedCheck,
+        },
+        { preserveInteraction: true },
+      );
+      return true;
     } catch {
       // Retain the last confirmed list; refresh again on return or the next poll.
+      return false;
     } finally {
       this._checksRefreshing = false;
     }
   }
 
-  _refreshActiveTab() {
+  _refreshFromPull({ background = false } = {}) {
+    if (this._pullRefreshPromise) {
+      if (!background && this._pullRefreshState !== "refreshing") {
+        this._pullRefreshState = "refreshing";
+        if (this._homeModel)
+          this._renderHome(this._homeModel, { preserveInteraction: true });
+      }
+      return this._pullRefreshPromise;
+    }
+    const id = ++this._pullRefreshId;
+    const siteId = this._siteId;
+    const current = () =>
+      this.isConnected && this._siteId === siteId && this._pullRefreshId === id;
+    const setState = (state) => {
+      if (!current()) return;
+      this._pullRefreshState = state;
+      if (this._homeModel)
+        this._renderHome(this._homeModel, { preserveInteraction: true });
+    };
+    if (!background) setState("refreshing");
+    const pending = Promise.resolve()
+      .then(async () => {
+        // Join an initial load before starting this explicitly requested batch.
+        await Promise.all([
+          this._homeRefresh,
+          this._remainingRefresh,
+          !background && this._backgroundRefreshPromise,
+        ]);
+        if (!current()) return;
+        if (navigator.onLine === false || !this._homeModel)
+          throw new Error("Refresh unavailable");
+        const generation = this._homeRefreshGeneration;
+        const guidanceGeneration = ++this._guidanceGeneration;
+        const checks = listChecks({ limit: 30 }).then((response) => {
+          if (!current()) return [];
+          const rows = response.checks || [];
+          const submitted = submittedChecks(rows);
+          this._renderHome(
+            {
+              ...this._homeModel,
+              checks: submitted,
+              last: submitted[0],
+              latestStartedCheck: latestStarted(rows),
+            },
+            { preserveInteraction: true },
+          );
+          return rows;
+        });
+        const tasks = import("../services/home-task-freshness.js").then(
+          ({ refreshActiveTab }) =>
+            refreshActiveTab(this, { maxAge: 0, allStatuses: true }),
+        );
+        const guidance = checks.then(async (rows) => {
+          if (!current()) return;
+          await this._loadHomeGuidance(
+            this._homeModel,
+            generation,
+            guidanceGeneration,
+            rows,
+          );
+          if (this._homeModel?.pendingGuidanceFailed)
+            throw new Error("Guidance refresh failed");
+        });
+        const results = await Promise.allSettled([checks, tasks, guidance]);
+        if (!current()) return;
+        if (
+          results.some((result) => result.status === "rejected") ||
+          (results[1].status === "fulfilled" && results[1].value !== true)
+        )
+          throw new Error("Refresh incomplete");
+        this._lastBackgroundRefresh = Date.now();
+        this._nextBackgroundRefresh = 0;
+        this._backgroundFailures = 0;
+        this._reconnectRefreshNeeded = false;
+        setState("idle");
+        this.dispatchEvent(new Event("home-refresh-recovered"));
+      })
+      .catch((error) => {
+        if (!background || this._pullRefreshState === "refreshing")
+          setState("failed");
+        throw error;
+      })
+      .finally(() => {
+        if (this._pullRefreshPromise === pending)
+          this._pullRefreshPromise = null;
+      });
+    this._pullRefreshPromise = pending;
+    return pending;
+  }
+
+  async _refreshHomeLists(maxAge = 60_000) {
+    if (
+      !this.isConnected ||
+      document.visibilityState === "hidden" ||
+      navigator.onLine === false ||
+      !this._homeModel
+    )
+      return;
+    if (this._backgroundRefreshPromise) return this._backgroundRefreshPromise;
+    if (this._pullRefreshPromise)
+      return this._pullRefreshPromise.catch(() => {});
+    const now = Date.now();
+    if (
+      now < (this._nextBackgroundRefresh || 0) ||
+      (!this._reconnectRefreshNeeded &&
+        now - (this._lastBackgroundRefresh || 0) < maxAge)
+    )
+      return;
+    const siteId = this._siteId;
+    const generation = this._homeRefreshGeneration;
+    const current = () =>
+      this.isConnected &&
+      this._siteId === siteId &&
+      this._homeRefreshGeneration === generation;
+    const pending = Promise.resolve()
+      .then(async () => {
+        let success;
+        if (
+          this._reconnectRefreshNeeded ||
+          this._pullRefreshState === "failed"
+        ) {
+          await this._refreshFromPull({ background: true });
+          success = true;
+        } else {
+          const results = await Promise.all([
+            this._refreshChecks(),
+            this._refreshActiveTab({ maxAge, allStatuses: true }),
+          ]);
+          success = results.every((result) => result === true);
+          // A reconnect can arrive while the list requests are in flight.
+          // Include guidance too, unless a manual batch is already waiting
+          // for this batch (joining that promise here would deadlock).
+          if (
+            current() &&
+            this._reconnectRefreshNeeded &&
+            !this._pullRefreshPromise
+          ) {
+            await this._refreshFromPull({ background: true });
+            success = true;
+          }
+        }
+        if (!current()) return;
+        if (!success) throw new Error("Background refresh incomplete");
+        this._lastBackgroundRefresh = Date.now();
+        this._nextBackgroundRefresh = 0;
+        this._backgroundFailures = 0;
+        this._reconnectRefreshNeeded = false;
+      })
+      .catch(() => {
+        if (!current()) return;
+        this._backgroundFailures = Math.min(
+          3,
+          (this._backgroundFailures || 0) + 1,
+        );
+        this._nextBackgroundRefresh =
+          Date.now() +
+          Math.min(300_000, 60_000 * 2 ** this._backgroundFailures);
+      })
+      .finally(() => {
+        if (this._backgroundRefreshPromise === pending)
+          this._backgroundRefreshPromise = null;
+      });
+    this._backgroundRefreshPromise = pending;
+    return pending;
+  }
+
+  _refreshActiveTab(options = {}) {
     return import("../services/home-task-freshness.js")
-      .then(({ refreshActiveTab }) => refreshActiveTab(this))
+      .then(({ refreshActiveTab }) => refreshActiveTab(this, options))
       .catch(() => {});
   }
 
@@ -1124,7 +1330,8 @@ class TodayView extends HTMLElement {
     }
     if (generation !== this._311StatusGeneration || !this.isConnected) return;
     this._311StatusByTaskId = map311StatusResponse(response);
-    if (this._homeModel) this._renderHome(this._homeModel);
+    if (this._homeModel)
+      this._renderHome(this._homeModel, { preserveInteraction: true });
   }
 
   /**
@@ -1177,7 +1384,7 @@ class TodayView extends HTMLElement {
     this._renderHome(this._homeModel);
   }
 
-  _renderHome(model) {
+  _renderHome(model, { preserveInteraction = false } = {}) {
     if (this._confirmedTasks?.size)
       model = {
         ...model,
@@ -1215,6 +1422,14 @@ class TodayView extends HTMLElement {
     if (tasks.some((task, index) => task !== model.tasks[index]))
       model = { ...model, tasks };
     this._homeModel = model;
+    if (
+      preserveInteraction &&
+      this._homeMarkup &&
+      this._interactionGuard?.busy()
+    ) {
+      this._pendingDialogRender = true;
+      return;
+    }
     if (this._answeringConditionIds.size) return;
     this._watchQueued311(model.tasks);
     // Keep the native dialog and its action buttons mounted while a location
@@ -1228,7 +1443,10 @@ class TodayView extends HTMLElement {
     // edit): the innerHTML swap would remove it unseen, orphaning its overlay
     // history entry and any close handler. The paint resumes on its `close`
     // (wired below) with whatever model arrived meanwhile.
-    if (this.querySelector(":scope > .home dialog[open]")) {
+    if (
+      this.querySelector(":scope > .home dialog[open]") ||
+      document.querySelector?.("dialog[open]")
+    ) {
       this._pendingDialogRender = true;
       return;
     }
@@ -1268,6 +1486,8 @@ class TodayView extends HTMLElement {
     );
     this._homeMarkup = markup;
     if (reconciled) {
+      this._wireHomeTabs();
+      this._restoreFocusAfterRender();
       restoreFinalizationNotices(model.pendingSession, this);
       this._wireCards();
       this._applyBusyCards();
@@ -1284,7 +1504,6 @@ class TodayView extends HTMLElement {
     }
     this.innerHTML = markup;
     restoreFinalizationNotices(model.pendingSession, this);
-    this._tabRefreshStatus?.();
 
     // Hand the bound site id to the feedback sheet so submissions carry it as
     // optional context (the server treats it as advisory, pattern-checked).
@@ -1521,33 +1740,7 @@ class TodayView extends HTMLElement {
     this.querySelector("#retry-remaining")?.addEventListener("click", () =>
       this._retryRemaining(),
     );
-    this.querySelectorAll("[data-home-filter]").forEach((button) => {
-      button.addEventListener("click", () => {
-        this._activateHomeTab(
-          button.getAttribute("data-home-filter") || "todo",
-        );
-      });
-      button.addEventListener("keydown", (event) => {
-        const key = /** @type {KeyboardEvent} */ (event).key;
-        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(key)) {
-          return;
-        }
-        event.preventDefault();
-        const currentIndex = HOME_TABS.findIndex(
-          ({ id }) => id === this._homeFilter,
-        );
-        const nextIndex =
-          key === "Home"
-            ? 0
-            : key === "End"
-              ? HOME_TABS.length - 1
-              : (currentIndex +
-                  (key === "ArrowRight" ? 1 : -1) +
-                  HOME_TABS.length) %
-                HOME_TABS.length;
-        this._activateHomeTab(HOME_TABS[nextIndex].id);
-      });
-    });
+    this._wireHomeTabs();
     this._analysisDeleteDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector(":scope > .home > #analysis-delete-dialog")
     );
@@ -1632,7 +1825,7 @@ class TodayView extends HTMLElement {
     this._sheets?.updateTask(
       tasks.find((task) => task.taskId === this._sheets?.ticketTaskId),
     );
-    this._renderHome({ ...current, tasks });
+    this._renderHome({ ...current, tasks }, { preserveInteraction: true });
   }
 
   _render({
@@ -1967,6 +2160,7 @@ class TodayView extends HTMLElement {
     if (this._homeModel?.pendingGuidanceFailed) delete counts.todo;
     this._tabCountSnapshot = { siteId: this._siteId, counts };
     return homeResults({
+      pullRefreshState: this._pullRefreshState,
       historyGrouping: this._historyGrouping || "resolved",
       homeFilter: this._homeFilter,
       // Retain confirmed counts during refresh; update each once its lists land.
@@ -1983,6 +2177,7 @@ class TodayView extends HTMLElement {
           pendingSession.finalizationRecovery?.state,
         ),
       pendingSessionId: pendingSession?.id || "",
+      pendingFlowType: pendingSession?.flowType,
       hasPendingSession: Boolean(pendingSession),
       recentCheckTime,
       recentItems,
@@ -2287,9 +2482,11 @@ class TodayView extends HTMLElement {
    */
   /** A home dialog closed: paint whatever `_renderHome` held while it was open. */
   _flushDialogRender() {
-    if (!this._pendingDialogRender) return;
+    if (!this._pendingDialogRender || this._interactionGuard?.busy()) return;
     this._pendingDialogRender = false;
+    const scroll = { left: window.scrollX, top: window.scrollY };
     if (this._homeModel) this._renderHome(this._homeModel);
+    window.scrollTo?.(scroll);
   }
 
   _onLocationDialogClosed({ changingSite }) {
@@ -2413,6 +2610,38 @@ class TodayView extends HTMLElement {
         ),
         isNew: isNewHomeTask(task, this._taskOverrides?.[task.taskId], now),
       }));
+  }
+
+  _wireHomeTabs() {
+    this.querySelectorAll("[data-home-filter]").forEach((button) => {
+      if (this._wiredTabs.has(button)) return;
+      this._wiredTabs.add(button);
+      button.addEventListener("click", () => {
+        this._activateHomeTab(
+          button.getAttribute("data-home-filter") || "todo",
+        );
+      });
+      button.addEventListener("keydown", (event) => {
+        const key = /** @type {KeyboardEvent} */ (event).key;
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(key)) {
+          return;
+        }
+        event.preventDefault();
+        const currentIndex = HOME_TABS.findIndex(
+          ({ id }) => id === this._homeFilter,
+        );
+        const nextIndex =
+          key === "Home"
+            ? 0
+            : key === "End"
+              ? HOME_TABS.length - 1
+              : (currentIndex +
+                  (key === "ArrowRight" ? 1 : -1) +
+                  HOME_TABS.length) %
+                HOME_TABS.length;
+        this._activateHomeTab(HOME_TABS[nextIndex].id);
+      });
+    });
   }
 
   _activateHomeTab(tabId) {
@@ -2661,6 +2890,7 @@ class TodayView extends HTMLElement {
         showInlineError(t("card.failed.deleteError"), {
           target: this,
           key: "delete-failed-item",
+          duration: 5000,
         });
       });
     } else if (action === "retry") {
@@ -3367,7 +3597,7 @@ class TodayView extends HTMLElement {
         // the remaining lists) keeps the card there if a reload's open-list
         // read lands before the worklist index has caught up.
         this._setTaskOverride(savedId, "in_progress");
-        void this._refreshAfterAction();
+        void this._refreshAfter311();
       });
     }
   }
@@ -3451,6 +3681,59 @@ class TodayView extends HTMLElement {
   _refreshAfterAction() {
     if (this._homeModel) this._renderHome(this._homeModel);
     return this.connectedCallback();
+  }
+
+  /** A filing changes task lists, not the whole home screen. Keep confirmed
+   * cards visible while refreshing and leave other tabs stale until opened. */
+  _refreshAfter311() {
+    for (const status of this._taskListFreshness.keys())
+      this._taskListFreshness.set(status, 0);
+    if (this._homeModel) this._renderHome(this._homeModel);
+    const siteId = this._siteId;
+    const generation = this._homeRefreshGeneration;
+    const previous = this._filingRefresh;
+    if (
+      previous &&
+      previous.siteId === siteId &&
+      previous.generation === generation
+    ) {
+      previous.dirty = true;
+      return previous.promise;
+    }
+    const entry = { siteId, generation, dirty: true, promise: null };
+    this._filingRefresh = entry;
+    const current = () =>
+      this.isConnected &&
+      this._siteId === siteId &&
+      this._homeRefreshGeneration === generation;
+    const run = async () => {
+      while (current() && entry.dirty) {
+        let blockers;
+        while (
+          current() &&
+          (blockers = [
+            this._homeRefresh,
+            this._remainingRefresh,
+            this._tabRefreshBatch?.promise,
+          ].filter(Boolean)).length
+        ) {
+          await Promise.allSettled(blockers);
+        }
+        if (!current()) return;
+        // Reads started before filing may have stamped their lists fresh.
+        // Invalidate after they settle and coalesce all filings seen so far.
+        entry.dirty = false;
+        for (const status of this._taskListFreshness.keys())
+          this._taskListFreshness.set(status, 0);
+        await this._refreshActiveTab();
+        // A home load can begin while the lazy refresh module is loading.
+        if (this._homeRefresh || this._remainingRefresh) entry.dirty = true;
+      }
+    };
+    entry.promise = run().finally(() => {
+      if (this._filingRefresh === entry) this._filingRefresh = null;
+    });
+    return entry.promise;
   }
 
   /**

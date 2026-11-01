@@ -1,9 +1,7 @@
 import { SendMessageCommand } from "@aws-sdk/client-sqs";
 import {
   BatchGetCommand,
-  DeleteCommand,
   GetCommand,
-  PutCommand,
   QueryCommand,
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
@@ -471,6 +469,37 @@ describe("registerArtifact", () => {
     text: "north gate clear",
   };
 
+  it("rejects registration after evidence deletion without queueing analysis", async () => {
+    ddbSend.mockRejectedValueOnce(
+      Object.assign(new Error("deleted"), {
+        name: "TransactionCanceledException",
+        CancellationReasons: [
+          { Code: "ConditionalCheckFailed" },
+          { Code: "None" },
+        ],
+      }),
+    );
+    ddbSend.mockResolvedValueOnce({
+      Item: { deletedAt: "2026-11-01T12:00:00Z" },
+    });
+    const res = await callRegister(
+      artifactEvent({
+        checkId: "chk_01",
+        siteClaim: "site-1",
+        body: validBody,
+      }),
+    );
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body).error).toBe("evidence_deleted");
+    expect(sqsSend).not.toHaveBeenCalled();
+    expect(
+      ddbSend.mock.calls[0][0].input.TransactItems[0].ConditionCheck,
+    ).toMatchObject({
+      Key: { pk: "SITE#site-1", sk: 'EVIDENCE_DELETION#["chk_01","art_1"]' },
+      ConditionExpression: "attribute_not_exists(pk)",
+    });
+  });
+
   it("routes foreground evidence to the dedicated analysis queue", async () => {
     process.env.ANALYSIS_QUEUE_URL = "analysis-queue";
     ddbSend.mockResolvedValueOnce({});
@@ -501,18 +530,20 @@ describe("registerArtifact", () => {
     expect(res.statusCode).toBe(202);
 
     const put = ddbSend.mock.calls[0][0];
-    expect(put).toBeInstanceOf(PutCommand);
+    expect(put).toBeInstanceOf(TransactWriteCommand);
     // Conditional write touches only this artifact's own item (no shared header
     // ConditionCheck), so a submit's parallel registrations never contend.
-    expect(put.input.ConditionExpression).toBe("attribute_not_exists(sk)");
-    expect(put.input.Item).toMatchObject({
+    expect(put.input.TransactItems[1].Put.ConditionExpression).toBe(
+      "attribute_not_exists(sk)",
+    );
+    expect(put.input.TransactItems[1].Put.Item).toMatchObject({
       pk: "SITE#site-1",
       sk: "CHECK#chk_01#ART#art_1",
       artifactId: "art_1",
       s3Key: "checks/site-1/chk_01/art_1",
     });
-    expect(put.input.Item).not.toHaveProperty("placeId");
-    expect(put.input.Item).not.toHaveProperty("placeName");
+    expect(put.input.TransactItems[1].Put.Item).not.toHaveProperty("placeId");
+    expect(put.input.TransactItems[1].Put.Item).not.toHaveProperty("placeName");
 
     const msg = sqsSend.mock.calls[0][0];
     expect(msg).toBeInstanceOf(SendMessageCommand);
@@ -544,7 +575,9 @@ describe("registerArtifact", () => {
     );
 
     expect(res.statusCode).toBe(202);
-    expect(ddbSend.mock.calls[0][0].input.Item).toMatchObject({
+    expect(
+      ddbSend.mock.calls[0][0].input.TransactItems[1].Put.Item,
+    ).toMatchObject({
       latitude: 37.7793,
       longitude: -122.4192,
     });
@@ -575,12 +608,14 @@ describe("registerArtifact", () => {
 
     expect((await register(18)).statusCode).toBe(202);
     expect((await register(-1)).statusCode).toBe(202);
-    expect(ddbSend.mock.calls[0][0].input.Item).toMatchObject({
+    expect(
+      ddbSend.mock.calls[0][0].input.TransactItems[1].Put.Item,
+    ).toMatchObject({
       accuracyMeters: 18,
     });
-    expect(ddbSend.mock.calls[1][0].input.Item).not.toHaveProperty(
-      "accuracyMeters",
-    );
+    expect(
+      ddbSend.mock.calls[1][0].input.TransactItems[1].Put.Item,
+    ).not.toHaveProperty("accuracyMeters");
   });
 
   it("rejects partial or out-of-range coordinates", async () => {
@@ -814,11 +849,11 @@ describe("registerArtifact", () => {
 
     expect(res.statusCode).toBe(202);
     const put = ddbSend.mock.calls[0][0];
-    expect(put.input.Item).toMatchObject({
+    expect(put.input.TransactItems[1].Put.Item).toMatchObject({
       sk: "CHECK#chk_01#ART#art_text_1",
       text: "Graffiti is on the west wall by the entrance.",
     });
-    expect(put.input.Item).not.toHaveProperty("s3Key");
+    expect(put.input.TransactItems[1].Put.Item).not.toHaveProperty("s3Key");
 
     const msg = JSON.parse(sqsSend.mock.calls[0][0].input.MessageBody);
     expect(msg).toEqual({
@@ -924,6 +959,7 @@ const callDelete = (event) =>
   /** @type {any} */ (deleteArtifact(event, ctx, () => {}));
 
 describe("deleteArtifact", () => {
+  beforeEach(() => ddbSend.mockResolvedValue({ Items: [] }));
   /** A header + one artifact, as deleteArtifact's two queries read them. */
   function mockCheckWithArtifact() {
     ddbSend.mockResolvedValueOnce({
@@ -972,11 +1008,45 @@ describe("deleteArtifact", () => {
     );
     // The delete touches exactly the resolved ART# item.
     const del = ddbSend.mock.calls[2][0];
-    expect(del).toBeInstanceOf(DeleteCommand);
-    expect(del.input.Key).toEqual({
+    expect(del).toBeInstanceOf(TransactWriteCommand);
+    expect(del.input.TransactItems[2].Delete.Key).toEqual({
       pk: "SITE#site-1",
       sk: "CHECK#chk_01#ART#place-north#art_1",
     });
+  });
+
+  it("retains the deletion marker but reports pending while filing owns the task", async () => {
+    mockCheckWithArtifact();
+    ddbSend.mockResolvedValueOnce({}); // durable marker and artifact removal
+    ddbSend.mockResolvedValueOnce({
+      Items: [
+        {
+          pk: "SITE#site-1",
+          sk: "TASK#task",
+          taskId: "task",
+          status: "open",
+          checkId: "chk_01",
+          sourceArtifactIds: ["art_1"],
+        },
+      ],
+    });
+    ddbSend.mockResolvedValueOnce({ Item: { sf311Lease: "worker" } });
+    const res = await callDelete(
+      deleteEvent({
+        checkId: "chk_01",
+        artifactId: "art_1",
+        siteClaim: "site-1",
+      }),
+    );
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body).code).toBe("EvidenceDeletionPending");
+    const writes = ddbSend.mock.calls
+      .map(([c]) => c)
+      .filter((c) => c instanceof TransactWriteCommand);
+    expect(writes).toHaveLength(1);
+    expect(writes[0].input.TransactItems?.[1].Put?.Item?.sk).toBe(
+      'EVIDENCE_DELETION#["chk_01","art_1"]',
+    );
   });
 
   it("404s when the check header does not exist for this site", async () => {
@@ -999,6 +1069,9 @@ describe("deleteArtifact", () => {
       Items: [{ sk: "CHECK#chk_01", status: "completed" }],
     });
 
+    ddbSend.mockResolvedValueOnce({
+      Items: [{ sk: "CHECK#chk_01#ART#art_1", artifactId: "art_1" }],
+    });
     ddbSend.mockResolvedValueOnce({ Item: { status: "analyzed" } });
 
     const res = await callDelete(
@@ -1010,16 +1083,16 @@ describe("deleteArtifact", () => {
     );
 
     expect(res.statusCode).toBe(409);
-    expect(ddbSend).toHaveBeenCalledTimes(2);
+    expect(ddbSend).toHaveBeenCalledTimes(3);
   });
 
   it("allows deleting permanently failed evidence from a completed check", async () => {
     ddbSend.mockResolvedValueOnce({ Items: [{ status: "completed" }] });
     ddbSend.mockResolvedValueOnce({
-      Item: { status: "failed", retryable: false },
+      Items: [{ sk: "CHECK#chk_01#ART#art_1", artifactId: "art_1" }],
     });
     ddbSend.mockResolvedValueOnce({
-      Items: [{ sk: "CHECK#chk_01#ART#art_1", artifactId: "art_1" }],
+      Item: { status: "failed", retryable: false },
     });
     const response = await callDelete(
       deleteEvent({
@@ -1029,12 +1102,12 @@ describe("deleteArtifact", () => {
       }),
     );
     expect(response.statusCode).toBe(200);
-    expect(ddbSend.mock.calls[1][0]).toBeInstanceOf(GetCommand);
-    expect(ddbSend.mock.calls[1][0].input.ConsistentRead).toBe(true);
-    expect(ddbSend.mock.calls[3][0]).toBeInstanceOf(DeleteCommand);
+    expect(ddbSend.mock.calls[2][0]).toBeInstanceOf(GetCommand);
+    expect(ddbSend.mock.calls[2][0].input.ConsistentRead).toBe(true);
+    expect(ddbSend.mock.calls[3][0]).toBeInstanceOf(TransactWriteCommand);
   });
 
-  it("404s when no ART# item matches the artifactId (idempotent replay)", async () => {
+  it("tombstones missing evidence so registration cannot recreate it", async () => {
     ddbSend.mockResolvedValueOnce({
       Items: [{ sk: "CHECK#chk_01", status: "in_progress" }],
     });
@@ -1048,8 +1121,8 @@ describe("deleteArtifact", () => {
       }),
     );
 
-    expect(res.statusCode).toBe(404);
-    expect(ddbSend).toHaveBeenCalledTimes(2);
+    expect(res.statusCode).toBe(200);
+    expect(ddbSend).toHaveBeenCalledTimes(4);
   });
 
   it("requires checkId and artifactId", async () => {

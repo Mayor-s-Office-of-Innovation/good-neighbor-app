@@ -89,19 +89,7 @@ class ComplaintView extends HTMLElement {
   }
 
   _topbar(title) {
-    return html`<header class="topbar">
-      <button
-        class="topbar__back"
-        type="button"
-        data-back
-        aria-label="${escapeAttr(t("common.back"))}"
-      >
-        <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
-      </button>
-      <div class="topbar__titles">
-        <h1 class="topbar__title" tabindex="-1">${escapeHtml(title)}</h1>
-      </div>
-    </header>`;
+    return careHeader(title);
   }
 
   // Header height depends on translated copy and text size. Measure it rather
@@ -409,11 +397,11 @@ class ComplaintView extends HTMLElement {
       ${draft.describing
         ? this._descriptionField()
         : html`<button
-            class="complaint-describe-link"
+            class="btn-outline complaint-describe-button"
             id="describe-complaint"
             type="button"
           >
-            <wa-icon name="pen" aria-hidden="true"></wa-icon>
+            <wa-icon name="keyboard" aria-hidden="true"></wa-icon>
             ${escapeHtml(t("complaints.describe"))}
           </button>`}
       ${draft.submitError
@@ -433,16 +421,16 @@ class ComplaintView extends HTMLElement {
     );
     this.querySelector("#describe-complaint")?.addEventListener("click", () => {
       draft.describing = true;
-      this._renderDraft();
+      // Keep uploads and the rest of the composer mounted. The shell owns
+      // keyboard-aware revealing; a second smooth scroll fights iOS panning.
+      const button = this.querySelector("#describe-complaint");
+      button?.insertAdjacentHTML("beforebegin", this._descriptionField());
+      button?.remove();
       const textarea = this.querySelector("#complaint-description");
-      textarea?.focus();
-      textarea?.scrollIntoView({
-        behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)")
-          .matches
-          ? "auto"
-          : "smooth",
-        block: "center",
-      });
+      this._bindDescription();
+      // The shell deliberately skips revealing zoomed views. Let the browser
+      // reveal the field there (and when VisualViewport is unavailable).
+      textarea?.focus({ preventScroll: window.visualViewport?.scale === 1 });
     });
     this.querySelector("#complaint-files").addEventListener("change", (event) =>
       this._selectFiles([...event.target.files]),
@@ -469,6 +457,11 @@ class ComplaintView extends HTMLElement {
     this.querySelector("#submit-complaint").addEventListener("click", () =>
       this._submit(),
     );
+    this._bindDescription();
+    this.querySelector("h1")?.focus();
+  }
+
+  _bindDescription() {
     const textarea = this.querySelector("#complaint-description");
     textarea?.addEventListener("input", () => {
       draft.description = textarea.value.slice(0, DESCRIPTION_MAX);
@@ -483,7 +476,6 @@ class ComplaintView extends HTMLElement {
           (!filesReady && draft.description.trim().length < 5);
       }
     });
-    this.querySelector("h1")?.focus();
   }
 
   _descriptionField() {

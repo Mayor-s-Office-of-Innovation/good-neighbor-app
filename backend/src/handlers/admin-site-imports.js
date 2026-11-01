@@ -10,6 +10,7 @@ import {
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { createHash, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { getDynamoTableName } from "../config.js";
 import { ddb } from "../db.js";
 import { geocodeSiteAddress, siteSearchItem } from "../domain/site-metadata.js";
@@ -180,8 +181,34 @@ export const applySiteImport = (event) =>
     const pendingRows = rows
       .filter((row) => isApplicable(row) && !isTerminal(row))
       .slice(0, MAX_APPLY_ROWS);
+    const currentRows = new Map(rows.map((row) => [row.rowNumber, row]));
     for (const row of pendingRows) {
-      await applyOneRow(importId, row);
+      /** @type {number[]} */
+      const dependencyNumbers =
+        row.plan?.dependsOnRows ||
+        (row.plan?.dependsOnRow ? [row.plan.dependsOnRow] : []);
+      const dependencies = dependencyNumbers.map((number) =>
+        currentRows.get(number),
+      );
+      if (
+        dependencies.some(
+          (dependency) =>
+            !dependency ||
+            (dependency.outcome !== "applied" && isTerminal(dependency)),
+        )
+      ) {
+        row.outcome = await recordOutcome(
+          importId,
+          row,
+          "skipped_conflict",
+          "import_dependency_failed",
+        );
+        continue;
+      }
+      // Wait only for records this row actually needs, not every prior Site row.
+      if (dependencies.some((dependency) => dependency?.outcome !== "applied"))
+        continue;
+      row.outcome = await applyOneRow(importId, row);
     }
     const finalRows = await queryImportRows(importId);
     const finalItems = finalRows.Items ?? [];
@@ -354,6 +381,7 @@ async function applyOneRow(importId, row) {
   const tableName = getDynamoTableName();
   const now = new Date().toISOString();
   const actor = "site-import";
+  const managerOnly = plan.mode === "program-manager-only";
   /** @type {import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]} */
   const items = [];
   for (const department of uniqueBy(
@@ -391,13 +419,46 @@ async function applyOneRow(importId, row) {
     items.push(
       activeMatch(
         { pk: `PROGRAM#${plan.program.id}`, sk: "#META" },
-        "#name = :name",
+        managerOnly
+          ? "#name = :name AND providerId = :providerId"
+          : "#name = :name",
         { "#name": "name" },
-        { ":name": plan.program.name },
+        {
+          ":name": plan.program.name,
+          ...(managerOnly ? { ":providerId": plan.provider.id } : {}),
+        },
       ),
     );
   }
-  if (plan.site.action === "reuse") {
+  if (managerOnly) {
+    const hasType = Object.hasOwn(plan.site, "expectedSiteType");
+    const hasOversight = plan.site.hasExpectedOversight;
+    items.push(
+      activeMatch(
+        { pk: `SITE#${plan.site.id}`, sk: "#META" },
+        `providerId = :providerId AND leadProgramId = :programId AND #name = :name AND address = :address AND ${hasType ? "siteType = :siteType" : "attribute_not_exists(siteType)"} AND ${hasOversight ? "oversight = :oversight" : "attribute_not_exists(oversight)"}`,
+        { "#name": "name" },
+        {
+          ":providerId": plan.provider.id,
+          ":programId": plan.program.id,
+          ":name": plan.site.name,
+          ":address": plan.site.address,
+          ...(hasType ? { ":siteType": plan.site.expectedSiteType } : {}),
+          ...(hasOversight
+            ? { ":oversight": plan.site.expectedOversight }
+            : {}),
+        },
+      ),
+    );
+    items.push(
+      activeMatch(
+        { pk: `SITE#${plan.site.id}`, sk: `ASSIGNED_USER#${plan.contact.id}` },
+        "programId = :programId AND userId = :userId",
+        {},
+        { ":programId": plan.program.id, ":userId": plan.contact.id },
+      ),
+    );
+  } else if (plan.site.action === "reuse") {
     items.push({
       Update: {
         TableName: tableName,
@@ -771,6 +832,19 @@ async function applyOneRow(importId, row) {
       }),
     );
   }
+  if (managerOnly && plan.complianceAssignment.action === "reuse") {
+    items.push(
+      activeMatch(
+        {
+          pk: `SITE#${plan.site.id}`,
+          sk: `COMPLIANCE_MANAGER#${complianceManager.id}`,
+        },
+        "managerId = :managerId",
+        {},
+        { ":managerId": complianceManager.id },
+      ),
+    );
+  }
   const providerManager = plan.providerManager;
   if (providerManager.action === "reuse") {
     items.push(
@@ -823,7 +897,7 @@ async function applyOneRow(importId, row) {
     );
   }
   try {
-    if (plan.site.action === "reuse") {
+    if (!managerOnly && plan.site.action === "reuse") {
       const primary = await sitePrimaryContactChange(
         tableName,
         plan.site.id,
@@ -1113,6 +1187,8 @@ function planRows(rows, catalog) {
   );
   const departments = departmentAliases(catalog.departments);
   let plannedDepartmentCreates = new Set();
+  /** @type {Map<string, number>} */
+  let plannedRecordRows = new Map();
   return rows.map((source, index) => {
     const previous = {
       providers,
@@ -1127,6 +1203,7 @@ function planRows(rows, catalog) {
       complianceManagerCounts,
       providerManagers,
       plannedDepartmentCreates,
+      plannedRecordRows,
     };
     providers = new Map(providers);
     programs = new Map(programs);
@@ -1145,6 +1222,7 @@ function planRows(rows, catalog) {
     );
     providerManagers = new Map(providerManagers);
     plannedDepartmentCreates = new Set(plannedDepartmentCreates);
+    plannedRecordRows = new Map(plannedRecordRows);
     const result = (() => {
       const rowNumber = index + 2;
       const missing = REQUIRED_HEADERS.filter(
@@ -1269,6 +1347,12 @@ function planRows(rows, catalog) {
         siteType,
         department,
         expectedOversight: siteExisting?.oversight || null,
+        hasExpectedOversight: Boolean(
+          siteExisting && Object.hasOwn(siteExisting, "oversight"),
+        ),
+        ...(siteExisting && Object.hasOwn(siteExisting, "siteType")
+          ? { expectedSiteType: siteExisting.siteType }
+          : {}),
         assignPrimary: siteExisting?.primaryContactUserId === undefined,
         oversight: {
           ...(siteExisting?.oversight || {}),
@@ -1283,7 +1367,10 @@ function planRows(rows, catalog) {
           name: source["Site name"],
           address: source["Site address"],
           siteType,
-          oversight: { managingCityDepartment: department.name },
+          oversight: {
+            managingCityDepartment: department.name,
+            managingCityDepartmentId: department.id,
+          },
         });
       const contactKey = `${programId}|${normalized(source["Site manager email"])}`;
       const contactExisting = users.get(contactKey);
@@ -1318,6 +1405,7 @@ function planRows(rows, catalog) {
           phone: source["Site manager phone"],
           phoneExtension: source["Site manager extension"],
           email: source["Site manager email"],
+          siteManager: true,
         });
       const assignmentKey = `${siteId}|${contactId}`;
       const assignmentExisting = assignments.get(assignmentKey);
@@ -1495,14 +1583,89 @@ function planRows(rows, catalog) {
       if (programManagerDepartment.action === "create") {
         plannedDepartmentCreates.add(programManagerDepartment.id);
       }
+      const managerOnly =
+        [
+          provider,
+          program,
+          site,
+          contact,
+          assignment,
+          manager,
+          providerManager,
+          department,
+        ].every((item) => item.action === "reuse") && !contact.promote;
       // The first valid row supplies the default; later rows add managers
       // without replacing a primary selected by this import or an administrator.
-      if (site.assignPrimary) {
+      if (site.assignPrimary && !managerOnly) {
         sites.set(siteKey, {
           ...sites.get(siteKey),
           primaryContactUserId: contactId,
         });
       }
+      // Track this row only after validation succeeds. The snapshot rollback below
+      // prevents rejected rows from becoming dependencies of subsequent rows.
+      if (contact.promote)
+        users.set(contactKey, { ...users.get(contactKey), siteManager: true });
+      /** @type {[string, boolean][]} */
+      const relatedRecords = [
+        [`PROVIDER#${providerId}|#META`, provider.action === "create"],
+        [`PROGRAM#${programId}|#META`, program.action === "create"],
+        [
+          `SITE#${siteId}|#META`,
+          !managerOnly &&
+            (site.action === "create" ||
+              siteExisting?.siteType !== siteType ||
+              !isDeepStrictEqual(siteExisting?.oversight, site.oversight)),
+        ],
+        [
+          `PROGRAM#${programId}|USER#${contactId}`,
+          contact.action === "create" || contact.promote,
+        ],
+        [
+          `SITE#${siteId}|ASSIGNED_USER#${contactId}`,
+          assignment.action === "create",
+        ],
+        [
+          `SITE#${siteId}|MANAGER_MEMBERSHIP#${manager.id}`,
+          manager.action === "create",
+        ],
+        [
+          `PROVIDER#${providerId}|PROVIDER_MANAGER#${providerManager.id}`,
+          providerManager.action === "create",
+        ],
+        [
+          `ADMIN_DIRECTORY#PROGRAM_MANAGERS|MANAGER#${complianceEmail}`,
+          complianceManager.action === "create",
+        ],
+        [
+          `SITE#${siteId}|COMPLIANCE_MANAGER#${complianceManager.id}`,
+          complianceAssignment.action === "create",
+        ],
+        ...[department, programManagerDepartment].map(
+          (item) =>
+            /** @type {[string, boolean]} */ ([
+              `ADMIN_DIRECTORY#OVERSIGHT|DEPARTMENT#${item.id}`,
+              item.action === "create",
+            ]),
+        ),
+      ];
+      const dependsOnRows = managerOnly
+        ? [
+            ...new Set(
+              relatedRecords
+                .map(([key]) => plannedRecordRows.get(key))
+                .filter((number) => number !== undefined),
+            ),
+          ]
+        : [];
+      for (const [key, changesRecord] of relatedRecords)
+        if (changesRecord) plannedRecordRows.set(key, rowNumber);
+      sites.set(siteKey, {
+        ...sites.get(siteKey),
+        ...(!managerOnly && site.action === "reuse"
+          ? { siteType, oversight: site.oversight }
+          : {}),
+      });
       const actions = [
         provider,
         program,
@@ -1527,6 +1690,12 @@ function planRows(rows, catalog) {
         reasonCode: missingOptional.length ? "missing_optional_value" : "",
         existingValue: missingOptional.join(", "),
         plan: {
+          ...(managerOnly
+            ? {
+                mode: "program-manager-only",
+                ...(dependsOnRows.length ? { dependsOnRows } : {}),
+              }
+            : {}),
           provider,
           program,
           site,
@@ -1554,6 +1723,7 @@ function planRows(rows, catalog) {
         complianceManagerCounts,
         providerManagers,
         plannedDepartmentCreates,
+        plannedRecordRows,
       } = previous);
     }
     return result;
@@ -1561,8 +1731,8 @@ function planRows(rows, catalog) {
 }
 
 /** @param {string} importId @param {Record<string, unknown>} row @param {string} outcome @param {string} reasonCode @param {Record<string, string>} [ids] */
-function recordOutcome(importId, row, outcome, reasonCode, ids = {}) {
-  return ddb.send(
+async function recordOutcome(importId, row, outcome, reasonCode, ids = {}) {
+  await ddb.send(
     new UpdateCommand({
       TableName: getDynamoTableName(),
       Key: { pk: `SITE_IMPORT#${importId}`, sk: String(row.sk) },
@@ -1577,6 +1747,7 @@ function recordOutcome(importId, row, outcome, reasonCode, ids = {}) {
       },
     }),
   );
+  return outcome;
 }
 
 /** @param {string} importId */
@@ -1962,7 +2133,8 @@ function csvCell(value) {
 function guidance(reason) {
   return reason === "missing_required_value"
     ? "Complete every required column and upload again."
-    : reason === "changed_after_preview"
+    : reason === "changed_after_preview" ||
+        reason === "import_dependency_failed"
       ? "Download current data, correct the source row, and preview again."
       : reason === "retryable_apply_error"
         ? "Retry the apply operation. If it fails again, contact an administrator."

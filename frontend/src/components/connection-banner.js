@@ -17,7 +17,7 @@ class ConnectionBanner extends HTMLElement {
     this.querySelector("button").textContent = t("notice.checkConnection");
     this.querySelector("button").addEventListener(
       "click",
-      () => void retryConnection(),
+      () => void this.checkConnection(),
     );
     this.unsubscribe = onConnectionChange((state) => this.sync(state));
     this.modalObserver = new MutationObserver(() => this.promote());
@@ -34,6 +34,31 @@ class ConnectionBanner extends HTMLElement {
     this.unsubscribe?.();
     clearTimeout(this.timer);
     this.modalObserver?.disconnect();
+  }
+  async checkConnection() {
+    if (this.checking) return;
+    this.checking = true;
+    const button = this.querySelector("button");
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.innerHTML =
+      '<wa-spinner aria-hidden="true"></wa-spinner><span></span>';
+    button.querySelector("span").textContent = t("notice.checkingConnection");
+    this.reserveSpace();
+    try {
+      await Promise.all([
+        retryConnection(),
+        new Promise((resolve) => setTimeout(resolve, 2000)),
+      ]);
+    } finally {
+      this.checking = false;
+      if (button.isConnected) {
+        button.disabled = false;
+        button.removeAttribute("aria-busy");
+        button.textContent = t("notice.checkConnection");
+        this.reserveSpace();
+      }
+    }
   }
   reserveSpace() {
     // Inert, invisible copies reserve their natural CSS height in page/toast

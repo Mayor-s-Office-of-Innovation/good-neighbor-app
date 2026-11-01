@@ -24,7 +24,9 @@ export async function deliberate311Decision(tableName, siteId, task, now) {
   );
   const attempted = prior.find(
     (result) =>
-      result.code === "create_311_ticket" && result.payload?.tickets?.length,
+      result.code === "create_311_ticket" &&
+      result.payload?.executionTrigger !== "task_created" &&
+      result.payload?.tickets?.length,
   );
   if (attempted)
     return {

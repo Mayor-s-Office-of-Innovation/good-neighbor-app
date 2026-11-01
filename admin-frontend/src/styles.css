@@ -2202,3 +2202,6 @@ app-toasts {
 .site-directory > .directory-count {
   margin: 0;
 }
+.device-revocation-dialog .places-modal__actions {
+  gap: 0.75rem;
+}

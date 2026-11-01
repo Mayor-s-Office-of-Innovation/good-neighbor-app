@@ -212,6 +212,25 @@ test("contact drafts survive focus changes and require confirmation before disca
   await expect(phone).toHaveValue("415-555-0111");
   await page.locator("#site-admin-cancel").click();
   await expect(page.locator("#site-admin-discard-dialog")).toBeVisible();
+  const results = await new AxeBuilder({ page })
+    .include("#site-admin-discard-dialog")
+    .withTags(["wcag2a", "wcag2aa"])
+    .analyze();
+  expect(results.violations).toEqual([]);
+  await page.screenshot({ path: test.info().outputPath("discard-dialog.png") });
+  await page.evaluate(() => document.documentElement.classList.add("wa-dark"));
+  await expect(page.locator("#site-admin-keep")).toHaveCSS(
+    "color",
+    "rgb(237, 237, 237)",
+  );
+  const darkResults = await new AxeBuilder({ page })
+    .include("#site-admin-discard-dialog")
+    .withTags(["wcag2a", "wcag2aa"])
+    .analyze();
+  expect(darkResults.violations).toEqual([]);
+  await page.screenshot({
+    path: test.info().outputPath("discard-dialog-dark.png"),
+  });
   await page.locator("#site-admin-keep").click();
   await expect(phone).toHaveValue("415-555-0111");
   await page.locator("#site-admin-cancel").click();

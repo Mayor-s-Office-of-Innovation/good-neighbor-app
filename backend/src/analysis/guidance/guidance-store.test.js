@@ -21,7 +21,51 @@ const {
   getAssessmentGuidance,
   storeEvaluatedAssessment,
   supersedeOpenTasksForCondition,
+  withConditionDismissals,
 } = await import("./guidance-store.js");
+
+it.each([0, 1, 2])(
+  "dismisses multi-source guidance only when all sources are deleted (%i)",
+  async (count) => {
+    send.mockReset();
+    send.mockImplementation(async (command) => {
+      expect(command).toBeInstanceOf(BatchGetCommand);
+      const keys = batchKeys(command);
+      expect(
+        keys.filter((key) => key.sk.startsWith("EVIDENCE_DELETION#")),
+      ).toHaveLength(2);
+      return {
+        Responses: {
+          table: ["a", "b"].slice(0, count).map((id) => ({
+            pk: "SITE#site",
+            sk: `EVIDENCE_DELETION#["check","${id}"]`,
+            deletedAt: "now",
+          })),
+        },
+      };
+    });
+    const result = await withConditionDismissals("table", "site", {
+      assessment: { checkId: "check" },
+      tasks: [],
+      conditions: [
+        {
+          conditionId: "shared",
+          status: "needs_answer",
+          source: { artifactIds: ["a", "b"] },
+        },
+        {
+          conditionId: "no-source",
+          status: "needs_answer",
+          source: { artifactIds: [] },
+        },
+      ],
+    });
+    expect(result.conditions.map((row) => row.status)).toEqual([
+      count === 2 ? "rejected" : "needs_answer",
+      "needs_answer",
+    ]);
+  },
+);
 
 /**
  * @param {BatchGetCommand} command
@@ -57,6 +101,105 @@ describe("storeEvaluatedAssessment", () => {
     send.mockReset();
     send.mockResolvedValue({});
   });
+
+  it.each([1, 24])(
+    "keeps maximum admitted tasks, jobs and %i evidence guards atomic",
+    async (evidenceCount) => {
+      const evidence = Array.from(
+        { length: evidenceCount },
+        (_, i) => `artifact-${i}`,
+      );
+      const condition = {
+        category: "Litter",
+        severity: 1,
+        sourceArtifactIds: evidence,
+      };
+      const input = {
+        siteId: "site-1",
+        assessmentId: "budget",
+        checkId: "check-1",
+        reportedAt: "2026-10-30T12:00:00Z",
+        rawAssessment: { artifactId: evidence[0] },
+        conditions: [condition],
+      };
+      const limit = Math.floor((100 - 2 - evidenceCount) / 3);
+      input.conditions = Array.from({ length: limit }, () => ({
+        ...condition,
+      }));
+      mockTaskShortIdAllocation();
+      let sequence = 0;
+      const result = await storeEvaluatedAssessment(input, {
+        tableName: "table",
+        idFactory: () => `task-${sequence++}`,
+        env: { GNP_311_SUBMISSION_ENABLED: "true" },
+      });
+      const transaction = send.mock.calls
+        .map(([command]) => command)
+        .find((command) => command instanceof TransactWriteCommand);
+      const items = transaction?.input.TransactItems || [];
+      expect(result.taskItems).toHaveLength(limit);
+      expect(items.filter((item) => item.ConditionCheck)).toHaveLength(
+        evidenceCount,
+      );
+      expect(
+        items.filter((item) => item.Put?.Item?.entityType === "SF311_OUTBOX"),
+      ).toHaveLength(limit);
+      expect(items.length).toBeLessThanOrEqual(100);
+      send.mockClear();
+      input.conditions.push(condition);
+      await expect(
+        storeEvaluatedAssessment(input, {
+          tableName: "table",
+          env: { GNP_311_SUBMISSION_ENABLED: "true" },
+        }),
+      ).rejects.toMatchObject({ name: "TransactionTooLarge" });
+      expect(send).not.toHaveBeenCalled();
+      input.conditions.pop();
+      send.mockImplementation(async (command) => {
+        if (command instanceof GetCommand)
+          return { Item: result.assessmentItem };
+        if (command instanceof QueryCommand)
+          return { Items: result.conditionItems };
+        if (command instanceof BatchGetCommand)
+          return { Responses: { table: result.taskItems } };
+        return {};
+      });
+      const revision = {
+        ...input,
+        assessmentId: "revision",
+        previousAssessmentId: "budget",
+      };
+      const retained = await storeEvaluatedAssessment(revision, {
+        tableName: "table",
+      });
+      expect(retained.taskItems.map((task) => task.taskId)).toEqual(
+        result.taskItems.map((task) => task.taskId),
+      );
+      expect(
+        send.mock.calls.some(([command]) => command instanceof UpdateCommand),
+      ).toBe(false);
+      send.mockClear();
+      await expect(
+        storeEvaluatedAssessment(
+          {
+            ...revision,
+            conditions: input.conditions.map((condition) => ({
+              ...condition,
+              description: "Changed evidence",
+            })),
+          },
+          { tableName: "table", env: { GNP_311_SUBMISSION_ENABLED: "true" } },
+        ),
+      ).rejects.toMatchObject({ name: "TransactionTooLarge" });
+      expect(
+        send.mock.calls.some(
+          ([command]) =>
+            command instanceof UpdateCommand ||
+            command instanceof TransactWriteCommand,
+        ),
+      ).toBe(false);
+    },
+  );
 
   it("stores the assessment, conditions, and immediately resolvable tasks", async () => {
     mockTaskShortIdAllocation();
@@ -115,7 +258,9 @@ describe("storeEvaluatedAssessment", () => {
     });
     const command = send.mock.calls[2][0];
     expect(command).toBeInstanceOf(TransactWriteCommand);
-    const writes = /** @type {any[]} */ (command.input.TransactItems);
+    const writes = /** @type {any[]} */ (command.input.TransactItems).filter(
+      (write) => !write.ConditionCheck,
+    );
     expect(writes).toHaveLength(5);
 
     const assessment = writes[0].Put.Item;
@@ -369,6 +514,7 @@ describe("answerCondition", () => {
       Item: { ...assessmentBase, assessmentRevision: 0 },
     });
     send.mockResolvedValueOnce({ Item: condition });
+    send.mockResolvedValueOnce({}); // evidence is still present
     mockTaskShortIdAllocation({
       providerShortCode: "MOI",
       siteShortCode: "CIT",
@@ -393,6 +539,7 @@ describe("answerCondition", () => {
       },
     });
     send.mockResolvedValueOnce({ Item: condition });
+    send.mockResolvedValueOnce({}); // evidence is still present
     mockTaskShortIdAllocation({
       providerShortCode: "MOI",
       siteShortCode: "CIT",
@@ -415,8 +562,8 @@ describe("answerCondition", () => {
       now: new Date("2026-08-18T12:02:00.000Z"),
     });
 
-    expect(send).toHaveBeenCalledTimes(10);
-    const finalTx = send.mock.calls[9][0];
+    expect(send).toHaveBeenCalledTimes(12);
+    const finalTx = send.mock.calls[11][0];
     expect(finalTx).toBeInstanceOf(TransactWriteCommand);
     expect(finalTx.input.TransactItems[0].Put).toMatchObject({
       ConditionExpression:
@@ -2188,6 +2335,7 @@ it("atomically rejects an answer when another device confirms dismissal", async 
       source: { artifactIds: ["artifact"] },
     },
   });
+  send.mockResolvedValueOnce({}); // evidence is still present
   send.mockImplementationOnce(async (command) => {
     const tx = command.input.TransactItems;
     expect(tx.at(-1).ConditionCheck).toMatchObject({
@@ -2213,5 +2361,110 @@ it("atomically rejects an answer when another device confirms dismissal", async 
       answers: {},
     }),
   ).rejects.toMatchObject({ name: "ConditionDismissed" });
-  expect(send).toHaveBeenCalledTimes(3);
+  expect(send).toHaveBeenCalledTimes(4);
+});
+
+it.each([
+  "survives",
+  "all-deleted",
+  "deletion-race",
+  "single-deleted",
+  "single-race",
+  "unrelated-conflict",
+  "partial-race",
+  "last-attempt-deletion",
+])("answers shared evidence safely: %s", async (mode) => {
+  send.mockReset();
+  const assessment = {
+    assessmentId: "a",
+    checkId: "check",
+    policyVersion: "actions-escalations-v3",
+    assessmentRevision: 0,
+  };
+  const condition = {
+    conditionId: "c",
+    assessmentId: "a",
+    checkId: "check",
+    status: "needs_answer",
+    analyzerCategory: "Graffiti",
+    canonicalCategory: "Graffiti",
+    severity: 2,
+    policyVersion: "actions-escalations-v3",
+    source: {
+      artifactIds: mode.startsWith("single") ? ["live"] : ["deleted", "live"],
+    },
+  };
+  let raced = false;
+  let writes = 0;
+  send.mockImplementation(async (command) => {
+    if (command instanceof GetCommand) {
+      const sk = command.input.Key?.sk;
+      if (sk === "ASSESSMENT#a") return { Item: assessment };
+      if (sk === "ASSESSMENT#a#COND#c") return { Item: condition };
+      if (sk?.startsWith("EVIDENCE_DELETION#"))
+        return (sk.includes('"deleted"') &&
+          (mode !== "partial-race" || raced)) ||
+          mode === "all-deleted" ||
+          mode === "single-deleted" ||
+          (raced && mode !== "partial-race")
+          ? { Item: { deletedAt: "now" } }
+          : {};
+      return { Item: { providerShortCode: "MOI", siteShortCode: "CIT" } };
+    }
+    if (command instanceof UpdateCommand)
+      return { Attributes: { nextTaskDisplayNumber: 1 } };
+    if (
+      command instanceof TransactWriteCommand &&
+      ([
+        "deletion-race",
+        "single-race",
+        "unrelated-conflict",
+        "last-attempt-deletion",
+      ].includes(mode) ||
+        (mode === "partial-race" && !raced))
+    ) {
+      writes++;
+      raced =
+        mode !== "unrelated-conflict" &&
+        (mode !== "last-attempt-deletion" || writes === 3);
+      throw Object.assign(new Error("evidence removed"), {
+        name: "TransactionCanceledException",
+      });
+    }
+    return {};
+  });
+  const promise = answerCondition({
+    tableName: "table",
+    siteId: "site",
+    assessmentId: "a",
+    conditionId: "c",
+    answers: { onsite: false },
+  });
+  if (!["survives", "partial-race"].includes(mode))
+    await expect(promise).rejects.toMatchObject({
+      name:
+        mode === "unrelated-conflict"
+          ? "TransactionCanceledException"
+          : "ConditionDismissed",
+    });
+  else {
+    const result = await promise;
+    expect(result.taskItem?.sourceArtifactIds).toEqual(["live"]);
+    const tx = /** @type {any[]} */ (
+      send.mock.calls
+        .map(([command]) => command)
+        .filter((command) => command instanceof TransactWriteCommand)
+        .at(-1)?.input.TransactItems || []
+    );
+    const guards = tx
+      .filter((entry) => entry.ConditionCheck)
+      .map((entry) => entry.ConditionCheck.Key.sk);
+    expect(guards).toEqual([
+      'EVIDENCE_DELETION#["check","live"]',
+      "ISSUE_DELETION#check:deleted:c",
+    ]);
+    expect(
+      /** @type {any} */ (result.conditionItem.source).artifactIds,
+    ).toEqual(["deleted", "live"]);
+  }
 });

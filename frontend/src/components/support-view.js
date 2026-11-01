@@ -10,6 +10,7 @@ export class SupportView extends HTMLElement {
   /** @type {AbortController | null} */
   _pending = null;
   _locale = "";
+  _questionTouched = false;
 
   connectedCallback() {
     this._locale = getLocale();
@@ -54,13 +55,17 @@ export class SupportView extends HTMLElement {
             label="${escapeAttr(t("support.question"))}"
             rows="3"
             maxlength="1000"
+            minlength="20"
             resize="vertical"
             required
-          ></wa-textarea>
+            ><span slot="hint" data-question-hint aria-live="polite"
+              >${escapeHtml(t("support.questionHint"))}</span
+            ></wa-textarea
+          >
           <button class="btn-link" type="button" data-clear-question hidden>
             ${escapeHtml(t("support.clearContents"))}
           </button>
-          <button class="btn-ink" type="submit" data-send>
+          <button class="btn-ink" type="submit" data-send disabled>
             ${escapeHtml(t("support.send"))}
           </button>
         </form>
@@ -82,18 +87,26 @@ export class SupportView extends HTMLElement {
       /** @type {import("@awesome.me/webawesome/dist/components/textarea/textarea.js").default} */ (
         this.querySelector("[data-question]")
       );
-    question.addEventListener("input", () => this._syncDraftClear());
     this.querySelector("[data-clear-question]").addEventListener(
       "click",
       () => {
         question.value = "";
-        this._syncDraftClear();
+        this._questionTouched = false;
+        this._syncQuestion();
         question.focus();
       },
     );
     this.querySelector("form").addEventListener("submit", (event) => {
       event.preventDefault();
       void this._submit();
+    });
+    question.addEventListener("input", () => {
+      this._questionTouched = true;
+      this._syncQuestion();
+    });
+    question.addEventListener("focusout", () => {
+      this._questionTouched = true;
+      this._syncQuestion();
     });
     this.querySelector("[data-clear]").addEventListener("click", () => {
       this.querySelector(".support__conversation").replaceChildren();
@@ -116,6 +129,7 @@ export class SupportView extends HTMLElement {
         this.querySelector("[data-question]")
       );
     if (question) question.value = "";
+    this._questionTouched = false;
     this.querySelector(".support__conversation")?.replaceChildren();
     this._syncResponses();
     this._busy(false);
@@ -145,8 +159,33 @@ export class SupportView extends HTMLElement {
       this.querySelector("[data-send]")
     );
     if (send) send.disabled = busy;
+    this._syncQuestion(busy);
     const status = this.querySelector("[data-status]");
     if (status) status.textContent = busy ? t("support.waiting") : "";
+  }
+
+  _syncQuestion(busy = Boolean(this._pending)) {
+    this._syncDraftClear();
+    const field =
+      /** @type {import("@awesome.me/webawesome/dist/components/textarea/textarea.js").default | null} */ (
+        this.querySelector("[data-question]")
+      );
+    if (!field) return;
+    const length = field.value.trim().length;
+    const invalid = length < 20 || field.value.length > 1000;
+    const error = this._questionTouched && invalid;
+    const hint = this.querySelector("[data-question-hint]");
+    if (hint) {
+      hint.textContent = t(
+        error ? "support.questionTooShort" : "support.questionHint",
+      );
+      hint.classList.toggle("support__question-error", error);
+    }
+    field.setCustomValidity(error ? t("support.questionTooShort") : "");
+    const send = /** @type {HTMLButtonElement | null} */ (
+      this.querySelector("[data-send]")
+    );
+    if (send) send.disabled = busy || invalid;
   }
 
   async _submit(retryQuestion, retryTurn) {
@@ -156,7 +195,11 @@ export class SupportView extends HTMLElement {
         this.querySelector("[data-question]")
       );
     const question = retryQuestion || textarea.value.trim();
-    if (!question || question.length > 1000) return;
+    if (question.length < 20 || question.length > 1000) {
+      this._questionTouched = true;
+      this._syncQuestion();
+      return;
+    }
     const controller = new AbortController();
     this._pending = controller;
     this._busy(true);
@@ -186,9 +229,11 @@ export class SupportView extends HTMLElement {
     if (retryTurn && !retryTurn.isConnected) return;
     retryTurn?.remove();
     this._append(question, result);
-    if (!retryQuestion && textarea.value.trim() === question)
+    if (!retryQuestion && textarea.value.trim() === question) {
       textarea.value = "";
-    this._syncDraftClear();
+      this._questionTouched = false;
+    }
+    this._syncQuestion();
     textarea.focus();
   }
 

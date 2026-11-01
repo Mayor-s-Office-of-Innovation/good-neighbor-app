@@ -1,3 +1,4 @@
+import { evidenceDeletionKey } from "../analysis/guidance/evidence-deletion.js";
 import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
@@ -69,7 +70,29 @@ export const listPendingGuidance = async (event) => {
       const source = /** @type {{ artifactIds?: string[] }} */ (
         condition.source
       );
-      const artifactId = source?.artifactIds?.[0];
+      const artifactIds = [...new Set(source?.artifactIds || [])];
+      let hasEvidence = !artifactIds.length;
+      let activeArtifactId;
+      for (const artifactId of artifactIds) {
+        const removed = await ddb.send(
+          new GetCommand({
+            TableName: dynamoTable,
+            Key: evidenceDeletionKey(
+              siteId,
+              String(current.assessment.checkId),
+              artifactId,
+            ),
+            ConsistentRead: true,
+          }),
+        );
+        if (!removed.Item) {
+          hasEvidence = true;
+          activeArtifactId = artifactId;
+          break;
+        }
+      }
+      if (!hasEvidence) continue;
+      const artifactId = artifactIds[0];
       if (artifactId) {
         const deletion = await ddb.send(
           new GetCommand({
@@ -83,7 +106,7 @@ export const listPendingGuidance = async (event) => {
         );
         if (deletion.Item?.deletedAt || deletion.Item?.dismissedAt) continue;
       }
-      conditions.push(condition);
+      conditions.push({ ...condition, activeArtifactId });
     }
     if (conditions.length)
       guidance.push({ assessment: current.assessment, conditions });

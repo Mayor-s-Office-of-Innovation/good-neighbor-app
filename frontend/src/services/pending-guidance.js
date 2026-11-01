@@ -22,6 +22,7 @@ export async function loadPendingQuestionItems(
         items.set(id, {
           id,
           kind: "unknown",
+          evidenceArtifactId: condition.activeArtifactId,
           checkId: assessment.checkId,
           createdAt: condition.createdAt,
           analysis: {

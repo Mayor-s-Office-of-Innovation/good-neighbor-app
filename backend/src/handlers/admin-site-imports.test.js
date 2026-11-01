@@ -83,6 +83,57 @@ beforeEach(() => {
 });
 
 describe("Site CSV import", () => {
+  it.each([8193, 65537, 1024 * 1024])(
+    "previews a valid UTF-8 CSV of %i bytes, including JSON escape overhead",
+    async (size) => {
+      const values = [...baseValues];
+      values[2] = 'Synthetic "quoted" café';
+      const source = makeCsv([values]);
+      const csv =
+        source + "\n".repeat(size - Buffer.byteLength(source, "utf8"));
+      expect(Buffer.byteLength(csv, "utf8")).toBe(size);
+      expect(
+        Buffer.byteLength(JSON.stringify({ csv }), "utf8"),
+      ).toBeGreaterThan(size);
+      const response = await call(
+        previewSiteImport,
+        event({ fileName: "synthetic.csv", csv }),
+      );
+      expect(response.statusCode).toBe(201);
+      expect(JSON.parse(String(response.body)).rows).toHaveLength(1);
+    },
+  );
+
+  it("rejects CSVs over 1 MiB before database access", async () => {
+    const response = await call(
+      previewSiteImport,
+      event({ csv: "é".repeat(512 * 1024) + "x" }),
+    );
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(String(response.body)).error).toBe("invalid_file_size");
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("rejects more than 500 rows before database access", async () => {
+    const response = await call(
+      previewSiteImport,
+      event({ csv: makeCsv(Array.from({ length: 501 }, () => baseValues)) }),
+    );
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(String(response.body)).error).toBe("invalid_row_count");
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("denies preview to non-supervisors before database access", async () => {
+    const request = event({ csv: makeCsv([baseValues]) });
+    request.requestContext.authorizer.jwt.claims["cognito:groups"] =
+      "compliance-manager";
+    const response = await call(previewSiteImport, request);
+    expect(response.statusCode).toBe(403);
+    expect(JSON.parse(String(response.body)).error).toBe("supervisor_required");
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("requires the revised headers and previews all relationships", async () => {
     const response = await call(
       previewSiteImport,

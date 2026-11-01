@@ -102,6 +102,7 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.webp";
 /**
  * @typedef {object} AnalysisState
  * @property {string} [status]
+ * @property {string} [evidenceArtifactId]
  * @property {string} [artifactId]
  * @property {string} [checkId]
  * @property {string} [georeferencedAddress]
@@ -145,6 +146,7 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.webp";
 /**
  * @typedef {object} TaskEvidence
  * @property {"photo" | "text"} [kind]
+ * @property {string} [evidenceArtifactId]
  * @property {string} [artifactId]
  * @property {string} [placeName]
  * @property {string} [georeferencedAddress]
@@ -214,6 +216,7 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.webp";
 
 /**
  * @typedef {object} TrayOptions
+ * @property {string} [flowType]
  * @property {string} [id]
  * @property {string} [title]
  * @property {string} [ariaLabel]
@@ -314,6 +317,7 @@ export function analysisResultsTray(
     siteAddress = "",
     checkTime = "",
     extraCards = [],
+    flowType = "perimeter",
   } = {},
 ) {
   const summary = problemSummary(items);
@@ -324,6 +328,7 @@ export function analysisResultsTray(
   const cards = sortAnalysisCards([
     ...items.flatMap((item) =>
       analysisCardEntries(item, sessionCheckId, {
+        flowType,
         siteName,
         siteAddress,
       }).filter((card) => {
@@ -356,7 +361,7 @@ export function analysisResultsTray(
         ? html`<div class="analysis-tray__cards">
             ${checkTime
               ? html`<h2 class="analysis-tray__check-title">
-                    ${escapeHtml(recentCheckTitle(checkTime))}
+                    ${escapeHtml(recentCheckTitle(checkTime, flowType))}
                   </h2>
                   ${duplicateCountLabel({
                     newCount: cards.filter((c) => !c.isDuplicate && !c.isClear)
@@ -375,9 +380,17 @@ export function analysisResultsTray(
 
 /**
  * @param {string | Date} value date/time of the check
+ * @param {string} [flowType]
  * @returns {string}
  */
-export function recentCheckTitle(value) {
+export function recentCheckTitle(value, flowType = "perimeter") {
+  if (flowType === "single-problem")
+    return pacificDaysAgo(value) === null
+      ? t("analysis.reportTitle.fallback")
+      : t("analysis.reportTitle.dateTime", {
+          date: formatMonthDay(value),
+          time: formatTime(value),
+        });
   const daysAgo = pacificDaysAgo(value);
   if (daysAgo === null) return t("analysis.checkTitle.todayFallback");
   const time = formatTime(value);
@@ -417,7 +430,7 @@ export function historicalCheckTitle(value, now = new Date()) {
 /**
  * @param {AnalysisItem} item
  * @param {string} sessionCheckId
- * @param {{ siteName?: string, siteAddress?: string }} [options]
+ * @param {{ siteName?: string, siteAddress?: string, flowType?: string }} [options]
  * @returns {string[]}
  */
 export function analysisCards(item, sessionCheckId, options = {}) {
@@ -429,7 +442,7 @@ export function analysisCards(item, sessionCheckId, options = {}) {
 /**
  * @param {AnalysisItem} evidence
  * @param {string} sessionCheckId
- * @param {{ siteName?: string, siteAddress?: string }} [options]
+ * @param {{ siteName?: string, siteAddress?: string, flowType?: string }} [options]
  * @returns {AnalysisCardEntry[]}
  */
 function analysisCardEntries(evidence, sessionCheckId, options = {}) {
@@ -446,11 +459,11 @@ function analysisCardEntries(evidence, sessionCheckId, options = {}) {
 }
 
 /** @param {AnalysisItem} evidence @param {string} sessionCheckId
- * @param {{siteName?: string, siteAddress?: string}} options */
+ * @param {{siteName?: string, siteAddress?: string, flowType?: string}} options */
 function renderAnalysisCardEntries(
   evidence,
   sessionCheckId,
-  { siteName = "", siteAddress = "" } = {},
+  { siteName = "", siteAddress = "", flowType = "perimeter" } = {},
 ) {
   const item = {
     ...evidence,
@@ -490,7 +503,16 @@ function renderAnalysisCardEntries(
     (item.analysis?.recovery?.state === "working" &&
       item.analysis?.recovery?.attempts > 0)
   )
-    return [{ markup: recoveryCard(item, "retrying"), createdAt: itemTime }];
+    return [
+      {
+        markup: ["start", "upload", "register"].includes(
+          item.analysis?.recovery?.stage,
+        )
+          ? pendingCard(item)
+          : recoveryCard(item, "retrying"),
+        createdAt: itemTime,
+      },
+    ];
   if (status === "failed") {
     return [{ markup: failedCard(item), createdAt: itemTime }];
   }
@@ -504,7 +526,9 @@ function renderAnalysisCardEntries(
     visibleProblemSelection(item);
   if (!visibleTasks.length && !visibleConditions.length) {
     if (hiddenConditionIds.size || item.analysis?.hideNoIssuesCard) return [];
-    return [{ markup: clearCheckCard(), createdAt: itemTime, isClear: true }];
+    return [
+      { markup: clearCheckCard(flowType), createdAt: itemTime, isClear: true },
+    ];
   }
   if (visibleTasks.length) {
     const taskConditionIds = new Set(
@@ -596,8 +620,8 @@ function clearCheckCopy() {
     .join(link);
 }
 
-/** @returns {string} */
-export function clearCheckCard() {
+/** @param {string} [flowType] @returns {string} */
+export function clearCheckCard(flowType = "perimeter") {
   return html`
     <article class="analysis-card analysis-card--clear">
       <div class="analysis-card__panel">
@@ -608,9 +632,21 @@ export function clearCheckCard() {
             width="96"
             height="98"
           />
-          <h3>${escapeHtml(t("card.clear.title"))}</h3>
+          <h3>
+            ${escapeHtml(
+              t(
+                flowType === "single-problem"
+                  ? "card.clearReport.title"
+                  : "card.clear.title",
+              ),
+            )}
+          </h3>
         </div>
-        <p class="analysis-card__clear-copy">${clearCheckCopy()}</p>
+        <p class="analysis-card__clear-copy">
+          ${flowType === "single-problem"
+            ? escapeHtml(t("card.clearReport.copy"))
+            : clearCheckCopy()}
+        </p>
       </div>
     </article>
   `;
@@ -1327,7 +1363,7 @@ function imagePreview(item) {
               src: item.dataUrl,
               original: item.fullDataUrl,
               checkId: item.checkId,
-              artifactId: item.analysis?.artifactId,
+              artifactId: item.evidenceArtifactId || item.analysis?.artifactId,
               alt: t("card.evidence.alt", {
                 place: placeName || t("card.evidence.siteFallback"),
               }),
@@ -1591,7 +1627,12 @@ function historyCard(task, readOnly = false) {
               checkId: task.checkId,
               artifactId: taskMediaArtifactId(task),
             })
-          : html`<wa-icon name="image" aria-hidden="true"></wa-icon>`}</span
+          : task.evidence?.kind === "text"
+            ? html`<wa-icon name="file-lines" aria-hidden="true"></wa-icon>`
+            : html`<span
+                class="history-card__unknown"
+                aria-hidden="true"
+              ></span>`}</span
       >
       <span class="history-card__copy"
         >${statusTickerMarkup(task, { history: true })}

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { t } from "../i18n/i18n.js";
 import { escapeHtml } from "../lib/html.js";
 import {
+  clearCheckTray,
   actionButton,
   attributionDialog,
   emptyResults,
@@ -318,4 +319,14 @@ it("orders manager settings and uses the key icon for access", () => {
   expect(positions.every((position) => position >= 0)).toBe(true);
   expect(positions).toEqual([...positions].sort((a, b) => a - b));
   expect(markup).toContain('name="key"');
+});
+
+it("preserves single-issue clear copy on Home", () => {
+  const markup = clearCheckTray(
+    { flowType: "single-problem", submittedAt: "2026-11-01T17:00:00Z" },
+    true,
+  );
+  expect(markup).toContain(escapeHtml(t("card.clearReport.title")));
+  expect(markup).not.toMatch(/From .*check/);
+  expect(markup).not.toContain('href="/problem"');
 });

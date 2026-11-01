@@ -69,9 +69,6 @@ class DescribeInstead extends HTMLElement {
     this.querySelector("#describe-close").addEventListener("click", () =>
       this._onClose(),
     );
-    this.querySelector("#describe-dismiss").addEventListener("click", () =>
-      this._onClose(),
-    );
     this._continue.addEventListener("click", () => this._onContinue());
     this._clear.addEventListener("click", () => this._clearAll());
     this.querySelector("#describe-discard").addEventListener("click", () =>

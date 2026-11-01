@@ -125,7 +125,7 @@ test.describe("describe instead", () => {
 
     // Unsaved changes are protected by an opaque modal that does not visually
     // merge with the editor underneath it.
-    await page.locator("#describe-dismiss").focus();
+    await page.locator("#describe-close").focus();
     await page.keyboard.press("Enter");
     const discardDialog = page.locator("#describe-exit-modal");
     await expect(discardDialog).toBeVisible();

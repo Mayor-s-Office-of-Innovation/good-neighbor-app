@@ -91,7 +91,7 @@ export function createSupportHandler({
     if (
       Object.keys(input).some((key) => !["question", "locale"].includes(key)) ||
       typeof input.question !== "string" ||
-      !input.question.trim() ||
+      input.question.trim().length < 20 ||
       input.question.length > 1000 ||
       typeof input.locale !== "string" ||
       !Object.hasOwn(LOCALES, input.locale)

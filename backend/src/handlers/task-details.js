@@ -1,3 +1,6 @@
+import { inactiveSf311Lease } from "../domain/sf311-lease.js";
+import { definitiveSilentFailure } from "../domain/silent-311-results.js";
+import { isDeepStrictEqual } from "node:util";
 import { sf311Job } from "../analysis/guidance/sf311-job.js";
 import {
   GetCommand,
@@ -145,14 +148,40 @@ function isConditionalConflict(error) {
   );
 }
 
-/** @param {unknown} results */
-function hasExecutedAction(results) {
-  return (
-    Array.isArray(results) &&
-    results.some((result) =>
-      ["submitted", "recorded", "closed", "partial"].includes(result?.status),
+/** Only known settled background effects may survive an action override.
+ * @param {Array<Record<string, any>>} results
+ */
+function editableActionResults(results) {
+  return results.every((result) => {
+    if (/uncertain|reconciliation/.test(String(result.reason || "")))
+      return false;
+    if (
+      ["skipped", "not_configured", "requires_user_action"].includes(
+        result.status,
+      )
     )
-  );
+      return true;
+    if (
+      result.code !== "create_311_ticket" ||
+      result.payload?.executionTrigger !== "task_created" ||
+      String(result.payload?.responsibleAgencyCode) !== "76"
+    )
+      return false;
+    const tickets = /** @type {Array<Record<string, any>>} */ (
+      result.payload?.tickets || []
+    );
+    if (result.status === "submitted")
+      return (
+        tickets.length > 0 &&
+        tickets.every(
+          (ticket) =>
+            ticket.srNum &&
+            String(ticket.responsibleAgency) === "76" &&
+            ticket.creationState !== "pending",
+        )
+      );
+    return definitiveSilentFailure(result);
+  });
 }
 
 /** GET /v1/tasks/{taskId}/details @param {any} event */
@@ -197,7 +226,7 @@ export const updateTaskAction = async (event) => {
   if (!task) return jsonResponse(404, { error: "Task not found" });
   if (task.status !== "open")
     return jsonResponse(409, { error: "Task is no longer open" });
-  if (hasExecutedAction(task.appActionResults))
+  if (!editableActionResults(task.appActionResults || []))
     return jsonResponse(409, { error: "An action has already been taken" });
   const rule = catalogForPolicyVersion(
     String(task.policyVersion ?? ""),
@@ -207,6 +236,29 @@ export const updateTaskAction = async (event) => {
   );
   if (!rule || !rule.outcome.buttons[0])
     return jsonResponse(400, { error: "Action is not available" });
+  const lockKey = { pk: `SITE#${siteId}`, sk: `SF311_LOCK#${task.taskId}` };
+  const { Item: lock } = await ddb.send(
+    new GetCommand({
+      TableName: dynamoTable,
+      Key: lockKey,
+      ConsistentRead: true,
+    }),
+  );
+  const priorResults =
+    /** @type {import("../analysis/guidance/app-actions.js").AppActionResult[]} */ (
+      task.appActionResults || []
+    );
+  const leaseGuard = inactiveSf311Lease(lock, new Date().toISOString());
+  // A checkpoint not yet reflected on the task is not a settled outcome.
+  if (
+    !leaseGuard ||
+    !editableActionResults(lock?.results || []) ||
+    (lock?.results || []).some(
+      (/** @type {Record<string, any>} */ result) =>
+        !priorResults.some((prior) => isDeepStrictEqual(prior, result)),
+    )
+  )
+    return jsonResponse(409, { error: "Task changed while editing" });
   const now = new Date().toISOString();
   const updated = {
     ...task,
@@ -227,10 +279,12 @@ export const updateTaskAction = async (event) => {
     guidance: rule.outcome.guidance,
     buttons: rule.outcome.buttons,
     appActions: rule.outcome.appActions,
-    appActionStatus: rule.outcome.appActions.length
-      ? "not_started"
-      : "not_required",
-    appActionResults: [],
+    appActionStatus: priorResults.length
+      ? summarizeAppActionResults(priorResults)
+      : rule.outcome.appActions.length
+        ? "not_started"
+        : "not_required",
+    appActionResults: priorResults,
     category311: rule.outcome.category311,
     phoneNumber: rule.outcome.phoneNumber ?? "",
     updatedAt: now,
@@ -252,11 +306,26 @@ export const updateTaskAction = async (event) => {
           {
             ConditionCheck: {
               TableName: dynamoTable,
-              Key: { pk: `SITE#${siteId}`, sk: `SF311_LOCK#${task.taskId}` },
+              Key: lockKey,
               // The worker claims this item before reading the action selection.
-              // Durable results also block edits after an uncertain external call.
+              // Compare the durable checkpoint as well as the task snapshot.
               ConditionExpression:
-                "attribute_not_exists(sf311Lease) AND attribute_not_exists(results)",
+                leaseGuard.ConditionExpression +
+                " AND " +
+                (lock?.results !== undefined
+                  ? "results = :lockResults"
+                  : "attribute_not_exists(results)"),
+              ...(lock?.results !== undefined ||
+              Object.keys(leaseGuard.ExpressionAttributeValues).length
+                ? {
+                    ExpressionAttributeValues: {
+                      ...leaseGuard.ExpressionAttributeValues,
+                      ...(lock?.results !== undefined
+                        ? { ":lockResults": lock.results }
+                        : {}),
+                    },
+                  }
+                : {}),
             },
           },
           {

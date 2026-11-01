@@ -11,6 +11,7 @@ const {
   readUpdateById,
   readUpdatePointer,
   releaseTaskResolution,
+  writeTaskTransition,
 } = await import("./task-update-store.js");
 
 describe("task update store", () => {
@@ -177,4 +178,59 @@ describe("task update store", () => {
       "REMOVE resolutionUpdateId, resolutionStartedAt, resolutionLeaseExpiresAt",
     );
   });
+});
+
+describe("resolution closure jobs", () => {
+  it.each([
+    ["issue_resolved", "76", 1],
+    ["additional_action_resolved", "76", 1],
+    ["note_photo_update", "76", 0],
+    ["resolution_proof", "76", 0],
+    ["issue_resolved", "other-city-agency", 0],
+  ])(
+    "%s with agency %s queues %i silent closure jobs",
+    async (type, agency, count) => {
+      vi.stubEnv("GNP_311_SUBMISSION_ENABLED", "true");
+      send.mockReset();
+      send.mockResolvedValue({});
+      try {
+        await writeTaskTransition({
+          tableName: "synthetic-table",
+          siteId: "site-1",
+          taskId: "task-1",
+          occurredAt: "2026-11-01T18:00:00Z",
+          expectedStatus: "completed",
+          update: { type, updateId: "update-1" },
+          task: {
+            taskId: "task-1",
+            status: "completed",
+            completionMethod: "site_team_resolved",
+            appActionResults: [
+              {
+                code: "create_311_ticket",
+                status: "submitted",
+                payload: {
+                  tickets: [
+                    {
+                      srNum: "123456789",
+                      serviceCode: "synthetic-service",
+                      responsibleAgency: agency,
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        });
+        const jobs = send.mock.calls[0][0].input.TransactItems.filter(
+          (
+            /** @type {NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]>[number]} */ entry,
+          ) => entry.Put?.Item?.entityType === "SF311_OUTBOX",
+        );
+        expect(jobs).toHaveLength(count);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
 });
