@@ -62,6 +62,9 @@ export class SupportView extends HTMLElement {
               >${escapeHtml(t("support.questionHint"))}</span
             ></wa-textarea
           >
+          <button class="btn-link" type="button" data-clear-question hidden>
+            ${escapeHtml(t("support.clearContents"))}
+          </button>
           <button class="btn-ink" type="submit" data-send disabled>
             ${escapeHtml(t("support.send"))}
           </button>
@@ -80,11 +83,23 @@ export class SupportView extends HTMLElement {
       backOrNavigate("/today"),
     );
     announceScreenHeading(this, "#support-title");
+    const question =
+      /** @type {import("@awesome.me/webawesome/dist/components/textarea/textarea.js").default} */ (
+        this.querySelector("[data-question]")
+      );
+    this.querySelector("[data-clear-question]").addEventListener(
+      "click",
+      () => {
+        question.value = "";
+        this._questionTouched = false;
+        this._syncQuestion();
+        question.focus();
+      },
+    );
     this.querySelector("form").addEventListener("submit", (event) => {
       event.preventDefault();
       void this._submit();
     });
-    const question = this.querySelector("[data-question]");
     question.addEventListener("input", () => {
       this._questionTouched = true;
       this._syncQuestion();
@@ -114,9 +129,21 @@ export class SupportView extends HTMLElement {
         this.querySelector("[data-question]")
       );
     if (question) question.value = "";
+    this._questionTouched = false;
     this.querySelector(".support__conversation")?.replaceChildren();
     this._syncResponses();
     this._busy(false);
+  }
+
+  _syncDraftClear() {
+    const button = /** @type {HTMLButtonElement | null} */ (
+      this.querySelector("[data-clear-question]")
+    );
+    const question =
+      /** @type {import("@awesome.me/webawesome/dist/components/textarea/textarea.js").default | null} */ (
+        this.querySelector("[data-question]")
+      );
+    if (button) button.hidden = !question?.value;
   }
 
   _syncResponses() {
@@ -138,6 +165,7 @@ export class SupportView extends HTMLElement {
   }
 
   _syncQuestion(busy = Boolean(this._pending)) {
+    this._syncDraftClear();
     const field =
       /** @type {import("@awesome.me/webawesome/dist/components/textarea/textarea.js").default | null} */ (
         this.querySelector("[data-question]")

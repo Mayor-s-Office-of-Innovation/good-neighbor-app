@@ -134,7 +134,7 @@
 }
 
 .complaint-compose__intro {
-  margin-top: 41px;
+  margin-top: 1.125rem;
 }
 
 .complaint-compose__intro h1 {
@@ -373,4 +373,31 @@
 #delete-confirm {
   background: var(--wa-color-danger-fill-loud, var(--c-hazard));
   color: var(--wa-color-danger-on-loud, #fff);
+}
+
+.complaints__sticky {
+  --complaints-safe-top: env(safe-area-inset-top, 0px);
+  position: sticky;
+  inset-block-start: var(--complaints-safe-top);
+  z-index: 2;
+  background: var(--bg);
+}
+/* Cover the safe-area band above the pinned controls as list content passes. */
+.complaints__sticky::before {
+  content: "";
+  position: absolute;
+  inset-block-end: 100%;
+  inset-inline: 0;
+  block-size: var(--complaints-safe-top);
+  background: var(--bg);
+  pointer-events: none;
+}
+.complaints__sticky[data-static]::before {
+  display: none;
+}
+.complaints__sticky[data-static] {
+  position: static;
+}
+.complaints__list :focus-visible {
+  scroll-margin-block-start: var(--complaints-header-height, 18rem);
 }

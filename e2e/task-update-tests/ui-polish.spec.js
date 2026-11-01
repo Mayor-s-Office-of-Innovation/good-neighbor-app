@@ -424,3 +424,298 @@ test("lazy navigation blocks the retained screen and unlocks the new screen", as
   await expect(page.locator("#old-action")).toHaveCount(0);
   await expect(page.locator("today-view")).toHaveCount(1);
 });
+
+test("complaints keep the title and action visible when a long list scrolls", async ({
+  page,
+}) => {
+  await page.evaluate(async () => {
+    const load = (/** @type {string} */ path) => import(path);
+    window.history.replaceState({}, "", "/complaints");
+    await load("/src/components/complaint-view.js");
+    document
+      .querySelector("main")
+      ?.append(document.createElement("complaint-view"));
+  });
+  await expect(page.locator("#log-complaint")).toBeVisible();
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((theme) => {
+      document.documentElement.classList.remove("wa-light", "wa-dark");
+      document.documentElement.classList.add(`wa-${theme}`);
+    }, theme);
+    const colors = await page
+      .locator(".complaints__sticky")
+      .evaluate((header) => ({
+        header: window.getComputedStyle(header).backgroundColor,
+        page: window.getComputedStyle(document.body).backgroundColor,
+      }));
+    expect(colors.header).toBe(colors.page);
+  }
+  await page.locator(".complaints__list").evaluate((list) => {
+    list.innerHTML = Array.from(
+      { length: 30 },
+      (_, index) => `<p style="height:60px">Synthetic complaint ${index}</p>`,
+    ).join("");
+  });
+  await page.evaluate(() => window.scrollTo(0, 700));
+  const title = await page.locator(".care-header h1").boundingBox();
+  const button = await page.locator("#log-complaint").boundingBox();
+  const viewport = page.viewportSize();
+  if (!title || !button || !viewport)
+    throw new Error("Missing header geometry");
+  expect(title.y).toBeGreaterThanOrEqual(0);
+  expect(button.y).toBeGreaterThanOrEqual(0);
+  expect(button.y + button.height).toBeLessThanOrEqual(viewport.height);
+  await expect(page.locator(".care-header__nav")).toHaveCSS(
+    "margin-bottom",
+    "18px",
+  );
+  await page.screenshot({
+    path: "/tmp/prelaunch-complaints-sticky.png",
+    animations: "disabled",
+  });
+});
+
+test("handoff has an app icon and enrollment errors stay centered without stale references", async ({
+  page,
+}) => {
+  await page.evaluate(async () => {
+    const load = (/** @type {string} */ path) => import(path);
+    const { handoffView } = await load("/src/components/app-root.templates.js");
+    const { codeEntryView } = await load(
+      "/src/components/site-setup.templates.js",
+    );
+    const { t } = await load("/src/i18n/i18n.js");
+    const main = document.querySelector("main");
+    if (!main) throw new Error("Missing fixture main");
+    main.innerHTML = handoffView() + `<site-setup></site-setup>`;
+    const setup = /** @type {any} */ (document.querySelector("site-setup"));
+    setup.innerHTML = codeEntryView({
+      error: t("setup.enrollment.used"),
+      reference: "synthetic-reference",
+    });
+    setup._otp = setup.querySelector("#code-input");
+    setup._form = setup.querySelector("#code-form");
+    setup._error = t("setup.enrollment.used");
+    setup._enrollmentReference = "synthetic-reference";
+    setup._otp.addEventListener("input", () => setup._onInput());
+  });
+  await expect(
+    page.locator(".login__handoff").locator("..", {}).locator("img"),
+  ).toHaveAttribute("src", "/img/icon-512.png");
+  await expect(page.locator("#code-error")).toHaveCSS("text-align", "center");
+  await page
+    .locator("#code-input")
+    .evaluate((otp) =>
+      otp.dispatchEvent(new window.Event("input", { bubbles: true })),
+    );
+  await expect(page.locator("[data-support-reference]")).toHaveCount(0);
+  await expect(page.locator("#code-error")).toBeHidden();
+  await expect(page.locator("#code-input")).toHaveAttribute(
+    "aria-invalid",
+    "false",
+  );
+});
+
+test("care pending status stays on its row and distinguishes offline waiting", async ({
+  page,
+}) => {
+  await page.evaluate(async () => {
+    const load = (/** @type {string} */ path) => import(path);
+    await load("/src/components/care-work-view.js");
+    const { careList } = await load("/src/components/care-work.templates.js");
+    const items = [
+      {
+        workId: "synthetic",
+        kind: "power_washed",
+        createdAt: "2026-10-16T12:00:00Z",
+        status: "pending",
+      },
+    ];
+    const main = document.querySelector("main");
+    if (!main) throw new Error("Missing fixture main");
+    /** @type {any} */ (window).renderCare = (
+      /** @type {boolean} */ offline,
+    ) => {
+      main.innerHTML = `<div class="care-work">${careList(items, false, offline)}</div>`;
+    };
+    /** @type {any} */ (window).renderCare(false);
+  });
+  await expect(page.locator(".care-row__status wa-spinner")).toBeVisible();
+  const time = await page.locator(".care-row time").boundingBox();
+  const status = await page.locator(".care-row__status").boundingBox();
+  if (!time || !status) throw new Error("Missing care timestamp or status");
+  expect(status.y).toBeGreaterThanOrEqual(time.y + time.height);
+  expect(Math.abs(status.x + status.width - time.x - time.width)).toBeLessThan(
+    2,
+  );
+  const saving = await page.evaluate(async () => {
+    const path = "/src/i18n/i18n.js";
+    return (await import(path)).t("care.savingShort");
+  });
+  await expect(page.locator(".care-row__status")).toHaveText(saving);
+  expect(
+    (await new AxeBuilder({ page }).include(".care-work").analyze()).violations,
+  ).toEqual([]);
+  await page.screenshot({
+    path: "/tmp/prelaunch-care-row.png",
+    animations: "disabled",
+  });
+  await page.evaluate(() => /** @type {any} */ (window).renderCare(true));
+  await expect(page.locator(".care-row__status wa-spinner")).toHaveCount(0);
+  const expected = await page.evaluate(async () => {
+    const path = "/src/i18n/i18n.js";
+    return (await import(path)).t("card.recovery.offline");
+  });
+  await expect(page.locator(".care-row__status")).toHaveText(expected);
+});
+
+test("oversized complaints header scrolls away and becomes sticky again when it fits", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 844, height: 390 });
+  await page.evaluate(async () => {
+    window.history.replaceState({}, "", "/complaints");
+    const path = "/src/components/complaint-view.js";
+    await import(path);
+    const main = document.querySelector("main");
+    if (!main) throw new Error("Missing fixture main");
+    main.append(document.createElement("complaint-view"));
+  });
+  await expect(page.locator("#log-complaint")).toBeVisible();
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "32px";
+    const list = document.querySelector(".complaints__list");
+    if (!list) throw new Error("Missing complaints list");
+    list.innerHTML = Array.from(
+      { length: 30 },
+      (_, index) => `<p style="height:60px">Synthetic complaint ${index}</p>`,
+    ).join("");
+  });
+  const header = page.locator(".complaints__sticky");
+  await expect(header).toHaveCSS("position", "static");
+  await page.evaluate(() => window.scrollTo(0, 700));
+  await expect
+    .poll(async () => {
+      const box = await header.boundingBox();
+      if (!box) throw new Error("Missing complaints header");
+      return box.y + box.height;
+    })
+    .toBeLessThan(0);
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "16px";
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(header).toHaveCSS("position", "sticky");
+});
+
+test("going offline preserves the care logs already displayed", async ({
+  page,
+  context,
+}) => {
+  await page.route("**/v1/care-work**", (route) =>
+    route.fulfill({
+      json: {
+        work: [
+          {
+            workId: "synthetic-saved",
+            kind: "power_washed",
+            createdAt: "2026-10-27T12:00:00Z",
+            photos: [],
+          },
+        ],
+      },
+    }),
+  );
+  await page.evaluate(async () => {
+    const load = (/** @type {string} */ path) => import(path);
+    const { setSite } = await load("/src/db.js");
+    await setSite("Synthetic review site", { siteId: "review-only" });
+    window.history.replaceState({}, "", "/care-work");
+    await load("/src/components/care-work-view.js");
+    const main = document.querySelector("main");
+    if (!main) throw new Error("Missing fixture main");
+    main.append(document.createElement("care-work-view"));
+  });
+  await expect(page.locator('[data-work="synthetic-saved"]')).toBeVisible();
+  await page.route("**/v1/care-work**", (route) => route.abort());
+  // Observe the real offline handler's DOM update instead of calling it directly.
+  await page.locator("care-work-view").evaluate((host) => {
+    const observer = new window.MutationObserver(() => {
+      observer.disconnect();
+      host.setAttribute("data-offline-rendered", "true");
+    });
+    observer.observe(host, { childList: true });
+  });
+  await context.setOffline(true);
+  await expect
+    .poll(() => page.evaluate(() => window.navigator.onLine))
+    .toBe(false);
+  await expect(page.locator("care-work-view")).toHaveAttribute(
+    "data-offline-rendered",
+    "true",
+  );
+  await expect(page.locator('[data-work="synthetic-saved"]')).toBeVisible();
+});
+
+test("sticky complaints header reserves and paints the safe-area band", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(async () => {
+    window.history.replaceState({}, "", "/complaints");
+    const path = "/src/components/complaint-view.js";
+    await import(path);
+    const main = document.querySelector("main");
+    if (!main) throw new Error("Missing fixture main");
+    main.append(document.createElement("complaint-view"));
+  });
+  await expect(page.locator("#log-complaint")).toBeVisible();
+  await page.evaluate(() => {
+    const header = document.querySelector(".complaints__sticky");
+    const list = document.querySelector(".complaints__list");
+    if (!(header instanceof window.HTMLElement) || !list)
+      throw new Error("Missing complaints layout");
+    // Device emulation doesn't supply a nonzero CSS safe-area inset.
+    header.style.setProperty("--complaints-safe-top", "48px");
+    list.innerHTML = Array.from(
+      { length: 30 },
+      (_, index) => `<p style="height:60px">Synthetic complaint ${index}</p>`,
+    ).join("");
+    window.dispatchEvent(new window.Event("resize"));
+    window.scrollTo(0, 700);
+  });
+  const header = page.locator(".complaints__sticky");
+  await expect(header).toHaveCSS("position", "sticky");
+  await expect.poll(async () => (await header.boundingBox())?.y).toBe(48);
+  const geometry = await header.evaluate((element) => {
+    const band = window.getComputedStyle(element, "::before");
+    const host = element.closest("complaint-view");
+    if (!host) throw new Error("Missing complaints host");
+    return {
+      height: element.getBoundingClientRect().height,
+      margin: parseFloat(
+        window
+          .getComputedStyle(host)
+          .getPropertyValue("--complaints-header-height"),
+      ),
+      bandHeight: band.height,
+      bandColor: band.backgroundColor,
+      headerColor: window.getComputedStyle(element).backgroundColor,
+    };
+  });
+  expect(geometry.bandHeight).toBe("48px");
+  expect(geometry.bandColor).toBe(geometry.headerColor);
+  expect(geometry.margin).toBeCloseTo(geometry.height + 48 + 16, 1);
+  await page.setViewportSize({
+    width: 390,
+    height: Math.floor(geometry.height * 2 + 48) - 2,
+  });
+  await expect(header).toHaveCSS("position", "static");
+  await expect
+    .poll(() =>
+      header.evaluate(
+        (element) => window.getComputedStyle(element, "::before").display,
+      ),
+    )
+    .toBe("none");
+});

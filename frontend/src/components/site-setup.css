@@ -284,3 +284,21 @@
   color: var(--text);
   box-shadow: inset 0 0 0 3px var(--text);
 }
+
+/* Center the warning icon and copy as one group, including wrapped errors. */
+.login__form .login__error.app-error:not(.app-error--panel):not([hidden]) {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.3125rem;
+  padding-inline-start: 0;
+  text-align: center;
+}
+.login__form .login__error.app-error:not(.app-error--panel)::before {
+  position: static;
+  flex: 0 0 0.9375rem;
+  margin-block-start: 0.1em;
+}
+.login__form .login__error[hidden] {
+  display: none;
+}

@@ -259,6 +259,9 @@ export class SiteSetup extends HTMLElement {
   // recreate the field and drop focus mid-entry).
   _onInput() {
     this._code = formatSiteCode(this._otp.value);
+    this._enrollmentReference = "";
+    this.querySelector("[data-support-reference]")?.remove();
+    this._otp.setAttribute("aria-invalid", "false");
     if (this._error) {
       this._error = "";
       this._otp.classList.remove("login__otp--error");
@@ -531,7 +534,9 @@ export class SiteSetup extends HTMLElement {
           ? "setup.enrollment.limited"
           : messages[err?.code] || "setup.enrollment.failed",
       );
-      this._enrollmentReference = err?.requestId || "";
+      this._enrollmentReference = messages[err?.code]
+        ? ""
+        : err?.requestId || "";
       this._render();
     }
   }

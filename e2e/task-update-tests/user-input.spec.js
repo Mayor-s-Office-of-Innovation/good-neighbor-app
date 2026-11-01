@@ -286,3 +286,36 @@ test("keyboard reveal preserves visibility inside nested scrollers", async ({
   });
   expect(result).toEqual({ inViewport: true, inContainer: true });
 });
+
+for (const name of ["perimeter-check", "problem-report"]) {
+  test(`${name}: opening results aligns its dropdown with the viewport top`, async ({
+    page,
+  }) => {
+    await page.evaluate(async (name) => {
+      const load = (/** @type {string} */ path) => import(path);
+      const { setSite } = await load("/src/db.js");
+      await setSite("Synthetic site", { siteId: "input-test" });
+      await load(`/src/components/${name}.js`);
+      document.querySelector("main")?.append(document.createElement(name));
+    }, name);
+    await expect(page.locator(`${name} h1`)).toBeVisible();
+    await page.evaluate(async () => {
+      const path = "/src/state/check-session.js";
+      const { addItem, setAnalyzingOpen } = await import(path);
+      addItem({ kind: "text", text: "Synthetic perimeter description" });
+      setAnalyzingOpen(false);
+      // Leave room to align the footer even when the fixture has little evidence.
+      const filler = document.createElement("div");
+      filler.style.height = "1500px";
+      document.querySelector("main")?.append(filler);
+    });
+    const dropdown = page.locator("#toggle-analyzing");
+    await expect(dropdown).toHaveAttribute("aria-expanded", "false");
+    await dropdown.click();
+    await expect(dropdown).toHaveAttribute("aria-expanded", "true");
+    await expect
+      .poll(async () => (await dropdown.boundingBox())?.y)
+      .toBeLessThan(2);
+    await expect(dropdown).toBeFocused();
+  });
+}

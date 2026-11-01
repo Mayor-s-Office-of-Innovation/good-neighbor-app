@@ -50,7 +50,10 @@ import {
 import { getSite } from "../db.js";
 import { navigate, replaceRoute } from "../router.js";
 import { openOverlayDialog, awaitOverlayUnwind } from "../dialog-history.js";
-import { announceScreenHeading } from "../screen-focus.js";
+import {
+  announceScreenHeading,
+  revealCaptureResults,
+} from "../screen-focus.js";
 import { mark } from "../services/instrument.js";
 import {
   analyzeNoIssueDescriptionEdit,
@@ -331,11 +334,9 @@ class PerimeterCheck extends HTMLElement {
     }
     const toggle = target.closest("#toggle-analyzing");
     if (toggle) {
-      setAnalyzingOpen(!getAnalyzingOpen());
-      const replacement = this.querySelector("#toggle-analyzing");
-      if (replacement instanceof HTMLElement) {
-        replacement.focus({ preventScroll: true });
-      }
+      const opening = !getAnalyzingOpen();
+      setAnalyzingOpen(opening);
+      revealCaptureResults(this, opening);
     }
   }
 
