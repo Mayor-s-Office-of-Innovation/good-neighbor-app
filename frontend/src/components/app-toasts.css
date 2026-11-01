@@ -148,3 +148,8 @@ app-toasts {
     padding: 2rem 1.25rem;
   }
 }
+
+/* Save failures must span the viewport even above an open task editor. */
+.app-toast--full-width {
+  max-inline-size: none;
+}

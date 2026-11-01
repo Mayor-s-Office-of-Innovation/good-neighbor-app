@@ -33,6 +33,30 @@ beforeEach(() => {
   list.mockReset();
   read.mockReset();
 });
+
+it("hydrates the surviving photo without changing the dismissal source", async () => {
+  list.mockResolvedValue({
+    guidance: [
+      {
+        ...group,
+        conditions: [
+          {
+            ...condition,
+            source: { artifactIds: ["deleted", "surviving"] },
+            activeArtifactId: "surviving",
+          },
+        ],
+      },
+    ],
+  });
+  const [item] = await loadPendingQuestionItems();
+  expect(item.evidenceArtifactId).toBe("surviving");
+  expect(item.analysis.artifactId).toBe("deleted");
+  expect(item.analysis.conditions[0].source.artifactIds).toEqual([
+    "deleted",
+    "surviving",
+  ]);
+});
 it("recovers questions from older reports across empty pages without local state", async () => {
   list
     .mockResolvedValueOnce({ guidance: [], nextToken: "next" })

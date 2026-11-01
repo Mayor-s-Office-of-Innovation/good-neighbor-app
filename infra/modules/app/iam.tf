@@ -165,6 +165,15 @@ data "aws_iam_policy_document" "api" {
     resources = [aws_cognito_user_pool.users.arn]
   }
 
+  # HeadObject returns 404 for missing uploads only with ListBucket permission.
+  # Scope to the upload bucket; no access to other buckets is granted.
+  statement {
+    sid       = "IdentifyMissingUploads"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.uploads.arn]
+  }
+
   statement {
     sid    = "UploadsObjects"
     effect = "Allow"

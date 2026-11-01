@@ -92,6 +92,180 @@ describe("task update handlers", () => {
     delete process.env.SF311_BASIC_AUTH_PASS;
   });
 
+  it.each([13, 14, 15])(
+    "enforces the creation-age window for resolved notes: %i days",
+    async (days) => {
+      const task = {
+        pk: "SITE#site-1",
+        sk: "TASK#task-1",
+        taskId: "task-1",
+        status: "completed",
+        completionMethod: "site_team_resolved",
+        createdAt: new Date(Date.now() - days * 86400000).toISOString(),
+        resolvedAt: new Date().toISOString(),
+      };
+      send.mockImplementation(async (command) =>
+        command instanceof GetCommand && command.input.Key?.sk === task.sk
+          ? { Item: task }
+          : {},
+      );
+      const response = await createTaskUpdate(
+        event({
+          type: "note_photo_update",
+          notes: ["Observation"],
+          photoKeys: [],
+        }),
+      );
+      expect(response.statusCode).toBe(days < 14 ? 201 : 409);
+      expect(
+        send.mock.calls.some(
+          ([command]) => command instanceof TransactWriteCommand,
+        ),
+      ).toBe(days < 14);
+    },
+  );
+
+  it.each([false, true])(
+    "appends a note/photo and retains resolution, including a concurrent resolution: %s",
+    async (race) => {
+      const resolved = {
+        pk: "SITE#site-1",
+        sk: "TASK#task-1",
+        taskId: "task-1",
+        checkId: "check-1",
+        status: "completed",
+        completionMethod: "site_team_resolved",
+        resolvedAt: "2026-11-01T12:00:00Z",
+        completedAt: "2026-11-01T12:00:00Z",
+        updatedAt: "2026-11-01T12:00:00Z",
+        latestUpdateLabel: "Issue resolved",
+        proofAddedAt: "2026-11-01T12:01:00Z",
+      };
+      let conflict = race;
+      send.mockImplementation(async (command) => {
+        if (
+          command instanceof GetCommand &&
+          command.input.Key?.sk === resolved.sk
+        )
+          return {
+            Item: conflict
+              ? { ...resolved, status: "in_progress", updatedAt: "before" }
+              : resolved,
+          };
+        if (command instanceof TransactWriteCommand && conflict) {
+          conflict = false;
+          throw Object.assign(new Error("changed"), {
+            name: "TransactionCanceledException",
+          });
+        }
+        return {};
+      });
+      const response = await createTaskUpdate(
+        event({
+          type: "note_photo_update",
+          notes: ["A later observation"],
+          photoKeys: ["photo-1"],
+        }),
+      );
+      expect(response.statusCode).toBe(201);
+      const transaction = send.mock.calls
+        .map(([command]) => command)
+        .filter((command) => command instanceof TransactWriteCommand)
+        .at(-1);
+      const writes = /** @type {any[]} */ (
+        transaction?.input.TransactItems || []
+      );
+      const saved = writes.find(
+        (write) => write.Put?.Item?.sk === resolved.sk,
+      ).Put;
+      expect(saved.Item).toMatchObject({
+        status: "completed",
+        completionMethod: resolved.completionMethod,
+        resolvedAt: resolved.resolvedAt,
+        completedAt: resolved.completedAt,
+        proofAddedAt: resolved.proofAddedAt,
+        latestUpdateLabel: resolved.latestUpdateLabel,
+      });
+      expect(saved.ExpressionAttributeValues[":expected"]).toBe("completed");
+      expect(
+        writes.some(
+          (write) =>
+            write.Put?.Item?.entityType === "task_update" &&
+            write.Put.Item.notes?.[0] === "A later observation",
+        ),
+      ).toBe(true);
+      expect(writes).toHaveLength(3); // event, idempotency pointer, task; no repeated City job
+    },
+  );
+
+  it.each(["note", "photo", "empty", "race"])(
+    "preserves inferred legacy proof when appending a note: %s",
+    async (kind) => {
+      const task = {
+        pk: "SITE#site-1",
+        sk: "TASK#task-1",
+        taskId: "task-1",
+        status: "completed",
+        completionMethod: "site_team_resolved",
+        latestUpdateId: "completion",
+        latestUpdateLabel: "Resolved",
+        updatedAt: "before",
+      };
+      let conflict = kind === "race";
+      send.mockImplementation(async (command) => {
+        if (command instanceof GetCommand) {
+          if (command.input.Key?.sk === task.sk)
+            return {
+              Item: { ...task, updatedAt: conflict ? "before" : "after" },
+            };
+          if (command.input.Key?.sk.endsWith("#UPDATE_ID#completion"))
+            return { Item: { updateSk: "legacy-completion" } };
+          if (command.input.Key?.sk === "legacy-completion")
+            return {
+              Item: {
+                type: "task_completed",
+                occurredAt: "2026-11-01T12:00:00Z",
+                documentedAt: conflict
+                  ? "2026-11-01T12:01:00Z"
+                  : "2026-11-01T12:02:00Z",
+                notes:
+                  kind === "note" || kind === "race" ? ["Original proof"] : [],
+                photoKeys: kind === "photo" ? ["original-photo"] : [],
+              },
+            };
+        }
+        if (command instanceof TransactWriteCommand && conflict) {
+          conflict = false;
+          throw Object.assign(new Error("changed"), {
+            name: "TransactionCanceledException",
+          });
+        }
+        return {};
+      });
+      const response = await createTaskUpdate(
+        event({
+          type: "note_photo_update",
+          notes: ["Later observation"],
+          photoKeys: [],
+        }),
+      );
+      expect(response.statusCode).toBe(201);
+      const transaction = send.mock.calls
+        .map(([command]) => command)
+        .filter((command) => command instanceof TransactWriteCommand)
+        .at(-1);
+      const saved = transaction?.input.TransactItems?.find(
+        (write) => write.Put?.Item?.sk === task.sk,
+      )?.Put?.Item;
+      if (!saved) throw new Error("Missing task write");
+      expect(saved.proofAddedAt).toBe(
+        kind === "empty" ? null : "2026-11-01T12:02:00Z",
+      );
+      expect(saved.latestUpdateId).toBe("request-1");
+      expect(saved.status).toBe("completed");
+    },
+  );
+
   it.each([
     "note",
     "photo",

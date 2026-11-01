@@ -460,3 +460,24 @@ describe("capture admission across session replacement", () => {
     expect(listener).not.toHaveBeenCalled();
   });
 });
+
+it("starts a fresh report after Done while retaining the old offline upload", async () => {
+  const session = await import("./check-session.js");
+  session.startProblemReport("site-1");
+  const old = session.getCurrentCheck();
+  session.addItem({
+    kind: "text",
+    text: "Synthetic pending evidence for the original report.",
+  });
+  session.markCaptureComplete({
+    checkId: old.id,
+    submissionKind: "problem_report",
+    expectedArtifacts: 1,
+  });
+  const next = await session.resumeOrStartProblemReport("site-1");
+  expect(next.id).not.toBe(old.id);
+  expect(next.status).toBe("in-progress");
+  expect(next.items).toEqual([]);
+  expect(session.getCheck(old.id)?.items).toHaveLength(1);
+  expect(session.getCheck(old.id)?.status).toBe("capture-complete");
+});

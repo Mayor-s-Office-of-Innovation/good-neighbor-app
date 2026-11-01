@@ -862,19 +862,23 @@ class AdminApp extends HTMLElement {
       "importId",
     );
     if (!importId) {
+      this.state.importNotice = null;
       this.state.importPreview = null;
       this.state.importResult = null;
       this.state.importApplyKey = "";
     }
     if (importId && this.state.importPreview?.importId !== importId) {
+      this.state.importNotice = null;
       const result = await adminApi.getSiteImport(importId);
       if (location.pathname + location.search !== path) return;
       if (result.import.status === "complete") {
-        this.state.importPreview = null;
-        this.state.importResult = null;
+        this.state.importPreview = {
+          importId,
+          counts: result.import.counts,
+          rows: result.rows,
+        };
+        this.state.importResult = { ...result.import, rows: result.rows };
         this.state.importApplyKey = "";
-        window.history.replaceState({}, "", "/sites/import");
-        path = location.pathname + location.search;
       } else {
         this.state.importPreview = {
           importId,
@@ -2511,6 +2515,7 @@ class AdminApp extends HTMLElement {
     if (file.size > 1024 * 1024) throw new Error("invalid_file_size");
     this.state.importBusy = true;
     this.state.error = "";
+    this.state.importNotice = null;
     this.render();
     try {
       this.state.importPreview = await adminApi.previewSiteImport(
@@ -2538,7 +2543,7 @@ class AdminApp extends HTMLElement {
     const feedback = actionFeedback("admin.toast.importComplete");
     try {
       const preview = this.state.importPreview;
-      if (!preview) return;
+      if (!preview || this.state.importResult?.status === "complete") return;
       this.state.importBusy = true;
       this.render();
       try {
@@ -2601,8 +2606,6 @@ class AdminApp extends HTMLElement {
                 }
               : null;
           sessionStorage.removeItem(`site-import-key:${preview.importId}`);
-          this.state.importPreview = null;
-          this.state.importResult = null;
           this.state.importApplyKey = "";
           try {
             const history = await adminApi.listSiteImports();
@@ -2616,7 +2619,11 @@ class AdminApp extends HTMLElement {
           this.managerDirectoryVersion =
             (this.managerDirectoryVersion || 0) + 1;
           if (currentRoute().name === "site-import")
-            window.history.replaceState({}, "", "/sites/import");
+            window.history.replaceState(
+              {},
+              "",
+              `/sites/import?importId=${encodeURIComponent(preview.importId)}`,
+            );
         }
       } finally {
         this.state.importBusy = false;
@@ -2633,6 +2640,7 @@ class AdminApp extends HTMLElement {
     if (importId) sessionStorage.removeItem(`site-import-key:${importId}`);
     this.state.importPreview = null;
     this.state.importResult = null;
+    this.state.importNotice = null;
     this.state.importApplyKey = "";
     this.state.importBusy = false;
     this.state.error = "";
@@ -4835,7 +4843,10 @@ class AdminApp extends HTMLElement {
       e.preventDefault();
       this.previewSiteImport(asForm(e.currentTarget)).catch((err) => {
         this.state.importBusy = false;
-        this.state.error = err.message;
+        this.state.error =
+          err.message === "invalid_file_size"
+            ? t("admin.import.fileTooLarge")
+            : adminErrorMessage(err, t);
         this.render();
       });
     });
@@ -4853,7 +4864,7 @@ class AdminApp extends HTMLElement {
       this.applySiteImport().catch((err) => {
         this.state.importBusy = false;
         this.state.importNotice = null;
-        this.state.error = err.message;
+        this.state.error = adminErrorMessage(err, t);
         this.render();
       });
     });
@@ -6567,6 +6578,21 @@ function siteImportView(state) {
     </section>
     ${pastImportsTable(state.importHistory)}
     ${siteImportHelpDialog()}`;
+  const completed = state.importResult?.status === "complete";
+  const resultsView = `<section class="panel" aria-labelledby="import-results-title">
+    <div class="panel__head"><h2 id="import-results-title">${escapeHtml(t("admin.import.resultsTitle"))}</h2>
+    <button class="btn-secondary" id="cancel-site-import" type="button">${escapeHtml(t("admin.import.startNew"))}</button></div>
+    <p>${escapeHtml(
+      t("admin.import.outcomeCounts", {
+        applied: Number(state.importResult?.outcomes?.applied || 0),
+        failed:
+          Number(state.importResult?.outcomes?.failed || 0) +
+          Number(state.importResult?.outcomes?.skipped_conflict || 0),
+      }),
+    )}</p>
+    ${importRowsTable(state.importResult?.rows || preview?.rows || [])}
+    ${hasConflictReport ? `<button class="btn-secondary" id="download-import-conflicts" type="button">${escapeHtml(t("admin.import.downloadConflicts"))}</button>` : ""}
+  </section>`;
   const reviewView = `<section class="panel" aria-labelledby="review-title">
       <div class="panel__head"><h2 id="review-title">2. Review record completeness</h2><button class="btn-secondary" id="cancel-site-import" type="button" ${state.importBusy ? "disabled" : ""}>Cancel</button></div>
       <dl class="import-summary"><div><dt>Perfect</dt><dd>${ready}</dd></div><div><dt>Acceptable</dt><dd>${acceptable}</dd></div><div><dt>Not ready</dt><dd>${skipped}</dd></div></dl>
@@ -6586,7 +6612,7 @@ function siteImportView(state) {
     </section>`
         : ""
     }
-    ${preview ? reviewView : uploadView}
+    ${completed ? resultsView : preview ? reviewView : uploadView}
   </section>`;
 }
 
@@ -6597,7 +6623,7 @@ function pastImportsTable(imports) {
         .map((item) => {
           const status = importHistoryStatus(item);
           return `<tr>
-            <td>${escapeHtml(item.fileName || "Imported CSV")}</td>
+            <td><a href="/sites/import?importId=${encodeURIComponent(item.importId)}" data-route>${escapeHtml(item.fileName || "Imported CSV")}</a></td>
             <td>${escapeHtml(formatImportDate(item.completedAt))}</td>
             <td>${escapeHtml(formatImportTime(item.completedAt))}</td>
             <td><span class="status-badge status-badge--${status.tone}">${status.label}</span></td>
@@ -6709,6 +6735,8 @@ function importRowReason(row) {
       ? "The temporary service error persisted, so this row was not imported."
       : "Temporary service error. The importer will retry this row.";
   }
+  if (row.reasonCode === "import_dependency_failed")
+    return t("admin.import.dependencyFailed");
   const applyFailureMessages = {
     invalid_apply_transaction:
       "The importer could not construct a valid database transaction.",

@@ -393,9 +393,10 @@ export function connectionTarget(value) {
 /** Explicitly observed requests exclude telemetry. HTTP errors are reachable, not transport loss.
  * @param {RequestInfo | URL} input
  * @param {RequestInit} [init]
+ * @param {{ httpRejectionsAreReachable?: boolean }} [options]
  * @returns {Promise<Response>}
  */
-export async function connectionFetch(input, init = {}) {
+export async function connectionFetch(input, init = {}, options = {}) {
   const generation = failureGeneration;
   const target = connectionTarget(
     typeof input === "string" || input instanceof URL
@@ -406,9 +407,15 @@ export async function connectionFetch(input, init = {}) {
   try {
     const response = await fetch(input, init);
     // Do not announce recovery from a CDN HTML fallback before the API
-    // parser has a chance to classify it as an outage.
+    // parser has a chance to classify it as an outage. Admin requests treat
+    // HTTP 4xx rejections as reachable even when an intermediary returns HTML.
     if (
       response.status !== 429 &&
+      !(
+        options.httpRejectionsAreReachable &&
+        response.status >= 400 &&
+        response.status < 500
+      ) &&
       target.service.startsWith("api:") &&
       typeof response.clone === "function" &&
       (await response.clone().text()).trimStart().startsWith("<")

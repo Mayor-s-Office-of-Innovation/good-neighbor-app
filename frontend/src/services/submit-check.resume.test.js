@@ -299,3 +299,57 @@ it("waits for deletion confirmation even when the remaining evidence count is ze
   expect(completeCheck).not.toHaveBeenCalled();
   expect(session.clearSubmittedSession).not.toHaveBeenCalled();
 });
+
+it("preserves warning expiry across replacement and removes retry after authoritative completion", async () => {
+  vi.useFakeTimers();
+  const notices = await import("../components/error-notice.js");
+  const target = { isConnected: true };
+  let connected = true;
+  const close = vi.fn();
+  const show = vi.spyOn(notices, "showInlineError").mockReturnValue({
+    close,
+    isConnected: () => connected,
+  });
+  const draft = /** @type {any} */ (makeDraft());
+  draft.finalizationRecovery = { state: "manual" };
+  getCurrentCheck.mockReturnValue(draft);
+  vi.stubGlobal("document", { querySelector: () => target });
+  try {
+    const { finalizeCaptureScorecardInBackground, restoreFinalizationNotices } =
+      await import("./submit-check.js");
+    expect(finalizeCaptureScorecardInBackground(draft.id)).toBeNull();
+    expect(show).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        duration: 5000,
+        retainRetryOnExpiry: true,
+        retry: expect.any(Function),
+      }),
+    );
+    const count = show.mock.calls.length;
+    finalizeCaptureScorecardInBackground(draft.id);
+    expect(show).toHaveBeenCalledTimes(count);
+    vi.advanceTimersByTime(5001);
+    connected = false;
+    finalizeCaptureScorecardInBackground(draft.id);
+    expect(show).toHaveBeenCalledTimes(count + 1);
+    expect(show).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        duration: 0,
+        expired: true,
+        retainRetryOnExpiry: true,
+      }),
+    );
+    close.mockClear();
+    getCurrentCheck.mockReturnValue(null);
+    restoreFinalizationNotices(null, target);
+    expect(close).toHaveBeenCalledOnce();
+    restoreFinalizationNotices(null, target);
+    expect(close).toHaveBeenCalledOnce();
+  } finally {
+    show.mockRestore();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  }
+});

@@ -795,6 +795,10 @@ export function removeEvidenceItem(itemId) {
             originSiteId: check.siteId,
           });
         } catch (error) {
+          // The artifact is already gone, but task cleanup is still waiting
+          // for filing to settle. Keep durable intent for the retry queue;
+          // artifact absence alone cannot confirm this deletion is complete.
+          if (error?.body?.code === "EvidenceDeletionPending") throw error;
           if (error?.status !== 404) {
             const rejected =
               error?.status >= 400 &&
@@ -828,6 +832,9 @@ export function removeEvidenceItem(itemId) {
       if (item.media) {
         await deleteCapturePhoto(check, item.media.key);
         removeItem(itemId, { mediaDeleted: true });
+        // The reference and bytes are already durably removed together. A
+        // later save must never resurrect a reference to those deleted bytes.
+        return;
       } else removeItem(itemId);
       if (!(await confirmLocalSave(check))) {
         check.items.splice(Math.max(0, index), 0, item);

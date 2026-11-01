@@ -16,6 +16,7 @@ export const guide = [
   },
 ];
 
-export const KNOWLEDGE_VERSION = "faq-v2-policy-2026-11-01-question-minimum";
+export const KNOWLEDGE_VERSION =
+  "faq-v2-policy-2026-11-01-home-refresh-question-minimum";
 export const sources = [...faq, ...guide, ...policy];
 export const sourceById = new Map(sources.map((entry) => [entry.id, entry]));

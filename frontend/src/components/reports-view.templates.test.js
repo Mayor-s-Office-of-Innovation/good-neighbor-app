@@ -688,12 +688,12 @@ describe("a site without a configured cadence", () => {
   it("still shows its checks instead of an empty report", () => {
     const markup = checksTab({ report, filters: "", shown: 10 });
     expect(markup).toContain(
-      escapeHtml(t("reports.checks.recorded", { count: 4 })),
+      escapeHtml(t("reports.checks.recorded", { count: 3 })),
     );
     expect(markup).not.toContain(escapeHtml(t("reports.checks.noRequirement")));
     expect(markup).toContain('data-day="2026-09-29"');
     expect(markup).toContain('data-day="2026-09-27"');
-    expect(markup).toContain('data-day="2026-09-26"');
+    expect(markup).not.toContain('data-day="2026-09-26"');
     expect(markup).not.toContain('data-day="2026-09-28"');
     expect(markup).not.toContain("reports-pill");
     const quarter = checksTab({
@@ -708,7 +708,8 @@ describe("a site without a configured cadence", () => {
       filters: "",
       shown: 10,
     });
-    expect(quarter).toContain("reports-chart__bar--complete");
+    expect(quarter).not.toContain("reports-chart__bar--complete");
+    expect(quarter).toContain("reports-chart__bar--current");
     expect(quarter).toContain('class="reports-legend"');
     expect(quarter).toContain(t("reports.checks.legend.recorded"));
     expect(quarter).toContain(t("reports.checks.legend.current"));
@@ -949,7 +950,7 @@ describe("overview issue cards and count scales", () => {
       "2026-10-04",
     );
     expect(markup).toContain(t("reports.axis.checks"));
-    expect(markup).toContain('height="30.00"');
+    expect(markup).toContain('height="18.00"');
     expect(markup).toContain('height="60.00"');
     expect(markup).toContain("reports-chart__bar--current");
     expect(markup.match(/<rect/g)).toHaveLength(2);

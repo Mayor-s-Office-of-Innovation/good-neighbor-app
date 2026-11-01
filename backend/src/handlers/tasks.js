@@ -10,7 +10,7 @@ import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveSiteId } from "../lib/principal.js";
-import { GSI2_NAME, taskKey, taskWorklistPk } from "./keys.js";
+import { GSI2_NAME, artifactKey, taskKey, taskWorklistPk } from "./keys.js";
 import {
   createSf311Client,
   GOOD_NEIGHBOR_AGENCY,
@@ -112,10 +112,60 @@ export const listTasks = async (event) => {
   const tasks = await withResolutionProofForTasks(
     dynamoTable,
     siteId,
-    selected,
+    await withEvidenceKinds(dynamoTable, siteId, selected),
   );
   return jsonResponse(200, { tasks });
 };
+
+/** @param {string} tableName @param {string} siteId @param {Record<string, any>[]} tasks */
+async function withEvidenceKinds(tableName, siteId, tasks) {
+  const sources = tasks.map((task) => {
+    const legacy =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(
+        String(task.assessmentId || ""),
+      )?.[1];
+    return [
+      ...new Set([...(task.sourceArtifactIds || []), legacy].filter(Boolean)),
+    ];
+  });
+  const keys = new Map();
+  tasks.forEach((task, i) => {
+    if (!task.checkId) return;
+    for (const id of sources[i]) {
+      const key = artifactKey(siteId, task.checkId, id);
+      keys.set(key.sk, key);
+    }
+  });
+  if (!keys.size) return tasks;
+  const artifacts = await batchGetAll({ tableName, keys: [...keys.values()] });
+  const byKey = new Map(artifacts.map((a) => [a.sk, a]));
+  return tasks.map((task, i) => {
+    const candidates = sources[i]
+      .map((id) => byKey.get(artifactKey(siteId, task.checkId, id).sk))
+      .filter(Boolean);
+    const artifact =
+      candidates.find((a) =>
+        String(a?.contentType || "").startsWith("image/"),
+      ) || candidates[0];
+    if (!artifact) return task;
+    const kind = String(artifact.contentType || "").startsWith("image/")
+      ? "photo"
+      : artifact.contentType === "text/plain"
+        ? "text"
+        : undefined;
+    if (!kind) return task;
+    return {
+      ...task,
+      evidence: {
+        artifactId: artifact.artifactId,
+        kind,
+        text: artifact.text || "",
+        placeName: artifact.placeName || "",
+        georeferencedAddress: artifact.georeferencedAddress || "",
+      },
+    };
+  });
+}
 
 const updateCache = new Map();
 const UPDATE_CACHE_MS = 60_000;

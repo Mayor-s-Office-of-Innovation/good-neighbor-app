@@ -38,6 +38,7 @@ function occurredAt(header) {
 export function adaptCheckHeader(header) {
   return {
     id: header.checkId,
+    flowType: header.flowType || "perimeter",
     status: uiStatus(header.status),
     submittedAt: occurredAt(header),
     startedAt: header.startedAt || null,

@@ -1297,8 +1297,9 @@ resource "aws_cloudfront_response_headers_policy" "admin_security" {
 }
 
 resource "aws_wafv2_web_acl" "web" {
-  # Inspect the entire body accepted by the evaluation handler. AWS bills
-  # additional inspection for requests above the default 16 KiB window.
+  # Inspect the entire evaluation body and the first 64 KiB of CSV imports.
+  # Import handlers enforce the decoded 1 MiB limit; WAF cannot inspect it all.
+  # AWS bills additional inspection above the default 16 KiB window.
   association_config {
     request_body {
       cloudfront {
@@ -1316,6 +1317,12 @@ resource "aws_wafv2_web_acl" "web" {
   custom_response_body {
     key          = "rate-limited"
     content      = jsonencode({ error = "rate_limited" })
+    content_type = "APPLICATION_JSON"
+  }
+
+  custom_response_body {
+    key          = "request-too-large"
+    content      = jsonencode({ error = "request_too_large" })
     content_type = "APPLICATION_JSON"
   }
 
@@ -1395,7 +1402,7 @@ resource "aws_wafv2_web_acl" "web" {
         vendor_name = "AWS"
 
         # Keep detection/labels, then restore blocking outside the exact
-        # evaluation route below. All other managed rules still enforce.
+        # evaluation and CSV preview routes below. Other rules still enforce.
         rule_action_override {
           name = "SizeRestrictions_BODY"
           action_to_use {
@@ -1412,14 +1419,25 @@ resource "aws_wafv2_web_acl" "web" {
     }
   }
 
-  # AI assessments can exceed 8 KiB. The handler enforces a decoded 64 KiB
-  # limit and returns JSON errors; do not exempt any other method or route.
+  # Assessments and CSV previews exceed the managed 8 KiB body limit.
+  # Only these exact POST routes are exempt; their handlers enforce decoded
+  # limits of 64 KiB and 1 MiB / 500 rows respectively. Preserve the rule name
+  # and metric for existing dashboards and log queries.
   rule {
     name     = "BodySizeRestrictionsOutsideAssessmentEvaluation"
     priority = 10
 
     action {
-      block {}
+      block {
+        custom_response {
+          response_code            = 413
+          custom_response_body_key = "request-too-large"
+          response_header {
+            name  = "Cache-Control"
+            value = "no-store"
+          }
+        }
+      }
     }
 
     statement {
@@ -1438,6 +1456,40 @@ resource "aws_wafv2_web_acl" "web" {
                   byte_match_statement {
                     positional_constraint = "EXACTLY"
                     search_string         = "/v1/assessments:evaluate"
+                    field_to_match {
+                      uri_path {}
+                    }
+                    text_transformation {
+                      priority = 0
+                      type     = "NONE"
+                    }
+                  }
+                }
+                statement {
+                  byte_match_statement {
+                    positional_constraint = "EXACTLY"
+                    search_string         = "POST"
+                    field_to_match {
+                      method {}
+                    }
+                    text_transformation {
+                      priority = 0
+                      type     = "NONE"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        statement {
+          not_statement {
+            statement {
+              and_statement {
+                statement {
+                  byte_match_statement {
+                    positional_constraint = "EXACTLY"
+                    search_string         = "/admin/v1/site-imports/preview"
                     field_to_match {
                       uri_path {}
                     }

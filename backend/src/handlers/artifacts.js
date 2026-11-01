@@ -1,9 +1,12 @@
+import {
+  evidenceDeletionKey,
+  evidencePublicationGuards,
+  retractEvidenceTasks,
+} from "../analysis/guidance/evidence-deletion.js";
 import { restartAnalysis } from "../analysis/artifact-recovery.js";
 import { randomUUID } from "node:crypto";
 import {
-  DeleteCommand,
   GetCommand,
-  PutCommand,
   QueryCommand,
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
@@ -490,17 +493,38 @@ export const registerArtifact = async (event) => {
   let alreadyRegistered = false;
   try {
     await ddb.send(
-      new PutCommand({
-        TableName: dynamoTable,
-        Item: item,
-        // No duplicate: write only if this artifactId isn't already registered.
-        // Touches only this artifact's own item, so a submit's parallel
-        // registrations never contend (see the header note above).
-        ConditionExpression: "attribute_not_exists(sk)",
+      new TransactWriteCommand({
+        TransactItems: [
+          ...evidencePublicationGuards(dynamoTable, siteId, checkId, [
+            artifactId,
+          ]),
+          {
+            Put: {
+              TableName: dynamoTable,
+              Item: item,
+              ConditionExpression: "attribute_not_exists(sk)",
+            },
+          },
+        ],
       }),
     );
   } catch (err) {
-    if (
+    if (err instanceof Error && err.name === "TransactionCanceledException") {
+      const deleted = await ddb.send(
+        new GetCommand({
+          TableName: dynamoTable,
+          Key: evidenceDeletionKey(siteId, checkId, artifactId),
+          ConsistentRead: true,
+        }),
+      );
+      if (deleted.Item) return jsonResponse(409, { error: "evidence_deleted" });
+      if (
+        /** @type {any} */ (err).CancellationReasons?.[1]?.Code !==
+        "ConditionalCheckFailed"
+      )
+        throw err;
+      alreadyRegistered = true;
+    } else if (
       err instanceof Error &&
       err.name === "ConditionalCheckFailedException"
     ) {
@@ -855,8 +879,7 @@ export const updateArtifactLocation = async (event) => {
  * ART# row, so the orphaned analysis is naturally excluded from the fold, and
  * the coverage gate never blocks on it.
  *
- * Idempotent: deleting an unknown artifact (already deleted, never registered)
- * 404s. Completed checks only allow removal of permanently failed evidence, which
+ * Idempotent: already deleted or unregistered evidence is tombstoned successfully. Completed checks only allow removal of permanently failed evidence, which
  * contributed nothing to the folded scorecard.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
@@ -872,6 +895,7 @@ export const deleteArtifact = async (event) => {
   const headerResult = await ddb.send(
     new QueryCommand({
       TableName: dynamoTable,
+      ConsistentRead: true,
       KeyConditionExpression: "pk = :pk AND sk = :sk",
       ExpressionAttributeValues: {
         ":pk": sitePk(siteId),
@@ -883,7 +907,22 @@ export const deleteArtifact = async (event) => {
   );
   const header = (headerResult.Items ?? [])[0];
   if (!header) return jsonResponse(404, { error: "Check not found" });
-  if (header.status === "completed") {
+
+  const result = await ddb.send(
+    new QueryCommand({
+      TableName: dynamoTable,
+      ConsistentRead: true,
+      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+      ExpressionAttributeValues: {
+        ":pk": sitePk(siteId),
+        ":prefix": checkArtifactPrefix(checkId),
+      },
+    }),
+  );
+  const artifact = (result.Items ?? []).find(
+    (it) => it.artifactId === artifactId,
+  );
+  if (artifact && header.status === "completed") {
     const failure = await ddb.send(
       new GetCommand({
         TableName: dynamoTable,
@@ -896,30 +935,61 @@ export const deleteArtifact = async (event) => {
       return jsonResponse(409, { error: "Check already completed" });
   }
 
-  const result = await ddb.send(
-    new QueryCommand({
-      TableName: dynamoTable,
-      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-      ExpressionAttributeValues: {
-        ":pk": sitePk(siteId),
-        ":prefix": checkArtifactPrefix(checkId),
-      },
-    }),
-  );
-  const artifact = (result.Items ?? []).find(
-    (it) => it.artifactId === artifactId,
-  );
-  if (!artifact) return jsonResponse(404, { error: "Artifact not found" });
-
+  // Marker and removal are atomic; late registration/evaluation cannot restore it.
   await ddb.send(
-    new DeleteCommand({
-      TableName: dynamoTable,
-      Key: {
-        pk: sitePk(siteId),
-        sk: artifact.sk,
-      },
+    new TransactWriteCommand({
+      TransactItems: [
+        {
+          ConditionCheck: {
+            TableName: dynamoTable,
+            Key: checkHeaderKey(siteId, checkId),
+            ConditionExpression: "#status = :status",
+            ExpressionAttributeNames: { "#status": "status" },
+            ExpressionAttributeValues: { ":status": header.status },
+          },
+        },
+        {
+          Put: {
+            TableName: dynamoTable,
+            Item: {
+              ...evidenceDeletionKey(siteId, checkId, artifactId),
+              checkId,
+              artifactId,
+              deletedAt: new Date().toISOString(),
+            },
+          },
+        },
+        ...(artifact
+          ? [
+              {
+                Delete: {
+                  TableName: dynamoTable,
+                  Key: { pk: sitePk(siteId), sk: artifact.sk },
+                },
+              },
+            ]
+          : []),
+      ],
     }),
   );
+  // Retried even when the artifact is already absent: an interrupted cleanup
+  // must not strand generated tasks forever.
+  try {
+    await retractEvidenceTasks({
+      tableName: dynamoTable,
+      siteId,
+      checkId,
+      artifactId,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "EvidenceDeletionPending")
+      return jsonResponse(409, {
+        code: "EvidenceDeletionPending",
+        error:
+          "Evidence cleanup is waiting for filing to settle. Please retry.",
+      });
+    throw error;
+  }
 
   return jsonResponse(200, { artifactId, status: "deleted" });
 };

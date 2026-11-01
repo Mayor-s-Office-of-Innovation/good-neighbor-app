@@ -194,10 +194,7 @@ export function errorBlock() {
  */
 export function checksTab({ report, filters, shown }) {
   const { period, days } = report;
-  const recorded = days.reduce(
-    (sum, day) => sum + day.completed + (day.reports || 0),
-    0,
-  );
+  const recorded = days.reduce((sum, day) => sum + day.completed, 0);
   const issues = (report.tasks || []).filter(isIssue);
   const resolved = issues.filter((task) => resolvedInPeriod(task, period));
   const href = issuesTabHref(period);
@@ -243,7 +240,7 @@ export function checksTab({ report, filters, shown }) {
  * @returns {"complete" | "partial" | "missed" | "exempt"}
  */
 export function checkCountBand(day) {
-  const count = day.completed + (day.reports || 0);
+  const count = day.completed;
   if (count >= 3) return "complete";
   if (count > 0) return "partial";
   return day.operating === false ? "exempt" : "missed";
@@ -260,7 +257,7 @@ export function weekChart(days, today = "") {
       .filter(
         (day) => day.date >= week.start && day.date < addDays(week.start, 7),
       )
-      .reduce((sum, day) => sum + day.completed + (day.reports || 0), 0),
+      .reduce((sum, day) => sum + day.completed, 0),
   }));
   const currentWeek = weeks.find(
     (week) => today >= week.start && today < addDays(week.start, 7),
@@ -456,7 +453,7 @@ export function calendarGrid(days) {
 
 /** @param {DaySummary} day */
 function dayCell(day) {
-  const count = day.completed + (day.reports || 0);
+  const count = day.completed;
   const band = checkCountBand(day);
   const label = `${formatMonthDay(dayInstant(day.date))}: ${count ? t("reports.checks.recorded", { count }) : t(`reports.counts.${band}`)}`;
   return html`<li
@@ -505,7 +502,7 @@ export function statusPill(status) {
  */
 export function recordsList({ days, today, period, shown }) {
   const records = days
-    .filter((day) => day.checkIds.length > 0)
+    .filter((day) => day.completed > 0 && day.checkIds.length > 0)
     .slice()
     .reverse();
   const visible = records.slice(0, shown);

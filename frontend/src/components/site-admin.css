@@ -375,10 +375,7 @@
   display: grid;
   gap: 1rem;
 }
-.site-access-grant:not(:empty) {
-  /* Leave enough scroll range to align a new invitation below the header. */
-  min-height: calc(100svh - 72px - env(safe-area-inset-top, 0px) - 0.5rem);
-  align-content: start;
+.site-access-grant:has(> details) {
   margin-block-start: var(--wa-space-l, 24px);
 }
 .site-access-ready summary {

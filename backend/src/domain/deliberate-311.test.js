@@ -353,3 +353,111 @@ it.each([undefined, "user_confirmed", "manual"])(
     expect(fetch).not.toHaveBeenCalled();
   },
 );
+
+it.each([false, true])(
+  "first deliberate filing after silent history reads site delivery setting %s",
+  async (enabled) => {
+    send.mockResolvedValue({
+      Item: { deliberate311ProductionEnabled: enabled },
+    });
+    const decision = await deliberate311Decision(
+      "table",
+      "site",
+      {
+        appActionResults: [
+          {
+            code: "create_311_ticket",
+            status: "submitted",
+            recordedAt: now,
+            payload: {
+              executionTrigger: "task_created",
+              tickets: [{ srNum: "123", responsibleAgency: "76" }],
+            },
+          },
+        ],
+      },
+      now,
+    );
+    expect(decision.mode).toBe(enabled ? "production" : "simulated");
+    expect(decision.acceptedAt).toBe(now);
+    expect(send).toHaveBeenCalledOnce();
+    expect(decision.checks).toHaveLength(1);
+  },
+);
+
+it("pins an actual deliberate attempt independently of earlier silent history", async () => {
+  const decision = await deliberate311Decision(
+    "table",
+    "site",
+    {
+      appActionResults: [
+        {
+          code: "create_311_ticket",
+          payload: {
+            executionTrigger: "task_created",
+            tickets: [{ srNum: "123" }],
+          },
+        },
+        {
+          code: "create_311_ticket",
+          recordedAt: now,
+          payload: {
+            executionTrigger: "user_confirmed",
+            tickets: [{ srNum: "SIM-123", deliveryMode: "simulated" }],
+          },
+        },
+      ],
+    },
+    now,
+  );
+  expect(decision.mode).toBe("simulated");
+  expect(send).not.toHaveBeenCalled();
+});
+
+it("simulates a newly selected deliberate action despite an existing real silent ticket", async () => {
+  send.mockResolvedValue({ Item: { deliberate311ProductionEnabled: false } });
+  const silent = {
+    code: "create_311_ticket",
+    status: "submitted",
+    recordedAt: now,
+    payload: {
+      executionTrigger: "task_created",
+      responsibleAgencyCode: "76",
+      tickets: [
+        { srNum: "123", responsibleAgency: "76", serviceCode: "synthetic" },
+      ],
+    },
+  };
+  const existing = { taskId: "task", appActionResults: [silent] };
+  const decision = await deliberate311Decision("table", "site", existing, now);
+  const fetch = vi.fn(() => {
+    throw new Error("Unexpected external request");
+  });
+  vi.stubGlobal("fetch", fetch);
+  try {
+    const results = await executeAppActions([action], {
+      env: { GNP_311_SUBMISSION_ENABLED: "true" },
+      trigger: "user_confirmed",
+      siteId: "site",
+      tableName: "table",
+      now: new Date(now),
+      task: {
+        ...existing,
+        deliberate311DeliveryMode: decision.mode,
+        deliberate311AcceptedAt: decision.acceptedAt,
+      },
+      priorResults: existing.appActionResults,
+    });
+    expect(results[0]).toMatchObject({
+      status: "submitted",
+      payload: {
+        tickets: [
+          { deliveryMode: "simulated", srNum: expect.stringMatching(/^SIM-/) },
+        ],
+      },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

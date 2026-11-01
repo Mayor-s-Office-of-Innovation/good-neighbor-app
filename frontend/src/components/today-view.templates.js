@@ -525,6 +525,7 @@ export function summaryBlock({ outsideRadius, label }) {
  *   siteAddress: string,
  *   finalizationPending?: boolean,
  *   pendingSessionId: string,
+ *   pendingFlowType?: string,
  *   hasPendingSession: boolean,
  *   recentCheckTime: string,
  *   recentItems: Array<object>,
@@ -533,13 +534,14 @@ export function summaryBlock({ outsideRadius, label }) {
  *   newTaskCount: number,
  *   counts?: {newCount:number,duplicateCount:number},
  *   tabCounts?: Record<string, number>,
- *   activeClearCheck: { submittedAt?: string, startedAt?: string } | null,
- *   pendingClearCheck?: { submittedAt?: string, startedAt?: string } | null,
+ *   activeClearCheck: { submittedAt?: string, startedAt?: string, flowType?: string } | null,
+ *   pendingClearCheck?: { submittedAt?: string, startedAt?: string, flowType?: string } | null,
  *   showActiveClearTray?: boolean,
  *   historyGrouping?: string,
  *   remainingStatus?: "pending" | "loaded" | "error",
  *   pendingGuidanceFailed?: boolean,
  *   pendingGuidanceLoading?: boolean,
+ *   pullRefreshState?: string,
  *   historyGroups: Array<{ checkTime: string | Date, cards: string, title?: string, compact?: boolean, counts?: any }>,
  * }} vm
  */
@@ -549,6 +551,7 @@ export function homeResults({
   siteName,
   siteAddress,
   pendingSessionId,
+  pendingFlowType = "perimeter",
   hasPendingSession,
   recentCheckTime,
   recentItems,
@@ -565,6 +568,7 @@ export function homeResults({
   remainingStatus = "loaded",
   pendingGuidanceFailed = false,
   pendingGuidanceLoading = false,
+  pullRefreshState = "idle",
 }) {
   const hasVisibleCards =
     recentItems.length ||
@@ -580,6 +584,7 @@ export function homeResults({
     homeFilter !== "todo" && remainingStatus !== "loaded";
   const trayOptions = {
     id: "home-analysis-results",
+    flowType: pendingFlowType,
     title: "",
     ariaLabel: t("today.newResults.aria"),
     tone: "new",
@@ -598,13 +603,20 @@ export function homeResults({
         : showActiveClearTray && activeClearCheck
           ? clearCheckTray(activeClearCheck, true)
           : ""}
-      ${taskTabs({ activeId: homeFilter, counts: tabCounts })}
-      ${homeFilter === "todo" && pendingGuidanceLoading
-        ? html`<p class="home-results__empty" role="status">
-            ${escapeHtml(t("common.loading"))}
-          </p>`
+      ${taskTabs({
+        activeId: homeFilter,
+        counts: tabCounts,
+        refreshState: pullRefreshState,
+      })}
+      ${homeFilter === "todo" &&
+      pendingGuidanceLoading &&
+      !hasVisibleCards &&
+      pullRefreshState === "idle"
+        ? pendingCards(1)
         : ""}
-      ${homeFilter === "todo" && pendingGuidanceFailed
+      ${homeFilter === "todo" &&
+      pendingGuidanceFailed &&
+      pullRefreshState === "idle"
         ? html`<p class="home-results__empty" role="status">
             ${escapeHtml(t("today.questions.error"))}
             <button
@@ -702,14 +714,15 @@ export function newTaskTray({
 }
 
 /**
- * @param {{ submittedAt?: string, startedAt?: string }} check
+ * @param {{ submittedAt?: string, startedAt?: string, flowType?: string }} check
  * @param {boolean} [recent]
  */
 export function clearCheckTray(check, recent = false) {
   const checkTime = check.submittedAt || check.startedAt || "";
-  const title = recent
-    ? recentCheckTitle(checkTime)
-    : historicalCheckTitle(checkTime);
+  const title =
+    recent || check.flowType === "single-problem"
+      ? recentCheckTitle(checkTime, check.flowType)
+      : historicalCheckTitle(checkTime);
   return html`
     <section
       class="analysis-tray ${recent
@@ -719,7 +732,7 @@ export function clearCheckTray(check, recent = false) {
     >
       <div class="analysis-tray__cards">
         <h2 class="analysis-tray__check-title">${escapeHtml(title)}</h2>
-        ${clearCheckCard()}
+        ${clearCheckCard(check.flowType)}
       </div>
     </section>
   `;
@@ -757,8 +770,13 @@ export function historyTray({
   `;
 }
 
-/** @param {{ activeId: string, tabs?: Array<{ id: string, labelKey: string }>, counts?: Record<string, number> }} vm */
-export function taskTabs({ activeId, tabs = HOME_TABS, counts = {} }) {
+/** @param {{ activeId: string, tabs?: Array<{ id: string, labelKey: string }>, counts?: Record<string, number>, refreshState?: string }} vm */
+export function taskTabs({
+  activeId,
+  tabs = HOME_TABS,
+  counts = {},
+  refreshState = "idle",
+}) {
   return html`
     <div
       class="home-tabs"
@@ -786,7 +804,19 @@ export function taskTabs({ activeId, tabs = HOME_TABS, counts = {} }) {
         )
         .join("")}
     </div>
-    <span data-task-refresh-status role="status"></span>
+    <div class="home-refresh">
+      <div class="home-pull-indicator" aria-hidden="true">
+        <wa-icon class="home-pull-arrow" name="rotate"></wa-icon>
+        <wa-spinner class="home-pull-spinner"></wa-spinner>
+      </div>
+      <span class="home-pull-label" data-task-refresh-status role="status"
+        >${refreshState === "refreshing"
+          ? escapeHtml(t("home.refreshing"))
+          : refreshState === "failed"
+            ? escapeHtml(t("home.refreshFailed"))
+            : ""}</span
+      >
+    </div>
   `;
 }
 
