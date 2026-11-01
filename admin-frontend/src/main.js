@@ -12,6 +12,7 @@ import {
 } from "./provider-manager-directory.js";
 import { localRoleEnabled, getLocalRole, setLocalRole } from "./local-role.js";
 import { actionFeedback, notifyAdmin } from "./action-feedback.js";
+import { confirmDeviceRevocation } from "./device-revocation-dialog.js";
 import "../../frontend/src/components/app-toasts.js";
 import {
   captureComplianceDraft,
@@ -3343,19 +3344,18 @@ class AdminApp extends HTMLElement {
       const device = this.state.devices.find(
         (item) => (item.bindingId || item.deviceId) === deviceId,
       );
-      const label = device?.label || "this device";
-      if (
-        !globalThis.confirm(
-          `Remove access for ${label} from ${this.state.site.name}? This ends this Site binding immediately. Other Site bindings on the same physical device are not affected.`,
-        )
-      ) {
+      const label = device?.label || t("admin.devices.unnamedDevice");
+      const siteId = this.state.site.siteId;
+      if (!(await confirmDeviceRevocation(label, this.state.site.name))) {
         return;
       }
-      const siteId = this.state.site.siteId;
+      if (this.state.site?.siteId !== siteId) return;
       await adminApi.revokeDevice(siteId, deviceId);
       feedback.success();
       if ((await this.refreshSiteAccess(siteId, false)) === false) return;
-      this.state.revocationMessage = `Access for ${label} was removed from this Site.`;
+      this.state.revocationMessage = t("admin.devices.revokedMessage", {
+        name: label,
+      });
       this.render();
     } catch (error) {
       feedback.failure(error);

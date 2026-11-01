@@ -28,8 +28,9 @@ class PhotoLightbox extends HTMLElement {
         </div>
         <figcaption class="photo-lightbox__caption"></figcaption>
         <div class="photo-lightbox__recovery" hidden>
+          <wa-icon name="image-slash" aria-hidden="true"></wa-icon>
           <p role="status"></p>
-          <button type="button" class="btn-secondary" data-photo-retry>${escapeAttr(t("common.retry"))}</button>
+          <button type="button" class="btn-outline" data-photo-retry>${escapeAttr(t("common.retry"))}</button>
         </div>
       </figure>
     </dialog>`;
@@ -59,7 +60,7 @@ class PhotoLightbox extends HTMLElement {
 
   /** @param {{ src: string, alt?: string, address?: string, capturedAt?: string, trigger?: HTMLElement, hideLocation?: boolean, previewOnly?: boolean }} photo */
   open(photo) {
-    if (!photo.src || !this._dialog) return;
+    if (!this._dialog) return;
     const image = this.querySelector(".photo-lightbox__image");
     const caption = /** @type {HTMLElement | null} */ (
       this.querySelector(".photo-lightbox__caption")
@@ -67,7 +68,9 @@ class PhotoLightbox extends HTMLElement {
     if (!(image instanceof HTMLImageElement) || !caption) return;
     this._trigger = photo.trigger || null;
     this._source = photo.src;
-    image.src = photo.src;
+    image.hidden = !photo.src;
+    if (photo.src) image.src = photo.src;
+    else image.removeAttribute("src");
     image.alt = photo.alt || t("lightbox.image.alt");
     const address = photo.hideLocation
       ? ""
@@ -263,16 +266,17 @@ export async function openPhotoLightbox(host, trigger, screen = trigger) {
     image.currentSrc ||
     image.getAttribute("src");
   if (!src) {
-    if (capture) {
-      const { showToast } = await import("../state/toasts.js");
-      if (!isCurrent()) return;
-      showToast({
-        title: t("card.evidence.unavailable"),
-        message: "",
-        tone: "warning",
-      });
-    }
-    cancel();
+    lightbox._release?.();
+    lightbox._release = null;
+    lightbox.open({ src: "", trigger });
+    recovery.hidden = false;
+    recovery.querySelector("p").textContent = t("lightbox.downloadFailed");
+    const retry = /** @type {HTMLButtonElement} */ (
+      recovery.querySelector("button")
+    );
+    retry.onclick = () => {
+      if (isCurrent()) void openPhotoLightbox(host, trigger, screen);
+    };
     return;
   }
   lightbox._release?.();
@@ -305,8 +309,7 @@ export async function openPhotoLightbox(host, trigger, screen = trigger) {
     clearTimeout(imageTimer);
     if (!isCurrent()) return;
     if (fallingBack) {
-      viewerImage.hidden = true;
-      viewerImage.removeAttribute("src");
+      lightbox.open({ ...photo, src: "", previewOnly: false });
       lightbox._release?.();
       lightbox._release = null;
       return;
@@ -332,8 +335,7 @@ export async function openPhotoLightbox(host, trigger, screen = trigger) {
     if (fallback && fallback !== src) {
       lightbox.open({ ...photo, src: fallback, previewOnly: true });
     } else {
-      viewerImage.hidden = true;
-      viewerImage.removeAttribute("src");
+      lightbox.open({ ...photo, src: "", previewOnly: false });
     }
   };
   viewerImage.onerror = () => void failed();

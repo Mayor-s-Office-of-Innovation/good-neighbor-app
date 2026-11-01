@@ -344,8 +344,12 @@ describe("several finished checks", () => {
     const { saveFinishedCheck } = await import("../db.js");
     const first = await finishOne("Litter by the gate");
     vi.mocked(saveFinishedCheck).mockClear();
+    const changed = vi.fn();
+    const unsubscribe = session.onCheckSessionChange(changed);
     session.markScorecardDone(first.check.id);
     session.markScorecardDone(first.check.id);
+    expect(changed).toHaveBeenCalledExactlyOnceWith(first.check);
+    unsubscribe();
     expect(first.check.scorecardDone).toBe(true);
     expect(saveFinishedCheck).toHaveBeenCalledTimes(1);
   });

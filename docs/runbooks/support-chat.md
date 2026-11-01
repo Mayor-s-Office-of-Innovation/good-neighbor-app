@@ -78,7 +78,8 @@ WAF sampled requests are disabled across the field-app ACL because managed-rule
 sampling can otherwise retain support bodies. Keep any future WAF logging from
 capturing support request data. The UI has no transcript analytics or persistence.
 
-Limits: 1,000 UTF-16 code units per question, 8 KiB decoded body, 400 model output
+Limits: at least 20 UTF-16 code units after trimming surrounding whitespace and
+at most 1,000 UTF-16 code units per question, 8 KiB decoded body, 400 model output
 tokens, 1,500 answer characters, three sources, 15-second backend deadline and
 20-second UI deadline. Requests contain no history. WAF limits the exact route
 to approximately 30 requests per viewer IP per five minutes. API Gateway limits

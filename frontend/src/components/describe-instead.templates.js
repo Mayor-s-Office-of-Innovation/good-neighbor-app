@@ -38,20 +38,6 @@ export const shell = ({
             >${escapeHtml(t("describe.back.aria"))}</span
           >
         </button>
-        <span aria-hidden="true"></span>
-        <button
-          class="describe__close describe__close--dismiss"
-          id="describe-dismiss"
-          type="button"
-        >
-          <span
-            class="describe__close-icon describe__close-icon--dismiss"
-            aria-hidden="true"
-          ></span>
-          <span class="visually-hidden"
-            >${escapeHtml(t("describe.close.aria"))}</span
-          >
-        </button>
       </div>
 
       <div class="describe__main">

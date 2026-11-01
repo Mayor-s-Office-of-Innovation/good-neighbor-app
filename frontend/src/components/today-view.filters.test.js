@@ -1211,7 +1211,7 @@ describe("deferred In-progress / History lists", () => {
       getToasts().forEach((toast) => toast.close());
       const view = liveView("?filter=inprogress");
       view._siteId = "site-1";
-      view._refreshAfterAction = vi.fn();
+      view._refreshAfter311 = vi.fn();
       const queued = tapped("queued");
       view._homeModel = { tasks: [queued, doneTask], checks: [] };
 
@@ -1239,7 +1239,7 @@ describe("deferred In-progress / History lists", () => {
         ).toMatchObject({ appActionStatus: "submitted" });
         expect(view._confirmedTasks.get(queued.taskId)).toBe(filedTask);
         expect(getToasts()).toHaveLength(0);
-        expect(view._refreshAfterAction).toHaveBeenCalled();
+        expect(view._refreshAfter311).toHaveBeenCalled();
 
         view._watchQueued311([filedTask]);
         expect(queued311.stop).toHaveBeenCalledTimes(1);

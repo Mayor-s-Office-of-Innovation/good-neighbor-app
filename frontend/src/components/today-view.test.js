@@ -1159,7 +1159,7 @@ it("keeps a shared filing override on the returned original and repairs separate
     view._homeModel = { tasks: [source, original] };
     view._duplicateLinks = new Map();
     view._expireRemainingLists = vi.fn();
-    view._refreshAfterAction = vi.fn();
+    view._refreshAfter311 = vi.fn();
     view._run = vi.fn().mockResolvedValue({ task: original });
     writeTaskStatusOverrides({
       repeat: { status: "in_progress" },
