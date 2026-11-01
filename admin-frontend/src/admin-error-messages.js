@@ -24,6 +24,8 @@ const messages = {
   invalid_staff_source: "admin.errors.staffUnavailable",
   person_not_found: "admin.errors.staffUnavailable",
   affiliation_not_found: "admin.errors.affiliationUnavailable",
+  request_blocked: "admin.errors.requestBlocked",
+  request_too_large: "admin.errors.requestTooLarge",
   admin_request_failed: "admin.toast.requestFailed",
 };
 

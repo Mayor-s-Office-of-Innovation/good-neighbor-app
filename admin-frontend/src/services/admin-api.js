@@ -37,16 +37,20 @@ async function authenticatedFetch(path, init = {}) {
   const signal = init.signal
     ? AbortSignal.any([init.signal, timeout])
     : timeout;
-  const res = await connectionFetch(`${config.apiBase}${path}`, {
-    ...init,
-    signal,
-    headers: {
-      "content-type": "application/json",
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...localRoleHeaders(config),
-      ...(init.headers || {}),
+  const res = await connectionFetch(
+    `${config.apiBase}${path}`,
+    {
+      ...init,
+      signal,
+      headers: {
+        "content-type": "application/json",
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...localRoleHeaders(config),
+        ...(init.headers || {}),
+      },
     },
-  });
+    { httpRejectionsAreReachable: true },
+  );
   if (!config.localDebugAdmin && res.status === 401) return redirectToLogin();
   return res;
 }
@@ -79,13 +83,19 @@ async function parseAdminResponse(path, init) {
     return {};
   });
   if (!res.ok) {
-    const err = new Error(body.error || "admin_request_failed");
+    const fallback =
+      res.status === 413
+        ? "request_too_large"
+        : res.status === 403
+          ? "request_blocked"
+          : "admin_request_failed";
+    const err = new Error(body?.error || fallback);
     /** @type {any} */ (err).status = res.status;
     /** @type {any} */ (err).retryAfterMs = parseRetryAfter(
       res.headers?.get?.("retry-after"),
     );
     // Some routes (analytics) explain the failure; surface it for the UI.
-    if (typeof body.message === "string") {
+    if (typeof body?.message === "string") {
       /** @type {any} */ (err).detail = body.message;
     }
     throw err;

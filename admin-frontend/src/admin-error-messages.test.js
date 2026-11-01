@@ -78,3 +78,15 @@ test("stale site settings explain how to recover instead of a generic failure", 
   assert.equal(adminErrorMessage(error, t), t("admin.errors.siteChanged"));
   assert.notEqual(adminErrorMessage(error, t), t("admin.toast.requestFailed"));
 });
+
+test("request rejections give localized recovery instructions", () => {
+  for (const [code, status, key] of [
+    ["request_blocked", 403, "requestBlocked"],
+    ["request_too_large", 413, "requestTooLarge"],
+  ]) {
+    assert.equal(
+      adminErrorMessage(Object.assign(new Error(code), { status }), t),
+      t(`admin.errors.${key}`),
+    );
+  }
+});

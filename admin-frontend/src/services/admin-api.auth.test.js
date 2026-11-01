@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { connectionSnapshot } from "../../../frontend/src/services/backend-health.js";
 
 class MemoryStorage {
   values = new Map();
@@ -45,6 +46,8 @@ async function fixture(t, options = {}) {
   t.mock.method(globalThis, "fetch", async (url, init) => {
     calls.push({ url, init });
     if (options.networkError) throw new TypeError("offline");
+    if (options.responseBody !== undefined)
+      return new Response(options.responseBody, { status: options.status });
     return {
       ok: !options.status || options.status < 400,
       status: options.status || 200,
@@ -147,6 +150,35 @@ for (const status of [403, 429, 500]) {
     await assert.rejects(f.adminApi.getSession(), { message: "admin_error" });
     assert.equal(f.redirects.length, 0);
     assert.ok(localStorage.getItem("good-neighbor-admin-session"));
+  });
+}
+
+for (const [status, responseBody, code] of [
+  [403, "<html>Request blocked</html>", "request_blocked"],
+  [413, "<html>Payload too large</html>", "request_too_large"],
+  [413, JSON.stringify({ error: "request_too_large" }), "request_too_large"],
+  [
+    403,
+    JSON.stringify({ error: "supervisor_required" }),
+    "supervisor_required",
+  ],
+  [403, "null", "request_blocked"],
+]) {
+  test(`import rejection ${status} (${responseBody}) keeps connectivity and session`, async (t) => {
+    const f = await fixture(t, { status, responseBody });
+    saveSession();
+    assert.equal(connectionSnapshot().disconnected, false);
+    await assert.rejects(
+      f.adminApi.previewSiteImport("sites.csv", "synthetic"),
+      {
+        message: code,
+        status,
+      },
+    );
+    assert.equal(connectionSnapshot().disconnected, false);
+    assert.equal(f.redirects.length, 0);
+    assert.ok(localStorage.getItem("good-neighbor-admin-session"));
+    assert.equal(f.calls.length, 1);
   });
 }
 
