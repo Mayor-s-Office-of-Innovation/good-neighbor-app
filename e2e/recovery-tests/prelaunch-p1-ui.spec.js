@@ -172,36 +172,45 @@ test("complaint description preserves the composer and focuses without smooth sc
   await expect(page.locator("#submit-complaint")).toBeEnabled();
 });
 
-test("lightbox failed image shows unavailable-image icon, text and a retry", async ({
-  page,
-}) => {
-  await page.route("**/missing-test-photo", (route) =>
-    route.fulfill({ status: 404, body: "" }),
-  );
-  await page.evaluate(async () => {
-    const path = "/src/components/photo-lightbox.js";
-    const { openPhotoLightbox } = await import(path);
-    const host = document.querySelector("main");
-    if (!host) throw new Error("Missing lightbox fixture");
-    host.innerHTML =
-      '<button data-photo-lightbox data-full-src="/missing-test-photo"><img src="/missing-test-photo" alt="Synthetic photo"></button>';
-    await openPhotoLightbox(host, host.querySelector("button"));
+for (const theme of ["light", "dark"]) {
+  test(`lightbox failed image shows unavailable-image icon, text and a retry (${theme})`, async ({
+    page,
+  }) => {
+    await page.evaluate((theme) => {
+      document.documentElement.classList.toggle("wa-dark", theme === "dark");
+    }, theme);
+    await page.route("**/missing-test-photo", (route) =>
+      route.fulfill({ status: 404, body: "" }),
+    );
+    await page.evaluate(async () => {
+      const path = "/src/components/photo-lightbox.js";
+      const { openPhotoLightbox } = await import(path);
+      const host = document.querySelector("main");
+      if (!host) throw new Error("Missing lightbox fixture");
+      host.innerHTML =
+        '<button data-photo-lightbox data-full-src="/missing-test-photo"><img src="/missing-test-photo" alt="Synthetic photo"></button>';
+      await openPhotoLightbox(host, host.querySelector("button"));
+    });
+    await expect(page.locator(".photo-lightbox__recovery")).toBeVisible();
+    await expect(
+      page.locator('.photo-lightbox__recovery wa-icon[name="image-slash"]'),
+    ).toBeVisible();
+    await expect(page.locator(".photo-lightbox__recovery p")).toHaveText(
+      t("lightbox.downloadFailed"),
+    );
+    await expect(page.locator("[data-photo-retry]")).toBeVisible();
+    // Axe must sample the settled colors, not the dialog entrance fade.
+    await expect(page.locator(".photo-lightbox")).toHaveCSS("opacity", "1");
+    const results = await new AxeBuilder({ page })
+      .include("photo-lightbox")
+      .withTags(["wcag2a", "wcag2aa"])
+      .analyze();
+    expect(results.violations).toEqual([]);
+    await page.screenshot({
+      path: test.info().outputPath("lightbox-error.png"),
+    });
   });
-  await expect(page.locator(".photo-lightbox__recovery")).toBeVisible();
-  await expect(
-    page.locator('.photo-lightbox__recovery wa-icon[name="image-slash"]'),
-  ).toBeVisible();
-  await expect(page.locator(".photo-lightbox__recovery p")).toHaveText(
-    t("lightbox.downloadFailed"),
-  );
-  await expect(page.locator("[data-photo-retry]")).toBeVisible();
-  const results = await new AxeBuilder({ page })
-    .include("photo-lightbox")
-    .withTags(["wcag2a", "wcag2aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
-  await page.screenshot({ path: test.info().outputPath("lightbox-error.png") });
-});
+}
 
 for (const failedPreview of [false, true]) {
   test(`failed photo restores focus after thumbnail replacement (preview failure: ${failedPreview})`, async ({
