@@ -4815,7 +4815,10 @@ class AdminApp extends HTMLElement {
       e.preventDefault();
       this.previewSiteImport(asForm(e.currentTarget)).catch((err) => {
         this.state.importBusy = false;
-        this.state.error = err.message;
+        this.state.error =
+          err.message === "invalid_file_size"
+            ? t("admin.import.fileTooLarge")
+            : adminErrorMessage(err, t);
         this.render();
       });
     });
@@ -4833,7 +4836,7 @@ class AdminApp extends HTMLElement {
       this.applySiteImport().catch((err) => {
         this.state.importBusy = false;
         this.state.importNotice = null;
-        this.state.error = err.message;
+        this.state.error = adminErrorMessage(err, t);
         this.render();
       });
     });

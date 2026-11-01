@@ -258,9 +258,16 @@ not that evaluation succeeded.
 
 In Terraform (`infra/modules/app/main.tf`), only the Common Rule Set's
 `SizeRestrictions_BODY` action is changed to Count. A subsequent label rule restores
-its block except for the exact POST evaluation route. Other managed rules and rate
-limits remain active. CloudFront's WAF inspection window is 64 KiB to cover accepted
-payloads; inspection above the default 16 KiB incurs additional WAF charges.
+its block except for exact `POST /v1/assessments:evaluate` and
+`POST /admin/v1/site-imports/preview` requests. The CSV handler enforces a decoded
+1 MiB file limit and 500 rows; JSON encoding adds transport bytes. Other managed
+rules and rate limits remain active. CloudFront's WAF inspection window is 64 KiB:
+it covers the evaluation body and only the first 64 KiB of larger CSV import
+requests. Inspection above the default 16 KiB incurs additional WAF charges.
+Size-rule blocks on other routes return JSON `413 {"error":"request_too_large"}`
+with `Cache-Control: no-store`. Admin HTTP rejections stay in the operation's error
+UI rather than raising a connectivity banner; network errors and HTML server
+failures still trigger outage detection.
 
 `infra/modules/app/waf-logging.tf` enables BLOCK-only logs in **us-east-1** under
 `aws-waf-logs-good-neighbor-app-dev` (or the corresponding production prefix),
@@ -287,7 +294,7 @@ fields @timestamp, httpRequest.httpMethod, httpRequest.uri,
 ```
 
 For managed-rule blocks, expand `ruleGroupList` to find the inner terminating rule.
-For size blocks outside evaluation, the top-level rule is
+For size blocks outside the two exempt POST routes, the top-level rule remains
 `BodySizeRestrictionsOutsideAssessmentEvaluation`. WAF's CloudFront request ID is
 not the API Gateway request ID; correlate with time, route, and available identifiers.
 
