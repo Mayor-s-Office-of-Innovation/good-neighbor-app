@@ -28,3 +28,15 @@ export function announceScreenHeading(host, selector) {
     if (target instanceof HTMLElement) target.focus();
   });
 }
+
+/** Focus the live capture dropdown after session subscribers have rendered. */
+export function revealCaptureResults(host, opening) {
+  requestAnimationFrame(() => {
+    if (!host.isConnected) return;
+    const trigger = host.querySelector("#toggle-analyzing");
+    if (!(trigger instanceof HTMLElement)) return;
+    trigger.focus({ preventScroll: true });
+    if (opening && trigger.getAttribute("aria-expanded") === "true")
+      trigger.scrollIntoView({ block: "start", behavior: "instant" });
+  });
+}

@@ -105,6 +105,8 @@ export class CareWorkView extends HTMLElement {
     } else if (this._route === "/care-work") {
       clearDraft();
       window.addEventListener("caresubmissionschange", this._refreshPending);
+      window.addEventListener("online", this._refreshPending);
+      window.addEventListener("offline", this._refreshPending);
       void recoverCareSubmissions();
       await this._loadList();
     } else {
@@ -118,6 +120,8 @@ export class CareWorkView extends HTMLElement {
   _listVersion = 0;
   disconnectedCallback() {
     window.removeEventListener("caresubmissionschange", this._refreshPending);
+    window.removeEventListener("online", this._refreshPending);
+    window.removeEventListener("offline", this._refreshPending);
     this._controller?.abort();
     this._removeGuard?.();
     window.removeEventListener("beforeunload", this._beforeUnload);
@@ -195,7 +199,11 @@ export class CareWorkView extends HTMLElement {
         storageFailed = true;
       }
       if (!this.isConnected || version !== this._listVersion) return;
-      this.innerHTML = careList([...items.values()]);
+      this.innerHTML = careList(
+        [...items.values()],
+        false,
+        navigator.onLine === false,
+      );
       if (failed || storageFailed)
         this.insertAdjacentHTML(
           "beforeend",

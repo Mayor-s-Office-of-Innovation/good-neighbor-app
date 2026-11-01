@@ -134,7 +134,7 @@
 }
 
 .complaint-compose__intro {
-  margin-top: 41px;
+  margin-top: 1.125rem;
 }
 
 .complaint-compose__intro h1 {
@@ -385,4 +385,15 @@
 #delete-confirm {
   background: var(--wa-color-danger-fill-loud, var(--c-hazard));
   color: var(--wa-color-danger-on-loud, #fff);
+}
+
+.complaints__sticky {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 2;
+  background: var(--bg);
+  padding-block-end: 0.75rem;
+}
+.complaints__list :focus-visible {
+  scroll-margin-block-start: var(--complaints-header-height, 18rem);
 }

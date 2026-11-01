@@ -110,12 +110,14 @@ class ComplaintView extends HTMLElement {
   async _renderList({ focusHeading = true, restoreFocus = "" } = {}) {
     if (!this.querySelector(".complaints__list")) {
       this.innerHTML = html`<div class="care-work complaints">
-        ${careHeader(t("complaints.title"), true)}
-        <p class="care-subtitle">${escapeHtml(t("complaints.subtitle"))}</p>
-        <hr class="splash-rule" />
-        <button class="btn-ink complaints__new" type="button" disabled>
-          ${escapeHtml(t("complaints.log"))}
-        </button>
+        <div class="complaints__sticky">
+          ${careHeader(t("complaints.title"), true)}
+          <p class="care-subtitle">${escapeHtml(t("complaints.subtitle"))}</p>
+          <hr class="splash-rule" />
+          <button class="btn-ink complaints__new" type="button" disabled>
+            ${escapeHtml(t("complaints.log"))}
+          </button>
+        </div>
         <p class="hint" role="status">${escapeHtml(t("common.loading"))}</p>
       </div>`;
       this._bindBack();
@@ -123,16 +125,18 @@ class ComplaintView extends HTMLElement {
     try {
       const { complaints = [] } = await listComplaints();
       this.innerHTML = html`<div class="care-work complaints">
-        ${careHeader(t("complaints.title"), true)}
-        <p class="care-subtitle">${escapeHtml(t("complaints.subtitle"))}</p>
-        <hr class="splash-rule" />
-        <button
-          class="btn-ink complaints__new"
-          id="log-complaint"
-          type="button"
-        >
-          ${escapeHtml(t("complaints.log"))}
-        </button>
+        <div class="complaints__sticky">
+          ${careHeader(t("complaints.title"), true)}
+          <p class="care-subtitle">${escapeHtml(t("complaints.subtitle"))}</p>
+          <hr class="splash-rule" />
+          <button
+            class="btn-ink complaints__new"
+            id="log-complaint"
+            type="button"
+          >
+            ${escapeHtml(t("complaints.log"))}
+          </button>
+        </div>
         ${this._listActionError
           ? `<p class="complaint-compose__error" role="alert">${escapeHtml(t(this._listActionError))}</p>`
           : ""}
@@ -179,19 +183,21 @@ class ComplaintView extends HTMLElement {
       else if (focusHeading) this.querySelector("h1")?.focus();
     } catch {
       this.innerHTML = html`<div class="care-work complaints">
-        ${careHeader(t("complaints.title"), true)}
-        <p class="care-subtitle">${escapeHtml(t("complaints.subtitle"))}</p>
-        <hr class="splash-rule" />
-        <button
-          class="btn-ink complaints__new"
-          type="button"
-          data-new-complaint
-        >
-          ${escapeHtml(t("complaints.log"))}
-        </button>
-        ${loadError(t("complaints.loadError"), {
-          retryAttribute: "data-retry-list",
-        })}
+        <div class="complaints__sticky">
+          ${careHeader(t("complaints.title"), true)}
+          <p class="care-subtitle">${escapeHtml(t("complaints.subtitle"))}</p>
+          <hr class="splash-rule" />
+          <button
+            class="btn-ink complaints__new"
+            type="button"
+            data-new-complaint
+          >
+            ${escapeHtml(t("complaints.log"))}
+          </button>
+          ${loadError(t("complaints.loadError"), {
+            retryAttribute: "data-retry-list",
+          })}
+        </div>
       </div>`;
       this._bindBack();
       this.querySelector("[data-retry-list]")?.addEventListener(

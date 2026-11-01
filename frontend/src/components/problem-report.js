@@ -48,7 +48,10 @@ import { navigate, replaceRoute } from "../router.js";
 import { markCameraOpen, clearCameraOpen } from "../state/capture-resume.js";
 import { trackEvent } from "../services/analytics.js";
 import { openOverlayDialog, awaitOverlayUnwind } from "../dialog-history.js";
-import { announceScreenHeading } from "../screen-focus.js";
+import {
+  announceScreenHeading,
+  revealCaptureResults,
+} from "../screen-focus.js";
 import {
   analyzeEvidenceItem,
   analyzeNoIssueDescriptionEdit,
@@ -351,11 +354,9 @@ class ProblemReport extends HTMLElement {
     }
     const toggle = target.closest("#toggle-analyzing");
     if (toggle) {
-      setAnalyzingOpen(!getAnalyzingOpen());
-      const replacement = this.querySelector("#toggle-analyzing");
-      if (replacement instanceof HTMLElement) {
-        replacement.focus({ preventScroll: true });
-      }
+      const opening = !getAnalyzingOpen();
+      setAnalyzingOpen(opening);
+      revealCaptureResults(this, opening);
     }
   }
 

@@ -146,7 +146,7 @@ export class TaskSheets {
       if (this._updateDialog?._task?.taskId === task.taskId)
         this._updateDialog?._dismiss?.();
       await this._options.reload?.();
-      this._options.fallbackFocus?.()?.focus();
+      this._options.fallbackFocus?.()?.focus({ preventScroll: true });
       return;
     }
     this._updateReturnFocus = { taskId: task.taskId, trigger };
@@ -270,12 +270,14 @@ export class TaskSheets {
     }
     const id = this._resolutionIds.get(task.taskId) || crypto.randomUUID();
     this._resolutionIds.set(task.taskId, id);
+    let confirmed = false;
     const completion = createTaskUpdate(
       task.taskId,
       { type: "issue_resolved" },
       id,
     )
       .then((response) => {
+        confirmed = true;
         this._uncertainResolutions.delete(task.taskId);
         const saved = {
           ...task,
@@ -299,9 +301,13 @@ export class TaskSheets {
       .finally(() => {
         this._resolutions.delete(task.taskId);
         if (button) {
-          button.disabled = false;
           button.removeAttribute("aria-busy");
-          button.textContent = original;
+          // A successful card is about to leave. Restoring its idle label and
+          // enabled styling here flashes the old action before the exit.
+          if (!confirmed) {
+            button.disabled = false;
+            button.textContent = original;
+          }
         }
       });
     this._resolutions.set(task.taskId, completion);

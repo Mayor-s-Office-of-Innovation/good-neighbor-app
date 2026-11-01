@@ -424,3 +424,138 @@ test("lazy navigation blocks the retained screen and unlocks the new screen", as
   await expect(page.locator("#old-action")).toHaveCount(0);
   await expect(page.locator("today-view")).toHaveCount(1);
 });
+
+test("complaints keep the title and action visible when a long list scrolls", async ({
+  page,
+}) => {
+  await page.evaluate(async () => {
+    const load = (/** @type {string} */ path) => import(path);
+    window.history.replaceState({}, "", "/complaints");
+    await load("/src/components/complaint-view.js");
+    document
+      .querySelector("main")
+      ?.append(document.createElement("complaint-view"));
+  });
+  await expect(page.locator("#log-complaint")).toBeVisible();
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((theme) => {
+      document.documentElement.classList.remove("wa-light", "wa-dark");
+      document.documentElement.classList.add(`wa-${theme}`);
+    }, theme);
+    const colors = await page
+      .locator(".complaints__sticky")
+      .evaluate((header) => ({
+        header: getComputedStyle(header).backgroundColor,
+        page: getComputedStyle(document.body).backgroundColor,
+      }));
+    expect(colors.header).toBe(colors.page);
+  }
+  await page.locator(".complaints__list").evaluate((list) => {
+    list.innerHTML = Array.from(
+      { length: 30 },
+      (_, index) => `<p style="height:60px">Synthetic complaint ${index}</p>`,
+    ).join("");
+  });
+  await page.evaluate(() => window.scrollTo(0, 700));
+  const title = await page.locator(".care-header h1").boundingBox();
+  const button = await page.locator("#log-complaint").boundingBox();
+  expect(title?.y).toBeGreaterThanOrEqual(0);
+  expect(button && button.y + button.height).toBeLessThan(844);
+  await expect(page.locator(".care-header__nav")).toHaveCSS(
+    "margin-bottom",
+    "18px",
+  );
+  await page.screenshot({
+    path: "/tmp/prelaunch-complaints-sticky.png",
+    animations: "disabled",
+  });
+});
+
+test("handoff has an app icon and enrollment errors stay centered without stale references", async ({
+  page,
+}) => {
+  await page.evaluate(async () => {
+    const load = (/** @type {string} */ path) => import(path);
+    const { handoffView } = await load("/src/components/app-root.templates.js");
+    const { codeEntryView } = await load(
+      "/src/components/site-setup.templates.js",
+    );
+    const { t } = await load("/src/i18n/i18n.js");
+    document.querySelector("main").innerHTML =
+      handoffView() + `<site-setup></site-setup>`;
+    const setup = /** @type {any} */ (document.querySelector("site-setup"));
+    setup.innerHTML = codeEntryView({
+      error: t("setup.enrollment.used"),
+      reference: "synthetic-reference",
+    });
+    setup._otp = setup.querySelector("#code-input");
+    setup._form = setup.querySelector("#code-form");
+    setup._error = t("setup.enrollment.used");
+    setup._enrollmentReference = "synthetic-reference";
+    setup._otp.addEventListener("input", () => setup._onInput());
+  });
+  await expect(
+    page.locator(".login__handoff").locator("..", {}).locator("img"),
+  ).toHaveAttribute("src", "/img/icon-512.png");
+  await expect(page.locator("#code-error")).toHaveCSS("text-align", "center");
+  await page
+    .locator("#code-input")
+    .evaluate((otp) =>
+      otp.dispatchEvent(new Event("input", { bubbles: true })),
+    );
+  await expect(page.locator("[data-support-reference]")).toHaveCount(0);
+  await expect(page.locator("#code-error")).toBeHidden();
+  await expect(page.locator("#code-input")).toHaveAttribute(
+    "aria-invalid",
+    "false",
+  );
+});
+
+test("care pending status stays on its row and distinguishes offline waiting", async ({
+  page,
+}) => {
+  await page.evaluate(async () => {
+    const load = (/** @type {string} */ path) => import(path);
+    await load("/src/components/care-work-view.js");
+    const { careList } = await load("/src/components/care-work.templates.js");
+    const items = [
+      {
+        workId: "synthetic",
+        kind: "power_washed",
+        createdAt: "2026-10-16T12:00:00Z",
+        status: "pending",
+      },
+    ];
+    /** @type {any} */ (window).renderCare = (offline) => {
+      document.querySelector("main").innerHTML =
+        `<div class="care-work">${careList(items, false, offline)}</div>`;
+    };
+    /** @type {any} */ (window).renderCare(false);
+  });
+  await expect(page.locator(".care-row__status wa-spinner")).toBeVisible();
+  const time = await page.locator(".care-row time").boundingBox();
+  const status = await page.locator(".care-row__status").boundingBox();
+  expect(status.y).toBeGreaterThanOrEqual(time.y + time.height);
+  expect(Math.abs(status.x + status.width - time.x - time.width)).toBeLessThan(
+    2,
+  );
+  const saving = await page.evaluate(async () => {
+    const path = "/src/i18n/i18n.js";
+    return (await import(path)).t("care.savingShort");
+  });
+  await expect(page.locator(".care-row__status")).toHaveText(saving);
+  expect(
+    (await new AxeBuilder({ page }).include(".care-work").analyze()).violations,
+  ).toEqual([]);
+  await page.screenshot({
+    path: "/tmp/prelaunch-care-row.png",
+    animations: "disabled",
+  });
+  await page.evaluate(() => /** @type {any} */ (window).renderCare(true));
+  await expect(page.locator(".care-row__status wa-spinner")).toHaveCount(0);
+  const expected = await page.evaluate(async () => {
+    const path = "/src/i18n/i18n.js";
+    return (await import(path)).t("card.recovery.offline");
+  });
+  await expect(page.locator(".care-row__status")).toHaveText(expected);
+});

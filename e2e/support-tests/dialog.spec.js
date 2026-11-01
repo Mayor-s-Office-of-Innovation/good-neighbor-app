@@ -198,3 +198,22 @@ test("direct Help loads and refreshes work, with Home as the Back fallback", asy
   await expect(direct.locator("today-view")).toBeVisible();
   await direct.close();
 });
+
+test("clears only the question draft and returns keyboard focus to it", async ({
+  page,
+}) => {
+  await page.route("**/v1/support/chat", (route) =>
+    route.fulfill({ json: { outcome: "unknown" } }),
+  );
+  const question = page.locator("support-view textarea");
+  await question.fill("Synthetic saved question");
+  await page.locator("[data-send]").click();
+  await expect(page.locator(".support__turn")).toHaveCount(1);
+  await question.fill("Synthetic unsent draft");
+  await page.locator("[data-clear-question]").focus();
+  await page.keyboard.press("Enter");
+  await expect(question).toHaveValue("");
+  await expect(question).toBeFocused();
+  await expect(page.locator("[data-clear-question]")).toBeHidden();
+  await expect(page.locator(".support__turn")).toHaveCount(1);
+});

@@ -57,6 +57,9 @@ export class SupportView extends HTMLElement {
             resize="vertical"
             required
           ></wa-textarea>
+          <button class="btn-link" type="button" data-clear-question hidden>
+            ${escapeHtml(t("support.clearContents"))}
+          </button>
           <button class="btn-ink" type="submit" data-send>
             ${escapeHtml(t("support.send"))}
           </button>
@@ -75,6 +78,19 @@ export class SupportView extends HTMLElement {
       backOrNavigate("/today"),
     );
     announceScreenHeading(this, "#support-title");
+    const question =
+      /** @type {import("@awesome.me/webawesome/dist/components/textarea/textarea.js").default} */ (
+        this.querySelector("[data-question]")
+      );
+    question.addEventListener("input", () => this._syncDraftClear());
+    this.querySelector("[data-clear-question]").addEventListener(
+      "click",
+      () => {
+        question.value = "";
+        this._syncDraftClear();
+        question.focus();
+      },
+    );
     this.querySelector("form").addEventListener("submit", (event) => {
       event.preventDefault();
       void this._submit();
@@ -103,6 +119,17 @@ export class SupportView extends HTMLElement {
     this.querySelector(".support__conversation")?.replaceChildren();
     this._syncResponses();
     this._busy(false);
+  }
+
+  _syncDraftClear() {
+    const button = /** @type {HTMLButtonElement | null} */ (
+      this.querySelector("[data-clear-question]")
+    );
+    const question =
+      /** @type {import("@awesome.me/webawesome/dist/components/textarea/textarea.js").default | null} */ (
+        this.querySelector("[data-question]")
+      );
+    if (button) button.hidden = !question?.value;
   }
 
   _syncResponses() {
@@ -161,6 +188,7 @@ export class SupportView extends HTMLElement {
     this._append(question, result);
     if (!retryQuestion && textarea.value.trim() === question)
       textarea.value = "";
+    this._syncDraftClear();
     textarea.focus();
   }
 
