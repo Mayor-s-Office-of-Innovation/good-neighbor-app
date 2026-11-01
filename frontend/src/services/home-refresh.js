@@ -223,6 +223,11 @@ export function installHomeRefresh(host, refresh) {
     clearTimeout(wheelTimer);
     if (!pending) settle();
   };
+  const recovered = () => {
+    lastFailed = false;
+    if (!pending && !start) settle();
+  };
+  host.addEventListener("home-refresh-recovered", recovered);
   host.addEventListener("mousedown", mouseBegin);
   window.addEventListener("mousemove", mouseMove);
   window.addEventListener("mouseup", mouseEnd);
@@ -236,6 +241,7 @@ export function installHomeRefresh(host, refresh) {
     disposed = true;
     clearTimeout(wheelTimer);
     paintPull(0, false);
+    host.removeEventListener("home-refresh-recovered", recovered);
     host.removeEventListener("mousedown", mouseBegin);
     window.removeEventListener("mousemove", mouseMove);
     window.removeEventListener("mouseup", mouseEnd);

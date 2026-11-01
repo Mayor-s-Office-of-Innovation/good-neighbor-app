@@ -304,28 +304,35 @@ test("finishing status removal preserves live tabs, keyboard handlers and cards"
   const result = await page.evaluate(async () => {
     const modulePath = "/src/components/home-card-reconcile.js";
     const { reconcileHomeResults } = await import(modulePath);
-    const host = document.querySelector("#host");
+    const host = /** @type {HTMLElement} */ (document.querySelector("#host"));
+    /** @param {boolean} finishing */
     const markup = (finishing) =>
       `<section class="home-region--results"><div class="home-results">${finishing ? '<p role="status">Finishing</p>' : ""}<div class="home-tabs"><button data-home-filter="todo">To do</button><button data-home-filter="history">History</button></div><article class="analysis-card" data-task-id="task">Issue</article></div></section>`;
     host.innerHTML = markup(true);
     const buttons = [...host.querySelectorAll("button")];
-    const card = host.querySelector("article");
+    const card = /** @type {HTMLElement} */ (host.querySelector("article"));
     let clicks = 0;
     let keys = 0;
     buttons[1].addEventListener("click", () => clicks++);
     buttons[1].addEventListener("keydown", () => keys++);
     const patched = reconcileHomeResults(host, markup(true), markup(false));
-    host.querySelector('[data-home-filter="history"]').click();
-    host
-      .querySelector('[data-home-filter="history"]')
-      .dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft" }));
+    /** @type {HTMLElement} */ (
+      host.querySelector('[data-home-filter="history"]')
+    ).click();
+    /** @type {HTMLElement} */ (
+      host.querySelector('[data-home-filter="history"]')
+    ).dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft" }));
     return {
       patched,
       clicks,
       keys,
       retainedTab:
-        buttons[1] === host.querySelector('[data-home-filter="history"]'),
-      retainedCard: card === host.querySelector("article"),
+        buttons[1] ===
+        /** @type {HTMLElement} */ (
+          host.querySelector('[data-home-filter="history"]')
+        ),
+      retainedCard:
+        card === /** @type {HTMLElement} */ (host.querySelector("article")),
     };
   });
   expect(result).toEqual({

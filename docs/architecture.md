@@ -448,6 +448,8 @@ pull-refresh state and shared promise. Its label is rendered below the icon from
 that state, so list rerenders cannot clear it. Check summaries, task lists, and
 pending guidance must all finish successfully before the indicator collapses;
 partial failure retains successful updates and presents one retry message.
+While that failure is displayed, the background poll retries the full batch,
+including guidance, and clears the message and pull offset only after success.
 Background list refreshes are silent. Initial guidance loading uses skeletons,
 not a separate loading label. Timers and
 gesture listeners are removed when Home unmounts. This adds up to five list requests
@@ -742,5 +744,6 @@ Finished checks wait for evidence guidance or permanent terminal failures before
 finalizing. Check-level finalization has its own durable client retry budget.
 Recoverable failed uploads remain in the expected evidence count. An exhausted
 finalization offers Retry saving; connectivity and operation guards also apply
-to that control. These rules do not change task-update, phone-completion, form,
+to that control. The warning expires after five seconds, but its retry button
+remains until the operation is retried or completed. These rules do not change task-update, phone-completion, form,
 or 311 recovery policies.

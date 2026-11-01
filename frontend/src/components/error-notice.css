@@ -173,3 +173,9 @@ app-toasts:has(> .connection-banner-space:not([hidden]))
   font-size: 1rem;
   --indicator-color: currentColor;
 }
+
+.app-recovery-actions {
+  display: flex;
+  justify-content: flex-start;
+  padding: 0.75rem;
+}

@@ -1107,8 +1107,14 @@ class TodayView extends HTMLElement {
     }
   }
 
-  _refreshFromPull() {
-    if (this._pullRefreshPromise) return this._pullRefreshPromise;
+  _refreshFromPull({ background = false } = {}) {
+    if (this._pullRefreshPromise) {
+      if (!background && this._pullRefreshState !== "refreshing") {
+        this._pullRefreshState = "refreshing";
+        if (this._homeModel) this._renderHome(this._homeModel);
+      }
+      return this._pullRefreshPromise;
+    }
     const id = ++this._pullRefreshId;
     const siteId = this._siteId;
     const current = () =>
@@ -1118,7 +1124,7 @@ class TodayView extends HTMLElement {
       this._pullRefreshState = state;
       if (this._homeModel) this._renderHome(this._homeModel);
     };
-    setState("refreshing");
+    if (!background) setState("refreshing");
     const pending = Promise.resolve()
       .then(async () => {
         // Join an initial load before starting this explicitly requested batch.
@@ -1163,6 +1169,7 @@ class TodayView extends HTMLElement {
         )
           throw new Error("Refresh incomplete");
         setState("idle");
+        this.dispatchEvent(new Event("home-refresh-recovered"));
       })
       .catch((error) => {
         setState("failed");
@@ -1183,6 +1190,11 @@ class TodayView extends HTMLElement {
       navigator.onLine === false
     )
       return;
+    if (this._pullRefreshState === "failed") {
+      // Retry the full failed batch, including guidance, without background UI.
+      await this._refreshFromPull({ background: true }).catch(() => {});
+      return;
+    }
     await Promise.all([
       this._refreshChecks(),
       this._refreshActiveTab({ maxAge, allStatuses: true }),

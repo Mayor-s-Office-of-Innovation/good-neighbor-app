@@ -163,15 +163,14 @@ export function expectedArtifactCountForCheck(check) {
 }
 
 function showSaveRecovery(checkId, expectedArtifacts, target = null) {
-  // Expired notices stay quiet through rerenders, but returning to Home gives
-  // a deliberately paused finalization its existing Retry action again.
+  // Keep the retry action available while finalization is deliberately paused.
   const noticeTarget =
     target ||
     (typeof document !== "undefined"
       ? document.querySelector("#view > *")
       : null);
   const previous = saveNotices.get(checkId);
-  if (previous?.target === noticeTarget && noticeTarget?.isConnected) return;
+  if (previous?.target === noticeTarget && previous.isConnected?.()) return;
   previous?.close();
   saveNotices.set(checkId, {
     close: () => {},
@@ -179,6 +178,7 @@ function showSaveRecovery(checkId, expectedArtifacts, target = null) {
     ...showInlineError(t("notice.saveFailed"), {
       key: `check-save:${checkId}`,
       duration: 5000,
+      retainRetryOnExpiry: true,
       target: noticeTarget,
       warning: true,
       retryLabel: t("notice.retrySaving"),

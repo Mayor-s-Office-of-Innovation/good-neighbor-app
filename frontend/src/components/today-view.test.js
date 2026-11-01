@@ -906,6 +906,7 @@ describe("return-to-app task freshness", () => {
 
   it("coordinates one pull batch through guidance completion and retains cards on partial failure", async () => {
     const { view, api } = await fixture();
+    view.dispatchEvent = vi.fn();
     view._guidanceGeneration = 1;
     view._homeModel.checks = [];
     let finishGuidance = () => {};
@@ -941,6 +942,23 @@ describe("return-to-app task freshness", () => {
       expect(view._homeModel.tasks).toEqual([
         expect.objectContaining({ taskId: "saved" }),
       ]);
+      // A background retry remains quiet and cannot clear failure until guidance succeeds.
+      tasks.mockResolvedValue({ tasks: [{ taskId: "saved", status: "open" }] });
+      view._loadHomeGuidance.mockImplementation(async () => {
+        expect(view._pullRefreshState).toBe("failed");
+        view._homeModel.pendingGuidanceFailed = true;
+      });
+      await view._refreshHomeLists(0);
+      expect(view._pullRefreshState).toBe("failed");
+      view._loadHomeGuidance.mockImplementation(async () => {
+        expect(view._pullRefreshState).toBe("failed");
+        view._homeModel.pendingGuidanceFailed = false;
+      });
+      await view._refreshHomeLists(0);
+      expect(view._pullRefreshState).toBe("idle");
+      expect(view.dispatchEvent.mock.lastCall[0].type).toBe(
+        "home-refresh-recovered",
+      );
     } finally {
       checks.mockRestore();
       tasks.mockRestore();

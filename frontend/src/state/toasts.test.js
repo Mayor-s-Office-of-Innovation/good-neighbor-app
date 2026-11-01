@@ -86,7 +86,7 @@ it("deduplicates one operation but preserves distinct persistent Retry actions",
   expect(retry2).toHaveBeenCalledOnce();
 });
 it("routes refresh warnings inline for five seconds without a toast", () => {
-  const local = { close: vi.fn() };
+  const local = { close: vi.fn(), isConnected: () => true };
   vi.mocked(showInlineError).mockReturnValueOnce(local);
   expect(showDeletionRefreshToast()).toBe(local);
   expect(showInlineError).toHaveBeenCalledWith(

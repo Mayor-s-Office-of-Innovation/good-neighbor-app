@@ -299,3 +299,40 @@ it("waits for deletion confirmation even when the remaining evidence count is ze
   expect(completeCheck).not.toHaveBeenCalled();
   expect(session.clearSubmittedSession).not.toHaveBeenCalled();
 });
+
+it("keeps a paused finalization retry available and restores it after its DOM is replaced", async () => {
+  const notices = await import("../components/error-notice.js");
+  const target = { isConnected: true };
+  let connected = true;
+  const show = vi.spyOn(notices, "showInlineError").mockReturnValue({
+    close: vi.fn(),
+    isConnected: () => connected,
+  });
+  const draft = /** @type {any} */ (makeDraft());
+  draft.finalizationRecovery = { state: "manual" };
+  getCurrentCheck.mockReturnValue(draft);
+  vi.stubGlobal("document", { querySelector: () => target });
+  try {
+    const { finalizeCaptureScorecardInBackground } = await import(
+      "./submit-check.js"
+    );
+    expect(finalizeCaptureScorecardInBackground(draft.id)).toBeNull();
+    expect(show).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        duration: 5000,
+        retainRetryOnExpiry: true,
+        retry: expect.any(Function),
+      }),
+    );
+    const count = show.mock.calls.length;
+    finalizeCaptureScorecardInBackground(draft.id);
+    expect(show).toHaveBeenCalledTimes(count);
+    connected = false;
+    finalizeCaptureScorecardInBackground(draft.id);
+    expect(show).toHaveBeenCalledTimes(count + 1);
+  } finally {
+    show.mockRestore();
+    vi.unstubAllGlobals();
+  }
+});
