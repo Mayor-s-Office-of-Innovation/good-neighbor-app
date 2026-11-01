@@ -137,13 +137,9 @@ test.describe("public complaints", () => {
     await expect(submit).toBeDisabled();
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.evaluate(() => {
-      document.documentElement.dataset.complaintScrollBehavior = "";
-      window.HTMLElement.prototype.scrollIntoView = function (
-        /** @type {ScrollIntoViewOptions | undefined} */ options,
-      ) {
-        document.documentElement.dataset.complaintScrollBehavior =
-          options?.behavior || "";
-      };
+      document
+        .querySelector("#complaint-files")
+        ?.setAttribute("data-preserved", "true");
     });
     await page.locator("#describe-complaint").click();
     await expect(page).toHaveURL(/\/complaints\/new$/);
@@ -157,9 +153,9 @@ test.describe("public complaints", () => {
       "placeholder",
       t("complaints.describe.placeholder"),
     );
-    await expect(page.locator("html")).toHaveAttribute(
-      "data-complaint-scroll-behavior",
-      "auto",
+    await expect(page.locator("#complaint-files")).toHaveAttribute(
+      "data-preserved",
+      "true",
     );
 
     await description.fill("Four");
@@ -239,6 +235,14 @@ test.describe("public complaints", () => {
     await expect(
       page.locator("complaint-view").getByRole("alert"),
     ).toContainText(t("complaints.detailError"));
-    await expect(page.locator(".complaints .topbar__back")).toBeVisible();
+    const detailBack = page.locator(".complaints [data-back]");
+    await expect(detailBack).toHaveAccessibleName(t("common.back"));
+    const backBounds = await detailBack.boundingBox();
+    const titleBounds = await page.locator("complaint-view h1").boundingBox();
+    if (!backBounds || !titleBounds)
+      throw new Error("Missing complaint header bounds");
+    expect(backBounds.y + backBounds.height).toBeLessThanOrEqual(titleBounds.y);
+    await detailBack.click();
+    await expect(page).toHaveURL(/\/complaints$/);
   });
 });

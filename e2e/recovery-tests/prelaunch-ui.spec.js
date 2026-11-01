@@ -13,7 +13,7 @@ test.beforeEach(async ({ page }) => {
     }),
   );
   await page.goto("/__prelaunch_test");
-  await page.evaluate(() => customElements.whenDefined("today-view"));
+  await page.evaluate(() => window.customElements.whenDefined("today-view"));
 });
 
 test("history focus follows the rounded outer corners after a dialog closes", async ({
@@ -37,7 +37,7 @@ test("history focus follows the rounded outer corners after a dialog closes", as
   await page.keyboard.press("Escape");
   await expect(page.locator(".history-card__row")).toBeFocused();
   const corners = await page.locator(".history-card__row").evaluate((el) => {
-    const style = getComputedStyle(el);
+    const style = window.getComputedStyle(el);
     return [style.borderTopLeftRadius, style.borderBottomRightRadius];
   });
   expect(corners).toEqual(["24px", "24px"]);
@@ -65,8 +65,8 @@ test("description has only Back and matching placeholder and input font sizes", 
   const sizes = await page
     .locator("#describe-text")
     .evaluate((el) => [
-      getComputedStyle(el).fontSize,
-      getComputedStyle(el, "::placeholder").fontSize,
+      window.getComputedStyle(el).fontSize,
+      window.getComputedStyle(el, "::placeholder").fontSize,
     ]);
   expect(sizes[0]).toBe(sizes[1]);
 });
@@ -88,12 +88,12 @@ test("311 revalidation retains another card and toast dismissal does not reload 
       siteId: "synthetic-site",
       token: "mock-token",
     });
-    const Base = /** @type {any} */ (customElements.get("today-view"));
+    const Base = /** @type {any} */ (window.customElements.get("today-view"));
     class FilingTest extends Base {
       connectedCallback() {}
       disconnectedCallback() {}
     }
-    customElements.define(
+    window.customElements.define(
       "filing-test",
       /** @type {CustomElementConstructor} */ (
         /** @type {unknown} */ (FilingTest)
@@ -210,9 +210,9 @@ for (const failedPreview of [false, true]) {
     await page.evaluate(async (failedPreview) => {
       const path = "/src/components/photo-lightbox.js";
       const { openPhotoLightbox } = await import(path);
-      customElements.define(
+      window.customElements.define(
         "capture-photo",
-        class extends HTMLElement {
+        class extends window.HTMLElement {
           async original({ previewOnly = false } = {}) {
             return {
               src:
@@ -259,7 +259,7 @@ test("zoomed complaint entry brings the focused editor into the visual viewport"
     await import(viewPath);
     const { navigate } = await import(routePath);
     navigate("/complaints/new");
-    const Base = /** @type {any} */ (customElements.get("app-root"));
+    const Base = /** @type {any} */ (window.customElements.get("app-root"));
     class ZoomRoot extends Base {
       connectedCallback() {
         this._startKeyboardViewportSync();
@@ -268,7 +268,7 @@ test("zoomed complaint entry brings the focused editor into the visual viewport"
         this._stopKeyboardViewportSync();
       }
     }
-    customElements.define(
+    window.customElements.define(
       "zoom-root",
       /** @type {CustomElementConstructor} */ (
         /** @type {unknown} */ (ZoomRoot)
@@ -316,4 +316,37 @@ test("zoomed complaint entry brings the focused editor into the visual viewport"
     await session.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1 });
     await session.detach();
   }
+});
+
+test("background check completion preserves the current single-issue controls", async ({
+  page,
+}) => {
+  await page.evaluate(async () => {
+    const sessionPath = "/src/state/check-session.js";
+    const componentPath = "/src/components/problem-report.js";
+    const session = await import(sessionPath);
+    const previous = session.startCheck("synthetic-site");
+    session.addItem({ kind: "text", text: "Synthetic finished issue" });
+    session.markCaptureComplete({ checkId: previous.id });
+    session.startProblemReport("synthetic-site");
+    session.addItem({ kind: "text", text: "Synthetic current issue" });
+    await import(componentPath);
+    const report = document.createElement("problem-report");
+    report.dataset.previousCheck = previous.id;
+    document.querySelector("main")?.append(report);
+  });
+  const controls = page.locator("#problem-footer button").first();
+  await expect(controls).toBeVisible();
+  await controls.focus();
+  await controls.evaluate((button) =>
+    button.setAttribute("data-preserved", "true"),
+  );
+  await page.evaluate(async () => {
+    const sessionPath = "/src/state/check-session.js";
+    const session = await import(sessionPath);
+    const report = document.querySelector("problem-report");
+    session.markScorecardDone(report?.getAttribute("data-previous-check"));
+  });
+  await expect(controls).toHaveAttribute("data-preserved", "true");
+  await expect(controls).toBeFocused();
 });

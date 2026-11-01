@@ -2,7 +2,8 @@ import { t } from "../../frontend/src/i18n/i18n.js";
 import { escapeHtml } from "../../frontend/src/lib/html.js";
 
 /** Confirm a site binding removal without using the browser confirmation UI. */
-export function confirmDeviceRevocation(label, siteName) {
+export function confirmDeviceRevocation(label, siteName, { signal } = {}) {
+  if (signal?.aborted) return Promise.resolve(false);
   const trigger = document.activeElement;
   const dialog = document.createElement("dialog");
   dialog.className = "places-modal device-revocation-dialog";
@@ -20,17 +21,28 @@ export function confirmDeviceRevocation(label, siteName) {
   </form>`;
   document.body.append(dialog);
   return new Promise((resolve) => {
-    dialog.addEventListener(
-      "close",
-      () => {
-        const confirmed = dialog.returnValue === "confirm";
-        dialog.remove();
-        if (trigger instanceof HTMLElement && trigger.isConnected)
-          trigger.focus({ preventScroll: true });
-        resolve(confirmed);
-      },
-      { once: true },
-    );
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      const confirmed = !signal?.aborted && dialog.returnValue === "confirm";
+      signal?.removeEventListener("abort", cancel);
+      dialog.removeEventListener("close", finish);
+      dialog.remove();
+      if (
+        !signal?.aborted &&
+        trigger instanceof HTMLElement &&
+        trigger.isConnected
+      )
+        trigger.focus({ preventScroll: true });
+      resolve(confirmed);
+    };
+    const cancel = () => {
+      dialog.close("cancel");
+      finish();
+    };
+    dialog.addEventListener("close", finish, { once: true });
+    signal?.addEventListener("abort", cancel, { once: true });
     dialog.showModal();
   });
 }
