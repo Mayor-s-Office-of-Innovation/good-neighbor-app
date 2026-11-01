@@ -115,7 +115,9 @@ describe("storeEvaluatedAssessment", () => {
     });
     const command = send.mock.calls[2][0];
     expect(command).toBeInstanceOf(TransactWriteCommand);
-    const writes = /** @type {any[]} */ (command.input.TransactItems);
+    const writes = /** @type {any[]} */ (command.input.TransactItems).filter(
+      (write) => !write.ConditionCheck,
+    );
     expect(writes).toHaveLength(5);
 
     const assessment = writes[0].Put.Item;

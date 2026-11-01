@@ -114,12 +114,13 @@ it("does not resurrect a question after a confirmed analyzer deletion", async ()
     tasks: [],
   });
   send.mockImplementation(async (command) =>
-    command instanceof GetCommand
+    command instanceof GetCommand &&
+    command.input.Key?.sk.startsWith("ISSUE_DELETION#")
       ? { Item: { deletedAt: "2026-10-29T12:00:00Z" } }
       : { Items: [{ assessmentId: "old" }] },
   );
   expect(JSON.parse((await invoke(undefined)).body).guidance).toEqual([]);
-  expect(send.mock.calls[1][0].input).toMatchObject({
+  expect(send.mock.calls[2][0].input).toMatchObject({
     Key: { pk: "SITE#site", sk: "ISSUE_DELETION#old-check:artifact:question" },
     ConsistentRead: true,
   });

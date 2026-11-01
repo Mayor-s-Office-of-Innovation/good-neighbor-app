@@ -83,7 +83,11 @@ export function showInlineError(message, options = {}) {
   }
   target.prepend(notice);
   decorateError(notice);
-  if (options.duration) setTimeout(() => notice.remove(), options.duration);
+  if (options.duration)
+    setTimeout(() => {
+      unsubscribe?.();
+      notice.remove();
+    }, options.duration);
   return {
     close: () => {
       unsubscribe?.();

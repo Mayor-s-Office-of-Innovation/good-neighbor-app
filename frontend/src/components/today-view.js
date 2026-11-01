@@ -299,6 +299,7 @@ function sessionRefreshKey(session) {
 
 class TodayView extends HTMLElement {
   _wiredCards = new WeakSet();
+  _wiredTabs = new WeakSet();
   constructor() {
     super();
     this._cardDeletedHandler = (event) => {
@@ -1268,6 +1269,8 @@ class TodayView extends HTMLElement {
     );
     this._homeMarkup = markup;
     if (reconciled) {
+      this._wireHomeTabs();
+      this._restoreFocusAfterRender();
       restoreFinalizationNotices(model.pendingSession, this);
       this._wireCards();
       this._applyBusyCards();
@@ -1521,33 +1524,7 @@ class TodayView extends HTMLElement {
     this.querySelector("#retry-remaining")?.addEventListener("click", () =>
       this._retryRemaining(),
     );
-    this.querySelectorAll("[data-home-filter]").forEach((button) => {
-      button.addEventListener("click", () => {
-        this._activateHomeTab(
-          button.getAttribute("data-home-filter") || "todo",
-        );
-      });
-      button.addEventListener("keydown", (event) => {
-        const key = /** @type {KeyboardEvent} */ (event).key;
-        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(key)) {
-          return;
-        }
-        event.preventDefault();
-        const currentIndex = HOME_TABS.findIndex(
-          ({ id }) => id === this._homeFilter,
-        );
-        const nextIndex =
-          key === "Home"
-            ? 0
-            : key === "End"
-              ? HOME_TABS.length - 1
-              : (currentIndex +
-                  (key === "ArrowRight" ? 1 : -1) +
-                  HOME_TABS.length) %
-                HOME_TABS.length;
-        this._activateHomeTab(HOME_TABS[nextIndex].id);
-      });
-    });
+    this._wireHomeTabs();
     this._analysisDeleteDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector(":scope > .home > #analysis-delete-dialog")
     );
@@ -2415,6 +2392,38 @@ class TodayView extends HTMLElement {
       }));
   }
 
+  _wireHomeTabs() {
+    this.querySelectorAll("[data-home-filter]").forEach((button) => {
+      if (this._wiredTabs.has(button)) return;
+      this._wiredTabs.add(button);
+      button.addEventListener("click", () => {
+        this._activateHomeTab(
+          button.getAttribute("data-home-filter") || "todo",
+        );
+      });
+      button.addEventListener("keydown", (event) => {
+        const key = /** @type {KeyboardEvent} */ (event).key;
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(key)) {
+          return;
+        }
+        event.preventDefault();
+        const currentIndex = HOME_TABS.findIndex(
+          ({ id }) => id === this._homeFilter,
+        );
+        const nextIndex =
+          key === "Home"
+            ? 0
+            : key === "End"
+              ? HOME_TABS.length - 1
+              : (currentIndex +
+                  (key === "ArrowRight" ? 1 : -1) +
+                  HOME_TABS.length) %
+                HOME_TABS.length;
+        this._activateHomeTab(HOME_TABS[nextIndex].id);
+      });
+    });
+  }
+
   _activateHomeTab(tabId) {
     this._homeFilter = normalizedHomeTab(tabId);
     const url = new URL(window.location.href);
@@ -2661,6 +2670,7 @@ class TodayView extends HTMLElement {
         showInlineError(t("card.failed.deleteError"), {
           target: this,
           key: "delete-failed-item",
+          duration: 5000,
         });
       });
     } else if (action === "retry") {

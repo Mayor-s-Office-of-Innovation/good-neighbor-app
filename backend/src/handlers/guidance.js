@@ -310,7 +310,11 @@ export const evaluateAssessment = async (event) => {
         siteId,
         assessmentId: input.assessmentId,
       });
-      if (existing.assessment) return jsonResponse(200, existing);
+      if (existing.assessment)
+        return jsonResponse(
+          200,
+          await withConditionDismissals(dynamoTable, siteId, existing),
+        );
       return jsonResponse(409, { code: err.name, error: err.message });
     }
     if (err instanceof Error && err.name === "TransactionCanceledException") {
@@ -319,7 +323,11 @@ export const evaluateAssessment = async (event) => {
         siteId,
         assessmentId: input.assessmentId,
       });
-      if (existing.assessment) return jsonResponse(200, existing);
+      if (existing.assessment)
+        return jsonResponse(
+          200,
+          await withConditionDismissals(dynamoTable, siteId, existing),
+        );
       return jsonResponse(409, {
         error: "Assessment evaluation was not stored",
       });

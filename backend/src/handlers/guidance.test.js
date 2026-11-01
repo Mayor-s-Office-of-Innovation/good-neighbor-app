@@ -201,7 +201,9 @@ describe("guidance handlers", () => {
     expect(send.mock.calls[1][0]).toBeInstanceOf(UpdateCommand);
     const command = send.mock.calls[2][0];
     expect(command).toBeInstanceOf(TransactWriteCommand);
-    const writes = /** @type {any[]} */ (command.input.TransactItems);
+    const writes = /** @type {any[]} */ (command.input.TransactItems).filter(
+      (item) => item.Put,
+    );
     expect(writes[0].Put.Item).toMatchObject({
       pk: "SITE#site-1",
       sk: "ASSESSMENT#asm-1",

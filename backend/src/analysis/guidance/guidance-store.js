@@ -1,3 +1,9 @@
+import {
+  evidenceDeletionKey,
+  evidencePublicationGuards,
+  evidenceIds,
+  retractableTask,
+} from "./evidence-deletion.js";
 import { deliberate311Decision } from "../../domain/deliberate-311.js";
 import { sf311Job } from "./sf311-job.js";
 import {
@@ -788,6 +794,19 @@ export async function storeEvaluatedAssessment(input, options) {
   });
 
   const transactItems = [
+    ...(input.checkId
+      ? evidencePublicationGuards(
+          options.tableName,
+          input.siteId,
+          input.checkId,
+          [
+            ...(artifactId ? [artifactId] : []),
+            ...input.conditions.flatMap(
+              (condition) => condition.sourceArtifactIds || [],
+            ),
+          ],
+        )
+      : []),
     put(assessmentItem),
     ...conditionItems.map(put),
     ...newTaskItems.map(put),
@@ -1324,6 +1343,15 @@ export async function answerCondition(opts) {
     if (taskItem)
       tx.push(
         ...sf311Job(opts.tableName, opts.siteId, taskItem, "created", opts.env),
+      );
+    if (conditionItem.checkId || assessmentItem.checkId)
+      tx.push(
+        ...evidencePublicationGuards(
+          opts.tableName,
+          opts.siteId,
+          String(conditionItem.checkId || assessmentItem.checkId),
+          evidenceIds(conditionItem),
+        ),
       );
     const deletionKey = conditionDeletionKey(
       opts.siteId,
@@ -2051,6 +2079,16 @@ export async function withConditionDismissals(tableName, siteId, guidance) {
       return key ? [key] : [];
     },
   );
+  const evidenceKeys = [...guidance.conditions, ...guidance.tasks].flatMap(
+    (row) => {
+      const checkId = row.checkId || guidance.assessment?.checkId;
+      const ids = evidenceIds(row);
+      return checkId && ids.length === 1
+        ? [evidenceDeletionKey(siteId, String(checkId), ids[0])]
+        : [];
+    },
+  );
+  keys.push(...evidenceKeys);
   const receipts = keys.length
     ? await batchGetAll({
         tableName,
@@ -2068,14 +2106,31 @@ export async function withConditionDismissals(tableName, siteId, guidance) {
       const receipt = dismissed.get(
         conditionDeletionKey(siteId, guidance.assessment || {}, task)?.sk,
       );
-      if (!receipt) return task;
+      const ids = evidenceIds(task);
+      const evidenceRemoved =
+        ids.length === 1 &&
+        task.checkId &&
+        dismissed.has(evidenceDeletionKey(siteId, task.checkId, ids[0]).sk) &&
+        retractableTask(task, ids[0]);
+      if (!receipt && !evidenceRemoved) return task;
       return {
         ...task,
         status: "superseded",
-        updatedAt: String(receipt.dismissedAt || receipt.deletedAt),
+        updatedAt: String(
+          receipt?.dismissedAt || receipt?.deletedAt || task.updatedAt,
+        ),
       };
     }),
     conditions: guidance.conditions.map((condition) =>
+      (evidenceIds(condition).length === 1 &&
+        (condition.checkId || guidance.assessment?.checkId) &&
+        dismissed.has(
+          evidenceDeletionKey(
+            siteId,
+            condition.checkId || guidance.assessment?.checkId,
+            evidenceIds(condition)[0],
+          ).sk,
+        )) ||
       dismissed.has(
         conditionDeletionKey(siteId, guidance.assessment || {}, condition)?.sk,
       )

@@ -84,7 +84,6 @@ import {
   getCurrentCheck,
   getFlowType,
   addCapturedPhoto,
-  removeItem,
   isCurrentSession,
   getAnalyzingOpen,
   setAnalyzingOpen,
@@ -300,8 +299,13 @@ class PerimeterCheck extends HTMLElement {
     }
     const del = target.closest("[data-del]");
     if (del) {
-      removeItem(del.getAttribute("data-del"));
-      this._render();
+      void removeEvidenceItem(del.getAttribute("data-del")).catch(() => {
+        showInlineError(t("card.failed.deleteError"), {
+          target: this,
+          key: "delete-evidence",
+          duration: 5000,
+        });
+      });
     }
   }
 
@@ -354,6 +358,7 @@ class PerimeterCheck extends HTMLElement {
         showInlineError(t("card.failed.deleteError"), {
           target: this,
           key: "delete-failed-item",
+          duration: 5000,
         });
       });
       return;

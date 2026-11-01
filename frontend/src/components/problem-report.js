@@ -64,7 +64,6 @@ import {
 import { isAccepted311Filing } from "../domain/task-actions.js";
 import { hasEvidence, hasLiveEvidence } from "../domain/check-completion.js";
 import {
-  ensureProblemReport,
   startProblemReport,
   loadDraft,
   clearCheck,
@@ -152,12 +151,16 @@ class ProblemReport extends HTMLElement {
       this._site?.siteId || this._site?.providerSiteId || this._site?.id || "";
 
     let check = getCurrentCheck();
-    if (!check) {
+    if (
+      !check ||
+      check.status !== "in-progress" ||
+      check.siteId !== this._siteId
+    ) {
       check = (await loadDraft("single-problem")) || null;
       if (!this._isCurrentInit(initGeneration)) return;
     }
-    if (!check) {
-      ensureProblemReport(this._siteId);
+    if (!check || check.siteId !== this._siteId) {
+      startProblemReport(this._siteId);
     } else if (getFlowType() !== "single-problem") {
       startProblemReport(this._siteId);
     }
@@ -369,8 +372,13 @@ class ProblemReport extends HTMLElement {
     }
     const del = target.closest("[data-del]");
     if (del) {
-      removeItem(del.getAttribute("data-del"));
-      this._render();
+      void removeEvidenceItem(del.getAttribute("data-del")).catch(() => {
+        showInlineError(t("card.failed.deleteError"), {
+          target: this,
+          key: "delete-evidence",
+          duration: 5000,
+        });
+      });
     }
   }
 
@@ -538,6 +546,7 @@ class ProblemReport extends HTMLElement {
             showInlineError(t("card.failed.deleteError"), {
               target: this,
               key: "delete-failed-item",
+              duration: 5000,
             });
           });
         } else if (action === "remove-item") {

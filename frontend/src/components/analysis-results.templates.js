@@ -490,7 +490,16 @@ function renderAnalysisCardEntries(
     (item.analysis?.recovery?.state === "working" &&
       item.analysis?.recovery?.attempts > 0)
   )
-    return [{ markup: recoveryCard(item, "retrying"), createdAt: itemTime }];
+    return [
+      {
+        markup: ["start", "upload", "register"].includes(
+          item.analysis?.recovery?.stage,
+        )
+          ? pendingCard(item)
+          : recoveryCard(item, "retrying"),
+        createdAt: itemTime,
+      },
+    ];
   if (status === "failed") {
     return [{ markup: failedCard(item), createdAt: itemTime }];
   }

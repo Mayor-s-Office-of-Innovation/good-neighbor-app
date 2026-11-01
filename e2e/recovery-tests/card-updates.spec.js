@@ -290,3 +290,110 @@ test("question focus restoration distinguishes photos with the same condition", 
   });
   expect(focused).toBe("B");
 });
+
+test("finishing status removal preserves live tabs, keyboard handlers and cards", async ({
+  page,
+}) => {
+  await page.route("**/__tabs_test", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: '<main id="host"></main>',
+    }),
+  );
+  await page.goto("/__tabs_test");
+  const result = await page.evaluate(async () => {
+    const modulePath = "/src/components/home-card-reconcile.js";
+    const { reconcileHomeResults } = await import(modulePath);
+    const host = document.querySelector("#host");
+    const markup = (finishing) =>
+      `<section class="home-region--results"><div class="home-results">${finishing ? '<p role="status">Finishing</p>' : ""}<div class="home-tabs"><button data-home-filter="todo">To do</button><button data-home-filter="history">History</button></div><article class="analysis-card" data-task-id="task">Issue</article></div></section>`;
+    host.innerHTML = markup(true);
+    const buttons = [...host.querySelectorAll("button")];
+    const card = host.querySelector("article");
+    let clicks = 0;
+    let keys = 0;
+    buttons[1].addEventListener("click", () => clicks++);
+    buttons[1].addEventListener("keydown", () => keys++);
+    const patched = reconcileHomeResults(host, markup(true), markup(false));
+    host.querySelector('[data-home-filter="history"]').click();
+    host
+      .querySelector('[data-home-filter="history"]')
+      .dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft" }));
+    return {
+      patched,
+      clicks,
+      keys,
+      retainedTab:
+        buttons[1] === host.querySelector('[data-home-filter="history"]'),
+      retainedCard: card === host.querySelector("article"),
+    };
+  });
+  expect(result).toEqual({
+    patched: true,
+    clicks: 1,
+    keys: 1,
+    retainedTab: true,
+    retainedCard: true,
+  });
+  await page.locator('[data-home-filter="history"]').focus();
+  await expect(page.locator('[data-home-filter="history"]')).toBeFocused();
+});
+
+test("reopening single issue after Done starts empty and preserves pending evidence", async ({
+  page,
+}) => {
+  await page.route("**/__report_test", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: "<html><body></body></html>",
+    }),
+  );
+  await page.goto("/__report_test");
+  const result = await page.evaluate(async () => {
+    const dbPath = "/src/db.js";
+    const statePath = "/src/state/check-session.js";
+    const componentPath = "/src/components/problem-report.js";
+    const db = await import(dbPath);
+    await db.setSite("Synthetic test site", { siteId: "site-test" });
+    const state = await import(statePath);
+    state.startProblemReport("site-test");
+    const old = state.getCurrentCheck();
+    state.addItem({ kind: "text", text: "Synthetic pending evidence" });
+    state.markCaptureComplete({
+      checkId: old.id,
+      submissionKind: "problem_report",
+      expectedArtifacts: 1,
+    });
+    await import(componentPath);
+    const element = document.createElement("problem-report");
+    document.body.append(element);
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("Report did not initialize")),
+        5000,
+      );
+      const poll = () => {
+        if (element.querySelector("#file-input")) {
+          clearTimeout(timer);
+          resolve(undefined);
+        } else setTimeout(poll, 10);
+      };
+      poll();
+    });
+    const current = state.getCurrentCheck();
+    const result = {
+      fresh: current.id !== old.id,
+      items: current.items.length,
+      oldItems: state.getCheck(old.id).items.length,
+      oldStatus: state.getCheck(old.id).status,
+    };
+    element.remove();
+    return result;
+  });
+  expect(result).toEqual({
+    fresh: true,
+    items: 0,
+    oldItems: 1,
+    oldStatus: "capture-complete",
+  });
+});

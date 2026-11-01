@@ -1,3 +1,4 @@
+import { evidenceDeletionKey } from "../analysis/guidance/evidence-deletion.js";
 import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
@@ -71,6 +72,18 @@ export const listPendingGuidance = async (event) => {
       );
       const artifactId = source?.artifactIds?.[0];
       if (artifactId) {
+        const removed = await ddb.send(
+          new GetCommand({
+            TableName: dynamoTable,
+            Key: evidenceDeletionKey(
+              siteId,
+              String(current.assessment.checkId),
+              artifactId,
+            ),
+            ConsistentRead: true,
+          }),
+        );
+        if (removed.Item) continue;
         const deletion = await ddb.send(
           new GetCommand({
             TableName: dynamoTable,

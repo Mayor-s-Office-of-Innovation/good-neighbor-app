@@ -163,12 +163,22 @@ export function expectedArtifactCountForCheck(check) {
 }
 
 function showSaveRecovery(checkId, expectedArtifacts, target = null) {
-  saveNotices.get(checkId)?.close();
-  saveNotices.set(
-    checkId,
-    showInlineError(t("notice.saveFailed"), {
+  // Expired notices stay quiet through rerenders, but returning to Home gives
+  // a deliberately paused finalization its existing Retry action again.
+  const noticeTarget =
+    target ||
+    (typeof document !== "undefined"
+      ? document.querySelector("#view > *")
+      : null);
+  const previous = saveNotices.get(checkId);
+  if (previous?.target === noticeTarget && noticeTarget?.isConnected) return;
+  previous?.close();
+  saveNotices.set(checkId, {
+    target: noticeTarget,
+    ...showInlineError(t("notice.saveFailed"), {
       key: `check-save:${checkId}`,
-      target,
+      duration: 5000,
+      target: noticeTarget,
       warning: true,
       retryLabel: t("notice.retrySaving"),
       retryAvailable: () => connectionAvailable(),
@@ -178,7 +188,7 @@ function showSaveRecovery(checkId, expectedArtifacts, target = null) {
           manual: true,
         }),
     }),
-  );
+  });
 }
 
 /** Reattach durable failures after Home replaces its contents. */
@@ -250,6 +260,7 @@ export function finalizeCaptureScorecardInBackground(
       checkId,
       showInlineError(t("common.retrying"), {
         key: `check-save:${checkId}`,
+        duration: 5000,
         warning: true,
       }),
     );
@@ -289,6 +300,7 @@ export function finalizeCaptureScorecardInBackground(
             : failedRecovery(previous, "complete", err);
       await updateCheckRecovery(checkId, next);
       saveNotices.get(checkId)?.close();
+      saveNotices.delete(checkId);
       if (next.state === "manual") showSaveRecovery(checkId, expectedArtifacts);
       throw err;
     })

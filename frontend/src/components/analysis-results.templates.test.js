@@ -1555,7 +1555,7 @@ it("offers one delete action despite contradictory upload flags and explains off
   }
 });
 
-it("animates the upload retry status using the shared decorative ellipsis", () => {
+it("reuses the existing uploading card for automatic upload retries", () => {
   const [markup] = analysisCards(
     item({
       kind: "photo",
@@ -1567,9 +1567,7 @@ it("animates the upload retry status using the shared decorative ellipsis", () =
     }),
     "check",
   );
-  expect(markup).toContain(
-    escapeHtml(t("card.recovery.retryUpload").replace(/[.…]+$/u, "")),
-  );
+  expect(markup).toContain(escapeHtml(t("card.recovery.uploading")));
   expect(markup).toContain('class="ellipsis-dots" aria-hidden="true"');
 });
 
