@@ -525,6 +525,7 @@ export function summaryBlock({ outsideRadius, label }) {
  *   siteAddress: string,
  *   finalizationPending?: boolean,
  *   pendingSessionId: string,
+ *   pendingFlowType?: string,
  *   hasPendingSession: boolean,
  *   recentCheckTime: string,
  *   recentItems: Array<object>,
@@ -533,8 +534,8 @@ export function summaryBlock({ outsideRadius, label }) {
  *   newTaskCount: number,
  *   counts?: {newCount:number,duplicateCount:number},
  *   tabCounts?: Record<string, number>,
- *   activeClearCheck: { submittedAt?: string, startedAt?: string } | null,
- *   pendingClearCheck?: { submittedAt?: string, startedAt?: string } | null,
+ *   activeClearCheck: { submittedAt?: string, startedAt?: string, flowType?: string } | null,
+ *   pendingClearCheck?: { submittedAt?: string, startedAt?: string, flowType?: string } | null,
  *   showActiveClearTray?: boolean,
  *   historyGrouping?: string,
  *   remainingStatus?: "pending" | "loaded" | "error",
@@ -550,6 +551,7 @@ export function homeResults({
   siteName,
   siteAddress,
   pendingSessionId,
+  pendingFlowType = "perimeter",
   hasPendingSession,
   recentCheckTime,
   recentItems,
@@ -582,6 +584,7 @@ export function homeResults({
     homeFilter !== "todo" && remainingStatus !== "loaded";
   const trayOptions = {
     id: "home-analysis-results",
+    flowType: pendingFlowType,
     title: "",
     ariaLabel: t("today.newResults.aria"),
     tone: "new",
@@ -711,14 +714,15 @@ export function newTaskTray({
 }
 
 /**
- * @param {{ submittedAt?: string, startedAt?: string }} check
+ * @param {{ submittedAt?: string, startedAt?: string, flowType?: string }} check
  * @param {boolean} [recent]
  */
 export function clearCheckTray(check, recent = false) {
   const checkTime = check.submittedAt || check.startedAt || "";
-  const title = recent
-    ? recentCheckTitle(checkTime)
-    : historicalCheckTitle(checkTime);
+  const title =
+    recent || check.flowType === "single-problem"
+      ? recentCheckTitle(checkTime, check.flowType)
+      : historicalCheckTitle(checkTime);
   return html`
     <section
       class="analysis-tray ${recent
@@ -728,7 +732,7 @@ export function clearCheckTray(check, recent = false) {
     >
       <div class="analysis-tray__cards">
         <h2 class="analysis-tray__check-title">${escapeHtml(title)}</h2>
-        ${clearCheckCard()}
+        ${clearCheckCard(check.flowType)}
       </div>
     </section>
   `;

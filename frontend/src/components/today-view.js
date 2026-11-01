@@ -2053,6 +2053,7 @@ class TodayView extends HTMLElement {
           pendingSession.finalizationRecovery?.state,
         ),
       pendingSessionId: pendingSession?.id || "",
+      pendingFlowType: pendingSession?.flowType,
       hasPendingSession: Boolean(pendingSession),
       recentCheckTime,
       recentItems,

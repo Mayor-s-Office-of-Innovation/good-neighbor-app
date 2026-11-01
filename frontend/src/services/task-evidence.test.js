@@ -342,3 +342,35 @@ it("shares transient image cooldowns until expiry or explicit reconnect", async 
     vi.useRealTimers();
   }
 });
+
+it("keeps the task-list evidence selection when check artifacts arrive in a different order", async () => {
+  getMediaUrl.mockResolvedValue({
+    downloadUrl: "https://media/selected-photo",
+  });
+  const [task] = await hydrateTaskEvidenceFromCheck(
+    [
+      {
+        taskId: "selected",
+        checkId: "selected-check",
+        sourceArtifactIds: ["text", "photo"],
+        evidence: { kind: "photo", artifactId: "photo" },
+      },
+    ],
+    {
+      artifacts: [
+        {
+          artifactId: "text",
+          contentType: "text/plain",
+          text: "Synthetic description",
+        },
+        {
+          artifactId: "photo",
+          contentType: "image/jpeg",
+          s3Key: "synthetic/photo",
+        },
+      ],
+    },
+  );
+  expect(task.evidence).toMatchObject({ kind: "photo", artifactId: "photo" });
+  expect(task.mediaUrl).toBe("https://media/selected-photo");
+});

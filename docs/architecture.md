@@ -421,6 +421,18 @@ and In-progress before the card moves to History. Notes and photos save in the
 background. Worklist refreshes preserve hydrated evidence and leave open sheets
 and unchanged card markup mounted, avoiding refresh flicker.
 
+Task-list responses include evidence type and artifact identity from a batched,
+site-scoped artifact read. History uses a document icon for text, a photo preview
+for images, and a neutral placeholder for unknown evidence. Media hydration keeps
+that selected artifact identity so a later fetch cannot change the evidence type.
+
+Single-issue reports share the analysis pipeline with perimeter checks, but keep
+`flowType` through saved check adaptation and Home rendering. A clear single-issue
+result uses the no-concerns message without the perimeter check's add-issue offer.
+Site-manager check headlines, calendar bands, weekly bars, and check detail lists
+count only perimeter checks. Issue reporting still includes single-issue findings;
+the CSV keeps perimeter completions and single-issue reports in separate columns.
+
 While Home is visible and online, it refreshes check summaries and the four task
 status lists every ten seconds. Concurrent reads share an in-flight batch;
 returning to the app refreshes immediately, and reconnect reloads the saved view.

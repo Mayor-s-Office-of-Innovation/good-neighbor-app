@@ -570,3 +570,58 @@ it("hides a durably dismissed task even while task cleanup is awaiting a retry",
   const result = await invoke(readEvent({ siteClaim: "site-1" }));
   expect(JSON.parse(result.body).tasks).toEqual([]);
 });
+
+it("includes evidence type for text and photo tasks without inventing a type for missing artifacts", async () => {
+  process.env.DYNAMO_TABLE = "gnp-test-app";
+  const tasks = ["text", "photo", "missing"].map((id) => ({
+    taskId: id,
+    checkId: "check",
+    sourceArtifactIds: [id],
+    status: "open",
+  }));
+  send.mockReset();
+  send.mockImplementation(async (command) => {
+    if (command instanceof QueryCommand) return { Items: tasks };
+    if (command instanceof BatchGetCommand) {
+      const keys = command.input.RequestItems?.["gnp-test-app"].Keys || [];
+      const rows = keys[0].sk.startsWith("TASK#")
+        ? tasks
+        : keys[0].sk.startsWith("CHECK#")
+          ? [
+              {
+                sk: "CHECK#check#ART#text",
+                artifactId: "text",
+                contentType: "text/plain",
+                text: "Synthetic description",
+              },
+              {
+                sk: "CHECK#check#ART#photo",
+                artifactId: "photo",
+                contentType: "image/jpeg",
+              },
+            ]
+          : [];
+      return { Responses: { "gnp-test-app": rows } };
+    }
+    return {};
+  });
+  const response = JSON.parse(
+    (await invoke(readEvent({ siteClaim: "site-1" }))).body,
+  );
+  expect(
+    response.tasks.find((/** @type {any} */ task) => task.taskId === "text")
+      .evidence,
+  ).toMatchObject({
+    kind: "text",
+    artifactId: "text",
+    text: "Synthetic description",
+  });
+  expect(
+    response.tasks.find((/** @type {any} */ task) => task.taskId === "photo")
+      .evidence.kind,
+  ).toBe("photo");
+  expect(
+    response.tasks.find((/** @type {any} */ task) => task.taskId === "missing")
+      .evidence,
+  ).toBeUndefined();
+});

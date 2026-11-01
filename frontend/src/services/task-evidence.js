@@ -282,9 +282,15 @@ export function markMediaUnavailable(checkId, artifactId) {
 function firstTaskArtifact(task, artifacts) {
   const sourceIds = new Set(taskArtifactIds(task));
   return (
+    artifacts.find(
+      (artifact) =>
+        artifact.artifactId === task.evidence?.artifactId &&
+        sourceIds.has(String(artifact.artifactId)),
+    ) ||
     artifacts.find((artifact) =>
       sourceIds.has(String(artifact.artifactId || "")),
-    ) || null
+    ) ||
+    null
   );
 }
 
