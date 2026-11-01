@@ -712,6 +712,47 @@ export async function storeEvaluatedAssessment(input, options) {
       "A task is currently completing",
     );
   }
+  const evidenceGuards = input.checkId
+    ? evidencePublicationGuards(
+        options.tableName,
+        input.siteId,
+        input.checkId,
+        [
+          ...(artifactId ? [artifactId] : []),
+          ...input.conditions.flatMap(
+            (condition) => condition.sourceArtifactIds || [],
+          ),
+        ],
+      )
+    : [];
+  const jobCount = pendingTaskInputs.reduce(
+    (count, taskInput) =>
+      count +
+      sf311Job(
+        options.tableName,
+        input.siteId,
+        { appActions: taskInput.rule.outcome.appActions },
+        "created",
+        options.env,
+      ).length,
+    0,
+  );
+  const publicationSize =
+    1 +
+    Number(Boolean(input.checkId)) +
+    Number(Boolean(previous)) +
+    evidenceGuards.length +
+    conditionItems.length +
+    pendingTaskInputs.length +
+    jobCount +
+    retiredTasks.filter((task) => task.status === "open").length +
+    retainedTaskTranslationUpdates.length;
+  if (publicationSize > MAX_TRANSACTION_ITEMS) {
+    throw namedError(
+      "TransactionTooLarge",
+      `Assessment creates ${publicationSize} DynamoDB transaction items; maximum is ${MAX_TRANSACTION_ITEMS}`,
+    );
+  }
   const shortIds = await allocateTaskShortIds({
     tableName: options.tableName,
     siteId: input.siteId,
@@ -795,19 +836,7 @@ export async function storeEvaluatedAssessment(input, options) {
   });
 
   const transactItems = [
-    ...(input.checkId
-      ? evidencePublicationGuards(
-          options.tableName,
-          input.siteId,
-          input.checkId,
-          [
-            ...(artifactId ? [artifactId] : []),
-            ...input.conditions.flatMap(
-              (condition) => condition.sourceArtifactIds || [],
-            ),
-          ],
-        )
-      : []),
+    ...evidenceGuards,
     put(assessmentItem),
     ...conditionItems.map(put),
     ...newTaskItems.map(put),

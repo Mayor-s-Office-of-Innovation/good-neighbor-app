@@ -321,7 +321,7 @@ test("finishing status removal preserves live tabs, keyboard handlers and cards"
     ).click();
     /** @type {HTMLElement} */ (
       host.querySelector('[data-home-filter="history"]')
-    ).dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft" }));
+    ).dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowLeft" }));
     return {
       patched,
       clicks,
@@ -381,7 +381,7 @@ test("reopening single issue after Done starts empty and preserves pending evide
       );
       const poll = () => {
         if (element.querySelector("#file-input")) {
-          clearTimeout(timer);
+          window.clearTimeout(timer);
           resolve(undefined);
         } else setTimeout(poll, 10);
       };

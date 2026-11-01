@@ -829,3 +829,42 @@ it("keeps an obsolete uncertain silent outcome pending for reconciliation", asyn
   expect(job.status).toBe("retry");
   expect(task.appActionResults).toEqual([uncertain]);
 });
+
+it("files a replacement silent service once and retains both tickets for closure", async () => {
+  const old = {
+    ...ticket,
+    payload: {
+      ...ticket.payload,
+      executionTrigger: "task_created",
+      serviceCodeOrAction: "old",
+      tickets: [{ serviceCode: "old", srNum: "111", responsibleAgency: "76" }],
+    },
+  };
+  const next = {
+    ...ticket,
+    payload: {
+      ...ticket.payload,
+      executionTrigger: "task_created",
+      serviceCodeOrAction: "new",
+      tickets: [{ serviceCode: "new", srNum: "222", responsibleAgency: "76" }],
+    },
+  };
+  task.appActionResults = [old];
+  task.appActions[0].payload.serviceCodeOrAction = "new";
+  lock.results = [old];
+  execute.mockResolvedValue([next]);
+  await runJob(message);
+  expect(execute).toHaveBeenCalledOnce();
+  expect(task.appActionResults).toEqual([old, next]);
+  job.status = "dispatched";
+  await runJob(message);
+  expect(execute).toHaveBeenCalledOnce();
+  task.status = "completed";
+  task.completionMethod = "manual";
+  job.status = "dispatched";
+  execute.mockResolvedValue([]);
+  await runJob(message);
+  expect(execute).toHaveBeenCalledTimes(2);
+  expect(execute.mock.calls[1][0][0].code).toBe("close_311_ticket");
+  expect(execute.mock.calls[1][1].priorResults).toEqual([old, next]);
+});

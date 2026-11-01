@@ -22,7 +22,6 @@ import {
   readUpdateById,
 } from "../task-updates/task-update-store.js";
 
-const MAX_ASSESSMENT_CONDITIONS = 49;
 const MAX_ASSESSMENT_BYTES = 64 * 1024;
 
 /**
@@ -129,11 +128,6 @@ function normalizeAssessmentBody(body) {
       },
     };
   });
-  if (conditions.length > MAX_ASSESSMENT_CONDITIONS) {
-    throw new Error(
-      `Too many conditions: maximum is ${MAX_ASSESSMENT_CONDITIONS}`,
-    );
-  }
 
   const reportedAt =
     typeof input.reportedAt === "string"
@@ -301,9 +295,11 @@ export const evaluateAssessment = async (event) => {
   } catch (err) {
     if (
       err instanceof Error &&
-      ["AssessmentRevisionConflict", "TaskTransitionConflict"].includes(
-        err.name,
-      )
+      [
+        "AssessmentRevisionConflict",
+        "TaskTransitionConflict",
+        "TransactionTooLarge",
+      ].includes(err.name)
     ) {
       const existing = await getPublishedAssessmentGuidance({
         tableName: dynamoTable,
@@ -315,6 +311,8 @@ export const evaluateAssessment = async (event) => {
           200,
           await withConditionDismissals(dynamoTable, siteId, existing),
         );
+      if (err.name === "TransactionTooLarge")
+        return jsonResponse(400, { error: err.message });
       return jsonResponse(409, { code: err.name, error: err.message });
     }
     if (err instanceof Error && err.name === "TransactionCanceledException") {
@@ -332,10 +330,7 @@ export const evaluateAssessment = async (event) => {
         error: "Assessment evaluation was not stored",
       });
     }
-    if (
-      err instanceof Error &&
-      ["TransactionTooLarge", "InvalidAssessmentRevision"].includes(err.name)
-    ) {
+    if (err instanceof Error && err.name === "InvalidAssessmentRevision") {
       return jsonResponse(400, { error: err.message });
     }
     throw err;

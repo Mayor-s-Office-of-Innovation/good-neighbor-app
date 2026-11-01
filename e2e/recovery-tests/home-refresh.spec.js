@@ -28,7 +28,7 @@ test("pull refresh is bounded, coalesced, and cancellable", async ({
     const card = /** @type {HTMLElement} */ (host.querySelector("article"));
     /** @param {string} type @param {number} y @param {number} [x] */
     const gesture = (type, y, x = 30) => {
-      const event = new Event(type, { bubbles: true, cancelable: true });
+      const event = new window.Event(type, { bubbles: true, cancelable: true });
       Object.defineProperty(event, "touches", {
         value: type === "touchend" ? [] : [{ clientX: x, clientY: y }],
       });
@@ -77,7 +77,7 @@ test("pull refresh is bounded, coalesced, and cancellable", async ({
     const failureRetained =
       failureOffset !== "0px" &&
       host.style.getPropertyValue("--home-pull-offset") === failureOffset;
-    host.dispatchEvent(new Event("home-refresh-recovered"));
+    host.dispatchEvent(new window.Event("home-refresh-recovered"));
     const recoveredOffset = host.style.getPropertyValue("--home-pull-offset");
     stopFailure();
     return {
@@ -207,13 +207,21 @@ test("desktop mouse and wheel pulls refresh without hijacking controls, text or 
     /** @type {HTMLElement} */ (
       document.querySelector("article")
     ).dispatchEvent(
-      new WheelEvent("wheel", { bubbles: true, clientY: 300, deltaY: -150 }),
+      new window.WheelEvent("wheel", {
+        bubbles: true,
+        clientY: 300,
+        deltaY: -150,
+      }),
     );
     window.scrollTo(0, 0);
     /** @type {HTMLElement} */ (
       document.querySelector("#nested")
     ).dispatchEvent(
-      new WheelEvent("wheel", { bubbles: true, clientY: 230, deltaY: -150 }),
+      new window.WheelEvent("wheel", {
+        bubbles: true,
+        clientY: 230,
+        deltaY: -150,
+      }),
     );
   });
   await expect(page.locator("body")).toHaveAttribute("data-calls", "1");
@@ -223,7 +231,11 @@ test("desktop mouse and wheel pulls refresh without hijacking controls, text or 
       /** @type {HTMLElement} */ (
         document.querySelector("article")
       ).dispatchEvent(
-        new WheelEvent("wheel", { bubbles: true, clientY: 300, deltaY: -40 }),
+        new window.WheelEvent("wheel", {
+          bubbles: true,
+          clientY: 300,
+          deltaY: -40,
+        }),
       );
   });
   await expect(page.locator("body")).toHaveAttribute("data-calls", "2");
@@ -333,7 +345,9 @@ test("pull reveals an indicator, refreshes on release and settles after completi
   await page.screenshot({
     path: `e2e/test-results/pull-loading-${test.info().project.name}.png`,
   });
-  await page.evaluate(() => window.dispatchEvent(new Event("finish-refresh")));
+  await page.evaluate(() =>
+    window.dispatchEvent(new window.Event("finish-refresh")),
+  );
   await expect(page.locator("main")).not.toHaveAttribute(
     "data-home-refreshing",
     "",
@@ -351,7 +365,7 @@ test("pull reveals an indicator, refreshes on release and settles after completi
   await page.emulateMedia({ reducedMotion: "reduce" });
   expect(
     await list.evaluate((node) =>
-      parseFloat(getComputedStyle(node).transitionDuration),
+      parseFloat(window.getComputedStyle(node).transitionDuration),
     ),
   ).toBeLessThanOrEqual(0.00001);
 });

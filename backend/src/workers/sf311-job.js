@@ -258,11 +258,30 @@ export async function runJob(message, delivery = {}) {
         ? withSilent311Guard(String(guardedTask.createdAt || ""), run)
         : run();
     await guard(async () => {});
-    const alreadyFiled = results.some(
-      (result) =>
-        result.code === "create_311_ticket" &&
-        result.status === "submitted" &&
-        result.payload?.executionTrigger !== "user_confirmed",
+    const silentActions =
+      /** @type {import("../analysis/guidance/app-actions.js").AppAction[]} */ (
+        task.appActions || []
+      ).filter(
+        (action) =>
+          action.code === "create_311_ticket" &&
+          action.payload?.executionTrigger === "task_created",
+      );
+    const alreadyFiled = silentActions.every((action) =>
+      results.some(
+        (result) =>
+          result.status === "submitted" &&
+          result.payload?.executionTrigger !== "user_confirmed" &&
+          sameAppAction(
+            {
+              ...result,
+              payload: {
+                ...result.payload,
+                executionTrigger: "task_created",
+              },
+            },
+            action,
+          ),
+      ),
     );
     if (!["superseded", "deleted"].includes(task.status) && !alreadyFiled) {
       const created = await guard(async () =>
@@ -309,18 +328,14 @@ export async function runJob(message, delivery = {}) {
     let merged = task.appActionResults || [];
     for (const result of results)
       merged = mergeBackgroundResult(merged, result);
-    const stillRequestsSilentFiling = (task.appActions || []).some(
-      (/** @type {Record<string, any>} */ action) =>
-        action.code === "create_311_ticket" &&
-        action.payload?.executionTrigger === "task_created",
-    );
     // Retain every checkpoint, but evaluate only this background job's work.
     // A proven no-ticket failure becomes historical when its action is replaced.
     // Unknown or partial outcomes remain eligible for reconciliation/alerts.
     const jobResults = results.filter(
       (result) =>
         result.payload?.executionTrigger !== "user_confirmed" &&
-        (stillRequestsSilentFiling || !definitiveSilentFailure(result)),
+        (silentActions.some((action) => sameAppAction(result, action)) ||
+          !definitiveSilentFailure(result)),
     );
     const failures = jobResults.filter((result) =>
       ["failed", "partial"].includes(result.status),

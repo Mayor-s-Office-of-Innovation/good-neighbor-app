@@ -184,9 +184,27 @@ export function sameAppAction(a, b) {
   return (
     a.code === b.code &&
     (a.code !== "create_311_ticket" ||
-      (a.payload?.executionTrigger === "task_created") ===
-        (b.payload?.executionTrigger === "task_created"))
+      ((a.payload?.executionTrigger === "task_created") ===
+        (b.payload?.executionTrigger === "task_created") &&
+        sameFilingSelection(a, b)))
   );
+}
+
+/** Match the requested service, with ticket metadata as a legacy fallback.
+ * @param {{payload?: Record<string, unknown>}} a
+ * @param {{payload?: Record<string, unknown>}} b
+ */
+function sameFilingSelection(a, b) {
+  const left = String(a.payload?.serviceCodeOrAction || "").trim();
+  const right = String(b.payload?.serviceCodeOrAction || "").trim();
+  if (left === right) return true;
+  /** @param {Record<string, unknown> | undefined} payload @param {string} selection */
+  const legacyMatches = (payload, selection) =>
+    !payload?.serviceCodeOrAction &&
+    Array.isArray(payload?.tickets) &&
+    payload.tickets.length === 1 &&
+    payload.tickets[0].serviceCode === selection;
+  return legacyMatches(a.payload, right) || legacyMatches(b.payload, left);
 }
 
 /**

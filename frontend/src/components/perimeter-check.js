@@ -300,13 +300,17 @@ class PerimeterCheck extends HTMLElement {
     const del = target.closest("[data-del]");
     if (del) {
       void removeEvidenceItem(del.getAttribute("data-del")).catch(() => {
-        showInlineError(t("card.failed.deleteError"), {
-          target: this,
-          key: "delete-evidence",
-          duration: 5000,
-        });
+        this._deleteError();
       });
     }
+  }
+
+  _deleteError() {
+    showInlineError(t("card.failed.deleteError"), {
+      target: this,
+      key: "delete-evidence",
+      duration: 5000,
+    });
   }
 
   /**
@@ -355,11 +359,7 @@ class PerimeterCheck extends HTMLElement {
       button.disabled = true;
       void removeEvidenceItem(itemId).catch(() => {
         button.disabled = false;
-        showInlineError(t("card.failed.deleteError"), {
-          target: this,
-          key: "delete-failed-item",
-          duration: 5000,
-        });
+        this._deleteError();
       });
       return;
     }

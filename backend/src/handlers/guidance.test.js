@@ -425,24 +425,143 @@ describe("guidance handlers", () => {
     });
   });
 
-  it("rejects assessments that exceed the transaction budget", async () => {
+  it.each([
+    [40, 1, 83],
+    [48, 2, 100],
+  ])(
+    "accepts %i tasks with %i evidence guards using %i operations",
+    async (count, evidenceCount, operations) => {
+      const evidence = Array.from(
+        { length: evidenceCount },
+        (_, i) => `photo-${i}`,
+      );
+      send.mockResolvedValue({});
+      mockTaskShortIdAllocation();
+      const res = await invoke(
+        evaluateAssessment,
+        event({
+          body: {
+            assessmentId: "forty",
+            checkId: "check",
+            rawAssessment: { artifactId: evidence[0] },
+            reportedAt: "2026-10-30T12:00:00Z",
+            conditions: Array.from({ length: count }, () => ({
+              category: "Litter",
+              severity: 3,
+              sourceArtifactIds: evidence,
+            })),
+          },
+        }),
+      );
+      expect(res.statusCode).toBe(201);
+      expect(parse(res).tasks).toHaveLength(count);
+      const tx = send.mock.calls.find(
+        ([command]) => command instanceof TransactWriteCommand,
+      )?.[0];
+      expect(tx?.input.TransactItems).toHaveLength(operations);
+    },
+  );
+
+  it.each([
+    [false, false],
+    [true, false],
+    [true, true],
+  ])(
+    "checks published guidance when a replay exceeds the current budget (exists: %s, deleted evidence: %s)",
+    async (exists, deleted) => {
+      process.env.GNP_311_SUBMISSION_ENABLED = "true";
+      const saved = {
+        assessmentId: "saved",
+        checkId: "check",
+        summary: { totalConditions: 40 },
+      };
+      const conditions = Array.from({ length: 40 }, (_, i) => ({
+        conditionId: `stored-${i}`,
+        taskIds: [],
+        ...(deleted ? { source: { artifactIds: ["photo"] } } : {}),
+      }));
+      send.mockImplementation(async (command) => {
+        if (command instanceof GetCommand) return exists ? { Item: saved } : {};
+        if (command instanceof QueryCommand)
+          return { Items: exists ? conditions : [] };
+        if (command instanceof BatchGetCommand)
+          return {
+            Responses: {
+              table: [
+                {
+                  pk: "SITE#site-1",
+                  sk: 'EVIDENCE_DELETION#["check","photo"]',
+                  deletedAt: "2026-10-31T12:00:00Z",
+                },
+              ],
+            },
+          };
+        throw new Error("Replay must not write or allocate IDs");
+      });
+      const res = await invoke(
+        evaluateAssessment,
+        event({
+          body: {
+            assessmentId: "saved",
+            checkId: "check",
+            rawAssessment: { artifactId: "photo" },
+            reportedAt: "2026-10-30T12:00:00Z",
+            conditions: Array.from({ length: 40 }, () => ({
+              category: "Litter",
+              severity: 1,
+              sourceArtifactIds: ["photo"],
+            })),
+          },
+        }),
+      );
+      expect(res.statusCode).toBe(exists ? 200 : 400);
+      if (exists)
+        expect(parse(res)).toEqual({
+          assessment: saved,
+          conditions: deleted
+            ? conditions.map((condition) => ({
+                ...condition,
+                status: "rejected",
+                needsAnswer: null,
+              }))
+            : conditions,
+          tasks: [],
+        });
+      else expect(parse(res).error).toContain("123 DynamoDB transaction items");
+      expect(
+        send.mock.calls.map(([command]) => command.constructor.name),
+      ).toEqual([
+        "GetCommand",
+        "QueryCommand",
+        ...(deleted ? ["BatchGetCommand"] : []),
+      ]);
+      expect(enqueueTranslateArtifact).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects assessments that exceed the actual transaction budget without writing", async () => {
+    send.mockResolvedValue({});
     const res = await invoke(
       evaluateAssessment,
       event({
         body: {
-          assessmentId: "asm-1",
-          reportedAt: "2026-08-18T12:00:00.000Z",
-          conditions: Array.from({ length: 50 }, (_, index) => ({
+          assessmentId: "oversized",
+          reportedAt: "2026-10-30T12:00:00Z",
+          conditions: Array.from({ length: 100 }, () => ({
             category: "Litter",
-            severity: index % 6,
+            severity: 3,
           })),
         },
       }),
     );
-
     expect(res.statusCode).toBe(400);
-    expect(parse(res).error).toContain("Too many conditions");
-    expect(send).not.toHaveBeenCalled();
+    expect(parse(res).error).toContain("maximum is 100");
+    expect(
+      send.mock.calls.every(
+        ([command]) =>
+          command instanceof GetCommand || command instanceof QueryCommand,
+      ),
+    ).toBe(true);
   });
 
   it("gets assessment guidance with condition tasks", async () => {

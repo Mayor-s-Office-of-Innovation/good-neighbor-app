@@ -58,6 +58,105 @@ describe("storeEvaluatedAssessment", () => {
     send.mockResolvedValue({});
   });
 
+  it.each([1, 24])(
+    "keeps maximum admitted tasks, jobs and %i evidence guards atomic",
+    async (evidenceCount) => {
+      const evidence = Array.from(
+        { length: evidenceCount },
+        (_, i) => `artifact-${i}`,
+      );
+      const condition = {
+        category: "Litter",
+        severity: 1,
+        sourceArtifactIds: evidence,
+      };
+      const input = {
+        siteId: "site-1",
+        assessmentId: "budget",
+        checkId: "check-1",
+        reportedAt: "2026-10-30T12:00:00Z",
+        rawAssessment: { artifactId: evidence[0] },
+        conditions: [condition],
+      };
+      const limit = Math.floor((100 - 2 - evidenceCount) / 3);
+      input.conditions = Array.from({ length: limit }, () => ({
+        ...condition,
+      }));
+      mockTaskShortIdAllocation();
+      let sequence = 0;
+      const result = await storeEvaluatedAssessment(input, {
+        tableName: "table",
+        idFactory: () => `task-${sequence++}`,
+        env: { GNP_311_SUBMISSION_ENABLED: "true" },
+      });
+      const transaction = send.mock.calls
+        .map(([command]) => command)
+        .find((command) => command instanceof TransactWriteCommand);
+      const items = transaction?.input.TransactItems || [];
+      expect(result.taskItems).toHaveLength(limit);
+      expect(items.filter((item) => item.ConditionCheck)).toHaveLength(
+        evidenceCount,
+      );
+      expect(
+        items.filter((item) => item.Put?.Item?.entityType === "SF311_OUTBOX"),
+      ).toHaveLength(limit);
+      expect(items.length).toBeLessThanOrEqual(100);
+      send.mockClear();
+      input.conditions.push(condition);
+      await expect(
+        storeEvaluatedAssessment(input, {
+          tableName: "table",
+          env: { GNP_311_SUBMISSION_ENABLED: "true" },
+        }),
+      ).rejects.toMatchObject({ name: "TransactionTooLarge" });
+      expect(send).not.toHaveBeenCalled();
+      input.conditions.pop();
+      send.mockImplementation(async (command) => {
+        if (command instanceof GetCommand)
+          return { Item: result.assessmentItem };
+        if (command instanceof QueryCommand)
+          return { Items: result.conditionItems };
+        if (command instanceof BatchGetCommand)
+          return { Responses: { table: result.taskItems } };
+        return {};
+      });
+      const revision = {
+        ...input,
+        assessmentId: "revision",
+        previousAssessmentId: "budget",
+      };
+      const retained = await storeEvaluatedAssessment(revision, {
+        tableName: "table",
+      });
+      expect(retained.taskItems.map((task) => task.taskId)).toEqual(
+        result.taskItems.map((task) => task.taskId),
+      );
+      expect(
+        send.mock.calls.some(([command]) => command instanceof UpdateCommand),
+      ).toBe(false);
+      send.mockClear();
+      await expect(
+        storeEvaluatedAssessment(
+          {
+            ...revision,
+            conditions: input.conditions.map((condition) => ({
+              ...condition,
+              description: "Changed evidence",
+            })),
+          },
+          { tableName: "table", env: { GNP_311_SUBMISSION_ENABLED: "true" } },
+        ),
+      ).rejects.toMatchObject({ name: "TransactionTooLarge" });
+      expect(
+        send.mock.calls.some(
+          ([command]) =>
+            command instanceof UpdateCommand ||
+            command instanceof TransactWriteCommand,
+        ),
+      ).toBe(false);
+    },
+  );
+
   it("stores the assessment, conditions, and immediately resolvable tasks", async () => {
     mockTaskShortIdAllocation();
 

@@ -82,6 +82,6 @@ test("invitation area collapses after the last link disappears despite whitespac
   expect(
     await page
       .locator(".site-access-grant")
-      .evaluate((node) => getComputedStyle(node).marginBlockStart),
+      .evaluate((node) => window.getComputedStyle(node).marginBlockStart),
   ).toBe("0px");
 });

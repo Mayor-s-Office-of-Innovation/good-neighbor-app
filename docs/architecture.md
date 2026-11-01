@@ -755,3 +755,14 @@ finalization offers Retry saving; connectivity and operation guards also apply
 to that control. The warning expires after five seconds, but its retry button
 remains until the operation is retried or completed. These rules do not change task-update, phone-completion, form,
 or 311 recovery policies.
+
+Assessment publication budgets the evaluated DynamoDB transaction before
+allocating task display IDs. It counts the assessment, current pointer, unique
+evidence-deletion guards, actual condition and task writes, filing outbox jobs,
+and any predecessor, retirement, or translation updates. It does not reserve
+filing jobs for actions that need no background job. The assembled transaction
+is checked again against the 100-operation ceiling. Oversized inputs are
+rejected without truncating conditions or splitting atomic publication; the
+64 KiB request limit still applies. A replay whose recalculated transaction is
+too large first checks for already-published guidance and returns that result
+using the existing visibility and dismissal rules.

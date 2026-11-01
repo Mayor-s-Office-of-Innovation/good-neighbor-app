@@ -22,6 +22,7 @@ import { is311SubmissionEnabled } from "../analysis/guidance/app-actions.js";
 import {
   buildTaskUpdateTransition,
   canUpdateTask,
+  withinTaskUpdateWindow,
   presencePeriod,
   presencePromptDue,
   responseExpectedAt,
@@ -182,7 +183,8 @@ export const createTaskUpdate = async (event, retry = true) => {
   const appendToResolved =
     task.status === "completed" &&
     task.completionMethod !== "311_filed" &&
-    input.type === "note_photo_update";
+    input.type === "note_photo_update" &&
+    withinTaskUpdateWindow(task);
   if (!proof && !appendToResolved && !canUpdateTask(task)) {
     const legacyRetry = await readLegacyUpdateById(
       dynamoTable,

@@ -210,8 +210,7 @@ export function buildTaskUpdateTransition(task, input, context) {
  * @param {number} [now]
  */
 export function canUpdateTask(task, now = Date.now()) {
-  const created = Date.parse(task.createdAt || task.created_at || "");
-  if (Number.isFinite(created) && now - created >= 14 * 86400000) return false;
+  if (!withinTaskUpdateWindow(task, now)) return false;
   if (task.status === "in_progress") return true;
   if (task.status === "resolving")
     return Date.parse(task.resolutionLeaseExpiresAt || "") <= now;
@@ -225,4 +224,10 @@ export function canUpdateTask(task, now = Date.now()) {
     task.completionMethod === "311_filed" &&
     hasOpenTicket
   );
+}
+
+/** @param {Record<string, any>} task @param {number} [now] */
+export function withinTaskUpdateWindow(task, now = Date.now()) {
+  const created = Date.parse(task.createdAt || task.created_at || "");
+  return !Number.isFinite(created) || now - created < 14 * 86400000;
 }

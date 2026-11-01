@@ -92,6 +92,39 @@ describe("task update handlers", () => {
     delete process.env.SF311_BASIC_AUTH_PASS;
   });
 
+  it.each([13, 14, 15])(
+    "enforces the creation-age window for resolved notes: %i days",
+    async (days) => {
+      const task = {
+        pk: "SITE#site-1",
+        sk: "TASK#task-1",
+        taskId: "task-1",
+        status: "completed",
+        completionMethod: "site_team_resolved",
+        createdAt: new Date(Date.now() - days * 86400000).toISOString(),
+        resolvedAt: new Date().toISOString(),
+      };
+      send.mockImplementation(async (command) =>
+        command instanceof GetCommand && command.input.Key?.sk === task.sk
+          ? { Item: task }
+          : {},
+      );
+      const response = await createTaskUpdate(
+        event({
+          type: "note_photo_update",
+          notes: ["Observation"],
+          photoKeys: [],
+        }),
+      );
+      expect(response.statusCode).toBe(days < 14 ? 201 : 409);
+      expect(
+        send.mock.calls.some(
+          ([command]) => command instanceof TransactWriteCommand,
+        ),
+      ).toBe(days < 14);
+    },
+  );
+
   it.each([false, true])(
     "appends a note/photo and retains resolution, including a concurrent resolution: %s",
     async (race) => {
