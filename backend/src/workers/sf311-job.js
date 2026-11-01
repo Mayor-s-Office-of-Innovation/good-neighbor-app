@@ -1,4 +1,10 @@
 import {
+  evidenceDeletionKey,
+  evidenceIds,
+  retractableTask,
+} from "../analysis/guidance/evidence-deletion.js";
+import { definitiveSilentFailure } from "../domain/silent-311-results.js";
+import {
   withSilent311Guard,
   Silent311Suppressed,
   isSilent311Task,
@@ -30,6 +36,7 @@ import {
   eligibleTicketsForClosure,
   is311SubmissionEnabled,
   mergeAppActionResults,
+  sameAppAction,
   summarizeAppActionResults,
 } from "../analysis/guidance/app-actions.js";
 
@@ -64,7 +71,7 @@ export function retryDelaySeconds(receiveCount, leaseWaitSeconds = 0) {
  * @param {import("../analysis/guidance/app-actions.js").AppActionResult} result
  */
 export function mergeBackgroundResult(prior, result) {
-  const previous = prior.find((entry) => entry.code === result.code);
+  const previous = prior.find((entry) => sameAppAction(entry, result));
   const payload = { ...previous?.payload, ...result.payload };
   for (const key of ["tickets", "closures"]) {
     const entries = new Map();
@@ -256,11 +263,45 @@ export async function runJob(message, delivery = {}) {
         ? withSilent311Guard(String(guardedTask.createdAt || ""), run)
         : run();
     await guard(async () => {});
-    const alreadyFiled = results.some(
-      (result) =>
-        result.code === "create_311_ticket" && result.status === "submitted",
+    const silentActions =
+      /** @type {import("../analysis/guidance/app-actions.js").AppAction[]} */ (
+        task.appActions || []
+      ).filter(
+        (action) =>
+          action.code === "create_311_ticket" &&
+          action.payload?.executionTrigger === "task_created",
+      );
+    const alreadyFiled = silentActions.every((action) =>
+      results.some(
+        (result) =>
+          result.status === "submitted" &&
+          result.payload?.executionTrigger !== "user_confirmed" &&
+          sameAppAction(
+            {
+              ...result,
+              payload: {
+                ...result.payload,
+                executionTrigger: "task_created",
+              },
+            },
+            action,
+          ),
+      ),
     );
-    if (!["superseded", "deleted"].includes(task.status) && !alreadyFiled) {
+    // Read after claiming the lease: cleanup uses that same lease to exclude
+    // workers before superseding a task. A durable deletion intent also stops
+    // queued work while cleanup is awaiting retry.
+    const ids = evidenceIds(task);
+    const evidenceRemoved =
+      task.checkId &&
+      ids.length === 1 &&
+      retractableTask(task, ids[0]) &&
+      (await read(evidenceDeletionKey(message.siteId, task.checkId, ids[0])));
+    if (
+      !["superseded", "deleted"].includes(task.status) &&
+      !alreadyFiled &&
+      !evidenceRemoved
+    ) {
       const created = await guard(async () =>
         executeAppActions(guardedTask.appActions || [], {
           tableName,
@@ -305,7 +346,16 @@ export async function runJob(message, delivery = {}) {
     let merged = task.appActionResults || [];
     for (const result of results)
       merged = mergeBackgroundResult(merged, result);
-    const failures = results.filter((result) =>
+    // Retain every checkpoint, but evaluate only this background job's work.
+    // A proven no-ticket failure becomes historical when its action is replaced.
+    // Unknown or partial outcomes remain eligible for reconciliation/alerts.
+    const jobResults = results.filter(
+      (result) =>
+        result.payload?.executionTrigger !== "user_confirmed" &&
+        (silentActions.some((action) => sameAppAction(result, action)) ||
+          !definitiveSilentFailure(result)),
+    );
+    const failures = jobResults.filter((result) =>
       ["failed", "partial"].includes(result.status),
     );
     // Only definitive validation failures are terminal. Partial/uncertain City
@@ -337,6 +387,9 @@ export async function runJob(message, delivery = {}) {
                 "SET appActionResults = :results, appActionStatus = :actionStatus",
               ConditionExpression:
                 "#status = :status AND " +
+                (task.appActionStatus !== undefined
+                  ? "appActionStatus = :priorStatus AND "
+                  : "attribute_not_exists(appActionStatus) AND ") +
                 (task.appActionResults
                   ? "appActionResults = :prior"
                   : "attribute_not_exists(appActionResults)"),
@@ -344,7 +397,15 @@ export async function runJob(message, delivery = {}) {
               ExpressionAttributeValues: {
                 ":status": task.status,
                 ":results": merged,
-                ":actionStatus": summarizeAppActionResults(merged),
+                // An older silent job must not mark a newly queued deliberate
+                // filing as submitted (which would make its worker abandon it).
+                ":actionStatus":
+                  task.inProgressActionKind === "311_filed"
+                    ? task.appActionStatus
+                    : summarizeAppActionResults(merged),
+                ...(task.appActionStatus !== undefined
+                  ? { ":priorStatus": task.appActionStatus }
+                  : {}),
                 ...(task.appActionResults
                   ? { ":prior": task.appActionResults }
                   : {}),
@@ -366,7 +427,7 @@ export async function runJob(message, delivery = {}) {
         ],
       }),
     );
-    reportSf311Results(results, {
+    reportSf311Results(jobResults, {
       terminal: terminal || (delivery.receiveCount ?? 1) >= MAX_FILING_ATTEMPTS,
       attempt: delivery.receiveCount ?? 1,
       jobId: message.jobSk,

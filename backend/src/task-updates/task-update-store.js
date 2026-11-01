@@ -250,6 +250,10 @@ export async function writeTaskTransition(input) {
     new TransactWriteCommand({
       TransactItems: [
         ...(input.update.type !== "resolution_proof" &&
+        !(
+          input.expectedStatus === "completed" &&
+          input.update.type === "note_photo_update"
+        ) &&
         input.task.status === "completed" &&
         input.task.completionMethod !== "311_filed"
           ? sf311Job(
@@ -313,7 +317,7 @@ export async function writeTaskTransition(input) {
                     ? ""
                     : " AND updatedAt = :prior")
                 : statusOnly
-                  ? "#status = :expected"
+                  ? "#status = :expected AND attribute_not_exists(updatedAt)"
                   : "#status = :expected AND updatedAt = :prior") +
               (input.update.type === "resolution_proof"
                 ? " AND (attribute_not_exists(proofAddedAt) OR attribute_type(proofAddedAt, :nullType))"
@@ -357,20 +361,116 @@ export async function writeTaskTransition(input) {
 
 /** @param {string} tableName @param {Record<string, any>} update */
 export async function writeDocumentedUpdate(tableName, update) {
-  await ddb.send(
-    new TransactWriteCommand({
-      TransactItems: [
-        {
-          Put: {
-            TableName: tableName,
-            Item: update,
-            ConditionExpression: "documentationState = :open",
-            ExpressionAttributeValues: { ":open": "open_for_documentation" },
-          },
-        },
-      ],
-    }),
-  );
+  const siteId = String(update.pk).slice("SITE#".length);
+  const hasContent =
+    update.notes?.some((/** @type {unknown} */ note) => String(note).trim()) ||
+    update.photoKeys?.length;
+  for (let attempt = 0; ; attempt++) {
+    const task =
+      hasContent &&
+      [
+        "issue_resolved",
+        "presence_resolved",
+        "additional_action_resolved",
+        "task_completed",
+        "311_ticket_filed",
+        "escalation_action_taken",
+      ].includes(update.type)
+        ? await readTask(tableName, siteId, update.taskId)
+        : null;
+    const completion =
+      task?.status === "completed" &&
+      [
+        "issue_resolved",
+        "presence_resolved",
+        "additional_action_resolved",
+        "task_completed",
+        ...(task.canBeInProgress === false
+          ? ["311_ticket_filed", "escalation_action_taken"]
+          : []),
+      ].includes(update.type);
+    const resolutionTime = task?.resolvedAt || task?.completedAt;
+    const sameResolution =
+      task?.latestUpdateId === update.updateId ||
+      (resolutionTime &&
+        update.occurredAt &&
+        Date.parse(resolutionTime) === Date.parse(update.occurredAt));
+    const preserveProof = completion && sameResolution && !task.proofAddedAt;
+    const version = new Date(
+      Math.max(Date.now(), (Date.parse(task?.updatedAt) || 0) + 1),
+    ).toISOString();
+    try {
+      await ddb.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            {
+              Put: {
+                TableName: tableName,
+                Item: update,
+                ConditionExpression: "documentationState = :open",
+                ExpressionAttributeValues: {
+                  ":open": "open_for_documentation",
+                },
+              },
+            },
+            ...(preserveProof
+              ? [
+                  {
+                    Update: {
+                      TableName: tableName,
+                      Key: taskKey(siteId, update.taskId),
+                      UpdateExpression:
+                        "SET proofAddedAt = :proof, updatedAt = :next, gsi2pk = :workPk, gsi2sk = :workSk",
+                      ConditionExpression:
+                        "#status = :completed AND " +
+                        (task.updatedAt === undefined
+                          ? "attribute_not_exists(updatedAt)"
+                          : "updatedAt = :prior"),
+                      ExpressionAttributeNames: { "#status": "status" },
+                      ExpressionAttributeValues: {
+                        ":completed": "completed",
+                        ":proof": update.documentedAt,
+                        ":next": version,
+                        ":workPk": taskWorklistDateGsi(
+                          siteId,
+                          task.status,
+                          task.kind,
+                          Number(task.severity || 0),
+                          version,
+                          update.taskId,
+                        ).gsi2pk,
+                        ":workSk": taskWorklistDateGsi(
+                          siteId,
+                          task.status,
+                          task.kind,
+                          Number(task.severity || 0),
+                          version,
+                          update.taskId,
+                        ).gsi2sk,
+                        ...(task.updatedAt === undefined
+                          ? {}
+                          : { ":prior": task.updatedAt }),
+                      },
+                    },
+                  },
+                ]
+              : []),
+          ],
+        }),
+      );
+      return;
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        error.name !== "TransactionCanceledException" ||
+        !preserveProof ||
+        attempt >= 2
+      )
+        throw error;
+      // Re-read the task after a concurrent note/proof/resolution; the event's
+      // open-state guard still prevents a second documentation write.
+    }
+  }
 }
 
 /** @param {{ tableName: string, siteId: string, checkId: string, taskId: string, artifactId: string, s3Key: string, contentType: string, contentLength: number, capturedAt: string, displayS3Key?: string }} input */

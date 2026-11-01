@@ -6,6 +6,7 @@ import { showInlineError } from "../components/error-notice.js";
  * @property {string} message
  * @property {string} [icon]
  * @property {string} [tone]
+ * @property {boolean} [fullWidth]
  * @property {{label: string, href: string}} [link]
  * @property {{label: string, run: () => void}} [action]
  * @property {() => void} [onDismiss]
@@ -255,7 +256,8 @@ export function showTaskUpdateErrorToast(error, retry) {
     "updateSaved" in error.body &&
     error.body.updateSaved === true;
   const key = saved ? "toast.cityUpdateError" : "toast.taskUpdateError";
-  return showOperationError({
+  return showToast({
+    fullWidth: true,
     warning: true,
     duration: 0,
     ...(retry

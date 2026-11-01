@@ -172,10 +172,14 @@ beforeEach(() => {
   });
 });
 beforeAll(async () => {
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  vi.stubGlobal("requestAnimationFrame", vi.fn());
   vi.stubGlobal("HTMLButtonElement", class {});
   vi.stubGlobal(
     "HTMLElement",
     class {
+      style = { setProperty() {} };
+      toggleAttribute() {}
       addEventListener() {}
       removeEventListener() {}
     },
@@ -2409,7 +2413,7 @@ it("renders live tasks before historical recovery finishes and publishes each re
   expect(view._homeModel.tasks).toEqual([task]);
   expect(view._homeModel.pendingQuestions).toHaveLength(1);
   expect(view._homeModel.pendingGuidanceLoading).toBe(true);
-  expect(view._render(view._homeModel)).toContain(t("common.loading"));
+  expect(view._render(view._homeModel)).not.toContain(t("common.loading"));
   release({ guidance: [], nextToken: null });
   await view._pendingGuidanceLoad;
   expect(view._homeModel.pendingGuidanceLoading).toBe(false);

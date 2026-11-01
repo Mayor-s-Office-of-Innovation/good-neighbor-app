@@ -1555,7 +1555,7 @@ it("offers one delete action despite contradictory upload flags and explains off
   }
 });
 
-it("animates the upload retry status using the shared decorative ellipsis", () => {
+it("reuses the existing uploading card for automatic upload retries", () => {
   const [markup] = analysisCards(
     item({
       kind: "photo",
@@ -1567,9 +1567,7 @@ it("animates the upload retry status using the shared decorative ellipsis", () =
     }),
     "check",
   );
-  expect(markup).toContain(
-    escapeHtml(t("card.recovery.retryUpload").replace(/[.…]+$/u, "")),
-  );
+  expect(markup).toContain(escapeHtml(t("card.recovery.uploading")));
   expect(markup).toContain('class="ellipsis-dots" aria-hidden="true"');
 });
 
@@ -1644,4 +1642,38 @@ it("keeps existing results visible and inert while registration is repaired", ()
   expect(cards.join("")).toContain("Litter near gate");
   expect(cards.join("")).toContain('aria-busy="true" inert');
   expect(cards.join("")).not.toContain("analysis-card--pending");
+});
+
+it("renders single-issue clear results without the perimeter offer", () => {
+  const evidence = item({
+    id: "text",
+    kind: "text",
+    analysis: { status: "analyzed", tasks: [], conditions: [] },
+  });
+  const markup = analysisResultsTray([evidence], "report", {
+    flowType: "single-problem",
+  });
+  expect(markup).toContain(escapeHtml(t("card.clearReport.title")));
+  expect(markup).toContain(escapeHtml(t("card.clearReport.copy")));
+  expect(markup).not.toContain('href="/problem"');
+  expect(markup).not.toContain(escapeHtml(t("card.clear.title")));
+  expect(analysisResultsTray([evidence], "check")).toContain(
+    escapeHtml(t("card.clear.title")),
+  );
+});
+
+it("distinguishes text, photo and unknown evidence in history", () => {
+  const render = (evidence) =>
+    taskAnalysisCard({
+      task: { taskId: "history-task", status: "completed", evidence },
+      history: true,
+      action: null,
+      statusLabel: "",
+    });
+  expect(render({ kind: "text" })).toContain('name="file-lines"');
+  expect(render({ kind: "text" })).not.toContain('name="image"');
+  expect(render(undefined)).toContain("history-card__unknown");
+  expect(render({ kind: "photo", artifactId: "photo" })).not.toContain(
+    "history-card__unknown",
+  );
 });

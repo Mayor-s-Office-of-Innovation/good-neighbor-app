@@ -244,13 +244,11 @@ export function isRecordDay(day) {
 }
 
 /**
- * Whether anything was recorded on a day that owed nothing: a completed
- * perimeter check or a single-issue report (both carry check IDs and a day
- * detail).
+ * Whether a perimeter check was recorded on a day that owed nothing.
  * @param {DaySummary} day
  */
 export function hasRecordedChecks(day) {
-  return day.completed > 0 || (day.reports ?? 0) > 0;
+  return day.completed > 0;
 }
 
 /**

@@ -163,12 +163,26 @@ export function expectedArtifactCountForCheck(check) {
 }
 
 function showSaveRecovery(checkId, expectedArtifacts, target = null) {
-  saveNotices.get(checkId)?.close();
-  saveNotices.set(
-    checkId,
-    showInlineError(t("notice.saveFailed"), {
+  // Keep the retry action available while finalization is deliberately paused.
+  const noticeTarget =
+    target ||
+    (typeof document !== "undefined"
+      ? document.querySelector("#view > *")
+      : null);
+  const previous = saveNotices.get(checkId);
+  if (previous?.target === noticeTarget && previous.isConnected?.()) return;
+  const expiresAt = previous?.expiresAt ?? Date.now() + 5000;
+  previous?.close();
+  saveNotices.set(checkId, {
+    expiresAt,
+    close: () => {},
+    target: noticeTarget,
+    ...showInlineError(t("notice.saveFailed"), {
       key: `check-save:${checkId}`,
-      target,
+      duration: Math.max(0, expiresAt - Date.now()),
+      expired: expiresAt <= Date.now(),
+      retainRetryOnExpiry: true,
+      target: noticeTarget,
       warning: true,
       retryLabel: t("notice.retrySaving"),
       retryAvailable: () => connectionAvailable(),
@@ -178,7 +192,7 @@ function showSaveRecovery(checkId, expectedArtifacts, target = null) {
           manual: true,
         }),
     }),
-  );
+  });
 }
 
 /** Reattach durable failures after Home replaces its contents. */
@@ -191,6 +205,10 @@ export function restoreFinalizationNotices(check, target) {
     const held = getHeldCheck(id) || (check?.id === id ? check : null);
     if (held?.finalizationRecovery?.state === "manual")
       showSaveRecovery(id, held.expectedArtifacts, target);
+    else if (saveNotices.get(id)?.expiresAt !== undefined) {
+      saveNotices.get(id)?.close();
+      saveNotices.delete(id);
+    }
   }
 }
 
@@ -250,6 +268,7 @@ export function finalizeCaptureScorecardInBackground(
       checkId,
       showInlineError(t("common.retrying"), {
         key: `check-save:${checkId}`,
+        duration: 5000,
         warning: true,
       }),
     );
@@ -289,6 +308,7 @@ export function finalizeCaptureScorecardInBackground(
             : failedRecovery(previous, "complete", err);
       await updateCheckRecovery(checkId, next);
       saveNotices.get(checkId)?.close();
+      saveNotices.delete(checkId);
       if (next.state === "manual") showSaveRecovery(checkId, expectedArtifacts);
       throw err;
     })

@@ -1,3 +1,9 @@
+import {
+  evidenceDeletionKey,
+  evidencePublicationGuards,
+  evidenceIds,
+  retractableTask,
+} from "./evidence-deletion.js";
 import { deliberate311Decision } from "../../domain/deliberate-311.js";
 import { sf311Job } from "./sf311-job.js";
 import {
@@ -33,6 +39,7 @@ import {
   is311AsyncFilingEnabled,
   is311SubmissionEnabled,
   summarizeAppActionResults,
+  mergeAppActionResults,
 } from "./app-actions.js";
 import { queue311Filing } from "./sf311-filing-queue.js";
 import { activeCatalog, catalogForPolicyVersion } from "./catalog-registry.js";
@@ -705,6 +712,47 @@ export async function storeEvaluatedAssessment(input, options) {
       "A task is currently completing",
     );
   }
+  const evidenceGuards = input.checkId
+    ? evidencePublicationGuards(
+        options.tableName,
+        input.siteId,
+        input.checkId,
+        [
+          ...(artifactId ? [artifactId] : []),
+          ...input.conditions.flatMap(
+            (condition) => condition.sourceArtifactIds || [],
+          ),
+        ],
+      )
+    : [];
+  const jobCount = pendingTaskInputs.reduce(
+    (count, taskInput) =>
+      count +
+      sf311Job(
+        options.tableName,
+        input.siteId,
+        { appActions: taskInput.rule.outcome.appActions },
+        "created",
+        options.env,
+      ).length,
+    0,
+  );
+  const publicationSize =
+    1 +
+    Number(Boolean(input.checkId)) +
+    Number(Boolean(previous)) +
+    evidenceGuards.length +
+    conditionItems.length +
+    pendingTaskInputs.length +
+    jobCount +
+    retiredTasks.filter((task) => task.status === "open").length +
+    retainedTaskTranslationUpdates.length;
+  if (publicationSize > MAX_TRANSACTION_ITEMS) {
+    throw namedError(
+      "TransactionTooLarge",
+      `Assessment creates ${publicationSize} DynamoDB transaction items; maximum is ${MAX_TRANSACTION_ITEMS}`,
+    );
+  }
   const shortIds = await allocateTaskShortIds({
     tableName: options.tableName,
     siteId: input.siteId,
@@ -788,6 +836,7 @@ export async function storeEvaluatedAssessment(input, options) {
   });
 
   const transactItems = [
+    ...evidenceGuards,
     put(assessmentItem),
     ...conditionItems.map(put),
     ...newTaskItems.map(put),
@@ -1184,6 +1233,31 @@ export async function answerCondition(opts) {
       throw err;
     }
 
+    // Keep the condition's original source identity for dismissal receipts,
+    // but only publish tasks from evidence that still exists.
+    const checkId = String(
+      conditionItem.checkId || assessmentItem.checkId || "",
+    );
+    const originalEvidence = evidenceIds(conditionItem);
+    const survivingEvidence = [];
+    for (const artifactId of originalEvidence) {
+      const removed = checkId
+        ? await ddb.send(
+            new GetCommand({
+              TableName: opts.tableName,
+              Key: evidenceDeletionKey(opts.siteId, checkId, artifactId),
+              ConsistentRead: true,
+            }),
+          )
+        : { Item: undefined };
+      if (!removed.Item) survivingEvidence.push(artifactId);
+    }
+    if (originalEvidence.length && !survivingEvidence.length)
+      throw namedError(
+        "ConditionDismissed",
+        "Supporting evidence has been deleted",
+      );
+
     const policyVersion = String(
       conditionItem.policyVersion ?? assessmentItem.policyVersion ?? "",
     );
@@ -1240,13 +1314,12 @@ export async function answerCondition(opts) {
           ...(conditionItem.translations
             ? { translations: conditionItem.translations }
             : {}),
-          sourceArtifactIds:
-            /** @type {{ artifactIds?: string[] }} */ (conditionItem.source)
-              ?.artifactIds ?? [],
-          source:
-            conditionItem.source && typeof conditionItem.source === "object"
+          sourceArtifactIds: survivingEvidence,
+          source: {
+            ...(conditionItem.source && typeof conditionItem.source === "object"
               ? /** @type {Record<string, unknown>} */ (conditionItem.source)
-              : {},
+              : {}),
+          },
         },
         conditionId: opts.conditionId,
         rule: evaluation.rule,
@@ -1325,6 +1398,15 @@ export async function answerCondition(opts) {
       tx.push(
         ...sf311Job(opts.tableName, opts.siteId, taskItem, "created", opts.env),
       );
+    if (conditionItem.checkId || assessmentItem.checkId)
+      tx.push(
+        ...evidencePublicationGuards(
+          opts.tableName,
+          opts.siteId,
+          String(conditionItem.checkId || assessmentItem.checkId),
+          survivingEvidence,
+        ),
+      );
     const deletionKey = conditionDeletionKey(
       opts.siteId,
       assessmentItem,
@@ -1359,12 +1441,31 @@ export async function answerCondition(opts) {
           "ConditionDismissed",
           "Condition has been dismissed; reload its guidance",
         );
-      if (
-        err instanceof Error &&
-        err.name === "TransactionCanceledException" &&
-        attempt < 2
-      ) {
-        continue;
+      if (err instanceof Error && err.name === "TransactionCanceledException") {
+        // Re-evaluate surviving sources on retry, including when DynamoDB
+        // omits cancellation reasons. Never classify unrelated conflicts as deletion.
+        if (attempt < 2) continue;
+        if (checkId && originalEvidence.length) {
+          const removed = await Promise.all(
+            originalEvidence.map(
+              async (id) =>
+                (
+                  await ddb.send(
+                    new GetCommand({
+                      TableName: opts.tableName,
+                      Key: evidenceDeletionKey(opts.siteId, checkId, id),
+                      ConsistentRead: true,
+                    }),
+                  )
+                ).Item,
+            ),
+          );
+          if (removed.every(Boolean))
+            throw namedError(
+              "ConditionDismissed",
+              "Supporting evidence has been deleted",
+            );
+        }
       }
       throw err;
     }
@@ -1556,20 +1657,10 @@ export async function completeTaskWithAppActions(opts) {
       : existing.Item.canBeInProgress === true;
 
   // Silent City notifications and their closure run on the durable background queue.
-  const appActionResults = [...executedAppActionResults];
-  if (
-    !executedAppActionResults.some(
-      (result) => result.code === "create_311_ticket",
-    )
-  ) {
-    appActionResults.unshift(
-      ...priorResults.filter((result) => result.code === "create_311_ticket"),
-    );
-  }
-  for (const prior of priorResults) {
-    if (!appActionResults.some((result) => result.code === prior.code))
-      appActionResults.push(prior);
-  }
+  const appActionResults = executedAppActionResults.reduce(
+    (results, result) => mergeAppActionResults(results, result),
+    [...priorResults],
+  );
   const appActionStatus = summarizeAppActionResults(appActionResults);
   // Whether THIS completion attempt failed — judged only on the actions it ran
   // for this trigger, NOT on the merged history. A completion for a trigger with
@@ -2051,6 +2142,17 @@ export async function withConditionDismissals(tableName, siteId, guidance) {
       return key ? [key] : [];
     },
   );
+  const evidenceKeys = [
+    ...guidance.conditions,
+    ...guidance.tasks.filter((task) => evidenceIds(task).length === 1),
+  ].flatMap((row) => {
+    const checkId = row.checkId || guidance.assessment?.checkId;
+    const ids = evidenceIds(row);
+    return checkId
+      ? ids.map((id) => evidenceDeletionKey(siteId, String(checkId), id))
+      : [];
+  });
+  keys.push(...evidenceKeys);
   const receipts = keys.length
     ? await batchGetAll({
         tableName,
@@ -2068,14 +2170,33 @@ export async function withConditionDismissals(tableName, siteId, guidance) {
       const receipt = dismissed.get(
         conditionDeletionKey(siteId, guidance.assessment || {}, task)?.sk,
       );
-      if (!receipt) return task;
+      const ids = evidenceIds(task);
+      const evidenceRemoved =
+        ids.length === 1 &&
+        task.checkId &&
+        dismissed.has(evidenceDeletionKey(siteId, task.checkId, ids[0]).sk) &&
+        retractableTask(task, ids[0]);
+      if (!receipt && !evidenceRemoved) return task;
       return {
         ...task,
         status: "superseded",
-        updatedAt: String(receipt.dismissedAt || receipt.deletedAt),
+        updatedAt: String(
+          receipt?.dismissedAt || receipt?.deletedAt || task.updatedAt,
+        ),
       };
     }),
     conditions: guidance.conditions.map((condition) =>
+      (evidenceIds(condition).length > 0 &&
+        (condition.checkId || guidance.assessment?.checkId) &&
+        evidenceIds(condition).every((id) =>
+          dismissed.has(
+            evidenceDeletionKey(
+              siteId,
+              condition.checkId || guidance.assessment?.checkId,
+              id,
+            ).sk,
+          ),
+        )) ||
       dismissed.has(
         conditionDeletionKey(siteId, guidance.assessment || {}, condition)?.sk,
       )

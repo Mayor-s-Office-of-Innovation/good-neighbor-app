@@ -176,8 +176,39 @@ function build311ActionResult({
   };
 }
 
+/** Separate silent notifications from deliberate filings, even for the same service.
+ * @param {{code: string, payload?: Record<string, unknown>}} a
+ * @param {{code: string, payload?: Record<string, unknown>}} b
+ */
+export function sameAppAction(a, b) {
+  return (
+    a.code === b.code &&
+    (a.code !== "create_311_ticket" ||
+      ((a.payload?.executionTrigger === "task_created") ===
+        (b.payload?.executionTrigger === "task_created") &&
+        sameFilingSelection(a, b)))
+  );
+}
+
+/** Match the requested service, with ticket metadata as a legacy fallback.
+ * @param {{payload?: Record<string, unknown>}} a
+ * @param {{payload?: Record<string, unknown>}} b
+ */
+function sameFilingSelection(a, b) {
+  const left = String(a.payload?.serviceCodeOrAction || "").trim();
+  const right = String(b.payload?.serviceCodeOrAction || "").trim();
+  if (left === right) return true;
+  /** @param {Record<string, unknown> | undefined} payload @param {string} selection */
+  const legacyMatches = (payload, selection) =>
+    !payload?.serviceCodeOrAction &&
+    Array.isArray(payload?.tickets) &&
+    payload.tickets.length === 1 &&
+    payload.tickets[0].serviceCode === selection;
+  return legacyMatches(a.payload, right) || legacyMatches(b.payload, left);
+}
+
 /**
- * Merge a fresh action result into the prior persisted results: same-code
+ * Merge a fresh action result into the prior persisted results: same-action
  * entries are replaced in place (first occurrence wins the slot), everything
  * else is kept verbatim so results for other action codes survive the write.
  * Checkpointing with this instead of `[result]` is what keeps closure records
@@ -191,15 +222,23 @@ export function mergeAppActionResults(priorResults, result) {
   const merged = [];
   let placed = false;
   for (const prior of priorResults) {
-    if (prior.code === result.code && !placed) {
+    if (sameAppAction(prior, result) && !placed) {
       merged.push(result);
       placed = true;
       continue;
     }
-    if (prior.code === result.code) continue;
+    if (sameAppAction(prior, result)) continue;
     merged.push(prior);
   }
-  if (!placed) merged.push(result);
+  if (!placed) {
+    // Existing consumers use the first filing for the user-facing ticket status.
+    if (
+      result.code === "create_311_ticket" &&
+      result.payload?.executionTrigger !== "task_created"
+    )
+      merged.unshift(result);
+    else merged.push(result);
+  }
   return merged;
 }
 
@@ -653,7 +692,20 @@ async function execute311Action({
   completionLeaseExpiresAt = "",
 }) {
   const now = nowDate.toISOString();
-  const priorTickets = priorTicketsByServiceCode(priorResults, action.code);
+  const followsSilentFiling =
+    trigger === "user_confirmed" &&
+    priorResults.some(
+      (result) =>
+        result.code === "create_311_ticket" &&
+        result.payload?.executionTrigger === "task_created",
+    );
+  const matchingPriorResults = priorResults.filter((result) =>
+    sameAppAction(result, action),
+  );
+  const priorTickets = priorTicketsByServiceCode(
+    matchingPriorResults,
+    action.code,
+  );
 
   if (!is311SubmissionEnabled(env)) {
     return {
@@ -814,7 +866,7 @@ async function execute311Action({
         ? String(actionPayload.responsibleAgencyCode ?? "")
         : await sf311.lookupResponsibleAgency(serviceCode);
       const payload = buildCreateSrPayload({
-        taskId: String(task.taskId ?? ""),
+        taskId: `${followsSilentFiling ? "u-" : ""}${String(task.taskId ?? "")}`,
         serviceCode,
         responsibleAgency,
         problemDescription: problemDescriptionForTask(task),
@@ -822,7 +874,7 @@ async function execute311Action({
         now: nowDate,
       });
       if (onCheckpoint) {
-        const uncertain = priorResults
+        const uncertain = matchingPriorResults
           .flatMap(ticketsFromActionResult)
           .some(
             (ticket) =>

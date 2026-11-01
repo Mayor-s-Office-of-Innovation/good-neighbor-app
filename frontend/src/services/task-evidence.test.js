@@ -300,7 +300,8 @@ it("hydrates photo and text question evidence without eagerly signing media", as
       id: "photo-question",
       checkId: "pending-check",
       kind: "unknown",
-      analysis: { artifactId: "p1" },
+      evidenceArtifactId: "p1",
+      analysis: { artifactId: "deleted-photo" },
     },
     {
       id: "text-question",
@@ -313,7 +314,8 @@ it("hydrates photo and text question evidence without eagerly signing media", as
     kind: "photo",
     georeferencedAddress: "15th St",
     checkId: "pending-check",
-    analysis: { artifactId: "p1" },
+    evidenceArtifactId: "p1",
+    analysis: { artifactId: "deleted-photo" },
   });
   expect(result[1]).toMatchObject({ kind: "text", text: "Sidewalk clear." });
 });
@@ -341,4 +343,36 @@ it("shares transient image cooldowns until expiry or explicit reconnect", async 
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("keeps the task-list evidence selection when check artifacts arrive in a different order", async () => {
+  getMediaUrl.mockResolvedValue({
+    downloadUrl: "https://media/selected-photo",
+  });
+  const [task] = await hydrateTaskEvidenceFromCheck(
+    [
+      {
+        taskId: "selected",
+        checkId: "selected-check",
+        sourceArtifactIds: ["text", "photo"],
+        evidence: { kind: "photo", artifactId: "photo" },
+      },
+    ],
+    {
+      artifacts: [
+        {
+          artifactId: "text",
+          contentType: "text/plain",
+          text: "Synthetic description",
+        },
+        {
+          artifactId: "photo",
+          contentType: "image/jpeg",
+          s3Key: "synthetic/photo",
+        },
+      ],
+    },
+  );
+  expect(task.evidence).toMatchObject({ kind: "photo", artifactId: "photo" });
+  expect(task.mediaUrl).toBe("https://media/selected-photo");
 });
