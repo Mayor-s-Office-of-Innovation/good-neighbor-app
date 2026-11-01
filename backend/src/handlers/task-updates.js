@@ -179,7 +179,11 @@ export const createTaskUpdate = async (event, retry = true) => {
         error: "Task cannot accept resolution proof",
       });
   }
-  if (!proof && !canUpdateTask(task)) {
+  const appendToResolved =
+    task.status === "completed" &&
+    task.completionMethod !== "311_filed" &&
+    input.type === "note_photo_update";
+  if (!proof && !appendToResolved && !canUpdateTask(task)) {
     const legacyRetry = await readLegacyUpdateById(
       dynamoTable,
       siteId,
@@ -199,7 +203,12 @@ export const createTaskUpdate = async (event, retry = true) => {
   const informational = ["note_photo_update", "additional_action"].includes(
     input.type,
   );
-  if (informational && srNum && typeof input.cityHelpNeeded !== "boolean")
+  if (
+    informational &&
+    srNum &&
+    !appendToResolved &&
+    typeof input.cityHelpNeeded !== "boolean"
+  )
     return jsonResponse(400, {
       error: "Choose whether City help is still needed",
     });
@@ -208,6 +217,7 @@ export const createTaskUpdate = async (event, retry = true) => {
       error: "City help choice requires a filed 311 request",
     });
   if (
+    !appendToResolved &&
     input.cityHelpNeeded === false &&
     !simulated &&
     !is311SubmissionEnabled(process.env)
@@ -241,7 +251,7 @@ export const createTaskUpdate = async (event, retry = true) => {
         return jsonResponse(400, { error: "Invalid proof media" });
     }
   }
-  if (informational && srNum) {
+  if (informational && srNum && !appendToResolved) {
     update.cityHelpNeeded = input.cityHelpNeeded;
     if (input.cityHelpNeeded === false && !simulated) {
       try {
@@ -260,7 +270,7 @@ export const createTaskUpdate = async (event, retry = true) => {
   }
   // The compare-and-swap below prevents a late worker or another user from
   // overwriting recovery. Preserve all ticket references and filing failures.
-  if (!proof && task.status !== "in_progress") {
+  if (!proof && !appendToResolved && task.status !== "in_progress") {
     updated.inProgressAt ||= task.notifiedAt || task.updatedAt || now;
     if (updated.status === "in_progress") {
       delete updated.completedAt;

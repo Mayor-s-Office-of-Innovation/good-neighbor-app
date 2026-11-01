@@ -794,6 +794,8 @@
   "home.overdue.days.other": "{count} araw",
   "home.overdue.hours.one": "{count} oras",
   "home.overdue.hours.other": "{count} oras",
+  "home.refreshFailed": "Hindi ma-refresh. Hilahin pababa upang subukan muli.",
+  "home.refreshing": "Nagre-refresh…",
   "home.tab.history": "Kasaysayan",
   "home.tab.inProgress": "Isinasagawa",
   "home.tab.todo": "Gagawin",

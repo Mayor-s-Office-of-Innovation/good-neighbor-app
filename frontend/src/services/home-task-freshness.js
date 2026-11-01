@@ -1,41 +1,37 @@
 import { duplicateTaskVersion } from "./duplicate-invalidation.js";
-import { t } from "../i18n/i18n.js";
 import { listTasks } from "./api.js";
 import { normalizedHomeTab } from "../domain/home-tasks.js";
 
 // UI tabs overlap backend statuses: completed 311 tasks can still be in
 // progress, and expired open/in-progress tasks belong to History.
-/** @param {any} view */
-export async function refreshActiveTab(view) {
+/** @param {any} view
+ * @param {{maxAge?: number, allStatuses?: boolean}} [options]
+ */
+export async function refreshActiveTab(
+  view,
+  { maxAge = 5 * 60 * 1000, allStatuses = false } = {},
+) {
   if (
     !view.isConnected ||
+    globalThis.navigator?.onLine === false ||
     document.visibilityState === "hidden" ||
     !view._homeModel ||
     view._homeRefresh ||
     view._remainingRefresh
   )
-    return;
-  view._tabRefreshStatus = () => {
-    const status = view.querySelector?.("[data-task-refresh-status]");
-    if (status)
-      status.textContent = [...view._tabRefreshes.values()].some(
-        (entry) => entry.visible,
-      )
-        ? t("home.checkingUpdates")
-        : "";
-  };
+    return false;
   view._tabListStatus = () =>
     neededStatuses(view._homeFilter).every((status) =>
       view._taskListFreshness.has(status),
     )
       ? "loaded"
       : view._remainingStatus;
-  const statuses = neededStatuses(view._homeFilter);
+  const statuses = neededStatuses(allStatuses ? "history" : view._homeFilter);
   const stale = statuses.filter(
     (status) =>
-      Date.now() - (view._taskListFreshness.get(status) || 0) >= 5 * 60 * 1000,
+      Date.now() - (view._taskListFreshness.get(status) || 0) >= maxAge,
   );
-  if (!stale.length) return;
+  if (!stale.length) return true;
   const epoch = view._tabRefreshEpoch;
   const siteId = view._siteId;
   const current = () =>
@@ -51,14 +47,7 @@ export async function refreshActiveTab(view) {
     if (batch.entries.has(status)) continue;
     const entry = {
       promise: Promise.resolve(null),
-      visible: false,
-      timer: null,
     };
-    entry.timer = setTimeout(() => {
-      if (!current()) return;
-      entry.visible = true;
-      view._tabRefreshStatus();
-    }, 300);
     entry.promise = listTasks({ status, limit: 50 })
       .then((result) => ({
         status,
@@ -80,9 +69,9 @@ export async function refreshActiveTab(view) {
         [...batch.entries.values()].map((entry) => entry.promise),
       );
     }
-    if (!current()) return;
+    if (!current()) return false;
     const succeeded = results.filter(Boolean);
-    if (!succeeded.length) return;
+    if (!succeeded.length) return false;
     const refreshed = new Set(succeeded.map((result) => result.status));
     const incoming = succeeded.flatMap((result) => result.tasks);
     // An observed saved version retires the local override. Missing/older index
@@ -152,14 +141,13 @@ export async function refreshActiveTab(view) {
     window.scrollTo?.(scroll);
     if (previousVersions !== nextVersions) view._watchDuplicates(tasks);
     void view._hydrateVisibleHomeTasks();
+    return succeeded.length === results.length;
   })().finally(() => {
     for (const [status, entry] of batch.entries) {
-      clearTimeout(entry.timer);
       if (view._tabRefreshes.get(status) === entry)
         view._tabRefreshes.delete(status);
     }
     if (view._tabRefreshBatch === batch) view._tabRefreshBatch = null;
-    if (current()) view._tabRefreshStatus();
   });
   return batch.promise;
 }

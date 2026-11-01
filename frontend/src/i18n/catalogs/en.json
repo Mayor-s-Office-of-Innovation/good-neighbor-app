@@ -794,6 +794,8 @@
   "home.overdue.days.other": "{count} days",
   "home.overdue.hours.one": "{count} hour",
   "home.overdue.hours.other": "{count} hours",
+  "home.refreshFailed": "Couldn’t refresh. Pull down to try again.",
+  "home.refreshing": "Refreshing…",
   "home.tab.history": "History",
   "home.tab.inProgress": "In progress",
   "home.tab.todo": "To do",

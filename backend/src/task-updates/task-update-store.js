@@ -250,6 +250,7 @@ export async function writeTaskTransition(input) {
     new TransactWriteCommand({
       TransactItems: [
         ...(input.update.type !== "resolution_proof" &&
+        input.expectedStatus !== "completed" &&
         input.task.status === "completed" &&
         input.task.completionMethod !== "311_filed"
           ? sf311Job(

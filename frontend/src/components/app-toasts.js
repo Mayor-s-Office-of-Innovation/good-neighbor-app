@@ -88,6 +88,7 @@ class AppToasts extends HTMLElement {
       if (this._elements.has(toast)) continue;
       const element = document.createElement("section");
       element.className = `app-toast app-toast--${toast.tone || "neutral"}`;
+      if (toast.fullWidth) element.classList.add("app-toast--full-width");
       element.innerHTML = html` <wa-icon
           class="app-toast__icon"
           name="${escapeAttr(

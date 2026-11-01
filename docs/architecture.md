@@ -421,6 +421,34 @@ and In-progress before the card moves to History. Notes and photos save in the
 background. Worklist refreshes preserve hydrated evidence and leave open sheets
 and unchanged card markup mounted, avoiding refresh flicker.
 
+While Home is visible and online, it refreshes check summaries and the four task
+status lists every ten seconds. Concurrent reads share an in-flight batch;
+returning to the app refreshes immediately, and reconnect reloads the saved view.
+A downward touch pull or mouse drag on card padding below the tabs at the top
+of the page, or an upward wheel/trackpad overscroll there, reloads the Home lists and pending guidance. Pulling displaces
+only the list below the tabs with resistance and reveals a refresh indicator.
+Releasing past the threshold holds a spinner until the request finishes, then
+settles the list without changing its scroll position. Short or cancelled pulls
+settle without a request. Wheel gestures release after a short quiet interval,
+since browsers expose no trackpad release event. Reduced-motion settings suppress
+the settling animation and use a static loading indicator. Home owns a single
+pull-refresh state and shared promise. Its label is rendered below the icon from
+that state, so list rerenders cannot clear it. Check summaries, task lists, and
+pending guidance must all finish successfully before the indicator collapses;
+partial failure retains successful updates and presents one retry message.
+Background list refreshes are silent. Initial guidance loading uses skeletons,
+not a separate loading label. Timers and
+gesture listeners are removed when Home unmounts. This adds up to five list requests
+per ten seconds per visible Home instance (150 requests per five minutes), before
+changed-card hydration; include this traffic when revisiting shared-IP WAF sizing.
+
+A note/photo update composed before another device resolves an issue can append
+to the resolved task. Its resolution timestamps, completion method, and proof
+remain intact, and the append does not enqueue another resolution job or send a
+City-help cancellation. A concurrent write conflict reloads the task and rebuilds
+the transition once; idempotency prevents duplicate timeline entries. Recoverable
+311 filing completions retain their separate existing recovery behavior.
+
 The provider frontend's CloudFront distribution has **no error-page mapping**. SPA deep links
 (`/check`, `/today`, …) resolve via a viewer-request function (`aws_cloudfront_function.frontend_spa_rewrite`,
 `infra/modules/app/cloudfront.tf`) that rewrites dot-less, non-API URIs to `/index.html`

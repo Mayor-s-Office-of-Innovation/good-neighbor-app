@@ -1,3 +1,4 @@
+import { installHomeRefresh } from "../services/home-refresh.js";
 import { reconcileHomeResults } from "./home-card-reconcile.js";
 import { showInlineError } from "./error-notice.js";
 import {
@@ -315,8 +316,10 @@ class TodayView extends HTMLElement {
     this._homeRefresh = null;
     this._taskListFreshness = new Map();
     this._tabRefreshes = new Map();
-    /** @type {(() => void) | null} */
-    this._tabRefreshStatus = null;
+    /** @type {string} */
+    this._pullRefreshState = "idle";
+    this._pullRefreshId = 0;
+    this._pullRefreshPromise = null;
     /** @type {(() => "pending" | "loaded" | "error") | null} */
     this._tabListStatus = null;
     this._tabRefreshEpoch = 0;
@@ -370,7 +373,7 @@ class TodayView extends HTMLElement {
     this._refresh311OnReturn = () => {
       this._refresh311Statuses();
       void this._refreshChecks();
-      void this._refreshActiveTab();
+      void this._refreshActiveTab({ maxAge: 0, allStatuses: true });
     };
     this._checksRefreshTimer = null;
     this._checksRefreshing = false;
@@ -390,6 +393,11 @@ class TodayView extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._pullRefreshId++;
+    this._pullRefreshState = "idle";
+    this._pullRefreshPromise = null;
+    this._stopHomeRefresh?.();
+    this._stopHomeRefresh = null;
     clearInterval(this._checksRefreshTimer);
     this._checksRefreshTimer = null;
     this._tabRefreshEpoch++;
@@ -431,9 +439,12 @@ class TodayView extends HTMLElement {
   }
 
   connectedCallback() {
+    this._stopHomeRefresh ??= installHomeRefresh(this, () =>
+      this._refreshFromPull(),
+    );
     this._checksRefreshTimer ??= setInterval(() => {
-      void this._refreshChecks();
-    }, 30_000);
+      void this._refreshHomeLists(8_000);
+    }, 10_000);
     if (this._homeRefresh) {
       this._homeRefreshQueued = true;
       return this._homeRefresh;
@@ -532,7 +543,7 @@ class TodayView extends HTMLElement {
     if (!this._onlineReload) {
       // Offline home is a saved snapshot: reload the live lists on reconnect.
       this._onlineReload = () => {
-        if (this._offline && this.isConnected) void this.connectedCallback();
+        if (this.isConnected) void this.connectedCallback();
       };
       window.addEventListener("online", this._onlineReload);
     }
@@ -1096,9 +1107,91 @@ class TodayView extends HTMLElement {
     }
   }
 
-  _refreshActiveTab() {
+  _refreshFromPull() {
+    if (this._pullRefreshPromise) return this._pullRefreshPromise;
+    const id = ++this._pullRefreshId;
+    const siteId = this._siteId;
+    const current = () =>
+      this.isConnected && this._siteId === siteId && this._pullRefreshId === id;
+    const setState = (state) => {
+      if (!current()) return;
+      this._pullRefreshState = state;
+      if (this._homeModel) this._renderHome(this._homeModel);
+    };
+    setState("refreshing");
+    const pending = Promise.resolve()
+      .then(async () => {
+        // Join an initial load before starting this explicitly requested batch.
+        await Promise.all([this._homeRefresh, this._remainingRefresh]);
+        if (!current()) return;
+        if (navigator.onLine === false || !this._homeModel)
+          throw new Error("Refresh unavailable");
+        const generation = this._homeRefreshGeneration;
+        const guidanceGeneration = ++this._guidanceGeneration;
+        const checks = listChecks({ limit: 30 }).then((response) => {
+          if (!current()) return [];
+          const rows = response.checks || [];
+          const submitted = submittedChecks(rows);
+          this._renderHome({
+            ...this._homeModel,
+            checks: submitted,
+            last: submitted[0],
+            latestStartedCheck: latestStarted(rows),
+          });
+          return rows;
+        });
+        const tasks = import("../services/home-task-freshness.js").then(
+          ({ refreshActiveTab }) =>
+            refreshActiveTab(this, { maxAge: 0, allStatuses: true }),
+        );
+        const guidance = checks.then(async (rows) => {
+          if (!current()) return;
+          await this._loadHomeGuidance(
+            this._homeModel,
+            generation,
+            guidanceGeneration,
+            rows,
+          );
+          if (this._homeModel?.pendingGuidanceFailed)
+            throw new Error("Guidance refresh failed");
+        });
+        const results = await Promise.allSettled([checks, tasks, guidance]);
+        if (!current()) return;
+        if (
+          results.some((result) => result.status === "rejected") ||
+          (results[1].status === "fulfilled" && results[1].value !== true)
+        )
+          throw new Error("Refresh incomplete");
+        setState("idle");
+      })
+      .catch((error) => {
+        setState("failed");
+        throw error;
+      })
+      .finally(() => {
+        if (this._pullRefreshPromise === pending)
+          this._pullRefreshPromise = null;
+      });
+    this._pullRefreshPromise = pending;
+    return pending;
+  }
+
+  async _refreshHomeLists(maxAge = 0) {
+    if (
+      !this.isConnected ||
+      document.visibilityState === "hidden" ||
+      navigator.onLine === false
+    )
+      return;
+    await Promise.all([
+      this._refreshChecks(),
+      this._refreshActiveTab({ maxAge, allStatuses: true }),
+    ]);
+  }
+
+  _refreshActiveTab(options = {}) {
     return import("../services/home-task-freshness.js")
-      .then(({ refreshActiveTab }) => refreshActiveTab(this))
+      .then(({ refreshActiveTab }) => refreshActiveTab(this, options))
       .catch(() => {});
   }
 
@@ -1287,7 +1380,6 @@ class TodayView extends HTMLElement {
     }
     this.innerHTML = markup;
     restoreFinalizationNotices(model.pendingSession, this);
-    this._tabRefreshStatus?.();
 
     // Hand the bound site id to the feedback sheet so submissions carry it as
     // optional context (the server treats it as advisory, pattern-checked).
@@ -1944,6 +2036,7 @@ class TodayView extends HTMLElement {
     if (this._homeModel?.pendingGuidanceFailed) delete counts.todo;
     this._tabCountSnapshot = { siteId: this._siteId, counts };
     return homeResults({
+      pullRefreshState: this._pullRefreshState,
       historyGrouping: this._historyGrouping || "resolved",
       homeFilter: this._homeFilter,
       // Retain confirmed counts during refresh; update each once its lists land.

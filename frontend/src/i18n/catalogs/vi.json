@@ -794,6 +794,8 @@
   "home.overdue.days.other": "{count} ngày",
   "home.overdue.hours.one": "{count} giờ",
   "home.overdue.hours.other": "{count} giờ",
+  "home.refreshFailed": "Không thể làm mới. Kéo xuống để thử lại.",
+  "home.refreshing": "Đang làm mới…",
   "home.tab.history": "Lịch sử",
   "home.tab.inProgress": "Đang xử lý",
   "home.tab.todo": "Cần làm",

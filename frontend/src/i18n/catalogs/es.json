@@ -794,6 +794,8 @@
   "home.overdue.days.other": "{count} días",
   "home.overdue.hours.one": "{count} hora",
   "home.overdue.hours.other": "{count} horas",
+  "home.refreshFailed": "No se pudo actualizar. Desliza hacia abajo para volver a intentarlo.",
+  "home.refreshing": "Actualizando…",
   "home.tab.history": "Historial",
   "home.tab.inProgress": "En curso",
   "home.tab.todo": "Pendientes",

@@ -174,6 +174,7 @@ function showSaveRecovery(checkId, expectedArtifacts, target = null) {
   if (previous?.target === noticeTarget && noticeTarget?.isConnected) return;
   previous?.close();
   saveNotices.set(checkId, {
+    close: () => {},
     target: noticeTarget,
     ...showInlineError(t("notice.saveFailed"), {
       key: `check-save:${checkId}`,

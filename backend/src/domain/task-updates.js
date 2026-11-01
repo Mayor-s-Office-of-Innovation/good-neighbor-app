@@ -169,14 +169,24 @@ export function buildTaskUpdateTransition(task, input, context) {
     ...(photoKeys.length ? { photoKeys } : {}),
   };
   const proof = type === "resolution_proof";
-  const status = proof ? task.status : resolved ? "completed" : "in_progress";
+  const preserveResolution =
+    type === "note_photo_update" &&
+    task.status === "completed" &&
+    task.completionMethod !== "311_filed";
+  const status =
+    proof || preserveResolution
+      ? task.status
+      : resolved
+        ? "completed"
+        : "in_progress";
   return {
     update,
     task: {
       ...task,
       status,
       latestUpdateId: context.updateId,
-      latestUpdateLabel: proof ? task.latestUpdateLabel : label,
+      latestUpdateLabel:
+        proof || preserveResolution ? task.latestUpdateLabel : label,
       ...(proof ? { proofAddedAt: now } : {}),
       updatedAt: now,
       ...(period ? { lastAnsweredPresencePeriod: period } : {}),

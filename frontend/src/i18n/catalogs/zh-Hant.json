@@ -794,6 +794,8 @@
   "home.overdue.days.other": "{count} 天",
   "home.overdue.hours.one": "{count} 小時",
   "home.overdue.hours.other": "{count} 小時",
+  "home.refreshFailed": "無法重新整理。請下拉再試一次。",
+  "home.refreshing": "正在重新整理…",
   "home.tab.history": "歷史記錄",
   "home.tab.inProgress": "處理中",
   "home.tab.todo": "待辦",
