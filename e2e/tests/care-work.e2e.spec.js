@@ -544,11 +544,11 @@ test("care submission returns immediately and recovers photos after reload", asy
   await page.locator("[data-save]").click();
   await expect(page).toHaveURL(/\/care-work$/);
   await expect(page.locator(".care-days [role=status]")).toHaveText(
-    t("care.saving"),
+    t("care.savingShort"),
   );
   await page.reload();
   await expect(page.locator(".care-days [role=status]")).toHaveText(
-    t("care.saving"),
+    t("care.savingShort"),
   );
   const saved = page.waitForResponse(
     (res) =>
