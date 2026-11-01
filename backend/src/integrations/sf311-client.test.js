@@ -7,6 +7,7 @@ import {
   findResponsibleAgencyInLookup,
   hubDateTime,
   Sf311Error,
+  SF311_TIMEOUTS,
   sourceRequestId,
 } from "./sf311-client.js";
 
@@ -210,6 +211,130 @@ describe("SF311 CreateSR client helpers", () => {
     });
     expect(fetchImpl).toHaveBeenCalledTimes(3);
     expect(fetchImpl.mock.calls[0][1].signal).toBeTruthy();
+  });
+
+  describe("per-operation timeouts", () => {
+    const config = {
+      uploadBucket: "bucket",
+      queueUrl: "queue",
+      dynamoTable: "table",
+      sf311CreateSrUrl: "https://hub.example.test/createsr",
+      sf311UpdateSrUrl: "https://hub.example.test/updatesr",
+      sf311AgencyLookupUrl: "https://hub.example.test/lookup",
+      sf311LatestUpdatesUrl: "https://hub.example.test/latest/{agencyID}",
+      sf311BasicAuthUser: "user",
+      sf311BasicAuthPass: "pass",
+    };
+    /**
+     * A HUB that never answers; the request ends only when our timer aborts it.
+     * @returns {typeof fetch}
+     */
+    const hangingFetch = () =>
+      /** @type {typeof fetch} */ (
+        /** @type {unknown} */ (
+          vi.fn(
+            (
+              /** @type {string} */ _url,
+              /** @type {{ signal?: { addEventListener: (type: string, listener: () => void) => void } }} */ init,
+            ) =>
+              new Promise((_resolve, reject) => {
+                init.signal?.addEventListener("abort", () => {
+                  const error = new Error("aborted");
+                  error.name = "AbortError";
+                  reject(error);
+                });
+              }),
+          )
+        )
+      );
+    /**
+     * @param {Promise<unknown>} promise
+     * @returns {() => string} the promise's state when called
+     */
+    const settled = (promise) => {
+      let state = "pending";
+      promise.then(
+        () => (state = "resolved"),
+        () => (state = "rejected"),
+      );
+      return () => state;
+    };
+
+    it("gives reads 10 s and writes 60 s", async () => {
+      vi.useFakeTimers();
+      try {
+        const client = createSf311Client({ config, fetchImpl: hangingFetch() });
+        const read = client.getLatestUpdatesBySourceAgency();
+        const lookup = client.lookupResponsibleAgency("1.1.4.7.20.0");
+        const create = client.createServiceRequest({ SourceRequestID: "t" });
+        const update = client.updateServiceRequest({ SRnum: "1" });
+        const states = [read, lookup, create, update].map(settled);
+        for (const promise of [read, lookup, create, update])
+          promise.catch(() => {});
+
+        await vi.advanceTimersByTimeAsync(SF311_TIMEOUTS.read + 1);
+        expect(states.map((state) => state())).toEqual([
+          "rejected",
+          "rejected",
+          "pending",
+          "pending",
+        ]);
+        await expect(read).rejects.toMatchObject({ code: "sf311_timeout" });
+
+        await vi.advanceTimersByTimeAsync(
+          SF311_TIMEOUTS.write - SF311_TIMEOUTS.read,
+        );
+        expect(states.map((state) => state())).toEqual([
+          "rejected",
+          "rejected",
+          "rejected",
+          "rejected",
+        ]);
+        await expect(create).rejects.toMatchObject({ code: "sf311_timeout" });
+        await expect(update).rejects.toMatchObject({ code: "sf311_timeout" });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("lets a caller shorten the write budget", async () => {
+      vi.useFakeTimers();
+      try {
+        const client = createSf311Client({
+          config,
+          fetchImpl: hangingFetch(),
+          timeouts: { write: 15_000 },
+        });
+        const update = client.updateServiceRequest({ SRnum: "1" });
+        const state = settled(update);
+        update.catch(() => {});
+        await vi.advanceTimersByTimeAsync(14_999);
+        expect(state()).toBe("pending");
+        await vi.advanceTimersByTimeAsync(2);
+        expect(state()).toBe("rejected");
+        await expect(update).rejects.toMatchObject({ code: "sf311_timeout" });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("clears the timer once the HUB answers", async () => {
+      vi.useFakeTimers();
+      try {
+        const fetchImpl = vi.fn(
+          async () =>
+            new Response(JSON.stringify({ data: [] }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+        );
+        const client = createSf311Client({ config, fetchImpl });
+        await client.getLatestUpdatesBySourceAgency();
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });
 

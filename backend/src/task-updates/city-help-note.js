@@ -256,7 +256,10 @@ async function deliverCityHelpNoteInner(tableName, siteId, update) {
     const config = getConfig();
     if (!config.sf311UpdateSrUrl) throw new Error("UpdateSR URL missing");
     await getSf311BasicAuth(config);
-    client = createSf311Client({ config });
+    // This note is still sent inside the API request (29 s limit), so it
+    // cannot use the worker's write budget. Remove the override when note
+    // delivery moves to the outbox worker.
+    client = createSf311Client({ config, timeouts: { write: 15_000 } });
     stage = "claim";
     await ddb.send(
       new UpdateCommand({

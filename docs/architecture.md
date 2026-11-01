@@ -287,10 +287,26 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   acceptance; missing or unavailable evidence leaves the attachment pending for
   reconciliation instead of resending. Operators must confirm acceptance or
   non-submission before correcting the durable checkpoint and redriving the job.
-  Closure retries reconcile City state. Previously dispatched submissions messages
+  Closure sends `UpdateSR` directly and may be repeated: the 311 team confirmed
+  that repeating a closure is safe and that agency-76 tickets are absent from the
+  latest-updates feed, so closure retries no longer read that feed (see
+  [closure recovery](runbooks/recovery.md#sf311-closure-recovery)). A closure is
+  recorded only on an explicit `return_code = 0`. Previously dispatched submissions messages
   stay on their original queue and remain supported by the general worker.
   Connection failures, blocked reconciliation and terminal action failures have
   separate alarms; see the [311 runbook](runbooks/sf311.md).
+- **Global silent filing control:** `SYSTEM#CONTROLS` / `SILENT_311` lets a
+  Compliance supervisor disable every silent (`task_created`) City workflow at
+  once through `GET`/`PUT /admin/v1/system-controls` (admin System status,
+  Control tab). The 311 worker checks the control before running a silent job and
+  the HUB client re-reads it before every request made inside that job; a
+  suppressed job is marked `complete` with `suppressionReason:
+  "silent_filing_disabled"` and never replays. Silent-ticket City help notes are
+  marked `suppressed` instead of failing the update. Each change starts a new
+  epoch: after re-enabling, only tasks created after the change are eligible, so
+  silent tickets filed before a disable keep whatever state they have in 311.
+  User-confirmed filings, their notes and the status feed are not affected. See
+  the [system status runbook](runbooks/system-status.md#global-silent-filing-control).
 - **Tapped 311 filing (`GNP_311_ASYNC_FILING`, on in dev, off by default):** a "File 311
   ticket" tap makes no HUB call. One transaction moves the task to `in_progress` with
   `appActionStatus: "queued"` and writes an `SF311_OUTBOX` job with phase `filed-<id>`
