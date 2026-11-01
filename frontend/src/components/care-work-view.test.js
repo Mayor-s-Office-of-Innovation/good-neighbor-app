@@ -101,3 +101,48 @@ it("reports both local queue and remote failures with a retry control", async ()
   expect(component.innerHTML).toContain(t("care.loadError"));
   expect(component.innerHTML).toContain("data-retry");
 });
+
+it("retains server logs and refreshes queue labels without fetching offline", async () => {
+  const component = view();
+  await component._loadList();
+  const originalNavigator = globalThis.navigator;
+  vi.stubGlobal("navigator", { onLine: false });
+  vi.mocked(listCareSubmissions).mockResolvedValue([
+    {
+      workId: "pending",
+      kind: "power_washed",
+      createdAt: "2026-10-27T13:00:00Z",
+      status: "pending",
+    },
+  ]);
+  try {
+    await component._loadList();
+    expect(listCareWork).toHaveBeenCalledOnce();
+    expect(component.innerHTML).toContain('data-work="saved"');
+    expect(component.innerHTML).toContain(t("card.recovery.offline"));
+    expect(component.innerHTML).not.toContain("wa-spinner");
+  } finally {
+    vi.stubGlobal("navigator", originalNavigator);
+  }
+});
+
+it("retains the last complete server snapshot when a refresh fails", async () => {
+  const component = view();
+  await component._loadList();
+  vi.mocked(listCareWork).mockRejectedValueOnce(new Error("network"));
+  await component._loadList();
+  expect(component.innerHTML).toContain('data-work="saved"');
+  expect(component.innerHTML).toContain(t("care.loadError"));
+  vi.mocked(listCareWork).mockResolvedValueOnce({ work: [] });
+  await component._loadList();
+  expect(component.innerHTML).not.toContain('data-work="saved"');
+});
+
+it("does not retain another site's server logs", async () => {
+  const component = view();
+  await component._loadList();
+  component._siteId = "other-site";
+  vi.mocked(listCareWork).mockRejectedValueOnce(new Error("network"));
+  await component._loadList();
+  expect(component.innerHTML).not.toContain('data-work="saved"');
+});

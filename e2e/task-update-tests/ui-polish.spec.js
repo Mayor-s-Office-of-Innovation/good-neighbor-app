@@ -559,3 +559,79 @@ test("care pending status stays on its row and distinguishes offline waiting", a
   });
   await expect(page.locator(".care-row__status")).toHaveText(expected);
 });
+
+test("oversized complaints header scrolls away and becomes sticky again when it fits", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 844, height: 390 });
+  await page.evaluate(async () => {
+    window.history.replaceState({}, "", "/complaints");
+    const path = "/src/components/complaint-view.js";
+    await import(path);
+    document
+      .querySelector("main")
+      .append(document.createElement("complaint-view"));
+  });
+  await expect(page.locator("#log-complaint")).toBeVisible();
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "32px";
+    document.querySelector(".complaints__list").innerHTML = Array.from(
+      { length: 30 },
+      (_, index) => `<p style="height:60px">Synthetic complaint ${index}</p>`,
+    ).join("");
+  });
+  const header = page.locator(".complaints__sticky");
+  await expect(header).toHaveCSS("position", "static");
+  await page.evaluate(() => window.scrollTo(0, 700));
+  await expect
+    .poll(async () => {
+      const box = await header.boundingBox();
+      return box.y + box.height;
+    })
+    .toBeLessThan(0);
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "16px";
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(header).toHaveCSS("position", "sticky");
+});
+
+test("going offline preserves the care logs already displayed", async ({
+  page,
+  context,
+}) => {
+  await page.route("**/v1/care-work**", (route) =>
+    route.fulfill({
+      json: {
+        work: [
+          {
+            workId: "synthetic-saved",
+            kind: "power_washed",
+            createdAt: "2026-10-27T12:00:00Z",
+            photos: [],
+          },
+        ],
+      },
+    }),
+  );
+  await page.evaluate(async () => {
+    const load = (path) => import(path);
+    const { setSite } = await load("/src/db.js");
+    await setSite("Synthetic review site", { siteId: "review-only" });
+    window.history.replaceState({}, "", "/care-work");
+    await load("/src/components/care-work-view.js");
+    document
+      .querySelector("main")
+      .append(document.createElement("care-work-view"));
+  });
+  await expect(page.locator('[data-work="synthetic-saved"]')).toBeVisible();
+  await page.route("**/v1/care-work**", (route) => route.abort());
+  await context.setOffline(true);
+  await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(false);
+  // Wait for the offline handler's asynchronous queue read and render.
+  await page.evaluate(async () => {
+    const host = document.querySelector("care-work-view");
+    await host._loadList();
+  });
+  await expect(page.locator('[data-work="synthetic-saved"]')).toBeVisible();
+});

@@ -76,6 +76,12 @@ class ComplaintView extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._headerObserver?.disconnect();
+    window.removeEventListener("resize", this._updateStickyHeader);
+    window.visualViewport?.removeEventListener(
+      "resize",
+      this._updateStickyHeader,
+    );
     for (const controller of this._aborters?.values() || []) controller.abort();
     clearTimeout(this._pollTimer);
     window.removeEventListener("beforeunload", this._beforeUnload);
@@ -98,7 +104,40 @@ class ComplaintView extends HTMLElement {
     </header>`;
   }
 
+  // Header height depends on translated copy and text size. Measure it rather
+  // than guessing a viewport breakpoint that can still obscure the list.
+  _updateStickyHeader = () => {
+    const header = this.querySelector(".complaints__sticky");
+    if (!header) return;
+    const height = header.getBoundingClientRect().height;
+    const viewport = window.visualViewport?.height || window.innerHeight;
+    const fits = height <= viewport / 2;
+    header.toggleAttribute("data-static", !fits);
+    this.style.setProperty(
+      "--complaints-header-height",
+      fits ? `${height + 16}px` : "0px",
+    );
+  };
+
+  _observeStickyHeader() {
+    const header = this.querySelector(".complaints__sticky");
+    if (!header && !this._headerObserver) return;
+    this._headerObserver?.disconnect();
+    window.removeEventListener("resize", this._updateStickyHeader);
+    window.visualViewport?.removeEventListener(
+      "resize",
+      this._updateStickyHeader,
+    );
+    if (!header) return;
+    this._headerObserver = new ResizeObserver(this._updateStickyHeader);
+    this._headerObserver.observe(header);
+    window.addEventListener("resize", this._updateStickyHeader);
+    window.visualViewport?.addEventListener("resize", this._updateStickyHeader);
+    this._updateStickyHeader();
+  }
+
   _bindBack(fallback = "/today") {
+    this._observeStickyHeader();
     this.querySelector("[data-back]")?.addEventListener("click", () => {
       if (draft?.uploading && !window.confirm(t("complaints.upload.leave")))
         return;

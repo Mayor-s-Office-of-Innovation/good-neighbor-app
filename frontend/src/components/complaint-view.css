@@ -394,6 +394,9 @@
   background: var(--bg);
   padding-block-end: 0.75rem;
 }
+.complaints__sticky[data-static] {
+  position: static;
+}
 .complaints__list :focus-visible {
   scroll-margin-block-start: var(--complaints-header-height, 18rem);
 }

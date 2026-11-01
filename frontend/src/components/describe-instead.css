@@ -317,8 +317,8 @@
 
 .describe-modal__primary {
   border: 0;
-  background: var(--ink);
-  color: var(--on-ink);
+  background: var(--wa-color-danger-fill-loud, var(--c-hazard));
+  color: var(--wa-color-danger-on-loud, #fff);
 }
 
 @media (max-width: 479px) {
