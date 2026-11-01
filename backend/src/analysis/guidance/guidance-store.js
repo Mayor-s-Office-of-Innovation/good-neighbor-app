@@ -39,6 +39,7 @@ import {
   is311AsyncFilingEnabled,
   is311SubmissionEnabled,
   summarizeAppActionResults,
+  mergeAppActionResults,
 } from "./app-actions.js";
 import { queue311Filing } from "./sf311-filing-queue.js";
 import { activeCatalog, catalogForPolicyVersion } from "./catalog-registry.js";
@@ -1584,20 +1585,10 @@ export async function completeTaskWithAppActions(opts) {
       : existing.Item.canBeInProgress === true;
 
   // Silent City notifications and their closure run on the durable background queue.
-  const appActionResults = [...executedAppActionResults];
-  if (
-    !executedAppActionResults.some(
-      (result) => result.code === "create_311_ticket",
-    )
-  ) {
-    appActionResults.unshift(
-      ...priorResults.filter((result) => result.code === "create_311_ticket"),
-    );
-  }
-  for (const prior of priorResults) {
-    if (!appActionResults.some((result) => result.code === prior.code))
-      appActionResults.push(prior);
-  }
+  const appActionResults = executedAppActionResults.reduce(
+    (results, result) => mergeAppActionResults(results, result),
+    [...priorResults],
+  );
   const appActionStatus = summarizeAppActionResults(appActionResults);
   // Whether THIS completion attempt failed — judged only on the actions it ran
   // for this trigger, NOT on the merged history. A completion for a trigger with

@@ -171,13 +171,16 @@ function showSaveRecovery(checkId, expectedArtifacts, target = null) {
       : null);
   const previous = saveNotices.get(checkId);
   if (previous?.target === noticeTarget && previous.isConnected?.()) return;
+  const expiresAt = previous?.expiresAt ?? Date.now() + 5000;
   previous?.close();
   saveNotices.set(checkId, {
+    expiresAt,
     close: () => {},
     target: noticeTarget,
     ...showInlineError(t("notice.saveFailed"), {
       key: `check-save:${checkId}`,
-      duration: 5000,
+      duration: Math.max(0, expiresAt - Date.now()),
+      expired: expiresAt <= Date.now(),
       retainRetryOnExpiry: true,
       target: noticeTarget,
       warning: true,
@@ -202,6 +205,10 @@ export function restoreFinalizationNotices(check, target) {
     const held = getHeldCheck(id) || (check?.id === id ? check : null);
     if (held?.finalizationRecovery?.state === "manual")
       showSaveRecovery(id, held.expectedArtifacts, target);
+    else if (saveNotices.get(id)?.expiresAt !== undefined) {
+      saveNotices.get(id)?.close();
+      saveNotices.delete(id);
+    }
   }
 }
 

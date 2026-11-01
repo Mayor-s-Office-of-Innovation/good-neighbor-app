@@ -393,6 +393,22 @@ test("expired save notification retains a keyboard-accessible retry action", asy
   await expect(retry).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.locator("body")).toHaveAttribute("data-retried", "true");
+  // Restoring an already expired warning must render only its action immediately.
+  await page.evaluate(async () => {
+    const path = "/src/components/error-notice.js";
+    const { showInlineError } = await import(path);
+    const catalogPath = "/src/i18n/i18n.js";
+    const { t } = await import(catalogPath);
+    showInlineError(t("notice.saveFailed"), {
+      target: document.querySelector("main"),
+      expired: true,
+      retainRetryOnExpiry: true,
+      retryLabel: t("notice.retrySaving"),
+      retry: () => {},
+    });
+  });
+  await expect(page.locator('[role="alert"]')).toHaveCount(0);
+  await expect(retry).toBeVisible();
   const { default: AxeBuilder } = await import("@axe-core/playwright");
   expect(
     (await new AxeBuilder({ page }).include("main").analyze()).violations,

@@ -300,12 +300,14 @@ it("waits for deletion confirmation even when the remaining evidence count is ze
   expect(session.clearSubmittedSession).not.toHaveBeenCalled();
 });
 
-it("keeps a paused finalization retry available and restores it after its DOM is replaced", async () => {
+it("preserves warning expiry across replacement and removes retry after authoritative completion", async () => {
+  vi.useFakeTimers();
   const notices = await import("../components/error-notice.js");
   const target = { isConnected: true };
   let connected = true;
+  const close = vi.fn();
   const show = vi.spyOn(notices, "showInlineError").mockReturnValue({
-    close: vi.fn(),
+    close,
     isConnected: () => connected,
   });
   const draft = /** @type {any} */ (makeDraft());
@@ -313,9 +315,8 @@ it("keeps a paused finalization retry available and restores it after its DOM is
   getCurrentCheck.mockReturnValue(draft);
   vi.stubGlobal("document", { querySelector: () => target });
   try {
-    const { finalizeCaptureScorecardInBackground } = await import(
-      "./submit-check.js"
-    );
+    const { finalizeCaptureScorecardInBackground, restoreFinalizationNotices } =
+      await import("./submit-check.js");
     expect(finalizeCaptureScorecardInBackground(draft.id)).toBeNull();
     expect(show).toHaveBeenLastCalledWith(
       expect.any(String),
@@ -328,11 +329,27 @@ it("keeps a paused finalization retry available and restores it after its DOM is
     const count = show.mock.calls.length;
     finalizeCaptureScorecardInBackground(draft.id);
     expect(show).toHaveBeenCalledTimes(count);
+    vi.advanceTimersByTime(5001);
     connected = false;
     finalizeCaptureScorecardInBackground(draft.id);
     expect(show).toHaveBeenCalledTimes(count + 1);
+    expect(show).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        duration: 0,
+        expired: true,
+        retainRetryOnExpiry: true,
+      }),
+    );
+    close.mockClear();
+    getCurrentCheck.mockReturnValue(null);
+    restoreFinalizationNotices(null, target);
+    expect(close).toHaveBeenCalledOnce();
+    restoreFinalizationNotices(null, target);
+    expect(close).toHaveBeenCalledOnce();
   } finally {
     show.mockRestore();
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   }
 });

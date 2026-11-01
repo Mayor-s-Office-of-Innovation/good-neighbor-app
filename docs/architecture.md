@@ -301,8 +301,16 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   permanent failures, outcomes that need reconciliation, and the fifth delivery mark the
   filing `failed`, leaving the task `in_progress`. A repeat tap returns the task; a tap on a
   failed filing queues a new job.
-  Action-selection overrides atomically check the worker lock and refuse changes
-  while it is claimed or holds durable results. Progress updates compare integration
+  Action-selection overrides atomically compare the task and worker-result snapshots.
+  They allow settled silent filings and definitive rejections once the results are
+  reflected on the task, preserving all ticket references and checkpoints. Active
+  worker claims, uncertain outcomes, and executed user actions still block edits.
+  Silent and deliberate filing results are kept separately; a deliberate filing
+  after a silent one uses its own source request ID and cannot reuse the silent ticket.
+  Its first deliberate acceptance reads the Site delivery setting independently of
+  silent history. Background jobs retain all results but do not retry proven no-ticket
+  silent failures after the action is replaced, or count deliberate failures as their
+  own. Uncertain outcomes remain protected. Progress updates compare integration
   results as well as task state and retry once from a fresh read on conflict.
   Explicit user-confirmed filing and City-help-note actions retain their existing
   confirmation semantics. The clarification UI shows “Updating issue” only while

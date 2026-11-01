@@ -1,4 +1,5 @@
 // @ts-nocheck -- command mocks intentionally accept several AWS input shapes.
+import { isDeepStrictEqual } from "node:util";
 import { beforeEach, expect, it, vi } from "vitest";
 import { activeCatalog } from "../analysis/guidance/catalog-registry.js";
 
@@ -34,12 +35,33 @@ vi.mock("../db.js", () => ({
         const guard = entry.ConditionCheck;
         if (guard?.Key.sk.startsWith("SF311_LOCK#")) {
           const lock = state.items.get(`${guard.Key.pk}|${guard.Key.sk}`);
-          if (lock?.sf311Lease || lock?.results)
+          if (
+            lock?.sf311Lease ||
+            !isDeepStrictEqual(
+              lock?.results,
+              guard.ExpressionAttributeValues?.[":lockResults"],
+            )
+          )
             throw Object.assign(new Error("worker won"), {
               name: "TransactionCanceledException",
               CancellationReasons: [{ Code: "ConditionalCheckFailed" }],
             });
         }
+      }
+      for (const { Put: write } of input.TransactItems ?? []) {
+        if (!write?.ConditionExpression?.includes("updatedAt = :updated"))
+          continue;
+        const current = state.items.get(`${write.Item.pk}|${write.Item.sk}`);
+        const expected = write.ExpressionAttributeValues;
+        if (
+          current.status !== expected[":open"] ||
+          current.updatedAt !== expected[":updated"] ||
+          !isDeepStrictEqual(current.appActionResults, expected[":results"])
+        )
+          throw Object.assign(new Error("task changed"), {
+            name: "TransactionCanceledException",
+            CancellationReasons: [{ Code: "ConditionalCheckFailed" }],
+          });
       }
       state.transactions.push(input.TransactItems);
       for (const entry of input.TransactItems ?? []) {
@@ -298,6 +320,131 @@ it.each(["lease", "checkpoint", "finalized"])(
       event("duplicate", { ruleId: "LITTER-2" }),
     );
     expect(response.statusCode).toBe(409);
+    expect(state.transactions).toHaveLength(0);
+  },
+);
+
+function silentResult(overrides = {}) {
+  return {
+    code: "create_311_ticket",
+    status: "submitted",
+    recordedAt: "2026-10-16T12:00:01Z",
+    payload: {
+      executionTrigger: "task_created",
+      responsibleAgencyCode: "76",
+      tickets: [
+        {
+          serviceCode: "synthetic",
+          srNum: "123456789",
+          responsibleAgency: "76",
+        },
+      ],
+    },
+    ...overrides,
+  };
+}
+function settledTask(result) {
+  put(
+    task("root", {
+      appActionResults: [result],
+      appActionStatus: result.status,
+    }),
+  );
+  put({ pk: "SITE#site", sk: "SF311_LOCK#root", results: [result] });
+}
+
+it.each(["submitted", "rejected", "preflight"])(
+  "allows settled silent %s while preserving task and lock results",
+  async (kind) => {
+    const result = silentResult();
+    if (kind !== "submitted") {
+      result.status = "failed";
+      result.reason = kind === "preflight" ? "missing_location" : "21";
+      result.payload.tickets =
+        kind === "preflight"
+          ? []
+          : [
+              {
+                serviceCode: "synthetic",
+                responsibleAgency: "76",
+                creationState: "rejected",
+              },
+            ];
+    }
+    settledTask(result);
+    const response = await updateTaskAction(
+      event("root", { ruleId: "LITTER-2" }),
+    );
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body).task.appActionResults).toEqual([result]);
+    expect(state.items.get("SITE#site|SF311_LOCK#root").results).toEqual([
+      result,
+    ]);
+    const guard = state.transactions[0].find(
+      (e) => e.ConditionCheck?.Key.sk === "SF311_LOCK#root",
+    ).ConditionCheck;
+    expect(guard.ConditionExpression).toBe(
+      "attribute_not_exists(sf311Lease) AND results = :lockResults",
+    );
+    expect(guard.ExpressionAttributeValues[":lockResults"]).toEqual([result]);
+  },
+);
+
+it.each([
+  "lease",
+  "partial",
+  "pending",
+  "uncertain",
+  "user",
+  "phone",
+  "unmirrored",
+])("blocks %s outcomes without changing history", async (kind) => {
+  const result = silentResult();
+  if (kind === "partial") result.status = "partial";
+  if (kind === "pending") {
+    result.status = "failed";
+    result.payload.tickets = [
+      { responsibleAgency: "76", creationState: "pending" },
+    ];
+  }
+  if (kind === "uncertain") {
+    result.status = "failed";
+    result.reason = "sf311_creation_uncertain_requires_reconciliation";
+  }
+  if (kind === "user") result.payload.executionTrigger = "user_confirmed";
+  if (kind === "phone") {
+    result.code = "open_phone";
+    result.status = "recorded";
+  }
+  settledTask(result);
+  if (kind === "lease")
+    state.items.get("SITE#site|SF311_LOCK#root").sf311Lease = "active-worker";
+  if (kind === "unmirrored") put(task("root", { appActionResults: [] }));
+  expect(
+    (await updateTaskAction(event("root", { ruleId: "LITTER-2" }))).statusCode,
+  ).toBe(409);
+  expect(state.transactions).toHaveLength(0);
+});
+
+it.each(["lock", "task", "lease"])(
+  "rejects concurrent %s changes after settled snapshot read",
+  async (kind) => {
+    settledTask(silentResult());
+    state.beforeTransaction = () => {
+      if (kind === "task")
+        put(task("root", { updatedAt: "2026-11-01T19:00:00Z" }));
+      else
+        put({
+          pk: "SITE#site",
+          sk: "SF311_LOCK#root",
+          results: [silentResult({ status: "partial" })],
+          ...(kind === "lease" ? { sf311Lease: "worker" } : {}),
+        });
+    };
+    expect(
+      (await updateTaskAction(event("root", { ruleId: "LITTER-2" })))
+        .statusCode,
+    ).toBe(409);
     expect(state.transactions).toHaveLength(0);
   },
 );

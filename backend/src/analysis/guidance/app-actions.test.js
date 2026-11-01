@@ -28,6 +28,7 @@ vi.mock("../analyzer-client.js", () => ({ createAnalyzerClient }));
 
 import {
   eligibleTicketsForClosure,
+  mergeAppActionResults,
   executeAppActions,
   initialAppActionStatus,
   is311SubmissionEnabled,
@@ -2356,4 +2357,68 @@ describe("311 ticket closure", () => {
     ]);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+});
+
+it("files a separate deliberate ticket after silent filing and preserves both through checkpoint merges", async () => {
+  const silent = {
+    ...SUBMITTED_311_RESULT,
+    payload: {
+      ...SUBMITTED_311_RESULT.payload,
+      executionTrigger: "task_created",
+      responsibleAgencyCode: "76",
+    },
+  };
+  const fetchImpl = vi.fn(
+    async () =>
+      new Response(
+        JSON.stringify({ data: { return_code: "0", SRNum: "2000009999" } }),
+        { status: 200 },
+      ),
+  );
+  vi.stubGlobal("fetch", fetchImpl);
+  const results = await executeAppActions(
+    [
+      {
+        code: "create_311_ticket",
+        payload: {
+          executionTrigger: "user_confirmed",
+          serviceCodeOrAction: "1.1.4.7.20.0",
+          responsibleAgencyCode: "99",
+        },
+      },
+    ],
+    {
+      env: {
+        GNP_311_SUBMISSION_ENABLED: "true",
+        DYNAMO_TABLE: "table",
+        S3_UPLOAD_BUCKET: "bucket",
+        SQS_QUEUE_URL: "queue",
+        SF311_CREATESR_URL: "https://hub.example/createsr",
+        SF311_BASIC_AUTH_USER: "user",
+        SF311_BASIC_AUTH_PASS: "pass",
+      },
+      tableName: "table",
+      siteId: "site",
+      trigger: "user_confirmed",
+      task: {
+        taskId: "task-1",
+        location: { latitude: 37.7, longitude: -122.4 },
+      },
+      priorResults: [silent],
+      onCheckpoint: async () => {},
+    },
+  );
+  expect(results[0].status).toBe("submitted");
+  expect(fetchImpl).toHaveBeenCalledOnce();
+  const merged = mergeAppActionResults([silent], results[0]);
+  expect(merged).toHaveLength(2);
+  expect(merged[0]).toMatchObject({
+    payload: {
+      tickets: [
+        { srNum: "2000009999", sourceRequestId: expect.stringMatching(/^u-/) },
+      ],
+    },
+  });
+  expect(merged[1]).toEqual(silent);
+  expect(mergeAppActionResults(merged, results[0])).toEqual(merged);
 });

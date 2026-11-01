@@ -700,3 +700,132 @@ it.each([
     expect(finalWrites).toHaveLength(0);
   },
 );
+
+it("preserves silent and deliberate tickets with the same service code through worker checkpoints", () => {
+  const silent = {
+    code: "create_311_ticket",
+    status: "submitted",
+    recordedAt: "2026-11-01T12:00:00Z",
+    payload: {
+      executionTrigger: "task_created",
+      tickets: [
+        { serviceCode: "same-service", srNum: "111", responsibleAgency: "76" },
+      ],
+    },
+  };
+  const deliberate = {
+    code: "create_311_ticket",
+    status: "submitted",
+    recordedAt: "2026-11-01T12:01:00Z",
+    payload: {
+      executionTrigger: "user_confirmed",
+      tickets: [
+        { serviceCode: "same-service", srNum: "222", responsibleAgency: "99" },
+      ],
+    },
+  };
+  const both = mergeBackgroundResult([silent], deliberate);
+  expect(both).toEqual([deliberate, silent]);
+  expect(mergeBackgroundResult(both, deliberate)).toEqual(both);
+  expect(mergeBackgroundResult(both, silent)).toEqual(both);
+});
+
+it("an older silent job preserves a queued deliberate filing status", async () => {
+  task.status = "in_progress";
+  task.inProgressActionKind = "311_filed";
+  task.appActionStatus = "queued";
+  task.appActionResults = [ticket];
+  lock.results = [ticket];
+  await runJob(message);
+  expect(finalWrites.at(-1).ExpressionAttributeValues[":actionStatus"]).toBe(
+    "queued",
+  );
+  expect(finalWrites.at(-1).ConditionExpression).toContain(
+    "appActionStatus = :priorStatus",
+  );
+  expect(finalWrites.at(-1).ExpressionAttributeValues[":priorStatus"]).toBe(
+    "queued",
+  );
+});
+
+it.each(["submitted", "failed"])(
+  "settles an obsolete rejected silent attempt while deliberate filing is %s",
+  async (status) => {
+    task.status = "in_progress";
+    task.inProgressActionKind = "311_filed";
+    task.appActionStatus = status;
+    task.appActions = [
+      {
+        code: "create_311_ticket",
+        payload: { executionTrigger: "user_confirmed" },
+      },
+    ];
+    const rejected = {
+      code: "create_311_ticket",
+      status: "failed",
+      reason: "21",
+      recordedAt: ticket.recordedAt,
+      payload: {
+        executionTrigger: "task_created",
+        responsibleAgencyCode: "76",
+        tickets: [
+          {
+            serviceCode: "code",
+            responsibleAgency: "76",
+            creationState: "rejected",
+          },
+        ],
+      },
+    };
+    const deliberate = {
+      ...ticket,
+      status,
+      payload: { ...ticket.payload, executionTrigger: "user_confirmed" },
+    };
+    task.appActionResults = [deliberate, rejected];
+    lock.results = [deliberate, rejected];
+    job.results = [rejected];
+    execute.mockResolvedValue([]);
+    await expect(runJob(message)).resolves.toBeUndefined();
+    expect(job.status).toBe("complete");
+    expect(task.appActionResults).toEqual([deliberate, rejected]);
+    expect(lock.results).toEqual([deliberate, rejected]);
+    expect(finalWrites.at(-1).ExpressionAttributeValues[":actionStatus"]).toBe(
+      status,
+    );
+  },
+);
+
+it("keeps an obsolete uncertain silent outcome pending for reconciliation", async () => {
+  task.appActions = [
+    {
+      code: "create_311_ticket",
+      payload: { executionTrigger: "user_confirmed" },
+    },
+  ];
+  const uncertain = {
+    code: "create_311_ticket",
+    status: "failed",
+    reason: "sf311_creation_uncertain_requires_reconciliation",
+    recordedAt: ticket.recordedAt,
+    payload: {
+      executionTrigger: "task_created",
+      responsibleAgencyCode: "76",
+      tickets: [
+        {
+          serviceCode: "code",
+          responsibleAgency: "76",
+          creationState: "pending",
+        },
+      ],
+    },
+  };
+  task.appActionResults = [uncertain];
+  lock.results = [uncertain];
+  execute.mockResolvedValue([]);
+  await expect(runJob(message)).rejects.toThrow(
+    "retry from durable checkpoint",
+  );
+  expect(job.status).toBe("retry");
+  expect(task.appActionResults).toEqual([uncertain]);
+});

@@ -1,3 +1,4 @@
+import { definitiveSilentFailure } from "../domain/silent-311-results.js";
 import {
   withSilent311Guard,
   Silent311Suppressed,
@@ -30,6 +31,7 @@ import {
   eligibleTicketsForClosure,
   is311SubmissionEnabled,
   mergeAppActionResults,
+  sameAppAction,
   summarizeAppActionResults,
 } from "../analysis/guidance/app-actions.js";
 
@@ -64,7 +66,7 @@ export function retryDelaySeconds(receiveCount, leaseWaitSeconds = 0) {
  * @param {import("../analysis/guidance/app-actions.js").AppActionResult} result
  */
 export function mergeBackgroundResult(prior, result) {
-  const previous = prior.find((entry) => entry.code === result.code);
+  const previous = prior.find((entry) => sameAppAction(entry, result));
   const payload = { ...previous?.payload, ...result.payload };
   for (const key of ["tickets", "closures"]) {
     const entries = new Map();
@@ -258,7 +260,9 @@ export async function runJob(message, delivery = {}) {
     await guard(async () => {});
     const alreadyFiled = results.some(
       (result) =>
-        result.code === "create_311_ticket" && result.status === "submitted",
+        result.code === "create_311_ticket" &&
+        result.status === "submitted" &&
+        result.payload?.executionTrigger !== "user_confirmed",
     );
     if (!["superseded", "deleted"].includes(task.status) && !alreadyFiled) {
       const created = await guard(async () =>
@@ -305,7 +309,20 @@ export async function runJob(message, delivery = {}) {
     let merged = task.appActionResults || [];
     for (const result of results)
       merged = mergeBackgroundResult(merged, result);
-    const failures = results.filter((result) =>
+    const stillRequestsSilentFiling = (task.appActions || []).some(
+      (/** @type {Record<string, any>} */ action) =>
+        action.code === "create_311_ticket" &&
+        action.payload?.executionTrigger === "task_created",
+    );
+    // Retain every checkpoint, but evaluate only this background job's work.
+    // A proven no-ticket failure becomes historical when its action is replaced.
+    // Unknown or partial outcomes remain eligible for reconciliation/alerts.
+    const jobResults = results.filter(
+      (result) =>
+        result.payload?.executionTrigger !== "user_confirmed" &&
+        (stillRequestsSilentFiling || !definitiveSilentFailure(result)),
+    );
+    const failures = jobResults.filter((result) =>
       ["failed", "partial"].includes(result.status),
     );
     // Only definitive validation failures are terminal. Partial/uncertain City
@@ -337,6 +354,9 @@ export async function runJob(message, delivery = {}) {
                 "SET appActionResults = :results, appActionStatus = :actionStatus",
               ConditionExpression:
                 "#status = :status AND " +
+                (task.appActionStatus !== undefined
+                  ? "appActionStatus = :priorStatus AND "
+                  : "attribute_not_exists(appActionStatus) AND ") +
                 (task.appActionResults
                   ? "appActionResults = :prior"
                   : "attribute_not_exists(appActionResults)"),
@@ -344,7 +364,15 @@ export async function runJob(message, delivery = {}) {
               ExpressionAttributeValues: {
                 ":status": task.status,
                 ":results": merged,
-                ":actionStatus": summarizeAppActionResults(merged),
+                // An older silent job must not mark a newly queued deliberate
+                // filing as submitted (which would make its worker abandon it).
+                ":actionStatus":
+                  task.inProgressActionKind === "311_filed"
+                    ? task.appActionStatus
+                    : summarizeAppActionResults(merged),
+                ...(task.appActionStatus !== undefined
+                  ? { ":priorStatus": task.appActionStatus }
+                  : {}),
                 ...(task.appActionResults
                   ? { ":prior": task.appActionResults }
                   : {}),
@@ -366,7 +394,7 @@ export async function runJob(message, delivery = {}) {
         ],
       }),
     );
-    reportSf311Results(results, {
+    reportSf311Results(jobResults, {
       terminal: terminal || (delivery.receiveCount ?? 1) >= MAX_FILING_ATTEMPTS,
       attempt: delivery.receiveCount ?? 1,
       jobId: message.jobSk,
