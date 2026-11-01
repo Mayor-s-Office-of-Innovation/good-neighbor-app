@@ -445,8 +445,8 @@ test("complaints keep the title and action visible when a long list scrolls", as
     const colors = await page
       .locator(".complaints__sticky")
       .evaluate((header) => ({
-        header: getComputedStyle(header).backgroundColor,
-        page: getComputedStyle(document.body).backgroundColor,
+        header: window.getComputedStyle(header).backgroundColor,
+        page: window.getComputedStyle(document.body).backgroundColor,
       }));
     expect(colors.header).toBe(colors.page);
   }
@@ -481,8 +481,9 @@ test("handoff has an app icon and enrollment errors stay centered without stale 
       "/src/components/site-setup.templates.js",
     );
     const { t } = await load("/src/i18n/i18n.js");
-    document.querySelector("main").innerHTML =
-      handoffView() + `<site-setup></site-setup>`;
+    const main = document.querySelector("main");
+    if (!main) throw new Error("Missing fixture main");
+    main.innerHTML = handoffView() + `<site-setup></site-setup>`;
     const setup = /** @type {any} */ (document.querySelector("site-setup"));
     setup.innerHTML = codeEntryView({
       error: t("setup.enrollment.used"),
@@ -501,7 +502,7 @@ test("handoff has an app icon and enrollment errors stay centered without stale 
   await page
     .locator("#code-input")
     .evaluate((otp) =>
-      otp.dispatchEvent(new Event("input", { bubbles: true })),
+      otp.dispatchEvent(new window.Event("input", { bubbles: true })),
     );
   await expect(page.locator("[data-support-reference]")).toHaveCount(0);
   await expect(page.locator("#code-error")).toBeHidden();
@@ -526,15 +527,19 @@ test("care pending status stays on its row and distinguishes offline waiting", a
         status: "pending",
       },
     ];
-    /** @type {any} */ (window).renderCare = (offline) => {
-      document.querySelector("main").innerHTML =
-        `<div class="care-work">${careList(items, false, offline)}</div>`;
+    const main = document.querySelector("main");
+    if (!main) throw new Error("Missing fixture main");
+    /** @type {any} */ (window).renderCare = (
+      /** @type {boolean} */ offline,
+    ) => {
+      main.innerHTML = `<div class="care-work">${careList(items, false, offline)}</div>`;
     };
     /** @type {any} */ (window).renderCare(false);
   });
   await expect(page.locator(".care-row__status wa-spinner")).toBeVisible();
   const time = await page.locator(".care-row time").boundingBox();
   const status = await page.locator(".care-row__status").boundingBox();
+  if (!time || !status) throw new Error("Missing care timestamp or status");
   expect(status.y).toBeGreaterThanOrEqual(time.y + time.height);
   expect(Math.abs(status.x + status.width - time.x - time.width)).toBeLessThan(
     2,
@@ -568,14 +573,16 @@ test("oversized complaints header scrolls away and becomes sticky again when it 
     window.history.replaceState({}, "", "/complaints");
     const path = "/src/components/complaint-view.js";
     await import(path);
-    document
-      .querySelector("main")
-      .append(document.createElement("complaint-view"));
+    const main = document.querySelector("main");
+    if (!main) throw new Error("Missing fixture main");
+    main.append(document.createElement("complaint-view"));
   });
   await expect(page.locator("#log-complaint")).toBeVisible();
   await page.evaluate(() => {
     document.documentElement.style.fontSize = "32px";
-    document.querySelector(".complaints__list").innerHTML = Array.from(
+    const list = document.querySelector(".complaints__list");
+    if (!list) throw new Error("Missing complaints list");
+    list.innerHTML = Array.from(
       { length: 30 },
       (_, index) => `<p style="height:60px">Synthetic complaint ${index}</p>`,
     ).join("");
@@ -586,6 +593,7 @@ test("oversized complaints header scrolls away and becomes sticky again when it 
   await expect
     .poll(async () => {
       const box = await header.boundingBox();
+      if (!box) throw new Error("Missing complaints header");
       return box.y + box.height;
     })
     .toBeLessThan(0);
@@ -615,23 +623,32 @@ test("going offline preserves the care logs already displayed", async ({
     }),
   );
   await page.evaluate(async () => {
-    const load = (path) => import(path);
+    const load = (/** @type {string} */ path) => import(path);
     const { setSite } = await load("/src/db.js");
     await setSite("Synthetic review site", { siteId: "review-only" });
     window.history.replaceState({}, "", "/care-work");
     await load("/src/components/care-work-view.js");
-    document
-      .querySelector("main")
-      .append(document.createElement("care-work-view"));
+    const main = document.querySelector("main");
+    if (!main) throw new Error("Missing fixture main");
+    main.append(document.createElement("care-work-view"));
   });
   await expect(page.locator('[data-work="synthetic-saved"]')).toBeVisible();
   await page.route("**/v1/care-work**", (route) => route.abort());
-  await context.setOffline(true);
-  await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(false);
-  // Wait for the offline handler's asynchronous queue read and render.
-  await page.evaluate(async () => {
-    const host = document.querySelector("care-work-view");
-    await host._loadList();
+  // Observe the real offline handler's DOM update instead of calling it directly.
+  await page.locator("care-work-view").evaluate((host) => {
+    const observer = new window.MutationObserver(() => {
+      observer.disconnect();
+      host.setAttribute("data-offline-rendered", "true");
+    });
+    observer.observe(host, { childList: true });
   });
+  await context.setOffline(true);
+  await expect
+    .poll(() => page.evaluate(() => window.navigator.onLine))
+    .toBe(false);
+  await expect(page.locator("care-work-view")).toHaveAttribute(
+    "data-offline-rendered",
+    "true",
+  );
   await expect(page.locator('[data-work="synthetic-saved"]')).toBeVisible();
 });

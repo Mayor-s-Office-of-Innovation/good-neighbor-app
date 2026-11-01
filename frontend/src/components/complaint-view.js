@@ -120,6 +120,7 @@ class ComplaintView extends HTMLElement {
   };
 
   _observeStickyHeader() {
+    if (!this.isConnected) return;
     const header = this.querySelector(".complaints__sticky");
     if (!header && !this._headerObserver) return;
     this._headerObserver?.disconnect();
@@ -147,6 +148,7 @@ class ComplaintView extends HTMLElement {
   }
 
   async _renderList({ focusHeading = true, restoreFocus = "" } = {}) {
+    if (!this.isConnected) return;
     if (!this.querySelector(".complaints__list")) {
       this.innerHTML = html`<div class="care-work complaints">
         <div class="complaints__sticky">
@@ -163,6 +165,7 @@ class ComplaintView extends HTMLElement {
     }
     try {
       const { complaints = [] } = await listComplaints();
+      if (!this.isConnected) return;
       this.innerHTML = html`<div class="care-work complaints">
         <div class="complaints__sticky">
           ${careHeader(t("complaints.title"), true)}
@@ -221,6 +224,7 @@ class ComplaintView extends HTMLElement {
       if (restoreFocus) this.querySelector(restoreFocus)?.focus();
       else if (focusHeading) this.querySelector("h1")?.focus();
     } catch {
+      if (!this.isConnected) return;
       this.innerHTML = html`<div class="care-work complaints">
         <div class="complaints__sticky">
           ${careHeader(t("complaints.title"), true)}
