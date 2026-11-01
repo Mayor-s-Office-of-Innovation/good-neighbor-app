@@ -1233,6 +1233,32 @@ export async function answerCondition(opts) {
       throw err;
     }
 
+    // Keep the condition's original source identity for dismissal receipts,
+    // but only publish tasks from evidence that still exists.
+    const checkId = String(
+      conditionItem.checkId || assessmentItem.checkId || "",
+    );
+    const originalEvidence = evidenceIds(conditionItem);
+    const survivingEvidence = [];
+    for (const artifactId of originalEvidence) {
+      const removed =
+        checkId && originalEvidence.length > 1
+          ? await ddb.send(
+              new GetCommand({
+                TableName: opts.tableName,
+                Key: evidenceDeletionKey(opts.siteId, checkId, artifactId),
+                ConsistentRead: true,
+              }),
+            )
+          : { Item: undefined };
+      if (!removed.Item) survivingEvidence.push(artifactId);
+    }
+    if (originalEvidence.length && !survivingEvidence.length)
+      throw namedError(
+        "ConditionDismissed",
+        "Supporting evidence has been deleted",
+      );
+
     const policyVersion = String(
       conditionItem.policyVersion ?? assessmentItem.policyVersion ?? "",
     );
@@ -1289,13 +1315,12 @@ export async function answerCondition(opts) {
           ...(conditionItem.translations
             ? { translations: conditionItem.translations }
             : {}),
-          sourceArtifactIds:
-            /** @type {{ artifactIds?: string[] }} */ (conditionItem.source)
-              ?.artifactIds ?? [],
-          source:
-            conditionItem.source && typeof conditionItem.source === "object"
+          sourceArtifactIds: survivingEvidence,
+          source: {
+            ...(conditionItem.source && typeof conditionItem.source === "object"
               ? /** @type {Record<string, unknown>} */ (conditionItem.source)
-              : {},
+              : {}),
+          },
         },
         conditionId: opts.conditionId,
         rule: evaluation.rule,
@@ -1380,7 +1405,7 @@ export async function answerCondition(opts) {
           opts.tableName,
           opts.siteId,
           String(conditionItem.checkId || assessmentItem.checkId),
-          evidenceIds(conditionItem),
+          survivingEvidence,
         ),
       );
     const deletionKey = conditionDeletionKey(

@@ -198,6 +198,74 @@ describe("task update handlers", () => {
     },
   );
 
+  it.each(["note", "photo", "empty", "race"])(
+    "preserves inferred legacy proof when appending a note: %s",
+    async (kind) => {
+      const task = {
+        pk: "SITE#site-1",
+        sk: "TASK#task-1",
+        taskId: "task-1",
+        status: "completed",
+        completionMethod: "site_team_resolved",
+        latestUpdateId: "completion",
+        latestUpdateLabel: "Resolved",
+        updatedAt: "before",
+      };
+      let conflict = kind === "race";
+      send.mockImplementation(async (command) => {
+        if (command instanceof GetCommand) {
+          if (command.input.Key?.sk === task.sk)
+            return {
+              Item: { ...task, updatedAt: conflict ? "before" : "after" },
+            };
+          if (command.input.Key?.sk.endsWith("#UPDATE_ID#completion"))
+            return { Item: { updateSk: "legacy-completion" } };
+          if (command.input.Key?.sk === "legacy-completion")
+            return {
+              Item: {
+                type: "task_completed",
+                occurredAt: "2026-11-01T12:00:00Z",
+                documentedAt: conflict
+                  ? "2026-11-01T12:01:00Z"
+                  : "2026-11-01T12:02:00Z",
+                notes:
+                  kind === "note" || kind === "race" ? ["Original proof"] : [],
+                photoKeys: kind === "photo" ? ["original-photo"] : [],
+              },
+            };
+        }
+        if (command instanceof TransactWriteCommand && conflict) {
+          conflict = false;
+          throw Object.assign(new Error("changed"), {
+            name: "TransactionCanceledException",
+          });
+        }
+        return {};
+      });
+      const response = await createTaskUpdate(
+        event({
+          type: "note_photo_update",
+          notes: ["Later observation"],
+          photoKeys: [],
+        }),
+      );
+      expect(response.statusCode).toBe(201);
+      const transaction = send.mock.calls
+        .map(([command]) => command)
+        .filter((command) => command instanceof TransactWriteCommand)
+        .at(-1);
+      const saved = transaction?.input.TransactItems?.find(
+        (write) => write.Put?.Item?.sk === task.sk,
+      )?.Put?.Item;
+      if (!saved) throw new Error("Missing task write");
+      expect(saved.proofAddedAt).toBe(
+        kind === "empty" ? null : "2026-11-01T12:02:00Z",
+      );
+      expect(saved.latestUpdateId).toBe("request-1");
+      expect(saved.status).toBe("completed");
+    },
+  );
+
   it.each([
     "note",
     "photo",

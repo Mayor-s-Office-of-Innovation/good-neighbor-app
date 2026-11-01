@@ -146,8 +146,11 @@ test("refresh controls are accessible and save errors span the viewport above a 
   const toast = page.locator(".app-toast--full-width");
   await expect(toast).toBeVisible();
   const bounds = await toast.boundingBox();
-  if (!bounds) throw new Error("Missing bounds bounds");
-  expect(bounds.width).toBe(800);
+  if (!bounds) throw new Error("Missing toast bounds");
+  const availableWidth = await page.evaluate(
+    () => document.documentElement.clientWidth,
+  );
+  expect(bounds.x + bounds.width).toBe(availableWidth);
   expect(bounds.x).toBe(0);
   await expect(page.locator("dialog input")).toHaveValue("Keep this draft");
   await page.screenshot({

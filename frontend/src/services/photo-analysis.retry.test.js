@@ -101,6 +101,12 @@ const successful = { artifactId: "artifact", status: "analyzed", concerns: [] };
 beforeEach(() => {
   vi.clearAllMocks();
   held.saved = [];
+  vi.mocked(saveDraft)
+    .mockReset()
+    .mockImplementation(async (check) => {
+      held.saved.push(structuredClone(check));
+    });
+  vi.mocked(deleteCapturePhoto).mockReset().mockResolvedValue(undefined);
   vi.stubGlobal("navigator", { onLine: true });
   vi.mocked(uploadArtifact).mockReset().mockResolvedValue({
     artifactId: "artifact",
@@ -604,6 +610,40 @@ it("awaits atomic media removal after durable remote-deletion checkpoint", async
   });
   await removeEvidenceItem(item.id);
   expect(deleteCapturePhoto).toHaveBeenCalledWith(held.check, "synthetic");
+  expect(held.check.items).toEqual([]);
+});
+
+it("does not restore a committed photo removal when a later save would fail", async () => {
+  const item = photo({
+    media: { key: "synthetic", size: 8, type: "image/jpeg" },
+  });
+  vi.mocked(saveDraft)
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(new Error("storage unavailable"));
+  await removeEvidenceItem(item.id);
+  expect(deleteCapturePhoto).toHaveBeenCalledWith(held.check, "synthetic");
+  expect(saveDraft).toHaveBeenCalledTimes(1);
+  expect(held.check.items).toEqual([]);
+});
+
+it("keeps a retryable photo when atomic local deletion fails after remote deletion", async () => {
+  const item = photo({
+    media: { key: "synthetic", size: 8, type: "image/jpeg" },
+    upload: { status: "uploaded", artifactId: "artifact" },
+  });
+  vi.mocked(deleteCapturePhoto).mockRejectedValueOnce(
+    new Error("storage unavailable"),
+  );
+  await expect(removeEvidenceItem(item.id)).rejects.toThrow(
+    "storage unavailable",
+  );
+  expect(held.check.items).toContain(item);
+  expect(item.deletionPending).toBe(true);
+  expect(shouldResumeEvidenceItem(item)).toBe(false);
+  vi.mocked(deleteArtifact).mockRejectedValueOnce(
+    Object.assign(new Error("already deleted"), { status: 404 }),
+  );
+  await removeEvidenceItem(item.id);
   expect(held.check.items).toEqual([]);
 });
 

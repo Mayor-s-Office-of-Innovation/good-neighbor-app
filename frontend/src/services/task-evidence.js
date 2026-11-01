@@ -354,7 +354,9 @@ export async function hydratePendingQuestionEvidence(items) {
   );
   return items.map((item) => {
     const artifact = (checks.get(item.checkId) || []).find(
-      (entry) => entry.artifactId === item.analysis?.artifactId,
+      (entry) =>
+        entry.artifactId ===
+        (item.evidenceArtifactId || item.analysis?.artifactId),
     );
     if (!artifact) return item;
     return {

@@ -828,6 +828,9 @@ export function removeEvidenceItem(itemId) {
       if (item.media) {
         await deleteCapturePhoto(check, item.media.key);
         removeItem(itemId, { mediaDeleted: true });
+        // The reference and bytes are already durably removed together. A
+        // later save must never resurrect a reference to those deleted bytes.
+        return;
       } else removeItem(itemId);
       if (!(await confirmLocalSave(check))) {
         check.items.splice(Math.max(0, index), 0, item);

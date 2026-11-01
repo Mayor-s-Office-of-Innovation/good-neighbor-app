@@ -2316,3 +2316,80 @@ it("atomically rejects an answer when another device confirms dismissal", async 
   ).rejects.toMatchObject({ name: "ConditionDismissed" });
   expect(send).toHaveBeenCalledTimes(3);
 });
+
+it.each(["survives", "all-deleted", "deletion-race"])(
+  "answers shared evidence safely: %s",
+  async (mode) => {
+    send.mockReset();
+    const assessment = {
+      assessmentId: "a",
+      checkId: "check",
+      policyVersion: "actions-escalations-v3",
+      assessmentRevision: 0,
+    };
+    const condition = {
+      conditionId: "c",
+      assessmentId: "a",
+      checkId: "check",
+      status: "needs_answer",
+      analyzerCategory: "Graffiti",
+      canonicalCategory: "Graffiti",
+      severity: 2,
+      policyVersion: "actions-escalations-v3",
+      source: { artifactIds: ["deleted", "live"] },
+    };
+    let raced = false;
+    send.mockImplementation(async (command) => {
+      if (command instanceof GetCommand) {
+        const sk = command.input.Key?.sk;
+        if (sk === "ASSESSMENT#a") return { Item: assessment };
+        if (sk === "ASSESSMENT#a#COND#c") return { Item: condition };
+        if (sk?.startsWith("EVIDENCE_DELETION#"))
+          return sk.includes('"deleted"') || mode === "all-deleted" || raced
+            ? { Item: { deletedAt: "now" } }
+            : {};
+        return { Item: { providerShortCode: "MOI", siteShortCode: "CIT" } };
+      }
+      if (command instanceof UpdateCommand)
+        return { Attributes: { nextTaskDisplayNumber: 1 } };
+      if (command instanceof TransactWriteCommand && mode === "deletion-race") {
+        raced = true;
+        throw Object.assign(new Error("evidence removed"), {
+          name: "TransactionCanceledException",
+        });
+      }
+      return {};
+    });
+    const promise = answerCondition({
+      tableName: "table",
+      siteId: "site",
+      assessmentId: "a",
+      conditionId: "c",
+      answers: { onsite: false },
+    });
+    if (mode !== "survives")
+      await expect(promise).rejects.toMatchObject({
+        name: "ConditionDismissed",
+      });
+    else {
+      const result = await promise;
+      expect(result.taskItem?.sourceArtifactIds).toEqual(["live"]);
+      const tx = /** @type {any[]} */ (
+        send.mock.calls
+          .map(([command]) => command)
+          .find((command) => command instanceof TransactWriteCommand)?.input
+          .TransactItems || []
+      );
+      const guards = tx
+        .filter((entry) => entry.ConditionCheck)
+        .map((entry) => entry.ConditionCheck.Key.sk);
+      expect(guards).toEqual([
+        'EVIDENCE_DELETION#["check","live"]',
+        "ISSUE_DELETION#check:deleted:c",
+      ]);
+      expect(
+        /** @type {any} */ (result.conditionItem.source).artifactIds,
+      ).toEqual(["deleted", "live"]);
+    }
+  },
+);

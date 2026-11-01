@@ -226,7 +226,12 @@ export const createTaskUpdate = async (event, retry = true) => {
   )
     return jsonResponse(503, { error: "City updates are unavailable" });
 
-  const transition = buildTaskUpdateTransition(task, input, {
+  // Legacy completion evidence may only be discoverable via latestUpdateId.
+  // Carry its proof summary into the same write that replaces that pointer.
+  const transitionTask = appendToResolved
+    ? await withResolutionProof(dynamoTable, siteId, task)
+    : task;
+  const transition = buildTaskUpdateTransition(transitionTask, input, {
     taskId,
     updateId,
     actorId: deriveActorId(event),

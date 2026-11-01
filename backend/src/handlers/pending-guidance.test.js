@@ -138,6 +138,45 @@ it("accepts its own pagination cursor when the assessment ID contains #", async 
   expect(send.mock.calls[1][0].input.ExclusiveStartKey).toEqual(key);
 });
 
+it.each([
+  [[], false, true],
+  [["first"], false, true],
+  [["second"], false, true],
+  [["first", "second"], false, false],
+  [["first"], true, false],
+])(
+  "checks all supporting photos independently of dismissal: %j %s",
+  async (deleted, dismissed, visible) => {
+    read.mockResolvedValueOnce({
+      assessment: { assessmentId: "old", checkId: "old-check" },
+      conditions: [
+        {
+          conditionId: "question",
+          status: "needs_answer",
+          needsAnswer: {},
+          source: { artifactIds: ["first", "second"] },
+        },
+      ],
+      tasks: [],
+    });
+    send.mockImplementation(async (command) => {
+      if (!(command instanceof GetCommand))
+        return { Items: [{ assessmentId: "old" }] };
+      const sk = String(command.input.Key?.sk || "");
+      if (sk.startsWith("EVIDENCE_DELETION#")) {
+        const [, artifact] = JSON.parse(sk.slice("EVIDENCE_DELETION#".length));
+        return deleted.includes(artifact)
+          ? { Item: { deletedAt: "2026-11-01" } }
+          : {};
+      }
+      return dismissed ? { Item: { dismissedAt: "2026-11-01" } } : {};
+    });
+    expect(JSON.parse((await invoke(undefined)).body).guidance).toHaveLength(
+      visible ? 1 : 0,
+    );
+  },
+);
+
 it("does not resurrect an app-dismissed question when its analyzer has expired", async () => {
   read.mockResolvedValueOnce({
     assessment: { assessmentId: "old", checkId: "old-check" },

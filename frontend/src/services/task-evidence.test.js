@@ -300,7 +300,8 @@ it("hydrates photo and text question evidence without eagerly signing media", as
       id: "photo-question",
       checkId: "pending-check",
       kind: "unknown",
-      analysis: { artifactId: "p1" },
+      evidenceArtifactId: "p1",
+      analysis: { artifactId: "deleted-photo" },
     },
     {
       id: "text-question",
@@ -313,7 +314,8 @@ it("hydrates photo and text question evidence without eagerly signing media", as
     kind: "photo",
     georeferencedAddress: "15th St",
     checkId: "pending-check",
-    analysis: { artifactId: "p1" },
+    evidenceArtifactId: "p1",
+    analysis: { artifactId: "deleted-photo" },
   });
   expect(result[1]).toMatchObject({ kind: "text", text: "Sidewalk clear." });
 });

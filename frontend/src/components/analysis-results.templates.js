@@ -102,6 +102,7 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.webp";
 /**
  * @typedef {object} AnalysisState
  * @property {string} [status]
+ * @property {string} [evidenceArtifactId]
  * @property {string} [artifactId]
  * @property {string} [checkId]
  * @property {string} [georeferencedAddress]
@@ -145,6 +146,7 @@ const CLEAR_CHECK_ICON = "/clear-check-icon.webp";
 /**
  * @typedef {object} TaskEvidence
  * @property {"photo" | "text"} [kind]
+ * @property {string} [evidenceArtifactId]
  * @property {string} [artifactId]
  * @property {string} [placeName]
  * @property {string} [georeferencedAddress]
@@ -1361,7 +1363,7 @@ function imagePreview(item) {
               src: item.dataUrl,
               original: item.fullDataUrl,
               checkId: item.checkId,
-              artifactId: item.analysis?.artifactId,
+              artifactId: item.evidenceArtifactId || item.analysis?.artifactId,
               alt: t("card.evidence.alt", {
                 place: placeName || t("card.evidence.siteFallback"),
               }),
