@@ -14,6 +14,7 @@ class PhotoLightbox extends HTMLElement {
     /** @type {HTMLElement | null} */
     this._trigger = null;
     this._source = "";
+    this._mediaKey = "";
     /** @type {(() => void) | null | undefined} */
     this._release = null;
     this._cancelPending = null;
@@ -67,7 +68,19 @@ class PhotoLightbox extends HTMLElement {
     );
     if (!(image instanceof HTMLImageElement) || !caption) return;
     this._trigger = photo.trigger || null;
-    this._source = photo.src;
+    // Return focus by the originating photo, not the displayed image: the
+    // latter can become an empty error state or a different preview URL.
+    const triggerImage = photo.trigger?.querySelector("img");
+    this._source =
+      photo.trigger?.getAttribute("data-full-src") ||
+      (triggerImage instanceof HTMLImageElement
+        ? triggerImage.currentSrc || triggerImage.src
+        : "") ||
+      photo.src;
+    this._mediaKey =
+      photo.trigger
+        ?.querySelector("capture-photo")
+        ?.getAttribute("data-media-key") || "";
     image.hidden = !photo.src;
     if (photo.src) image.src = photo.src;
     else image.removeAttribute("src");
@@ -110,6 +123,7 @@ class PhotoLightbox extends HTMLElement {
     this._release = null;
     this._trigger = null;
     this._source = "";
+    this._mediaKey = "";
   }
 
   _restoreFocus() {
@@ -120,8 +134,15 @@ class PhotoLightbox extends HTMLElement {
       ? this._trigger
       : [...document.querySelectorAll("[data-photo-lightbox]")].find(
           (candidate) => {
+            if (this._mediaKey)
+              return (
+                candidate
+                  .querySelector("capture-photo")
+                  ?.getAttribute("data-media-key") === this._mediaKey
+              );
             const image = candidate.querySelector("img");
             return (
+              Boolean(this._source) &&
               (candidate.getAttribute("data-full-src") ||
                 (image instanceof HTMLImageElement
                   ? image.currentSrc || image.src
@@ -132,6 +153,7 @@ class PhotoLightbox extends HTMLElement {
     if (trigger instanceof HTMLElement) trigger.focus();
     this._trigger = null;
     this._source = "";
+    this._mediaKey = "";
     this.dispatchEvent(
       new CustomEvent("photolightboxclosed", { bubbles: true }),
     );

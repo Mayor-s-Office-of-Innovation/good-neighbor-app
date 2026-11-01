@@ -202,3 +202,118 @@ test("lightbox failed image shows unavailable-image icon, text and a retry", asy
   expect(results.violations).toEqual([]);
   await page.screenshot({ path: test.info().outputPath("lightbox-error.png") });
 });
+
+for (const failedPreview of [false, true]) {
+  test(`failed photo restores focus after thumbnail replacement (preview failure: ${failedPreview})`, async ({
+    page,
+  }) => {
+    await page.evaluate(async (failedPreview) => {
+      const path = "/src/components/photo-lightbox.js";
+      const { openPhotoLightbox } = await import(path);
+      customElements.define(
+        "capture-photo",
+        class extends HTMLElement {
+          async original({ previewOnly = false } = {}) {
+            return {
+              src:
+                previewOnly && failedPreview
+                  ? "data:image/png;base64,YmFkMg=="
+                  : "data:image/png;base64,YmFk",
+              release() {},
+            };
+          }
+        },
+      );
+      const host = document.querySelector("main");
+      if (!host) throw new Error("Missing photo fixture");
+      host.innerHTML =
+        '<button id="original-photo" data-photo-lightbox data-full-src="data:image/png;base64,YmFk"><capture-photo data-media-key="synthetic-photo"><img src="data:image/png;base64,YmFk" alt="Synthetic photo"></capture-photo></button>';
+      await openPhotoLightbox(host, host.querySelector("button"), host);
+    }, failedPreview);
+    await expect(page.locator(".photo-lightbox__recovery")).toBeVisible();
+    await expect(page.locator(".photo-lightbox__image")).toBeHidden();
+    await page.evaluate(() => {
+      const original = document.querySelector("#original-photo");
+      if (!original) throw new Error("Missing original photo");
+      const replacement = /** @type {HTMLElement} */ (original.cloneNode(true));
+      replacement.id = "replacement-photo";
+      original.replaceWith(replacement);
+    });
+    await expect(page.locator(".photo-lightbox")).toBeVisible();
+    await page.locator(".photo-lightbox__close").click();
+    await expect(page.locator("#replacement-photo")).toBeFocused();
+  });
+}
+
+test("zoomed complaint entry brings the focused editor into the visual viewport", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(
+    browserName !== "chromium",
+    "Pinch zoom emulation uses Chromium CDP",
+  );
+  await page.evaluate(async () => {
+    const viewPath = "/src/components/complaint-view.js";
+    const routePath = "/src/router.js";
+    await import(viewPath);
+    const { navigate } = await import(routePath);
+    navigate("/complaints/new");
+    const Base = /** @type {any} */ (customElements.get("app-root"));
+    class ZoomRoot extends Base {
+      connectedCallback() {
+        this._startKeyboardViewportSync();
+      }
+      disconnectedCallback() {
+        this._stopKeyboardViewportSync();
+      }
+    }
+    customElements.define(
+      "zoom-root",
+      /** @type {CustomElementConstructor} */ (
+        /** @type {unknown} */ (ZoomRoot)
+      ),
+    );
+    const root = document.createElement("zoom-root");
+    root.innerHTML =
+      '<complaint-view></complaint-view><div style="height:1000px" aria-hidden="true"></div>';
+    document.querySelector("main")?.append(root);
+  });
+  const session = await page.context().newCDPSession(page);
+  try {
+    await session.send("Emulation.setPageScaleFactor", { pageScaleFactor: 2 });
+    await page.evaluate(() => {
+      const button = document.querySelector("#describe-complaint");
+      if (!button || !window.visualViewport)
+        throw new Error("Missing zoom fixture");
+      window.scrollTo(
+        0,
+        window.scrollY +
+          button.getBoundingClientRect().bottom -
+          window.visualViewport.height +
+          8,
+      );
+      // Activate a button positioned near the visible viewport's bottom.
+      // Locator.click would first auto-scroll and conceal this regression.
+      /** @type {HTMLElement} */ (button).click();
+    });
+    await expect(page.locator("#complaint-description")).toBeFocused();
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const field = document.querySelector("#complaint-description");
+          const viewport = window.visualViewport;
+          if (!field || !viewport) return false;
+          const bounds = field.getBoundingClientRect();
+          return (
+            bounds.top >= viewport.offsetTop &&
+            bounds.bottom <= viewport.offsetTop + viewport.height
+          );
+        }),
+      )
+      .toBe(true);
+  } finally {
+    await session.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1 });
+    await session.detach();
+  }
+});

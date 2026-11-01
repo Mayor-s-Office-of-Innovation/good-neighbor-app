@@ -378,7 +378,9 @@ class ComplaintView extends HTMLElement {
       button?.remove();
       const textarea = this.querySelector("#complaint-description");
       this._bindDescription();
-      textarea?.focus({ preventScroll: true });
+      // The shell deliberately skips revealing zoomed views. Let the browser
+      // reveal the field there (and when VisualViewport is unavailable).
+      textarea?.focus({ preventScroll: window.visualViewport?.scale === 1 });
     });
     this.querySelector("#complaint-files").addEventListener("change", (event) =>
       this._selectFiles([...event.target.files]),
