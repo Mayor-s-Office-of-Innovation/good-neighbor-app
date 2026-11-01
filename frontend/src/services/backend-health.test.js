@@ -588,3 +588,64 @@ it("does not announce an outage for a throttled HTML API response", async () => 
   expect(mod.getHealthState()).toBe("healthy");
   expect(mod.connectionSnapshot().disconnected).toBe(false);
 });
+
+it.each([403, 413, 429])(
+  "admin HTML rejection %s remains reachable",
+  async (status) => {
+    const mod = await load();
+    fetchMock.mockResolvedValue(
+      new Response("<html>Rejected</html>", { status }),
+    );
+    const response = await mod.connectionFetch(
+      "http://localhost/admin/v1/site-imports/preview",
+      {},
+      {
+        httpRejectionsAreReachable: true,
+      },
+    );
+    expect(response.status).toBe(status);
+    expect(mod.connectionSnapshot().disconnected).toBe(false);
+  },
+);
+
+it.each([200, 502, 504])(
+  "admin HTML response %s still signals an outage",
+  async (status) => {
+    const mod = await load();
+    fetchMock.mockResolvedValue(
+      new Response("<html>CDN error</html>", { status }),
+    );
+    await mod.connectionFetch(
+      "http://localhost/admin/v1/site-imports/preview",
+      {},
+      {
+        httpRejectionsAreReachable: true,
+      },
+    );
+    expect(mod.connectionSnapshot().disconnected).toBe(true);
+  },
+);
+
+it("admin network failures still signal an outage", async () => {
+  const mod = await load();
+  fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
+  await expect(
+    mod.connectionFetch(
+      "http://localhost/admin/v1/site-imports/preview",
+      {},
+      {
+        httpRejectionsAreReachable: true,
+      },
+    ),
+  ).rejects.toThrow(TypeError);
+  expect(mod.connectionSnapshot().disconnected).toBe(true);
+});
+
+it("preserves default HTML 403 classification for the app", async () => {
+  const mod = await load();
+  fetchMock.mockResolvedValue(
+    new Response("<html>Rejected</html>", { status: 403 }),
+  );
+  await mod.connectionFetch("http://localhost/v1/tasks");
+  expect(mod.connectionSnapshot().disconnected).toBe(true);
+});
