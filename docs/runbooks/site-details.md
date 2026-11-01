@@ -119,3 +119,26 @@ attachment or note is sent. Simulated closure does not resolve the underlying
 issue. Support can identify simulation from the ticket's stored delivery mode and
 `SIM-` reference. Analytics exclude simulations from City-escalation counts/lists
 while retaining ordinary task activity and raw provenance.
+
+## CSV imports with additional Program managers
+
+Repeated rows for the same Site, Provider, and Program can add another Program
+manager. When the other records and assignments match, the importer creates only
+any missing Program manager directory entry and Site assignment. It checks the
+existing records without updating Site metadata, the primary contact, Site manager
+records, Provider manager records, or existing assignments. Repeated identical
+manager assignments are successful no-ops for those application records. The
+existing maximum of two active Program managers per Site still applies.
+
+Within one import, a manager-only row waits only for earlier rows that create or
+change records it actually needs, including shared manager directory entries.
+Unrelated failed or no-op rows do not block the assignment. Retryable failures defer the dependent row; terminal failures mark it
+not imported with `import_dependency_failed`. Resolve the prerequisite and create
+a fresh preview. Genuine conflicting changes after preview remain blocked.
+
+Completed imports retain their row results and a download of rows not imported.
+They can be reopened from Past imports or their `?importId=` URL without enabling
+another apply operation. Start another import clears the result view.
+
+Run `npm run test:site-imports -w backend` for isolated real DynamoDB transaction
+checks with synthetic data (requires Java and the local DynamoDB harness).

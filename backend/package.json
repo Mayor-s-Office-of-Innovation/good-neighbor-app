@@ -41,7 +41,8 @@
     "support:check": "node scripts/check-support-knowledge.mjs",
     "support:evaluate": "node scripts/evaluate-support.mjs",
     "test:site-details": "node scripts/test-site-admin-propagation.mjs",
-    "local:reconcile-compliance": "node --env-file=../.env.local scripts/reconcile-local-compliance.mjs"
+    "local:reconcile-compliance": "node --env-file=../.env.local scripts/reconcile-local-compliance.mjs",
+    "test:site-imports": "node --test scripts/test-site-import-managers.mjs"
   },
   "dependencies": {
     "@aws-crypto/client-node": "^4.2.1",
