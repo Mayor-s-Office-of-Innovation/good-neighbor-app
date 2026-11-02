@@ -97,3 +97,37 @@ describe("pending deletion overlay", () => {
     expect(isTaskPendingDeletion({ taskId: "task" })).toBe(true);
   });
 });
+
+it("hides and restores every group member together on Undo or failed save", async () => {
+  const root = {
+    checkId: "group-check",
+    artifactId: "group-art",
+    conditionId: "root",
+    taskId: "group-root",
+  };
+  const child = {
+    checkId: "other-check",
+    artifactId: "other-art",
+    conditionId: "child",
+    taskId: "group-child",
+  };
+  const group = { ...root, deletionTargets: [root, child] };
+  const commit = vi.fn();
+  const pending = stageDeletion(group, commit);
+  expect(isTaskPendingDeletion({ taskId: root.taskId })).toBe(true);
+  expect(isTaskPendingDeletion({ taskId: child.taskId })).toBe(true);
+  expect(isTaskPendingDeletion({ taskId: "unrelated" })).toBe(false);
+  expect(pendingDeletedConditionIds(child)).toEqual([child.conditionId]);
+  pending.undo();
+  expect(isTaskPendingDeletion({ taskId: root.taskId })).toBe(false);
+  expect(isTaskPendingDeletion({ taskId: child.taskId })).toBe(false);
+  expect(commit).not.toHaveBeenCalled();
+  const silence = vi.spyOn(console, "error").mockImplementation(() => {});
+  const failed = stageDeletion(group, async () => {
+    throw new Error("offline");
+  });
+  await failed.save();
+  expect(isTaskPendingDeletion({ taskId: root.taskId })).toBe(false);
+  expect(isTaskPendingDeletion({ taskId: child.taskId })).toBe(false);
+  silence.mockRestore();
+});

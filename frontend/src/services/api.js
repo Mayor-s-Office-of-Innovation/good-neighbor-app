@@ -513,6 +513,18 @@ async function requestOnce(
   // original may be reached through an intermediate link. Reads never invalidate.
   // Separation notifies after clearing local status overrides in its wrapper.
   if (
+    method === "POST" &&
+    path.endsWith("/reject") &&
+    Array.isArray(parsed?.deleted)
+  ) {
+    invalidateDuplicateIssues(
+      requestSiteId,
+      undefined,
+      parsed.deleted
+        .flatMap((target) => [target.taskId, target.originalTaskId])
+        .filter(Boolean),
+    );
+  } else if (
     method !== "GET" &&
     ((/^\/v1\/checks\/[^/]+\/artifacts(?:$|\/)/.test(path) &&
       !path.endsWith("/presign")) ||
@@ -756,8 +768,8 @@ export function editAnalysisCondition(checkId, artifactId, conditionId, body) {
  * @param {string} checkId
  * @param {string} artifactId
  * @param {string} conditionId
- * @param {{ reason?: { key: "not_a_problem" | "other", note?: string }, taskId?: string, caller?: { request_id?: string } }} [body]
- * @returns {Promise<{ analysis_id: string, rejected_condition_id: string, rejection: any, assessment: any }>}
+ * @param {{ reason?: { key: "not_a_problem" | "other", note?: string }, taskId?: string, deletionTaskIds?: (string | undefined)[], caller?: { request_id?: string } }} [body]
+ * @returns {Promise<{ analysis_id: string, rejected_condition_id: string, rejection: any, assessment: any, deleted?: any[] }>}
  */
 export function rejectAnalysisCondition(
   checkId,

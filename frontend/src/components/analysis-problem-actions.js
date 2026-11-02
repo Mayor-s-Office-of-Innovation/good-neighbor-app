@@ -23,6 +23,7 @@ import { t } from "../i18n/i18n.js";
  * @property {string} actionKind
  * @property {string} title
  * @property {string} description
+ * @property {import("../state/pending-deletions.js").DeletedProblem[]} [deletionTargets]
  */
 
 /**
@@ -82,6 +83,13 @@ export async function rejectProblemCondition(
     {
       reason: { key: "not_a_problem" },
       ...(problem.taskId ? { taskId: problem.taskId } : {}),
+      ...(problem.deletionTargets
+        ? {
+            deletionTaskIds: problem.deletionTargets.map(
+              (target) => target.taskId,
+            ),
+          }
+        : {}),
       caller: { request_id: requestId },
     },
   );

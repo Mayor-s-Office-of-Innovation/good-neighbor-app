@@ -1,12 +1,10 @@
+import { deletionScope } from "../analysis/duplicates/deletion.js";
+import { readTask, groupForTask } from "../analysis/duplicates/group.js";
 import { inactiveSf311Lease } from "../domain/sf311-lease.js";
 import { definitiveSilentFailure } from "../domain/silent-311-results.js";
 import { isDeepStrictEqual } from "node:util";
 import { sf311Job } from "../analysis/guidance/sf311-job.js";
-import {
-  GetCommand,
-  QueryCommand,
-  TransactWriteCommand,
-} from "@aws-sdk/lib-dynamodb";
+import { GetCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "node:crypto";
 import { catalogForPolicyVersion } from "../analysis/guidance/catalog-registry.js";
 import { completeTaskWithAppActions } from "../analysis/guidance/guidance-store.js";
@@ -17,86 +15,10 @@ import { ddb } from "../db.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveActorId, deriveSiteId } from "../lib/principal.js";
 import {
-  taskKey,
   taskUpdateKey,
   taskUpdateTimelineGsi,
   taskWorklistDateGsi,
 } from "./keys.js";
-
-/** @param {string} table @param {string} siteId @param {string} taskId */
-async function readTask(table, siteId, taskId) {
-  return (
-    await ddb.send(
-      new GetCommand({
-        TableName: table,
-        Key: taskKey(siteId, taskId),
-        ConsistentRead: true,
-      }),
-    )
-  ).Item;
-}
-
-/** @param {string} table @param {string} siteId @param {string} prefix */
-async function duplicateRows(table, siteId, prefix) {
-  const items = [];
-  let exclusiveStartKey;
-  do {
-    /** @type {any} */
-    const page = await ddb.send(
-      new QueryCommand({
-        TableName: table,
-        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-        ExpressionAttributeValues: {
-          ":pk": `SITE#${siteId}`,
-          ":prefix": prefix,
-        },
-        ConsistentRead: true,
-        ...(exclusiveStartKey ? { ExclusiveStartKey: exclusiveStartKey } : {}),
-      }),
-    );
-    items.push(...(page.Items ?? []));
-    exclusiveStartKey = page.LastEvaluatedKey;
-  } while (exclusiveStartKey);
-  return items;
-}
-
-/** Resolve a clicked task to the root and every still-linked group member.
- * @param {string} table @param {string} siteId @param {Record<string, any>} clickedTask
- */
-async function groupForTask(table, siteId, clickedTask) {
-  const [savedLinks, overrides] = await Promise.all([
-    duplicateRows(table, siteId, "DUP_LINK#"),
-    duplicateRows(table, siteId, "DUP_OVERRIDE#"),
-  ]);
-  const separated = new Set(overrides.map((override) => override.taskId));
-  const links = savedLinks.filter((link) => !separated.has(link.taskId));
-  const clickedLink = links.find((link) => link.taskId === clickedTask.taskId);
-  const rootTaskId = String(clickedLink?.originalTaskId ?? clickedTask.taskId);
-  const memberLinks = links.filter(
-    (link) => String(link.originalTaskId) === rootTaskId,
-  );
-  const ids = [rootTaskId, ...memberLinks.map((link) => String(link.taskId))];
-  const tasks = /** @type {Record<string, any>[]} */ (
-    await Promise.all(
-      [...new Set(ids)].map((id) => readTask(table, siteId, id)),
-    )
-  ).filter(Boolean);
-  return {
-    rootTaskId,
-    root: tasks.find((task) => task.taskId === rootTaskId),
-    members: tasks
-      .map((task) => ({
-        ...task,
-        isDuplicate: task.taskId !== rootTaskId,
-        ...(memberLinks.find((link) => link.taskId === task.taskId) ?? {}),
-      }))
-      .sort((a, b) =>
-        String(/** @type {Record<string, any>} */ (b).createdAt).localeCompare(
-          String(/** @type {Record<string, any>} */ (a).createdAt),
-        ),
-      ),
-  };
-}
 
 /** @param {Record<string, any>} task */
 function actionOptions(task) {
@@ -197,6 +119,12 @@ export const getTaskDetails = async (event) => {
   const selection = actionOptions(group.root);
   return jsonResponse(200, {
     clicked,
+    deletion: await deletionScope(dynamoTable, siteId, clicked, group)
+      .then(({ kind, targets }) => ({ kind, targets }))
+      .catch((error) => {
+        if (error.statusCode === 409) return null;
+        throw error;
+      }),
     rootTaskId: group.rootTaskId,
     members: group.members,
     actions: selection.options,

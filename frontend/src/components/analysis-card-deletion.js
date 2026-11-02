@@ -1,3 +1,4 @@
+import { getTaskDetails } from "../services/api.js";
 import { stageDeletion } from "../state/pending-deletions.js";
 import { showToast } from "../state/toasts.js";
 import { t } from "../i18n/i18n.js";
@@ -135,4 +136,39 @@ export function collapseCard(card) {
   return Promise.allSettled(
     shell.getAnimations().map((animation) => animation.finished),
   ).then(() => shell.remove());
+}
+
+/** Resolve the server-owned deletion scope before enabling confirmation.
+ * @param {HTMLElement} host @param {any} problem
+ */
+export async function prepareCardDeletion(host, problem) {
+  const button = /** @type {HTMLButtonElement | null} */ (
+    host.querySelector("#analysis-delete-confirm")
+  );
+  const copy = host.querySelector("#analysis-delete-copy");
+  if (button) button.disabled = true;
+  if (copy) copy.textContent = t("analysis.deleteDialog.loading");
+  try {
+    const deletion = problem.taskId
+      ? (await getTaskDetails(problem.taskId)).deletion
+      : null;
+    // Ignore a result after another card was selected.
+    if (host["_activeProblem"] !== problem) return;
+    if (problem.taskId && !deletion?.targets?.length)
+      throw new Error("Missing deletion scope");
+    problem.deletionTargets = deletion?.targets;
+    if (copy)
+      copy.textContent = t(
+        deletion?.kind === "group"
+          ? "analysis.deleteDialog.group"
+          : deletion?.kind === "duplicate"
+            ? "analysis.deleteDialog.duplicate"
+            : "analysis.deleteDialog.text",
+        { count: deletion?.targets?.length || 1 },
+      );
+    if (button) button.disabled = false;
+  } catch {
+    if (host["_activeProblem"] !== problem) return;
+    if (copy) copy.textContent = t("analysis.deleteDialog.loadError");
+  }
 }

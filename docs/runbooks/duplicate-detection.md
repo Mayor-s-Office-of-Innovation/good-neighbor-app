@@ -473,3 +473,31 @@ Deployment and activation order:
    429 amplification and DLQ growth before expanding. The site flag rolls back
    presentation; disabling the backend flag through CI stops new matching work.
    Neither action purges queues, deletes links or reverses completed user actions.
+
+### Card deletion and count stability
+
+Deleting a linked duplicate dismisses only that card. Deleting an original
+also dismisses its still-linked duplicates across all task statuses. Explicitly
+separated cards are excluded. Existing action/status group presentation is unchanged.
+The confirmation dialog reads the server-owned scope before enabling Delete;
+if membership changes before saving, the request returns 409 and the user must
+reopen the dialog.
+
+Task-backed deletions atomically supersede the affected tasks and write
+`ISSUE_DELETION#` receipts in one DynamoDB transaction. These are app-owned
+confirmed user deletions (`deletionOrigin: app`); analyzer evidence is retained and no external analyzer rejection
+is required. Receipts also suppress stale worklist, guidance, and pending-question
+reads. Retrying an accepted deletion returns its saved scope. Legacy conditions
+without task cards retain the existing analyzer rejection flow.
+
+Duplicate-link writes advance `duplicateGroupVersion` on the original task.
+Deletion guards this version, member task versions, link revisions, and separation
+records so concurrent membership/status changes cancel the transaction. Groups
+exceeding DynamoDB's 100-operation transaction limit fail before any card is deleted.
+
+The client overlays the complete confirmed scope during the Undo window, hiding
+or restoring all affected cards together. The To do badge subtracts only cards
+it currently counts. Saving refreshes only deleted task IDs and their cached
+original, preserving confirmed match presentation while the lookup is pending;
+unrelated matches are retained. A failed save removes the overlay and shows the
+existing error toast.

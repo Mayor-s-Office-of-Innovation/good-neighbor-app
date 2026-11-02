@@ -82,6 +82,8 @@ export async function taskForIssue(site, ref, get) {
  * @returns {Promise<Item>}
  */
 export async function duplicateForTask(table, site, task, reader) {
+  if (["superseded", "deleted"].includes(task.status))
+    return { state: "complete" };
   const get = reader ?? siteReader(table, site);
   const artifactId = task.sourceArtifactIds?.[0];
   if (!task.checkId || !artifactId || !task.conditionId)
@@ -201,6 +203,15 @@ export async function duplicateForTask(table, site, task, reader) {
     get,
   });
   if (!original.originalIssue) return pending;
+  // A deleted original cannot hide new observations or receive shared actions.
+  const [originalCheck, originalArtifact] =
+    original.originalIssue.observationId.split(":");
+  const deletion = await get({
+    pk: `SITE#${site}`,
+    sk: `ISSUE_DELETION#${originalCheck}:${originalArtifact}:${original.originalIssue.conditionId}`,
+  });
+  if (deletion?.deletedAt || deletion?.dismissedAt)
+    return { state: "complete" };
   const root = await taskForIssue(site, original.originalIssue, get);
   if (
     root?.resolvedAt &&
@@ -262,6 +273,7 @@ export async function reconcileObservation(table, site, checkId, artifactId) {
     const adoptAction =
       root.status === "open" &&
       ["in_progress", "completed"].includes(task.status);
+    if (root.status === "superseded" || task.status === "superseded") continue;
     if (previous?.updateId === updateId && !adoptAction) continue;
     const actionFields = [
       "status",
@@ -305,23 +317,25 @@ export async function reconcileObservation(table, site, checkId, artifactId) {
       await ddb.send(
         new TransactWriteCommand({
           TransactItems: [
-            ...(adopted
-              ? [
-                  {
-                    Put: {
-                      TableName: table,
-                      Item: adopted,
-                      ConditionExpression:
-                        "#status = :open AND updatedAt = :updated",
-                      ExpressionAttributeNames: { "#status": "status" },
-                      ExpressionAttributeValues: {
-                        ":open": "open",
-                        ":updated": root.updatedAt,
-                      },
-                    },
-                  },
-                ]
-              : []),
+            {
+              Put: {
+                TableName: table,
+                Item: { ...(adopted || root), duplicateGroupVersion: updateId },
+                ConditionExpression:
+                  "#status = :rootStatus AND updatedAt = :rootUpdated AND " +
+                  (root.duplicateGroupVersion
+                    ? "duplicateGroupVersion = :groupVersion"
+                    : "attribute_not_exists(duplicateGroupVersion)"),
+                ExpressionAttributeNames: { "#status": "status" },
+                ExpressionAttributeValues: {
+                  ":rootStatus": root.status,
+                  ":rootUpdated": root.updatedAt,
+                  ...(root.duplicateGroupVersion
+                    ? { ":groupVersion": root.duplicateGroupVersion }
+                    : {}),
+                },
+              },
+            },
             ...(adopted
               ? [
                   {

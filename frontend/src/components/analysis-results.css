@@ -585,9 +585,9 @@ html.wa-dark .analysis-card__clear-copy a {
   box-shadow: none;
 }
 
-.analysis-dialog__button:focus,
 .analysis-dialog__button:focus-visible {
-  outline: none;
+  outline: 3px solid var(--focus-ring, var(--brand-blue));
+  outline-offset: 2px;
 }
 
 .analysis-dialog__button:disabled {

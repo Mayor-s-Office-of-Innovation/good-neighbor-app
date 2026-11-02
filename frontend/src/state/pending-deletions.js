@@ -8,6 +8,7 @@ import { showDeleteErrorToast } from "./toasts.js";
  * @property {string} [taskId]
  * @property {string} [title]
  * @property {string} [reference]
+ * @property {DeletedProblem[]} [deletionTargets]
  */
 
 /** @type {Map<string, {problem: DeletedProblem, status: string}>} */
@@ -89,22 +90,25 @@ export function stageDeletion(problem, commit) {
 export function pendingDeletedConditionIds({ checkId, artifactId }) {
   if (!artifactId) return [];
   return [...deletions.values()]
+    .flatMap(({ problem }) => problem.deletionTargets || [problem])
     .filter(
-      ({ problem }) =>
+      (problem) =>
         problem.artifactId === artifactId &&
         (!checkId || problem.checkId === checkId),
     )
-    .map(({ problem }) => problem.conditionId);
+    .map((problem) => problem.conditionId);
 }
 
 /** @param {{taskId?: string, checkId?: string, conditionId?: string, sourceArtifactIds?: string[], evidence?: {artifactId?: string}}} task */
 export function isTaskPendingDeletion(task) {
-  return [...deletions.values()].some(
-    ({ problem }) =>
-      (problem.taskId && problem.taskId === task.taskId) ||
-      (problem.checkId === task.checkId &&
-        problem.conditionId === task.conditionId &&
-        (task.sourceArtifactIds?.includes(problem.artifactId) ||
-          task.evidence?.artifactId === problem.artifactId)),
-  );
+  return [...deletions.values()]
+    .flatMap(({ problem }) => problem.deletionTargets || [problem])
+    .some(
+      (problem) =>
+        (problem.taskId && problem.taskId === task.taskId) ||
+        (problem.checkId === task.checkId &&
+          problem.conditionId === task.conditionId &&
+          (task.sourceArtifactIds?.includes(problem.artifactId) ||
+            task.evidence?.artifactId === problem.artifactId)),
+    );
 }

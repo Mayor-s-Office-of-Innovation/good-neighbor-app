@@ -546,3 +546,21 @@ it("still rejects a settled negative whose guidance no longer includes the task"
     "not_applicable",
   );
 });
+
+it("does not link new observations or route actions to a deleted original", async () => {
+  const { old, recent } = fixture();
+  put({ ...old.task, status: "superseded" });
+  put({
+    pk: "SITE#site",
+    sk: "ISSUE_DELETION#old:photo:condition",
+    deletedAt: "2026-11-02T12:00:00Z",
+  });
+  expect(await duplicateForTask("test", "site", recent.task)).toMatchObject({
+    state: "complete",
+  });
+  expect((await sharedActionTarget("test", "site", "recent")).taskId).toBe(
+    "recent",
+  );
+  await reconcileObservation("test", "site", "recent", "photo");
+  expect(state.writes).toHaveLength(0);
+});

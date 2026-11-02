@@ -1,3 +1,4 @@
+import { deleteTaskGroup } from "../analysis/duplicates/deletion.js";
 import { statusConditionId } from "../domain/system-status.js";
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
 import { getConfig } from "../config.js";
@@ -47,6 +48,8 @@ async function analyzerClient() {
  * @returns {import("aws-lambda").APIGatewayProxyResult}
  */
 function errorResponse(err) {
+  if (err instanceof Error && "statusCode" in err && err.statusCode === 409)
+    return jsonResponse(409, { error: err.message });
   if (err instanceof AnalyzerError) {
     return jsonResponse(err.status || 502, {
       error: err.message,
@@ -211,7 +214,7 @@ export async function rejectAnalysisCondition(event) {
     }
   }
   const input =
-    /** @type {{ reason?: { key?: unknown, note?: unknown }, taskId?: unknown }} */ (
+    /** @type {{ reason?: { key?: unknown, note?: unknown }, taskId?: unknown, deletionTaskIds?: string[] }} */ (
       body
     );
   /** @type {{ key: "not_a_problem" | "other", note?: string } | undefined} */
@@ -240,6 +243,22 @@ export async function rejectAnalysisCondition(event) {
   }
 
   try {
+    if (typeof input.taskId === "string" && input.taskId) {
+      if (
+        input.deletionTaskIds !== undefined &&
+        (!Array.isArray(input.deletionTaskIds) ||
+          !input.deletionTaskIds.every((id) => typeof id === "string"))
+      )
+        return jsonResponse(400, { error: "Invalid deletion scope" });
+      const deleted = await deleteTaskGroup(dynamoTable, siteId, {
+        taskId: input.taskId,
+        checkId,
+        artifactId,
+        conditionId,
+        expectedTaskIds: input.deletionTaskIds,
+      });
+      return jsonResponse(200, { deleted });
+    }
     const context = await findAnalysisContext({
       tableName: dynamoTable,
       siteId,
@@ -415,7 +434,7 @@ export async function rejectAnalysisCondition(event) {
         : {}),
       reason: "analysis_condition_rejected",
     });
-    return jsonResponse(200, result);
+    return jsonResponse(200, { ...result, deleted: [] });
   } catch (err) {
     return errorResponse(err);
   }
