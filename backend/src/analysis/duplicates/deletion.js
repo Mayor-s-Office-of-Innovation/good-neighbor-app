@@ -112,11 +112,19 @@ export async function deleteTaskGroup(table, siteId, input) {
     )
   ).Item;
   if (receipt?.deletionTargets) return receipt.deletionTargets;
+  if (
+    !Array.isArray(input.expectedTaskIds) ||
+    !input.expectedTaskIds.length ||
+    input.expectedTaskIds.some((id) => typeof id !== "string" || !id.trim()) ||
+    new Set(input.expectedTaskIds).size !== input.expectedTaskIds.length
+  )
+    throw conflict(
+      "Missing confirmed deletion scope; reopen the deletion dialog",
+    );
   const scope = await deletionScope(table, siteId, clicked);
   if (
-    input.expectedTaskIds &&
     JSON.stringify([...input.expectedTaskIds].sort()) !==
-      JSON.stringify(scope.targets.map((target) => target.taskId).sort())
+    JSON.stringify(scope.targets.map((target) => target.taskId).sort())
   )
     throw conflict("Issue group changed; reopen the deletion dialog");
   if (scope.kind === "group") {

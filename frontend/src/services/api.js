@@ -1866,6 +1866,16 @@ export function getTaskDetails(taskId, { signal } = {}) {
   });
 }
 
+/** Read deletion scope without resolving action-editing catalogs.
+ * @param {string} taskId
+ */
+export function getTaskDeletionScope(taskId) {
+  return request(
+    "GET",
+    `/v1/tasks/${encodeURIComponent(taskId)}/details?view=deletion`,
+  );
+}
+
 /** @param {string} taskId @param {string} ruleId */
 export function updateTaskAction(taskId, ruleId) {
   return request("PATCH", `/v1/tasks/${encodeURIComponent(taskId)}/action`, {

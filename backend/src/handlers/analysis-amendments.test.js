@@ -252,6 +252,38 @@ describe("analysis amendments (check/artifact-addressed)", () => {
     ).toBe(false);
   });
 
+  it.each([undefined, [], [""], ["task-fresh", "task-fresh"]])(
+    "rejects task-backed deletion without valid confirmation %j",
+    async (deletionTaskIds) => {
+      send.mockImplementation(async (command) => {
+        if (command.input.Key?.sk === "TASK#task-fresh")
+          return {
+            Item: {
+              pk: "SITE#site-1",
+              sk: "TASK#task-fresh",
+              taskId: "task-fresh",
+              checkId: "chk_01",
+              conditionId: "chk_01-art_1-001-litter",
+              sourceArtifactIds: ["art_1"],
+              status: "open",
+            },
+          };
+        return {};
+      });
+      const response = await invoke(
+        amendEvent({ body: { taskId: "task-fresh", deletionTaskIds } }),
+        rejectAnalysisCondition,
+      );
+      expect(response.statusCode).toBe(409);
+      expect(
+        send.mock.calls.some(
+          ([command]) => command instanceof TransactWriteCommand,
+        ),
+      ).toBe(false);
+      expect(analyzeReject).not.toHaveBeenCalled();
+    },
+  );
+
   it("dismisses a task-backed card atomically using strongly consistent identity", async () => {
     const task = {
       pk: "SITE#site-1",

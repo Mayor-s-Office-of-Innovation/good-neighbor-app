@@ -1,4 +1,4 @@
-import { getTaskDetails } from "../services/api.js";
+import { getTaskDeletionScope } from "../services/api.js";
 import { stageDeletion } from "../state/pending-deletions.js";
 import { showToast } from "../state/toasts.js";
 import { t } from "../i18n/i18n.js";
@@ -150,7 +150,7 @@ export async function prepareCardDeletion(host, problem) {
   if (copy) copy.textContent = t("analysis.deleteDialog.loading");
   try {
     const deletion = problem.taskId
-      ? (await getTaskDetails(problem.taskId)).deletion
+      ? (await getTaskDeletionScope(problem.taskId)).deletion
       : null;
     // Ignore a result after another card was selected.
     if (host["_activeProblem"] !== problem) return;

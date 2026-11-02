@@ -482,6 +482,13 @@ separated cards are excluded. Existing action/status group presentation is uncha
 The confirmation dialog reads the server-owned scope before enabling Delete;
 if membership changes before saving, the request returns 409 and the user must
 reopen the dialog.
+Deletion preparation uses `GET /v1/tasks/{taskId}/details?view=deletion`, which
+validates scope without resolving the task's action catalog. Missing or retired
+policy versions therefore do not block deletion. Normal task details and action
+editing retain their catalog requirements. New task-backed deletions require a
+nonempty, unique `deletionTaskIds` list matching the current server scope;
+older clients without that confirmation are rejected without writes and must
+reload the app. Replays of committed deletions return the saved scope.
 
 Task-backed deletions atomically supersede the affected tasks and write
 `ISSUE_DELETION#` receipts in one DynamoDB transaction. These are app-owned

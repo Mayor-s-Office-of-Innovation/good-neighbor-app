@@ -186,6 +186,51 @@ it("returns the full group and distinct category actions from either member", as
   ]);
 });
 
+it.each([undefined, "unsupported-policy"])(
+  "returns deletion scope independently of policy version %s",
+  async (policyVersion) => {
+    put(
+      task("standalone", {
+        policyVersion,
+        checkId: "check",
+        conditionId: "condition",
+        sourceArtifactIds: ["artifact"],
+      }),
+    );
+    const response = await getTaskDetails({
+      ...event("standalone"),
+      queryStringParameters: { view: "deletion" },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({
+      deletion: {
+        kind: "single",
+        targets: [
+          {
+            taskId: "standalone",
+            originalTaskId: "standalone",
+            checkId: "check",
+            artifactId: "artifact",
+            conditionId: "condition",
+          },
+        ],
+      },
+    });
+    await expect(getTaskDetails(event("standalone"))).rejects.toMatchObject({
+      name: "CatalogUnavailable",
+    });
+  },
+);
+
+it("fails closed when deletion-only scope cannot be validated", async () => {
+  const response = await getTaskDetails({
+    ...event("root"),
+    queryStringParameters: { view: "deletion" },
+  });
+  expect(response.statusCode).toBe(409);
+  expect(JSON.parse(response.body).deletion).toBeUndefined();
+});
+
 it("maps equivalent same-label rules to their canonical selectable action", async () => {
   put(
     task("root", {

@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-const api = vi.hoisted(() => ({ getTaskDetails: vi.fn() }));
+const api = vi.hoisted(() => ({ getTaskDeletionScope: vi.fn() }));
 vi.mock("../services/api.js", () => api);
 import { prepareCardDeletion } from "./analysis-card-deletion.js";
 import { t } from "../i18n/i18n.js";
@@ -22,7 +22,7 @@ it.each(["single", "duplicate", "group"])(
     let finish = (result) => {
       void result;
     };
-    api.getTaskDetails.mockImplementationOnce(
+    api.getTaskDeletionScope.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           finish = resolve;
@@ -44,7 +44,7 @@ it.each(["single", "duplicate", "group"])(
 it("keeps confirmation disabled after a scope lookup failure", async () => {
   const problem = { taskId: "root" };
   const { host, button, copy } = fixture(problem);
-  api.getTaskDetails.mockRejectedValueOnce(new Error("offline"));
+  api.getTaskDeletionScope.mockRejectedValueOnce(new Error("offline"));
   await prepareCardDeletion(host, problem);
   expect(button.disabled).toBe(true);
   expect(copy.textContent).toBe(t("analysis.deleteDialog.loadError"));
@@ -55,7 +55,7 @@ it("ignores a late result for a previously selected card", async () => {
   let finish = (result) => {
     void result;
   };
-  api.getTaskDetails.mockImplementationOnce(
+  api.getTaskDeletionScope.mockImplementationOnce(
     () =>
       new Promise((resolve) => {
         finish = resolve;

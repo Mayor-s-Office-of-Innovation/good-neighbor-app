@@ -185,7 +185,12 @@ function linked(id, status) {
     sourceRevision: revision,
   });
 }
-function input(id, expectedTaskIds) {
+function input(
+  id,
+  expectedTaskIds = [...state.rows.values()]
+    .filter((row) => row.sk.startsWith("TASK#"))
+    .map((row) => row.taskId),
+) {
   return {
     taskId: id,
     checkId: `check-${id}`,
@@ -200,6 +205,18 @@ beforeEach(() => {
   state.fail = false;
   state.before = null;
 });
+it.each([undefined, [], [""], ["root", "root"], [12]])(
+  "rejects an unconfirmed deletion scope %j without writing",
+  async (expectedTaskIds) => {
+    put(task("root"));
+    linked("one");
+    await expect(
+      deleteTaskGroup("table", "site", { ...input("root"), expectedTaskIds }),
+    ).rejects.toMatchObject({ statusCode: 409 });
+    expect(state.writes).toHaveLength(0);
+    expect(state.rows.get("TASK#one").status).toBe("open");
+  },
+);
 it("deletes a standalone card atomically and replays the same receipt", async () => {
   put(task("solo"));
   const deleted = await deleteTaskGroup(
@@ -211,6 +228,12 @@ it("deletes a standalone card atomically and replays the same receipt", async ()
   expect(state.rows.get("TASK#solo").status).toBe("superseded");
   expect(
     await deleteTaskGroup("table", "site", input("solo", ["solo"])),
+  ).toEqual(deleted);
+  expect(
+    await deleteTaskGroup("table", "site", {
+      ...input("solo"),
+      expectedTaskIds: undefined,
+    }),
   ).toEqual(deleted);
   expect(state.writes).toHaveLength(1);
 });

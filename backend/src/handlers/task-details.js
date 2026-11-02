@@ -116,6 +116,27 @@ export const getTaskDetails = async (event) => {
   if (!clicked) return jsonResponse(404, { error: "Task not found" });
   const group = await groupForTask(dynamoTable, siteId, clicked);
   if (!group.root) return jsonResponse(409, { error: "Issue group changed" });
+  // Deletion needs only validated scope, never an action catalog. Keep normal
+  // details/action editing strict when a policy version is unavailable.
+  if (event.queryStringParameters?.view === "deletion") {
+    try {
+      const { kind, targets } = await deletionScope(
+        dynamoTable,
+        siteId,
+        clicked,
+        group,
+      );
+      return jsonResponse(200, { deletion: { kind, targets } });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "statusCode" in error &&
+        error.statusCode === 409
+      )
+        return jsonResponse(409, { error: error.message });
+      throw error;
+    }
+  }
   const selection = actionOptions(group.root);
   return jsonResponse(200, {
     clicked,

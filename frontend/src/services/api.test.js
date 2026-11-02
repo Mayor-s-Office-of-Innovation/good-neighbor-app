@@ -11,6 +11,7 @@ import {
   getSiteSettings,
   getMediaUrl,
   getTaskUpdates,
+  getTaskDeletionScope,
   get311RequestDetails,
   getCaptureGuidance,
   putMedia,
@@ -25,6 +26,24 @@ import {
   uploadTaskUpdatePhoto,
   uploadArtifact,
 } from "./api.js";
+
+it("requests deletion-only scope independently of normal task details", async () => {
+  const response = {
+    deletion: { kind: "single", targets: [{ taskId: "task/id" }] },
+  };
+  const fetch = vi
+    .fn()
+    .mockResolvedValue(new Response(JSON.stringify(response)));
+  vi.stubGlobal("fetch", fetch);
+  try {
+    expect(await getTaskDeletionScope("task/id")).toEqual(response);
+    expect(fetch.mock.calls[0][0]).toContain(
+      "/v1/tasks/task%2Fid/details?view=deletion",
+    );
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
 
 vi.mock("../db.js", async (importOriginal) => ({
   ...(await importOriginal()),
