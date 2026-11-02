@@ -66,9 +66,26 @@ export async function groupForTask(table, siteId, clickedTask) {
     return id;
   };
   const rootTaskId = rootFor(String(clickedTask.taskId));
-  const memberLinks = links.filter(
-    (link) => rootFor(String(link.taskId)) === rootTaskId,
-  );
+  // Walk incoming edges from this root only. A corrupt unrelated component
+  // must not prevent opening or deleting the selected card.
+  const members = new Set([rootTaskId]);
+  /** @type {Record<string,any>[]} */
+  const memberLinks = [];
+  const incoming = new Map();
+  for (const link of links) {
+    const parent = String(link.originalTaskId);
+    const rows = incoming.get(parent) || [];
+    rows.push(link);
+    incoming.set(parent, rows);
+  }
+  for (const parent of members) {
+    for (const link of incoming.get(parent) || []) {
+      const id = String(link.taskId);
+      if (members.has(id)) continue;
+      members.add(id);
+      memberLinks.push(link);
+    }
+  }
   const ids = [rootTaskId, ...memberLinks.map((link) => String(link.taskId))];
   const tasks = /** @type {Record<string, any>[]} */ (
     await Promise.all(

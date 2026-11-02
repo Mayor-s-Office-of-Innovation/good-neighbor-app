@@ -89,7 +89,8 @@ vi.mock("../lib/principal.js", () => ({
   deriveSiteId: () => "site",
   deriveActorId: () => "actor",
 }));
-vi.mock("../analysis/duplicates/links.js", () => ({
+vi.mock("../analysis/duplicates/links.js", async (importOriginal) => ({
+  ...(await importOriginal()),
   sharedActionTarget: async (_table, _site, taskId) => ({
     taskId: taskId === "duplicate" ? "root" : taskId,
     duplicateChecks: [],

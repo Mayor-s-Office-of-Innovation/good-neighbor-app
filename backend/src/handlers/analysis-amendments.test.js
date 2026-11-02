@@ -285,10 +285,15 @@ describe("analysis amendments (check/artifact-addressed)", () => {
         .map(([command]) => command)
         .find((command) => command instanceof TransactWriteCommand)
     );
-    expect(transaction.input.TransactItems[0].Put.Item).toMatchObject({
-      taskId: "task-fresh",
-      status: "superseded",
+    expect(transaction.input.TransactItems[0].Update.Key).toEqual({
+      pk: "SITE#site-1",
+      sk: "TASK#task-fresh",
     });
+    expect(
+      Object.values(
+        transaction.input.TransactItems[0].Update.ExpressionAttributeValues,
+      ),
+    ).toContain("superseded");
     expect(transaction.input.TransactItems[1].Put.Item).toMatchObject({
       state: "confirmed",
       deletionOrigin: "app",

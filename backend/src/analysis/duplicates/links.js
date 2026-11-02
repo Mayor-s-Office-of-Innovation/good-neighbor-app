@@ -313,21 +313,66 @@ export async function reconcileObservation(table, site, checkId, artifactId) {
           ),
         }
       : null;
+    const rootChanges = {
+      duplicateGroupVersion: updateId,
+      ...(adopted
+        ? {
+            ...Object.fromEntries(
+              actionFields
+                .filter((field) => task[field] !== undefined)
+                .map((field) => [field, adopted[field]]),
+            ),
+            updatedAt: adopted.updatedAt,
+            latestUpdateId: adopted.latestUpdateId,
+            gsi2pk: adopted.gsi2pk,
+            gsi2sk: adopted.gsi2sk,
+          }
+        : {}),
+    };
+    /** @type {Record<string,string>} */
+    const rootNames = { "#status": "status" };
+    /** @type {Record<string,any>} */
+    const rootValues = {};
+    const rootAssignments = Object.entries(rootChanges).map(
+      ([field, value], index) => {
+        rootNames[`#set${index}`] = field;
+        rootValues[`:set${index}`] = value;
+        return `#set${index} = :set${index}`;
+      },
+    );
     try {
       await ddb.send(
         new TransactWriteCommand({
           TransactItems: [
             {
-              Put: {
+              Update: {
                 TableName: table,
-                Item: { ...(adopted || root), duplicateGroupVersion: updateId },
+                Key: taskKey(site, root.taskId),
+                UpdateExpression: `SET ${rootAssignments.join(", ")}`,
                 ConditionExpression:
                   "#status = :rootStatus AND updatedAt = :rootUpdated AND " +
                   (root.duplicateGroupVersion
                     ? "duplicateGroupVersion = :groupVersion"
-                    : "attribute_not_exists(duplicateGroupVersion)"),
-                ExpressionAttributeNames: { "#status": "status" },
+                    : "attribute_not_exists(duplicateGroupVersion)") +
+                  (adopted
+                    ? " AND " +
+                      (root.appActionResults !== undefined
+                        ? "appActionResults = :rootResults"
+                        : "attribute_not_exists(appActionResults)") +
+                      " AND " +
+                      (root.appActionStatus !== undefined
+                        ? "appActionStatus = :rootActionStatus"
+                        : "attribute_not_exists(appActionStatus)")
+                    : ""),
+                ExpressionAttributeNames: rootNames,
                 ExpressionAttributeValues: {
+                  ...rootValues,
+                  ...(adopted && root.appActionResults !== undefined
+                    ? { ":rootResults": root.appActionResults }
+                    : {}),
+                  ...(adopted && root.appActionStatus !== undefined
+                    ? { ":rootActionStatus": root.appActionStatus }
+                    : {}),
                   ":rootStatus": root.status,
                   ":rootUpdated": root.updatedAt,
                   ...(root.duplicateGroupVersion

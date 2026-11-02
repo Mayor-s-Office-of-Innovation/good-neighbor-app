@@ -491,9 +491,16 @@ reads. Retrying an accepted deletion returns its saved scope. Legacy conditions
 without task cards retain the existing analyzer rejection flow.
 
 Duplicate-link writes advance `duplicateGroupVersion` on the original task.
-Deletion guards this version, member task versions, link revisions, and separation
-records so concurrent membership/status changes cancel the transaction. Groups
-exceeding DynamoDB's 100-operation transaction limit fail before any card is deleted.
+Deletion revalidates saved candidate links against the current analysis, matching
+results, guidance pointers, and separation records. A settled non-match is excluded;
+unsettled evidence blocks confirmation rather than partially deleting the group.
+The transaction guards those evidence snapshots (including previously absent
+invalidation fields), member task versions, and link revisions. Traversal stays
+within the selected component, so an unrelated cyclic group does not block it.
+Task retirement and link-version writes use targeted updates to preserve concurrent
+311 results. Action adoption additionally guards the integration fields it copies.
+Groups exceeding DynamoDB's 100-operation transaction limit fail before any card
+is deleted.
 
 The client overlays the complete confirmed scope during the Undo window, hiding
 or restoring all affected cards together. The To do badge subtracts only cards

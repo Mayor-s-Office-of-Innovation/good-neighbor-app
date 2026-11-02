@@ -1,3 +1,5 @@
+import { duplicateForTask, siteReader } from "./links.js";
+import { evidenceCondition } from "./evidence-check.js";
 import { GetCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../../db.js";
 import { taskKey, taskWorklistDateGsi } from "../../handlers/keys.js";
@@ -14,11 +16,52 @@ function conflict(message) {
  * @param {Awaited<ReturnType<typeof groupForTask>>} [knownGroup]
  */
 export async function deletionScope(table, siteId, clicked, knownGroup) {
+  if (["superseded", "deleted"].includes(clicked.status))
+    throw conflict("Card was already deleted; refresh and retry");
   const group = knownGroup || (await groupForTask(table, siteId, clicked));
-  const duplicate = group.rootTaskId !== clicked.taskId;
-  const members = (duplicate ? [clicked] : group.tasks).filter(
-    (task) => task.status !== "superseded",
+  const base = siteReader(table, siteId);
+  /** @type {Map<string, {key:{pk:string,sk:string},item:Record<string,any>|undefined}>} */
+  const proof = new Map();
+  /** @param {{pk:string,sk:string}} key */
+  const get = async (key) => {
+    if (!proof.has(key.sk)) proof.set(key.sk, { key, item: await base(key) });
+    return proof.get(key.sk)?.item;
+  };
+  let rootTaskId = group.rootTaskId;
+  let members = group.tasks.filter(
+    (task) => !["superseded", "deleted"].includes(task.status),
   );
+  if (group.links.length) {
+    const clickedRelation = await duplicateForTask(table, siteId, clicked, get);
+    if (["pending", "unavailable"].includes(clickedRelation.state))
+      throw conflict(
+        "Duplicate evidence is being refreshed; retry deletion later",
+      );
+    rootTaskId =
+      clickedRelation.state === "matched"
+        ? clickedRelation.original.taskId
+        : clicked.taskId;
+    if (rootTaskId !== clicked.taskId) members = [clicked];
+    else {
+      const validated = [clicked];
+      for (const task of members) {
+        if (task.taskId === clicked.taskId) continue;
+        if (!group.links.some((link) => link.taskId === task.taskId)) continue;
+        const relation = await duplicateForTask(table, siteId, task, get);
+        if (["pending", "unavailable"].includes(relation.state))
+          throw conflict(
+            "Duplicate evidence is being refreshed; retry deletion later",
+          );
+        if (
+          relation.state === "matched" &&
+          relation.original.taskId === rootTaskId
+        )
+          validated.push(task);
+      }
+      members = validated;
+    }
+  }
+  const duplicate = rootTaskId !== clicked.taskId;
   if (!members.length)
     throw conflict("Card was already deleted; refresh and retry");
   const targets = members.map((task) => {
@@ -27,7 +70,7 @@ export async function deletionScope(table, siteId, clicked, knownGroup) {
       throw conflict("Issue group has incomplete evidence; refresh and retry");
     return {
       taskId: String(task.taskId),
-      originalTaskId: group.rootTaskId,
+      originalTaskId: rootTaskId,
       checkId: String(task.checkId),
       artifactId: String(artifactId),
       conditionId: String(task.conditionId),
@@ -38,7 +81,8 @@ export async function deletionScope(table, siteId, clicked, knownGroup) {
     targets,
     members,
     links: group.links,
-    rootTaskId: group.rootTaskId,
+    rootTaskId,
+    proof,
   };
 }
 
@@ -92,25 +136,34 @@ export async function deleteTaskGroup(table, siteId, input) {
   const receipts = new Set();
   for (const member of scope.members) {
     const task = member.taskId === clicked.taskId ? clicked : member;
+    const updates = {
+      status: "superseded",
+      supersededAt: now,
+      updatedAt: now,
+      supersessionReason: "issue_deleted",
+      ...taskWorklistDateGsi(
+        siteId,
+        "superseded",
+        task.kind,
+        Number(task.severity || 0),
+        now,
+        task.taskId,
+      ),
+    };
+    /** @type {Record<string,string>} */
+    const updateNames = {};
+    /** @type {Record<string,any>} */
+    const updateValues = {};
+    const assignments = Object.entries(updates).map(([field, value], index) => {
+      updateNames[`#set${index}`] = field;
+      updateValues[`:set${index}`] = value;
+      return `#set${index} = :set${index}`;
+    });
     writes.push({
-      Put: {
+      Update: {
         TableName: table,
-        Item: {
-          ...task,
-          ...taskKey(siteId, task.taskId),
-          status: "superseded",
-          supersededAt: now,
-          updatedAt: now,
-          supersessionReason: "issue_deleted",
-          ...taskWorklistDateGsi(
-            siteId,
-            "superseded",
-            task.kind,
-            Number(task.severity || 0),
-            now,
-            task.taskId,
-          ),
-        },
+        Key: taskKey(siteId, task.taskId),
+        UpdateExpression: `SET ${assignments.join(", ")}`,
         ConditionExpression:
           (task.updatedAt
             ? "#status = :status AND updatedAt = :updatedAt"
@@ -119,8 +172,9 @@ export async function deleteTaskGroup(table, siteId, input) {
           (task.duplicateGroupVersion
             ? "duplicateGroupVersion = :groupVersion"
             : "attribute_not_exists(duplicateGroupVersion)"),
-        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeNames: { "#status": "status", ...updateNames },
         ExpressionAttributeValues: {
+          ...updateValues,
           ":status": task.status,
           ...(task.updatedAt ? { ":updatedAt": task.updatedAt } : {}),
           ...(task.duplicateGroupVersion
@@ -165,19 +219,34 @@ export async function deleteTaskGroup(table, siteId, input) {
       },
     });
   }
-  for (const target of scope.targets.filter(
-    (target) => target.taskId !== scope.rootTaskId,
-  )) {
-    writes.push({
-      ConditionCheck: {
-        TableName: table,
-        Key: {
-          pk: `SITE#${siteId}`,
-          sk: `DUP_OVERRIDE#${JSON.stringify([target.checkId, target.artifactId, target.conditionId])}`,
-        },
-        ConditionExpression: "attribute_not_exists(sk)",
-      },
+  for (const { key, item } of scope.proof.values()) {
+    const condition = evidenceCondition(item);
+    const existing = writes.find((entry) => {
+      const target =
+        entry.Update?.Key || entry.Put?.Item || entry.ConditionCheck?.Key;
+      return target.pk === key.pk && target.sk === key.sk;
     });
+    if (existing) {
+      const write = existing.Update || existing.Put || existing.ConditionCheck;
+      write.ConditionExpression = write.ConditionExpression
+        ? `(${write.ConditionExpression}) AND (${condition.ConditionExpression})`
+        : condition.ConditionExpression;
+      write.ExpressionAttributeNames = {
+        ...write.ExpressionAttributeNames,
+        ...condition.ExpressionAttributeNames,
+      };
+      write.ExpressionAttributeValues = {
+        ...write.ExpressionAttributeValues,
+        ...condition.ExpressionAttributeValues,
+      };
+      if (!Object.keys(write.ExpressionAttributeNames).length)
+        delete write.ExpressionAttributeNames;
+      if (!Object.keys(write.ExpressionAttributeValues).length)
+        delete write.ExpressionAttributeValues;
+    } else
+      writes.push({
+        ConditionCheck: { TableName: table, Key: key, ...condition },
+      });
   }
   // DynamoDB's transaction limit: never partially delete a large group.
   if (writes.length > 100)
