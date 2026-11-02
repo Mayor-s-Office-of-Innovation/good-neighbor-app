@@ -13,6 +13,7 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import {
   ScanCommand,
+  GetCommand,
   QueryCommand,
   PutCommand,
   TransactWriteCommand,
@@ -221,6 +222,28 @@ await test("Program manager imports preserve unrelated records using real transa
         const result = await apply(p);
         observe = false;
         assert.equal(result.outcomes.applied, 2);
+        const providerMembership = [...(await snapshot()).values()].find(
+          (item) => item.type === "providerManagerMembership",
+        );
+        assert.ok(providerMembership);
+        assert.equal(
+          providerMembership.managerId,
+          providerMembership.membershipId,
+        );
+        const directLookup = await send(
+          new GetCommand({
+            TableName,
+            Key: {
+              pk: providerMembership.pk,
+              sk: `PROVIDER_MANAGER#${providerMembership.membershipId}`,
+            },
+            ConsistentRead: true,
+          }),
+        );
+        assert.equal(
+          directLookup.Item?.membershipId,
+          providerMembership.membershipId,
+        );
         assert.deepEqual(
           mutations
             .at(-1)
