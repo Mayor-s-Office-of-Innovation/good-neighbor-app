@@ -79,10 +79,15 @@ describe("capture scorecard finalization", () => {
     expect(expectedArtifactCountForCheck(draft)).toBe(2);
   });
 
-  it("finalizes the run-level scorecard without changing visible submitted state", async () => {
+  it("marks the local scorecard done after successful server finalization", async () => {
     const { finalizeCaptureScorecardInBackground } = await import(
       "./submit-check.js"
     );
+    const { markScorecardDone } = await import("../state/check-session.js");
+    completeCheck.mockImplementationOnce(async () => {
+      expect(markScorecardDone).not.toHaveBeenCalled();
+      return { grade: "A", issueCount: 0 };
+    });
 
     await finalizeCaptureScorecardInBackground("check-1", {
       expectedArtifacts: 1,
@@ -90,6 +95,7 @@ describe("capture scorecard finalization", () => {
 
     expect(waitForAnalyses).toHaveBeenCalledWith("check-1", { expected: 1 });
     expect(completeCheck).toHaveBeenCalledTimes(1);
+    expect(markScorecardDone).toHaveBeenCalledExactlyOnceWith("check-1");
   });
 
   it("skips background scorecard finalization when capture has no evidence", async () => {

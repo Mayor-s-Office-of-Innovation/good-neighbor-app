@@ -287,6 +287,7 @@ export function finalizeCaptureScorecardInBackground(
     })
     .then(async (result) => {
       await updateCheckRecovery(checkId, undefined);
+      markScorecardDone(checkId);
       saveNotices.get(checkId)?.close();
       saveNotices.delete(checkId);
       return result;
