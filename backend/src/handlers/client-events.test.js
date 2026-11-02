@@ -63,6 +63,17 @@ describe("client-events handler", () => {
     expect(forward.mock.calls[0][1]).toEqual({ userAgent: "TestUA/1.0" });
   });
 
+  it("prefers the envelope's user agent over the header", async () => {
+    forward.mockResolvedValue("forwarded");
+    await call(
+      event({
+        batch: [{ event: "camera_opened", id: "uuid-1", properties: {} }],
+        ua: "EnvelopeUA/2.0",
+      }),
+    );
+    expect(forward.mock.calls[0][1]).toEqual({ userAgent: "EnvelopeUA/2.0" });
+  });
+
   it("forwards a batch in one call, dropping only the invalid items", async () => {
     forward.mockResolvedValue("forwarded");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});

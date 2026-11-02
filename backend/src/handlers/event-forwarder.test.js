@@ -12,6 +12,7 @@ vi.mock("./posthog-api-key.js", () => ({
 const {
   forwardClientEvent,
   forwardClientEvents,
+  forwardClientEventGroups,
   toPosthogEvent,
   userAgentProperties,
   EVENT_FORWARD_TIMEOUT_MS,
@@ -168,6 +169,56 @@ describe("forwardClientEvent", () => {
     expect(lines.every((l) => l.marker === FORWARD_OK_MARKER)).toBe(true);
     expect(lines.every((l) => l.batch_size === 3)).toBe(true);
     expect(lines[1].event).toBe("camera_opened");
+  });
+
+  it("forwards several groups, each with its own user agent, in one call", async () => {
+    getPosthogApiKey.mockResolvedValue("phc_key");
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchImpl = vi.fn().mockResolvedValue(response(true, 200));
+    const outcome = await forwardClientEventGroups(
+      [
+        {
+          reports: [report(), report({ event: "camera_opened" })],
+          ctx: { userAgent: ANDROID_UA },
+        },
+        {
+          reports: [report({ id: "uuid-2" })],
+          ctx: {
+            userAgent:
+              "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+          },
+        },
+        { reports: [], ctx: {} },
+      ],
+      {
+        fetchImpl,
+        config,
+        host: "https://ph.example",
+        now: () => 0,
+        timeoutMs: 5000,
+      },
+    );
+    expect(outcome).toBe("forwarded");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetchImpl.mock.calls[0][1].body));
+    expect(body.batch).toHaveLength(3);
+    expect(body.batch[0].properties.$os).toBe("Android");
+    expect(body.batch[2].properties.$os).toBe("iOS");
+    expect(body.batch[2].distinct_id).toBe("uuid-2");
+    const lines = log.mock.calls.map((c) => JSON.parse(String(c[0])));
+    expect(lines).toHaveLength(3);
+    expect(lines.every((l) => l.batch_size === 3)).toBe(true);
+  });
+
+  it("treats a call with no events as log-only without fetching", async () => {
+    const fetchImpl = vi.fn();
+    expect(
+      await forwardClientEventGroups([{ reports: [], ctx: {} }], {
+        fetchImpl,
+        config,
+      }),
+    ).toBe("log-only");
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("never throws: ingest failure and non-2xx both WARN + 'failed'", async () => {

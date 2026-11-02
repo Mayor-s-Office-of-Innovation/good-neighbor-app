@@ -80,36 +80,65 @@ export function toPosthogEvent(report, ctx) {
  * @property {string} [host]
  * @property {() => number} [now]
  * @property {import("../config.js").PosthogConfig} [config]
+ * @property {number} [timeoutMs] egress budget; defaults to
+ *   EVENT_FORWARD_TIMEOUT_MS (the request-path figure — the queue consumer
+ *   passes a longer one because nothing waits on it)
+ */
+
+/**
+ * Events that share one request context (user agent). A PostHog call may
+ * carry several groups — the queue consumer forwards a whole SQS batch, one
+ * group per message, in a single call.
+ * @typedef {{ reports: import("./scrub-client-event.js").ScrubbedClientEvent[],
+ *   ctx: { userAgent?: string } }} ClientEventGroup
  */
 
 /**
  * Forward one scrubbed client event. Never throws. Thin wrapper over
- * forwardClientEvents for callers (and tests) holding a single event.
+ * forwardClientEventGroups for callers (and tests) holding a single event.
  * @param {import("./scrub-client-event.js").ScrubbedClientEvent} report
  * @param {{ userAgent?: string }} ctx
  * @param {ForwardDeps} [deps]
  * @returns {Promise<"forwarded" | "log-only" | "failed">}
  */
 export function forwardClientEvent(report, ctx, deps = {}) {
-  return forwardClientEvents([report], ctx, deps);
+  return forwardClientEventGroups([{ reports: [report], ctx }], deps);
 }
 
 /**
  * Forward a request's scrubbed client events in one PostHog `/batch/` call.
- * Never throws. The outcome is per call: every event in the batch is
- * forwarded, logged-only, or failed together.
+ * Never throws.
  * @param {import("./scrub-client-event.js").ScrubbedClientEvent[]} reports
  * @param {{ userAgent?: string }} ctx
  * @param {ForwardDeps} [deps]
  * @returns {Promise<"forwarded" | "log-only" | "failed">}
  */
-export async function forwardClientEvents(reports, ctx, deps = {}) {
-  if (reports.length === 0) return "log-only";
-  const posthogEvents = reports.map((report) => toPosthogEvent(report, ctx));
-  const logFields = reports.map((report, i) => ({
-    event: report.event,
-    properties: posthogEvents[i].properties,
-    batch_size: reports.length,
+export function forwardClientEvents(reports, ctx, deps = {}) {
+  return forwardClientEventGroups([{ reports, ctx }], deps);
+}
+
+/**
+ * Forward several groups of scrubbed client events, each with its own user
+ * agent, in one PostHog `/batch/` call. Never throws. The outcome is per
+ * call: every event is forwarded, logged-only, or failed together, so a
+ * queue consumer can retry or acknowledge the whole SQS batch on it.
+ * @param {ClientEventGroup[]} groups
+ * @param {ForwardDeps} [deps]
+ * @returns {Promise<"forwarded" | "log-only" | "failed">}
+ */
+export async function forwardClientEventGroups(groups, deps = {}) {
+  const entries = groups.flatMap((group) =>
+    group.reports.map((report) => ({
+      report,
+      posthogEvent: toPosthogEvent(report, group.ctx),
+    })),
+  );
+  if (entries.length === 0) return "log-only";
+  const posthogEvents = entries.map((entry) => entry.posthogEvent);
+  const logFields = entries.map((entry) => ({
+    event: entry.report.event,
+    properties: entry.posthogEvent.properties,
+    batch_size: entries.length,
   }));
 
   let apiKey;
@@ -146,7 +175,7 @@ export async function forwardClientEvents(reports, ctx, deps = {}) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       }),
-      EVENT_FORWARD_TIMEOUT_MS,
+      deps.timeoutMs ?? EVENT_FORWARD_TIMEOUT_MS,
     );
     if (!res.ok) {
       throw new Error(`PostHog ingest returned ${res.status}`);

@@ -7,8 +7,12 @@
  * uploads and check completion. Here a slow PostHog costs dropped beacons,
  * nothing else.
  *
- * Routes mirror infra/modules/app/api.tf `intake_routes`; the local dev
- * harness (scripts/local-api.mjs) serves the same handlers on one port.
+ * Routes mirror infra/modules/app/api.tf `intake_routes`, plus
+ * POST /v1/client-events, which API Gateway now sends straight to SQS
+ * (infra/modules/app/client-events.tf → lambda/client-events-consumer.js) and
+ * which stays here only as a fallback should that route ever be pointed back
+ * at this function. The local dev harness (scripts/local-api.mjs) serves the
+ * same handlers on one port.
  */
 
 import { handler as clientErrorsHandler } from "../handlers/client-errors.js";

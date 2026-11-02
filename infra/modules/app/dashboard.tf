@@ -261,6 +261,8 @@ locals {
           ["AWS/Lambda", "Throttles", "FunctionName", aws_lambda_function.authorizer.function_name, { label = "authorizer throttles", color = "#c5b0d5" }],
           ["AWS/Lambda", "Errors", "FunctionName", aws_lambda_function.intake.function_name, { label = "intake errors", color = "#8c564b" }],
           ["AWS/Lambda", "Throttles", "FunctionName", aws_lambda_function.intake.function_name, { label = "intake throttles", color = "#c49c94" }],
+          ["AWS/Lambda", "Errors", "FunctionName", aws_lambda_function.client_events_consumer.function_name, { label = "client-events consumer errors", color = "#e377c2" }],
+          ["AWS/Lambda", "Throttles", "FunctionName", aws_lambda_function.client_events_consumer.function_name, { label = "client-events consumer throttles", color = "#f7b6d2" }],
         ]
         yAxis = { left = { min = 0, showUnits = false } }
       })

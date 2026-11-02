@@ -77,6 +77,11 @@ locals {
     "311-worker" = { function = aws_lambda_function.sf311.function_name, threshold = 1 }
     authorizer   = { function = aws_lambda_function.authorizer.function_name, threshold = 3 }
     intake       = { function = aws_lambda_function.intake.function_name, threshold = 5 }
+    # Queue consumer for analytics events: not in the request path, so its
+    # throttles are expected back-pressure (reserved = mapping concurrency)
+    # and are deliberately absent from lambda_throttle_alarms; the queue-age
+    # alarm in client-events.tf covers "not keeping up".
+    "client-events-consumer" = { function = aws_lambda_function.client_events_consumer.function_name, threshold = 5 }
   }
 
   # Watch both reserved capacity and shared account-pool exhaustion.

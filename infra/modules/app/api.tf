@@ -3,7 +3,9 @@
 # event.routeKey — plus a second integration for the admin analytics routes,
 # which a dedicated DuckDB-carrying Lambda serves (analytics.tf), and a third
 # for the anonymous best-effort intakes (intake_routes → the intake Lambda,
-# lambda.tf), isolated so PostHog latency never consumes api concurrency. No authorizer for
+# lambda.tf), isolated so PostHog latency never consumes api concurrency, and a
+# fourth, Lambda-free one for client analytics events (client-events.tf →
+# SQS). No authorizer for
 # MVP — the site-code flow mints no Cognito JWT, so requests resolve to
 # DEMO_SITE_ID (tenant isolation lands with the deferred JWT authorizer). The
 # route set mirrors backend/scripts/local-api.mjs and backend/src/lambda/api.js.
@@ -187,10 +189,12 @@ locals {
   ]
 
   # Best-effort public intakes, served by the intake Lambda (lambda.tf) and
-  # always anonymous. Mirrors backend/src/lambda/intake.js.
+  # always anonymous. backend/src/lambda/intake.js serves these plus
+  # POST /v1/client-events, which the gateway sends straight to SQS instead
+  # (client-events.tf) — the handler there is the local-dev path and a
+  # fallback, not a deployed route.
   intake_routes = [
     "POST /v1/client-errors",
-    "POST /v1/client-events",
     "POST /v1/feedback",
   ]
 
