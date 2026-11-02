@@ -8,6 +8,13 @@
   (backend/src/handlers/event-forwarder.js). Nothing here talks to PostHog
   directly and no third-party script ships.
 
+  Events are queued and flushed as one beacon (`{ batch: [...] }`) after a
+  short delay, when the queue fills, or when the page is hidden/unloaded. A
+  four-photo perimeter check emits ~55 events; one beacon each meant one
+  intake Lambda invocation each, every one held for a PostHog round trip, and
+  a few concurrent users exhausted the intake's reserved concurrency. Batched,
+  a check costs a handful of invocations and PostHog is called once per batch.
+
   Why it exists: the field question "which devices and browsers misbehave?"
   needs per-device page views with device facts attached. Properties sent from
   here are the facts the user-agent header cannot carry — screen/viewport,
@@ -32,6 +39,14 @@ import {
 
 const ENDPOINT = "/v1/client-events";
 const FLAG_KEY = "gnp:analytics";
+/** Quiet period after an event before the queue is flushed. */
+export const FLUSH_DELAY_MS = 2000;
+/**
+ * Flush early at this many queued events. Keeps a batch well under the
+ * sendBeacon payload limit (64 KB; an event is ~700 bytes) and matches the
+ * intake's per-request cap (backend/src/handlers/client-events.js).
+ */
+export const MAX_BATCH = 25;
 
 /** @typedef {Record<string, string | number | boolean>} EventProperties */
 
@@ -63,9 +78,9 @@ export function analyticsEnabled() {
 }
 
 /**
- * Send one event. Device properties are merged beneath the caller's, so a
+ * Queue one event. Device properties are merged beneath the caller's, so a
  * caller can override nothing by accident but may add app facts freely.
- * Resolves true when a beacon or request was handed to the browser.
+ * Resolves true when the event was queued for the next flush.
  * @param {string} event
  * @param {EventProperties} [properties]
  * @returns {Promise<boolean>}
@@ -74,18 +89,87 @@ export async function trackEvent(event, properties = {}) {
   if (!analyticsEnabled()) return false;
   try {
     const hints = await clientHints();
-    return sendBeacon(
-      {
-        event,
-        properties: { ...deviceProperties(), ...hints, ...properties },
-        id: distinctId(),
-        release: release(),
-        ts: new Date().toISOString(),
-      },
-      ENDPOINT,
-    );
+    enqueue({
+      event,
+      properties: { ...deviceProperties(), ...hints, ...properties },
+      id: distinctId(),
+      release: release(),
+      ts: new Date().toISOString(),
+    });
+    return true;
   } catch {
     return false;
+  }
+}
+
+/** @typedef {{ event: string, properties: EventProperties, id: string, release: string, ts: string }} QueuedEvent */
+
+/** @type {QueuedEvent[]} */
+let queue = [];
+/** @type {ReturnType<typeof setTimeout> | null} */
+let flushTimer = null;
+let lifecycleHooked = false;
+
+/**
+ * @param {QueuedEvent} item
+ */
+function enqueue(item) {
+  queue.push(item);
+  hookLifecycle();
+  if (queue.length >= MAX_BATCH) {
+    flushEvents();
+    return;
+  }
+  if (flushTimer === null) {
+    flushTimer = setTimeout(flushEvents, FLUSH_DELAY_MS);
+  }
+}
+
+/**
+ * Send everything queued as one beacon. Safe to call at any time; a no-op
+ * with an empty queue. Returns true when a beacon or request was handed to
+ * the browser. Exported for tests and for callers that know the page is
+ * about to go away.
+ * @returns {boolean}
+ */
+export function flushEvents() {
+  try {
+    if (flushTimer !== null) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+    if (queue.length === 0) return false;
+    const batch = queue;
+    queue = [];
+    // Best effort: a batch the browser refuses is dropped, never retried or
+    // re-queued, so a failing intake can never back up memory or requests.
+    return sendBeacon({ batch }, ENDPOINT);
+  } catch {
+    // Runs from timers and lifecycle listeners: never let telemetry throw
+    // into the page (it would only turn into a client-error report).
+    queue = [];
+    return false;
+  }
+}
+
+/**
+ * Flush when the page is hidden or unloading, so events queued right before
+ * a camera hand-off, tab switch, or close are not lost with the document.
+ * Installed lazily on the first event so environments without a document
+ * (tests, workers) never touch it.
+ */
+function hookLifecycle() {
+  if (lifecycleHooked) return;
+  lifecycleHooked = true;
+  try {
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") flushEvents();
+    });
+    window.addEventListener("pagehide", () => {
+      flushEvents();
+    });
+  } catch {
+    // no document/window listeners here; the timer flush still runs
   }
 }
 

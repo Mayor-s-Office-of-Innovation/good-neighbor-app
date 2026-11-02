@@ -11,6 +11,7 @@ vi.mock("./posthog-api-key.js", () => ({
 
 const {
   forwardClientEvent,
+  forwardClientEvents,
   toPosthogEvent,
   userAgentProperties,
   EVENT_FORWARD_TIMEOUT_MS,
@@ -140,6 +141,33 @@ describe("forwardClientEvent", () => {
     expect(JSON.parse(String(log.mock.calls[0]?.[0])).marker).toBe(
       FORWARD_OK_MARKER,
     );
+  });
+
+  it("sends a request's events in one /batch/ call and logs each", async () => {
+    getPosthogApiKey.mockResolvedValue("phc_key");
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchImpl = vi.fn().mockResolvedValue(response(true, 200));
+    const outcome = await forwardClientEvents(
+      [
+        report(),
+        report({ event: "camera_opened", properties: { flow: "perimeter" } }),
+        report({ event: "photo_picked", properties: { flow: "perimeter" } }),
+      ],
+      { userAgent: ANDROID_UA },
+      { fetchImpl, config, host: "https://ph.example", now: () => 0 },
+    );
+    expect(outcome).toBe("forwarded");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetchImpl.mock.calls[0][1].body));
+    expect(body.batch.map((/** @type {{event: string}} */ e) => e.event)).toEqual(
+      ["$pageview", "camera_opened", "photo_picked"],
+    );
+    expect(body.batch[2].properties.$browser).toBe("Chrome");
+    const lines = log.mock.calls.map((c) => JSON.parse(String(c[0])));
+    expect(lines).toHaveLength(3);
+    expect(lines.every((l) => l.marker === FORWARD_OK_MARKER)).toBe(true);
+    expect(lines.every((l) => l.batch_size === 3)).toBe(true);
+    expect(lines[1].event).toBe("camera_opened");
   });
 
   it("never throws: ingest failure and non-2xx both WARN + 'failed'", async () => {

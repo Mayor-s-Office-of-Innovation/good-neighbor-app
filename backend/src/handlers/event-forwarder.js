@@ -1,8 +1,10 @@
-// Forward a scrubbed client analytics event to PostHog as a plain named event
+// Forward scrubbed client analytics events to PostHog as plain named events
 // (`$pageview`, `camera_opened`, ...). Sibling of forwarder.js ($exception)
 // and feedback-forwarder.js (`survey sent`): same key resolution, same
 // log-only default, same best-effort contract — failures become WARN lines
-// and the intake still answers 204.
+// and the intake still answers 204. A request's events go to PostHog in one
+// `/batch/` call; the structured log still carries one line per event so
+// CloudWatch keeps the per-event device picture.
 //
 // Browser/OS/device properties: server-side events carry none unless set, so
 // the user-agent header is parsed here (lib/user-agent.js) into PostHog's
@@ -21,10 +23,11 @@ export const FORWARD_FAILED_MARKER = "ClientEventForwardFailed";
 export const FORWARD_OK_MARKER = "ClientEventForwarded";
 export const LOG_ONLY_MARKER = "ClientEventLogOnly";
 /**
- * Egress budget per event. Page views fire on every route change, and the
- * intake answers only after the forward settles, so a slow PostHog must cost
- * a dropped event rather than a held Lambda execution. 1 s is generous for a
- * healthy ingest (typically ~100-300 ms) and a third of the error forwarder's.
+ * Egress budget per batch. The intake answers only after the forward settles,
+ * so a slow PostHog must cost a dropped batch rather than a held Lambda
+ * execution. 1 s is generous for a healthy ingest (typically ~100-300 ms,
+ * dominated by the round trip rather than batch size) and a third of the
+ * error forwarder's.
  */
 export const EVENT_FORWARD_TIMEOUT_MS = 1000;
 
@@ -72,39 +75,66 @@ export function toPosthogEvent(report, ctx) {
 }
 
 /**
- * Forward one scrubbed client event. Never throws.
+ * @typedef {object} ForwardDeps
+ * @property {typeof fetch} [fetchImpl]
+ * @property {string} [host]
+ * @property {() => number} [now]
+ * @property {import("../config.js").PosthogConfig} [config]
+ */
+
+/**
+ * Forward one scrubbed client event. Never throws. Thin wrapper over
+ * forwardClientEvents for callers (and tests) holding a single event.
  * @param {import("./scrub-client-event.js").ScrubbedClientEvent} report
  * @param {{ userAgent?: string }} ctx
- * @param {{ fetchImpl?: typeof fetch, host?: string, now?: () => number,
- *   config?: import("../config.js").PosthogConfig }} [deps]
+ * @param {ForwardDeps} [deps]
  * @returns {Promise<"forwarded" | "log-only" | "failed">}
  */
-export async function forwardClientEvent(report, ctx, deps = {}) {
-  const posthogEvent = toPosthogEvent(report, ctx);
-  const logFields = {
+export function forwardClientEvent(report, ctx, deps = {}) {
+  return forwardClientEvents([report], ctx, deps);
+}
+
+/**
+ * Forward a request's scrubbed client events in one PostHog `/batch/` call.
+ * Never throws. The outcome is per call: every event in the batch is
+ * forwarded, logged-only, or failed together.
+ * @param {import("./scrub-client-event.js").ScrubbedClientEvent[]} reports
+ * @param {{ userAgent?: string }} ctx
+ * @param {ForwardDeps} [deps]
+ * @returns {Promise<"forwarded" | "log-only" | "failed">}
+ */
+export async function forwardClientEvents(reports, ctx, deps = {}) {
+  if (reports.length === 0) return "log-only";
+  const posthogEvents = reports.map((report) => toPosthogEvent(report, ctx));
+  const logFields = reports.map((report, i) => ({
     event: report.event,
-    properties: posthogEvent.properties,
-  };
+    properties: posthogEvents[i].properties,
+    batch_size: reports.length,
+  }));
 
   let apiKey;
   try {
     apiKey = await getPosthogApiKey(deps.config ?? getPosthogConfig());
   } catch (err) {
-    warnForwardFailed("secret_fetch_failed", err, logFields);
+    for (const fields of logFields) {
+      warnForwardFailed("secret_fetch_failed", err, fields);
+    }
     return "failed";
   }
 
   if (!apiKey) {
-    console.log(
-      JSON.stringify({ level: "info", marker: LOG_ONLY_MARKER, ...logFields }),
-    );
+    for (const fields of logFields) {
+      console.log(
+        JSON.stringify({ level: "info", marker: LOG_ONLY_MARKER, ...fields }),
+      );
+    }
     return "log-only";
   }
 
   const host = deps.host || process.env.POSTHOG_HOST || DEFAULT_HOST;
   const body = {
     api_key: apiKey,
-    batch: [posthogEvent],
+    batch: posthogEvents,
     sent_at: new Date((deps.now ?? Date.now)()).toISOString(),
   };
 
@@ -121,16 +151,16 @@ export async function forwardClientEvent(report, ctx, deps = {}) {
     if (!res.ok) {
       throw new Error(`PostHog ingest returned ${res.status}`);
     }
-    console.log(
-      JSON.stringify({
-        level: "info",
-        marker: FORWARD_OK_MARKER,
-        ...logFields,
-      }),
-    );
+    for (const fields of logFields) {
+      console.log(
+        JSON.stringify({ level: "info", marker: FORWARD_OK_MARKER, ...fields }),
+      );
+    }
     return "forwarded";
   } catch (err) {
-    warnForwardFailed("forward_failed", err, logFields);
+    for (const fields of logFields) {
+      warnForwardFailed("forward_failed", err, fields);
+    }
     return "failed";
   }
 }

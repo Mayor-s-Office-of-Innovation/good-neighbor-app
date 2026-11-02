@@ -63,9 +63,29 @@ values are query-stripped again server-side. Adding an event or property means a
   across IPs; WAF bounds requests per IP. Slow PostHog responses can occupy the intake slots
   and cause dropped beacons. The event forwarder gives up after 1 s (`EVENT_FORWARD_TIMEOUT_MS`); errors and feedback keep 3 s.
 
+## Batching (2026-11)
+
+The client queues events and sends them as one beacon, `{ batch: [event, ...] }`, after a 2 s
+quiet period, when 25 are queued, or when the page is hidden or unloading (`flushEvents` in
+`analytics.js`). The intake scrubs each item, drops invalid ones (one `ClientEventDropped` line
+with `received` / `dropped` counts), caps a request at 50 items, and forwards the batch to
+PostHog in a single `/batch/` call. A single-event body is still accepted.
+
+Why: a four-photo perimeter check emits roughly 55 events (`camera_opened`, `photo_picked`,
+`photo_location`, and `started` + `completed` for each of the five `photo_pipeline` stages per
+photo, plus page views). With one beacon per event, a 2026-11-01 load test saw 4 concurrent
+users produce ~100 concurrent intake invocations, each held for a PostHog round trip, and the
+function throttled. Throttling only drops telemetry (the app never waits on it), but it drops
+exactly the field data the pipeline exists to collect. Batched, a check costs a few invocations.
+
+Isolation is unchanged: `trackEvent` only queues, the flush runs from a timer or a lifecycle
+listener and swallows every error, a batch the browser or intake refuses is dropped rather than
+retried, and the intake still answers 204 whatever happens.
+
 ## Is it working? (CloudWatch, intake Lambda log group `/aws/lambda/good-neighbor-app-<env>-intake`)
 
-One structured line per event:
+One structured line per event (a batched request logs one line per event it carried, each with
+`batch_size`):
 
 | Marker | Meaning |
 |---|---|

@@ -4,14 +4,23 @@
  * client-errors.js: always 204, never throw, never signal validity. Valid
  * events are scrubbed, logged as structured JSON with their device
  * properties, and handed to the PostHog event forwarder.
+ *
+ * The body is either one event or `{ batch: [event, ...] }` — the client
+ * (frontend/src/services/analytics.js) queues events and flushes a batch, so
+ * a perimeter check costs a few invocations and one PostHog call per batch
+ * rather than one of each per event. Items past MAX_BATCH are dropped (the
+ * client flushes at 25), as is any item that fails the scrub; the valid rest
+ * still forward.
  */
 
 import { readJsonBody } from "../http.js";
-import { forwardClientEvent } from "./event-forwarder.js";
+import { forwardClientEvents } from "./event-forwarder.js";
 import { scrubClientEvent } from "./scrub-client-event.js";
 
 /** Log marker for validation drops (metric-filter abuse signal). */
 export const DROPPED_MARKER = "ClientEventDropped";
+/** Most events accepted from one request; the client flushes at 25. */
+export const MAX_BATCH = 50;
 
 /**
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
@@ -24,21 +33,49 @@ export const handler = async (event) => {
     body = undefined;
   }
 
-  const report = scrubClientEvent(body);
-  if (!report) {
+  const items = unpackBatch(body);
+  /** @type {import("./scrub-client-event.js").ScrubbedClientEvent[]} */
+  const reports = [];
+  for (const item of items.slice(0, MAX_BATCH)) {
+    const report = scrubClientEvent(item);
+    if (report) reports.push(report);
+  }
+  const dropped = items.length - reports.length;
+  if (dropped > 0 || items.length === 0) {
     console.warn(
       JSON.stringify({
         level: "warn",
         marker: DROPPED_MARKER,
-        reason: "invalid_payload",
+        reason: items.length === 0 ? "invalid_payload" : "invalid_items",
+        received: items.length,
+        dropped,
       }),
     );
+  }
+  if (reports.length === 0) {
     return { statusCode: 204 };
   }
 
-  await forwardClientEvent(report, { userAgent: readUserAgent(event) });
+  await forwardClientEvents(reports, { userAgent: readUserAgent(event) });
   return { statusCode: 204 };
 };
+
+/**
+ * `{ batch: [...] }` → its items; any other object → a one-item list; garbage
+ * (including an empty or non-array `batch`) → an empty list.
+ * @param {unknown} body
+ * @returns {unknown[]}
+ */
+function unpackBatch(body) {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return [];
+  }
+  if ("batch" in body) {
+    const batch = /** @type {{ batch: unknown }} */ (body).batch;
+    return Array.isArray(batch) ? batch : [];
+  }
+  return [body];
+}
 
 /**
  * @param {unknown} event

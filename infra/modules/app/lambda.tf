@@ -244,10 +244,14 @@ resource "aws_lambda_function" "intake" {
   # the function never needs the gateway's full 29 s.
   timeout     = 10
   kms_key_arn = aws_kms_key.app.arn
-  # Initial headroom for telemetry bursts from 100 concurrent perimeter checks;
-  # validate this sizing with distributed load tests and throttle metrics.
-  # Keep a ceiling so anonymous traffic or slow PostHog calls cannot consume
-  # the rest of the account's concurrency.
+  # Sizing note (2026-11-01 load test): a four-photo perimeter check emits
+  # ~55 analytics events, and the client used to beacon each one separately,
+  # so 4 concurrent users produced ~100 concurrent invocations, each held for
+  # a PostHog round trip, and the function throttled. The client now batches
+  # events (frontend/src/services/analytics.js) and the handler forwards a
+  # batch in one PostHog call, so a check costs a few invocations. Validate
+  # with the Throttles metric under load. Keep a ceiling so anonymous traffic
+  # or slow PostHog calls cannot consume the rest of the account's concurrency.
   reserved_concurrent_executions = 50
 
   tracing_config {
