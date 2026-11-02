@@ -69,7 +69,9 @@ The client queues events and sends them as one beacon, `{ batch: [event, ...] }`
 quiet period, when 25 are queued, or when the page is hidden or unloading (`flushEvents` in
 `analytics.js`). The intake scrubs each item, drops invalid ones (one `ClientEventDropped` line
 with `received` / `dropped` counts), caps a request at 50 items, and forwards the batch to
-PostHog in a single `/batch/` call. A single-event body is still accepted.
+PostHog in a single `/batch/` call. A single-event body is still accepted. The drop line is
+per request, not per item (`invalid` and `truncated` give the breakdown), so the
+`ClientEventDropped` alarm counts requests carrying garbage rather than items.
 
 Why: a four-photo perimeter check emits roughly 55 events (`camera_opened`, `photo_picked`,
 `photo_location`, and `started` + `completed` for each of the five `photo_pipeline` stages per

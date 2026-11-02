@@ -215,7 +215,10 @@ describe("batching", () => {
     vi.stubGlobal("document", {
       referrer: "",
       visibilityState: "visible",
-      addEventListener: (/** @type {string} */ t, /** @type {() => void} */ fn) => {
+      addEventListener: (
+        /** @type {string} */ t,
+        /** @type {() => void} */ fn,
+      ) => {
         docListeners[t] = fn;
       },
     });
@@ -224,7 +227,10 @@ describe("batching", () => {
       innerHeight: 780,
       devicePixelRatio: 2,
       matchMedia: () => ({ matches: false }),
-      addEventListener: (/** @type {string} */ t, /** @type {() => void} */ fn) => {
+      addEventListener: (
+        /** @type {string} */ t,
+        /** @type {() => void} */ fn,
+      ) => {
         winListeners[t] = fn;
       },
     });

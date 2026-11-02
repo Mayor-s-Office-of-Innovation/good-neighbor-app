@@ -81,26 +81,30 @@ describe("client-events handler", () => {
       forward.mock.calls[0][0].map(
         (/** @type {{ event: string }} */ r) => r.event,
       ),
-    ).toEqual([
-      "camera_opened",
-      "photo_picked",
-    ]);
+    ).toEqual(["camera_opened", "photo_picked"]);
     const line = JSON.parse(String(warn.mock.calls[0]?.[0]));
     expect(line.marker).toBe(DROPPED_MARKER);
     expect(line.reason).toBe("invalid_items");
     expect(line.received).toBe(3);
     expect(line.dropped).toBe(1);
+    expect(line.invalid).toBe(1);
+    expect(line.truncated).toBe(0);
   });
 
-  it("caps a batch at MAX_BATCH items", async () => {
+  it("caps a batch at MAX_BATCH items and reports the excess as truncated", async () => {
     forward.mockResolvedValue("forwarded");
-    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const batch = Array.from({ length: MAX_BATCH + 10 }, () => ({
       event: "$pageview",
       id: "uuid-1",
     }));
     await call(event({ batch }));
     expect(forward.mock.calls[0][0]).toHaveLength(MAX_BATCH);
+    const line = JSON.parse(String(warn.mock.calls[0]?.[0]));
+    expect(line.received).toBe(MAX_BATCH + 10);
+    expect(line.dropped).toBe(10);
+    expect(line.invalid).toBe(0);
+    expect(line.truncated).toBe(10);
   });
 
   it("treats an empty or malformed batch as garbage", async () => {

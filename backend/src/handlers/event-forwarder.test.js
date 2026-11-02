@@ -159,9 +159,9 @@ describe("forwardClientEvent", () => {
     expect(outcome).toBe("forwarded");
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const body = JSON.parse(String(fetchImpl.mock.calls[0][1].body));
-    expect(body.batch.map((/** @type {{event: string}} */ e) => e.event)).toEqual(
-      ["$pageview", "camera_opened", "photo_picked"],
-    );
+    expect(
+      body.batch.map((/** @type {{event: string}} */ e) => e.event),
+    ).toEqual(["$pageview", "camera_opened", "photo_picked"]);
     expect(body.batch[2].properties.$browser).toBe("Chrome");
     const lines = log.mock.calls.map((c) => JSON.parse(String(c[0])));
     expect(lines).toHaveLength(3);

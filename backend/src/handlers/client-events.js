@@ -34,21 +34,27 @@ export const handler = async (event) => {
   }
 
   const items = unpackBatch(body);
+  const considered = items.slice(0, MAX_BATCH);
   /** @type {import("./scrub-client-event.js").ScrubbedClientEvent[]} */
   const reports = [];
-  for (const item of items.slice(0, MAX_BATCH)) {
+  for (const item of considered) {
     const report = scrubClientEvent(item);
     if (report) reports.push(report);
   }
-  const dropped = items.length - reports.length;
-  if (dropped > 0 || items.length === 0) {
+  const invalid = considered.length - reports.length;
+  const truncated = items.length - considered.length;
+  if (items.length === 0 || invalid > 0 || truncated > 0) {
+    // One line per request, not per item: the ClientEventDropped alarm counts
+    // requests carrying garbage, which is the unit an abuser pays for.
     console.warn(
       JSON.stringify({
         level: "warn",
         marker: DROPPED_MARKER,
         reason: items.length === 0 ? "invalid_payload" : "invalid_items",
         received: items.length,
-        dropped,
+        dropped: invalid + truncated,
+        invalid,
+        truncated,
       }),
     );
   }
