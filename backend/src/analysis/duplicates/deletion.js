@@ -6,9 +6,9 @@ import { taskKey, taskWorklistDateGsi } from "../../handlers/keys.js";
 import { conditionDeletionKey } from "../guidance/guidance-store.js";
 import { groupForTask, readTask } from "./group.js";
 
-/** @param {string} message */
-function conflict(message) {
-  return Object.assign(new Error(message), { statusCode: 409 });
+/** @param {string} message @param {string} [code] */
+function conflict(message, code = "group_changed") {
+  return Object.assign(new Error(message), { statusCode: 409, code });
 }
 
 /** The confirmation and the write use exactly the same server-owned scope.
@@ -17,7 +17,10 @@ function conflict(message) {
  */
 export async function deletionScope(table, siteId, clicked, knownGroup) {
   if (["superseded", "deleted"].includes(clicked.status))
-    throw conflict("Card was already deleted; refresh and retry");
+    throw conflict(
+      "Card was already deleted; refresh and retry",
+      "already_deleted",
+    );
   const group = knownGroup || (await groupForTask(table, siteId, clicked));
   const base = siteReader(table, siteId);
   /** @type {Map<string, {key:{pk:string,sk:string},item:Record<string,any>|undefined}>} */
@@ -36,6 +39,9 @@ export async function deletionScope(table, siteId, clicked, knownGroup) {
     if (["pending", "unavailable"].includes(clickedRelation.state))
       throw conflict(
         "Duplicate evidence is being refreshed; retry deletion later",
+        clickedRelation.state === "pending"
+          ? "matching_pending"
+          : "matching_unavailable",
       );
     rootTaskId =
       clickedRelation.state === "matched"
@@ -51,6 +57,9 @@ export async function deletionScope(table, siteId, clicked, knownGroup) {
         if (["pending", "unavailable"].includes(relation.state))
           throw conflict(
             "Duplicate evidence is being refreshed; retry deletion later",
+            relation.state === "pending"
+              ? "matching_pending"
+              : "matching_unavailable",
           );
         if (
           relation.state === "matched" &&
@@ -63,7 +72,10 @@ export async function deletionScope(table, siteId, clicked, knownGroup) {
   }
   const duplicate = rootTaskId !== clicked.taskId;
   if (!members.length)
-    throw conflict("Card was already deleted; refresh and retry");
+    throw conflict(
+      "Card was already deleted; refresh and retry",
+      "already_deleted",
+    );
   const targets = members.map((task) => {
     const artifactId = task.sourceArtifactIds?.[0];
     if (!task.checkId || !artifactId || !task.conditionId)
@@ -86,10 +98,64 @@ export async function deletionScope(table, siteId, clicked, knownGroup) {
   };
 }
 
+/** Selected-card deletion never depends on duplicate matching or group traversal.
+ * @param {Record<string, any>} clicked
+ */
+export function selectedDeletionScope(clicked) {
+  if (["superseded", "deleted"].includes(clicked.status))
+    throw conflict("Card was already deleted", "already_deleted");
+  const artifactId = clicked.sourceArtifactIds?.[0];
+  if (
+    !clicked.taskId ||
+    !clicked.checkId ||
+    !artifactId ||
+    !clicked.conditionId
+  )
+    throw conflict("Missing deletion identity", "identity_unavailable");
+  return {
+    kind: "single",
+    rootTaskId: clicked.taskId,
+    members: [clicked],
+    links: [],
+    proof: new Map(),
+    targets: [
+      {
+        taskId: String(clicked.taskId),
+        originalTaskId: String(clicked.taskId),
+        checkId: String(clicked.checkId),
+        artifactId: String(artifactId),
+        conditionId: String(clicked.conditionId),
+      },
+    ],
+  };
+}
+
+/** Count unique items, including every evidence guard, before confirmation.
+ * @param {string} siteId @param {Awaited<ReturnType<typeof deletionScope>>} scope
+ */
+export function checkDeletionSize(siteId, scope) {
+  const keys = new Set(
+    scope.members.flatMap((task) => [
+      taskKey(siteId, task.taskId).sk,
+      conditionDeletionKey(siteId, {}, task)?.sk,
+    ]),
+  );
+  for (const link of scope.links) {
+    if (scope.kind !== "duplicate" || link.taskId === scope.members[0]?.taskId)
+      keys.add(`DUP_LINK#${link.taskId}`);
+  }
+  for (const key of scope.proof.keys()) keys.add(key);
+  if (keys.size > 100)
+    throw conflict(
+      "Issue group is too large for one deletion",
+      "group_too_large",
+    );
+}
+
 /** Commit all cards and their durable dismissal receipts together. Analyzer
  * evidence is retained: this is an app-owned dismissal, not an upstream rejection.
  * @param {string} table @param {string} siteId
- * @param {{taskId:string,checkId:string,artifactId:string,conditionId:string,expectedTaskIds?:string[]}} input
+ * @param {{taskId:string,checkId:string,artifactId:string,conditionId:string,expectedTaskIds?:string[],mode?:"selected"}} input
  */
 export async function deleteTaskGroup(table, siteId, input) {
   const clicked = await readTask(table, siteId, input.taskId);
@@ -111,7 +177,28 @@ export async function deleteTaskGroup(table, siteId, input) {
       }),
     )
   ).Item;
-  if (receipt?.deletionTargets) return receipt.deletionTargets;
+  if (receipt?.deletionTargets) {
+    const targets =
+      input.mode === "selected"
+        ? receipt.deletionTargets.filter(
+            (/** @type {{taskId:string}} */ target) =>
+              target.taskId === clicked.taskId,
+          )
+        : receipt.deletionTargets;
+    // A replay must not claim a newly confirmed, wider group was removed by an
+    // earlier selected-only deletion. Restore that caller's optimistic overlay.
+    if (
+      input.expectedTaskIds !== undefined &&
+      JSON.stringify([...input.expectedTaskIds].sort()) !==
+        JSON.stringify(
+          targets
+            .map((/** @type {{taskId:string}} */ target) => target.taskId)
+            .sort(),
+        )
+    )
+      throw conflict("Deletion scope changed; reopen the deletion dialog");
+    return targets;
+  }
   if (
     !Array.isArray(input.expectedTaskIds) ||
     !input.expectedTaskIds.length ||
@@ -121,7 +208,10 @@ export async function deleteTaskGroup(table, siteId, input) {
     throw conflict(
       "Missing confirmed deletion scope; reopen the deletion dialog",
     );
-  const scope = await deletionScope(table, siteId, clicked);
+  const scope =
+    input.mode === "selected"
+      ? selectedDeletionScope(clicked)
+      : await deletionScope(table, siteId, clicked);
   if (
     JSON.stringify([...input.expectedTaskIds].sort()) !==
     JSON.stringify(scope.targets.map((target) => target.taskId).sort())
@@ -176,16 +266,18 @@ export async function deleteTaskGroup(table, siteId, input) {
           (task.updatedAt
             ? "#status = :status AND updatedAt = :updatedAt"
             : "#status = :status AND attribute_not_exists(updatedAt)") +
-          " AND " +
-          (task.duplicateGroupVersion
-            ? "duplicateGroupVersion = :groupVersion"
-            : "attribute_not_exists(duplicateGroupVersion)"),
+          (input.mode === "selected"
+            ? ""
+            : " AND " +
+              (task.duplicateGroupVersion
+                ? "duplicateGroupVersion = :groupVersion"
+                : "attribute_not_exists(duplicateGroupVersion)")),
         ExpressionAttributeNames: { "#status": "status", ...updateNames },
         ExpressionAttributeValues: {
           ...updateValues,
           ":status": task.status,
           ...(task.updatedAt ? { ":updatedAt": task.updatedAt } : {}),
-          ...(task.duplicateGroupVersion
+          ...(input.mode !== "selected" && task.duplicateGroupVersion
             ? { ":groupVersion": task.duplicateGroupVersion }
             : {}),
         },
@@ -210,6 +302,15 @@ export async function deleteTaskGroup(table, siteId, input) {
       });
     }
   }
+  // Remove only the selected card's outgoing saved link. In particular, this
+  // breaks a corrupt cycle without changing any other card or its evidence.
+  if (input.mode === "selected")
+    writes.push({
+      Delete: {
+        TableName: table,
+        Key: { pk: `SITE#${siteId}`, sk: `DUP_LINK#${clicked.taskId}` },
+      },
+    });
   // Guard every relationship consulted, including the clicked duplicate's
   // relation. A concurrent separation or link change must cancel the deletion.
   for (const link of scope.links) {
@@ -258,7 +359,10 @@ export async function deleteTaskGroup(table, siteId, input) {
   }
   // DynamoDB's transaction limit: never partially delete a large group.
   if (writes.length > 100)
-    throw conflict("Issue group is too large for one deletion");
+    throw conflict(
+      "Issue group is too large for one deletion",
+      "group_too_large",
+    );
   try {
     await ddb.send(new TransactWriteCommand({ TransactItems: writes }));
   } catch (error) {

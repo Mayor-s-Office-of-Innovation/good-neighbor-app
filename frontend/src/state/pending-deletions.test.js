@@ -131,3 +131,31 @@ it("hides and restores every group member together on Undo or failed save", asyn
   expect(isTaskPendingDeletion({ taskId: child.taskId })).toBe(false);
   silence.mockRestore();
 });
+
+it("restores a changed group and tells the user about selected-card deletion", async () => {
+  const { getToasts } = await import("./toasts.js");
+  const { t } = await import("../i18n/i18n.js");
+  while (getToasts().length) for (const toast of getToasts()) toast.close(true);
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const selected = {
+      ...problem,
+      conditionId: "changed-group",
+      taskId: "changed-task",
+    };
+    const pending = stageDeletion(selected, async () => {
+      throw Object.assign(new Error("Synthetic membership change"), {
+        body: { code: "group_changed" },
+      });
+    });
+    await pending.save();
+    expect(isTaskPendingDeletion({ taskId: selected.taskId })).toBe(false);
+    const toast = getToasts().at(-1);
+    expect(toast.message).toContain(
+      t("analysis.deleteDialog.selectedAvailable"),
+    );
+    toast.close(true);
+  } finally {
+    log.mockRestore();
+  }
+});

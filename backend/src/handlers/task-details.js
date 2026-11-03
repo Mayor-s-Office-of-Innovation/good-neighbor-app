@@ -1,4 +1,8 @@
-import { deletionScope } from "../analysis/duplicates/deletion.js";
+import {
+  deletionScope,
+  selectedDeletionScope,
+  checkDeletionSize,
+} from "../analysis/duplicates/deletion.js";
 import { readTask, groupForTask } from "../analysis/duplicates/group.js";
 import { inactiveSf311Lease } from "../domain/sf311-lease.js";
 import { definitiveSilentFailure } from "../domain/silent-311-results.js";
@@ -114,38 +118,36 @@ export const getTaskDetails = async (event) => {
   if (!taskId) return jsonResponse(400, { error: "Missing taskId" });
   const clicked = await readTask(dynamoTable, siteId, taskId);
   if (!clicked) return jsonResponse(404, { error: "Task not found" });
-  const group = await groupForTask(dynamoTable, siteId, clicked);
-  if (!group.root) return jsonResponse(409, { error: "Issue group changed" });
-  // Deletion needs only validated scope, never an action catalog. Keep normal
-  // details/action editing strict when a policy version is unavailable.
-  if (event.queryStringParameters?.view === "deletion") {
+  if (
+    ["deletion", "selected"].includes(event.queryStringParameters?.view || "")
+  ) {
     try {
-      const { kind, targets } = await deletionScope(
-        dynamoTable,
-        siteId,
-        clicked,
-        group,
-      );
-      return jsonResponse(200, { deletion: { kind, targets } });
+      const scope =
+        event.queryStringParameters.view === "selected"
+          ? selectedDeletionScope(clicked)
+          : await deletionScope(dynamoTable, siteId, clicked);
+      checkDeletionSize(siteId, scope);
+      return jsonResponse(200, {
+        deletion: { kind: scope.kind, targets: scope.targets },
+      });
     } catch (error) {
       if (
         error instanceof Error &&
         "statusCode" in error &&
         error.statusCode === 409
       )
-        return jsonResponse(409, { error: error.message });
+        return jsonResponse(409, {
+          error: error.message,
+          code: "code" in error ? error.code : "group_changed",
+        });
       throw error;
     }
   }
+  const group = await groupForTask(dynamoTable, siteId, clicked);
+  if (!group.root) return jsonResponse(409, { error: "Issue group changed" });
   const selection = actionOptions(group.root);
   return jsonResponse(200, {
     clicked,
-    deletion: await deletionScope(dynamoTable, siteId, clicked, group)
-      .then(({ kind, targets }) => ({ kind, targets }))
-      .catch((error) => {
-        if (error.statusCode === 409) return null;
-        throw error;
-      }),
     rootTaskId: group.rootTaskId,
     members: group.members,
     actions: selection.options,

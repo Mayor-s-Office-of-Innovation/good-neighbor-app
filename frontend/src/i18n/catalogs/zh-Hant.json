@@ -1630,5 +1630,14 @@
   "webview.banner.dismiss.aria": "關閉",
   "webview.banner.message": "您正在另一個應用程式的內建瀏覽器中。請改用您的瀏覽器開啟，相機才能正常運作。",
   "webview.banner.open": "在瀏覽器中開啟",
-  "webview.banner.title": "相機可能無法在此開啟。"
+  "webview.banner.title": "相機可能無法在此開啟。",
+  "analysis.deleteDialog.selectedDelete": "僅刪除此卡片",
+  "analysis.deleteDialog.selectedText": "只會刪除此卡片，其他卡片將保留。",
+  "analysis.deleteDialog.selectedAvailable": "您可以僅刪除此卡片，其他卡片將保留。",
+  "analysis.deleteDialog.matchingPending": "連結的卡片尚未確認。",
+  "analysis.deleteDialog.matchingUnavailable": "我們無法確認哪些卡片屬於此問題。",
+  "analysis.deleteDialog.groupChanged": "與此問題連結的卡片已變更。請重新開啟此對話方塊以檢視群組。",
+  "analysis.deleteDialog.groupTooLarge": "此群組太大，無法一次全部刪除。",
+  "analysis.deleteDialog.alreadyDeleted": "此卡片已刪除。請重新整理清單以查看最新資訊。",
+  "analysis.deleteDialog.refresh": "重新整理清單"
 }

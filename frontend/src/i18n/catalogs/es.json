@@ -1630,5 +1630,14 @@
   "webview.banner.dismiss.aria": "Descartar",
   "webview.banner.message": "Está dentro del navegador de otra aplicación. Ábrala en su navegador para que funcione la cámara.",
   "webview.banner.open": "Abrir en el navegador",
-  "webview.banner.title": "Es posible que la cámara no se abra aquí."
+  "webview.banner.title": "Es posible que la cámara no se abra aquí.",
+  "analysis.deleteDialog.selectedDelete": "Eliminar solo esta tarjeta",
+  "analysis.deleteDialog.selectedText": "Solo se eliminará esta tarjeta. Las demás tarjetas permanecerán.",
+  "analysis.deleteDialog.selectedAvailable": "Puede eliminar solo esta tarjeta. Las demás tarjetas permanecerán.",
+  "analysis.deleteDialog.matchingPending": "Aún no se han confirmado las tarjetas vinculadas.",
+  "analysis.deleteDialog.matchingUnavailable": "No pudimos confirmar qué tarjetas pertenecen a este problema.",
+  "analysis.deleteDialog.groupChanged": "Las tarjetas vinculadas a este problema han cambiado. Vuelva a abrir este diálogo para revisar el grupo.",
+  "analysis.deleteDialog.groupTooLarge": "Este grupo es demasiado grande para eliminarlo de una vez.",
+  "analysis.deleteDialog.alreadyDeleted": "Esta tarjeta ya se ha eliminado. Actualice la lista para ver la información más reciente.",
+  "analysis.deleteDialog.refresh": "Actualizar lista"
 }

@@ -768,7 +768,7 @@ export function editAnalysisCondition(checkId, artifactId, conditionId, body) {
  * @param {string} checkId
  * @param {string} artifactId
  * @param {string} conditionId
- * @param {{ reason?: { key: "not_a_problem" | "other", note?: string }, taskId?: string, deletionTaskIds?: (string | undefined)[], caller?: { request_id?: string } }} [body]
+ * @param {{ reason?: { key: "not_a_problem" | "other", note?: string }, taskId?: string, deletionMode?: "selected", deletionTaskIds?: (string | undefined)[], caller?: { request_id?: string } }} [body]
  * @returns {Promise<{ analysis_id: string, rejected_condition_id: string, rejection: any, assessment: any, deleted?: any[] }>}
  */
 export function rejectAnalysisCondition(
@@ -1868,11 +1868,12 @@ export function getTaskDetails(taskId, { signal } = {}) {
 
 /** Read deletion scope without resolving action-editing catalogs.
  * @param {string} taskId
+ * @param {boolean} [selected]
  */
-export function getTaskDeletionScope(taskId) {
+export function getTaskDeletionScope(taskId, selected = false) {
   return request(
     "GET",
-    `/v1/tasks/${encodeURIComponent(taskId)}/details?view=deletion`,
+    `/v1/tasks/${encodeURIComponent(taskId)}/details?view=${selected ? "selected" : "deletion"}`,
   );
 }
 

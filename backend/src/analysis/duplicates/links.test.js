@@ -22,8 +22,13 @@ vi.mock("../../db.js", () => ({
         const expected = update.ExpressionAttributeValues;
         let conflict =
           row.status !== expected[":rootStatus"] ||
-          row.updatedAt !== expected[":rootUpdated"] ||
-          row.duplicateGroupVersion !== expected[":groupVersion"];
+          (update.ConditionExpression.includes(":rootUpdated") &&
+            row.updatedAt !== expected[":rootUpdated"]) ||
+          (update.ConditionExpression.includes(":groupVersion")
+            ? row.duplicateGroupVersion !== expected[":groupVersion"]
+            : update.ConditionExpression.includes(
+                "attribute_not_exists(duplicateGroupVersion)",
+              ) && row.duplicateGroupVersion !== undefined);
         if (update.ConditionExpression.includes("appActionResults"))
           conflict ||=
             !isDeepStrictEqual(
@@ -651,5 +656,64 @@ it("adoption cancels rather than replacing a newer integration result", async ()
     status: "open",
     appActionResults: results,
   });
+  expect(state.items.has("SITE#site|DUP_LINK#recent")).toBe(false);
+});
+
+it("non-adoption linking tolerates a concurrent membership stamp and foreground timestamp", async () => {
+  fixture();
+  state.beforeWrite = () => {
+    state.beforeWrite = null;
+    put({
+      ...state.items.get("SITE#site|TASK#old"),
+      duplicateGroupVersion: "another-link",
+      updatedAt: "2026-10-15T10:03:00Z",
+    });
+  };
+  await reconcileObservation("test", "site", "recent", "photo");
+  expect(state.items.has("SITE#site|DUP_LINK#recent")).toBe(true);
+  const update = state.writes[0].TransactItems.find(
+    (/** @type {any} */ entry) => entry.Update,
+  )?.Update;
+  expect(update.ConditionExpression).toBe(
+    "attribute_exists(sk) AND #status = :rootStatus",
+  );
+  expect(state.items.get("SITE#site|TASK#old").updatedAt).toBe(
+    "2026-10-15T10:03:00Z",
+  );
+  expect(state.items.get("SITE#site|TASK#old").duplicateGroupVersion).not.toBe(
+    "another-link",
+  );
+});
+
+it("retries a transient non-adoption transaction conflict with fresh reads", async () => {
+  fixture();
+  const readsBefore = state.reads.length;
+  let attempts = 0;
+  state.beforeWrite = () => {
+    if (++attempts === 1)
+      throw Object.assign(new Error("transaction contention"), {
+        name: "TransactionCanceledException",
+        retryable: true,
+      });
+  };
+  await reconcileObservation("test", "site", "recent", "photo");
+  expect(attempts).toBe(2);
+  expect(state.reads.length).toBeGreaterThan(readsBefore);
+  expect(state.items.has("SITE#site|DUP_LINK#recent")).toBe(true);
+});
+
+it("bounds non-adoption contention retries before returning the job to SQS", async () => {
+  fixture();
+  let attempts = 0;
+  state.beforeWrite = () => {
+    attempts++;
+    throw Object.assign(new Error("transaction contention"), {
+      name: "TransactionCanceledException",
+    });
+  };
+  await expect(
+    reconcileObservation("test", "site", "recent", "photo"),
+  ).rejects.toMatchObject({ name: "TransactionCanceledException" });
+  expect(attempts).toBe(3);
   expect(state.items.has("SITE#site|DUP_LINK#recent")).toBe(false);
 });

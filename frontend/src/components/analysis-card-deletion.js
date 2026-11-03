@@ -146,14 +146,56 @@ export async function prepareCardDeletion(host, problem) {
     host.querySelector("#analysis-delete-confirm")
   );
   const copy = host.querySelector("#analysis-delete-copy");
-  if (button) button.disabled = true;
+  copy?.setAttribute("aria-live", "polite");
+  host.querySelector("[data-delete-selected]")?.remove();
+  delete problem.deletionMode;
+  delete problem.deletionTargets;
+  if (button) {
+    button.hidden = false;
+    button.disabled = true;
+    button.textContent = t("common.delete");
+  }
   if (copy) copy.textContent = t("analysis.deleteDialog.loading");
+  let selected;
+  const chooseSelected = () => {
+    problem.deletionMode = "selected";
+    problem.deletionTargets = selected.targets;
+    if (copy) copy.textContent = t("analysis.deleteDialog.selectedText");
+    if (button) {
+      button.disabled = false;
+      button.textContent = t("analysis.deleteDialog.selectedDelete");
+    }
+    host.querySelector("[data-delete-selected]")?.remove();
+    button?.focus();
+  };
   try {
+    if (problem.taskId) {
+      selected = (await getTaskDeletionScope(problem.taskId, true)).deletion;
+      if (host["_activeProblem"] !== problem) return;
+      if (
+        selected?.targets?.length !== 1 ||
+        selected.targets[0].taskId !== problem.taskId
+      )
+        throw new Error(
+          "Selected-card scope does not identify exactly the clicked card",
+        );
+      const fallback = document.createElement("button");
+      fallback.type = "button";
+      fallback.className =
+        "btn-outline analysis-dialog__button analysis-dialog__button--outline";
+      fallback.dataset.deleteSelected = "";
+      fallback.textContent = t("analysis.deleteDialog.selectedDelete");
+      fallback.addEventListener("click", chooseSelected);
+      button?.before(fallback);
+    }
     const deletion = problem.taskId
       ? (await getTaskDeletionScope(problem.taskId)).deletion
       : null;
-    // Ignore a result after another card was selected.
-    if (host["_activeProblem"] !== problem) return;
+    if (
+      host["_activeProblem"] !== problem ||
+      problem.deletionMode === "selected"
+    )
+      return;
     if (problem.taskId && !deletion?.targets?.length)
       throw new Error("Missing deletion scope");
     problem.deletionTargets = deletion?.targets;
@@ -167,8 +209,37 @@ export async function prepareCardDeletion(host, problem) {
         { count: deletion?.targets?.length || 1 },
       );
     if (button) button.disabled = false;
-  } catch {
-    if (host["_activeProblem"] !== problem) return;
-    if (copy) copy.textContent = t("analysis.deleteDialog.loadError");
+  } catch (error) {
+    if (
+      host["_activeProblem"] !== problem ||
+      problem.deletionMode === "selected"
+    )
+      return;
+    const code = error?.body?.code;
+    const key =
+      {
+        matching_pending: "matchingPending",
+        matching_unavailable: "matchingUnavailable",
+        group_changed: "groupChanged",
+        group_too_large: "groupTooLarge",
+        already_deleted: "alreadyDeleted",
+      }[code] || "loadError";
+    if (copy)
+      copy.textContent =
+        t(`analysis.deleteDialog.${key}`) +
+        (selected ? " " + t("analysis.deleteDialog.selectedAvailable") : "");
+    if (code === "already_deleted" || error?.status === 404) {
+      if (button) button.hidden = true;
+      host.querySelector("[data-delete-selected]")?.remove();
+      if (copy) copy.textContent = t("analysis.deleteDialog.alreadyDeleted");
+      const refresh = document.createElement("button");
+      refresh.type = "button";
+      refresh.className =
+        "btn-outline analysis-dialog__button analysis-dialog__button--outline";
+      refresh.dataset.deleteSelected = "";
+      refresh.textContent = t("analysis.deleteDialog.refresh");
+      refresh.addEventListener("click", () => window.location.reload());
+      button?.before(refresh);
+    }
   }
 }

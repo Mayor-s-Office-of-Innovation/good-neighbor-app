@@ -1630,5 +1630,14 @@
   "webview.banner.dismiss.aria": "I-dismiss",
   "webview.banner.message": "Nasa loob kayo ng browser ng ibang app. Buksan sa inyong browser para gumana ang camera.",
   "webview.banner.open": "Buksan sa browser",
-  "webview.banner.title": "Maaaring hindi magbukas ang camera dito."
+  "webview.banner.title": "Maaaring hindi magbukas ang camera dito.",
+  "analysis.deleteDialog.selectedDelete": "Tanggalin ang card na ito lamang",
+  "analysis.deleteDialog.selectedText": "Ang card na ito lamang ang tatanggalin. Mananatili ang ibang mga card.",
+  "analysis.deleteDialog.selectedAvailable": "Maaari mong tanggalin ang card na ito lamang. Mananatili ang ibang mga card.",
+  "analysis.deleteDialog.matchingPending": "Hindi pa nakukumpirma ang mga naka-link na card.",
+  "analysis.deleteDialog.matchingUnavailable": "Hindi namin makumpirma kung aling mga card ang kabilang sa isyung ito.",
+  "analysis.deleteDialog.groupChanged": "Nagbago ang mga card na naka-link sa isyung ito. Buksan muli ang dialog na ito upang suriin ang grupo.",
+  "analysis.deleteDialog.groupTooLarge": "Masyadong malaki ang grupong ito para tanggalin nang sabay-sabay.",
+  "analysis.deleteDialog.alreadyDeleted": "Natanggal na ang card na ito. I-refresh ang listahan para makita ang pinakabagong impormasyon.",
+  "analysis.deleteDialog.refresh": "I-refresh ang listahan"
 }

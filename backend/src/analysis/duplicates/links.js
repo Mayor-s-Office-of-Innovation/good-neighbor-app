@@ -236,6 +236,27 @@ export async function duplicateForTask(table, site, task, reader) {
  * @param {string} table @param {string} site @param {string} checkId @param {string} artifactId
  */
 export async function reconcileObservation(table, site, checkId, artifactId) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await reconcileOnce(table, site, checkId, artifactId);
+    } catch (error) {
+      if (
+        attempt >= 2 ||
+        !(error instanceof Error) ||
+        error.name !== "TransactionCanceledException" ||
+        !("retryable" in error) ||
+        !error.retryable
+      )
+        throw error;
+      await new Promise((resolve) =>
+        setTimeout(resolve, 10 + Math.random() * 30),
+      );
+    }
+  }
+}
+
+/** @param {string} table @param {string} site @param {string} checkId @param {string} artifactId */
+async function reconcileOnce(table, site, checkId, artifactId) {
   const get = siteReader(table, site),
     pk = `SITE#${site}`;
   const analysis = await get({
@@ -350,10 +371,12 @@ export async function reconcileObservation(table, site, checkId, artifactId) {
                 Key: taskKey(site, root.taskId),
                 UpdateExpression: `SET ${rootAssignments.join(", ")}`,
                 ConditionExpression:
-                  "#status = :rootStatus AND updatedAt = :rootUpdated AND " +
-                  (root.duplicateGroupVersion
-                    ? "duplicateGroupVersion = :groupVersion"
-                    : "attribute_not_exists(duplicateGroupVersion)") +
+                  (adopted
+                    ? "#status = :rootStatus AND updatedAt = :rootUpdated AND " +
+                      (root.duplicateGroupVersion
+                        ? "duplicateGroupVersion = :groupVersion"
+                        : "attribute_not_exists(duplicateGroupVersion)")
+                    : "attribute_exists(sk) AND #status = :rootStatus") +
                   (adopted
                     ? " AND " +
                       (root.appActionResults !== undefined
@@ -374,8 +397,8 @@ export async function reconcileObservation(table, site, checkId, artifactId) {
                     ? { ":rootActionStatus": root.appActionStatus }
                     : {}),
                   ":rootStatus": root.status,
-                  ":rootUpdated": root.updatedAt,
-                  ...(root.duplicateGroupVersion
+                  ...(adopted ? { ":rootUpdated": root.updatedAt } : {}),
+                  ...(adopted && root.duplicateGroupVersion
                     ? { ":groupVersion": root.duplicateGroupVersion }
                     : {}),
                 },
@@ -501,7 +524,7 @@ export async function reconcileObservation(table, site, checkId, artifactId) {
           (adopted &&
             (await get(taskKey(site, root.taskId)))?.status === "open"))
       )
-        throw error;
+        throw Object.assign(error, { retryable: !adopted });
     }
   }
 }

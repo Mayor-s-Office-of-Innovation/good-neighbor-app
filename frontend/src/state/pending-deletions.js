@@ -1,4 +1,5 @@
 import { showDeleteErrorToast } from "./toasts.js";
+import { t } from "../i18n/i18n.js";
 
 /**
  * @typedef {object} DeletedProblem
@@ -6,6 +7,7 @@ import { showDeleteErrorToast } from "./toasts.js";
  * @property {string} artifactId
  * @property {string} conditionId
  * @property {string} [taskId]
+ * @property {"selected"} [deletionMode]
  * @property {string} [title]
  * @property {string} [reference]
  * @property {DeletedProblem[]} [deletionTargets]
@@ -75,7 +77,19 @@ export function stageDeletion(problem, commit) {
         entry.status = "failed";
         emit("failed");
         console.error("save pending deletion failed", error);
-        showDeleteErrorToast();
+        const key = {
+          group_changed: "groupChanged",
+          group_too_large: "groupTooLarge",
+          matching_pending: "matchingPending",
+          matching_unavailable: "matchingUnavailable",
+        }[error?.body?.code];
+        showDeleteErrorToast(
+          key && problem.deletionMode !== "selected"
+            ? t(`analysis.deleteDialog.${key}`) +
+                " " +
+                t("analysis.deleteDialog.selectedAvailable")
+            : undefined,
+        );
       } finally {
         if (saves.get(artifactKey) === saving) saves.delete(artifactKey);
       }

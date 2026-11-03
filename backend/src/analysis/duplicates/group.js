@@ -66,6 +66,24 @@ export async function groupForTask(table, siteId, clickedTask) {
     return id;
   };
   const rootTaskId = rootFor(String(clickedTask.taskId));
+  // A selected-card dismissal leaves sightings intact and independently actionable.
+  // Saved historical links must not route them back to a deleted original.
+  const root =
+    rootTaskId === clickedTask.taskId
+      ? clickedTask
+      : await readTask(table, siteId, rootTaskId);
+  if (
+    root &&
+    ["superseded", "deleted"].includes(root.status) &&
+    rootTaskId !== clickedTask.taskId
+  )
+    return {
+      tasks: [clickedTask],
+      links: [],
+      rootTaskId: clickedTask.taskId,
+      root: clickedTask,
+      members: [{ ...clickedTask, isDuplicate: false }],
+    };
   // Walk incoming edges from this root only. A corrupt unrelated component
   // must not prevent opening or deleting the selected card.
   const members = new Set([rootTaskId]);

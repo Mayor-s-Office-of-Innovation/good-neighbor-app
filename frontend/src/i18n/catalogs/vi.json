@@ -1630,5 +1630,14 @@
   "webview.banner.dismiss.aria": "Bỏ qua",
   "webview.banner.message": "Bạn đang dùng trình duyệt bên trong một ứng dụng khác. Hãy mở bằng trình duyệt của bạn để máy ảnh hoạt động.",
   "webview.banner.open": "Mở trong trình duyệt",
-  "webview.banner.title": "Máy ảnh có thể không mở được ở đây."
+  "webview.banner.title": "Máy ảnh có thể không mở được ở đây.",
+  "analysis.deleteDialog.selectedDelete": "Chỉ xóa thẻ này",
+  "analysis.deleteDialog.selectedText": "Chỉ thẻ này sẽ bị xóa. Các thẻ khác sẽ được giữ lại.",
+  "analysis.deleteDialog.selectedAvailable": "Bạn có thể chỉ xóa thẻ này. Các thẻ khác sẽ được giữ lại.",
+  "analysis.deleteDialog.matchingPending": "Các thẻ liên kết chưa được xác nhận.",
+  "analysis.deleteDialog.matchingUnavailable": "Chúng tôi không thể xác nhận những thẻ nào thuộc về vấn đề này.",
+  "analysis.deleteDialog.groupChanged": "Các thẻ liên kết với vấn đề này đã thay đổi. Mở lại hộp thoại này để xem lại nhóm.",
+  "analysis.deleteDialog.groupTooLarge": "Nhóm này quá lớn để xóa cùng lúc.",
+  "analysis.deleteDialog.alreadyDeleted": "Thẻ này đã được xóa. Làm mới danh sách để xem thông tin mới nhất.",
+  "analysis.deleteDialog.refresh": "Làm mới danh sách"
 }

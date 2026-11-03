@@ -31,7 +31,11 @@ vi.mock("../../db.js", () => ({
           conflict =
             row.status !== expected[":status"] ||
             row.updatedAt !== expected[":updatedAt"] ||
-            row.duplicateGroupVersion !== expected[":groupVersion"];
+            (write.ConditionExpression.includes(":groupVersion")
+              ? row.duplicateGroupVersion !== expected[":groupVersion"]
+              : write.ConditionExpression.includes(
+                  "attribute_not_exists(duplicateGroupVersion)",
+                ) && row.duplicateGroupVersion !== undefined);
         }
         if (guard?.Key.sk.startsWith("DUP_OVERRIDE#")) conflict = Boolean(row);
         if (guard?.Key.sk.startsWith("DUP_LINK#")) {
@@ -72,7 +76,8 @@ vi.mock("../../db.js", () => ({
           name: "TransactionCanceledException",
         });
       state.writes.push(input.TransactItems);
-      for (const { Put, Update } of input.TransactItems) {
+      for (const { Put, Update, Delete } of input.TransactItems) {
+        if (Delete) state.rows.delete(Delete.Key.sk);
         if (Put) state.rows.set(Put.Item.sk, Put.Item);
         if (Update) {
           const row = { ...state.rows.get(Update.Key.sk) };
@@ -88,6 +93,12 @@ vi.mock("../../db.js", () => ({
     },
   },
 }));
+import { groupForTask } from "./group.js";
+import {
+  duplicateForTask,
+  sharedActionTarget,
+  reconcileObservation,
+} from "./links.js";
 import { deletionScope, deleteTaskGroup } from "./deletion.js";
 const task = (id, status = "open") => ({
   pk: "SITE#site",
@@ -528,4 +539,142 @@ it("merges evidence guards into each unique transaction item within expression l
         Object.keys(operation.ExpressionAttributeValues).length,
       ).toBeGreaterThan(0);
   }
+});
+
+it.each(["pending", "unavailable", "cycle", "large"])(
+  "selected-only deletion bypasses %s grouping without touching siblings",
+  async (stateName) => {
+    put(task("root"));
+    linked("one");
+    linked("two");
+    if (stateName === "cycle")
+      put({
+        pk: "SITE#site",
+        sk: "DUP_LINK#root",
+        taskId: "root",
+        originalTaskId: "one",
+      });
+    else if (stateName === "large")
+      for (let i = 0; i < 101; i++) linked(`extra-${i}`);
+    else {
+      const analysis = state.rows.get("CHECK#check-one#ANALYSIS#artifact-one");
+      put({
+        pk: "SITE#site",
+        sk: `DUP_RESULT#check-one:artifact-one#${analysisRevision(analysis)}`,
+        status: stateName === "pending" ? "pending" : "incomplete",
+        invalidatedAt: "2026-11-03T00:00:00Z",
+      });
+    }
+    const sibling = globalThis.structuredClone(state.rows.get("TASK#one"));
+    const targets = await deleteTaskGroup("table", "site", {
+      ...input("root", ["root"]),
+      mode: "selected",
+    });
+    expect(targets.map((t) => t.taskId)).toEqual(["root"]);
+    expect(state.rows.get("TASK#root").status).toBe("superseded");
+    expect(state.rows.get("TASK#one")).toEqual(sibling);
+    expect(
+      (await groupForTask("table", "site", state.rows.get("TASK#one")))
+        .rootTaskId,
+    ).toBe("one");
+    expect(state.writes[0]).toHaveLength(3);
+    expect(
+      await deleteTaskGroup("table", "site", {
+        ...input("root", ["root"]),
+        mode: "selected",
+      }),
+    ).toEqual(targets);
+  },
+);
+
+it("selected-only mode still requires confirmation of exactly the selected task", async () => {
+  put(task("root"));
+  linked("one");
+  await expect(
+    deleteTaskGroup("table", "site", { ...input("root"), mode: "selected" }),
+  ).rejects.toMatchObject({ statusCode: 409 });
+  expect(state.writes).toHaveLength(0);
+});
+
+it("remaining sightings act independently after selected-only root deletion and matching cannot revive the root", async () => {
+  put(task("root"));
+  linked("one");
+  await deleteTaskGroup("table", "site", {
+    ...input("root", ["root"]),
+    mode: "selected",
+  });
+  const remaining = state.rows.get("TASK#one");
+  expect((await groupForTask("table", "site", remaining)).rootTaskId).toBe(
+    "one",
+  );
+  expect((await duplicateForTask("table", "site", remaining)).state).toBe(
+    "complete",
+  );
+  expect((await sharedActionTarget("table", "site", "one")).taskId).toBe("one");
+  const writeCount = state.writes.length;
+  await reconcileObservation(
+    "table",
+    "site",
+    remaining.checkId,
+    remaining.sourceArtifactIds[0],
+  );
+  expect(state.writes).toHaveLength(writeCount);
+  expect(state.rows.get("TASK#root").status).toBe("superseded");
+});
+
+it("selected duplicate deletion leaves its original and sibling unchanged", async () => {
+  put(task("root"));
+  linked("one");
+  linked("two");
+  const original = globalThis.structuredClone(state.rows.get("TASK#root"));
+  const sibling = globalThis.structuredClone(state.rows.get("TASK#two"));
+  await deleteTaskGroup("table", "site", {
+    ...input("one", ["one"]),
+    mode: "selected",
+  });
+  expect(state.rows.get("TASK#root")).toEqual(original);
+  expect(state.rows.get("TASK#two")).toEqual(sibling);
+  expect(state.rows.has("DUP_LINK#one")).toBe(false);
+});
+
+it("selected deletion does not wait for a concurrently changing membership stamp", async () => {
+  put(task("root"));
+  linked("one");
+  state.before = () =>
+    put({ ...state.rows.get("TASK#root"), duplicateGroupVersion: "new-link" });
+  await deleteTaskGroup("table", "site", {
+    ...input("root", ["root"]),
+    mode: "selected",
+  });
+  expect(state.rows.get("TASK#root").status).toBe("superseded");
+  expect(state.rows.get("TASK#one").status).toBe("open");
+});
+
+it("does not replay a selected-only receipt as a successful wider group deletion", async () => {
+  put(task("root"));
+  linked("one");
+  await deleteTaskGroup("table", "site", {
+    ...input("root", ["root"]),
+    mode: "selected",
+  });
+  await expect(
+    deleteTaskGroup("table", "site", input("root", ["root", "one"])),
+  ).rejects.toMatchObject({ statusCode: 409, code: "group_changed" });
+  expect(state.rows.get("TASK#one").status).toBe("open");
+  expect(state.writes).toHaveLength(1);
+});
+
+it("a selected-only replay of a prior group receipt reports only the selected task", async () => {
+  put(task("root"));
+  linked("one");
+  await deleteTaskGroup("table", "site", input("root", ["root", "one"]));
+  expect(
+    (
+      await deleteTaskGroup("table", "site", {
+        ...input("root", ["root"]),
+        mode: "selected",
+      })
+    ).map((target) => target.taskId),
+  ).toEqual(["root"]);
+  expect(state.writes).toHaveLength(1);
 });

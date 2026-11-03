@@ -97,6 +97,10 @@ vi.mock("../analysis/duplicates/links.js", async (importOriginal) => ({
   }),
 }));
 vi.mock("../analysis/guidance/guidance-store.js", () => ({
+  conditionDeletionKey: (site, input, task) => ({
+    pk: `SITE#${site}`,
+    sk: `ISSUE_DELETION#${task.checkId}:${task.sourceArtifactIds[0]}:${task.conditionId}`,
+  }),
   executeTaskCreatedAppActions: async (options) => {
     state.taskCreatedRuns.push(options);
     return options.taskItems;
@@ -173,6 +177,7 @@ it("returns the full group and distinct category actions from either member", as
   const response = await getTaskDetails(event("duplicate"));
   const body = JSON.parse(response.body);
   expect(body.rootTaskId).toBe("root");
+  expect(body).not.toHaveProperty("deletion");
   expect(body.members.map((member) => member.taskId)).toEqual([
     "root",
     "duplicate",

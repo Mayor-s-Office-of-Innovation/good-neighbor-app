@@ -500,14 +500,26 @@ without task cards retain the existing analyzer rejection flow.
 Duplicate-link writes advance `duplicateGroupVersion` on the original task.
 Deletion revalidates saved candidate links against the current analysis, matching
 results, guidance pointers, and separation records. A settled non-match is excluded;
-unsettled evidence blocks confirmation rather than partially deleting the group.
+unsettled evidence blocks group confirmation rather than silently deleting part of
+it. The dialog also offers an explicit **Delete this card only** choice. It reads
+and validates the selected task independently (`?view=selected`) and sends
+`deletionMode: "selected"` with exactly that task ID. This path never traverses
+links or waits for matching; it atomically retires only the selected task and
+writes its durable dismissal receipt. Remaining sightings become independently
+actionable if their original is removed. Matching retries cannot revive the
+dismissed card. Failed scope checks and oversized groups leave this choice
+available; already-deleted cards offer a list refresh instead.
 The transaction guards those evidence snapshots (including previously absent
 invalidation fields), member task versions, and link revisions. Traversal stays
 within the selected component, so an unrelated cyclic group does not block it.
 Task retirement and link-version writes use targeted updates to preserve concurrent
 311 results. Action adoption additionally guards the integration fields it copies.
 Groups exceeding DynamoDB's 100-operation transaction limit fail before any card
-is deleted.
+is deleted; users can remove cards individually. Ordinary task-details reads do
+not calculate deletion scope. Non-adopting link writes stamp membership without
+requiring the previous stamp or foreground timestamp to match, and retry transient
+transaction cancellations up to twice with fresh reads. Action adoption retains
+its stricter guards and does not automatically retry a stale adoption snapshot.
 
 The client overlays the complete confirmed scope during the Undo window, hiding
 or restoring all affected cards together. The To do badge subtracts only cards
