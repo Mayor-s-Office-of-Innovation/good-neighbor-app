@@ -482,7 +482,7 @@ describe("createAnalyzerClient", () => {
       calls.push({ url, init });
       return new Promise((_resolve, reject) =>
         init.signal.addEventListener("abort", () =>
-          reject(new DOMException("Aborted", "AbortError")),
+          reject(Object.assign(new Error("Aborted"), { name: "AbortError" })),
         ),
       );
     };
@@ -543,7 +543,9 @@ describe("createAnalyzerClient", () => {
         json: () =>
           new Promise((_resolve, reject) =>
             init.signal.addEventListener("abort", () =>
-              reject(new DOMException("Aborted", "AbortError")),
+              reject(
+                Object.assign(new Error("Aborted"), { name: "AbortError" }),
+              ),
             ),
           ),
       };
