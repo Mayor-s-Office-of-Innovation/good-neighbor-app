@@ -763,3 +763,69 @@ it("keeps a filed group collapsed while revalidating its cached relation", async
   expect(changed.mock.calls.at(-1)[0].get("one").state).toBe("pending");
   stop();
 });
+
+it("refreshes only a deleted duplicate and its original, retaining confirmed matches during a delayed lookup", async () => {
+  setDuplicateUiSite({});
+  const root = { taskId: "root", status: "completed" };
+  const rows = [
+    { taskId: "one", state: "matched", original: root },
+    { taskId: "two", state: "matched", original: root },
+    { taskId: "root", state: "complete" },
+    {
+      taskId: "unrelated",
+      state: "matched",
+      original: { taskId: "elsewhere" },
+    },
+  ];
+  api.getDuplicateLinks.mockResolvedValueOnce({ enabled: true, issues: rows });
+  const changed = vi.fn();
+  const stop = watchDuplicateIssues(
+    rows.map((row) => row.taskId),
+    changed,
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  const before = changed.mock.calls.at(-1)[0];
+  api.getDuplicateLinks.mockImplementationOnce(() => new Promise(() => {}));
+  invalidateDuplicateIssues("site-1", undefined, ["one"]);
+  expect(changed.mock.calls.at(-1)[0].get("one")).toEqual(before.get("one"));
+  expect(changed.mock.calls.at(-1)[0].get("two")).toEqual(before.get("two"));
+  expect(changed.mock.calls.at(-1)[0].get("unrelated")).toEqual(
+    before.get("unrelated"),
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  expect(api.getDuplicateLinks.mock.calls.at(-1)[0].slice().sort()).toEqual([
+    "one",
+    "root",
+  ]);
+  stop();
+});
+
+it("keeps the confirmed projection when a deletion refresh returns pending", async () => {
+  setDuplicateUiSite({});
+  const match = {
+    taskId: "one",
+    state: "matched",
+    original: { taskId: "root", status: "completed" },
+  };
+  api.getDuplicateLinks.mockResolvedValueOnce({
+    enabled: true,
+    issues: [match],
+  });
+  const changed = vi.fn();
+  const stop = watchDuplicateIssues(["one"], changed);
+  await vi.advanceTimersByTimeAsync(0);
+  api.getDuplicateLinks.mockResolvedValueOnce({
+    enabled: true,
+    issues: [{ taskId: "one", state: "pending" }],
+  });
+  invalidateDuplicateIssues("site-1", undefined, ["one"]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(changed.mock.calls.at(-1)[0].get("one")).toEqual(match);
+  api.getDuplicateLinks.mockResolvedValueOnce({
+    enabled: true,
+    issues: [{ taskId: "one", state: "complete" }],
+  });
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(changed.mock.calls.at(-1)[0].get("one").state).toBe("complete");
+  stop();
+});

@@ -473,3 +473,57 @@ Deployment and activation order:
    429 amplification and DLQ growth before expanding. The site flag rolls back
    presentation; disabling the backend flag through CI stops new matching work.
    Neither action purges queues, deletes links or reverses completed user actions.
+
+### Card deletion and count stability
+
+Deleting a linked duplicate dismisses only that card. Deleting an original
+also dismisses its still-linked duplicates across all task statuses. Explicitly
+separated cards are excluded. Existing action/status group presentation is unchanged.
+The confirmation dialog reads the server-owned scope before enabling Delete;
+if membership changes before saving, the request returns 409 and the user must
+reopen the dialog.
+Deletion preparation uses `GET /v1/tasks/{taskId}/details?view=deletion`, which
+validates scope without resolving the task's action catalog. Missing or retired
+policy versions therefore do not block deletion. Normal task details and action
+editing retain their catalog requirements. New task-backed deletions require a
+nonempty, unique `deletionTaskIds` list matching the current server scope;
+older clients without that confirmation are rejected without writes and must
+reload the app. Replays of committed deletions return the saved scope.
+
+Task-backed deletions atomically supersede the affected tasks and write
+`ISSUE_DELETION#` receipts in one DynamoDB transaction. These are app-owned
+confirmed user deletions (`deletionOrigin: app`); analyzer evidence is retained and no external analyzer rejection
+is required. Receipts also suppress stale worklist, guidance, and pending-question
+reads. Retrying an accepted deletion returns its saved scope. Legacy conditions
+without task cards retain the existing analyzer rejection flow.
+
+Duplicate-link writes advance `duplicateGroupVersion` on the original task.
+Deletion revalidates saved candidate links against the current analysis, matching
+results, guidance pointers, and separation records. A settled non-match is excluded;
+unsettled evidence blocks group confirmation rather than silently deleting part of
+it. The dialog also offers an explicit **Delete this card only** choice. It reads
+and validates the selected task independently (`?view=selected`) and sends
+`deletionMode: "selected"` with exactly that task ID. This path never traverses
+links or waits for matching; it atomically retires only the selected task and
+writes its durable dismissal receipt. Remaining sightings become independently
+actionable if their original is removed. Matching retries cannot revive the
+dismissed card. Failed scope checks and oversized groups leave this choice
+available; already-deleted cards offer a list refresh instead.
+The transaction guards those evidence snapshots (including previously absent
+invalidation fields), member task versions, and link revisions. Traversal stays
+within the selected component, so an unrelated cyclic group does not block it.
+Task retirement and link-version writes use targeted updates to preserve concurrent
+311 results. Action adoption additionally guards the integration fields it copies.
+Groups exceeding DynamoDB's 100-operation transaction limit fail before any card
+is deleted; users can remove cards individually. Ordinary task-details reads do
+not calculate deletion scope. Non-adopting link writes stamp membership without
+requiring the previous stamp or foreground timestamp to match, and retry transient
+transaction cancellations up to twice with fresh reads. Action adoption retains
+its stricter guards and does not automatically retry a stale adoption snapshot.
+
+The client overlays the complete confirmed scope during the Undo window, hiding
+or restoring all affected cards together. The To do badge subtracts only cards
+it currently counts. Saving refreshes only deleted task IDs and their cached
+original, preserving confirmed match presentation while the lookup is pending;
+unrelated matches are retained. A failed save removes the overlay and shows the
+existing error toast.

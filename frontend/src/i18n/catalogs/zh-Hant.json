@@ -491,7 +491,11 @@
   "analysis.checkTitle.weekday": "來自{weekday}的巡檢",
   "analysis.checkTitle.yesterday": "來自昨天的巡檢",
   "analysis.checkTitle.yesterdayTime": "來自昨天 {time} 的巡檢",
-  "analysis.deleteDialog.text": "此操作無法復原。問題詳情將不會儲存。",
+  "analysis.deleteDialog.loading": "正在確認將刪除哪些卡片…",
+  "analysis.deleteDialog.loadError": "無法確認刪除範圍。請關閉此對話框後重試。",
+  "analysis.deleteDialog.duplicate": "只會刪除此重複卡片。原始卡片和其他重複卡片將予以保留。",
+  "analysis.deleteDialog.group": "將刪除原始卡片及所有相關聯的重複卡片（共 {count} 張），包括「處理中」和「歷史記錄」中的卡片。已分離的卡片將予以保留。",
+  "analysis.deleteDialog.text": "將刪除此卡片。您可在短時間內透過通知復原刪除。",
   "analysis.deleteDialog.titleFor": "要刪除「{title}」嗎？",
   "analysis.editDialog.descriptionLabel": "描述",
   "analysis.editDialog.discard": "捨棄",
@@ -1626,5 +1630,14 @@
   "webview.banner.dismiss.aria": "關閉",
   "webview.banner.message": "您正在另一個應用程式的內建瀏覽器中。請改用您的瀏覽器開啟，相機才能正常運作。",
   "webview.banner.open": "在瀏覽器中開啟",
-  "webview.banner.title": "相機可能無法在此開啟。"
+  "webview.banner.title": "相機可能無法在此開啟。",
+  "analysis.deleteDialog.selectedDelete": "僅刪除此卡片",
+  "analysis.deleteDialog.selectedText": "只會刪除此卡片，其他卡片將保留。",
+  "analysis.deleteDialog.selectedAvailable": "您可以僅刪除此卡片，其他卡片將保留。",
+  "analysis.deleteDialog.matchingPending": "連結的卡片尚未確認。",
+  "analysis.deleteDialog.matchingUnavailable": "我們無法確認哪些卡片屬於此問題。",
+  "analysis.deleteDialog.groupChanged": "與此問題連結的卡片已變更。請重新開啟此對話方塊以檢視群組。",
+  "analysis.deleteDialog.groupTooLarge": "此群組太大，無法一次全部刪除。",
+  "analysis.deleteDialog.alreadyDeleted": "此卡片已刪除。請重新整理清單以查看最新資訊。",
+  "analysis.deleteDialog.refresh": "重新整理清單"
 }
