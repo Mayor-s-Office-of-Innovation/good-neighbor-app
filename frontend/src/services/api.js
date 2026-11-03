@@ -258,7 +258,7 @@ function untilAborted(promise, signal) {
 // hanging. Generous: a slow but working connection should still get through.
 export const REQUEST_TIMEOUT_MS = 30_000;
 // Condition edit and reject wait on the analyzer inside the api function,
-// which gives up after 8 s (vendor-insulation plan, item 3). The client allows
+// which gives up after 8 s. The client allows
 // that budget plus a cold start and the round trip, then stops waiting rather
 // than holding for the general 30 s on an answer that is not coming.
 export const AMENDMENT_TIMEOUT_MS = 12_000;

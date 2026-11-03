@@ -35,7 +35,7 @@ import { RUBRIC_ID, RUBRIC_VERSION } from "./contract.js";
  * Our own code, never sent by the service: the client gave up waiting
  * (per-attempt `requestTimeoutMs` or the overall `totalBudgetMs`). Callers on
  * the API request path map it to a 504 so the gateway never has to answer for
- * a held execution with its own 503 (vendor-insulation plan, item 3).
+ * a held execution with its own 503.
  */
 export const ANALYZER_TIMEOUT_CODE = "analyzer_timeout";
 

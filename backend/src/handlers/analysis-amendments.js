@@ -21,8 +21,8 @@ const MAX_DESCRIPTION_LENGTH = 4000;
 /** Max reject-reason note length forwarded to the analyzer. */
 const MAX_NOTE_LENGTH = 1000;
 
-// The analyzer wait on the request path is bounded (vendor-insulation plan,
-// item 3): a hung analyzer must not hold an api execution for the function's
+// The analyzer wait on the request path is bounded: a hung analyzer must not
+// hold an api execution for the function's
 // full 29 s. One attempt gets 4 s; the whole call, retries and backoff
 // included, 8 s. The analysis worker keeps its own, longer budget.
 const ANALYZER_ATTEMPT_TIMEOUT_MS = 4_000;
