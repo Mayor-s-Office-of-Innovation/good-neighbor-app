@@ -288,6 +288,27 @@ describe("batching", () => {
     winListeners.pagehide();
     expect(sendBeacon).toHaveBeenCalledTimes(2);
   });
+
+  it("sends at once when an event is queued after the page is already hidden", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal("document", {
+        visibilityState: "hidden",
+        addEventListener: () => {},
+      });
+      vi.stubGlobal("window", { addEventListener: () => {} });
+      const { trackEvent } = await load();
+      await trackEvent("camera_opened", { flow: "perimeter" });
+      // No quiet period: the hidden flush already ran, and a timer may
+      // never fire once the camera has the screen.
+      expect(sendBeacon).toHaveBeenCalledTimes(1);
+      expect(await lastBatch()).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(sendBeacon).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("trackPageView", () => {

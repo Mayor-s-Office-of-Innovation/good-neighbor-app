@@ -135,12 +135,24 @@ function enqueue(item) {
   }
   queue.push(item);
   queueBytes += bytes;
-  if (queue.length >= MAX_BATCH) {
+  // A full batch, or an event queued after the page already went hidden
+  // (the hidden flush has run; the camera or a tab switch may freeze or
+  // kill the document before a timer fires), goes out now.
+  if (queue.length >= MAX_BATCH || pageHidden()) {
     flushEvents();
     return;
   }
   if (flushTimer === null) {
     flushTimer = setTimeout(flushEvents, FLUSH_DELAY_MS);
+  }
+}
+
+/** @returns {boolean} */
+function pageHidden() {
+  try {
+    return document.visibilityState === "hidden";
+  } catch {
+    return false;
   }
 }
 
