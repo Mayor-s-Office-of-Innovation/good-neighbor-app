@@ -119,83 +119,76 @@ export function applyHomeTaskSections(view, sections, fetchedAt) {
  * @returns {boolean} true when every list in `results` was applied
  */
 export function applyTaskLists(view, results) {
-  {
-    const succeeded = results.filter(Boolean);
-    if (!succeeded.length) return false;
-    const refreshed = new Set(succeeded.map((result) => result.status));
-    const incoming = succeeded.flatMap((result) => result.tasks);
-    // An observed saved version retires the local override. Missing/older index
-    // rows are not proof that a confirmed mutation has disappeared.
-    for (const task of incoming) {
-      const confirmed = view._confirmedTasks?.get(task.taskId);
-      if (
-        confirmed &&
-        task.updatedAt &&
-        confirmed.updatedAt &&
-        (task.updatedAt > confirmed.updatedAt ||
-          (task.updatedAt === confirmed.updatedAt &&
-            task.status === confirmed.status))
-      )
-        view._confirmedTasks.delete(task.taskId);
-    }
-    const byId = new Map();
-    for (const task of [
-      ...view._homeModel.tasks.filter((task) => !refreshed.has(task.status)),
-      ...incoming,
-    ]) {
-      const previous = byId.get(task.taskId);
-      if (
-        !previous ||
-        !previous.updatedAt ||
-        !task.updatedAt ||
-        task.updatedAt >= previous.updatedAt
-      )
-        byId.set(task.taskId, task);
-    }
-    const tasks = view._reconcileConfirmedTasks([...byId.values()]);
-    const previousVersions = view._homeModel.tasks
-      .map((task) => JSON.stringify([task.taskId, duplicateTaskVersion(task)]))
-      .sort()
-      .join();
-    const nextVersions = tasks
-      .map((task) => JSON.stringify([task.taskId, duplicateTaskVersion(task)]))
-      .sort()
-      .join();
-    for (const result of succeeded)
-      view._taskListFreshness.set(result.status, result.fetchedAt);
-    const secondary = ["in_progress", "completing", "completed"];
-    if (secondary.every((status) => view._taskListFreshness.has(status))) {
-      view._remainingStatus = "loaded";
-      view._remainingLoadedAt = Math.min(
-        ...secondary.map((status) => view._taskListFreshness.get(status)),
-      );
-    }
-    const active = document.activeElement;
-    const taskId = active
-      ?.closest?.("[data-task-id]")
-      ?.getAttribute("data-task-id");
-    const action = active?.getAttribute("data-action");
-    const filter = active?.getAttribute("data-home-filter");
-    const scroll = { left: window.scrollX, top: window.scrollY };
-    view._renderHome(
-      { ...view._homeModel, tasks },
-      { preserveInteraction: true },
-    );
-    if (active && !active.isConnected) {
-      const selector =
-        taskId && action
-          ? `[data-task-id="${CSS.escape(taskId)}"] [data-action="${CSS.escape(action)}"]`
-          : filter
-            ? `[data-home-filter="${CSS.escape(filter)}"]`
-            : null;
-      if (selector)
-        view.querySelector(selector)?.focus({ preventScroll: true });
-    }
-    window.scrollTo?.(scroll);
-    if (previousVersions !== nextVersions) view._watchDuplicates(tasks);
-    void view._hydrateVisibleHomeTasks();
-    return succeeded.length === results.length;
+  const succeeded = results.filter(Boolean);
+  if (!succeeded.length) return false;
+  const refreshed = new Set(succeeded.map((result) => result.status));
+  const incoming = succeeded.flatMap((result) => result.tasks);
+  // An observed saved version retires the local override. Missing/older index
+  // rows are not proof that a confirmed mutation has disappeared.
+  for (const task of incoming) {
+    const confirmed = view._confirmedTasks?.get(task.taskId);
+    if (
+      confirmed &&
+      task.updatedAt &&
+      confirmed.updatedAt &&
+      (task.updatedAt > confirmed.updatedAt ||
+        (task.updatedAt === confirmed.updatedAt &&
+          task.status === confirmed.status))
+    )
+      view._confirmedTasks.delete(task.taskId);
   }
+  const byId = new Map();
+  for (const task of [
+    ...view._homeModel.tasks.filter((task) => !refreshed.has(task.status)),
+    ...incoming,
+  ]) {
+    const previous = byId.get(task.taskId);
+    if (
+      !previous ||
+      !previous.updatedAt ||
+      !task.updatedAt ||
+      task.updatedAt >= previous.updatedAt
+    )
+      byId.set(task.taskId, task);
+  }
+  const tasks = view._reconcileConfirmedTasks([...byId.values()]);
+  const previousVersions = view._homeModel.tasks
+    .map((task) => JSON.stringify([task.taskId, duplicateTaskVersion(task)]))
+    .sort()
+    .join();
+  const nextVersions = tasks
+    .map((task) => JSON.stringify([task.taskId, duplicateTaskVersion(task)]))
+    .sort()
+    .join();
+  for (const result of succeeded)
+    view._taskListFreshness.set(result.status, result.fetchedAt);
+  const secondary = ["in_progress", "completing", "completed"];
+  if (secondary.every((status) => view._taskListFreshness.has(status)))
+    view._remainingStatus = "loaded";
+  const active = document.activeElement;
+  const taskId = active
+    ?.closest?.("[data-task-id]")
+    ?.getAttribute("data-task-id");
+  const action = active?.getAttribute("data-action");
+  const filter = active?.getAttribute("data-home-filter");
+  const scroll = { left: window.scrollX, top: window.scrollY };
+  view._renderHome(
+    { ...view._homeModel, tasks },
+    { preserveInteraction: true },
+  );
+  if (active && !active.isConnected) {
+    const selector =
+      taskId && action
+        ? `[data-task-id="${CSS.escape(taskId)}"] [data-action="${CSS.escape(action)}"]`
+        : filter
+          ? `[data-home-filter="${CSS.escape(filter)}"]`
+          : null;
+    if (selector) view.querySelector(selector)?.focus({ preventScroll: true });
+  }
+  window.scrollTo?.(scroll);
+  if (previousVersions !== nextVersions) view._watchDuplicates(tasks);
+  void view._hydrateVisibleHomeTasks();
+  return succeeded.length === results.length;
 }
 
 /** @param {string} tab */

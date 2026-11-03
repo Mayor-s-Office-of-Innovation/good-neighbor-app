@@ -232,7 +232,6 @@ function stashHomeState(view) {
         task311Statuses: view._311StatusByTaskId,
         duplicateLinks: new Map(view._duplicateLinks),
         remainingStatus: view._remainingStatus,
-        remainingLoadedAt: view._remainingLoadedAt,
         tabCountSnapshot: view._tabCountSnapshot,
       }
     : null;
@@ -243,6 +242,8 @@ function stashHomeState(view) {
 // one of their sections failed, and after a cross-list action expires them —
 // see _expireRemainingLists.
 const REMAINING_STATUSES = ["in_progress", "completing", "completed"];
+// Page sizes for the one Home read; the same the per-list routes used.
+const HOME_LIMITS = { checksLimit: 30, tasksLimit: 50 };
 
 // The stash belongs to one site session and must never paint for the next
 // one: sign-out and re-binding replace the device's binding in the same
@@ -669,7 +670,7 @@ class TodayView extends HTMLElement {
     try {
       const [[catalog, bindings], home] = await Promise.all([
         catalogLoad,
-        fetchHome({ checksLimit: 30, tasksLimit: 50 }),
+        fetchHome(HOME_LIMITS),
       ]);
       if (generation !== this._homeRefreshGeneration) return;
       this._providerSitesStatus = catalog ? "loaded" : "error";
@@ -699,7 +700,6 @@ class TodayView extends HTMLElement {
       pendingQuestions = [];
       if (remainingLoaded) {
         this._remainingStatus = "loaded";
-        this._remainingLoadedAt = loadedAt;
         for (const status of REMAINING_STATUSES)
           this._taskListFreshness.set(status, loadedAt);
       } else {
@@ -908,13 +908,12 @@ class TodayView extends HTMLElement {
 
   /**
    * A cross-list action (a task completed, filed to 311, moved to in
-   * progress, or a card deleted) changes the In-progress / History lists:
-   * forget their freshness so the next reload re-fetches them.
+   * progress, or a card deleted) changes the In-progress / History lists.
+   * Every reload re-reads them (one GET /v1/home), so all that is left to do
+   * is retire a per-status fallback already in flight: its answer predates
+   * the change and must not land and re-stamp the lists as fresh.
    */
   _expireRemainingLists() {
-    this._remainingLoadedAt = 0;
-    // A request already in flight predates the change: its answer must not
-    // land and re-stamp the lists as fresh.
     this._remainingGeneration = (this._remainingGeneration || 0) + 1;
   }
 
@@ -1071,7 +1070,6 @@ class TodayView extends HTMLElement {
       ...model.tasks,
     ]);
     this._remainingStatus = "loaded";
-    this._remainingLoadedAt = Date.now();
     for (const status of ["in_progress", "completing", "completed"])
       this._taskListFreshness.set(status, Date.now());
     this._renderHome({ ...model, tasks }, { preserveInteraction: true });
@@ -1162,7 +1160,7 @@ class TodayView extends HTMLElement {
           throw new Error("Refresh unavailable");
         const generation = this._homeRefreshGeneration;
         const guidanceGeneration = ++this._guidanceGeneration;
-        const home = fetchHome({ checksLimit: 30, tasksLimit: 50 });
+        const home = fetchHome(HOME_LIMITS);
         const checks = home.then((response) => {
           if (!current()) return [];
           if (!response.checks?.ok) throw new Error("Checks unavailable");
@@ -1316,9 +1314,12 @@ class TodayView extends HTMLElement {
       return false;
     const siteId = this._siteId;
     const epoch = this._tabRefreshEpoch;
-    let response;
+    let response, applyHomeTaskSections;
     try {
-      response = await fetchHome({ checksLimit: 30, tasksLimit: 50 });
+      [response, { applyHomeTaskSections }] = await Promise.all([
+        fetchHome(HOME_LIMITS),
+        import("../services/home-task-freshness.js"),
+      ]);
     } catch {
       return false;
     }
@@ -1332,9 +1333,6 @@ class TodayView extends HTMLElement {
     const checksApplied = response.checks?.ok
       ? this._applyChecks(response.checks.items || []) === true
       : false;
-    const { applyHomeTaskSections } = await import(
-      "../services/home-task-freshness.js"
-    );
     const tasksApplied = applyHomeTaskSections(this, response.tasks, fetchedAt);
     return checksApplied && tasksApplied;
   }
@@ -1414,7 +1412,6 @@ class TodayView extends HTMLElement {
     this._boundSites = snapshot.boundSites;
     this._311StatusByTaskId = snapshot.task311Statuses;
     this._remainingStatus = snapshot.remainingStatus;
-    this._remainingLoadedAt = snapshot.remainingLoadedAt;
     this._tabCountSnapshot = snapshot.tabCountSnapshot;
     this._duplicateLinks = duplicateUiEnabled()
       ? new Map(snapshot.duplicateLinks ?? [])

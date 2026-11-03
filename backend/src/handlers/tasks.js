@@ -97,7 +97,7 @@ export async function loadTaskWorklist(dynamoTable, siteId, status, limit) {
   // real pagination; do not paper over it by paging here.
   if (result.LastEvaluatedKey) {
     console.warn(
-      `listTasks: ${taskWorklistPk(siteId, status)} exceeded one page; ` +
+      `loadTaskWorklist: ${taskWorklistPk(siteId, status)} exceeded one page; ` +
         "severity ranking is incomplete.",
     );
   }
