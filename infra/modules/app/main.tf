@@ -1873,8 +1873,11 @@ resource "aws_wafv2_web_acl" "web" {
     }
   }
 
-  # Client analytics intake (POST /v1/client-events): 5,000 requests per
-  # viewer IP/five minutes for shared-network page views and app events.
+  # Client analytics intake (POST /v1/client-events): 1,000 requests per
+  # viewer IP/five minutes. The client batches events, so a perimeter check is
+  # 15 to 20 requests and a venue network of forty people doing a check each
+  # stays well under this; a request can carry up to 25 events, which is why
+  # the budget is tighter than it was for one event per request.
   # The general traffic budget may block first; rejected beacons are not retried.
   rule {
     name     = "ClientEventsRateLimit"
@@ -1900,7 +1903,7 @@ resource "aws_wafv2_web_acl" "web" {
     statement {
       rate_based_statement {
         aggregate_key_type = "IP"
-        limit              = 5000
+        limit              = 1000
 
         scope_down_statement {
           byte_match_statement {

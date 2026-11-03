@@ -95,6 +95,12 @@ const entries = [
     entry: resolve(backendRoot, "src/lambda/intake.js"),
   },
   {
+    // Client analytics events: API Gateway writes bodies to SQS; this
+    // consumer scrubs batches and forwards them to PostHog in one call.
+    name: "client-events-consumer",
+    entry: resolve(backendRoot, "src/lambda/client-events-consumer.js"),
+  },
+  {
     name: "worker",
     entry: resolve(backendRoot, "src/lambda/worker.js"),
     // Native addons can't be bundled — keep the import as a runtime require

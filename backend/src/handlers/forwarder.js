@@ -97,38 +97,42 @@ export function parseStackFrames(stack) {
 }
 
 /**
- * Forward a scrubbed client error report to PostHog. Never throws.
+ * @typedef {object} ErrorForwardDeps
+ * @property {typeof fetch} [fetchImpl]
+ * @property {string} [host]
+ * @property {() => number} [now]
+ * @property {import("../config.js").PosthogConfig} [config] defaults to
+ *   getPosthogConfig() (the Lambda env)
+ * @property {number} [timeoutMs] egress budget; defaults to the 3 s the
+ *   request-path intake uses (the queue consumer passes a longer one)
+ */
+
+/**
+ * A scrubbed report with the request context it arrived with.
+ * @typedef {{ report: import("./scrub-client-error.js").ScrubbedErrorReport,
+ *   ctx: { userAgent?: string } }} ClientErrorEntry
+ */
+
+/**
+ * Forward one scrubbed client error report to PostHog. Never throws. Thin
+ * wrapper over forwardClientErrors for callers (and tests) holding one report.
  * @param {import("./scrub-client-error.js").ScrubbedErrorReport} report
- * @param {{ userAgent?: string }} ctx best taken from the API Gateway event
- *   headers server-side; the client never sends it
- * @param {{ fetchImpl?: typeof fetch, host?: string, now?: () => number,
- *   config?: import("../config.js").PosthogConfig }} [deps] test seams; `config`
- *   defaults to getPosthogConfig() (the Lambda env)
+ * @param {{ userAgent?: string }} ctx from the body's `ua` or, on the HTTP
+ *   path, the request header
+ * @param {ErrorForwardDeps} [deps]
  * @returns {Promise<"forwarded" | "log-only" | "failed">}
  */
-export async function forwardClientError(report, ctx, deps = {}) {
-  let apiKey;
-  try {
-    apiKey = await getPosthogApiKey(deps.config ?? getPosthogConfig());
-  } catch (err) {
-    warnForwardFailed("secret_fetch_failed", err, report);
-    return "failed";
-  }
+export function forwardClientError(report, ctx, deps = {}) {
+  return forwardClientErrors([{ report, ctx }], deps);
+}
 
-  if (!apiKey) {
-    // Log-only mode: the pipeline runs end-to-end minus egress.
-    console.log(
-      JSON.stringify({
-        level: "info",
-        marker: LOG_ONLY_MARKER,
-        type: report.type,
-        message: report.message,
-      }),
-    );
-    return "log-only";
-  }
-
-  const host = deps.host || process.env.POSTHOG_HOST || DEFAULT_HOST;
+/**
+ * Map a scrubbed report to PostHog's strict `$exception` event.
+ * @param {import("./scrub-client-error.js").ScrubbedErrorReport} report
+ * @param {{ userAgent?: string }} ctx
+ * @returns {Record<string, unknown>}
+ */
+export function toPosthogException(report, ctx) {
   const ts = toIso(report.ts);
   /** @type {PosthogException} */
   const exception = {
@@ -137,9 +141,10 @@ export async function forwardClientError(report, ctx, deps = {}) {
     stacktrace: { frames: report.stack ? parseStackFrames(report.stack) : [] },
     mechanism: { handled: false, synthetic: true },
   };
-  const event = {
+  return {
     event: "$exception",
     distinct_id: report.id,
+    ...(report.uuid ? { uuid: report.uuid } : {}),
     properties: {
       $exception_list: [exception],
       ...(report.release ? { release: report.release } : {}),
@@ -150,40 +155,91 @@ export async function forwardClientError(report, ctx, deps = {}) {
     },
     ...(ts ? { timestamp: ts } : {}),
   };
+}
 
+/**
+ * Forward several scrubbed client error reports in one PostHog `/batch/`
+ * call. Never throws. The outcome is per call: every report is forwarded,
+ * logged-only, or failed together, so the queue consumer can retry or
+ * acknowledge the SQS messages that carried them on it.
+ * @param {ClientErrorEntry[]} entries
+ * @param {ErrorForwardDeps} [deps]
+ * @returns {Promise<"forwarded" | "log-only" | "failed">}
+ */
+export async function forwardClientErrors(entries, deps = {}) {
+  if (entries.length === 0) return "log-only";
+  const reports = entries.map((entry) => entry.report);
+
+  let apiKey;
+  try {
+    apiKey = await getPosthogApiKey(deps.config ?? getPosthogConfig());
+  } catch (err) {
+    for (const report of reports) {
+      warnForwardFailed("secret_fetch_failed", err, report);
+    }
+    return "failed";
+  }
+
+  if (!apiKey) {
+    // Log-only mode: the pipeline runs end-to-end minus egress.
+    for (const report of reports) {
+      console.log(
+        JSON.stringify({
+          level: "info",
+          marker: LOG_ONLY_MARKER,
+          type: report.type,
+          message: report.message,
+        }),
+      );
+    }
+    return "log-only";
+  }
+
+  const host = deps.host || process.env.POSTHOG_HOST || DEFAULT_HOST;
+  const events = entries.map((entry) =>
+    toPosthogException(entry.report, entry.ctx),
+  );
   const body = {
     api_key: apiKey,
-    batch: [event],
-    ...(ts
+    batch: events,
+    ...(events.some((event) => "timestamp" in event)
       ? { sent_at: new Date((deps.now ?? Date.now)()).toISOString() }
       : {}),
   };
 
   const fetchImpl = deps.fetchImpl ?? fetch;
+  const controller = new globalThis.AbortController();
   try {
     const res = await withTimeout(
       fetchImpl(`${host}/batch/`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
+        signal: controller.signal,
       }),
+      deps.timeoutMs,
+      () => controller.abort(),
     );
     if (!res.ok) {
       throw new Error(`PostHog ingest returned ${res.status}`);
     }
     // Dual storage: every accepted report gets an INFO line in CloudWatch
     // (per the error-tracking plan), not just the log-only path.
-    console.log(
-      JSON.stringify({
-        level: "info",
-        marker: FORWARD_OK_MARKER,
-        type: report.type,
-        message: report.message,
-      }),
-    );
+    for (const report of reports) {
+      console.log(
+        JSON.stringify({
+          level: "info",
+          marker: FORWARD_OK_MARKER,
+          type: report.type,
+          message: report.message,
+        }),
+      );
+    }
     return "forwarded";
   } catch (err) {
-    warnForwardFailed("forward_failed", err, report);
+    for (const report of reports) {
+      warnForwardFailed("forward_failed", err, report);
+    }
     return "failed";
   }
 }
@@ -225,21 +281,34 @@ function warnForwardFailed(reason, err, report) {
 }
 
 /**
- * Reject with a timeout error if the fetch doesn't settle in time.
+ * Reject with a timeout error if the fetch doesn't settle in time, and tell
+ * the caller so it can abort the request: a race alone leaves the fetch
+ * running, which on the retrying queue consumer means an orphaned attempt
+ * can still be in flight (or complete after the container thaws) while the
+ * redelivery starts a new one.
  * @template T
  * @param {Promise<T>} promise
  * @param {number} [ms] budget; the error forwarder keeps the 3 s default,
  *   the higher-volume event forwarder passes a tighter one
+ * @param {() => void} [onTimeout] runs when the budget expires, before the
+ *   rejection; callers pass the AbortController's abort
  * @returns {Promise<T>}
  */
-export async function withTimeout(promise, ms = 3000) {
+export async function withTimeout(promise, ms = 3000, onTimeout) {
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let timer;
   try {
     return await Promise.race([
       promise,
       new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error("forwarder timeout")), ms);
+        timer = setTimeout(() => {
+          try {
+            onTimeout?.();
+          } catch {
+            // aborting is best effort; the rejection below still stands
+          }
+          reject(new Error("forwarder timeout"));
+        }, ms);
       }),
     ]);
   } finally {

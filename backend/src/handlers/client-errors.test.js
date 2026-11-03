@@ -168,4 +168,17 @@ describe("client-errors handler", () => {
 
     expect(lastContext().userAgent).toBe("TestUA/2.0");
   });
+
+  it("prefers the body's user agent over the header", async () => {
+    await callHandler(
+      /** @type {any} */ (
+        event(
+          { type: "Error", message: "x", id: "u1", ua: "BodyUA/3.0" },
+          { headers: { "User-Agent": "TestUA/2.0" } },
+        )
+      ),
+    );
+
+    expect(lastContext().userAgent).toBe("BodyUA/3.0");
+  });
 });

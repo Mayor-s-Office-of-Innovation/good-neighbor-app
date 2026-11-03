@@ -34,6 +34,8 @@ export const MAX_URL = 500;
  * @property {string} [release]
  * @property {string} id
  * @property {string} [ts]
+ * @property {string} [uuid] stable event id set by the queue consumer (never
+ *   accepted from the client) so a redelivered report deduplicates in PostHog
  */
 
 /**
