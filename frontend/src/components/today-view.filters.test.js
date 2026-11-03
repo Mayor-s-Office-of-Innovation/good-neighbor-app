@@ -98,10 +98,13 @@ const HOME_STATUSES = ["open", "in_progress", "completing", "completed"];
  * the transport: a rejected read is an `ok: false` section, every read
  * rejected is a failed request, and a connection failure fails the request.
  */
-async function composeHome() {
+/** @param {{ sections?: readonly string[] }} [options] */
+async function composeHome({ sections } = {}) {
+  const wanted = new Set(sections ?? ["checks", ...HOME_STATUSES]);
+  const statuses = HOME_STATUSES.filter((status) => wanted.has(status));
   const settled = await Promise.allSettled([
-    catalog.listChecks({ limit: 30 }),
-    ...HOME_STATUSES.map((status) => catalog.listTasks({ status, limit: 50 })),
+    ...(wanted.has("checks") ? [catalog.listChecks({ limit: 30 })] : []),
+    ...statuses.map((status) => catalog.listTasks({ status, limit: 50 })),
   ]);
   const rejected = settled.filter((result) => result.status === "rejected");
   const offline = rejected.find((result) => result.reason?.status === 0);
@@ -112,11 +115,13 @@ async function composeHome() {
     result.status === "fulfilled"
       ? { ok: true, items: pick(result.value) || [] }
       : { ok: false, error: "Error" };
-  const [checks, ...lists] = settled;
+  const lists = settled.slice(wanted.has("checks") ? 1 : 0);
   return {
-    checks: section(checks, (value) => value.checks),
+    ...(wanted.has("checks")
+      ? { checks: section(settled[0], (value) => value.checks) }
+      : {}),
     tasks: Object.fromEntries(
-      HOME_STATUSES.map((status, i) => [
+      statuses.map((status, i) => [
         status,
         section(lists[i], (value) => value.tasks),
       ]),
@@ -124,6 +129,18 @@ async function composeHome() {
     loadedAt: new Date().toISOString(),
   };
 }
+/** The cold open's first request, as fetchHome receives it. */
+const FIRST_PAINT_CALL = {
+  checksLimit: 30,
+  tasksLimit: 50,
+  sections: ["checks", "open"],
+};
+/** The cold open's second request. */
+const REMAINING_CALL = {
+  checksLimit: 30,
+  tasksLimit: 50,
+  sections: ["in_progress", "completing", "completed"],
+};
 vi.mock("../services/session-handoff.js", () => ({
   retireHandoff: vi.fn(async () => false),
 }));
@@ -899,13 +916,14 @@ describe("pre-data skeleton", () => {
   it("paints the chrome and placeholder cards before the worklist responds", async () => {
     window.location.search = "?filter=in_progress";
     let release = () => {};
-    // The catalog shares the worklist's Promise.all, so holding it holds the
-    // whole data tier while the skeleton is on screen.
-    catalog.listProviderSites.mockReturnValueOnce(
-      new Promise((resolve) => {
-        release = () =>
-          resolve({ providerId: "provider-1", providerName: "P", sites: [] });
-      }),
+    // Hold the first-paint read; the skeleton stays on screen until it lands.
+    // (The provider catalog no longer gates the paint, so holding it would
+    // hold nothing.)
+    catalog.fetchHome.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(composeHome(FIRST_PAINT_CALL));
+        }),
     );
     const view = new TodayView();
     view._renderHome = vi.fn((model) => {
@@ -1358,61 +1376,36 @@ describe("deferred In-progress / History lists", () => {
     });
   });
 
-  it("paints every list from one home response and shows the tab counts at once", async () => {
+  it("paints from checks and the open list, then one request brings the rest and reveals counts", async () => {
     freezeClock();
-    catalog.listTasks.mockImplementation(async ({ status }) =>
-      status === "open"
-        ? { tasks: [openTask] }
-        : status === "completed"
-          ? { tasks: [doneTask] }
-          : { tasks: [] },
-    );
-    const view = liveView("?filter=todo");
-    await view.connectedCallback();
-    await view._remainingLoad;
-
-    expect(catalog.fetchHome).toHaveBeenCalledExactlyOnceWith({
-      checksLimit: 30,
-      tasksLimit: 50,
-    });
-    // The first render already had every list: no second tier, no placeholders.
-    expect(
-      view._renderHome.mock.calls[0][0].tasks.map((t) => t.taskId).sort(),
-    ).toEqual(["done-1", "open-1"]);
-    expect(view._remainingStatus).toBe("loaded");
-    for (const status of HOME_STATUSES)
-      expect(view._taskListFreshness.get(status)).toBe(Date.now());
-    const markup = view._render(view._homeModel);
-    expect(markup).toContain("home-tabs__count");
-    expect(markup).not.toContain("analysis-card--pending");
-  });
-
-  it("falls back to per-status reads when a remaining section fails, hiding counts until they land", async () => {
-    freezeClock();
-    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     let release = () => {};
     const held = new Promise((resolve) => {
       release = () => resolve({ tasks: [doneTask] });
     });
-    let fallback = false;
     catalog.listTasks.mockImplementation(async ({ status }) =>
       status === "open"
         ? { tasks: [openTask] }
-        : status === "completed" && fallback
+        : status === "completed"
           ? held
           : { tasks: [] },
     );
-    catalog.fetchHome.mockImplementationOnce(async () => {
-      const home = await composeHome();
-      home.tasks.completed = { ok: false, error: "TimeoutError" };
-      fallback = true;
-      return home;
-    });
     const view = liveView("?filter=todo");
     const loading = view.connectedCallback();
-    await vi.waitFor(() => expect(view._remainingStatus).toBe("pending"));
+    await vi.waitFor(() => expect(catalog.fetchHome).toHaveBeenCalledTimes(2));
+
+    expect(catalog.fetchHome.mock.calls[0][0]).toEqual(FIRST_PAINT_CALL);
+    expect(catalog.fetchHome.mock.calls[1][0]).toEqual(REMAINING_CALL);
+    // The first render happened between the two requests.
+    const firstRender = view._renderHome.mock.invocationCallOrder[0];
+    expect(catalog.fetchHome.mock.invocationCallOrder[0]).toBeLessThan(
+      firstRender,
+    );
+    expect(catalog.fetchHome.mock.invocationCallOrder[1]).toBeGreaterThan(
+      firstRender,
+    );
     expect(view._homeModel.tasks.map((t) => t.taskId)).toEqual(["open-1"]);
-    // Counts stay hidden while the remaining lists are in flight…
+
+    // Counts stay hidden while the second request is in flight…
     expect(view._render(view._homeModel)).not.toContain("home-tabs__count");
     // …and History shows placeholders, not "no history".
     view._homeFilter = "history";
@@ -1428,15 +1421,15 @@ describe("deferred In-progress / History lists", () => {
       "done-1",
       "open-1",
     ]);
+    for (const status of HOME_STATUSES)
+      expect(view._taskListFreshness.has(status)).toBe(true);
     view._homeFilter = "todo";
     const loadedMarkup = view._render(view._homeModel);
     expect(loadedMarkup).toContain("home-tabs__count");
     expect(loadedMarkup).not.toContain("analysis-card--pending");
-    expect(catalog.fetchHome).toHaveBeenCalledTimes(1);
-    errorLog.mockRestore();
   });
 
-  it("shows the sections that did arrive while a failed one waits for the fallback", async () => {
+  it("keeps the rows that did arrive when one remaining section fails, and offers a retry", async () => {
     freezeClock();
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     const progressTask = {
@@ -1444,47 +1437,41 @@ describe("deferred In-progress / History lists", () => {
       taskId: "progress-1",
       status: "in_progress",
     };
-    let release = () => {};
-    const held = new Promise((resolve) => {
-      release = () => resolve({ tasks: [] });
-    });
-    let fallback = false;
     catalog.listTasks.mockImplementation(async ({ status }) =>
       status === "open"
         ? { tasks: [openTask] }
         : status === "in_progress"
           ? { tasks: [progressTask] }
-          : status === "completing" && fallback
-            ? held
-            : { tasks: [] },
+          : { tasks: [] },
     );
-    catalog.fetchHome.mockImplementationOnce(async () => {
-      const home = await composeHome();
-      home.tasks.completing = { ok: false, error: "Error" };
-      fallback = true;
+    catalog.fetchHome.mockImplementation(async (options) => {
+      const home = await composeHome(options);
+      if (options?.sections?.includes("completing"))
+        home.tasks.completing = { ok: false, error: "Error" };
       return home;
     });
     const view = liveView("?filter=todo");
     await view.connectedCallback();
-
-    // The first paint already carries the In-progress rows that came back…
-    expect(view._remainingStatus).toBe("pending");
-    expect(
-      view._renderHome.mock.calls[0][0].tasks.map((t) => t.taskId).sort(),
-    ).toEqual(["open-1", "progress-1"]);
-    expect(view._taskListFreshness.has("in_progress")).toBe(true);
-    expect(view._taskListFreshness.has("completing")).toBe(false);
-    // …while the counts stay hidden until the failed list lands.
-    expect(view._render(view._homeModel)).not.toContain("home-tabs__count");
-
-    release();
     await view._remainingLoad;
-    expect(view._remainingStatus).toBe("loaded");
+
+    // The In-progress rows that came back are shown; the tabs offer a retry
+    // and the counts stay hidden because one list is missing.
+    expect(view._remainingStatus).toBe("error");
     expect(view._homeModel.tasks.map((t) => t.taskId).sort()).toEqual([
       "open-1",
       "progress-1",
     ]);
-    expect(view._render(view._homeModel)).toContain("home-tabs__count");
+    expect(view._taskListFreshness.has("in_progress")).toBe(true);
+    expect(view._taskListFreshness.has("completing")).toBe(false);
+    view._homeFilter = "history";
+    const errorMarkup = view._render(view._homeModel);
+    expect(errorMarkup).toContain('id="retry-remaining"');
+    expect(errorMarkup).not.toContain("home-tabs__count");
+
+    catalog.fetchHome.mockImplementation(composeHome);
+    await view._loadRemainingTasks();
+    expect(view._remainingStatus).toBe("loaded");
+    expect(view._render(view._homeModel)).not.toContain("retry-remaining");
     errorLog.mockRestore();
   });
 
@@ -1649,7 +1636,7 @@ describe("deferred In-progress / History lists", () => {
     expect(view._tabCountSnapshot.counts.todo).toBe(confirmed);
   });
 
-  it("reads every list again with one request on a route return", async () => {
+  it("reads checks and the open list, then the rest, on a route return", async () => {
     freezeClock();
     const view = await loadedView();
     catalog.fetchHome.mockClear();
@@ -1659,7 +1646,10 @@ describe("deferred In-progress / History lists", () => {
     await next.connectedCallback();
     await next._remainingLoad;
 
-    expect(catalog.fetchHome).toHaveBeenCalledTimes(1);
+    expect(catalog.fetchHome.mock.calls.map(([options]) => options)).toEqual([
+      FIRST_PAINT_CALL,
+      REMAINING_CALL,
+    ]);
     expect(next._remainingStatus).toBe("loaded");
     expect(next._homeModel.tasks.map((t) => t.taskId).sort()).toEqual([
       "done-1",
@@ -1676,7 +1666,7 @@ describe("deferred In-progress / History lists", () => {
     await view.connectedCallback();
     await view._remainingLoad;
     expect(view._remainingStatus).toBe("loaded");
-    expect(catalog.fetchHome).toHaveBeenCalledTimes(1);
+    expect(catalog.fetchHome).toHaveBeenCalledTimes(2);
   });
 
   it("re-fetches the lists on the next reload after a cross-list action", async () => {
@@ -1691,7 +1681,7 @@ describe("deferred In-progress / History lists", () => {
     await view.connectedCallback();
     await view._remainingLoad;
     expect(view._remainingStatus).toBe("loaded");
-    expect(catalog.fetchHome).toHaveBeenCalledTimes(1);
+    expect(catalog.fetchHome).toHaveBeenCalledTimes(2);
   });
 
   it("does not carry tasks over when the view re-enters for another site", async () => {
@@ -1730,21 +1720,13 @@ describe("deferred In-progress / History lists", () => {
   });
 
   it("ignores a late remaining-lists answer after the site changed", async () => {
-    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     let release = () => {};
     const held = new Promise((resolve) => {
       release = () => resolve({ tasks: [doneTask] });
     });
-    let fallback = false;
     catalog.listTasks.mockImplementation(async ({ status }) =>
-      status !== "open" && fallback ? held : { tasks: [] },
+      status === "open" ? { tasks: [] } : held,
     );
-    catalog.fetchHome.mockImplementationOnce(async () => {
-      const home = await composeHome();
-      home.tasks.completed = { ok: false, error: "Error" };
-      fallback = true;
-      return home;
-    });
     const view = liveView("?filter=todo");
     const loading = view.connectedCallback();
     await vi.waitFor(() => expect(view._remainingStatus).toBe("pending"));
@@ -1755,7 +1737,6 @@ describe("deferred In-progress / History lists", () => {
     await view._remainingLoad;
     expect(view._renderHome.mock.calls.length).toBe(renders);
     expect(view._homeModel.tasks).toEqual([]);
-    errorLog.mockRestore();
   });
 });
 
@@ -2099,7 +2080,7 @@ it("repaints photo progress without refetching lists, but refreshes new analysis
   pending.items[0].analysis.status = "analyzed";
   listener(pending);
   await view._homeRefresh;
-  expect(catalog.fetchHome).toHaveBeenCalledOnce();
+  expect(catalog.fetchHome).toHaveBeenCalledTimes(2);
   expect(catalog.listProviderSites).toHaveBeenCalledOnce();
 });
 
@@ -2127,13 +2108,19 @@ it("coalesces reloads while the home response is slow", async () => {
   for (let i = 0; i < 20; i++) expect(view.connectedCallback()).toBe(refresh);
   release();
   await refresh;
-  // One active pass and one coalesced trailing pass, one request each.
+  // One active pass and one coalesced trailing pass, one first-paint
+  // request each; neither waits for the second tier.
   expect(catalog.listProviderSites).toHaveBeenCalledTimes(2);
-  expect(catalog.fetchHome).toHaveBeenCalledTimes(2);
+  expect(
+    catalog.fetchHome.mock.calls.filter(([options]) =>
+      options.sections.includes("checks"),
+    ),
+  ).toHaveLength(2);
   expect(view._homeModel.tasks).toContainEqual({
     taskId: "late-task",
     status: "open",
   });
+  await view._remainingLoad;
   expect(view._remainingStatus).toBe("loaded");
 });
 
@@ -2165,7 +2152,7 @@ it("refreshes tasks when an existing assessment revision changes", async () => {
   listener(pending);
   await view._homeRefresh;
   await view._remainingLoad;
-  expect(catalog.fetchHome).toHaveBeenCalledOnce();
+  expect(catalog.fetchHome).toHaveBeenCalledTimes(2);
   catalog.fetchHome.mockClear();
   listener(pending);
   expect(catalog.fetchHome).not.toHaveBeenCalled();
@@ -2581,24 +2568,15 @@ it.each(["completed", "superseded"])(
         },
       ],
     };
-    // History is delayed: the remaining sections fail in the home response
-    // and the per-status fallback reads are held open.
+    // History is delayed: the second-tier reads are held open.
     const releases = [];
-    let fallback = false;
     catalog.listTasks.mockImplementation(async ({ status }) =>
-      status === "open" || !fallback
+      status === "open"
         ? { tasks: [] }
         : new Promise((resolve) => {
             releases.push(() => resolve({ tasks: [] }));
           }),
     );
-    catalog.fetchHome.mockImplementationOnce(async () => {
-      const home = await composeHome();
-      for (const status of ["in_progress", "completing", "completed"])
-        home.tasks[status] = { ok: false, error: "Error" };
-      fallback = true;
-      return home;
-    });
     catalog.getAssessmentGuidance.mockResolvedValueOnce({
       assessment: { assessmentId: "a", checkId: "check" },
       conditions: [],

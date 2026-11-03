@@ -1199,15 +1199,20 @@ export function listTasks({ status, limit } = {}) {
  */
 
 /**
- * GET /v1/home — the check list and all four task worklists in one request,
+ * GET /v1/home — the check list and the four task worklists in one request,
  * read side by side on the server and answered per section (`ok` on each).
- * Home loads and refreshes with this; the per-list routes stay for the
- * targeted refreshes after an action.
- * @param {{ checksLimit?: number, tasksLimit?: number }} [limits]
+ * `sections` narrows the read: Home's cold open asks for `checks` and `open`
+ * first so the first paint never waits on the completed list, then the other
+ * three; refreshes take everything. Only requested keys come back. The
+ * per-list routes stay for the targeted refreshes after an action.
+ * @param {{ checksLimit?: number, tasksLimit?: number, sections?: readonly string[] }} [options]
  * @returns {Promise<HomeResponse>}
  */
-export function fetchHome({ checksLimit, tasksLimit } = {}) {
-  return request("GET", `/v1/home${qs({ checksLimit, tasksLimit })}`);
+export function fetchHome({ checksLimit, tasksLimit, sections } = {}) {
+  return request(
+    "GET",
+    `/v1/home${qs({ checksLimit, tasksLimit, sections: sections?.join(",") })}`,
+  );
 }
 
 /** @param {string} taskId @param {string} [nextToken] @param {{signal?: AbortSignal}} [options] */

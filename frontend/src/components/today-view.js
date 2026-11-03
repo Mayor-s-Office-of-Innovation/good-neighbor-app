@@ -79,7 +79,6 @@ import {
 import { retireHandoff } from "../services/session-handoff.js";
 import {
   fetchHome,
-  listTasks,
   submitConditionAnswers,
   editAnalysisCondition,
   get311RequestDetails,
@@ -237,12 +236,16 @@ function stashHomeState(view) {
     : null;
 }
 
-// The In-progress / History lists. They arrive with the open list in the one
-// GET /v1/home response; _loadRemainingTasks fetches them per status only when
-// one of their sections failed, and after a cross-list action expires them —
-// see _expireRemainingLists.
+// Home reads its lists through GET /v1/home in two tiers on a cold open. The
+// first paint waits only for the check list and the open worklist (what the
+// To-do tab shows); the In-progress / History lists are the second request,
+// right after the first render, so the ever-growing completed list is never
+// on the first paint's critical path. Refreshes read everything in one
+// request. A cross-list action expires the second tier — see
+// _expireRemainingLists.
+const FIRST_PAINT_SECTIONS = ["checks", "open"];
 const REMAINING_STATUSES = ["in_progress", "completing", "completed"];
-// Page sizes for the one Home read; the same the per-list routes used.
+// Page sizes for the Home reads; the same the per-list routes used.
 const HOME_LIMITS = { checksLimit: 30, tasksLimit: 50 };
 
 // The stash belongs to one site session and must never paint for the next
@@ -617,14 +620,22 @@ class TodayView extends HTMLElement {
     // not wait on the worklist round trip below. A refresh (model present)
     // or a restored snapshot already has real content on screen.
     if (!this._homeModel && !restoring) this._renderSkeleton(requestedFilter);
+    // What the switcher showed before this load; the catalog callback below
+    // re-renders only when the new catalog differs from it.
+    const catalogBefore = JSON.stringify([
+      this._providerSitesStatus,
+      this._providerName,
+      this._providerSites,
+    ]);
     this._providerSitesStatus = "loading";
     // The provider catalog only feeds the site switcher and the location
-    // prompt, so it rides in the same round trip as the worklist below
-    // instead of gating it: one network tier before first paint, not two.
-    // Neither read can reject — a failed catalog is a switcher state, and a
-    // failed bindings read must not take the worklist down with it. The
-    // latter stays `null` (unknown) rather than an empty list so a switch
-    // re-reads it instead of treating every bound site as unbound.
+    // prompt, so it does not gate the first paint: it is requested alongside
+    // the worklist and applied when it lands, re-rendering the switcher from
+    // its "loading" state. Neither read can reject — a failed catalog is a
+    // switcher state, and a failed bindings read must not take the worklist
+    // down with it. The latter stays `null` (unknown) rather than an empty
+    // list so a switch re-reads it instead of treating every bound site as
+    // unbound.
     const catalogLoad = Promise.all([
       fetchProviderSites().catch((error) => {
         console.error("listProviderSites failed", error);
@@ -656,61 +667,52 @@ class TodayView extends HTMLElement {
       pendingSession = null;
     }
 
-    // The check list and every task worklist are read from the backend on
-    // load (AP6/AP10) with one request, GET /v1/home, newest first, adapted
-    // to the UI record shape. Online-only: on failure show an error, not a
-    // crash. Checks and the open list gate the first paint, as their own
-    // requests did; the In-progress and History lists arrive in the same
-    // response, so the tab counts show on the first paint too. Only when one
-    // of those sections failed does _loadRemainingTasks fetch them per status
-    // after the first render.
+    // The check list and the open worklist are read from the backend on load
+    // (AP6/AP10) in one request, GET /v1/home?sections=checks,open, newest
+    // first, adapted to the UI record shape. Online-only: on failure show an
+    // error, not a crash. Only those two gate the first paint: the open list
+    // is all the default To-do tab shows, and the In-progress and History
+    // lists (the slowest read is the ever-growing completed list) load in a
+    // second request right after the first render — see _loadRemainingTasks.
     let submitted, tasks, latestStartedCheck, pendingQuestions, rawChecks;
     let pendingGuidanceFailed = false;
-    let remainingLoaded = false;
-    try {
-      const [[catalog, bindings], home] = await Promise.all([
-        catalogLoad,
-        fetchHome(HOME_LIMITS),
-      ]);
+    void catalogLoad.then(([catalog, bindings]) => {
       if (generation !== this._homeRefreshGeneration) return;
       this._providerSitesStatus = catalog ? "loaded" : "error";
       this._providerSites = catalog?.sites || [];
       this._providerName =
         catalog?.providerName || this._site.providerName || "";
       this._boundSites = bindings;
+      // Landed after the paint with something new: refresh the switcher and
+      // identity in place. (A refresh whose catalog is unchanged, or a cold
+      // open the catalog beat, needs no extra render.)
+      const catalogAfter = JSON.stringify([
+        this._providerSitesStatus,
+        this._providerName,
+        this._providerSites,
+      ]);
+      if (this._homeModel && catalogAfter !== catalogBefore)
+        this._renderHome(this._homeModel, { preserveInteraction: true });
+    });
+    try {
+      const home = await fetchHome({
+        ...HOME_LIMITS,
+        sections: FIRST_PAINT_SECTIONS,
+      });
+      if (generation !== this._homeRefreshGeneration) return;
       // A failed checks or open section is the error screen, as a failed
       // request for either was before.
       if (!home.checks?.ok || !home.tasks?.open?.ok)
         throw new Error("home: checks or open worklist unavailable");
       const checks = home.checks.items || [];
-      const loadedAt = Date.now();
-      this._taskListFreshness.set("open", loadedAt);
-      // Every In-progress / History section that came back is shown now and
-      // stamped fresh. A failed one leaves those tabs on their placeholder
-      // with the counts hidden until the per-status fallback lands; the rows
-      // already in hand stay in the model meanwhile. Old cards are never shown.
-      /** @type {Record<string, any>[]} */
-      const remainingTasks = [];
-      remainingLoaded = true;
-      for (const status of REMAINING_STATUSES) {
-        const section = home.tasks[status];
-        if (!section?.ok) {
-          remainingLoaded = false;
-          continue;
-        }
-        remainingTasks.push(...(section.items || []));
-        this._taskListFreshness.set(status, loadedAt);
-      }
-      if (remainingTasks.length)
-        this._reconcileConfirmedTasks(remainingTasks, true);
-      tasks = uniqueTasks([
-        ...(home.tasks.open.items || []),
-        ...remainingTasks,
-      ]);
+      this._taskListFreshness.set("open", Date.now());
+      tasks = uniqueTasks(home.tasks.open.items || []);
       // Historical recovery is a second tier. Cached online questions are not
       // actionable until revalidated; offline snapshots remain available.
       pendingQuestions = [];
-      this._remainingStatus = remainingLoaded ? "loaded" : "pending";
+      // In-progress and History show a placeholder and the tab counts stay
+      // hidden until the second request lands. Old cards are never shown.
+      this._remainingStatus = "pending";
       rawChecks = checks;
       latestStartedCheck = latestStarted(checks);
       submitted = submittedChecks(checks);
@@ -803,13 +805,7 @@ class TodayView extends HTMLElement {
       return;
     }
     void this._hydrateVisibleHomeTasks();
-    if (remainingLoaded) {
-      this._remainingLoad = Promise.resolve();
-      this._watchDuplicates(tasks);
-      void this._hydrate311CardStatuses(tasks);
-    } else {
-      this._startRemainingLoad();
-    }
+    this._startRemainingLoad();
     if (announceArrival) announceScreenHeading(this, ".home-identity__site");
   }
 
@@ -1030,7 +1026,8 @@ class TodayView extends HTMLElement {
 
   /**
    * Second data tier: the lists behind the In-progress and History tabs,
-   * fetched after the first paint (connectedCallback loads only `open`).
+   * fetched after the first paint in one request (connectedCallback loads
+   * only `checks` and `open`).
    * Merges into the current model and re-renders; the tab counts stay
    * hidden until this lands. A failure leaves those tabs on a retry state
    * (`#retry-remaining`) — the To-do tab is unaffected.
@@ -1044,15 +1041,11 @@ class TodayView extends HTMLElement {
       this._siteId === siteId &&
       this.isConnected &&
       Boolean(this._homeModel);
-    let results;
+    let home;
     try {
-      results = await Promise.all(
-        ["in_progress", "completing", "completed"].map((status) =>
-          listTasks({ status, limit: 50 }),
-        ),
-      );
+      home = await fetchHome({ ...HOME_LIMITS, sections: REMAINING_STATUSES });
     } catch (err) {
-      console.error("listTasks (remaining) failed", err);
+      console.error("home (remaining lists) failed", err);
       if (!stillCurrent()) return;
       this._remainingStatus = "error";
       this._renderHome(this._homeModel, { preserveInteraction: true });
@@ -1062,20 +1055,29 @@ class TodayView extends HTMLElement {
       return;
     }
     if (!stillCurrent()) return;
-    this._reconcileConfirmedTasks(
-      results.flatMap((result) => result.tasks || []),
-      true,
-    );
+    // Every section that came back is merged and stamped fresh. A failed one
+    // leaves those tabs on the retry state; the rows in hand stay visible.
+    const loadedAt = Date.now();
+    /** @type {Record<string, any>[]} */
+    const fresh = [];
+    let complete = true;
+    for (const status of REMAINING_STATUSES) {
+      const section = home.tasks?.[status];
+      if (!section?.ok) {
+        complete = false;
+        continue;
+      }
+      fresh.push(...(section.items || []));
+      this._taskListFreshness.set(status, loadedAt);
+    }
+    if (!complete)
+      console.error("home (remaining lists) returned a failed section", home);
+    this._reconcileConfirmedTasks(fresh, true);
     const model = this._homeModel;
     // Merge the fresh status lists with the first-tier model. _renderHome
     // retains confirmed completions while any index entries are still stale.
-    const tasks = uniqueTasks([
-      ...results.flatMap((result) => result.tasks || []),
-      ...model.tasks,
-    ]);
-    this._remainingStatus = "loaded";
-    for (const status of ["in_progress", "completing", "completed"])
-      this._taskListFreshness.set(status, Date.now());
+    const tasks = uniqueTasks([...fresh, ...model.tasks]);
+    this._remainingStatus = complete ? "loaded" : "error";
     this._renderHome({ ...model, tasks }, { preserveInteraction: true });
     this._watchDuplicates(tasks);
     void this._hydrate311CardStatuses(tasks);

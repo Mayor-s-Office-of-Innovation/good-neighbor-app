@@ -173,21 +173,22 @@ export async function dismissAllNewResults(page) {
 const HOME_TASK_STATUSES = ["open", "in_progress", "completing", "completed"];
 
 /**
- * A `GET /v1/home` body with every section ok, for specs that answer the
- * route inside their own handler.
- * @param {{ tasks?: any[] | ((status: string) => any[]), checks?: any[] }} [fixtures]
+ * A `GET /v1/home` body with every requested section ok, for specs that
+ * answer the route inside their own handler. `sections` mirrors the route's
+ * query parameter: only those keys are returned (default: all five).
+ * @param {{ tasks?: any[] | ((status: string) => any[]), checks?: any[], sections?: string[] }} [fixtures]
  */
-export function homeResponse({ tasks = [], checks = [] } = {}) {
+export function homeResponse({ tasks = [], checks = [], sections } = {}) {
   /** @param {string} status */
   const tasksFor = (status) =>
     typeof tasks === "function" ? tasks(status) : tasks;
+  const wanted = new Set(sections ?? ["checks", ...HOME_TASK_STATUSES]);
   return {
-    checks: { ok: true, items: checks },
+    ...(wanted.has("checks") ? { checks: { ok: true, items: checks } } : {}),
     tasks: Object.fromEntries(
-      HOME_TASK_STATUSES.map((status) => [
-        status,
-        { ok: true, items: tasksFor(status) },
-      ]),
+      HOME_TASK_STATUSES.filter((status) => wanted.has(status)).map(
+        (status) => [status, { ok: true, items: tasksFor(status) }],
+      ),
     ),
     loadedAt: new Date().toISOString(),
   };
@@ -207,9 +208,18 @@ export async function routeHomeLists(page, { tasks = [], checks = [] } = {}) {
   /** @param {string} status */
   const tasksFor = (status) =>
     typeof tasks === "function" ? tasks(status) : tasks;
-  await page.route("**/v1/home*", (route) =>
-    route.fulfill({ json: homeResponse({ tasks, checks }) }),
-  );
+  await page.route("**/v1/home*", (route) => {
+    const sections = new URL(route.request().url()).searchParams.get(
+      "sections",
+    );
+    return route.fulfill({
+      json: homeResponse({
+        tasks,
+        checks,
+        ...(sections ? { sections: sections.split(",") } : {}),
+      }),
+    });
+  });
   await page.route("**/v1/tasks?*", (route) =>
     route.fulfill({
       json: {

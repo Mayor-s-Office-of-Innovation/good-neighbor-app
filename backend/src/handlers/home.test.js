@@ -131,6 +131,65 @@ describe("getHome", () => {
     );
   });
 
+  it("runs and returns only the named sections", async () => {
+    const res = await invoke(readEvent({ query: { sections: "checks,open" } }));
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.checks.ok).toBe(true);
+    expect(Object.keys(body.tasks)).toEqual(["open"]);
+    expect(loadChecks).toHaveBeenCalledTimes(1);
+    expect(loadTaskWorklist).toHaveBeenCalledTimes(1);
+    expect(loadTaskWorklist).toHaveBeenCalledWith(
+      "gnp-test-app",
+      "site-1",
+      "open",
+      50,
+    );
+  });
+
+  it("leaves checks out when only task statuses are named", async () => {
+    const res = await invoke(
+      readEvent({ query: { sections: "in_progress, completing,completed" } }),
+    );
+
+    const body = JSON.parse(res.body);
+    expect(body).not.toHaveProperty("checks");
+    expect(Object.keys(body.tasks)).toEqual([
+      "in_progress",
+      "completing",
+      "completed",
+    ]);
+    expect(loadChecks).not.toHaveBeenCalled();
+    expect(loadTaskWorklist).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects an unknown or empty sections list with a 400 before reading anything", async () => {
+    for (const sections of ["checks,bogus", ",", "  "]) {
+      const res = await invoke(readEvent({ query: { sections } }));
+      if (sections.trim() === "") {
+        // Blank means "everything", like an absent parameter.
+        expect(res.statusCode).toBe(200);
+        continue;
+      }
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body)).toMatchObject({ error: "invalid_sections" });
+    }
+    expect(loadChecks).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws when every named read fails, even with a subset", async () => {
+    const outage = new Error("DynamoDB unreachable");
+    loadTaskWorklist.mockRejectedValue(outage);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      invoke(readEvent({ query: { sections: "open,completed" } })),
+    ).rejects.toBe(outage);
+    // checks was not requested, so its (healthy) loader cannot rescue the call.
+    expect(loadChecks).not.toHaveBeenCalled();
+  });
+
   it("reports one failed worklist as ok:false and still returns the rest", async () => {
     const failure = new Error("throttled");
     failure.name = "ProvisionedThroughputExceededException";

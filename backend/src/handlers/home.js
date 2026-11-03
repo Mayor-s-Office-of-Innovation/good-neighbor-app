@@ -20,8 +20,38 @@ export const HOME_TASK_STATUSES = /** @type {const} */ ([
   "completing",
   "completed",
 ]);
+/** Everything the route can return; `sections=` names a subset. */
+export const HOME_SECTIONS = /** @type {const} */ ([
+  "checks",
+  ...HOME_TASK_STATUSES,
+]);
 const DEFAULT_CHECKS_LIMIT = 30;
 const DEFAULT_TASKS_LIMIT = 50;
+
+/**
+ * `sections=checks,open` narrows the response to the named sections; absent
+ * means all five. Home's cold open asks for `checks,open` first, so its first
+ * paint never waits on the ever-growing completed list, and for the other
+ * three right after. Returns null when a name is unknown.
+ * @param {string | undefined} raw
+ * @returns {Set<string> | null}
+ */
+function parseSections(raw) {
+  if (raw === undefined || raw.trim() === "") return new Set(HOME_SECTIONS);
+  const names = raw
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+  if (
+    !names.length ||
+    names.some(
+      (name) =>
+        !(/** @type {readonly string[]} */ (HOME_SECTIONS).includes(name)),
+    )
+  )
+    return null;
+  return new Set(names);
+}
 
 /**
  * @typedef {{ ok: true, items: Record<string, any>[], nextToken?: string } | { ok: false, error: string }} HomeSection
@@ -39,7 +69,8 @@ function errorLabel(reason) {
 }
 
 /**
- * GET /v1/home?checksLimit=30&tasksLimit=50 — the Home worklist in one body:
+ * GET /v1/home?checksLimit=30&tasksLimit=50&sections=checks,open — the Home
+ * worklist in one body:
  *
  *   { checks: { ok, items, nextToken? },
  *     tasks: { open: { ok, items }, in_progress: …, completing: …, completed: … },
@@ -48,8 +79,9 @@ function errorLabel(reason) {
  * Each section carries its own `ok`; a rejected read is logged and reported as
  * `{ ok: false, error }` while the others still return. Only when every read
  * fails does the handler throw, so a DynamoDB outage still surfaces as the 5xx
- * the client's connection-failure path expects. `siteId` comes from the device
- * token, never the query string, exactly as on the routes this replaces.
+ * the client's connection-failure path expects. With `sections`, only the
+ * named reads run and only those keys are returned. `siteId` comes from the
+ * device token, never the query string, exactly as on the routes this replaces.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const getHome = async (event) => {
@@ -58,19 +90,33 @@ export const getHome = async (event) => {
   const query = event.queryStringParameters ?? {};
   const checksLimit = parseLimit(query.checksLimit) ?? DEFAULT_CHECKS_LIMIT;
   const tasksLimit = parseLimit(query.tasksLimit) ?? DEFAULT_TASKS_LIMIT;
+  const sections = parseSections(query.sections);
+  if (!sections) {
+    return jsonResponse(400, {
+      error: "invalid_sections",
+      allowed: HOME_SECTIONS,
+    });
+  }
+  const wantChecks = sections.has("checks");
+  const statuses = HOME_TASK_STATUSES.filter((status) => sections.has(status));
 
-  const [checksResult, ...taskResults] = await Promise.allSettled([
-    loadChecks(dynamoTable, siteId, { limit: checksLimit }),
-    ...HOME_TASK_STATUSES.map((status) =>
-      loadTaskWorklist(dynamoTable, siteId, status, tasksLimit),
-    ),
-  ]);
+  // Every read starts here, before the first await; the two settles below
+  // only keep the checks and task results separately typed.
+  const checksRead = wantChecks
+    ? loadChecks(dynamoTable, siteId, { limit: checksLimit })
+    : undefined;
+  const taskReads = statuses.map((status) =>
+    loadTaskWorklist(dynamoTable, siteId, status, tasksLimit),
+  );
+  const checksResult =
+    checksRead && (await Promise.allSettled([checksRead]))[0];
+  const taskResults = await Promise.allSettled(taskReads);
+  const settled = [...(checksResult ? [checksResult] : []), ...taskResults];
 
-  const settled = [checksResult, ...taskResults];
   if (settled.every((result) => result.status === "rejected")) {
     // Nothing to show: let the router's error logging and the platform 500
     // handle it the way a failed single-list read is handled today.
-    throw /** @type {PromiseRejectedResult} */ (checksResult).reason;
+    throw /** @type {PromiseRejectedResult} */ (settled[0]).reason;
   }
 
   const reqId = /** @type {any} */ (event).requestContext?.requestId;
@@ -89,12 +135,16 @@ export const getHome = async (event) => {
   };
 
   return jsonResponse(200, {
-    checks: section("checks", checksResult, ({ checks, nextToken }) => ({
-      items: checks,
-      ...(nextToken ? { nextToken } : {}),
-    })),
+    ...(checksResult
+      ? {
+          checks: section("checks", checksResult, ({ checks, nextToken }) => ({
+            items: checks,
+            ...(nextToken ? { nextToken } : {}),
+          })),
+        }
+      : {}),
     tasks: Object.fromEntries(
-      HOME_TASK_STATUSES.map((status, i) => [
+      statuses.map((status, i) => [
         status,
         section(`tasks.${status}`, taskResults[i], (items) => ({ items })),
       ]),

@@ -84,7 +84,7 @@ repeats the reads. The count comes from code, not a live AWS measurement.
 | HTML page | **1** | CloudFront; S3 serves it on a cache miss |
 | JS files | **11** | CloudFront; files load in parallel as the browser finds them |
 | CSS files | **2** | CloudFront |
-| API calls that read DynamoDB | **15** | 4 settings/list calls (the check list and all four task statuses are one `GET /v1/home`) + 5 check details + 5 photo URL calls + 1 duplicate batch |
+| API calls that read DynamoDB | **16** | 5 settings/list calls (the check list and the open worklist are one `GET /v1/home`, the other three statuses a second) + 5 check details + 5 photo URL calls + 1 duplicate batch |
 | Other API calls | **2** | 1 health check + 1 page-view event |
 | Task photos | **5** | S3; one photo per To-do task |
 | Icons and other page assets | **Varies** | CloudFront; count depends on the browser and page content |
@@ -92,7 +92,7 @@ repeats the reads. The count comes from code, not a live AWS measurement.
 | Backend calls to outside services | **1 if set up** | PostHog; no SF311 call in this example |
 | Repeat duplicate checks | **0 once all results settle** | Pending tasks only, with a 15-minute retry budget |
 
-That is **36 browser requests**, plus icons and other page assets. Pending results can add repeat
+That is **37 browser requests**, plus icons and other page assets. Pending results can add repeat
 polls while the page loads. One API call can make many database
 reads. Those reads are not extra browser requests.
 
@@ -108,7 +108,8 @@ and install prompts can load more JS files.
   The five To-do photos come from five different checks. None is a duplicate.
   The other tabs' photos do not load yet.
 - The task lists have 5 `open`, 5 `in_progress`, and 20 `completed` rows.
-  `completing` is empty, but is still one of the four queries behind `GET /v1/home`.
+  `completing` is empty, but is still one of the three queries behind the
+  second `GET /v1/home`.
 - The site list and each check fit in one database page. No task has a 311 ticket.
 - Duplicate checks are on, and all results are ready. Site settings arrive before
   the task lists finish. The total counts the first poll only.
@@ -147,11 +148,10 @@ sequenceDiagram
     and First task list
         B->>A: 1 GET /v1/provider-sites
         A->>D: Get current site, Query memberships, Get each active site
-        B->>A: 1 GET /v1/home?checksLimit=30&tasksLimit=50
-        A->>D: Query GSI1 + 4 GSI2 Queries, side by side
-        Note over B,A: open, in_progress, completing, completed in one body
+        B->>A: 1 GET /v1/home?sections=checks,open
+        A->>D: Query GSI1 + 1 GSI2 Query, side by side
     end
-    Note over B: Show To-do cards and tab counts
+    Note over B: Show To-do cards
     par Photos for To-do cards
         B->>A: 5 GET /v1/checks/{checkId}
         A->>D: 5 Queries for check data
@@ -159,8 +159,11 @@ sequenceDiagram
         A->>D: 5 Queries for photo records
         A-->>B: Signed URLs (signing does not GET S3 objects)
         B->>S: 5 photo GETs
+    and Remaining task lists
+        B->>A: 1 GET /v1/home?sections=in_progress,completing,completed
+        A->>D: 3 GSI2 Queries, side by side, even for empty lists
     end
-    Note over B: Watch duplicates for the 30 tasks
+    Note over B: Merge 30 tasks and update tab counts
     B->>A: 1 POST /v1/duplicates:batch (30 task IDs)
     A->>D: Many GetItem reads per task (reuse shared records)
     Note over A,D: No model call, SF311 call, or write in duplicate lookup
@@ -350,9 +353,12 @@ with per-status `GET /v1/tasks` reads, without reloading provider data or check
 lists. Overlapping return events share in-flight requests. This adds no periodic
 timer and does not change the initial-load counts above.
 
-A route return within a minute used to re-read only the check list and the open
-worklist and reuse the other three; one request now returns all five, so every
-reload reads fresh lists.
+A cold open or route return reads in two tiers through the same route: the
+check list and the open worklist first (`sections=checks,open`), which is all
+the first paint waits for, then the other three statuses in one request. The
+completed list, which grows for the life of a site, is never on the first
+paint's critical path. A route return within a minute used to reuse the other
+three lists; it now re-reads them, in that one second request.
 
 To-do needs open tasks. In-progress also needs completing and completed tasks,
 because completed 311 filings can still be in progress. History needs all five
