@@ -1,10 +1,12 @@
 # Runbook: client analytics events (page views, device facts, camera hand-offs)
 
-**Scope:** `frontend/src/services/analytics.js` → `POST /v1/client-events` → **intake Lambda**
-(`backend/src/lambda/intake.js` → `handlers/client-events.js`) → PostHog as plain named events. No vendor SDK ships
-in the app. This is the sibling of the error-tracking pipeline (`/v1/client-errors`, `$exception`
-events) and the feedback pipeline (`/v1/feedback`, see [feedback-ops.md](./feedback-ops.md)); all
-three share the same PostHog project key and the same log-only default.
+**Scope:** `frontend/src/services/analytics.js` → `POST /v1/client-events` → **API Gateway writes
+the body to the `client-events` SQS queue** → **consumer Lambda**
+(`backend/src/lambda/client-events-consumer.js`) → PostHog as plain named events. No Lambda sits in
+the request path; see [Transport](#transport-2026-11). No vendor SDK ships in the app. This is the
+sibling of the error-tracking pipeline (`/v1/client-errors`, `$exception` events) and the feedback
+pipeline (`/v1/feedback`, see [feedback-ops.md](./feedback-ops.md)), which still run in the intake
+Lambda; all three share the same PostHog project key and the same log-only default.
 
 ## Why it exists (2026-10)
 
@@ -56,16 +58,85 @@ values are query-stripped again server-side. Adding an event or property means a
 - Globally: the forwarder is log-only whenever the PostHog project key is unset (same secret as
   error tracking, [feedback-ops.md §2](./feedback-ops.md)). Log-only still writes every event and
   its device properties to CloudWatch, so the device picture is available before egress is on.
-- WAF: `ClientEventsRateLimit` blocks an IP above 5,000 requests per 5 minutes on this path. The general WAF traffic budget can block first.
+- WAF: `ClientEventsRateLimit` blocks an IP above 1,000 requests per 5 minutes on this path (a batched check is 15 to 20 requests). The general WAF traffic budget can block first.
 - Concurrency: the three intakes (errors, events, feedback) run in their own `good-neighbor-app-<env>-intake`
   Lambda with reserved concurrency of 50, separate from the app API function. Each handler
   awaits its PostHog forward before answering. The reservation bounds concurrent intake work
   across IPs; WAF bounds requests per IP. Slow PostHog responses can occupy the intake slots
   and cause dropped beacons. The event forwarder gives up after 1 s (`EVENT_FORWARD_TIMEOUT_MS`); errors and feedback keep 3 s.
 
-## Is it working? (CloudWatch, intake Lambda log group `/aws/lambda/good-neighbor-app-<env>-intake`)
+## Transport (2026-11)
 
-One structured line per event:
+In deployed environments the route is an API Gateway **SQS-SendMessage** service integration
+(`infra/modules/app/client-events.tf`): the gateway puts the raw body on the `<env>-client-events`
+queue, tags it with a constant `Kind` message attribute (`client-event`), and rewrites SQS's 200
+to the 204 the client expects. `POST /v1/client-errors` uses the same queue and consumer with
+`Kind=client-error`; the consumer runs the error scrub and the `$exception` forwarder for those,
+one PostHog call per kind per invocation. The user agent
+travels inside the body (`ua`), because the only way for the gateway to attach a header would be
+to splice it into a JSON mapping it cannot escape; the server reads `ua` first and falls back to
+the header on the HTTP path for older cached clients. The consumer Lambda reads up to 100 bodies per invocation (5 s
+batching window, 5 concurrent at most), scrubs each with `handlers/client-events-batch.js`, and
+sends every event in the invocation to PostHog in one `/batch/` call with a 5 s budget.
+
+What this buys over the old intake-Lambda path:
+
+- **No request-path Lambda.** Beacon bursts cannot be throttled by PostHog latency or by a
+  concurrency reservation; SQS absorbs them.
+- **Durability.** A failed PostHog call reports the messages that carried events as batch item
+  failures; SQS redelivers them (visibility timeout 180 s) up to 5 times, then parks them in
+  `<env>-client-events-dlq` (14-day retention). Garbage bodies are acknowledged, not retried.
+  The forwarder aborts its PostHog request when the budget expires, so a redelivery never
+  overlaps an orphaned attempt from the previous one.
+- **Redeliveries deduplicate.** The consumer stamps each event with a uuid derived from the SQS
+  message id and the event's position (`lib/stable-uuid.js`); a redelivered message repeats the
+  same ids and PostHog collapses them with the client timestamp. Dead-letter redrives get new
+  message ids, so those can still duplicate.
+- **Bounded ingress.** The gateway stage throttles the two routes (100 requests per second with
+  a burst of 200 for events, 20 with a burst of 40 for errors; `api.tf`). Unlike the per-IP WAF
+  rules, this applies to callers that reach the API endpoint directly, so a flood cannot outrun
+  the five consumers or fill the four-day queue. The old intake Lambda's reservation did this
+  job; the queue integration has no such cap of its own.
+
+What stays the same: the HTTP handlers (`handlers/client-events.js`, `handlers/client-errors.js`)
+still serve `npm run dev` and are still wired in `lambda/intake.js`, which in deployed environments
+now receives only `/v1/feedback`. Pointing a route back at the intake integration restores the old
+path with no code change.
+
+Alarms added with the queue: `client-events-dlq-not-empty` (any dead letter) and
+`client-events-queue-stale` (oldest message over 10 minutes: the consumer is not keeping up or not
+running). Redrive the DLQ from the SQS console once forwarding works; a redriven batch that had
+partly reached PostHog can produce duplicate events (redrive assigns new message ids, so the
+stable uuids differ), which is harmless analytics noise.
+
+## Batching (2026-11)
+
+The client queues events and sends them as one beacon, `{ batch: [event, ...], ua }`, after a 2 s
+quiet period, before the serialized batch would exceed 6 KiB (about eight `photo_pipeline`
+events), at 25 events, or when the page is hidden or unloading (`flushEvents` in `analytics.js`).
+The byte budget exists because the WAF blocks bodies over the managed 8 KiB limit on this path
+(`SizeRestrictions_Body`, `main.tf`); a bigger batch would be rejected with a 413 and lost. The intake scrubs each item, drops invalid ones (one `ClientEventDropped` line
+with `received` / `dropped` counts), caps a request at 50 items, and forwards the batch to
+PostHog in a single `/batch/` call. A single-event body is still accepted. The drop line is
+per request, not per item (`invalid` and `truncated` give the breakdown), so the
+`ClientEventDropped` alarm counts requests carrying garbage rather than items.
+
+Why: a four-photo perimeter check emits roughly 55 events (`camera_opened`, `photo_picked`,
+`photo_location`, and `started` + `completed` for each of the five `photo_pipeline` stages per
+photo, plus page views). With one beacon per event, a 2026-11-01 load test saw 4 concurrent
+users produce ~100 concurrent intake invocations, each held for a PostHog round trip, and the
+function throttled. Throttling only drops telemetry (the app never waits on it), but it drops
+exactly the field data the pipeline exists to collect. Batched, a check costs a few invocations.
+
+Isolation is unchanged: `trackEvent` only queues, the flush runs from a timer or a lifecycle
+listener and swallows every error, a batch the browser or intake refuses is dropped rather than
+retried, and the intake still answers 204 whatever happens.
+
+## Is it working? (CloudWatch, consumer log group `/aws/lambda/good-neighbor-app-<env>-client-events-consumer`)
+
+One structured line per event (a batch logs one line per event it carried, each with
+`batch_size`). The same markers appear in the intake log group for the local/fallback HTTP path, and
+both log groups feed the same metric filters and alarms:
 
 | Marker | Meaning |
 |---|---|
@@ -109,8 +180,10 @@ Previously failed beacons are not automatically replayed.
 
 ## Local development
 
-`npm run dev` (backend harness) serves `POST /v1/client-events` and the Vite proxy forwards it,
-so beacons land in the harness log. Under vitest the service is off unless forced on.
+`npm run dev` (backend harness) serves `POST /v1/client-events` through the HTTP handler and the
+Vite proxy forwards it, so beacons land in the harness log. There is no local queue; the harness
+path and the deployed path share the unpack/scrub module and the forwarder, and differ only in the
+SQS hop. Under vitest the service is off unless forced on.
 
 ## Photo upload and analysis diagnosis
 

@@ -238,6 +238,18 @@ describe("capture + payload", () => {
     ]);
   });
 
+  it("carries the browser's user agent in the body when it has one", async () => {
+    vi.stubGlobal("navigator", {
+      sendBeacon,
+      userAgent: "Mozilla/5.0 (Linux; Android 14) TestBrowser/1.0",
+    });
+    await loadEnabled();
+    listeners.error({ message: "boom", error: new Error("boom") });
+    await syncBodies();
+    const payload = await lastPayload();
+    expect(payload.ua).toBe("Mozilla/5.0 (Linux; Android 14) TestBrowser/1.0");
+  });
+
   it("skips resource-load noise (message but no error object)", async () => {
     await loadEnabled();
 

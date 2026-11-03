@@ -217,7 +217,29 @@ function scrub(raw) {
     release: raw.release,
     id: raw.id,
     ts: raw.ts,
+    ...userAgentField(),
   };
+}
+
+/** Longest user agent sent; the server caps at the same length. */
+const MAX_USER_AGENT = 500;
+
+/**
+ * The browser's user agent, as a body field. In deployed environments the
+ * report travels API Gateway → SQS, where no request header survives, so the
+ * forwarder reads it from the body (it parses it into browser/OS/device
+ * detail for the error). Omitted when the browser exposes none.
+ * @returns {{ ua?: string }}
+ */
+function userAgentField() {
+  try {
+    const ua = navigator.userAgent;
+    return typeof ua === "string" && ua
+      ? { ua: ua.slice(0, MAX_USER_AGENT) }
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 /**

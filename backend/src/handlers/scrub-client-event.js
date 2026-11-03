@@ -83,6 +83,8 @@ export const MAX_PROPERTY_STRING = 500;
  * @property {string} [ts]
  * @property {string} [release]
  * @property {Record<string, string | number | boolean>} properties
+ * @property {string} [uuid] stable event id set by the queue consumer (never
+ *   accepted from the client) so a redelivered batch deduplicates in PostHog
  */
 
 /**

@@ -201,10 +201,11 @@ export function showDeletionRefreshToast() {
   });
 }
 
-export function showDeleteErrorToast() {
+/** @param {string} [message] */
+export function showDeleteErrorToast(message = t("toast.deleteError.message")) {
   return showOperationError({
     title: t("toast.deleteError.title"),
-    message: t("toast.deleteError.message"),
+    message,
     icon: "triangle-exclamation",
     tone: "error",
   });

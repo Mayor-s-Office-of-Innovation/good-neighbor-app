@@ -39,6 +39,7 @@ import {
 import { onDeletionsChange } from "../state/pending-deletions.js";
 import {
   deleteAnalysisCard,
+  prepareCardDeletion,
   isDeletingAnalysisCard,
 } from "./analysis-card-deletion.js";
 import { getSite } from "../db.js";
@@ -557,6 +558,7 @@ class ProblemReport extends HTMLElement {
       title.textContent = t("analysis.deleteDialog.titleFor", {
         title: problem.title,
       });
+    void prepareCardDeletion(this, problem);
     openOverlayDialog(
       /** @type {HTMLDialogElement} */ (this._analysisDeleteDialog),
       "analysis-delete",

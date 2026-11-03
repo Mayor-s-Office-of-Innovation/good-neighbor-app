@@ -82,6 +82,8 @@ export async function taskForIssue(site, ref, get) {
  * @returns {Promise<Item>}
  */
 export async function duplicateForTask(table, site, task, reader) {
+  if (["superseded", "deleted"].includes(task.status))
+    return { state: "complete" };
   const get = reader ?? siteReader(table, site);
   const artifactId = task.sourceArtifactIds?.[0];
   if (!task.checkId || !artifactId || !task.conditionId)
@@ -201,6 +203,15 @@ export async function duplicateForTask(table, site, task, reader) {
     get,
   });
   if (!original.originalIssue) return pending;
+  // A deleted original cannot hide new observations or receive shared actions.
+  const [originalCheck, originalArtifact] =
+    original.originalIssue.observationId.split(":");
+  const deletion = await get({
+    pk: `SITE#${site}`,
+    sk: `ISSUE_DELETION#${originalCheck}:${originalArtifact}:${original.originalIssue.conditionId}`,
+  });
+  if (deletion?.deletedAt || deletion?.dismissedAt)
+    return { state: "complete" };
   const root = await taskForIssue(site, original.originalIssue, get);
   if (
     root?.resolvedAt &&
@@ -225,6 +236,27 @@ export async function duplicateForTask(table, site, task, reader) {
  * @param {string} table @param {string} site @param {string} checkId @param {string} artifactId
  */
 export async function reconcileObservation(table, site, checkId, artifactId) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await reconcileOnce(table, site, checkId, artifactId);
+    } catch (error) {
+      if (
+        attempt >= 2 ||
+        !(error instanceof Error) ||
+        error.name !== "TransactionCanceledException" ||
+        !("retryable" in error) ||
+        !error.retryable
+      )
+        throw error;
+      await new Promise((resolve) =>
+        setTimeout(resolve, 10 + Math.random() * 30),
+      );
+    }
+  }
+}
+
+/** @param {string} table @param {string} site @param {string} checkId @param {string} artifactId */
+async function reconcileOnce(table, site, checkId, artifactId) {
   const get = siteReader(table, site),
     pk = `SITE#${site}`;
   const analysis = await get({
@@ -262,6 +294,7 @@ export async function reconcileObservation(table, site, checkId, artifactId) {
     const adoptAction =
       root.status === "open" &&
       ["in_progress", "completed"].includes(task.status);
+    if (root.status === "superseded" || task.status === "superseded") continue;
     if (previous?.updateId === updateId && !adoptAction) continue;
     const actionFields = [
       "status",
@@ -301,27 +334,76 @@ export async function reconcileObservation(table, site, checkId, artifactId) {
           ),
         }
       : null;
+    const rootChanges = {
+      duplicateGroupVersion: updateId,
+      ...(adopted
+        ? {
+            ...Object.fromEntries(
+              actionFields
+                .filter((field) => task[field] !== undefined)
+                .map((field) => [field, adopted[field]]),
+            ),
+            updatedAt: adopted.updatedAt,
+            latestUpdateId: adopted.latestUpdateId,
+            gsi2pk: adopted.gsi2pk,
+            gsi2sk: adopted.gsi2sk,
+          }
+        : {}),
+    };
+    /** @type {Record<string,string>} */
+    const rootNames = { "#status": "status" };
+    /** @type {Record<string,any>} */
+    const rootValues = {};
+    const rootAssignments = Object.entries(rootChanges).map(
+      ([field, value], index) => {
+        rootNames[`#set${index}`] = field;
+        rootValues[`:set${index}`] = value;
+        return `#set${index} = :set${index}`;
+      },
+    );
     try {
       await ddb.send(
         new TransactWriteCommand({
           TransactItems: [
-            ...(adopted
-              ? [
-                  {
-                    Put: {
-                      TableName: table,
-                      Item: adopted,
-                      ConditionExpression:
-                        "#status = :open AND updatedAt = :updated",
-                      ExpressionAttributeNames: { "#status": "status" },
-                      ExpressionAttributeValues: {
-                        ":open": "open",
-                        ":updated": root.updatedAt,
-                      },
-                    },
-                  },
-                ]
-              : []),
+            {
+              Update: {
+                TableName: table,
+                Key: taskKey(site, root.taskId),
+                UpdateExpression: `SET ${rootAssignments.join(", ")}`,
+                ConditionExpression:
+                  (adopted
+                    ? "#status = :rootStatus AND updatedAt = :rootUpdated AND " +
+                      (root.duplicateGroupVersion
+                        ? "duplicateGroupVersion = :groupVersion"
+                        : "attribute_not_exists(duplicateGroupVersion)")
+                    : "attribute_exists(sk) AND #status = :rootStatus") +
+                  (adopted
+                    ? " AND " +
+                      (root.appActionResults !== undefined
+                        ? "appActionResults = :rootResults"
+                        : "attribute_not_exists(appActionResults)") +
+                      " AND " +
+                      (root.appActionStatus !== undefined
+                        ? "appActionStatus = :rootActionStatus"
+                        : "attribute_not_exists(appActionStatus)")
+                    : ""),
+                ExpressionAttributeNames: rootNames,
+                ExpressionAttributeValues: {
+                  ...rootValues,
+                  ...(adopted && root.appActionResults !== undefined
+                    ? { ":rootResults": root.appActionResults }
+                    : {}),
+                  ...(adopted && root.appActionStatus !== undefined
+                    ? { ":rootActionStatus": root.appActionStatus }
+                    : {}),
+                  ":rootStatus": root.status,
+                  ...(adopted ? { ":rootUpdated": root.updatedAt } : {}),
+                  ...(adopted && root.duplicateGroupVersion
+                    ? { ":groupVersion": root.duplicateGroupVersion }
+                    : {}),
+                },
+              },
+            },
             ...(adopted
               ? [
                   {
@@ -442,7 +524,7 @@ export async function reconcileObservation(table, site, checkId, artifactId) {
           (adopted &&
             (await get(taskKey(site, root.taskId)))?.status === "open"))
       )
-        throw error;
+        throw Object.assign(error, { retryable: !adopted });
     }
   }
 }

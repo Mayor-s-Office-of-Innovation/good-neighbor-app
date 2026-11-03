@@ -1,4 +1,5 @@
 import { showDeleteErrorToast } from "./toasts.js";
+import { t } from "../i18n/i18n.js";
 
 /**
  * @typedef {object} DeletedProblem
@@ -6,8 +7,10 @@ import { showDeleteErrorToast } from "./toasts.js";
  * @property {string} artifactId
  * @property {string} conditionId
  * @property {string} [taskId]
+ * @property {"selected"} [deletionMode]
  * @property {string} [title]
  * @property {string} [reference]
+ * @property {DeletedProblem[]} [deletionTargets]
  */
 
 /** @type {Map<string, {problem: DeletedProblem, status: string}>} */
@@ -74,7 +77,19 @@ export function stageDeletion(problem, commit) {
         entry.status = "failed";
         emit("failed");
         console.error("save pending deletion failed", error);
-        showDeleteErrorToast();
+        const key = {
+          group_changed: "groupChanged",
+          group_too_large: "groupTooLarge",
+          matching_pending: "matchingPending",
+          matching_unavailable: "matchingUnavailable",
+        }[error?.body?.code];
+        showDeleteErrorToast(
+          key && problem.deletionMode !== "selected"
+            ? t(`analysis.deleteDialog.${key}`) +
+                " " +
+                t("analysis.deleteDialog.selectedAvailable")
+            : undefined,
+        );
       } finally {
         if (saves.get(artifactKey) === saving) saves.delete(artifactKey);
       }
@@ -89,22 +104,25 @@ export function stageDeletion(problem, commit) {
 export function pendingDeletedConditionIds({ checkId, artifactId }) {
   if (!artifactId) return [];
   return [...deletions.values()]
+    .flatMap(({ problem }) => problem.deletionTargets || [problem])
     .filter(
-      ({ problem }) =>
+      (problem) =>
         problem.artifactId === artifactId &&
         (!checkId || problem.checkId === checkId),
     )
-    .map(({ problem }) => problem.conditionId);
+    .map((problem) => problem.conditionId);
 }
 
 /** @param {{taskId?: string, checkId?: string, conditionId?: string, sourceArtifactIds?: string[], evidence?: {artifactId?: string}}} task */
 export function isTaskPendingDeletion(task) {
-  return [...deletions.values()].some(
-    ({ problem }) =>
-      (problem.taskId && problem.taskId === task.taskId) ||
-      (problem.checkId === task.checkId &&
-        problem.conditionId === task.conditionId &&
-        (task.sourceArtifactIds?.includes(problem.artifactId) ||
-          task.evidence?.artifactId === problem.artifactId)),
-  );
+  return [...deletions.values()]
+    .flatMap(({ problem }) => problem.deletionTargets || [problem])
+    .some(
+      (problem) =>
+        (problem.taskId && problem.taskId === task.taskId) ||
+        (problem.checkId === task.checkId &&
+          problem.conditionId === task.conditionId &&
+          (task.sourceArtifactIds?.includes(problem.artifactId) ||
+            task.evidence?.artifactId === problem.artifactId)),
+    );
 }
