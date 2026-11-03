@@ -448,6 +448,63 @@ describe("provider and site management", () => {
     expect(JSON.parse(res.body).site.providerId).toBe("provider-one");
   });
 
+  it.each(["program-old", "program-new", ""])(
+    "previews the current previous program name when assigning %s",
+    async (leadProgramId) => {
+      send.mockImplementation(async (command) => {
+        if (command instanceof GetCommand) {
+          const pk = command.input.Key?.pk;
+          if (pk === "SITE#site-1")
+            return {
+              Item: {
+                siteId: "site-1",
+                status: "active",
+                providerId: "provider-1",
+                leadProgramId: "program-old",
+                programName: "Stale Program",
+              },
+            };
+          if (pk === "PROVIDER#provider-1")
+            return {
+              Item: {
+                providerId: "provider-1",
+                name: "Provider",
+                status: "active",
+              },
+            };
+          return {
+            Item: {
+              name:
+                pk === "PROGRAM#program-old"
+                  ? "Renamed Program"
+                  : "New Program",
+              status: "active",
+            },
+          };
+        }
+        return { Items: [] };
+      });
+      const res = await call(
+        reassignSite,
+        event(
+          { providerId: "provider-1", leadProgramId, preview: true },
+          "central-admin",
+          { siteId: "site-1" },
+        ),
+      );
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(String(res.body)).preview.previousProgram).toBe(
+        "Renamed Program",
+      );
+      expect(
+        send.mock.calls.every(
+          ([command]) =>
+            command instanceof GetCommand || command instanceof QueryCommand,
+        ),
+      ).toBe(true);
+    },
+  );
+
   it("reassigns a site preserving direct access while invalidating old provider access", async () => {
     send
       .mockResolvedValueOnce({
@@ -512,6 +569,101 @@ describe("provider and site management", () => {
         }),
       ]),
     );
+  });
+
+  it("removes a lead program atomically while preserving provider and direct access", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          name: "Test Site",
+          providerId: "provider-1",
+          providerName: "Test Provider",
+          providerSiteId: "external-1",
+          leadProgramId: "program-old",
+          programName: "Old Program",
+          primaryContactUserId: "staff-1",
+          providerAccessGeneration: 3,
+          status: "active",
+          updatedAt: "v1",
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: {
+          providerId: "provider-1",
+          name: "Test Provider",
+          status: "active",
+        },
+      })
+      .mockResolvedValueOnce({});
+    const response = await call(
+      reassignSite,
+      event(
+        {
+          providerId: "provider-1",
+          leadProgramId: "",
+          expectedUpdatedAt: "v1",
+        },
+        "central-admin",
+        { siteId: "site-1" },
+      ),
+    );
+    expect(response.statusCode).toBe(200);
+    const result = JSON.parse(String(response.body)).site;
+    expect(result).toMatchObject({
+      providerId: "provider-1",
+      leadProgramId: "",
+      programName: "",
+      primaryContactUserId: "staff-1",
+      providerAccessGeneration: 3,
+    });
+    const items = send.mock.calls[2][0].input.TransactItems;
+    expect(items).toHaveLength(4);
+    expect(items[0].Update.UpdateExpression).toContain(
+      "REMOVE leadProgramId, programName",
+    );
+    expect(items[0].Update.ConditionExpression).toContain(
+      "updatedAt = :expectedUpdatedAt",
+    );
+    expect(
+      items[0].Update.ExpressionAttributeValues[":providerGeneration"],
+    ).toBe(3);
+    expect(items[3].Delete.Key).toEqual({
+      pk: "PROGRAM#program-old",
+      sk: "SITE#site-1",
+    });
+    expect(JSON.stringify(items)).not.toMatch(
+      /MANAGER_MEMBERSHIP|DEVICE|USER#/,
+    );
+  });
+
+  it("rejects a stale program removal without writing", async () => {
+    send
+      .mockResolvedValueOnce({
+        Item: {
+          siteId: "site-1",
+          providerId: "provider-1",
+          status: "active",
+          updatedAt: "v2",
+        },
+      })
+      .mockResolvedValueOnce({
+        Item: { providerId: "provider-1", status: "active" },
+      });
+    const response = await call(
+      reassignSite,
+      event(
+        {
+          providerId: "provider-1",
+          leadProgramId: "",
+          expectedUpdatedAt: "v1",
+        },
+        "central-admin",
+        { siteId: "site-1" },
+      ),
+    );
+    expect(response.statusCode).toBe(409);
+    expect(send).toHaveBeenCalledTimes(2);
   });
 
   it("rejects unknown providers before geocoding the site address", async () => {

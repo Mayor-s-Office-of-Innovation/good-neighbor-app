@@ -1,9 +1,11 @@
 import { beforeEach, expect, it, vi } from "vitest";
+import { isDeepStrictEqual } from "node:util";
 import { analysisRevision, projectionKey } from "./jobs.js";
 const state = vi.hoisted(() => ({
   items: new Map(),
   writes: /** @type {any[]} */ ([]),
   reads: /** @type {string[]} */ ([]),
+  beforeWrite: /** @type {null | (() => void)} */ (null),
 }));
 vi.mock("../../db.js", () => ({
   ddb: {
@@ -13,13 +15,50 @@ vi.mock("../../db.js", () => ({
         state.reads.push(i.Key.sk);
         return { Item: state.items.get(i.Key.pk + "|" + i.Key.sk) };
       }
+      state.beforeWrite?.();
+      for (const { Update: update } of i.TransactItems ?? []) {
+        if (!update?.Key.sk.startsWith("TASK#")) continue;
+        const row = state.items.get(update.Key.pk + "|" + update.Key.sk);
+        const expected = update.ExpressionAttributeValues;
+        let conflict =
+          row.status !== expected[":rootStatus"] ||
+          (update.ConditionExpression.includes(":rootUpdated") &&
+            row.updatedAt !== expected[":rootUpdated"]) ||
+          (update.ConditionExpression.includes(":groupVersion")
+            ? row.duplicateGroupVersion !== expected[":groupVersion"]
+            : update.ConditionExpression.includes(
+                "attribute_not_exists(duplicateGroupVersion)",
+              ) && row.duplicateGroupVersion !== undefined);
+        if (update.ConditionExpression.includes("appActionResults"))
+          conflict ||=
+            !isDeepStrictEqual(
+              row.appActionResults,
+              expected[":rootResults"],
+            ) || row.appActionStatus !== expected[":rootActionStatus"];
+        if (conflict)
+          throw Object.assign(new Error("Concurrent root update"), {
+            name: "TransactionCanceledException",
+          });
+      }
       state.writes.push(i);
-      for (const entry of i.TransactItems ?? [])
+      for (const entry of i.TransactItems ?? []) {
+        if (entry.Update) {
+          const update = entry.Update;
+          const key = update.Key.pk + "|" + update.Key.sk;
+          const row = { ...state.items.get(key) };
+          for (const match of update.UpdateExpression.matchAll(
+            /(#[A-Za-z0-9]+) = (:[A-Za-z0-9]+)/g,
+          ))
+            row[update.ExpressionAttributeNames[match[1]]] =
+              update.ExpressionAttributeValues[match[2]];
+          state.items.set(key, row);
+        }
         if (entry.Put)
           state.items.set(
             entry.Put.Item.pk + "|" + entry.Put.Item.sk,
             entry.Put.Item,
           );
+      }
       return {};
     },
   },
@@ -116,6 +155,7 @@ beforeEach(() => {
   state.items.clear();
   state.writes.length = 0;
   state.reads.length = 0;
+  state.beforeWrite = null;
   process.env.DUPLICATE_DETECTION_ENABLED = "true";
 });
 it("resolves current issue/task identities using generation times, not capture times", async () => {
@@ -545,4 +585,135 @@ it("still rejects a settled negative whose guidance no longer includes the task"
   expect((await duplicateForTask("test", "site", task)).state).toBe(
     "not_applicable",
   );
+});
+
+it("does not link new observations or route actions to a deleted original", async () => {
+  const { old, recent } = fixture();
+  put({ ...old.task, status: "superseded" });
+  put({
+    pk: "SITE#site",
+    sk: "ISSUE_DELETION#old:photo:condition",
+    deletedAt: "2026-11-02T12:00:00Z",
+  });
+  expect(await duplicateForTask("test", "site", recent.task)).toMatchObject({
+    state: "complete",
+  });
+  expect((await sharedActionTarget("test", "site", "recent")).taskId).toBe(
+    "recent",
+  );
+  await reconcileObservation("test", "site", "recent", "photo");
+  expect(state.writes).toHaveLength(0);
+});
+
+it("linking preserves integration results that arrived after the root was read", async () => {
+  const { old } = fixture();
+  const results = [
+    {
+      code: "create_311_ticket",
+      status: "submitted",
+      payload: { tickets: [{ srNum: "synthetic-ticket" }] },
+    },
+  ];
+  state.beforeWrite = () =>
+    put({
+      ...state.items.get("SITE#site|TASK#old"),
+      appActionResults: results,
+      appActionStatus: "submitted",
+    });
+  await reconcileObservation("test", "site", "recent", "photo");
+  expect(state.items.get("SITE#site|TASK#old")).toMatchObject({
+    status: old.task.status,
+    appActionResults: results,
+    appActionStatus: "submitted",
+  });
+  expect(state.items.get("SITE#site|DUP_LINK#recent")).toBeTruthy();
+});
+it("adoption cancels rather than replacing a newer integration result", async () => {
+  const { recent } = fixture();
+  put({
+    ...recent.task,
+    status: "in_progress",
+    inProgressAt: "2026-10-15T10:02:00Z",
+    appActionResults: [{ code: "create_311_ticket", status: "submitted" }],
+  });
+  const results = [
+    {
+      code: "create_311_ticket",
+      status: "submitted",
+      payload: { tickets: [{ srNum: "synthetic-original-ticket" }] },
+    },
+  ];
+  state.beforeWrite = () =>
+    put({
+      ...state.items.get("SITE#site|TASK#old"),
+      appActionResults: results,
+      appActionStatus: "submitted",
+    });
+  await expect(
+    reconcileObservation("test", "site", "recent", "photo"),
+  ).rejects.toMatchObject({ name: "TransactionCanceledException" });
+  expect(state.items.get("SITE#site|TASK#old")).toMatchObject({
+    status: "open",
+    appActionResults: results,
+  });
+  expect(state.items.has("SITE#site|DUP_LINK#recent")).toBe(false);
+});
+
+it("non-adoption linking tolerates a concurrent membership stamp and foreground timestamp", async () => {
+  fixture();
+  state.beforeWrite = () => {
+    state.beforeWrite = null;
+    put({
+      ...state.items.get("SITE#site|TASK#old"),
+      duplicateGroupVersion: "another-link",
+      updatedAt: "2026-10-15T10:03:00Z",
+    });
+  };
+  await reconcileObservation("test", "site", "recent", "photo");
+  expect(state.items.has("SITE#site|DUP_LINK#recent")).toBe(true);
+  const update = state.writes[0].TransactItems.find(
+    (/** @type {any} */ entry) => entry.Update,
+  )?.Update;
+  expect(update.ConditionExpression).toBe(
+    "attribute_exists(sk) AND #status = :rootStatus",
+  );
+  expect(state.items.get("SITE#site|TASK#old").updatedAt).toBe(
+    "2026-10-15T10:03:00Z",
+  );
+  expect(state.items.get("SITE#site|TASK#old").duplicateGroupVersion).not.toBe(
+    "another-link",
+  );
+});
+
+it("retries a transient non-adoption transaction conflict with fresh reads", async () => {
+  fixture();
+  const readsBefore = state.reads.length;
+  let attempts = 0;
+  state.beforeWrite = () => {
+    if (++attempts === 1)
+      throw Object.assign(new Error("transaction contention"), {
+        name: "TransactionCanceledException",
+        retryable: true,
+      });
+  };
+  await reconcileObservation("test", "site", "recent", "photo");
+  expect(attempts).toBe(2);
+  expect(state.reads.length).toBeGreaterThan(readsBefore);
+  expect(state.items.has("SITE#site|DUP_LINK#recent")).toBe(true);
+});
+
+it("bounds non-adoption contention retries before returning the job to SQS", async () => {
+  fixture();
+  let attempts = 0;
+  state.beforeWrite = () => {
+    attempts++;
+    throw Object.assign(new Error("transaction contention"), {
+      name: "TransactionCanceledException",
+    });
+  };
+  await expect(
+    reconcileObservation("test", "site", "recent", "photo"),
+  ).rejects.toMatchObject({ name: "TransactionCanceledException" });
+  expect(attempts).toBe(3);
+  expect(state.items.has("SITE#site|DUP_LINK#recent")).toBe(false);
 });

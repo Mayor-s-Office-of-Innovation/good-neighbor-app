@@ -61,9 +61,11 @@ import {
 import {
   onDeletionsChange,
   isTaskPendingDeletion,
+  pendingDeletedConditionIds,
 } from "../state/pending-deletions.js";
 import {
   deleteAnalysisCard,
+  prepareCardDeletion,
   isDeletingAnalysisCard,
 } from "./analysis-card-deletion.js";
 import { navigate } from "../router.js";
@@ -1881,7 +1883,13 @@ class TodayView extends HTMLElement {
         (count, item) =>
           count +
           (item.analysis?.conditions || []).filter(
-            (condition) => condition.needsAnswer,
+            (condition) =>
+              condition.needsAnswer &&
+              !pendingDeletedConditionIds({
+                checkId: item.analysis?.checkId || pendingSession?.id,
+                artifactId:
+                  item.analysis?.artifactId || item.upload?.artifactId,
+              }).includes(condition.conditionId),
           ).length,
         0,
       ),
@@ -2935,6 +2943,7 @@ class TodayView extends HTMLElement {
         title: problem.title,
       });
     }
+    void prepareCardDeletion(this, problem);
     openOverlayDialog(
       /** @type {HTMLDialogElement} */ (this._analysisDeleteDialog),
       "analysis-delete",

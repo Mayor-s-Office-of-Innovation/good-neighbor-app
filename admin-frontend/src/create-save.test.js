@@ -110,48 +110,41 @@ for (const kind of ["Provider", "Program"]) {
   });
 }
 
-for (const [staff, disabled] of [
-  ["", false],
-  ["__create__", false],
-  [encodeURIComponent("{}"), false],
-  [encodeURIComponent('{"existingStaff":{"userId":"one"}}'), true],
-]) {
-  test(`program creation rejects missing or loading staff (${staff}, ${disabled})`, async () => {
-    const source = readFileSync(new URL("./main.js", import.meta.url), "utf8");
-    const start = source.indexOf("  async createProgram(form)");
-    const end = source.indexOf("\n  }", start) + 4;
-    let calls = 0;
-    const Subject = vm.runInNewContext(`(class{${source.slice(start, end)}})`, {
-      location: { pathname: "/programs/new", search: "" },
-      window: { location: { search: "" } },
-      URLSearchParams,
-      FormData: class {
-        get(key) {
-          return key === "program-staff" ? staff : "New";
-        }
+test("program creation sends only name and provider, without requiring staff", async () => {
+  const source = readFileSync(new URL("./main.js", import.meta.url), "utf8");
+  const start = source.indexOf("  async createProgram(form)");
+  const end = source.indexOf("\n  }", start) + 4;
+  let payload;
+  const Subject = vm.runInNewContext(`(class{${source.slice(start, end)}})`, {
+    location: { pathname: "/programs/new", search: "" },
+    window: { location: { search: "" } },
+    URLSearchParams,
+    upsertRecord,
+    navigate() {},
+    FormData: class {
+      get(key) {
+        return key === "program-name" ? "New" : "provider";
+      }
+    },
+    actionFeedback: () => ({ success() {}, failure() {} }),
+    adminApi: {
+      createProgram: async (values) => {
+        payload = values;
+        return { program: { ...values, programId: "new" } };
       },
-      t: (key) => key,
-      actionFeedback: (key) =>
-        createActionFeedback(
-          key,
-          () => ({ close() {} }),
-          (key) => key,
-        ),
-      adminApi: {
-        createProgram: () => {
-          calls++;
-        },
-      },
-    });
-    await assert.rejects(
-      new Subject().createProgram({ querySelector: () => ({ disabled }) }),
-      /admin.programs.chooseStaff/,
-    );
-    assert.equal(calls, 0);
+    },
   });
-}
+  const app = new Subject();
+  app.state = { programs: [] };
+  await app.createProgram({});
+  assert.deepEqual(JSON.parse(JSON.stringify(payload)), {
+    name: "New",
+    providerId: "provider",
+  });
+});
 
 for (const scenario of [
+  "without manager",
   "success",
   "repair",
   "failure",
@@ -169,7 +162,9 @@ for (const scenario of [
       name: "New site",
       addressParts: { street: "Main" },
       publicContact: { email: "test@example.org" },
-      primaryContactUserId: "staff",
+      ...(scenario === "without manager"
+        ? {}
+        : { primaryContactUserId: "staff" }),
     };
     const membership = {
       membershipId: "confirmed",
@@ -185,7 +180,11 @@ for (const scenario of [
       upsertRecord,
       FormData: class {},
       formValue: (_, name) =>
-        ({ "site-manager-user-id": "staff" })[name] || name,
+        name === "site-manager-user-id"
+          ? scenario === "without manager"
+            ? ""
+            : "staff"
+          : name,
       controlValue: () => "test",
       addressPartsFromForm: () => savedSite.addressParts,
       formatAddressParts: () => "Main",
@@ -199,7 +198,9 @@ for (const scenario of [
         },
       }),
       adminApi: {
-        async createSite() {
+        async createSite(_providerId, payload) {
+          if (scenario === "without manager")
+            assert.equal("primaryContactUserId" in payload, false);
           if (scenario === "failure") throw new Error("save_failed");
           if (scenario === "navigated away") {
             location.pathname = "/providers";
@@ -259,6 +260,11 @@ for (const scenario of [
     await app.createSiteFromFlow({ dataset: {} });
     assert.equal(app.state.sites[0], existing);
     assert.equal(app.state.sites[1].siteId, savedSite.siteId);
+    if (scenario === "without manager") {
+      assert.equal(app.state.sites[1].managerMemberships, undefined);
+      assert.deepEqual(events, ["success", "/sites/new%2Fsite"]);
+      return;
+    }
     assert.deepEqual(app.state.sites[1].managerMemberships, [membership]);
     assert.equal(app.state.managerDirectoryLoaded, false);
     if (scenario === "existing membership")
@@ -335,3 +341,51 @@ for (const detached of [false, true]) {
     });
   }
 }
+
+test("renaming a program reloads a previously cached manager directory", async () => {
+  const source = readFileSync(new URL("./main.js", import.meta.url), "utf8");
+  const methods = [
+    "updateProgramDetails(form)",
+    "loadSiteManagers(force = false)",
+  ].map((signature) => {
+    const start = source.indexOf(`  async ${signature}`);
+    return source.slice(start, source.indexOf("\n  }", start) + 4);
+  });
+  const Subject = vm.runInNewContext(`(class { ${methods.join("\n")} })`, {
+    upsertRecord,
+    FormData: class {},
+    formValue: () => "Renamed Program",
+    syncDirtyForm() {},
+    actionFeedback: () => ({ success() {}, failure() {} }),
+    adminApi: {
+      updateProgram: async () => ({
+        program: { programId: "p", name: "Renamed Program" },
+      }),
+    },
+  });
+  const app = new Subject();
+  app.render = () => {};
+  app.state = {
+    program: { programId: "p", name: "Old Program" },
+    programs: [{ programId: "p", name: "Old Program" }],
+    capabilities: { createEntities: true },
+    managerDirectoryLoaded: true,
+    siteManagers: [{ programId: "p", programName: "Old Program" }],
+  };
+  app.managerDirectoryVersion = 4;
+  let loads = 0;
+  app.managerDirectoryLoader = {
+    pending: false,
+    load: async () => {
+      loads++;
+      app.state.siteManagers[0].programName = app.state.programs[0].name;
+    },
+  };
+  await app.loadSiteManagers();
+  assert.equal(loads, 0);
+  await app.updateProgramDetails({});
+  assert.equal(app.managerDirectoryVersion, 5);
+  await app.loadSiteManagers();
+  assert.equal(loads, 1);
+  assert.equal(app.state.siteManagers[0].programName, "Renamed Program");
+});

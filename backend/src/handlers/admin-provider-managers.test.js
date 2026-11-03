@@ -205,7 +205,7 @@ describe("Provider Manager administration", () => {
     expect(sendProviderManagerEnrollmentEmail).not.toHaveBeenCalled();
   });
 
-  it.each(["link", "code"])(
+  it.each(["link", "code", "screen"])(
     "records delivery evidence without requiring the grant to remain pending (%s)",
     async (deliveryMode) => {
       send
@@ -233,13 +233,37 @@ describe("Provider Manager administration", () => {
       const response = await call(
         createProviderManagerGrant,
         event(
-          { membershipId: "membership-1", deliveryMode },
+          {
+            membershipId: "membership-1",
+            deliveryMode: deliveryMode === "screen" ? "code" : deliveryMode,
+            ...(deliveryMode === "screen" ? { deliveryChannel: "screen" } : {}),
+          },
           { providerId: "provider-1" },
           "compliance-supervisor",
         ),
       );
 
       expect(response.statusCode).toBe(201);
+      if (deliveryMode === "screen") {
+        const body = JSON.parse(String(response.body));
+        expect(body.enrollmentCode).toMatch(/^[A-Z0-9]{6}$/);
+        expect(body.grant).toMatchObject({
+          deliveryMode: "code",
+          deliveryChannel: "screen",
+          status: "pending",
+          deliveryStatus: "issued",
+        });
+        expect(response.headers?.["cache-control"]).toBe("no-store");
+        expect(sendProviderManagerEnrollmentEmail).not.toHaveBeenCalled();
+        const writes = send.mock.calls.find(
+          ([c]) => c instanceof TransactWriteCommand,
+        )?.[0].input;
+        expect(JSON.stringify(writes)).not.toContain(body.enrollmentCode);
+        expect(
+          Date.parse(body.grant.expiresAt) - Date.parse(body.grant.createdAt),
+        ).toBe(24 * 60 * 60 * 1000);
+        return;
+      }
       const message = sendProviderManagerEnrollmentEmail.mock.calls[0][0];
       if (deliveryMode === "code") {
         expect(message.enrollmentCode).toMatch(/^[A-Z0-9]{6}$/);

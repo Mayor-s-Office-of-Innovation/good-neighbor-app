@@ -1,3 +1,4 @@
+import { deleteTaskGroup } from "../analysis/duplicates/deletion.js";
 import { statusConditionId } from "../domain/system-status.js";
 import { PutCommand } from "@aws-sdk/lib-dynamodb";
 import { getConfig } from "../config.js";
@@ -58,6 +59,11 @@ async function analyzerClient() {
  * @returns {import("aws-lambda").APIGatewayProxyResult}
  */
 function errorResponse(err) {
+  if (err instanceof Error && "statusCode" in err && err.statusCode === 409)
+    return jsonResponse(409, {
+      error: err.message,
+      code: "code" in err ? err.code : "group_changed",
+    });
   if (err instanceof AnalyzerError && err.code === ANALYZER_TIMEOUT_CODE) {
     // We stopped waiting; the analyzer may or may not have committed the
     // amendment. Nothing is recorded on our side (a reject receipt stays
@@ -234,7 +240,7 @@ export async function rejectAnalysisCondition(event) {
     }
   }
   const input =
-    /** @type {{ reason?: { key?: unknown, note?: unknown }, taskId?: unknown }} */ (
+    /** @type {{ reason?: { key?: unknown, note?: unknown }, taskId?: unknown, deletionTaskIds?: string[], deletionMode?: "selected" }} */ (
       body
     );
   /** @type {{ key: "not_a_problem" | "other", note?: string } | undefined} */
@@ -263,6 +269,25 @@ export async function rejectAnalysisCondition(event) {
   }
 
   try {
+    if (typeof input.taskId === "string" && input.taskId) {
+      if (
+        input.deletionTaskIds !== undefined &&
+        (!Array.isArray(input.deletionTaskIds) ||
+          !input.deletionTaskIds.every((id) => typeof id === "string"))
+      )
+        return jsonResponse(400, { error: "Invalid deletion scope" });
+      if (input.deletionMode !== undefined && input.deletionMode !== "selected")
+        return jsonResponse(400, { error: "Invalid deletion mode" });
+      const deleted = await deleteTaskGroup(dynamoTable, siteId, {
+        taskId: input.taskId,
+        checkId,
+        artifactId,
+        conditionId,
+        expectedTaskIds: input.deletionTaskIds,
+        mode: input.deletionMode,
+      });
+      return jsonResponse(200, { deleted });
+    }
     const context = await findAnalysisContext({
       tableName: dynamoTable,
       siteId,
@@ -438,7 +463,7 @@ export async function rejectAnalysisCondition(event) {
         : {}),
       reason: "analysis_condition_rejected",
     });
-    return jsonResponse(200, result);
+    return jsonResponse(200, { ...result, deleted: [] });
   } catch (err) {
     return errorResponse(err);
   }

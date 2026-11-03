@@ -313,7 +313,14 @@ export const adminApi = {
   ) =>
     adminFetch(
       `/admin/v1/providers/${encodeURIComponent(providerId)}/manager-grants`,
-      { method: "POST", body: JSON.stringify({ membershipId, deliveryMode }) },
+      {
+        method: "POST",
+        body: JSON.stringify({
+          membershipId,
+          deliveryMode: deliveryMode === "screen" ? "code" : deliveryMode,
+          ...(deliveryMode === "screen" ? { deliveryChannel: "screen" } : {}),
+        }),
+      },
     ),
   cancelProviderManagerGrant: (providerId, grantId) =>
     adminFetch(
@@ -439,7 +446,11 @@ export const adminApi = {
   createManagerGrant: (siteId, membershipId, deliveryMode = "link") =>
     adminFetch(`/admin/v1/sites/${encodeURIComponent(siteId)}/manager-grants`, {
       method: "POST",
-      body: JSON.stringify({ membershipId, deliveryMode }),
+      body: JSON.stringify({
+        membershipId,
+        deliveryMode: deliveryMode === "screen" ? "code" : deliveryMode,
+        ...(deliveryMode === "screen" ? { deliveryChannel: "screen" } : {}),
+      }),
     }),
   cancelManagerGrant: (siteId, grantId) =>
     adminFetch(

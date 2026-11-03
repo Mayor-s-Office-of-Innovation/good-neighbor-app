@@ -2831,3 +2831,114 @@ it.each([
     }
   },
 );
+
+it.each(["single", "duplicate", "group"])(
+  "keeps the To do count stable through %s deletion, refresh, and Undo",
+  async (kind) => {
+    freezeClock();
+    const { stageDeletion } = await import("../state/pending-deletions.js");
+    const view = await mount("?filter=todo");
+    setDuplicateUiSite({});
+    const makeTask = (id) => ({
+      taskId: id,
+      checkId: `check-${id}`,
+      conditionId: `condition-${id}`,
+      sourceArtifactIds: [`artifact-${id}`],
+      status: "open",
+      createdAt: NEWER_TODAY,
+    });
+    const tasks = Array.from({ length: 33 }, (_, i) =>
+      makeTask(`count-${kind}-${i}`),
+    );
+    const original = {
+      ...makeTask(`handled-${kind}`),
+      status: "completed",
+      completedAt: NEWER_TODAY,
+    };
+    const hidden = Array.from({ length: 9 }, (_, i) =>
+      makeTask(`hidden-${kind}-${i}`),
+    );
+    view._duplicateLinks = new Map(
+      hidden.map((task) => [task.taskId, { state: "matched", original }]),
+    );
+    if (kind !== "single") {
+      view._duplicateLinks.set(tasks[1].taskId, {
+        state: "matched",
+        original: tasks[0],
+      });
+      view._duplicateLinks.set(tasks[2].taskId, {
+        state: "matched",
+        original: tasks[0],
+      });
+    }
+    const model = { checks: [], tasks: [...tasks, ...hidden] };
+    const results = vi.spyOn(view, "_homeResults").mockReturnValue("");
+    const count = () => {
+      view._render(model);
+      return /** @type {any} */ (results.mock.calls.at(-1)[0]).tabCounts.todo;
+    };
+    expect(count()).toBe(33);
+    const removed =
+      kind === "group"
+        ? tasks.slice(0, 3)
+        : [tasks[kind === "duplicate" ? 1 : 0]];
+    const targets = removed.map((task) => ({
+      taskId: task.taskId,
+      checkId: task.checkId,
+      artifactId: task.sourceArtifactIds[0],
+      conditionId: task.conditionId,
+    }));
+    const pending = stageDeletion(
+      { ...targets[0], deletionTargets: targets },
+      vi.fn(),
+    );
+    expect(count()).toBe(33 - removed.length);
+    // Repeated paints while relationship refresh is pending retain the same
+    // projection: nine handled observations must never become countable.
+    expect(count()).toBe(33 - removed.length);
+    pending.undo();
+    expect(count()).toBe(33);
+  },
+);
+
+it("decrements a pending-question badge during deletion and restores it on Undo", async () => {
+  freezeClock();
+  const { stageDeletion } = await import("../state/pending-deletions.js");
+  const view = await mount("?filter=todo");
+  const problem = {
+    checkId: "pending-check",
+    artifactId: "pending-artifact",
+    conditionId: "pending-condition",
+  };
+  const model = {
+    tasks: [],
+    checks: [],
+    pendingSession: {
+      id: problem.checkId,
+      status: "capture-complete",
+      items: [
+        {
+          id: "pending-item",
+          analysis: {
+            status: "analyzed",
+            checkId: problem.checkId,
+            artifactId: problem.artifactId,
+            conditions: [
+              { conditionId: problem.conditionId, needsAnswer: true },
+            ],
+          },
+        },
+      ],
+    },
+  };
+  const results = vi.spyOn(view, "_homeResults").mockReturnValue("");
+  const count = () => {
+    view._render(model);
+    return /** @type {any} */ (results.mock.calls.at(-1)[0]).tabCounts.todo;
+  };
+  expect(count()).toBe(1);
+  const pending = stageDeletion(problem, vi.fn());
+  expect(count()).toBe(0);
+  pending.undo();
+  expect(count()).toBe(1);
+});

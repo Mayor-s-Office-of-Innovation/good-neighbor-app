@@ -89,13 +89,18 @@ vi.mock("../lib/principal.js", () => ({
   deriveSiteId: () => "site",
   deriveActorId: () => "actor",
 }));
-vi.mock("../analysis/duplicates/links.js", () => ({
+vi.mock("../analysis/duplicates/links.js", async (importOriginal) => ({
+  ...(await importOriginal()),
   sharedActionTarget: async (_table, _site, taskId) => ({
     taskId: taskId === "duplicate" ? "root" : taskId,
     duplicateChecks: [],
   }),
 }));
 vi.mock("../analysis/guidance/guidance-store.js", () => ({
+  conditionDeletionKey: (site, input, task) => ({
+    pk: `SITE#${site}`,
+    sk: `ISSUE_DELETION#${task.checkId}:${task.sourceArtifactIds[0]}:${task.conditionId}`,
+  }),
   executeTaskCreatedAppActions: async (options) => {
     state.taskCreatedRuns.push(options);
     return options.taskItems;
@@ -172,6 +177,7 @@ it("returns the full group and distinct category actions from either member", as
   const response = await getTaskDetails(event("duplicate"));
   const body = JSON.parse(response.body);
   expect(body.rootTaskId).toBe("root");
+  expect(body).not.toHaveProperty("deletion");
   expect(body.members.map((member) => member.taskId)).toEqual([
     "root",
     "duplicate",
@@ -183,6 +189,51 @@ it("returns the full group and distinct category actions from either member", as
     "Pick up the litter",
     "File 311 ticket",
   ]);
+});
+
+it.each([undefined, "unsupported-policy"])(
+  "returns deletion scope independently of policy version %s",
+  async (policyVersion) => {
+    put(
+      task("standalone", {
+        policyVersion,
+        checkId: "check",
+        conditionId: "condition",
+        sourceArtifactIds: ["artifact"],
+      }),
+    );
+    const response = await getTaskDetails({
+      ...event("standalone"),
+      queryStringParameters: { view: "deletion" },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({
+      deletion: {
+        kind: "single",
+        targets: [
+          {
+            taskId: "standalone",
+            originalTaskId: "standalone",
+            checkId: "check",
+            artifactId: "artifact",
+            conditionId: "condition",
+          },
+        ],
+      },
+    });
+    await expect(getTaskDetails(event("standalone"))).rejects.toMatchObject({
+      name: "CatalogUnavailable",
+    });
+  },
+);
+
+it("fails closed when deletion-only scope cannot be validated", async () => {
+  const response = await getTaskDetails({
+    ...event("root"),
+    queryStringParameters: { view: "deletion" },
+  });
+  expect(response.statusCode).toBe(409);
+  expect(JSON.parse(response.body).deletion).toBeUndefined();
 });
 
 it("maps equivalent same-label rules to their canonical selectable action", async () => {

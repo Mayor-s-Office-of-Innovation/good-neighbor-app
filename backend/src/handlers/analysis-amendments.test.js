@@ -1,5 +1,4 @@
 import {
-  BatchGetCommand,
   GetCommand,
   PutCommand,
   TransactWriteCommand,
@@ -279,7 +278,39 @@ describe("analysis amendments (check/artifact-addressed)", () => {
     ).toBe(false);
   });
 
-  it("retires a just-published task through strongly consistent primary-key reads", async () => {
+  it.each([undefined, [], [""], ["task-fresh", "task-fresh"]])(
+    "rejects task-backed deletion without valid confirmation %j",
+    async (deletionTaskIds) => {
+      send.mockImplementation(async (command) => {
+        if (command.input.Key?.sk === "TASK#task-fresh")
+          return {
+            Item: {
+              pk: "SITE#site-1",
+              sk: "TASK#task-fresh",
+              taskId: "task-fresh",
+              checkId: "chk_01",
+              conditionId: "chk_01-art_1-001-litter",
+              sourceArtifactIds: ["art_1"],
+              status: "open",
+            },
+          };
+        return {};
+      });
+      const response = await invoke(
+        amendEvent({ body: { taskId: "task-fresh", deletionTaskIds } }),
+        rejectAnalysisCondition,
+      );
+      expect(response.statusCode).toBe(409);
+      expect(
+        send.mock.calls.some(
+          ([command]) => command instanceof TransactWriteCommand,
+        ),
+      ).toBe(false);
+      expect(analyzeReject).not.toHaveBeenCalled();
+    },
+  );
+
+  it("dismisses a task-backed card atomically using strongly consistent identity", async () => {
     const task = {
       pk: "SITE#site-1",
       sk: "TASK#task-fresh",
@@ -289,55 +320,43 @@ describe("analysis amendments (check/artifact-addressed)", () => {
       severity: 3,
       conditionId: "chk_01-art_1-001-litter",
       checkId: "chk_01",
-      assessmentId: "chk_01-art_1",
+      sourceArtifactIds: ["art_1"],
+      updatedAt: "2026-11-01T12:00:00Z",
     };
-    send
-      .mockResolvedValueOnce({ Item: analysisItem() })
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({ Item: task })
-      .mockResolvedValueOnce({
-        Item: {
-          conditionId: "chk_01-art_1-001-litter",
-          checkId: "chk_01",
-          taskIds: ["task-fresh"],
-        },
-      })
-      .mockResolvedValueOnce({ Responses: { "gnp-test-app": [task] } })
-      .mockResolvedValueOnce({});
-
+    send.mockImplementation(async (command) => {
+      if (command.input.Key?.sk === task.sk) return { Item: task };
+      if (command.input.KeyConditionExpression) return { Items: [] };
+      return {};
+    });
     const res = await invoke(
       amendEvent({
-        body: {
-          reason: { key: "not_a_problem" },
-          taskId: "task-fresh",
-        },
+        body: { taskId: "task-fresh", deletionTaskIds: ["task-fresh"] },
       }),
       rejectAnalysisCondition,
     );
-
     expect(res.statusCode).toBe(200);
-    expect(send.mock.calls[4][0]).toMatchObject({
-      input: {
-        Key: { pk: "SITE#site-1", sk: "TASK#task-fresh" },
-        ConsistentRead: true,
-      },
+    expect(send.mock.calls[0][0]).toMatchObject({
+      input: { Key: { pk: "SITE#site-1", sk: task.sk }, ConsistentRead: true },
     });
-    expect(send.mock.calls[5][0]).toMatchObject({
-      input: {
-        Key: {
-          pk: "SITE#site-1",
-          sk: "ASSESSMENT#chk_01-art_1#COND#chk_01-art_1-001-litter",
-        },
-        ConsistentRead: true,
-      },
-    });
-    expect(send.mock.calls[6][0]).toBeInstanceOf(BatchGetCommand);
-    expect(send.mock.calls[7][0]).toBeInstanceOf(TransactWriteCommand);
-    expect(send.mock.calls[7][0].input.TransactItems[0].Put.Item).toMatchObject(
-      { taskId: "task-fresh", status: "superseded" },
+    const transaction = /** @type {any} */ (
+      send.mock.calls
+        .map(([command]) => command)
+        .find((command) => command instanceof TransactWriteCommand)
     );
+    expect(transaction.input.TransactItems[0].Update.Key).toEqual({
+      pk: "SITE#site-1",
+      sk: "TASK#task-fresh",
+    });
+    expect(
+      Object.values(
+        transaction.input.TransactItems[0].Update.ExpressionAttributeValues,
+      ),
+    ).toContain("superseded");
+    expect(transaction.input.TransactItems[1].Put.Item).toMatchObject({
+      state: "confirmed",
+      deletionOrigin: "app",
+    });
+    expect(analyzeReject).not.toHaveBeenCalled();
   });
 
   it("preserves confirmed category and upstream time across a failed cleanup and next-day retry", async () => {
