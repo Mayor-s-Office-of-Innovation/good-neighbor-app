@@ -1197,7 +1197,7 @@ describe("card redesign", () => {
   };
   it("shows the new rubric label on an existing to-do card with one edit target and an X", () => {
     const card = taskAnalysisCard({
-      task,
+      task: { ...task, status: "open", completedAt: undefined },
       action: { kind: "done", label: "We picked this up" },
       statusLabel: "",
     });

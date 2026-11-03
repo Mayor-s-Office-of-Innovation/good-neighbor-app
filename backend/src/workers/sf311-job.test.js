@@ -892,3 +892,37 @@ it("files a replacement silent service once and retains both tickets for closure
   expect(execute.mock.calls[1][0][0].code).toBe("close_311_ticket");
   expect(execute.mock.calls[1][1].priorResults).toEqual([old, next]);
 });
+
+it("finishes a queued initial filing using the original action and description after an edit", async () => {
+  const original = globalThis.structuredClone(task.appActions);
+  task.silent311Snapshot = {
+    appActions: original,
+    description: "Original observation",
+  };
+  task.actionOverride = { ruleId: "changed" };
+  task.appActions = [
+    {
+      code: "create_311_ticket",
+      payload: {
+        executionTrigger: "task_created",
+        serviceCodeOrAction: "different",
+      },
+    },
+  ];
+  task.description = "Corrected observation";
+  await runJob(message);
+  expect(execute.mock.calls[0][0]).toEqual(original);
+  expect(execute.mock.calls[0][1].task.description).toBe(
+    "Original observation",
+  );
+  expect(task.description).toBe("Corrected observation");
+});
+
+it("does not create a silent ticket for an edited action on a later resolution job", async () => {
+  task.actionOverride = { ruleId: "changed" };
+  task.silent311Snapshot = {
+    appActions: globalThis.structuredClone(task.appActions),
+  };
+  await runJob({ ...message, jobSk: "SF311_JOB#task#resolved-edit" });
+  expect(execute).not.toHaveBeenCalled();
+});

@@ -265,7 +265,11 @@ describe("createAnalyzerClient", () => {
       fetchImpl,
     });
     /** @type {Omit<import("./analyzer-client.js").ImageMedia, "type">} */
-    const image = { content_type: "image/jpeg", base64: "aW1hZ2U=" };
+    const image = {
+      content_type: "image/jpeg",
+      base64: "aW1hZ2U=",
+      metadata: { description: "Saved description" },
+    };
 
     await client.classifyEvidence({
       classifierId: "bulky-items",

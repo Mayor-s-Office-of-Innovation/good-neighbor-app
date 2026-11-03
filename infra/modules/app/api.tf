@@ -67,6 +67,7 @@ locals {
     "POST /v1/duplicates:batch",
     "POST /v1/tasks/{taskId}/duplicate:separate",
     "GET /v1/tasks/{taskId}/details",
+    "GET /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}",
     "PATCH /v1/tasks/{taskId}/action",
     "POST /v1/tasks/{taskId}/custom-action",
     "POST /v1/311-requests:batch",

@@ -89,6 +89,8 @@ export function projectDuplicateTasks(tasks, links, now = Date.now()) {
       ? {}
       : Object.fromEntries(
           [
+            "category",
+            "actionOverride",
             "buttons",
             "appActions",
             "guidance",

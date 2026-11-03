@@ -734,14 +734,13 @@ export function submitConditionAnswers(assessmentId, conditionId, body) {
 /**
  * POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}
  *
- * Addressed by the artifact's own coordinates (the client holds checkId +
- * artifactId on every evidence item); the backend reads the analyzer's
- * analysisId off the stored ANALYSIS# item, so the client never supplies it.
+ * Correct generated-card text in the app's stored condition and tasks.
+ * This does not invoke the analyzer or re-evaluate guidance.
  * @param {string} checkId
  * @param {string} artifactId
  * @param {string} conditionId
- * @param {{ description: string, language?: string, caller?: { request_id?: string } }} body
- * @returns {Promise<{ analysis_id: string, condition: any, assessment: any }>}
+ * @param {{ description: string, title?:string, category?:string, ruleId?:string, revision?:number, requestId?:string, customAction?:{text:string,resolved:boolean}, language?: string, caller?: { request_id?: string } }} body
+ * @returns {Promise<{ description: string, condition: any, task?: any, assessment?:any }>}
  */
 export function editAnalysisCondition(checkId, artifactId, conditionId, body) {
   return request(
@@ -1854,14 +1853,25 @@ export function getTaskDetails(taskId, { signal } = {}) {
   });
 }
 
-/** @param {string} taskId @param {string} ruleId */
-export function updateTaskAction(taskId, ruleId) {
+/** @param {string} taskId
+ * @param {string} [ruleId] Omit for a description-only correction.
+ * @param {string} [description]
+ * @param {string} [requestId] Stable across a retry of the same draft.
+ * @param {{title?:string, category?:string}} [fields]
+ */
+export function updateTaskAction(
+  taskId,
+  ruleId,
+  description,
+  requestId,
+  fields = {},
+) {
   return request("PATCH", `/v1/tasks/${encodeURIComponent(taskId)}/action`, {
-    body: { ruleId },
+    body: { ...fields, ruleId, description, requestId },
   });
 }
 
-/** @param {string} taskId @param {{text:string,resolved:boolean}} body */
+/** @param {string} taskId @param {{text:string,resolved:boolean,description?:string,requestId?:string,title?:string,category?:string}} body */
 export function recordCustomTaskAction(taskId, body) {
   return request(
     "POST",
@@ -1912,4 +1922,12 @@ export function askSupport({ question, locale, signal }) {
 export function listPendingGuidance(nextToken = null) {
   const query = nextToken ? `?nextToken=${encodeURIComponent(nextToken)}` : "";
   return request("GET", `/v1/guidance/pending${query}`);
+}
+
+/** @param {Record<string,any>} problem */
+export function getConditionDetails(problem) {
+  return request(
+    "GET",
+    `/v1/checks/${encodeURIComponent(problem.checkId)}/artifacts/${encodeURIComponent(problem.artifactId)}/conditions/${encodeURIComponent(problem.conditionId)}`,
+  );
 }

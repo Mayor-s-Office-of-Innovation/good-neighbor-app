@@ -2468,3 +2468,111 @@ it.each([
     ).toEqual(["deleted", "live"]);
   }
 });
+
+describe("manual clarification replacement", () => {
+  const assessment = {
+    pk: "SITE#site-1",
+    sk: "ASSESSMENT#manual",
+    assessmentId: "manual",
+    assessmentRevision: 3,
+    policyVersion: activeCatalog().policyVersion,
+    summary: { totalConditions: 1, conditionsNeedAnswer: 1 },
+  };
+  const condition = {
+    pk: "SITE#site-1",
+    sk: "ASSESSMENT#manual#COND#one",
+    conditionId: "one",
+    assessmentId: "manual",
+    status: "needs_answer",
+    policyVersion: activeCatalog().policyVersion,
+    analyzerCategory: "Litter",
+    canonicalCategory: "Litter",
+    severity: 1,
+    description: "Original synthetic description",
+    taskIds: [],
+    needsAnswer: { key: "test" },
+  };
+  const options = {
+    tableName: "table",
+    siteId: "site-1",
+    assessmentId: "manual",
+    conditionId: "one",
+    answers: {},
+    idFactory: () => "manual-task",
+  };
+  beforeEach(() => send.mockReset());
+  it.each([false, true])(
+    "atomically retires the question without silent filing (custom=%s)",
+    async (custom) => {
+      send
+        .mockResolvedValueOnce({ Item: assessment })
+        .mockResolvedValueOnce({ Item: condition });
+      mockTaskShortIdAllocation({
+        providerShortCode: "MOI",
+        siteShortCode: "CIT",
+        nextTaskDisplayNumber: 43,
+      });
+      send.mockResolvedValue({});
+      const result = await answerCondition({
+        ...options,
+        manualEdit: {
+          revision: 3,
+          requestId: "manual-edit",
+          ruleId: "LITTER-2",
+          title: "Corrected title",
+          description: "Corrected observation",
+          ...(custom
+            ? { customAction: { text: "Asked a teammate", resolved: false } }
+            : {}),
+        },
+      });
+      expect(result.conditionItem).toMatchObject({
+        status: "tasks_created",
+        needsAnswer: null,
+        userFriendlyLabel: "Corrected title",
+        titleEdited: true,
+      });
+      expect(result.assessmentItem.summary).toMatchObject({
+        conditionsNeedAnswer: 0,
+        conditionsResolvedToTasks: 1,
+      });
+      expect(result.taskItem).toMatchObject({
+        userFriendlyLabel: "Corrected title",
+        description: "Corrected observation",
+        titleEdited: true,
+        status: custom ? "in_progress" : "open",
+      });
+      if (custom) expect(result.taskItem?.guidance).toBe("");
+      const tx = send.mock.calls.find(
+        ([command]) => command instanceof TransactWriteCommand,
+      )?.[0].input.TransactItems;
+      expect(
+        tx.some(
+          (/** @type {any} */ entry) =>
+            entry.Put?.Item.entityType === "SF311_OUTBOX",
+        ),
+      ).toBe(false);
+      expect(tx[0].Put.ExpressionAttributeValues[":priorRevision"]).toBe(3);
+    },
+  );
+  it("rejects a stale editor after another answer or edit", async () => {
+    send
+      .mockResolvedValueOnce({ Item: { ...assessment, assessmentRevision: 4 } })
+      .mockResolvedValueOnce({ Item: condition });
+    await expect(
+      answerCondition({
+        ...options,
+        manualEdit: {
+          revision: 3,
+          ruleId: "LITTER-2",
+          description: "Corrected description",
+        },
+      }),
+    ).rejects.toMatchObject({ name: "AssessmentRevisionConflict" });
+    expect(
+      send.mock.calls.some(
+        ([command]) => command instanceof TransactWriteCommand,
+      ),
+    ).toBe(false);
+  });
+});

@@ -40,7 +40,10 @@ export function problemFromCard(card) {
     actionKind: card.getAttribute("data-action-kind") || "",
     title:
       card.getAttribute("data-card-title") || t("card.title.problemFallback"),
-    description: card.getAttribute("data-card-description") || "",
+    description:
+      card.getAttribute("data-card-edit-description") ||
+      card.getAttribute("data-card-description") ||
+      "",
   };
 }
 

@@ -50,9 +50,6 @@ import {
   showActionSaveErrorToast,
   showAnswerSaveErrorToast,
   showDeleteErrorToast,
-  showEditErrorToast,
-  showEditRefreshErrorToast,
-  showReanalysisErrorToast,
   showSiteCatalogErrorToast,
   showSiteSwitchBlockedToast,
   showSiteSwitchErrorToast,
@@ -81,15 +78,11 @@ import {
   listChecks,
   listTasks,
   submitConditionAnswers,
-  editAnalysisCondition,
   get311RequestDetails,
   getAssessmentGuidance,
 } from "../services/api.js";
 import {
   answerAnalysisQuestion,
-  analyzeNoIssueDescriptionEdit,
-  refreshEvidenceAnalysis,
-  refreshRecoveredQuestion,
   retryEvidenceItem,
   removeEvidenceItem,
 } from "../services/photo-analysis.js";
@@ -1747,20 +1740,9 @@ class TodayView extends HTMLElement {
     this._analysisSuccessDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector(":scope > .home > #analysis-success-dialog")
     );
-    this._analysisEditDialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector(":scope > .home > #analysis-edit-dialog")
-    );
-    this._analysisEditDescription = /** @type {HTMLTextAreaElement | null} */ (
-      this.querySelector(
-        ":scope > .home > #analysis-edit-dialog #analysis-edit-description",
-      )
-    );
     this.querySelector(
       ":scope > .home > #analysis-delete-dialog #analysis-delete-confirm",
     )?.addEventListener("click", () => this._confirmDeleteProblem());
-    this.querySelector(
-      ":scope > .home > #analysis-edit-dialog #analysis-edit-save",
-    )?.addEventListener("click", () => this._saveProblemEdit());
     this.querySelectorAll(":scope > .home > .analysis-dialog").forEach(
       (dialog) => {
         dialog.addEventListener("click", (e) => {
@@ -2942,14 +2924,18 @@ class TodayView extends HTMLElement {
   }
 
   _openEditProblem(problem) {
-    this._activeProblem = problem;
-    this._setDialogError("analysis-edit-error", "");
-    if (this._analysisEditDescription) {
-      this._analysisEditDescription.value = problem.description;
-    }
-    openOverlayDialog(
-      /** @type {HTMLDialogElement} */ (this._analysisEditDialog),
-      "analysis-edit",
+    const trigger = document.activeElement;
+    void import("./task-details-dialog.js").then(
+      async ({ openDescriptionDetails }) => {
+        const itemId = await this._localQuestionItemId(problem.itemId);
+        openDescriptionDetails(
+          { ...problem, itemId: itemId || problem.itemId },
+          trigger,
+          () => {
+            if (this.isConnected) return this.connectedCallback();
+          },
+        );
+      },
     );
   }
 
@@ -3006,110 +2992,6 @@ class TodayView extends HTMLElement {
       showDeleteErrorToast();
     } finally {
       this._deletingProblem = false;
-      setBusy(button, false);
-    }
-  }
-
-  async _saveProblemEdit() {
-    const problem = this._activeProblem;
-    if (!problem) return;
-    const description = this._analysisEditDescription?.value?.trim() || "";
-    if (description.length < 5) {
-      this._setDialogError(
-        "analysis-edit-error",
-        t("analysis.editDialog.tooShort"),
-      );
-      return;
-    }
-    if (description === problem.description.trim()) {
-      this._analysisEditDialog?.close();
-      this._activeProblem = null;
-      return;
-    }
-    if (!problem.conditionId) {
-      if (!problem.itemId) {
-        this._setDialogError(
-          "analysis-edit-error",
-          missingConditionMessage(problem, "edited"),
-        );
-        return;
-      }
-      const button = this.querySelector(
-        ":scope > .home > #analysis-edit-dialog #analysis-edit-save",
-      );
-      setBusy(button, true);
-      this._setDialogError("analysis-edit-error", "");
-      try {
-        await analyzeNoIssueDescriptionEdit(problem.itemId, description);
-        this._analysisEditDialog?.close();
-        this._activeProblem = null;
-        await this.connectedCallback();
-      } catch (err) {
-        console.error("text-only no-issue reanalysis failed", err);
-        showReanalysisErrorToast();
-      } finally {
-        setBusy(button, false);
-      }
-      return;
-    }
-    if (!problem.checkId || !problem.artifactId || !problem.conditionId) {
-      this._setDialogError(
-        "analysis-edit-error",
-        missingConditionMessage(problem, "edited"),
-      );
-      return;
-    }
-
-    const button = this.querySelector(
-      ":scope > .home > #analysis-edit-dialog #analysis-edit-save",
-    );
-    setBusy(button, true);
-    this._setDialogError("analysis-edit-error", "");
-    try {
-      const result = await editAnalysisCondition(
-        problem.checkId,
-        problem.artifactId,
-        problem.conditionId,
-        {
-          description,
-          language: getLocale(),
-          caller: { request_id: this._requestId("edit", problem) },
-        },
-      );
-      const localItemId = await this._localQuestionItemId(problem.itemId);
-      if (localItemId) {
-        try {
-          await refreshEvidenceAnalysis(localItemId, result);
-        } catch (error) {
-          console.error("refresh after saved edit failed", error);
-          this._analysisEditDialog?.close();
-          this._activeProblem = null;
-          showEditRefreshErrorToast();
-          return;
-        }
-      }
-      const recovered = (this._homeModel?.pendingQuestions || []).find(
-        (item) => item.id === problem.itemId,
-      );
-      if (recovered && !localItemId) {
-        const guidance = await refreshRecoveredQuestion(recovered, result);
-        for (const task of guidance.tasks || []) {
-          this._confirmedTasks ??= new Map();
-          this._confirmedTasks.set(task.taskId, task);
-        }
-      }
-      this._analysisEditDialog?.close();
-      this._activeProblem = null;
-      await this.connectedCallback();
-    } catch (err) {
-      console.error("edit analysis condition failed", err);
-      if (err?.status === 404 && err?.body?.code === "unknown_analysis") {
-        this._setDialogError(
-          "analysis-edit-error",
-          t("analysis.editDialog.expired"),
-        );
-      } else showEditErrorToast();
-    } finally {
       setBusy(button, false);
     }
   }

@@ -42,3 +42,27 @@ describe("analyzerTranslation", () => {
     ).toBeUndefined();
   });
 });
+
+it("never shows a stale translated description over a user correction", () => {
+  expect(
+    analyzerTranslation(
+      {
+        descriptionEdited: true,
+        translations: { es: { description: "Old translation" } },
+      },
+      "description",
+    ),
+  ).toBeUndefined();
+});
+
+it("does not display stale translated titles after a title correction", () => {
+  expect(
+    analyzerTranslation(
+      {
+        titleEdited: true,
+        translations: { es: { user_friendly_label: "Título anterior" } },
+      },
+      "user_friendly_label",
+    ),
+  ).toBeUndefined();
+});

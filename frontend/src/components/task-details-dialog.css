@@ -18,6 +18,8 @@
 
 .task-details__sheet {
   box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   max-height: calc(100dvh - 32px);
   padding: 32px 24px 42px;
   overflow-y: auto;
@@ -74,7 +76,7 @@
 .task-details__members {
   display: grid;
   gap: 0;
-  margin: 0 0 18px;
+  margin: 0 0 32px;
   padding: 0;
   list-style: none;
 }
@@ -89,6 +91,7 @@
 .task-details__thumbnail {
   width: 75px;
   height: 75px;
+  overflow: hidden;
   border-radius: 10px;
   object-fit: cover;
   background: var(--wa-color-neutral-fill-quiet);
@@ -176,4 +179,70 @@
   .task-details__sheet {
     max-height: calc(100dvh - 24px);
   }
+}
+
+.task-details__select {
+  margin-top: 20px;
+}
+.task-details__save {
+  width: 100%;
+  justify-content: center;
+  margin-top: 24px;
+}
+.task-details__discard {
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr);
+  display: grid;
+  gap: 16px;
+}
+.task-details__discard h2,
+.task-details__discard p {
+  margin: 0;
+}
+
+.task-details [data-category] {
+  display: block;
+  margin-bottom: 20px;
+}
+
+.task-details__header [data-title] {
+  display: block;
+  min-height: 1.2em;
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+  cursor: text;
+}
+
+.task-details__header [data-title]:focus-visible {
+  outline: var(--wa-focus-ring);
+  outline-offset: 5px;
+}
+
+.task-details__thumbnail img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  object-fit: cover;
+}
+
+.task-details__header [data-title] {
+  padding: 10px 12px;
+  border: 1px solid var(--wa-color-neutral-border-normal);
+  border-radius: 10px;
+  background: var(--wa-color-neutral-fill-quiet);
+}
+
+.task-details__discard > button {
+  box-sizing: border-box;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  justify-self: stretch;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  line-height: 1.2;
+  white-space: normal;
+  text-align: center;
 }

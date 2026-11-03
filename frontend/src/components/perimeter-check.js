@@ -31,12 +31,9 @@ import {
   show311ErrorToast,
   showActionSaveErrorToast,
   showDeleteErrorToast,
-  showEditErrorToast,
-  showEditRefreshErrorToast,
-  showReanalysisErrorToast,
 } from "../state/toasts.js";
 import { requestId, setBusy, setDialogError } from "../lib/dialog-controls.js";
-import { getLocale, t } from "../i18n/i18n.js";
+import { t } from "../i18n/i18n.js";
 import {
   missingConditionMessage,
   problemFromCard,
@@ -56,14 +53,11 @@ import {
 } from "../screen-focus.js";
 import { mark } from "../services/instrument.js";
 import {
-  analyzeNoIssueDescriptionEdit,
   analyzeEvidenceItem,
   shouldResumeEvidenceItem,
   retryEvidenceItem,
-  refreshEvidenceAnalysis,
   removeEvidenceItem,
 } from "../services/photo-analysis.js";
-import { editAnalysisCondition } from "../services/api.js";
 import {
   expectedArtifactCountForCheck,
   finalizeCaptureScorecardInBackground,
@@ -151,10 +145,6 @@ class PerimeterCheck extends HTMLElement {
     this._analysisProgressDialog = this.querySelector(
       "#analysis-progress-dialog",
     );
-    this._analysisEditDialog = this.querySelector("#analysis-edit-dialog");
-    this._analysisEditDescription = this.querySelector(
-      "#analysis-edit-description",
-    );
 
     this.querySelector("#cancel")?.addEventListener("click", () =>
       this._cancel(),
@@ -210,21 +200,16 @@ class PerimeterCheck extends HTMLElement {
     gallery.addEventListener("change", () => this._onFilePicked(gallery));
     this._fileInput.oncancel = gallery.oncancel = clearCameraOpen;
 
-    [
-      this._analysisDeleteDialog,
-      this._analysisSuccessDialog,
-      this._analysisEditDialog,
-    ].forEach((dialog) => {
-      dialog?.addEventListener("click", (e) => {
-        if (e.target === dialog) dialog.close();
-      });
-    });
+    [this._analysisDeleteDialog, this._analysisSuccessDialog].forEach(
+      (dialog) => {
+        dialog?.addEventListener("click", (e) => {
+          if (e.target === dialog) dialog.close();
+        });
+      },
+    );
     this.querySelector("#analysis-delete-confirm")?.addEventListener(
       "click",
       () => this._confirmDeleteProblem(),
-    );
-    this.querySelector("#analysis-edit-save")?.addEventListener("click", () =>
-      this._saveProblemEdit(),
     );
     this.querySelector("#analysis-success-undo")?.addEventListener(
       "click",
@@ -416,14 +401,11 @@ class PerimeterCheck extends HTMLElement {
   }
 
   _openEditProblem(problem) {
-    this._activeProblem = problem;
-    this._setDialogError("analysis-edit-error", "");
-    if (this._analysisEditDescription) {
-      this._analysisEditDescription.value = problem.description;
-    }
-    openOverlayDialog(
-      /** @type {HTMLDialogElement} */ (this._analysisEditDialog),
-      "analysis-edit",
+    const trigger = document.activeElement;
+    void import("./task-details-dialog.js").then(({ openDescriptionDetails }) =>
+      openDescriptionDetails(problem, trigger, () => {
+        if (this.isConnected) return this._render();
+      }),
     );
   }
 
@@ -471,81 +453,6 @@ class PerimeterCheck extends HTMLElement {
 
   _deleteProblemLocally(problem) {
     if (rejectConditionLocally(problem) && this.isConnected) this._render();
-  }
-
-  async _saveProblemEdit() {
-    const problem = this._activeProblem;
-    if (!problem) return;
-    const description = this._analysisEditDescription?.value?.trim() || "";
-    if (description.length < 5) {
-      this._setDialogError(
-        "analysis-edit-error",
-        t("analysis.editDialog.tooShort"),
-      );
-      return;
-    }
-    if (description === problem.description.trim()) {
-      this._analysisEditDialog?.close();
-      this._activeProblem = null;
-      return;
-    }
-    if (!problem.conditionId) {
-      const button = this.querySelector("#analysis-edit-save");
-      setBusy(button, true);
-      this._setDialogError("analysis-edit-error", "");
-      try {
-        await analyzeNoIssueDescriptionEdit(problem.itemId, description);
-        this._analysisEditDialog?.close();
-        this._activeProblem = null;
-        this._render();
-      } catch (err) {
-        console.error("text-only no-issue reanalysis failed", err);
-        showReanalysisErrorToast();
-      } finally {
-        setBusy(button, false);
-      }
-      return;
-    }
-    if (!problem.checkId || !problem.artifactId) {
-      this._setDialogError(
-        "analysis-edit-error",
-        missingConditionMessage(problem, "edited"),
-      );
-      return;
-    }
-
-    const button = this.querySelector("#analysis-edit-save");
-    setBusy(button, true);
-    this._setDialogError("analysis-edit-error", "");
-    try {
-      const result = await editAnalysisCondition(
-        problem.checkId,
-        problem.artifactId,
-        problem.conditionId,
-        {
-          description,
-          language: getLocale(),
-          caller: { request_id: this._requestId("edit", problem) },
-        },
-      );
-      try {
-        await refreshEvidenceAnalysis(problem.itemId, result);
-      } catch (error) {
-        console.error("refresh after saved edit failed", error);
-        this._analysisEditDialog?.close();
-        this._activeProblem = null;
-        showEditRefreshErrorToast();
-        return;
-      }
-      this._analysisEditDialog?.close();
-      this._activeProblem = null;
-      this._render();
-    } catch (err) {
-      console.error("edit analysis condition failed", err);
-      showEditErrorToast();
-    } finally {
-      setBusy(button, false);
-    }
   }
 
   async _resolveProblem(problem) {
