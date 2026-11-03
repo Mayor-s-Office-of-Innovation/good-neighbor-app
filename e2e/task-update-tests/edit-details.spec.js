@@ -10,10 +10,15 @@ const catalog = JSON.parse(
 const t = (/** @type {string} */ key) => catalog[key];
 
 /** @param {import("@playwright/test").Page} page
- * @param {{descriptionOnly?:boolean, fail?:boolean, photo?:boolean}} [options] */
+ * @param {{descriptionOnly?:boolean, fail?:boolean, photo?:boolean, duplicate?:boolean}} [options] */
 async function mount(
   page,
-  { descriptionOnly = false, fail = false, photo = false } = {},
+  {
+    descriptionOnly = false,
+    fail = false,
+    photo = false,
+    duplicate = false,
+  } = {},
 ) {
   /** @type {{url: string, body: Record<string, unknown>}[]} */
   const writes = [];
@@ -27,8 +32,11 @@ async function mount(
             ),
         }
       : {}),
-    taskId: "observation",
+    ...(descriptionOnly
+      ? { conditionId: "condition" }
+      : { taskId: "observation" }),
     description: "Wrappers beside the entrance.",
+    georeferencedAddress: "Synthetic block entrance",
     createdAt: "2026-10-29T12:00:00Z",
     status: "open",
     category: "Litter",
@@ -40,7 +48,7 @@ async function mount(
       return route.fulfill({
         json: {
           clicked: task,
-          members: [task],
+          members: [{ ...task, isDuplicate: duplicate }],
           selectedRuleId: descriptionOnly ? "" : "LITTER-1",
           revision: 3,
           category: "Litter",
@@ -106,6 +114,7 @@ async function mount(
         checkId: "check",
         artifactId: "artifact",
         conditionId: "condition",
+        assessmentId: "synthetic-assessment",
       };
       const trigger = document.querySelector("#trigger");
       if (descriptionOnly) openDescriptionDetails(problem, trigger, () => {});
@@ -228,7 +237,16 @@ test("edit details retains a failed save for review and retry", async ({
 test("edit details description-only mode saves text without changing action or analysis", async ({
   page,
 }) => {
+  const detailsRequest = page.waitForRequest(
+    (request) =>
+      request.method() === "GET" &&
+      request.url().includes("/conditions/condition"),
+  );
   const writes = await mount(page, { descriptionOnly: true });
+  await expect(page.locator(".task-details__member-copy")).toHaveCount(0);
+  expect((await detailsRequest).url()).toContain(
+    "assessmentId=synthetic-assessment",
+  );
   await expect(page.locator("[data-action-select]")).toHaveJSProperty(
     "value",
     null,
@@ -247,7 +265,9 @@ test("edit details description-only mode saves text without changing action or a
   expect(writes[0].body).toMatchObject({
     description: "Corrected description of the observation.",
   });
-  expect(writes[0].url).toContain("/conditions/condition");
+  expect(writes[0].url).toContain(
+    "/conditions/condition?assessmentId=synthetic-assessment",
+  );
 });
 
 test("category changes require a new action and preserve the edited title", async ({
@@ -300,10 +320,32 @@ test("the inline title looks editable and portrait thumbnails stay square", asyn
   const title = page.locator("[data-title]");
   await title.scrollIntoViewIfNeeded();
   await expect(title).toHaveCSS("border-top-style", "solid");
+  const location = page.locator("[data-location]");
+  const time = page.locator("[data-observed-at]");
+  await expect(location).toHaveText("Synthetic block entrance");
+  await expect(time.locator("time")).toHaveAttribute(
+    "datetime",
+    "2026-10-29T12:00:00Z",
+  );
+  await expect(page.locator(".task-details__header p")).toHaveCount(2);
+  const locationBox = await location.boundingBox();
+  const timeBox = await time.boundingBox();
+  const photoBox = await page.locator(".task-details__thumbnail").boundingBox();
+  if (!locationBox || !timeBox || !photoBox)
+    throw new Error("Missing observation context");
+  expect(timeBox.x).toBeCloseTo(locationBox.x, 0);
+  expect(timeBox.y).toBeGreaterThanOrEqual(locationBox.y + locationBox.height);
+  expect(photoBox.y).toBeGreaterThanOrEqual(timeBox.y + timeBox.height);
+  expect(photoBox.x).toBeCloseTo(locationBox.x, 0);
+  const categoryBox = await page.locator("[data-category]").boundingBox();
+  if (!categoryBox) throw new Error("Missing category field");
+  expect(categoryBox.y).toBeGreaterThanOrEqual(photoBox.y + photoBox.height);
+  const triggerBox = await page.locator("[data-photo-lightbox]").boundingBox();
+  expect(triggerBox?.height).toBeCloseTo(photoBox.height, 0);
   const image = page.locator(".task-details__thumbnail img");
   await expect(image).toHaveCSS("object-fit", "cover");
-  await expect(image).toHaveCSS("width", "75px");
-  await expect(image).toHaveCSS("height", "75px");
+  await expect(image).toHaveCSS("width", "180px");
+  await expect(image).toHaveCSS("height", "180px");
   await expect(page.locator(".task-details__members")).toHaveCSS(
     "margin-bottom",
     "32px",
@@ -347,4 +389,27 @@ test("short draft content keeps the editor full width on desktop", async ({
     path: testInfo.outputPath("full-width-editor.png"),
     animations: "disabled",
   });
+});
+
+test("editing a duplicate retains its separation control", async ({ page }) => {
+  await mount(page, { photo: true, duplicate: true });
+  await expect(page.locator('[data-separate-id="observation"]')).toBeVisible();
+  await expect(page.locator("[data-location]")).toHaveText(
+    "Synthetic block entrance",
+  );
+});
+
+test("editor photo opens the lightbox and returns to the unchanged draft", async ({
+  page,
+}) => {
+  await mount(page, { photo: true });
+  const title = page.locator("[data-title]");
+  await title.fill("Edited draft title");
+  const photo = page.locator("task-details-dialog [data-photo-lightbox]");
+  await photo.focus();
+  await photo.press("Enter");
+  await expect(page.locator("photo-lightbox dialog")).toBeVisible();
+  await page.locator(".photo-lightbox__close").click();
+  await expect(title).toHaveText("Edited draft title");
+  await expect(photo).toBeFocused();
 });

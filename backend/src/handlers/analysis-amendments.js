@@ -143,6 +143,22 @@ async function conditionContext(event) {
         new GetCommand({ TableName: dynamoTable, Key, ConsistentRead: true }),
       )
     ).Item;
+  const requestedId = event.queryStringParameters?.assessmentId;
+  if (requestedId) {
+    const assessment = await read(assessmentKey(siteId, requestedId));
+    const condition = await read(
+      conditionKey(siteId, requestedId, conditionId),
+    );
+    if (
+      !assessment ||
+      assessment.checkId !== checkId ||
+      assessment.supersededByAssessmentId ||
+      !condition ||
+      !condition.source?.artifactIds?.includes(artifactId)
+    )
+      return null;
+    return { condition, assessment, assessmentId: requestedId };
+  }
   const pointer = await read({
     pk: `SITE#${siteId}`,
     sk: `GUIDANCE_CURRENT#${JSON.stringify([checkId, artifactId])}`,
@@ -169,6 +185,7 @@ export async function getAnalysisConditionDetails(event) {
   };
   return jsonResponse(200, {
     clicked: condition,
+    members: [{ ...condition, checkId: assessment.checkId }],
     category: selection.category,
     editable:
       condition.status === "needs_answer" ||
@@ -251,6 +268,16 @@ export async function editAnalysisCondition(event) {
         context.condition.detailsEditId !== bodyObject.requestId
       )
         return jsonResponse(409, { error: "Issue changed while editing" });
+      if (
+        !bodyObject.ruleId &&
+        bodyObject.requestId &&
+        context.condition.detailsEditId === bodyObject.requestId
+      )
+        return jsonResponse(200, {
+          description: context.condition.description,
+          condition: context.condition,
+          assessment: context.assessment,
+        });
       if (bodyObject.ruleId) {
         const catalog = catalogForPolicyVersion(
           context.condition.policyVersion || context.assessment.policyVersion,
@@ -308,6 +335,9 @@ export async function editAnalysisCondition(event) {
       conditionId,
       description,
       title: bodyObject?.title,
+      assessmentId: event.queryStringParameters?.assessmentId,
+      revision: bodyObject?.revision,
+      requestId: bodyObject?.requestId,
     });
     await ddb.send(
       new TransactWriteCommand({

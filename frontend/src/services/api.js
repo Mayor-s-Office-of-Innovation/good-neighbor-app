@@ -739,13 +739,16 @@ export function submitConditionAnswers(assessmentId, conditionId, body) {
  * @param {string} checkId
  * @param {string} artifactId
  * @param {string} conditionId
- * @param {{ description: string, title?:string, category?:string, ruleId?:string, revision?:number, requestId?:string, customAction?:{text:string,resolved:boolean}, language?: string, caller?: { request_id?: string } }} body
+ * @param {{ description: string, title?:string, category?:string, ruleId?:string, revision?:number, requestId?:string, assessmentId?:string, customAction?:{text:string,resolved:boolean}, language?: string, caller?: { request_id?: string } }} body
  * @returns {Promise<{ description: string, condition: any, task?: any, assessment?:any }>}
  */
 export function editAnalysisCondition(checkId, artifactId, conditionId, body) {
+  const query = body.assessmentId
+    ? `?assessmentId=${encodeURIComponent(body.assessmentId)}`
+    : "";
   return request(
     "POST",
-    `/v1/checks/${encodeURIComponent(checkId)}/artifacts/${encodeURIComponent(artifactId)}/conditions/${encodeURIComponent(conditionId)}`,
+    `/v1/checks/${encodeURIComponent(checkId)}/artifacts/${encodeURIComponent(artifactId)}/conditions/${encodeURIComponent(conditionId)}${query}`,
     { body },
   );
 }
@@ -1926,8 +1929,11 @@ export function listPendingGuidance(nextToken = null) {
 
 /** @param {Record<string,any>} problem */
 export function getConditionDetails(problem) {
+  const query = problem.assessmentId
+    ? `?assessmentId=${encodeURIComponent(problem.assessmentId)}`
+    : "";
   return request(
     "GET",
-    `/v1/checks/${encodeURIComponent(problem.checkId)}/artifacts/${encodeURIComponent(problem.artifactId)}/conditions/${encodeURIComponent(problem.conditionId)}`,
+    `/v1/checks/${encodeURIComponent(problem.checkId)}/artifacts/${encodeURIComponent(problem.artifactId)}/conditions/${encodeURIComponent(problem.conditionId)}${query}`,
   );
 }

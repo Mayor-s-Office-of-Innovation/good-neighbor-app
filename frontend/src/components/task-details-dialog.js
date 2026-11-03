@@ -27,17 +27,6 @@ import { hydrateTaskEvidence } from "../services/task-evidence.js";
 
 const CUSTOM_ACTION = "__custom__";
 
-/** @param {string} value */
-function openAge(value) {
-  const started = Date.parse(value);
-  if (!Number.isFinite(started)) return "";
-  const hours = Math.max(1, Math.floor((Date.now() - started) / 3_600_000));
-  if (hours < 48) return t("taskDetails.openHours", { count: hours });
-  const days = Math.floor(hours / 24);
-  if (days < 14) return t("taskDetails.openDays", { count: days });
-  return t("taskDetails.openWeeks", { count: Math.floor(days / 7) });
-}
-
 /** @param {Record<string, any>} task */
 function location(task) {
   return (
@@ -51,40 +40,61 @@ function location(task) {
 }
 
 /** @param {Record<string, any>} member */
-function memberRow(member, editingId) {
+function memberRow(member, editingId, editingConditionId) {
+  const isEditing = member.taskId
+    ? member.taskId === editingId
+    : Boolean(member.conditionId && member.conditionId === editingConditionId);
   const image = taskMediaUrl(member);
   const title = member.userFriendlyLabel || rulebookText(member.category) || "";
   return html`<li
     class="task-details__member"
-    data-member-id="${escapeAttr(member.taskId)}"
+    data-member-id="${escapeAttr(member.taskId || member.conditionId)}"
   >
+    ${isEditing && !member.isDuplicate
+      ? ""
+      : html`<div class="task-details__member-copy">
+          ${isEditing
+            ? ""
+            : html`<strong>${escapeHtml(location(member))}</strong>
+                <time datetime="${escapeAttr(member.createdAt || "")}"
+                  >${escapeHtml(formatMonthDayTime(member.createdAt))}</time
+                >
+                <span>${escapeHtml(member.description || title)}</span>`}
+          ${member.isDuplicate
+            ? html`<button
+                type="button"
+                class="btn-outline btn-outline--sm task-details__separate"
+                data-separate-id="${escapeAttr(member.taskId)}"
+              >
+                ${escapeHtml(t("taskDetails.separate"))}
+              </button>`
+            : ""}
+        </div>`}
     ${image || member.evidence?.kind === "photo"
-      ? artifactPhoto({
-          className: "task-details__thumbnail",
-          src: image,
-          original: member.mediaUrl,
-          checkId: member.checkId,
-          artifactId: taskMediaArtifactId(member),
-          alt: title,
-        })
-      : html`<span class="task-details__thumbnail task-details__placeholder"
-          ><wa-icon name="image" aria-hidden="true"></wa-icon
+      ? html`<button
+          type="button"
+          class="task-details__photo"
+          data-photo-lightbox
+          data-full-src="${escapeAttr(member.mediaUrl || image || "")}"
+          data-photo-address="${escapeAttr(location(member))}"
+          data-photo-time="${escapeAttr(member.createdAt || "")}"
+          aria-label="${escapeAttr(t("lightbox.image.alt"))}"
+        >
+          ${artifactPhoto({
+            className: "task-details__thumbnail",
+            src: image,
+            original: member.mediaUrl,
+            checkId: member.checkId,
+            artifactId: taskMediaArtifactId(member),
+            alt: title,
+          })}
+        </button>`
+      : html`<span
+          class="task-details__thumbnail task-details__placeholder"
+          role="img"
+          aria-label="${escapeAttr(t("card.evidence.unavailable"))}"
+          ><wa-icon name="image-slash" aria-hidden="true"></wa-icon
         ></span>`}
-    <div class="task-details__member-copy">
-      <strong>${escapeHtml(formatMonthDayTime(member.createdAt))}</strong>
-      ${member.taskId === editingId
-        ? ""
-        : html`<span>${escapeHtml(member.description || title)}</span>`}
-      ${member.isDuplicate
-        ? html`<button
-            type="button"
-            class="btn-outline btn-outline--sm task-details__separate"
-            data-separate-id="${escapeAttr(member.taskId)}"
-          >
-            ${escapeHtml(t("taskDetails.separate"))}
-          </button>`
-        : ""}
-    </div>
   </li>`;
 }
 
@@ -215,6 +225,12 @@ export class TaskDetailsDialog extends HTMLElement {
 
   _render(loading = false) {
     const clicked = this._clicked || {};
+    const context =
+      this._details?.members?.find((member) =>
+        clicked.taskId
+          ? member.taskId === clicked.taskId
+          : member.conditionId === this._problem?.conditionId,
+      ) || clicked;
     const title = this._problem?.title || clicked.userFriendlyLabel || "";
     const actions =
       this._details?.categories?.find(
@@ -303,20 +319,14 @@ export class TaskDetailsDialog extends HTMLElement {
               >`
             : escapeHtml(title)}
         </h2>
-        ${this._descriptionOnly
-          ? ""
-          : html`<p>
-                ${escapeHtml(
-                  t("taskDetails.location", { location: location(clicked) }),
-                )}
-              </p>
-              <p>
-                ${escapeHtml(
-                  t("taskDetails.open", {
-                    duration: openAge(clicked.createdAt),
-                  }),
-                )}
-              </p>`}
+        <p data-location>${escapeHtml(location(context))}</p>
+        ${context.createdAt
+          ? html`<p data-observed-at>
+              <time datetime="${escapeAttr(context.createdAt)}"
+                >${escapeHtml(formatMonthDayTime(context.createdAt))}</time
+              >
+            </p>`
+          : ""}
       </header>
       ${loading
         ? html`<div class="task-details__loading">
@@ -325,7 +335,13 @@ export class TaskDetailsDialog extends HTMLElement {
         : html` ${this._details?.members?.length
               ? html`<ul class="task-details__members">
                   ${this._details.members
-                    .map((member) => memberRow(member, clicked.taskId))
+                    .map((member) =>
+                      memberRow(
+                        member,
+                        clicked.taskId,
+                        this._problem?.conditionId,
+                      ),
+                    )
                     .join("")}
                 </ul>`
               : ""}
@@ -442,6 +458,14 @@ export class TaskDetailsDialog extends HTMLElement {
                   ${escapeHtml(t("common.save"))}
                 </button>`
               : ""}`}`;
+    this.querySelectorAll("[data-photo-lightbox]").forEach((trigger) => {
+      trigger.addEventListener("click", (event) => {
+        event.stopPropagation();
+        void import("./photo-lightbox.js").then(({ openPhotoLightbox }) =>
+          openPhotoLightbox(this, /** @type {HTMLElement} */ (trigger), dialog),
+        );
+      });
+    });
     this.querySelector("[data-close]").addEventListener("click", () =>
       this._requestClose(),
     );
@@ -563,6 +587,7 @@ export class TaskDetailsDialog extends HTMLElement {
           this._problem.conditionId,
           {
             ...fields,
+            assessmentId: this._problem.assessmentId,
             ruleId: this._selected || undefined,
             revision: this._details.revision,
             requestId: this._requestId,

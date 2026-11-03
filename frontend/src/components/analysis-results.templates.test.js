@@ -293,7 +293,9 @@ describe("analysis result summaries", () => {
     expect(cards[0]).toContain(
       t("card.meta.newWithReference", { reference: "GUB-STJ-001" }),
     );
-    expect(cards[0]).not.toContain("long-assessment-id");
+    expect(cards[0].replace(/data-assessment-id="[^"]*"/g, "")).not.toContain(
+      "long-assessment-id",
+    );
   });
 
   it("falls back to assessment ids for legacy task cards without display ids", () => {
@@ -365,7 +367,9 @@ describe("analysis result summaries", () => {
     expect(cards).toHaveLength(1);
     expect(cards[0]).toContain("Blocking access");
     expect(cards[0]).toContain(`>${t("card.meta.new")}</span>`);
-    expect(cards[0]).not.toContain("long-assessment-id");
+    expect(cards[0].replace(/data-assessment-id="[^"]*"/g, "")).not.toContain(
+      "long-assessment-id",
+    );
   });
 
   it("renders task cards alongside unpaired condition questions", () => {

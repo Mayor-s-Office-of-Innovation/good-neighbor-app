@@ -768,7 +768,7 @@
   "details.category": "Category",
   "details.conflict": "This issue changed or has work in progress. Review your changes and try again.",
   "details.continueEditing": "Continue editing",
-  "details.descriptionHint": "Editing this text does not change the assessment or recommended action.",
+  "details.descriptionHint": "Editing this text does not re-run the automatic analysis or change your action options.",
   "details.discardExit": "Discard and exit",
   "details.discardText": "Your changes have not been saved.",
   "details.discardTitle": "Discard changes?",

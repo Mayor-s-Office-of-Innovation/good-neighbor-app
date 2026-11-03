@@ -1107,6 +1107,9 @@ function completedEvidenceCard(
       tabindex="-1"
       data-task-id="${escapeAttr(taskId)}"
       data-analysis-id="${escapeAttr(analysisId)}"
+      data-assessment-id="${escapeAttr(
+        item.analysis?.assessment?.assessmentId || "",
+      )}"
       data-condition-id="${escapeAttr(conditionId)}"
       data-action-kind="${escapeAttr(actionKind)}"
       data-card-title="${escapeAttr(title)}"

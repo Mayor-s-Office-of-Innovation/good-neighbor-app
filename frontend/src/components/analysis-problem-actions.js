@@ -19,6 +19,7 @@ import { t } from "../i18n/i18n.js";
  * @property {string} checkId
  * @property {string} artifactId
  * @property {string} taskId
+ * @property {string} [assessmentId]
  * @property {string} conditionId
  * @property {string} actionKind
  * @property {string} title
@@ -36,6 +37,7 @@ export function problemFromCard(card) {
     checkId: card.getAttribute("data-check-id") || "",
     artifactId: card.getAttribute("data-artifact-id") || "",
     taskId: card.getAttribute("data-task-id") || "",
+    assessmentId: card.getAttribute("data-assessment-id") || "",
     conditionId: card.getAttribute("data-condition-id") || "",
     actionKind: card.getAttribute("data-action-kind") || "",
     title:

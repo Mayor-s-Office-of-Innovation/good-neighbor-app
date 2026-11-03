@@ -5,6 +5,7 @@ import {
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { actionsEscalationsV10Catalog } from "../analysis/guidance/actions-escalations-v10.js";
 
 const {
   send,
@@ -39,9 +40,11 @@ vi.mock("../analysis/analyzer-client.js", () => ({
   createAnalyzerClient,
 }));
 
-const { editAnalysisCondition, rejectAnalysisCondition } = await import(
-  "./analysis-amendments.js"
-);
+const {
+  getAnalysisConditionDetails,
+  editAnalysisCondition,
+  rejectAnalysisCondition,
+} = await import("./analysis-amendments.js");
 
 /**
  * @param {object} opts
@@ -590,4 +593,81 @@ describe("analysis amendments (check/artifact-addressed)", () => {
     expect(receipt).not.toHaveProperty("dismissedAt");
     expect(analyzeReject).toHaveBeenCalledOnce();
   });
+});
+
+describe("assessment-backed condition details", () => {
+  it.each(["valid", "wrong-check", "wrong-photo", "superseded"])(
+    "validates the supplied assessment: %s",
+    async (state) => {
+      send.mockImplementation(async (command) => {
+        const key = command.input.Key?.sk || "";
+        if (key === "ASSESSMENT#synthetic-assessment")
+          return {
+            Item: {
+              policyVersion: actionsEscalationsV10Catalog.policyVersion,
+              assessmentId: "synthetic-assessment",
+              checkId: state === "wrong-check" ? "other" : "chk_01",
+              ...(state === "superseded"
+                ? { supersededByAssessmentId: "successor" }
+                : {}),
+            },
+          };
+        if (key.includes("#COND#"))
+          return {
+            Item: {
+              conditionId: "chk_01-art_1-001-litter",
+              status: "needs_answer",
+              canonicalCategory: "Litter",
+              source: {
+                artifactIds: [state === "wrong-photo" ? "other" : "art_1"],
+              },
+            },
+          };
+        return {};
+      });
+      const event = amendEvent({});
+      event.queryStringParameters = { assessmentId: "synthetic-assessment" };
+      const response = await getAnalysisConditionDetails(event);
+      expect(response.statusCode).toBe(state === "valid" ? 200 : 404);
+      if (state === "valid")
+        expect(JSON.parse(response.body).editable).toBe(true);
+    },
+  );
+});
+
+it("acknowledges a saved question-text retry without another write", async () => {
+  send.mockReset();
+  send.mockImplementation(async (command) => {
+    const key = command.input.Key?.sk || "";
+    if (key === 'GUIDANCE_CURRENT#["chk_01","art_1"]')
+      return { Item: { assessmentId: "assessment" } };
+    if (key === "ASSESSMENT#assessment")
+      return { Item: { assessmentRevision: 4 } };
+    if (key.includes("#COND#"))
+      return {
+        Item: {
+          status: "needs_answer",
+          detailsEditId: "same-save",
+          description: "Saved synthetic correction",
+        },
+      };
+    throw new Error("Unexpected write or read");
+  });
+  const response = await editAnalysisCondition(
+    amendEvent({
+      body: {
+        title: "Edited title",
+        description: "Saved synthetic correction",
+        revision: 3,
+        requestId: "same-save",
+      },
+    }),
+  );
+  expect(response.statusCode).toBe(200);
+  expect(JSON.parse(response.body).description).toBe(
+    "Saved synthetic correction",
+  );
+  expect(
+    send.mock.calls.every(([command]) => command instanceof GetCommand),
+  ).toBe(true);
 });

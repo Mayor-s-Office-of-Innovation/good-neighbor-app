@@ -49,7 +49,7 @@ export function descriptionPatch(item, description) {
 /** Prepare atomic text corrections; never call the analyzer or evaluate guidance.
  * The caller may merge the clicked task's patch into its action write.
  * @param {{table: string, siteId: string, checkId?: string, artifactId?: string,
- * conditionId?: string, task?: Record<string, any>, description: string, title?: string}} opts
+ * conditionId?: string, assessmentId?: string, revision?: number, requestId?: string, task?: Record<string, any>, description: string, title?: string}} opts
  */
 export async function descriptionWrites(opts) {
   const { table, siteId, description } = opts;
@@ -75,8 +75,11 @@ export async function descriptionWrites(opts) {
     sk: `GUIDANCE_CURRENT#${JSON.stringify([checkId, artifactId])}`,
   };
   const pointer =
-    !task?.assessmentId && artifactId ? await read(pointerKey) : null;
-  const assessmentId = task?.assessmentId || pointer?.assessmentId;
+    !task?.assessmentId && !opts.assessmentId && artifactId
+      ? await read(pointerKey)
+      : null;
+  const assessmentId =
+    task?.assessmentId || opts.assessmentId || pointer?.assessmentId;
   /** @type {NonNullable<import('@aws-sdk/lib-dynamodb').TransactWriteCommandInput['TransactItems']>} */
   const writes = [];
   /** @type {Record<string, any>[]} */
@@ -87,11 +90,21 @@ export async function descriptionWrites(opts) {
     condition = await read(conditionKey(siteId, assessmentId, conditionId));
     if (
       !assessment ||
+      (opts.assessmentId &&
+        (assessment.checkId !== checkId ||
+          !condition?.source?.artifactIds?.includes(artifactId))) ||
       assessment.supersededByAssessmentId ||
       !condition ||
       (task
         ? condition.status === "rejected"
         : !["needs_answer", "manual_review"].includes(condition.status))
+    )
+      throw Object.assign(new Error("Description changed while editing"), {
+        status: 409,
+      });
+    if (
+      opts.revision !== undefined &&
+      opts.revision !== Number(assessment.assessmentRevision || 0)
     )
       throw Object.assign(new Error("Description changed while editing"), {
         status: 409,
@@ -117,6 +130,7 @@ export async function descriptionWrites(opts) {
         Key: conditionKey(siteId, assessmentId, conditionId),
         UpdateExpression:
           "SET description = :text, descriptionEdited = :yes" +
+          (opts.requestId ? ", detailsEditId = :requestId" : "") +
           (opts.title !== undefined
             ? ", userFriendlyLabel = :title, titleEdited = :yes"
             : ""),
@@ -127,6 +141,7 @@ export async function descriptionWrites(opts) {
           ":conditionStatus": condition.status,
           ":text": description.trim(),
           ":yes": true,
+          ...(opts.requestId ? { ":requestId": opts.requestId } : {}),
           ...(opts.title !== undefined ? { ":title": opts.title.trim() } : {}),
         },
       },
@@ -171,6 +186,7 @@ export async function descriptionWrites(opts) {
       ? {
           ...condition,
           ...descriptionPatch(condition, description),
+          ...(opts.requestId ? { detailsEditId: opts.requestId } : {}),
           ...(opts.title !== undefined
             ? { userFriendlyLabel: opts.title.trim(), titleEdited: true }
             : {}),
