@@ -31,6 +31,7 @@ import {
 import { requestId, setBusy, setDialogError } from "../lib/dialog-controls.js";
 import { t } from "../i18n/i18n.js";
 import {
+  openProblemDetails,
   missingConditionMessage,
   problemFromCard,
   rejectProblemCondition,
@@ -563,12 +564,9 @@ class ProblemReport extends HTMLElement {
   }
 
   _openEditProblem(problem) {
-    const trigger = document.activeElement;
-    void import("./task-details-dialog.js").then(({ openDescriptionDetails }) =>
-      openDescriptionDetails(problem, trigger, () => {
-        if (this.isConnected) return this._render();
-      }),
-    );
+    openProblemDetails(problem, () => {
+      if (this.isConnected) return this._render();
+    });
   }
 
   async _confirmDeleteProblem() {

@@ -213,6 +213,14 @@ export async function editAnalysisCondition(event) {
       bodyObject.requestId.length > 100)
   )
     return jsonResponse(400, { error: "Invalid requestId" });
+  if (
+    bodyObject?.ruleId &&
+    (!Number.isSafeInteger(bodyObject.revision) ||
+      Number(bodyObject.revision) < 0)
+  )
+    return jsonResponse(400, {
+      error: "A valid revision is required for action edits",
+    });
   const description = bodyObject?.description;
   if (bodyObject?.title !== undefined && !validTitle(bodyObject.title))
     return jsonResponse(400, { error: "Invalid title" });

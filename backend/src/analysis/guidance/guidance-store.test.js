@@ -2501,9 +2501,10 @@ describe("manual clarification replacement", () => {
     idFactory: () => "manual-task",
   };
   beforeEach(() => send.mockReset());
-  it.each([false, true])(
-    "atomically retires the question without silent filing (custom=%s)",
-    async (custom) => {
+  it.each([null, false, true])(
+    "atomically retires the question without silent filing (custom resolved=%s)",
+    async (resolved) => {
+      const custom = resolved !== null;
       send
         .mockResolvedValueOnce({ Item: assessment })
         .mockResolvedValueOnce({ Item: condition });
@@ -2522,7 +2523,7 @@ describe("manual clarification replacement", () => {
           title: "Corrected title",
           description: "Corrected observation",
           ...(custom
-            ? { customAction: { text: "Asked a teammate", resolved: false } }
+            ? { customAction: { text: "Asked a teammate", resolved } }
             : {}),
         },
       });
@@ -2535,12 +2536,13 @@ describe("manual clarification replacement", () => {
       expect(result.assessmentItem.summary).toMatchObject({
         conditionsNeedAnswer: 0,
         conditionsResolvedToTasks: 1,
+        openTaskCount: custom ? 0 : 1,
       });
       expect(result.taskItem).toMatchObject({
         userFriendlyLabel: "Corrected title",
         description: "Corrected observation",
         titleEdited: true,
-        status: custom ? "in_progress" : "open",
+        status: custom ? (resolved ? "completed" : "in_progress") : "open",
       });
       if (custom) expect(result.taskItem?.guidance).toBe("");
       const tx = send.mock.calls.find(

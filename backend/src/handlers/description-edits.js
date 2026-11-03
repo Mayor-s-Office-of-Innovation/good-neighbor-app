@@ -89,7 +89,9 @@ export async function descriptionWrites(opts) {
       !assessment ||
       assessment.supersededByAssessmentId ||
       !condition ||
-      condition.status === "rejected"
+      (task
+        ? condition.status === "rejected"
+        : !["needs_answer", "manual_review"].includes(condition.status))
     )
       throw Object.assign(new Error("Description changed while editing"), {
         status: 409,
@@ -118,8 +120,11 @@ export async function descriptionWrites(opts) {
           (opts.title !== undefined
             ? ", userFriendlyLabel = :title, titleEdited = :yes"
             : ""),
-        ConditionExpression: "attribute_exists(sk)",
+        ConditionExpression:
+          "attribute_exists(sk) AND #status = :conditionStatus",
+        ExpressionAttributeNames: { "#status": "status" },
         ExpressionAttributeValues: {
+          ":conditionStatus": condition.status,
           ":text": description.trim(),
           ":yes": true,
           ...(opts.title !== undefined ? { ":title": opts.title.trim() } : {}),

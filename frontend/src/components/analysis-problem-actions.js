@@ -101,3 +101,14 @@ export async function rejectProblemCondition(
     });
   }
 }
+
+/** Open the shared editor while capture routes stay lazy-loaded.
+ * @param {CardProblem} problem
+ * @param {() => void} onChanged
+ */
+export function openProblemDetails(problem, onChanged) {
+  const trigger = document.activeElement;
+  void import("./task-details-dialog.js").then(({ openDescriptionDetails }) =>
+    openDescriptionDetails(problem, trigger, onChanged),
+  );
+}

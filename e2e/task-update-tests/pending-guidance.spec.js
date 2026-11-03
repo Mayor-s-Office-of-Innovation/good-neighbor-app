@@ -41,6 +41,7 @@ for (const resolution of ["answer", "dismiss"])
     let answers = 0;
     let guidanceFailed = false;
     let dismissals = 0;
+    let detailsFailed = true;
     const liveTask = {
       ...task,
       taskId: "live-task",
@@ -76,7 +77,19 @@ for (const resolution of ["answer", "dismiss"])
       if (
         url.pathname ===
         "/v1/checks/old-check/artifacts/text-artifact/conditions/bulky"
-      )
+      ) {
+        if (route.request().method() === "GET" && !detailsFailed)
+          return route.fulfill({
+            json: {
+              clicked: question,
+              editable: true,
+              category: question.canonicalCategory,
+              categories: [],
+              actions: [],
+              selectedRuleId: "",
+              revision: 0,
+            },
+          });
         return route.fulfill({
           status: 404,
           json: {
@@ -84,6 +97,7 @@ for (const resolution of ["answer", "dismiss"])
             error: "Original analysis unavailable",
           },
         });
+      }
       if (
         [
           "/v1/guidance/pending",
@@ -210,23 +224,28 @@ for (const resolution of ["answer", "dismiss"])
     await expect(page.locator("#retry-guidance")).toHaveCount(0);
     await expect(card).toHaveCount(1);
     await card.locator('[data-analysis-action="edit"]').click();
-    await page
-      .locator("#analysis-edit-description")
-      .fill("Updated description of the abandoned furniture.");
-    await page.locator("#analysis-edit-save").click();
-    await expect(page.locator("#analysis-edit-error")).toHaveText(
-      t("analysis.editDialog.expired"),
+    const editor = page.locator("task-details-dialog > dialog").first();
+    await expect(editor.locator('[role="alert"]')).toHaveText(
+      t("taskDetails.loadError"),
     );
-    await expect(page.locator("#analysis-edit-description")).toHaveValue(
+    await expect(editor.locator("[data-save]")).toHaveCount(0);
+    await editor.locator("[data-close]").click();
+    detailsFailed = false;
+    await card.locator('[data-analysis-action="edit"]').click();
+    const description = editor.locator("[data-description] textarea");
+    await description.fill("Updated description of the abandoned furniture.");
+    await editor.locator("[data-save]").click();
+    await expect(page.locator(".app-toast")).toContainText(
+      t("taskDetails.saveError"),
+    );
+    await page
+      .getByRole("button", { name: t("details.reviewRetry"), exact: true })
+      .click();
+    await expect(description).toHaveValue(
       "Updated description of the abandoned furniture.",
     );
-    await page
-      .locator("#analysis-edit-dialog")
-      .getByRole("button", {
-        name: t("analysis.editDialog.discard"),
-        exact: true,
-      })
-      .click();
+    await editor.locator("[data-close]").click();
+    await page.locator("[data-discard]").click();
     if (resolution === "dismiss") {
       await card.locator('[data-analysis-action="delete"]').click();
       await page.locator("#analysis-delete-confirm").click();

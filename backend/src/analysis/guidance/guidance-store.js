@@ -250,7 +250,11 @@ function applyAssessmentConditionDelta({
       Number(priorSummary.conditionsResolvedToTasks ?? 0) +
       (isResolvedToTasks(nextCondition) ? 1 : 0) -
       (isResolvedToTasks(priorCondition) ? 1 : 0),
-    openTaskCount: Number(priorSummary.openTaskCount ?? 0) + (taskItem ? 1 : 0),
+    openTaskCount:
+      Number(priorSummary.openTaskCount ?? 0) +
+      (taskItem?.status === "open" || taskItem?.status === "completing"
+        ? 1
+        : 0),
     actionCount:
       Number(priorSummary.actionCount ?? 0) +
       (taskItem?.kind === "action" ? 1 : 0),

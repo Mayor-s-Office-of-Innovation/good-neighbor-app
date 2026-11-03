@@ -122,6 +122,7 @@ describe("analysis amendments (check/artifact-addressed)", () => {
     send.mockResolvedValueOnce({
       Item: {
         conditionId: "condition",
+        status: "needs_answer",
         description: "Old description",
         taskIds: ["task"],
       },
@@ -153,9 +154,51 @@ describe("analysis amendments (check/artifact-addressed)", () => {
     expect(tx[1].Update.ExpressionAttributeValues[":text"]).toBe(
       "Corrected description",
     );
+    expect(tx[1].Update.ConditionExpression).toContain(
+      "#status = :conditionStatus",
+    );
+    expect(tx[1].Update.ExpressionAttributeValues[":conditionStatus"]).toBe(
+      "needs_answer",
+    );
     expect(tx[2].Update.Key.sk).toBe("TASK#task");
     expect(JSON.stringify(tx)).not.toContain("SF311_JOB");
   });
+
+  it.each([undefined, null, -1, 1.5, "3"])(
+    "rejects action edits with an invalid revision (%s) before writing",
+    async (revision) => {
+      const res = await editAnalysisCondition(
+        amendEvent({
+          body: {
+            description: "Corrected description",
+            ruleId: "LITTER-2",
+            revision,
+          },
+        }),
+      );
+      expect(res.statusCode).toBe(400);
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["completed", "rejected", "tasks_created"])(
+    "rejects condition-only description edits in status %s",
+    async (status) => {
+      send
+        .mockResolvedValueOnce({ Item: { assessmentId: "assessment" } })
+        .mockResolvedValueOnce({ Item: { assessmentRevision: 4 } })
+        .mockResolvedValueOnce({ Item: { status, taskIds: [] } });
+      const res = await editAnalysisCondition(
+        amendEvent({ body: { description: "Corrected description" } }),
+      );
+      expect(res.statusCode).toBe(409);
+      expect(
+        send.mock.calls.some(
+          ([command]) => command instanceof TransactWriteCommand,
+        ),
+      ).toBe(false);
+    },
+  );
 
   it("rejects a superseded assessment instead of reviving its description", async () => {
     send.mockResolvedValueOnce({ Item: { assessmentId: "assessment" } });
@@ -175,7 +218,9 @@ describe("analysis amendments (check/artifact-addressed)", () => {
   it("returns a conflict when a concurrent answer wins the assessment revision", async () => {
     send.mockResolvedValueOnce({ Item: { assessmentId: "assessment" } });
     send.mockResolvedValueOnce({ Item: { assessmentRevision: 4 } });
-    send.mockResolvedValueOnce({ Item: { taskIds: [] } });
+    send.mockResolvedValueOnce({
+      Item: { status: "needs_answer", taskIds: [] },
+    });
     send.mockRejectedValueOnce(
       Object.assign(new Error("changed"), {
         name: "TransactionCanceledException",

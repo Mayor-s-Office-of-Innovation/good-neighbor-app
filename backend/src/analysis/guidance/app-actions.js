@@ -453,6 +453,17 @@ async function resolveLocation({ tableName, siteId, task, artifacts }) {
   return siteLocation;
 }
 
+/** Bound transport evidence without changing the stored observation.
+ * The classifier counts Unicode code points, rather than UTF-16 code units.
+ * @param {string} text
+ */
+function classifierTextEvidence(text) {
+  return {
+    type: /** @type {const} */ ("text"),
+    text: Array.from(text).slice(0, 4000).join(""),
+  };
+}
+
 /**
  * @param {object} opts
  * @param {string} opts.tableName
@@ -468,7 +479,7 @@ async function loadClassifierEvidence({ tableName, siteId, task, config }) {
     /** @type {string[]} */ (task.sourceArtifactIds ?? []),
   );
   if (!task.checkId || artifactIds.size === 0) {
-    if (description) return { type: "text", text: description };
+    if (description) return classifierTextEvidence(description);
     throw new Error(
       "No source image or text is available for 311 classifier analysis",
     );
@@ -517,12 +528,12 @@ async function loadClassifierEvidence({ tableName, siteId, task, config }) {
       },
     };
   }
-  if (description) return { type: "text", text: description };
+  if (description) return classifierTextEvidence(description);
   const textArtifact = artifacts.find(
     (item) => typeof item.text === "string" && item.text.trim().length > 0,
   );
   if (textArtifact) {
-    return { type: "text", text: String(textArtifact.text).trim() };
+    return classifierTextEvidence(String(textArtifact.text).trim());
   }
   throw new Error(
     "No source image or text is available for 311 classifier analysis",

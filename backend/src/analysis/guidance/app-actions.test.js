@@ -1010,6 +1010,63 @@ describe("app action execution", () => {
     }
   });
 
+  it.each(["missing identifiers", "no image", "artifact fallback"])(
+    "bounds classifier text by Unicode code points (%s)",
+    async (source) => {
+      const text = "😀".repeat(4000) + "overflow";
+      send.mockReset();
+      send.mockResolvedValue({ Items: [{ artifactId: "artifact-1", text }] });
+      getAnalyzerApiKey.mockResolvedValueOnce("analyzer-key");
+      const classifyEvidence = vi.fn().mockResolvedValueOnce({ labels: [] });
+      createAnalyzerClient.mockReturnValueOnce({ classifyEvidence });
+      const task = {
+        taskId: "task-long",
+        ...(source !== "artifact fallback" ? { description: text } : {}),
+        ...(source !== "missing identifiers"
+          ? { checkId: "check-1", sourceArtifactIds: ["artifact-1"] }
+          : {}),
+      };
+      try {
+        await executeAppActions(
+          [
+            {
+              code: "create_311_ticket",
+              payload: { serviceCodeOrAction: "Run graffiti analysis" },
+            },
+          ],
+          {
+            env: {
+              GNP_311_SUBMISSION_ENABLED: "true",
+              DYNAMO_TABLE: "table",
+              S3_UPLOAD_BUCKET: "bucket",
+              SQS_QUEUE_URL: "queue",
+              ANALYZER_BASE_URL: "https://analyzer.example.test",
+              ANALYZER_API_KEY: "analyzer-key",
+              SF311_CREATESR_URL: "https://hub.example.test/createsr",
+              SF311_AGENCY_LOOKUP_URL: "https://hub.example.test/lookup",
+              SF311_BASIC_AUTH_USER: "user",
+              SF311_BASIC_AUTH_PASS: "pass",
+            },
+            now,
+            tableName: "table",
+            siteId: "site-1",
+            task,
+          },
+        );
+        expect(classifyEvidence).toHaveBeenCalledWith(
+          expect.objectContaining({
+            evidence: { type: "text", text: "😀".repeat(4000) },
+          }),
+        );
+        if (source !== "artifact fallback") expect(task.description).toBe(text);
+      } finally {
+        send.mockReset();
+        createAnalyzerClient.mockReset();
+        getAnalyzerApiKey.mockReset();
+      }
+    },
+  );
+
   it("classifies description-only evidence and files without an attachment", async () => {
     const textArtifact = {
       artifactId: "artifact-1",

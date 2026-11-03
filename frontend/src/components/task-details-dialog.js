@@ -292,15 +292,15 @@ export class TaskDetailsDialog extends HTMLElement {
         <h2 id="task-details-title">
           ${this._baseline && this._details
             ? html`<span
-                  data-title
-                  contenteditable="plaintext-only"
-                  role="textbox"
-                  aria-label="${escapeAttr(t("details.title"))}"
-                  aria-multiline="false"
-                  tabindex="0"
-                  spellcheck="true"
-                  >${escapeHtml(this._title)}</span
-                >`
+                data-title
+                contenteditable="plaintext-only"
+                role="textbox"
+                aria-label="${escapeAttr(t("details.title"))}"
+                aria-multiline="false"
+                tabindex="0"
+                spellcheck="true"
+                >${escapeHtml(this._title)}</span
+              >`
             : escapeHtml(title)}
         </h2>
         ${this._descriptionOnly
