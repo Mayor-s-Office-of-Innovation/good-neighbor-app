@@ -1,3 +1,4 @@
+import { beginEnrollmentRequest } from "./enrollment-request.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -10,6 +11,7 @@ const moduleSource = readFileSync(
   .replace(/^import .*;$/gm, "")
   .replace(/export /g, "");
 const context = vm.createContext({
+  beginEnrollmentRequest,
   escapeHtml,
   formatTimestamp,
   t: (key) => key,
@@ -80,6 +82,7 @@ test("a code returned after navigation is discarded", async () => {
   const end = source.indexOf("\n  async issueManagerGrant", start);
   let finish;
   const context = vm.createContext({
+    beginEnrollmentRequest,
     adminApi: {
       createManagerGrant: () =>
         new Promise((resolve) => {

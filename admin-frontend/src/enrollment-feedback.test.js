@@ -1,3 +1,4 @@
+import { beginEnrollmentRequest } from "./enrollment-request.js";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
@@ -9,6 +10,7 @@ test("enrollment failures show one toast and clear the stale page banner", async
   const end = source.indexOf("  /** @param {HTMLButtonElement}", start);
   const failures = [];
   const context = vm.createContext({
+    beginEnrollmentRequest,
     actionFeedback: () => ({
       failure: (error) => failures.push(error.message),
     }),
@@ -34,6 +36,7 @@ test("enrollment failures show one toast and clear the stale page banner", async
   );
   assert.deepEqual(failures, ["program_user_not_found"]);
   assert.equal(app.state.error, "");
+  assert.equal(app.enrollmentRequests.size, 0);
 });
 
 test("enrollment click handler does not duplicate the toast in the page banner", async () => {

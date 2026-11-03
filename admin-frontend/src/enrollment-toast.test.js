@@ -1,3 +1,4 @@
+import { beginEnrollmentRequest } from "./enrollment-request.js";
 import { createActionFeedback } from "./action-feedback-core.js";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -15,6 +16,7 @@ for (const kind of ["Manager", "ProviderManager"]) {
       const Subject = vm.runInNewContext(
         `(class { ${source.slice(start, end)} })`,
         {
+          beginEnrollmentRequest,
           adminApi: {
             [`create${kind}Grant`]: async () => {
               if (delivery === "rejected") throw new Error("offline");

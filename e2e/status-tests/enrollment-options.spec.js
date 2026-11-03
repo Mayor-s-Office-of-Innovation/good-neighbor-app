@@ -187,3 +187,47 @@ test("document navigation clears displayed codes before a possible browser cache
   await page.locator('.entity-tabs a[href$="section=access"]').click();
   await expect(page.locator("[data-enrollment-code]")).toHaveCount(0);
 });
+
+for (const scope of ["sites", "providers"]) {
+  for (const first of ["screen", "email"]) {
+    test(`${scope}: ${first} request blocks competing enrollment modes`, async ({
+      page,
+    }) => {
+      await setup(page);
+      let finish = () => {};
+      const waiting = new Promise((resolve) => {
+        finish = () => resolve(undefined);
+      });
+      let requests = 0;
+      await page.route(
+        `**/admin/v1/${scope}/*/manager-grants`,
+        async (route) => {
+          if (route.request().method() === "POST") {
+            requests++;
+            await waiting;
+          }
+          await route.fallback();
+        },
+      );
+      await page.goto(
+        `/${scope}/${scope === "sites" ? "s" : "p"}?section=access`,
+      );
+      const emailSelector =
+        scope === "sites"
+          ? "[data-issue-manager-grant]"
+          : "[data-issue-provider-manager-grant]";
+      const screen = page.locator("[data-show-enrollment-code]");
+      await (
+        first === "screen" ? screen : page.locator(emailSelector).first()
+      ).click();
+      await expect(screen).toBeDisabled();
+      for (const button of await page.locator(emailSelector).all())
+        await expect(button).toBeDisabled();
+      expect(requests).toBe(1);
+      finish();
+      await expect(screen).toBeEnabled();
+      for (const button of await page.locator(emailSelector).all())
+        await expect(button).toBeEnabled();
+    });
+  }
+}

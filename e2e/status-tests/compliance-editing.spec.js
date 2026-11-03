@@ -304,7 +304,8 @@ for (const [providerChanged, programChanged] of [
         });
       }
     });
-    await page.goto("/sites/one");
+    await page.goto("/sites");
+    await page.locator('.site-directory-row__main[href="/sites/one"]').click();
     const select = page.locator('wa-select[name="lead-program-id"]');
     await expect(select).toHaveAttribute(
       "label",
@@ -346,6 +347,14 @@ for (const [providerChanged, programChanged] of [
     await expect(
       page.locator('wa-select[name="lead-program-id"]'),
     ).toHaveJSProperty("value", programChanged ? "" : "p");
+    await page.locator('a[data-route][href="/sites"]').first().click();
+    const row = page.locator('.site-directory-row__main[href="/sites/one"]');
+    await expect(row).toContainText(
+      providerChanged ? "Zebra Test Provider" : "Alpha Test Provider",
+    );
+    if (programChanged)
+      await expect(row).not.toContainText("Current Test Program");
+    else await expect(row).toContainText("Current Test Program");
   });
 }
 

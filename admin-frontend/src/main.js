@@ -1,3 +1,7 @@
+import {
+  beginEnrollmentRequest,
+  syncEnrollmentRequests,
+} from "./enrollment-request.js";
 import { bindManagerAssignmentSearch } from "./manager-assignment-search.js";
 import {
   clearEnrollmentCodeView,
@@ -1082,6 +1086,12 @@ class AdminApp extends HTMLElement {
   }
 
   async issueProviderManagerGrant(membershipId, deliveryMode = "link") {
+    const release = beginEnrollmentRequest(
+      this,
+      "provider",
+      this.state.provider?.providerId,
+    );
+    if (!release) return;
     const feedback = actionFeedback("admin.enrollment.emailed");
     const providerId = this.state.provider?.providerId;
     try {
@@ -1132,6 +1142,8 @@ class AdminApp extends HTMLElement {
       }
       feedback.failure(error);
       throw error;
+    } finally {
+      release();
     }
   }
 
@@ -1928,6 +1940,11 @@ class AdminApp extends HTMLElement {
           );
           feedback.changed();
           this.state.site = { ...this.state.site, ...reassignment.site };
+          this.state.sites = upsertRecord(
+            this.state.sites,
+            this.state.site,
+            "siteId",
+          );
         }
         if (section === "lead-program") {
           feedback.success("admin.toast.leadProgramSaved");
@@ -3290,13 +3307,9 @@ class AdminApp extends HTMLElement {
         ? this.state.site?.siteId
         : this.state.provider?.providerId;
     if (!id) return;
-    const view = (this.state.enrollmentCodeView ||= {
-      codes: new Map(),
-      pending: new Set(),
-    });
-    const key = `${scope}:${id}:${membershipId}`;
-    if (view.pending.has(key)) return;
-    view.pending.add(key);
+    const release = beginEnrollmentRequest(this, scope, id);
+    if (!release) return;
+    const view = (this.state.enrollmentCodeView ||= { codes: new Map() });
     const generation = this.navigationGeneration;
     const current = () =>
       this.state.enrollmentCodeView === view &&
@@ -3375,24 +3388,17 @@ class AdminApp extends HTMLElement {
           "error",
         );
     } finally {
-      view.pending.delete(key);
-      if (current())
-        this.querySelectorAll("[data-show-enrollment-code]").forEach(
-          (button) => {
-            const buttonScope = button.dataset.enrollmentScope;
-            const buttonId =
-              buttonScope === "site"
-                ? this.state.site?.siteId
-                : this.state.provider?.providerId;
-            button.disabled = view.pending.has(
-              `${buttonScope}:${buttonId}:${button.dataset.showEnrollmentCode}`,
-            );
-          },
-        );
+      release();
     }
   }
 
   async issueManagerGrant(membershipId, deliveryMode = "link") {
+    const release = beginEnrollmentRequest(
+      this,
+      "site",
+      this.state.site?.siteId,
+    );
+    if (!release) return;
     if (this.state.error) {
       this.state.error = "";
       this.render();
@@ -3452,6 +3458,8 @@ class AdminApp extends HTMLElement {
       }
       feedback.failure(error);
       throw error;
+    } finally {
+      release();
     }
   }
 
@@ -3882,14 +3890,6 @@ class AdminApp extends HTMLElement {
     this.querySelectorAll("[data-show-enrollment-code]").forEach((button) => {
       const scope = button.dataset.enrollmentScope;
       const membershipId = button.getAttribute("data-show-enrollment-code");
-      const id =
-        scope === "site"
-          ? this.state.site?.siteId
-          : this.state.provider?.providerId;
-      button.disabled =
-        this.state.enrollmentCodeView?.pending.has(
-          `${scope}:${id}:${membershipId}`,
-        ) || false;
       button.addEventListener("click", () =>
         this.showEnrollmentCode(scope, membershipId),
       );
@@ -5782,6 +5782,7 @@ class AdminApp extends HTMLElement {
     `;
     this.bind();
     this.applyCapabilities();
+    syncEnrollmentRequests(this);
     this.lastRenderedPath = window.location.pathname + window.location.search;
   }
 

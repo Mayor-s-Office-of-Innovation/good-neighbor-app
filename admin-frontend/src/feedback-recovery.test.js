@@ -1,3 +1,4 @@
+import { beginEnrollmentRequest } from "./enrollment-request.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
@@ -10,6 +11,7 @@ function subject(name, api, notices) {
   const t = (key, params) =>
     params ? JSON.stringify({ key, ...params }) : key;
   return vm.runInNewContext(`(class { ${source.slice(start, end)} })`, {
+    beginEnrollmentRequest,
     adminApi: api,
     currentRoute: () => ({ name: "site-import" }),
     t,
