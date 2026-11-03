@@ -208,9 +208,11 @@ export function createAnalyzerClient({
    * Try to read the service's `{ error: { code, message, details } }` body.
    * @param {Response} res
    * @param {{abort: () => void}} controller
+   * @param {number} maxMs how long to wait for the body before falling back
+   *   to the HTTP status alone
    * @returns {Promise<{ code?: string, message?: string, details?: string[], retryable?: boolean }>}
    */
-  const readError = async (res, controller) => {
+  const readError = async (res, controller, maxMs) => {
     let timer;
     try {
       const body = await Promise.race([
@@ -220,7 +222,7 @@ export function createAnalyzerClient({
             // Abort the underlying fetch body, then use HTTP-status fallback.
             controller.abort();
             resolve(undefined);
-          }, ERROR_BODY_TIMEOUT_MS);
+          }, maxMs);
         }),
       ]);
       return body && typeof body === "object" && body.error ? body.error : {};
@@ -240,21 +242,34 @@ export function createAnalyzerClient({
     const url = resolve(pathname);
     const deadline =
       totalBudgetMs === undefined ? Infinity : now() + totalBudgetMs;
+    const remainingMs = () => deadline - now();
     const timeoutError = () =>
       new AnalyzerError("Analyzer request timed out", {
         code: ANALYZER_TIMEOUT_CODE,
         retryable: true,
       });
+    /**
+     * Back off before another attempt, but only while attempts remain and the
+     * backoff still leaves budget for that attempt; otherwise the failure in
+     * hand is final and keeps its own status and code.
+     * @param {number} attempt
+     * @returns {Promise<boolean>} true once the backoff has been waited
+     */
+    const retryAfterBackoff = async (attempt) => {
+      const delay = baseDelayMs * 2 ** attempt;
+      if (attempt >= maxRetries || remainingMs() <= delay) return false;
+      await sleep(delay);
+      return true;
+    };
 
     for (let attempt = 0; ; attempt++) {
-      let res;
-      const controller = new globalThis.AbortController();
-      // Arm the controller: one timer bounds the attempt (connect, headers,
-      // and the success body). `readError` has its own shorter cap for error
-      // bodies. The last attempt is cut short to fit the remaining budget so
-      // the whole call, retries and backoff included, ends by `deadline`.
-      const remaining = deadline - now();
+      const remaining = remainingMs();
       if (remaining <= 0) throw timeoutError();
+      // Arm the controller: one timer bounds the attempt (connect, headers,
+      // and the success body); the error-body read below gets what is left.
+      // The last attempt is cut short to fit the remaining budget so the whole
+      // call, retries and backoff included, ends by `deadline`.
+      const controller = new globalThis.AbortController();
       const attemptMs = Math.min(requestTimeoutMs ?? Infinity, remaining);
       let timedOut = false;
       const timer = Number.isFinite(attemptMs)
@@ -263,59 +278,60 @@ export function createAnalyzerClient({
             controller.abort();
           }, attemptMs)
         : undefined;
-      const budgetLeft = () => deadline - now() > 0;
 
+      let res;
+      let failed = false;
+      /** @type {unknown} */
+      let failure;
       try {
-        try {
-          res = await fetchImpl(url, {
-            signal: controller.signal,
-            method,
-            headers: {
-              accept: "application/json",
-              ...(body !== undefined
-                ? { "content-type": "application/json" }
-                : {}),
-              ...(auth ? { "x-api-key": apiKey } : {}),
-            },
-            ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-          });
-        } catch {
-          // Transport failure (DNS/connection/TLS) or our own timeout — retry
-          // while attempts and budget remain, then give up.
-          if (attempt < maxRetries && budgetLeft()) {
-            await sleep(baseDelayMs * 2 ** attempt);
-            continue;
-          }
-          if (timedOut) throw timeoutError();
-          // Security: the request that just failed carried the `x-api-key` header
-          // (GNP's server-side analyzer credential), so the fetch error is on that
-          // key's taint path. The worker pumps log this error whole on redelivery,
-          // so we deliberately do NOT attach the raw fetch error as `cause` — that
-          // would be the one edge by which the key could reach clear-text logs.
-          // "network" + retryable is all the caller acts on; the HTTP-error path
-          // below still carries status/code for diagnosis.
-          throw new AnalyzerError("Analyzer request failed (network)", {
-            retryable: true,
-          });
-        }
-
-        if (res.ok) {
-          try {
-            return await res.json();
-          } catch (bodyErr) {
-            if (!timedOut) throw bodyErr;
-            if (attempt < maxRetries && budgetLeft()) {
-              await sleep(baseDelayMs * 2 ** attempt);
-              continue;
-            }
-            throw timeoutError();
-          }
-        }
+        res = await fetchImpl(url, {
+          signal: controller.signal,
+          method,
+          headers: {
+            accept: "application/json",
+            ...(body !== undefined
+              ? { "content-type": "application/json" }
+              : {}),
+            ...(auth ? { "x-api-key": apiKey } : {}),
+          },
+          ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        });
+        if (res.ok) return await res.json();
+      } catch (err) {
+        failed = true;
+        failure = err;
       } finally {
         clearTimeout(timer);
       }
 
-      const err = await readError(res, controller);
+      // (`!res` is for the type checker: fetch either returned or threw.)
+      if (failed || !res) {
+        if (timedOut) {
+          // Our own abort: retry like a transport failure while budget remains.
+          if (await retryAfterBackoff(attempt)) continue;
+          throw timeoutError();
+        }
+        // A 2xx whose body did not parse is the service's bug, not transport.
+        if (res) throw failure;
+        // Transport failure (DNS/connection/TLS) — retry, then give up.
+        if (await retryAfterBackoff(attempt)) continue;
+        // Security: the request that just failed carried the `x-api-key` header
+        // (GNP's server-side analyzer credential), so the fetch error is on that
+        // key's taint path. The worker pumps log this error whole on redelivery,
+        // so we deliberately do NOT attach the raw fetch error as `cause` — that
+        // would be the one edge by which the key could reach clear-text logs.
+        // "network" + retryable is all the caller acts on; the HTTP-error path
+        // below still carries status/code for diagnosis.
+        throw new AnalyzerError("Analyzer request failed (network)", {
+          retryable: true,
+        });
+      }
+
+      const err = await readError(
+        res,
+        controller,
+        Math.min(ERROR_BODY_TIMEOUT_MS, Math.max(remainingMs(), 0)),
+      );
       // Read the contract before deciding: a retired model is a permanent 502.
       const permanentModelError = [
         "model_unavailable",
@@ -327,10 +343,7 @@ export function createAnalyzerClient({
           ? err.retryable
           : err.code === "evidence_retrieval_failed" ||
             RETRYABLE_STATUS.has(res.status));
-      if (retryable && attempt < maxRetries && budgetLeft()) {
-        await sleep(baseDelayMs * 2 ** attempt);
-        continue;
-      }
+      if (retryable && (await retryAfterBackoff(attempt))) continue;
 
       throw new AnalyzerError(
         err.message || `Analyzer returned ${res.status}`,

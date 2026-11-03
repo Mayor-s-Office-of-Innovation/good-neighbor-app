@@ -257,11 +257,11 @@ function untilAborted(promise, signal) {
 // (status 0), so a weak signal fails over to the offline paths instead of
 // hanging. Generous: a slow but working connection should still get through.
 export const REQUEST_TIMEOUT_MS = 30_000;
-// Condition amendments wait on the analyzer inside the api function, which
-// gives up after 8 s (vendor-insulation plan, item 3). The dialog stops
-// waiting shortly after the server does rather than holding for the general
-// 30 s on an answer that is not coming.
-export const AMENDMENT_TIMEOUT_MS = 10_000;
+// Condition edit and reject wait on the analyzer inside the api function,
+// which gives up after 8 s (vendor-insulation plan, item 3). The client allows
+// that budget plus a cold start and the round trip, then stops waiting rather
+// than holding for the general 30 s on an answer that is not coming.
+export const AMENDMENT_TIMEOUT_MS = 12_000;
 // Photo uploads: abort when no bytes have moved for this long (XHR), or when
 // the whole PUT is slower than UPLOAD_MIN_BYTES_PER_SECOND (fetch).
 export const UPLOAD_STALL_MS = 30_000;
@@ -755,7 +755,7 @@ export function editAnalysisCondition(checkId, artifactId, conditionId, body) {
   return request(
     "POST",
     `/v1/checks/${encodeURIComponent(checkId)}/artifacts/${encodeURIComponent(artifactId)}/conditions/${encodeURIComponent(conditionId)}`,
-    { body },
+    { body, timeoutMs: AMENDMENT_TIMEOUT_MS },
   );
 }
 

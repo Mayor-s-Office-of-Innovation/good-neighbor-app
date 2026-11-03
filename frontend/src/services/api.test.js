@@ -778,20 +778,35 @@ describe("time limits on a weak connection", () => {
     await expect(pending).resolves.toEqual({ ok: true });
   });
 
-  it("gives up on a condition rejection at the amendment limit, not the general one", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    vi.stubGlobal("fetch", hangingFetch());
-    let settled = false;
-    const pending = rejectAnalysisCondition("chk_01", "art_1", "cond-1", {});
-    void pending.catch(() => {}).finally(() => (settled = true));
-    await vi.advanceTimersByTimeAsync(AMENDMENT_TIMEOUT_MS - 1);
-    expect(settled).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-    await expect(pending).rejects.toMatchObject({
-      name: "ApiError",
-      status: 0,
-    });
-  });
+  it.each([
+    [
+      "rejection",
+      () => rejectAnalysisCondition("chk_01", "art_1", "cond-1", {}),
+    ],
+    [
+      "edit",
+      () =>
+        editAnalysisCondition("chk_01", "art_1", "cond-1", {
+          description: "Overflowing bin by the gate",
+        }),
+    ],
+  ])(
+    "gives up on a condition %s at the amendment limit, not the general one",
+    async (_label, call) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      vi.stubGlobal("fetch", hangingFetch());
+      let settled = false;
+      const pending = call();
+      void pending.catch(() => {}).finally(() => (settled = true));
+      await vi.advanceTimersByTimeAsync(AMENDMENT_TIMEOUT_MS - 1);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(pending).rejects.toMatchObject({
+        name: "ApiError",
+        status: 0,
+      });
+    },
+  );
 
   it("gives a large photo upload more time than a small one", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });

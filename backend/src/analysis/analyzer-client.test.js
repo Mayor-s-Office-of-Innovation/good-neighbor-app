@@ -525,8 +525,46 @@ describe("createAnalyzerClient", () => {
     const error = await client.analyze({ metadata, media }).catch((e) => e);
     expect(error).toBeInstanceOf(AnalyzerError);
     expect(error.code).toBe("analyzer_timeout");
-    // One full attempt plus at most one shortened to the remaining budget.
-    expect(calls.length).toBeLessThanOrEqual(2);
+    // The default 200 ms backoff no longer fits the budget, so no second try.
+    expect(calls).toHaveLength(1);
+  });
+
+  it("caps the error-body read by the remaining budget", async () => {
+    // A 503 whose body never arrives: without the cap the client would sit on
+    // the body read for the full ERROR_BODY_TIMEOUT_MS (5 s).
+    /** @type {Array<{ url: unknown, init: any }>} */
+    const calls = [];
+    /** @param {any} url @param {any} init */
+    const impl = async (url, init) => {
+      calls.push({ url, init });
+      return {
+        ok: false,
+        status: 503,
+        json: () =>
+          new Promise((_resolve, reject) =>
+            init.signal.addEventListener("abort", () =>
+              reject(new DOMException("Aborted", "AbortError")),
+            ),
+          ),
+      };
+    };
+    const client = createAnalyzerClient({
+      baseUrl: "https://analysis.example.org/",
+      apiKey: "k",
+      fetchImpl: /** @type {typeof fetch} */ (impl),
+      maxRetries: 2,
+      sleep: noSleep,
+      totalBudgetMs: 40,
+    });
+
+    const started = Date.now();
+    await expect(client.analyze({ metadata, media })).rejects.toMatchObject({
+      status: 503,
+      retryable: true,
+    });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].init.signal.aborted).toBe(true);
   });
 
   it("does not retry a retryable HTTP error once the budget is spent", async () => {

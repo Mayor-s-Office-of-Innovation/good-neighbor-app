@@ -234,21 +234,7 @@ describe("analysis amendments (check/artifact-addressed)", () => {
     });
   });
 
-  it("bounds the analyzer wait on the request path", async () => {
-    send.mockResolvedValueOnce({ Item: analysisItem() });
-    await invoke(
-      amendEvent({ body: { description: "Overflowing bin by the gate" } }),
-      editAnalysisCondition,
-    );
-    expect(createAnalyzerClient).toHaveBeenCalledWith(
-      expect.objectContaining({
-        requestTimeoutMs: 4_000,
-        totalBudgetMs: 8_000,
-      }),
-    );
-  });
-
-  it("answers 504 analyzer_timeout when the analyzer does not respond in time, confirming nothing", async () => {
+  it("bounds the analyzer wait and answers 504 analyzer_timeout when it runs out, confirming nothing", async () => {
     analyzeReject.mockRejectedValueOnce(
       new AnalyzerError("Analyzer request timed out", {
         code: "analyzer_timeout",
@@ -258,6 +244,12 @@ describe("analysis amendments (check/artifact-addressed)", () => {
     send.mockResolvedValueOnce({});
     send.mockResolvedValueOnce({});
     const res = await invoke(amendEvent({}), rejectAnalysisCondition);
+    expect(createAnalyzerClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestTimeoutMs: 4_000,
+        totalBudgetMs: 8_000,
+      }),
+    );
     expect(res.statusCode).toBe(504);
     expect(JSON.parse(res.body).code).toBe("analyzer_timeout");
     expect(
