@@ -469,4 +469,122 @@ describe("createAnalyzerClient", () => {
     expect(error.retryable).toBe(true);
     expect(calls).toHaveLength(3);
   });
+
+  /**
+   * A fetch that never answers; it rejects only when the client aborts it.
+   * @returns {{ fetchImpl: typeof fetch, calls: Array<{ url: unknown, init: any }> }}
+   */
+  function hangingFetch() {
+    /** @type {Array<{ url: unknown, init: any }>} */
+    const calls = [];
+    /** @param {any} url @param {any} init */
+    const impl = (url, init) => {
+      calls.push({ url, init });
+      return new Promise((_resolve, reject) =>
+        init.signal.addEventListener("abort", () =>
+          reject(new DOMException("Aborted", "AbortError")),
+        ),
+      );
+    };
+    return { fetchImpl: /** @type {typeof fetch} */ (impl), calls };
+  }
+
+  it("aborts a hung attempt at requestTimeoutMs, retries, then fails with analyzer_timeout", async () => {
+    const { fetchImpl, calls } = hangingFetch();
+    const client = createAnalyzerClient({
+      baseUrl: "https://analysis.example.org/",
+      apiKey: "k",
+      fetchImpl,
+      maxRetries: 2,
+      sleep: noSleep,
+      requestTimeoutMs: 10,
+      totalBudgetMs: 5_000,
+    });
+
+    const error = await client.analyze({ metadata, media }).catch((e) => e);
+    expect(error).toBeInstanceOf(AnalyzerError);
+    expect(error.code).toBe("analyzer_timeout");
+    expect(error.retryable).toBe(true);
+    expect(error.status).toBeUndefined();
+    expect(calls).toHaveLength(3); // initial + 2 retries, each aborted
+    for (const call of calls) expect(call.init.signal.aborted).toBe(true);
+  });
+
+  it("stops retrying once totalBudgetMs is spent, before maxRetries", async () => {
+    const { fetchImpl, calls } = hangingFetch();
+    const client = createAnalyzerClient({
+      baseUrl: "https://analysis.example.org/",
+      apiKey: "k",
+      fetchImpl,
+      maxRetries: 5,
+      sleep: noSleep,
+      requestTimeoutMs: 10,
+      totalBudgetMs: 15,
+    });
+
+    const error = await client.analyze({ metadata, media }).catch((e) => e);
+    expect(error).toBeInstanceOf(AnalyzerError);
+    expect(error.code).toBe("analyzer_timeout");
+    // One full attempt plus at most one shortened to the remaining budget.
+    expect(calls.length).toBeLessThanOrEqual(2);
+  });
+
+  it("does not retry a retryable HTTP error once the budget is spent", async () => {
+    const { fetchImpl, calls } = stubFetch([
+      { ok: false, status: 503, body: {} },
+      { ok: false, status: 503, body: {} },
+    ]);
+    let t = 0;
+    const client = createAnalyzerClient({
+      baseUrl: "https://analysis.example.org/",
+      apiKey: "k",
+      fetchImpl,
+      maxRetries: 2,
+      sleep: noSleep,
+      totalBudgetMs: 1_500,
+      // Each clock read is a second later, so the first attempt eats the budget.
+      now: () => (t += 1_000),
+    });
+
+    await expect(client.analyze({ metadata, media })).rejects.toMatchObject({
+      status: 503,
+      retryable: true,
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("returns a response that arrives inside the limit and leaves its signal unaborted", async () => {
+    const { fetchImpl, calls } = stubFetch([
+      { ok: true, status: 200, body: excellentResponse },
+    ]);
+    const client = createAnalyzerClient({
+      baseUrl: "https://analysis.example.org/",
+      apiKey: "k",
+      fetchImpl,
+      requestTimeoutMs: 1_000,
+      totalBudgetMs: 2_000,
+    });
+
+    await expect(client.analyze({ metadata, media })).resolves.toEqual(
+      excellentResponse,
+    );
+    expect(calls[0].init.signal.aborted).toBe(false);
+  });
+
+  it("rejects a non-positive timeout at construction", () => {
+    expect(() =>
+      createAnalyzerClient({
+        baseUrl: "https://analysis.example.org/",
+        apiKey: "k",
+        requestTimeoutMs: 0,
+      }),
+    ).toThrow(/requestTimeoutMs/);
+    expect(() =>
+      createAnalyzerClient({
+        baseUrl: "https://analysis.example.org/",
+        apiKey: "k",
+        totalBudgetMs: -1,
+      }),
+    ).toThrow(/totalBudgetMs/);
+  });
 });

@@ -5,6 +5,7 @@ import { GetCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getAnalyzerApiKey } from "../analysis/api-key.js";
 import {
+  ANALYZER_TIMEOUT_CODE,
   AnalyzerError,
   createAnalyzerClient,
 } from "../analysis/analyzer-client.js";
@@ -19,6 +20,13 @@ const APP_ID = "good-neighbor-app";
 const MAX_DESCRIPTION_LENGTH = 4000;
 /** Max reject-reason note length forwarded to the analyzer. */
 const MAX_NOTE_LENGTH = 1000;
+
+// The analyzer wait on the request path is bounded (vendor-insulation plan,
+// item 3): a hung analyzer must not hold an api execution for the function's
+// full 29 s. One attempt gets 4 s; the whole call, retries and backoff
+// included, 8 s. The analysis worker keeps its own, longer budget.
+const ANALYZER_ATTEMPT_TIMEOUT_MS = 4_000;
+const ANALYZER_TOTAL_BUDGET_MS = 8_000;
 
 /**
  * @param {string} [message]
@@ -39,6 +47,8 @@ async function analyzerClient() {
   return createAnalyzerClient({
     baseUrl: config.analyzerBaseUrl,
     apiKey: await getAnalyzerApiKey(config),
+    requestTimeoutMs: ANALYZER_ATTEMPT_TIMEOUT_MS,
+    totalBudgetMs: ANALYZER_TOTAL_BUDGET_MS,
   });
 }
 
@@ -47,6 +57,14 @@ async function analyzerClient() {
  * @returns {import("aws-lambda").APIGatewayProxyResult}
  */
 function errorResponse(err) {
+  if (err instanceof AnalyzerError && err.code === ANALYZER_TIMEOUT_CODE) {
+    // Nothing was saved; the client shows its retry copy. A 504 from us, not
+    // a gateway 503 for a timed-out function.
+    return jsonResponse(504, {
+      error: "The analyzer did not answer in time; the change was not saved",
+      code: ANALYZER_TIMEOUT_CODE,
+    });
+  }
   if (err instanceof AnalyzerError) {
     return jsonResponse(err.status || 502, {
       error: err.message,

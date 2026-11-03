@@ -35,6 +35,7 @@ const {
 });
 vi.mock("../db.js", () => ({ ddb: { send } }));
 vi.mock("../analysis/analyzer-client.js", () => ({
+  ANALYZER_TIMEOUT_CODE: "analyzer_timeout",
   AnalyzerError,
   createAnalyzerClient,
 }));
@@ -231,6 +232,39 @@ describe("analysis amendments (check/artifact-addressed)", () => {
       supersessionReason: "analysis_condition_rejected",
       gsi2pk: "SITE#site-1#TASK#superseded",
     });
+  });
+
+  it("bounds the analyzer wait on the request path", async () => {
+    send.mockResolvedValueOnce({ Item: analysisItem() });
+    await invoke(
+      amendEvent({ body: { description: "Overflowing bin by the gate" } }),
+      editAnalysisCondition,
+    );
+    expect(createAnalyzerClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestTimeoutMs: 4_000,
+        totalBudgetMs: 8_000,
+      }),
+    );
+  });
+
+  it("answers 504 analyzer_timeout when the analyzer does not respond in time, confirming nothing", async () => {
+    analyzeReject.mockRejectedValueOnce(
+      new AnalyzerError("Analyzer request timed out", {
+        code: "analyzer_timeout",
+      }),
+    );
+    send.mockResolvedValueOnce({ Item: analysisItem() });
+    send.mockResolvedValueOnce({});
+    send.mockResolvedValueOnce({});
+    const res = await invoke(amendEvent({}), rejectAnalysisCondition);
+    expect(res.statusCode).toBe(504);
+    expect(JSON.parse(res.body).code).toBe("analyzer_timeout");
+    expect(
+      send.mock.calls.some(
+        ([command]) => command instanceof TransactWriteCommand,
+      ),
+    ).toBe(false);
   });
 
   it("keeps an unknown-condition rejection retryable until durably confirmed", async () => {

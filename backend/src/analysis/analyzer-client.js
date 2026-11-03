@@ -28,8 +28,16 @@ import { RUBRIC_ID, RUBRIC_VERSION } from "./contract.js";
  * The service's documented error `code`s (error-response.schema.json). Kept as a
  * plain typedef — we don't switch on them beyond surfacing, but naming them
  * documents what a caller can expect on `.code`.
- * @typedef {"invalid_request" | "unknown_rubric" | "unsupported_input_type" | "unauthorized" | "forbidden_rubric" | "model_invoke_failed" | "model_unavailable" | "model_access_denied" | "invalid_model_response" | "evidence_retrieval_failed"} AnalyzerErrorCode
+ * @typedef {"invalid_request" | "unknown_rubric" | "unsupported_input_type" | "unauthorized" | "forbidden_rubric" | "model_invoke_failed" | "model_unavailable" | "model_access_denied" | "invalid_model_response" | "evidence_retrieval_failed" | "analyzer_timeout"} AnalyzerErrorCode
  */
+
+/**
+ * Our own code, never sent by the service: the client gave up waiting
+ * (per-attempt `requestTimeoutMs` or the overall `totalBudgetMs`). Callers on
+ * the API request path map it to a 504 so the gateway never has to answer for
+ * a held execution with its own 503 (vendor-insulation plan, item 3).
+ */
+export const ANALYZER_TIMEOUT_CODE = "analyzer_timeout";
 
 /** HTTP statuses worth a retry: throttling, gateway/model transients, 5xx. */
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
@@ -138,6 +146,13 @@ export function buildAnalyzeRequest({
  * @property {number} [maxRetries] retries on transient failures (default 2)
  * @property {number} [baseDelayMs] backoff base, doubled per attempt (default 200)
  * @property {(ms: number) => Promise<void>} [sleep] injectable delay (tests)
+ * @property {number} [requestTimeoutMs] abort one attempt (connect + response
+ *   body) after this long; a timed-out attempt is retried like a transport
+ *   failure while budget remains. Unset = no per-attempt limit (the workers
+ *   rely on their own function timeout).
+ * @property {number} [totalBudgetMs] wall-clock cap across every attempt and
+ *   backoff; the last attempt is shortened to fit. Unset = no cap.
+ * @property {() => number} [now] injectable clock (tests)
  */
 
 /**
@@ -165,9 +180,22 @@ export function createAnalyzerClient({
   maxRetries = 2,
   baseDelayMs = 200,
   sleep = defaultSleep,
+  requestTimeoutMs,
+  totalBudgetMs,
+  now = Date.now,
 }) {
   if (!baseUrl) throw new Error("createAnalyzerClient: baseUrl is required");
   if (!apiKey) throw new Error("createAnalyzerClient: apiKey is required");
+  for (const [name, value] of Object.entries({
+    requestTimeoutMs,
+    totalBudgetMs,
+  })) {
+    if (value !== undefined && !(Number.isFinite(value) && value > 0)) {
+      throw new Error(
+        `createAnalyzerClient: ${name} must be a positive number`,
+      );
+    }
+  }
 
   const base = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
   /**
@@ -210,42 +238,82 @@ export function createAnalyzerClient({
    */
   const request = async (pathname, { method, body, auth }) => {
     const url = resolve(pathname);
+    const deadline =
+      totalBudgetMs === undefined ? Infinity : now() + totalBudgetMs;
+    const timeoutError = () =>
+      new AnalyzerError("Analyzer request timed out", {
+        code: ANALYZER_TIMEOUT_CODE,
+        retryable: true,
+      });
 
     for (let attempt = 0; ; attempt++) {
       let res;
       const controller = new globalThis.AbortController();
-      try {
-        res = await fetchImpl(url, {
-          signal: controller.signal,
-          method,
-          headers: {
-            accept: "application/json",
-            ...(body !== undefined
-              ? { "content-type": "application/json" }
-              : {}),
-            ...(auth ? { "x-api-key": apiKey } : {}),
-          },
-          ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-        });
-      } catch {
-        // Transport failure (DNS/connection/TLS) — retry, then give up.
-        if (attempt < maxRetries) {
-          await sleep(baseDelayMs * 2 ** attempt);
-          continue;
-        }
-        // Security: the request that just failed carried the `x-api-key` header
-        // (GNP's server-side analyzer credential), so the fetch error is on that
-        // key's taint path. The worker pumps log this error whole on redelivery,
-        // so we deliberately do NOT attach the raw fetch error as `cause` — that
-        // would be the one edge by which the key could reach clear-text logs.
-        // "network" + retryable is all the caller acts on; the HTTP-error path
-        // below still carries status/code for diagnosis.
-        throw new AnalyzerError("Analyzer request failed (network)", {
-          retryable: true,
-        });
-      }
+      // Arm the controller: one timer bounds the attempt (connect, headers,
+      // and the success body). `readError` has its own shorter cap for error
+      // bodies. The last attempt is cut short to fit the remaining budget so
+      // the whole call, retries and backoff included, ends by `deadline`.
+      const remaining = deadline - now();
+      if (remaining <= 0) throw timeoutError();
+      const attemptMs = Math.min(requestTimeoutMs ?? Infinity, remaining);
+      let timedOut = false;
+      const timer = Number.isFinite(attemptMs)
+        ? setTimeout(() => {
+            timedOut = true;
+            controller.abort();
+          }, attemptMs)
+        : undefined;
+      const budgetLeft = () => deadline - now() > 0;
 
-      if (res.ok) return res.json();
+      try {
+        try {
+          res = await fetchImpl(url, {
+            signal: controller.signal,
+            method,
+            headers: {
+              accept: "application/json",
+              ...(body !== undefined
+                ? { "content-type": "application/json" }
+                : {}),
+              ...(auth ? { "x-api-key": apiKey } : {}),
+            },
+            ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+          });
+        } catch {
+          // Transport failure (DNS/connection/TLS) or our own timeout — retry
+          // while attempts and budget remain, then give up.
+          if (attempt < maxRetries && budgetLeft()) {
+            await sleep(baseDelayMs * 2 ** attempt);
+            continue;
+          }
+          if (timedOut) throw timeoutError();
+          // Security: the request that just failed carried the `x-api-key` header
+          // (GNP's server-side analyzer credential), so the fetch error is on that
+          // key's taint path. The worker pumps log this error whole on redelivery,
+          // so we deliberately do NOT attach the raw fetch error as `cause` — that
+          // would be the one edge by which the key could reach clear-text logs.
+          // "network" + retryable is all the caller acts on; the HTTP-error path
+          // below still carries status/code for diagnosis.
+          throw new AnalyzerError("Analyzer request failed (network)", {
+            retryable: true,
+          });
+        }
+
+        if (res.ok) {
+          try {
+            return await res.json();
+          } catch (bodyErr) {
+            if (!timedOut) throw bodyErr;
+            if (attempt < maxRetries && budgetLeft()) {
+              await sleep(baseDelayMs * 2 ** attempt);
+              continue;
+            }
+            throw timeoutError();
+          }
+        }
+      } finally {
+        clearTimeout(timer);
+      }
 
       const err = await readError(res, controller);
       // Read the contract before deciding: a retired model is a permanent 502.
@@ -259,7 +327,7 @@ export function createAnalyzerClient({
           ? err.retryable
           : err.code === "evidence_retrieval_failed" ||
             RETRYABLE_STATUS.has(res.status));
-      if (retryable && attempt < maxRetries) {
+      if (retryable && attempt < maxRetries && budgetLeft()) {
         await sleep(baseDelayMs * 2 ** attempt);
         continue;
       }

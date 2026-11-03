@@ -257,6 +257,11 @@ function untilAborted(promise, signal) {
 // (status 0), so a weak signal fails over to the offline paths instead of
 // hanging. Generous: a slow but working connection should still get through.
 export const REQUEST_TIMEOUT_MS = 30_000;
+// Condition amendments wait on the analyzer inside the api function, which
+// gives up after 8 s (vendor-insulation plan, item 3). The dialog stops
+// waiting shortly after the server does rather than holding for the general
+// 30 s on an answer that is not coming.
+export const AMENDMENT_TIMEOUT_MS = 10_000;
 // Photo uploads: abort when no bytes have moved for this long (XHR), or when
 // the whole PUT is slower than UPLOAD_MIN_BYTES_PER_SECOND (fetch).
 export const UPLOAD_STALL_MS = 30_000;
@@ -302,19 +307,22 @@ function withTimeout(signal, ms) {
  * @param {Record<string,string>} [opts.headers]
  * @param {unknown} [opts.body]  JSON-serializable body (omitted for GET)
  * @param {AbortSignal} [opts.signal]
+ * @param {number} [opts.timeoutMs] give up after this long instead of
+ *   `REQUEST_TIMEOUT_MS`; for calls whose server side has a shorter budget
  * @param {boolean} [opts.allowAuthRetry] internal: set false on the retry leg
  *   to stop a 401 loop
  * @param {string} [opts.originSiteId] internal: keep retries bound to the original site
  * @returns {Promise<any>} the parsed JSON body (null for an empty 2xx)
  */
 async function request(method, path, opts = {}) {
-  const timeout = withTimeout(opts.signal, REQUEST_TIMEOUT_MS);
+  const { timeoutMs = REQUEST_TIMEOUT_MS, ...rest } = opts;
+  const timeout = withTimeout(opts.signal, timeoutMs);
   try {
-    return await requestOnce(method, path, { ...opts, signal: timeout.signal });
+    return await requestOnce(method, path, { ...rest, signal: timeout.signal });
   } catch (err) {
     if (!timeout.timedOut() || opts.signal?.aborted) throw err;
     const timedOut = new ApiError(
-      `Timed out after ${REQUEST_TIMEOUT_MS}ms calling ${method} ${path}`,
+      `Timed out after ${timeoutMs}ms calling ${method} ${path}`,
       { status: 0 },
     );
     classifyApiFailure(timedOut);
@@ -768,7 +776,7 @@ export function rejectAnalysisCondition(
   return request(
     "POST",
     `/v1/checks/${encodeURIComponent(checkId)}/artifacts/${encodeURIComponent(artifactId)}/conditions/${encodeURIComponent(conditionId)}/reject`,
-    { body },
+    { body, timeoutMs: AMENDMENT_TIMEOUT_MS },
   );
 }
 
