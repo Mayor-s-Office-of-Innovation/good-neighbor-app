@@ -42,11 +42,21 @@ const FLAG_KEY = "gnp:analytics";
 /** Quiet period after an event before the queue is flushed. */
 export const FLUSH_DELAY_MS = 2000;
 /**
- * Flush early at this many queued events. Keeps a batch well under the
- * sendBeacon payload limit (64 KB; an event is ~700 bytes) and matches the
- * intake's per-request cap (backend/src/handlers/client-events.js).
+ * Flush before a batch body would exceed this many serialized bytes. The WAF
+ * blocks request bodies over the managed 8 KiB limit on this path
+ * (SizeRestrictions_Body, infra/modules/app/main.tf), and a photo_pipeline
+ * event with device facts is ~750 bytes, so 6 KiB holds roughly eight of
+ * them with room for the envelope. sendBeacon's own 64 KB cap is never near.
+ */
+export const MAX_BATCH_BYTES = 6144;
+/**
+ * Count cap as a second guard; the byte budget above is the one that
+ * normally triggers. Matches the intake's per-request cap
+ * (backend/src/handlers/client-events.js).
  */
 export const MAX_BATCH = 25;
+/** Longest user agent sent in the envelope (the server caps at the same). */
+const MAX_USER_AGENT = 500;
 
 /** @typedef {Record<string, string | number | boolean>} EventProperties */
 
@@ -106,6 +116,8 @@ export async function trackEvent(event, properties = {}) {
 
 /** @type {QueuedEvent[]} */
 let queue = [];
+/** Serialized bytes of the queued events (commas included). */
+let queueBytes = 0;
 /** @type {ReturnType<typeof setTimeout> | null} */
 let flushTimer = null;
 let lifecycleHooked = false;
@@ -114,14 +126,67 @@ let lifecycleHooked = false;
  * @param {QueuedEvent} item
  */
 function enqueue(item) {
-  queue.push(item);
   hookLifecycle();
-  if (queue.length >= MAX_BATCH) {
+  const bytes = byteLength(JSON.stringify(item)) + 1;
+  // Flush what is queued first if this event would push the body over
+  // budget; the event itself always goes out in the next batch.
+  if (queue.length > 0 && queueBytes + bytes > MAX_BATCH_BYTES) {
+    flushEvents();
+  }
+  queue.push(item);
+  queueBytes += bytes;
+  // A full batch, or an event queued after the page already went hidden
+  // (the hidden flush has run; the camera or a tab switch may freeze or
+  // kill the document before a timer fires), goes out now.
+  if (queue.length >= MAX_BATCH || pageHidden()) {
     flushEvents();
     return;
   }
   if (flushTimer === null) {
     flushTimer = setTimeout(flushEvents, FLUSH_DELAY_MS);
+  }
+}
+
+/** @returns {boolean} */
+function pageHidden() {
+  try {
+    return document.visibilityState === "hidden";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * UTF-8 size of a string, which is what the WAF measures. String length
+ * counts UTF-16 code units and under-reads non-ASCII device models or
+ * languages; TextEncoder is everywhere this app runs, with length as the
+ * (over-optimistic) fallback.
+ * @param {string} s
+ * @returns {number}
+ */
+function byteLength(s) {
+  try {
+    return new TextEncoder().encode(s).length;
+  } catch {
+    return s.length;
+  }
+}
+
+/**
+ * The user agent travels inside the body as well as in the request header.
+ * The intake reads the header today; the queued transport that follows this
+ * change hands the body to a queue verbatim and cannot forward headers, so
+ * the body copy is what it will read. The server caps it at the same length.
+ * @returns {string | undefined}
+ */
+function userAgent() {
+  try {
+    const ua = navigator.userAgent;
+    return typeof ua === "string" && ua
+      ? ua.slice(0, MAX_USER_AGENT)
+      : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -141,13 +206,16 @@ export function flushEvents() {
     if (queue.length === 0) return false;
     const batch = queue;
     queue = [];
+    queueBytes = 0;
+    const ua = userAgent();
     // Best effort: a batch the browser refuses is dropped, never retried or
     // re-queued, so a failing intake can never back up memory or requests.
-    return sendBeacon({ batch }, ENDPOINT);
+    return sendBeacon({ batch, ...(ua ? { ua } : {}) }, ENDPOINT);
   } catch {
     // Runs from timers and lifecycle listeners: never let telemetry throw
     // into the page (it would only turn into a client-error report).
     queue = [];
+    queueBytes = 0;
     return false;
   }
 }

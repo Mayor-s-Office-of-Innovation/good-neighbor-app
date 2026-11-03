@@ -19,8 +19,14 @@ import { scrubClientEvent } from "./scrub-client-event.js";
 
 /** Log marker for validation drops (metric-filter abuse signal). */
 export const DROPPED_MARKER = "ClientEventDropped";
-/** Most events accepted from one request; the client flushes at 25. */
-export const MAX_BATCH = 50;
+/**
+ * Most events accepted from one request. Matches the client's count cap
+ * (frontend/src/services/analytics.js MAX_BATCH); a larger server cap would
+ * only widen what an anonymous caller can push through one rate-limited
+ * request. The WAF's 8 KiB body limit caps a request at about ten realistic
+ * events before this does.
+ */
+export const MAX_BATCH = 25;
 
 /**
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2}

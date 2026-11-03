@@ -56,7 +56,7 @@ values are query-stripped again server-side. Adding an event or property means a
 - Globally: the forwarder is log-only whenever the PostHog project key is unset (same secret as
   error tracking, [feedback-ops.md §2](./feedback-ops.md)). Log-only still writes every event and
   its device properties to CloudWatch, so the device picture is available before egress is on.
-- WAF: `ClientEventsRateLimit` blocks an IP above 5,000 requests per 5 minutes on this path. The general WAF traffic budget can block first.
+- WAF: `ClientEventsRateLimit` blocks an IP above 1,000 requests per 5 minutes on this path (a batched check is 15 to 20 requests). The general WAF traffic budget can block first.
 - Concurrency: the three intakes (errors, events, feedback) run in their own `good-neighbor-app-<env>-intake`
   Lambda with reserved concurrency of 50, separate from the app API function. Each handler
   awaits its PostHog forward before answering. The reservation bounds concurrent intake work

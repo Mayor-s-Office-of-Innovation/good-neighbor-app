@@ -65,6 +65,7 @@ beforeEach(() => {
   });
   vi.stubGlobal("navigator", {
     sendBeacon,
+    userAgent: "Mozilla/5.0 (Linux; Android 14; SM-S911U) TestBrowser/1.0",
     language: "en-US",
     deviceMemory: 2,
     hardwareConcurrency: 4,
@@ -119,6 +120,10 @@ describe("trackEvent", () => {
     expect(sendBeacon).not.toHaveBeenCalled();
     expect(flushEvents()).toBe(true);
     expect(sendBeacon.mock.calls[0][0]).toBe("/v1/client-events");
+    const envelope = JSON.parse(await beacons[0].text());
+    expect(envelope.ua).toBe(
+      "Mozilla/5.0 (Linux; Android 14; SM-S911U) TestBrowser/1.0",
+    );
     const body = await lastBeacon();
     expect(body.event).toBe("camera_opened");
     expect(body.id).toBe("device-1");
@@ -193,18 +198,53 @@ describe("batching", () => {
     }
   });
 
-  it("flushes early when the queue reaches MAX_BATCH", async () => {
+  it("flushes early so no beacon body exceeds MAX_BATCH_BYTES", async () => {
     vi.useFakeTimers();
     try {
-      const { trackEvent, MAX_BATCH } = await load();
-      for (let i = 0; i < MAX_BATCH + 1; i++) {
-        await trackEvent("photo_pipeline", { stage: "put", http_status: i });
+      const { trackEvent, MAX_BATCH_BYTES, MAX_BATCH } = await load();
+      // Realistic photo_pipeline payload: ids plus stage facts, ~750 bytes
+      // with the device properties merged in.
+      const props = {
+        check_id: "01J9ZK3Q8X2M4N6P8R0T2V4W6Y",
+        attempt_id: "6f1d2c3b-4a5e-4f60-8b7c-9d0e1f2a3b4c",
+        artifact_id: "01J9ZK3Q8X2M4N6P8R0T2V4W6Z",
+        photo_bytes: 2345678,
+        stage: "register",
+        outcome: "completed",
+        elapsed_ms: 1234,
+        http_status: 0,
+        online: true,
+        visibility: "visible",
+      };
+      let sent = 0;
+      for (let i = 0; i < MAX_BATCH; i++) {
+        await trackEvent("photo_pipeline", { ...props, elapsed_ms: i });
+        sent++;
+        if (sendBeacon.mock.calls.length > 0) break;
       }
       expect(sendBeacon).toHaveBeenCalledTimes(1);
-      expect(await lastBatch()).toHaveLength(MAX_BATCH);
+      const body = await beacons[0].text();
+      expect(body.length).toBeLessThanOrEqual(MAX_BATCH_BYTES + 600);
+      const batch = JSON.parse(body).batch;
+      expect(batch.length).toBeGreaterThan(1);
+      // The event that would have overflowed is queued for the next batch.
+      expect(batch).toHaveLength(sent - 1);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(sendBeacon).toHaveBeenCalledTimes(2);
+      expect(await lastBatch()).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("never sends a beacon without the user agent when the browser lacks one", async () => {
+    vi.stubGlobal("navigator", { sendBeacon, language: "en" });
+    const { trackEvent, flushEvents } = await load();
+    await trackEvent("camera_opened");
+    flushEvents();
+    const envelope = JSON.parse(await beacons[0].text());
+    expect(envelope).not.toHaveProperty("ua");
+    expect(envelope.batch).toHaveLength(1);
   });
 
   it("flushes when the page is hidden or unloading", async () => {
@@ -247,6 +287,27 @@ describe("batching", () => {
     // Nothing queued: pagehide with an empty queue sends nothing.
     winListeners.pagehide();
     expect(sendBeacon).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends at once when an event is queued after the page is already hidden", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal("document", {
+        visibilityState: "hidden",
+        addEventListener: () => {},
+      });
+      vi.stubGlobal("window", { addEventListener: () => {} });
+      const { trackEvent } = await load();
+      await trackEvent("camera_opened", { flow: "perimeter" });
+      // No quiet period: the hidden flush already ran, and a timer may
+      // never fire once the camera has the screen.
+      expect(sendBeacon).toHaveBeenCalledTimes(1);
+      expect(await lastBatch()).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(sendBeacon).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
