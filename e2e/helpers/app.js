@@ -175,6 +175,49 @@ export async function dismissAllNewResults(page) {
  * deliberately included in the response to verify they never appear in History.
  * @param {import("@playwright/test").Page} page
  */
+const HOME_TASK_STATUSES = ["open", "in_progress", "completing", "completed"];
+
+/**
+ * Serve Home's list reads from fixtures: the one `GET /v1/home` the screen
+ * loads and refreshes with, plus the per-status `GET /v1/tasks` and
+ * `GET /v1/checks` routes that targeted refreshes and the fallback still use.
+ * `tasks` may be a function of status so a spec can mutate its fixture and
+ * have the next read see the change.
+ * @param {import('@playwright/test').Page} page
+ * @param {{ tasks?: any[] | ((status: string) => any[]), checks?: any[] }} fixtures
+ */
+export async function routeHomeLists(page, { tasks = [], checks = [] } = {}) {
+  /** @param {string} status */
+  const tasksFor = (status) =>
+    typeof tasks === "function" ? tasks(status) : tasks;
+  await page.route("**/v1/home*", (route) =>
+    route.fulfill({
+      json: {
+        checks: { ok: true, items: checks },
+        tasks: Object.fromEntries(
+          HOME_TASK_STATUSES.map((status) => [
+            status,
+            { ok: true, items: tasksFor(status) },
+          ]),
+        ),
+        loadedAt: new Date().toISOString(),
+      },
+    }),
+  );
+  await page.route("**/v1/tasks?*", (route) =>
+    route.fulfill({
+      json: {
+        tasks: tasksFor(
+          new URL(route.request().url()).searchParams.get("status") || "open",
+        ),
+      },
+    }),
+  );
+  await page.route("**/v1/checks?*", (route) =>
+    route.fulfill({ json: { checks } }),
+  );
+}
+
 export async function openHistoryWithTrays(page) {
   const createdAt = new Date(Date.now() - 2 * 86400000).toISOString();
   const completedAt = new Date(Date.now() - 86400000).toISOString();
@@ -191,39 +234,25 @@ export async function openHistoryWithTrays(page) {
     completedAt,
     resolvedAt: completedAt,
   };
-  await page.route("**/v1/tasks?*", (route) =>
-    route.fulfill({
-      json: {
-        tasks:
-          new URL(route.request().url()).searchParams.get("status") ===
-          "completed"
-            ? [task]
-            : [],
+  await routeHomeLists(page, {
+    tasks: (status) => (status === "completed" ? [task] : []),
+    checks: [
+      {
+        checkId: task.checkId,
+        status: "completed",
+        startedAt: createdAt,
+        completedAt,
+        issueCount: 1,
       },
-    }),
-  );
-  await page.route("**/v1/checks?*", (route) =>
-    route.fulfill({
-      json: {
-        checks: [
-          {
-            checkId: task.checkId,
-            status: "completed",
-            startedAt: createdAt,
-            completedAt,
-            issueCount: 1,
-          },
-          {
-            checkId: "history-a11y-clear",
-            status: "completed",
-            startedAt: completedAt,
-            completedAt,
-            issueCount: 0,
-          },
-        ],
+      {
+        checkId: "history-a11y-clear",
+        status: "completed",
+        startedAt: completedAt,
+        completedAt,
+        issueCount: 0,
       },
-    }),
-  );
+    ],
+  });
   await page.goto("/today?filter=history");
   await expect(
     page.locator('.analysis-tray--history [data-task-id="history-a11y-issue"]'),

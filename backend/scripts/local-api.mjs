@@ -65,6 +65,7 @@ import {
   get311RequestDetails,
   listTasks,
 } from "../src/handlers/tasks.js";
+import { getHome } from "../src/handlers/home.js";
 import {
   createTaskUpdate,
   documentTaskUpdate,
@@ -379,6 +380,7 @@ const routes = [
   ),
   // Staff worklist (AP10)
   route("GET", "/v1/tasks", listTasks),
+  route("GET", "/v1/home", getHome),
   route("POST", "/v1/duplicates:batch", getDuplicateLinks),
   route("POST", "/v1/tasks/{taskId}/duplicate:separate", separateDuplicate),
   route("GET", "/v1/tasks/{taskId}/details", getTaskDetails),

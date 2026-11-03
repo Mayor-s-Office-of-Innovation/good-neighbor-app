@@ -1193,6 +1193,23 @@ export function listTasks({ status, limit } = {}) {
   return request("GET", `/v1/tasks${qs({ status, limit })}`);
 }
 
+/**
+ * @typedef {{ ok: true, items: any[], nextToken?: string } | { ok: false, error: string }} HomeSection
+ * @typedef {{ checks: HomeSection, tasks: Record<"open" | "in_progress" | "completing" | "completed", HomeSection>, loadedAt: string }} HomeResponse
+ */
+
+/**
+ * GET /v1/home — the check list and all four task worklists in one request,
+ * read side by side on the server and answered per section (`ok` on each).
+ * Home loads and refreshes with this; the per-list routes stay for the
+ * targeted refreshes after an action.
+ * @param {{ checksLimit?: number, tasksLimit?: number }} [limits]
+ * @returns {Promise<HomeResponse>}
+ */
+export function fetchHome({ checksLimit, tasksLimit } = {}) {
+  return request("GET", `/v1/home${qs({ checksLimit, tasksLimit })}`);
+}
+
 /** @param {string} taskId @param {string} [nextToken] @param {{signal?: AbortSignal}} [options] */
 export function getTaskUpdates(taskId, nextToken, { signal } = {}) {
   return request(

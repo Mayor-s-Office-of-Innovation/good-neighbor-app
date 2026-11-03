@@ -70,6 +70,56 @@ export async function refreshActiveTab(
       );
     }
     if (!current()) return false;
+    return applyTaskLists(view, results);
+  })().finally(() => {
+    for (const [status, entry] of batch.entries) {
+      if (view._tabRefreshes.get(status) === entry)
+        view._tabRefreshes.delete(status);
+    }
+    if (view._tabRefreshBatch === batch) view._tabRefreshBatch = null;
+  });
+  return batch.promise;
+}
+
+/** The worklist statuses Home shows, in tab order (the backend's order too). */
+export const HOME_TASK_STATUSES = /** @type {const} */ ([
+  "open",
+  "in_progress",
+  "completing",
+  "completed",
+]);
+
+/**
+ * Apply the `tasks` sections of a `GET /v1/home` response: one timestamp for
+ * every list, and a section with `ok: false` treated exactly like a failed
+ * per-status request (its list keeps its old rows and freshness).
+ * @param {any} view
+ * @param {Record<string, { ok: boolean, items?: any[] }> | undefined} sections
+ * @param {number} fetchedAt
+ * @returns {boolean} true when every section applied
+ */
+export function applyHomeTaskSections(view, sections, fetchedAt) {
+  return applyTaskLists(
+    view,
+    HOME_TASK_STATUSES.map((status) =>
+      sections?.[status]?.ok
+        ? { status, tasks: sections[status].items || [], fetchedAt }
+        : null,
+    ),
+  );
+}
+
+/**
+ * Merge freshly read status lists into the Home model and re-render once.
+ * `results` holds `{ status, tasks, fetchedAt }` per list, or null for a list
+ * whose read failed. Shared by the targeted per-status refresh above and the
+ * one-request Home refresh.
+ * @param {any} view
+ * @param {Array<{ status: string, tasks: any[], fetchedAt: number } | null>} results
+ * @returns {boolean} true when every list in `results` was applied
+ */
+export function applyTaskLists(view, results) {
+  {
     const succeeded = results.filter(Boolean);
     if (!succeeded.length) return false;
     const refreshed = new Set(succeeded.map((result) => result.status));
@@ -145,14 +195,7 @@ export async function refreshActiveTab(
     if (previousVersions !== nextVersions) view._watchDuplicates(tasks);
     void view._hydrateVisibleHomeTasks();
     return succeeded.length === results.length;
-  })().finally(() => {
-    for (const [status, entry] of batch.entries) {
-      if (view._tabRefreshes.get(status) === entry)
-        view._tabRefreshes.delete(status);
-    }
-    if (view._tabRefreshBatch === batch) view._tabRefreshBatch = null;
-  });
-  return batch.promise;
+  }
 }
 
 /** @param {string} tab */

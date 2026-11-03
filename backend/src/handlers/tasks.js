@@ -8,7 +8,7 @@ import { withResolutionProofForTasks } from "../task-updates/resolution-proof.js
 import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
-import { jsonResponse, readJsonBody } from "../http.js";
+import { jsonResponse, parseLimit, readJsonBody } from "../http.js";
 import { deriveSiteId } from "../lib/principal.js";
 import { GSI2_NAME, artifactKey, taskKey, taskWorklistPk } from "./keys.js";
 import {
@@ -53,23 +53,32 @@ const byWorklistPriority = (tasks) =>
 
 /**
  * GET /v1/tasks?status=open&limit= — the site's action items at one status,
- * most-severe first (AP10). Reads GSI2 (the per-status worklist index carried
- * only by TASK items, so no filtering). `siteId` is derived server-side; the
- * client can only ever read its own site's worklist.
+ * most-severe first (AP10). `siteId` is derived server-side; the client can
+ * only ever read its own site's worklist. The work is in `loadTaskWorklist`,
+ * which GET /v1/home shares.
  * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
  */
 export const listTasks = async (event) => {
   const { dynamoTable } = getConfig();
   const siteId = deriveSiteId(event);
-
   const status = event.queryStringParameters?.status || DEFAULT_STATUS;
+  const limit = parseLimit(event.queryStringParameters?.limit);
+  const tasks = await loadTaskWorklist(dynamoTable, siteId, status, limit);
+  return jsonResponse(200, { tasks });
+};
 
-  const rawLimit = Number(event.queryStringParameters?.limit);
-  const limit =
-    Number.isFinite(rawLimit) && rawLimit > 0
-      ? Math.floor(rawLimit)
-      : undefined;
-
+/**
+ * One status's finished worklist: GSI2 rows (the per-status worklist index
+ * carried only by TASK items, so no filtering), re-read from the current
+ * items, dismissals applied, ranked most-severe first, sliced to `limit`,
+ * then evidence and resolution proof attached.
+ * @param {string} dynamoTable
+ * @param {string} siteId
+ * @param {string} status
+ * @param {number} [limit] post-sort slice; never a DynamoDB Limit (see above)
+ * @returns {Promise<Record<string, any>[]>}
+ */
+export async function loadTaskWorklist(dynamoTable, siteId, status, limit) {
   const result = await ddb.send(
     new QueryCommand({
       TableName: dynamoTable,
@@ -109,13 +118,12 @@ export const listTasks = async (event) => {
     visible.tasks.filter((row) => row.status === status),
   );
   const selected = limit ? ranked.slice(0, limit) : ranked;
-  const tasks = await withResolutionProofForTasks(
+  return withResolutionProofForTasks(
     dynamoTable,
     siteId,
     await withEvidenceKinds(dynamoTable, siteId, selected),
   );
-  return jsonResponse(200, { tasks });
-};
+}
 
 /** @param {string} tableName @param {string} siteId @param {Record<string, any>[]} tasks */
 async function withEvidenceKinds(tableName, siteId, tasks) {

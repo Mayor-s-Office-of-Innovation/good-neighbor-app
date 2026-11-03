@@ -66,6 +66,7 @@ locals {
     "DELETE /v1/complaints/{complaintId}/artifacts/{artifactId}",
     "GET /v1/complaints/{complaintId}/artifacts/{artifactId}/media",
     "GET /v1/tasks",
+    "GET /v1/home",
     "POST /v1/duplicates:batch",
     "POST /v1/tasks/{taskId}/duplicate:separate",
     "GET /v1/tasks/{taskId}/details",

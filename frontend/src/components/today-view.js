@@ -78,7 +78,7 @@ import {
 } from "../db.js";
 import { retireHandoff } from "../services/session-handoff.js";
 import {
-  listChecks,
+  fetchHome,
   listTasks,
   submitConditionAnswers,
   editAnalysisCondition,
@@ -238,10 +238,11 @@ function stashHomeState(view) {
     : null;
 }
 
-// How long the In-progress / History lists stay fresh enough to reuse on a
-// reload (route return, or an action on this screen) without re-fetching.
-// Cross-list actions expire them early — see _expireRemainingLists.
-const REMAINING_LISTS_FRESH_MS = 60_000;
+// The In-progress / History lists. They arrive with the open list in the one
+// GET /v1/home response; _loadRemainingTasks fetches them per status only when
+// one of their sections failed, and after a cross-list action expires them —
+// see _expireRemainingLists.
+const REMAINING_STATUSES = ["in_progress", "completing", "completed"];
 
 // The stash belongs to one site session and must never paint for the next
 // one: sign-out and re-binding replace the device's binding in the same
@@ -386,7 +387,6 @@ class TodayView extends HTMLElement {
       }
     };
     this._checksRefreshTimer = null;
-    this._checksRefreshing = false;
     this._duplicateLinks = new Map();
     this._duplicateCloseHandler = () => {
       if (!document.querySelector("dialog[open]")) this._flushDialogRender();
@@ -655,65 +655,65 @@ class TodayView extends HTMLElement {
       pendingSession = null;
     }
 
-    // Checks + the open worklist are read from the backend on load (AP6/AP10) —
-    // newest first, adapted to the UI record shape. Online-only: on failure show
-    // an error, not a crash.
-    // Only the open list gates the first paint: it is all the default To-do
-    // tab shows. The In-progress and History lists (the slowest call is the
-    // ever-growing completed list) load right after the first render — see
-    // _loadRemainingTasks.
+    // The check list and every task worklist are read from the backend on
+    // load (AP6/AP10) with one request, GET /v1/home, newest first, adapted
+    // to the UI record shape. Online-only: on failure show an error, not a
+    // crash. Checks and the open list gate the first paint, as their own
+    // requests did; the In-progress and History lists arrive in the same
+    // response, so the tab counts show on the first paint too. Only when one
+    // of those sections failed does _loadRemainingTasks fetch them per status
+    // after the first render.
     let submitted, tasks, latestStartedCheck, pendingQuestions, rawChecks;
     let pendingGuidanceFailed = false;
-    let reuseRemaining = false;
+    let remainingLoaded = false;
     try {
-      const [[catalog, bindings], { checks }, openTasksResult] =
-        await Promise.all([
-          catalogLoad,
-          listChecks({ limit: 30 }),
-          listTasks({ status: "open", limit: 50 }),
-        ]);
+      const [[catalog, bindings], home] = await Promise.all([
+        catalogLoad,
+        fetchHome({ checksLimit: 30, tasksLimit: 50 }),
+      ]);
       if (generation !== this._homeRefreshGeneration) return;
       this._providerSitesStatus = catalog ? "loaded" : "error";
       this._providerSites = catalog?.sites || [];
       this._providerName =
         catalog?.providerName || this._site.providerName || "";
       this._boundSites = bindings;
-      // The remaining lists are reused only on a route return (restored
-      // snapshot) for this site, loaded within REMAINING_LISTS_FRESH_MS and
-      // not expired by a cross-list action since; then only the open list is
-      // re-fetched. Every reload triggered from this screen follows an action
-      // (a task update, 311 filing, deletion, phone save, check finished)
-      // and re-fetches everything, so a status change made on the server is
-      // never masked by a cached list. When not reused they are dropped:
-      // In-progress and History show a placeholder and the tab counts stay
-      // hidden until the fresh lists land. Old cards are never shown.
-      const sameSite = !previousSiteId || previousSiteId === this._siteId;
-      reuseRemaining =
-        restoring &&
-        sameSite &&
-        this._remainingStatus === "loaded" &&
-        Date.now() - (this._remainingLoadedAt || 0) < REMAINING_LISTS_FRESH_MS;
-      const reused = reuseRemaining
-        ? (this._homeModel?.tasks || []).filter(
-            (task) => task.status && task.status !== "open",
-          )
+      // A failed checks or open section is the error screen, as a failed
+      // request for either was before.
+      if (!home.checks?.ok || !home.tasks?.open?.ok)
+        throw new Error("home: checks or open worklist unavailable");
+      const checks = home.checks.items || [];
+      const remaining = REMAINING_STATUSES.map((status) => home.tasks[status]);
+      remainingLoaded = remaining.every((section) => section?.ok);
+      const loadedAt = Date.now();
+      this._taskListFreshness.set("open", loadedAt);
+      const remainingTasks = remainingLoaded
+        ? remaining.flatMap((section) => section.items || [])
         : [];
-      this._taskListFreshness.set("open", Date.now());
-      tasks = uniqueTasks([...(openTasksResult.tasks || []), ...reused]);
+      if (remainingLoaded) this._reconcileConfirmedTasks(remainingTasks, true);
+      tasks = uniqueTasks([
+        ...(home.tasks.open.items || []),
+        ...remainingTasks,
+      ]);
       // Historical recovery is a second tier. Cached online questions are not
       // actionable until revalidated; offline snapshots remain available.
       pendingQuestions = [];
-      if (!reuseRemaining) this._remainingStatus = "pending";
-      else
-        for (const status of ["in_progress", "completing", "completed"])
-          this._taskListFreshness.set(status, this._remainingLoadedAt);
-      rawChecks = checks || [];
+      if (remainingLoaded) {
+        this._remainingStatus = "loaded";
+        this._remainingLoadedAt = loadedAt;
+        for (const status of REMAINING_STATUSES)
+          this._taskListFreshness.set(status, loadedAt);
+      } else {
+        // In-progress and History show a placeholder and the tab counts stay
+        // hidden until the per-status fallback lands. Old cards are never shown.
+        this._remainingStatus = "pending";
+      }
+      rawChecks = checks;
       latestStartedCheck = latestStarted(checks);
       submitted = submittedChecks(checks);
       this._offline = null;
     } catch (err) {
       if (generation !== this._homeRefreshGeneration) return;
-      console.error("listChecks/listTasks failed", err);
+      console.error("home load failed", err);
       // No connection: show the last saved lists (or empty ones) so Start
       // check and checks waiting to upload stay reachable. Other failures
       // keep the error screen.
@@ -799,7 +799,7 @@ class TodayView extends HTMLElement {
       return;
     }
     void this._hydrateVisibleHomeTasks();
-    if (reuseRemaining) {
+    if (remainingLoaded) {
       this._remainingLoad = Promise.resolve();
       this._watchDuplicates(tasks);
       void this._hydrate311CardStatuses(tasks);
@@ -1080,20 +1080,16 @@ class TodayView extends HTMLElement {
     void this._hydrateVisibleHomeTasks();
   }
 
-  async _refreshChecks() {
-    if (
-      !this.isConnected ||
-      document.visibilityState === "hidden" ||
-      !this._homeModel ||
-      this._checksRefreshing
-    )
-      return false;
-    const siteId = this._siteId;
-    this._checksRefreshing = true;
+  /**
+   * Apply a fresh check list from a background refresh. True when the model is
+   * current afterwards (changed or already equal); an older snapshot than the
+   * one on screen is ignored.
+   * @param {Record<string, any>[]} rows
+   */
+  _applyChecks(rows) {
+    if (!this.isConnected || !this._homeModel) return false;
     try {
-      const response = await listChecks({ limit: 30 });
-      if (!this.isConnected || this._siteId !== siteId) return;
-      const headers = (response.checks || []).map(adaptCheckHeader);
+      const headers = (rows || []).map(adaptCheckHeader);
       const latestStartedCheck = [...headers].sort((a, b) =>
         String(b.startedAt || "").localeCompare(String(a.startedAt || "")),
       )[0];
@@ -1130,8 +1126,6 @@ class TodayView extends HTMLElement {
     } catch {
       // Retain the last confirmed list; refresh again on return or the next poll.
       return false;
-    } finally {
-      this._checksRefreshing = false;
     }
   }
 
@@ -1168,9 +1162,11 @@ class TodayView extends HTMLElement {
           throw new Error("Refresh unavailable");
         const generation = this._homeRefreshGeneration;
         const guidanceGeneration = ++this._guidanceGeneration;
-        const checks = listChecks({ limit: 30 }).then((response) => {
+        const home = fetchHome({ checksLimit: 30, tasksLimit: 50 });
+        const checks = home.then((response) => {
           if (!current()) return [];
-          const rows = response.checks || [];
+          if (!response.checks?.ok) throw new Error("Checks unavailable");
+          const rows = response.checks.items || [];
           const submitted = submittedChecks(rows);
           this._renderHome(
             {
@@ -1183,9 +1179,13 @@ class TodayView extends HTMLElement {
           );
           return rows;
         });
-        const tasks = import("../services/home-task-freshness.js").then(
-          ({ refreshActiveTab }) =>
-            refreshActiveTab(this, { maxAge: 0, allStatuses: true }),
+        const tasks = Promise.all([
+          home,
+          import("../services/home-task-freshness.js"),
+        ]).then(([response, { applyHomeTaskSections }]) =>
+          current()
+            ? applyHomeTaskSections(this, response.tasks, Date.now())
+            : false,
         );
         const guidance = checks.then(async (rows) => {
           if (!current()) return;
@@ -1259,11 +1259,7 @@ class TodayView extends HTMLElement {
           await this._refreshFromPull({ background: true });
           success = true;
         } else {
-          const results = await Promise.all([
-            this._refreshChecks(),
-            this._refreshActiveTab({ maxAge, allStatuses: true }),
-          ]);
-          success = results.every((result) => result === true);
+          success = await this._refreshAllLists();
           // A reconnect can arrive while the list requests are in flight.
           // Include guidance too, unless a manual batch is already waiting
           // for this batch (joining that promise here would deadlock).
@@ -1299,6 +1295,48 @@ class TodayView extends HTMLElement {
       });
     this._backgroundRefreshPromise = pending;
     return pending;
+  }
+
+  /**
+   * The background timer's and the return-to-app batch's read: one
+   * GET /v1/home with the check list and all four worklists, applied per
+   * section. True only when every section applied, so a partial answer is
+   * retried on the usual backoff. Skipped (false) while a full load or the
+   * per-status fallback is in flight, as the targeted refresh is.
+   */
+  async _refreshAllLists() {
+    if (
+      !this.isConnected ||
+      document.visibilityState === "hidden" ||
+      navigator.onLine === false ||
+      !this._homeModel ||
+      this._homeRefresh ||
+      this._remainingRefresh
+    )
+      return false;
+    const siteId = this._siteId;
+    const epoch = this._tabRefreshEpoch;
+    let response;
+    try {
+      response = await fetchHome({ checksLimit: 30, tasksLimit: 50 });
+    } catch {
+      return false;
+    }
+    if (
+      !this.isConnected ||
+      this._siteId !== siteId ||
+      this._tabRefreshEpoch !== epoch
+    )
+      return false;
+    const fetchedAt = Date.now();
+    const checksApplied = response.checks?.ok
+      ? this._applyChecks(response.checks.items || []) === true
+      : false;
+    const { applyHomeTaskSections } = await import(
+      "../services/home-task-freshness.js"
+    );
+    const tasksApplied = applyHomeTaskSections(this, response.tasks, fetchedAt);
+    return checksApplied && tasksApplied;
   }
 
   _refreshActiveTab(options = {}) {
