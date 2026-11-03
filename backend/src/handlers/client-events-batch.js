@@ -39,9 +39,7 @@ export function unpackEnvelope(body) {
     return { items: [], userAgent: undefined };
   }
   const raw = /** @type {Record<string, unknown>} */ (body);
-  const ua = raw.ua;
-  const userAgent =
-    typeof ua === "string" && ua ? ua.slice(0, MAX_USER_AGENT) : undefined;
+  const userAgent = envelopeUserAgent(raw);
   if ("batch" in raw) {
     return {
       items: Array.isArray(raw.batch) ? raw.batch : [],
@@ -49,6 +47,19 @@ export function unpackEnvelope(body) {
     };
   }
   return { items: [raw], userAgent };
+}
+
+/**
+ * The client-supplied user agent from a body's `ua` field, capped. Shared by
+ * the events envelope and the client-errors body: both travel through SQS,
+ * where no request header survives.
+ * @param {unknown} body
+ * @returns {string | undefined}
+ */
+export function envelopeUserAgent(body) {
+  if (typeof body !== "object" || body === null) return undefined;
+  const ua = /** @type {Record<string, unknown>} */ (body).ua;
+  return typeof ua === "string" && ua ? ua.slice(0, MAX_USER_AGENT) : undefined;
 }
 
 /**

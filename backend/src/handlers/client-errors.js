@@ -4,9 +4,15 @@
  * respond 204, never throw, never signal payload validity to a possible
  * abuser. Valid reports are scrubbed, logged as structured JSON, and handed
  * to the PostHog forwarder (which is log-only until the egress sign-off).
+ *
+ * Transport note: in deployed environments API Gateway writes this route's
+ * bodies to the client-events SQS queue tagged `Kind=client-error`, and
+ * lambda/client-events-consumer.js forwards them. This handler serves the
+ * local dev harness and stays wired in lambda/intake.js as a fallback.
  */
 
 import { readJsonBody } from "../http.js";
+import { envelopeUserAgent } from "./client-events-batch.js";
 import { forwardClientError } from "./forwarder.js";
 import { scrubClientErrorReport } from "./scrub-client-error.js";
 
@@ -41,7 +47,12 @@ export const handler = async (event) => {
     return { statusCode: 204 };
   }
 
-  await forwardClientError(report, { userAgent: readUserAgent(event) });
+  // Current clients put their user agent in the body (the deployed route
+  // goes through SQS, where no header survives); the header covers older
+  // cached clients on this HTTP path.
+  await forwardClientError(report, {
+    userAgent: envelopeUserAgent(body) ?? readUserAgent(event),
+  });
 
   // Always 204 No Content — validity is never signalled back.
   return { statusCode: 204 };

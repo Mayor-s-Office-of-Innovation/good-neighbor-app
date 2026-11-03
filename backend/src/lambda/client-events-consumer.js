@@ -1,34 +1,48 @@
 /*
  * Lambda entrypoint for the client-events queue consumer.
  *
- * API Gateway writes each POST /v1/client-events body straight to the
- * client-events SQS queue (infra/modules/app/client-events.tf), so no Lambda
- * sits in the request path: a burst of beacons cannot be throttled by PostHog
- * latency or by this function's concurrency, and the client gets its 204 from
- * the gateway. This consumer reads batches of bodies, scrubs them with the
- * same code as the HTTP handler (handlers/client-events-batch.js), and
- * forwards every event in the batch to PostHog in one `/batch/` call.
+ * API Gateway writes each POST /v1/client-events and POST /v1/client-errors
+ * body straight to the client-events SQS queue (infra/modules/app/
+ * client-events.tf), so no Lambda sits in the request path: a burst of
+ * beacons cannot be throttled by PostHog latency or by this function's
+ * concurrency, and the client gets its 204 from the gateway. This consumer
+ * reads batches of bodies, scrubs them with the same code as the HTTP
+ * handlers, and forwards them to PostHog: one `/batch/` call for all the
+ * analytics events in the invocation and one for all the error reports.
+ *
+ * Which scrub applies is decided by the `Kind` message attribute, a constant
+ * each gateway integration sets (`client-event` or `client-error`); it is
+ * never derived from request data. A message without it is an event.
  *
  * Retry semantics (the one thing the queue adds over the HTTP intake): a
- * failed PostHog call reports every message that carried events as a batch
- * item failure, so SQS redelivers them and, after the redrive limit, parks
- * them in the dead-letter queue. Bodies that fail the scrub are acknowledged
- * and logged as ClientEventDropped — retrying garbage never helps. Log-only
- * mode (no PostHog key) acknowledges too; the events are in CloudWatch.
+ * failed PostHog call reports every message of that kind as a batch item
+ * failure, so SQS redelivers them and, after the redrive limit, parks them in
+ * the dead-letter queue. Bodies that fail the scrub are acknowledged and
+ * logged with the kind's Dropped marker — retrying garbage never helps.
+ * Log-only mode (no PostHog key) acknowledges too; the payloads are in
+ * CloudWatch.
  *
  * The user agent arrives inside the body (`ua`, put there by the client)
  * because the gateway passes the body to SQS verbatim and has no safe way to
- * add a header to it; the forwarder parses it into browser/OS/device
- * properties exactly as it did the header.
+ * add a header to it; the forwarders parse it exactly as they did the header.
  */
 
 import {
+  envelopeUserAgent,
   logDroppedClientEvents,
   scrubClientEventBatch,
   unpackEnvelope,
 } from "../handlers/client-events-batch.js";
+import { DROPPED_MARKER as ERROR_DROPPED_MARKER } from "../handlers/client-errors.js";
 import { forwardClientEventGroups } from "../handlers/event-forwarder.js";
+import { forwardClientErrors } from "../handlers/forwarder.js";
+import { scrubClientErrorReport } from "../handlers/scrub-client-error.js";
 import { logServerError } from "../lib/log-server-error.js";
+
+/** Message attribute naming the intake a body came from. */
+export const KIND_ATTRIBUTE = "Kind";
+export const KIND_CLIENT_EVENT = "client-event";
+export const KIND_CLIENT_ERROR = "client-error";
 
 /**
  * Egress budget per PostHog call. Nothing waits on this function, so it can
@@ -39,15 +53,23 @@ export const CONSUMER_FORWARD_TIMEOUT_MS = 5000;
 
 /**
  * @param {import("aws-lambda").SQSRecord} record
- * @returns {ReturnType<typeof unpackEnvelope>} the body's items and user
- *   agent, or nothing for an unparseable body
+ * @returns {unknown} the parsed body, or undefined when it is not JSON
  */
-function envelopeOf(record) {
+function bodyOf(record) {
   try {
-    return unpackEnvelope(JSON.parse(record.body));
+    return JSON.parse(record.body);
   } catch {
-    return { items: [], userAgent: undefined };
+    return undefined;
   }
+}
+
+/**
+ * @param {import("aws-lambda").SQSRecord} record
+ * @returns {string}
+ */
+function kindOf(record) {
+  const value = record.messageAttributes?.[KIND_ATTRIBUTE]?.stringValue;
+  return value === KIND_CLIENT_ERROR ? KIND_CLIENT_ERROR : KIND_CLIENT_EVENT;
 }
 
 /**
@@ -56,30 +78,65 @@ function envelopeOf(record) {
  */
 export async function consumeClientEvents(event) {
   /** @type {{ messageId: string, reports: import("../handlers/scrub-client-event.js").ScrubbedClientEvent[], ctx: { userAgent?: string } }[]} */
-  const groups = [];
+  const eventGroups = [];
+  /** @type {{ messageId: string, report: import("../handlers/scrub-client-error.js").ScrubbedErrorReport, ctx: { userAgent?: string } }[]} */
+  const errorEntries = [];
+
   for (const record of event.Records ?? []) {
-    const { items, userAgent } = envelopeOf(record);
+    const body = bodyOf(record);
+    if (kindOf(record) === KIND_CLIENT_ERROR) {
+      const report = scrubClientErrorReport(body);
+      if (report) {
+        errorEntries.push({
+          messageId: record.messageId,
+          report,
+          ctx: { userAgent: envelopeUserAgent(body) },
+        });
+      } else {
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            marker: ERROR_DROPPED_MARKER,
+            reason: "invalid_payload",
+            source: "queue",
+          }),
+        );
+      }
+      continue;
+    }
+    const { items, userAgent } = unpackEnvelope(body);
     const { reports, ...counts } = scrubClientEventBatch(items);
     logDroppedClientEvents(counts, "queue");
     if (reports.length > 0) {
-      groups.push({ messageId: record.messageId, reports, ctx: { userAgent } });
+      eventGroups.push({
+        messageId: record.messageId,
+        reports,
+        ctx: { userAgent },
+      });
     }
   }
-  if (groups.length === 0) return { batchItemFailures: [] };
 
-  const outcome = await forwardClientEventGroups(groups, {
-    timeoutMs: CONSUMER_FORWARD_TIMEOUT_MS,
-  });
-  if (outcome === "failed") {
-    // The forwarder already wrote one ClientEventForwardFailed line per
-    // event; here only the redelivery decision is left.
-    return {
-      batchItemFailures: groups.map((group) => ({
-        itemIdentifier: group.messageId,
-      })),
-    };
-  }
-  return { batchItemFailures: [] };
+  const deps = { timeoutMs: CONSUMER_FORWARD_TIMEOUT_MS };
+  const [eventOutcome, errorOutcome] = await Promise.all([
+    eventGroups.length > 0
+      ? forwardClientEventGroups(eventGroups, deps)
+      : Promise.resolve("log-only"),
+    errorEntries.length > 0
+      ? forwardClientErrors(errorEntries, deps)
+      : Promise.resolve("log-only"),
+  ]);
+
+  // The forwarders already wrote one ForwardFailed line per payload; here
+  // only the redelivery decision is left, per kind.
+  const batchItemFailures = [
+    ...(eventOutcome === "failed"
+      ? eventGroups.map((group) => ({ itemIdentifier: group.messageId }))
+      : []),
+    ...(errorOutcome === "failed"
+      ? errorEntries.map((entry) => ({ itemIdentifier: entry.messageId }))
+      : []),
+  ];
+  return { batchItemFailures };
 }
 
 /**

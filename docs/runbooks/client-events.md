@@ -69,7 +69,10 @@ values are query-stripped again server-side. Adding an event or property means a
 
 In deployed environments the route is an API Gateway **SQS-SendMessage** service integration
 (`infra/modules/app/client-events.tf`): the gateway puts the raw body on the `<env>-client-events`
-queue with no other mapping and rewrites SQS's 200 to the 204 the client expects. The user agent
+queue, tags it with a constant `Kind` message attribute (`client-event`), and rewrites SQS's 200
+to the 204 the client expects. `POST /v1/client-errors` uses the same queue and consumer with
+`Kind=client-error`; the consumer runs the error scrub and the `$exception` forwarder for those,
+one PostHog call per kind per invocation. The user agent
 travels inside the body (`ua`), because the only way for the gateway to attach a header would be
 to splice it into a JSON mapping it cannot escape; the server reads `ua` first and falls back to
 the header on the HTTP path for older cached clients. The consumer Lambda reads up to 100 bodies per invocation (5 s
@@ -84,9 +87,10 @@ What this buys over the old intake-Lambda path:
   failures; SQS redelivers them (visibility timeout 180 s) up to 5 times, then parks them in
   `<env>-client-events-dlq` (14-day retention). Garbage bodies are acknowledged, not retried.
 
-What stays the same: the HTTP handler (`handlers/client-events.js`) still serves `npm run dev`
-and is still wired in `lambda/intake.js`. Pointing the route back at the intake integration
-restores the old path with no code change.
+What stays the same: the HTTP handlers (`handlers/client-events.js`, `handlers/client-errors.js`)
+still serve `npm run dev` and are still wired in `lambda/intake.js`, which in deployed environments
+now receives only `/v1/feedback`. Pointing a route back at the intake integration restores the old
+path with no code change.
 
 Alarms added with the queue: `client-events-dlq-not-empty` (any dead letter) and
 `client-events-queue-stale` (oldest message over 10 minutes: the consumer is not keeping up or not

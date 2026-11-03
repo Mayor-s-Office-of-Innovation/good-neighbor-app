@@ -216,14 +216,15 @@ resource "aws_lambda_function" "api" {
   tags = var.tags
 }
 
-# Best-effort public intakes: client errors and user feedback
-# (backend/src/lambda/intake.js). Split from the api function so the PostHog
-# forward each handler awaits before answering 204 can never hold the api
-# function's executions during a PostHog slowdown — the only aggregate bound
-# on this anonymous traffic is the reservation below (the per-IP WAF rate
-# rules cannot cap many IPs). Throttled beacons fail silently client-side.
-# Client analytics events, the high-volume intake, no longer come here: the
-# gateway writes them to SQS (client-events.tf).
+# Best-effort public intake: user feedback (backend/src/lambda/intake.js).
+# Split from the api function so the PostHog forward the handler awaits
+# before answering 204 can never hold the api function's executions during a
+# PostHog slowdown — the only aggregate bound on this anonymous traffic is the
+# reservation below (the per-IP WAF rate rules cannot cap many IPs). Throttled
+# beacons fail silently client-side. Client analytics events and client error
+# reports no longer come here: the gateway writes them to SQS
+# (client-events.tf); their handlers stay in the bundle as the local-dev path
+# and a fallback.
 resource "aws_cloudwatch_log_group" "intake" {
   name              = "/aws/lambda/${local.name_prefix}-intake"
   retention_in_days = 365
@@ -248,11 +249,10 @@ resource "aws_lambda_function" "intake" {
   kms_key_arn = aws_kms_key.app.arn
   # Sizing note (2026-11-01 load test): analytics events used to come through
   # here one beacon each, and 4 concurrent users produced ~100 concurrent
-  # invocations held on PostHog round trips. Those events now go to SQS
-  # (client-events.tf); only client errors (≤5 per device per window) and
-  # feedback remain, so 50 is ample headroom. Keep a ceiling so anonymous
-  # traffic or slow PostHog calls cannot consume the rest of the account's
-  # concurrency.
+  # invocations held on PostHog round trips. Events and error reports now go
+  # to SQS (client-events.tf); only feedback remains, so 50 is ample headroom.
+  # Keep a ceiling so anonymous traffic or slow PostHog calls cannot consume
+  # the rest of the account's concurrency.
   reserved_concurrent_executions = 50
 
   tracing_config {

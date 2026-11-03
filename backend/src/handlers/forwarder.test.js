@@ -11,6 +11,7 @@ vi.mock("./posthog-api-key.js", () => ({
 
 const {
   forwardClientError,
+  forwardClientErrors,
   toIso,
   parseStackFrames,
   FORWARD_FAILED_MARKER,
@@ -121,6 +122,36 @@ describe("forwardClientError", () => {
       type: "Error",
       message: "boom",
     });
+  });
+
+  it("forwards several reports, each with its own user agent, in one call", async () => {
+    getPosthogApiKey.mockResolvedValue("phc_key");
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    const outcome = await forwardClientErrors(
+      [
+        { report: report(), ctx: { userAgent: "UA/1" } },
+        {
+          report: report({ message: "again", id: "uuid-2" }),
+          ctx: { userAgent: "UA/2" },
+        },
+      ],
+      {
+        fetchImpl,
+        config,
+        host: "https://ph.example",
+        now: () => 0,
+        timeoutMs: 5000,
+      },
+    );
+    expect(outcome).toBe("forwarded");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetchImpl.mock.calls[0][1].body));
+    expect(body.batch).toHaveLength(2);
+    expect(body.batch[0].properties.user_agent).toBe("UA/1");
+    expect(body.batch[1].properties.user_agent).toBe("UA/2");
+    expect(body.batch[1].distinct_id).toBe("uuid-2");
+    expect(log.mock.calls).toHaveLength(2);
   });
 
   it("never throws on fetch failure: WARN marker + 'failed', still no throw", async () => {

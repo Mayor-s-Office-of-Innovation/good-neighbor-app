@@ -1,19 +1,24 @@
-# Client analytics events: API Gateway → SQS → consumer Lambda → PostHog.
+# Client analytics events and client error reports:
+# API Gateway → SQS → consumer Lambda → PostHog.
 #
-# POST /v1/client-events used to be served by the intake Lambda, which awaited
-# a PostHog round trip before answering 204. A four-photo perimeter check emits
-# ~55 events, so a few concurrent users held every reserved slot and the
-# function throttled (2026-11-01 load test). Client-side batching cut the
-# request count; this takes the Lambda out of the request path altogether:
-# the gateway's first-party SQS integration writes the body to a queue and
-# answers 204, and the consumer below forwards whole batches to PostHog in one
-# call. A PostHog outage now costs redeliveries (and ultimately dead letters)
-# instead of dropped events.
+# POST /v1/client-events and POST /v1/client-errors used to be served by the
+# intake Lambda, which awaited a PostHog round trip before answering 204. A
+# four-photo perimeter check emits ~55 events, so a few concurrent users held
+# every reserved slot and the function throttled (2026-11-01 load test).
+# Client-side batching cut the request count; this takes the Lambda out of the
+# request path altogether: the gateway's first-party SQS integration writes
+# the body to a queue and answers 204, and the consumer below forwards whole
+# batches to PostHog in one call. A PostHog outage now costs redeliveries (and
+# ultimately dead letters) instead of dropped events.
 #
-# The HTTP handler (backend/src/handlers/client-events.js) still exists for
-# the local dev harness and stays wired in the intake Lambda as a fallback:
-# pointing this route back at aws_apigatewayv2_integration.intake restores the
-# old path with no code change. See docs/runbooks/client-events.md.
+# Both routes share one queue and one consumer. A static `Kind` message
+# attribute set by each integration (never derived from the request) tells
+# the consumer which scrub and forwarder to use.
+#
+# The HTTP handlers (backend/src/handlers/client-events.js, client-errors.js)
+# still exist for the local dev harness and stay wired in the intake Lambda
+# as a fallback: pointing a route back at aws_apigatewayv2_integration.intake
+# restores the old path with no code change. See docs/runbooks/client-events.md.
 
 # ---- Queue + dead letters ----------------------------------------------------
 
@@ -85,7 +90,24 @@ resource "aws_iam_role_policy" "client_events_gateway" {
   policy = data.aws_iam_policy_document.client_events_gateway.json
 }
 
-resource "aws_apigatewayv2_integration" "client_events_queue" {
+locals {
+  # One integration per intake kind. The body goes through untouched: the
+  # only way to attach a request header here would be to splice it into a
+  # static JSON string, and parameter mapping cannot escape it, so a header
+  # containing a quote would produce a malformed request. The clients
+  # therefore put their user agent in the body (frontend/src/services/
+  # analytics.js and error-report.js), which $request.body carries verbatim.
+  # `Kind` is a constant per integration — no request data in it — and is
+  # what backend/src/lambda/client-events-consumer.js dispatches on.
+  client_intake_kinds = {
+    client_events = { route = "POST /v1/client-events", kind = "client-event" }
+    client_errors = { route = "POST /v1/client-errors", kind = "client-error" }
+  }
+}
+
+resource "aws_apigatewayv2_integration" "client_intake_queue" {
+  for_each = local.client_intake_kinds
+
   api_id                 = aws_apigatewayv2_api.http.id
   integration_type       = "AWS_PROXY"
   integration_subtype    = "SQS-SendMessage"
@@ -93,16 +115,11 @@ resource "aws_apigatewayv2_integration" "client_events_queue" {
   payload_format_version = "1.0" # service integrations are 1.0 only
 
   request_parameters = {
-    QueueUrl = aws_sqs_queue.client_events.url
-    # The whole body, untouched: `{ batch: [...], ua }` or a single event. The
-    # consumer scrubs it exactly as the HTTP handler did. Nothing else is
-    # mapped on purpose: the only way to attach a request header here is to
-    # splice it into a static JSON string (MessageAttributes), and parameter
-    # mapping cannot escape it, so a header containing a quote would produce
-    # a malformed request. The client therefore puts its user agent in the
-    # body (frontend/src/services/analytics.js), which $request.body carries
-    # verbatim with no interpolation at all.
+    QueueUrl    = aws_sqs_queue.client_events.url
     MessageBody = "$request.body"
+    MessageAttributes = jsonencode({
+      Kind = { DataType = "String", StringValue = each.value.kind }
+    })
   }
 
   # SQS answers 200 with a SendMessage result body; clients expect the
@@ -115,13 +132,16 @@ resource "aws_apigatewayv2_integration" "client_events_queue" {
   }
 }
 
-# Anonymous by design, like the other intakes; the WAF ClientEventsRateLimit
-# rule (main.tf) and the body-size rule still apply in front of it.
-resource "aws_apigatewayv2_route" "client_events" {
-  #checkov:skip=CKV_AWS_309:Public best-effort intake; sendBeacon carries no credentials. Payloads are allowlist-scrubbed by the consumer and bounded by WAF.
+# Anonymous by design, like the other intakes; the per-path WAF rate rules
+# (ClientEventsRateLimit, ClientErrorsRateLimit in main.tf) and the body-size
+# rule still apply in front of them.
+resource "aws_apigatewayv2_route" "client_intake" {
+  #checkov:skip=CKV_AWS_309:Public best-effort intakes; sendBeacon carries no credentials. Payloads are allowlist-scrubbed by the consumer and bounded by WAF.
+  for_each = local.client_intake_kinds
+
   api_id    = aws_apigatewayv2_api.http.id
-  route_key = "POST /v1/client-events"
-  target    = "integrations/${aws_apigatewayv2_integration.client_events_queue.id}"
+  route_key = each.value.route
+  target    = "integrations/${aws_apigatewayv2_integration.client_intake_queue[each.key].id}"
 }
 
 # ---- Consumer Lambda ---------------------------------------------------------
@@ -250,7 +270,34 @@ resource "aws_lambda_event_source_mapping" "client_events" {
 # ---- Alarms + log metrics ----------------------------------------------------
 
 # Same markers as the intake log group (alarms.tf) so the existing
-# ClientEventForwardFailed / ClientEventDropped alarms see both transports.
+# ClientEventForwardFailed / ClientEventDropped / ClientErrorForwardFailed /
+# ClientErrorDropped alarms see both transports.
+resource "aws_cloudwatch_log_metric_filter" "client_events_consumer_error_forward_failed" {
+  name           = "${local.name_prefix}-client-events-consumer-error-forward-failed"
+  log_group_name = aws_cloudwatch_log_group.client_events_consumer.name
+  pattern        = "{ $.marker = \"ClientErrorForwardFailed\" }"
+
+  metric_transformation {
+    name          = "ClientErrorForwardFailed"
+    namespace     = local.error_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "client_events_consumer_error_dropped" {
+  name           = "${local.name_prefix}-client-events-consumer-error-dropped"
+  log_group_name = aws_cloudwatch_log_group.client_events_consumer.name
+  pattern        = "{ $.marker = \"ClientErrorDropped\" }"
+
+  metric_transformation {
+    name          = "ClientErrorDropped"
+    namespace     = local.error_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
 resource "aws_cloudwatch_log_metric_filter" "client_events_consumer_forward_failed" {
   name           = "${local.name_prefix}-client-events-consumer-forward-failed"
   log_group_name = aws_cloudwatch_log_group.client_events_consumer.name
@@ -294,7 +341,7 @@ resource "aws_cloudwatch_log_metric_filter" "client_events_consumer_errors" {
 
 resource "aws_cloudwatch_metric_alarm" "client_events_dlq_not_empty" {
   alarm_name          = "${local.name_prefix}-client-events-dlq-not-empty"
-  alarm_description   = "Client analytics event batches exhausted their redeliveries in ${aws_sqs_queue.client_events_dlq.name}: PostHog ingest has been failing for a sustained period, or the consumer is broken. Events are still in CloudWatch (ClientEventForwardFailed lines carry them). Redrive the DLQ once forwarding works. See docs/runbooks/client-events.md."
+  alarm_description   = "Client analytics events or error reports exhausted their redeliveries in ${aws_sqs_queue.client_events_dlq.name}: PostHog ingest has been failing for a sustained period, or the consumer is broken. The payloads are still in CloudWatch (ClientEventForwardFailed / ClientErrorForwardFailed lines carry them). Redrive the DLQ once forwarding works. See docs/runbooks/client-events.md."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
   datapoints_to_alarm = 1
@@ -319,7 +366,7 @@ resource "aws_cloudwatch_metric_alarm" "client_events_dlq_not_empty" {
 # Ten minutes is far beyond the 5 s batching window plus a few redeliveries.
 resource "aws_cloudwatch_metric_alarm" "client_events_queue_stale" {
   alarm_name          = "${local.name_prefix}-client-events-queue-stale"
-  alarm_description   = "The oldest client analytics event has waited over 10 minutes in ${aws_sqs_queue.client_events.name}. The consumer is throttled, erroring, or disabled; PostHog data is delayed, nothing user-facing is affected. See docs/runbooks/client-events.md."
+  alarm_description   = "The oldest client analytics event or error report has waited over 10 minutes in ${aws_sqs_queue.client_events.name}. The consumer is throttled, erroring, or disabled; PostHog data is delayed, nothing user-facing is affected. See docs/runbooks/client-events.md."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
   datapoints_to_alarm = 2
