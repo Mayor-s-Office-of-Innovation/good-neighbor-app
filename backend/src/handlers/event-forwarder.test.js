@@ -297,3 +297,41 @@ describe("forwardClientEvent", () => {
     );
   });
 });
+
+describe("abort on timeout", () => {
+  it("carries the consumer's uuid through to PostHog", () => {
+    const event = toPosthogEvent(
+      report({ uuid: "11111111-2222-5333-8444-555555555555" }),
+      {},
+    );
+    expect(event.uuid).toBe("11111111-2222-5333-8444-555555555555");
+    expect(toPosthogEvent(report(), {})).not.toHaveProperty("uuid");
+  });
+
+  it("aborts the fetch when the budget expires, then reports failed", async () => {
+    getPosthogApiKey.mockResolvedValue("phc_key");
+    /** @typedef {{ aborted: boolean, addEventListener: (type: string, fn: () => void) => void }} Signal */
+    /** @type {Signal | undefined} */
+    let seen;
+    const fetchImpl = vi.fn(
+      (/** @type {string} */ _url, /** @type {{ signal?: Signal }} */ init) =>
+        new Promise((_, reject) => {
+          seen = init.signal;
+          seen?.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    );
+    const outcome = await forwardClientEventGroups(
+      [{ reports: [report()], ctx: {} }],
+      {
+        fetchImpl: /** @type {typeof fetch} */ (
+          /** @type {unknown} */ (fetchImpl)
+        ),
+        config,
+        host: "https://ph.example",
+        timeoutMs: 10,
+      },
+    );
+    expect(outcome).toBe("failed");
+    expect(seen?.aborted).toBe(true);
+  });
+});

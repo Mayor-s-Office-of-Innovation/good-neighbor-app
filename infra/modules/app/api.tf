@@ -396,6 +396,25 @@ resource "aws_apigatewayv2_stage" "default" {
     throttling_rate_limit  = 2
   }
 
+  # The queue-backed intakes have no Lambda reservation bounding what reaches
+  # them, and the per-IP WAF rules only see CloudFront traffic, so the stage
+  # bounds ingress for every caller. Sized far above legitimate traffic (a
+  # perimeter check is 15 to 20 event beacons over several minutes; the client
+  # caps error reports at 5 per window) and below what five consumers drain
+  # (100 bodies per batch). A throttled beacon is dropped; the client never
+  # retries telemetry.
+  route_settings {
+    route_key              = aws_apigatewayv2_route.client_intake["client_events"].route_key
+    throttling_burst_limit = 200
+    throttling_rate_limit  = 100
+  }
+
+  route_settings {
+    route_key              = aws_apigatewayv2_route.client_intake["client_errors"].route_key
+    throttling_burst_limit = 40
+    throttling_rate_limit  = 20
+  }
+
   default_route_settings {
     # Match account capacity instead of imposing a lower application ceiling.
     # Keep explicit values: removing this block can retain old settings, while

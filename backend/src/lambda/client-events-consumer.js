@@ -38,6 +38,7 @@ import { forwardClientEventGroups } from "../handlers/event-forwarder.js";
 import { forwardClientErrors } from "../handlers/forwarder.js";
 import { scrubClientErrorReport } from "../handlers/scrub-client-error.js";
 import { logServerError } from "../lib/log-server-error.js";
+import { stableUuid } from "../lib/stable-uuid.js";
 
 /** Message attribute naming the intake a body came from. */
 export const KIND_ATTRIBUTE = "Kind";
@@ -89,7 +90,9 @@ export async function consumeClientEvents(event) {
       if (report) {
         errorEntries.push({
           messageId: record.messageId,
-          report,
+          // Redelivery keeps the message id, so the uuid repeats and PostHog
+          // deduplicates a report whose first delivery reached it but timed out.
+          report: { ...report, uuid: stableUuid(record.messageId) },
           ctx: { userAgent: envelopeUserAgent(body) },
         });
       } else {
@@ -110,7 +113,12 @@ export async function consumeClientEvents(event) {
     if (reports.length > 0) {
       eventGroups.push({
         messageId: record.messageId,
-        reports,
+        // Message id plus position: stable across redeliveries (scrubbing is
+        // deterministic, so positions are too), distinct within a body.
+        reports: reports.map((report, index) => ({
+          ...report,
+          uuid: stableUuid(`${record.messageId}#${index}`),
+        })),
         ctx: { userAgent },
       });
     }

@@ -61,6 +61,7 @@ export function toPosthogEvent(report, ctx) {
   return {
     event: report.event,
     distinct_id: report.id,
+    ...(report.uuid ? { uuid: report.uuid } : {}),
     properties: {
       ...report.properties,
       ...userAgentProperties(ctx.userAgent),
@@ -168,14 +169,17 @@ export async function forwardClientEventGroups(groups, deps = {}) {
   };
 
   const fetchImpl = deps.fetchImpl ?? fetch;
+  const controller = new globalThis.AbortController();
   try {
     const res = await withTimeout(
       fetchImpl(`${host}/batch/`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
+        signal: controller.signal,
       }),
       deps.timeoutMs ?? EVENT_FORWARD_TIMEOUT_MS,
+      () => controller.abort(),
     );
     if (!res.ok) {
       throw new Error(`PostHog ingest returned ${res.status}`);

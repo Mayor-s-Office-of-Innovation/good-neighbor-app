@@ -86,6 +86,17 @@ What this buys over the old intake-Lambda path:
 - **Durability.** A failed PostHog call reports the messages that carried events as batch item
   failures; SQS redelivers them (visibility timeout 180 s) up to 5 times, then parks them in
   `<env>-client-events-dlq` (14-day retention). Garbage bodies are acknowledged, not retried.
+  The forwarder aborts its PostHog request when the budget expires, so a redelivery never
+  overlaps an orphaned attempt from the previous one.
+- **Redeliveries deduplicate.** The consumer stamps each event with a uuid derived from the SQS
+  message id and the event's position (`lib/stable-uuid.js`); a redelivered message repeats the
+  same ids and PostHog collapses them with the client timestamp. Dead-letter redrives get new
+  message ids, so those can still duplicate.
+- **Bounded ingress.** The gateway stage throttles the two routes (100 requests per second with
+  a burst of 200 for events, 20 with a burst of 40 for errors; `api.tf`). Unlike the per-IP WAF
+  rules, this applies to callers that reach the API endpoint directly, so a flood cannot outrun
+  the five consumers or fill the four-day queue. The old intake Lambda's reservation did this
+  job; the queue integration has no such cap of its own.
 
 What stays the same: the HTTP handlers (`handlers/client-events.js`, `handlers/client-errors.js`)
 still serve `npm run dev` and are still wired in `lambda/intake.js`, which in deployed environments
@@ -94,8 +105,9 @@ path with no code change.
 
 Alarms added with the queue: `client-events-dlq-not-empty` (any dead letter) and
 `client-events-queue-stale` (oldest message over 10 minutes: the consumer is not keeping up or not
-running). Redrive the DLQ from the SQS console once forwarding works; a redelivered batch that had
-partly reached PostHog produces duplicate events, which is harmless analytics noise.
+running). Redrive the DLQ from the SQS console once forwarding works; a redriven batch that had
+partly reached PostHog can produce duplicate events (redrive assigns new message ids, so the
+stable uuids differ), which is harmless analytics noise.
 
 ## Batching (2026-11)
 

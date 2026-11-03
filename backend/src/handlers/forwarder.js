@@ -144,6 +144,7 @@ export function toPosthogException(report, ctx) {
   return {
     event: "$exception",
     distinct_id: report.id,
+    ...(report.uuid ? { uuid: report.uuid } : {}),
     properties: {
       $exception_list: [exception],
       ...(report.release ? { release: report.release } : {}),
@@ -207,14 +208,17 @@ export async function forwardClientErrors(entries, deps = {}) {
   };
 
   const fetchImpl = deps.fetchImpl ?? fetch;
+  const controller = new globalThis.AbortController();
   try {
     const res = await withTimeout(
       fetchImpl(`${host}/batch/`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
+        signal: controller.signal,
       }),
       deps.timeoutMs,
+      () => controller.abort(),
     );
     if (!res.ok) {
       throw new Error(`PostHog ingest returned ${res.status}`);
@@ -277,21 +281,34 @@ function warnForwardFailed(reason, err, report) {
 }
 
 /**
- * Reject with a timeout error if the fetch doesn't settle in time.
+ * Reject with a timeout error if the fetch doesn't settle in time, and tell
+ * the caller so it can abort the request: a race alone leaves the fetch
+ * running, which on the retrying queue consumer means an orphaned attempt
+ * can still be in flight (or complete after the container thaws) while the
+ * redelivery starts a new one.
  * @template T
  * @param {Promise<T>} promise
  * @param {number} [ms] budget; the error forwarder keeps the 3 s default,
  *   the higher-volume event forwarder passes a tighter one
+ * @param {() => void} [onTimeout] runs when the budget expires, before the
+ *   rejection; callers pass the AbortController's abort
  * @returns {Promise<T>}
  */
-export async function withTimeout(promise, ms = 3000) {
+export async function withTimeout(promise, ms = 3000, onTimeout) {
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let timer;
   try {
     return await Promise.race([
       promise,
       new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error("forwarder timeout")), ms);
+        timer = setTimeout(() => {
+          try {
+            onTimeout?.();
+          } catch {
+            // aborting is best effort; the rejection below still stands
+          }
+          reject(new Error("forwarder timeout"));
+        }, ms);
       }),
     ]);
   } finally {

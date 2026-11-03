@@ -156,6 +156,13 @@ describe("client-events queue consumer", () => {
     ).toEqual(["camera_opened", "photo_picked"]);
     expect(groups[0].ctx).toEqual({ userAgent: "Android/1" });
     expect(groups[1].ctx).toEqual({ userAgent: "iPhone/1" });
+    // Stable ids: message id plus position, so a redelivery repeats them.
+    const uuids = groups.flatMap(
+      (/** @type {{ reports: { uuid?: string }[] }} */ g) =>
+        g.reports.map((/** @type {{ uuid?: string }} */ r) => r.uuid),
+    );
+    expect(new Set(uuids).size).toBe(uuids.length);
+    for (const uuid of uuids) expect(uuid).toMatch(/^[0-9a-f-]{36}$/);
     expect(deps.timeoutMs).toBe(CONSUMER_FORWARD_TIMEOUT_MS);
   });
 

@@ -144,6 +144,20 @@ resource "aws_apigatewayv2_route" "client_intake" {
   target    = "integrations/${aws_apigatewayv2_integration.client_intake_queue[each.key].id}"
 }
 
+# These two routes used to be instances of the intake route resource. Without
+# the moves Terraform would plan an unordered destroy and create of the same
+# route key, which API Gateway rejects as a duplicate if the create runs first;
+# with them it updates each route's integration target in place.
+moved {
+  from = aws_apigatewayv2_route.intake["POST /v1/client-events"]
+  to   = aws_apigatewayv2_route.client_intake["client_events"]
+}
+
+moved {
+  from = aws_apigatewayv2_route.intake["POST /v1/client-errors"]
+  to   = aws_apigatewayv2_route.client_intake["client_errors"]
+}
+
 # ---- Consumer Lambda ---------------------------------------------------------
 
 resource "aws_cloudwatch_log_group" "client_events_consumer" {
