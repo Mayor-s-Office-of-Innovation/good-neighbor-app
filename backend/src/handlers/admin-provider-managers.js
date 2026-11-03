@@ -313,6 +313,12 @@ export const createProviderManagerGrant = (event) =>
       return jsonResponse(400, { error: "invalid_delivery_mode" });
     }
     const deliveryMode = body.deliveryMode === "code" ? "code" : "link";
+    const deliveryChannel = body.deliveryChannel ?? "email";
+    if (
+      (deliveryChannel !== "email" && deliveryChannel !== "screen") ||
+      (deliveryChannel === "screen" && deliveryMode !== "code")
+    )
+      return jsonResponse(400, { error: "invalid_delivery_channel" });
     const token =
       deliveryMode === "code"
         ? await generateEnrollmentCode()
@@ -335,8 +341,10 @@ export const createProviderManagerGrant = (event) =>
       accessLevel: "manager",
       tokenHash,
       deliveryMode,
+      deliveryChannel,
       status: "pending",
-      deliveryStatus: "queued",
+      deliveryStatus: deliveryChannel === "screen" ? "issued" : "queued",
+      ...(deliveryChannel === "screen" ? { deliveryProvider: "screen" } : {}),
       issuedTo: manager.email,
       issuedBy: actorId(event),
       siteCountAtIssue: activeSites.length,
@@ -411,6 +419,13 @@ export const createProviderManagerGrant = (event) =>
             grantId,
             token,
           );
+    if (deliveryChannel === "screen") {
+      return jsonResponse(201, {
+        grant: publicGrant(grant, nowIso),
+        enrollmentCode: token,
+      });
+    }
+
     let deliveryStatus = "accepted";
     let deliveryProvider = configuredDeliveryProvider();
     let messageId = "";
@@ -767,6 +782,7 @@ function publicManager(item) {
 function publicGrant(item, now) {
   return {
     deliveryMode: item.deliveryMode ?? "link",
+    deliveryChannel: item.deliveryChannel ?? "email",
     grantId: item.grantId,
     membershipId: item.membershipId,
     providerId: item.providerId,

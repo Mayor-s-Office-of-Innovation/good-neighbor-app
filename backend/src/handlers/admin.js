@@ -807,7 +807,7 @@ export const reassignSite = (event) =>
     const siteId = event.pathParameters?.siteId ?? "";
     const providerId = cleanText(body.providerId);
     const leadProgramId = cleanText(body.leadProgramId);
-    if (!providerId || !leadProgramId) {
+    if (!providerId || typeof body.leadProgramId !== "string") {
       return jsonResponse(400, { error: "provider_and_program_required" });
     }
     const tableName = getDynamoTableName();
@@ -824,12 +824,14 @@ export const reassignSite = (event) =>
           Key: { pk: `PROVIDER#${providerId}`, sk: "#META" },
         }),
       ),
-      ddb.send(
-        new GetCommand({
-          TableName: tableName,
-          Key: { pk: `PROGRAM#${leadProgramId}`, sk: "#META" },
-        }),
-      ),
+      leadProgramId
+        ? ddb.send(
+            new GetCommand({
+              TableName: tableName,
+              Key: { pk: `PROGRAM#${leadProgramId}`, sk: "#META" },
+            }),
+          )
+        : Promise.resolve({ Item: undefined }),
     ]);
     const site = siteResult.Item;
     const provider = providerResult.Item;
@@ -840,7 +842,7 @@ export const reassignSite = (event) =>
     if (!provider || provider.status === "inactive") {
       return jsonResponse(404, { error: "provider_not_found" });
     }
-    if (!program || program.status === "inactive") {
+    if (leadProgramId && (!program || program.status === "inactive")) {
       return jsonResponse(400, { error: "incompatible_program" });
     }
     if (body.expectedUpdatedAt && body.expectedUpdatedAt !== site.updatedAt)
@@ -858,7 +860,7 @@ export const reassignSite = (event) =>
           previousProvider: site.providerName,
           newProvider: provider.name,
           previousProgram: site.programName,
-          newProgram: program.name,
+          newProgram: program?.name || "",
           retainedManagers: (children.Items || [])
             .filter(
               (r) =>
@@ -877,7 +879,7 @@ export const reassignSite = (event) =>
     }
     if (
       site.providerId === providerId &&
-      site.leadProgramId === leadProgramId
+      (site.leadProgramId || "") === leadProgramId
     ) {
       return jsonResponse(200, { site, unchanged: true });
     }
@@ -888,8 +890,9 @@ export const reassignSite = (event) =>
         Update: {
           TableName: tableName,
           Key: { pk: `SITE#${siteId}`, sk: "#META" },
-          UpdateExpression:
-            "SET providerId = :providerId, providerName = :providerName, leadProgramId = :programId, programName = :programName, updatedAt = :now, providerAccessGeneration = :providerGeneration REMOVE programMigrationRunId",
+          UpdateExpression: program
+            ? "SET providerId = :providerId, providerName = :providerName, leadProgramId = :programId, programName = :programName, updatedAt = :now, providerAccessGeneration = :providerGeneration REMOVE programMigrationRunId"
+            : "SET providerId = :providerId, providerName = :providerName, updatedAt = :now, providerAccessGeneration = :providerGeneration REMOVE leadProgramId, programName, programMigrationRunId",
           ConditionExpression: site.updatedAt
             ? "attribute_exists(pk) AND updatedAt = :expectedUpdatedAt"
             : "attribute_exists(pk)",
@@ -899,8 +902,9 @@ export const reassignSite = (event) =>
               Number(site.providerId !== providerId),
             ":providerId": providerId,
             ":providerName": provider.name,
-            ":programId": leadProgramId,
-            ":programName": program.name,
+            ...(program
+              ? { ":programId": leadProgramId, ":programName": program.name }
+              : {}),
             ":now": now,
             ...(site.updatedAt ? { ":expectedUpdatedAt": site.updatedAt } : {}),
           },
@@ -927,23 +931,27 @@ export const reassignSite = (event) =>
           },
         },
       },
-      {
-        Put: {
-          TableName: tableName,
-          Item: {
-            pk: `PROGRAM#${leadProgramId}`,
-            sk: `SITE#${siteId}`,
-            type: "programSiteMembership",
-            programId: leadProgramId,
-            programName: program.name,
-            siteId,
-            siteName: site.name,
-            status: "active",
-            createdAt: now,
-            updatedAt: now,
-          },
-        },
-      },
+      ...(program
+        ? [
+            {
+              Put: {
+                TableName: tableName,
+                Item: {
+                  pk: `PROGRAM#${leadProgramId}`,
+                  sk: `SITE#${siteId}`,
+                  type: "programSiteMembership",
+                  programId: leadProgramId,
+                  programName: program.name,
+                  siteId,
+                  siteName: site.name,
+                  status: "active",
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              },
+            },
+          ]
+        : []),
       {
         Put: {
           TableName: tableName,
@@ -994,7 +1002,7 @@ export const reassignSite = (event) =>
           Number(site.providerAccessGeneration || 0) +
           Number(site.providerId !== providerId),
         leadProgramId,
-        programName: program.name,
+        programName: program?.name || "",
         updatedAt: now,
       },
     });

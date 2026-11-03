@@ -1,5 +1,6 @@
 // Shared by creation forms and operation toasts. API codes stay out of the UI.
 const messages = {
+  program_update_conflict: "admin.programs.renameConflict",
   program_already_exists: "admin.programs.duplicateHelp",
   provider_already_exists: "admin.errors.providerExists",
   site_changed: "admin.errors.siteChanged",

@@ -180,7 +180,7 @@ test("program results open the specific program, retaining provider context only
   }
 });
 
-test("new program asks to add a staff member without the redundant contact label", () => {
+test("new program defers staff assignment to the Program page", () => {
   const context = vm.createContext({
     window: { location: new URL("https://admin.example/programs/new") },
     URLSearchParams,
@@ -191,9 +191,8 @@ test("new program asks to add a staff member without the redundant contact label
   });
   vm.runInContext(viewFunction("newProgramView"), context);
   const html = context.newProgramView({ providers: [] });
-  assert.ok(
-    html.includes(`<legend>${t("admin.programs.addStaffMember")}</legend>`),
-  );
+  assert.ok(html.includes(t("admin.programs.createWithoutStaff")));
+  assert.doesNotMatch(html, /program-staff|data-retry-staff/);
   assert.doesNotMatch(html, /Assign staff|Add the first staff contact/);
 });
 
@@ -203,6 +202,8 @@ test("program roster shows all active staff and named assignments, with add rest
     escapeHtml,
     entityList: () => "",
     entityBreadcrumb: () => "",
+    formInput: () => "",
+    discardChangesDialog: () => "",
     primaryProgramStaffId,
     phoneWithExtension: () => "",
     programStaffEditDialog: () => "",

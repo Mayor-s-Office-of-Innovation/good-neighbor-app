@@ -139,6 +139,12 @@ export const createManagerGrant = (event) =>
       return jsonResponse(400, { error: "invalid_delivery_mode" });
     }
     const deliveryMode = body.deliveryMode === "code" ? "code" : "link";
+    const deliveryChannel = body.deliveryChannel ?? "email";
+    if (
+      (deliveryChannel !== "email" && deliveryChannel !== "screen") ||
+      (deliveryChannel === "screen" && deliveryMode !== "code")
+    )
+      return jsonResponse(400, { error: "invalid_delivery_channel" });
     const token =
       deliveryMode === "code"
         ? await generateEnrollmentCode()
@@ -170,8 +176,10 @@ export const createManagerGrant = (event) =>
       accessLevel: "manager",
       tokenHash,
       deliveryMode,
+      deliveryChannel,
       status: "pending",
-      deliveryStatus: "queued",
+      deliveryStatus: deliveryChannel === "screen" ? "issued" : "queued",
+      ...(deliveryChannel === "screen" ? { deliveryProvider: "screen" } : {}),
       issuedTo: recipientEmail,
       issuedBy: actor,
       createdAt: nowIso,
@@ -285,6 +293,13 @@ export const createManagerGrant = (event) =>
         return jsonResponse(409, { error: "manager_grant_conflict" });
       }
       throw error;
+    }
+
+    if (deliveryChannel === "screen") {
+      return jsonResponse(201, {
+        grant: publicGrant(grant, nowIso),
+        enrollmentCode: token,
+      });
     }
 
     let deliveryStatus = "accepted";
@@ -428,6 +443,7 @@ function publicGrant(item, now) {
       : item.status;
   return {
     deliveryMode: item.deliveryMode ?? "link",
+    deliveryChannel: item.deliveryChannel ?? "email",
     grantId: item.grantId,
     membershipId: item.membershipId,
     siteId: item.siteId,
