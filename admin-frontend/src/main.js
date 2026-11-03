@@ -5798,7 +5798,7 @@ class AdminApp extends HTMLElement {
           element.disabled = true;
       });
       this.querySelectorAll(
-        "[data-require-checks], [data-end-checks], [data-resend-letter], [data-issue-manager-grant], [data-cancel-manager-grant], [data-revoke-device], [data-remove-manager-membership], [data-remove-site-manager], [data-edit-manager-membership]",
+        "[data-require-checks], [data-end-checks], [data-resend-letter], [data-issue-manager-grant], [data-show-enrollment-code], [data-cancel-manager-grant], [data-revoke-device], [data-remove-manager-membership], [data-remove-site-manager], [data-edit-manager-membership]",
       ).forEach((element) => {
         element.disabled = true;
       });

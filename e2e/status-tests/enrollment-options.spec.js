@@ -1,8 +1,8 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
-/** @param {import("@playwright/test").Page} page */
-async function setup(page) {
+/** @param {import("@playwright/test").Page} page @param {boolean} [canEdit] */
+async function setup(page, canEdit = true) {
   /** @type {Array<{path: string, body: any}>} */
   const writes = [];
   const member = {
@@ -54,8 +54,11 @@ async function setup(page) {
     };
     if (path.endsWith("/session"))
       json = {
-        role: "compliance-supervisor",
-        capabilities: { createEntities: true, manageProviderManagers: true },
+        role: canEdit ? "compliance-supervisor" : "compliance-manager",
+        capabilities: {
+          createEntities: canEdit,
+          manageProviderManagers: canEdit,
+        },
       };
     else if (path === "/admin/v1/providers")
       json = { providers: [provider], sites: [{ items: [site] }] };
@@ -65,7 +68,7 @@ async function setup(page) {
     else if (path === "/admin/v1/sites/s")
       json = {
         items: [site, { ...member, type: "managerMembership" }],
-        permissions: { canEdit: true },
+        permissions: { canEdit },
       };
     else if (path.endsWith("/people"))
       json =
@@ -231,3 +234,16 @@ for (const scope of ["sites", "providers"]) {
     });
   }
 }
+
+test("read-only sites disable both email and screen enrollment actions", async ({
+  page,
+}) => {
+  const writes = await setup(page, false);
+  await page.goto("/sites/s?section=access");
+  await expect(page.locator("[data-show-enrollment-code]")).toBeDisabled();
+  await expect(page.locator("[data-issue-manager-grant]")).toHaveCount(2);
+  for (const button of await page.locator("[data-issue-manager-grant]").all()) {
+    await expect(button).toBeDisabled();
+  }
+  expect(writes).toEqual([]);
+});
