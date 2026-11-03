@@ -495,10 +495,14 @@ describe("program administration", () => {
     expect(response.statusCode).toBe(409);
   });
 
-  it("loads a program with sites and users", async () => {
+  it("loads a program with current names on its sites and users", async () => {
     send
-      .mockResolvedValueOnce({ Item: { programId: "program-1" } })
-      .mockResolvedValueOnce({ Items: [{ siteId: "site-1" }] })
+      .mockResolvedValueOnce({
+        Item: { programId: "program-1", name: "Renamed Program" },
+      })
+      .mockResolvedValueOnce({
+        Items: [{ siteId: "site-1", programName: "Old Program" }],
+      })
       .mockResolvedValueOnce({ Items: [{ userId: "user-1" }] });
     const response = await call(
       getProgram,
@@ -506,7 +510,7 @@ describe("program administration", () => {
     );
     expect(response.statusCode).toBe(200);
     expect(JSON.parse(String(response.body))).toMatchObject({
-      sites: [{ siteId: "site-1" }],
+      sites: [{ siteId: "site-1", programName: "Renamed Program" }],
       users: [{ userId: "user-1" }],
     });
   });
@@ -1006,6 +1010,12 @@ describe("program administration", () => {
         Item: {
           programId: "program-1",
           name: "Program One",
+          contact: {
+            firstName: "Test",
+            lastName: "Person",
+            email: "test@example.org",
+          },
+          updatedAt: "v1",
           providerId: "provider-1",
           providerName: "Provider One",
           status: "active",
@@ -1014,12 +1024,21 @@ describe("program administration", () => {
       .mockResolvedValueOnce({});
     const response = await call(
       updateProgram,
-      event({ name: "Renamed" }, { programId: "program-1" }),
+      event(
+        { name: "Renamed", expectedUpdatedAt: "v1" },
+        { programId: "program-1" },
+      ),
     );
     expect(response.statusCode).toBe(200);
+    expect(JSON.parse(String(response.body)).program.contact.email).toBe(
+      "test@example.org",
+    );
     expect(send.mock.calls[0][0]).toBeInstanceOf(GetCommand);
     const transaction = send.mock.calls[1][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
+    expect(
+      transaction.input.TransactItems[0].Update.ConditionExpression,
+    ).toContain("updatedAt = :expected");
     expect(transaction.input.TransactItems[1].Update.Key).toEqual({
       pk: "PROVIDER#provider-1",
       sk: "PROGRAM#program-1",
