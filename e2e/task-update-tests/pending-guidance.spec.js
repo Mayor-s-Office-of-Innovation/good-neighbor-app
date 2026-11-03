@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { t } from "../helpers/i18n.js";
+import { homeResponse } from "../helpers/app.js";
 
 const assessment = { assessmentId: "old-assessment", checkId: "old-check" };
 const question = {
@@ -114,29 +115,28 @@ for (const resolution of ["answer", "dismiss"])
               }
             : { guidance: [], nextToken: "second-page" },
         });
+      /** @param {string | null} status */
+      const tasksFor = (status) =>
+        status === "open" ? [liveTask, ...(answers ? [task] : [])] : [];
+      const checks = [
+        {
+          checkId: "newer-check",
+          status: "completed",
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          issueCount: 0,
+        },
+      ];
+      if (url.pathname === "/v1/home")
+        return route.fulfill({
+          json: homeResponse({ tasks: tasksFor, checks }),
+        });
       if (url.pathname === "/v1/tasks")
         return route.fulfill({
-          json: {
-            tasks:
-              url.searchParams.get("status") === "open"
-                ? [liveTask, ...(answers ? [task] : [])]
-                : [],
-          },
+          json: { tasks: tasksFor(url.searchParams.get("status")) },
         });
       if (url.pathname === "/v1/checks")
-        return route.fulfill({
-          json: {
-            checks: [
-              {
-                checkId: "newer-check",
-                status: "completed",
-                startedAt: new Date().toISOString(),
-                completedAt: new Date().toISOString(),
-                issueCount: 0,
-              },
-            ],
-          },
-        });
+        return route.fulfill({ json: { checks } });
       return route.fulfill({ json: { sites: [], artifacts: [], updates: [] } });
     });
     await page.route("**/__pending_test", (route) =>
