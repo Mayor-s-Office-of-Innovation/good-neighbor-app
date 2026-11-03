@@ -1,0 +1,23 @@
+/* Shared by the public and admin apps. More specific dialog families may
+   provide a smaller limit or a separately constrained scrolling body. */
+:where(dialog) {
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
+}
+
+/* Geometry is supplied by menu-viewport.js for cross-browser collision handling. */
+:is(
+    .home-action-menu,
+    .home-settings-menu,
+    .home-site-switcher__menu
+  )[data-viewport-menu] {
+  position: fixed;
+  inset: auto;
+  transform: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
+}

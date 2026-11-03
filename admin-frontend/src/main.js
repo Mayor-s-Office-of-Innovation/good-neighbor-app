@@ -1,3 +1,4 @@
+import "../../frontend/src/styles/overlays.css";
 import {
   beginEnrollmentRequest,
   syncEnrollmentRequests,

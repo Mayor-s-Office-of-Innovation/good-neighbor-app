@@ -1,6 +1,6 @@
 .task-update {
   width: min(100% - 2rem, var(--app-content-max-width));
-  max-height: 94vh;
+  max-height: calc(100dvh - 2rem);
   border: 0;
   border-radius: var(--wa-font-size-2xl, 2rem);
   padding: 0;
@@ -61,7 +61,7 @@
 .task-update__sheet {
   width: 100%;
   box-sizing: border-box;
-  min-height: min(70rem, 88vh);
+  min-height: min(70rem, 88dvh);
   padding: 1.5rem 1.5rem 4rem;
   overflow: visible;
 }
@@ -339,7 +339,7 @@
 
 @media (max-width: 32rem) {
   .task-update__sheet {
-    min-height: 88vh;
+    min-height: 88dvh;
     padding: 1.25rem;
   }
   .task-update__header {

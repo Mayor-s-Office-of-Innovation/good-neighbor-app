@@ -1,3 +1,4 @@
+import { containMenus } from "../lib/menu-viewport.js";
 import { installHomeInteractionGuard } from "../services/home-interaction.js";
 import { installHomeRefresh } from "../services/home-refresh.js";
 import { reconcileHomeResults } from "./home-card-reconcile.js";
@@ -405,6 +406,8 @@ class TodayView extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._stopMenuContainment?.();
+    this._stopMenuContainment = null;
     this._pullRefreshId++;
     this._pullRefreshState = "idle";
     this._pullRefreshPromise = null;
@@ -457,6 +460,9 @@ class TodayView extends HTMLElement {
   }
 
   connectedCallback() {
+    this._stopMenuContainment ??= containMenus(this, (menu) => {
+      if (menu.matches(".home-settings-menu")) this._removeSettingsMenu();
+    });
     this._interactionGuard ??= installHomeInteractionGuard(this, () =>
       this._flushDialogRender(),
     );
