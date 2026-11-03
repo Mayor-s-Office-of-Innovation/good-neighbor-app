@@ -28,7 +28,7 @@ async function setup(page, canEdit = true) {
   let emailFails = true;
   await page.addInitScript(() => {
     /** @type {any} */ (window).GOOD_NEIGHBOR_ADMIN_CONFIG = {
-      apiBase: location.origin,
+      apiBase: window.location.origin,
       localDebugAdmin: true,
     };
   });
@@ -142,7 +142,7 @@ for (const scope of ["sites", "providers"]) {
   });
 }
 
-test("create and assign once, then retry only the enrollment email", async ({
+test("email failure keeps the manager assigned and allows another attempt in App access", async ({
   page,
 }) => {
   const writes = await setup(page);
@@ -161,8 +161,12 @@ test("create and assign once, then retry only the enrollment email", async ({
   await check.focus();
   await page.keyboard.press("Space");
   await form.locator('button[type="submit"]').click();
-  await expect(page.locator("#retry-manager-enrollment")).toBeVisible();
-  await page.locator("#retry-manager-enrollment").click();
+  await expect(form).not.toBeVisible();
+  await expect(page.locator("#retry-manager-enrollment")).toHaveCount(0);
+  await page.locator('.entity-tabs a[href$="section=access"]').click();
+  await page
+    .locator('[data-issue-manager-grant="m"][data-delivery-mode="link"]')
+    .click();
   await expect(page.locator("#retry-manager-enrollment")).toHaveCount(0);
   expect(writes.filter((w) => w.path.endsWith("/people"))).toHaveLength(1);
   expect(
@@ -182,7 +186,7 @@ test("document navigation clears displayed codes before a possible browser cache
   await expect(page.locator("[data-enrollment-code]")).toBeVisible();
   await page.evaluate(() =>
     window.dispatchEvent(
-      new PageTransitionEvent("pagehide", { persisted: true }),
+      new window.PageTransitionEvent("pagehide", { persisted: true }),
     ),
   );
   await expect(page.locator("[data-enrollment-code]")).toHaveCount(0);

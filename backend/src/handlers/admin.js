@@ -848,6 +848,18 @@ export const reassignSite = (event) =>
     if (body.expectedUpdatedAt && body.expectedUpdatedAt !== site.updatedAt)
       return jsonResponse(409, { error: "site_reassignment_conflict" });
     if (body.preview === true) {
+      const previousProgram = site.leadProgramId
+        ? site.leadProgramId === leadProgramId
+          ? program
+          : (
+              await ddb.send(
+                new GetCommand({
+                  TableName: tableName,
+                  Key: { pk: `PROGRAM#${site.leadProgramId}`, sk: "#META" },
+                }),
+              )
+            ).Item
+        : undefined;
       const children = await queryAllItems({
         TableName: tableName,
         KeyConditionExpression: "pk = :pk",
@@ -859,7 +871,7 @@ export const reassignSite = (event) =>
           updatedAt: site.updatedAt,
           previousProvider: site.providerName,
           newProvider: provider.name,
-          previousProgram: site.programName,
+          previousProgram: previousProgram?.name || "",
           newProgram: program?.name || "",
           retainedManagers: (children.Items || [])
             .filter(

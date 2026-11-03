@@ -285,9 +285,13 @@ export const getProgram = (event) =>
       queryChildren(programId, "USER#"),
     ]);
     if (!program.Item) return jsonResponse(404, { error: "not_found" });
+    const currentProgram = program.Item;
     return jsonResponse(200, {
-      program: program.Item,
-      sites: sites.Items ?? [],
+      program: currentProgram,
+      sites: (sites.Items ?? []).map((site) => ({
+        ...site,
+        programName: currentProgram.name,
+      })),
       users: users.Items ?? [],
     });
   });

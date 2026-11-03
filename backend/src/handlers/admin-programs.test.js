@@ -495,10 +495,14 @@ describe("program administration", () => {
     expect(response.statusCode).toBe(409);
   });
 
-  it("loads a program with sites and users", async () => {
+  it("loads a program with current names on its sites and users", async () => {
     send
-      .mockResolvedValueOnce({ Item: { programId: "program-1" } })
-      .mockResolvedValueOnce({ Items: [{ siteId: "site-1" }] })
+      .mockResolvedValueOnce({
+        Item: { programId: "program-1", name: "Renamed Program" },
+      })
+      .mockResolvedValueOnce({
+        Items: [{ siteId: "site-1", programName: "Old Program" }],
+      })
       .mockResolvedValueOnce({ Items: [{ userId: "user-1" }] });
     const response = await call(
       getProgram,
@@ -506,7 +510,7 @@ describe("program administration", () => {
     );
     expect(response.statusCode).toBe(200);
     expect(JSON.parse(String(response.body))).toMatchObject({
-      sites: [{ siteId: "site-1" }],
+      sites: [{ siteId: "site-1", programName: "Renamed Program" }],
       users: [{ userId: "user-1" }],
     });
   });

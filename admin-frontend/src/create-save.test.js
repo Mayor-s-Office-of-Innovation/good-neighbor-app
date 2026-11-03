@@ -341,3 +341,51 @@ for (const detached of [false, true]) {
     });
   }
 }
+
+test("renaming a program reloads a previously cached manager directory", async () => {
+  const source = readFileSync(new URL("./main.js", import.meta.url), "utf8");
+  const methods = [
+    "updateProgramDetails(form)",
+    "loadSiteManagers(force = false)",
+  ].map((signature) => {
+    const start = source.indexOf(`  async ${signature}`);
+    return source.slice(start, source.indexOf("\n  }", start) + 4);
+  });
+  const Subject = vm.runInNewContext(`(class { ${methods.join("\n")} })`, {
+    upsertRecord,
+    FormData: class {},
+    formValue: () => "Renamed Program",
+    syncDirtyForm() {},
+    actionFeedback: () => ({ success() {}, failure() {} }),
+    adminApi: {
+      updateProgram: async () => ({
+        program: { programId: "p", name: "Renamed Program" },
+      }),
+    },
+  });
+  const app = new Subject();
+  app.render = () => {};
+  app.state = {
+    program: { programId: "p", name: "Old Program" },
+    programs: [{ programId: "p", name: "Old Program" }],
+    capabilities: { createEntities: true },
+    managerDirectoryLoaded: true,
+    siteManagers: [{ programId: "p", programName: "Old Program" }],
+  };
+  app.managerDirectoryVersion = 4;
+  let loads = 0;
+  app.managerDirectoryLoader = {
+    pending: false,
+    load: async () => {
+      loads++;
+      app.state.siteManagers[0].programName = app.state.programs[0].name;
+    },
+  };
+  await app.loadSiteManagers();
+  assert.equal(loads, 0);
+  await app.updateProgramDetails({});
+  assert.equal(app.managerDirectoryVersion, 5);
+  await app.loadSiteManagers();
+  assert.equal(loads, 1);
+  assert.equal(app.state.siteManagers[0].programName, "Renamed Program");
+});

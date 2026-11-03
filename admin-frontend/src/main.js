@@ -1443,6 +1443,8 @@ class AdminApp extends HTMLElement {
         result.program,
         "programId",
       );
+      this.state.managerDirectoryLoaded = false;
+      this.managerDirectoryVersion = (this.managerDirectoryVersion || 0) + 1;
       if (this.state.program?.programId === program.programId) {
         this.state.program = { ...program, ...result.program };
         syncDirtyForm(form, true);
@@ -2843,7 +2845,9 @@ class AdminApp extends HTMLElement {
         return;
       }
       if (emailRequested && assignedMembership) {
+        const release = beginEnrollmentRequest(this, "site", siteId);
         try {
+          if (!release) throw new Error("enrollment_request_pending");
           const sent = await adminApi.createManagerGrant(
             siteId,
             assignedMembership.membershipId,
@@ -2853,11 +2857,9 @@ class AdminApp extends HTMLElement {
             throw new Error("enrollment_email_failed");
           notifyAdmin("admin.enrollment.emailed", "success");
         } catch {
-          this.state.managerEnrollmentRetry = {
-            siteId,
-            membershipId: assignedMembership.membershipId,
-          };
           notifyAdmin("admin.enrollment.createdEmailFailed", "error");
+        } finally {
+          release?.();
         }
       }
       form.closest("dialog")?.close();
@@ -3861,32 +3863,6 @@ class AdminApp extends HTMLElement {
 
   bind() {
     bindEnrollmentCodeExpiry(this, this.state);
-    this.querySelector("#retry-manager-enrollment")?.addEventListener(
-      "click",
-      async (event) => {
-        const retry = this.state.managerEnrollmentRetry;
-        if (!retry) return;
-        const button = event.currentTarget;
-        button.disabled = true;
-        try {
-          const sent = await adminApi.createManagerGrant(
-            retry.siteId,
-            retry.membershipId,
-            "link",
-          );
-          if (sent.grant?.deliveryStatus !== "accepted")
-            throw new Error("enrollment_email_failed");
-          if (this.state.managerEnrollmentRetry === retry)
-            this.state.managerEnrollmentRetry = null;
-          notifyAdmin("admin.enrollment.emailed", "success");
-          if (this.state.site?.siteId === retry.siteId) this.render();
-        } catch {
-          notifyAdmin("admin.enrollment.createdEmailFailed", "error");
-        } finally {
-          button.disabled = false;
-        }
-      },
-    );
     this.querySelectorAll("[data-show-enrollment-code]").forEach((button) => {
       const scope = button.dataset.enrollmentScope;
       const membershipId = button.getAttribute("data-show-enrollment-code");
@@ -6245,7 +6221,6 @@ function siteManagersEditorView(state) {
   return `<section class="subsection" aria-labelledby="site-managers-title">
     <div class="panel__head"><h2 id="site-managers-title">${escapeHtml(t("admin.siteManagers.title"))}</h2>${canEditSite(state) ? `<button class="btn-secondary" id="create-site-manager" type="button">${escapeHtml(t("admin.siteManagers.createButton"))}</button>` : ""}</div>
     <p>${escapeHtml(t("admin.siteManagers.description"))}</p>
-    ${state.managerEnrollmentRetry?.siteId === state.site.siteId ? `<div role="status"><p>${escapeHtml(t("admin.enrollment.createdEmailFailed"))}</p><button type="button" class="btn-secondary" id="retry-manager-enrollment">${escapeHtml(t("admin.enrollment.retryEmail"))}</button></div>` : ""}
     ${managerMembershipList(state.managerMemberships, state.site.siteId, true, canEditSite(state))}
     ${
       canEditSite(state)

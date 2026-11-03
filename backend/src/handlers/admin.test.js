@@ -448,6 +448,63 @@ describe("provider and site management", () => {
     expect(JSON.parse(res.body).site.providerId).toBe("provider-one");
   });
 
+  it.each(["program-old", "program-new", ""])(
+    "previews the current previous program name when assigning %s",
+    async (leadProgramId) => {
+      send.mockImplementation(async (command) => {
+        if (command instanceof GetCommand) {
+          const pk = command.input.Key?.pk;
+          if (pk === "SITE#site-1")
+            return {
+              Item: {
+                siteId: "site-1",
+                status: "active",
+                providerId: "provider-1",
+                leadProgramId: "program-old",
+                programName: "Stale Program",
+              },
+            };
+          if (pk === "PROVIDER#provider-1")
+            return {
+              Item: {
+                providerId: "provider-1",
+                name: "Provider",
+                status: "active",
+              },
+            };
+          return {
+            Item: {
+              name:
+                pk === "PROGRAM#program-old"
+                  ? "Renamed Program"
+                  : "New Program",
+              status: "active",
+            },
+          };
+        }
+        return { Items: [] };
+      });
+      const res = await call(
+        reassignSite,
+        event(
+          { providerId: "provider-1", leadProgramId, preview: true },
+          "central-admin",
+          { siteId: "site-1" },
+        ),
+      );
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(String(res.body)).preview.previousProgram).toBe(
+        "Renamed Program",
+      );
+      expect(
+        send.mock.calls.every(
+          ([command]) =>
+            command instanceof GetCommand || command instanceof QueryCommand,
+        ),
+      ).toBe(true);
+    },
+  );
+
   it("reassigns a site preserving direct access while invalidating old provider access", async () => {
     send
       .mockResolvedValueOnce({
