@@ -48,11 +48,12 @@ export async function refreshActiveTab(
     const entry = {
       promise: Promise.resolve(null),
     };
+    const requestedAt = Date.now();
     entry.promise = listTasks({ status, limit: 50 })
       .then((result) => ({
         status,
         tasks: result.tasks || [],
-        fetchedAt: Date.now(),
+        fetchedAt: requestedAt,
       }))
       .catch(() => null);
     batch.entries.set(status, entry);
@@ -112,15 +113,23 @@ export function applyHomeTaskSections(view, sections, fetchedAt) {
 /**
  * Merge freshly read status lists into the Home model and re-render once.
  * `results` holds `{ status, tasks, fetchedAt }` per list, or null for a list
- * whose read failed. Shared by the targeted per-status refresh above and the
+ * whose read failed; `fetchedAt` is when the read was requested. A list the
+ * model already holds from a newer read (a targeted tab refresh that landed
+ * while this one was in flight) is left alone rather than rolled back; it
+ * counts as applied. Shared by the targeted per-status refresh above and the
  * one-request Home refresh.
  * @param {any} view
  * @param {Array<{ status: string, tasks: any[], fetchedAt: number } | null>} results
- * @returns {boolean} true when every list in `results` was applied
+ * @returns {boolean} true when no list in `results` failed
  */
 export function applyTaskLists(view, results) {
-  const succeeded = results.filter(Boolean);
-  if (!succeeded.length) return false;
+  const failed = results.some((result) => !result);
+  const succeeded = results.filter(
+    (result) =>
+      result &&
+      (view._taskListFreshness.get(result.status) || 0) <= result.fetchedAt,
+  );
+  if (!succeeded.length) return !failed;
   const refreshed = new Set(succeeded.map((result) => result.status));
   const incoming = succeeded.flatMap((result) => result.tasks);
   // An observed saved version retires the local override. Missing/older index
@@ -188,7 +197,7 @@ export function applyTaskLists(view, results) {
   window.scrollTo?.(scroll);
   if (previousVersions !== nextVersions) view._watchDuplicates(tasks);
   void view._hydrateVisibleHomeTasks();
-  return succeeded.length === results.length;
+  return !failed;
 }
 
 /** @param {string} tab */

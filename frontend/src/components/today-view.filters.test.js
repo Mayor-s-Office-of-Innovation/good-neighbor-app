@@ -1436,6 +1436,58 @@ describe("deferred In-progress / History lists", () => {
     errorLog.mockRestore();
   });
 
+  it("shows the sections that did arrive while a failed one waits for the fallback", async () => {
+    freezeClock();
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    const progressTask = {
+      ...doneTask,
+      taskId: "progress-1",
+      status: "in_progress",
+    };
+    let release = () => {};
+    const held = new Promise((resolve) => {
+      release = () => resolve({ tasks: [] });
+    });
+    let fallback = false;
+    catalog.listTasks.mockImplementation(async ({ status }) =>
+      status === "open"
+        ? { tasks: [openTask] }
+        : status === "in_progress"
+          ? { tasks: [progressTask] }
+          : status === "completing" && fallback
+            ? held
+            : { tasks: [] },
+    );
+    catalog.fetchHome.mockImplementationOnce(async () => {
+      const home = await composeHome();
+      home.tasks.completing = { ok: false, error: "Error" };
+      fallback = true;
+      return home;
+    });
+    const view = liveView("?filter=todo");
+    await view.connectedCallback();
+
+    // The first paint already carries the In-progress rows that came back…
+    expect(view._remainingStatus).toBe("pending");
+    expect(
+      view._renderHome.mock.calls[0][0].tasks.map((t) => t.taskId).sort(),
+    ).toEqual(["open-1", "progress-1"]);
+    expect(view._taskListFreshness.has("in_progress")).toBe(true);
+    expect(view._taskListFreshness.has("completing")).toBe(false);
+    // …while the counts stay hidden until the failed list lands.
+    expect(view._render(view._homeModel)).not.toContain("home-tabs__count");
+
+    release();
+    await view._remainingLoad;
+    expect(view._remainingStatus).toBe("loaded");
+    expect(view._homeModel.tasks.map((t) => t.taskId).sort()).toEqual([
+      "open-1",
+      "progress-1",
+    ]);
+    expect(view._render(view._homeModel)).toContain("home-tabs__count");
+    errorLog.mockRestore();
+  });
+
   it("keeps the To-do tab and offers a retry when the remaining lists fail", async () => {
     freezeClock();
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});

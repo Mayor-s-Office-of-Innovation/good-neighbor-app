@@ -992,6 +992,59 @@ describe("return-to-app task freshness", () => {
     }
   });
 
+  it("counts an ignored older checks snapshot as a complete refresh", async () => {
+    const { view, api } = await fixture();
+    view._homeModel.checks = [];
+    view._homeModel.latestStartedCheck = {
+      startedAt: "2026-11-02T10:00:00.000Z",
+    };
+    const home = vi.spyOn(api, "fetchHome").mockResolvedValue(
+      homeResponse({}, [
+        {
+          checkId: "older",
+          status: "in_progress",
+          startedAt: "2026-11-01T10:00:00.000Z",
+          issueCount: 0,
+        },
+      ]),
+    );
+    try {
+      expect(await view._refreshAllLists()).toBe(true);
+      expect(view._homeModel.latestStartedCheck.startedAt).toBe(
+        "2026-11-02T10:00:00.000Z",
+      );
+    } finally {
+      home.mockRestore();
+    }
+  });
+
+  it("does not roll back a list that a targeted refresh landed first", async () => {
+    const { view, api } = await fixture();
+    view._applyChecks = vi.fn(() => true);
+    const home = vi.spyOn(api, "fetchHome").mockImplementation(async () => {
+      // A tab refresh for `open` lands while the aggregate read is in flight.
+      view._homeModel = {
+        ...view._homeModel,
+        tasks: [
+          { taskId: "newer", status: "open" },
+          { taskId: "history", status: "completed" },
+        ],
+      };
+      view._taskListFreshness.set("open", Date.now() + 5);
+      return homeResponse({ open: [{ taskId: "stale", status: "open" }] });
+    });
+    try {
+      expect(await view._refreshAllLists()).toBe(true);
+      // `open` kept the newer rows; the other sections applied (and emptied).
+      expect(view._homeModel.tasks.map((task) => task.taskId)).toEqual([
+        "newer",
+      ]);
+      expect(view._taskListFreshness.has("completed")).toBe(true);
+    } finally {
+      home.mockRestore();
+    }
+  });
+
   it("includes guidance when reconnect arrives during a list refresh", async () => {
     const { view } = await fixture();
     /** @type {(value: boolean) => void} */

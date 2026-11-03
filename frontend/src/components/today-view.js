@@ -683,14 +683,26 @@ class TodayView extends HTMLElement {
       if (!home.checks?.ok || !home.tasks?.open?.ok)
         throw new Error("home: checks or open worklist unavailable");
       const checks = home.checks.items || [];
-      const remaining = REMAINING_STATUSES.map((status) => home.tasks[status]);
-      remainingLoaded = remaining.every((section) => section?.ok);
       const loadedAt = Date.now();
       this._taskListFreshness.set("open", loadedAt);
-      const remainingTasks = remainingLoaded
-        ? remaining.flatMap((section) => section.items || [])
-        : [];
-      if (remainingLoaded) this._reconcileConfirmedTasks(remainingTasks, true);
+      // Every In-progress / History section that came back is shown now and
+      // stamped fresh. A failed one leaves those tabs on their placeholder
+      // with the counts hidden until the per-status fallback lands; the rows
+      // already in hand stay in the model meanwhile. Old cards are never shown.
+      /** @type {Record<string, any>[]} */
+      const remainingTasks = [];
+      remainingLoaded = true;
+      for (const status of REMAINING_STATUSES) {
+        const section = home.tasks[status];
+        if (!section?.ok) {
+          remainingLoaded = false;
+          continue;
+        }
+        remainingTasks.push(...(section.items || []));
+        this._taskListFreshness.set(status, loadedAt);
+      }
+      if (remainingTasks.length)
+        this._reconcileConfirmedTasks(remainingTasks, true);
       tasks = uniqueTasks([
         ...(home.tasks.open.items || []),
         ...remainingTasks,
@@ -698,15 +710,7 @@ class TodayView extends HTMLElement {
       // Historical recovery is a second tier. Cached online questions are not
       // actionable until revalidated; offline snapshots remain available.
       pendingQuestions = [];
-      if (remainingLoaded) {
-        this._remainingStatus = "loaded";
-        for (const status of REMAINING_STATUSES)
-          this._taskListFreshness.set(status, loadedAt);
-      } else {
-        // In-progress and History show a placeholder and the tab counts stay
-        // hidden until the per-status fallback lands. Old cards are never shown.
-        this._remainingStatus = "pending";
-      }
+      this._remainingStatus = remainingLoaded ? "loaded" : "pending";
       rawChecks = checks;
       latestStartedCheck = latestStarted(checks);
       submitted = submittedChecks(checks);
@@ -1080,8 +1084,8 @@ class TodayView extends HTMLElement {
 
   /**
    * Apply a fresh check list from a background refresh. True when the model is
-   * current afterwards (changed or already equal); an older snapshot than the
-   * one on screen is ignored.
+   * current afterwards: changed, already equal, or the response was an older
+   * snapshot than the one on screen and was ignored.
    * @param {Record<string, any>[]} rows
    */
   _applyChecks(rows) {
@@ -1098,12 +1102,14 @@ class TodayView extends HTMLElement {
             String(a.submittedAt || ""),
           ),
         );
-      // Ignore an older snapshot and avoid rebuilding unchanged cards on each poll.
+      // An older snapshot than the one on screen is ignored; the model is
+      // still current, so the refresh counts as complete. Unchanged lists
+      // avoid rebuilding their cards on each poll.
       if (
         String(latestStartedCheck?.startedAt || "") <
         String(this._homeModel.latestStartedCheck?.startedAt || "")
       )
-        return;
+        return true;
       if (
         JSON.stringify(checks) === JSON.stringify(this._homeModel.checks) &&
         JSON.stringify(latestStartedCheck) ===
@@ -1314,6 +1320,9 @@ class TodayView extends HTMLElement {
       return false;
     const siteId = this._siteId;
     const epoch = this._tabRefreshEpoch;
+    // Stamped at request time: a targeted tab refresh that lands while this
+    // read is in flight is newer, and applyTaskLists leaves its lists alone.
+    const fetchedAt = Date.now();
     let response, applyHomeTaskSections;
     try {
       [response, { applyHomeTaskSections }] = await Promise.all([
@@ -1329,7 +1338,6 @@ class TodayView extends HTMLElement {
       this._tabRefreshEpoch !== epoch
     )
       return false;
-    const fetchedAt = Date.now();
     const checksApplied = response.checks?.ok
       ? this._applyChecks(response.checks.items || []) === true
       : false;
