@@ -859,9 +859,9 @@ async function applyOneRow(importId, row) {
       ),
     );
   } else {
-    const membershipId = stableId(
-      `${plan.provider.id}|${providerManager.email}|provider-manager`,
-    );
+    // New imports use one identity for the key, membership, and manager, just
+    // like admin-created memberships. Reused records keep their original keys.
+    const membershipId = providerManager.id;
     items.push(
       conditionalPut({
         pk: `PROVIDER#${plan.provider.id}`,
@@ -1562,7 +1562,9 @@ function planRows(rows, catalog) {
       }
       const providerManager = {
         id:
-          providerManagerExisting?.managerId || stableId(providerManagerEmail),
+          providerManagerExisting?.managerId ||
+          providerManagerExisting?.membershipId ||
+          stableId(`${providerId}|${providerManagerEmail}|provider-manager`),
         action: providerManagerExisting ? "reuse" : "create",
         email: providerManagerEmail,
       };
