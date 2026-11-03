@@ -122,6 +122,32 @@ describe("request auth flow (listChecks as the vehicle)", () => {
     );
   });
 
+  it("stops waiting on the post-401 refresh when the caller aborts, as the preflight leg does", async () => {
+    let releaseRefresh = () => {};
+    vi.mocked(refreshDeviceToken).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseRefresh = () => resolve(freshSession);
+        }),
+    );
+    const fetch = stubFetch([{ status: 401 }, { status: 200, body: {} }]);
+    vi.stubGlobal("fetch", fetch);
+    const controller = new AbortController();
+    const pending = getCaptureGuidance({
+      startedAt: "2026-10-20T00:00:00.000Z",
+      checkId: "chk_1",
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(refreshDeviceToken).toHaveBeenCalled());
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    // Only the original 401 leg went out; no retry rode the aborted request.
+    expect(fetch).toHaveBeenCalledTimes(1);
+    // The shared refresh still completes and persists for other callers.
+    releaseRefresh();
+    await vi.waitFor(() => expect(site.token).toBe("access-2"));
+  });
+
   it("silently refreshes an API Gateway authorizer 403", async () => {
     const fetch = stubFetch([
       { status: 403, body: { message: "Forbidden" } },

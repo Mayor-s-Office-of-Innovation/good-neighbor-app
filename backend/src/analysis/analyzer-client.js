@@ -146,10 +146,13 @@ export function buildAnalyzeRequest({
  * @property {number} [maxRetries] retries on transient failures (default 2)
  * @property {number} [baseDelayMs] backoff base, doubled per attempt (default 200)
  * @property {(ms: number) => Promise<void>} [sleep] injectable delay (tests)
- * @property {number} [requestTimeoutMs] abort one attempt (connect + response
- *   body) after this long; a timed-out attempt is retried like a transport
- *   failure while budget remains. Unset = no per-attempt limit (the workers
- *   rely on their own function timeout).
+ * @property {number} [requestTimeoutMs] abort one attempt (connect, headers
+ *   and body, error bodies included) after this long. A timed-out attempt is
+ *   NOT retried: the service may still be processing it, and the amendment
+ *   POSTs are not idempotent upstream (each accepted rejection gets its own
+ *   id), so a replay could commit twice. Only failures with a known outcome
+ *   retry: a transport error before any response, or a retryable HTTP status.
+ *   Unset = no per-attempt limit (the workers rely on their function timeout).
  * @property {number} [totalBudgetMs] wall-clock cap across every attempt and
  *   backoff; the last attempt is shortened to fit. Unset = no cap.
  * @property {() => number} [now] injectable clock (tests)
@@ -271,6 +274,9 @@ export function createAnalyzerClient({
       // call, retries and backoff included, ends by `deadline`.
       const controller = new globalThis.AbortController();
       const attemptMs = Math.min(requestTimeoutMs ?? Infinity, remaining);
+      const attemptDeadline = Number.isFinite(attemptMs)
+        ? now() + attemptMs
+        : Infinity;
       let timedOut = false;
       const timer = Number.isFinite(attemptMs)
         ? setTimeout(() => {
@@ -306,11 +312,10 @@ export function createAnalyzerClient({
 
       // (`!res` is for the type checker: fetch either returned or threw.)
       if (failed || !res) {
-        if (timedOut) {
-          // Our own abort: retry like a transport failure while budget remains.
-          if (await retryAfterBackoff(attempt)) continue;
-          throw timeoutError();
-        }
+        // Our own abort. The outcome upstream is unknown (the service may
+        // finish the work after we hang up), so never replay: see the
+        // `requestTimeoutMs` note on the options typedef.
+        if (timedOut) throw timeoutError();
         // A 2xx whose body did not parse is the service's bug, not transport.
         if (res) throw failure;
         // Transport failure (DNS/connection/TLS) — retry, then give up.
@@ -327,10 +332,19 @@ export function createAnalyzerClient({
         });
       }
 
+      // The error body gets what is left of the attempt and of the budget,
+      // never more than ERROR_BODY_TIMEOUT_MS; past that the status decides.
       const err = await readError(
         res,
         controller,
-        Math.min(ERROR_BODY_TIMEOUT_MS, Math.max(remainingMs(), 0)),
+        Math.max(
+          0,
+          Math.min(
+            ERROR_BODY_TIMEOUT_MS,
+            attemptDeadline - now(),
+            remainingMs(),
+          ),
+        ),
       );
       // Read the contract before deciding: a retired model is a permanent 502.
       const permanentModelError = [

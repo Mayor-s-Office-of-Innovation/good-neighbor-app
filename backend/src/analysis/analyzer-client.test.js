@@ -489,7 +489,7 @@ describe("createAnalyzerClient", () => {
     return { fetchImpl: /** @type {typeof fetch} */ (impl), calls };
   }
 
-  it("aborts a hung attempt at requestTimeoutMs, retries, then fails with analyzer_timeout", async () => {
+  it("aborts a hung attempt at requestTimeoutMs and never replays it", async () => {
     const { fetchImpl, calls } = hangingFetch();
     const client = createAnalyzerClient({
       baseUrl: "https://analysis.example.org/",
@@ -501,31 +501,83 @@ describe("createAnalyzerClient", () => {
       totalBudgetMs: 5_000,
     });
 
-    const error = await client.analyze({ metadata, media }).catch((e) => e);
+    const error = /** @type {any} */ (
+      await client
+        .rejectCondition("ana_1", "cond_1", {
+          reason: { key: "not_a_problem" },
+        })
+        .catch((e) => e)
+    );
     expect(error).toBeInstanceOf(AnalyzerError);
     expect(error.code).toBe("analyzer_timeout");
     expect(error.retryable).toBe(true);
     expect(error.status).toBeUndefined();
-    expect(calls).toHaveLength(3); // initial + 2 retries, each aborted
-    for (const call of calls) expect(call.init.signal.aborted).toBe(true);
+    // Retries remained, but the outcome upstream is unknown: one POST only.
+    expect(calls).toHaveLength(1);
+    expect(calls[0].init.signal.aborted).toBe(true);
   });
 
-  it("stops retrying once totalBudgetMs is spent, before maxRetries", async () => {
-    const { fetchImpl, calls } = hangingFetch();
+  it("stops retrying transport failures once totalBudgetMs is spent, before maxRetries", async () => {
+    const { fetchImpl, calls } = stubFetch([
+      new Error("ECONNRESET"),
+      new Error("ECONNRESET"),
+      new Error("ECONNRESET"),
+    ]);
+    let t = 0;
     const client = createAnalyzerClient({
       baseUrl: "https://analysis.example.org/",
       apiKey: "k",
       fetchImpl,
       maxRetries: 5,
       sleep: noSleep,
-      requestTimeoutMs: 10,
-      totalBudgetMs: 15,
+      totalBudgetMs: 1_500,
+      // Each clock read is a second later, so the first attempt eats the budget.
+      now: () => (t += 1_000),
     });
 
     const error = await client.analyze({ metadata, media }).catch((e) => e);
     expect(error).toBeInstanceOf(AnalyzerError);
-    expect(error.code).toBe("analyzer_timeout");
-    // The default 200 ms backoff no longer fits the budget, so no second try.
+    expect(error.message).toMatch(/network/);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("bounds a stalled error body by the attempt limit, not only the budget", async () => {
+    // Headers arrive at once with a 503, the body never does. The attempt
+    // limit (30 ms) must end the read, not the 5 s error-body cap or the
+    // much larger budget.
+    /** @type {Array<{ url: unknown, init: any }>} */
+    const calls = [];
+    /** @param {any} url @param {any} init */
+    const impl = async (url, init) => {
+      calls.push({ url, init });
+      return {
+        ok: false,
+        status: 503,
+        json: () =>
+          new Promise((_resolve, reject) =>
+            init.signal.addEventListener("abort", () =>
+              reject(
+                Object.assign(new Error("Aborted"), { name: "AbortError" }),
+              ),
+            ),
+          ),
+      };
+    };
+    const client = createAnalyzerClient({
+      baseUrl: "https://analysis.example.org/",
+      apiKey: "k",
+      fetchImpl: /** @type {typeof fetch} */ (impl),
+      maxRetries: 0,
+      requestTimeoutMs: 30,
+      totalBudgetMs: 60_000,
+    });
+
+    const started = Date.now();
+    await expect(client.analyze({ metadata, media })).rejects.toMatchObject({
+      status: 503,
+      retryable: true,
+    });
+    expect(Date.now() - started).toBeLessThan(2_000);
     expect(calls).toHaveLength(1);
   });
 

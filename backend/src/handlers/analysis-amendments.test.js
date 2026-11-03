@@ -246,7 +246,7 @@ describe("analysis amendments (check/artifact-addressed)", () => {
     const res = await invoke(amendEvent({}), rejectAnalysisCondition);
     expect(createAnalyzerClient).toHaveBeenCalledWith(
       expect.objectContaining({
-        requestTimeoutMs: 4_000,
+        requestTimeoutMs: 8_000,
         totalBudgetMs: 8_000,
       }),
     );

@@ -258,10 +258,13 @@ function untilAborted(promise, signal) {
 // hanging. Generous: a slow but working connection should still get through.
 export const REQUEST_TIMEOUT_MS = 30_000;
 // Condition edit and reject wait on the analyzer inside the api function,
-// which gives up after 8 s. The client allows that budget plus a cold start
-// and the round trip, then stops waiting rather than holding for the general
-// 30 s on an answer that is not coming.
-export const AMENDMENT_TIMEOUT_MS = 12_000;
+// which gives up after 8 s. The client allows that budget plus what sits
+// around it: a cold start (about 1.5 s), a token refresh round trip, the
+// DynamoDB reads, and the network, then stops waiting rather than holding for
+// the general 30 s on an answer that is not coming. Giving up here says only
+// that no answer arrived in time, not that the change was rejected: the
+// server may still have saved it, and the next read of the check shows which.
+export const AMENDMENT_TIMEOUT_MS = 15_000;
 // Photo uploads: abort when no bytes have moved for this long (XHR), or when
 // the whole PUT is slower than UPLOAD_MIN_BYTES_PER_SECOND (fetch).
 export const UPLOAD_STALL_MS = 30_000;
@@ -456,11 +459,13 @@ async function requestOnce(
         throw preflightRefreshError;
       }
       // Refresh from the CURRENT stored session — `site` here may be stale
-      // (read before this request's fetch); refreshSession re-reads it.
+      // (read before this request's fetch); refreshSession re-reads it. The
+      // caller's signal is honored while waiting, as on the preflight leg:
+      // the shared refresh carries on for other callers, this request stops.
       try {
-        await refreshSession(requestSiteId, token, site);
+        await untilAborted(refreshSession(requestSiteId, token, site), signal);
       } catch (err) {
-        classifyApiFailure(err);
+        if (!signal?.aborted) classifyApiFailure(err);
         if (err instanceof ReauthRequiredError) throw err;
         // Retryable refresh failure (5xx/transport): surface as-is — the
         // stored session may be perfectly valid.

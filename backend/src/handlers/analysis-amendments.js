@@ -22,11 +22,12 @@ const MAX_DESCRIPTION_LENGTH = 4000;
 const MAX_NOTE_LENGTH = 1000;
 
 // The analyzer wait on the request path is bounded: a hung analyzer must not
-// hold an api execution for the function's full 29 s. One attempt gets 4 s;
-// the whole call, retries and backoff included, 8 s. The analysis worker keeps
-// its own, longer budget.
-const ANALYZER_ATTEMPT_TIMEOUT_MS = 4_000;
-const ANALYZER_TOTAL_BUDGET_MS = 8_000;
+// hold an api execution for the function's full 29 s. One attempt may use the
+// whole 8 s, and a timed-out attempt is never replayed (the analyzer may still
+// commit it; its amendment endpoints are not idempotent). Fast failures with a
+// known outcome retry inside the same 8 s. The analysis worker keeps its own,
+// longer budget.
+const ANALYZER_WAIT_MS = 8_000;
 
 /**
  * @param {string} [message]
@@ -47,8 +48,8 @@ async function analyzerClient() {
   return createAnalyzerClient({
     baseUrl: config.analyzerBaseUrl,
     apiKey: await getAnalyzerApiKey(config),
-    requestTimeoutMs: ANALYZER_ATTEMPT_TIMEOUT_MS,
-    totalBudgetMs: ANALYZER_TOTAL_BUDGET_MS,
+    requestTimeoutMs: ANALYZER_WAIT_MS,
+    totalBudgetMs: ANALYZER_WAIT_MS,
   });
 }
 
@@ -58,10 +59,14 @@ async function analyzerClient() {
  */
 function errorResponse(err) {
   if (err instanceof AnalyzerError && err.code === ANALYZER_TIMEOUT_CODE) {
-    // Nothing was saved; the client shows its retry copy. A 504 from us, not
-    // a gateway 503 for a timed-out function.
+    // We stopped waiting; the analyzer may or may not have committed the
+    // amendment. Nothing is recorded on our side (a reject receipt stays
+    // open), so a retry asks the analyzer again, and an "unknown condition"
+    // answer on that retry takes the existing unconfirmed path. A 504 from
+    // us, not a gateway 503 for a timed-out function.
     return jsonResponse(504, {
-      error: "The analyzer did not answer in time; the change was not saved",
+      error:
+        "The analyzer did not answer in time; whether the change was saved is not known",
       code: ANALYZER_TIMEOUT_CODE,
     });
   }
