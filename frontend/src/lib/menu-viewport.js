@@ -10,12 +10,26 @@ const menus = [
 ];
 
 /**
+ * Owners call update after opening, closing, or replacing menu content.
+ * The returned function releases listeners when the owner disconnects.
  * @param {HTMLElement} host
  * @param {(menu: HTMLElement) => void} [onDismiss] Keep owner state in sync.
- * @returns {() => void}
+ * @returns {(() => void) & { update: () => void }}
  */
 export function containMenus(host, onDismiss = () => {}) {
+  let listening = false;
+  const viewport = window.visualViewport;
+  const setListening = (active) => {
+    if (active === listening) return;
+    listening = active;
+    const method = active ? "addEventListener" : "removeEventListener";
+    window[method]("resize", update);
+    document[method]("scroll", update, true);
+    viewport?.[method]("resize", update);
+    viewport?.[method]("scroll", update);
+  };
   const update = () => {
+    let open = false;
     const viewport = window.visualViewport;
     const x = viewport?.offsetLeft || 0;
     const y = viewport?.offsetTop || 0;
@@ -46,6 +60,7 @@ export function containMenus(host, onDismiss = () => {}) {
         onDismiss(menu);
         continue;
       }
+      open = true;
       menu.setAttribute("data-viewport-menu", "");
       menu.style.setProperty("--menu-viewport-width", `${width}px`);
       menu.style.setProperty("--menu-viewport-height", `${height}px`);
@@ -63,24 +78,9 @@ export function containMenus(host, onDismiss = () => {}) {
       menu.style.left = `${Math.max(x + gutter, Math.min(left, x + width - gutter - bounds.width))}px`;
       menu.style.top = `${Math.max(y + gutter, Math.min(flip ? rect.top - 8 - bounds.height : rect.bottom + 8, y + height - gutter - bounds.height))}px`;
     }
+    setListening(open);
   };
-  const observer = new MutationObserver(update);
-  observer.observe(host, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ["hidden"],
-  });
-  window.addEventListener("resize", update);
-  document.addEventListener("scroll", update, true);
-  window.visualViewport?.addEventListener("resize", update);
-  window.visualViewport?.addEventListener("scroll", update);
-  update();
-  return () => {
-    observer.disconnect();
-    window.removeEventListener("resize", update);
-    document.removeEventListener("scroll", update, true);
-    window.visualViewport?.removeEventListener("resize", update);
-    window.visualViewport?.removeEventListener("scroll", update);
-  };
+  const stop = () => setListening(false);
+  stop.update = update;
+  return stop;
 }

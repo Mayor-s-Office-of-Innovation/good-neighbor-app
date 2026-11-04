@@ -1672,10 +1672,12 @@ class TodayView extends HTMLElement {
           actionMenu.querySelector(`#${focusedActionId}`)
         )?.focus({ preventScroll: true });
     }
+    this._stopMenuContainment?.update();
     actionMenuTrigger?.addEventListener("click", () => {
       const opening = actionMenu.hidden;
       actionMenu.hidden = !opening;
       actionMenuTrigger.setAttribute("aria-expanded", String(opening));
+      this._stopMenuContainment?.update();
       if (opening)
         /** @type {HTMLElement | null} */ (
           actionMenu.querySelector('[role="menuitem"]')
@@ -1698,6 +1700,7 @@ class TodayView extends HTMLElement {
         if (path.includes(trigger) || path.includes(menu)) return;
         menu.hidden = true;
         trigger?.setAttribute("aria-expanded", "false");
+        this._stopMenuContainment?.update();
       };
       document.addEventListener("click", this._actionMenuDocumentClick);
     }
@@ -1712,6 +1715,7 @@ class TodayView extends HTMLElement {
       if (keyEvent.key === "Escape") {
         actionMenu.hidden = true;
         actionMenuTrigger.setAttribute("aria-expanded", "false");
+        this._stopMenuContainment?.update();
         actionMenuTrigger.focus();
       }
       if (keyEvent.key === "ArrowDown" || keyEvent.key === "ArrowUp") {
@@ -2051,6 +2055,7 @@ class TodayView extends HTMLElement {
     this._settingsMenuOpen = false;
     this._homeMarkup = null;
     this.querySelector(".home-settings-menu")?.remove();
+    this._stopMenuContainment?.update();
     this.querySelector("#home-settings")?.setAttribute(
       "aria-expanded",
       "false",

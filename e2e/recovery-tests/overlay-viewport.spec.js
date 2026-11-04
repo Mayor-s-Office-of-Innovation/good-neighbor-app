@@ -30,7 +30,7 @@ for (const viewport of [
       if (!host) throw new Error("Missing fixture host");
       host.innerHTML =
         '<section class="home-region home-region--header" style="margin:40px 16px"><div class="home-actions" style="margin-top:180px"><button class="btn-blue" style="width:260px">Synthetic long label</button><div class="home-action-menu-wrap"><button id="home-action-menu-trigger" class="home-action-menu-trigger">...</button><div class="home-action-menu" hidden><button>First</button><button>Second</button><button id="last-menu-action">Last</button></div></div></div></section><dialog class="places-modal"><form class="places-modal__card"><h2>Synthetic dialog</h2><p style="height:800px;flex-shrink:0">Synthetic content</p><button id="last-dialog-action">Confirm</button></form></dialog>';
-      containMenus(host);
+      const containment = containMenus(host);
       const trigger = document.querySelector("#home-action-menu-trigger");
       const menu = document.querySelector(".home-action-menu");
       if (
@@ -40,6 +40,7 @@ for (const viewport of [
         throw new Error("Missing menu fixture");
       trigger.addEventListener("click", () => {
         menu.hidden = false;
+        containment.update();
       });
     });
     await page.locator("#home-action-menu-trigger").click();
@@ -105,7 +106,7 @@ test("settings and site menus fit long labels and resize while open", async ({
         20,
       ) +
       "</div></div></main>";
-    containMenus(document.querySelector("main"));
+    containMenus(document.querySelector("main")).update();
   });
   for (const size of [
     { width: 320, height: 568 },
@@ -191,7 +192,7 @@ for (const width of [320, 1280]) {
         '<div class="home"><section class="home-region home-region--header">' +
         homeActions({ checkLabel: "Synthetic long check label" }) +
         '</section><div style="height:2000px"></div></div>';
-      containMenus(host);
+      const containment = containMenus(host);
       const trigger = document.querySelector("#home-action-menu-trigger");
       const menu = document.querySelector(".home-action-menu");
       if (
@@ -201,6 +202,7 @@ for (const width of [320, 1280]) {
         throw new Error("Missing menu fixture");
       trigger.addEventListener("click", () => {
         menu.hidden = !menu.hidden;
+        containment.update();
         trigger.setAttribute("aria-expanded", String(!menu.hidden));
       });
     });

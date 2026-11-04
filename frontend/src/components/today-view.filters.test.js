@@ -36,7 +36,7 @@ const todayTitle = (iso) =>
 
 // Menu geometry is covered in the Chromium/WebKit overlay regressions.
 vi.mock("../lib/menu-viewport.js", () => ({
-  containMenus: () => () => {},
+  containMenus: () => Object.assign(() => {}, { update: () => {} }),
 }));
 
 const hydrateEvidence = vi.hoisted(() => vi.fn(async () => []));

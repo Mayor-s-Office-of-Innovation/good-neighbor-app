@@ -77,6 +77,7 @@ class SiteSwitcher extends HTMLElement {
       key: "switch",
       retry,
     });
+    this._stopMenuContainment?.update();
   }
 
   render() {
@@ -108,6 +109,7 @@ class SiteSwitcher extends HTMLElement {
         );
       });
     });
+    this._stopMenuContainment?.update();
     this.querySelector("#site-catalog-retry")?.addEventListener("click", () => {
       this.dispatchEvent(new CustomEvent("retrysites", { bubbles: true }));
     });
