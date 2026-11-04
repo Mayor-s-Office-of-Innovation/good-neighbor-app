@@ -98,6 +98,7 @@ locals {
     "PUT /admin/v1/profile",
     "GET /admin/v1/admin-users",
     "POST /admin/v1/admin-users",
+    "POST /admin/v1/admin-users/lookup",
     "PUT /admin/v1/admin-users/{username}/role",
     "POST /admin/v1/admin-users/{username}/suspend",
     "POST /admin/v1/admin-users/{username}/reinstate",

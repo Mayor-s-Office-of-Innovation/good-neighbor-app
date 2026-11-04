@@ -137,6 +137,11 @@ export const adminApi = {
     }),
   getSession: () => adminFetch("/admin/v1/session"),
   listAdminUsers: () => adminFetch("/admin/v1/admin-users"),
+  lookupAdminInvitation: (email) =>
+    adminFetch("/admin/v1/admin-users/lookup", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
   inviteAdminUser: (values) =>
     adminFetch("/admin/v1/admin-users", {
       method: "POST",
