@@ -5,7 +5,7 @@ care-work-view,
 complaint-view {
   display: block;
   position: fixed;
-  inset: max(env(safe-area-inset-top), 20dvh) 0 0;
+  inset: max(env(safe-area-inset-top), 10dvh) 0 0;
   z-index: 10;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -13,6 +13,29 @@ complaint-view {
   border-radius: 26px 26px 0 0;
   box-shadow: var(--shadow-lift);
   animation: care-sheet-up 240ms ease-out;
+}
+/* On the list screens the header (title, subtitle, record CTA, past head)
+   freezes: the sheet stops scrolling as a whole and only the list pane
+   scrolls. The other care/complaint screens keep whole-sheet scrolling. */
+care-work-view:has(.care-days),
+complaint-view:has(.complaints__list) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+complaint-view:has(.complaints__list) .complaints {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+}
+.care-days,
+.complaints__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 @keyframes care-sheet-up {
   from {
