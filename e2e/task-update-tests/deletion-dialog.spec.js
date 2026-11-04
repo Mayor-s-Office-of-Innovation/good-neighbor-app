@@ -72,6 +72,11 @@ for (const kind of ["single", "duplicate", "group"]) {
     );
     await expect(confirm).toBeFocused();
     await expect(confirm).toHaveCSS("outline-style", "solid");
+    // Contrast must be measured after the dialog entrance fade has settled.
+    await expect(page.locator("#analysis-delete-dialog")).toHaveCSS(
+      "opacity",
+      "1",
+    );
     const audit = await new AxeBuilder({ page })
       .include("#analysis-delete-dialog")
       .analyze();
@@ -215,6 +220,10 @@ for (const code of [
         const path = "/src/i18n/i18n.js";
         return (await import(path)).t("analysis.deleteDialog.selectedText");
       }),
+    );
+    await expect(page.locator("#analysis-delete-dialog")).toHaveCSS(
+      "opacity",
+      "1",
     );
     expect(
       (
