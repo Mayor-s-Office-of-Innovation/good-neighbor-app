@@ -75,6 +75,9 @@ care-work-view {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+  /* margin 0 beats the default list-item indent, so cards share the CTA's
+     left edge and width. */
+  margin: 0;
   padding: 1rem;
   border: 1px solid var(--c-line);
   border-radius: var(--radius);
@@ -104,8 +107,62 @@ care-work-view {
   overflow-wrap: anywhere;
 }
 .care-row time {
-  font-size: 0.875rem;
+  /* Same spec as the todo card footer timestamp (analysis-card__footer). */
+  font-size: var(--wa-font-size-s, 0.875rem);
+  line-height: 1.6;
   color: var(--text-secondary);
+}
+.care-row__delete {
+  min-width: 44px;
+  min-height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.care-row__delete:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+  border-radius: 50%;
+}
+
+/* Delete confirmation — self-contained (mirrors #complaint-delete) so the
+   dialog renders correctly when /care-work is opened directly, without
+   depending on another view's stylesheet being loaded. */
+#care-delete {
+  border: 0;
+  padding: 0;
+  width: min(400px, calc(100vw - 2rem));
+  border-radius: 24px;
+  background: var(--surface);
+}
+#care-delete::backdrop {
+  background: color-mix(in srgb, var(--text) 64%, transparent);
+}
+#care-delete .places-modal__card {
+  margin: 0;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+#care-delete h2,
+#care-delete p {
+  margin: 0;
+}
+#care-delete .places-modal__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+#care-delete .places-modal__actions button {
+  width: 100%;
+}
+#care-delete-confirm {
+  background: var(--wa-color-danger-fill-loud, var(--c-hazard));
+  color: var(--wa-color-danger-on-loud, #fff);
 }
 .care-row__actions {
   display: flex;

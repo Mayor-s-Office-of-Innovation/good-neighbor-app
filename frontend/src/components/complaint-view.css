@@ -72,8 +72,19 @@
   margin: 0;
 }
 
+/* Row timestamp — same spec as the todo card footer timestamp. */
+.complaint-row p {
+  font-size: var(--wa-font-size-s, 0.875rem);
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
 .complaint-row__link {
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  /* Title-to-timestamp spacing matches the care log rows. */
+  gap: 6px;
   color: inherit;
   text-decoration: none;
 }
