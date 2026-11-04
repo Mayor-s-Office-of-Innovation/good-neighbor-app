@@ -54,8 +54,14 @@ care-work-view {
   width: 100%;
   min-height: 44px;
 }
+/* Section title over the past-items list (care + complaints; group-title M). */
+.care-past-title {
+  margin: 28px 0 0;
+  font-size: var(--wa-font-size-m, 1rem);
+  font-weight: 600;
+}
 .care-days {
-  margin-top: 32px;
+  margin-top: 16px;
 }
 /* Same list vocabulary as the public complaints screen: one bordered card
    per log — what was done + when; day headers and counts dropped (each

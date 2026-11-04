@@ -143,10 +143,12 @@ class ComplaintView extends HTMLElement {
         <div class="complaints__sticky">
           ${careHeader(t("complaints.title"), true)}
           <p class="care-subtitle">${escapeHtml(t("complaints.subtitle"))}</p>
-          <hr class="splash-rule" />
           <button class="btn-ink complaints__new" type="button" disabled>
             ${escapeHtml(t("complaints.log"))}
           </button>
+          <h2 class="care-past-title">
+            ${escapeHtml(t("complaints.pastLogs"))}
+          </h2>
         </div>
         <p class="hint" role="status">${escapeHtml(t("common.loading"))}</p>
       </div>`;
@@ -159,7 +161,6 @@ class ComplaintView extends HTMLElement {
         <div class="complaints__sticky">
           ${careHeader(t("complaints.title"), true)}
           <p class="care-subtitle">${escapeHtml(t("complaints.subtitle"))}</p>
-          <hr class="splash-rule" />
           <button
             class="btn-ink complaints__new"
             id="log-complaint"
@@ -167,6 +168,9 @@ class ComplaintView extends HTMLElement {
           >
             ${escapeHtml(t("complaints.log"))}
           </button>
+          <h2 class="care-past-title">
+            ${escapeHtml(t("complaints.pastLogs"))}
+          </h2>
         </div>
         ${this._listActionError
           ? `<p class="complaint-compose__error" role="alert">${escapeHtml(t(this._listActionError))}</p>`
@@ -218,7 +222,6 @@ class ComplaintView extends HTMLElement {
         <div class="complaints__sticky">
           ${careHeader(t("complaints.title"), true)}
           <p class="care-subtitle">${escapeHtml(t("complaints.subtitle"))}</p>
-          <hr class="splash-rule" />
           <button
             class="btn-ink complaints__new"
             type="button"
@@ -226,6 +229,9 @@ class ComplaintView extends HTMLElement {
           >
             ${escapeHtml(t("complaints.log"))}
           </button>
+          <h2 class="care-past-title">
+            ${escapeHtml(t("complaints.pastLogs"))}
+          </h2>
           ${loadError(t("complaints.loadError"), {
             retryAttribute: "data-retry-list",
           })}

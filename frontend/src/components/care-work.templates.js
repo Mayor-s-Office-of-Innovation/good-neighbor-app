@@ -30,10 +30,10 @@ export function careHeader(title, close = false) {
 export function careList(items, loading = false, offline = false) {
   return html`${careHeader(t("care.title"), true)}
     <p class="care-subtitle">${e(t("care.subtitle"))}</p>
-    <hr class="splash-rule" />
     <button type="button" class="btn-ink care-cta" data-new>
       ${e(t("care.new"))}
     </button>
+    <h2 class="care-past-title">${e(t("care.pastLogs"))}</h2>
     <div class="care-days" aria-busy="${loading}">
       ${loading
         ? `<p role="status">${e(t("care.loading"))}</p>`
