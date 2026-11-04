@@ -2947,3 +2947,119 @@ it("decrements a pending-question badge during deletion and restores it on Undo"
   pending.undo();
   expect(count()).toBe(1);
 });
+
+// A saved custom action must survive stale worklist reads while its receipt is
+// visible; only an explicit destination click switches the user's active tab.
+describe("saved custom action receipt", () => {
+  for (const viewRequested of [false, true]) {
+    it(`keeps the authoritative task and ${viewRequested ? "opens the requested destination" : "keeps the current tab"}`, async () => {
+      const { isCompletingAnalysisCard } = await import(
+        "./analysis-card-completion.js"
+      );
+      const view = new TodayView();
+      const task = {
+        taskId: "custom-test",
+        status: "in_progress",
+        updatedAt: NEWER_TODAY,
+      };
+      view.isConnected = true;
+      view._siteId = "site-1";
+      view._homeModel = { tasks: [{ ...task, status: "open" }] };
+      view._duplicateLinks = new Map();
+      view._renderHome = vi.fn();
+      view._activateHomeTab = vi.fn();
+      view._focusIssueCard = vi.fn();
+      view.connectedCallback = vi.fn(async () => {});
+      const card = { getAttribute: () => task.taskId, contains: () => false };
+      const receipt = vi.fn(async () => {
+        expect(isCompletingAnalysisCard(view)).toBe(true);
+        expect(view._homeModel.tasks[0].status).toBe("in_progress");
+        return { destination: "in_progress", viewRequested };
+      });
+      expect(
+        await view._onTaskDetailsSaved(
+          card,
+          { task },
+          { customAction: true },
+          receipt,
+        ),
+      ).toBe(true);
+      expect(isCompletingAnalysisCard(view)).toBe(false);
+      expect(view._confirmedTasks.get(task.taskId)).toEqual(task);
+      expect(view._activateHomeTab.mock.calls).toEqual(
+        viewRequested ? [["in_progress"]] : [],
+      );
+      expect(view.connectedCallback).toHaveBeenCalledOnce();
+    });
+  }
+});
+
+for (const tab of ["in_progress", "history"]) {
+  it(`dismisses a saved-action receipt before painting the ${tab} tab`, async () => {
+    const { isCompletingAnalysisCard } = await import(
+      "./analysis-card-completion.js"
+    );
+    const view = new TodayView();
+    const task = {
+      taskId: "saved-task",
+      status: "in_progress",
+      updatedAt: NEWER_TODAY,
+    };
+    view.isConnected = true;
+    view._siteId = "site-1";
+    view._homeFilter = "todo";
+    view._homeModel = { tasks: [{ ...task, status: "open" }] };
+    view._duplicateLinks = new Map();
+    view.connectedCallback = vi.fn(async () => {});
+    view._hydrateVisibleHomeTasks = vi.fn();
+    view._refresh311Statuses = vi.fn();
+    view._refreshActiveTab = vi.fn();
+    const previousHistory = window.history;
+    window.location.href = "http://localhost:5173/today?filter=todo";
+    window.history = {
+      length: 1,
+      state: null,
+      scrollRestoration: "auto",
+      back: vi.fn(),
+      forward: vi.fn(),
+      go: vi.fn(),
+      pushState: vi.fn(),
+      replaceState: vi.fn(),
+    };
+    view._renderHome = vi.fn(() => {
+      expect(isCompletingAnalysisCard(view)).toBe(false);
+      expect(view._homeFilter).toBe(tab);
+      expect(view._homeModel.tasks[0].status).toBe("in_progress");
+    });
+    const card = { getAttribute: () => task.taskId, contains: () => false };
+    let signal = new AbortController().signal;
+    const show = (_card, _task, options) => {
+      signal = options.signal;
+      return new Promise((resolve) =>
+        signal.addEventListener(
+          "abort",
+          () => resolve({ destination: "in_progress", viewRequested: false }),
+          { once: true },
+        ),
+      );
+    };
+    try {
+      const pending = view._onTaskDetailsSaved(
+        card,
+        { task },
+        { customAction: true },
+        show,
+      );
+      expect(isCompletingAnalysisCard(view)).toBe(true);
+      view._activateHomeTab(tab);
+      expect(signal.aborted).toBe(true);
+      expect(view._renderHome).toHaveBeenCalledOnce();
+      expect(await pending).toBe(true);
+      expect(view._renderHome).toHaveBeenCalledOnce();
+      expect(view.connectedCallback).not.toHaveBeenCalled();
+      expect(view._savedActionReceipts.size).toBe(0);
+    } finally {
+      window.history = previousHistory;
+    }
+  });
+}

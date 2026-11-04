@@ -26,6 +26,7 @@ import {
   completeCardAction,
   isCompletingAnalysisCard,
   slideCompletedCard,
+  holdCompletionCard,
 } from "./analysis-card-completion.js";
 import { taskCardTitle } from "../domain/task-title.js";
 import { groupHistory } from "../domain/task-history.js";
@@ -303,6 +304,7 @@ function sessionRefreshKey(session) {
 class TodayView extends HTMLElement {
   _wiredCards = new WeakSet();
   _wiredTabs = new WeakSet();
+  _savedActionReceipts = new Set();
   constructor() {
     super();
     this._cardDeletedHandler = (event) => {
@@ -2713,6 +2715,7 @@ class TodayView extends HTMLElement {
   }
 
   _activateHomeTab(tabId) {
+    for (const dismiss of this._savedActionReceipts) dismiss();
     this._homeFilter = normalizedHomeTab(tabId);
     const url = new URL(window.location.href);
     url.searchParams.set("filter", this._homeFilter);
@@ -2925,8 +2928,21 @@ class TodayView extends HTMLElement {
       this._openDeleteProblem(problem);
     } else if (action === "edit") {
       if (task && btn instanceof HTMLElement) {
-        void import("./task-details-dialog.js").then(({ openTaskDetails }) =>
-          openTaskDetails(task, problem, btn, () => this.connectedCallback()),
+        void import("./task-details-dialog.js").then(
+          ({ openTaskDetails, showSavedActionCard }) =>
+            openTaskDetails(
+              task,
+              problem,
+              btn,
+              (result, options) =>
+                this._onTaskDetailsSaved(
+                  card,
+                  result,
+                  options,
+                  showSavedActionCard,
+                ),
+              () => holdCompletionCard(this, card),
+            ),
         );
       } else {
         this._openEditProblem(problem);
@@ -3008,6 +3024,46 @@ class TodayView extends HTMLElement {
       /** @type {HTMLDialogElement} */ (this._analysisDeleteDialog),
       "analysis-delete",
     );
+  }
+
+  async _onTaskDetailsSaved(card, result, options, showSavedActionCard) {
+    if (!options?.customAction || !result?.task || !this.isConnected) {
+      if (this.isConnected) await this.connectedCallback();
+      return false;
+    }
+    const siteId = this._siteId;
+    const release = holdCompletionCard(this, card);
+    const controller = new AbortController();
+    const dismiss = () => {
+      release();
+      controller.abort();
+    };
+    this._savedActionReceipts.add(dismiss);
+    let receipt;
+    try {
+      this._applyTaskResult(card.getAttribute("data-task-id"), result.task);
+      receipt = await showSavedActionCard(card, result.task, {
+        signal: controller.signal,
+      });
+    } finally {
+      this._savedActionReceipts.delete(dismiss);
+      release();
+    }
+    if (controller.signal.aborted) return Boolean(receipt);
+    if (!this.isConnected || this._siteId !== siteId) return Boolean(receipt);
+    const restoreFocus =
+      card.contains(document.activeElement) ||
+      document.activeElement === document.body;
+    if (receipt?.viewRequested) {
+      this._activateHomeTab(receipt.destination);
+      this._focusIssueCard(result.task.taskId);
+    } else {
+      if (restoreFocus) this._focusAfterRender = "home-tab-current";
+      if (this._homeModel) this._renderHome(this._homeModel);
+    }
+    // The response is authoritative; refresh all lists behind the receipt.
+    void this.connectedCallback();
+    return Boolean(receipt);
   }
 
   _openEditProblem(problem) {

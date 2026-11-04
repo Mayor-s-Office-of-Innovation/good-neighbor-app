@@ -10,7 +10,7 @@ const catalog = JSON.parse(
 const t = (/** @type {string} */ key) => catalog[key];
 
 /** @param {import("@playwright/test").Page} page
- * @param {{descriptionOnly?:boolean, fail?:boolean, photo?:boolean, duplicate?:boolean}} [options] */
+ * @param {{descriptionOnly?:boolean, fail?:boolean, photo?:boolean, duplicate?:boolean, card?:boolean, dismissible?:boolean, delay?:number}} [options] */
 async function mount(
   page,
   {
@@ -18,8 +18,12 @@ async function mount(
     fail = false,
     photo = false,
     duplicate = false,
+    card = false,
+    dismissible = false,
+    delay = 0,
   } = {},
 ) {
+  await page.clock.setFixedTime(new Date("2026-11-04T19:00:00Z"));
   /** @type {{url: string, body: Record<string, unknown>}[]} */
   const writes = [];
   const task = {
@@ -79,9 +83,17 @@ async function mount(
       url: route.request().url(),
       body: route.request().postDataJSON(),
     });
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+    const body = route.request().postDataJSON();
     await route.fulfill({
       status: fail && writes.length === 1 ? 503 : 200,
-      json: { task },
+      json: {
+        task: {
+          ...task,
+          status: body.resolved ? "completed" : "in_progress",
+          customAction: { resolved: body.resolved },
+        },
+      },
     });
   });
   await page.route("**/__edit_test", (route) =>
@@ -96,7 +108,7 @@ async function mount(
     await load("/src/main.js");
   });
   await page.evaluate(
-    async ({ task, descriptionOnly }) => {
+    async ({ task, descriptionOnly, card, dismissible }) => {
       const load = (/** @type {string} */ path) => import(path);
       await load("/src/components/app-toasts.js");
       const { setSite } = await load("/src/db.js");
@@ -104,9 +116,8 @@ async function mount(
         siteId: "synthetic-site",
         token: "test-token",
       });
-      const { openTaskDetails, openDescriptionDetails } = await load(
-        "/src/components/task-details-dialog.js",
-      );
+      const { openTaskDetails, openDescriptionDetails, showSavedActionCard } =
+        await load("/src/components/task-details-dialog.js");
       const problem = {
         title: "Litter near the entrance",
         description: task.description,
@@ -118,9 +129,33 @@ async function mount(
       };
       const trigger = document.querySelector("#trigger");
       if (descriptionOnly) openDescriptionDetails(problem, trigger, () => {});
-      else openTaskDetails(task, problem, trigger, () => {});
+      else {
+        if (card) {
+          const article = document.createElement("article");
+          article.className = "analysis-card";
+          article.style.cssText =
+            "min-height:240px;max-width:500px;margin:24px auto";
+          trigger.before(article);
+          article.append(trigger);
+        }
+        openTaskDetails(task, problem, trigger, async (result) => {
+          if (!card) return;
+          const controller = new AbortController();
+          if (dismissible) {
+            const navigation = document.createElement("button");
+            navigation.dataset.testNavigate = "";
+            navigation.textContent = "Test navigation";
+            navigation.addEventListener("click", () => controller.abort());
+            document.querySelector("main").prepend(navigation);
+          }
+          await showSavedActionCard(trigger.closest("article"), result.task, {
+            signal: controller.signal,
+          });
+          return true;
+        });
+      }
     },
-    { task, descriptionOnly },
+    { task, descriptionOnly, card, dismissible },
   );
   await expect(page.locator("[data-description]")).toBeVisible();
   return writes;
@@ -224,8 +259,13 @@ test("edit details retains a failed save for review and retry", async ({
     .locator("textarea")
     .fill("A corrected observation.");
   await page.locator("[data-save]").click();
-  await expect(editor(page)).toHaveCount(0);
-  await page.getByRole("button", { name: t("details.reviewRetry") }).click();
+  await expect(editor(page)).toBeVisible();
+  await expect(page.locator(".task-details__error")).toHaveText(
+    t("taskDetails.saveError"),
+  );
+  await expect(page.locator("app-toasts")).not.toContainText(
+    t("toast.actionSaveError.title"),
+  );
   await expect(
     page.locator("[data-description]").locator("textarea"),
   ).toHaveValue("A corrected observation.");
@@ -412,4 +452,182 @@ test("editor photo opens the lightbox and returns to the unchanged draft", async
   await page.locator(".photo-lightbox__close").click();
   await expect(title).toHaveText("Edited draft title");
   await expect(photo).toBeFocused();
+});
+
+test("Not yet saves explicitly, shows progress, and confirms the destination on the card", async ({
+  page,
+}, testInfo) => {
+  const writes = await mount(page, { card: true, delay: 800 });
+  await selectAction(page, "__custom__");
+  await page
+    .locator("[data-custom] textarea")
+    .fill("Asked the site team to help.");
+  await page.locator('[data-resolved="false"]').click();
+  await expect(page.locator('[data-resolved="false"]')).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.locator("[data-save-hint]")).toHaveText(
+    t("taskDetails.saveUnresolvedHint"),
+  );
+  expect(writes).toHaveLength(0);
+  await expect(page.locator("[data-save]")).toHaveText(
+    t("taskDetails.saveAction"),
+  );
+  await page.locator("[data-save]").click();
+  await expect(editor(page)).toBeVisible();
+  await expect(page.locator("[data-save]")).toContainText(t("details.saving"));
+  await page.keyboard.press("Escape");
+  await expect(editor(page)).toBeVisible();
+  await expect(page.locator("[data-discard-dialog]")).not.toBeVisible();
+  const receipt = page.locator(".saved-action-card");
+  await expect(receipt).toBeVisible();
+  await expect(editor(page)).toHaveCount(0);
+  await expect(receipt.getByRole("status")).toContainText(
+    t("taskDetails.movingUnresolved"),
+  );
+  await expect(page.locator("[data-view-saved-action]")).toHaveCount(0);
+  await expect(receipt.locator(".ellipsis-dots")).toHaveAttribute(
+    "aria-hidden",
+    "true",
+  );
+  await receipt.hover();
+  await page.waitForTimeout(2400);
+  await expect(receipt).toBeVisible();
+  expect(
+    (await new AxeBuilder({ page }).include("main").analyze()).violations,
+  ).toEqual([]);
+  await page.screenshot({ path: testInfo.outputPath("action-saved-card.png") });
+  // Hovering must not hold the automatic move indefinitely.
+  await expect(receipt).toHaveCount(0, { timeout: 8000 });
+  expect(writes).toHaveLength(1);
+  await expect(page.locator("app-toasts")).not.toContainText(
+    t("taskDetails.actionSaved"),
+  );
+});
+
+test("the saved-action receipt collapses without motion", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await mount(page, { card: true });
+  await selectAction(page, "__custom__");
+  await page
+    .locator("[data-custom] textarea")
+    .fill("Asked the site team to help.");
+  await page.locator('[data-resolved="false"]').click();
+  await page.locator("[data-save]").click();
+  await expect(page.locator(".saved-action-card")).toBeVisible();
+  await expect(page.locator(".saved-action-card")).toHaveCSS(
+    "animation-name",
+    "none",
+  );
+  await page.mouse.move(0, 0);
+  await expect(page.locator(".ellipsis-dots span").first()).toHaveCSS(
+    "animation-name",
+    "none",
+  );
+  await expect(page.locator(".analysis-card")).toHaveCount(0, {
+    timeout: 8000,
+  });
+});
+
+test("a resolved custom action explains the History destination", async ({
+  page,
+}) => {
+  await mount(page, { card: true });
+  await selectAction(page, "__custom__");
+  await page
+    .locator("[data-custom] textarea")
+    .fill("The site team picked up the wrappers.");
+  await page.locator('[data-resolved="true"]').click();
+  await expect(page.locator("[data-save-hint]")).toHaveText(
+    t("taskDetails.saveResolvedHint"),
+  );
+  await page.locator("[data-save]").click();
+  await expect(page.locator(".saved-action-card [role=status]")).toContainText(
+    t("taskDetails.movingResolved"),
+  );
+  await expect(page.locator("[data-view-saved-action]")).toHaveCount(0);
+  await expect(
+    page.locator(".saved-action-card .ellipsis-dots"),
+  ).toHaveAttribute("aria-hidden", "true");
+  await page.locator(".saved-action-card").hover();
+  await page.waitForTimeout(2400);
+  await expect(page.locator(".saved-action-card")).toBeVisible();
+  await expect(page.locator(".saved-action-card")).toHaveCount(0, {
+    timeout: 8000,
+  });
+  await expect(page.locator("app-toasts")).not.toContainText(
+    t("taskDetails.actionSaved"),
+  );
+});
+
+for (const outcome of ["false", "true"]) {
+  test(`empty custom action highlights its required field for outcome ${outcome}`, async ({
+    page,
+  }) => {
+    const writes = await mount(page);
+    await selectAction(page, "__custom__");
+    const custom = page.locator("[data-custom]");
+    await expect(custom).toHaveAttribute("required", "");
+    await expect(page.locator(".task-details__custom legend")).toContainText(
+      "*",
+    );
+    const normalColor = await custom.evaluate(
+      (element) =>
+        getComputedStyle(
+          element.shadowRoot.querySelector('[part~="form-control-label"]'),
+        ).color,
+    );
+    await page.locator(`[data-resolved="${outcome}"]`).click();
+    await expect(custom).toHaveAttribute("aria-invalid", "true");
+    await expect(custom).toHaveAttribute("data-custom-invalid", "");
+    await expect(custom).toHaveJSProperty(
+      "hint",
+      t("taskDetails.actionRequired"),
+    );
+    const colors = await custom.evaluate((element) => ({
+      label: getComputedStyle(
+        element.shadowRoot.querySelector('[part~="form-control-label"]'),
+      ).color,
+      border: getComputedStyle(
+        element.shadowRoot.querySelector('[part~="textarea-wrapper"]'),
+      ).borderTopColor,
+      marker: getComputedStyle(
+        element.shadowRoot.querySelector('[part~="form-control-label"]'),
+        "::after",
+      ).content,
+    }));
+    expect(colors.label).not.toBe(normalColor);
+    expect(colors.border).toBe(colors.label);
+    expect(colors.marker).toContain("*");
+    await expect(page.locator("[data-save]")).toBeDisabled();
+    await custom.locator("textarea").fill("   ");
+    await expect(custom).toHaveAttribute("aria-invalid", "true");
+    await custom.locator("textarea").fill("Asked the site team to help.");
+    await expect(custom).toHaveAttribute("aria-invalid", "false");
+    await expect(custom).not.toHaveAttribute("data-custom-invalid", "");
+    await expect(custom).toHaveJSProperty("hint", "");
+    await expect(page.locator("[data-save]")).toBeEnabled();
+    expect(writes).toHaveLength(0);
+  });
+}
+
+test("navigation immediately clears a saved-action overlay without collapsing its card", async ({
+  page,
+}) => {
+  await mount(page, { card: true, dismissible: true });
+  await selectAction(page, "__custom__");
+  await page
+    .locator("[data-custom] textarea")
+    .fill("Asked the site team to help.");
+  await page.locator('[data-resolved="false"]').click();
+  await page.locator("[data-save]").click();
+  await expect(page.locator(".saved-action-card")).toBeVisible();
+  await page.locator("[data-test-navigate]").click();
+  await expect(page.locator(".saved-action-card")).toHaveCount(0, {
+    timeout: 1000,
+  });
+  await expect(page.locator(".analysis-card")).toBeVisible();
+  await expect(page.locator(".saved-action-exit")).toHaveCount(0);
+  await expect(page.locator("#trigger")).toBeEnabled();
 });
