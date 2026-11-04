@@ -324,7 +324,7 @@ it("records an unresolved custom action and its timeline transition", async () =
   });
 });
 
-it("uses the guarded completion flow for a resolved custom action", async () => {
+it("atomically records a resolved custom action without executing its prior actions", async () => {
   const response = await recordCustomTaskAction(
     event("duplicate", {
       text: "Asked a neighbor to help",
@@ -336,13 +336,18 @@ it("uses the guarded completion flow for a resolved custom action", async () => 
     resolvedAt: expect.any(String),
     completionMethod: "custom_action",
   });
-  expect(state.completions[0]).toMatchObject({
-    taskId: "root",
-    forceComplete: true,
-    skipUserConfirmedActions: true,
-    timelineType: "task_completed",
-    timelineText: "Asked a neighbor to help",
-  });
+  expect(state.completions).toHaveLength(0);
+  expect(state.transactions).toHaveLength(1);
+  expect(
+    state.transactions[0].some(
+      (entry) => entry.ConditionCheck?.Key.sk === "SF311_LOCK#root",
+    ),
+  ).toBe(true);
+  expect(
+    state.transactions[0].find(
+      (entry) => entry.Put?.Item.entityType === "task_update",
+    ).Put.Item,
+  ).toMatchObject({ type: "task_completed", text: "Asked a neighbor to help" });
 });
 
 it.each(["lease", "checkpoint", "finalized"])(
@@ -485,41 +490,66 @@ it.each(["submitted", "rejected", "preflight"])(
   },
 );
 
-it.each([
-  "lease",
-  "partial",
-  "pending",
-  "uncertain",
-  "user",
-  "phone",
-  "unmirrored",
-])("blocks %s outcomes without changing history", async (kind) => {
-  const result = silentResult();
-  if (kind === "partial") result.status = "partial";
-  if (kind === "pending") {
-    result.status = "failed";
-    result.payload.tickets = [
-      { responsibleAgency: "76", creationState: "pending" },
-    ];
-  }
-  if (kind === "uncertain") {
-    result.status = "failed";
-    result.reason = "sf311_creation_uncertain_requires_reconciliation";
-  }
-  if (kind === "user") result.payload.executionTrigger = "user_confirmed";
-  if (kind === "phone") {
-    result.code = "open_phone";
-    result.status = "recorded";
-  }
-  settledTask(result);
-  if (kind === "lease")
-    state.items.get("SITE#site|SF311_LOCK#root").sf311Lease = "active-worker";
-  if (kind === "unmirrored") put(task("root", { appActionResults: [] }));
-  expect(
-    (await updateTaskAction(event("root", { ruleId: "LITTER-2" }))).statusCode,
-  ).toBe(409);
-  expect(state.transactions).toHaveLength(0);
-});
+it.each(["lease", "user", "phone"])(
+  "blocks %s outcomes without changing history",
+  async (kind) => {
+    const result = silentResult();
+    if (kind === "user") result.payload.executionTrigger = "user_confirmed";
+    if (kind === "phone") {
+      result.code = "open_phone";
+      result.status = "recorded";
+    }
+    settledTask(result);
+    if (kind === "lease")
+      state.items.get("SITE#site|SF311_LOCK#root").sf311Lease = "active-worker";
+    expect(
+      (await updateTaskAction(event("root", { ruleId: "LITTER-2" })))
+        .statusCode,
+    ).toBe(409);
+    expect(state.transactions).toHaveLength(0);
+  },
+);
+
+it.each(["attachment", "partial", "pending", "uncertain", "unmirrored"])(
+  "allows a combined edit with silent %s history without altering the ticket",
+  async (kind) => {
+    const result = silentResult({ status: "failed" });
+    if (kind === "attachment") result.reason = "attachment_submission_failed";
+    if (kind === "partial") result.status = "partial";
+    if (kind === "pending")
+      result.payload.tickets = [
+        { responsibleAgency: "76", creationState: "pending" },
+      ];
+    if (kind === "uncertain")
+      result.reason = "sf311_creation_uncertain_requires_reconciliation";
+    settledTask(result);
+    if (kind === "unmirrored") put(task("root", { appActionResults: [] }));
+    const original = globalThis.structuredClone(
+      state.items.get("SITE#site|TASK#root"),
+    );
+    const lock = globalThis.structuredClone(
+      state.items.get("SITE#site|SF311_LOCK#root"),
+    );
+    const response = await updateTaskAction(
+      event("root", {
+        ruleId: "LITTER-2",
+        description: "Updated synthetic observation",
+      }),
+    );
+    expect(response.statusCode).toBe(200);
+    const saved = JSON.parse(response.body).task;
+    expect(saved.description).toBe("Updated synthetic observation");
+    expect(saved.actionOverride.ruleId).toBe("LITTER-2");
+    expect(saved.appActionResults).toEqual(original.appActionResults);
+    expect(saved.silent311Snapshot.appActions).toEqual(original.appActions);
+    expect(state.items.get("SITE#site|SF311_LOCK#root")).toEqual(lock);
+    expect(
+      state.transactions
+        .flat()
+        .some((entry) => entry.Put?.Item.sk?.startsWith("SF311_JOB#")),
+    ).toBe(false);
+  },
+);
 
 it.each(["lock", "task", "lease"])(
   "rejects concurrent %s changes after settled snapshot read",
@@ -541,5 +571,215 @@ it.each(["lock", "task", "lease"])(
         .statusCode,
     ).toBe(409);
     expect(state.transactions).toHaveLength(0);
+  },
+);
+
+it("never queues a silent filing on an action edit, even when submission is enabled", async () => {
+  vi.stubEnv("GNP_311_SUBMISSION_ENABLED", "true");
+  const original = state.items.get("SITE#site|TASK#root");
+  const response = await updateTaskAction(
+    event("duplicate", { ruleId: "LITTER-2" }),
+  );
+  expect(response.statusCode).toBe(200);
+  expect(JSON.parse(response.body).task.silent311Snapshot.appActions).toEqual(
+    original.appActions,
+  );
+  expect(
+    state.transactions
+      .flat()
+      .some((entry) => entry.Put?.Item.entityType === "SF311_OUTBOX"),
+  ).toBe(false);
+  vi.unstubAllEnvs();
+});
+
+it("saves action and clicked duplicate description together without rewriting the root description", async () => {
+  const response = await updateTaskAction(
+    event("duplicate", {
+      ruleId: "LITTER-2",
+      description: "A corrected observation",
+    }),
+  );
+  expect(response.statusCode).toBe(200);
+  expect(state.transactions).toHaveLength(1);
+  const tx = state.transactions[0];
+  expect(
+    tx.find((entry) => entry.Update?.Key.sk === "TASK#duplicate").Update
+      .ExpressionAttributeValues[":text"],
+  ).toBe("A corrected observation");
+  expect(
+    tx.find((entry) => entry.Put?.Item.sk === "TASK#root").Put.Item.description,
+  ).not.toBe("A corrected observation");
+});
+
+it("locks description corrections after a user action", async () => {
+  put(
+    task("root", {
+      status: "open",
+      appActionResults: [{ status: "submitted" }],
+    }),
+  );
+  const response = await updateTaskAction(
+    event("root", { description: "Corrected observation text" }),
+  );
+  expect(response.statusCode).toBe(409);
+  expect(state.transactions).toHaveLength(0);
+});
+
+it("replays a custom-action save after a lost response without another timeline entry", async () => {
+  const input = event("root", {
+    text: "Asked the team to help",
+    resolved: true,
+    requestId: "synthetic-edit-request",
+  });
+  expect((await recordCustomTaskAction(input)).statusCode).toBe(200);
+  expect((await recordCustomTaskAction(input)).statusCode).toBe(200);
+  expect(state.transactions).toHaveLength(1);
+});
+
+it("changes shared category and guidance while editing only the opened observation title", async () => {
+  const rule = activeCatalog().rules.find(
+    (rule) => rule.category === "Graffiti" && rule.outcome.buttons[0],
+  );
+  const response = await updateTaskAction(
+    event("duplicate", {
+      title: "Paint on the wall",
+      description: "A synthetic observation",
+      category: rule.category,
+      ruleId: rule.ruleId,
+    }),
+  );
+  expect(response.statusCode).toBe(200);
+  const saved = JSON.parse(response.body).task;
+  expect(saved.category).toBe("Graffiti");
+  expect(saved.guidance).toBe(rule.outcome.guidance);
+  expect(saved.userFriendlyLabel).not.toBe("Paint on the wall");
+  const clicked = state.transactions[0].find(
+    (entry) => entry.Update?.Key.sk === "TASK#duplicate",
+  );
+  expect(clicked.Update.ExpressionAttributeValues[":title"]).toBe(
+    "Paint on the wall",
+  );
+});
+it("requires an explicit action from the chosen category", async () => {
+  expect(
+    (
+      await updateTaskAction(
+        event("root", {
+          category: "Graffiti",
+          description: "A synthetic observation",
+        }),
+      )
+    ).statusCode,
+  ).toBe(400);
+  expect(
+    (
+      await updateTaskAction(
+        event("root", { category: "Graffiti", ruleId: "LITTER-2" }),
+      )
+    ).statusCode,
+  ).toBe(400);
+});
+it.each(["in_progress", "completing", "completed"])(
+  "locks every field for %s tasks",
+  async (status) => {
+    put(task("root", { status }));
+    expect(
+      (
+        await updateTaskAction(
+          event("root", { title: "New title", description: "New description" }),
+        )
+      ).statusCode,
+    ).toBe(409);
+    expect(
+      (
+        await updateTaskAction(
+          event("duplicate", { description: "New description" }),
+        )
+      ).statusCode,
+    ).toBe(409);
+  },
+);
+it("clears inherited guidance for a custom action", async () => {
+  put(task("root", { guidance: "Original guidance" }));
+  const response = await recordCustomTaskAction(
+    event("root", {
+      text: "Called the team",
+      resolved: false,
+      category: "Graffiti",
+    }),
+  );
+  expect(response.statusCode).toBe(200);
+  expect(JSON.parse(response.body).task).toMatchObject({
+    category: "Graffiti",
+    guidance: "",
+    status: "in_progress",
+  });
+});
+
+it.each(["text", "action", "custom"])(
+  "edits a retained task through its current assessment (%s)",
+  async (mode) => {
+    put(
+      task("retained", {
+        assessmentId: "original",
+        conditionId: "survivor",
+        checkId: "check",
+        sourceArtifactIds: ["photo"],
+      }),
+    );
+    put({
+      pk: "SITE#site",
+      sk: "ASSESSMENT#original",
+      checkId: "check",
+      lineageId: "photo",
+      supersededByAssessmentId: "successor",
+    });
+    put({
+      pk: "SITE#site",
+      sk: 'GUIDANCE_CURRENT#["check","photo"]',
+      assessmentId: "successor",
+    });
+    put({
+      pk: "SITE#site",
+      sk: "ASSESSMENT#successor",
+      checkId: "check",
+      assessmentRevision: 2,
+    });
+    put({
+      pk: "SITE#site",
+      sk: "ASSESSMENT#successor#COND#survivor",
+      status: "tasks_created",
+      taskIds: ["retained"],
+      source: { artifactIds: ["photo"] },
+    });
+    const body = {
+      title: "Edited surviving issue",
+      description: "Corrected synthetic observation",
+      requestId: "retained-edit",
+      ...(mode === "action" ? { ruleId: "LITTER-2", category: "Litter" } : {}),
+      ...(mode === "custom"
+        ? { text: "Synthetic work performed", resolved: true }
+        : {}),
+    };
+    const handler =
+      mode === "custom" ? recordCustomTaskAction : updateTaskAction;
+    const response = await handler(event("retained", body));
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body).task).toMatchObject({
+      taskId: "retained",
+      assessmentId: "original",
+      description: body.description,
+      userFriendlyLabel: body.title,
+    });
+    const writes = state.transactions.at(-1);
+    expect(
+      writes.some(
+        (entry) =>
+          entry.Update?.Key.sk === "ASSESSMENT#successor#COND#survivor",
+      ),
+    ).toBe(true);
+    expect(
+      writes.some((entry) => entry.Update?.Key.sk === "ASSESSMENT#original"),
+    ).toBe(false);
   },
 );

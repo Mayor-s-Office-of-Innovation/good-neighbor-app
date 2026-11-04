@@ -862,32 +862,171 @@ describe("app action execution", () => {
     }
   });
 
-  it("fails classifier-backed 311 actions when no service codes are produced", async () => {
-    send.mockResolvedValueOnce({
-      Items: [
-        {
-          artifactId: "artifact-1",
-          s3Key: "checks/site-1/check-1/North/artifact-1",
-          contentType: "image/jpeg",
-        },
-      ],
-    });
-    getObjectBytes.mockResolvedValueOnce({
-      bytes: Buffer.from("image"),
-      contentType: "image/jpeg",
-    });
-    downscaleImage.mockResolvedValueOnce({
-      bytes: Buffer.from("resized-image"),
-      contentType: "image/jpeg",
-    });
+  it.each(["Run graffiti analysis", "Run bulky item analysis"])(
+    "includes saved description with the image for %s even when routing fails",
+    async (command) => {
+      send.mockResolvedValueOnce({
+        Items: [
+          {
+            artifactId: "artifact-1",
+            s3Key: "checks/site-1/check-1/North/artifact-1",
+            contentType: "image/jpeg",
+          },
+        ],
+      });
+      getObjectBytes.mockResolvedValueOnce({
+        bytes: Buffer.from("image"),
+        contentType: "image/jpeg",
+      });
+      downscaleImage.mockResolvedValueOnce({
+        bytes: Buffer.from("resized-image"),
+        contentType: "image/jpeg",
+      });
+      getAnalyzerApiKey.mockResolvedValueOnce("analyzer-key");
+      const classifyEvidence = vi.fn().mockResolvedValueOnce({ labels: [] });
+      createAnalyzerClient.mockReturnValueOnce({
+        classifyEvidence,
+      });
+
+      try {
+        expect(
+          await executeAppActions(
+            [
+              {
+                code: "create_311_ticket",
+                payload: { serviceCodeOrAction: command },
+              },
+            ],
+            {
+              env: {
+                GNP_311_SUBMISSION_ENABLED: "true",
+                DYNAMO_TABLE: "table",
+                S3_UPLOAD_BUCKET: "bucket",
+                SQS_QUEUE_URL: "queue",
+                ANALYZER_BASE_URL: "https://analyzer.example.test",
+                ANALYZER_API_KEY: "analyzer-key",
+                SF311_CREATESR_URL: "https://hub.example.test/createsr",
+                SF311_AGENCY_LOOKUP_URL: "https://hub.example.test/lookup",
+                SF311_BASIC_AUTH_USER: "user",
+                SF311_BASIC_AUTH_PASS: "pass",
+              },
+              now,
+              tableName: "table",
+              siteId: "site-1",
+              task: {
+                taskId: "task-1",
+                checkId: "check-1",
+                description: "Graffiti",
+                sourceArtifactIds: ["artifact-1"],
+              },
+            },
+          ),
+        ).toEqual([
+          {
+            code: "create_311_ticket",
+            status: "failed",
+            reason: "insufficient_classifier_information",
+            payload: { serviceCodeOrAction: command },
+            recordedAt: "2026-08-18T12:00:00.000Z",
+          },
+        ]);
+        expect(downscaleImage).toHaveBeenCalledWith(
+          Buffer.from("image"),
+          "image/jpeg",
+        );
+        expect(classifyEvidence).toHaveBeenCalledWith(
+          expect.objectContaining({
+            evidence: {
+              type: "image",
+              image: {
+                content_type: "image/jpeg",
+                base64: Buffer.from("resized-image").toString("base64"),
+                metadata: { description: "Graffiti" },
+              },
+            },
+          }),
+        );
+      } finally {
+        createAnalyzerClient.mockReset();
+        getAnalyzerApiKey.mockReset();
+        getObjectBytes.mockReset();
+        send.mockReset();
+      }
+    },
+  );
+
+  it("uses the saved description when an older task has no source artifact identifiers", async () => {
     getAnalyzerApiKey.mockResolvedValueOnce("analyzer-key");
     const classifyEvidence = vi.fn().mockResolvedValueOnce({ labels: [] });
-    createAnalyzerClient.mockReturnValueOnce({
-      classifyEvidence,
-    });
+    createAnalyzerClient.mockReturnValueOnce({ classifyEvidence });
 
     try {
-      expect(
+      const results = await executeAppActions(
+        [
+          {
+            code: "create_311_ticket",
+            payload: { serviceCodeOrAction: "Run graffiti analysis" },
+          },
+        ],
+        {
+          env: {
+            GNP_311_SUBMISSION_ENABLED: "true",
+            DYNAMO_TABLE: "table",
+            S3_UPLOAD_BUCKET: "bucket",
+            SQS_QUEUE_URL: "queue",
+            ANALYZER_BASE_URL: "https://analyzer.example.test",
+            ANALYZER_API_KEY: "analyzer-key",
+            SF311_CREATESR_URL: "https://hub.example.test/createsr",
+            SF311_AGENCY_LOOKUP_URL: "https://hub.example.test/lookup",
+            SF311_BASIC_AUTH_USER: "user",
+            SF311_BASIC_AUTH_PASS: "pass",
+          },
+          now,
+          tableName: "table",
+          siteId: "site-1",
+          task: {
+            taskId: "task-1",
+            description: "Graffiti on a metal utility box.",
+          },
+        },
+      );
+
+      expect(classifyEvidence).toHaveBeenCalledWith({
+        classifierId: "graffiti",
+        evidence: {
+          type: "text",
+          text: "Graffiti on a metal utility box.",
+        },
+        requestId: "task-1",
+        appId: "good-neighbor-app",
+      });
+      expect(results[0]).toMatchObject({
+        status: "failed",
+        reason: "insufficient_classifier_information",
+      });
+    } finally {
+      createAnalyzerClient.mockReset();
+      getAnalyzerApiKey.mockReset();
+    }
+  });
+
+  it.each(["missing identifiers", "no image", "artifact fallback"])(
+    "bounds classifier text by Unicode code points (%s)",
+    async (source) => {
+      const text = "😀".repeat(4000) + "overflow";
+      send.mockReset();
+      send.mockResolvedValue({ Items: [{ artifactId: "artifact-1", text }] });
+      getAnalyzerApiKey.mockResolvedValueOnce("analyzer-key");
+      const classifyEvidence = vi.fn().mockResolvedValueOnce({ labels: [] });
+      createAnalyzerClient.mockReturnValueOnce({ classifyEvidence });
+      const task = {
+        taskId: "task-long",
+        ...(source !== "artifact fallback" ? { description: text } : {}),
+        ...(source !== "missing identifiers"
+          ? { checkId: "check-1", sourceArtifactIds: ["artifact-1"] }
+          : {}),
+      };
+      try {
         await executeAppActions(
           [
             {
@@ -911,50 +1050,27 @@ describe("app action execution", () => {
             now,
             tableName: "table",
             siteId: "site-1",
-            task: {
-              taskId: "task-1",
-              checkId: "check-1",
-              description: "Graffiti",
-              sourceArtifactIds: ["artifact-1"],
-            },
+            task,
           },
-        ),
-      ).toEqual([
-        {
-          code: "create_311_ticket",
-          status: "failed",
-          reason: "insufficient_classifier_information",
-          payload: { serviceCodeOrAction: "Run graffiti analysis" },
-          recordedAt: "2026-08-18T12:00:00.000Z",
-        },
-      ]);
-      expect(downscaleImage).toHaveBeenCalledWith(
-        Buffer.from("image"),
-        "image/jpeg",
-      );
-      expect(classifyEvidence).toHaveBeenCalledWith(
-        expect.objectContaining({
-          evidence: {
-            type: "image",
-            image: {
-              content_type: "image/jpeg",
-              base64: Buffer.from("resized-image").toString("base64"),
-            },
-          },
-        }),
-      );
-    } finally {
-      createAnalyzerClient.mockReset();
-      getAnalyzerApiKey.mockReset();
-      getObjectBytes.mockReset();
-      send.mockReset();
-    }
-  });
+        );
+        expect(classifyEvidence).toHaveBeenCalledWith(
+          expect.objectContaining({
+            evidence: { type: "text", text: "😀".repeat(4000) },
+          }),
+        );
+        if (source !== "artifact fallback") expect(task.description).toBe(text);
+      } finally {
+        send.mockReset();
+        createAnalyzerClient.mockReset();
+        getAnalyzerApiKey.mockReset();
+      }
+    },
+  );
 
   it("classifies description-only evidence and files without an attachment", async () => {
     const textArtifact = {
       artifactId: "artifact-1",
-      text: "A mattress has been left on the sidewalk.",
+      text: "Original capture description before the correction.",
     };
     send
       .mockResolvedValueOnce({ Items: [textArtifact] })

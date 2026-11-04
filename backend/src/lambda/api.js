@@ -112,6 +112,7 @@ import {
 } from "../handlers/site.js";
 import {
   editAnalysisCondition,
+  getAnalysisConditionDetails,
   rejectAnalysisCondition,
 } from "../handlers/analysis-amendments.js";
 import {
@@ -310,6 +311,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /v1/assessments/{assessmentId}/guidance": getGuidance,
   "POST /v1/assessments/{assessmentId}/conditions/{conditionId}/answers":
     submitConditionAnswers,
+  "GET /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}":
+    getAnalysisConditionDetails,
   "POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}":
     editAnalysisCondition,
   "POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}/reject":

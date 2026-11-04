@@ -19,6 +19,7 @@ import { t } from "../i18n/i18n.js";
  * @property {string} checkId
  * @property {string} artifactId
  * @property {string} taskId
+ * @property {string} [assessmentId]
  * @property {string} conditionId
  * @property {string} actionKind
  * @property {string} title
@@ -38,11 +39,15 @@ export function problemFromCard(card) {
     checkId: card.getAttribute("data-check-id") || "",
     artifactId: card.getAttribute("data-artifact-id") || "",
     taskId: card.getAttribute("data-task-id") || "",
+    assessmentId: card.getAttribute("data-assessment-id") || "",
     conditionId: card.getAttribute("data-condition-id") || "",
     actionKind: card.getAttribute("data-action-kind") || "",
     title:
       card.getAttribute("data-card-title") || t("card.title.problemFallback"),
-    description: card.getAttribute("data-card-description") || "",
+    description:
+      card.getAttribute("data-card-edit-description") ||
+      card.getAttribute("data-card-description") ||
+      "",
   };
 }
 
@@ -107,4 +112,15 @@ export async function rejectProblemCondition(
       onRefreshFailure();
     });
   }
+}
+
+/** Open the shared editor while capture routes stay lazy-loaded.
+ * @param {CardProblem} problem
+ * @param {() => void} onChanged
+ */
+export function openProblemDetails(problem, onChanged) {
+  const trigger = document.activeElement;
+  void import("./task-details-dialog.js").then(({ openDescriptionDetails }) =>
+    openDescriptionDetails(problem, trigger, onChanged),
+  );
 }

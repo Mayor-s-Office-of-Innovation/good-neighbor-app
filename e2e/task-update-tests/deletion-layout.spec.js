@@ -45,7 +45,6 @@ for (const width of [320, 390, 1280])
         "selected",
         "deleted",
         "success",
-        "edit",
       ]) {
         state = mode;
         await page.evaluate(
@@ -74,7 +73,7 @@ for (const width of [320, 390, 1280])
               "analysis.deleteDialog.titleFor",
               { title: "Synthetic issue" },
             );
-            if (["success", "edit"].includes(mode)) {
+            if (mode === "success") {
               host.querySelector(`#analysis-${mode}-dialog`).showModal();
               return;
             }

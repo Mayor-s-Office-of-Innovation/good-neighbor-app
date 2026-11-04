@@ -4,6 +4,7 @@ import {
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { actionsEscalationsV10Catalog } from "../analysis/guidance/actions-escalations-v10.js";
 
 const {
   send,
@@ -38,9 +39,11 @@ vi.mock("../analysis/analyzer-client.js", () => ({
   createAnalyzerClient,
 }));
 
-const { editAnalysisCondition, rejectAnalysisCondition } = await import(
-  "./analysis-amendments.js"
-);
+const {
+  getAnalysisConditionDetails,
+  editAnalysisCondition,
+  rejectAnalysisCondition,
+} = await import("./analysis-amendments.js");
 
 /**
  * @param {object} opts
@@ -115,70 +118,121 @@ describe("analysis amendments (check/artifact-addressed)", () => {
     });
   });
 
-  it("edit resolves the stored analysis by artifact key and calls the analyzer with ITS analysisId", async () => {
-    send.mockResolvedValueOnce({ Item: analysisItem() });
-    // supersedeOpenTasksForCondition's GSI2 query (empty open-task list).
-    send.mockResolvedValueOnce({ Items: [] });
-
-    const res = await invoke(
-      amendEvent({
-        body: { description: "Actually paint spilled here" },
-      }),
-      editAnalysisCondition,
-    );
-
-    expect(res.statusCode).toBe(200);
-    // Single key-predicated GetItem — not a partition query.
-    const get = send.mock.calls[0][0];
-    expect(get).toBeInstanceOf(GetCommand);
-    expect(get.input.Key).toEqual({
-      pk: "SITE#site-1",
-      sk: "CHECK#chk_01#ANALYSIS#art_1",
+  it("saves a correction without calling the analyzer or changing guidance", async () => {
+    send.mockResolvedValueOnce({ Item: { assessmentId: "assessment" } });
+    send.mockResolvedValueOnce({ Item: { assessmentRevision: 4 } });
+    send.mockResolvedValueOnce({
+      Item: {
+        conditionId: "condition",
+        status: "needs_answer",
+        description: "Old description",
+        taskIds: ["task"],
+      },
     });
-    expect(get.input.ConsistentRead).toBe(true);
-    // Task retirement waits for successful guidance publication.
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(analyzeEdit).toHaveBeenCalledWith(
-      "ana_20260907_ab12cd34",
-      "chk_01-art_1-001-litter",
-      expect.objectContaining({
-        description: "Actually paint spilled here",
-        appId: "good-neighbor-app",
-      }),
-    );
-  });
-
-  it("edit forwards language from the request body", async () => {
-    send.mockResolvedValueOnce({ Item: analysisItem() });
-
-    const res = await invoke(
+    send.mockResolvedValueOnce({
+      Item: {
+        pk: "SITE#site-1",
+        sk: "TASK#task",
+        taskId: "task",
+        status: "open",
+        description: "Old description",
+        appActions: [],
+      },
+    });
+    send.mockResolvedValueOnce({});
+    const res = await editAnalysisCondition(
       amendEvent({
-        body: {
-          description: "Actually paint spilled here",
-          language: "vi",
-        },
+        body: { description: "Corrected description", language: "vi" },
       }),
-      editAnalysisCondition,
     );
-
     expect(res.statusCode).toBe(200);
-    expect(analyzeEdit).toHaveBeenCalledWith(
-      "ana_20260907_ab12cd34",
-      expect.any(String),
-      expect.objectContaining({ language: "vi" }),
+    expect(createAnalyzerClient).not.toHaveBeenCalled();
+    const tx = send.mock.calls.at(-1)?.[0].input.TransactItems;
+    expect(tx).toHaveLength(3);
+    expect(tx[0].Update.ExpressionAttributeValues).toEqual({
+      ":prior": 4,
+      ":next": 5,
+    });
+    expect(tx[1].Update.ExpressionAttributeValues[":text"]).toBe(
+      "Corrected description",
     );
+    expect(tx[1].Update.ConditionExpression).toContain(
+      "#status = :conditionStatus",
+    );
+    expect(tx[1].Update.ExpressionAttributeValues[":conditionStatus"]).toBe(
+      "needs_answer",
+    );
+    expect(tx[2].Update.Key.sk).toBe("TASK#task");
+    expect(JSON.stringify(tx)).not.toContain("SF311_JOB");
   });
 
-  it("edit omits language when the request body has none", async () => {
-    send.mockResolvedValueOnce({ Item: analysisItem() });
+  it.each([undefined, null, -1, 1.5, "3"])(
+    "rejects action edits with an invalid revision (%s) before writing",
+    async (revision) => {
+      const res = await editAnalysisCondition(
+        amendEvent({
+          body: {
+            description: "Corrected description",
+            ruleId: "LITTER-2",
+            revision,
+          },
+        }),
+      );
+      expect(res.statusCode).toBe(400);
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
 
-    await invoke(
-      amendEvent({ body: { description: "Actually paint spilled here" } }),
-      editAnalysisCondition,
+  it.each(["completed", "rejected", "tasks_created"])(
+    "rejects condition-only description edits in status %s",
+    async (status) => {
+      send
+        .mockResolvedValueOnce({ Item: { assessmentId: "assessment" } })
+        .mockResolvedValueOnce({ Item: { assessmentRevision: 4 } })
+        .mockResolvedValueOnce({ Item: { status, taskIds: [] } });
+      const res = await editAnalysisCondition(
+        amendEvent({ body: { description: "Corrected description" } }),
+      );
+      expect(res.statusCode).toBe(409);
+      expect(
+        send.mock.calls.some(
+          ([command]) => command instanceof TransactWriteCommand,
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it("rejects a superseded assessment instead of reviving its description", async () => {
+    send.mockResolvedValueOnce({ Item: { assessmentId: "assessment" } });
+    send.mockResolvedValueOnce({ Item: { supersededByAssessmentId: "next" } });
+    send.mockResolvedValueOnce({ Item: { description: "Old description" } });
+    const res = await editAnalysisCondition(
+      amendEvent({ body: { description: "Corrected description" } }),
     );
+    expect(res.statusCode).toBe(409);
+    expect(
+      send.mock.calls.some(
+        ([command]) => command instanceof TransactWriteCommand,
+      ),
+    ).toBe(false);
+  });
 
-    const call = analyzeEdit.mock.calls[0][2];
-    expect(call).not.toHaveProperty("language");
+  it("returns a conflict when a concurrent answer wins the assessment revision", async () => {
+    send.mockResolvedValueOnce({ Item: { assessmentId: "assessment" } });
+    send.mockResolvedValueOnce({ Item: { assessmentRevision: 4 } });
+    send.mockResolvedValueOnce({
+      Item: { status: "needs_answer", taskIds: [] },
+    });
+    send.mockRejectedValueOnce(
+      Object.assign(new Error("changed"), {
+        name: "TransactionCanceledException",
+      }),
+    );
+    const res = await editAnalysisCondition(
+      amendEvent({ body: { description: "Corrected description" } }),
+    );
+    expect(res.statusCode).toBe(409);
+    expect(createAnalyzerClient).not.toHaveBeenCalled();
   });
 
   it("reject resolves by key, passes the reason through, and retires its open task", async () => {
@@ -474,23 +528,6 @@ describe("analysis amendments (check/artifact-addressed)", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("client-supplied analysisId is ignored — server-stored one wins", async () => {
-    send.mockResolvedValueOnce({
-      Item: analysisItem({ analysisId: "ana_SERVER" }),
-    });
-    send.mockResolvedValueOnce({ Items: [] });
-
-    await invoke(
-      amendEvent({ body: { description: "A corrected description" } }),
-      editAnalysisCondition,
-    );
-
-    expect(analyzeEdit).toHaveBeenCalledWith(
-      "ana_SERVER",
-      expect.any(String),
-      expect.anything(),
-    );
-  });
   it.each([true, false])(
     "dismisses expired analyzer results only for a verified site-owned condition: %s",
     async (verified) => {
@@ -575,4 +612,81 @@ describe("analysis amendments (check/artifact-addressed)", () => {
     expect(receipt).not.toHaveProperty("dismissedAt");
     expect(analyzeReject).toHaveBeenCalledOnce();
   });
+});
+
+describe("assessment-backed condition details", () => {
+  it.each(["valid", "wrong-check", "wrong-photo", "superseded"])(
+    "validates the supplied assessment: %s",
+    async (state) => {
+      send.mockImplementation(async (command) => {
+        const key = command.input.Key?.sk || "";
+        if (key === "ASSESSMENT#synthetic-assessment")
+          return {
+            Item: {
+              policyVersion: actionsEscalationsV10Catalog.policyVersion,
+              assessmentId: "synthetic-assessment",
+              checkId: state === "wrong-check" ? "other" : "chk_01",
+              ...(state === "superseded"
+                ? { supersededByAssessmentId: "successor" }
+                : {}),
+            },
+          };
+        if (key.includes("#COND#"))
+          return {
+            Item: {
+              conditionId: "chk_01-art_1-001-litter",
+              status: "needs_answer",
+              canonicalCategory: "Litter",
+              source: {
+                artifactIds: [state === "wrong-photo" ? "other" : "art_1"],
+              },
+            },
+          };
+        return {};
+      });
+      const event = amendEvent({});
+      event.queryStringParameters = { assessmentId: "synthetic-assessment" };
+      const response = await getAnalysisConditionDetails(event);
+      expect(response.statusCode).toBe(state === "valid" ? 200 : 404);
+      if (state === "valid")
+        expect(JSON.parse(response.body).editable).toBe(true);
+    },
+  );
+});
+
+it("acknowledges a saved question-text retry without another write", async () => {
+  send.mockReset();
+  send.mockImplementation(async (command) => {
+    const key = command.input.Key?.sk || "";
+    if (key === 'GUIDANCE_CURRENT#["chk_01","art_1"]')
+      return { Item: { assessmentId: "assessment" } };
+    if (key === "ASSESSMENT#assessment")
+      return { Item: { assessmentRevision: 4 } };
+    if (key.includes("#COND#"))
+      return {
+        Item: {
+          status: "needs_answer",
+          detailsEditId: "same-save",
+          description: "Saved synthetic correction",
+        },
+      };
+    throw new Error("Unexpected write or read");
+  });
+  const response = await editAnalysisCondition(
+    amendEvent({
+      body: {
+        title: "Edited title",
+        description: "Saved synthetic correction",
+        revision: 3,
+        requestId: "same-save",
+      },
+    }),
+  );
+  expect(response.statusCode).toBe(200);
+  expect(JSON.parse(response.body).description).toBe(
+    "Saved synthetic correction",
+  );
+  expect(
+    send.mock.calls.every(([command]) => command instanceof GetCommand),
+  ).toBe(true);
 });

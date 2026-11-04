@@ -256,7 +256,7 @@ export async function runJob(message, delivery = {}) {
       });
       return;
     }
-    const guardedTask = task;
+    const guardedTask = { ...task, ...(task.silent311Snapshot || {}) };
     /** @template T @param {() => Promise<T>} run */
     const guard = (run) =>
       isSilent311Task(guardedTask)
@@ -265,7 +265,7 @@ export async function runJob(message, delivery = {}) {
     await guard(async () => {});
     const silentActions =
       /** @type {import("../analysis/guidance/app-actions.js").AppAction[]} */ (
-        task.appActions || []
+        guardedTask.appActions || []
       ).filter(
         (action) =>
           action.code === "create_311_ticket" &&
@@ -300,6 +300,7 @@ export async function runJob(message, delivery = {}) {
     if (
       !["superseded", "deleted"].includes(task.status) &&
       !alreadyFiled &&
+      (!task.actionOverride || jobKey.sk.endsWith("#created")) &&
       !evidenceRemoved
     ) {
       const created = await guard(async () =>
@@ -307,7 +308,7 @@ export async function runJob(message, delivery = {}) {
           tableName,
           siteId: message.siteId,
           taskId: message.taskId,
-          task,
+          task: guardedTask,
           priorResults: results,
           trigger: "task_created",
           onCheckpoint: checkpoint,
