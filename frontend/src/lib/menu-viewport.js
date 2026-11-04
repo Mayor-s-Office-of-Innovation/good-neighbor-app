@@ -1,7 +1,8 @@
 import "../styles/overlays.css";
 
-// CSS cannot flip anchored menus in every supported Safari version. Measure
-// only these menus, keeping their existing DOM, focus and dismissal behavior.
+// CSS owns size constraints and scrolling. This fallback measures trigger
+// collisions and visual-viewport offsets (including zoom/keyboard changes),
+// keeping the existing DOM, focus and dismissal behavior for Safari.
 const menus = [
   [".home-action-menu", "#home-action-menu-trigger"],
   [".home-settings-menu", "#home-settings"],
@@ -46,11 +47,15 @@ export function containMenus(host, onDismiss = () => {}) {
         continue;
       }
       menu.setAttribute("data-viewport-menu", "");
-      menu.style.maxWidth = `${Math.max(0, width - 2 * gutter)}px`;
+      menu.style.setProperty("--menu-viewport-width", `${width}px`);
+      menu.style.setProperty("--menu-viewport-height", `${height}px`);
       const below = Math.max(0, y + height - gutter - rect.bottom - 8);
       const above = Math.max(0, rect.top - y - gutter - 8);
       const flip = menu.scrollHeight > below && above > below;
-      menu.style.maxHeight = `${Math.min(height - 2 * gutter, flip ? above : below)}px`;
+      menu.style.setProperty(
+        "--menu-available-height",
+        `${flip ? above : below}px`,
+      );
       const bounds = menu.getBoundingClientRect();
       const left = selector.includes("site-switcher")
         ? rect.left + (rect.width - bounds.width) / 2

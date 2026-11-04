@@ -8,12 +8,18 @@
   overflow-wrap: anywhere;
 }
 
-/* Geometry is supplied by menu-viewport.js for cross-browser collision handling. */
+/* CSS constrains size; the fallback supplies measured visual-viewport and
+   trigger space because viewport units alone do not track pinch zoom. */
 :is(
     .home-action-menu,
     .home-settings-menu,
     .home-site-switcher__menu
   )[data-viewport-menu] {
+  max-width: max(0px, calc(var(--menu-viewport-width, 100vw) - 32px));
+  max-height: min(
+    calc(var(--menu-viewport-height, 100dvh) - 32px),
+    var(--menu-available-height, 100dvh)
+  );
   position: fixed;
   inset: auto;
   transform: none;

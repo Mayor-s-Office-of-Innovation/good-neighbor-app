@@ -27,14 +27,20 @@ for (const viewport of [
       const path = "/src/lib/menu-viewport.js";
       const { containMenus } = await import(path);
       const host = document.querySelector("main");
+      if (!host) throw new Error("Missing fixture host");
       host.innerHTML =
         '<section class="home-region home-region--header" style="margin:40px 16px"><div class="home-actions" style="margin-top:180px"><button class="btn-blue" style="width:260px">Synthetic long label</button><div class="home-action-menu-wrap"><button id="home-action-menu-trigger" class="home-action-menu-trigger">...</button><div class="home-action-menu" hidden><button>First</button><button>Second</button><button id="last-menu-action">Last</button></div></div></div></section><dialog class="places-modal"><form class="places-modal__card"><h2>Synthetic dialog</h2><p style="height:800px;flex-shrink:0">Synthetic content</p><button id="last-dialog-action">Confirm</button></form></dialog>';
       containMenus(host);
-      document
-        .querySelector("#home-action-menu-trigger")
-        .addEventListener("click", () => {
-          document.querySelector(".home-action-menu").hidden = false;
-        });
+      const trigger = document.querySelector("#home-action-menu-trigger");
+      const menu = document.querySelector(".home-action-menu");
+      if (
+        !(trigger instanceof window.HTMLElement) ||
+        !(menu instanceof window.HTMLElement)
+      )
+        throw new Error("Missing menu fixture");
+      trigger.addEventListener("click", () => {
+        menu.hidden = false;
+      });
     });
     await page.locator("#home-action-menu-trigger").click();
     await expect
@@ -52,7 +58,11 @@ for (const viewport of [
       .toBe(true);
     await page.locator("#last-menu-action").focus();
     await expect(page.locator("#last-menu-action")).toBeInViewport();
-    await page.evaluate(() => document.querySelector("dialog").showModal());
+    await page.locator("dialog").evaluate((dialog) => {
+      if (!(dialog instanceof window.HTMLDialogElement))
+        throw new Error("Missing dialog fixture");
+      dialog.showModal();
+    });
     await page.locator("#last-dialog-action").focus();
     await expect(page.locator("#last-dialog-action")).toBeInViewport();
     expect(
@@ -138,7 +148,11 @@ test("admin manager picker scrolls to its final action on a short screen", async
       "utf8",
     ),
   });
-  await page.evaluate(() => document.querySelector("dialog").showModal());
+  await page.locator("dialog").evaluate((dialog) => {
+    if (!(dialog instanceof window.HTMLDialogElement))
+      throw new Error("Missing dialog fixture");
+    dialog.showModal();
+  });
   await page.locator("#admin-last").focus();
   await expect(page.locator("#admin-last")).toBeInViewport();
   expect(
@@ -172,21 +186,23 @@ for (const width of [320, 1280]) {
       const helperPath = "/src/lib/menu-viewport.js";
       const { containMenus } = await import(helperPath);
       const host = document.querySelector("main");
+      if (!host) throw new Error("Missing fixture host");
       host.innerHTML =
         '<div class="home"><section class="home-region home-region--header">' +
         homeActions({ checkLabel: "Synthetic long check label" }) +
         '</section><div style="height:2000px"></div></div>';
       containMenus(host);
-      document
-        .querySelector("#home-action-menu-trigger")
-        .addEventListener("click", (event) => {
-          const menu = document.querySelector(".home-action-menu");
-          menu.hidden = !menu.hidden;
-          event.currentTarget.setAttribute(
-            "aria-expanded",
-            String(!menu.hidden),
-          );
-        });
+      const trigger = document.querySelector("#home-action-menu-trigger");
+      const menu = document.querySelector(".home-action-menu");
+      if (
+        !(trigger instanceof window.HTMLElement) ||
+        !(menu instanceof window.HTMLElement)
+      )
+        throw new Error("Missing menu fixture");
+      trigger.addEventListener("click", () => {
+        menu.hidden = !menu.hidden;
+        trigger.setAttribute("aria-expanded", String(!menu.hidden));
+      });
     });
     const trigger = page.locator("#home-action-menu-trigger");
     const menu = page.locator(".home-action-menu");
@@ -195,9 +211,9 @@ for (const width of [320, 1280]) {
       .poll(() =>
         menu.evaluate((el) => {
           const rect = el.getBoundingClientRect();
-          const trigger = document
-            .querySelector("#home-action-menu-trigger")
-            .getBoundingClientRect();
+          const element = document.querySelector("#home-action-menu-trigger");
+          if (!element) throw new Error("Missing trigger fixture");
+          const trigger = element.getBoundingClientRect();
           const expectedLeft = Math.max(
             16,
             Math.min(
