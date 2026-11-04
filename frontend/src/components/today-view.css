@@ -693,7 +693,9 @@ html.wa-dark .skeleton-line {
   color: var(--on-ink);
   font-size: var(--wa-font-size-2xs, 0.6875rem);
   font-weight: var(--wa-font-weight-bold, 600);
-  line-height: 1.6;
+  /* line-height 1 so the flex centering governs: the spec's 160% line box
+     centered ~1px high inside the fixed-height pill. */
+  line-height: 1;
 }
 
 html.wa-dark .home-tabs {
