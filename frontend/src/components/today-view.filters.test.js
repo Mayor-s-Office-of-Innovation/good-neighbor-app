@@ -2180,59 +2180,6 @@ it("maps a recovered question to its retained local evidence for edits and answe
   );
 });
 
-it.each([true, false])(
-  "republishes edits to recovered questions (retained local copy: %s)",
-  async (hasLocal) => {
-    const analysis = await import("../services/photo-analysis.js");
-    const localRefresh = vi
-      .spyOn(analysis, "refreshEvidenceAnalysis")
-      .mockResolvedValue(undefined);
-    const recoveredRefresh = vi
-      .spyOn(analysis, "refreshRecoveredQuestion")
-      .mockResolvedValue({ assessment: {}, conditions: [], tasks: [] });
-    try {
-      const view = await mount("?filter=todo");
-      const item = {
-        id: "recovered",
-        checkId: "check",
-        analysis: {
-          artifactId: "artifact",
-          assessment: { assessmentId: "assessment" },
-        },
-      };
-      view._homeModel = { tasks: [], pendingQuestions: [item] };
-      view._activeProblem = {
-        itemId: item.id,
-        checkId: "check",
-        artifactId: "artifact",
-        conditionId: "condition",
-        description: "Original description",
-      };
-      view._analysisEditDescription = { value: "Updated description" };
-      view.querySelector = () => null;
-      view._setDialogError = vi.fn();
-      view._localQuestionItemId = vi.fn(async () =>
-        hasLocal ? "local-photo" : null,
-      );
-      view.connectedCallback = vi.fn(async () => {});
-      const response = { assessment: {} };
-      catalog.editAnalysisCondition.mockResolvedValue(response);
-      await view._saveProblemEdit();
-      if (hasLocal) {
-        expect(localRefresh).toHaveBeenCalledWith("local-photo", response);
-        expect(recoveredRefresh).not.toHaveBeenCalled();
-      } else {
-        expect(recoveredRefresh).toHaveBeenCalledWith(item, response);
-        expect(localRefresh).not.toHaveBeenCalled();
-      }
-      expect(view.connectedCallback).toHaveBeenCalledOnce();
-    } finally {
-      localRefresh.mockRestore();
-      recoveredRefresh.mockRestore();
-    }
-  },
-);
-
 it("keeps live tasks and withholds unverified cached questions when guidance fails", async () => {
   const { saveHomeSnapshot } = await import("../db.js");
   const { clearSubmittedSession } = await import("../state/check-session.js");
@@ -2316,32 +2263,6 @@ it("does not leak cached questions across a site switch when guidance fails", as
   await view.connectedCallback();
   await view._pendingGuidanceLoad;
   expect(view._renderHome.mock.calls.at(-1)[0].pendingQuestions).toEqual([]);
-});
-
-it("explains an expired analyzer edit and retains the description for the user", async () => {
-  const view = await mount("?filter=todo");
-  const problem = {
-    itemId: "recovered",
-    checkId: "check",
-    artifactId: "artifact",
-    conditionId: "condition",
-    description: "Original description",
-  };
-  view._activeProblem = problem;
-  view._analysisEditDescription = { value: "My updated description" };
-  view.querySelector = () => null;
-  view._setDialogError = vi.fn();
-  catalog.editAnalysisCondition.mockRejectedValueOnce({
-    status: 404,
-    body: { code: "unknown_analysis" },
-  });
-  await view._saveProblemEdit();
-  expect(view._setDialogError).toHaveBeenLastCalledWith(
-    "analysis-edit-error",
-    t("analysis.editDialog.expired"),
-  );
-  expect(view._activeProblem).toBe(problem);
-  expect(view._analysisEditDescription.value).toBe("My updated description");
 });
 
 it("uses retained local evidence when committing deletion of a recovered card", async () => {

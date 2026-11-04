@@ -27,13 +27,11 @@ import {
   showActionSaveErrorToast,
   showDeletionRefreshToast,
   showDeleteErrorToast,
-  showEditErrorToast,
-  showEditRefreshErrorToast,
-  showReanalysisErrorToast,
 } from "../state/toasts.js";
 import { requestId, setBusy, setDialogError } from "../lib/dialog-controls.js";
-import { getLocale, t } from "../i18n/i18n.js";
+import { t } from "../i18n/i18n.js";
 import {
+  openProblemDetails,
   missingConditionMessage,
   problemFromCard,
   rejectProblemCondition,
@@ -55,12 +53,9 @@ import {
 } from "../screen-focus.js";
 import {
   analyzeEvidenceItem,
-  analyzeNoIssueDescriptionEdit,
-  refreshEvidenceAnalysis,
   retryEvidenceItem,
   removeEvidenceItem,
 } from "../services/photo-analysis.js";
-import { editAnalysisCondition } from "../services/api.js";
 import {
   expectedArtifactCountForCheck,
   finalizeCaptureScorecardInBackground,
@@ -115,8 +110,6 @@ class ProblemReport extends HTMLElement {
     this._analysisDeleteDialog = null;
     this._analysisSuccessDialog = null;
     this._analysisProgressDialog = null;
-    this._analysisEditDialog = null;
-    this._analysisEditDescription = null;
     this._initGeneration = 0;
     this._answeringConditionIds = new Map();
   }
@@ -232,18 +225,9 @@ class ProblemReport extends HTMLElement {
     this._analysisProgressDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector("#analysis-progress-dialog")
     );
-    this._analysisEditDialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector("#analysis-edit-dialog")
-    );
-    this._analysisEditDescription = /** @type {HTMLTextAreaElement | null} */ (
-      this.querySelector("#analysis-edit-description")
-    );
     this.querySelector("#analysis-delete-confirm")?.addEventListener(
       "click",
       () => this._confirmDeleteProblem(),
-    );
-    this.querySelector("#analysis-edit-save")?.addEventListener("click", () =>
-      this._saveProblemEdit(),
     );
     this.querySelector("#analysis-progress-cancel")?.addEventListener(
       "click",
@@ -582,15 +566,9 @@ class ProblemReport extends HTMLElement {
   }
 
   _openEditProblem(problem) {
-    this._activeProblem = problem;
-    this._setDialogError("analysis-edit-error", "");
-    if (this._analysisEditDescription) {
-      this._analysisEditDescription.value = problem.description;
-    }
-    openOverlayDialog(
-      /** @type {HTMLDialogElement} */ (this._analysisEditDialog),
-      "analysis-edit",
-    );
+    openProblemDetails(problem, () => {
+      if (this.isConnected) return this._render();
+    });
   }
 
   async _confirmDeleteProblem() {
@@ -636,74 +614,6 @@ class ProblemReport extends HTMLElement {
 
   _deleteProblemLocally(problem) {
     if (rejectConditionLocally(problem) && this.isConnected) this._render();
-  }
-
-  async _saveProblemEdit() {
-    const problem = this._activeProblem;
-    if (!problem) return;
-    const description = this._analysisEditDescription?.value?.trim() || "";
-    if (description.length < 5) {
-      this._setDialogError(
-        "analysis-edit-error",
-        t("analysis.editDialog.tooShort"),
-      );
-      return;
-    }
-    if (description === problem.description.trim()) {
-      this._analysisEditDialog?.close();
-      this._activeProblem = null;
-      return;
-    }
-
-    const button = this.querySelector("#analysis-edit-save");
-    setBusy(button, true);
-    this._setDialogError("analysis-edit-error", "");
-    try {
-      if (!problem.conditionId) {
-        try {
-          await analyzeNoIssueDescriptionEdit(problem.itemId, description);
-        } catch (error) {
-          console.error("text-only no-issue reanalysis failed", error);
-          showReanalysisErrorToast();
-          return;
-        }
-      } else {
-        if (!problem.checkId || !problem.artifactId) {
-          this._setDialogError(
-            "analysis-edit-error",
-            missingConditionMessage(problem, "edited"),
-          );
-          return;
-        }
-        const result = await editAnalysisCondition(
-          problem.checkId,
-          problem.artifactId,
-          problem.conditionId,
-          {
-            description,
-            language: getLocale(),
-            caller: { request_id: this._requestId("edit", problem) },
-          },
-        );
-        try {
-          await refreshEvidenceAnalysis(problem.itemId, result);
-        } catch (error) {
-          console.error("refresh after saved edit failed", error);
-          this._analysisEditDialog?.close();
-          this._activeProblem = null;
-          showEditRefreshErrorToast();
-          return;
-        }
-      }
-      this._analysisEditDialog?.close();
-      this._activeProblem = null;
-      this._render();
-    } catch (err) {
-      console.error("edit analysis condition failed", err);
-      showEditErrorToast();
-    } finally {
-      setBusy(button, false);
-    }
   }
 
   async _resolveProblem(problem) {

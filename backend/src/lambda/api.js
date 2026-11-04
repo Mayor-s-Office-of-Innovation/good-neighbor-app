@@ -76,7 +76,6 @@ import {
   getGuidance,
   submitConditionAnswers,
 } from "../handlers/guidance.js";
-import { handler as submissionsHandler } from "../handlers/submissions.js";
 import { handler as healthHandler } from "../handlers/health.js";
 import { handler as siteCodeHandler } from "../handlers/site-code.js";
 import { registerDevice, refreshDeviceToken } from "../handlers/devices.js";
@@ -112,6 +111,7 @@ import {
 } from "../handlers/site.js";
 import {
   editAnalysisCondition,
+  getAnalysisConditionDetails,
   rejectAnalysisCondition,
 } from "../handlers/analysis-amendments.js";
 import {
@@ -310,12 +310,12 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /v1/assessments/{assessmentId}/guidance": getGuidance,
   "POST /v1/assessments/{assessmentId}/conditions/{conditionId}/answers":
     submitConditionAnswers,
+  "GET /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}":
+    getAnalysisConditionDetails,
   "POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}":
     editAnalysisCondition,
   "POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}/reject":
     rejectAnalysisCondition,
-  // Legacy demo submission loop + health
-  "POST /submissions": submissionsHandler,
   "GET /health": healthHandler,
   // The best-effort intakes (client-errors, client-events, feedback) are
   // served by the separate intake Lambda (lambda/intake.js) so a slow PostHog

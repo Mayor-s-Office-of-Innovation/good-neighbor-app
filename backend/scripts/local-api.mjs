@@ -121,6 +121,7 @@ import { handler as clientEventsHandler } from "../src/handlers/client-events.js
 import { handler as feedbackHandler } from "../src/handlers/feedback.js";
 import {
   editAnalysisCondition,
+  getAnalysisConditionDetails,
   rejectAnalysisCondition,
 } from "../src/handlers/analysis-amendments.js";
 import {
@@ -381,6 +382,11 @@ const routes = [
   route("GET", "/v1/tasks", listTasks),
   route("POST", "/v1/duplicates:batch", getDuplicateLinks),
   route("POST", "/v1/tasks/{taskId}/duplicate:separate", separateDuplicate),
+  route(
+    "GET",
+    "/v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}",
+    getAnalysisConditionDetails,
+  ),
   route("GET", "/v1/tasks/{taskId}/details", getTaskDetails),
   route("PATCH", "/v1/tasks/{taskId}/action", updateTaskAction),
   route("POST", "/v1/tasks/{taskId}/custom-action", recordCustomTaskAction),

@@ -35,18 +35,20 @@ function entryFor(translations, locale) {
 /**
  * The active-locale translation of one analyzer field, or undefined when the
  * record has none (callers fall back to the canonical English field).
- * @param {{ translations?: unknown } | null | undefined} record a concern, condition, or task
+ * @param {{ translations?: unknown, descriptionEdited?: boolean, titleEdited?: boolean } | null | undefined} record a concern, condition, or task
  * @param {"user_friendly_label" | "description"} key
  * @returns {string | undefined}
  */
 export function analyzerTranslation(record, key) {
+  if (key === "description" && record?.descriptionEdited) return undefined;
+  if (key === "user_friendly_label" && record?.titleEdited) return undefined;
   const text = entryFor(record?.translations, getLocale())?.[key];
   return typeof text === "string" && text ? text : undefined;
 }
 
 /**
  * Whether a record already holds both translated fields for a locale.
- * @param {{ translations?: unknown } | null | undefined} record
+ * @param {{ translations?: unknown, descriptionEdited?: boolean, titleEdited?: boolean } | null | undefined} record
  * @param {string} locale
  * @returns {boolean}
  */

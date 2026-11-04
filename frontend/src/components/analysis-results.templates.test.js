@@ -293,7 +293,9 @@ describe("analysis result summaries", () => {
     expect(cards[0]).toContain(
       t("card.meta.newWithReference", { reference: "GUB-STJ-001" }),
     );
-    expect(cards[0]).not.toContain("long-assessment-id");
+    expect(cards[0].replace(/data-assessment-id="[^"]*"/g, "")).not.toContain(
+      "long-assessment-id",
+    );
   });
 
   it("falls back to assessment ids for legacy task cards without display ids", () => {
@@ -365,7 +367,9 @@ describe("analysis result summaries", () => {
     expect(cards).toHaveLength(1);
     expect(cards[0]).toContain("Blocking access");
     expect(cards[0]).toContain(`>${t("card.meta.new")}</span>`);
-    expect(cards[0]).not.toContain("long-assessment-id");
+    expect(cards[0].replace(/data-assessment-id="[^"]*"/g, "")).not.toContain(
+      "long-assessment-id",
+    );
   });
 
   it("renders task cards alongside unpaired condition questions", () => {
@@ -1197,7 +1201,7 @@ describe("card redesign", () => {
   };
   it("shows the new rubric label on an existing to-do card with one edit target and an X", () => {
     const card = taskAnalysisCard({
-      task,
+      task: { ...task, status: "open", completedAt: undefined },
       action: { kind: "done", label: "We picked this up" },
       statusLabel: "",
     });

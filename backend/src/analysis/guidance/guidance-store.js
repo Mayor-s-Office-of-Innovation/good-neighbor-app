@@ -250,7 +250,11 @@ function applyAssessmentConditionDelta({
       Number(priorSummary.conditionsResolvedToTasks ?? 0) +
       (isResolvedToTasks(nextCondition) ? 1 : 0) -
       (isResolvedToTasks(priorCondition) ? 1 : 0),
-    openTaskCount: Number(priorSummary.openTaskCount ?? 0) + (taskItem ? 1 : 0),
+    openTaskCount:
+      Number(priorSummary.openTaskCount ?? 0) +
+      (taskItem?.status === "open" || taskItem?.status === "completing"
+        ? 1
+        : 0),
     actionCount:
       Number(priorSummary.actionCount ?? 0) +
       (taskItem?.kind === "action" ? 1 : 0),
@@ -299,6 +303,7 @@ function applyAssessmentConditionDelta({
  * @property {number} severity
  * @property {string} [severityLabel]
  * @property {string} [userFriendlyLabel]
+ * @property {boolean} [descriptionEdited]
  * @property {string} [description]
  * @property {ConditionTranslationsInput} [translations]
  * @property {string[]} [sourceArtifactIds]
@@ -388,6 +393,7 @@ function buildConditionItem({
     severityLabel: condition.severityLabel,
     userFriendlyLabel: condition.userFriendlyLabel,
     description: condition.description,
+    ...(condition.descriptionEdited ? { descriptionEdited: true } : {}),
     ...translationsField(condition.translations),
     answers: {},
     status:
@@ -462,6 +468,7 @@ function buildTaskItem({
     userFriendlyLabel: condition.userFriendlyLabel,
     label: rule.outcome.label,
     description: condition.description,
+    ...(condition.descriptionEdited ? { descriptionEdited: true } : {}),
     ...translationsField(condition.translations),
     guidance: rule.outcome.guidance,
     buttons: rule.outcome.buttons,
@@ -1180,6 +1187,7 @@ export async function artifactTaskLocationUpdates({
 
 /**
  * @param {object} opts
+ * @param {{ruleId: string, description: string, title?: string, category?: string, revision?: number, requestId?: string, customAction?: {text:string,resolved:boolean}}} [opts.manualEdit]
  * @param {string} opts.tableName
  * @param {string} opts.siteId
  * @param {string} opts.assessmentId
@@ -1218,14 +1226,58 @@ export async function answerCondition(opts) {
     }
 
     const assessmentItem = assessmentResult.Item;
-    const conditionItem = conditionResult.Item;
+    let conditionItem = conditionResult.Item;
+    const priorCondition = conditionItem;
     if (assessmentItem.supersededByAssessmentId) {
       throw namedError(
         "AssessmentRevisionConflict",
         "Assessment has been replaced; reload its guidance",
       );
     }
-    if (conditionItem.status !== "needs_answer") {
+    if (
+      opts.manualEdit?.requestId &&
+      conditionItem.detailsEditId === opts.manualEdit.requestId
+    ) {
+      const taskItem = conditionItem.taskIds?.[0]
+        ? (
+            await ddb.send(
+              new GetCommand({
+                TableName: opts.tableName,
+                Key: taskKey(opts.siteId, conditionItem.taskIds[0]),
+                ConsistentRead: true,
+              }),
+            )
+          ).Item
+        : null;
+      return {
+        assessmentItem,
+        conditionItem,
+        taskItem: taskItem ?? null,
+        evaluation: evaluateCondition({
+          condition: {
+            category: conditionItem.analyzerCategory,
+            severity: conditionItem.severity,
+          },
+          answers: conditionItem.answers || {},
+          catalog:
+            opts.catalog ??
+            catalogForPolicyVersion(conditionItem.policyVersion),
+        }),
+      };
+    }
+    if (
+      opts.manualEdit &&
+      Number(assessmentItem.assessmentRevision || 0) !==
+        opts.manualEdit.revision
+    )
+      throw namedError(
+        "AssessmentRevisionConflict",
+        "Issue changed while editing",
+      );
+    if (
+      conditionItem.status !== "needs_answer" &&
+      !(opts.manualEdit && conditionItem.status === "manual_review")
+    ) {
       const err = namedError(
         "TransactionCanceledException",
         "Condition is not awaiting answers",
@@ -1266,7 +1318,7 @@ export async function answerCondition(opts) {
       .../** @type {Record<string, unknown>} */ (conditionItem.answers ?? {}),
       ...opts.answers,
     };
-    const evaluation = evaluateCondition({
+    let evaluation = evaluateCondition({
       condition: {
         category: String(
           conditionItem.analyzerCategory ?? conditionItem.canonicalCategory,
@@ -1280,6 +1332,32 @@ export async function answerCondition(opts) {
           .reportedAt ?? "",
       ),
     });
+
+    if (opts.manualEdit) {
+      const rule = catalog.rules.find(
+        (candidate) => candidate.ruleId === opts.manualEdit?.ruleId,
+      );
+      if (!rule) throw namedError("NotFound", "Action not found");
+      evaluation = {
+        kind: "outcome",
+        category: rule.category,
+        rule,
+        outcome: rule.outcome,
+      };
+      conditionItem = {
+        ...conditionItem,
+        description: opts.manualEdit.description,
+        descriptionEdited: true,
+        ...(opts.manualEdit.title !== undefined
+          ? {
+              userFriendlyLabel: opts.manualEdit.title.trim(),
+              titleEdited: true,
+            }
+          : {}),
+        canonicalCategory: rule.category,
+        detailsEditId: opts.manualEdit.requestId,
+      };
+    }
 
     /** @type {Record<string, unknown> | null} */
     let taskItem = null;
@@ -1311,6 +1389,9 @@ export async function answerCondition(opts) {
             typeof conditionItem.description === "string"
               ? conditionItem.description
               : undefined,
+          ...(conditionItem.descriptionEdited
+            ? { descriptionEdited: true }
+            : {}),
           ...(conditionItem.translations
             ? { translations: conditionItem.translations }
             : {}),
@@ -1327,6 +1408,51 @@ export async function answerCondition(opts) {
         shortId,
         now,
       });
+    }
+
+    if (taskItem && conditionItem.titleEdited) taskItem.titleEdited = true;
+    if (taskItem && opts.manualEdit) {
+      taskItem.actionOverride = {
+        ruleId: opts.manualEdit.ruleId,
+        selectedAt: now,
+      };
+      const custom = opts.manualEdit.customAction;
+      if (custom) {
+        const status = custom.resolved ? "completed" : "in_progress";
+        Object.assign(taskItem, {
+          status,
+          guidance: "",
+          appActions: [],
+          appActionStatus: "not_required",
+          customAction: {
+            ...custom,
+            text: custom.text.trim(),
+            recordedAt: now,
+          },
+          actionOverride: { type: "custom", selectedAt: now },
+          canBeInProgress: !custom.resolved,
+          ...(custom.resolved
+            ? {
+                completedAt: now,
+                resolvedAt: now,
+                completionMethod: "custom_action",
+              }
+            : {
+                inProgressAt: now,
+                agency: "other",
+                inProgressActionKind: "custom_action",
+                lastAnsweredPresencePeriod: 0,
+              }),
+          ...taskWorklistDateGsi(
+            opts.siteId,
+            status,
+            String(taskItem.kind),
+            Number(taskItem.severity || 0),
+            now,
+            String(taskItem.taskId),
+          ),
+        });
+      }
     }
 
     const status =
@@ -1352,10 +1478,11 @@ export async function answerCondition(opts) {
         evaluation.kind === "needs_answer" ? evaluation.question : null,
       updatedAt: now,
     };
+    if (opts.manualEdit?.customAction) updatedCondition.outcome = null;
     const priorRevision = Number(assessmentItem.assessmentRevision ?? 0);
     const updatedAssessment = applyAssessmentConditionDelta({
       assessment: assessmentItem,
-      priorCondition: conditionItem,
+      priorCondition,
       nextCondition: updatedCondition,
       taskItem,
       now,
@@ -1379,7 +1506,7 @@ export async function answerCondition(opts) {
           Item: updatedCondition,
           ConditionExpression: "#status = :needsAnswer",
           ExpressionAttributeNames: { "#status": "status" },
-          ExpressionAttributeValues: { ":needsAnswer": "needs_answer" },
+          ExpressionAttributeValues: { ":needsAnswer": priorCondition.status },
         },
       },
     ];
@@ -1394,7 +1521,41 @@ export async function answerCondition(opts) {
       });
     }
 
-    if (taskItem)
+    if (taskItem && opts.manualEdit?.customAction) {
+      const updateId = randomUUID();
+      const custom = opts.manualEdit.customAction;
+      const label = custom.resolved
+        ? "Site marked as resolved"
+        : "Other action taken";
+      taskItem.latestUpdateId = updateId;
+      taskItem.latestUpdateLabel = label;
+      tx.push({
+        Put: {
+          TableName: opts.tableName,
+          Item: {
+            ...taskUpdateKey(
+              opts.siteId,
+              String(taskItem.taskId),
+              now,
+              updateId,
+            ),
+            ...taskUpdateTimelineGsi(opts.siteId, now, updateId),
+            entityType: "task_update",
+            taskId: taskItem.taskId,
+            updateId,
+            type: custom.resolved ? "task_completed" : "action_taken",
+            label,
+            text: custom.text.trim(),
+            occurredAt: now,
+            actorId: "site-team",
+            documentationState: "closed",
+          },
+          ConditionExpression: "attribute_not_exists(sk)",
+        },
+      });
+    }
+
+    if (taskItem && !opts.manualEdit)
       tx.push(
         ...sf311Job(opts.tableName, opts.siteId, taskItem, "created", opts.env),
       );
@@ -1444,6 +1605,11 @@ export async function answerCondition(opts) {
       if (err instanceof Error && err.name === "TransactionCanceledException") {
         // Re-evaluate surviving sources on retry, including when DynamoDB
         // omits cancellation reasons. Never classify unrelated conflicts as deletion.
+        if (opts.manualEdit)
+          throw namedError(
+            "AssessmentRevisionConflict",
+            "Issue changed while editing",
+          );
         if (attempt < 2) continue;
         if (checkId && originalEvidence.length) {
           const removed = await Promise.all(

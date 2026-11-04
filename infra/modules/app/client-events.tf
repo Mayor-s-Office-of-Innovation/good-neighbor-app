@@ -44,6 +44,8 @@ resource "aws_sqs_queue" "client_events" {
 
 # ---- API Gateway → SQS -------------------------------------------------------
 
+# HTTP API service integrations assume this dedicated role as API Gateway.
+# The permissions policy below scopes its use to one queue and its KMS key.
 data "aws_iam_policy_document" "apigateway_assume" {
   statement {
     actions = ["sts:AssumeRole"]
@@ -51,10 +53,11 @@ data "aws_iam_policy_document" "apigateway_assume" {
       type        = "Service"
       identifiers = ["apigateway.amazonaws.com"]
     }
-    # Only API Gateway acting for this account may assume the role
-    # (confused-deputy guard; the role can do nothing but enqueue anyway).
+    # Require this account whenever STS receives the source-account context.
+    # Service-role assumptions can omit it; configuring the integration still
+    # requires permission to pass this role in the API's account.
     condition {
-      test     = "StringEquals"
+      test     = "StringEqualsIfExists"
       variable = "aws:SourceAccount"
       values   = [data.aws_caller_identity.current.account_id]
     }

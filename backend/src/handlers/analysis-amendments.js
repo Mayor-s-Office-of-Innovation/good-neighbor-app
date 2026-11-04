@@ -1,6 +1,16 @@
+import { categoryOptions, actionOptions } from "./task-details.js";
+import { catalogForPolicyVersion } from "../analysis/guidance/catalog-registry.js";
+import { answerCondition } from "../analysis/guidance/guidance-store.js";
+import { assessmentKey, conditionKey } from "./keys.js";
 import { deleteTaskGroup } from "../analysis/duplicates/deletion.js";
 import { statusConditionId } from "../domain/system-status.js";
-import { PutCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  descriptionWrites,
+  taskDescriptionWrite,
+  validDescription,
+  validTitle,
+} from "./description-edits.js";
+import { PutCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { getConfig } from "../config.js";
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
@@ -149,6 +159,71 @@ async function findAnalysisContext({ tableName, siteId, checkId, artifactId }) {
   };
 }
 
+/** @param {any} event */
+async function conditionContext(event) {
+  const { dynamoTable } = getConfig();
+  const siteId = deriveSiteId(event);
+  const { checkId, artifactId, conditionId } = event.pathParameters || {};
+  const read = async (/** @type {{pk:string,sk:string}} */ Key) =>
+    (
+      await ddb.send(
+        new GetCommand({ TableName: dynamoTable, Key, ConsistentRead: true }),
+      )
+    ).Item;
+  const requestedId = event.queryStringParameters?.assessmentId;
+  if (requestedId) {
+    const assessment = await read(assessmentKey(siteId, requestedId));
+    const condition = await read(
+      conditionKey(siteId, requestedId, conditionId),
+    );
+    if (
+      !assessment ||
+      assessment.checkId !== checkId ||
+      assessment.supersededByAssessmentId ||
+      !condition ||
+      !condition.source?.artifactIds?.includes(artifactId)
+    )
+      return null;
+    return { condition, assessment, assessmentId: requestedId };
+  }
+  const pointer = await read({
+    pk: `SITE#${siteId}`,
+    sk: `GUIDANCE_CURRENT#${JSON.stringify([checkId, artifactId])}`,
+  });
+  if (!pointer?.assessmentId) return null;
+  const condition = await read(
+    conditionKey(siteId, pointer.assessmentId, conditionId),
+  );
+  const assessment = await read(assessmentKey(siteId, pointer.assessmentId));
+  return condition && assessment && !assessment.supersededByAssessmentId
+    ? { condition, assessment, assessmentId: pointer.assessmentId }
+    : null;
+}
+
+/** GET the current generated condition and its selectable actions. @param {any} event */
+export async function getAnalysisConditionDetails(event) {
+  const context = await conditionContext(event);
+  if (!context) return jsonResponse(404, { error: "Condition not found" });
+  const { condition, assessment } = context;
+  const selection = {
+    policyVersion: condition.policyVersion || assessment.policyVersion,
+    category: condition.canonicalCategory || condition.category,
+    ruleId: condition.selectedRuleId,
+  };
+  return jsonResponse(200, {
+    clicked: condition,
+    members: [{ ...condition, checkId: assessment.checkId }],
+    category: selection.category,
+    editable:
+      condition.status === "needs_answer" ||
+      condition.status === "manual_review",
+    categories: categoryOptions(selection),
+    actions: actionOptions(selection).options,
+    selectedRuleId: "",
+    revision: Number(assessment.assessmentRevision || 0),
+  });
+}
+
 /**
  * POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}
  * @param {import("aws-lambda").APIGatewayProxyEventV2WithJWTAuthorizer} event
@@ -172,9 +247,27 @@ export async function editAnalysisCondition(event) {
   }
   const bodyObject =
     body && typeof body === "object"
-      ? /** @type {{ description?: unknown, language?: unknown }} */ (body)
+      ? /** @type {{ description?: unknown, language?: unknown, title?: string, category?: string, ruleId?: string, customAction?: {text:string,resolved:boolean}, revision?: number, requestId?: string }} */ (
+          body
+        )
       : undefined;
+  if (
+    bodyObject?.requestId !== undefined &&
+    (typeof bodyObject.requestId !== "string" ||
+      bodyObject.requestId.length > 100)
+  )
+    return jsonResponse(400, { error: "Invalid requestId" });
+  if (
+    bodyObject?.ruleId &&
+    (!Number.isSafeInteger(bodyObject.revision) ||
+      Number(bodyObject.revision) < 0)
+  )
+    return jsonResponse(400, {
+      error: "A valid revision is required for action edits",
+    });
   const description = bodyObject?.description;
+  if (bodyObject?.title !== undefined && !validTitle(bodyObject.title))
+    return jsonResponse(400, { error: "Invalid title" });
   if (typeof description !== "string" || description.trim().length < 5) {
     return jsonResponse(400, {
       error: "Description must be at least 5 characters",
@@ -185,32 +278,126 @@ export async function editAnalysisCondition(event) {
       error: `Description must be ${MAX_DESCRIPTION_LENGTH} characters or fewer`,
     });
   }
-  // Pass-through to the analyzer (falls back to English on unknown tags).
-  const language =
-    typeof bodyObject?.language === "string" && bodyObject.language.trim()
-      ? bodyObject.language.trim()
-      : undefined;
-
+  if (!validDescription(description))
+    return jsonResponse(400, { error: "Invalid description" });
   try {
-    const context = await findAnalysisContext({
-      tableName: dynamoTable,
+    if (
+      bodyObject?.ruleId ||
+      bodyObject?.category ||
+      bodyObject?.title !== undefined
+    ) {
+      const context = await conditionContext(event);
+      if (!context) return jsonResponse(404, { error: "Condition not found" });
+      if (
+        bodyObject.revision !== undefined &&
+        bodyObject.revision !==
+          Number(context.assessment.assessmentRevision || 0) &&
+        context.condition.detailsEditId !== bodyObject.requestId
+      )
+        return jsonResponse(409, { error: "Issue changed while editing" });
+      if (
+        !bodyObject.ruleId &&
+        bodyObject.requestId &&
+        context.condition.detailsEditId === bodyObject.requestId
+      )
+        return jsonResponse(200, {
+          description: context.condition.description,
+          condition: context.condition,
+          assessment: context.assessment,
+        });
+      if (bodyObject.ruleId) {
+        const catalog = catalogForPolicyVersion(
+          context.condition.policyVersion || context.assessment.policyVersion,
+        );
+        const category =
+          bodyObject.category || context.condition.canonicalCategory;
+        const custom = bodyObject.ruleId === "__custom__";
+        const rule = catalog.rules.find(
+          (candidate) =>
+            candidate.category === category &&
+            candidate.outcome.buttons[0] &&
+            (custom || candidate.ruleId === bodyObject.ruleId),
+        );
+        if (
+          !rule ||
+          (custom &&
+            (!bodyObject.customAction?.text?.trim() ||
+              bodyObject.customAction.text.length > 1000 ||
+              typeof bodyObject.customAction.resolved !== "boolean"))
+        )
+          return jsonResponse(400, { error: "Invalid action" });
+        const result = await answerCondition({
+          tableName: dynamoTable,
+          siteId,
+          assessmentId: context.assessmentId,
+          conditionId,
+          answers: {},
+          manualEdit: {
+            ...bodyObject,
+            description: description.trim(),
+            ruleId: rule.ruleId,
+            customAction: custom ? bodyObject.customAction : undefined,
+          },
+        });
+        return jsonResponse(200, {
+          description: description.trim(),
+          condition: result.conditionItem,
+          task: result.taskItem,
+          assessment: result.assessmentItem,
+        });
+      }
+      if (
+        bodyObject.category &&
+        bodyObject.category !== context.condition.canonicalCategory
+      )
+        return jsonResponse(400, {
+          error: "Select an action for the category",
+        });
+    }
+    const edit = await descriptionWrites({
+      table: dynamoTable,
       siteId,
       checkId,
       artifactId,
+      conditionId,
+      description,
+      title: bodyObject?.title,
+      assessmentId: event.queryStringParameters?.assessmentId,
+      revision: bodyObject?.revision,
+      requestId: bodyObject?.requestId,
     });
-    if (!context) {
-      return jsonResponse(404, { error: "Analysis not found" });
-    }
-    const client = await analyzerClient();
-    const result = await client.editCondition(context.analysisId, conditionId, {
+    await ddb.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          ...edit.writes,
+          ...edit.tasks.map((task) =>
+            taskDescriptionWrite(
+              dynamoTable,
+              task,
+              description,
+              bodyObject?.title,
+            ),
+          ),
+        ],
+      }),
+    );
+    return jsonResponse(200, {
       description: description.trim(),
-      appId: APP_ID,
-      requestId: requestId(body, `${context.analysisId}#${conditionId}#edit`),
-      ...(language ? { language } : {}),
+      condition: edit.condition,
     });
-    return jsonResponse(200, result);
-  } catch (err) {
-    return errorResponse(err);
+  } catch (error) {
+    if (error instanceof Error && "status" in error)
+      return jsonResponse(Number(error.status), { error: error.message });
+    if (
+      error instanceof Error &&
+      [
+        "TransactionCanceledException",
+        "AssessmentRevisionConflict",
+        "ConditionDismissed",
+      ].includes(error.name)
+    )
+      return jsonResponse(409, { error: "Description changed while editing" });
+    throw error;
   }
 }
 
