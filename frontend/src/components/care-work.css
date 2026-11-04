@@ -1,6 +1,10 @@
-/* Bottom-sheet presentation (care + complaints): the screen slides up and
-   stops ~80% of the way, top corners 26px, app background visible above —
-   the peek tells users the screen closes. Reduced motion skips the slide. */
+/* Bottom-sheet presentation (care + complaints): the screen stops ~90% of
+   the way up, top corners 26px, app background visible above — the peek
+   tells users the screen closes. Motion comes from the router's View
+   Transitions ("/care-work" and "/complaints" are SHEET_ROUTES): the sheet
+   rises over the home screen on entry, pages inside it push/pop
+   horizontally, and closing dismisses it downward. No element-level
+   animation here — it would replay on every inner remount. */
 care-work-view,
 complaint-view {
   display: block;
@@ -12,7 +16,6 @@ complaint-view {
   background: var(--surface);
   border-radius: 26px 26px 0 0;
   box-shadow: var(--shadow-lift);
-  animation: care-sheet-up 240ms ease-out;
 }
 /* On the list screens the header (title, subtitle, record CTA, past head)
    freezes: the sheet stops scrolling as a whole and only the list pane
@@ -36,17 +39,6 @@ complaint-view:has(.complaints__list) .complaints {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-}
-@keyframes care-sheet-up {
-  from {
-    translate: 0 100%;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  care-work-view,
-  complaint-view {
-    animation: none;
-  }
 }
 .app--chromeless .app__main:has(> care-work-view) {
   padding: 0;
