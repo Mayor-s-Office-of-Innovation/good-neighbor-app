@@ -1,0 +1,29 @@
+/* Shared by the public and admin apps. More specific dialog families may
+   provide a smaller limit or a separately constrained scrolling body. */
+:where(dialog) {
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
+}
+
+/* CSS constrains size; the fallback supplies measured visual-viewport and
+   trigger space because viewport units alone do not track pinch zoom. */
+:is(
+    .home-action-menu,
+    .home-settings-menu,
+    .home-site-switcher__menu
+  )[data-viewport-menu] {
+  max-width: max(0px, calc(var(--menu-viewport-width, 100vw) - 32px));
+  max-height: min(
+    calc(var(--menu-viewport-height, 100dvh) - 32px),
+    var(--menu-available-height, 100dvh)
+  );
+  position: fixed;
+  inset: auto;
+  transform: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
+}

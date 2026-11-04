@@ -8,7 +8,7 @@
    the height and scrolls inside past 94vh. */
 .ticket-detail {
   width: min(100% - 2rem, var(--app-content-max-width, 34rem));
-  max-height: 94vh;
+  max-height: calc(100dvh - 2rem);
   border: 0;
   border-radius: var(--radius, 1rem);
   padding: 0;
