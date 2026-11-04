@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The loaders are covered through their own routes (tasks.test.js and
@@ -219,6 +221,52 @@ describe("getHome", () => {
       reqId: "req-1",
       message: "throttled",
     });
+  });
+
+  it("handles a task rejection while checks are still pending", () => {
+    // Run the actual handler outside Vitest: mock promise tracking can mask
+    // unhandled rejections, while Node must survive until checks resolve.
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--experimental-vm-modules",
+        "--input-type=module",
+        "-e",
+        `
+        import { readFileSync } from "node:fs";
+        import { SourceTextModule, SyntheticModule } from "node:vm";
+        const dependencies = {
+          getConfig: () => ({ dynamoTable: "synthetic-table" }),
+          deriveSiteId: () => "synthetic-site",
+          parseLimit: () => undefined,
+          jsonResponse: (statusCode, body) => ({ statusCode, body }),
+          logServerError: () => {},
+          loadChecks: () => new Promise(resolve => {
+            setTimeout(() => resolve({ checks: [{ checkId: "chk_1" }] }), 20);
+          }),
+          loadTaskWorklist: async (_table, _site, status) => {
+            if (status === "open") throw new Error("Synthetic task failure");
+            return [{ taskId: "synthetic-" + status }];
+          },
+        };
+        const handler = new SourceTextModule(readFileSync(${JSON.stringify(new URL("./home.js", import.meta.url).pathname)}, "utf8"));
+        await handler.link(() => new SyntheticModule(Object.keys(dependencies), function () {
+          for (const [name, value] of Object.entries(dependencies)) this.setExport(name, value);
+        }));
+        await handler.evaluate();
+        console.log(JSON.stringify(await handler.namespace.getHome({})));
+      `,
+      ],
+      { encoding: "utf8", timeout: 10_000 },
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    const { statusCode, body } = JSON.parse(result.stdout);
+    expect(statusCode).toBe(200);
+    expect(body.checks).toEqual({ ok: true, items: [{ checkId: "chk_1" }] });
+    expect(body.tasks.open).toEqual({ ok: false, error: "Error" });
+    expect(body.tasks.completed.ok).toBe(true);
   });
 
   it("reports a failed checks read as ok:false while the worklists return", async () => {

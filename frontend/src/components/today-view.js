@@ -1168,6 +1168,7 @@ class TodayView extends HTMLElement {
           throw new Error("Refresh unavailable");
         const generation = this._homeRefreshGeneration;
         const guidanceGeneration = ++this._guidanceGeneration;
+        const fetchedAt = Date.now();
         const home = fetchHome(HOME_LIMITS);
         const checks = home.then((response) => {
           if (!current()) return [];
@@ -1190,7 +1191,7 @@ class TodayView extends HTMLElement {
           import("../services/home-task-freshness.js"),
         ]).then(([response, { applyHomeTaskSections }]) =>
           current()
-            ? applyHomeTaskSections(this, response.tasks, Date.now())
+            ? applyHomeTaskSections(this, response.tasks, fetchedAt)
             : false,
         );
         const guidance = checks.then(async (rows) => {

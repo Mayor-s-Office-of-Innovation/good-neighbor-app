@@ -1143,6 +1143,52 @@ describe("return-to-app task freshness", () => {
     }
   });
 
+  it("preserves a newer tab refresh that finishes during a pull refresh", async () => {
+    const { view, api } = await fixture();
+    const { refreshActiveTab } = await import(
+      "../services/home-task-freshness.js"
+    );
+    view.dispatchEvent = vi.fn();
+    view._homeModel.checks = [];
+    view._loadHomeGuidance = vi.fn(async () => {});
+    /** @type {(response: any) => void} */
+    let finishHome = () => {};
+    const home = vi.spyOn(api, "fetchHome").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishHome = resolve;
+        }),
+    );
+    const newer = { taskId: "newer", status: "open" };
+    const tab = vi
+      .spyOn(api, "listTasks")
+      .mockResolvedValue({ tasks: [newer] });
+    const now = vi.spyOn(Date, "now").mockReturnValue(100);
+    try {
+      const pending = view._refreshFromPull();
+      await vi.waitFor(() => expect(home).toHaveBeenCalledTimes(1));
+      now.mockReturnValue(200);
+      expect(await refreshActiveTab(view, { maxAge: 0 })).toBe(true);
+      expect(tab).toHaveBeenCalledExactlyOnceWith({
+        status: "open",
+        limit: 50,
+      });
+      expect(view._taskListFreshness.get("open")).toBe(200);
+
+      now.mockReturnValue(300);
+      finishHome(homeResponse());
+      await pending;
+      expect(view._homeModel.tasks).toEqual([newer]);
+      expect(view._taskListFreshness.get("open")).toBe(200);
+      expect(view._taskListFreshness.get("completed")).toBe(100);
+      expect(view._pullRefreshState).toBe("idle");
+    } finally {
+      home.mockRestore();
+      tab.mockRestore();
+      now.mockRestore();
+    }
+  });
+
   it("ignores completion of a pull refresh after its owner changes", async () => {
     const { view, api } = await fixture();
     view._guidanceGeneration = 1;

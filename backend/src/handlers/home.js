@@ -108,9 +108,13 @@ export const getHome = async (event) => {
   const taskReads = statuses.map((status) =>
     loadTaskWorklist(dynamoTable, siteId, status, tasksLimit),
   );
-  const checksResult =
-    checksRead && (await Promise.allSettled([checksRead]))[0];
-  const taskResults = await Promise.allSettled(taskReads);
+  // Observe both groups before awaiting either so an early task failure
+  // cannot become unhandled while the checks read is still pending.
+  const [checkResults, taskResults] = await Promise.all([
+    Promise.allSettled(checksRead ? [checksRead] : []),
+    Promise.allSettled(taskReads),
+  ]);
+  const checksResult = checkResults[0];
   const settled = [...(checksResult ? [checksResult] : []), ...taskResults];
 
   if (settled.every((result) => result.status === "rejected")) {
