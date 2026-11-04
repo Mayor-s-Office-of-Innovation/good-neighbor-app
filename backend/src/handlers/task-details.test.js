@@ -715,3 +715,71 @@ it("clears inherited guidance for a custom action", async () => {
     status: "in_progress",
   });
 });
+
+it.each(["text", "action", "custom"])(
+  "edits a retained task through its current assessment (%s)",
+  async (mode) => {
+    put(
+      task("retained", {
+        assessmentId: "original",
+        conditionId: "survivor",
+        checkId: "check",
+        sourceArtifactIds: ["photo"],
+      }),
+    );
+    put({
+      pk: "SITE#site",
+      sk: "ASSESSMENT#original",
+      checkId: "check",
+      lineageId: "photo",
+      supersededByAssessmentId: "successor",
+    });
+    put({
+      pk: "SITE#site",
+      sk: 'GUIDANCE_CURRENT#["check","photo"]',
+      assessmentId: "successor",
+    });
+    put({
+      pk: "SITE#site",
+      sk: "ASSESSMENT#successor",
+      checkId: "check",
+      assessmentRevision: 2,
+    });
+    put({
+      pk: "SITE#site",
+      sk: "ASSESSMENT#successor#COND#survivor",
+      status: "tasks_created",
+      taskIds: ["retained"],
+      source: { artifactIds: ["photo"] },
+    });
+    const body = {
+      title: "Edited surviving issue",
+      description: "Corrected synthetic observation",
+      requestId: "retained-edit",
+      ...(mode === "action" ? { ruleId: "LITTER-2", category: "Litter" } : {}),
+      ...(mode === "custom"
+        ? { text: "Synthetic work performed", resolved: true }
+        : {}),
+    };
+    const handler =
+      mode === "custom" ? recordCustomTaskAction : updateTaskAction;
+    const response = await handler(event("retained", body));
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body).task).toMatchObject({
+      taskId: "retained",
+      assessmentId: "original",
+      description: body.description,
+      userFriendlyLabel: body.title,
+    });
+    const writes = state.transactions.at(-1);
+    expect(
+      writes.some(
+        (entry) =>
+          entry.Update?.Key.sk === "ASSESSMENT#successor#COND#survivor",
+      ),
+    ).toBe(true);
+    expect(
+      writes.some((entry) => entry.Update?.Key.sk === "ASSESSMENT#original"),
+    ).toBe(false);
+  },
+);

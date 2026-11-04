@@ -3,7 +3,9 @@ const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
 import { descriptionWrites } from "./description-edits.js";
 
-beforeEach(() => send.mockReset());
+beforeEach(() => {
+  send.mockReset();
+});
 
 it.each(["needs_answer", "manual_review"])(
   "guards a pending %s condition at transaction time",
@@ -131,4 +133,108 @@ it("stores the retry identity atomically with question text", async () => {
     Update: { ExpressionAttributeValues: { ":requestId": "same-save" } },
   });
   expect(edit.condition?.detailsEditId).toBe("same-save");
+});
+
+it.each([
+  "retained",
+  "removed",
+  "replaced",
+  "wrong-photo",
+  "wrong-check",
+  "rejected",
+])(
+  "resolves a superseded task assessment only for its surviving condition: %s",
+  async (state) => {
+    /** @type {Record<string, any>} */
+    const rows = {
+      "ASSESSMENT#original": {
+        checkId: "check",
+        lineageId: "artifact",
+        supersededByAssessmentId: "middle",
+      },
+      'GUIDANCE_CURRENT#["check","artifact"]': { assessmentId: "current" },
+      "ASSESSMENT#current": {
+        checkId: state === "wrong-check" ? "other" : "check",
+        assessmentRevision: 4,
+      },
+      "ASSESSMENT#current#COND#survivor":
+        state === "removed"
+          ? undefined
+          : {
+              status: state === "rejected" ? "rejected" : "tasks_created",
+              taskIds: [
+                state === "replaced" ? "replacement-task" : "retained-task",
+              ],
+              source: {
+                artifactIds: [state === "wrong-photo" ? "other" : "artifact"],
+              },
+            },
+    };
+    send.mockImplementation(async (command) => ({
+      Item: rows[command.input.Key.sk],
+    }));
+    const task = {
+      taskId: "retained-task",
+      assessmentId: "original",
+      conditionId: "survivor",
+      checkId: "check",
+      sourceArtifactIds: ["artifact"],
+      status: "open",
+    };
+    const result = descriptionWrites({
+      table: "table",
+      siteId: "site",
+      task,
+      description: "Edited surviving issue",
+      title: "Edited title",
+    });
+    if (state !== "retained") {
+      await expect(result).rejects.toMatchObject({ status: 409 });
+      return;
+    }
+    const edit = await result;
+    expect(edit.writes[0]).toMatchObject({
+      Update: {
+        Key: { sk: "ASSESSMENT#current" },
+        ExpressionAttributeValues: { ":prior": 4, ":next": 5 },
+      },
+    });
+    expect(edit.writes[1]).toMatchObject({
+      Update: {
+        Key: { sk: "ASSESSMENT#current#COND#survivor" },
+        ExpressionAttributeValues: {
+          ":retainedTask": "retained-task",
+          ":title": "Edited title",
+        },
+      },
+    });
+    expect(edit.writes[0].Update?.ConditionExpression).toContain(
+      "attribute_not_exists(supersededByAssessmentId)",
+    );
+    expect(edit.writes[1].Update?.ConditionExpression).toContain(
+      "contains(taskIds, :retainedTask)",
+    );
+    expect(task.assessmentId).toBe("original");
+  },
+);
+
+it("bounds redirect loops while assessments are changing", async () => {
+  send.mockImplementation(async (command) => ({
+    Item: command.input.Key.sk.startsWith("GUIDANCE_CURRENT#")
+      ? { assessmentId: "original" }
+      : { supersededByAssessmentId: "next" },
+  }));
+  await expect(
+    descriptionWrites({
+      table: "table",
+      siteId: "site",
+      task: {
+        taskId: "task",
+        status: "open",
+        assessmentId: "original",
+        conditionId: "condition",
+      },
+      description: "Synthetic edit",
+    }),
+  ).rejects.toMatchObject({ status: 409 });
 });

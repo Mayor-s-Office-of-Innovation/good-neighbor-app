@@ -2578,3 +2578,100 @@ describe("manual clarification replacement", () => {
     ).toBe(false);
   });
 });
+
+it("edits a retained task after another issue on its photo is removed", async () => {
+  send.mockReset();
+  send.mockResolvedValue({});
+  mockTaskShortIdAllocation();
+  const input = {
+    siteId: "site-1",
+    assessmentId: "original",
+    checkId: "check",
+    reportedAt: "2026-11-03T12:00:00Z",
+    rawAssessment: { artifactId: "photo" },
+    conditions: ["survivor", "removed"].map((conditionId) => ({
+      conditionId,
+      category: "Litter",
+      severity: 1,
+      description: `Synthetic ${conditionId} issue`,
+      sourceArtifactIds: ["photo"],
+    })),
+  };
+  let sequence = 0;
+  const original = await storeEvaluatedAssessment(input, {
+    tableName: "table",
+    idFactory: () => `task-${sequence++}`,
+  });
+  send.mockImplementation(async (command) => {
+    if (command instanceof GetCommand)
+      return {
+        Item:
+          command.input.Key?.sk === "ASSESSMENT#original"
+            ? original.assessmentItem
+            : undefined,
+      };
+    if (command instanceof QueryCommand)
+      return { Items: original.conditionItems };
+    if (command instanceof BatchGetCommand)
+      return { Responses: { table: original.taskItems } };
+    return {};
+  });
+  const successor = await storeEvaluatedAssessment(
+    {
+      ...input,
+      assessmentId: "successor",
+      previousAssessmentId: "original",
+      conditions: [input.conditions[0]],
+    },
+    { tableName: "table" },
+  );
+  const survivor = successor.taskItems[0];
+  expect(successor.taskItems).toHaveLength(1);
+  expect(survivor.taskId).toBe(original.taskItems[0].taskId);
+  expect(survivor.assessmentId).toBe("original");
+  const rows = [
+    { ...original.assessmentItem, supersededByAssessmentId: "successor" },
+    successor.assessmentItem,
+    ...successor.conditionItems,
+    {
+      pk: "SITE#site-1",
+      sk: 'GUIDANCE_CURRENT#["check","photo"]',
+      assessmentId: "successor",
+    },
+  ];
+  send.mockImplementation(async (command) => ({
+    Item: rows.find(
+      (row) =>
+        row.pk === command.input.Key.pk && row.sk === command.input.Key.sk,
+    ),
+  }));
+  const { descriptionWrites } = await import(
+    "../../handlers/description-edits.js"
+  );
+  const edit = await descriptionWrites({
+    table: "table",
+    siteId: "site-1",
+    task: survivor,
+    title: "Edited surviving issue",
+    description: "Corrected surviving issue text",
+  });
+  expect(edit.writes[0]).toMatchObject({
+    Update: { Key: { sk: "ASSESSMENT#successor" } },
+  });
+  expect(edit.writes[1]).toMatchObject({
+    Update: { Key: { sk: "ASSESSMENT#successor#COND#survivor" } },
+  });
+  expect(edit.condition).toMatchObject({
+    description: "Corrected surviving issue text",
+    userFriendlyLabel: "Edited surviving issue",
+  });
+  // A reload still returns the original task provenance; it must remain editable.
+  await expect(
+    descriptionWrites({
+      table: "table",
+      siteId: "site-1",
+      task: { ...survivor },
+      description: "Another correction after reload",
+    }),
+  ).resolves.toMatchObject({ tasks: [survivor] });
+});

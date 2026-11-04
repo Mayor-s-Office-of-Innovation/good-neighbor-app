@@ -78,7 +78,7 @@ export async function descriptionWrites(opts) {
     !task?.assessmentId && !opts.assessmentId && artifactId
       ? await read(pointerKey)
       : null;
-  const assessmentId =
+  let assessmentId =
     task?.assessmentId || opts.assessmentId || pointer?.assessmentId;
   /** @type {NonNullable<import('@aws-sdk/lib-dynamodb').TransactWriteCommandInput['TransactItems']>} */
   const writes = [];
@@ -86,10 +86,36 @@ export async function descriptionWrites(opts) {
   const tasks = task ? [task] : [];
   let condition;
   if (assessmentId && conditionId && conditionId !== "__summary__") {
-    const assessment = await read(assessmentKey(siteId, assessmentId));
+    let assessment = await read(assessmentKey(siteId, assessmentId));
+    let redirected = false;
+    // Retained tasks keep their original assessment as provenance. Edits belong
+    // to the current copy of the condition, only while it still owns this task.
+    for (
+      let attempt = 0;
+      task && assessment?.supersededByAssessmentId;
+      attempt++
+    ) {
+      if (attempt >= 3)
+        throw Object.assign(new Error("Guidance is changing"), { status: 409 });
+      const current = await read({
+        pk: `SITE#${siteId}`,
+        sk: `GUIDANCE_CURRENT#${JSON.stringify([checkId, assessment.lineageId || artifactId])}`,
+      });
+      const nextId =
+        current?.assessmentId || assessment.supersededByAssessmentId;
+      if (nextId === assessmentId)
+        throw Object.assign(new Error("Guidance is changing"), { status: 409 });
+      assessmentId = nextId;
+      assessment = await read(assessmentKey(siteId, assessmentId));
+      redirected = true;
+    }
     condition = await read(conditionKey(siteId, assessmentId, conditionId));
     if (
       !assessment ||
+      (redirected &&
+        (assessment.checkId !== checkId ||
+          !condition?.taskIds?.includes(task?.taskId) ||
+          !condition?.source?.artifactIds?.includes(artifactId))) ||
       (opts.assessmentId &&
         (assessment.checkId !== checkId ||
           !condition?.source?.artifactIds?.includes(artifactId))) ||
@@ -135,10 +161,12 @@ export async function descriptionWrites(opts) {
             ? ", userFriendlyLabel = :title, titleEdited = :yes"
             : ""),
         ConditionExpression:
-          "attribute_exists(sk) AND #status = :conditionStatus",
+          "attribute_exists(sk) AND #status = :conditionStatus" +
+          (redirected ? " AND contains(taskIds, :retainedTask)" : ""),
         ExpressionAttributeNames: { "#status": "status" },
         ExpressionAttributeValues: {
           ":conditionStatus": condition.status,
+          ...(redirected ? { ":retainedTask": task?.taskId } : {}),
           ":text": description.trim(),
           ":yes": true,
           ...(opts.requestId ? { ":requestId": opts.requestId } : {}),
