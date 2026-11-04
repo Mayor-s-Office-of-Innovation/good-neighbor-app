@@ -912,7 +912,7 @@ h3 {
 
 .import-help {
   gap: 8px;
-  max-height: min(760px, calc(100vh - 32px));
+  max-height: min(760px, calc(100dvh - 32px));
   overflow: auto;
 }
 
@@ -1132,7 +1132,7 @@ h3 {
 #choose-compliance-manager-dialog {
   width: min(600px, calc(100vw - 32px));
   max-width: none;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 #choose-compliance-manager-dialog > .compliance-manager-picker {
@@ -1156,7 +1156,7 @@ h3 {
 }
 
 .compliance-manager-candidates {
-  max-height: min(45vh, 360px);
+  max-height: min(45dvh, 360px);
   overflow-y: auto;
 }
 
@@ -2204,4 +2204,44 @@ app-toasts {
 }
 .device-revocation-dialog .places-modal__actions {
   gap: 0.75rem;
+}
+
+.site-311-banner {
+  padding: var(--wa-space-m);
+  border: 1px solid var(--wa-color-neutral-border-normal);
+  border-radius: var(--wa-border-radius-m);
+  margin-block-end: var(--wa-space-m);
+}
+.site-directory-row__actions wa-checkbox {
+  max-width: 12rem;
+}
+@media (max-width: 760px) {
+  .site-directory-row__actions:has([data-site-311]) {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+}
+
+.enrollment-screen-code {
+  font-size: 2rem;
+  letter-spacing: 0.2em;
+  font-variant-numeric: tabular-nums;
+}
+
+.manager-search-results {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 18rem;
+  overflow-y: auto;
+}
+.manager-search-results li + li {
+  margin-top: 0.5rem;
+}
+.manager-search-results button {
+  width: 100%;
+  text-align: start;
+}
+[data-manager-search-status]:empty {
+  display: none;
 }

@@ -562,6 +562,8 @@ function renderAnalysisCardEntries(
               rulebookText(task.guidance) ||
               displayDescription(condition) ||
               t("card.description.fallback"),
+            editableDescription:
+              task.description || condition.description || "",
             action: taskButtonLabel(task) || actionLabel(task.kind),
             includeEditDelete: ![
               "in_progress",
@@ -666,6 +668,7 @@ function conditionEvidenceCard(item, sessionCheckId, condition) {
     action: "",
     actionKind: "",
     conditionId: condition.conditionId || "",
+    editableDescription: condition.description || "",
     question: condition.needsAnswer,
   });
 }
@@ -1104,6 +1107,9 @@ function completedEvidenceCard(
       tabindex="-1"
       data-task-id="${escapeAttr(taskId)}"
       data-analysis-id="${escapeAttr(analysisId)}"
+      data-assessment-id="${escapeAttr(
+        item.analysis?.assessment?.assessmentId || "",
+      )}"
       data-condition-id="${escapeAttr(conditionId)}"
       data-action-kind="${escapeAttr(actionKind)}"
       data-card-title="${escapeAttr(title)}"
@@ -1166,7 +1172,7 @@ function completedEvidenceCard(
               : ""}
             ${cardDescription(description)}
             ${question ? clarifyingQuestion(question, conditionId) : ""}
-            ${includeEditDelete
+            ${includeEditDelete && (!tickerTask || tickerTask.status === "open")
               ? html`<button
                   class="btn-card analysis-card__edit"
                   type="button"
@@ -1559,44 +1565,6 @@ export const analysisDialogs = () => html`
           type="button"
         >
           ${escapeHtml(t("common.undo"))}
-        </button>
-      </div>
-    </form>
-  </dialog>
-
-  <dialog
-    class="analysis-dialog analysis-edit-dialog"
-    id="analysis-edit-dialog"
-    aria-labelledby="analysis-edit-title"
-    aria-describedby="analysis-edit-copy"
-  >
-    <form class="analysis-dialog__card" method="dialog">
-      <div class="analysis-dialog__copy">
-        <h2 class="analysis-dialog__title" id="analysis-edit-title">
-          ${escapeHtml(t("analysis.editDialog.title"))}
-        </h2>
-        <p class="analysis-dialog__text" id="analysis-edit-copy">
-          ${escapeHtml(t("analysis.editDialog.text"))}
-        </p>
-        <p class="analysis-dialog__error" id="analysis-edit-error" hidden></p>
-      </div>
-      <label class="analysis-edit-dialog__field">
-        <span>${escapeHtml(t("analysis.editDialog.descriptionLabel"))}</span>
-        <textarea id="analysis-edit-description" rows="5"></textarea>
-      </label>
-      <div class="analysis-dialog__actions">
-        <button
-          class="analysis-dialog__button analysis-dialog__button--ink"
-          id="analysis-edit-save"
-          type="button"
-        >
-          ${escapeHtml(t("common.save"))}
-        </button>
-        <button
-          class="analysis-dialog__button analysis-dialog__button--danger-text"
-          type="submit"
-        >
-          ${escapeHtml(t("analysis.editDialog.discard"))}
         </button>
       </div>
     </form>

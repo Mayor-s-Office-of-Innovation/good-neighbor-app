@@ -257,6 +257,14 @@ function untilAborted(promise, signal) {
 // (status 0), so a weak signal fails over to the offline paths instead of
 // hanging. Generous: a slow but working connection should still get through.
 export const REQUEST_TIMEOUT_MS = 30_000;
+// Condition edit and reject wait on the analyzer inside the api function,
+// which gives up after 8 s. The client allows that budget plus what sits
+// around it: a cold start (about 1.5 s), a token refresh round trip, the
+// DynamoDB reads, and the network, then stops waiting rather than holding for
+// the general 30 s on an answer that is not coming. Giving up here says only
+// that no answer arrived in time, not that the change was rejected: the
+// server may still have saved it, and the next read of the check shows which.
+export const AMENDMENT_TIMEOUT_MS = 15_000;
 // Photo uploads: abort when no bytes have moved for this long (XHR), or when
 // the whole PUT is slower than UPLOAD_MIN_BYTES_PER_SECOND (fetch).
 export const UPLOAD_STALL_MS = 30_000;
@@ -302,19 +310,22 @@ function withTimeout(signal, ms) {
  * @param {Record<string,string>} [opts.headers]
  * @param {unknown} [opts.body]  JSON-serializable body (omitted for GET)
  * @param {AbortSignal} [opts.signal]
+ * @param {number} [opts.timeoutMs] give up after this long instead of
+ *   `REQUEST_TIMEOUT_MS`; for calls whose server side has a shorter budget
  * @param {boolean} [opts.allowAuthRetry] internal: set false on the retry leg
  *   to stop a 401 loop
  * @param {string} [opts.originSiteId] internal: keep retries bound to the original site
  * @returns {Promise<any>} the parsed JSON body (null for an empty 2xx)
  */
 async function request(method, path, opts = {}) {
-  const timeout = withTimeout(opts.signal, REQUEST_TIMEOUT_MS);
+  const { timeoutMs = REQUEST_TIMEOUT_MS, ...rest } = opts;
+  const timeout = withTimeout(opts.signal, timeoutMs);
   try {
-    return await requestOnce(method, path, { ...opts, signal: timeout.signal });
+    return await requestOnce(method, path, { ...rest, signal: timeout.signal });
   } catch (err) {
     if (!timeout.timedOut() || opts.signal?.aborted) throw err;
     const timedOut = new ApiError(
-      `Timed out after ${REQUEST_TIMEOUT_MS}ms calling ${method} ${path}`,
+      `Timed out after ${timeoutMs}ms calling ${method} ${path}`,
       { status: 0 },
     );
     classifyApiFailure(timedOut);
@@ -448,11 +459,13 @@ async function requestOnce(
         throw preflightRefreshError;
       }
       // Refresh from the CURRENT stored session — `site` here may be stale
-      // (read before this request's fetch); refreshSession re-reads it.
+      // (read before this request's fetch); refreshSession re-reads it. The
+      // caller's signal is honored while waiting, as on the preflight leg:
+      // the shared refresh carries on for other callers, this request stops.
       try {
-        await refreshSession(requestSiteId, token, site);
+        await untilAborted(refreshSession(requestSiteId, token, site), signal);
       } catch (err) {
-        classifyApiFailure(err);
+        if (!signal?.aborted) classifyApiFailure(err);
         if (err instanceof ReauthRequiredError) throw err;
         // Retryable refresh failure (5xx/transport): surface as-is — the
         // stored session may be perfectly valid.
@@ -513,6 +526,18 @@ async function requestOnce(
   // original may be reached through an intermediate link. Reads never invalidate.
   // Separation notifies after clearing local status overrides in its wrapper.
   if (
+    method === "POST" &&
+    path.endsWith("/reject") &&
+    Array.isArray(parsed?.deleted)
+  ) {
+    invalidateDuplicateIssues(
+      requestSiteId,
+      undefined,
+      parsed.deleted
+        .flatMap((target) => [target.taskId, target.originalTaskId])
+        .filter(Boolean),
+    );
+  } else if (
     method !== "GET" &&
     ((/^\/v1\/checks\/[^/]+\/artifacts(?:$|\/)/.test(path) &&
       !path.endsWith("/presign")) ||
@@ -734,20 +759,22 @@ export function submitConditionAnswers(assessmentId, conditionId, body) {
 /**
  * POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}
  *
- * Addressed by the artifact's own coordinates (the client holds checkId +
- * artifactId on every evidence item); the backend reads the analyzer's
- * analysisId off the stored ANALYSIS# item, so the client never supplies it.
+ * Correct generated-card text in the app's stored condition and tasks.
+ * This does not invoke the analyzer or re-evaluate guidance.
  * @param {string} checkId
  * @param {string} artifactId
  * @param {string} conditionId
- * @param {{ description: string, language?: string, caller?: { request_id?: string } }} body
- * @returns {Promise<{ analysis_id: string, condition: any, assessment: any }>}
+ * @param {{ description: string, title?:string, category?:string, ruleId?:string, revision?:number, requestId?:string, assessmentId?:string, customAction?:{text:string,resolved:boolean}, language?: string, caller?: { request_id?: string } }} body
+ * @returns {Promise<{ description: string, condition: any, task?: any, assessment?:any }>}
  */
 export function editAnalysisCondition(checkId, artifactId, conditionId, body) {
+  const query = body.assessmentId
+    ? `?assessmentId=${encodeURIComponent(body.assessmentId)}`
+    : "";
   return request(
     "POST",
-    `/v1/checks/${encodeURIComponent(checkId)}/artifacts/${encodeURIComponent(artifactId)}/conditions/${encodeURIComponent(conditionId)}`,
-    { body },
+    `/v1/checks/${encodeURIComponent(checkId)}/artifacts/${encodeURIComponent(artifactId)}/conditions/${encodeURIComponent(conditionId)}${query}`,
+    { body, timeoutMs: AMENDMENT_TIMEOUT_MS },
   );
 }
 
@@ -756,8 +783,8 @@ export function editAnalysisCondition(checkId, artifactId, conditionId, body) {
  * @param {string} checkId
  * @param {string} artifactId
  * @param {string} conditionId
- * @param {{ reason?: { key: "not_a_problem" | "other", note?: string }, taskId?: string, caller?: { request_id?: string } }} [body]
- * @returns {Promise<{ analysis_id: string, rejected_condition_id: string, rejection: any, assessment: any }>}
+ * @param {{ reason?: { key: "not_a_problem" | "other", note?: string }, taskId?: string, deletionMode?: "selected", deletionTaskIds?: (string | undefined)[], caller?: { request_id?: string } }} [body]
+ * @returns {Promise<{ analysis_id: string, rejected_condition_id: string, rejection: any, assessment: any, deleted?: any[] }>}
  */
 export function rejectAnalysisCondition(
   checkId,
@@ -768,7 +795,7 @@ export function rejectAnalysisCondition(
   return request(
     "POST",
     `/v1/checks/${encodeURIComponent(checkId)}/artifacts/${encodeURIComponent(artifactId)}/conditions/${encodeURIComponent(conditionId)}/reject`,
-    { body },
+    { body, timeoutMs: AMENDMENT_TIMEOUT_MS },
   );
 }
 
@@ -1191,6 +1218,28 @@ export function getTaskUpdatesReport({ period, start } = {}) {
  */
 export function listTasks({ status, limit } = {}) {
   return request("GET", `/v1/tasks${qs({ status, limit })}`);
+}
+
+/**
+ * @typedef {{ ok: true, items: any[], nextToken?: string } | { ok: false, error: string }} HomeSection
+ * @typedef {{ checks: HomeSection, tasks: Record<"open" | "in_progress" | "completing" | "completed", HomeSection>, loadedAt: string }} HomeResponse
+ */
+
+/**
+ * GET /v1/home — the check list and the four task worklists in one request,
+ * read side by side on the server and answered per section (`ok` on each).
+ * `sections` narrows the read: Home's cold open asks for `checks` and `open`
+ * first so the first paint never waits on the completed list, then the other
+ * three; refreshes take everything. Only requested keys come back. The
+ * per-list routes stay for the targeted refreshes after an action.
+ * @param {{ checksLimit?: number, tasksLimit?: number, sections?: readonly string[] }} [options]
+ * @returns {Promise<HomeResponse>}
+ */
+export function fetchHome({ checksLimit, tasksLimit, sections } = {}) {
+  return request(
+    "GET",
+    `/v1/home${qs({ checksLimit, tasksLimit, sections: sections?.join(",") })}`,
+  );
 }
 
 /** @param {string} taskId @param {string} [nextToken] @param {{signal?: AbortSignal}} [options] */
@@ -1854,14 +1903,36 @@ export function getTaskDetails(taskId, { signal } = {}) {
   });
 }
 
-/** @param {string} taskId @param {string} ruleId */
-export function updateTaskAction(taskId, ruleId) {
+/** Read deletion scope without resolving action-editing catalogs.
+ * @param {string} taskId
+ * @param {boolean} [selected]
+ */
+export function getTaskDeletionScope(taskId, selected = false) {
+  return request(
+    "GET",
+    `/v1/tasks/${encodeURIComponent(taskId)}/details?view=${selected ? "selected" : "deletion"}`,
+  );
+}
+
+/** @param {string} taskId
+ * @param {string} [ruleId] Omit for a description-only correction.
+ * @param {string} [description]
+ * @param {string} [requestId] Stable across a retry of the same draft.
+ * @param {{title?:string, category?:string}} [fields]
+ */
+export function updateTaskAction(
+  taskId,
+  ruleId,
+  description,
+  requestId,
+  fields = {},
+) {
   return request("PATCH", `/v1/tasks/${encodeURIComponent(taskId)}/action`, {
-    body: { ruleId },
+    body: { ...fields, ruleId, description, requestId },
   });
 }
 
-/** @param {string} taskId @param {{text:string,resolved:boolean}} body */
+/** @param {string} taskId @param {{text:string,resolved:boolean,description?:string,requestId?:string,title?:string,category?:string}} body */
 export function recordCustomTaskAction(taskId, body) {
   return request(
     "POST",
@@ -1912,4 +1983,15 @@ export function askSupport({ question, locale, signal }) {
 export function listPendingGuidance(nextToken = null) {
   const query = nextToken ? `?nextToken=${encodeURIComponent(nextToken)}` : "";
   return request("GET", `/v1/guidance/pending${query}`);
+}
+
+/** @param {Record<string,any>} problem */
+export function getConditionDetails(problem) {
+  const query = problem.assessmentId
+    ? `?assessmentId=${encodeURIComponent(problem.assessmentId)}`
+    : "";
+  return request(
+    "GET",
+    `/v1/checks/${encodeURIComponent(problem.checkId)}/artifacts/${encodeURIComponent(problem.artifactId)}/conditions/${encodeURIComponent(problem.conditionId)}${query}`,
+  );
 }

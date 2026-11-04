@@ -302,7 +302,7 @@ often staff use the text path instead of photos.
 
 ### While on home — cards, answers, amendments
 
-Home renders three sources together: backend task cards (`GET /v1/tasks?status=…`,
+Home renders three sources together: backend task cards (every status from one `GET /v1/home`; `GET /v1/tasks?status=…` for targeted refreshes,
 GSI2, handlers/tasks.js), the session's live analysis cards until backend cards exist for
 the same problem, and a "That's a wrap" summary when a recent run resolved without new
 issues (the dedup and the wrap logic both live in today-view.js `_homeResults`; § 4

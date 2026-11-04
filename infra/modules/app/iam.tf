@@ -328,8 +328,9 @@ resource "aws_iam_role_policy" "intake" {
 }
 
 # ---- authorizer Lambda role ---------------------------------------------------
-# Read-only by design: verify token + one DEVICE# GetItem + read the signing
-# key. No write, no S3, no SQS.
+# Read-only by design: verify token + device/site/membership reads + read the
+# signing key. Legacy provider memberships also need a provider-scoped Query.
+# No write, no S3, no SQS.
 
 resource "aws_iam_role" "authorizer" {
   name               = "${local.name_prefix}-authorizer"
@@ -343,6 +344,19 @@ data "aws_iam_policy_document" "authorizer" {
     effect    = "Allow"
     actions   = ["dynamodb:GetItem"]
     resources = [aws_dynamodb_table.app.arn]
+  }
+
+  statement {
+    sid       = "QueryLegacyProviderMemberships"
+    effect    = "Allow"
+    actions   = ["dynamodb:Query"]
+    resources = [aws_dynamodb_table.app.arn]
+
+    condition {
+      test     = "ForAllValues:StringLike"
+      variable = "dynamodb:LeadingKeys"
+      values   = ["PROVIDER#*"]
+    }
   }
 
   statement {

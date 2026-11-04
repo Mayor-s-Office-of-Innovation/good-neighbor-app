@@ -43,6 +43,7 @@ const {
   getMyProfile,
   updateMyProfile,
   inviteAdminUser,
+  lookupAdminInvitation,
   reinviteAdminUser,
   resetAdminUserPassword,
   suspendAdminUser,
@@ -869,4 +870,105 @@ it("skips account enrichment without a configured pool", async () => {
 it("does not hide a configured pool's directory failures", async () => {
   cognitoSend.mockRejectedValue(new Error("directory unavailable"));
   await expect(loadAdminDirectory()).rejects.toThrow("directory unavailable");
+});
+
+describe("invitation directory lookup", () => {
+  it("finds a normalized email without requiring a Cognito account and exposes only contact fields", async () => {
+    ddbSend.mockResolvedValue({
+      Item: {
+        pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+        sk: "MANAGER#alex@example.org",
+        email: "alex@example.org",
+        firstName: "Alex",
+        lastName: "Example",
+        phone: "415-555-0100",
+        phoneExtension: "12",
+        departmentId: "example",
+        departmentName: "Example department",
+        privateField: "internal",
+      },
+    });
+    const response = await call(
+      lookupAdminInvitation,
+      event({ email: " Alex@Example.org " }),
+    );
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(String(response.body))).toEqual({
+      profile: {
+        email: "alex@example.org",
+        firstName: "Alex",
+        lastName: "Example",
+        phone: "415-555-0100",
+        phoneExtension: "12",
+        departmentId: "example",
+        departmentName: "Example department",
+      },
+    });
+    expect(ddbSend.mock.calls[0][0].input).toMatchObject({
+      Key: {
+        pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+        sk: "MANAGER#alex@example.org",
+      },
+      ConsistentRead: true,
+    });
+    expect(cognitoSend).not.toHaveBeenCalled();
+  });
+
+  it("returns null for a new email", async () => {
+    const response = await call(
+      lookupAdminInvitation,
+      event({ email: "new@example.org" }),
+    );
+    expect(JSON.parse(String(response.body))).toEqual({ profile: null });
+  });
+
+  it("rejects malformed addresses before reading the directory", async () => {
+    expect(
+      (await call(lookupAdminInvitation, event({ email: "invalid" })))
+        .statusCode,
+    ).toBe(400);
+    expect(ddbSend).not.toHaveBeenCalled();
+  });
+
+  it("requires a supervisor before reading personal details", async () => {
+    const request = event({ email: "alex@example.org" });
+    request.requestContext.authorizer.jwt.claims["cognito:groups"] =
+      "compliance-manager";
+    expect((await call(lookupAdminInvitation, request)).statusCode).toBe(403);
+    expect(ddbSend).not.toHaveBeenCalled();
+  });
+
+  it("accepts equivalent phone formatting while preserving profile identity conflicts", async () => {
+    const profile = {
+      pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS",
+      sk: "MANAGER#alex@example.org",
+      email: "alex@example.org",
+      firstName: "Alex",
+      lastName: "Example",
+      phone: "415-555-0100",
+    };
+    ddbSend.mockResolvedValueOnce({ Item: profile }).mockResolvedValue({});
+    cognitoSend.mockImplementation(async (command) =>
+      command instanceof AdminGetUserCommand
+        ? user("alex@example.org", "alex-sub")
+        : {},
+    );
+    const body = {
+      email: "alex@example.org",
+      firstName: "Alex",
+      lastName: "Example",
+      phone: "+1 (415) 555-0100",
+      role: "compliance-supervisor",
+    };
+    expect((await call(inviteAdminUser, event(body))).statusCode).toBe(201);
+    ddbSend.mockResolvedValueOnce({ Item: profile });
+    const conflict = await call(
+      inviteAdminUser,
+      event({ ...body, firstName: "Different" }),
+    );
+    expect(conflict.statusCode).toBe(409);
+    expect(JSON.parse(String(conflict.body))).toEqual({
+      error: "compliance_profile_conflict",
+    });
+  });
 });

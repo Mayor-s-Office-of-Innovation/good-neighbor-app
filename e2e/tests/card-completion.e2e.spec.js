@@ -1,5 +1,6 @@
 // @ts-check
 import { test, expect } from "../helpers/harness.js";
+import { routeHomeLists } from "../helpers/app.js";
 import { t } from "../helpers/i18n.js";
 
 test("checklist waits for confirmed save, recovers from failure, and opens completion history", async ({
@@ -21,12 +22,7 @@ test("checklist waits for confirmed save, recovers from failure, and opens compl
     createdAt: new Date(createdAt).toISOString(),
     completedAt: "",
   };
-  await page.route("**/v1/tasks?*", (route) =>
-    route.fulfill({ json: { tasks: [task] } }),
-  );
-  await page.route("**/v1/checks?*", (route) =>
-    route.fulfill({ json: { checks: [] } }),
-  );
+  await routeHomeLists(page, { checks: [], tasks: () => [task] });
   let fail = true;
   let releaseFailure = () => {};
   /** @type {Promise<void>} */

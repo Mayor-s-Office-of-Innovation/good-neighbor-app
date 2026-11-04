@@ -28,3 +28,14 @@ export function readJsonBody(event) {
     : event.body;
   return JSON.parse(raw);
 }
+
+/**
+ * A positive integer page size from a query-string value, or `undefined` when
+ * absent or unusable (callers then apply their own default or no limit).
+ * @param {string | undefined} raw
+ * @returns {number | undefined}
+ */
+export function parseLimit(raw) {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+}

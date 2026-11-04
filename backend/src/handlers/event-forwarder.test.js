@@ -11,6 +11,8 @@ vi.mock("./posthog-api-key.js", () => ({
 
 const {
   forwardClientEvent,
+  forwardClientEvents,
+  forwardClientEventGroups,
   toPosthogEvent,
   userAgentProperties,
   EVENT_FORWARD_TIMEOUT_MS,
@@ -142,6 +144,83 @@ describe("forwardClientEvent", () => {
     );
   });
 
+  it("sends a request's events in one /batch/ call and logs each", async () => {
+    getPosthogApiKey.mockResolvedValue("phc_key");
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchImpl = vi.fn().mockResolvedValue(response(true, 200));
+    const outcome = await forwardClientEvents(
+      [
+        report(),
+        report({ event: "camera_opened", properties: { flow: "perimeter" } }),
+        report({ event: "photo_picked", properties: { flow: "perimeter" } }),
+      ],
+      { userAgent: ANDROID_UA },
+      { fetchImpl, config, host: "https://ph.example", now: () => 0 },
+    );
+    expect(outcome).toBe("forwarded");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetchImpl.mock.calls[0][1].body));
+    expect(
+      body.batch.map((/** @type {{event: string}} */ e) => e.event),
+    ).toEqual(["$pageview", "camera_opened", "photo_picked"]);
+    expect(body.batch[2].properties.$browser).toBe("Chrome");
+    const lines = log.mock.calls.map((c) => JSON.parse(String(c[0])));
+    expect(lines).toHaveLength(3);
+    expect(lines.every((l) => l.marker === FORWARD_OK_MARKER)).toBe(true);
+    expect(lines.every((l) => l.batch_size === 3)).toBe(true);
+    expect(lines[1].event).toBe("camera_opened");
+  });
+
+  it("forwards several groups, each with its own user agent, in one call", async () => {
+    getPosthogApiKey.mockResolvedValue("phc_key");
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchImpl = vi.fn().mockResolvedValue(response(true, 200));
+    const outcome = await forwardClientEventGroups(
+      [
+        {
+          reports: [report(), report({ event: "camera_opened" })],
+          ctx: { userAgent: ANDROID_UA },
+        },
+        {
+          reports: [report({ id: "uuid-2" })],
+          ctx: {
+            userAgent:
+              "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+          },
+        },
+        { reports: [], ctx: {} },
+      ],
+      {
+        fetchImpl,
+        config,
+        host: "https://ph.example",
+        now: () => 0,
+        timeoutMs: 5000,
+      },
+    );
+    expect(outcome).toBe("forwarded");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetchImpl.mock.calls[0][1].body));
+    expect(body.batch).toHaveLength(3);
+    expect(body.batch[0].properties.$os).toBe("Android");
+    expect(body.batch[2].properties.$os).toBe("iOS");
+    expect(body.batch[2].distinct_id).toBe("uuid-2");
+    const lines = log.mock.calls.map((c) => JSON.parse(String(c[0])));
+    expect(lines).toHaveLength(3);
+    expect(lines.every((l) => l.batch_size === 3)).toBe(true);
+  });
+
+  it("treats a call with no events as log-only without fetching", async () => {
+    const fetchImpl = vi.fn();
+    expect(
+      await forwardClientEventGroups([{ reports: [], ctx: {} }], {
+        fetchImpl,
+        config,
+      }),
+    ).toBe("log-only");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("never throws: ingest failure and non-2xx both WARN + 'failed'", async () => {
     getPosthogApiKey.mockResolvedValue("phc_key");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -216,5 +295,43 @@ describe("forwardClientEvent", () => {
     expect(JSON.parse(String(warn.mock.calls[0]?.[0])).reason).toBe(
       "secret_fetch_failed",
     );
+  });
+});
+
+describe("abort on timeout", () => {
+  it("carries the consumer's uuid through to PostHog", () => {
+    const event = toPosthogEvent(
+      report({ uuid: "11111111-2222-5333-8444-555555555555" }),
+      {},
+    );
+    expect(event.uuid).toBe("11111111-2222-5333-8444-555555555555");
+    expect(toPosthogEvent(report(), {})).not.toHaveProperty("uuid");
+  });
+
+  it("aborts the fetch when the budget expires, then reports failed", async () => {
+    getPosthogApiKey.mockResolvedValue("phc_key");
+    /** @typedef {{ aborted: boolean, addEventListener: (type: string, fn: () => void) => void }} Signal */
+    /** @type {Signal | undefined} */
+    let seen;
+    const fetchImpl = vi.fn(
+      (/** @type {string} */ _url, /** @type {{ signal?: Signal }} */ init) =>
+        new Promise((_, reject) => {
+          seen = init.signal;
+          seen?.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    );
+    const outcome = await forwardClientEventGroups(
+      [{ reports: [report()], ctx: {} }],
+      {
+        fetchImpl: /** @type {typeof fetch} */ (
+          /** @type {unknown} */ (fetchImpl)
+        ),
+        config,
+        host: "https://ph.example",
+        timeoutMs: 10,
+      },
+    );
+    expect(outcome).toBe("failed");
+    expect(seen?.aborted).toBe(true);
   });
 });

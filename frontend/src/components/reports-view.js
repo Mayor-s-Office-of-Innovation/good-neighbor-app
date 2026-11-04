@@ -17,7 +17,7 @@ import "@awesome.me/webawesome/dist/components/select/select.js";
 import "@awesome.me/webawesome/dist/components/option/option.js";
 import { getSite, hasAdminAccess, listBoundSites } from "../db.js";
 import { t } from "../i18n/i18n.js";
-import { currentRoute, navigate } from "../router.js";
+import { currentRoute, navigate, replaceRoute } from "../router.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import {
   get311RequestDetails,
@@ -100,7 +100,7 @@ class ReportsScreen extends HTMLElement {
     this._site = await getSite();
     if (!this.isConnected) return false;
     if (!hasAdminAccess(this._site)) {
-      navigate("/today");
+      replaceRoute("/today");
       return false;
     }
     this._siteId =
@@ -110,6 +110,7 @@ class ReportsScreen extends HTMLElement {
 
   async _loadCatalog() {
     this._providerSitesStatus = "loading";
+    const bindingsRevision = this._bindingsRevision;
     const [catalog, bindings] = await Promise.all([
       fetchProviderSites().catch((error) => {
         console.error("listProviderSites failed", error);
@@ -122,10 +123,22 @@ class ReportsScreen extends HTMLElement {
     this._providerSites = catalog?.sites || [];
     this._providerName =
       catalog?.providerName || this._site?.providerName || "";
-    this._boundSites = bindings;
+    if (this._bindingsRevision === bindingsRevision)
+      this._boundSites = bindings;
   }
 
-  /** @param {string} destination */
+  /** Update only the site menu; preserve the current screen and draft. */
+  async refreshSiteBindings() {
+    const bindings = await listBoundSites();
+    if (!this.isConnected) return;
+    this._bindingsRevision = (this._bindingsRevision || 0) + 1;
+    this._boundSites = bindings;
+    if (!this._siteSwitcher) return;
+    this._mountSiteSwitcher();
+    this._siteSwitcher?.render();
+  }
+
+  /** @param {string} [destination] */
   _mountSiteSwitcher(destination) {
     if (!this._siteSwitcher) {
       const switcher = document.createElement("site-switcher");
@@ -144,7 +157,15 @@ class ReportsScreen extends HTMLElement {
     }
     const switcher = this._siteSwitcher;
     switcher.providerName = this._providerName;
-    switcher.sites = this._providerSites;
+    switcher.sites = [
+      ...this._providerSites,
+      ...(this._boundSites || [])
+        .filter(
+          (bound) =>
+            !this._providerSites.some((site) => site.siteId === bound.siteId),
+        )
+        .map((bound) => ({ siteId: bound.siteId, name: bound.name })),
+    ];
     switcher.currentSite = {
       siteId: this._siteId,
       name: this._site?.name || "",

@@ -3,7 +3,9 @@
 # event.routeKey — plus a second integration for the admin analytics routes,
 # which a dedicated DuckDB-carrying Lambda serves (analytics.tf), and a third
 # for the anonymous best-effort intakes (intake_routes → the intake Lambda,
-# lambda.tf), isolated so PostHog latency never consumes api concurrency. No authorizer for
+# lambda.tf), isolated so PostHog latency never consumes api concurrency, and
+# Lambda-free ones for client analytics events and error reports
+# (client-events.tf → SQS). No authorizer for
 # MVP — the site-code flow mints no Cognito JWT, so requests resolve to
 # DEMO_SITE_ID (tenant isolation lands with the deferred JWT authorizer). The
 # route set mirrors backend/scripts/local-api.mjs and backend/src/lambda/api.js.
@@ -64,9 +66,11 @@ locals {
     "DELETE /v1/complaints/{complaintId}/artifacts/{artifactId}",
     "GET /v1/complaints/{complaintId}/artifacts/{artifactId}/media",
     "GET /v1/tasks",
+    "GET /v1/home",
     "POST /v1/duplicates:batch",
     "POST /v1/tasks/{taskId}/duplicate:separate",
     "GET /v1/tasks/{taskId}/details",
+    "GET /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}",
     "PATCH /v1/tasks/{taskId}/action",
     "POST /v1/tasks/{taskId}/custom-action",
     "POST /v1/311-requests:batch",
@@ -82,7 +86,6 @@ locals {
     "POST /v1/assessments/{assessmentId}/conditions/{conditionId}/answers",
     "POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}",
     "POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}/reject",
-    "POST /submissions",
     "GET /admin/v1/providers",
     "GET /admin/v1/session",
     "GET /admin/v1/system-controls",
@@ -95,6 +98,7 @@ locals {
     "PUT /admin/v1/profile",
     "GET /admin/v1/admin-users",
     "POST /admin/v1/admin-users",
+    "POST /admin/v1/admin-users/lookup",
     "PUT /admin/v1/admin-users/{username}/role",
     "POST /admin/v1/admin-users/{username}/suspend",
     "POST /admin/v1/admin-users/{username}/reinstate",
@@ -187,18 +191,16 @@ locals {
   ]
 
   # Best-effort public intakes, served by the intake Lambda (lambda.tf) and
-  # always anonymous. Mirrors backend/src/lambda/intake.js.
+  # always anonymous. backend/src/lambda/intake.js serves this plus
+  # POST /v1/client-events and POST /v1/client-errors, which the gateway sends
+  # straight to SQS instead (client-events.tf) — the handlers there are the
+  # local-dev path and a fallback, not deployed routes.
   intake_routes = [
-    "POST /v1/client-errors",
-    "POST /v1/client-events",
     "POST /v1/feedback",
   ]
 
-  # api_routes an anonymous caller may reach: bootstrap + health + the legacy
-  # submissions loop. Everything else gets the device-token authorizer
-  # (Option 4). As a MAP keyed by route, so the route resource can do
-  # `route_is_open[x]`. (The intakes above are open too, on their own route
-  # resource.)
+  # Anonymous routes on the main API integration. Device and admin routes
+  # select their respective authorizers below.
   route_is_open = {
     "POST /site-code"                     = true
     "POST /v1/devices"                    = true
@@ -209,7 +211,6 @@ locals {
     "GET /v1/sites:search"                = true
     "GET /v1/311-media"                   = true
     "GET /health"                         = true
-    "POST /submissions"                   = true
   }
 
   # Route keys are "METHOD /path". Determine admin scope from the path rather
@@ -391,6 +392,25 @@ resource "aws_apigatewayv2_stage" "default" {
     route_key              = aws_apigatewayv2_route.support.route_key
     throttling_burst_limit = 5
     throttling_rate_limit  = 2
+  }
+
+  # The queue-backed intakes have no Lambda reservation bounding what reaches
+  # them, and the per-IP WAF rules only see CloudFront traffic, so the stage
+  # bounds ingress for every caller. Sized far above legitimate traffic (a
+  # perimeter check is 15 to 20 event beacons over several minutes; the client
+  # caps error reports at 5 per window) and below what five consumers drain
+  # (100 bodies per batch). A throttled beacon is dropped; the client never
+  # retries telemetry.
+  route_settings {
+    route_key              = aws_apigatewayv2_route.client_intake["client_events"].route_key
+    throttling_burst_limit = 200
+    throttling_rate_limit  = 100
+  }
+
+  route_settings {
+    route_key              = aws_apigatewayv2_route.client_intake["client_errors"].route_key
+    throttling_burst_limit = 40
+    throttling_rate_limit  = 20
   }
 
   default_route_settings {

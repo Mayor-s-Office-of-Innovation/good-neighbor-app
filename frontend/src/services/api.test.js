@@ -11,6 +11,7 @@ import {
   getSiteSettings,
   getMediaUrl,
   getTaskUpdates,
+  getTaskDeletionScope,
   get311RequestDetails,
   getCaptureGuidance,
   putMedia,
@@ -18,6 +19,7 @@ import {
   registerTextArtifact,
   rejectAnalysisCondition,
   REQUEST_TIMEOUT_MS,
+  AMENDMENT_TIMEOUT_MS,
   UPLOAD_STALL_MS,
   updateArtifactLocation,
   toDevUploadUrl,
@@ -25,6 +27,24 @@ import {
   uploadTaskUpdatePhoto,
   uploadArtifact,
 } from "./api.js";
+
+it("requests deletion-only scope independently of normal task details", async () => {
+  const response = {
+    deletion: { kind: "single", targets: [{ taskId: "task/id" }] },
+  };
+  const fetch = vi
+    .fn()
+    .mockResolvedValue(new Response(JSON.stringify(response)));
+  vi.stubGlobal("fetch", fetch);
+  try {
+    expect(await getTaskDeletionScope("task/id")).toEqual(response);
+    expect(fetch.mock.calls[0][0]).toContain(
+      "/v1/tasks/task%2Fid/details?view=deletion",
+    );
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
 
 vi.mock("../db.js", async (importOriginal) => ({
   ...(await importOriginal()),
@@ -776,6 +796,36 @@ describe("time limits on a weak connection", () => {
     await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS - 1000);
     await expect(pending).resolves.toEqual({ ok: true });
   });
+
+  it.each([
+    [
+      "rejection",
+      () => rejectAnalysisCondition("chk_01", "art_1", "cond-1", {}),
+    ],
+    [
+      "edit",
+      () =>
+        editAnalysisCondition("chk_01", "art_1", "cond-1", {
+          description: "Overflowing bin by the gate",
+        }),
+    ],
+  ])(
+    "gives up on a condition %s at the amendment limit, not the general one",
+    async (_label, call) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      vi.stubGlobal("fetch", hangingFetch());
+      let settled = false;
+      const pending = call();
+      void pending.catch(() => {}).finally(() => (settled = true));
+      await vi.advanceTimersByTimeAsync(AMENDMENT_TIMEOUT_MS - 1);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(pending).rejects.toMatchObject({
+        name: "ApiError",
+        status: 0,
+      });
+    },
+  );
 
   it("gives a large photo upload more time than a small one", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });

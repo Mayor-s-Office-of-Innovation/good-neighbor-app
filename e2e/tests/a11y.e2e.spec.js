@@ -2,7 +2,12 @@
 import { a11yMatrix, matrix, test } from "ramp-check/test";
 import { t } from "../helpers/i18n.js";
 import { expect, boundPage } from "../helpers/harness.js";
-import { addPhoto, startCheck, openHistoryWithTrays } from "../helpers/app.js";
+import {
+  addPhoto,
+  startCheck,
+  openHistoryWithTrays,
+  routeHomeLists,
+} from "../helpers/app.js";
 import { PHOTO_CLEAR } from "../helpers/fixtures.js";
 import {
   REPORT_DAY,
@@ -105,9 +110,6 @@ matrix(
         await stubReports(page);
         // Other tests create real checks in the shared table. Keep their clear
         // result cards out of this fixture, just as we isolate its task list.
-        await page.route("**/v1/checks?*", (route) =>
-          route.fulfill({ json: { checks: [] } }),
-        );
         // Earlier scenarios can leave unanswered guidance in the shared table.
         // This fixture owns exactly two task cards, so isolate questions too.
         let pendingGuidanceReads = 0;
@@ -115,20 +117,18 @@ matrix(
           pendingGuidanceReads++;
           return route.fulfill({ json: { guidance: [], nextToken: null } });
         });
-        await page.route("**/v1/tasks?*", (route) =>
-          route.fulfill({
-            json: {
-              tasks: TASKS_REPORT.tasks.map((task) => ({
-                ...task,
-                status: "open",
-                createdAt: new Date().toISOString(),
-                appActionResults: [],
-                completionMethod: undefined,
-                latestUpdateLabel: undefined,
-              })),
-            },
-          }),
-        );
+        await routeHomeLists(page, {
+          checks: [],
+          tasks: () =>
+            TASKS_REPORT.tasks.map((task) => ({
+              ...task,
+              status: "open",
+              createdAt: new Date().toISOString(),
+              appActionResults: [],
+              completionMethod: undefined,
+              latestUpdateLabel: undefined,
+            })),
+        });
         await page.reload();
         await expect(page.locator("#start-check")).toBeVisible();
         await expect.poll(() => pendingGuidanceReads).toBeGreaterThan(0);

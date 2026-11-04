@@ -285,9 +285,13 @@ export const getProgram = (event) =>
       queryChildren(programId, "USER#"),
     ]);
     if (!program.Item) return jsonResponse(404, { error: "not_found" });
+    const currentProgram = program.Item;
     return jsonResponse(200, {
-      program: program.Item,
-      sites: sites.Items ?? [],
+      program: currentProgram,
+      sites: (sites.Items ?? []).map((site) => ({
+        ...site,
+        programName: currentProgram.name,
+      })),
       users: users.Items ?? [],
     });
   });
@@ -923,8 +927,16 @@ export const updateProgram = (event) =>
     if (!current || current.status === "inactive") {
       return jsonResponse(404, { error: "program_not_found" });
     }
+    if (
+      body.expectedUpdatedAt !== undefined &&
+      body.expectedUpdatedAt !== (current.updatedAt || "")
+    )
+      return jsonResponse(409, { error: "program_update_conflict" });
     const now = new Date().toISOString();
-    const contact = normalizeContact(body.contact);
+    const contact =
+      body.contact === undefined
+        ? current.contact || normalizeContact(null)
+        : normalizeContact(body.contact);
     const oldName = String(current.name ?? "");
     const oldSearchSk = programSearchSk(oldName, programId);
     const newSearchSk = programSearchSk(name, programId);
@@ -937,11 +949,15 @@ export const updateProgram = (event) =>
           UpdateExpression:
             "SET #name = :name, contact = :contact, updatedAt = :now",
           ConditionExpression:
-            "attribute_exists(pk) AND #status = :active AND #name = :oldName",
+            "attribute_exists(pk) AND #status = :active AND #name = :oldName" +
+            (current.updatedAt
+              ? " AND updatedAt = :expected"
+              : " AND attribute_not_exists(updatedAt)"),
           ExpressionAttributeNames: { "#name": "name", "#status": "status" },
           ExpressionAttributeValues: {
             ":name": name,
             ":oldName": oldName,
+            ...(current.updatedAt ? { ":expected": current.updatedAt } : {}),
             ":contact": contact,
             ":now": now,
             ":active": "active",

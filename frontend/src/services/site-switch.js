@@ -12,7 +12,7 @@
     "switched"      done; the page is being reloaded onto `destination`
     "failed"        the switch threw; a toast was shown
 */
-import { activateSiteBinding, setSite } from "../db.js";
+import { activateSiteBinding, hasAdminAccess, setSite } from "../db.js";
 import { selectDeviceBinding } from "./api.js";
 import {
   discardInMemorySession,
@@ -79,7 +79,12 @@ export async function switchToBoundSite({
     }
     if (!selected) return "needs-binding";
     discardInMemorySession();
-    window.location.assign(destination);
+    // Use the selected session's current authority, not discovery's cached role.
+    const target =
+      destination === "/reports" && !hasAdminAccess(selected)
+        ? "/today"
+        : destination;
+    window.location.assign(target);
     return "switched";
   } catch (error) {
     console.error("site switch failed", error);

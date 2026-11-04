@@ -334,6 +334,48 @@ describe("Site CSV import", () => {
     });
   });
 
+  it.each(["different-imported-membership", "provider-manager-1"])(
+    "preserves existing Provider-manager keys when membershipId is %s",
+    async (membershipId) => {
+      mockCatalog({
+        providers: [
+          {
+            providerId: "provider-one",
+            name: "Provider One",
+            status: "active",
+          },
+        ],
+        providerManagers: [
+          {
+            sk: "PROVIDER_MANAGER#provider-manager-1",
+            providerId: "provider-one",
+            managerId: "provider-manager-1",
+            membershipId,
+            email: "priya@provider.org",
+            firstName: "Priya",
+            lastName: "Provider",
+            phone: "415-555-0120",
+            status: "active",
+          },
+        ],
+      });
+      const response = await call(
+        previewSiteImport,
+        event({ csv: makeCsv([baseValues]) }),
+      );
+      expect(response.statusCode).toBe(201);
+      const rows = send.mock.calls
+        .filter(([command]) => command instanceof BatchWriteCommand)
+        .flatMap(([command]) => command.input.RequestItems["gnp-test-app"])
+        .map((request) => request.PutRequest.Item)
+        .filter((item) => item.plan);
+      expect(rows[0].plan.providerManager).toMatchObject({
+        action: "reuse",
+        id: "provider-manager-1",
+      });
+    },
+  );
+
   it("requires manual resolution for inactive Provider-manager memberships", async () => {
     mockCatalog({
       providers: [
@@ -474,11 +516,22 @@ describe("Site CSV import", () => {
           (item) => item.Put?.Item?.type === "siteComplianceManagerAssignment",
         ),
       ).toBe(true);
-      expect(
-        items.some(
-          (item) => item.Put?.Item?.type === "providerManagerMembership",
-        ),
-      ).toBe(true);
+      const providerMembership = items.find(
+        (item) => item.Put?.Item?.type === "providerManagerMembership",
+      )?.Put?.Item;
+      expect(providerMembership).toMatchObject({
+        sk: "PROVIDER_MANAGER#provider-manager-1",
+        membershipId: "provider-manager-1",
+        managerId: "provider-manager-1",
+      });
+      const providerDirectory = items.find(
+        (item) => item.Put?.Item?.type === "providerManagerEmailDirectory",
+      )?.Put?.Item;
+      expect(providerDirectory).toMatchObject({
+        sk: "PROVIDER#provider-one#MEMBERSHIP#provider-manager-1",
+        membershipId: "provider-manager-1",
+        managerId: "provider-manager-1",
+      });
       const site = items.find((item) => item.Put?.Item?.type === "site")?.Put
         ?.Item;
       if (!site) throw new Error("Expected a Site item");

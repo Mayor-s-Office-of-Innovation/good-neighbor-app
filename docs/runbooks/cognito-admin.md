@@ -54,7 +54,13 @@ for an existing user. Create new users with their email address as their
 username, an email attribute, and `--desired-delivery-mediums EMAIL`. Cognito
 generates and emails the temporary password; do not print, store, or commit it.
 New administrators are normally invited from the supervisor-only
-Administrators screen. Assign exactly one of `compliance-manager` or
+Administrators screen. Enter the email first: the invitation form looks up the
+existing City program manager directory record and fills its saved name, phone,
+extension, and department, including contacts without a Cognito account. Review
+those details before sending. Changing the email discards unchanged prefilled
+values, and a failed lookup must be retried before submitting. The invitation API
+retains profile-conflict checks; equivalent phone formatting is accepted.
+Assign exactly one of `compliance-manager` or
 `compliance-supervisor`. Keep user accounts and temporary passwords out of
 Terraform state. `central-admin` is a temporary migration alias for
 `compliance-manager`; do not add new users to it.

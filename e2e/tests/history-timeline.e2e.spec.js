@@ -1,5 +1,6 @@
 // @ts-check
 import { test, expect } from "../helpers/harness.js";
+import { routeHomeLists } from "../helpers/app.js";
 import { t } from "../helpers/i18n.js";
 
 const task = {
@@ -14,20 +15,10 @@ const task = {
 
 /** @param {import('@playwright/test').Page} page */
 async function history(page) {
-  await page.route("**/v1/tasks?*", (route) =>
-    route.fulfill({
-      json: {
-        tasks:
-          new URL(route.request().url()).searchParams.get("status") ===
-          "completed"
-            ? [task]
-            : [],
-      },
-    }),
-  );
-  await page.route("**/v1/checks?*", (route) =>
-    route.fulfill({ json: { checks: [] } }),
-  );
+  await routeHomeLists(page, {
+    checks: [],
+    tasks: (status) => (status === "completed" ? [task] : []),
+  });
   await page.goto("/today?filter=history");
   await page
     .locator('[data-task-id="history-timeline"] [data-action="update"]')

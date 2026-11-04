@@ -4,7 +4,7 @@ import { getDuplicateLinks } from "./api.js";
 import { getSite } from "../db.js";
 
 /** @typedef {{ids: string[], onChange: (links: Map<string, Record<string, any>>) => void, expired: boolean, ready: boolean, siteCheckDue: number, previous: string, expiry?: ReturnType<typeof setTimeout>}} Subscriber */
-/** @typedef {{due: number, polls: number, row?: Record<string, any>}} Task */
+/** @typedef {{due: number, polls: number, retainMatch?: boolean, row?: Record<string, any>}} Task */
 /** @type {Set<Subscriber>} */
 const subscribers = new Set();
 /** @type {Map<string, Task>} */
@@ -164,12 +164,16 @@ async function run() {
           if (tasks.get(id) !== task) continue;
           // Disabled rows are settled, but the subscription stays alive for
           // invalidation. Later batches may still contain persisted links.
-          task.row = result.enabled
+          const incoming = result.enabled
             ? result.issues.find((row) => row.taskId === id)
             : undefined;
+          const pending = incoming?.state === "pending";
+          if (!(task.retainMatch && pending && task.row?.state === "matched")) {
+            task.row = incoming;
+            task.retainMatch = false;
+          }
           const delay = task.polls++ < 15 ? 2000 : 5000;
-          task.due =
-            task.row?.state === "pending" ? Date.now() + delay : Infinity;
+          task.due = pending ? Date.now() + delay : Infinity;
         }
         for (const subscriber of [...subscribers]) publish(subscriber);
       } catch (error) {
@@ -237,14 +241,21 @@ export function watchDuplicateIssues(taskIds, onChange) {
  * Invalidate the site's cache, including dependents and currently unmounted tasks.
  * @param {string} [originSiteId]
  * @param {Record<string, any>[]} [updatedTasks]
+ * @param {string[]} [deletedTaskIds]
  */
-function invalidateDuplicateIssues(originSiteId, updatedTasks) {
+function invalidateDuplicateIssues(originSiteId, updatedTasks, deletedTaskIds) {
   if (originSiteId && siteId !== undefined && originSiteId !== siteId) return;
   generation++;
   clearTimeout(timer);
   activeController?.abort();
   running = false;
+  const affected = deletedTaskIds ? new Set(deletedTaskIds) : null;
+  for (const id of deletedTaskIds || []) {
+    const originalId = tasks.get(id)?.row?.original?.taskId;
+    if (originalId) affected.add(originalId);
+  }
   for (const id of tasks.keys()) {
+    if (affected && !affected.has(id)) continue;
     // Replacing the record also invalidates batches holding the old object.
     const previous = tasks.get(id)?.row;
     const updated = updatedTasks?.find(
@@ -253,7 +264,7 @@ function invalidateDuplicateIssues(originSiteId, updatedTasks) {
     // State-only updates keep the known relation visible while revalidating.
     // Evidence edits and separations discard it immediately.
     const row =
-      updatedTasks && previous?.state === "matched"
+      (updatedTasks || deletedTaskIds) && previous?.state === "matched"
         ? {
             ...previous,
             original:
@@ -264,7 +275,12 @@ function invalidateDuplicateIssues(originSiteId, updatedTasks) {
                 : previous.original,
           }
         : { taskId: id, state: "pending" };
-    tasks.set(id, { due: Date.now(), polls: 0, row });
+    tasks.set(id, {
+      due: Date.now(),
+      polls: 0,
+      row,
+      retainMatch: Boolean(deletedTaskIds && row.state === "matched"),
+    });
   }
   for (const subscriber of [...subscribers]) {
     if (duplicateUiEnabled()) {

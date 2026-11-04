@@ -55,6 +55,7 @@ describe("problemFromCard", () => {
       artifactId: "",
       taskId: "",
       conditionId: "c",
+      assessmentId: "",
       actionKind: "",
       title: t("card.title.problemFallback"),
       description: "",

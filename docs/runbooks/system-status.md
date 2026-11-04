@@ -40,7 +40,7 @@ is not automatically refreshed, so background reporting cannot discard edits.
 | Checks | Perimeter check headers, grouped by current unfinished/completed status; single-problem reports excluded | Checks started since Pacific midnight |
 | Issues | Positive analyzer concerns, once per check/artifact/condition identity, even after amendment, deletion or resolution | First generation since Pacific midnight |
 | Actions | User task timeline events and proactive care logs; automatic duplicate-link events and copied/adopted actions excluded | Event time since Pacific midnight |
-| Deletions | Immutable receipts written after an explicit condition rejection; not automatic supersession | Rejection since Pacific midnight |
+| Deletions | Immutable receipts written after an explicit card deletion or condition rejection; not automatic supersession | Rejection since Pacific midnight |
 | Duplicates | First duplicate link per issue/task, preserving source and directly matched observation references | Detection since Pacific midnight |
 
 Network thresholds are 75%/25%; analysis thresholds are 90%/75%. Comparisons use
@@ -68,7 +68,10 @@ journal. A `pending` record preserves attempt identity and `attemptedAt` before
 calling the analyzer. Only a confirmed record with `deletedAt` becomes a reporting
 event; confirmation uses the analyzer's rejection timestamp when supplied and is
 written before local task cleanup. Retries reuse confirmed receipts. No new GSI
-is needed.
+is needed. Task-backed card deletions instead commit app-owned confirmed receipts
+(`deletionOrigin: app`, `deletedAt` at commit time) with every affected task in one
+transaction. Each deleted condition contributes one deletion event; retaining the
+analyzer evidence does not make these user-requested deletions automatic supersessions.
 
 A 404 `unknown_condition` permits local task cleanup but does not prove when or
 whether a rejection occurred. The upstream API has no rejection-history read

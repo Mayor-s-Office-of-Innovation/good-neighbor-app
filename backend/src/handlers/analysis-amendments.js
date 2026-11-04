@@ -1,10 +1,22 @@
+import { categoryOptions, actionOptions } from "./task-details.js";
+import { catalogForPolicyVersion } from "../analysis/guidance/catalog-registry.js";
+import { answerCondition } from "../analysis/guidance/guidance-store.js";
+import { assessmentKey, conditionKey } from "./keys.js";
+import { deleteTaskGroup } from "../analysis/duplicates/deletion.js";
 import { statusConditionId } from "../domain/system-status.js";
-import { PutCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  descriptionWrites,
+  taskDescriptionWrite,
+  validDescription,
+  validTitle,
+} from "./description-edits.js";
+import { PutCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { getConfig } from "../config.js";
 import { GetCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getAnalyzerApiKey } from "../analysis/api-key.js";
 import {
+  ANALYZER_TIMEOUT_CODE,
   AnalyzerError,
   createAnalyzerClient,
 } from "../analysis/analyzer-client.js";
@@ -19,6 +31,14 @@ const APP_ID = "good-neighbor-app";
 const MAX_DESCRIPTION_LENGTH = 4000;
 /** Max reject-reason note length forwarded to the analyzer. */
 const MAX_NOTE_LENGTH = 1000;
+
+// The analyzer wait on the request path is bounded: a hung analyzer must not
+// hold an api execution for the function's full 29 s. One attempt may use the
+// whole 8 s, and a timed-out attempt is never replayed (the analyzer may still
+// commit it; its amendment endpoints are not idempotent). Fast failures with a
+// known outcome retry inside the same 8 s. The analysis worker keeps its own,
+// longer budget.
+const ANALYZER_WAIT_MS = 8_000;
 
 /**
  * @param {string} [message]
@@ -39,6 +59,8 @@ async function analyzerClient() {
   return createAnalyzerClient({
     baseUrl: config.analyzerBaseUrl,
     apiKey: await getAnalyzerApiKey(config),
+    requestTimeoutMs: ANALYZER_WAIT_MS,
+    totalBudgetMs: ANALYZER_WAIT_MS,
   });
 }
 
@@ -47,6 +69,21 @@ async function analyzerClient() {
  * @returns {import("aws-lambda").APIGatewayProxyResult}
  */
 function errorResponse(err) {
+  if (err instanceof Error && "statusCode" in err && err.statusCode === 409)
+    return jsonResponse(409, {
+      error: err.message,
+      code: "code" in err ? err.code : "group_changed",
+    });
+  if (err instanceof AnalyzerError && err.code === ANALYZER_TIMEOUT_CODE) {
+    // We stopped waiting; the analyzer may or may not have committed the
+    // amendment. Verified rejections handle this with a durable local
+    // dismissal below; edits and unverified rejections remain unconfirmed.
+    return jsonResponse(504, {
+      error:
+        "The analyzer did not answer in time; whether the change was saved is not known",
+      code: ANALYZER_TIMEOUT_CODE,
+    });
+  }
   if (err instanceof AnalyzerError) {
     return jsonResponse(err.status || 502, {
       error: err.message,
@@ -122,6 +159,71 @@ async function findAnalysisContext({ tableName, siteId, checkId, artifactId }) {
   };
 }
 
+/** @param {any} event */
+async function conditionContext(event) {
+  const { dynamoTable } = getConfig();
+  const siteId = deriveSiteId(event);
+  const { checkId, artifactId, conditionId } = event.pathParameters || {};
+  const read = async (/** @type {{pk:string,sk:string}} */ Key) =>
+    (
+      await ddb.send(
+        new GetCommand({ TableName: dynamoTable, Key, ConsistentRead: true }),
+      )
+    ).Item;
+  const requestedId = event.queryStringParameters?.assessmentId;
+  if (requestedId) {
+    const assessment = await read(assessmentKey(siteId, requestedId));
+    const condition = await read(
+      conditionKey(siteId, requestedId, conditionId),
+    );
+    if (
+      !assessment ||
+      assessment.checkId !== checkId ||
+      assessment.supersededByAssessmentId ||
+      !condition ||
+      !condition.source?.artifactIds?.includes(artifactId)
+    )
+      return null;
+    return { condition, assessment, assessmentId: requestedId };
+  }
+  const pointer = await read({
+    pk: `SITE#${siteId}`,
+    sk: `GUIDANCE_CURRENT#${JSON.stringify([checkId, artifactId])}`,
+  });
+  if (!pointer?.assessmentId) return null;
+  const condition = await read(
+    conditionKey(siteId, pointer.assessmentId, conditionId),
+  );
+  const assessment = await read(assessmentKey(siteId, pointer.assessmentId));
+  return condition && assessment && !assessment.supersededByAssessmentId
+    ? { condition, assessment, assessmentId: pointer.assessmentId }
+    : null;
+}
+
+/** GET the current generated condition and its selectable actions. @param {any} event */
+export async function getAnalysisConditionDetails(event) {
+  const context = await conditionContext(event);
+  if (!context) return jsonResponse(404, { error: "Condition not found" });
+  const { condition, assessment } = context;
+  const selection = {
+    policyVersion: condition.policyVersion || assessment.policyVersion,
+    category: condition.canonicalCategory || condition.category,
+    ruleId: condition.selectedRuleId,
+  };
+  return jsonResponse(200, {
+    clicked: condition,
+    members: [{ ...condition, checkId: assessment.checkId }],
+    category: selection.category,
+    editable:
+      condition.status === "needs_answer" ||
+      condition.status === "manual_review",
+    categories: categoryOptions(selection),
+    actions: actionOptions(selection).options,
+    selectedRuleId: "",
+    revision: Number(assessment.assessmentRevision || 0),
+  });
+}
+
 /**
  * POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}
  * @param {import("aws-lambda").APIGatewayProxyEventV2WithJWTAuthorizer} event
@@ -145,9 +247,27 @@ export async function editAnalysisCondition(event) {
   }
   const bodyObject =
     body && typeof body === "object"
-      ? /** @type {{ description?: unknown, language?: unknown }} */ (body)
+      ? /** @type {{ description?: unknown, language?: unknown, title?: string, category?: string, ruleId?: string, customAction?: {text:string,resolved:boolean}, revision?: number, requestId?: string }} */ (
+          body
+        )
       : undefined;
+  if (
+    bodyObject?.requestId !== undefined &&
+    (typeof bodyObject.requestId !== "string" ||
+      bodyObject.requestId.length > 100)
+  )
+    return jsonResponse(400, { error: "Invalid requestId" });
+  if (
+    bodyObject?.ruleId &&
+    (!Number.isSafeInteger(bodyObject.revision) ||
+      Number(bodyObject.revision) < 0)
+  )
+    return jsonResponse(400, {
+      error: "A valid revision is required for action edits",
+    });
   const description = bodyObject?.description;
+  if (bodyObject?.title !== undefined && !validTitle(bodyObject.title))
+    return jsonResponse(400, { error: "Invalid title" });
   if (typeof description !== "string" || description.trim().length < 5) {
     return jsonResponse(400, {
       error: "Description must be at least 5 characters",
@@ -158,32 +278,126 @@ export async function editAnalysisCondition(event) {
       error: `Description must be ${MAX_DESCRIPTION_LENGTH} characters or fewer`,
     });
   }
-  // Pass-through to the analyzer (falls back to English on unknown tags).
-  const language =
-    typeof bodyObject?.language === "string" && bodyObject.language.trim()
-      ? bodyObject.language.trim()
-      : undefined;
-
+  if (!validDescription(description))
+    return jsonResponse(400, { error: "Invalid description" });
   try {
-    const context = await findAnalysisContext({
-      tableName: dynamoTable,
+    if (
+      bodyObject?.ruleId ||
+      bodyObject?.category ||
+      bodyObject?.title !== undefined
+    ) {
+      const context = await conditionContext(event);
+      if (!context) return jsonResponse(404, { error: "Condition not found" });
+      if (
+        bodyObject.revision !== undefined &&
+        bodyObject.revision !==
+          Number(context.assessment.assessmentRevision || 0) &&
+        context.condition.detailsEditId !== bodyObject.requestId
+      )
+        return jsonResponse(409, { error: "Issue changed while editing" });
+      if (
+        !bodyObject.ruleId &&
+        bodyObject.requestId &&
+        context.condition.detailsEditId === bodyObject.requestId
+      )
+        return jsonResponse(200, {
+          description: context.condition.description,
+          condition: context.condition,
+          assessment: context.assessment,
+        });
+      if (bodyObject.ruleId) {
+        const catalog = catalogForPolicyVersion(
+          context.condition.policyVersion || context.assessment.policyVersion,
+        );
+        const category =
+          bodyObject.category || context.condition.canonicalCategory;
+        const custom = bodyObject.ruleId === "__custom__";
+        const rule = catalog.rules.find(
+          (candidate) =>
+            candidate.category === category &&
+            candidate.outcome.buttons[0] &&
+            (custom || candidate.ruleId === bodyObject.ruleId),
+        );
+        if (
+          !rule ||
+          (custom &&
+            (!bodyObject.customAction?.text?.trim() ||
+              bodyObject.customAction.text.length > 1000 ||
+              typeof bodyObject.customAction.resolved !== "boolean"))
+        )
+          return jsonResponse(400, { error: "Invalid action" });
+        const result = await answerCondition({
+          tableName: dynamoTable,
+          siteId,
+          assessmentId: context.assessmentId,
+          conditionId,
+          answers: {},
+          manualEdit: {
+            ...bodyObject,
+            description: description.trim(),
+            ruleId: rule.ruleId,
+            customAction: custom ? bodyObject.customAction : undefined,
+          },
+        });
+        return jsonResponse(200, {
+          description: description.trim(),
+          condition: result.conditionItem,
+          task: result.taskItem,
+          assessment: result.assessmentItem,
+        });
+      }
+      if (
+        bodyObject.category &&
+        bodyObject.category !== context.condition.canonicalCategory
+      )
+        return jsonResponse(400, {
+          error: "Select an action for the category",
+        });
+    }
+    const edit = await descriptionWrites({
+      table: dynamoTable,
       siteId,
       checkId,
       artifactId,
+      conditionId,
+      description,
+      title: bodyObject?.title,
+      assessmentId: event.queryStringParameters?.assessmentId,
+      revision: bodyObject?.revision,
+      requestId: bodyObject?.requestId,
     });
-    if (!context) {
-      return jsonResponse(404, { error: "Analysis not found" });
-    }
-    const client = await analyzerClient();
-    const result = await client.editCondition(context.analysisId, conditionId, {
+    await ddb.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          ...edit.writes,
+          ...edit.tasks.map((task) =>
+            taskDescriptionWrite(
+              dynamoTable,
+              task,
+              description,
+              bodyObject?.title,
+            ),
+          ),
+        ],
+      }),
+    );
+    return jsonResponse(200, {
       description: description.trim(),
-      appId: APP_ID,
-      requestId: requestId(body, `${context.analysisId}#${conditionId}#edit`),
-      ...(language ? { language } : {}),
+      condition: edit.condition,
     });
-    return jsonResponse(200, result);
-  } catch (err) {
-    return errorResponse(err);
+  } catch (error) {
+    if (error instanceof Error && "status" in error)
+      return jsonResponse(Number(error.status), { error: error.message });
+    if (
+      error instanceof Error &&
+      [
+        "TransactionCanceledException",
+        "AssessmentRevisionConflict",
+        "ConditionDismissed",
+      ].includes(error.name)
+    )
+      return jsonResponse(409, { error: "Description changed while editing" });
+    throw error;
   }
 }
 
@@ -211,7 +425,7 @@ export async function rejectAnalysisCondition(event) {
     }
   }
   const input =
-    /** @type {{ reason?: { key?: unknown, note?: unknown }, taskId?: unknown }} */ (
+    /** @type {{ reason?: { key?: unknown, note?: unknown }, taskId?: unknown, deletionTaskIds?: string[], deletionMode?: "selected" }} */ (
       body
     );
   /** @type {{ key: "not_a_problem" | "other", note?: string } | undefined} */
@@ -240,6 +454,25 @@ export async function rejectAnalysisCondition(event) {
   }
 
   try {
+    if (typeof input.taskId === "string" && input.taskId) {
+      if (
+        input.deletionTaskIds !== undefined &&
+        (!Array.isArray(input.deletionTaskIds) ||
+          !input.deletionTaskIds.every((id) => typeof id === "string"))
+      )
+        return jsonResponse(400, { error: "Invalid deletion scope" });
+      if (input.deletionMode !== undefined && input.deletionMode !== "selected")
+        return jsonResponse(400, { error: "Invalid deletion mode" });
+      const deleted = await deleteTaskGroup(dynamoTable, siteId, {
+        taskId: input.taskId,
+        checkId,
+        artifactId,
+        conditionId,
+        expectedTaskIds: input.deletionTaskIds,
+        mode: input.deletionMode,
+      });
+      return jsonResponse(200, { deleted });
+    }
     const context = await findAnalysisContext({
       tableName: dynamoTable,
       siteId,
@@ -310,6 +543,7 @@ export async function rejectAnalysisCondition(event) {
       const client = await analyzerClient();
       let accepted = false;
       let dismissed = false;
+      let dismissalReason = "analysis_unavailable";
       try {
         result = await client.rejectCondition(context.analysisId, conditionId, {
           ...(reason ? { reason } : {}),
@@ -323,13 +557,21 @@ export async function rejectAnalysisCondition(event) {
       } catch (err) {
         if (
           err instanceof AnalyzerError &&
-          err.status === 404 &&
-          err.code === "unknown_analysis" &&
+          (err.code === ANALYZER_TIMEOUT_CODE ||
+            (err.status === 404 &&
+              (err.code === "unknown_analysis" ||
+                err.code === "unknown_condition"))) &&
           knownConcern
         ) {
           // The site-owned stored analysis verifies this condition. Dismiss it
-          // locally without claiming the expired analyzer accepted a rejection.
+          // locally without claiming the analyzer accepted a rejection.
           dismissed = true;
+          dismissalReason =
+            err.code === ANALYZER_TIMEOUT_CODE
+              ? "analyzer_timeout"
+              : err.code === "unknown_condition"
+                ? "condition_unavailable"
+                : "analysis_unavailable";
           result = {
             analysis_id: context.analysisId,
             condition_id: conditionId,
@@ -366,7 +608,7 @@ export async function rejectAnalysisCondition(event) {
             ...(dismissed
               ? {
                   dismissedAt: new Date().toISOString(),
-                  dismissalReason: "analysis_unavailable",
+                  dismissalReason,
                 }
               : { deletedAt }),
             category: knownConcern?.category || receipt.category,
@@ -415,7 +657,7 @@ export async function rejectAnalysisCondition(event) {
         : {}),
       reason: "analysis_condition_rejected",
     });
-    return jsonResponse(200, result);
+    return jsonResponse(200, { ...result, deleted: [] });
   } catch (err) {
     return errorResponse(err);
   }

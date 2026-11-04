@@ -65,6 +65,7 @@ import {
   get311RequestDetails,
   listTasks,
 } from "../src/handlers/tasks.js";
+import { getHome } from "../src/handlers/home.js";
 import {
   createTaskUpdate,
   documentTaskUpdate,
@@ -121,6 +122,7 @@ import { handler as clientEventsHandler } from "../src/handlers/client-events.js
 import { handler as feedbackHandler } from "../src/handlers/feedback.js";
 import {
   editAnalysisCondition,
+  getAnalysisConditionDetails,
   rejectAnalysisCondition,
 } from "../src/handlers/analysis-amendments.js";
 import {
@@ -147,6 +149,7 @@ import {
   getMyProfile,
   updateMyProfile,
   inviteAdminUser,
+  lookupAdminInvitation,
   listAdminUsers,
   reinviteAdminUser,
   reinstateAdminUser,
@@ -379,8 +382,14 @@ const routes = [
   ),
   // Staff worklist (AP10)
   route("GET", "/v1/tasks", listTasks),
+  route("GET", "/v1/home", getHome),
   route("POST", "/v1/duplicates:batch", getDuplicateLinks),
   route("POST", "/v1/tasks/{taskId}/duplicate:separate", separateDuplicate),
+  route(
+    "GET",
+    "/v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}",
+    getAnalysisConditionDetails,
+  ),
   route("GET", "/v1/tasks/{taskId}/details", getTaskDetails),
   route("PATCH", "/v1/tasks/{taskId}/action", updateTaskAction),
   route("POST", "/v1/tasks/{taskId}/custom-action", recordCustomTaskAction),
@@ -442,6 +451,7 @@ const routes = [
   route("PUT", "/admin/v1/profile", updateMyProfile),
   route("GET", "/admin/v1/admin-users", listAdminUsers),
   route("POST", "/admin/v1/admin-users", inviteAdminUser),
+  route("POST", "/admin/v1/admin-users/lookup", lookupAdminInvitation),
   route("PUT", "/admin/v1/admin-users/{username}/role", updateAdminUserRole),
   route("POST", "/admin/v1/admin-users/{username}/suspend", suspendAdminUser),
   route(

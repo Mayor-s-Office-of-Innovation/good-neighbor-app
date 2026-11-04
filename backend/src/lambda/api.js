@@ -64,6 +64,7 @@ import {
   get311RequestDetails,
   listTasks,
 } from "../handlers/tasks.js";
+import { getHome } from "../handlers/home.js";
 import {
   createTaskUpdate,
   documentTaskUpdate,
@@ -76,7 +77,6 @@ import {
   getGuidance,
   submitConditionAnswers,
 } from "../handlers/guidance.js";
-import { handler as submissionsHandler } from "../handlers/submissions.js";
 import { handler as healthHandler } from "../handlers/health.js";
 import { handler as siteCodeHandler } from "../handlers/site-code.js";
 import { registerDevice, refreshDeviceToken } from "../handlers/devices.js";
@@ -112,6 +112,7 @@ import {
 } from "../handlers/site.js";
 import {
   editAnalysisCondition,
+  getAnalysisConditionDetails,
   rejectAnalysisCondition,
 } from "../handlers/analysis-amendments.js";
 import {
@@ -138,6 +139,7 @@ import {
   getMyProfile,
   updateMyProfile,
   inviteAdminUser,
+  lookupAdminInvitation,
   listAdminUsers,
   reinviteAdminUser,
   reinstateAdminUser,
@@ -292,6 +294,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
     presignComplaintMedia,
   // Staff worklist (AP10)
   "GET /v1/tasks": listTasks,
+  // Home in one request: checks + the four worklists, per-section results
+  "GET /v1/home": getHome,
   "POST /v1/duplicates:batch": getDuplicateLinks,
   "POST /v1/tasks/{taskId}/duplicate:separate": separateDuplicate,
   "GET /v1/tasks/{taskId}/details": getTaskDetails,
@@ -310,12 +314,12 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /v1/assessments/{assessmentId}/guidance": getGuidance,
   "POST /v1/assessments/{assessmentId}/conditions/{conditionId}/answers":
     submitConditionAnswers,
+  "GET /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}":
+    getAnalysisConditionDetails,
   "POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}":
     editAnalysisCondition,
   "POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}/reject":
     rejectAnalysisCondition,
-  // Legacy demo submission loop + health
-  "POST /submissions": submissionsHandler,
   "GET /health": healthHandler,
   // The best-effort intakes (client-errors, client-events, feedback) are
   // served by the separate intake Lambda (lambda/intake.js) so a slow PostHog
@@ -334,6 +338,7 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "PUT /admin/v1/profile": updateMyProfile,
   "GET /admin/v1/admin-users": listAdminUsers,
   "POST /admin/v1/admin-users": inviteAdminUser,
+  "POST /admin/v1/admin-users/lookup": lookupAdminInvitation,
   "PUT /admin/v1/admin-users/{username}/role": updateAdminUserRole,
   "POST /admin/v1/admin-users/{username}/suspend": suspendAdminUser,
   "POST /admin/v1/admin-users/{username}/reinstate": reinstateAdminUser,

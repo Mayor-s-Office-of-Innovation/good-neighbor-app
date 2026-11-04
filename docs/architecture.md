@@ -221,7 +221,10 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   `SITE#<siteId> / #META`. With none it fails the app action with a retryable
   `missing_location` result rather than guessing.
 - **Classifier-backed 311 routing:** the app sends the task's source image to the constrained
-  analyzer classifier when one exists, otherwise it sends the original text artifact. Images use
+  analyzer classifier when one exists, with the saved task description in `image.metadata.description`
+  (included in the classifier prompt). Without an image, it sends the saved description, falling
+  back to the original text artifact for older tasks without a description. This shared path
+  applies to every classifier-backed action, including graffiti and bulky items. Images use
   the same orientation correction, 1568 px long-edge cap, flattening, and JPEG normalization as
   the main analysis path before base64 encoding. The classifier returns only approved labels,
   which the app maps to SF311 service codes. An empty label result is stored explicitly as
@@ -260,8 +263,7 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   tickets runs in the background and does not delay or undo that resolution. Notes,
   actions, and update photos append to the timeline. Update-photo registration
   reuses the private artifact/S3 read path but does not enqueue analyzer work.
-- **Automatic 311 work:** task creation (including clarification answers and action
-  overrides) and resolution atomically write an `SF311_OUTBOX` item with
+- **Automatic 311 work:** task creation (including clarification answers) and resolution atomically write an `SF311_OUTBOX` item with
   the task change. DynamoDB Streams dispatches it to the dedicated 311 queue;
   the local harness polls the same outbox. Classification, ticket creation,
   attachment uploads, and automatic closure never gate these HTTP responses.
@@ -302,10 +304,10 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   filing `failed`, leaving the task `in_progress`. A repeat tap returns the task; a tap on a
   failed filing queues a new job.
   Action-selection overrides atomically compare the task and worker-result snapshots.
-  They allow settled silent filings and definitive rejections once the results are
-  reflected on the task, preserving all ticket references and checkpoints. Active
-  worker claims, uncertain outcomes, and executed user actions still block edits.
-  Expired worker leases permit edits only with settled results; the transaction
+  They preserve all silent filing history, including failed attachments, uncertain
+  outcomes, and checkpoints not yet reflected on the task. Editing does not retry
+  or replace those tickets. Active worker claims and executed user actions still
+  block edits. Expired worker leases permit edits; the transaction
   checks the observed lease token and expiry so a newly claimed lease blocks the edit.
   Missing or malformed lease expiry remains blocked.
   Silent and deliberate filing results are kept separately; a deliberate filing
@@ -343,6 +345,9 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   `POST /v1/assessments/{id}/conditions/{id}/answers`, `POST /v1/tasks/{id}/complete`,
   `GET /v1/tasks/{id}/details`, `PATCH /v1/tasks/{id}/action`,
   `POST /v1/tasks/{id}/custom-action`,
+  `GET /v1/home` (Home's one-request read: the check list plus the four task
+  worklists, each section with its own `ok`, so one failed query degrades one
+  list rather than the page; the per-list routes stay for targeted refreshes),
   `POST /v1/311-requests:batch`, and
   `GET /v1/tasks/{taskId}/311-requests/{srNum}`. The 311 routes verify that each site-scoped task
   owns its service-request number and return only the normalized summary and timeline fields used
@@ -353,13 +358,37 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   build, served only by the dev server) exercises the flow with fixtures against the real local
   API; see [dev-commands.md](./dev-commands.md#guidance-harness-dev-only-page).
 
-Open tasks may replace their card action with any distinct action in the task's
-snapshotted category and policy catalog. The task retains its evaluated `ruleId`;
-`actionOverride` records the selected rule and original rule while the executable
-fields are replaced atomically. Duplicate-group edits resolve to the original task,
-so every linked card shares one action. A free-text custom action either moves that
-root task to `in_progress` or completes it regardless of `canBeInProgress`, and
-appends the entered text to the immutable task timeline.
+Open tasks may edit their observation title and description and select any category
+and action in their snapshotted policy catalog. Changing category clears the draft
+action and requires an explicit selection. Guidance is derived from the saved rule
+and is never editable or previewed inside the editor. The task retains its evaluated
+`ruleId`; `actionOverride` records the selected rule. Duplicate-group category,
+action, and guidance belong to the root; title and description belong only to the
+opened observation. Custom actions have no inherited guidance and append the
+entered text to the immutable task timeline.
+
+Generated-card editors keep all fields and custom resolution answers in a draft
+until Save. This applies to capture, pending questions, and finalized Home cards.
+Once work begins, all editing is locked in both the UI and API. Save closes the
+editor, and failed requests retain the draft behind a Review and retry control.
+X, backdrop, Escape, and browser Back share the dirty-exit confirmation.
+
+Title/description corrections do not invoke the analyzer or change outstanding
+questions. `titleEdited` and `descriptionEdited` make saved text take precedence
+over generated translations, including those arriving later. Selecting an explicit
+action on a pending question instead retires the question and creates the selected
+task atomically, with an assessment revision guard against concurrent answers.
+This does not enqueue a silent 311 filing. Selecting File 311 shows the report-text
+hint; saving that selection does not file the report. Initial evidence capture and
+editing the original text-evidence input keep their existing analysis behavior.
+
+A combined action/description save updates the duplicate group's root action and
+only the clicked observation's description in one transaction. Action edits do not
+create, replace, or close silent 311 tickets. `silent311Snapshot` preserves the
+original filing fields for an initial job already queued; subsequent resolution
+jobs may close existing tickets but cannot create tickets for an overridden action.
+Explicit File 311 operations retain their separate user-confirmed behavior.
+
 
 ## Single-table data model
 

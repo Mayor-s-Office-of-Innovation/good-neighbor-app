@@ -1,7 +1,7 @@
 // Keep mutation notifications independent of the polling/UI dependency graph.
 const listeners = new Set();
 
-/** @param {(originSiteId?: string, tasks?: Record<string, any>[]) => void} listener */
+/** @param {(originSiteId?: string, tasks?: Record<string, any>[], deletedTaskIds?: string[]) => void} listener */
 export function onDuplicateInvalidation(listener) {
   listeners.add(listener);
   return () => listeners.delete(listener);
@@ -9,9 +9,13 @@ export function onDuplicateInvalidation(listener) {
 
 /** @param {string} [originSiteId]
  * @param {Record<string, any>[]} [tasks]
+ * @param {string[]} [deletedTaskIds]
  */
-export function invalidateDuplicateIssues(originSiteId, tasks) {
-  for (const listener of listeners) listener(originSiteId, tasks);
+export function invalidateDuplicateIssues(originSiteId, tasks, deletedTaskIds) {
+  for (const listener of listeners) {
+    if (deletedTaskIds) listener(originSiteId, tasks, deletedTaskIds);
+    else listener(originSiteId, tasks);
+  }
 }
 
 /**

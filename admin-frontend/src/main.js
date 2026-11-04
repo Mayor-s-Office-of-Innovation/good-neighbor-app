@@ -1,3 +1,19 @@
+import "../../frontend/src/styles/overlays.css";
+import {
+  beginEnrollmentRequest,
+  syncEnrollmentRequests,
+} from "./enrollment-request.js";
+import { bindManagerAssignmentSearch } from "./manager-assignment-search.js";
+import {
+  clearEnrollmentCodeView,
+  enrollmentCodePanel,
+  bindEnrollmentCodeExpiry,
+} from "./enrollment-code-view.js";
+import {
+  batch311Header,
+  batch311Checkbox,
+  bind311Batch,
+} from "./site-311-batch.js";
 import { startErrorPresentation } from "../../frontend/src/components/error-notice.js";
 import { mountConnectionBanner } from "../../frontend/src/components/connection-banner.js";
 startErrorPresentation();
@@ -24,8 +40,8 @@ import {
   bindSiteProgramCreation,
 } from "./site-program.js";
 import { phoneExtensionField, bindPhoneExtensions } from "./phone-extension.js";
+import { bindAdminInvitationLookup } from "./admin-invitation-lookup.js";
 import { withSaveFeedback, upsertRecord } from "./save-feedback.js";
-import { bindNewProgramStaff } from "./new-program-staff.js";
 import { createAndAssignManager } from "./pending-manager.js";
 import { letterEmailProgress, profilePhoneUpdate } from "./admin-save-state.js";
 import "./icons.js";
@@ -80,6 +96,7 @@ import {
  * @typedef {{ deviceId: string, label?: string, status?: string }} AdminDevice
  * @typedef {{ code: string, issuedTo: string, expiresAt: string }} AdminIssuedCode
  * @typedef {object} AdminState
+ * @property {ReturnType<typeof import("./site-311-batch.js").create311Batch>} [site311Batch]
  * @property {AdminProvider[]} providers
  * @property {AdminSite[]} sites
  * @property {any[]} programs
@@ -286,6 +303,7 @@ class AdminApp extends HTMLElement {
     this.addEventListener("click", this.routeClick);
     window.addEventListener("popstate", this.routeChanged);
     window.addEventListener("beforeunload", this.beforeUnload);
+    window.addEventListener("pagehide", this.clearDisplayedEnrollmentCodes);
     if (this.state.hasToken) {
       const origin = location.pathname + location.search;
       this.bootstrap().catch((error) => {
@@ -302,12 +320,22 @@ class AdminApp extends HTMLElement {
   }
 
   disconnectedCallback() {
+    clearEnrollmentCodeView(this.state);
     this.deviceRevocationController?.abort();
     this.directorySearchDebounce?.cancel();
+    this.managerSearchCleanup?.();
     this.removeEventListener("click", this.routeClick);
     window.removeEventListener("popstate", this.routeChanged);
     window.removeEventListener("beforeunload", this.beforeUnload);
+    window.removeEventListener("pagehide", this.clearDisplayedEnrollmentCodes);
   }
+
+  clearDisplayedEnrollmentCodes = () => {
+    clearEnrollmentCodeView(this.state);
+    this.querySelectorAll("[data-enrollment-code]").forEach((node) =>
+      node.remove(),
+    );
+  };
 
   beforeUnload = (event) => {
     if (!this.hasUnsavedSiteChanges()) return;
@@ -339,16 +367,22 @@ class AdminApp extends HTMLElement {
     this.navigationGeneration = (this.navigationGeneration || 0) + 1;
     this.deviceRevocationController?.abort();
     this.directorySearchDebounce?.cancel();
+    this.managerSearchCleanup?.();
     const destination = window.location.pathname + window.location.search;
     if (
       this.lastRenderedPath &&
       destination !== this.lastRenderedPath &&
+      !(
+        this.lastRenderedPath.split("?")[0] === "/sites" &&
+        currentRoute().name === "sites"
+      ) &&
       this.hasUnsavedSiteChanges()
     ) {
       window.history.pushState({}, "", this.lastRenderedPath);
       this.confirmSiteNavigation(destination);
       return;
     }
+    clearEnrollmentCodeView(this.state);
     this.state.complianceProfileDraft = complianceDraftAfterNavigation(
       this.state.complianceProfileDraft,
       destination,
@@ -378,6 +412,8 @@ class AdminApp extends HTMLElement {
   };
 
   hasUnsavedSiteChanges() {
+    if (this.state.site311Batch?.drafts.size || this.state.site311Batch?.saving)
+      return true;
     if (this.querySelector("#admin-user-form[data-saving='true']")) return true;
     const siteDetailsForm = this.querySelector("#site-details-form");
     const siteDetailsDirty =
@@ -397,6 +433,7 @@ class AdminApp extends HTMLElement {
   confirmSiteNavigation(destination) {
     // An invitation already in flight cannot be cancelled by leaving the page.
     if (this.querySelector("#admin-user-form[data-saving='true']")) return;
+    if (this.state.site311Batch?.saving) return;
     this.pendingSiteDestination = destination;
     this.querySelector("#site-unsaved-dialog")?.showModal();
   }
@@ -832,22 +869,12 @@ class AdminApp extends HTMLElement {
   }
 
   async openNewSiteFlow() {
-    const path = location.pathname + location.search;
-    const programId = new URLSearchParams(window.location.search).get(
-      "programId",
-    );
     this.state.provider = null;
     this.state.program = null;
     this.state.site = null;
     this.state.siteManager = null;
     this.state.newSiteUsers = [];
-    if (programId) {
-      const result = await adminApi.getProgram(programId);
-      if (location.pathname + location.search !== path) return;
-      this.state.newSiteUsers = (result.users || []).filter(
-        (user) => user.status !== "inactive",
-      );
-    }
+
     this.render();
     queueMicrotask(() => this.querySelector("h1")?.focus());
   }
@@ -1061,6 +1088,12 @@ class AdminApp extends HTMLElement {
   }
 
   async issueProviderManagerGrant(membershipId, deliveryMode = "link") {
+    const release = beginEnrollmentRequest(
+      this,
+      "provider",
+      this.state.provider?.providerId,
+    );
+    if (!release) return;
     const feedback = actionFeedback("admin.enrollment.emailed");
     const providerId = this.state.provider?.providerId;
     try {
@@ -1111,6 +1144,8 @@ class AdminApp extends HTMLElement {
       }
       feedback.failure(error);
       throw error;
+    } finally {
+      release();
     }
   }
 
@@ -1396,22 +1431,43 @@ class AdminApp extends HTMLElement {
     }
   }
 
+  async updateProgramDetails(form) {
+    const program = this.state.program;
+    if (!program || !this.state.capabilities.createEntities) return false;
+    const feedback = actionFeedback("admin.programs.saved");
+    try {
+      const result = await adminApi.updateProgram(program.programId, {
+        name: formValue(new FormData(form), "program-name"),
+        expectedUpdatedAt: program.updatedAt || "",
+      });
+      this.state.programs = upsertRecord(
+        this.state.programs,
+        result.program,
+        "programId",
+      );
+      this.state.managerDirectoryLoaded = false;
+      this.managerDirectoryVersion = (this.managerDirectoryVersion || 0) + 1;
+      if (this.state.program?.programId === program.programId) {
+        this.state.program = { ...program, ...result.program };
+        syncDirtyForm(form, true);
+        this.render();
+      }
+      feedback.success();
+      return true;
+    } catch (error) {
+      feedback.failure(error);
+      throw error;
+    }
+  }
+
   async createProgram(form) {
     const feedback = actionFeedback("admin.toast.programCreated");
     try {
       const origin = location.pathname + location.search;
       const data = new FormData(form);
-      const selection = form.querySelector('[name="program-staff"]');
-      const rawStaff = String(data.get("program-staff") || "");
-      if (selection?.disabled || !rawStaff || rawStaff === "__create__")
-        throw new Error(t("admin.programs.chooseStaff"));
-      const staff = JSON.parse(decodeURIComponent(rawStaff));
-      if (!staff || (!staff.existingStaff && !staff.firstStaff))
-        throw new Error(t("admin.programs.chooseStaff"));
       const result = await adminApi.createProgram({
         name: String(data.get("program-name") || ""),
         providerId: String(data.get("program-provider") || ""),
-        ...staff,
       });
       feedback.success();
       this.state.programs = upsertRecord(
@@ -1685,7 +1741,9 @@ class AdminApp extends HTMLElement {
           phone: formValue(data, "public-contact-phone"),
           phoneExtension: formValue(data, "public-contact-extension"),
         },
-        primaryContactUserId: formValue(data, "site-manager-user-id"),
+        ...(expectedManagerId
+          ? { primaryContactUserId: expectedManagerId }
+          : {}),
         siteType: controlValue(form, "site-type"),
       });
       feedback.changed();
@@ -1694,9 +1752,10 @@ class AdminApp extends HTMLElement {
       if (
         !result.site.addressParts ||
         !result.site.publicContact ||
-        result.site.primaryContactUserId !== expectedManagerId
+        (result.site.primaryContactUserId || "") !== expectedManagerId
       ) {
-        await adminApi.assignSiteUser(siteId, expectedManagerId, true);
+        if (expectedManagerId)
+          await adminApi.assignSiteUser(siteId, expectedManagerId, true);
         const repaired = await adminApi.updateSite(siteId, {
           name: result.site.name,
           addressParts,
@@ -1705,14 +1764,16 @@ class AdminApp extends HTMLElement {
             phone: formValue(data, "public-contact-phone"),
             phoneExtension: formValue(data, "public-contact-extension"),
           },
-          primaryContactUserId: expectedManagerId,
+          ...(expectedManagerId
+            ? { primaryContactUserId: expectedManagerId }
+            : {}),
           siteType: controlValue(form, "site-type"),
         });
         result.site = repaired.site;
         if (
           !repaired.site?.addressParts ||
           !repaired.site?.publicContact ||
-          repaired.site?.primaryContactUserId !== expectedManagerId
+          (repaired.site?.primaryContactUserId || "") !== expectedManagerId
         ) {
           throw new Error("site_creation_incomplete");
         }
@@ -1872,7 +1933,7 @@ class AdminApp extends HTMLElement {
             this.state.programs,
             leadProgramId,
           );
-          if (!leadProgramId || !leadProgram?.providerId) {
+          if (leadProgramId && !leadProgram) {
             throw new Error("lead_program_required");
           }
           const reassignment = await adminApi.reassignSite(
@@ -1883,6 +1944,11 @@ class AdminApp extends HTMLElement {
           );
           feedback.changed();
           this.state.site = { ...this.state.site, ...reassignment.site };
+          this.state.sites = upsertRecord(
+            this.state.sites,
+            this.state.site,
+            "siteId",
+          );
         }
         if (section === "lead-program") {
           feedback.success("admin.toast.leadProgramSaved");
@@ -2709,8 +2775,12 @@ class AdminApp extends HTMLElement {
       cancel.disabled = true;
       const siteId = this.state.site.siteId;
       const programId = this.state.site.leadProgramId;
+      const creationGeneration = this.navigationGeneration;
+      let assignedMembership;
+      let emailRequested = false;
       try {
         const data = new FormData(form);
+        emailRequested = Boolean(data.get("email-enrollment-link"));
         const values = {
           firstName: formValue(data, "new-manager-first-name"),
           lastName: formValue(data, "new-manager-last-name"),
@@ -2749,12 +2819,15 @@ class AdminApp extends HTMLElement {
               email,
               programId,
               userId,
-            ) =>
-              adminApi.assignPersonToSite(siteId, {
+            ) => {
+              const assigned = await adminApi.assignPersonToSite(siteId, {
                 personId: userId,
                 name,
                 email,
-              }),
+              });
+              assignedMembership = assigned?.membership;
+              return assigned;
+            },
           },
         );
         feedback.success();
@@ -2773,10 +2846,31 @@ class AdminApp extends HTMLElement {
         cancel.disabled = false;
         return;
       }
+      if (emailRequested && assignedMembership) {
+        const release = beginEnrollmentRequest(this, "site", siteId);
+        try {
+          if (!release) throw new Error("enrollment_request_pending");
+          const sent = await adminApi.createManagerGrant(
+            siteId,
+            assignedMembership.membershipId,
+            "link",
+          );
+          if (sent.grant?.deliveryStatus !== "accepted")
+            throw new Error("enrollment_email_failed");
+          notifyAdmin("admin.enrollment.emailed", "success");
+        } catch {
+          notifyAdmin("admin.enrollment.createdEmailFailed", "error");
+        } finally {
+          release?.();
+        }
+      }
       form.closest("dialog")?.close();
+      if (this.navigationGeneration !== creationGeneration) return;
       try {
         await this.openSite(siteId, false);
-        this.querySelector("#manager-membership-form wa-select")?.focus();
+        this.querySelector(
+          "#manager-membership-form [data-manager-search]",
+        )?.focus();
       } catch (error) {
         feedback.failure(error);
         this.state.error = error.message;
@@ -3211,7 +3305,104 @@ class AdminApp extends HTMLElement {
   }
 
   /** @param {string} membershipId */
+  async showEnrollmentCode(scope, membershipId) {
+    const id =
+      scope === "site"
+        ? this.state.site?.siteId
+        : this.state.provider?.providerId;
+    if (!id) return;
+    const release = beginEnrollmentRequest(this, scope, id);
+    if (!release) return;
+    const view = (this.state.enrollmentCodeView ||= { codes: new Map() });
+    const generation = this.navigationGeneration;
+    const current = () =>
+      this.state.enrollmentCodeView === view &&
+      this.navigationGeneration === generation;
+    this.render();
+    try {
+      if (scope === "site") {
+        const member = this.state.managerMemberships.find(
+          (m) => m.membershipId === membershipId,
+        );
+        if (member?.legacyAssignment) {
+          const linked = await adminApi.createManagerMembership(
+            id,
+            member.name,
+            member.email,
+            this.state.site.leadProgramId,
+            member.userId,
+          );
+          if (!current()) return;
+          membershipId = linked.membership.membershipId;
+          this.state.managerMemberships = this.state.managerMemberships.map(
+            (m) => (m === member ? linked.membership : m),
+          );
+        }
+      }
+      const result =
+        scope === "site"
+          ? await adminApi.createManagerGrant(id, membershipId, "screen")
+          : await adminApi.createProviderManagerGrant(
+              id,
+              membershipId,
+              "screen",
+            );
+      if (!current()) return;
+      view.codes.set(result.grant.grantId, {
+        scope,
+        id,
+        grant: result.grant,
+        code: result.enrollmentCode,
+      });
+      const field =
+        scope === "site" ? "managerGrants" : "providerManagerGrants";
+      this.state[field] = upsertRecord(
+        this.state[field].map((grant) =>
+          scope === "site" &&
+          grant.membershipId === membershipId &&
+          grant.status === "pending" &&
+          grant.issuedBy !== "manager-email-recovery" &&
+          Date.parse(grant.expiresAt) > Date.now()
+            ? { ...grant, status: "replaced" }
+            : grant,
+        ),
+        result.grant,
+        "grantId",
+      );
+      // Site issuance replaces older pending grants for this membership.
+      for (const [grantId, entry] of view.codes) {
+        if (
+          entry.scope === scope &&
+          entry.id === id &&
+          entry.grant.membershipId === membershipId &&
+          grantId !== result.grant.grantId
+        )
+          view.codes.delete(grantId);
+      }
+      this.render();
+      this.querySelector(
+        `[data-enrollment-code="${CSS.escape(result.grant.grantId)}"]`,
+      )?.focus();
+    } catch (error) {
+      if (current())
+        notifyAdmin(
+          error.message === "provider_manager_grant_already_active"
+            ? "admin.enrollment.alreadyActive"
+            : "admin.enrollment.screenFailed",
+          "error",
+        );
+    } finally {
+      release();
+    }
+  }
+
   async issueManagerGrant(membershipId, deliveryMode = "link") {
+    const release = beginEnrollmentRequest(
+      this,
+      "site",
+      this.state.site?.siteId,
+    );
+    if (!release) return;
     if (this.state.error) {
       this.state.error = "";
       this.render();
@@ -3271,6 +3462,8 @@ class AdminApp extends HTMLElement {
       }
       feedback.failure(error);
       throw error;
+    } finally {
+      release();
     }
   }
 
@@ -3592,6 +3785,7 @@ class AdminApp extends HTMLElement {
   }
 
   bindDirectoryFilters() {
+    bind311Batch(this, this.state, adminApi);
     this.querySelector("#site-directory-filters")?.addEventListener(
       "change",
       (event) => {
@@ -3670,6 +3864,14 @@ class AdminApp extends HTMLElement {
   }
 
   bind() {
+    bindEnrollmentCodeExpiry(this, this.state);
+    this.querySelectorAll("[data-show-enrollment-code]").forEach((button) => {
+      const scope = button.dataset.enrollmentScope;
+      const membershipId = button.getAttribute("data-show-enrollment-code");
+      button.addEventListener("click", () =>
+        this.showEnrollmentCode(scope, membershipId),
+      );
+    });
     this.querySelector("#retry-page-load")?.addEventListener("click", () => {
       if (!this.state.role) {
         window.location.reload();
@@ -3736,19 +3938,32 @@ class AdminApp extends HTMLElement {
         sync();
       });
     });
-    this.querySelector("#admin-user-form")?.addEventListener(
-      "submit",
-      (event) => {
-        event.preventDefault();
-        const form = asForm(event.currentTarget);
-        if (!form.reportValidity()) return;
-        void withSaveFeedback(form, () => this.inviteAdministrator(form), {
+    const invitationForm = this.querySelector("#admin-user-form");
+    const ensureInvitationLookup = invitationForm
+      ? bindAdminInvitationLookup(
+          invitationForm,
+          adminApi.lookupAdminInvitation,
+          t,
+        )
+      : null;
+    invitationForm?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const form = asForm(event.currentTarget);
+      if (!form.querySelector('[name="email"]').reportValidity()) return;
+      void withSaveFeedback(
+        form,
+        async () => {
+          await ensureInvitationLookup();
+          if (!form.isConnected || !form.reportValidity()) return;
+          return this.inviteAdministrator(form);
+        },
+        {
           savingLabel: t("admin.users.sending"),
           onError: (error) =>
             showFormSaveError(form, adminInvitationError(error)),
-        });
-      },
-    );
+        },
+      );
+    });
     this.querySelector("#admin-user-status-filter")?.addEventListener(
       "change",
       (event) => {
@@ -3976,6 +4191,7 @@ class AdminApp extends HTMLElement {
       this.state.sites = [];
       this.state.provider = null;
       this.state.site = null;
+      clearEnrollmentCodeView(this.state);
       signOutAdmin();
     });
     this.querySelector("#provider-form")?.addEventListener("submit", (e) => {
@@ -4159,7 +4375,14 @@ class AdminApp extends HTMLElement {
       programSelect?.addEventListener("change", syncAddProgramButton);
       programSelect?.addEventListener("input", syncAddProgramButton);
     }
-    bindNewProgramStaff(this, this.state.programs, adminApi);
+    this.querySelector("#program-details-form")?.addEventListener(
+      "submit",
+      (event) => {
+        event.preventDefault();
+        const form = asForm(event.currentTarget);
+        void this.saveWithFeedback(form, () => this.updateProgramDetails(form));
+      },
+    );
     this.querySelector("#program-form")?.addEventListener("submit", (e) => {
       e.preventDefault();
       const form = asForm(e.currentTarget);
@@ -4347,19 +4570,17 @@ class AdminApp extends HTMLElement {
           const dialog = this.querySelector(
             "#lead-program-confirmation-dialog",
           );
-          dialog.querySelector("[data-reassignment-preview]").textContent = t(
-            "admin.relationships.impact",
-            {
-              previousProvider: preview.previousProvider,
-              provider: preview.newProvider,
-              previousProgram: preview.previousProgram,
-              program: preview.newProgram,
-              managers:
-                preview.retainedManagers.join(", ") ||
-                t("admin.relationships.none"),
-              count: preview.affectedProviderDevices,
-            },
-          );
+          const providerChanged =
+            controlValue(siteDetailsForm, "lead-provider-id") !==
+            this.state.site.providerId;
+          dialog.querySelector("#lead-program-confirmation-copy").hidden =
+            !providerChanged;
+          if (providerChanged)
+            dialog.setAttribute(
+              "aria-describedby",
+              "lead-program-confirmation-copy",
+            );
+          else dialog.removeAttribute("aria-describedby");
           dialog.showModal();
         } catch (error) {
           showFormSaveError(siteDetailsForm, error.message);
@@ -4569,7 +4790,7 @@ class AdminApp extends HTMLElement {
       button.addEventListener("click", () => button.closest("dialog")?.close());
     });
     this.querySelectorAll(
-      "#admin-user-form, #site-oversight-form, #site-compliance-form, #site-perimeter-form, #site-manager-record-form, #provider-manager-record-form, #site-deliberate-311-form",
+      "#program-details-form, #admin-user-form, #site-oversight-form, #site-compliance-form, #site-perimeter-form, #site-manager-record-form, #provider-manager-record-form, #site-deliberate-311-form",
     ).forEach((form) => {
       const sync = () => syncDirtyForm(form);
       syncDirtyForm(form, true);
@@ -4635,6 +4856,7 @@ class AdminApp extends HTMLElement {
       if (leaveDialog.returnValue === "discard") {
         const destination = this.pendingSiteDestination;
         if (destination) {
+          this.state.site311Batch?.drafts.clear();
           this.lastRenderedPath = "";
           navigate(destination);
         }
@@ -4906,37 +5128,17 @@ class AdminApp extends HTMLElement {
         });
       },
     );
-    const managerMembershipForm = this.querySelector(
-      "#manager-membership-form",
+    this.managerSearchCleanup?.();
+    this.managerSearchCleanup = bindManagerAssignmentSearch(
+      this.querySelector("#manager-membership-form"),
     );
-    const managerMembershipSelect = managerMembershipForm?.querySelector(
-      "wa-select[name='manager-user-id']",
+    this.querySelector("#create-site-manager")?.addEventListener(
+      "click",
+      () => {
+        this.querySelector("#new-site-manager-dialog")?.showModal();
+        this.querySelector('[name="new-manager-first-name"]')?.focus();
+      },
     );
-    const managerMembershipActions = managerMembershipForm?.querySelector(
-      "[data-manager-membership-actions]",
-    );
-    const syncManagerMembershipSubmit = () => {
-      const selectedUserId = String(managerMembershipSelect?.value || "");
-      const selectedUser = this.state.availableSiteUsers.find(
-        (user) => user.userId === selectedUserId,
-      );
-      const isCurrentManager = this.state.managerMemberships.some(
-        (membership) =>
-          membership.userId === selectedUserId ||
-          (!membership.userId &&
-            String(membership.email || "").toLowerCase() ===
-              String(selectedUser?.email || "").toLowerCase()),
-      );
-      managerMembershipActions?.toggleAttribute(
-        "hidden",
-        !selectedUser || isCurrentManager,
-      );
-    };
-    managerMembershipSelect?.addEventListener("change", () => {
-      if (managerMembershipSelect.value !== "__create_site_manager__") return;
-      managerMembershipSelect.value = "";
-      this.querySelector("#new-site-manager-dialog")?.showModal();
-    });
     this.querySelector("#new-site-manager-form")?.addEventListener(
       "submit",
       (event) => {
@@ -4964,20 +5166,8 @@ class AdminApp extends HTMLElement {
         input.disabled = false;
       });
       form?.querySelector("[data-form-save-error]")?.remove();
-      managerMembershipSelect?.focus();
+      this.querySelector("#create-site-manager")?.focus();
     });
-    managerMembershipForm
-      ?.querySelector("[data-cancel-manager-assignment]")
-      ?.addEventListener("click", () => {
-        managerMembershipSelect.value = "";
-        syncManagerMembershipSubmit();
-        managerMembershipSelect.focus();
-      });
-    syncManagerMembershipSubmit();
-    managerMembershipSelect?.addEventListener(
-      "change",
-      syncManagerMembershipSubmit,
-    );
     this.querySelector("#setup-code-form")?.addEventListener("submit", (e) => {
       e.preventDefault();
       this.issueSetupCode(asForm(e.currentTarget));
@@ -5462,6 +5652,7 @@ class AdminApp extends HTMLElement {
   render(loading = false) {
     this.state.hasToken = hasAdminSession();
     this.directorySearchDebounce?.cancel();
+    this.managerSearchCleanup?.();
     const route = currentRoute();
     const { provider, program, site, siteManager } = loading
       ? {}
@@ -5577,10 +5768,12 @@ class AdminApp extends HTMLElement {
             `
             : ""
         }
+      ${!site && !program && route.name === "sites" ? discardChangesDialog() : ""}
       </main>
     `;
     this.bind();
     this.applyCapabilities();
+    syncEnrollmentRequests(this);
     this.lastRenderedPath = window.location.pathname + window.location.search;
   }
 
@@ -5596,7 +5789,7 @@ class AdminApp extends HTMLElement {
           element.disabled = true;
       });
       this.querySelectorAll(
-        "[data-require-checks], [data-end-checks], [data-resend-letter], [data-issue-manager-grant], [data-cancel-manager-grant], [data-revoke-device], [data-remove-manager-membership], [data-remove-site-manager], [data-edit-manager-membership]",
+        "[data-require-checks], [data-end-checks], [data-resend-letter], [data-issue-manager-grant], [data-show-enrollment-code], [data-cancel-manager-grant], [data-revoke-device], [data-remove-manager-membership], [data-remove-site-manager], [data-edit-manager-membership]",
       ).forEach((element) => {
         element.disabled = true;
       });
@@ -5729,12 +5922,13 @@ function newAdministratorView(state) {
     <a class="site-back-link btn-icon" href="/administrators" data-route aria-label="${escapeHtml(t("common.back"))}"><wa-icon name="chevron-left" aria-hidden="true"></wa-icon></a>
     <h1 id="new-admin-user-title" tabindex="-1">${escapeHtml(t("admin.users.add"))}</h1>
     <p class="muted">${escapeHtml(t("admin.users.help"))}</p>
-    <form id="admin-user-form" class="site-details-form" data-dirty-form>
+    <form id="admin-user-form" class="site-details-form" data-dirty-form novalidate>
       <fieldset><legend>${escapeHtml(t("admin.users.invite"))}</legend>
         <div class="form-grid">
+          <wa-input name="email" type="email" label="${escapeHtml(t("admin.users.email"))}" autocomplete="email" required aria-describedby="invitation-lookup-status"></wa-input>
+          <p id="invitation-lookup-status" data-invitation-lookup-status role="status" aria-live="polite"></p>
           <wa-input name="firstName" label="${escapeHtml(t("admin.programs.firstName"))}" required></wa-input>
           <wa-input name="lastName" label="${escapeHtml(t("admin.programs.lastName"))}" required></wa-input>
-          <wa-input name="email" type="email" label="${escapeHtml(t("admin.users.email"))}" autocomplete="email" required></wa-input>
           ${phoneInput("phone", t("siteAdmin.field.phone"), "", { required: true, type: "tel", autocomplete: "tel" })}
           <wa-select name="departmentId" label="${escapeHtml(t("admin.users.department"))}" placeholder="${escapeHtml(t("admin.users.chooseDepartment"))}">
             ${departments.map((item) => `<wa-option value="${escapeHtml(item.departmentId || item.name)}">${escapeHtml(item.name)}</wa-option>`).join("")}
@@ -6006,6 +6200,7 @@ function siteAccessView(state) {
     <h2>${escapeHtml(t("admin.enrollment.siteAccessTitle"))}</h2>
     <p class="muted">${escapeHtml(t("admin.enrollment.instructions"))}</p>
     ${managerMembershipList(state.managerMemberships, state.site.siteId)}
+    ${enrollmentCodePanel(state, "site", state.site.siteId)}
     ${managerGrantList(state.managerGrants)}
     <h2>${escapeHtml(t("admin.enrollment.enrolledDevices"))}</h2>
     ${revocableDevices.length ? "" : '<p class="empty-state">No devices in use.</p>'}
@@ -6028,7 +6223,6 @@ function siteAccessView(state) {
 
 /** @param {AdminState} state */
 function siteManagersEditorView(state) {
-  const hasCurrentManager = state.managerMemberships.length > 0;
   const availableManagers = state.availableSiteUsers.filter(
     (user) =>
       !state.managerMemberships.some(
@@ -6039,27 +6233,30 @@ function siteManagersEditorView(state) {
             member.email?.toLowerCase() === user.email?.toLowerCase()),
       ),
   );
-  const managerPrompt = t(
-    hasCurrentManager
-      ? "admin.siteManagers.addAnother"
-      : "admin.siteManagers.choose",
-  );
+  const managerPrompt = t("admin.siteManagers.assignExisting");
   return `<section class="subsection" aria-labelledby="site-managers-title">
-    <h2 id="site-managers-title">${escapeHtml(t("admin.siteManagers.title"))}</h2>
+    <div class="panel__head"><h2 id="site-managers-title">${escapeHtml(t("admin.siteManagers.title"))}</h2>${canEditSite(state) ? `<button class="btn-secondary" id="create-site-manager" type="button">${escapeHtml(t("admin.siteManagers.createButton"))}</button>` : ""}</div>
     <p>${escapeHtml(t("admin.siteManagers.description"))}</p>
     ${managerMembershipList(state.managerMemberships, state.site.siteId, true, canEditSite(state))}
     ${
       canEditSite(state)
         ? `<form id="manager-membership-form" class="inline-form manager-membership-form">
-      <wa-select name="manager-user-id" aria-label="${escapeHtml(managerPrompt)}" placeholder="${escapeHtml(managerPrompt)}" >
-        ${availableManagers
-          .map(
-            (user) =>
-              `<wa-option value="${escapeHtml(user.userId)}">${escapeHtml(`${user.firstName} ${user.lastName}`)}</wa-option>`,
-          )
-          .join("")}
-        <wa-option value="__create_site_manager__">${escapeHtml(t("admin.siteManagers.createNew"))}</wa-option>
-      </wa-select>
+      <div class="manager-assignment-search">
+        <wa-input data-manager-search type="search" label="${escapeHtml(managerPrompt)}" placeholder="${escapeHtml(t("admin.siteManagers.searchPlaceholder"))}" autocomplete="off" with-clear></wa-input>
+        <input type="hidden" name="manager-user-id" value="">
+        <p class="muted" role="status" data-manager-search-status></p>
+        <ul class="manager-search-results" data-manager-search-results hidden>
+          ${availableManagers
+            .map((user) => {
+              const name =
+                [user.firstName, user.lastName].filter(Boolean).join(" ") ||
+                user.name ||
+                user.email;
+              return `<li hidden><button class="btn-outline" type="button" data-manager-option="${escapeHtml(user.userId)}" data-manager-search-text="${escapeHtml(`${name} ${user.email || ""}`.toLocaleLowerCase())}">${escapeHtml(name)} — ${escapeHtml(user.email || "")}</button></li>`;
+            })
+            .join("")}
+        </ul>
+      </div>
       <div class="manager-membership-actions" data-manager-membership-actions hidden>
         <button class="btn-primary" type="submit">${escapeHtml(t("admin.siteManagers.assignToSite"))}</button>
         <button class="btn-outline" type="button" data-cancel-manager-assignment>${escapeHtml(t("common.cancel"))}</button>
@@ -6081,6 +6278,7 @@ function newSiteManagerDialog() {
       ${formInput("new-manager-last-name", t("admin.programs.lastName"), "", { required: true, autocomplete: "family-name" })}
       ${phoneInput("new-manager-phone", t("admin.programs.phone"), "", { required: true, type: "tel", autocomplete: "tel" })}
       ${formInput("new-manager-email", t("admin.programs.email"), "", { required: true, type: "email", autocomplete: "email" })}
+      <wa-checkbox name="email-enrollment-link">${escapeHtml(t("admin.enrollment.emailOnCreation"))}</wa-checkbox>
       <div class="places-modal__actions">
         <button class="btn-primary" type="submit">${escapeHtml(t("common.save"))}</button>
         <button class="btn-outline" type="button" data-cancel-new-site-manager>${escapeHtml(t("common.cancel"))}</button>
@@ -6177,7 +6375,7 @@ function managerMembershipList(
         <div class="contact-list__actions">${
           editing
             ? `${(membership.personId || membership.userId) && canManage ? `<a class="btn-secondary" href="/managers/${encodeURIComponent(membership.personId || membership.userId)}?returnSite=${encodeURIComponent(siteId)}" data-route>${escapeHtml(t("common.edit"))}</a>` : ""}${canManage ? `<button class="btn-danger" type="button" data-remove-manager-membership="${escapeHtml(membership.membershipId)}">${escapeHtml(t("admin.siteManagers.remove"))}</button>` : ""}`
-            : `<button class="btn-secondary" type="button" data-issue-manager-grant="${escapeHtml(membership.membershipId)}" data-delivery-mode="link">${escapeHtml(t("admin.enrollment.emailMagicLink"))}</button><button class="btn-secondary" type="button" data-issue-manager-grant="${escapeHtml(membership.membershipId)}" data-delivery-mode="code">${escapeHtml(t("admin.enrollment.emailOneTimeCode"))}</button>`
+            : `<button class="btn-secondary" type="button" data-issue-manager-grant="${escapeHtml(membership.membershipId)}" data-delivery-mode="link">${escapeHtml(t("admin.enrollment.emailMagicLink"))}</button><button class="btn-secondary" type="button" data-issue-manager-grant="${escapeHtml(membership.membershipId)}" data-delivery-mode="code">${escapeHtml(t("admin.enrollment.emailOneTimeCode"))}</button><button class="btn-secondary" type="button" data-show-enrollment-code="${escapeHtml(membership.membershipId)}" data-enrollment-scope="site">${escapeHtml(t("admin.enrollment.showCode"))}</button>`
         }</div>
       </li>`,
     )
@@ -6210,7 +6408,7 @@ function managerGrantList(grants) {
   return `<details class="table-disclosure site-enrollment-history"><summary>${escapeHtml(t("admin.enrollment.history", { count: grants.length }))}</summary><div class="table-wrap"><table><thead><tr><th>Recipient</th><th>${escapeHtml(t("admin.enrollment.type"))}</th><th>Issued</th><th>Expires</th><th>Status</th><th>${escapeHtml(t("admin.enrollment.delivery"))}</th><th>Security notice</th>${hasCopyableLink ? `<th>${escapeHtml(t("admin.enrollment.link"))}</th>` : ""}<th>Action</th></tr></thead><tbody>${grants
     .map(
       (grant) =>
-        `<tr><td>${escapeHtml(grant.issuedTo)}</td><td>${escapeHtml(t(grant.deliveryMode === "code" ? "admin.enrollment.oneTimeCode" : "admin.enrollment.magicLink"))}</td><td>${escapeHtml(formatTimestamp(grant.createdAt))}</td><td>${escapeHtml(formatTimestamp(grant.expiresAt))}</td><td>${escapeHtml(grant.status)}</td><td>${escapeHtml(grant.deliveryStatus || "queued")}</td><td>${escapeHtml(grant.securityNotificationStatus || (grant.status === "redeemed" ? "pending" : "Not applicable"))}</td>${hasCopyableLink ? `<td>${grant.enrollmentUrl ? `<button class="btn-secondary enrollment-copy" type="button" data-copy-enrollment-url="${escapeHtml(grant.enrollmentUrl)}" aria-label="${escapeHtml(t("admin.enrollment.copyFor", { email: grant.issuedTo }))}">${escapeHtml(t("admin.enrollment.copy"))}</button><span class="visually-hidden" aria-live="polite" data-copy-status></span>` : "—"}</td>` : ""}<td>${grant.status === "pending" ? `<button class="btn-danger" type="button" data-cancel-manager-grant="${escapeHtml(grant.grantId)}">Cancel</button>` : "—"}</td></tr>`,
+        `<tr><td>${escapeHtml(grant.issuedTo)}</td><td>${escapeHtml(t(grant.deliveryMode === "code" ? "admin.enrollment.oneTimeCode" : "admin.enrollment.magicLink"))}</td><td>${escapeHtml(formatTimestamp(grant.createdAt))}</td><td>${escapeHtml(formatTimestamp(grant.expiresAt))}</td><td>${escapeHtml(grant.status)}</td><td>${escapeHtml(grant.deliveryChannel === "screen" ? t("admin.enrollment.screenIssued") : grant.deliveryStatus || "queued")}</td><td>${escapeHtml(grant.securityNotificationStatus || (grant.status === "redeemed" ? "pending" : "Not applicable"))}</td>${hasCopyableLink ? `<td>${grant.enrollmentUrl ? `<button class="btn-secondary enrollment-copy" type="button" data-copy-enrollment-url="${escapeHtml(grant.enrollmentUrl)}" aria-label="${escapeHtml(t("admin.enrollment.copyFor", { email: grant.issuedTo }))}">${escapeHtml(t("admin.enrollment.copy"))}</button><span class="visually-hidden" aria-live="polite" data-copy-status></span>` : "—"}</td>` : ""}<td>${grant.status === "pending" ? `<button class="btn-danger" type="button" data-cancel-manager-grant="${escapeHtml(grant.grantId)}">Cancel</button>` : "—"}</td></tr>`,
     )
     .join("")}</tbody></table></div></details>`;
 }
@@ -6273,6 +6471,7 @@ function directoryView(state, route) {
     </nav>`
         : ""
     }
+    ${search && section === "sites" && state.capabilities?.createEntities === true ? batch311Header() : ""}
     ${search && section !== "provider-managers" ? globalDirectorySearch(state, search) : ""}
     ${section === "provider-managers" ? providerManagerDirectoryView(state, search) : ""}
     ${!search && section === "sites" ? siteDirectory(state, filterParams) : ""}
@@ -6353,6 +6552,7 @@ function siteDirectory(state, selected) {
       </div>
       <a class="btn-link" href="/sites/new" data-route>Add new site</a>
     </div>
+    ${state.capabilities.createEntities === true ? batch311Header() : ""}
     <form id="site-directory-filters" class="directory-filters" aria-label="Filter sites">
       <wa-select name="manager" aria-label="All program managers" placeholder="All program managers" value="${escapeHtml(selected.manager)}" size="s" pill><wa-option value="">All program managers</wa-option>${[
         ...managers.values(),
@@ -6378,7 +6578,7 @@ function siteDirectory(state, selected) {
               const program = state.programs.find(
                 (program) => program.programId === site.leadProgramId,
               );
-              const leadProgramName = site.programName || program?.name;
+              const leadProgramName = program?.name || site.programName;
               const providerId = site.providerId || program?.providerId;
               const providerName =
                 state.providers.find(
@@ -6400,7 +6600,7 @@ function siteDirectory(state, selected) {
                   '<span class="site-directory-meta__separator" aria-hidden="true">·</span>',
                 );
               const siteUrl = `/sites/${encodeURIComponent(site.siteId)}`;
-              return `<li><div class="site-directory-row site-directory-row--actions"><a class="site-directory-row__main" href="${siteUrl}" data-route><span class="site-directory-row__text"><strong>${escapeHtml(site.name || site.siteName || site.siteId)}</strong><span class="site-directory-meta">${description}</span></span><span class="site-directory-row__caret" aria-hidden="true">›</span></a><div class="site-directory-row__actions"><a class="btn-secondary" href="${siteUrl}?section=compliance" data-route>${escapeHtml(t("admin.sites.updatePerimeterChecks"))}</a><a class="btn-secondary" href="${siteUrl}?section=access" data-route>${escapeHtml(t("admin.sites.giveAppAccess"))}</a></div></div></li>`;
+              return `<li><div class="site-directory-row site-directory-row--actions"><a class="site-directory-row__main" href="${siteUrl}" data-route><span class="site-directory-row__text"><strong>${escapeHtml(site.name || site.siteName || site.siteId)}</strong><span class="site-directory-meta">${description}</span></span><span class="site-directory-row__caret" aria-hidden="true">›</span></a><div class="site-directory-row__actions">${batch311Checkbox(state, site)}<a class="btn-secondary" href="${siteUrl}?section=compliance" data-route>${escapeHtml(t("admin.sites.updatePerimeterChecks"))}</a><a class="btn-secondary" href="${siteUrl}?section=access" data-route>${escapeHtml(t("admin.sites.giveAppAccess"))}</a></div></div></li>`;
             })
             .join("")}</ul>`
         : '<p class="empty-state">No sites match these filters.</p>'
@@ -6486,7 +6686,8 @@ function globalDirectorySearch(state, query) {
     includes(
       site.name,
       site.address,
-      site.programName,
+      state.programs.find((program) => program.programId === site.leadProgramId)
+        ?.name || site.programName,
       site.providerName,
       site.oversight?.cityProgramManager,
       site.oversight?.managingCityDepartment,
@@ -6799,36 +7000,21 @@ function newProgramView(state) {
   const providerId = params.get("providerId") || "";
   return `<section class="creation-page" aria-labelledby="new-program-title">
     <a href="${inSiteFlow ? `/sites/new${providerId ? `?providerId=${encodeURIComponent(providerId)}` : ""}` : inProviderFlow && providerId ? `/providers/${encodeURIComponent(providerId)}` : "/programs"}" data-route class="site-back-link"><wa-icon name="chevron-left" aria-hidden="true"></wa-icon> ${inSiteFlow ? "Add new site" : inProviderFlow ? "Provider" : escapeHtml(t("admin.breadcrumb.admin"))}</a>
-    <div><h1 id="new-program-title" tabindex="-1">Add new program</h1><p class="muted">Create the Program and its first staff member. ${inSiteFlow ? "You’ll return to the new Site flow afterward." : inProviderFlow ? "You’ll return to the provider afterward." : ""}</p></div>
+    <div><h1 id="new-program-title" tabindex="-1">${escapeHtml(t("admin.programs.createNew"))}</h1><p class="muted">${escapeHtml(t("admin.programs.createWithoutStaff"))}</p></div>
     <form id="program-form" class="site-details-form">
-      <fieldset><legend>Program</legend><div class="form-grid form-grid--one">
-        ${formInput("program-name", "Program name", "", { required: true, autocomplete: "organization" })}
-        <wa-select name="program-provider" label="Provider" required data-initial-value="${escapeHtml(providerId)}" placeholder="Choose a provider">
-          ${state.providers.map((provider) => `<wa-option value="${escapeHtml(provider.providerId)}" ${provider.providerId === providerId ? "selected" : ""}>${escapeHtml(provider.name)}</wa-option>`).join("")}
-        </wa-select>
-      </div></fieldset>
-      <fieldset><legend>${escapeHtml(t("admin.programs.addStaffMember"))}</legend>
-        <wa-select name="program-staff" required disabled aria-label="${escapeHtml(t("admin.programs.addStaffMember"))}" placeholder="${escapeHtml(t("admin.programs.chooseStaff"))}"></wa-select>
-        <p class="error" data-staff-error role="alert"></p>
-        <button class="btn-outline" type="button" data-retry-staff hidden>${escapeHtml(t("admin.programs.retryStaff"))}</button>
-      </fieldset>
-      <button class="btn-primary" type="submit" disabled>Add program</button>
+      ${formInput("program-name", t("admin.programs.name"), "", { required: true, autocomplete: "organization" })}
+      <wa-select name="program-provider" label="${escapeHtml(t("admin.relationships.leadProvider"))}" required data-initial-value="${escapeHtml(providerId)}" placeholder="${escapeHtml(t("admin.programs.chooseProvider"))}">
+        ${state.providers
+          .filter((provider) => provider.status !== "inactive")
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map(
+            (provider) =>
+              `<wa-option value="${escapeHtml(provider.providerId)}" ${provider.providerId === providerId ? "selected" : ""}>${escapeHtml(provider.name)}</wa-option>`,
+          )
+          .join("")}
+      </wa-select>
+      <button class="btn-primary" type="submit">${escapeHtml(t("admin.programs.createNew"))}</button>
     </form>
-    <dialog id="new-program-staff-dialog" class="places-modal" aria-labelledby="new-program-staff-title">
-      <form class="places-modal__card site-details-form">
-        <h2 id="new-program-staff-title">${escapeHtml(t("admin.programs.createStaff"))}</h2>
-        <div class="form-grid form-grid--two">
-          ${formInput("firstName", t("siteAdmin.field.firstName"), "", { required: true, autocomplete: "given-name" })}
-          ${formInput("lastName", t("siteAdmin.field.lastName"), "", { required: true, autocomplete: "family-name" })}
-          ${formInput("email", t("siteAdmin.field.email"), "", { required: true, type: "email", autocomplete: "email" })}
-          ${phoneInput("phone", t("siteAdmin.field.phone"), "", { type: "tel", autocomplete: "tel" })}
-        </div>
-        <div class="places-modal__actions">
-          <button class="btn-primary" type="submit">${escapeHtml(t("admin.programs.createStaff"))}</button>
-          <button class="btn-outline" type="button" data-cancel-staff>${escapeHtml(t("common.cancel"))}</button>
-        </div>
-      </form>
-    </dialog>
   </section>`;
 }
 
@@ -6866,6 +7052,7 @@ function newSiteProviderStep(providers) {
       <wa-select name="provider-id" label="Provider" required placeholder="Choose a provider">
         ${providers
           .filter((provider) => provider.status !== "inactive")
+          .sort((a, b) => a.name.localeCompare(b.name))
           .map(
             (provider) =>
               `<wa-option value="${escapeHtml(provider.providerId)}">${escapeHtml(provider.name)}</wa-option>`,
@@ -6906,17 +7093,12 @@ function newSiteRecordStep(provider, program, users) {
       <fieldset><legend>Address</legend>
         ${addressEditor({}, { required: true })}
       </fieldset>
-      <fieldset><legend>Lead Program manager</legend>
-        <wa-select class="required-flow-field" name="site-manager-user-id" required data-empty placeholder="Choose a staff member"><span slot="label">Program staff <em>Required</em></span>
-          ${users.map((user) => `<wa-option value="${escapeHtml(user.userId)}">${escapeHtml(`${user.firstName} ${user.lastName}`)}</wa-option>`).join("")}
-        </wa-select>
-        ${users.length ? "" : `<p class="error">This Program has no active staff. <a href="/programs/${encodeURIComponent(program.programId)}" data-route>Add Program staff</a> before creating the Site.</p>`}
-      </fieldset>
+      <p class="muted">${escapeHtml(t("admin.sites.assignManagerLater"))}</p>
       <fieldset><legend>Public site contact</legend><div class="form-grid form-grid--two">
         ${requiredFlowInput("public-contact-email", "Email", { type: "email", autocomplete: "email" })}
         ${phoneExtensionField(requiredFlowInput("public-contact-phone", "Phone", { type: "tel", autocomplete: "tel", pattern: "[0-9()+ .-]{10,20}" }), formInput("public-contact-extension", t("admin.phone.extension"), "", { autocomplete: "tel-extension", maxlength: 20 }), escapeHtml(t("admin.phone.addExtension")), false, escapeHtml(t("admin.phone.removeExtension")))}
       </div></fieldset>
-      <button class="btn-primary" type="submit" data-address-dependent ${users.length ? "disabled" : "disabled data-address-blocked"}>Create Site</button>
+      <button class="btn-primary" type="submit" data-address-dependent disabled>Create Site</button>
     </form>
   </section>`;
 }
@@ -7080,7 +7262,7 @@ function entityBreadcrumb(kind, record, programs = [], providers = []) {
     parents.push({
       href: `/programs/${encodeURIComponent(parentProgramId)}`,
       label:
-        record.programName || program?.name || t("admin.breadcrumb.program"),
+        program?.name || record.programName || t("admin.breadcrumb.program"),
     });
   const root =
     kind === "provider"
@@ -7263,7 +7445,7 @@ function providerManagerDetailView(state, membershipId) {
 }
 
 function providerEmailActions(manager) {
-  return `<div class="contact-list__actions"><button class="btn-secondary" type="button" data-issue-provider-manager-grant="${escapeHtml(manager.membershipId)}" data-delivery-mode="link">${escapeHtml(t("admin.enrollment.emailMagicLink"))}</button><button class="btn-secondary" type="button" data-issue-provider-manager-grant="${escapeHtml(manager.membershipId)}" data-delivery-mode="code">${escapeHtml(t("admin.enrollment.emailOneTimeCode"))}</button></div>`;
+  return `<div class="contact-list__actions"><button class="btn-secondary" type="button" data-issue-provider-manager-grant="${escapeHtml(manager.membershipId)}" data-delivery-mode="link">${escapeHtml(t("admin.enrollment.emailMagicLink"))}</button><button class="btn-secondary" type="button" data-issue-provider-manager-grant="${escapeHtml(manager.membershipId)}" data-delivery-mode="code">${escapeHtml(t("admin.enrollment.emailOneTimeCode"))}</button><button class="btn-secondary" type="button" data-show-enrollment-code="${escapeHtml(manager.membershipId)}" data-enrollment-scope="provider">${escapeHtml(t("admin.enrollment.showCode"))}</button></div>`;
 }
 
 function providerAccessView(state) {
@@ -7271,7 +7453,7 @@ function providerAccessView(state) {
     (manager) => manager.status === "active",
   );
   return `<section><h2>${escapeHtml(t("admin.providerManagers.accessTitle"))}</h2><p>${escapeHtml(t("admin.providerManagers.accessInstructions"))}</p>${active.length ? `<ul class="contact-list provider-access-managers">${active.map((manager) => `<li><div><strong>${escapeHtml(manager.name)}</strong><span>${escapeHtml(manager.email)}</span>${state.providerManagerGrantErrors?.[manager.membershipId] ? `<p class="error" role="alert" data-provider-manager-grant-error="${escapeHtml(manager.membershipId)}">${escapeHtml(state.providerManagerGrantErrors[manager.membershipId])}</p>` : ""}</div>${providerEmailActions(manager)}</li>`).join("")}</ul>` : `<p class="empty-state">${escapeHtml(t("admin.providerManagers.none"))}</p>`}</section>
-    <section class="subsection">${providerManagerGrantList(state.providerManagerGrants)}</section>
+    ${enrollmentCodePanel(state, "provider", state.provider.providerId)}<section class="subsection">${providerManagerGrantList(state.providerManagerGrants)}</section>
     <section class="subsection"><h2>${escapeHtml(t("admin.enrollment.enrolledDevices"))}</h2>${providerManagerEnrollmentList(state.providerManagerEnrollments, state.providerManagers)}</section>
     ${providerDeviceRemovalForm(state)}
   `;
@@ -7292,7 +7474,7 @@ function providerManagerGrantList(grants) {
   return `<details class="table-disclosure"><summary>${escapeHtml(t("admin.enrollment.history", { count: grants.length }))}</summary><div class="table-wrap"><table class="provider-enrollment-history"><thead><tr><th>Recipient</th><th>${escapeHtml(t("admin.enrollment.type"))}</th><th>Sites</th><th>Issued</th><th>Expires</th><th>Status</th><th>Delivery</th><th>Action</th></tr></thead><tbody>${grants
     .map(
       (grant) =>
-        `<tr><td><span class="enrollment-recipient"><span>${escapeHtml(grant.issuedTo)}</span>${grant.enrollmentUrl ? `<button class="btn-icon enrollment-copy" type="button" title="Copy enrollment link" aria-label="Copy provider enrollment link for ${escapeHtml(grant.issuedTo)}" data-copy-enrollment-url="${escapeHtml(grant.enrollmentUrl)}"><wa-icon name="copy" aria-hidden="true"></wa-icon></button><span class="visually-hidden" aria-live="polite" data-copy-status></span>` : ""}</span></td><td>${escapeHtml(t(grant.deliveryMode === "code" ? "admin.enrollment.oneTimeCode" : "admin.enrollment.magicLink"))}</td><td>${escapeHtml(grant.siteCount || 0)}</td><td>${escapeHtml(formatTimestamp(grant.createdAt))}</td><td>${escapeHtml(formatTimestamp(grant.expiresAt))}</td><td>${escapeHtml(grant.status)}</td><td>${escapeHtml(grant.deliveryStatus || "queued")}</td><td>${grant.status === "pending" ? `<button class="btn-danger" type="button" data-cancel-provider-manager-grant="${escapeHtml(grant.grantId)}">Cancel</button>` : "—"}</td></tr>`,
+        `<tr><td><span class="enrollment-recipient"><span>${escapeHtml(grant.issuedTo)}</span>${grant.enrollmentUrl ? `<button class="btn-icon enrollment-copy" type="button" title="Copy enrollment link" aria-label="Copy provider enrollment link for ${escapeHtml(grant.issuedTo)}" data-copy-enrollment-url="${escapeHtml(grant.enrollmentUrl)}"><wa-icon name="copy" aria-hidden="true"></wa-icon></button><span class="visually-hidden" aria-live="polite" data-copy-status></span>` : ""}</span></td><td>${escapeHtml(t(grant.deliveryMode === "code" ? "admin.enrollment.oneTimeCode" : "admin.enrollment.magicLink"))}</td><td>${escapeHtml(grant.siteCount || 0)}</td><td>${escapeHtml(formatTimestamp(grant.createdAt))}</td><td>${escapeHtml(formatTimestamp(grant.expiresAt))}</td><td>${escapeHtml(grant.status)}</td><td>${escapeHtml(grant.deliveryChannel === "screen" ? t("admin.enrollment.screenIssued") : grant.deliveryStatus || "queued")}</td><td>${grant.status === "pending" ? `<button class="btn-danger" type="button" data-cancel-provider-manager-grant="${escapeHtml(grant.grantId)}">Cancel</button>` : "—"}</td></tr>`,
     )
     .join("")}</tbody></table></div></details>`;
 }
@@ -7346,6 +7528,14 @@ function programView(program, canAddStaff = false) {
       </div>
       ${program.needsReview ? '<span class="status-badge">Needs review</span>' : '<span class="status-badge">Active</span>'}
     </div>
+    ${
+      canAddStaff
+        ? `<form id="program-details-form" class="site-details-form" data-dirty-form>
+      ${formInput("program-name", t("admin.programs.name"), program.name, { required: true, autocomplete: "organization" })}
+      <button class="btn-primary" type="submit" data-save-button disabled>${escapeHtml(t("common.save"))}</button>
+    </form>${discardChangesDialog()}`
+        : ""
+    }
     <section aria-labelledby="program-sites-title">
       <h2 id="program-sites-title">Sites</h2>
       ${entityList(
@@ -7441,7 +7631,8 @@ function siteEditor(state) {
   const publicContact = site.publicContact || site.contactPerson || {};
   const programs = siteProviderPrograms(state.programs, site.providerId);
   const hasAddress = Boolean(site.address || streetLineFromParts(address));
-  return `<form id="site-details-form" class="site-details-form" data-read-only="${!canEditSite(state)}" data-dirty-form>
+  return `<div class="panel__head"><h2>${escapeHtml(t("admin.sites.detailsTitle"))}</h2></div>
+  <form id="site-details-form" class="site-details-form" data-read-only="${!canEditSite(state)}" data-dirty-form>
     <fieldset>
       <legend>Site name and public contact</legend>
       <div class="form-grid form-grid--one" data-site-details-fields>
@@ -7484,7 +7675,7 @@ function siteEditor(state) {
               `<wa-option value="${escapeHtml(p.providerId)}" ${p.providerId === site.providerId ? "selected" : ""}>${escapeHtml(p.name)}</wa-option>`,
           )
           .join("")}</wa-select>
-        <wa-select name="lead-program-id" aria-label="Lead program" placeholder="No lead program assigned" data-initial-value="${escapeHtml(site.leadProgramId || "")}">
+        <wa-select name="lead-program-id" label="${escapeHtml(t("admin.relationships.leadProgram"))}" placeholder="No lead program assigned" data-initial-value="${escapeHtml(site.leadProgramId || "")}">
           <wa-option value="" ${site.leadProgramId ? "" : "selected"}>No lead program assigned</wa-option>
           ${programs.map((program) => `<wa-option value="${escapeHtml(program.programId)}" ${program.programId === site.leadProgramId ? "selected" : ""}>${escapeHtml(program.name)}</wa-option>`).join("")}
           ${state.capabilities.createEntities && site.providerId ? `<wa-option value="__create_program__" data-create-program>${escapeHtml(t("admin.programs.createNew"))}</wa-option>` : ""}
@@ -7537,7 +7728,7 @@ function leadProgramConfirmationDialog() {
     <form class="places-modal__card" method="dialog">
       <div class="places-modal__copy">
         <h2 class="places-modal__title" id="lead-program-confirmation-title">${escapeHtml(t("admin.relationships.confirmSiteChange"))}</h2>
-        <p class="places-modal__text" id="lead-program-confirmation-copy">${escapeHtml(t("admin.relationships.siteChangeHelp"))}</p><p data-reassignment-preview></p>
+        <p class="places-modal__text" id="lead-program-confirmation-copy">${escapeHtml(t("admin.relationships.providerAccessWarning"))}</p>
       </div>
       <div class="places-modal__actions">
         <button class="btn-primary" value="confirm">${escapeHtml(t("admin.relationships.saveAffiliations"))}</button>

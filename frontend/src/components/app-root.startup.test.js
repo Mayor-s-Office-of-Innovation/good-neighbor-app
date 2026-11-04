@@ -3,6 +3,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 const setup = vi.hoisted(() => ({
   currentRoute: vi.fn(() => "/today"),
   backOrNavigate: vi.fn(),
+  replaceRoute: vi.fn(),
   clearSite: vi.fn(),
   getSite: vi.fn(),
   getSiteSettings: vi.fn(),
@@ -70,6 +71,7 @@ vi.mock("../router.js", () => ({
   currentRoute: setup.currentRoute,
   navigate: vi.fn(),
   backOrNavigate: setup.backOrNavigate,
+  replaceRoute: setup.replaceRoute,
   onRouteChange: vi.fn(),
 }));
 vi.mock("./app-root.templates.js", () => ({
@@ -89,6 +91,7 @@ vi.mock("../services/keyboard-viewport.js", () => ({
   deepActiveElement: vi.fn(),
   isEditable: vi.fn(),
   keyboardViewport: vi.fn(),
+  revealEditable: vi.fn(),
 }));
 vi.mock("../state/toasts.js", () => ({
   showQueuedSiteSwitchSuccessToast: vi.fn(),
@@ -131,7 +134,7 @@ beforeEach(() => {
   setup.clearAuthState.mockReset();
   setup.saveSiteSettings.mockReset();
   setup.setSite.mockReset().mockResolvedValue(undefined);
-  setup.saveDiscoveredBindings.mockReset().mockResolvedValue(undefined);
+  setup.saveDiscoveredBindings.mockReset().mockResolvedValue(true);
   setup.listDeviceBindings.mockReset();
   setup.redeemHandoffGrant.mockReset();
   setup.stripHandoffCredentials.mockReset();
@@ -630,6 +633,7 @@ describe("keyboard viewport style updates", () => {
 
   async function shell() {
     const keyboard = await import("../services/keyboard-viewport.js");
+    vi.mocked(keyboard.revealEditable).mockClear();
     const root = {
       style: style(),
       open: false,
@@ -639,17 +643,18 @@ describe("keyboard viewport style updates", () => {
       }),
     };
     vi.stubGlobal("document", { documentElement: root });
-    vi.stubGlobal("window", {
-      innerHeight: 844,
-      visualViewport: { height: 500, offsetTop: 90, scale: 1 },
-    });
+    const viewport = { height: 500, offsetTop: 90, scale: 1 };
+    vi.stubGlobal("window", { innerHeight: 844, visualViewport: viewport });
     vi.stubGlobal("requestAnimationFrame", vi.fn());
     const view = {
+      _keyboardViewportHeight: viewport.height,
+      _keyboardUserScrolled: false,
       style: style(),
       _applyKeyboardViewport: AppRoot.prototype._applyKeyboardViewport,
     };
-    const sync = () => AppRoot.prototype._syncKeyboardViewport.call(view);
-    return { keyboard, root, view, sync };
+    const sync = (type) =>
+      AppRoot.prototype._syncKeyboardViewport.call(view, { type });
+    return { keyboard, root, view, sync, viewport };
   }
 
   it("does not mutate viewport styles or attributes during ordinary scrolling", async () => {
@@ -676,7 +681,7 @@ describe("keyboard viewport style updates", () => {
     sync();
     expect(root.style.setProperty).toHaveBeenCalledTimes(2);
     expect(view.style.setProperty).toHaveBeenCalledTimes(2);
-    expect(requestAnimationFrame).toHaveBeenCalledTimes(2);
+    expect(requestAnimationFrame).not.toHaveBeenCalled();
     vi.mocked(keyboard.isEditable).mockReturnValue(false);
     vi.mocked(keyboard.keyboardViewport).mockReturnValue({
       height: 500,
@@ -697,6 +702,75 @@ describe("keyboard viewport style updates", () => {
     expect(root.toggleAttribute).toHaveBeenCalledTimes(2);
   });
 
+  it("reveals on focus and keyboard shrink, but respects scrolling with focus retained", async () => {
+    const { keyboard, sync, viewport } = await shell();
+    const active = /** @type {Element} */ ({});
+    vi.mocked(keyboard.deepActiveElement).mockReturnValue(active);
+    vi.mocked(keyboard.isEditable).mockReturnValue(true);
+    vi.mocked(keyboard.keyboardViewport).mockReturnValue(null);
+    vi.mocked(requestAnimationFrame).mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+    sync("focusin");
+    expect(keyboard.revealEditable).toHaveBeenCalledTimes(1);
+    viewport.height = 400;
+    sync("resize");
+    expect(keyboard.revealEditable).toHaveBeenCalledTimes(2);
+    viewport.offsetTop = 120;
+    sync("scroll");
+    sync("input");
+    sync("focusout");
+    sync("resize");
+    viewport.height = 500;
+    sync("resize");
+    expect(keyboard.revealEditable).toHaveBeenCalledTimes(2);
+    expect(keyboard.deepActiveElement(document)).toBe(active);
+  });
+
+  it("preserves a keyboard shrink across an earlier pan or input event", async () => {
+    const { keyboard, sync, viewport } = await shell();
+    vi.mocked(keyboard.isEditable).mockReturnValue(true);
+    viewport.height = 400;
+    sync("scroll");
+    sync("input");
+    sync("resize");
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["touchmove", "wheel"])(
+    "respects %s before a queued reveal and later viewport shrink until refocus",
+    async (gesture) => {
+      const { keyboard, sync, viewport } = await shell();
+      vi.mocked(keyboard.deepActiveElement).mockReturnValue(
+        /** @type {Element} */ ({}),
+      );
+      vi.mocked(keyboard.isEditable).mockReturnValue(true);
+      sync("focusin");
+      sync(gesture);
+      vi.mocked(requestAnimationFrame).mock.calls[0][0](0);
+      expect(keyboard.revealEditable).not.toHaveBeenCalled();
+      viewport.height = 400;
+      sync("resize");
+      expect(requestAnimationFrame).toHaveBeenCalledTimes(1);
+      sync("focusin");
+      vi.mocked(requestAnimationFrame).mock.calls[1][0](0);
+      expect(keyboard.revealEditable).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("does not reveal a field whose focus changed before the frame runs", async () => {
+    const { keyboard, sync } = await shell();
+    vi.mocked(keyboard.deepActiveElement).mockReturnValue(
+      /** @type {Element} */ ({}),
+    );
+    vi.mocked(keyboard.isEditable).mockReturnValue(true);
+    sync("focusin");
+    vi.mocked(keyboard.deepActiveElement).mockReturnValue(null);
+    vi.mocked(requestAnimationFrame).mock.calls[0][0](0);
+    expect(keyboard.revealEditable).not.toHaveBeenCalled();
+  });
+
   it("keeps editable viewport sizing when the browser also resizes its layout viewport", async () => {
     const { keyboard, root, view, sync } = await shell();
     vi.mocked(keyboard.isEditable).mockReturnValue(true);
@@ -710,4 +784,123 @@ describe("keyboard viewport style updates", () => {
     sync();
     expect(root.style.getPropertyValue("--editable-viewport-height")).toBe("");
   });
+});
+
+describe("later device enrollments", () => {
+  beforeEach(() => {
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    vi.stubGlobal("document", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      hidden: false,
+    });
+  });
+  const bound = {
+    siteId: "site-1",
+    deviceId: "binding-1",
+    physicalDeviceId: "physical-1",
+  };
+  const bindings = [
+    {
+      siteId: "site-2",
+      siteName: "Synthetic second site",
+      bindingId: "binding-2",
+    },
+  ];
+
+  it("discovers later enrollments on startup and foreground without remounting", async () => {
+    vi.stubGlobal("location", new URL("http://localhost:5173/"));
+    setup.getSite.mockResolvedValue(bound);
+    setup.getSiteSettings.mockReturnValue(new Promise(() => {}));
+    setup.listDeviceBindings.mockResolvedValue({ bindings });
+    const root = component();
+    const refreshSiteBindings = vi.fn();
+    root.querySelector.mockImplementation((selector) =>
+      selector === ".app__main > *" ? { refreshSiteBindings } : null,
+    );
+    await root.connectedCallback();
+    await flush();
+    expect(setup.saveDiscoveredBindings).toHaveBeenCalledWith(
+      bindings,
+      "physical-1",
+      { expectedSession: bound },
+    );
+    expect(refreshSiteBindings).toHaveBeenCalledOnce();
+    root._onBindingsVisible();
+    await flush();
+    expect(refreshSiteBindings).toHaveBeenCalledTimes(2);
+    expect(root._renderView).toHaveBeenCalledOnce();
+    expect(setup.setSite).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates discovery and ignores a response after sign-out", async () => {
+    const response = deferred();
+    setup.listDeviceBindings.mockReturnValue(response.promise);
+    setup.getSite.mockResolvedValue(null);
+    const root = component();
+    root._site = bound;
+    const first = root._refreshDeviceBindings();
+    const second = root._refreshDeviceBindings();
+    expect(setup.listDeviceBindings).toHaveBeenCalledOnce();
+    root._site = null;
+    response.resolve({ bindings });
+    await Promise.all([first, second]);
+    expect(setup.saveDiscoveredBindings).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh the menu when the transaction rejects a replaced session", async () => {
+    setup.getSite.mockResolvedValue(bound);
+    setup.listDeviceBindings.mockResolvedValue({ bindings });
+    setup.saveDiscoveredBindings.mockResolvedValue(false);
+    const root = component();
+    root._site = bound;
+    const refreshSiteBindings = vi.fn();
+    root.querySelector.mockImplementation((selector) =>
+      selector === ".app__main > *" ? { refreshSiteBindings } : null,
+    );
+    await root._refreshDeviceBindings();
+    expect(setup.saveDiscoveredBindings).toHaveBeenCalledWith(
+      bindings,
+      "physical-1",
+      { expectedSession: bound },
+    );
+    expect(refreshSiteBindings).not.toHaveBeenCalled();
+  });
+
+  it("does not reconcile an incomplete discovery response", async () => {
+    setup.getSite.mockResolvedValue(bound);
+    setup.listDeviceBindings.mockResolvedValue({});
+    const root = component();
+    root._site = bound;
+    await root._refreshDeviceBindings();
+    expect(setup.saveDiscoveredBindings).not.toHaveBeenCalled();
+  });
+
+  it("preserves cached state on network failure", async () => {
+    setup.listDeviceBindings.mockRejectedValue(new Error("offline"));
+    const root = component();
+    root._site = bound;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    await root._refreshDeviceBindings();
+    expect(root._site).toBe(bound);
+    expect(setup.clearSite).not.toHaveBeenCalled();
+    expect(setup.saveDiscoveredBindings).not.toHaveBeenCalled();
+    log.mockRestore();
+  });
+});
+
+it.each([
+  "/reports",
+  "/reports/checks/2026-11-04",
+  "/reports/issues/synthetic",
+])("replaces inaccessible %s history after a site switch", (route) => {
+  setup.currentRoute.mockReturnValue(route);
+  setup.replaceRoute.mockClear();
+  const root = component();
+  root._site = { siteId: "general-site", accessLevel: "general" };
+  AppRoot.prototype._renderView.call(root);
+  expect(setup.replaceRoute).toHaveBeenCalledExactlyOnceWith("/today");
 });

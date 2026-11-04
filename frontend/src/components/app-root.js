@@ -173,6 +173,10 @@ export class AppRoot extends HTMLElement {
       };
       window.addEventListener("localechange", this._onLocaleChange);
     }
+    this._onBindingsVisible = () => {
+      if (!document.hidden) void this._refreshDeviceBindings();
+    };
+    document.addEventListener("visibilitychange", this._onBindingsVisible);
     requestLocationPermissionEarly();
     this._site = await getSite();
     this._stopPhoneRecovery?.();
@@ -226,6 +230,7 @@ export class AppRoot extends HTMLElement {
     // grant this install has not recorded as consumed (storage was cleared):
     // a stale grant never replaces a live session.
     if (handoff) void trackEvent("handoff_stale_ignored", {});
+    void this._refreshDeviceBindings();
     await this._restoreInterruptedCapture();
     this._renderApp();
     this._unsub = onRouteChange(() => this._renderView());
@@ -242,6 +247,7 @@ export class AppRoot extends HTMLElement {
   }
 
   disconnectedCallback() {
+    document.removeEventListener("visibilitychange", this._onBindingsVisible);
     this._stopPhoneRecovery?.();
     if (this._unsub) this._unsub();
     stopHealthMonitoring();
@@ -263,7 +269,9 @@ export class AppRoot extends HTMLElement {
   _startKeyboardViewportSync() {
     const viewport = window.visualViewport;
     if (!viewport || this._onKeyboardViewport) return;
-    this._onKeyboardViewport = () => this._syncKeyboardViewport();
+    this._keyboardViewportHeight = viewport.height;
+    this._keyboardUserScrolled = false;
+    this._onKeyboardViewport = (event) => this._syncKeyboardViewport(event);
     viewport.addEventListener("resize", this._onKeyboardViewport);
     // Pans (Safari revealing a newly focused field, or the user dragging)
     // change offsetTop without a resize; only "scroll" reports them.
@@ -271,6 +279,13 @@ export class AppRoot extends HTMLElement {
     document.addEventListener("focusin", this._onKeyboardViewport);
     document.addEventListener("focusout", this._onKeyboardViewport);
     document.addEventListener("input", this._onKeyboardViewport);
+    // Capture gestures even inside nested scrollers; native focus/keyboard
+    // panning also emits scroll, so scroll events alone cannot express intent.
+    for (const type of ["touchmove", "wheel"])
+      document.addEventListener(type, this._onKeyboardViewport, {
+        passive: true,
+        capture: true,
+      });
   }
 
   _stopKeyboardViewportSync() {
@@ -286,6 +301,8 @@ export class AppRoot extends HTMLElement {
     document.removeEventListener("focusin", this._onKeyboardViewport);
     document.removeEventListener("focusout", this._onKeyboardViewport);
     document.removeEventListener("input", this._onKeyboardViewport);
+    for (const type of ["touchmove", "wheel"])
+      document.removeEventListener(type, this._onKeyboardViewport, true);
     this._onKeyboardViewport = null;
     document.documentElement.removeAttribute("data-keyboard-open");
     document.documentElement.style.removeProperty("--editable-viewport-height");
@@ -293,7 +310,22 @@ export class AppRoot extends HTMLElement {
     this._applyKeyboardViewport(null);
   }
 
-  _syncKeyboardViewport() {
+  /** @param {Event} [event] */
+  _syncKeyboardViewport(event) {
+    if (event?.type === "touchmove" || event?.type === "wheel") {
+      this._keyboardUserScrolled = true;
+      return;
+    }
+    if (event?.type === "focusin") this._keyboardUserScrolled = false;
+    const height = window.visualViewport?.height;
+    // Focus starts editing; a shrinking viewport covers keyboard/accessory-bar
+    // arrival. Scrolling and typing must never pull a reader back to the field.
+    const reveal =
+      event?.type === "focusin" ||
+      (event?.type === "resize" && height < this._keyboardViewportHeight);
+    // Only resize consumes the height change: a preceding pan/input event
+    // can already see the new geometry before resize is dispatched.
+    if (event?.type === "resize") this._keyboardViewportHeight = height;
     const active = deepActiveElement(document);
     const editing = isEditable(active);
     const root = document.documentElement;
@@ -317,9 +349,18 @@ export class AppRoot extends HTMLElement {
       syncing ? `${box?.top || 0}px` : "",
     );
     this._applyKeyboardViewport(box);
-    if (editing && window.visualViewport?.scale === 1) {
+    if (
+      reveal &&
+      !this._keyboardUserScrolled &&
+      editing &&
+      window.visualViewport?.scale === 1
+    ) {
       requestAnimationFrame(() => {
-        if (deepActiveElement(document) !== active) return;
+        if (
+          this._keyboardUserScrolled ||
+          deepActiveElement(document) !== active
+        )
+          return;
         revealEditable(active, window.visualViewport);
       });
     }
@@ -569,7 +610,9 @@ export class AppRoot extends HTMLElement {
       route.startsWith("/manage-access") ||
       route.startsWith("/reports");
     if (managerOnly && !hasAdminAccess(this._site)) {
-      navigate("/today");
+      // A site switch can leave Reports for the former site in history.
+      if (route.startsWith("/reports")) replaceRoute("/today");
+      else navigate("/today");
       return;
     }
     const match = ROUTE_VIEW.find(([prefix]) => route.startsWith(prefix));
@@ -756,6 +799,44 @@ export class AppRoot extends HTMLElement {
       }
       console.error("getSiteSettings failed", err);
       return true;
+    }
+  }
+
+  /** Discover later browser enrollments without replacing the active session. */
+  async _refreshDeviceBindings() {
+    if (this._bindingsRefresh) return this._bindingsRefresh;
+    const bound = this._site;
+    if (!bound?.physicalDeviceId || this.querySelector("site-setup")) return;
+    const pending = (async () => {
+      try {
+        const result = await listDeviceBindings();
+        const current = await getSite();
+        if (
+          this._site?.siteId !== bound.siteId ||
+          this._site?.deviceId !== bound.deviceId ||
+          current?.deviceId !== bound.deviceId ||
+          current?.physicalDeviceId !== bound.physicalDeviceId ||
+          this.querySelector("site-setup")
+        )
+          return;
+        if (!Array.isArray(result?.bindings)) return;
+        const saved = await saveDiscoveredBindings(
+          result.bindings,
+          bound.physicalDeviceId,
+          { expectedSession: bound },
+        );
+        if (!saved) return;
+        await this.querySelector(".app__main > *")?.refreshSiteBindings?.();
+      } catch (err) {
+        // Offline and discovery failures must preserve the cached sites/session.
+        console.error("device bindings refresh failed", err);
+      }
+    })();
+    this._bindingsRefresh = pending;
+    try {
+      await pending;
+    } finally {
+      if (this._bindingsRefresh === pending) this._bindingsRefresh = null;
     }
   }
 

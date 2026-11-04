@@ -1,5 +1,6 @@
 // @ts-check
 import { test, expect } from "../helpers/harness.js";
+import { routeHomeLists } from "../helpers/app.js";
 import { t } from "../helpers/i18n.js";
 import { E2E_URLS } from "../helpers/ports.js";
 import { PHOTO_ISSUES } from "../helpers/fixtures.js";
@@ -36,12 +37,7 @@ async function filedTicket(
   /** @type {Array<{body: Record<string, any>, key: string | undefined}>} */
   const requests = [];
   const state = { failDelivery: false, uploads: 0, task, updates, requests };
-  await page.route("**/v1/tasks?*", (route) =>
-    route.fulfill({ json: { tasks: [task] } }),
-  );
-  await page.route("**/v1/checks?*", (route) =>
-    route.fulfill({ json: { checks: [] } }),
-  );
+  await routeHomeLists(page, { checks: [], tasks: () => [task] });
   await page.route("**/v1/tasks/311-update-fixture/updates*", async (route) => {
     const request = route.request();
     if (request.method() === "POST") {

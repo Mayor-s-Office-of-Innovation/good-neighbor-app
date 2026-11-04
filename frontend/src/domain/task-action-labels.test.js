@@ -53,3 +53,14 @@ it.each([
     }),
   ).toBe("Call SFPD");
 });
+
+it("uses an edited action label even on an older policy task", () => {
+  expect(
+    taskActionLabel({
+      policyVersion: "actions-escalations-v5",
+      ruleId: "LITTER-1",
+      actionOverride: { ruleId: "GRAFFITI-2" },
+      buttons: ["File 311 ticket"],
+    }),
+  ).toBe("File 311 ticket");
+});

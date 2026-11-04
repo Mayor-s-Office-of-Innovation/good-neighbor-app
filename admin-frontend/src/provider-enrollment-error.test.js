@@ -11,6 +11,7 @@ test("pending invitation error is rendered only inside the implicated manager ro
   const context = vm.createContext({
     escapeHtml,
     t: (key) => key,
+    enrollmentCodePanel: () => "",
     providerEmailActions: () => "",
     providerManagerGrantList: () => "",
     providerManagerEnrollmentList: () => "",
@@ -18,6 +19,7 @@ test("pending invitation error is rendered only inside the implicated manager ro
   });
   vm.runInContext(source.slice(start, end), context);
   const state = {
+    provider: { providerId: "p" },
     providerManagers: ["a", "b"].map((membershipId) => ({
       membershipId,
       name: membershipId,
