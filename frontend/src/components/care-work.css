@@ -1,5 +1,29 @@
-care-work-view {
+/* Bottom-sheet presentation (care + complaints): the screen slides up and
+   stops ~80% of the way, top corners 26px, app background visible above —
+   the peek tells users the screen closes. Reduced motion skips the slide. */
+care-work-view,
+complaint-view {
   display: block;
+  position: fixed;
+  inset: max(env(safe-area-inset-top), 20dvh) 0 0;
+  z-index: 10;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--surface);
+  border-radius: 26px 26px 0 0;
+  box-shadow: var(--shadow-lift);
+  animation: care-sheet-up 240ms ease-out;
+}
+@keyframes care-sheet-up {
+  from {
+    translate: 0 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  care-work-view,
+  complaint-view {
+    animation: none;
+  }
 }
 .app--chromeless .app__main:has(> care-work-view) {
   padding: 0;
@@ -54,40 +78,78 @@ care-work-view {
   width: 100%;
   min-height: 44px;
 }
-/* Section title over the past-items list (care + complaints; group-title M). */
-.care-past-title {
+/* ---- Shared "past items" vocabulary (care + complaints). One block styles
+   both screens so type and spacing cannot drift apart: section head with an
+   entry count, then divider rows (not cards). Complaint selectors are scoped
+   under .complaints so these win over complaint-view.css regardless of
+   import order. ---- */
+.care-past-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
   margin: 28px 0 0;
-  font-size: var(--wa-font-size-m, 1rem);
+}
+.care-past-title {
+  margin: 0;
+  font-size: var(--wa-font-size-l, 1.25rem);
   font-weight: 600;
+  line-height: 1.2;
+}
+.care-past-count {
+  font-size: var(--wa-font-size-s, 0.875rem);
+  color: var(--text-secondary);
+}
+.care-row-item,
+.complaints .complaint-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0;
+  padding: 1.25rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.care-row-item + .care-row-item,
+.complaints .complaint-row + .complaint-row {
+  border-top: 1px solid var(--c-line);
+}
+.care-row strong,
+.complaints .complaint-row h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.care-row time,
+.complaints .complaint-row p {
+  margin: 0;
+  font-size: var(--wa-font-size-s, 0.875rem);
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+/* The log CTAs carry a leading plus on both screens. */
+.care-cta,
+.complaints__new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+.care-cta wa-icon,
+.complaints__new wa-icon {
+  font-size: 0.9em;
 }
 .care-days {
   margin-top: 16px;
 }
-/* Same list vocabulary as the public complaints screen: one bordered card
-   per log — what was done + when; day headers and counts dropped (each
-   card carries its own date). */
 .care-list,
 .care-thumbnails {
   list-style: none;
   margin: 0;
   padding: 0;
-}
-.care-list {
-  display: grid;
-  gap: 0.75rem;
-}
-.care-row-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  /* margin 0 beats the default list-item indent, so cards share the CTA's
-     left edge and width. */
-  margin: 0;
-  padding: 1rem;
-  border: 1px solid var(--c-line);
-  border-radius: var(--radius);
-  background: var(--surface);
 }
 .care-row {
   display: flex;
@@ -106,17 +168,7 @@ care-work-view {
   cursor: pointer;
 }
 .care-row strong {
-  /* Same title size as the complaint row's h2 (global h2, 1.15rem). */
-  font-size: 1.15rem;
-  font-weight: 600;
-  line-height: 1.2;
   overflow-wrap: anywhere;
-}
-.care-row time {
-  /* Same spec as the todo card footer timestamp (analysis-card__footer). */
-  font-size: var(--wa-font-size-s, 0.875rem);
-  line-height: 1.6;
-  color: var(--text-secondary);
 }
 .care-row__delete {
   min-width: 44px;

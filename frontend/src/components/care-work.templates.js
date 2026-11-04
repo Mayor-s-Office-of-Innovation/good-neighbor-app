@@ -1,7 +1,7 @@
 import { captureControls } from "./capture-controls.templates.js";
 import { escapeHtml as e, escapeAttr as a, html } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
-import { formatMonthDayTime } from "../i18n/dates.js";
+import { formatMonthDay, formatTime } from "../i18n/dates.js";
 import { formatPhotoDateTime } from "../domain/photo-lightbox.js";
 import {
   CARE_WORK_TYPES,
@@ -31,9 +31,14 @@ export function careList(items, loading = false, offline = false) {
   return html`${careHeader(t("care.title"), true)}
     <p class="care-subtitle">${e(t("care.subtitle"))}</p>
     <button type="button" class="btn-ink care-cta" data-new>
-      ${e(t("care.new"))}
+      <wa-icon name="plus" aria-hidden="true"></wa-icon>${e(t("care.new"))}
     </button>
-    <h2 class="care-past-title">${e(t("care.pastLogs"))}</h2>
+    <div class="care-past-head">
+      <h2 class="care-past-title">${e(t("care.pastWork"))}</h2>
+      ${!loading && items.length
+        ? `<span class="care-past-count">${e(t("common.entries", { count: items.length }))}</span>`
+        : ""}
+    </div>
     <div class="care-days" aria-busy="${loading}">
       ${loading
         ? `<p role="status">${e(t("care.loading"))}</p>`
@@ -45,7 +50,7 @@ export function careList(items, loading = false, offline = false) {
                 )
                 .map(
                   (item) =>
-                    html`<li class="care-row-card">
+                    html`<li class="care-row-item">
                       <button
                         type="button"
                         class="btn-care care-row"
@@ -55,7 +60,14 @@ export function careList(items, loading = false, offline = false) {
                       >
                         <strong>${e(careTitle(item))}</strong
                         ><time datetime="${a(item.createdAt)}"
-                          >${e(formatMonthDayTime(item.createdAt))}</time
+                          >${e(
+                            [
+                              formatMonthDay(item.createdAt),
+                              formatTime(item.createdAt),
+                            ]
+                              .filter(Boolean)
+                              .join(" · "),
+                          )}</time
                         >
                       </button>
                       <div class="care-row__actions">

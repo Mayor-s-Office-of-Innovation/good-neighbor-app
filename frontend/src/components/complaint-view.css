@@ -47,13 +47,13 @@
   color: var(--text-secondary);
 }
 
-.complaints__list,
+/* Row layout and type come from the shared block in care-work.css
+   (.complaints .complaint-row), so care and complaints stay identical. */
 .complaint-files {
   display: grid;
   gap: 0.75rem;
 }
 
-.complaint-row,
 .complaint-file {
   display: flex;
   align-items: center;
@@ -70,13 +70,6 @@
 .complaint-file strong,
 .complaint-file small {
   margin: 0;
-}
-
-/* Row timestamp — same spec as the todo card footer timestamp. */
-.complaint-row p {
-  font-size: var(--wa-font-size-s, 0.875rem);
-  line-height: 1.6;
-  color: var(--text-secondary);
 }
 
 .complaint-row__link {
@@ -391,7 +384,9 @@
   position: sticky;
   inset-block-start: var(--complaints-safe-top);
   z-index: 2;
-  background: var(--bg);
+  /* The screen presents as a bottom sheet on --surface; the pinned header
+     must match it, not the page background. */
+  background: var(--surface);
 }
 /* Cover the safe-area band above the pinned controls as list content passes. */
 .complaints__sticky::before {
@@ -400,7 +395,7 @@
   inset-block-end: 100%;
   inset-inline: 0;
   block-size: var(--complaints-safe-top);
-  background: var(--bg);
+  background: var(--surface);
   pointer-events: none;
 }
 .complaints__sticky[data-static]::before {
