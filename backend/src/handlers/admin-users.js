@@ -289,6 +289,38 @@ export async function loadAdminDirectory(pool = configuredPool()) {
   return [...users.values()].sort((a, b) => a.email.localeCompare(b.email));
 }
 
+/** Resolve saved contact details before an invitation, including contacts without accounts.
+ * @type {import("aws-lambda").APIGatewayProxyHandlerV2}
+ */
+export const lookupAdminInvitation = (event) =>
+  supervisorOnly(event, async (body) => {
+    const email = clean(body.email).toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+      return jsonResponse(400, { error: "valid_email_required" });
+    const { Item } = await ddb.send(
+      new GetCommand({
+        TableName: getDynamoTableName(),
+        Key: { pk: "ADMIN_DIRECTORY#PROGRAM_MANAGERS", sk: `MANAGER#${email}` },
+        ConsistentRead: true,
+      }),
+    );
+    return jsonResponse(200, {
+      profile: Item
+        ? Object.fromEntries(
+            [
+              "email",
+              "firstName",
+              "lastName",
+              "phone",
+              "phoneExtension",
+              "departmentId",
+              "departmentName",
+            ].map((key) => [key, clean(Item[key])]),
+          )
+        : null,
+    });
+  });
+
 /** @type {import("aws-lambda").APIGatewayProxyHandlerV2} */
 export const inviteAdminUser = (event) =>
   supervisorOnly(event, async (body) => {
@@ -327,7 +359,9 @@ export const inviteAdminUser = (event) =>
         firstName.toLocaleLowerCase("en-US") ||
         clean(directory.lastName).toLocaleLowerCase("en-US") !==
           lastName.toLocaleLowerCase("en-US") ||
-        (phone && clean(directory.phone) && clean(directory.phone) !== phone) ||
+        (phone &&
+          clean(directory.phone) &&
+          toCognitoPhoneNumber(directory.phone) !== cognitoPhoneNumber) ||
         (departmentId &&
           clean(directory.departmentId) &&
           clean(directory.departmentId) !== departmentId))

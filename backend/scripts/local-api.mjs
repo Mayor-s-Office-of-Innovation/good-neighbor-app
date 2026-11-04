@@ -148,6 +148,7 @@ import {
   getMyProfile,
   updateMyProfile,
   inviteAdminUser,
+  lookupAdminInvitation,
   listAdminUsers,
   reinviteAdminUser,
   reinstateAdminUser,
@@ -448,6 +449,7 @@ const routes = [
   route("PUT", "/admin/v1/profile", updateMyProfile),
   route("GET", "/admin/v1/admin-users", listAdminUsers),
   route("POST", "/admin/v1/admin-users", inviteAdminUser),
+  route("POST", "/admin/v1/admin-users/lookup", lookupAdminInvitation),
   route("PUT", "/admin/v1/admin-users/{username}/role", updateAdminUserRole),
   route("POST", "/admin/v1/admin-users/{username}/suspend", suspendAdminUser),
   route(

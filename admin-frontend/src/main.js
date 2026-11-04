@@ -39,6 +39,7 @@ import {
   bindSiteProgramCreation,
 } from "./site-program.js";
 import { phoneExtensionField, bindPhoneExtensions } from "./phone-extension.js";
+import { bindAdminInvitationLookup } from "./admin-invitation-lookup.js";
 import { withSaveFeedback, upsertRecord } from "./save-feedback.js";
 import { createAndAssignManager } from "./pending-manager.js";
 import { letterEmailProgress, profilePhoneUpdate } from "./admin-save-state.js";
@@ -3936,19 +3937,32 @@ class AdminApp extends HTMLElement {
         sync();
       });
     });
-    this.querySelector("#admin-user-form")?.addEventListener(
-      "submit",
-      (event) => {
-        event.preventDefault();
-        const form = asForm(event.currentTarget);
-        if (!form.reportValidity()) return;
-        void withSaveFeedback(form, () => this.inviteAdministrator(form), {
+    const invitationForm = this.querySelector("#admin-user-form");
+    const ensureInvitationLookup = invitationForm
+      ? bindAdminInvitationLookup(
+          invitationForm,
+          adminApi.lookupAdminInvitation,
+          t,
+        )
+      : null;
+    invitationForm?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const form = asForm(event.currentTarget);
+      if (!form.querySelector('[name="email"]').reportValidity()) return;
+      void withSaveFeedback(
+        form,
+        async () => {
+          await ensureInvitationLookup();
+          if (!form.isConnected || !form.reportValidity()) return;
+          return this.inviteAdministrator(form);
+        },
+        {
           savingLabel: t("admin.users.sending"),
           onError: (error) =>
             showFormSaveError(form, adminInvitationError(error)),
-        });
-      },
-    );
+        },
+      );
+    });
     this.querySelector("#admin-user-status-filter")?.addEventListener(
       "change",
       (event) => {
@@ -5907,12 +5921,13 @@ function newAdministratorView(state) {
     <a class="site-back-link btn-icon" href="/administrators" data-route aria-label="${escapeHtml(t("common.back"))}"><wa-icon name="chevron-left" aria-hidden="true"></wa-icon></a>
     <h1 id="new-admin-user-title" tabindex="-1">${escapeHtml(t("admin.users.add"))}</h1>
     <p class="muted">${escapeHtml(t("admin.users.help"))}</p>
-    <form id="admin-user-form" class="site-details-form" data-dirty-form>
+    <form id="admin-user-form" class="site-details-form" data-dirty-form novalidate>
       <fieldset><legend>${escapeHtml(t("admin.users.invite"))}</legend>
         <div class="form-grid">
+          <wa-input name="email" type="email" label="${escapeHtml(t("admin.users.email"))}" autocomplete="email" required aria-describedby="invitation-lookup-status"></wa-input>
+          <p id="invitation-lookup-status" data-invitation-lookup-status role="status" aria-live="polite"></p>
           <wa-input name="firstName" label="${escapeHtml(t("admin.programs.firstName"))}" required></wa-input>
           <wa-input name="lastName" label="${escapeHtml(t("admin.programs.lastName"))}" required></wa-input>
-          <wa-input name="email" type="email" label="${escapeHtml(t("admin.users.email"))}" autocomplete="email" required></wa-input>
           ${phoneInput("phone", t("siteAdmin.field.phone"), "", { required: true, type: "tel", autocomplete: "tel" })}
           <wa-select name="departmentId" label="${escapeHtml(t("admin.users.department"))}" placeholder="${escapeHtml(t("admin.users.chooseDepartment"))}">
             ${departments.map((item) => `<wa-option value="${escapeHtml(item.departmentId || item.name)}">${escapeHtml(item.name)}</wa-option>`).join("")}
