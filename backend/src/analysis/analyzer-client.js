@@ -28,8 +28,16 @@ import { RUBRIC_ID, RUBRIC_VERSION } from "./contract.js";
  * The service's documented error `code`s (error-response.schema.json). Kept as a
  * plain typedef — we don't switch on them beyond surfacing, but naming them
  * documents what a caller can expect on `.code`.
- * @typedef {"invalid_request" | "unknown_rubric" | "unsupported_input_type" | "unauthorized" | "forbidden_rubric" | "model_invoke_failed" | "model_unavailable" | "model_access_denied" | "invalid_model_response" | "evidence_retrieval_failed"} AnalyzerErrorCode
+ * @typedef {"invalid_request" | "unknown_rubric" | "unsupported_input_type" | "unauthorized" | "forbidden_rubric" | "model_invoke_failed" | "model_unavailable" | "model_access_denied" | "invalid_model_response" | "evidence_retrieval_failed" | "analyzer_timeout"} AnalyzerErrorCode
  */
+
+/**
+ * Our own code, never sent by the service: the client gave up waiting
+ * (per-attempt `requestTimeoutMs` or the overall `totalBudgetMs`). Callers on
+ * the API request path map it to a 504 so the gateway never has to answer for
+ * a held execution with its own 503.
+ */
+export const ANALYZER_TIMEOUT_CODE = "analyzer_timeout";
 
 /** HTTP statuses worth a retry: throttling, gateway/model transients, 5xx. */
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
@@ -138,6 +146,16 @@ export function buildAnalyzeRequest({
  * @property {number} [maxRetries] retries on transient failures (default 2)
  * @property {number} [baseDelayMs] backoff base, doubled per attempt (default 200)
  * @property {(ms: number) => Promise<void>} [sleep] injectable delay (tests)
+ * @property {number} [requestTimeoutMs] abort one attempt (connect, headers
+ *   and body, error bodies included) after this long. A timed-out attempt is
+ *   NOT retried: the service may still be processing it, and the amendment
+ *   POSTs are not idempotent upstream (each accepted rejection gets its own
+ *   id), so a replay could commit twice. Only failures with a known outcome
+ *   retry: a transport error before any response, or a retryable HTTP status.
+ *   Unset = no per-attempt limit (the workers rely on their function timeout).
+ * @property {number} [totalBudgetMs] wall-clock cap across every attempt and
+ *   backoff; the last attempt is shortened to fit. Unset = no cap.
+ * @property {() => number} [now] injectable clock (tests)
  */
 
 /**
@@ -165,9 +183,22 @@ export function createAnalyzerClient({
   maxRetries = 2,
   baseDelayMs = 200,
   sleep = defaultSleep,
+  requestTimeoutMs,
+  totalBudgetMs,
+  now = Date.now,
 }) {
   if (!baseUrl) throw new Error("createAnalyzerClient: baseUrl is required");
   if (!apiKey) throw new Error("createAnalyzerClient: apiKey is required");
+  for (const [name, value] of Object.entries({
+    requestTimeoutMs,
+    totalBudgetMs,
+  })) {
+    if (value !== undefined && !(Number.isFinite(value) && value > 0)) {
+      throw new Error(
+        `createAnalyzerClient: ${name} must be a positive number`,
+      );
+    }
+  }
 
   const base = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
   /**
@@ -180,9 +211,11 @@ export function createAnalyzerClient({
    * Try to read the service's `{ error: { code, message, details } }` body.
    * @param {Response} res
    * @param {{abort: () => void}} controller
+   * @param {number} maxMs how long to wait for the body before falling back
+   *   to the HTTP status alone
    * @returns {Promise<{ code?: string, message?: string, details?: string[], retryable?: boolean }>}
    */
-  const readError = async (res, controller) => {
+  const readError = async (res, controller, maxMs) => {
     let timer;
     try {
       const body = await Promise.race([
@@ -192,7 +225,7 @@ export function createAnalyzerClient({
             // Abort the underlying fetch body, then use HTTP-status fallback.
             controller.abort();
             resolve(undefined);
-          }, ERROR_BODY_TIMEOUT_MS);
+          }, maxMs);
         }),
       ]);
       return body && typeof body === "object" && body.error ? body.error : {};
@@ -210,10 +243,52 @@ export function createAnalyzerClient({
    */
   const request = async (pathname, { method, body, auth }) => {
     const url = resolve(pathname);
+    const deadline =
+      totalBudgetMs === undefined ? Infinity : now() + totalBudgetMs;
+    const remainingMs = () => deadline - now();
+    const timeoutError = () =>
+      new AnalyzerError("Analyzer request timed out", {
+        code: ANALYZER_TIMEOUT_CODE,
+        retryable: true,
+      });
+    /**
+     * Back off before another attempt, but only while attempts remain and the
+     * backoff still leaves budget for that attempt; otherwise the failure in
+     * hand is final and keeps its own status and code.
+     * @param {number} attempt
+     * @returns {Promise<boolean>} true once the backoff has been waited
+     */
+    const retryAfterBackoff = async (attempt) => {
+      const delay = baseDelayMs * 2 ** attempt;
+      if (attempt >= maxRetries || remainingMs() <= delay) return false;
+      await sleep(delay);
+      return true;
+    };
 
     for (let attempt = 0; ; attempt++) {
-      let res;
+      const remaining = remainingMs();
+      if (remaining <= 0) throw timeoutError();
+      // Arm the controller: one timer bounds the attempt (connect, headers,
+      // and the success body); the error-body read below gets what is left.
+      // The last attempt is cut short to fit the remaining budget so the whole
+      // call, retries and backoff included, ends by `deadline`.
       const controller = new globalThis.AbortController();
+      const attemptMs = Math.min(requestTimeoutMs ?? Infinity, remaining);
+      const attemptDeadline = Number.isFinite(attemptMs)
+        ? now() + attemptMs
+        : Infinity;
+      let timedOut = false;
+      const timer = Number.isFinite(attemptMs)
+        ? setTimeout(() => {
+            timedOut = true;
+            controller.abort();
+          }, attemptMs)
+        : undefined;
+
+      let res;
+      let failed = false;
+      /** @type {unknown} */
+      let failure;
       try {
         res = await fetchImpl(url, {
           signal: controller.signal,
@@ -227,12 +302,24 @@ export function createAnalyzerClient({
           },
           ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
         });
-      } catch {
+        if (res.ok) return await res.json();
+      } catch (err) {
+        failed = true;
+        failure = err;
+      } finally {
+        clearTimeout(timer);
+      }
+
+      // (`!res` is for the type checker: fetch either returned or threw.)
+      if (failed || !res) {
+        // Our own abort. The outcome upstream is unknown (the service may
+        // finish the work after we hang up), so never replay: see the
+        // `requestTimeoutMs` note on the options typedef.
+        if (timedOut) throw timeoutError();
+        // A 2xx whose body did not parse is the service's bug, not transport.
+        if (res) throw failure;
         // Transport failure (DNS/connection/TLS) — retry, then give up.
-        if (attempt < maxRetries) {
-          await sleep(baseDelayMs * 2 ** attempt);
-          continue;
-        }
+        if (await retryAfterBackoff(attempt)) continue;
         // Security: the request that just failed carried the `x-api-key` header
         // (GNP's server-side analyzer credential), so the fetch error is on that
         // key's taint path. The worker pumps log this error whole on redelivery,
@@ -245,9 +332,20 @@ export function createAnalyzerClient({
         });
       }
 
-      if (res.ok) return res.json();
-
-      const err = await readError(res, controller);
+      // The error body gets what is left of the attempt and of the budget,
+      // never more than ERROR_BODY_TIMEOUT_MS; past that the status decides.
+      const err = await readError(
+        res,
+        controller,
+        Math.max(
+          0,
+          Math.min(
+            ERROR_BODY_TIMEOUT_MS,
+            attemptDeadline - now(),
+            remainingMs(),
+          ),
+        ),
+      );
       // Read the contract before deciding: a retired model is a permanent 502.
       const permanentModelError = [
         "model_unavailable",
@@ -259,10 +357,7 @@ export function createAnalyzerClient({
           ? err.retryable
           : err.code === "evidence_retrieval_failed" ||
             RETRYABLE_STATUS.has(res.status));
-      if (retryable && attempt < maxRetries) {
-        await sleep(baseDelayMs * 2 ** attempt);
-        continue;
-      }
+      if (retryable && (await retryAfterBackoff(attempt))) continue;
 
       throw new AnalyzerError(
         err.message || `Analyzer returned ${res.status}`,
