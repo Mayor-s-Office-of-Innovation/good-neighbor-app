@@ -223,6 +223,10 @@ for (const code of [
         return (await import(path)).t("analysis.deleteDialog.selectedText");
       }),
     );
+    await expect(page.locator("#analysis-delete-dialog")).toHaveCSS(
+      "opacity",
+      "1",
+    );
     expect(
       (
         await new AxeBuilder({ page })
