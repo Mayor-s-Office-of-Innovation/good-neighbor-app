@@ -12,6 +12,8 @@ export function bindAdminInvitationLookup(form, lookup, t) {
   let request;
   let timer;
   let filled = {};
+  let historicalOption;
+  let extensionOpened = false;
   const email = () => emailInput.value.trim().toLowerCase();
   const announce = (key) => {
     status.textContent = key ? t(key) : "";
@@ -22,11 +24,17 @@ export function bindAdminInvitationLookup(form, lookup, t) {
       if (input.value === value) input.value = "";
     }
     filled = {};
+    if (historicalOption) {
+      const department = form.querySelector('[name="departmentId"]');
+      if (department.value === historicalOption.value) department.value = "";
+      historicalOption.remove();
+      historicalOption = undefined;
+    }
   };
   const updateExtension = () => {
-    const expanded = Boolean(
-      form.querySelector('[name="phoneExtension"]').value,
-    );
+    const expanded =
+      extensionOpened ||
+      Boolean(form.querySelector('[name="phoneExtension"]').value);
     form.querySelector("[data-phone-extension]").hidden = !expanded;
     const add = form.querySelector("[data-add-extension]");
     add.hidden = expanded;
@@ -61,6 +69,7 @@ export function bindAdminInvitationLookup(form, lookup, t) {
               option.textContent =
                 profile.departmentName || profile.departmentId;
               department.append(option);
+              historicalOption = option;
             }
             for (const name of fields) {
               const input = form.querySelector(`[name="${name}"]`);
@@ -75,17 +84,28 @@ export function bindAdminInvitationLookup(form, lookup, t) {
           );
         })
         .catch((error) => {
-          if (request === current && email() === target) {
-            request = undefined;
-            announce("admin.users.lookupFailed");
-          }
+          if (request !== current || email() !== target || !form.isConnected)
+            return;
+          request = undefined;
+          announce("admin.users.lookupFailed");
           throw error;
         });
     }
-    await request.promise;
-    // Submitting while the email changes must resolve the current address first.
-    if (email() !== target) await ensure();
+    const pending = request;
+    await pending.promise;
+    // Resolve the current request even if the email changed away and back.
+    if (form.isConnected && (request !== pending || email() !== target))
+      await ensure();
   };
+  form.querySelector("[data-add-extension]").addEventListener("click", () => {
+    extensionOpened = true;
+  });
+  form
+    .querySelector("[data-remove-extension]")
+    .addEventListener("click", () => {
+      if (!form.querySelector('[name="phoneExtension"]').disabled)
+        extensionOpened = false;
+    });
   emailInput.addEventListener("input", () => {
     clearTimeout(timer);
     if (request?.email !== email()) {

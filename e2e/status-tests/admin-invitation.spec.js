@@ -20,7 +20,7 @@ test("invite an existing directory contact by email with keyboard review", async
   let lookups = 0;
   await page.addInitScript(() => {
     /** @type {any} */ (window).GOOD_NEIGHBOR_ADMIN_CONFIG = {
-      apiBase: location.origin,
+      apiBase: window.location.origin,
       localDebugAdmin: true,
     };
   });
@@ -42,9 +42,15 @@ test("invite an existing directory contact by email with keyboard review", async
       json = { departments: [], systemsOfCare: [] };
     else if (path.endsWith("/admin-users/lookup")) {
       lookups++;
-      expect(route.request().postDataJSON()).toEqual({ email: profile.email });
+      const target = route.request().postDataJSON().email;
+      expect([
+        profile.email,
+        "new@example.org",
+        "another@example.org",
+        "third@example.org",
+      ]).toContain(target);
       await new Promise((resolve) => setTimeout(resolve, 150));
-      json = { profile };
+      json = { profile: target === profile.email ? profile : null };
     } else if (
       path.endsWith("/admin-users") &&
       route.request().method() === "POST"
@@ -70,8 +76,14 @@ test("invite an existing directory contact by email with keyboard review", async
   await expect(page).toHaveURL(/\/administrators$/);
   expect(lookups).toBe(1);
   expect(invitations).toHaveLength(1);
-  const { departmentName, ...expected } = profile;
-  expect(invitations[0]).toMatchObject(expected);
+  expect(invitations[0]).toMatchObject({
+    email: profile.email,
+    firstName: profile.firstName,
+    lastName: profile.lastName,
+    phone: profile.phone,
+    phoneExtension: profile.phoneExtension,
+    departmentId: profile.departmentId,
+  });
 
   await page.goto("/administrators/new");
   await page.locator('wa-input[name="email"] input').fill(profile.email);
@@ -97,4 +109,40 @@ test("invite an existing directory contact by email with keyboard review", async
     .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
     .analyze();
   expect(results.violations).toEqual([]);
+
+  // An email change clears both the historical option and its selection.
+  await email.fill("new@example.org");
+  await email.press("Tab");
+  await expect(page.locator("[data-invitation-lookup-status]")).toHaveText(
+    t("admin.users.lookupNew"),
+  );
+  await expect(
+    page.locator(`wa-option[value="${profile.departmentId}"]`),
+  ).toHaveCount(0);
+  await expect(page.locator('wa-select[name="departmentId"]')).toHaveJSProperty(
+    "value",
+    null,
+  );
+  await expect(page.locator("[data-phone-extension]")).toBeHidden();
+
+  // Manual opening survives lookup start and resolution with a blank extension.
+  await page.locator("[data-add-extension]").click();
+  await email.fill("another@example.org");
+  await expect(page.locator("[data-phone-extension]")).toBeVisible();
+  await email.press("Tab");
+  await expect(page.locator("[data-invitation-lookup-status]")).toHaveText(
+    t("admin.users.lookupNew"),
+  );
+  await expect(
+    page.locator('wa-input[name="phoneExtension"]'),
+  ).toHaveJSProperty("value", "");
+  await expect(page.locator("[data-phone-extension]")).toBeVisible();
+
+  await page.locator("[data-remove-extension]").click();
+  await email.fill("third@example.org");
+  await email.press("Tab");
+  await expect(page.locator("[data-invitation-lookup-status]")).toHaveText(
+    t("admin.users.lookupNew"),
+  );
+  await expect(page.locator("[data-phone-extension]")).toBeHidden();
 });
