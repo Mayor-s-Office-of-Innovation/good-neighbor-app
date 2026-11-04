@@ -1,3 +1,4 @@
+import { containMenus } from "../lib/menu-viewport.js";
 import { showInlineError } from "./error-notice.js";
 import { t } from "../i18n/i18n.js";
 /*
@@ -32,11 +33,14 @@ class SiteSwitcher extends HTMLElement {
   }
 
   connectedCallback() {
+    this._stopMenuContainment ??= containMenus(this, () => this.close());
     this.render();
     document.addEventListener("click", this._onDocumentClick);
   }
 
   disconnectedCallback() {
+    this._stopMenuContainment?.();
+    this._stopMenuContainment = null;
     document.removeEventListener("click", this._onDocumentClick);
   }
 
@@ -73,6 +77,7 @@ class SiteSwitcher extends HTMLElement {
       key: "switch",
       retry,
     });
+    this._stopMenuContainment?.update();
   }
 
   render() {
@@ -104,6 +109,7 @@ class SiteSwitcher extends HTMLElement {
         );
       });
     });
+    this._stopMenuContainment?.update();
     this.querySelector("#site-catalog-retry")?.addEventListener("click", () => {
       this.dispatchEvent(new CustomEvent("retrysites", { bubbles: true }));
     });

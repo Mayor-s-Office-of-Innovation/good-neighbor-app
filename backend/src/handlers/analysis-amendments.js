@@ -16,6 +16,7 @@ import { GetCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getAnalyzerApiKey } from "../analysis/api-key.js";
 import {
+  ANALYZER_TIMEOUT_CODE,
   AnalyzerError,
   createAnalyzerClient,
 } from "../analysis/analyzer-client.js";
@@ -30,6 +31,14 @@ const APP_ID = "good-neighbor-app";
 const MAX_DESCRIPTION_LENGTH = 4000;
 /** Max reject-reason note length forwarded to the analyzer. */
 const MAX_NOTE_LENGTH = 1000;
+
+// The analyzer wait on the request path is bounded: a hung analyzer must not
+// hold an api execution for the function's full 29 s. One attempt may use the
+// whole 8 s, and a timed-out attempt is never replayed (the analyzer may still
+// commit it; its amendment endpoints are not idempotent). Fast failures with a
+// known outcome retry inside the same 8 s. The analysis worker keeps its own,
+// longer budget.
+const ANALYZER_WAIT_MS = 8_000;
 
 /**
  * @param {string} [message]
@@ -50,6 +59,8 @@ async function analyzerClient() {
   return createAnalyzerClient({
     baseUrl: config.analyzerBaseUrl,
     apiKey: await getAnalyzerApiKey(config),
+    requestTimeoutMs: ANALYZER_WAIT_MS,
+    totalBudgetMs: ANALYZER_WAIT_MS,
   });
 }
 
@@ -63,6 +74,16 @@ function errorResponse(err) {
       error: err.message,
       code: "code" in err ? err.code : "group_changed",
     });
+  if (err instanceof AnalyzerError && err.code === ANALYZER_TIMEOUT_CODE) {
+    // We stopped waiting; the analyzer may or may not have committed the
+    // amendment. Verified rejections handle this with a durable local
+    // dismissal below; edits and unverified rejections remain unconfirmed.
+    return jsonResponse(504, {
+      error:
+        "The analyzer did not answer in time; whether the change was saved is not known",
+      code: ANALYZER_TIMEOUT_CODE,
+    });
+  }
   if (err instanceof AnalyzerError) {
     return jsonResponse(err.status || 502, {
       error: err.message,
@@ -522,6 +543,7 @@ export async function rejectAnalysisCondition(event) {
       const client = await analyzerClient();
       let accepted = false;
       let dismissed = false;
+      let dismissalReason = "analysis_unavailable";
       try {
         result = await client.rejectCondition(context.analysisId, conditionId, {
           ...(reason ? { reason } : {}),
@@ -535,13 +557,21 @@ export async function rejectAnalysisCondition(event) {
       } catch (err) {
         if (
           err instanceof AnalyzerError &&
-          err.status === 404 &&
-          err.code === "unknown_analysis" &&
+          (err.code === ANALYZER_TIMEOUT_CODE ||
+            (err.status === 404 &&
+              (err.code === "unknown_analysis" ||
+                err.code === "unknown_condition"))) &&
           knownConcern
         ) {
           // The site-owned stored analysis verifies this condition. Dismiss it
-          // locally without claiming the expired analyzer accepted a rejection.
+          // locally without claiming the analyzer accepted a rejection.
           dismissed = true;
+          dismissalReason =
+            err.code === ANALYZER_TIMEOUT_CODE
+              ? "analyzer_timeout"
+              : err.code === "unknown_condition"
+                ? "condition_unavailable"
+                : "analysis_unavailable";
           result = {
             analysis_id: context.analysisId,
             condition_id: conditionId,
@@ -578,7 +608,7 @@ export async function rejectAnalysisCondition(event) {
             ...(dismissed
               ? {
                   dismissedAt: new Date().toISOString(),
-                  dismissalReason: "analysis_unavailable",
+                  dismissalReason,
                 }
               : { deletedAt }),
             category: knownConcern?.category || receipt.category,

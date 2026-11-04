@@ -912,7 +912,7 @@ h3 {
 
 .import-help {
   gap: 8px;
-  max-height: min(760px, calc(100vh - 32px));
+  max-height: min(760px, calc(100dvh - 32px));
   overflow: auto;
 }
 
@@ -1132,7 +1132,7 @@ h3 {
 #choose-compliance-manager-dialog {
   width: min(600px, calc(100vw - 32px));
   max-width: none;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 #choose-compliance-manager-dialog > .compliance-manager-picker {
@@ -1156,7 +1156,7 @@ h3 {
 }
 
 .compliance-manager-candidates {
-  max-height: min(45vh, 360px);
+  max-height: min(45dvh, 360px);
   overflow-y: auto;
 }
 

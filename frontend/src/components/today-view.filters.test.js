@@ -34,6 +34,11 @@ function freezeClock() {
 const todayTitle = (iso) =>
   escapeHtml(t("analysis.checkTitle.today", { time: formatTime(iso) }));
 
+// Menu geometry is covered in the Chromium/WebKit overlay regressions.
+vi.mock("../lib/menu-viewport.js", () => ({
+  containMenus: () => Object.assign(() => {}, { update: () => {} }),
+}));
+
 const hydrateEvidence = vi.hoisted(() => vi.fn(async () => []));
 vi.mock("../services/task-evidence.js", async (importOriginal) => ({
   ...(await importOriginal()),

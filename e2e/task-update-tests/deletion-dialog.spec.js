@@ -80,6 +80,7 @@ for (const kind of ["single", "duplicate", "group"]) {
     await expect(confirm).toBeFocused();
     await expect(confirm).toHaveCSS("outline-style", "solid");
     // Visibility and keyboard focus can settle before the opacity transition.
+    // Wait for full opacity so axe does not audit translucent text mid-fade.
     await expect(page.locator("#analysis-delete-dialog")).toHaveCSS(
       "opacity",
       "1",

@@ -34,7 +34,7 @@
   width: min(400px, calc(100vw - 2rem));
   border-radius: 24px;
   background: var(--surface);
-  overflow: hidden;
+  overflow-y: auto;
   box-shadow: none;
 }
 
@@ -216,7 +216,8 @@
   margin: 0;
   padding: 0.75rem 1rem;
   text-align: left;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
   box-shadow: none;
   text-shadow: none;
 }
@@ -394,7 +395,10 @@
   opacity: 1;
 }
 
+/* A transform hint creates a containing block for fixed-position menus.
+   Keep header menus positioned against the viewport. */
 .home-region--header {
+  will-change: opacity;
   position: relative;
   z-index: 10;
   overflow: visible;
