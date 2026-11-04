@@ -1,13 +1,12 @@
 import { captureControls } from "./capture-controls.templates.js";
 import { escapeHtml as e, escapeAttr as a, html } from "../lib/html.js";
 import { t } from "../i18n/i18n.js";
-import { formatTime } from "../i18n/dates.js";
+import { formatMonthDayTime } from "../i18n/dates.js";
 import { formatPhotoDateTime } from "../domain/photo-lightbox.js";
 import {
   CARE_WORK_TYPES,
   careTitle,
   careKindLabel,
-  groupCareWork,
 } from "../domain/care-work.js";
 
 export function careHeader(title, close = false) {
@@ -39,81 +38,66 @@ export function careList(items, loading = false, offline = false) {
       ${loading
         ? `<p role="status">${e(t("care.loading"))}</p>`
         : items.length
-          ? groupCareWork(items)
-              .map(
-                (group) =>
-                  html`<section class="care-day">
-                    <h2>
-                      ${e(group.label)}<span
-                        aria-label="${a(
-                          t("care.count", { count: group.items.length }),
-                        )}"
-                        >${group.items.length}</span
+          ? html`<ul class="care-list">
+              ${[...items]
+                .sort(
+                  (x, y) => Date.parse(y.createdAt) - Date.parse(x.createdAt),
+                )
+                .map(
+                  (item) =>
+                    html`<li class="care-row-card">
+                      <button
+                        type="button"
+                        class="btn-care care-row"
+                        ${item.status
+                          ? "disabled"
+                          : `data-work="${a(item.workId)}"`}
                       >
-                    </h2>
-                    <ul>
-                      ${group.items
-                        .map(
-                          (item) =>
-                            html`<li>
-                              <div class="care-row-shell">
-                                <button
-                                  type="button"
-                                  class="btn-care care-row"
-                                  ${item.status
-                                    ? "disabled"
-                                    : `data-work="${a(item.workId)}"`}
-                                >
-                                  <strong>${e(careTitle(item))}</strong
-                                  ><time datetime="${a(item.createdAt)}"
-                                    >${e(formatTime(item.createdAt))}</time
-                                  >
-                                </button>
-                                ${item.status
-                                  ? html`<span
-                                      class="care-row__status"
-                                      role="status"
-                                    >
-                                      ${item.status !== "failed" && !offline
-                                        ? '<wa-spinner aria-hidden="true"></wa-spinner>'
-                                        : ""}
-                                      ${e(
-                                        t(
-                                          item.status === "failed"
-                                            ? "care.needsRetry"
-                                            : offline
-                                              ? "card.recovery.offline"
-                                              : "care.savingShort",
-                                        ),
-                                      )}
-                                    </span>`
-                                  : ""}
-                              </div>
-                              ${item.status === "failed"
-                                ? html`<button
-                                    type="button"
-                                    class="btn-outline"
-                                    data-retry-work="${a(item.workId)}"
-                                  >
-                                    ${e(t("care.retry"))}
-                                  </button>`
+                        <strong>${e(careTitle(item))}</strong
+                        ><time datetime="${a(item.createdAt)}"
+                          >${e(formatMonthDayTime(item.createdAt))}</time
+                        >
+                      </button>
+                      <div class="care-row__actions">
+                        ${item.status
+                          ? html`<span class="care-row__status" role="status">
+                              ${item.status !== "failed" && !offline
+                                ? '<wa-spinner aria-hidden="true"></wa-spinner>'
                                 : ""}
-                              ${item.status === "failed" && item.editable
-                                ? html`<button
-                                    type="button"
-                                    class="btn-outline"
-                                    data-edit-work="${a(item.workId)}"
-                                  >
-                                    ${e(t("care.editRetry"))}
-                                  </button>`
-                                : ""}
-                            </li>`,
-                        )
-                        .join("")}
-                    </ul>
-                  </section>`,
-              )
-              .join("")
+                              ${e(
+                                t(
+                                  item.status === "failed"
+                                    ? "care.needsRetry"
+                                    : offline
+                                      ? "card.recovery.offline"
+                                      : "care.savingShort",
+                                ),
+                              )}
+                            </span>`
+                          : ""}
+                        ${item.status === "failed"
+                          ? html`<button
+                              type="button"
+                              class="btn-outline btn-outline--sm"
+                              data-retry-work="${a(item.workId)}"
+                            >
+                              ${e(t("care.retry"))}
+                            </button>`
+                          : ""}
+                        ${item.status === "failed" && item.editable
+                          ? html`<button
+                              type="button"
+                              class="btn-outline btn-outline--sm"
+                              data-edit-work="${a(item.workId)}"
+                            >
+                              ${e(t("care.editRetry"))}
+                            </button>`
+                          : ""}
+                      </div>
+                    </li>`,
+                )
+                .join("")}
+            </ul>`
           : `<p data-empty>${e(t("care.empty"))}</p>`}
     </div>`;
 }

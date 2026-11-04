@@ -57,49 +57,60 @@ care-work-view {
 .care-days {
   margin-top: 32px;
 }
-.care-day + .care-day {
-  margin-top: 32px;
-}
-.care-day h2 {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  margin: 0 0 12px;
-  font-size: 0.875rem;
-  color: var(--text-secondary);
-  font-weight: 600;
-}
-.care-day h2 span {
-  font-weight: 400;
-}
-.care-day ul,
+/* Same list vocabulary as the public complaints screen: one bordered card
+   per log — what was done + when; day headers and counts dropped (each
+   card carries its own date). */
+.care-list,
 .care-thumbnails {
   list-style: none;
   margin: 0;
   padding: 0;
 }
+.care-list {
+  display: grid;
+  gap: 0.75rem;
+}
+.care-row-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
 .care-row {
   display: flex;
+  flex: 1;
   flex-direction: column;
+  align-items: flex-start;
   gap: 6px;
-  width: 100%;
-  padding: 16px 0 10px;
+  min-inline-size: 0;
+  padding: 0;
   border: 0;
-  border-bottom: 1px solid var(--c-line);
   color: var(--text);
   background: transparent;
   font: inherit;
   text-align: start;
+  white-space: normal;
   cursor: pointer;
 }
 .care-row strong {
+  /* Same title size as the complaint row's h2 (global h2, 1.15rem). */
+  font-size: 1.15rem;
   font-weight: 600;
+  line-height: 1.2;
   overflow-wrap: anywhere;
 }
 .care-row time {
-  align-self: flex-end;
   font-size: 0.875rem;
   color: var(--text-secondary);
+}
+.care-row__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 .care-options {
   display: grid;
@@ -287,14 +298,6 @@ care-work-view {
   height: 84px;
   aspect-ratio: auto;
 }
-.care-day ul {
-  padding-inline-start: 0;
-}
-.care-day li {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
 
 .care-photo-section {
   min-width: 0;
@@ -313,25 +316,4 @@ care-work-view {
   .care-row__status wa-spinner::part(spinner) {
     animation: none;
   }
-}
-
-.care-row-shell {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-}
-.care-row-shell .care-row {
-  min-inline-size: 0;
-  white-space: normal;
-  border-bottom: 0;
-}
-.care-row-shell .care-row strong {
-  max-inline-size: 100%;
-}
-.care-row-shell {
-  border-bottom: 1px solid var(--c-line);
-}
-.care-row-shell .care-row__status {
-  justify-self: end;
-  max-inline-size: 100%;
-  padding-block-end: 0.625rem;
 }
