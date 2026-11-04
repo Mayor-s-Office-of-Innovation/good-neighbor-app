@@ -128,6 +128,7 @@ async function mount(
         assessmentId: "synthetic-assessment",
       };
       const trigger = document.querySelector("#trigger");
+      if (!trigger) throw new Error("Missing edit trigger");
       if (descriptionOnly) openDescriptionDetails(problem, trigger, () => {});
       else {
         if (card) {
@@ -138,21 +139,28 @@ async function mount(
           trigger.before(article);
           article.append(trigger);
         }
-        openTaskDetails(task, problem, trigger, async (result) => {
-          if (!card) return;
-          const controller = new AbortController();
-          if (dismissible) {
-            const navigation = document.createElement("button");
-            navigation.dataset.testNavigate = "";
-            navigation.textContent = "Test navigation";
-            navigation.addEventListener("click", () => controller.abort());
-            document.querySelector("main").prepend(navigation);
-          }
-          await showSavedActionCard(trigger.closest("article"), result.task, {
-            signal: controller.signal,
-          });
-          return true;
-        });
+        openTaskDetails(
+          task,
+          problem,
+          trigger,
+          async (/** @type {{task: Record<string, unknown>}} */ result) => {
+            if (!card) return;
+            const controller = new window.AbortController();
+            if (dismissible) {
+              const navigation = document.createElement("button");
+              navigation.dataset.testNavigate = "";
+              navigation.textContent = "Test navigation";
+              navigation.addEventListener("click", () => controller.abort());
+              const main = document.querySelector("main");
+              if (!main) throw new Error("Missing test main");
+              main.prepend(navigation);
+            }
+            await showSavedActionCard(trigger.closest("article"), result.task, {
+              signal: controller.signal,
+            });
+            return true;
+          },
+        );
       }
     },
     { task, descriptionOnly, card, dismissible },
@@ -572,12 +580,13 @@ for (const outcome of ["false", "true"]) {
     await expect(page.locator(".task-details__custom legend")).toContainText(
       "*",
     );
-    const normalColor = await custom.evaluate(
-      (element) =>
-        getComputedStyle(
-          element.shadowRoot.querySelector('[part~="form-control-label"]'),
-        ).color,
-    );
+    const normalColor = await custom.evaluate((element) => {
+      const label = element.shadowRoot?.querySelector(
+        '[part~="form-control-label"]',
+      );
+      if (!label) throw new Error("Missing custom action label");
+      return window.getComputedStyle(label).color;
+    });
     await page.locator(`[data-resolved="${outcome}"]`).click();
     await expect(custom).toHaveAttribute("aria-invalid", "true");
     await expect(custom).toHaveAttribute("data-custom-invalid", "");
@@ -585,18 +594,20 @@ for (const outcome of ["false", "true"]) {
       "hint",
       t("taskDetails.actionRequired"),
     );
-    const colors = await custom.evaluate((element) => ({
-      label: getComputedStyle(
-        element.shadowRoot.querySelector('[part~="form-control-label"]'),
-      ).color,
-      border: getComputedStyle(
-        element.shadowRoot.querySelector('[part~="textarea-wrapper"]'),
-      ).borderTopColor,
-      marker: getComputedStyle(
-        element.shadowRoot.querySelector('[part~="form-control-label"]'),
-        "::after",
-      ).content,
-    }));
+    const colors = await custom.evaluate((element) => {
+      const label = element.shadowRoot?.querySelector(
+        '[part~="form-control-label"]',
+      );
+      const wrapper = element.shadowRoot?.querySelector(
+        '[part~="textarea-wrapper"]',
+      );
+      if (!label || !wrapper) throw new Error("Missing custom action controls");
+      return {
+        label: window.getComputedStyle(label).color,
+        border: window.getComputedStyle(wrapper).borderTopColor,
+        marker: window.getComputedStyle(label, "::after").content,
+      };
+    });
     expect(colors.label).not.toBe(normalColor);
     expect(colors.border).toBe(colors.label);
     expect(colors.marker).toContain("*");

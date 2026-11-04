@@ -3056,10 +3056,124 @@ for (const tab of ["in_progress", "history"]) {
       expect(view._renderHome).toHaveBeenCalledOnce();
       expect(await pending).toBe(true);
       expect(view._renderHome).toHaveBeenCalledOnce();
-      expect(view.connectedCallback).not.toHaveBeenCalled();
+      expect(view.connectedCallback).toHaveBeenCalledOnce();
       expect(view._savedActionReceipts.size).toBe(0);
     } finally {
       window.history = previousHistory;
     }
+  });
+}
+
+it("reconciles a duplicate edit after receipt cancellation despite fresh worklist caches", async () => {
+  freezeClock();
+  const root = {
+    taskId: "root",
+    status: "open",
+    updatedAt: OLDER_TODAY,
+    createdAt: OLDER_TODAY,
+  };
+  const clicked = {
+    taskId: "duplicate",
+    status: "open",
+    description: "Old observation",
+    updatedAt: OLDER_TODAY,
+    createdAt: OLDER_TODAY,
+  };
+  const savedRoot = {
+    ...root,
+    status: "in_progress",
+    updatedAt: NEWER_TODAY,
+    customAction: { resolved: false },
+  };
+  const savedDuplicate = {
+    ...clicked,
+    description: "Corrected observation",
+    updatedAt: NEWER_TODAY,
+  };
+  const view = await mount("?filter=todo");
+  view.isConnected = true;
+  view.querySelector = () => null;
+  view._homeModel.tasks = [root, clicked];
+  view._homeFilter = "in_progress";
+  for (const status of HOME_STATUSES)
+    view._taskListFreshness.set(status, Date.now());
+  catalog.listTasks.mockClear();
+  catalog.fetchHome.mockClear();
+  catalog.listTasks.mockImplementation(async ({ status }) => ({
+    // A lagging index must not roll back the authoritative saved root.
+    tasks: status === "open" ? [savedDuplicate, root] : [],
+  }));
+  const card = { getAttribute: () => clicked.taskId, contains: () => false };
+  const show = (_card, _task, { signal }) =>
+    new Promise((resolve) => {
+      signal.addEventListener(
+        "abort",
+        () => resolve({ destination: "in_progress", viewRequested: false }),
+        { once: true },
+      );
+    });
+  try {
+    const pending = view._onTaskDetailsSaved(
+      card,
+      { task: savedRoot },
+      { customAction: true },
+      show,
+    );
+    for (const dismiss of view._savedActionReceipts) dismiss();
+    expect(await pending).toBe(true);
+    await view._homeRefresh;
+    await view._remainingLoad;
+    await view._pendingGuidanceLoad;
+    expect(catalog.fetchHome).toHaveBeenCalledWith(FIRST_PAINT_CALL);
+    expect(catalog.fetchHome).toHaveBeenCalledWith(REMAINING_CALL);
+    expect(
+      new Set(catalog.listTasks.mock.calls.map(([options]) => options.status)),
+    ).toEqual(new Set(HOME_STATUSES));
+    expect(
+      view._homeModel.tasks.find((task) => task.taskId === "duplicate")
+        .description,
+    ).toBe("Corrected observation");
+    // mount() stubs DOM rendering; use the renderer's existing confirmation
+    // projection to check the task that remains visible over a lagging index.
+    expect(view._confirmedTasks.get("root")).toEqual(savedRoot);
+    expect(
+      view
+        ._reconcileConfirmedTasks(view._homeModel.tasks)
+        .find((task) => task.taskId === "root").status,
+    ).toBe("in_progress");
+    expect(view._homeFilter).toBe("in_progress");
+  } finally {
+    view.disconnectedCallback();
+  }
+});
+
+for (const leave of ["disconnect", "site switch"]) {
+  it(`does not reconcile the old receipt after ${leave}`, async () => {
+    const view = new TodayView();
+    view.isConnected = true;
+    view._siteId = "site-1";
+    const task = {
+      taskId: "root",
+      status: "in_progress",
+      updatedAt: NEWER_TODAY,
+    };
+    view._homeModel = { tasks: [] };
+    view._duplicateLinks = new Map();
+    view.connectedCallback = vi.fn();
+    const card = { getAttribute: () => task.taskId };
+    const show = async () => {
+      for (const dismiss of view._savedActionReceipts) dismiss();
+      if (leave === "disconnect") view.isConnected = false;
+      else view._siteId = "site-2";
+      return { destination: "in_progress", viewRequested: false };
+    };
+    await view._onTaskDetailsSaved(
+      card,
+      { task },
+      { customAction: true },
+      show,
+    );
+    expect(view.connectedCallback).not.toHaveBeenCalled();
+    expect(view._savedActionReceipts.size).toBe(0);
   });
 }

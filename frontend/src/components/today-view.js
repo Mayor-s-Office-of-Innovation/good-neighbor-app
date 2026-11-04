@@ -3049,8 +3049,14 @@ class TodayView extends HTMLElement {
       this._savedActionReceipts.delete(dismiss);
       release();
     }
-    if (controller.signal.aborted) return Boolean(receipt);
     if (!this.isConnected || this._siteId !== siteId) return Boolean(receipt);
+    if (controller.signal.aborted) {
+      // Navigation cancels only the receipt. A duplicate edit can also update
+      // rows absent from the returned root, so reconcile every worklist even
+      // when the newly selected tab's cached statuses are still fresh.
+      void this.connectedCallback();
+      return Boolean(receipt);
+    }
     const restoreFocus =
       card.contains(document.activeElement) ||
       document.activeElement === document.body;
