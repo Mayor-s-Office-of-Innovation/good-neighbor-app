@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 
+/** @param {import("@playwright/test").Page} page */
 async function openStoragePage(page) {
   await page.route("**/binding-test", (route) =>
     route.fulfill({
@@ -85,7 +86,11 @@ for (const replacement of ["other-site", "same-site-new-session"]) {
       return { saved: await saving, sites: await db.listBoundSites() };
     }, replacement);
     expect(result.saved).toBe(false);
-    expect(result.sites.some((site) => site.siteId === "late")).toBe(false);
+    expect(
+      result.sites.some(
+        (/** @type {{siteId: string}} */ site) => site.siteId === "late",
+      ),
+    ).toBe(false);
   });
 }
 
@@ -148,7 +153,11 @@ for (const bindings of [
       };
     }, bindings);
     expect(result.saved).toBe(true);
-    expect(result.sites.map((site) => site.siteId).sort()).toEqual(
+    expect(
+      result.sites
+        .map((/** @type {{siteId: string}} */ site) => site.siteId)
+        .sort(),
+    ).toEqual(
       ["active", "unrelated", ...bindings.map((site) => site.siteId)].sort(),
     );
     expect(result.current.token).toBe("synthetic-access");

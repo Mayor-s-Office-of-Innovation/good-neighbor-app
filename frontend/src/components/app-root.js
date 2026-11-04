@@ -575,7 +575,9 @@ export class AppRoot extends HTMLElement {
       route.startsWith("/manage-access") ||
       route.startsWith("/reports");
     if (managerOnly && !hasAdminAccess(this._site)) {
-      navigate("/today");
+      // A site switch can leave Reports for the former site in history.
+      if (route.startsWith("/reports")) replaceRoute("/today");
+      else navigate("/today");
       return;
     }
     const match = ROUTE_VIEW.find(([prefix]) => route.startsWith(prefix));

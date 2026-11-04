@@ -13,7 +13,10 @@ const mocks = vi.hoisted(() => ({
   showSiteSwitchErrorToast: vi.fn(),
   showSiteSwitchSuccessToast: vi.fn(),
 }));
-vi.mock("../db.js", () => mocks);
+vi.mock("../db.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  ...mocks,
+}));
 vi.mock("./api.js", () => mocks);
 vi.mock("../state/check-session.js", () => mocks);
 vi.mock("../state/toasts.js", () => mocks);
@@ -41,7 +44,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.stubGlobal("window", { location: { assign } });
   mocks.selectDeviceBinding.mockResolvedValue(session);
-  mocks.setSite.mockResolvedValue({ siteId: "site-2" });
+  mocks.setSite.mockImplementation(async (_name, meta) => ({ ...meta }));
   mocks.activateSiteBinding.mockResolvedValue({ siteId: "site-2" });
 });
 afterEach(() => {
@@ -151,4 +154,47 @@ it("blocks switching when a captured check is awaiting submission", async () => 
   ).toBe("blocked");
   expect(mocks.showSiteSwitchBlockedToast).toHaveBeenCalledOnce();
   expect(mocks.selectDeviceBinding).not.toHaveBeenCalled();
+});
+
+it.each([
+  { cached: "manager", selected: "general", destination: "/today" },
+  { cached: "general", selected: "manager", destination: "/reports" },
+  { cached: "general", selected: "admin", destination: "/reports" },
+])(
+  "routes Reports switches using selected access $selected rather than cached $cached",
+  async ({ cached, selected, destination }) => {
+    mocks.selectDeviceBinding.mockResolvedValue({
+      ...session,
+      accessLevel: selected,
+    });
+    expect(
+      await switchToBoundSite({
+        siteId: "site-2",
+        currentSiteId: "site-1",
+        boundSites: [{ ...sibling, accessLevel: cached }],
+        destination: "/reports",
+      }),
+    ).toBe("switched");
+    expect(assign).toHaveBeenCalledExactlyOnceWith(destination);
+  },
+);
+
+it("routes a selected legacy general-access session to Today from Reports", async () => {
+  mocks.activateSiteBinding.mockResolvedValue({
+    siteId: "site-2",
+    accessLevel: "general",
+  });
+  await switchToBoundSite({
+    siteId: "site-2",
+    currentSiteId: "site-1",
+    boundSites: [
+      {
+        siteId: "site-2",
+        token: "synthetic-access",
+        refreshToken: "synthetic-refresh",
+      },
+    ],
+    destination: "/reports",
+  });
+  expect(assign).toHaveBeenCalledExactlyOnceWith("/today");
 });

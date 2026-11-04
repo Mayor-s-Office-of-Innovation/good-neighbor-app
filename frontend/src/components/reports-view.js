@@ -17,7 +17,7 @@ import "@awesome.me/webawesome/dist/components/select/select.js";
 import "@awesome.me/webawesome/dist/components/option/option.js";
 import { getSite, hasAdminAccess, listBoundSites } from "../db.js";
 import { t } from "../i18n/i18n.js";
-import { currentRoute, navigate } from "../router.js";
+import { currentRoute, navigate, replaceRoute } from "../router.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import {
   get311RequestDetails,
@@ -100,7 +100,7 @@ class ReportsScreen extends HTMLElement {
     this._site = await getSite();
     if (!this.isConnected) return false;
     if (!hasAdminAccess(this._site)) {
-      navigate("/today");
+      replaceRoute("/today");
       return false;
     }
     this._siteId =

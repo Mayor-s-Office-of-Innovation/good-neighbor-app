@@ -3,6 +3,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 const setup = vi.hoisted(() => ({
   currentRoute: vi.fn(() => "/today"),
   backOrNavigate: vi.fn(),
+  replaceRoute: vi.fn(),
   clearSite: vi.fn(),
   getSite: vi.fn(),
   getSiteSettings: vi.fn(),
@@ -70,6 +71,7 @@ vi.mock("../router.js", () => ({
   currentRoute: setup.currentRoute,
   navigate: vi.fn(),
   backOrNavigate: setup.backOrNavigate,
+  replaceRoute: setup.replaceRoute,
   onRouteChange: vi.fn(),
 }));
 vi.mock("./app-root.templates.js", () => ({
@@ -816,4 +818,17 @@ describe("later device enrollments", () => {
     expect(setup.saveDiscoveredBindings).not.toHaveBeenCalled();
     log.mockRestore();
   });
+});
+
+it.each([
+  "/reports",
+  "/reports/checks/2026-11-04",
+  "/reports/issues/synthetic",
+])("replaces inaccessible %s history after a site switch", (route) => {
+  setup.currentRoute.mockReturnValue(route);
+  setup.replaceRoute.mockClear();
+  const root = component();
+  root._site = { siteId: "general-site", accessLevel: "general" };
+  AppRoot.prototype._renderView.call(root);
+  expect(setup.replaceRoute).toHaveBeenCalledExactlyOnceWith("/today");
 });

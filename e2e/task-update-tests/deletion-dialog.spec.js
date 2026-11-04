@@ -34,6 +34,13 @@ for (const kind of ["single", "duplicate", "group"]) {
       const load = (/** @type {string} */ path) => import(path);
       await load("/src/styles/tokens.css");
       await load("/src/styles/base.css");
+      if (kind === "single") {
+        // Exercise the audit's settle guard with a deliberately slow entrance.
+        const style = document.createElement("style");
+        style.textContent =
+          "dialog, dialog::backdrop { transition-duration: 1s; }";
+        document.head.append(style);
+      }
       const { setSite } = await load("/src/db.js");
       await setSite("Synthetic deletion test", {
         siteId: "test-site",
@@ -72,6 +79,11 @@ for (const kind of ["single", "duplicate", "group"]) {
     );
     await expect(confirm).toBeFocused();
     await expect(confirm).toHaveCSS("outline-style", "solid");
+    // Visibility and keyboard focus can settle before the opacity transition.
+    await expect(page.locator("#analysis-delete-dialog")).toHaveCSS(
+      "opacity",
+      "1",
+    );
     const audit = await new AxeBuilder({ page })
       .include("#analysis-delete-dialog")
       .analyze();
@@ -215,6 +227,10 @@ for (const code of [
         const path = "/src/i18n/i18n.js";
         return (await import(path)).t("analysis.deleteDialog.selectedText");
       }),
+    );
+    await expect(page.locator("#analysis-delete-dialog")).toHaveCSS(
+      "opacity",
+      "1",
     );
     expect(
       (
