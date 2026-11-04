@@ -1,5 +1,6 @@
 // @ts-check
 import { test, expect } from "../helpers/harness.js";
+import { routeHomeLists } from "../helpers/app.js";
 
 for (const width of [393, 1178]) {
   test(`History grouping has a visible label and works by keyboard at ${width}px`, async ({
@@ -18,12 +19,7 @@ for (const width of [393, 1178]) {
         completedAt: "2026-09-02T12:00:00Z",
       },
     ];
-    await page.route("**/v1/tasks?*", (route) =>
-      route.fulfill({ json: { tasks } }),
-    );
-    await page.route("**/v1/checks?*", (route) =>
-      route.fulfill({ json: { checks: [] } }),
-    );
+    await routeHomeLists(page, { checks: [], tasks: () => tasks });
     await page.goto("/today?filter=history");
     const select = page.locator("#history-grouping");
     const label = select.locator("label");

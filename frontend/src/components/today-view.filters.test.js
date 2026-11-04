@@ -94,7 +94,58 @@ const catalog = vi.hoisted(() => ({
   submitConditionAnswers: vi.fn(),
   editAnalysisCondition: vi.fn(),
   listChecks: vi.fn(),
+  fetchHome: vi.fn(),
 }));
+const HOME_STATUSES = ["open", "in_progress", "completing", "completed"];
+/**
+ * The mocked `GET /v1/home`, composed from the per-list mocks so a test keeps
+ * programming `listTasks` / `listChecks` by status. Mirrors the backend and
+ * the transport: a rejected read is an `ok: false` section, every read
+ * rejected is a failed request, and a connection failure fails the request.
+ */
+/** @param {{ sections?: readonly string[] }} [options] */
+async function composeHome({ sections } = {}) {
+  const wanted = new Set(sections ?? ["checks", ...HOME_STATUSES]);
+  const statuses = HOME_STATUSES.filter((status) => wanted.has(status));
+  const settled = await Promise.allSettled([
+    ...(wanted.has("checks") ? [catalog.listChecks({ limit: 30 })] : []),
+    ...statuses.map((status) => catalog.listTasks({ status, limit: 50 })),
+  ]);
+  const rejected = settled.filter((result) => result.status === "rejected");
+  const offline = rejected.find((result) => result.reason?.status === 0);
+  if (offline) throw offline.reason;
+  if (rejected.length === settled.length) throw rejected[0].reason;
+  /** @param {any} result @param {(value: any) => any[]} pick */
+  const section = (result, pick) =>
+    result.status === "fulfilled"
+      ? { ok: true, items: pick(result.value) || [] }
+      : { ok: false, error: "Error" };
+  const lists = settled.slice(wanted.has("checks") ? 1 : 0);
+  return {
+    ...(wanted.has("checks")
+      ? { checks: section(settled[0], (value) => value.checks) }
+      : {}),
+    tasks: Object.fromEntries(
+      statuses.map((status, i) => [
+        status,
+        section(lists[i], (value) => value.tasks),
+      ]),
+    ),
+    loadedAt: new Date().toISOString(),
+  };
+}
+/** The cold open's first request, as fetchHome receives it. */
+const FIRST_PAINT_CALL = {
+  checksLimit: 30,
+  tasksLimit: 50,
+  sections: ["checks", "open"],
+};
+/** The cold open's second request. */
+const REMAINING_CALL = {
+  checksLimit: 30,
+  tasksLimit: 50,
+  sections: ["in_progress", "completing", "completed"],
+};
 vi.mock("../services/session-handoff.js", () => ({
   retireHandoff: vi.fn(async () => false),
 }));
@@ -116,6 +167,7 @@ vi.mock("../services/api.js", () => ({
   getAssessmentGuidance: catalog.getAssessmentGuidance,
   submitConditionAnswers: catalog.submitConditionAnswers,
   editAnalysisCondition: catalog.editAnalysisCondition,
+  fetchHome: catalog.fetchHome,
 }));
 const duplicates = vi.hoisted(() => ({ watch: vi.fn(() => vi.fn()) }));
 vi.mock("../services/duplicate-issues.js", () => ({
@@ -162,6 +214,7 @@ beforeEach(() => {
   catalog.listBoundSites.mockReset().mockResolvedValue([]);
   catalog.listTasks.mockReset().mockResolvedValue({ tasks: [] });
   catalog.listChecks.mockReset().mockResolvedValue({ checks: [] });
+  catalog.fetchHome.mockReset().mockImplementation(composeHome);
   catalog.getAssessmentGuidance
     .mockReset()
     .mockResolvedValue({ assessment: null, conditions: [], tasks: [] });
@@ -868,13 +921,14 @@ describe("pre-data skeleton", () => {
   it("paints the chrome and placeholder cards before the worklist responds", async () => {
     window.location.search = "?filter=in_progress";
     let release = () => {};
-    // The catalog shares the worklist's Promise.all, so holding it holds the
-    // whole data tier while the skeleton is on screen.
-    catalog.listProviderSites.mockReturnValueOnce(
-      new Promise((resolve) => {
-        release = () =>
-          resolve({ providerId: "provider-1", providerName: "P", sites: [] });
-      }),
+    // Hold the first-paint read; the skeleton stays on screen until it lands.
+    // (The provider catalog no longer gates the paint, so holding it would
+    // hold nothing.)
+    catalog.fetchHome.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(composeHome(FIRST_PAINT_CALL));
+        }),
     );
     const view = new TodayView();
     view._renderHome = vi.fn((model) => {
@@ -1327,7 +1381,7 @@ describe("deferred In-progress / History lists", () => {
     });
   });
 
-  it("paints from the open list alone, then fetches the rest and reveals counts", async () => {
+  it("paints from checks and the open list, then one request brings the rest and reveals counts", async () => {
     freezeClock();
     let release = () => {};
     const held = new Promise((resolve) => {
@@ -1342,24 +1396,21 @@ describe("deferred In-progress / History lists", () => {
     );
     const view = liveView("?filter=todo");
     const loading = view.connectedCallback();
-    await vi.waitFor(() => expect(catalog.listTasks).toHaveBeenCalledTimes(4));
+    await vi.waitFor(() => expect(catalog.fetchHome).toHaveBeenCalledTimes(2));
 
-    const statuses = catalog.listTasks.mock.calls.map(([{ status }]) => status);
-    expect(statuses[0]).toBe("open");
-    expect(statuses.slice(1).sort()).toEqual(
-      ["completed", "completing", "in_progress"].sort(),
-    );
-    // The open-only render happened before any other list was requested.
+    expect(catalog.fetchHome.mock.calls[0][0]).toEqual(FIRST_PAINT_CALL);
+    expect(catalog.fetchHome.mock.calls[1][0]).toEqual(REMAINING_CALL);
+    // The first render happened between the two requests.
     const firstRender = view._renderHome.mock.invocationCallOrder[0];
-    expect(catalog.listTasks.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(catalog.fetchHome.mock.invocationCallOrder[0]).toBeLessThan(
       firstRender,
     );
-    expect(catalog.listTasks.mock.invocationCallOrder[1]).toBeGreaterThan(
+    expect(catalog.fetchHome.mock.invocationCallOrder[1]).toBeGreaterThan(
       firstRender,
     );
     expect(view._homeModel.tasks.map((t) => t.taskId)).toEqual(["open-1"]);
 
-    // Counts stay hidden while the remaining lists are in flight…
+    // Counts stay hidden while the second request is in flight…
     expect(view._render(view._homeModel)).not.toContain("home-tabs__count");
     // …and History shows placeholders, not "no history".
     view._homeFilter = "history";
@@ -1375,10 +1426,58 @@ describe("deferred In-progress / History lists", () => {
       "done-1",
       "open-1",
     ]);
+    for (const status of HOME_STATUSES)
+      expect(view._taskListFreshness.has(status)).toBe(true);
     view._homeFilter = "todo";
     const loadedMarkup = view._render(view._homeModel);
     expect(loadedMarkup).toContain("home-tabs__count");
     expect(loadedMarkup).not.toContain("analysis-card--pending");
+  });
+
+  it("keeps the rows that did arrive when one remaining section fails, and offers a retry", async () => {
+    freezeClock();
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    const progressTask = {
+      ...doneTask,
+      taskId: "progress-1",
+      status: "in_progress",
+    };
+    catalog.listTasks.mockImplementation(async ({ status }) =>
+      status === "open"
+        ? { tasks: [openTask] }
+        : status === "in_progress"
+          ? { tasks: [progressTask] }
+          : { tasks: [] },
+    );
+    catalog.fetchHome.mockImplementation(async (options) => {
+      const home = await composeHome(options);
+      if (options?.sections?.includes("completing"))
+        home.tasks.completing = { ok: false, error: "Error" };
+      return home;
+    });
+    const view = liveView("?filter=todo");
+    await view.connectedCallback();
+    await view._remainingLoad;
+
+    // The In-progress rows that came back are shown; the tabs offer a retry
+    // and the counts stay hidden because one list is missing.
+    expect(view._remainingStatus).toBe("error");
+    expect(view._homeModel.tasks.map((t) => t.taskId).sort()).toEqual([
+      "open-1",
+      "progress-1",
+    ]);
+    expect(view._taskListFreshness.has("in_progress")).toBe(true);
+    expect(view._taskListFreshness.has("completing")).toBe(false);
+    view._homeFilter = "history";
+    const errorMarkup = view._render(view._homeModel);
+    expect(errorMarkup).toContain('id="retry-remaining"');
+    expect(errorMarkup).not.toContain("home-tabs__count");
+
+    catalog.fetchHome.mockImplementation(composeHome);
+    await view._loadRemainingTasks();
+    expect(view._remainingStatus).toBe("loaded");
+    expect(view._render(view._homeModel)).not.toContain("retry-remaining");
+    errorLog.mockRestore();
   });
 
   it("keeps the To-do tab and offers a retry when the remaining lists fail", async () => {
@@ -1542,18 +1641,19 @@ describe("deferred In-progress / History lists", () => {
     expect(view._tabCountSnapshot.counts.todo).toBe(confirmed);
   });
 
-  it("reuses fresh In-progress / History lists on a route return and re-fetches only the open list", async () => {
+  it("reads checks and the open list, then the rest, on a route return", async () => {
     freezeClock();
     const view = await loadedView();
-    catalog.listTasks.mockClear();
+    catalog.fetchHome.mockClear();
     vi.setSystemTime(FROZEN_NOW.getTime() + 30_000);
 
     const next = routeReturn(view);
     await next.connectedCallback();
     await next._remainingLoad;
 
-    expect(catalog.listTasks.mock.calls.map(([{ status }]) => status)).toEqual([
-      "open",
+    expect(catalog.fetchHome.mock.calls.map(([options]) => options)).toEqual([
+      FIRST_PAINT_CALL,
+      REMAINING_CALL,
     ]);
     expect(next._remainingStatus).toBe("loaded");
     expect(next._homeModel.tasks.map((t) => t.taskId).sort()).toEqual([
@@ -1566,54 +1666,18 @@ describe("deferred In-progress / History lists", () => {
   it("re-fetches every list on a reload triggered from the screen itself", async () => {
     freezeClock();
     const view = await loadedView();
-    catalog.listTasks.mockClear();
+    catalog.fetchHome.mockClear();
     // Seconds old, same instance: an action on this screen caused the reload.
     await view.connectedCallback();
     await view._remainingLoad;
     expect(view._remainingStatus).toBe("loaded");
-    expect(
-      catalog.listTasks.mock.calls.map(([{ status }]) => status).sort(),
-    ).toEqual(["completed", "completing", "in_progress", "open"].sort());
-  });
-
-  it("drops the lists and shows a placeholder once they are older than a minute", async () => {
-    freezeClock();
-    const previous = await loadedView();
-    vi.setSystemTime(FROZEN_NOW.getTime() + 61_000);
-    let release = () => {};
-    const held = new Promise((resolve) => {
-      release = () => resolve({ tasks: [doneTask] });
-    });
-    catalog.listTasks.mockImplementation(async ({ status }) =>
-      status === "open" ? { tasks: [openTask] } : held,
-    );
-
-    const view = routeReturn(previous);
-    const loading = view.connectedCallback();
-    await vi.waitFor(() => expect(view._remainingStatus).toBe("pending"));
-    // The previous completed task is gone, counts hidden, one placeholder.
-    expect(view._remainingStatus).toBe("pending");
-    expect(view._homeModel.tasks.map((t) => t.taskId)).toEqual(["open-1"]);
-    expect(view._render(view._homeModel)).not.toContain("home-tabs__count");
-    view._homeFilter = "history";
-    const pendingMarkup = view._render(view._homeModel);
-    expect(pendingMarkup.match(/analysis-card--pending/g)).toHaveLength(1);
-    expect(pendingMarkup).toContain('aria-busy="true"');
-
-    release();
-    await loading;
-    await view._remainingLoad;
-    expect(view._remainingStatus).toBe("loaded");
-    expect(view._homeModel.tasks.map((t) => t.taskId).sort()).toEqual([
-      "done-1",
-      "open-1",
-    ]);
+    expect(catalog.fetchHome).toHaveBeenCalledTimes(2);
   });
 
   it("re-fetches the lists on the next reload after a cross-list action", async () => {
     freezeClock();
     const previous = await loadedView();
-    catalog.listTasks.mockClear();
+    catalog.fetchHome.mockClear();
     // Completing a task writes a status override: the lists are now expired
     // even though they are seconds old, so even a route return re-fetches.
     previous._setTaskOverride("open-1", "resolved");
@@ -1622,10 +1686,7 @@ describe("deferred In-progress / History lists", () => {
     await view.connectedCallback();
     await view._remainingLoad;
     expect(view._remainingStatus).toBe("loaded");
-    expect(
-      catalog.listTasks.mock.calls.map(([{ status }]) => status).sort(),
-    ).toEqual(["completed", "completing", "in_progress", "open"].sort());
-    expect(view._remainingStatus).toBe("loaded");
+    expect(catalog.fetchHome).toHaveBeenCalledTimes(2);
   });
 
   it("does not carry tasks over when the view re-enters for another site", async () => {
@@ -1640,19 +1701,17 @@ describe("deferred In-progress / History lists", () => {
     siteRead.mockResolvedValue({ siteId: "site-2" });
     let release = () => {};
     const held = new Promise((resolve) => {
-      release = () => resolve({ tasks: [] });
+      release = () => resolve(composeHome());
     });
-    catalog.listTasks.mockImplementation(async ({ status }) =>
-      status === "open" ? { tasks: [] } : held,
-    );
+    catalog.listTasks.mockResolvedValue({ tasks: [] });
+    catalog.fetchHome.mockImplementationOnce(() => held);
     const loading = view.connectedCallback();
-    await vi.waitFor(() => expect(view._remainingStatus).toBe("pending"));
-    expect(view._siteId).toBe("site-2");
-    expect(view._homeModel.tasks).toEqual([]);
-    expect(view._remainingStatus).toBe("pending");
+    await vi.waitFor(() => expect(view._siteId).toBe("site-2"));
     release();
     await loading;
     await view._remainingLoad;
+    expect(view._remainingStatus).toBe("loaded");
+    expect(view._homeModel.tasks).toEqual([]);
   });
 
   it("keeps keyboard focus on the current tab when retrying a failed load", async () => {
@@ -1969,30 +2028,28 @@ describe("attention badges and newer submissions", () => {
       submittedAt: OLDER_TODAY,
     };
     view._homeModel = { last: clear, checks: [clear], tasks: [] };
-    catalog.listChecks.mockResolvedValue({
-      checks: [
-        {
-          checkId: "new",
-          startedAt: NEWER_TODAY,
-          status: "in_progress",
-          issueCount: 0,
-        },
-        {
-          checkId: "clear",
-          status: "completed",
-          completedAt: OLDER_TODAY,
-          issueCount: 0,
-        },
-      ],
-    });
-    await view._refreshChecks();
+    const rows = [
+      {
+        checkId: "new",
+        startedAt: NEWER_TODAY,
+        status: "in_progress",
+        issueCount: 0,
+      },
+      {
+        checkId: "clear",
+        status: "completed",
+        completedAt: OLDER_TODAY,
+        issueCount: 0,
+      },
+    ];
+    view._applyChecks(rows);
     const model = view._renderHome.mock.calls.at(-1)[0];
     expect(model.last.id).toBe("clear");
     expect(model.latestStartedCheck.id).toBe("new");
     expect(view._render(model)).not.toContain(t("card.clear.title"));
     view._homeModel = model;
     view._renderHome.mockClear();
-    await view._refreshChecks();
+    view._applyChecks(rows);
     expect(view._renderHome).not.toHaveBeenCalled();
     // A later clear result may display its own notice.
     model.checks[0] = {
@@ -2015,7 +2072,7 @@ it("repaints photo progress without refetching lists, but refreshes new analysis
   listener(pending);
   await view._homeRefresh;
   view._homeModel = { tasks: [], pendingSession: pending };
-  catalog.listTasks.mockClear();
+  catalog.fetchHome.mockClear();
   catalog.listProviderSites.mockClear();
   view._renderHome.mockClear();
   for (const status of ["uploading", "analyzing", "analyzing", "failed"]) {
@@ -2023,16 +2080,16 @@ it("repaints photo progress without refetching lists, but refreshes new analysis
     listener(pending);
   }
   expect(view._renderHome).toHaveBeenCalledTimes(4);
-  expect(catalog.listTasks).not.toHaveBeenCalled();
+  expect(catalog.fetchHome).not.toHaveBeenCalled();
   expect(catalog.listProviderSites).not.toHaveBeenCalled();
   pending.items[0].analysis.status = "analyzed";
   listener(pending);
   await view._homeRefresh;
-  expect(catalog.listTasks).toHaveBeenCalledTimes(4);
+  expect(catalog.fetchHome).toHaveBeenCalledTimes(2);
   expect(catalog.listProviderSites).toHaveBeenCalledOnce();
 });
 
-it("refreshes open tasks while secondary lists are slow, without overlapping secondary reads", async () => {
+it("coalesces reloads while the home response is slow", async () => {
   const view = await mount("?filter=todo");
   view.isConnected = true;
   view.querySelector = () => null;
@@ -2041,38 +2098,34 @@ it("refreshes open tasks while secondary lists are slow, without overlapping sec
     view._homeModel = model;
   });
   view._hydrate311CardStatuses = vi.fn();
+  await view.connectedCallback();
+  catalog.fetchHome.mockClear();
+  catalog.listProviderSites.mockClear();
   let release = () => {};
   const held = new Promise((resolve) => {
-    release = () =>
-      resolve({ tasks: [{ taskId: "stale", status: "completed" }] });
+    release = () => resolve(composeHome());
   });
-  catalog.listTasks.mockClear();
-  catalog.listProviderSites.mockClear();
-  catalog.listTasks.mockImplementation(({ status }) =>
-    status === "completed" ? held : Promise.resolve({ tasks: [] }),
-  );
-  await view.connectedCallback();
-  expect(catalog.listTasks).toHaveBeenCalledTimes(4);
   catalog.listTasks.mockImplementation(async ({ status }) => ({
     tasks: status === "open" ? [{ taskId: "late-task", status: "open" }] : [],
   }));
+  catalog.fetchHome.mockImplementationOnce(() => held);
   const refresh = view.connectedCallback();
   for (let i = 0; i < 20; i++) expect(view.connectedCallback()).toBe(refresh);
+  release();
   await refresh;
-  // One active primary pass and one coalesced trailing pass; neither waits
-  // for the old completed-task read. No new secondary batch starts yet.
-  expect(catalog.listProviderSites).toHaveBeenCalledTimes(3);
-  expect(catalog.listTasks).toHaveBeenCalledTimes(6);
+  // One active pass and one coalesced trailing pass, one first-paint
+  // request each; neither waits for the second tier.
+  expect(catalog.listProviderSites).toHaveBeenCalledTimes(2);
+  expect(
+    catalog.fetchHome.mock.calls.filter(([options]) =>
+      options.sections.includes("checks"),
+    ),
+  ).toHaveLength(2);
   expect(view._homeModel.tasks).toContainEqual({
     taskId: "late-task",
     status: "open",
   });
-  release();
   await view._remainingLoad;
-  expect(catalog.listTasks).toHaveBeenCalledTimes(9);
-  expect(view._homeModel.tasks.some((task) => task.taskId === "stale")).toBe(
-    false,
-  );
   expect(view._remainingStatus).toBe("loaded");
 });
 
@@ -2099,15 +2152,15 @@ it("refreshes tasks when an existing assessment revision changes", async () => {
   await view._homeRefresh;
   await view._remainingLoad;
   view._homeModel = { tasks: [], pendingSession: pending };
-  catalog.listTasks.mockClear();
+  catalog.fetchHome.mockClear();
   pending.items[0].analysis.assessment.assessmentRevision = 2;
   listener(pending);
   await view._homeRefresh;
   await view._remainingLoad;
-  expect(catalog.listTasks).toHaveBeenCalledTimes(4);
-  catalog.listTasks.mockClear();
+  expect(catalog.fetchHome).toHaveBeenCalledTimes(2);
+  catalog.fetchHome.mockClear();
   listener(pending);
-  expect(catalog.listTasks).not.toHaveBeenCalled();
+  expect(catalog.fetchHome).not.toHaveBeenCalled();
 });
 
 it("preserves a queued refresh after a local site read rejects", async () => {
@@ -2441,6 +2494,7 @@ it.each(["completed", "superseded"])(
         },
       ],
     };
+    // History is delayed: the second-tier reads are held open.
     const releases = [];
     catalog.listTasks.mockImplementation(async ({ status }) =>
       status === "open"

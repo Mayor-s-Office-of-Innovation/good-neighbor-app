@@ -1,5 +1,6 @@
 // @ts-check
 import { test, expect } from "../helpers/harness.js";
+import { routeHomeLists } from "../helpers/app.js";
 import { t } from "../helpers/i18n.js";
 import { activeCatalog } from "../../backend/src/analysis/guidance/catalog-registry.js";
 
@@ -66,12 +67,7 @@ async function issueFixture(page, ruleId) {
     completions,
     label: rule.outcome.buttons[0],
   };
-  await page.route("**/v1/tasks?*", (route) =>
-    route.fulfill({ json: { tasks: [task] } }),
-  );
-  await page.route("**/v1/checks?*", (route) =>
-    route.fulfill({ json: { checks: [] } }),
-  );
+  await routeHomeLists(page, { checks: [], tasks: () => [task] });
   await page.route(`**/v1/tasks/${task.taskId}/complete`, async (route) => {
     completions.push(route.request().postDataJSON());
     await state.hold;

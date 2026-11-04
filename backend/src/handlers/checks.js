@@ -11,7 +11,7 @@ import {
 } from "../domain/check-completions.js";
 import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
-import { jsonResponse, readJsonBody } from "../http.js";
+import { jsonResponse, parseLimit, readJsonBody } from "../http.js";
 import { deriveSiteId } from "../lib/principal.js";
 import { synthesizeCheck } from "../analysis/synthesize-check.js";
 import { emitMetrics } from "../lib/metrics.js";
@@ -438,14 +438,29 @@ export const getCaptureGuidance = async (event) => {
 export const listChecks = async (event) => {
   const { dynamoTable } = getConfig();
   const siteId = deriveSiteId(event);
+  const { checks, nextToken } = await loadChecks(dynamoTable, siteId, {
+    limit: parseLimit(event.queryStringParameters?.limit),
+    startKey: decodeCursor(event.queryStringParameters?.nextToken),
+  });
+  return jsonResponse(200, {
+    checks,
+    ...(nextToken ? { nextToken } : {}),
+  });
+};
 
-  const rawLimit = Number(event.queryStringParameters?.limit);
-  const limit =
-    Number.isFinite(rawLimit) && rawLimit > 0
-      ? Math.floor(rawLimit)
-      : undefined;
-  const startKey = decodeCursor(event.queryStringParameters?.nextToken);
-
+/**
+ * One page of the site's checks, newest first, from GSI1. Shared by
+ * GET /v1/checks and GET /v1/home.
+ * @param {string} dynamoTable
+ * @param {string} siteId
+ * @param {{ limit?: number, startKey?: Record<string, unknown> }} [page]
+ * @returns {Promise<{ checks: Record<string, any>[], nextToken?: string }>}
+ */
+export async function loadChecks(
+  dynamoTable,
+  siteId,
+  { limit, startKey } = {},
+) {
   const result = await ddb.send(
     new QueryCommand({
       TableName: dynamoTable,
@@ -457,13 +472,11 @@ export const listChecks = async (event) => {
       ...(startKey ? { ExclusiveStartKey: startKey } : {}),
     }),
   );
-
-  const nextToken = encodeCursor(result.LastEvaluatedKey);
-  return jsonResponse(200, {
+  return {
     checks: result.Items ?? [],
-    ...(nextToken ? { nextToken } : {}),
-  });
-};
+    nextToken: encodeCursor(result.LastEvaluatedKey),
+  };
+}
 
 /**
  * GET /v1/checks/{checkId} — one check with its artifacts and analyses, read in

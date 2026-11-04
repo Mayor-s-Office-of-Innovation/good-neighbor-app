@@ -1220,6 +1220,28 @@ export function listTasks({ status, limit } = {}) {
   return request("GET", `/v1/tasks${qs({ status, limit })}`);
 }
 
+/**
+ * @typedef {{ ok: true, items: any[], nextToken?: string } | { ok: false, error: string }} HomeSection
+ * @typedef {{ checks: HomeSection, tasks: Record<"open" | "in_progress" | "completing" | "completed", HomeSection>, loadedAt: string }} HomeResponse
+ */
+
+/**
+ * GET /v1/home — the check list and the four task worklists in one request,
+ * read side by side on the server and answered per section (`ok` on each).
+ * `sections` narrows the read: Home's cold open asks for `checks` and `open`
+ * first so the first paint never waits on the completed list, then the other
+ * three; refreshes take everything. Only requested keys come back. The
+ * per-list routes stay for the targeted refreshes after an action.
+ * @param {{ checksLimit?: number, tasksLimit?: number, sections?: readonly string[] }} [options]
+ * @returns {Promise<HomeResponse>}
+ */
+export function fetchHome({ checksLimit, tasksLimit, sections } = {}) {
+  return request(
+    "GET",
+    `/v1/home${qs({ checksLimit, tasksLimit, sections: sections?.join(",") })}`,
+  );
+}
+
 /** @param {string} taskId @param {string} [nextToken] @param {{signal?: AbortSignal}} [options] */
 export function getTaskUpdates(taskId, nextToken, { signal } = {}) {
   return request(

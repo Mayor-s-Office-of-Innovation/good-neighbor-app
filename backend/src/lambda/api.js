@@ -64,6 +64,7 @@ import {
   get311RequestDetails,
   listTasks,
 } from "../handlers/tasks.js";
+import { getHome } from "../handlers/home.js";
 import {
   createTaskUpdate,
   documentTaskUpdate,
@@ -292,6 +293,8 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
     presignComplaintMedia,
   // Staff worklist (AP10)
   "GET /v1/tasks": listTasks,
+  // Home in one request: checks + the four worklists, per-section results
+  "GET /v1/home": getHome,
   "POST /v1/duplicates:batch": getDuplicateLinks,
   "POST /v1/tasks/{taskId}/duplicate:separate": separateDuplicate,
   "GET /v1/tasks/{taskId}/details": getTaskDetails,
