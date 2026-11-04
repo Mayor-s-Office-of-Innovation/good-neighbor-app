@@ -776,6 +776,31 @@ describe("logout", () => {
 });
 
 describe("site switcher", () => {
+  it("refreshes enrolled sites across providers without remounting the worklist", async () => {
+    const view = new TodayView();
+    Object.defineProperty(view, "isConnected", { value: true });
+    view._site = { siteId: "site-1", name: "Synthetic first site" };
+    view._siteId = "site-1";
+    view._providerSites = [{ siteId: "site-1", name: "Synthetic first site" }];
+    view._siteSwitcher = { render: vi.fn() };
+    view.querySelector = vi.fn(() => null);
+    catalog.listBoundSites.mockResolvedValue([
+      {
+        siteId: "site-2",
+        name: "Synthetic other provider site",
+        bindingId: "binding-2",
+      },
+    ]);
+    await view.refreshSiteBindings();
+    expect(view._siteSwitcher.sites.map((site) => site.siteId)).toEqual([
+      "site-1",
+      "site-2",
+    ]);
+    expect(view._boundSites[0].bindingId).toBe("binding-2");
+    expect(view._site.siteId).toBe("site-1");
+    expect(view._siteSwitcher.render).toHaveBeenCalledOnce();
+  });
+
   it("collects all provider-site pages and sorts the complete catalog", async () => {
     catalog.listProviderSites
       .mockResolvedValueOnce({

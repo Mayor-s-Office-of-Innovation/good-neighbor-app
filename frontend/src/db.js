@@ -267,10 +267,44 @@ export async function setSite(name, meta = {}) {
  * for that binding through `/device-bindings/select`.
  * @param {Array<{siteId:string,siteName:string,bindingId:string,accessLevel?:"general"|"manager"}>} bindings
  * @param {string} physicalDeviceId
+ * @param {{ expectedSession?: {siteId?: string, deviceId?: string, physicalDeviceId?: string, localSessionId?: string} }} [options] A complete discovery response, guarded by its originating session.
+ * @returns {Promise<boolean>} false when the originating session is no longer current
  */
-export async function saveDiscoveredBindings(bindings, physicalDeviceId) {
-  if (!physicalDeviceId || !Array.isArray(bindings)) return;
-  await tx("site", "readwrite", async (os) => {
+export async function saveDiscoveredBindings(
+  bindings,
+  physicalDeviceId,
+  options = {},
+) {
+  if (!physicalDeviceId || !Array.isArray(bindings)) return false;
+  return tx("site", "readwrite", async (os) => {
+    const expected = options.expectedSession;
+    if (expected) {
+      const current = await reqToPromise(os.get("current"));
+      if (
+        !current ||
+        current.siteId !== expected.siteId ||
+        current.deviceId !== expected.deviceId ||
+        current.physicalDeviceId !== physicalDeviceId ||
+        current.localSessionId !== expected.localSessionId
+      )
+        return false;
+      // Only full discovery reconciles; enrollment responses may be partial.
+      const liveIds = new Set(
+        bindings
+          .filter((binding) => binding?.siteId && binding.bindingId)
+          .map((binding) => bindingKey(binding.siteId)),
+      );
+      const records = await reqToPromise(os.getAll());
+      for (const record of records) {
+        if (
+          String(record.id || "").startsWith("bound:") &&
+          record.physicalDeviceId === physicalDeviceId &&
+          record.siteId !== current.siteId &&
+          !liveIds.has(record.id)
+        )
+          os.delete(record.id);
+      }
+    }
     for (const binding of bindings) {
       if (!binding?.siteId || !binding.bindingId) continue;
       const id = bindingKey(binding.siteId);
@@ -287,6 +321,7 @@ export async function saveDiscoveredBindings(bindings, physicalDeviceId) {
         boundAt: existing?.boundAt || new Date().toISOString(),
       });
     }
+    return true;
   });
 }
 /**

@@ -619,6 +619,7 @@ class TodayView extends HTMLElement {
     // failed bindings read must not take the worklist down with it. The
     // latter stays `null` (unknown) rather than an empty list so a switch
     // re-reads it instead of treating every bound site as unbound.
+    const bindingsRevision = this._bindingsRevision;
     const catalogLoad = Promise.all([
       fetchProviderSites().catch((error) => {
         console.error("listProviderSites failed", error);
@@ -672,7 +673,8 @@ class TodayView extends HTMLElement {
       this._providerSites = catalog?.sites || [];
       this._providerName =
         catalog?.providerName || this._site.providerName || "";
-      this._boundSites = bindings;
+      if (this._bindingsRevision === bindingsRevision)
+        this._boundSites = bindings;
       // The remaining lists are reused only on a route return (restored
       // snapshot) for this site, loaded within REMAINING_LISTS_FRESH_MS and
       // not expired by a cross-list action since; then only the open list is
@@ -2411,6 +2413,17 @@ class TodayView extends HTMLElement {
     return splitSiteIdentity(name) || { org: "", site: name };
   }
 
+  /** Update only the site menu; preserve the current screen and draft. */
+  async refreshSiteBindings() {
+    const bindings = await listBoundSites();
+    if (!this.isConnected) return;
+    this._bindingsRevision = (this._bindingsRevision || 0) + 1;
+    this._boundSites = bindings;
+    if (!this._siteSwitcher) return;
+    this._mountSiteSwitcher();
+    this._siteSwitcher?.render();
+  }
+
   _mountSiteSwitcher() {
     if (!this._siteSwitcher) {
       const switcher = document.createElement("site-switcher");
@@ -2426,7 +2439,15 @@ class TodayView extends HTMLElement {
     }
     const switcher = this._siteSwitcher;
     switcher.providerName = this._siteIdentity().org;
-    switcher.sites = this._providerSites;
+    switcher.sites = [
+      ...this._providerSites,
+      ...(this._boundSites || [])
+        .filter(
+          (bound) =>
+            !this._providerSites.some((site) => site.siteId === bound.siteId),
+        )
+        .map((bound) => ({ siteId: bound.siteId, name: bound.name })),
+    ];
     switcher.currentSite = { siteId: this._siteId, name: this._site?.name };
     switcher.status = this._providerSitesStatus;
     // Swapping the same instance in for the placeholder keeps its open state

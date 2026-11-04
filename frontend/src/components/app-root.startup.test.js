@@ -131,7 +131,7 @@ beforeEach(() => {
   setup.clearAuthState.mockReset();
   setup.saveSiteSettings.mockReset();
   setup.setSite.mockReset().mockResolvedValue(undefined);
-  setup.saveDiscoveredBindings.mockReset().mockResolvedValue(undefined);
+  setup.saveDiscoveredBindings.mockReset().mockResolvedValue(true);
   setup.listDeviceBindings.mockReset();
   setup.redeemHandoffGrant.mockReset();
   setup.stripHandoffCredentials.mockReset();
@@ -709,5 +709,111 @@ describe("keyboard viewport style updates", () => {
     vi.mocked(keyboard.isEditable).mockReturnValue(false);
     sync();
     expect(root.style.getPropertyValue("--editable-viewport-height")).toBe("");
+  });
+});
+
+describe("later device enrollments", () => {
+  beforeEach(() => {
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    vi.stubGlobal("document", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      hidden: false,
+    });
+  });
+  const bound = {
+    siteId: "site-1",
+    deviceId: "binding-1",
+    physicalDeviceId: "physical-1",
+  };
+  const bindings = [
+    {
+      siteId: "site-2",
+      siteName: "Synthetic second site",
+      bindingId: "binding-2",
+    },
+  ];
+
+  it("discovers later enrollments on startup and foreground without remounting", async () => {
+    vi.stubGlobal("location", new URL("http://localhost:5173/"));
+    setup.getSite.mockResolvedValue(bound);
+    setup.getSiteSettings.mockReturnValue(new Promise(() => {}));
+    setup.listDeviceBindings.mockResolvedValue({ bindings });
+    const root = component();
+    const refreshSiteBindings = vi.fn();
+    root.querySelector.mockImplementation((selector) =>
+      selector === ".app__main > *" ? { refreshSiteBindings } : null,
+    );
+    await root.connectedCallback();
+    await flush();
+    expect(setup.saveDiscoveredBindings).toHaveBeenCalledWith(
+      bindings,
+      "physical-1",
+      { expectedSession: bound },
+    );
+    expect(refreshSiteBindings).toHaveBeenCalledOnce();
+    root._onBindingsVisible();
+    await flush();
+    expect(refreshSiteBindings).toHaveBeenCalledTimes(2);
+    expect(root._renderView).toHaveBeenCalledOnce();
+    expect(setup.setSite).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates discovery and ignores a response after sign-out", async () => {
+    const response = deferred();
+    setup.listDeviceBindings.mockReturnValue(response.promise);
+    setup.getSite.mockResolvedValue(null);
+    const root = component();
+    root._site = bound;
+    const first = root._refreshDeviceBindings();
+    const second = root._refreshDeviceBindings();
+    expect(setup.listDeviceBindings).toHaveBeenCalledOnce();
+    root._site = null;
+    response.resolve({ bindings });
+    await Promise.all([first, second]);
+    expect(setup.saveDiscoveredBindings).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh the menu when the transaction rejects a replaced session", async () => {
+    setup.getSite.mockResolvedValue(bound);
+    setup.listDeviceBindings.mockResolvedValue({ bindings });
+    setup.saveDiscoveredBindings.mockResolvedValue(false);
+    const root = component();
+    root._site = bound;
+    const refreshSiteBindings = vi.fn();
+    root.querySelector.mockImplementation((selector) =>
+      selector === ".app__main > *" ? { refreshSiteBindings } : null,
+    );
+    await root._refreshDeviceBindings();
+    expect(setup.saveDiscoveredBindings).toHaveBeenCalledWith(
+      bindings,
+      "physical-1",
+      { expectedSession: bound },
+    );
+    expect(refreshSiteBindings).not.toHaveBeenCalled();
+  });
+
+  it("does not reconcile an incomplete discovery response", async () => {
+    setup.getSite.mockResolvedValue(bound);
+    setup.listDeviceBindings.mockResolvedValue({});
+    const root = component();
+    root._site = bound;
+    await root._refreshDeviceBindings();
+    expect(setup.saveDiscoveredBindings).not.toHaveBeenCalled();
+  });
+
+  it("preserves cached state on network failure", async () => {
+    setup.listDeviceBindings.mockRejectedValue(new Error("offline"));
+    const root = component();
+    root._site = bound;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    await root._refreshDeviceBindings();
+    expect(root._site).toBe(bound);
+    expect(setup.clearSite).not.toHaveBeenCalled();
+    expect(setup.saveDiscoveredBindings).not.toHaveBeenCalled();
+    log.mockRestore();
   });
 });
