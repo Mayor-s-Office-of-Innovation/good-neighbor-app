@@ -355,6 +355,20 @@ const SHEET_ROUTES = new Set([
   "/reports",
   "/help",
 ]);
+/* Sheets that present as a fixed bottom-sheet frame (the frame is painted by
+   #view and stays stationary; the screen inside carries
+   view-transition-name: sheet-content). Navigation WITHIN one of these
+   returns "sheet-push"/"sheet-pop" so base.css animates only the content
+   layer. The other sheets keep whole-root push/pop. */
+const FRAMED_SHEET_ROUTES = new Set(["/care-work", "/complaints"]);
+
+/** The sheet root a route belongs to, or "" when it is not inside one.
+ * @param {string} path */
+function framedSheetOf(path) {
+  for (const sheet of FRAMED_SHEET_ROUTES)
+    if (path === sheet || path.startsWith(`${sheet}/`)) return sheet;
+  return "";
+}
 
 /** @param {string} route */
 function routeLevel(route) {
@@ -368,7 +382,7 @@ function routeLevel(route) {
  * horizontally; sibling routes and capture roots cross-fade.
  * @param {string | null} from the route on screen, null on first paint
  * @param {string} to
- * @returns {"push" | "pop" | "fade" | "rise" | "dismiss"}
+ * @returns {"push" | "pop" | "fade" | "rise" | "dismiss" | "sheet-push" | "sheet-pop"}
  */
 export function routeTransitionDirection(from, to) {
   if (from == null) return "fade";
@@ -380,6 +394,9 @@ export function routeTransitionDirection(from, to) {
   if (SHEET_ROUTES.has(source) && !target.startsWith(`${source}/`))
     return "dismiss";
   const delta = routeLevel(to) - routeLevel(from);
+  const framedSheet = framedSheetOf(source);
+  if (framedSheet && framedSheet === framedSheetOf(target))
+    return delta > 0 ? "sheet-push" : delta < 0 ? "sheet-pop" : "fade";
   return delta > 0 ? "push" : delta < 0 ? "pop" : "fade";
 }
 

@@ -31,6 +31,7 @@ import {
   retryCareSubmission,
   recoverCareSubmissions,
 } from "../services/care-submissions.js";
+import { showToast } from "../state/toasts.js";
 
 /** @type {any} Live-only, Site-bound draft; never an offline queue. */
 let draft = null;
@@ -387,6 +388,9 @@ export class CareWorkView extends HTMLElement {
       this._busy = false;
       if (returnToList) returnToList();
       else replaceRoute("/care-work");
+      // Back on the list the new entry is at the top; the toast is the
+      // explicit receipt (close-the-loop: the effort got recorded).
+      showToast({ title: t("care.success") });
     } catch (error) {
       saving.error = t(
         error?.code === "care_conflict"
