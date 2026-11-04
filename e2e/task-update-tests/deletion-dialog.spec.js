@@ -72,7 +72,9 @@ for (const kind of ["single", "duplicate", "group"]) {
     );
     await expect(confirm).toBeFocused();
     await expect(confirm).toHaveCSS("outline-style", "solid");
-    // Contrast must be measured after the dialog entrance fade has settled.
+    // The dialog fades in over 80 ms (base.css). WebKit has audited it
+    // mid-fade, where axe reads the still-translucent text as low contrast,
+    // so wait for the settled state before measuring.
     await expect(page.locator("#analysis-delete-dialog")).toHaveCSS(
       "opacity",
       "1",

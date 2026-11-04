@@ -229,7 +229,7 @@ Two env notes (see [`.env.example`](../.env.example)):
 > and writes an `ANALYSIS#` item. Media reaches the worker only via the S3 key — never through
 > the queue body.
 
-### Exercise the loop
+### Exercise the local-only submissions loop
 
 With `npm run dev -w backend` running, in another terminal:
 
