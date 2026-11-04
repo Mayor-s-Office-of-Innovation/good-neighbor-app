@@ -258,6 +258,97 @@ describe("analysis amendments (check/artifact-addressed)", () => {
     ).toBe(false);
   });
 
+  it.each(["analyzer_timeout", "unknown_condition"])(
+    "durably dismisses a verified clarification after %s, including retry and refresh",
+    async (code) => {
+      const conditionId = "chk_01-art_1-001-litter";
+      const assessmentId = "chk_01-art_1";
+      // The unknown-condition case starts with an attempt left pending by an
+      // older client whose analyzer rejection committed after its timeout.
+      /** @type {any} */
+      let receipt =
+        code === "unknown_condition"
+          ? { state: "pending", attemptedAt: "2026-11-01T12:00:00Z" }
+          : undefined;
+      const condition = {
+        conditionId,
+        status: "needs_answer",
+        needsAnswer: { key: "provider_generated" },
+        source: { artifactIds: ["art_1"] },
+        taskIds: [],
+      };
+      send.mockImplementation(async (command) => {
+        if (command instanceof GetCommand) {
+          const sk = String(command.input.Key?.sk);
+          if (sk.includes("#ANALYSIS#"))
+            return {
+              Item: {
+                ...analysisItem(),
+                concerns: [{ conditionId, category: "Litter" }],
+              },
+            };
+          if (sk.startsWith("ISSUE_DELETION#")) return { Item: receipt };
+          if (sk.startsWith("ASSESSMENT#"))
+            return {
+              Item: { assessmentId, checkId: "chk_01" },
+            };
+          return {};
+        }
+        if (command instanceof PutCommand) {
+          receipt = command.input.Item;
+          return {};
+        }
+        if (command.input.IndexName === "GSI1")
+          return { Items: [{ assessmentId }] };
+        if (command.input.ConsistentRead) return { Items: [condition] };
+        return { Items: [] };
+      });
+      const { listPendingGuidance } = await import("./pending-guidance.js");
+      const refresh = async () =>
+        /** @type {{ body: string }} */ (
+          await listPendingGuidance(
+            amendEvent({}),
+            /** @type {any} */ ({}),
+            () => {},
+          )
+        );
+      expect(JSON.parse((await refresh()).body).guidance).toHaveLength(1);
+      analyzeReject.mockRejectedValueOnce(
+        new AnalyzerError("Unavailable", {
+          code,
+          ...(code === "unknown_condition" ? { status: 404 } : {}),
+        }),
+      );
+      const response = await invoke(amendEvent({}), rejectAnalysisCondition);
+      expect(response.statusCode).toBe(200);
+      expect(JSON.parse(response.body).dismissed_locally).toBe(true);
+      expect(receipt).toMatchObject({
+        state: "dismissed",
+        dismissalReason:
+          code === "analyzer_timeout" ? code : "condition_unavailable",
+      });
+      expect(receipt.dismissedAt).toBeTruthy();
+      expect(receipt).not.toHaveProperty("deletedAt");
+      const { statusRecords } = await import("../domain/system-status.js");
+      expect(statusRecords(receipt)).toEqual([]);
+      const dismissedAt = receipt.dismissedAt;
+      // After a timeout, upstream can finish and return unknown_condition on
+      // another call. The durable receipt must prevent that call altogether.
+      analyzeReject.mockRejectedValue(
+        new AnalyzerError("Unknown condition", {
+          code: "unknown_condition",
+          status: 404,
+        }),
+      );
+      const retry = await invoke(amendEvent({}), rejectAnalysisCondition);
+      expect(retry.statusCode).toBe(200);
+      expect(JSON.parse(retry.body).dismissed_locally).toBe(true);
+      expect(analyzeReject).toHaveBeenCalledOnce();
+      expect(receipt.dismissedAt).toBe(dismissedAt);
+      expect(JSON.parse((await refresh()).body).guidance).toEqual([]);
+    },
+  );
+
   it("keeps an unknown-condition rejection retryable until durably confirmed", async () => {
     analyzeReject.mockRejectedValueOnce(
       new AnalyzerError("Unknown condition", {
@@ -567,38 +658,44 @@ describe("analysis amendments (check/artifact-addressed)", () => {
       }
     },
   );
-  it("does not report a historical dismissal as saved when its durable write fails", async () => {
-    /** @type {any} */ let receipt;
-    analyzeReject.mockRejectedValue(
-      new AnalyzerError("Expired", { status: 404, code: "unknown_analysis" }),
-    );
-    send.mockImplementation(async (command) => {
-      if (command instanceof GetCommand)
-        return {
-          Item: command.input.Key?.sk.includes("#ANALYSIS#")
-            ? {
-                ...analysisItem(),
-                concerns: [
-                  {
-                    conditionId: "chk_01-art_1-001-litter",
-                    category: "Litter",
-                  },
-                ],
-              }
-            : receipt,
-        };
-      if (command instanceof PutCommand) {
-        if (command.input.Item?.dismissedAt)
-          throw new Error("dismissal write failed");
-        receipt = command.input.Item;
-      }
-      return { Items: [] };
-    });
-    await expect(
-      invoke(amendEvent({}), rejectAnalysisCondition),
-    ).rejects.toThrow("dismissal write failed");
-    expect(receipt.state).toBe("pending");
-    expect(receipt).not.toHaveProperty("dismissedAt");
-    expect(analyzeReject).toHaveBeenCalledOnce();
-  });
+  it.each(["unknown_analysis", "analyzer_timeout", "unknown_condition"])(
+    "does not report dismissal as saved when its durable write fails: %s",
+    async (code) => {
+      /** @type {any} */ let receipt;
+      analyzeReject.mockRejectedValue(
+        new AnalyzerError("Unavailable", {
+          status: code === "analyzer_timeout" ? undefined : 404,
+          code,
+        }),
+      );
+      send.mockImplementation(async (command) => {
+        if (command instanceof GetCommand)
+          return {
+            Item: command.input.Key?.sk.includes("#ANALYSIS#")
+              ? {
+                  ...analysisItem(),
+                  concerns: [
+                    {
+                      conditionId: "chk_01-art_1-001-litter",
+                      category: "Litter",
+                    },
+                  ],
+                }
+              : receipt,
+          };
+        if (command instanceof PutCommand) {
+          if (command.input.Item?.dismissedAt)
+            throw new Error("dismissal write failed");
+          receipt = command.input.Item;
+        }
+        return { Items: [] };
+      });
+      await expect(
+        invoke(amendEvent({}), rejectAnalysisCondition),
+      ).rejects.toThrow("dismissal write failed");
+      expect(receipt.state).toBe("pending");
+      expect(receipt).not.toHaveProperty("dismissedAt");
+      expect(analyzeReject).toHaveBeenCalledOnce();
+    },
+  );
 });

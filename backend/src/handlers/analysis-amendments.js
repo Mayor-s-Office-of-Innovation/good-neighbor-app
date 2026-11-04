@@ -66,10 +66,8 @@ function errorResponse(err) {
     });
   if (err instanceof AnalyzerError && err.code === ANALYZER_TIMEOUT_CODE) {
     // We stopped waiting; the analyzer may or may not have committed the
-    // amendment. Nothing is recorded on our side (a reject receipt stays
-    // open), so a retry asks the analyzer again, and an "unknown condition"
-    // answer on that retry takes the existing unconfirmed path. A 504 from
-    // us, not a gateway 503 for a timed-out function.
+    // amendment. Verified rejections handle this with a durable local
+    // dismissal below; edits and unverified rejections remain unconfirmed.
     return jsonResponse(504, {
       error:
         "The analyzer did not answer in time; whether the change was saved is not known",
@@ -358,6 +356,7 @@ export async function rejectAnalysisCondition(event) {
       const client = await analyzerClient();
       let accepted = false;
       let dismissed = false;
+      let dismissalReason = "analysis_unavailable";
       try {
         result = await client.rejectCondition(context.analysisId, conditionId, {
           ...(reason ? { reason } : {}),
@@ -371,13 +370,21 @@ export async function rejectAnalysisCondition(event) {
       } catch (err) {
         if (
           err instanceof AnalyzerError &&
-          err.status === 404 &&
-          err.code === "unknown_analysis" &&
+          (err.code === ANALYZER_TIMEOUT_CODE ||
+            (err.status === 404 &&
+              (err.code === "unknown_analysis" ||
+                err.code === "unknown_condition"))) &&
           knownConcern
         ) {
           // The site-owned stored analysis verifies this condition. Dismiss it
-          // locally without claiming the expired analyzer accepted a rejection.
+          // locally without claiming the analyzer accepted a rejection.
           dismissed = true;
+          dismissalReason =
+            err.code === ANALYZER_TIMEOUT_CODE
+              ? "analyzer_timeout"
+              : err.code === "unknown_condition"
+                ? "condition_unavailable"
+                : "analysis_unavailable";
           result = {
             analysis_id: context.analysisId,
             condition_id: conditionId,
@@ -414,7 +421,7 @@ export async function rejectAnalysisCondition(event) {
             ...(dismissed
               ? {
                   dismissedAt: new Date().toISOString(),
-                  dismissalReason: "analysis_unavailable",
+                  dismissalReason,
                 }
               : { deletedAt }),
             category: knownConcern?.category || receipt.category,
