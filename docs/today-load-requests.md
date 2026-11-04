@@ -34,17 +34,20 @@ these reads calls the analyzer.
 ## Background refresh cadence
 
 Home polls check summaries and all four task statuses once per minute while
-visible and online. A successful batch makes subsequent focus/visibility events
-no-ops for 30 seconds. Repeated events join an in-flight batch. Failed automatic
+visible and online, with one request: `GET /v1/home` reads the check list and
+the four worklists side by side on the server and answers per section. A
+successful batch makes subsequent focus/visibility events no-ops for 30 seconds. Repeated events join an in-flight batch. Failed automatic
 batches back off for 2 minutes, then 4 minutes, then 5 minutes. Manual pull-to-refresh
 remains available during backoff. Reconnect requests a targeted batch including
 pending guidance, without rerunning Home initialization. Ticket-status refresh on
 return has a separate one-minute cooldown.
 
-A normal timer batch makes at most five list requests (four task statuses and one
-check list), before any changed-task evidence or duplicate follow-up work. These
-are code-derived limits, not measured production cost: database fanout still
-depends on rows, evidence and pending guidance. Measure API volume, DynamoDB
+A normal timer batch makes one list request (`GET /v1/home`), before any
+changed-task evidence or duplicate follow-up work. A section that failed on the
+server comes back as `ok: false` and leaves that list as it was; the batch then
+counts as incomplete and is retried on the backoff above. These are code-derived
+limits, not measured production cost: the request still runs five DynamoDB
+queries, and database fanout still depends on rows, evidence and pending guidance. Measure API volume, DynamoDB
 consumption, latency and browser rendering on representative sites before
 shortening this interval. Offline snapshots and pending-write reconciliation
 remain necessary even with automatic refresh.
@@ -81,7 +84,7 @@ repeats the reads. The count comes from code, not a live AWS measurement.
 | HTML page | **1** | CloudFront; S3 serves it on a cache miss |
 | JS files | **11** | CloudFront; files load in parallel as the browser finds them |
 | CSS files | **2** | CloudFront |
-| API calls that read DynamoDB | **19** | 8 settings/list calls + 5 check details + 5 photo URL calls + 1 duplicate batch |
+| API calls that read DynamoDB | **16** | 5 settings/list calls (the check list and the open worklist are one `GET /v1/home`, the other three statuses a second) + 5 check details + 5 photo URL calls + 1 duplicate batch |
 | Other API calls | **2** | 1 health check + 1 page-view event |
 | Task photos | **5** | S3; one photo per To-do task |
 | Icons and other page assets | **Varies** | CloudFront; count depends on the browser and page content |
@@ -89,7 +92,7 @@ repeats the reads. The count comes from code, not a live AWS measurement.
 | Backend calls to outside services | **1 if set up** | PostHog; no SF311 call in this example |
 | Repeat duplicate checks | **0 once all results settle** | Pending tasks only, with a 15-minute retry budget |
 
-That is **40 browser requests**, plus icons and other page assets. Pending results can add repeat
+That is **37 browser requests**, plus icons and other page assets. Pending results can add repeat
 polls while the page loads. One API call can make many database
 reads. Those reads are not extra browser requests.
 
@@ -105,7 +108,8 @@ and install prompts can load more JS files.
   The five To-do photos come from five different checks. None is a duplicate.
   The other tabs' photos do not load yet.
 - The task lists have 5 `open`, 5 `in_progress`, and 20 `completed` rows.
-  `completing` is empty, but still needs a call.
+  `completing` is empty, but is still one of the three queries behind the
+  second `GET /v1/home`.
 - The site list and each check fit in one database page. No task has a 311 ticket.
 - Duplicate checks are on, and all results are ready. Site settings arrive before
   the task lists finish. The total counts the first poll only.
@@ -144,10 +148,8 @@ sequenceDiagram
     and First task list
         B->>A: 1 GET /v1/provider-sites
         A->>D: Get current site, Query memberships, Get each active site
-        B->>A: 1 GET /v1/checks?limit=30
-        A->>D: Query GSI1
-        B->>A: 1 GET /v1/tasks?status=open&limit=50
-        A->>D: Query GSI2
+        B->>A: 1 GET /v1/home?sections=checks,open
+        A->>D: Query GSI1 + 1 GSI2 Query, side by side
     end
     Note over B: Show To-do cards
     par Photos for To-do cards
@@ -158,9 +160,8 @@ sequenceDiagram
         A-->>B: Signed URLs (signing does not GET S3 objects)
         B->>S: 5 photo GETs
     and Remaining task lists
-        B->>A: 3 GET /v1/tasks?status=...&limit=50
-        Note over B,A: in_progress, completing, completed
-        A->>D: 3 GSI2 Queries, even for empty lists
+        B->>A: 1 GET /v1/home?sections=in_progress,completing,completed
+        A->>D: 3 GSI2 Queries, side by side, even for empty lists
     end
     Note over B: Merge 30 tasks and update tab counts
     B->>A: 1 POST /v1/duplicates:batch (30 task IDs)
@@ -344,11 +345,20 @@ A browser trace is needed to count the exact icons and other page assets.
 
 ## Returning to the app
 
-On return to a visible Today page, or when switching tabs, the app checks the
-age of the task data needed by the selected tab. Lists fetched successfully
-within five minutes are reused. Older lists refresh without reloading provider
-data or check lists. Overlapping return events share in-flight requests. This
-adds no periodic timer and does not change the initial-load counts above.
+On return to a visible Today page after the 30-second cooldown, the app reads
+everything again with one `GET /v1/home`, the same request the timer uses. When
+switching tabs, it checks the age of the task data needed by the selected tab.
+Lists fetched successfully within five minutes are reused. Older lists refresh
+with per-status `GET /v1/tasks` reads, without reloading provider data or check
+lists. Overlapping return events share in-flight requests. This adds no periodic
+timer and does not change the initial-load counts above.
+
+A cold open or route return reads in two tiers through the same route: the
+check list and the open worklist first (`sections=checks,open`), which is all
+the first paint waits for, then the other three statuses in one request. The
+completed list, which grows for the life of a site, is never on the first
+paint's critical path. A route return within a minute used to reuse the other
+three lists; it now re-reads them, in that one second request.
 
 To-do needs open tasks. In-progress also needs completing and completed tasks,
 because completed 311 filings can still be in progress. History needs all five

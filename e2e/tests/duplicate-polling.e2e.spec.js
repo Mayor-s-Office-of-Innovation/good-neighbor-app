@@ -1,6 +1,6 @@
 // @ts-check
 import { test, expect } from "@playwright/test";
-import { bindSite } from "../helpers/app.js";
+import { bindSite, routeHomeLists } from "../helpers/app.js";
 import { t } from "../helpers/i18n.js";
 
 /** Real Home and polling service with controlled duplicate API outcomes.
@@ -33,19 +33,10 @@ async function fixture(page) {
   await page.route("**/v1/guidance/pending*", (route) =>
     route.fulfill({ json: { guidance: [] } }),
   );
-  await page.route("**/v1/checks?*", (route) =>
-    route.fulfill({ json: { checks: [] } }),
-  );
-  await page.route("**/v1/tasks?*", (route) =>
-    route.fulfill({
-      json: {
-        tasks:
-          new URL(route.request().url()).searchParams.get("status") === "open"
-            ? tasks
-            : [],
-      },
-    }),
-  );
+  await routeHomeLists(page, {
+    checks: [],
+    tasks: (status) => (status === "open" ? tasks : []),
+  });
   await page.route("**/v1/duplicates:batch", async (route) => {
     const { taskIds } = route.request().postDataJSON();
     state.batches.push(taskIds);

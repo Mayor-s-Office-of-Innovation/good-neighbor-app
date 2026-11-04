@@ -1,11 +1,14 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { t } from "../helpers/i18n.js";
+import { routeHomeLists } from "../helpers/app.js";
 
 test.beforeEach(async ({ page }) => {
   await page.route("**/v1/**", (route) =>
     route.fulfill({ json: { checks: [], tasks: [], sites: [] } }),
   );
+  // Home reads its lists through GET /v1/home, which needs the section shape.
+  await routeHomeLists(page);
   await page.route("**/__support_test", (route) =>
     route.fulfill({
       contentType: "text/html",
@@ -222,6 +225,7 @@ test("direct Help loads and refreshes work, with Home as the Back fallback", asy
   await direct.route("**/v1/**", (route) =>
     route.fulfill({ json: { checks: [], tasks: [], sites: [] } }),
   );
+  await routeHomeLists(direct);
   await direct.goto("/help");
   await expect(direct.locator("support-view h1")).toHaveText(
     t("support.title"),

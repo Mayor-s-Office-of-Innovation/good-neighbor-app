@@ -345,6 +345,9 @@ Key properties, all built (`backend/src/analysis/guidance/` + `handlers/guidance
   `POST /v1/assessments/{id}/conditions/{id}/answers`, `POST /v1/tasks/{id}/complete`,
   `GET /v1/tasks/{id}/details`, `PATCH /v1/tasks/{id}/action`,
   `POST /v1/tasks/{id}/custom-action`,
+  `GET /v1/home` (Home's one-request read: the check list plus the four task
+  worklists, each section with its own `ok`, so one failed query degrades one
+  list rather than the page; the per-list routes stay for targeted refreshes),
   `POST /v1/311-requests:batch`, and
   `GET /v1/tasks/{taskId}/311-requests/{srNum}`. The 311 routes verify that each site-scoped task
   owns its service-request number and return only the normalized summary and timeline fields used

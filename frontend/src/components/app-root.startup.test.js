@@ -91,6 +91,7 @@ vi.mock("../services/keyboard-viewport.js", () => ({
   deepActiveElement: vi.fn(),
   isEditable: vi.fn(),
   keyboardViewport: vi.fn(),
+  revealEditable: vi.fn(),
 }));
 vi.mock("../state/toasts.js", () => ({
   showQueuedSiteSwitchSuccessToast: vi.fn(),
@@ -632,6 +633,7 @@ describe("keyboard viewport style updates", () => {
 
   async function shell() {
     const keyboard = await import("../services/keyboard-viewport.js");
+    vi.mocked(keyboard.revealEditable).mockClear();
     const root = {
       style: style(),
       open: false,
@@ -641,17 +643,18 @@ describe("keyboard viewport style updates", () => {
       }),
     };
     vi.stubGlobal("document", { documentElement: root });
-    vi.stubGlobal("window", {
-      innerHeight: 844,
-      visualViewport: { height: 500, offsetTop: 90, scale: 1 },
-    });
+    const viewport = { height: 500, offsetTop: 90, scale: 1 };
+    vi.stubGlobal("window", { innerHeight: 844, visualViewport: viewport });
     vi.stubGlobal("requestAnimationFrame", vi.fn());
     const view = {
+      _keyboardViewportHeight: viewport.height,
+      _keyboardUserScrolled: false,
       style: style(),
       _applyKeyboardViewport: AppRoot.prototype._applyKeyboardViewport,
     };
-    const sync = () => AppRoot.prototype._syncKeyboardViewport.call(view);
-    return { keyboard, root, view, sync };
+    const sync = (type) =>
+      AppRoot.prototype._syncKeyboardViewport.call(view, { type });
+    return { keyboard, root, view, sync, viewport };
   }
 
   it("does not mutate viewport styles or attributes during ordinary scrolling", async () => {
@@ -678,7 +681,7 @@ describe("keyboard viewport style updates", () => {
     sync();
     expect(root.style.setProperty).toHaveBeenCalledTimes(2);
     expect(view.style.setProperty).toHaveBeenCalledTimes(2);
-    expect(requestAnimationFrame).toHaveBeenCalledTimes(2);
+    expect(requestAnimationFrame).not.toHaveBeenCalled();
     vi.mocked(keyboard.isEditable).mockReturnValue(false);
     vi.mocked(keyboard.keyboardViewport).mockReturnValue({
       height: 500,
@@ -697,6 +700,75 @@ describe("keyboard viewport style updates", () => {
     expect(root.style.removeProperty).toHaveBeenCalledTimes(2);
     expect(view.style.removeProperty).toHaveBeenCalledTimes(2);
     expect(root.toggleAttribute).toHaveBeenCalledTimes(2);
+  });
+
+  it("reveals on focus and keyboard shrink, but respects scrolling with focus retained", async () => {
+    const { keyboard, sync, viewport } = await shell();
+    const active = /** @type {Element} */ ({});
+    vi.mocked(keyboard.deepActiveElement).mockReturnValue(active);
+    vi.mocked(keyboard.isEditable).mockReturnValue(true);
+    vi.mocked(keyboard.keyboardViewport).mockReturnValue(null);
+    vi.mocked(requestAnimationFrame).mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+    sync("focusin");
+    expect(keyboard.revealEditable).toHaveBeenCalledTimes(1);
+    viewport.height = 400;
+    sync("resize");
+    expect(keyboard.revealEditable).toHaveBeenCalledTimes(2);
+    viewport.offsetTop = 120;
+    sync("scroll");
+    sync("input");
+    sync("focusout");
+    sync("resize");
+    viewport.height = 500;
+    sync("resize");
+    expect(keyboard.revealEditable).toHaveBeenCalledTimes(2);
+    expect(keyboard.deepActiveElement(document)).toBe(active);
+  });
+
+  it("preserves a keyboard shrink across an earlier pan or input event", async () => {
+    const { keyboard, sync, viewport } = await shell();
+    vi.mocked(keyboard.isEditable).mockReturnValue(true);
+    viewport.height = 400;
+    sync("scroll");
+    sync("input");
+    sync("resize");
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["touchmove", "wheel"])(
+    "respects %s before a queued reveal and later viewport shrink until refocus",
+    async (gesture) => {
+      const { keyboard, sync, viewport } = await shell();
+      vi.mocked(keyboard.deepActiveElement).mockReturnValue(
+        /** @type {Element} */ ({}),
+      );
+      vi.mocked(keyboard.isEditable).mockReturnValue(true);
+      sync("focusin");
+      sync(gesture);
+      vi.mocked(requestAnimationFrame).mock.calls[0][0](0);
+      expect(keyboard.revealEditable).not.toHaveBeenCalled();
+      viewport.height = 400;
+      sync("resize");
+      expect(requestAnimationFrame).toHaveBeenCalledTimes(1);
+      sync("focusin");
+      vi.mocked(requestAnimationFrame).mock.calls[1][0](0);
+      expect(keyboard.revealEditable).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("does not reveal a field whose focus changed before the frame runs", async () => {
+    const { keyboard, sync } = await shell();
+    vi.mocked(keyboard.deepActiveElement).mockReturnValue(
+      /** @type {Element} */ ({}),
+    );
+    vi.mocked(keyboard.isEditable).mockReturnValue(true);
+    sync("focusin");
+    vi.mocked(keyboard.deepActiveElement).mockReturnValue(null);
+    vi.mocked(requestAnimationFrame).mock.calls[0][0](0);
+    expect(keyboard.revealEditable).not.toHaveBeenCalled();
   });
 
   it("keeps editable viewport sizing when the browser also resizes its layout viewport", async () => {

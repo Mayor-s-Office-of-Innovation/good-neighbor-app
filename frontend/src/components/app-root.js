@@ -269,7 +269,9 @@ export class AppRoot extends HTMLElement {
   _startKeyboardViewportSync() {
     const viewport = window.visualViewport;
     if (!viewport || this._onKeyboardViewport) return;
-    this._onKeyboardViewport = () => this._syncKeyboardViewport();
+    this._keyboardViewportHeight = viewport.height;
+    this._keyboardUserScrolled = false;
+    this._onKeyboardViewport = (event) => this._syncKeyboardViewport(event);
     viewport.addEventListener("resize", this._onKeyboardViewport);
     // Pans (Safari revealing a newly focused field, or the user dragging)
     // change offsetTop without a resize; only "scroll" reports them.
@@ -277,6 +279,13 @@ export class AppRoot extends HTMLElement {
     document.addEventListener("focusin", this._onKeyboardViewport);
     document.addEventListener("focusout", this._onKeyboardViewport);
     document.addEventListener("input", this._onKeyboardViewport);
+    // Capture gestures even inside nested scrollers; native focus/keyboard
+    // panning also emits scroll, so scroll events alone cannot express intent.
+    for (const type of ["touchmove", "wheel"])
+      document.addEventListener(type, this._onKeyboardViewport, {
+        passive: true,
+        capture: true,
+      });
   }
 
   _stopKeyboardViewportSync() {
@@ -292,6 +301,8 @@ export class AppRoot extends HTMLElement {
     document.removeEventListener("focusin", this._onKeyboardViewport);
     document.removeEventListener("focusout", this._onKeyboardViewport);
     document.removeEventListener("input", this._onKeyboardViewport);
+    for (const type of ["touchmove", "wheel"])
+      document.removeEventListener(type, this._onKeyboardViewport, true);
     this._onKeyboardViewport = null;
     document.documentElement.removeAttribute("data-keyboard-open");
     document.documentElement.style.removeProperty("--editable-viewport-height");
@@ -299,7 +310,22 @@ export class AppRoot extends HTMLElement {
     this._applyKeyboardViewport(null);
   }
 
-  _syncKeyboardViewport() {
+  /** @param {Event} [event] */
+  _syncKeyboardViewport(event) {
+    if (event?.type === "touchmove" || event?.type === "wheel") {
+      this._keyboardUserScrolled = true;
+      return;
+    }
+    if (event?.type === "focusin") this._keyboardUserScrolled = false;
+    const height = window.visualViewport?.height;
+    // Focus starts editing; a shrinking viewport covers keyboard/accessory-bar
+    // arrival. Scrolling and typing must never pull a reader back to the field.
+    const reveal =
+      event?.type === "focusin" ||
+      (event?.type === "resize" && height < this._keyboardViewportHeight);
+    // Only resize consumes the height change: a preceding pan/input event
+    // can already see the new geometry before resize is dispatched.
+    if (event?.type === "resize") this._keyboardViewportHeight = height;
     const active = deepActiveElement(document);
     const editing = isEditable(active);
     const root = document.documentElement;
@@ -323,9 +349,18 @@ export class AppRoot extends HTMLElement {
       syncing ? `${box?.top || 0}px` : "",
     );
     this._applyKeyboardViewport(box);
-    if (editing && window.visualViewport?.scale === 1) {
+    if (
+      reveal &&
+      !this._keyboardUserScrolled &&
+      editing &&
+      window.visualViewport?.scale === 1
+    ) {
       requestAnimationFrame(() => {
-        if (deepActiveElement(document) !== active) return;
+        if (
+          this._keyboardUserScrolled ||
+          deepActiveElement(document) !== active
+        )
+          return;
         revealEditable(active, window.visualViewport);
       });
     }
