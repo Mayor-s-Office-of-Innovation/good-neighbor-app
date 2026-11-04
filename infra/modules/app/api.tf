@@ -85,7 +85,6 @@ locals {
     "POST /v1/assessments/{assessmentId}/conditions/{conditionId}/answers",
     "POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}",
     "POST /v1/checks/{checkId}/artifacts/{artifactId}/conditions/{conditionId}/reject",
-    "POST /submissions",
     "GET /admin/v1/providers",
     "GET /admin/v1/session",
     "GET /admin/v1/system-controls",
@@ -198,11 +197,8 @@ locals {
     "POST /v1/feedback",
   ]
 
-  # api_routes an anonymous caller may reach: bootstrap + health + the legacy
-  # submissions loop. Everything else gets the device-token authorizer
-  # (Option 4). As a MAP keyed by route, so the route resource can do
-  # `route_is_open[x]`. (The intakes above are open too, on their own route
-  # resource.)
+  # Anonymous routes on the main API integration. Device and admin routes
+  # select their respective authorizers below.
   route_is_open = {
     "POST /site-code"                     = true
     "POST /v1/devices"                    = true
@@ -213,7 +209,6 @@ locals {
     "GET /v1/sites:search"                = true
     "GET /v1/311-media"                   = true
     "GET /health"                         = true
-    "POST /submissions"                   = true
   }
 
   # Route keys are "METHOD /path". Determine admin scope from the path rather
