@@ -173,6 +173,10 @@ export class AppRoot extends HTMLElement {
       };
       window.addEventListener("localechange", this._onLocaleChange);
     }
+    this._onBindingsVisible = () => {
+      if (!document.hidden) void this._refreshDeviceBindings();
+    };
+    document.addEventListener("visibilitychange", this._onBindingsVisible);
     requestLocationPermissionEarly();
     this._site = await getSite();
     this._stopPhoneRecovery?.();
@@ -226,6 +230,7 @@ export class AppRoot extends HTMLElement {
     // grant this install has not recorded as consumed (storage was cleared):
     // a stale grant never replaces a live session.
     if (handoff) void trackEvent("handoff_stale_ignored", {});
+    void this._refreshDeviceBindings();
     await this._restoreInterruptedCapture();
     this._renderApp();
     this._unsub = onRouteChange(() => this._renderView());
@@ -242,6 +247,7 @@ export class AppRoot extends HTMLElement {
   }
 
   disconnectedCallback() {
+    document.removeEventListener("visibilitychange", this._onBindingsVisible);
     this._stopPhoneRecovery?.();
     if (this._unsub) this._unsub();
     stopHealthMonitoring();
@@ -604,7 +610,9 @@ export class AppRoot extends HTMLElement {
       route.startsWith("/manage-access") ||
       route.startsWith("/reports");
     if (managerOnly && !hasAdminAccess(this._site)) {
-      navigate("/today");
+      // A site switch can leave Reports for the former site in history.
+      if (route.startsWith("/reports")) replaceRoute("/today");
+      else navigate("/today");
       return;
     }
     const match = ROUTE_VIEW.find(([prefix]) => route.startsWith(prefix));
@@ -791,6 +799,44 @@ export class AppRoot extends HTMLElement {
       }
       console.error("getSiteSettings failed", err);
       return true;
+    }
+  }
+
+  /** Discover later browser enrollments without replacing the active session. */
+  async _refreshDeviceBindings() {
+    if (this._bindingsRefresh) return this._bindingsRefresh;
+    const bound = this._site;
+    if (!bound?.physicalDeviceId || this.querySelector("site-setup")) return;
+    const pending = (async () => {
+      try {
+        const result = await listDeviceBindings();
+        const current = await getSite();
+        if (
+          this._site?.siteId !== bound.siteId ||
+          this._site?.deviceId !== bound.deviceId ||
+          current?.deviceId !== bound.deviceId ||
+          current?.physicalDeviceId !== bound.physicalDeviceId ||
+          this.querySelector("site-setup")
+        )
+          return;
+        if (!Array.isArray(result?.bindings)) return;
+        const saved = await saveDiscoveredBindings(
+          result.bindings,
+          bound.physicalDeviceId,
+          { expectedSession: bound },
+        );
+        if (!saved) return;
+        await this.querySelector(".app__main > *")?.refreshSiteBindings?.();
+      } catch (err) {
+        // Offline and discovery failures must preserve the cached sites/session.
+        console.error("device bindings refresh failed", err);
+      }
+    })();
+    this._bindingsRefresh = pending;
+    try {
+      await pending;
+    } finally {
+      if (this._bindingsRefresh === pending) this._bindingsRefresh = null;
     }
   }
 

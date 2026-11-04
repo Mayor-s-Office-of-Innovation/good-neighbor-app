@@ -34,6 +34,13 @@ for (const kind of ["single", "duplicate", "group"]) {
       const load = (/** @type {string} */ path) => import(path);
       await load("/src/styles/tokens.css");
       await load("/src/styles/base.css");
+      if (kind === "single") {
+        // Exercise the audit's settle guard with a deliberately slow entrance.
+        const style = document.createElement("style");
+        style.textContent =
+          "dialog, dialog::backdrop { transition-duration: 1s; }";
+        document.head.append(style);
+      }
       const { setSite } = await load("/src/db.js");
       await setSite("Synthetic deletion test", {
         siteId: "test-site",
@@ -72,9 +79,8 @@ for (const kind of ["single", "duplicate", "group"]) {
     );
     await expect(confirm).toBeFocused();
     await expect(confirm).toHaveCSS("outline-style", "solid");
-    // The dialog fades in over 80 ms (base.css). WebKit has audited it
-    // mid-fade, where axe reads the still-translucent text as low contrast,
-    // so wait for the settled state before measuring.
+    // Visibility and keyboard focus can settle before the opacity transition.
+    // Wait for full opacity so axe does not audit translucent text mid-fade.
     await expect(page.locator("#analysis-delete-dialog")).toHaveCSS(
       "opacity",
       "1",
