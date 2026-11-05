@@ -1108,3 +1108,38 @@ describe("City note status polling", () => {
     }
   });
 });
+
+describe("City note polling and older pages", () => {
+  it("doesn't poll for an in-flight note that only appears on an older page", async () => {
+    vi.useFakeTimers();
+    try {
+      const { CITY_NOTE_POLL_MS } = await import("./task-update-dialog.js");
+      await import("./task-update-dialog.js");
+      const Dialog = /** @type {any} */ (
+        vi
+          .mocked(customElements.define)
+          .mock.calls.find(([name]) => name === "task-update-dialog")[1]
+      );
+      const dialog = new Dialog();
+      dialog._render = vi.fn();
+      const task = { taskId: "older-note" };
+      api.getTaskUpdates.mockReset();
+      api.getTaskUpdates.mockResolvedValueOnce({
+        task,
+        updates: [{ updateId: "newest", text: "Latest" }],
+        nextToken: "older",
+      });
+      await dialog.open(task);
+      api.getTaskUpdates.mockResolvedValueOnce({
+        task,
+        updates: [{ updateId: "old-note", cityNoteStatus: "unknown" }],
+      });
+      await dialog._load("older");
+      expect(dialog._detail.updates).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(CITY_NOTE_POLL_MS * 3);
+      expect(api.getTaskUpdates).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

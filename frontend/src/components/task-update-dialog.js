@@ -38,6 +38,13 @@ import {
 export const CITY_NOTE_POLL_MS = 10_000;
 export const CITY_NOTE_POLL_LIMIT = 12;
 
+/** @param {Record<string, any>[] | undefined} updates */
+function updateIds(updates) {
+  return new Set(
+    (updates || []).map((update) => update.updateId).filter(Boolean),
+  );
+}
+
 export class TaskUpdateDialog extends HTMLElement {
   /** @type {boolean | undefined} */
   readOnly;
@@ -63,6 +70,8 @@ export class TaskUpdateDialog extends HTMLElement {
     this._timelineFrame = null;
     /** @type {ReturnType<typeof setTimeout> | null} */
     this._notePollTimer = null;
+    /** Update ids on the newest timeline page, the only page polling re-reads. */
+    this._newestPageIds = new Set();
     this._retryToken = "";
     /** @type {Record<string, any> | null} */
     this._pendingEvent = null;
@@ -189,6 +198,7 @@ export class TaskUpdateDialog extends HTMLElement {
           }
         : page;
       this._nextToken = page.nextToken;
+      if (!nextToken) this._newestPageIds = updateIds(page.updates);
       this._task = { ...this._task, ...this._detail.task };
       if (this._task.canRequestCityHelp === false)
         this._cityHelpNeeded = undefined;
@@ -318,7 +328,8 @@ export class TaskUpdateDialog extends HTMLElement {
   }
 
   /**
-   * Check again later while any loaded note is still on its way to the City.
+   * Check again later while a note on the newest page is still on its way to
+   * the City. Older pages aren't re-read; the next open picks those up.
    * @param {number} generation @param {number} [attempt]
    */
   _scheduleCityNotePoll(generation, attempt = 0) {
@@ -326,7 +337,10 @@ export class TaskUpdateDialog extends HTMLElement {
     this._notePollTimer = null;
     if (
       attempt >= CITY_NOTE_POLL_LIMIT ||
-      !(this._detail?.updates || []).some(cityNoteInFlight)
+      !(this._detail?.updates || []).some(
+        (update) =>
+          this._newestPageIds.has(update.updateId) && cityNoteInFlight(update),
+      )
     )
       return;
     this._notePollTimer = setTimeout(() => {
@@ -348,6 +362,7 @@ export class TaskUpdateDialog extends HTMLElement {
         getTaskUpdates(this._task.taskId, undefined, { signal }),
       );
       if (generation !== this._loadGeneration || !this._detail) return;
+      this._newestPageIds = updateIds(page.updates);
       const statuses = new Map(
         (page.updates || [])
           .filter((update) => update.updateId)
