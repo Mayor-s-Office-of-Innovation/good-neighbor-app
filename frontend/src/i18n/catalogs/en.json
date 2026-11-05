@@ -1518,6 +1518,8 @@
   "taskUpdate.cityHelp.no": "No",
   "taskUpdate.cityHelp.title": "Do you still need help from the City?",
   "taskUpdate.cityHelp.yes": "Yes",
+  "taskUpdate.cityNote.failed": "Couldn't send to the City",
+  "taskUpdate.cityNote.sending": "Sending to the City",
   "taskUpdate.created.perimeter": "Issue added during a perimeter check",
   "taskUpdate.created.single": "Issue added as a single issue",
   "taskUpdate.discard.cancel": "Back to editing",

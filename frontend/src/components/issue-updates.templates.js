@@ -3,7 +3,10 @@ import { MAX_TASK_UPDATE_TEXT } from "../domain/task-update-draft.js";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { hasKey, t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
-import { formatPacificDateTime } from "../domain/task-updates.js";
+import {
+  cityNoteLabelKey,
+  formatPacificDateTime,
+} from "../domain/task-updates.js";
 import { artifactPhoto } from "./artifact-photo.templates.js";
 
 /** @param {string} type */
@@ -49,6 +52,29 @@ export function taskUpdateActions() {
       ${escapeHtml(t("taskUpdate.markResolved"))}
     </button>
   </div>`;
+}
+
+/**
+ * Where the update's "no longer need City help" note stands. Users can't
+ * retry it (the queue retries, then operators), so this is a label only.
+ * @param {Record<string, any>} update
+ */
+function cityNoteState(update) {
+  const key = cityNoteLabelKey(update.cityNoteStatus);
+  if (!key) return "";
+  const failed = update.cityNoteStatus === "failed";
+  return html`<p
+    class="task-update__city-note${failed
+      ? " task-update__city-note--failed"
+      : ""}"
+    data-city-note-status="${escapeAttr(update.cityNoteStatus)}"
+  >
+    <wa-icon
+      name="${failed ? "triangle-exclamation" : "paper-plane"}"
+      aria-hidden="true"
+    ></wa-icon
+    >${escapeHtml(t(key))}
+  </p>`;
 }
 
 /**
@@ -108,6 +134,7 @@ export function taskUpdateTimelineItem(update, task, mediaUrls, title) {
             >${escapeHtml(formatPacificDateTime(update.occurredAt))}</time
           >`
         : ""}
+      ${cityNoteState(update)}
       ${update.type === "city_status" && cityText
         ? html`<p>${escapeHtml(cityText)}</p>`
         : ""}

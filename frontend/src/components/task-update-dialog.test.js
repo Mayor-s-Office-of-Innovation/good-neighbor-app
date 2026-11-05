@@ -1013,3 +1013,98 @@ it("allows local updates without a City-help choice when the API reports only cl
   dialog._resetDraft();
   expect(dialog._cityHelpNeeded).toBeUndefined();
 });
+
+describe("City note status polling", () => {
+  async function makeDialog() {
+    await import("./task-update-dialog.js");
+    const Dialog = /** @type {any} */ (
+      vi
+        .mocked(customElements.define)
+        .mock.calls.find(([name]) => name === "task-update-dialog")[1]
+    );
+    const dialog = new Dialog();
+    dialog._render = vi.fn();
+    return dialog;
+  }
+  const task = { taskId: "note-poll" };
+  /** @param {string} status */
+  const page = (status) => ({
+    task,
+    updates: [
+      { updateId: "note", cityHelpNeeded: false, cityNoteStatus: status },
+      { updateId: "older", text: "Earlier activity" },
+    ],
+  });
+
+  it("re-checks a sending note while open and stops once it settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const { CITY_NOTE_POLL_MS } = await import("./task-update-dialog.js");
+      const dialog = await makeDialog();
+      api.getTaskUpdates.mockReset();
+      api.getTaskUpdates.mockResolvedValueOnce(page("pending"));
+      await dialog.open(task);
+      expect(api.getTaskUpdates).toHaveBeenCalledTimes(1);
+
+      api.getTaskUpdates.mockResolvedValueOnce(page("sending"));
+      await vi.advanceTimersByTimeAsync(CITY_NOTE_POLL_MS);
+      expect(api.getTaskUpdates).toHaveBeenCalledTimes(2);
+      expect(dialog._detail.updates[0].cityNoteStatus).toBe("sending");
+
+      api.getTaskUpdates.mockResolvedValueOnce(page("sent"));
+      await vi.advanceTimersByTimeAsync(CITY_NOTE_POLL_MS);
+      expect(dialog._detail.updates[0].cityNoteStatus).toBe("sent");
+      expect(dialog._detail.updates[1].text).toBe("Earlier activity");
+      expect(dialog._state).toBe("ready");
+
+      await vi.advanceTimersByTimeAsync(CITY_NOTE_POLL_MS * 3);
+      expect(api.getTaskUpdates).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("doesn't poll when no note is in flight, and stops after the limit", async () => {
+    vi.useFakeTimers();
+    try {
+      const { CITY_NOTE_POLL_MS, CITY_NOTE_POLL_LIMIT } = await import(
+        "./task-update-dialog.js"
+      );
+      const dialog = await makeDialog();
+      api.getTaskUpdates.mockReset();
+      api.getTaskUpdates.mockResolvedValue(page("failed"));
+      await dialog.open(task);
+      await vi.advanceTimersByTimeAsync(CITY_NOTE_POLL_MS * 2);
+      expect(api.getTaskUpdates).toHaveBeenCalledTimes(1);
+
+      api.getTaskUpdates.mockResolvedValue(page("unknown"));
+      await dialog._load();
+      await vi.advanceTimersByTimeAsync(
+        CITY_NOTE_POLL_MS * (CITY_NOTE_POLL_LIMIT + 3),
+      );
+      expect(api.getTaskUpdates).toHaveBeenCalledTimes(
+        2 + CITY_NOTE_POLL_LIMIT,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops polling when the dialog closes", async () => {
+    vi.useFakeTimers();
+    try {
+      const { CITY_NOTE_POLL_MS } = await import("./task-update-dialog.js");
+      const dialog = await makeDialog();
+      dialog.querySelector = vi.fn(() => null);
+      dialog.dispatchEvent = vi.fn();
+      api.getTaskUpdates.mockReset();
+      api.getTaskUpdates.mockResolvedValue(page("pending"));
+      await dialog.open(task);
+      dialog._dismiss();
+      await vi.advanceTimersByTimeAsync(CITY_NOTE_POLL_MS * 3);
+      expect(api.getTaskUpdates).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

@@ -78,3 +78,18 @@
 .task-update__timeline-item p {
   white-space: pre-wrap;
 }
+
+/* The text carries the state; the icon and color only reinforce it. */
+.task-update__timeline-item .task-update__city-note {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  color: var(--wa-color-text-quiet, #545868);
+  font-size: var(--wa-font-size-s, 0.875rem);
+  white-space: normal;
+}
+
+.task-update__timeline-item .task-update__city-note--failed {
+  color: var(--wa-color-danger-on-quiet, #b30532);
+}

@@ -1509,6 +1509,8 @@
   "taskUpdate.cityHelp.no": "否",
   "taskUpdate.cityHelp.title": "您是否仍需要市政府的協助？",
   "taskUpdate.cityHelp.yes": "是",
+  "taskUpdate.cityNote.failed": "無法傳送給市政府",
+  "taskUpdate.cityNote.sending": "正在傳送給市政府",
   "taskUpdate.created.perimeter": "在周邊巡檢中新增的問題",
   "taskUpdate.created.single": "以單一問題形式新增",
   "taskUpdate.discard.cancel": "返回編輯",

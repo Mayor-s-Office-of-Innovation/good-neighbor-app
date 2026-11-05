@@ -1509,6 +1509,8 @@
   "taskUpdate.cityHelp.no": "Hindi",
   "taskUpdate.cityHelp.title": "Kailangan mo pa ba ng tulong mula sa Lungsod?",
   "taskUpdate.cityHelp.yes": "Oo",
+  "taskUpdate.cityNote.failed": "Hindi naipadala sa Lungsod",
+  "taskUpdate.cityNote.sending": "Ipinapadala sa Lungsod",
   "taskUpdate.created.perimeter": "Problemang idinagdag sa pagsuri sa paligid",
   "taskUpdate.created.single": "Problemang idinagdag bilang isang problema",
   "taskUpdate.discard.cancel": "Bumalik sa pag-edit",
