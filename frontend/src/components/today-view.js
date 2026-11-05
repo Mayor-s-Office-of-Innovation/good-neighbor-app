@@ -1628,8 +1628,9 @@ class TodayView extends HTMLElement {
       navigate("/help");
     });
     this.querySelector("#settings-feedback")?.addEventListener("click", () => {
-      this._removeSettingsMenu();
-      feedbackDialog?.open();
+      this._settingsMenuOpen = false;
+      forceNextRouteTransition("push");
+      navigate("/feedback");
     });
     // Language and About & attributions are pushed screens now, not dialogs.
     this.querySelector("#settings-attributions")?.addEventListener(

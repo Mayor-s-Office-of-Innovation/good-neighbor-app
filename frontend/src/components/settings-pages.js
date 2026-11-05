@@ -9,7 +9,12 @@ import "./settings-pages.css";
 import { announceScreenHeading } from "../screen-focus.js";
 import { backOrNavigate, forceNextRouteTransition } from "../router.js";
 import { getLocale, setLocale, t, LOCALES } from "../i18n/i18n.js";
-import { showLanguageErrorToast } from "../state/toasts.js";
+import {
+  showFeedbackErrorToast,
+  showFeedbackSuccessToast,
+  showLanguageErrorToast,
+} from "../state/toasts.js";
+import { getSite } from "../db.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
 
 /** @param {string} title @param {string} body */
@@ -131,3 +136,66 @@ class AttributionsView extends HTMLElement {
   }
 }
 customElements.define("attributions-view", AttributionsView);
+
+class FeedbackView extends HTMLElement {
+  _siteId = "";
+  connectedCallback() {
+    this.innerHTML = pageShell(
+      t("feedback.dialog.title"),
+      html`<p class="settings-page__copy">${escapeHtml(t("feedback.intro"))}</p>
+        <form class="settings-page__form" id="feedback-form">
+          <wa-textarea
+            id="feedback-text"
+            name="message"
+            rows="5"
+            maxlength="2000"
+            required
+            placeholder="${escapeAttr(t("feedback.textarea.placeholder"))}"
+            label="${escapeAttr(t("feedback.textarea.label"))}"
+            resize="vertical"
+          ></wa-textarea>
+          <button
+            class="btn-ink settings-page__send"
+            id="feedback-send"
+            type="submit"
+          >
+            ${escapeHtml(t("feedback.send"))}
+          </button>
+        </form>`,
+    );
+    bindMenuBack(this);
+    void getSite()
+      .then((site) => {
+        this._siteId = site?.siteId || "";
+      })
+      .catch(() => {});
+    this.querySelector("#feedback-form")?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      void this._submit();
+    });
+    announceScreenHeading(this, ".settings-page__title");
+  }
+
+  async _submit() {
+    const textarea = /** @type {any} */ (this.querySelector("#feedback-text"));
+    const text = textarea?.value ?? "";
+    if (typeof text !== "string" || !text.trim()) return;
+    const send = /** @type {any} */ (this.querySelector("#feedback-send"));
+    if (send) send.disabled = true;
+    try {
+      // Submission code is only needed after Send; import failures use the
+      // same draft-preserving retry path as network failures.
+      const { sendFeedback } = await import("../services/feedback.js");
+      await sendFeedback({ message: text, site: this._siteId || undefined });
+      showFeedbackSuccessToast();
+      // Sent: return to the reopened settings menu, like Back.
+      this.querySelector("[data-menu-back]")?.click();
+    } catch {
+      // Keep the screen + the draft intact for retry.
+      showFeedbackErrorToast();
+    } finally {
+      if (send) send.disabled = false;
+    }
+  }
+}
+customElements.define("feedback-view", FeedbackView);
