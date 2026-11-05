@@ -223,6 +223,11 @@ dialog.home-settings-menu:not([open]) {
   }
 }
 
+.home-settings-head,
+.home-settings-actions {
+  width: 100%;
+}
+
 .home-settings-head {
   display: flex;
   align-items: center;

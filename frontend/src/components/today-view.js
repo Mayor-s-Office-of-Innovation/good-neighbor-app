@@ -353,7 +353,6 @@ class TodayView extends HTMLElement {
     } catch {
       /* storage unavailable: open as a plain home screen */
     }
-    this._settingsDocumentClick = null;
     /** @type {any} the persistent <site-switcher>, created on first render */
     this._siteSwitcher = null;
     this._providerSites = [];
@@ -452,8 +451,6 @@ class TodayView extends HTMLElement {
     window.removeEventListener("online", this._onlineReload);
     this._onlineReload = null;
     this.removeEventListener("analysiscarddeleted", this._cardDeletedHandler);
-    document.removeEventListener("click", this._settingsDocumentClick);
-    this._settingsDocumentClick = null;
     document.removeEventListener("click", this._actionMenuDocumentClick);
     this._actionMenuDocumentClick = null;
     this._locationUnsub?.();
@@ -578,18 +575,6 @@ class TodayView extends HTMLElement {
         void this._refreshHomeLists(0);
       };
       window.addEventListener("online", this._onlineReload);
-    }
-    if (!this._settingsDocumentClick) {
-      this._settingsDocumentClick = (event) => {
-        if (!this._settingsMenuOpen) return;
-        const path = event.composedPath?.() || [];
-        const withinSettings = path.some(
-          (node) =>
-            node instanceof Element && node.matches(".home-settings-wrap"),
-        );
-        if (!withinSettings) this._closeSettingsMenu();
-      };
-      document.addEventListener("click", this._settingsDocumentClick);
     }
 
     // Refreshing a completed card is not a new screen arrival. Re-focusing
@@ -1662,6 +1647,12 @@ class TodayView extends HTMLElement {
       },
     );
     this.querySelector("#settings-reports")?.addEventListener("click", () => {
+      // System Back bypasses the Reports header's return handler.
+      try {
+        sessionStorage.setItem("gnp-reopen-settings", "1");
+      } catch {
+        /* storage unavailable: return to a plain home screen */
+      }
       forceNextRouteTransition("push");
       navigate("/reports");
     });
@@ -1673,6 +1664,9 @@ class TodayView extends HTMLElement {
     });
     this._logoutDialog?.addEventListener("close", () => {
       this._logoutDialogOpen = false;
+      if (!this.isConnected || this._logoutPending) return;
+      this._settingsMenuOpen = true;
+      this._renderHome(this._homeModel);
     });
     this._restoreLogoutDialog();
     this._taskSheets().mount();

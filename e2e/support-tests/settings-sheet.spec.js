@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { t } from "../helpers/i18n.js";
+import { stubReports } from "../helpers/reports.js";
 import { routeHomeLists } from "../helpers/app.js";
 
 test.beforeEach(async ({ page }) => {
@@ -23,6 +24,7 @@ test.beforeEach(async ({ page }) => {
     await setSite("Support test site", {
       siteId: "support-test",
       token: "mock-token",
+      accessLevel: "manager",
     });
     // Use the production app shell, route table, lazy loading, and history.
     document.querySelector("main")?.remove();
@@ -51,7 +53,7 @@ test("Settings contains keyboard focus, its footer, and accessible menu content"
   await close.focus();
   await page.keyboard.press("Shift+Tab");
   await expect(page.locator("#start-check")).not.toBeFocused();
-  for (const width of [320, 1136]) {
+  for (const width of [320, 620, 1136]) {
     await page.setViewportSize({ width, height: 844 });
     await expect(sheet).toHaveCSS("opacity", "1");
     const contained = await sheet.evaluate((el) => {
@@ -67,6 +69,19 @@ test("Settings contains keyboard focus, its footer, and accessible menu content"
       );
     });
     expect(contained).toBe(true);
+    const widths = await sheet.evaluate((el) => {
+      const style = getComputedStyle(el);
+      const available =
+        el.clientWidth -
+        parseFloat(style.paddingLeft) -
+        parseFloat(style.paddingRight);
+      return [".home-settings-head", ".home-settings-actions"].map((selector) =>
+        Math.abs(
+          el.querySelector(selector).getBoundingClientRect().width - available,
+        ),
+      );
+    });
+    for (const difference of widths) expect(difference).toBeLessThan(1);
   }
   const audit = await new AxeBuilder({ page })
     .include("dialog.home-settings-menu")
@@ -113,5 +128,32 @@ for (const status of [204, 503]) {
         ".app-toast--success, .app-toast--error, [data-operation-error]",
       ),
     ).toHaveCount(0);
+  });
+}
+
+for (const back of ["button", "browser"]) {
+  test(`Reports ${back} Back reopens Settings`, async ({ page }) => {
+    await stubReports(page);
+    // Exercise synchronous route swaps as used without View Transitions.
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.locator("support-view [data-menu-back]").click();
+    await page.locator("#settings-reports").click();
+    await expect(page.locator("#reports-back")).toBeVisible();
+    if (back === "button") await page.locator("#reports-back").click();
+    else await page.goBack();
+    await expect(page.locator("dialog.home-settings-menu[open]")).toBeVisible();
+  });
+}
+
+for (const cancel of ["button", "Escape"]) {
+  test(`Log out ${cancel} cancellation reopens Settings`, async ({ page }) => {
+    await page.locator("support-view [data-menu-back]").click();
+    await page.locator("#settings-logout").click();
+    await expect(page.locator("#logout-dialog[open]")).toBeVisible();
+    if (cancel === "button")
+      await page.locator(".logout-dialog__cancel").click();
+    else await page.keyboard.press("Escape");
+    await expect(page.locator("dialog.home-settings-menu[open]")).toBeVisible();
+    await expect(page.locator("#settings-close")).toBeFocused();
   });
 }
