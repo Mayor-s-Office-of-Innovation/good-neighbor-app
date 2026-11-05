@@ -8,11 +8,13 @@ await import("../src/main.js");
 // src/admin-app.js lazy-loads the /system-status page; Vite's first load of that file
 // outlasts settle(), so a test on that page would assert before it draws.
 await import("../src/system-status.js");
+// insights-page.js lazy-loads this file too, and its first load also outlasts settle().
+await import("../src/pages/insights/insights.pages.js");
 
 /**
  * Mount a fresh <admin-app> at `path` against fresh synthetic data.
  * @param {string} path
- * @param {{ role?: "compliance-supervisor" | "compliance-manager", data?: any, setup?: (api: any) => void, fetch?: (url: string, init: any) => Response | undefined }} [options]
+ * @param {{ role?: "compliance-supervisor" | "compliance-manager", data?: any, insights?: boolean, setup?: (api: any) => void, fetch?: (url: string, init: any) => Response | undefined }} [options]
  */
 export async function mountAdmin(path = "/sites", options = {}) {
   const api = await startMount(path, options);

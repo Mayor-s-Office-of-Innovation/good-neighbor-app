@@ -35,6 +35,9 @@ import {
 } from "./compliance.bindings.js";
 import { prepareSiteAccess, siteAccessEvents } from "./access.bindings.js";
 import { siteManagerAccessEvents } from "./manager.bindings.js";
+import { insightsOn } from "../insights/insights-page.js";
+import { routeMode, safeReturnPath } from "../insights/insights-routes.js";
+import { insightsReturnLink } from "../insights/shell.templates.js";
 import { currentSiteSection, siteRecordActions } from "./record.actions.js";
 import { siteOversightActions } from "./oversight.actions.js";
 import { siteComplianceActions } from "./compliance.actions.js";
@@ -91,6 +94,8 @@ export class AdminSitePage extends HTMLElement {
     this.catalog = /** @type {any} */ (null);
     /** @type {AdminSession} */
     this.session = /** @type {any} */ (null);
+    /** @type {{ siteId: string, path: string } | null} */
+    this.insightsReturn = null;
   }
 
   connectedCallback() {
@@ -135,10 +140,14 @@ export class AdminSitePage extends HTMLElement {
     clearEnrollmentCodeView(this.state);
   }
 
-  /** <admin-app> reuses this page on the next Site visit, so leaving drops the open Site. */
-  leave() {
+  /** Drops the open Site unless the move is to Insights, so the Manage tab reopens it without a reread. @param {Route} [next] */
+  leave(next) {
     this.endVisit();
-    this.state.site = null;
+    this.insightsReturn = null;
+    // <admin-app> also leaves this page on the way back from Insights, with this Site as `next`.
+    const back = next?.name === "site" && next.id === this.state.site?.siteId;
+    if (routeMode(next?.name || "") !== "insights" && !back)
+      this.state.site = null;
     this.route = null;
   }
 
@@ -161,6 +170,7 @@ export class AdminSitePage extends HTMLElement {
    * @returns {Promise<boolean>}
    */
   async open(route) {
+    this.noteInsightsReturn(route.id || "");
     this.endVisit();
     this.route = route;
     const visit = this.visit;
@@ -169,6 +179,22 @@ export class AdminSitePage extends HTMLElement {
     if (visit !== this.visit) return false;
     const page = /** @type {SitePageElement} */ (this);
     return (await page.openSite(route.id || "", false, false, false)) === true;
+  }
+
+  /** Kept per Site, since saves and section links drop the return query. @param {string} siteId */
+  noteInsightsReturn(siteId) {
+    const path = safeReturnPath(
+      new URLSearchParams(location.search).get("return"),
+    );
+    if (path) this.insightsReturn = { siteId, path };
+    else if (this.insightsReturn?.siteId !== siteId) this.insightsReturn = null;
+  }
+
+  /** @param {string} siteId @returns {string} */
+  insightsReturnPath(siteId) {
+    return insightsOn(this.session) && this.insightsReturn?.siteId === siteId
+      ? this.insightsReturn.path
+      : "";
   }
 
   /** @param {Route} route */
@@ -196,6 +222,7 @@ export class AdminSitePage extends HTMLElement {
       new URLSearchParams(window.location.search).get("view") || "";
     this.innerHTML = `
       <section class="site-page site-record">
+        ${insightsReturnLink(this.insightsReturnPath(site.siteId))}
         ${entityBreadcrumb("site", site, this.state.programs, this.state.providers)}
         <div class="panel__head">
           <div class="site-title">

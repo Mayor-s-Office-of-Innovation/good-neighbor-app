@@ -12,7 +12,7 @@ import { createAdminSession } from "./admin-session.js";
 import { getAdminConfig } from "./config.js";
 import { escapeHtml } from "./dom.js";
 import { errorLineText } from "./admin-error-messages.js";
-import { currentRoute, navigate } from "./router.js";
+import { currentRoute, matchRoute, navigate } from "./router.js";
 import { adminSettingsMenu } from "./pages/admin-user/admin-user.templates.js";
 import "./pages/admin-user/admin-users-page.js";
 import "./pages/directory/directory-page.js";
@@ -23,6 +23,13 @@ import { restartManagerLoad } from "./pages/site/manager-directory-read.js";
 import "./pages/site/new-site-page.js";
 import "./pages/site/site-import-page.js";
 import "./pages/site/site-page.js";
+import { insightsOn } from "./pages/insights/insights-page.js";
+import {
+  INSIGHTS_ROUTES,
+  routeMode,
+} from "./pages/insights/insights-routes.js";
+import { modeMemory } from "./pages/insights/mode-memory.js";
+import { modeNav } from "./pages/insights/shell.templates.js";
 
 // One tag per route, so routes that share a page reuse its loaded lists.
 const ROUTE_PAGES = {
@@ -44,6 +51,9 @@ const ROUTE_PAGES = {
   providers: "admin-directory-page",
   programs: "admin-directory-page",
   "provider-managers": "admin-directory-page",
+  ...Object.fromEntries(
+    INSIGHTS_ROUTES.map(([name]) => [name, "admin-insights-page"]),
+  ),
 };
 
 // These page elements are thrown away on leaving, so a later visit can't flash the last record.
@@ -101,6 +111,7 @@ export class AdminApp extends HTMLElement {
     this.session.clear();
     this.dropPages();
     this.state = this.freshState(hasAdminSession());
+    this.modes = modeMemory();
     const callback = await completeAdminLoginFromUrl().catch((err) => ({
       handled: true,
       error: err.message,
@@ -288,6 +299,8 @@ export class AdminApp extends HTMLElement {
       void this.leavePage(destination);
       return;
     }
+    const from = this.lastRenderedPath || "";
+    this.leaveModePage();
     this.session.complianceDraft = complianceDraftAfterNavigation(
       this.session.complianceDraft,
       destination,
@@ -301,7 +314,7 @@ export class AdminApp extends HTMLElement {
       )
     )
       this.render(true);
-    this.openRoute().catch((error) => {
+    this.openModeRoute(from, destination).catch((error) => {
       if (
         error.name === "AbortError" ||
         window.location.pathname + window.location.search !== destination
@@ -354,9 +367,41 @@ export class AdminApp extends HTMLElement {
     });
     const latest = /** @type {string} */ (this.leaveDestination);
     if (!current() || !discard || page !== this.shownPage) return;
+    // Saved now, since the cleared path below stops the move saving this page.
+    this.leaveModePage();
     // Skips routeChanged's check, since the user just chose to drop the edits.
     this.lastRenderedPath = "";
     navigate(latest);
+  }
+
+  leaveModePage() {
+    // A page still loading was never seen, and its scroll is the previous page's.
+    if (this.lastRenderLoading) return;
+    const active = document.activeElement;
+    const focus = active && this.contains(active) ? active.id : "";
+    this.modes.leave(this.lastRenderedPath || "", window.scrollY, focus);
+  }
+
+  /** @param {string} from @param {string} destination */
+  async openModeRoute(from, destination) {
+    await this.openRoute();
+    this.restoreModePage(from, destination);
+  }
+
+  /** @param {string} from @param {string} destination */
+  restoreModePage(from, destination) {
+    if (location.pathname + location.search !== destination) return;
+    const fromMode = routeMode(matchRoute(from.split("?")[0]).name);
+    const toMode = routeMode(currentRoute().name);
+    if (fromMode !== "insights" && toMode !== "insights") return;
+    const place = this.modes.arrive(destination);
+    // With nothing saved, the browser's own Back scroll is left alone.
+    if (place) window.scrollTo(0, place.scrollY);
+    const saved = place?.focus ? document.getElementById(place.focus) : null;
+    const target =
+      saved && this.contains(saved) ? saved : this.querySelector("h1");
+    // The scroll just restored would be lost to the heading scrolling into view.
+    /** @type {HTMLElement | null} */ (target)?.focus({ preventScroll: true });
   }
 
   async bootstrap() {
@@ -463,6 +508,7 @@ export class AdminApp extends HTMLElement {
               : ""
           }
         </header>
+        ${this.state.hasToken && insightsOn(this.session) ? modeNav(routeMode(route.name), (mode) => this.modes.href(mode)) : ""}
         ${localRoleEnabled(this.state.authConfig) ? `<div class="local-role-switch"><label for="local-role-switch">${escapeHtml(t("admin.localRole.label"))}</label><select id="local-role-switch"><option value="supervisor" ${getLocalRole() === "supervisor" ? "selected" : ""}>${escapeHtml(t("admin.localRole.supervisor"))}</option><option value="manager" ${getLocalRole() === "manager" ? "selected" : ""}>${escapeHtml(t("admin.localRole.manager"))}</option></select><p class="muted">${escapeHtml(t("admin.localRole.help"))}</p></div>` : ""}
         ${
           this.state.hasToken
@@ -519,6 +565,7 @@ export class AdminApp extends HTMLElement {
         this.querySelector("template[data-page-slot]")?.replaceWith(page);
     }
     this.lastRenderedPath = window.location.pathname + window.location.search;
+    this.lastRenderLoading = loading;
   }
 }
 

@@ -299,6 +299,8 @@ function defaultReply(data, role, request) {
           manageAdminUsers: supervisor,
           createEntities: supervisor,
           manageProviderManagers: supervisor,
+          // admin-auth.js gives both admin roles Insights.
+          viewInsights: true,
         },
       },
     };
@@ -1142,17 +1144,19 @@ function writeReply(data, request, exec) {
 /**
  * Mock the admin API for one page.
  * @param {import("@playwright/test").Page} page
- * @param {{ role?: "compliance-supervisor" | "compliance-manager", data?: AdminData }} [options]
+ * @param {{ role?: "compliance-supervisor" | "compliance-manager", data?: AdminData, insights?: boolean }} [options]
+ *   insights: switch Insights on, as a deployed config.js would
  */
 export async function mockAdmin(page, options = {}) {
   const api = fakeAdminApi(options, () => settle(page));
   mockFailuresByPage.set(page, api.failures);
-  await page.addInitScript(() => {
+  await page.addInitScript((insightsEnabled) => {
     /** @type {any} */ (window).GOOD_NEIGHBOR_ADMIN_CONFIG = {
       apiBase: window.location.origin,
       localDebugAdmin: true,
+      insightsEnabled,
     };
-  });
+  }, options.insights === true);
   await page.route(/\/config\.js$/, (route) =>
     new URL(route.request().url()).pathname === "/config.js"
       ? route.fulfill({ contentType: "application/javascript", body: "" })

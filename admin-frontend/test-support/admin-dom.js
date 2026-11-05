@@ -518,7 +518,7 @@ export async function revisitPage(path) {
 /**
  * Reset the window and fake backend for a new mount. For mountPage() and app-mount.js.
  * @param {string} path
- * @param {{ role?: "compliance-supervisor" | "compliance-manager", data?: any, fetch?: (url: string, init: any) => Response | undefined }} options
+ * @param {{ role?: "compliance-supervisor" | "compliance-manager", data?: any, insights?: boolean, fetch?: (url: string, init: any) => Response | undefined }} options
  */
 export async function startMount(path, options) {
   // A read the old app still holds can be joined by the new app's identical
@@ -544,6 +544,7 @@ export async function startMount(path, options) {
   /** @type {any} */ (window).GOOD_NEIGHBOR_ADMIN_CONFIG = {
     apiBase: window.location.origin,
     localDebugAdmin: true,
+    insightsEnabled: options.insights === true,
   };
   return api;
 }
