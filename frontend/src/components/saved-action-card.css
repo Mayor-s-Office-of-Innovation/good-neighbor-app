@@ -1,0 +1,72 @@
+.analysis-card--action-saved {
+  position: relative;
+  min-height: 180px;
+}
+
+.analysis-card--action-saved > :not(.saved-action-card) {
+  visibility: hidden;
+}
+
+.saved-action-card {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 20px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: center;
+  animation: saved-action-appear 160ms ease-out;
+}
+
+.saved-action-card [role="status"] {
+  display: grid;
+  gap: 6px;
+}
+
+.saved-action-card [role="status"] span {
+  color: var(--text-secondary);
+  font-size: var(--wa-font-size-s);
+}
+
+.saved-action-card > wa-icon {
+  font-size: 24px;
+}
+
+@keyframes saved-action-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.saved-action-exit {
+  display: grid;
+  grid-template-rows: 1fr;
+  min-height: 0;
+  overflow: clip;
+  flex-shrink: 0;
+  animation: analysis-card-collapse 220ms ease-out forwards;
+}
+
+.saved-action-exit > div {
+  min-height: 0;
+  overflow: hidden;
+}
+.saved-action-exit:only-child {
+  --analysis-card-gap: 0px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .saved-action-card {
+    animation: none;
+  }
+  .saved-action-exit {
+    animation: none;
+  }
+}

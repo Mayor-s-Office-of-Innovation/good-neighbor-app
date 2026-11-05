@@ -9,7 +9,7 @@
     instead of lost, and the banner's Install button replays it with
     prompt(). No event → no banner (the browser decided it isn't installable
     here, or it is already installed).
-  - iOS Safari: there is no event and no API — the user adds the app through
+  - iOS browsers: there is no event and no API — the user adds the app through
     the Share sheet — so the banner shows the two-step instruction instead.
 
   Never offered when the page already runs standalone, inside an in-app
@@ -139,19 +139,20 @@ export function isStandalone(w = win(), n = nav()) {
 }
 
 /**
- * iOS Safari (including iPadOS, which presents as a Mac with touch) — the
- * only iOS browser where "Add to Home Screen" yields a standalone app.
+ * iOS browsers (including iPadOS, which presents as a Mac with touch).
+ * Safari and third-party browsers use the Share sheet to install.
+ * Keep this platform check shared with session handoff preparation: iOS
+ * installations need a cookie because IndexedDB is not copied.
  * @param {string} ua
  * @param {{ platform?: string, maxTouchPoints?: number } | undefined} n
  * @returns {boolean}
  */
-export function isIosSafari(ua = nav()?.userAgent ?? "", n = nav()) {
+export function isIosBrowser(ua = nav()?.userAgent ?? "", n = nav()) {
   if (typeof ua !== "string" || !ua) return false;
   const iPadOs = n?.platform === "MacIntel" && (n.maxTouchPoints ?? 0) > 1;
   if (!/iPhone|iPad|iPod/.test(ua) && !iPadOs) return false;
-  if (!/Safari/.test(ua)) return false;
-  // Third-party iOS browsers install via their own menus (or not at all).
-  if (/CriOS|FxiOS|EdgiOS|OPT\/|DuckDuckGo|BraveiOS/.test(ua)) return false;
+  if (!/Safari|CriOS|FxiOS|EdgiOS|OPT\/|DuckDuckGo|BraveiOS/.test(ua))
+    return false;
   return !isInAppBrowser(ua);
 }
 
@@ -162,7 +163,7 @@ export function isIosSafari(ua = nav()?.userAgent ?? "", n = nav()) {
  * @returns {"prompt" | "ios" | null}
  */
 export function installMethod(ua = nav()?.userAgent ?? "", n = nav()) {
-  if (isIosSafari(ua, n)) return "ios";
+  if (isIosBrowser(ua, n)) return "ios";
   if (deferredEvent) return "prompt";
   // Chromium announces installability with the event; everything else is
   // silent. The "prompt" path is confirmed by onInstallAvailable, so the

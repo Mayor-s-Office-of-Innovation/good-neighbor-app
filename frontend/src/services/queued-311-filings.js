@@ -1,4 +1,5 @@
 import { getTaskDetails } from "./api.js";
+import { ReauthRequiredError } from "./api-error.js";
 import { filing311State } from "../domain/task-actions.js";
 
 /**
@@ -48,7 +49,12 @@ export function watchQueued311Filings(taskIds, onSettled) {
         onSettled(clicked);
       }
       return true;
-    } catch {
+    } catch (error) {
+      // The API client has already tried session recovery. Polling cannot
+      // repair a rejected session; the next authenticated view starts a watcher.
+      // A plain 401 can be a concurrent token-rotation race. Only the API
+      // client's explicit fatal-session signal ends this watcher.
+      if (error instanceof ReauthRequiredError) stop();
       return false;
     }
   };

@@ -97,13 +97,25 @@ test("caches a language once it has loaded", async ({ page }) => {
     return `/${match[0]}`;
   }, entry);
 
+  // Workbox's CacheFirst hands the response back before its cache write
+  // finishes (the put runs under event.waitUntil), so wait for the entry
+  // rather than checking right after the fetch.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        async (url) =>
+          Boolean(await (await window.caches.open("languages")).match(url)),
+        spanish,
+      ),
+    )
+    .toBe(true);
+
   await page.context().setOffline(true);
-  const result = await page.evaluate(async (url) => {
-    const saved = await (await window.caches.open("languages")).match(url);
-    const response = await fetch(url);
-    return { saved: Boolean(saved), status: response.status };
-  }, spanish);
-  expect(result).toEqual({ saved: true, status: 200 });
+  const status = await page.evaluate(
+    async (url) => (await fetch(url)).status,
+    spanish,
+  );
+  expect(status).toBe(200);
 });
 
 test("an online launch opens a new release right away", async ({ page }) => {

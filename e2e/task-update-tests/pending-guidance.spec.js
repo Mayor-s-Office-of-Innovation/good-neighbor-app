@@ -235,12 +235,10 @@ for (const resolution of ["answer", "dismiss"])
     const description = editor.locator("[data-description] textarea");
     await description.fill("Updated description of the abandoned furniture.");
     await editor.locator("[data-save]").click();
-    await expect(page.locator(".app-toast")).toContainText(
+    await expect(editor).toBeVisible();
+    await expect(editor.locator(".task-details__error")).toContainText(
       t("taskDetails.saveError"),
     );
-    await page
-      .getByRole("button", { name: t("details.reviewRetry"), exact: true })
-      .click();
     await expect(description).toHaveValue(
       "Updated description of the abandoned furniture.",
     );
