@@ -13,16 +13,19 @@ test("an admin moves between Manage and Insights pages and back", async ({
   const api = await mockAdmin(page, { insights: true });
   await page.goto("/insights");
   await expect(heading(page)).toHaveText(t("admin.insights.overview"));
-  await expect(page.locator("[data-insights-freshness]")).toHaveText(
-    t("admin.insights.dataAsOfPending"),
-  );
-  // So opening Insights never waits on Manage's directory reads.
+  await expect(page.locator("[data-site-row]").first()).toBeVisible();
+  // So opening Insights never waits on Manage's Site and record reads; it
+  // reads only the filter names.
   await settle(page);
+  // Sorted: the two reads go out together and can arrive in either order.
   expect(
-    ["GET", "POST", "PUT", "PATCH", "DELETE"].flatMap((method) =>
-      api.calls(method, /^(?!session(?:\?|$))/),
-    ),
-  ).toEqual([]);
+    ["GET", "POST", "PUT", "PATCH", "DELETE"]
+      .flatMap((method) =>
+        api.calls(method, /^(?!session(?:\?|$)|reporting\/)/),
+      )
+      .map((c) => c.path + c.search)
+      .sort(),
+  ).toEqual(["program-managers", "providers"]);
   await page.locator('#insights-nav a[data-insights-nav="trends"]').click();
   await expect(heading(page)).toHaveText(t("admin.insights.trends"));
   await tab(page, "manage").click();

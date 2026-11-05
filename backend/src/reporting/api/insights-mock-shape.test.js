@@ -195,6 +195,8 @@ describe("the admin E2E Insights mock", () => {
     ["reporting/checks/nope", "getCheck", { checkId: "nope" }],
     ["reporting/sites/nope", "getSite", { siteId: "nope" }],
     ["reports/nope", "getJob", { jobId: "nope" }],
+    // POST makes a report there; a read asks for a job of that name.
+    ["reports/insights", "getJob", { jobId: "insights" }],
   ])(
     "answers an unknown ID in %s as the handler does",
     async (path, name, ids) => {
@@ -204,6 +206,7 @@ describe("the admin E2E Insights mock", () => {
       const mock = insightsReply({
         method: "GET",
         path,
+        search: "period=month&month=2026-10",
       });
       expect([mock?.status, mock?.json]).toEqual([
         real.statusCode,
@@ -211,6 +214,38 @@ describe("the admin E2E Insights mock", () => {
       ]);
     },
   );
+
+  it.each(["ascending", ""])(
+    "refuses a sort direction of %j as the handler does",
+    async (dir) => {
+      const real = await handlers.getOverview(
+        event({ query: { ...october, dir } }),
+      );
+      const mock = insightsReply({
+        method: "GET",
+        path: "reporting/overview",
+        search: `period=month&month=2026-10&dir=${dir}`,
+      });
+      expect([mock?.status, mock?.json]).toEqual([
+        real.statusCode,
+        JSON.parse(real.body),
+      ]);
+    },
+  );
+
+  it("opens the record of every Issue its lists show", () => {
+    const listed = insightsReply({
+      method: "GET",
+      path: "reporting/issues",
+      search: "period=month&month=2026-10",
+    })?.json.issues.map((/** @type {any} */ i) => i.issueId);
+    const opened = listed.map(
+      (/** @type {string} */ id) =>
+        insightsReply({ method: "GET", path: `reporting/issues/${id}` })?.json
+          .issue?.issueId,
+    );
+    expect([listed.length > 1, opened]).toEqual([true, listed]);
+  });
 
   it.each(Object.keys(insightsReplies))(
     "matches the handler's status and reply shape for %s",

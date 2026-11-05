@@ -12,3 +12,184 @@
   margin: 0;
   font-size: 0.875rem;
 }
+
+.insights [data-region] {
+  display: grid;
+  gap: 12px;
+}
+
+.insights__quality {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.insights__quality ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.insights__period,
+.insights__stepper,
+.insights__custom,
+.insights__seg,
+.insights__selects,
+.insights__resultbar,
+.insights__report,
+.insights__pager,
+.insights__links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.insights__resultbar {
+  justify-content: space-between;
+}
+
+.insights__resultbar p,
+.insights__report p,
+.insights__help {
+  margin: 0;
+}
+
+.insights__help {
+  font-size: 0.875rem;
+  max-width: 70ch;
+}
+
+.insights__seg button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--on-ink);
+  border-color: var(--ink);
+}
+
+.insights__period-label {
+  min-width: 10ch;
+  text-align: center;
+  font-weight: 600;
+}
+
+.insights__filters,
+.insights__show {
+  display: grid;
+  gap: 8px;
+}
+
+.insights__num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.insights__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.insights__table td,
+.insights__table th {
+  white-space: normal;
+  vertical-align: top;
+}
+
+/* Row names (Site names, Issue times) wrapped after one word at desktop widths. */
+.insights__table tbody th {
+  min-width: 11rem;
+}
+
+.insights__group {
+  display: grid;
+  gap: 12px;
+}
+
+.insights__group h2 {
+  margin: 8px 0 0;
+  font-size: 1.125rem;
+}
+
+.insights__tiles,
+.insights__states {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+
+.insights__tiles {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.insights__tiles > div {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.insights__tiles dd {
+  margin: 4px 0 0;
+  font-size: 1.5rem;
+}
+
+.insights__tiles dd.insights__num {
+  text-align: left;
+}
+
+.insights__states > div {
+  display: grid;
+  grid-template-columns: minmax(10rem, 14rem) 1fr;
+  gap: 8px;
+}
+
+.insights__states dt {
+  font-weight: 600;
+}
+
+.insights__states dd {
+  margin: 0;
+}
+
+/* Narrow screens show each row as a labelled record, so no column drops. */
+@media (max-width: 760px) {
+  .insights__table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .insights__table tr,
+  .insights__table td,
+  .insights__table tbody th {
+    display: block;
+  }
+
+  .insights__table tr {
+    border-bottom: 1px solid var(--line);
+    padding: 8px 0;
+  }
+
+  .insights__table td,
+  .insights__table tbody th {
+    border: 0;
+    padding: 4px 12px;
+    text-align: left;
+    /* The global cell cap would cut stacked values off at 360px. */
+    max-width: none;
+    overflow: visible;
+  }
+
+  .insights__table td[data-label]::before,
+  .insights__table tbody th[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 0.8125rem;
+    color: var(--muted);
+  }
+
+  .insights__states > div {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}

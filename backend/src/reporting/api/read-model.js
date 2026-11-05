@@ -225,7 +225,7 @@ function sortRows(rows, sort, ties) {
  * @param {ListQuery} list
  * @param {unknown} query everything that shaped `rows`, for the cursor
  * @param {Snapshot} snap
- * @returns {{ page: T[], nextCursor: string | null }}
+ * @returns {{ page: T[], nextCursor: string | null, offset: number }}
  */
 function paginate(rows, list, query, snap) {
   const offset = list.cursor
@@ -235,6 +235,7 @@ function paginate(rows, list, query, snap) {
   const next = offset + list.limit;
   return {
     page,
+    offset,
     nextCursor:
       next < rows.length ? encodeCursor(query, snap.snapshotId, next) : null,
   };
@@ -292,6 +293,7 @@ function siteDims(site) {
  */
 function siteRows(snap, interval, sites) {
   const ids = new Set(sites.map((s) => s.siteId));
+  const today = pacificDateKey(snap.manifest.evaluatedAt);
   const { total, bySite } = sumDays(snap, interval, ids);
   /** @type {Map<string, number>} */
   const maxSeverity = new Map();
@@ -307,15 +309,134 @@ function siteRows(snap, interval, sites) {
   }
   const rows = sites.map((site) => {
     const totals = split(bySite.get(site.siteId) ?? {});
+    const indicators = contacts(snap, site.siteId);
     return {
       ...siteDims(site),
       ...totals,
       maxSeverity: maxSeverity.get(site.siteId) ?? null,
-      ...contacts(snap, site.siteId),
+      ...indicators,
+      concerns: concernsOf(totals, indicators, {
+        active: site.status !== "inactive",
+        expectedChecks: owesChecks(snap, site, interval, today),
+      }),
+      unknownEvidence: unknownsOf(totals, indicators, {
+        active: site.status !== "inactive",
+      }),
       manageHref: manageHref(site.siteId),
     };
   });
   return { rows, total, ids };
+}
+
+/**
+ * @param {string} a
+ * @param {string} b day keys
+ */
+const laterDay = (a, b) => (b > a ? b : a);
+/**
+ * @param {string} a
+ * @param {string} b day keys
+ */
+const earlierDay = (a, b) => (b < a ? b : a);
+
+/**
+ * No perimeter means nothing to walk, and the first day of the records or
+ * of the Site is likely partial, so neither can owe Checks.
+ * @param {Snapshot} snap
+ * @param {Record<string, any>} site
+ * @param {Interval} interval
+ * @param {string} today Pacific day key, still running
+ */
+function owesChecks(snap, site, interval, today) {
+  if (!site.hasPerimeter || snap.coverageStart === null) return false;
+  // A createdAt that doesn't parse can't say when the Site began.
+  const added = site.createdAt ? pacificDateKey(site.createdAt) : "";
+  const begun = laterDay(snap.coverageStart, added);
+  const first = laterDay(interval.startDay, addDays(begun, 1));
+  return first < earlierDay(interval.endDay, today);
+}
+
+/**
+ * Plan §7's Top concerns, plus no Checks, as separate reasons. Awaiting isn't
+ * one: there's still time to answer. A closed Site can only be flagged by its
+ * Issues.
+ * @param {ReturnType<typeof split>} totals
+ * @param {ReturnType<typeof contacts>} indicators
+ * @param {{ active: boolean, expectedChecks: boolean }} site
+ * @returns {string[]}
+ */
+function concernsOf(
+  { activity, response },
+  indicators,
+  { active, expectedChecks },
+) {
+  return [
+    response.overdue > 0 && "overdue",
+    response.late > 0 && "late",
+    activity.severeIssues > 0 && "severe",
+    active &&
+      expectedChecks &&
+      activity.completedPerimeterChecks === 0 &&
+      "noChecks",
+    active && indicators.publicContact.state === "missing" && "publicContact",
+    active && indicators.siteContact.state === "missing" && "siteContact",
+  ].filter((c) => typeof c === "string");
+}
+
+/**
+ * Unknown isn't Missing, so it gets its own list. A closed Site's contacts
+ * don't matter.
+ * @param {ReturnType<typeof split>} totals
+ * @param {ReturnType<typeof contacts>} indicators
+ * @param {{ active: boolean }} site
+ * @returns {string[]}
+ */
+function unknownsOf({ response }, indicators, { active }) {
+  return [
+    response.unknown > 0 && "response",
+    active && indicators.publicContact.state === "unknown" && "publicContact",
+    active && indicators.siteContact.state === "unknown" && "siteContact",
+  ].filter((c) => typeof c === "string");
+}
+
+// Must cover every key in LIST_FILTERS.sites; a test holds the two together.
+/** @type {Record<string, (row: Record<string, any>, value: string) => boolean>} */
+export const SITE_ROW_FILTERS = {
+  show: (row, value) =>
+    value === "all" ||
+    (value === "top" ? row.concerns : row.unknownEvidence).length > 0,
+  responseState: (row, value) => row.response[value] > 0,
+  publicContact: (row, value) => row.publicContact.state === value,
+  siteContact: (row, value) => row.siteContact.state === value,
+};
+
+/**
+ * Overview and its CSV keep the same Sites, with totals over only those.
+ * @param {Snapshot} snap
+ * @param {Interval} interval
+ * @param {SiteFilter} filter
+ * @param {Record<string, string>} filters
+ */
+function filteredSiteRows(snap, interval, filter, filters) {
+  const all = siteRows(snap, interval, matchSites(snap, filter));
+  const active = outcomeFilters(filters);
+  if (!active.length) return all;
+  const rows = all.rows.filter((row) =>
+    active.every(([name, value]) => SITE_ROW_FILTERS[name](row, value)),
+  );
+  const ids = new Set(rows.map((r) => r.siteId));
+  return { rows, total: sumDays(snap, interval, ids).total, ids };
+}
+
+// The filters that drop rows; All Sites keeps every row, so it isn't one.
+/**
+ * @param {Record<string, string>} filters
+ * @returns {[string, string][]}
+ */
+function outcomeFilters(filters) {
+  return Object.entries(filters).filter(
+    ([name, value]) => !(name === "show" && value === "all"),
+  );
 }
 
 // Must cover every key in SORTS.sites; a test holds the two together.
@@ -356,22 +477,30 @@ function sortSiteRows(rows, sort) {
  * @param {{ interval: Interval, filter: SiteFilter, list: ListQuery, now: number }} req
  */
 export function overview(snap, { interval, filter, list, now }) {
-  const sites = matchSites(snap, filter);
-  const { rows, total, ids } = siteRows(snap, interval, sites);
+  const { rows, total, ids } = filteredSiteRows(
+    snap,
+    interval,
+    filter,
+    list.filters,
+  );
   const sorted = sortSiteRows(rows, list.sort);
   const query = {
     kind: "overview",
     period: periodKey(interval),
     filter,
+    filters: list.filters,
     sort: list.sort,
     limit: list.limit,
   };
-  const { page, nextCursor } = paginate(sorted, list, query, snap);
+  const { page, nextCursor, offset } = paginate(sorted, list, query, snap);
   return {
     meta: meta(snap, interval, now),
     totals: split(total),
+    // Over the same Sites as totals, so its change explains those numbers.
     comparison: comparison(snap, interval, ids),
-    siteCount: sites.length,
+    siteCount: rows.length,
+    // A page reopened from its link numbers its rows from here.
+    offset,
     sites: page,
     nextCursor,
   };
@@ -385,12 +514,9 @@ export function overview(snap, { interval, filter, list, now }) {
  */
 function coveredDays(snap, interval) {
   if (snap.coverageStart === null) return [];
-  const start =
-    interval.startDay > snap.coverageStart
-      ? interval.startDay
-      : snap.coverageStart;
+  const start = laterDay(interval.startDay, snap.coverageStart);
   const today = addDays(pacificDateKey(snap.manifest.evaluatedAt), 1);
-  const end = interval.endDay < today ? interval.endDay : today;
+  const end = earlierDay(interval.endDay, today);
   return start < end ? dayKeysBetween(start, end) : [];
 }
 
@@ -835,7 +961,10 @@ export function exportRowCount(snap, { dataset, interval, filter, list }) {
     return issuesIn(snap, interval, filter, list.filters).length;
   if (dataset === "checks")
     return checksIn(snap, interval, filter, list.filters).length;
-  return matchSites(snap, filter).length;
+  // Outcome filters need each Site's totals; without them, counting is enough.
+  if (!outcomeFilters(list.filters).length)
+    return matchSites(snap, filter).length;
+  return filteredSiteRows(snap, interval, filter, list.filters).rows.length;
 }
 
 /**
@@ -863,7 +992,7 @@ export function exportRows(snap, { dataset, interval, filter, list }) {
         ["siteId", "checkId"],
       ),
     };
-  const { rows } = siteRows(snap, interval, matchSites(snap, filter));
+  const { rows } = filteredSiteRows(snap, interval, filter, list.filters);
   return {
     columns,
     rows: sortSiteRows(rows, list.sort).map((r) => ({

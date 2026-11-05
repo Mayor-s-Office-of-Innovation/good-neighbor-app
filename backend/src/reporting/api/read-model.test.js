@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { SORTS, parseListQuery, parsePeriodParams } from "./requests.js";
+import {
+  LIST_FILTERS,
+  SORTS,
+  parseListQuery,
+  parsePeriodParams,
+} from "./requests.js";
 import {
   checkDetail,
   dataQuality,
@@ -8,6 +13,7 @@ import {
   issueDetail,
   listChecks,
   listIssues,
+  SITE_ROW_FILTERS,
   overview,
   reportDataset,
   scopeOptions,
@@ -16,6 +22,8 @@ import {
 } from "./read-model.js";
 import { indexSnapshot } from "./snapshot.js";
 import { TEST_EVALUATED_AT, syntheticProjection } from "./test-projection.js";
+
+/** @typedef {import("./snapshot.js").Snapshot} Snapshot */
 
 const NOW = Date.parse("2026-11-04T20:00:00.000Z");
 const { manifest, tables } = syntheticProjection();
@@ -288,6 +296,237 @@ describe("overview", () => {
       now: NOW,
     });
     expect(res.sites.map((s) => s.siteId)).toEqual(["s3", "s1", "s2"]);
+  });
+
+  /**
+   * October's Overview with list filters, as the page asks for it.
+   * @param {Record<string, unknown>} params
+   * @param {Snapshot} [from]
+   */
+  const shown = (params, from = snap) =>
+    overview(from, {
+      interval: october,
+      filter: {},
+      list: list("sites", params),
+      now: NOW,
+    });
+
+  // s3 reopens with a public and a Site contact, so only its activity can flag it.
+  const s3Contacted = (/** @type {string} */ state = "available") =>
+    edited((t) => {
+      t.sites[2].status = "active";
+      const row = t.site_contacts.find((c) => c.siteId === "s3");
+      row.publicContact = state;
+      row.siteContact = state;
+    });
+
+  it("lists why each Site is a top concern, and what evidence is unknown", () => {
+    const rows = shown({}, s3Contacted("unknown")).sites;
+    expect(rows.map((r) => [r.siteId, r.concerns, r.unknownEvidence])).toEqual([
+      ["s1", ["overdue", "severe", "siteContact"], []],
+      ["s2", ["late", "publicContact", "siteContact"], []],
+      ["s3", [], ["publicContact", "siteContact"]],
+    ]);
+  });
+
+  it("shows only top concerns when asked, leaving out a quiet Site", () => {
+    expect(
+      shown({ show: "top" }, s3Contacted()).sites.map((r) => r.siteId),
+    ).toEqual(["s1", "s2"]);
+  });
+
+  it("doesn't count an Issue still awaiting its first response as a concern", () => {
+    // s1's only November Issue was created yesterday and awaits a response.
+    const s = edited((t) => {
+      for (const c of t.site_contacts) {
+        c.publicContact = "available";
+        c.siteContact = "available";
+      }
+    });
+    const res = overview(s, {
+      interval: november,
+      filter: {},
+      list: list("sites", { show: "top" }),
+      now: NOW,
+    });
+    expect(res.siteCount).toBe(0);
+  });
+
+  // Sites with a perimeter to walk, so no Checks can count against them.
+  const walked = (
+    /** @type {(t: Record<string, any[]>, m: Record<string, any>) => void} */ more = () => {},
+  ) =>
+    edited((t, m) => {
+      for (const site of t.sites) site.hasPerimeter = true;
+      more(t, m);
+    });
+
+  /**
+   * @param {Snapshot} from
+   * @param {typeof november} interval
+   */
+  const noChecks = (from, interval) =>
+    overview(from, { interval, filter: {}, list: list("sites"), now: NOW })
+      .sites.filter((r) => r.concerns.includes("noChecks"))
+      .map((r) => r.siteId);
+
+  it("flags an open Site with a perimeter and no Checks in the period", () => {
+    // s2 has no November Checks; s3 has none either, but it's closed.
+    expect(noChecks(walked(), november)).toEqual(["s2"]);
+  });
+
+  it("doesn't flag no Checks without a perimeter, before the data, or before the Site existed", () => {
+    const august = parsePeriodParams(
+      { period: "month", month: "2026-08" },
+      TEST_EVALUATED_AT,
+    );
+    const lateSite = walked((t) => {
+      t.sites[1].createdAt = "2026-11-20T17:00:00.000Z";
+    });
+    expect([
+      noChecks(snap, november),
+      noChecks(walked(), august),
+      noChecks(lateSite, november),
+    ]).toEqual([[], [], []]);
+  });
+
+  it("flags no Checks in a period the records start partway through", () => {
+    // Records start on 2026-09-15, a part day; s1 has no Checks after it.
+    const september = parsePeriodParams(
+      { period: "month", month: "2026-09" },
+      TEST_EVALUATED_AT,
+    );
+    expect(noChecks(walked(), september)).toEqual(["s1"]);
+  });
+
+  it("doesn't count the records' first day, which is likely a part day", () => {
+    const firstDay = parsePeriodParams(
+      { period: "custom", from: "2026-09-15", to: "2026-09-16" },
+      TEST_EVALUATED_AT,
+    );
+    expect(noChecks(walked(), firstDay)).toEqual([]);
+  });
+
+  it("waits for the day after a Site is added to end before flagging no Checks", () => {
+    // 20:00Z is noon Pacific, a part day; the evaluation day is 2026-11-04.
+    const addedOn = (/** @type {string} */ day) =>
+      walked((t) => {
+        t.sites[1].createdAt = `${day}T20:00:00.000Z`;
+      });
+    expect([
+      noChecks(addedOn("2026-11-03"), november),
+      noChecks(addedOn("2026-11-02"), november),
+    ]).toEqual([[], ["s2"]]);
+  });
+
+  it("doesn't fail an Overview over a Site whose added time doesn't parse", () => {
+    const garbled = walked((t) => {
+      t.sites[1].createdAt = "not a time";
+    });
+    expect(noChecks(garbled, november)).toEqual(["s2"]);
+  });
+
+  it("keeps every row for All Sites, however the filter is applied", () => {
+    const rows = overview(snap, {
+      interval: october,
+      filter: {},
+      list: list("sites"),
+      now: NOW,
+    }).sites;
+    expect(rows.every((r) => SITE_ROW_FILTERS.show(r, "all"))).toBe(true);
+  });
+
+  it("keeps a Site flagged only for no Checks in Top concerns", () => {
+    const quiet = walked((t) => {
+      for (const c of t.site_contacts) {
+        c.publicContact = "available";
+        c.siteContact = "available";
+      }
+    });
+    const rows = overview(quiet, {
+      interval: november,
+      filter: {},
+      list: list("sites", { show: "top" }),
+      now: NOW,
+    }).sites;
+    expect(rows.map((r) => [r.siteId, r.concerns])).toEqual([
+      ["s2", ["noChecks"]],
+    ]);
+  });
+
+  it("doesn't flag no Checks on the first day of a period, before any day has ended", () => {
+    const firstDay = walked((_, m) => {
+      m.evaluatedAt = "2026-11-01T17:00:00.000Z";
+    });
+    expect(noChecks(firstDay, november)).toEqual([]);
+  });
+
+  it("doesn't flag a closed Site's missing contacts", () => {
+    const res = shown({ siteContact: "missing" });
+    const s3 = res.sites.find((r) => r.siteId === "s3");
+    expect([s3?.concerns, s3?.unknownEvidence]).toEqual([[], []]);
+  });
+
+  it("doesn't list a closed Site's contacts as unknown", () => {
+    const closed = edited((t) => {
+      const row = t.site_contacts.find((c) => c.siteId === "s3");
+      row.publicContact = "unknown";
+      row.siteContact = "unknown";
+    });
+    const s3 = shown({}, closed).sites.find((r) => r.siteId === "s3");
+    expect(s3?.unknownEvidence).toEqual([]);
+  });
+
+  it("has a row filter for every Overview filter the request accepts", () => {
+    expect(Object.keys(SITE_ROW_FILTERS).sort()).toEqual(
+      Object.keys(LIST_FILTERS.sites).sort(),
+    );
+  });
+
+  it("compares periods over the Sites the filters keep, as totals do", () => {
+    const filtered = shown({ responseState: "late" });
+    const onlyKept = overview(snap, {
+      interval: october,
+      filter: { siteIds: filtered.sites.map((r) => r.siteId) },
+      list: list("sites", {}),
+      now: NOW,
+    });
+    expect(filtered.comparison).toEqual(onlyKept.comparison);
+    expect(filtered.comparison).not.toEqual(shown({}).comparison);
+  });
+
+  it("says where a page from a cursor starts", () => {
+    const first = shown({ limit: "2" });
+    const second = shown({ limit: "2", cursor: first.nextCursor });
+    expect([first.offset, second.offset]).toEqual([0, 2]);
+  });
+
+  it("shows Sites with unknown evidence when asked", () => {
+    expect(
+      shown({ show: "unknown" }, s3Contacted("unknown")).sites.map(
+        (r) => r.siteId,
+      ),
+    ).toEqual(["s3"]);
+  });
+
+  it("filters by one response state and by each contact indicator", () => {
+    expect(
+      [
+        { responseState: "late" },
+        { publicContact: "missing" },
+        { siteContact: "missing" },
+      ].map((params) => shown(params).sites.map((r) => r.siteId)),
+    ).toEqual([["s2"], ["s2", "s3"], ["s1", "s2", "s3"]]);
+  });
+
+  it("counts and totals only the Sites the filters keep", () => {
+    const res = shown({ responseState: "late" });
+    expect([
+      res.siteCount,
+      res.totals.response.late,
+      res.totals.response.overdue,
+      res.totals.activity.completedPerimeterChecks,
+    ]).toEqual([1, 1, 0, 1]);
   });
 });
 
@@ -647,6 +886,19 @@ describe("exportRows", () => {
     });
     expect(res.rows).toHaveLength(4);
     expect(res.columns).toContain("responseState");
+  });
+
+  it("writes the same Sites to the CSV as the filtered Overview shows", () => {
+    const req = {
+      dataset: /** @type {const} */ ("sites"),
+      interval: october,
+      filter: {},
+      list: list("sites", { responseState: "late" }),
+    };
+    expect([
+      exportRowCount(snap, req),
+      exportRows(snap, req).rows.map((r) => r.siteId),
+    ]).toEqual([1, ["s2"]]);
   });
 
   it("flattens Overview rows for the Sites CSV", () => {

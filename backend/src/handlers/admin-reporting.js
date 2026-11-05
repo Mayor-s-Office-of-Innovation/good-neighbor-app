@@ -61,6 +61,9 @@ const LIST_PARAMS = [
   "issueStatus",
   "category",
   "state",
+  "show",
+  "publicContact",
+  "siteContact",
   "sort",
   "dir",
 ];

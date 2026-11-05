@@ -1,7 +1,10 @@
 // The fake Insights reporting API for admin specs. Replies copy the shape of
 // backend/src/handlers/admin-reporting.js; a backend unit test compares the
 // two (reporting/api/insights-mock-shape.test.js), so a changed reply fails
-// there before a spec passes against an outdated fake.
+// there before a spec passes against an outdated fake. Overview follows the
+// request's period, filters and paging; Site replies follow the period, and
+// Issue lists only the period and siteIds, so specs can check what the page
+// asked for.
 
 const TZ = "America/Los_Angeles";
 const SITE_ID = "s1";
@@ -36,6 +39,81 @@ const SEPTEMBER = interval(
   "2026-10-01T07:00:00.000Z",
 );
 
+const EVALUATED_DAY = "2026-11-04";
+const EVALUATED_AT = "2026-11-04T19:00:00.000Z";
+const COVERAGE_START = "2026-01-01";
+
+/** @param {string} day @param {number} months */
+function addMonths(day, months) {
+  const [y, m] = day.split("-").map(Number);
+  const next = new Date(Date.UTC(y, m - 1 + months, 1));
+  return next.toISOString().slice(0, 10);
+}
+
+/** @param {string} day @param {number} months same day, or the month's last */
+function addMonthsSameDay(day, months) {
+  const [y, m, d] = day.split("-").map(Number);
+  const last = new Date(Date.UTC(y, m - 1 + months + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(y, m - 1 + months, Math.min(d, last)))
+    .toISOString()
+    .slice(0, 10);
+}
+
+/** @param {string} day @param {number} days */
+function addDays(day, days) {
+  const next = new Date(`${day}T00:00:00Z`);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next.toISOString().slice(0, 10);
+}
+
+/**
+ * The period a request names, as the handler resolves it, or an error code.
+ * Instants use 07:00Z, Pacific midnight in summer time, all year; pages
+ * read only the day keys.
+ * @param {URLSearchParams} params
+ * @returns {ReturnType<typeof interval> | { error: string }}
+ */
+function requestedPeriod(params) {
+  const kind = params.get("period") || "month";
+  /** @type {[string, string]} */
+  let days;
+  if (kind === "month") {
+    const month = params.get("month") || EVALUATED_DAY.slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(month)) return { error: "invalid_month" };
+    days = [`${month}-01`, addMonths(`${month}-01`, 1)];
+  } else if (kind === "year" || kind === "financialYear") {
+    const year = Number(params.get(kind === "year" ? "year" : "startYear"));
+    if (!Number.isInteger(year) || year < 2000)
+      return { error: "invalid_year" };
+    days =
+      kind === "year"
+        ? [`${year}-01-01`, `${year + 1}-01-01`]
+        : [`${year}-07-01`, `${year + 1}-07-01`];
+  } else if (kind === "custom") {
+    const from = params.get("from") || "";
+    const to = params.get("to") || "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to))
+      return { error: "invalid_day" };
+    if (to <= from) return { error: "empty_period" };
+    if (to > addMonthsSameDay(from, 12)) return { error: "period_too_long" };
+    days = [from, to];
+  } else return { error: "invalid_period" };
+  if (days[0] > EVALUATED_DAY) return { error: "future_period" };
+  const found = interval(
+    days[0],
+    days[1],
+    `${days[0]}T07:00:00.000Z`,
+    `${days[1]}T07:00:00.000Z`,
+  );
+  const incomplete = days[1] > EVALUATED_DAY;
+  return {
+    ...found,
+    kind,
+    incomplete,
+    observedTo: incomplete ? EVALUATED_AT : found.to,
+  };
+}
+
 /** @param {ReturnType<typeof interval> | null} period */
 const meta = (period) => ({
   apiVersion: "reporting-v1",
@@ -43,13 +121,14 @@ const meta = (period) => ({
   ruleVersion: "2026-11-04",
   snapshotId: "mock-snapshot",
   asOf: "2026-11-04T18:00:00.000Z",
-  evaluatedAt: "2026-11-04T19:00:00.000Z",
+  evaluatedAt: EVALUATED_AT,
   timezone: TZ,
   interval: period,
   dataQuality: {
-    state: "ok",
-    reasons: [],
-    coverageStart: "2026-01-01",
+    state: period && period.startDay < COVERAGE_START ? "partial" : "ok",
+    reasons:
+      period && period.startDay < COVERAGE_START ? ["before_coverage"] : [],
+    coverageStart: COVERAGE_START,
     excluded: {
       superseded: 0,
       deleted: 0,
@@ -115,6 +194,276 @@ const dims = {
   hasLocation: true,
 };
 
+/**
+ * The Sites Overview lists. Example Site is the Manage fixture's s1; the
+ * others cover each concern and an unknown, with their reasons as the
+ * handler would list them.
+ */
+const SITES = [
+  {
+    ...dims,
+    activity,
+    response,
+    maxSeverity: 4,
+    publicContact: contact("available"),
+    siteContact: contact("missing"),
+    concerns: ["overdue", "late", "severe", "siteContact"],
+    unknownEvidence: [],
+  },
+  {
+    ...dims,
+    siteId: "s2",
+    name: "Quiet Site",
+    status: "inactive",
+    providerId: "v2",
+    programId: "p2",
+    activity: {
+      completedPerimeterChecks: 0,
+      singleIssueReports: 0,
+      unfinishedChecks: 0,
+      issuesCreated: 0,
+      severeIssues: 0,
+    },
+    response: {
+      awaiting: 0,
+      overdue: 0,
+      onTime: 0,
+      late: 0,
+      unknown: 0,
+      notTimed: 0,
+    },
+    maxSeverity: null,
+    publicContact: contact("available"),
+    siteContact: contact("available"),
+    concerns: [],
+    unknownEvidence: [],
+  },
+  {
+    ...dims,
+    siteId: "s3",
+    name: "Harbor Example Site",
+    activity: {
+      completedPerimeterChecks: 40,
+      singleIssueReports: 1,
+      unfinishedChecks: 0,
+      issuesCreated: 2,
+      severeIssues: 0,
+    },
+    response: {
+      awaiting: 1,
+      overdue: 0,
+      onTime: 1,
+      late: 0,
+      unknown: 0,
+      notTimed: 0,
+    },
+    maxSeverity: 2,
+    publicContact: contact("available"),
+    siteContact: contact("available"),
+    concerns: [],
+    unknownEvidence: [],
+  },
+  {
+    ...dims,
+    siteId: "s4",
+    name: "Pier Example Site",
+    managerId: "pm2",
+    department: "Other Department",
+    activity: {
+      completedPerimeterChecks: 12,
+      singleIssueReports: 0,
+      unfinishedChecks: 2,
+      issuesCreated: 3,
+      severeIssues: 1,
+    },
+    response: {
+      awaiting: 0,
+      overdue: 0,
+      onTime: 1,
+      late: 1,
+      unknown: 1,
+      notTimed: 0,
+    },
+    maxSeverity: 5,
+    publicContact: contact("missing"),
+    siteContact: contact("unknown"),
+    concerns: ["late", "severe", "publicContact"],
+    unknownEvidence: ["response", "siteContact"],
+  },
+];
+
+/** @param {Record<string, number>} counts */
+const zeros = (counts) =>
+  Object.fromEntries(Object.keys(counts).map((k) => [k, 0]));
+// Its own zeros, frozen because rows share them: a write would change every
+// later total, so it throws instead.
+const ZERO = Object.freeze({
+  activity: Object.freeze(zeros(activity)),
+  response: Object.freeze(zeros(response)),
+});
+
+const collator = new Intl.Collator("en", {
+  sensitivity: "base",
+  numeric: true,
+});
+/**
+ * The handler's name order: as people read numbers, then exact text, then
+ * siteId, so equal names still come out the same way every time.
+ * @param {Record<string, any>} a
+ * @param {Record<string, any>} b
+ */
+const byName = (a, b) =>
+  collator.compare(a.name, b.name) ||
+  (a.name < b.name ? -1 : a.name > b.name ? 1 : 0) ||
+  (a.siteId < b.siteId ? -1 : a.siteId > b.siteId ? 1 : 0);
+
+/** @param {Record<string, any>} site @param {ReturnType<typeof interval>} period */
+const counted = (site, period) =>
+  period.endDay <= COVERAGE_START
+    ? {
+        ...site,
+        ...ZERO,
+        maxSeverity: null,
+        // Contacts are today's, so they still count with no activity data.
+        concerns: site.concerns.filter((/** @type {string} */ c) =>
+          c.endsWith("Contact"),
+        ),
+        unknownEvidence: site.unknownEvidence.filter(
+          (/** @type {string} */ u) => u.endsWith("Contact"),
+        ),
+      }
+    : site;
+
+/** @param {Record<string, any>[]} rows */
+function totalsOf(rows) {
+  /** @type {Record<string, Record<string, number>>} */
+  const sums = {
+    activity: { ...ZERO.activity },
+    response: { ...ZERO.response },
+  };
+  for (const row of rows)
+    for (const part of /** @type {const} */ (["activity", "response"]))
+      for (const [k, v] of Object.entries(row[part])) sums[part][k] += v;
+  return sums;
+}
+
+const SITE_FILTERS = [
+  "siteType",
+  "providerId",
+  "programId",
+  "department",
+  "managerId",
+  "status",
+];
+const SORT_VALUE = {
+  /** @param {any} r */ name: (r) => r.name,
+  /** @param {any} r */ overdueLate: (r) =>
+    r.response.overdue + r.response.late,
+  /** @param {any} r */ maxSeverity: (r) => r.maxSeverity,
+  /** @param {any} r */ completedPerimeterChecks: (r) =>
+    r.activity.completedPerimeterChecks,
+  /** @param {any} r */ issuesCreated: (r) => r.activity.issuesCreated,
+};
+
+/**
+ * Overview for a request, filtered, sorted and paged as the handler does.
+ * The cursor is the next row's index, which only the mock reads.
+ * @param {URLSearchParams} params
+ */
+function overviewReply(params) {
+  const period = requestedPeriod(params);
+  if ("error" in period) return { status: 400, json: { error: period.error } };
+  // An empty value is refused, as the handler refuses it, not defaulted.
+  const sort = params.has("sort") ? String(params.get("sort")) : "name";
+  if (!Object.hasOwn(SORT_VALUE, sort))
+    return { status: 400, json: { error: "invalid_sort" } };
+  const value = SORT_VALUE[/** @type {keyof typeof SORT_VALUE} */ (sort)];
+  const dir = params.has("dir")
+    ? params.get("dir")
+    : sort === "name"
+      ? "asc"
+      : "desc";
+  if (dir !== "asc" && dir !== "desc")
+    return { status: 400, json: { error: "invalid_dir" } };
+  const q = (params.get("q") || "").trim().toLowerCase();
+  const ids = params.get("siteIds")?.split(",");
+  const show = params.get("show") || "all";
+  const state = params.get("responseState");
+  const rows = SITES.map((site) => counted(site, period)).filter(
+    (r) =>
+      (!q ||
+        r.name.toLowerCase().includes(q) ||
+        r.siteId.toLowerCase().includes(q)) &&
+      (!ids || ids.includes(r.siteId)) &&
+      SITE_FILTERS.every((k) => !params.get(k) || params.get(k) === r[k]) &&
+      (show === "all" ||
+        (show === "top" ? r.concerns : r.unknownEvidence).length > 0) &&
+      (!state || r.response[state] > 0) &&
+      (!params.get("publicContact") ||
+        params.get("publicContact") === r.publicContact.state) &&
+      (!params.get("siteContact") ||
+        params.get("siteContact") === r.siteContact.state),
+  );
+  rows.sort((a, b) => {
+    const [x, y] = [value(a), value(b)];
+    // Blanks sort last either way, then by name, as the handler's do.
+    if (x === null || y === null)
+      return (x === null ? 1 : 0) - (y === null ? 1 : 0) || byName(a, b);
+    const order = typeof x === "string" ? collator.compare(x, y) : x - y;
+    return (dir === "asc" ? order : -order) || byName(a, b);
+  });
+  const limit = Number(params.get("limit") || 50);
+  const start = Number(params.get("cursor") || 0);
+  const page = rows.slice(start, start + limit);
+  return {
+    json: {
+      meta: meta(period),
+      totals: totalsOf(rows),
+      comparison,
+      siteCount: rows.length,
+      offset: start,
+      sites: page.map((r) => ({ ...r, manageHref: `/sites/${r.siteId}` })),
+      nextCursor: start + limit < rows.length ? String(start + limit) : null,
+    },
+  };
+}
+
+/**
+ * @param {string} siteId
+ * @param {URLSearchParams} params
+ */
+function siteReply(siteId, params) {
+  const site = SITES.find((s) => s.siteId === siteId);
+  if (!site) return { status: 404, json: { error: "site_not_found" } };
+  const period = requestedPeriod(params);
+  if ("error" in period) return { status: 400, json: { error: period.error } };
+  const row = counted(site, period);
+  const today = addDays(EVALUATED_DAY, 1);
+  const last = period.endDay < today ? period.endDay : today;
+  const first =
+    period.startDay > COVERAGE_START ? period.startDay : COVERAGE_START;
+  /** @type {Record<string, any>[]} */
+  const days = [];
+  for (let day = first; day < last; day = addDays(day, 1))
+    days.push({ day, ...ZERO.activity, ...ZERO.response });
+  // One busy day holds the period's counts, so the day table has a row to read.
+  if (days.length) Object.assign(days[0], row.activity, row.response);
+  const dimsOnly = Object.fromEntries(
+    Object.keys(dims).map((k) => [k, /** @type {any} */ (row)[k]]),
+  );
+  return {
+    json: {
+      meta: meta(period),
+      site: { ...dimsOnly, manageHref: `/sites/${siteId}` },
+      publicContact: row.publicContact,
+      siteContact: row.siteContact,
+      totals: { activity: row.activity, response: row.response },
+      comparison,
+      days,
+    },
+  };
+}
+
 const issue = {
   issueId: "t1",
   siteId: SITE_ID,
@@ -150,6 +499,75 @@ const check = {
   day: "2026-10-02",
   issues: 1,
 };
+
+/** Issues by Site: s1's one Issue, and one for s4 with no response record. */
+const ISSUES = [
+  { ...issue, siteName: "Example Site" },
+  {
+    ...issue,
+    issueId: "t9",
+    siteId: "s4",
+    siteName: "Pier Example Site",
+    category: "Debris",
+    severity: 2,
+    severityBand: "minor",
+    firstResponseAt: null,
+    responseState: "unknown",
+    responseBasis: null,
+    // No Check is on record for it, so its source isn't known either.
+    checkId: null,
+    source: "unknown",
+    latestActivityAt: issue.createdAt,
+  },
+];
+
+/**
+ * One Issue's record, with its Check when it has one, as issueDetail gives.
+ * @param {string} issueId
+ * @returns {{ status?: number, json: any }}
+ */
+function issueRecord(issueId) {
+  const listed = ISSUES.find((i) => i.issueId === issueId);
+  if (!listed) return { status: 404, json: { error: "issue_not_found" } };
+  // The list row carries its Site's name; the record names it under site.
+  const found = Object.fromEntries(
+    Object.entries(listed).filter(([key]) => key !== "siteName"),
+  );
+  const site = SITES.find((s) => s.siteId === found.siteId);
+  return {
+    json: {
+      meta: meta(null),
+      issue: found,
+      check: found.checkId === check.checkId ? check : null,
+      site: {
+        siteId: found.siteId,
+        name: site?.name ?? null,
+        manageHref: `/sites/${found.siteId}`,
+      },
+    },
+  };
+}
+
+/** @param {URLSearchParams} params */
+function issuesReply(params) {
+  const period = requestedPeriod(params);
+  if ("error" in period) return { status: 400, json: { error: period.error } };
+  const ids = params.get("siteIds")?.split(",");
+  const rows = ISSUES.filter(
+    (i) =>
+      (!ids || ids.includes(i.siteId)) &&
+      i.createdDay >= period.startDay &&
+      i.createdDay < period.endDay,
+  );
+  return {
+    json: {
+      meta: meta(period),
+      total: rows.length,
+      issues: rows,
+      nextCursor: null,
+    },
+  };
+}
 
 const siteRef = {
   siteId: SITE_ID,
@@ -197,48 +615,18 @@ const bucket = (values) => ({
  * @type {Record<string, { status?: number, json: any }>}
  */
 export const insightsReplies = {
-  "GET reporting/overview": {
-    json: {
-      meta: meta(OCTOBER),
-      totals: { activity, response },
-      comparison,
-      siteCount: 1,
-      sites: [
-        {
-          ...dims,
-          activity,
-          response,
-          maxSeverity: 4,
-          publicContact: contact("available"),
-          siteContact: contact("missing"),
-          manageHref: "/sites/s1",
-        },
-      ],
-      nextCursor: null,
-    },
-  },
-  "GET reporting/sites/{siteId}": {
-    json: {
-      meta: meta(OCTOBER),
-      site: { ...dims, manageHref: "/sites/s1" },
-      publicContact: contact("available"),
-      siteContact: contact("missing"),
-      totals: { activity, response },
-      comparison,
-      days: [{ day: "2026-10-01", ...metrics }],
-    },
-  },
-  "GET reporting/issues": {
-    json: {
-      meta: meta(OCTOBER),
-      total: 1,
-      issues: [{ ...issue, siteName: "Example Site" }],
-      nextCursor: null,
-    },
-  },
-  "GET reporting/issues/{issueId}": {
-    json: { meta: meta(null), issue, check, site: siteRef },
-  },
+  "GET reporting/overview": overviewReply(
+    new URLSearchParams("period=month&month=2026-10"),
+  ),
+  "GET reporting/sites/{siteId}": siteReply(
+    SITE_ID,
+    new URLSearchParams("period=month&month=2026-10"),
+  ),
+  "GET reporting/issues": issuesReply(
+    new URLSearchParams("period=month&month=2026-10"),
+  ),
+  // The reply the mock really sends, so the shape test checks it.
+  "GET reporting/issues/{issueId}": issueRecord("t1"),
   "GET reporting/checks": {
     json: {
       meta: meta(OCTOBER),
@@ -319,15 +707,14 @@ const ROUTES = Object.keys(insightsReplies).map((key) => {
 // can be tested.
 const KNOWN = [
   {
-    regex: /^reporting\/sites\/([^/]+)$/,
-    id: SITE_ID,
-    error: "site_not_found",
+    keys: ["GET reporting/checks/{checkId}"],
+    ids: ["c1"],
+    error: "check_not_found",
   },
-  { regex: /^reporting\/issues\/([^/]+)$/, id: "t1", error: "issue_not_found" },
-  { regex: /^reporting\/checks\/([^/]+)$/, id: "c1", error: "check_not_found" },
   {
-    regex: /^reports\/(?!insights$)([^/]+)$/,
-    id: "mock-job",
+    // POST reports/insights is its own route, so "insights" is never a job.
+    keys: ["GET reports/{jobId}", "DELETE reports/{jobId}"],
+    ids: ["mock-job"],
     error: "job_not_found",
   },
 ];
@@ -347,7 +734,7 @@ function decoded(part) {
 /**
  * The Insights reply for a request, or undefined when it isn't an Insights
  * route.
- * @param {{ method: string, path: string }} request path after /admin/v1/
+ * @param {{ method: string, path: string, search?: string }} request path after /admin/v1/
  * @returns {{ status?: number, json: any } | undefined}
  */
 export function insightsReply(request) {
@@ -355,11 +742,22 @@ export function insightsReply(request) {
     (r) => r.method === request.method && r.regex.test(request.path),
   );
   if (!found) return undefined;
-  for (const known of KNOWN) {
-    const match = known.regex.exec(request.path);
-    if (match && decoded(match[1]) !== known.id)
-      return { status: 404, json: { error: known.error } };
-  }
+  const params = new URLSearchParams(request.search || "");
   // A copy, so a spec that edits its reply can't change the next test's.
-  return JSON.parse(JSON.stringify(insightsReplies[found.key]));
+  /** @param {{ status?: number, json: any }} reply */
+  const copy = (reply) => JSON.parse(JSON.stringify(reply));
+  if (found.key === "GET reporting/overview")
+    return copy(overviewReply(params));
+  if (found.key === "GET reporting/issues") return copy(issuesReply(params));
+  if (found.key === "GET reporting/sites/{siteId}")
+    return copy(
+      siteReply(decoded(request.path.split("/").pop() || ""), params),
+    );
+  const id = decoded(request.path.split("/").pop() || "");
+  if (found.key === "GET reporting/issues/{issueId}")
+    return copy(issueRecord(id));
+  const known = KNOWN.find((k) => k.keys.includes(found.key));
+  if (known && !known.ids.includes(id))
+    return { status: 404, json: { error: known.error } };
+  return copy(insightsReplies[found.key]);
 }

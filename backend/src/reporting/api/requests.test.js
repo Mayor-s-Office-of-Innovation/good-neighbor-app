@@ -191,6 +191,28 @@ describe("parseListQuery", () => {
       parseListQuery("issues", { severityBand: "severe" }).filters,
     ).toEqual({ severityBand: "severe" });
   });
+
+  it("keeps Overview's concern and indicator filters", () => {
+    expect(
+      parseListQuery("sites", {
+        show: "top",
+        responseState: "overdue",
+        publicContact: "missing",
+        siteContact: "unknown",
+      }).filters,
+    ).toEqual({
+      show: "top",
+      responseState: "overdue",
+      publicContact: "missing",
+      siteContact: "unknown",
+    });
+  });
+
+  it("refuses a contact state that isn't one of the three", () => {
+    expect(
+      errorOf(() => parseListQuery("sites", { siteContact: "compliant" })),
+    ).toMatchObject({ code: "invalid_siteContact" });
+  });
 });
 
 describe("cursors", () => {

@@ -192,8 +192,15 @@ export const SORTS = Object.freeze({
 });
 
 /** Fixed values, so a typo is a 400, not an empty list; null is free text. */
-const LIST_FILTERS = Object.freeze({
-  sites: {},
+const CONTACT_STATES = ["available", "missing", "unknown"];
+export const LIST_FILTERS = Object.freeze({
+  // Unlike SITE_DIMENSIONS, these need each Site's totals for the period.
+  sites: {
+    show: ["all", "top", "unknown"],
+    responseState: RESPONSE_STATES,
+    publicContact: CONTACT_STATES,
+    siteContact: CONTACT_STATES,
+  },
   issues: {
     severityBand: ["minor", "moderate", "severe", "unknown"],
     responseState: RESPONSE_STATES,

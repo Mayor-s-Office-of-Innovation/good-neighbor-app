@@ -3,7 +3,7 @@ import { t } from "../../../../frontend/src/i18n/i18n.js";
 import { appMessageError } from "../../admin-error-messages.js";
 import { getAdminConfig } from "../../config.js";
 import { currentRoute, navigate } from "../../router.js";
-import { routeMode } from "./insights-routes.js";
+import { carriedQuery, routeMode } from "./insights-routes.js";
 import { insightsAvailable } from "./mode-memory.js";
 
 /**
@@ -33,8 +33,30 @@ export class AdminInsightsPage extends HTMLElement {
   session = /** @type {any} */ (null);
 
   connectedCallback() {
+    this.addEventListener("insights-url", this.urlChanged);
     this.render();
   }
+
+  disconnectedCallback() {
+    this.removeEventListener("insights-url", this.urlChanged);
+  }
+
+  // The app's guards read the new URL, and the tabs carry its period so switching pages keeps it.
+  urlChanged = () => {
+    const query = carriedQuery(location.search);
+    for (const link of this.querySelectorAll(
+      "#insights-page [data-insights-nav], #insights-page [data-insights-raw]",
+    )) {
+      const path = (link.getAttribute("href") ?? "").split("?")[0];
+      link.setAttribute("href", `${path}${query}`);
+    }
+    this.dispatchEvent(
+      new CustomEvent("page-rendered", {
+        bubbles: true,
+        detail: location.pathname + location.search,
+      }),
+    );
+  };
 
   /** @param {Route} route @returns {Promise<boolean>} false if the user left or it redirects */
   async open(route) {

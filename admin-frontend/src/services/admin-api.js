@@ -64,7 +64,10 @@ function adminFetch(path, init = {}) {
     parseAdminResponse(path, init).catch(async (error) => {
       if (error.name === "TimeoutError") {
         const { t } = await import("../../../frontend/src/i18n/i18n.js");
-        throw appMessageError(t("admin.errors.requestTimeout"));
+        const timeout = appMessageError(t("admin.errors.requestTimeout"));
+        // The message is a sentence; pages that word their own read the code.
+        /** @type {any} */ (timeout).code = "request_timeout";
+        throw timeout;
       }
       throw error;
     });
@@ -593,4 +596,41 @@ export const adminApi = {
       body: JSON.stringify({ sql }),
       signal,
     }),
+  // Insights (plan §6): fixed reporting endpoints on the analytics Lambda.
+  /** @param {Record<string, string>} params @param {AbortSignal} [signal] */
+  reportingOverview: (params, signal) =>
+    adminFetch(`/admin/v1/reporting/overview${queryOf(params)}`, { signal }),
+  /** @param {string} siteId @param {Record<string, string>} params @param {AbortSignal} [signal] */
+  reportingSite: (siteId, params, signal) =>
+    adminFetch(
+      `/admin/v1/reporting/sites/${encodeURIComponent(siteId)}${queryOf(params)}`,
+      { signal },
+    ),
+  /** @param {Record<string, string>} params @param {AbortSignal} [signal] */
+  reportingIssues: (params, signal) =>
+    adminFetch(`/admin/v1/reporting/issues${queryOf(params)}`, { signal }),
+  reportingScopeOptions: () => adminFetch("/admin/v1/reporting/scope-options"),
+  /** @param {Record<string, unknown>} body @param {string} idempotencyKey the server makes one report per key */
+  createInsightsReport: (body, idempotencyKey) =>
+    adminFetch("/admin/v1/reports/insights", {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "idempotency-key": idempotencyKey },
+    }),
+  /** @param {string} jobId */
+  getReportJob: (jobId) =>
+    adminFetch(`/admin/v1/reports/${encodeURIComponent(jobId)}`, {
+      cache: "no-store",
+    }),
+  /** @param {string} jobId */
+  cancelReportJob: (jobId) =>
+    adminFetch(`/admin/v1/reports/${encodeURIComponent(jobId)}`, {
+      method: "DELETE",
+    }),
 };
+
+/** @param {Record<string, string>} params @returns {string} "" or "?…" */
+function queryOf(params) {
+  const query = new URLSearchParams(params).toString();
+  return query ? `?${query}` : "";
+}

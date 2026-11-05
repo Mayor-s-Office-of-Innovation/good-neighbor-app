@@ -80,7 +80,7 @@ test("Settings pages mark neither tab", async () => {
   assert.equal(current(insightsTab), null);
 });
 
-test("opening Insights shows Overview, a data-time placeholder and no Manage reads", async () => {
+test("opening Insights shows Overview with no Manage Site or record reads", async () => {
   const { api } = await mountAdmin("/insights", { insights: true });
   assert.equal(heading(), t("admin.insights.overview"));
   assert.equal(current(insightsTab), "true");
@@ -88,13 +88,15 @@ test("opening Insights shows Overview, a data-time placeholder and no Manage rea
     current('#insights-nav a[data-insights-nav="overview"]'),
     "page",
   );
-  assert.equal(
-    text("[data-insights-freshness]"),
-    t("admin.insights.dataAsOfPending"),
-  );
   assert.ok(focused("#insights-title"));
-  // The session read is the only one Insights shares with Manage.
-  assert.deepEqual(api.calls("GET", /^(?!session$)/), []);
+  // Only the Provider and manager lists, for filter names; no Site or record reads.
+  assert.deepEqual(
+    api
+      .calls("GET", /^(?!session$|reporting\/)/)
+      .map((/** @type {any} */ c) => c.path + c.search)
+      .sort(),
+    ["program-managers", "providers"],
+  );
 });
 
 test("Insights pages keep the period when moving between them", async () => {
@@ -121,7 +123,7 @@ test("record pages name their record", async () => {
   assert.equal(current('a[data-insights-raw="checks"]'), "true");
   assert.equal(current('#insights-nav a[data-insights-nav="raw"]'), "true");
   await routeTo("/insights/sites/s1");
-  assert.equal(heading(), t("admin.insights.site"));
+  assert.equal(heading(), "Example Site");
   assert.equal(
     current('#insights-nav a[data-insights-nav="overview"]'),
     "true",
@@ -315,7 +317,7 @@ test("a focused element whose id isn't a valid selector doesn't break the return
   await click(link);
   await click("#insights-return");
   assert.equal(pageError(), "");
-  assert.equal(heading(), t("admin.insights.site"));
+  assert.equal(heading(), "Example Site");
   assert.ok(focused("#insights-title"));
 });
 
