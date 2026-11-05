@@ -296,6 +296,7 @@ export async function teardown() {
     mount = null;
     // A held request stays pending: rejecting it would run the removed app's
     // error paths, which a browser closing the page never does.
+    unfollow();
     current?.remove();
     current = null;
     // Whole-app mounts fill the module-wide adminCatalog and adminSession, which outlive <admin-app>.
@@ -367,7 +368,7 @@ export async function waitFor(predicate, { timeout = 1000 } = {}) {
   }
 }
 
-const { adminCatalog, createAdminCatalog } = await import(
+const { adminCatalog, createAdminCatalog, directorySites } = await import(
   "../src/admin-catalog.js"
 );
 const { adminSession, createAdminSession } = await import(
@@ -380,6 +381,10 @@ document.body.append(document.createElement("app-toasts"));
 
 /** @type {any} */
 let current = null;
+/** What <admin-app>'s error line would show for a page mounted alone. */
+let pageErrorLine = "";
+/** Stops a mountPage() `follow` listener, so it can't outlive its test. */
+let unfollow = () => {};
 
 // Open toasts hold 3.5 s timers that would keep each test process alive.
 function closeToasts() {
@@ -418,7 +423,7 @@ export async function attach(element) {
  * Requests outside `calls` fail the test; so do page errors, unless `recordErrors`.
  * @param {string} tag
  * @param {string} path
- * @param {{ calls: RegExp[], recordErrors?: boolean, role?: "compliance-supervisor" | "compliance-manager", data?: any, setup?: (api: any) => void, catalog?: AdminCatalog, session?: AdminSession }} options an earlier mount's `catalog` and `session` share its lists and role
+ * @param {{ calls: RegExp[], recordErrors?: boolean, follow?: string[], sites?: boolean, role?: "compliance-supervisor" | "compliance-manager", data?: any, setup?: (api: any) => void, catalog?: AdminCatalog, session?: AdminSession }} options an earlier mount's `catalog` and `session` share its lists and role
  */
 export async function mountPage(tag, path, options) {
   // The test file imports the page's module, so the page alone is loaded.
@@ -432,11 +437,11 @@ export async function mountPage(tag, path, options) {
   });
   options.setup?.(api);
   /** Seeded from the fake backend's own replies, so lists match what <admin-app> reads at start-up. @param {string} apiPath */
-  const read = (apiPath) =>
+  const read = (apiPath, search = "") =>
     api.reply({
       method: "GET",
       path: apiPath,
-      search: "",
+      search,
       body: undefined,
       headers: {},
     }).json;
@@ -451,13 +456,22 @@ export async function mountPage(tag, path, options) {
     });
   }
   if (!catalog) {
+    const programManagers = read("program-managers").programManagers;
     catalog = createAdminCatalog();
     catalog.freezeLists();
     catalog.seed({
       providers: read("providers").providers,
       programs: read("programs").programs,
       oversightOptions: read("oversight-options"),
-      programManagers: read("program-managers").programManagers,
+      programManagers,
+      // Only when the test passes sites: true, so an unexpected Sites read fails the test.
+      ...(options.sites && {
+        // Cloned like a fetch reply, since the catalog edits the Sites it stores.
+        sites: directorySites(
+          structuredClone(read("providers", "?directory=1").sites),
+          programManagers,
+        ),
+      }),
     });
   }
   const owner = mount;
@@ -467,15 +481,36 @@ export async function mountPage(tag, path, options) {
   current.catalog = catalog;
   current.session = session;
   // <admin-app> shows page-error events in its error line; with no app, the test reads or fails on them.
-  current.addEventListener("page-error", (/** @type {any} */ event) =>
-    options.recordErrors
-      ? errors.push(event.detail.message)
-      : owner?.errors.push(`page-error: ${event.detail.message}`),
-  );
-  // Open, attach, then focus, as <admin-app>'s openProgramPage() does, so renders match.
-  if (await current.open(currentRoute())) {
-    document.body.append(current);
-    current.focusOnOpen();
+  current.addEventListener("page-error", (/** @type {any} */ event) => {
+    pageErrorLine = event.detail.message;
+    // Pages send an empty message to clear <admin-app>'s error line; it isn't an error.
+    if (!event.detail.message) return;
+    if (options.recordErrors) errors.push(event.detail.message);
+    else owner?.errors.push(`page-error: ${event.detail.message}`);
+  });
+  const page = current;
+  // `follow` lists the routes <admin-app> opens this page for, so routeTo() can move between them.
+  if (options.follow) {
+    const follow = options.follow;
+    const routeChanged = async () => {
+      pageErrorLine = "";
+      const route = currentRoute();
+      if (!follow.includes(route.name)) {
+        page.leave();
+        page.remove();
+      } else if (await page.open(route)) {
+        if (page.isConnected) page.render();
+        else document.body.append(page);
+        page.focusOnOpen();
+      }
+    };
+    window.addEventListener("popstate", routeChanged);
+    unfollow = () => window.removeEventListener("popstate", routeChanged);
+  }
+  // Open, attach, then focus, as <admin-app> does on a first visit, so renders match.
+  if (await page.open(currentRoute())) {
+    document.body.append(page);
+    page.focusOnOpen();
   }
   await settle();
   return { page: /** @type {any} */ (current), api, errors, catalog, session };
@@ -504,6 +539,8 @@ export async function startMount(path, options) {
     releaseGates();
     await settle();
   }
+  unfollow();
+  pageErrorLine = "";
   current?.remove();
   closeToasts();
   adminCatalog.clear();
@@ -706,14 +743,14 @@ export function alertText() {
     .join(" ");
 }
 
-/** The page-level error banner's text, or "" when none shows. */
+/** The page-level error banner's text, or "" when none shows. A page mounted alone has no banner, so its last error stands in. */
 export function pageError() {
-  return (
-    document
-      .querySelector('#main-content > [role="alert"]')
-      ?.textContent.replace(/\s+/g, " ")
-      .trim() || ""
-  );
+  const banner = document.querySelector('#main-content > [role="alert"]');
+  return banner
+    ? banner.textContent.replace(/\s+/g, " ").trim()
+    : current?.localName === "admin-app"
+      ? ""
+      : pageErrorLine;
 }
 
 /** Move to a route the way main.js's router does, without a page load. @param {string} path */

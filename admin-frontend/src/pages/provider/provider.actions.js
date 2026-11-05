@@ -1,10 +1,9 @@
-// main.js adds these to AdminApp, so they can use this.state and render().
-import { adminCatalog } from "../../admin-catalog.js";
+// Provider actions, mixed into <admin-provider-page> so tests can mount it alone.
 import { actionFeedback } from "../../action-feedback.js";
 import { adminApi } from "../../services/admin-api.js";
 import { attachCreatedEnrollmentUrl } from "../../enrollment-links.js";
 import { beginEnrollmentRequest } from "../../enrollment-request.js";
-import { currentRoute, navigate } from "../../router.js";
+import { navigate } from "../../router.js";
 import { dataAttr } from "../../dom.js";
 import { formValue } from "../../form-state.js";
 import { removeProviderManagerAccess } from "../../provider-manager-directory.js";
@@ -16,13 +15,17 @@ export const providerActions = {
    * Load active providers visible to central admins.
    * @returns {Promise<void>}
    */
-  async loadProviders() {
+  async loadProviders(visit = this.navigationGeneration) {
     try {
       const data = await adminApi.listProviders();
-      adminCatalog.setProviders(data.providers || []);
-      this.state.error = "";
+      this.catalog.setProviders(data.providers || []);
+      // After the user leaves, the error line belongs to the page they went to.
+      if (visit !== this.navigationGeneration) return;
+      // An empty message clears <admin-app>'s error line after a good reload.
+      this.reportError(new Error(""));
     } catch (err) {
-      this.state.error = err.message;
+      if (visit !== this.navigationGeneration) return;
+      this.reportError(err);
     }
     this.render();
   },
@@ -34,13 +37,13 @@ export const providerActions = {
   async createProvider(form) {
     const feedback = actionFeedback("admin.toast.providerCreated");
     try {
-      const origin = location.pathname + location.search;
+      const visit = this.navigationGeneration;
       const name = new FormData(form).get("provider-name");
       if (!name) return;
       const result = await adminApi.createProvider(String(name));
       feedback.success();
-      adminCatalog.addProvider(result.provider);
-      if (location.pathname + location.search !== origin) return;
+      this.catalog.addProvider(result.provider);
+      if (visit !== this.navigationGeneration) return;
       const params = new URLSearchParams(window.location.search);
       if (params.get("returnTo") === "site-new") {
         navigate(
@@ -58,17 +61,20 @@ export const providerActions = {
     const feedback = actionFeedback("admin.toast.providerSaved");
     try {
       if (!this.state.provider) return;
+      const visit = this.navigationGeneration;
       const name = formValue(new FormData(form), "provider-name");
       const result = await adminApi.updateProvider(
         this.state.provider.providerId,
         { name },
       );
       feedback.success();
+      this.catalog.updateProvider(result.provider);
+      // A late reply must not merge into the provider the user opened next.
+      if (visit !== this.navigationGeneration) return;
       this.state.provider = {
         ...this.state.provider,
         ...result.provider,
       };
-      adminCatalog.updateProvider(result.provider);
       this.state.siteSaveMessage = "";
       this.render();
     } catch (error) {
@@ -257,7 +263,7 @@ export const providerActions = {
       if (!programId) return;
       await adminApi.assignProgramToProvider(providerId, programId);
       feedback.success();
-      adminCatalog.setPrograms((await adminApi.listPrograms()).programs || []);
+      this.catalog.setPrograms((await adminApi.listPrograms()).programs || []);
       this.render();
     } catch (error) {
       feedback.failure(error);
@@ -270,13 +276,14 @@ export const providerActions = {
    * @param {boolean} [renderNow]
    */
   async refreshProviderAccess(providerId, renderNow = true) {
+    const visit = this.navigationGeneration;
     const [managers, grants] = await Promise.all([
       adminApi.listProviderManagers(providerId),
       adminApi.listProviderManagerGrants(providerId),
     ]);
     if (
-      this.state.provider?.providerId !== providerId ||
-      !["provider", "provider-manager"].includes(currentRoute().name)
+      visit !== this.navigationGeneration ||
+      this.state.provider?.providerId !== providerId
     )
       return false;
     this.state.providerManagers = managers.managers || [];
@@ -285,10 +292,13 @@ export const providerActions = {
     if (renderNow) this.render();
     return true;
   },
-  async openProvider(providerId, updateUrl = true) {
-    if (updateUrl)
-      return navigate(`/providers/${encodeURIComponent(providerId)}`);
-    const path = location.pathname + location.search;
+  /**
+   * Read the provider and, for those who manage them, its managers; false when open() or leave() ran again first.
+   * @param {string} providerId
+   * @returns {Promise<boolean>}
+   */
+  async loadProvider(providerId) {
+    const visit = this.navigationGeneration;
     const canManage = this.state.capabilities.manageProviderManagers === true;
     const [data, managers, grants, people] = await Promise.all([
       adminApi.getProvider(providerId),
@@ -300,20 +310,16 @@ export const providerActions = {
         : Promise.resolve({ grants: [] }),
       canManage ? adminApi.listPeople() : null,
     ]);
-    if (location.pathname + location.search !== path) return;
+    if (visit !== this.navigationGeneration) return false;
     if (people) this.state.people = people.people || [];
     this.state.provider = data.provider;
     this.state.providerManagers = managers.managers || [];
     this.state.providerManagerEnrollments = managers.enrollments || [];
     this.state.providerManagerGrants = grants.grants || [];
     this.state.providerManagerGrantErrors = {};
-    this.state.site = null;
-    this.state.siteManager = null;
     this.state.siteSaveMessage = "";
-    this.state.siteSaveError = "";
     this.state.provider.sites = data.sites || [];
-    this.render();
-    queueMicrotask(() => this.querySelector("h1")?.focus());
+    return true;
   },
   /**
    * Deactivate a provider and return to the provider list.
@@ -323,11 +329,12 @@ export const providerActions = {
   async deactivateProvider(providerId) {
     const feedback = actionFeedback("admin.toast.providerDeactivated");
     try {
+      const visit = this.navigationGeneration;
       await adminApi.deactivateProvider(providerId);
       feedback.success();
-      this.state.provider = null;
-      this.state.site = null;
-      await this.loadProviders();
+      // Cleared only on the same visit, so a late reply can't blank another provider.
+      if (visit === this.navigationGeneration) this.state.provider = null;
+      await this.loadProviders(visit);
     } catch (error) {
       feedback.failure(error);
       throw error;

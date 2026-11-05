@@ -8,7 +8,6 @@ import { startErrorPresentation } from "../../frontend/src/components/error-noti
 import { mountConnectionBanner } from "../../frontend/src/components/connection-banner.js";
 startErrorPresentation();
 mountConnectionBanner();
-import { loadProviderManagerDirectory } from "./provider-manager-directory.js";
 import { localRoleEnabled, getLocalRole, setLocalRole } from "./local-role.js";
 import "../../frontend/src/components/app-toasts.js";
 import { complianceDraftAfterNavigation } from "./compliance-profile-draft.js";
@@ -34,7 +33,6 @@ import {
   signOutAdmin,
   startAdminLogin,
 } from "./services/admin-auth.js";
-import { adminApi } from "./services/admin-api.js";
 import { adminCatalog, START_UP_LISTS } from "./admin-catalog.js";
 import { adminSession } from "./admin-session.js";
 import { getAdminConfig } from "./config.js";
@@ -42,12 +40,8 @@ import { visibleRecords } from "./record-navigation.js";
 import { escapeHtml, formatTimestamp } from "./dom.js";
 import { currentRoute, navigate } from "./router.js";
 import { canEditSite, canEditSiteManager } from "./site-permissions.js";
-import {
-  myProfileView,
-  adminSettingsMenu,
-  administratorView,
-  newAdministratorView,
-} from "./pages/admin-user/admin-user.templates.js";
+import { adminSettingsMenu } from "./pages/admin-user/admin-user.templates.js";
+import "./pages/admin-user/admin-users-page.js";
 import {
   discardChangesDialog,
   entityBreadcrumb,
@@ -57,24 +51,13 @@ import {
   siteSectionNav,
   siteSectionView,
 } from "./pages/site/record.templates.js";
-import { directoryView } from "./pages/directory/directory.templates.js";
-import { siteImportView } from "./pages/site/import.templates.js";
+import "./pages/directory/directory-page.js";
+import "./pages/site/site-import-page.js";
 import { activeSiteSection } from "./pages/site/site-section.js";
-import {
-  newProviderView,
-  providerView,
-  providerManagerDetailView,
-} from "./pages/provider/provider.templates.js";
 import "./pages/program/program-page.js";
-import { newSiteFlowView } from "./pages/site/new.templates.js";
+import "./pages/provider/provider-page.js";
+import "./pages/site/new-site-page.js";
 import { syncSiteDetailsForm, trackDirtyForm } from "./form-state.js";
-import { bindAdminUsers } from "./pages/admin-user/admin-user.bindings.js";
-import {
-  bindDirectoryFilters,
-  bindDirectorySearch,
-} from "./pages/directory/directory.bindings.js";
-import { bindProvider } from "./pages/provider/provider.bindings.js";
-import { bindNewSiteFlow } from "./pages/site/new.bindings.js";
 import { bindSiteManager } from "./pages/site/manager.bindings.js";
 import {
   bindAddressLookup,
@@ -82,19 +65,13 @@ import {
 } from "./pages/site/record.bindings.js";
 import { bindSiteOversight } from "./pages/site/oversight.bindings.js";
 import { bindSiteCompliance } from "./pages/site/compliance.bindings.js";
-import { bindSiteImport } from "./pages/site/import.bindings.js";
 import { bindSiteAccess } from "./pages/site/access.bindings.js";
 
-import { adminUserActions } from "./pages/admin-user/admin-user.actions.js";
 import { siteManagerActions } from "./pages/site/manager.actions.js";
-import { newSiteActions } from "./pages/site/new.actions.js";
-import { siteImportActions } from "./pages/site/import.actions.js";
-import { providerActions } from "./pages/provider/provider.actions.js";
 import { siteOversightActions } from "./pages/site/oversight.actions.js";
 import { siteRecordActions } from "./pages/site/record.actions.js";
 import { siteComplianceActions } from "./pages/site/compliance.actions.js";
 import { siteAccessActions } from "./pages/site/access.actions.js";
-import { directoryActions } from "./pages/directory/directory.actions.js";
 import { mixActions } from "./mix-actions.js";
 /**
  * @typedef {import("./admin-types.js").AdminState} AdminState
@@ -123,27 +100,45 @@ function adminState(fields) {
   return /** @type {AdminState} */ (fields);
 }
 
+// One tag per route, so routes that share a page reuse its loaded lists.
+const ROUTE_PAGES = {
+  administrators: "admin-users-page",
+  "administrator-new": "admin-users-page",
+  profile: "admin-users-page",
+  "site-import": "admin-site-import-page",
+  "site-new": "admin-new-site-page",
+  sites: "admin-directory-page",
+  managers: "admin-directory-page",
+  providers: "admin-directory-page",
+  programs: "admin-directory-page",
+  "provider-managers": "admin-directory-page",
+  provider: "admin-provider-page",
+  "provider-new": "admin-provider-page",
+  "provider-manager": "admin-provider-page",
+};
+
 class AdminApp extends HTMLElement {
+  // One element per tag, reused on every visit, so a page keeps its lists between visits.
+  /** @type {Record<string, any>} */
+  routePages = {};
+
+  /** The directory page's unsaved 311 edits, which the leave prompt checks. */
+  get site311Batch() {
+    return this.routePages["admin-directory-page"]?.state.site311Batch;
+  }
+
   constructor() {
     super();
     /** @type {AdminState} */
     this.state = adminState({
-      adminUsers: [],
-      adminUserStatusFilter: "all",
-      adminUserMessage: "",
-      adminUserDirectoryMode: "",
       siteManagers: [],
       siteManager: null,
-      managerSearchFailed: false,
       provider: null,
-      providerManagers: [],
       providerManagerGrants: [],
-      providerManagerEnrollments: [],
       site: null,
       assignedUsers: [],
       assignedComplianceManagers: [],
       availableSiteUsers: [],
-      newSiteUsers: [],
       siteTerms: [],
       letterEmailHistory: [],
       letterEmailUncertain: false,
@@ -159,13 +154,6 @@ class AdminApp extends HTMLElement {
       authConfig: getAdminConfig(),
       authBusy: false,
       complianceProfileDraft: null,
-      profileMessage: "",
-      importPreview: null,
-      importResult: null,
-      importBusy: false,
-      importApplyKey: "",
-      importHistory: [],
-      importNotice: null,
       perimeterSaving: false,
       perimeterMessage: "",
       perimeterError: "",
@@ -178,6 +166,14 @@ class AdminApp extends HTMLElement {
     });
   }
 
+  /** Pages outlive a render, so drop them with the session: their unsaved edits belong to it. */
+  dropPages() {
+    for (const page of [...Object.values(this.routePages), this.programPage])
+      page?.leave();
+    this.routePages = {};
+    this.routePage = this.programPage = null;
+  }
+
   /**
    * Initialize admin auth state and load provider data when signed in.
    * @returns {Promise<void>}
@@ -187,23 +183,16 @@ class AdminApp extends HTMLElement {
     adminCatalog.invalidate("managers");
     // A reattached app reads the role again, so a failed read can't keep the old one.
     adminSession.clear();
+    this.dropPages();
     this.state = adminState({
-      adminUsers: [],
-      adminUserDirectoryMode: "",
-      adminUserStatusFilter: "all",
-      adminUserMessage: "",
       siteManagers: [],
       siteManager: null,
-      managerSearchFailed: false,
       provider: null,
-      providerManagers: [],
       providerManagerGrants: [],
-      providerManagerEnrollments: [],
       site: null,
       assignedUsers: [],
       assignedComplianceManagers: [],
       availableSiteUsers: [],
-      newSiteUsers: [],
       siteTerms: [],
       letterEmailHistory: [],
       letterEmailUncertain: false,
@@ -219,13 +208,6 @@ class AdminApp extends HTMLElement {
       authConfig: getAdminConfig(),
       authBusy: false,
       complianceProfileDraft: null,
-      profileMessage: "",
-      importPreview: null,
-      importResult: null,
-      importBusy: false,
-      importApplyKey: "",
-      importHistory: [],
-      importNotice: null,
       revocationMessage: "",
       physicalDeviceRevocationPreview: null,
       emergencyRevocationSites: [],
@@ -289,7 +271,10 @@ class AdminApp extends HTMLElement {
 
   /** @param {Event} event */
   showPageError = (event) => {
-    this.state.error = /** @type {CustomEvent<Error>} */ (event).detail.message;
+    const { message } = /** @type {CustomEvent<Error>} */ (event).detail;
+    // Pages clear the line after most actions; redrawing <admin-app> for no change loses focus.
+    if (message === this.state.error) return;
+    this.state.error = message;
     this.render();
   };
 
@@ -304,7 +289,7 @@ class AdminApp extends HTMLElement {
       !this.pendingSiteDestination
     )
       return;
-    this.state.site311Batch?.drafts.clear();
+    this.site311Batch?.drafts.clear();
     this.lastRenderedPath = "";
     navigate(this.pendingSiteDestination);
   };
@@ -391,7 +376,7 @@ class AdminApp extends HTMLElement {
   };
 
   hasUnsavedSiteChanges() {
-    if (this.state.site311Batch?.drafts.size || this.state.site311Batch?.saving)
+    if (this.site311Batch?.drafts.size || this.site311Batch?.saving)
       return true;
     if (this.querySelector("#admin-user-form[data-saving='true']")) return true;
     const siteDetailsForm = this.querySelector("#site-details-form");
@@ -430,7 +415,7 @@ class AdminApp extends HTMLElement {
   confirmSiteNavigation(destination) {
     // An invitation already in flight cannot be cancelled by leaving the page.
     if (this.querySelector("#admin-user-form[data-saving='true']")) return;
-    if (this.state.site311Batch?.saving) return;
+    if (this.site311Batch?.saving) return;
     this.pendingSiteDestination = destination;
     this.querySelector("#site-unsaved-dialog")?.showModal();
   }
@@ -449,14 +434,6 @@ class AdminApp extends HTMLElement {
       saved = await this.createSiteTerms(form);
     if (form.id === "site-perimeter-form")
       saved = await this.updatePerimeter(form);
-    if (form.id === "provider-manager-record-form") {
-      await this.saveProviderManager(form);
-      saved = true;
-    }
-    if (form.id === "provider-details-form") {
-      await this.updateProvider(form);
-      saved = true;
-    }
     if (form.id === "site-manager-record-form")
       saved = await this.saveSiteManager(form);
     if (saved && destination) navigate(destination);
@@ -477,27 +454,19 @@ class AdminApp extends HTMLElement {
       this.programPage?.leave();
       this.programPage = null;
     }
-    const needsSites = [
-      "sites",
-      "managers",
-      "manager",
-      "manager-new",
-      "providers",
-      "programs",
-      "provider-managers",
-      "profile",
-    ].includes(route.name);
+    // Pages stay alive between visits, so stop a read or save they started.
+    for (const [tag, page] of Object.entries(this.routePages))
+      if (tag !== ROUTE_PAGES[route.name]) page.leave();
+    if (!ROUTE_PAGES[route.name]) this.routePage = null;
+    const needsSites = ["manager", "manager-new"].includes(route.name);
     if (
       ![
         "system-status",
-        "administrators",
-        "administrator-new",
-        "provider-new",
-        "site-import",
         // The Program page calls ensure() on the catalog createPage() gives it.
         "program",
         "program-new",
-      ].includes(route.name)
+      ].includes(route.name) &&
+      !ROUTE_PAGES[route.name]
     ) {
       await adminCatalog.ensure([
         ...START_UP_LISTS,
@@ -505,14 +474,14 @@ class AdminApp extends HTMLElement {
       ]);
       if (location.pathname + location.search !== path) return;
     }
-    if (["administrator-new", "profile"].includes(route.name)) {
-      adminCatalog.setOversightOptions(await adminApi.listOversightOptions());
-      if (location.pathname + location.search !== path) return;
-    }
-    if (!["administrators", "administrator-new"].includes(route.name))
-      this.useCachedAdminUsers = false;
     if (route.name === "program" || route.name === "program-new")
       return this.openProgramPage(route);
+    if (
+      route.name === "provider-manager" &&
+      !this.state.capabilities.manageProviderManagers
+    )
+      return navigate("/sites", { replace: true });
+    if (ROUTE_PAGES[route.name]) return this.openRoutePage(route);
     if (route.name === "system-status") {
       await import("./system-status.js");
       if (location.pathname + location.search !== path) return;
@@ -529,61 +498,6 @@ class AdminApp extends HTMLElement {
       this.querySelector("#status-title")?.focus();
       return;
     }
-    if (
-      route.name === "provider-manager" ||
-      route.name === "provider-managers"
-    ) {
-      if (!this.state.capabilities.manageProviderManagers)
-        return navigate("/sites", { replace: true });
-      if (route.name === "provider-manager")
-        return this.openProvider(route.id, false);
-      const directory = await loadProviderManagerDirectory(
-        this.state.providers,
-        adminApi,
-      );
-      if (location.pathname + location.search !== path) return;
-      this.state.providerManagerDirectory = directory;
-    }
-    if (route.name === "profile") {
-      const result = await adminApi.getMyProfile();
-      if (location.pathname + location.search !== path) return;
-      adminSession.setProfile(result.profile);
-      this.state.profileMessage = "";
-      this.state.provider = null;
-      this.state.site = null;
-      this.state.siteManager = null;
-      this.render();
-      this.querySelector("#profile-title")?.focus();
-      return;
-    }
-    if (route.name === "administrator-new") {
-      if (!this.state.capabilities.manageAdminUsers)
-        return navigate("/sites", { replace: true });
-      this.useCachedAdminUsers = this.adminUsersLoaded === true;
-      this.state.provider = this.state.site = this.state.siteManager = null;
-      this.state.error = "";
-      this.render();
-      this.querySelector("#new-admin-user-title")?.focus();
-      return;
-    }
-    if (route.name === "administrators") {
-      if (!this.state.capabilities.manageAdminUsers)
-        return navigate("/sites", { replace: true });
-      if (!this.useCachedAdminUsers) {
-        const result = await adminApi.listAdminUsers();
-        if (location.pathname + location.search !== path) return;
-        this.state.adminUsers = result.users || [];
-        this.state.adminUserDirectoryMode = result.directoryMode || "cognito";
-        this.adminUsersLoaded = true;
-      }
-      this.useCachedAdminUsers = false;
-      this.state.provider = null;
-      this.state.site = null;
-      this.state.siteManager = null;
-      this.render();
-      this.querySelector("#administrators-title")?.focus();
-      return;
-    }
     if (route.name === "manager-new") {
       await this.loadSiteManagers();
       if (location.pathname + location.search !== path) return;
@@ -596,15 +510,7 @@ class AdminApp extends HTMLElement {
       return;
     }
     if (route.name === "manager") return this.openSiteManager(route.id);
-    if (
-      route.name === "managers" &&
-      !new URLSearchParams(location.search).get("q")?.trim()
-    )
-      await this.loadSiteManagers();
     if (location.pathname + location.search !== path) return;
-    if (route.name === "site-new") return this.openNewSiteFlow();
-    if (route.name === "site-import") return this.openSiteImport();
-    if (route.name === "provider") return this.openProvider(route.id, false);
     if (route.name === "site") return this.openSite(route.id, false, false);
     this.state.provider = null;
     this.state.site = null;
@@ -634,6 +540,29 @@ class AdminApp extends HTMLElement {
       void this.loadSearchManagers();
   }
 
+  /** @param {{ name: string, id?: string }} route */
+  async openRoutePage(route) {
+    const tag = ROUTE_PAGES[route.name];
+    const page = (this.routePages[tag] ||= this.createPage(tag));
+    // My profile requires a phone while <admin-app> holds an unsaved Site compliance draft.
+    page.complianceDraft = () => this.state.complianceProfileDraft;
+    // Creating a Site makes a running Site manager read stale, so the next read starts over.
+    page.dropManagerLoad = () => (this.managerDirectoryLoader = null);
+    // <admin-app> still holds the Site manager list and its read; the directory page shows them.
+    page.managers = () => this.state.siteManagers;
+    page.loadManagers = () => this.loadSiteManagers();
+    page.pathRendered = (path) => (this.lastRenderedPath = path);
+    page.reopenRoute = () => this.openRoute();
+    this.routePage = page;
+    // A newer visit replaced the page, so this one must not render or focus.
+    if (!(await page.open(route)) || page !== this.routePage) return;
+    this.state.provider = this.state.site = this.state.siteManager = null;
+    // Opening the invite form clears an error left from the admin users list.
+    if (route.name === "administrator-new") this.state.error = "";
+    this.render();
+    page.focusOnOpen();
+  }
+
   /** @param {string} tag */
   createPage(tag) {
     const page = /** @type {any} */ (document.createElement(tag));
@@ -647,6 +576,10 @@ class AdminApp extends HTMLElement {
     return page;
   }
 
+  /** Called when <admin-app>'s Site manager search read ends, so the directory page redraws its results. */
+  renderDirectoryResults() {
+    this.routePages["admin-directory-page"]?.renderDirectoryResults();
+  }
   /** Reattach every page's listeners, since render() replaces this element's HTML. */
   bind() {
     bindEnrollmentCodeExpiry(this, this.state);
@@ -680,10 +613,7 @@ class AdminApp extends HTMLElement {
       },
     );
     bindPhoneExtensions(this);
-    bindAdminUsers(this);
     bindAddressLookup(this);
-    bindDirectorySearch(this);
-    bindDirectoryFilters(this);
     this.querySelector("#sign-in")?.addEventListener("click", async () => {
       this.state.authBusy = true;
       this.state.error = "";
@@ -698,13 +628,12 @@ class AdminApp extends HTMLElement {
       this.state.hasToken = false;
       adminCatalog.clear();
       adminSession.clear();
+      this.dropPages();
       this.state.provider = null;
       this.state.site = null;
       clearEnrollmentCodeView(this.state);
       signOutAdmin();
     });
-    bindProvider(this);
-    bindNewSiteFlow(this);
     bindSiteManager(this);
     bindSiteRecord(this);
     bindSiteOversight(this);
@@ -712,10 +641,9 @@ class AdminApp extends HTMLElement {
       button.addEventListener("click", () => button.closest("dialog")?.close());
     });
     this.querySelectorAll(
-      "#admin-user-form, #site-oversight-form, #site-compliance-form, #site-perimeter-form, #site-manager-record-form, #provider-manager-record-form, #site-deliberate-311-form",
+      "#site-oversight-form, #site-compliance-form, #site-perimeter-form, #site-manager-record-form, #site-deliberate-311-form",
     ).forEach((form) => trackDirtyForm(/** @type {HTMLFormElement} */ (form)));
     bindSiteCompliance(this);
-    bindSiteImport(this);
     bindSiteAccess(this);
   }
 
@@ -728,7 +656,7 @@ class AdminApp extends HTMLElement {
     this.directorySearchDebounce?.cancel();
     this.managerSearchCleanup?.();
     const route = currentRoute();
-    const { provider, site, siteManager } = loading
+    const { site, siteManager } = loading
       ? {}
       : visibleRecords(this.state, route);
     // A signed-out user never saw the new Program form, only a Program record.
@@ -737,7 +665,9 @@ class AdminApp extends HTMLElement {
       this.programPage?.shows(route) &&
       (route.name !== "program-new" || this.state.hasToken)
         ? this.programPage
-        : null;
+        : !loading && this.state.hasToken && this.routePage?.shows(route)
+          ? this.routePage
+          : null;
     const siteSubview =
       new URLSearchParams(window.location.search).get("view") || "";
     const siteSection = activeSiteSection(
@@ -784,40 +714,13 @@ class AdminApp extends HTMLElement {
         ${this.routeReadFailed ? `<button class="btn-secondary" id="retry-page-load" type="button">${escapeHtml(t("common.retry"))}</button>` : ""}
         ${this.state.complianceProfileDraft?.phase === "recovery" ? `<button id="retry-compliance-draft" class="btn-secondary" type="button">${escapeHtml(t("admin.compliance.resumeDraft"))}</button>` : ""}
         ${
-          this.state.hasToken &&
-          !loading &&
-          ![
-            "provider",
-            "program",
-            "site",
-            "manager",
-            "provider-manager",
-          ].includes(route.name)
-            ? route.name === "system-status"
-              ? this.state.capabilities.manageAdminUsers
-                ? `<system-status-view view="${escapeHtml(route.id)}"></system-status-view>`
-                : ""
-              : route.name === "profile"
-                ? myProfileView(this.state)
-                : route.name === "administrator-new"
-                  ? newAdministratorView(this.state)
-                  : route.name === "administrators"
-                    ? administratorView(this.state.adminUsers, this.state)
-                    : route.name === "site-import"
-                      ? siteImportView(this.state)
-                      : route.name === "site-new"
-                        ? newSiteFlowView(this.state)
-                        : route.name === "provider-new"
-                          ? newProviderView()
-                          : route.name === "program-new"
-                            ? ""
-                            : route.name === "manager-new"
-                              ? siteManagerEditorView(this.state, null)
-                              : directoryView(this.state, route)
+          this.state.hasToken && !loading && route.name === "system-status"
+            ? this.state.capabilities.manageAdminUsers
+              ? `<system-status-view view="${escapeHtml(route.id)}"></system-status-view>`
+              : ""
             : ""
         }
-        ${provider ? providerView(this.state) : ""}
-        ${!loading && route.name === "provider-manager" && this.state.provider?.providerId === route.id ? providerManagerDetailView(this.state, route.membershipId) : ""}
+        ${this.state.hasToken && !loading && route.name === "manager-new" ? siteManagerEditorView(this.state, null) : ""}
         ${pageElement ? "<template data-page-slot></template>" : ""}
         ${siteManager ? siteManagerEditorView(this.state, siteManager) : ""}
         ${
@@ -894,16 +797,11 @@ class AdminApp extends HTMLElement {
 // Page actions use this.state and render(), so they live on AdminApp.
 mixActions(
   AdminApp,
-  adminUserActions,
   siteManagerActions,
-  newSiteActions,
-  siteImportActions,
-  providerActions,
   siteOversightActions,
   siteRecordActions,
   siteComplianceActions,
   siteAccessActions,
-  directoryActions,
 );
 
 customElements.define("admin-app", AdminApp);
