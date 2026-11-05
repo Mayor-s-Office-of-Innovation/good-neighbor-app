@@ -64,15 +64,18 @@ To find the source, check the two log markers:
 - `MediaRejected` (perimeter-check worker only) carries the safe IDs: `siteId`, `checkId`,
   `artifactId`, and `reason`. Use it when the burst is on perimeter checks.
 - `ImageRejected` (every Lambda that runs downscale) carries `reason`, `stage` (`signature`: the
-  leading bytes are not an accepted JPEG/PNG/WebP/HEIC, so sharp never parsed the file; `decode`:
+  leading bytes are not an accepted JPEG/PNG/WebP, or the file is HEIC/HEIF, so sharp never parsed
+  it; `decode`:
   sharp rejected it), `declaredType`, `signature`, `brand` (the container brand for HEIC-family
   files), and the byte size. It has no Site or upload IDs, so narrow it down by the Lambda log group
   and the time window. Find entries with CloudWatch Logs Insights:
   `filter marker = "ImageRejected" | stats count() by stage, reason, declaredType, brand`.
 
-A run of `stage: "signature"` entries with `declaredType: "image/heic"` and a `brand` outside the
-accepted list (`heic`, `heix`, `heim`, `heis`, `hevc`, `hevx`, `hevm`, `hevs`, `mif1`, `msf1`)
-points to a real camera format we need to add in `backend/src/media/downscale.js`.
+HEIC/HEIF photos are always rejected by downscale at the `signature` stage. The libvips bundled
+with sharp has no HEVC decoder, so it cannot decode a real HEIC photo, and the only HEIF it can
+decode is AVIF, which an uploader can disguise as HEIC. A steady stream of `declaredType:
+"image/heic"` rejections therefore means users are uploading HEIC photos on a path that needs them
+converted first, not an attack.
 
 `MediaQuotaExceeded` alarms after five rejected reservations in five minutes. Determine which
 check or device counter is near its conditional limit from the Site's

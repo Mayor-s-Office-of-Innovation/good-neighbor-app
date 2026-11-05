@@ -66,15 +66,21 @@ const JPEG_QUALITY = 80;
 const FLATTEN_BACKGROUND = { r: 255, g: 255, b: 255 };
 const MAX_INPUT_PIXELS = 40_000_000;
 const MAX_INPUT_EDGE = 12_000;
-/** @type {Record<string, string>} */
+/**
+ * Formats sharp may decode here. HEIF is deliberately absent: the prebuilt
+ * libvips bundled with sharp has an AV1 decoder (aom) but no HEVC decoder, so
+ * it cannot decode a real HEIC photo, and any "heif" it can decode is AVIF.
+ * The codec sharp reports comes from the container's brand labels, which the
+ * uploader controls, so it can't be used to tell the two apart.
+ * @type {Record<string, string>}
+ */
 const TYPE_BY_FORMAT = {
   jpeg: "image/jpeg",
   png: "image/png",
   webp: "image/webp",
-  heif: "image/heic",
 };
-/** ISO-BMFF major brands for HEIC/HEIF still images (phones use these). */
-const HEIF_BRANDS = new Set([
+/** ISO-BMFF brands that mean HEVC-coded HEIC/HEIF (phones use these). */
+const HEIC_BRANDS = new Set([
   "heic",
   "heix",
   "heim",
@@ -83,15 +89,42 @@ const HEIF_BRANDS = new Set([
   "hevx",
   "hevm",
   "hevs",
-  "mif1",
-  "msf1",
 ]);
+/**
+ * Generic HEIF brands. AVIF files use these too, so they only count as HEIC
+ * when the compatible-brand list also names a HEIC brand and no AVIF brand.
+ */
+const GENERIC_HEIF_BRANDS = new Set(["mif1", "msf1"]);
+const AVIF_BRANDS = new Set(["avif", "avis"]);
+/** Upper bound on the `ftyp` box we read, so a bogus size can't make us scan far. */
+const MAX_FTYP_BYTES = 1024;
+
+/**
+ * Read the ISO-BMFF `ftyp` box: the major brand and the compatible brands.
+ * @param {Buffer} bytes
+ * @returns {{ major: string, compatible: string[] } | undefined}
+ */
+function ftypBrands(bytes) {
+  if (bytes.length < 12 || bytes.subarray(4, 8).toString("latin1") !== "ftyp")
+    return undefined;
+  const major = bytes.subarray(8, 12).toString("latin1");
+  const size = bytes.readUInt32BE(0);
+  const end = Math.min(size, bytes.length, MAX_FTYP_BYTES);
+  /** @type {string[]} */
+  const compatible = [];
+  // Box layout: size(4) "ftyp"(4) major(4) minor version(4) compatible(4 each).
+  for (let offset = 16; offset + 4 <= end; offset += 4)
+    compatible.push(bytes.subarray(offset, offset + 4).toString("latin1"));
+  return { major, compatible };
+}
 
 /**
  * Identify an allowed image type from its leading bytes, before any decoder
  * sees them. sharp picks its decoder from the bytes, not the declared type, so
  * without this an SVG (or any other libvips format) labeled `image/jpeg` would
- * be parsed by that format's library. Only the four types we accept get past.
+ * be parsed by that format's library. HEIC is recognized (so rejections are
+ * labeled correctly) but downscaleImage never passes it to sharp; see
+ * TYPE_BY_FORMAT.
  * @param {Buffer} bytes
  * @returns {string | undefined} the matching content type, if any
  */
@@ -107,8 +140,17 @@ export function sniffImageType(bytes) {
     return "image/jpeg";
   if (ascii(0, 8) === "\x89PNG\r\n\x1a\n") return "image/png";
   if (ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP") return "image/webp";
-  if (ascii(4, 8) === "ftyp" && HEIF_BRANDS.has(ascii(8, 12)))
-    return "image/heic";
+  const brands = ftypBrands(bytes);
+  if (brands) {
+    const all = [brands.major, ...brands.compatible];
+    if (all.some((brand) => AVIF_BRANDS.has(brand))) return undefined;
+    if (HEIC_BRANDS.has(brands.major)) return "image/heic";
+    if (
+      GENERIC_HEIF_BRANDS.has(brands.major) &&
+      brands.compatible.some((brand) => HEIC_BRANDS.has(brand))
+    )
+      return "image/heic";
+  }
   return undefined;
 }
 
@@ -184,6 +226,12 @@ export async function downscaleImage(bytes, contentType) {
       throw new DownscaleError(
         `Undecodable image input (${contentType}): file signature ${sniffedType ?? "unrecognized"}`,
         sniffedType ? "image_type_mismatch" : "undecodable_input",
+      );
+    }
+    if (sniffedType === "image/heic") {
+      throw new DownscaleError(
+        `Undecodable image input (${contentType}): HEIC/HEIF is not decoded by the bundled sharp`,
+        "undecodable_input",
       );
     }
     stage = "decode";
