@@ -464,7 +464,7 @@ test("one device exposes labeled sessions and one revoke control", async ({
   await expect(page.locator('[data-revoke-team-device="bob"]')).toBeVisible();
 });
 
-test("mobile access header stays at the top and device actions stack above sessions", async ({
+test("mobile access header scrolls with the page and device actions stack above sessions", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 393, height: 852 });
@@ -567,6 +567,8 @@ test("mobile access header stays at the top and device actions stack above sessi
     }
     await page.evaluate(() => window.scrollTo(0, 400));
     const header = page.locator(".site-admin-header");
+    await expect(header).toHaveCSS("position", "static");
+    await page.evaluate(() => window.scrollTo(0, 0));
     await expect
       .poll(async () => Math.round((await header.boundingBox())?.y ?? -1))
       .toBe(0);

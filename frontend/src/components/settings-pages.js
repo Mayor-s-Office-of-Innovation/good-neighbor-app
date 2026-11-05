@@ -189,7 +189,9 @@ class FeedbackView extends HTMLElement {
       await sendFeedback({ message: text, site: this._siteId || undefined });
       showFeedbackSuccessToast();
       // Sent: return to the reopened settings menu, like Back.
-      this.querySelector("[data-menu-back]")?.click();
+      /** @type {HTMLButtonElement | null} */ (
+        this.querySelector("[data-menu-back]")
+      )?.click();
     } catch {
       // Keep the screen + the draft intact for retry.
       showFeedbackErrorToast();

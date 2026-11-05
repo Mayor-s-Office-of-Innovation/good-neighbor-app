@@ -19,9 +19,8 @@ import { getSite, hasAdminAccess, listBoundSites } from "../db.js";
 import { t } from "../i18n/i18n.js";
 import {
   currentRoute,
-  navigate,
   replaceRoute,
-  backOrNavigate,
+  navigate,
   forceNextRouteTransition,
 } from "../router.js";
 import { announceScreenHeading } from "../screen-focus.js";
@@ -377,7 +376,9 @@ class ReportsView extends ReportsScreen {
       } catch {
         /* storage unavailable: land on a plain home screen */
       }
-      backOrNavigate("/today");
+      // Reports drill-downs add history entries; exit to the settings menu
+      // rather than stepping back into a day report.
+      navigate("/today");
     });
     if (!this._accessReady) {
       for (const section of this.querySelectorAll(

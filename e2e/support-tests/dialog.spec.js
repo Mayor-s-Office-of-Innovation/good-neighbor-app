@@ -78,7 +78,7 @@ test("Help is a screen in the navigation stack and clears on leaving", async ({
   await page.locator("support-view textarea").fill("How do I finish my check?");
   await page.locator("[data-send]").click();
   await expect(page.locator(".support__turn")).toHaveCount(1);
-  await page.locator("support-view [data-back]").click();
+  await page.locator("support-view [data-menu-back]").click();
   await expect(page.locator("today-view")).toBeVisible();
   await expect(page.locator("support-view")).toHaveCount(0);
   await page.goForward();
@@ -191,7 +191,7 @@ test("leaving aborts pending answers and prevents stale updates", async ({
   await page.locator("[data-send]").click();
   await expect.poll(() => count).toBe(1);
   await expect(page.locator("[data-send]")).toBeDisabled();
-  await page.locator("support-view [data-back]").click();
+  await page.locator("support-view [data-menu-back]").click();
   await expect(page.locator("support-view")).toHaveCount(0);
   release?.();
   await page.goForward();
@@ -208,7 +208,7 @@ test("fits desktop and mobile and passes accessibility", async ({ page }) => {
         .evaluate((el) => el.scrollWidth <= el.clientWidth),
     ).toBe(true);
   }
-  await page.locator("support-view [data-back]").focus();
+  await page.locator("support-view [data-menu-back]").focus();
   await page.keyboard.press("Tab");
   await expect(page.locator("support-view textarea")).toBeFocused();
   const results = await new AxeBuilder({ page })
@@ -234,7 +234,7 @@ test("direct Help loads and refreshes work, with Home as the Back fallback", asy
   await expect(direct.locator("support-view h1")).toHaveText(
     t("support.title"),
   );
-  await direct.locator("support-view [data-back]").click();
+  await direct.locator("support-view [data-menu-back]").click();
   await expect(direct).toHaveURL(/\/today$/);
   await expect(direct.locator("today-view")).toBeVisible();
   await direct.close();
