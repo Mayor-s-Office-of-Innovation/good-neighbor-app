@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 const mocks = vi.hoisted(() => ({
   send: vi.fn(),
@@ -32,6 +32,7 @@ import {
   prepareCityHelpNote,
   deliverCityHelpNote,
   cityHelpNoteExists,
+  queueCityHelpNote,
 } from "./city-help-note.js";
 
 const payload = buildNoteUpdatePayload({
@@ -457,4 +458,95 @@ it("checkpoints suppression after claiming with the owned lease", async () => {
   expect(writes[1].ConditionExpression).toBe(
     "cityNoteStatus = :sending AND cityNoteLeaseExpiresAt = :lease",
   );
+});
+
+describe("queued-job options", () => {
+  it("marks a HUB rejection failed and alerts when the job won't retry", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const metrics = vi.spyOn(console, "log").mockImplementation(() => {});
+    mocks.update.mockRejectedValue(new Sf311Error("rejected", { code: "26" }));
+    const event = update();
+    expect(
+      await deliverCityHelpNote("table", "site1", event, {
+        terminal: false,
+        failOnRejection: true,
+      }),
+    ).toBe(false);
+    expect(event.cityNoteStatus).toBe("failed");
+    const failure = metrics.mock.calls
+      .map(([line]) => String(line))
+      .find((line) => line.includes("sf311_action_failure"));
+    expect(failure).toContain('"outcome":"needs_attention"');
+    // A failed note is never sent again.
+    mocks.update.mockClear();
+    expect(await deliverCityHelpNote("table", "site1", event)).toBe(false);
+    expect(mocks.update).not.toHaveBeenCalled();
+    log.mockRestore();
+    metrics.mockRestore();
+  });
+  it("reports uncertain sends as retrying", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const metrics = vi.spyOn(console, "log").mockImplementation(() => {});
+    mocks.update.mockRejectedValue(new Error("connection lost"));
+    const event = update();
+    expect(
+      await deliverCityHelpNote("table", "site1", event, { terminal: false }),
+    ).toBe(false);
+    expect(event.cityNoteStatus).toBe("unknown");
+    const failure = metrics.mock.calls
+      .map(([line]) => String(line))
+      .find((line) => line.includes("sf311_action_failure"));
+    expect(failure).toContain('"outcome":"retrying"');
+    log.mockRestore();
+    metrics.mockRestore();
+  });
+});
+
+describe("queueCityHelpNote", () => {
+  it("writes one job keyed by the update for an outstanding note", async () => {
+    await queueCityHelpNote("table", "site1", update());
+    const put = mocks.send.mock.calls[0][0];
+    expect(put).toBeInstanceOf(PutCommand);
+    expect(put.input.Item).toMatchObject({
+      pk: "SITE#site1",
+      sk: "SF311_JOB#t1#note-u1",
+      entityType: "SF311_OUTBOX",
+      status: "pending",
+      trigger: "city_note",
+      updateId: "u1",
+      updateOccurredAt: "2026-10-09T12:00:00Z",
+    });
+    expect(put.input.ConditionExpression).toBe("attribute_not_exists(pk)");
+  });
+  it("treats an existing job as already queued", async () => {
+    mocks.send.mockRejectedValueOnce(
+      Object.assign(new Error("exists"), {
+        name: "ConditionalCheckFailedException",
+      }),
+    );
+    await expect(
+      queueCityHelpNote("table", "site1", update()),
+    ).resolves.toBeUndefined();
+  });
+  it.each(["sent", "suppressed", "failed"])(
+    "skips a %s note",
+    async (status) => {
+      await queueCityHelpNote("table", "site1", {
+        ...update(),
+        cityNoteStatus: status,
+      });
+      expect(mocks.send).not.toHaveBeenCalled();
+    },
+  );
+  it("skips updates without a real City note", async () => {
+    await queueCityHelpNote("table", "site1", {
+      ...update(),
+      cityNotePayload: undefined,
+    });
+    await queueCityHelpNote("table", "site1", {
+      ...update(),
+      cityNotePayload: { ...payload, SRnum: "SIM-1" },
+    });
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
 });

@@ -4,10 +4,14 @@ import {
   UpdateCommand,
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
-const { send, execute, sendSqs } = vi.hoisted(() => ({
+const { send, execute, sendSqs, sendNote } = vi.hoisted(() => ({
   send: vi.fn(),
   sendSqs: vi.fn(),
   execute: vi.fn(),
+  sendNote: vi.fn(),
+}));
+vi.mock("../task-updates/city-help-note.js", () => ({
+  deliverCityHelpNote: sendNote,
 }));
 vi.mock("@aws-sdk/client-sqs", async (original) => ({
   ...(await original()),
@@ -925,4 +929,146 @@ it("does not create a silent ticket for an edited action on a later resolution j
   };
   await runJob({ ...message, jobSk: "SF311_JOB#task#resolved-edit" });
   expect(execute).not.toHaveBeenCalled();
+});
+
+describe("queued City notes (trigger: city_note)", () => {
+  const noteMessage = {
+    ...message,
+    jobSk: "SF311_JOB#task#note-u1",
+  };
+  const updateSk = "TASK#task#UPDATE#2026-11-04T12:00:00Z#u1";
+  /** @type {any} */
+  let note;
+  /** @type {any[]} */
+  let updates;
+  beforeEach(() => {
+    job = {
+      status: "dispatched",
+      trigger: "city_note",
+      updateId: "u1",
+      updateOccurredAt: "2026-11-04T12:00:00Z",
+    };
+    note = {
+      sk: updateSk,
+      taskId: "task",
+      updateId: "u1",
+      cityNotePayload: { SRnum: "123" },
+      cityNoteStatus: "pending",
+    };
+    // The note doesn't care what state the task is in.
+    task.status = "completing";
+    updates = [];
+    deliverAs("sent");
+    const mock = send.getMockImplementation();
+    send.mockImplementation(async (command) => {
+      if (command instanceof GetCommand && command.input.Key?.sk === updateSk)
+        return { Item: note && globalThis.structuredClone(note) };
+      if (
+        command instanceof UpdateCommand &&
+        !command.input.UpdateExpression?.includes("sf311Lease")
+      ) {
+        updates.push(command.input);
+        return {};
+      }
+      return mock?.(command);
+    });
+  });
+  /**
+   * Have delivery leave the note in `status`, as the real one does.
+   * @param {string} status
+   */
+  function deliverAs(status) {
+    sendNote.mockReset().mockImplementation(async (_t, _s, saved) => {
+      saved.cityNoteStatus = status;
+      return status === "sent";
+    });
+  }
+  /** @param {string} sk */
+  const writesTo = (sk) => updates.filter((input) => input.Key.sk === sk);
+  const jobStatus = () =>
+    writesTo(noteMessage.jobSk).at(-1)?.ExpressionAttributeValues;
+
+  it("sends the note under the task lock and completes the job", async () => {
+    await runJob(noteMessage);
+    expect(sendNote).toHaveBeenCalledWith(
+      "test",
+      "site",
+      expect.objectContaining({ updateId: "u1" }),
+      { terminal: false, failOnRejection: true },
+    );
+    expect(jobStatus()).toEqual({ ":status": "complete" });
+    expect(execute).not.toHaveBeenCalled();
+    expect(lock.sf311Lease).toBeUndefined();
+  });
+  it("does not send while another job holds the task lock", async () => {
+    const mock = send.getMockImplementation();
+    send.mockImplementation(async (command) => {
+      if (
+        command instanceof UpdateCommand &&
+        command.input.UpdateExpression?.startsWith("SET sf311Lease")
+      )
+        throw Object.assign(new Error("leased"), {
+          name: "ConditionalCheckFailedException",
+        });
+      return mock?.(command);
+    });
+    await expect(runJob(noteMessage)).rejects.toThrow("leased");
+    expect(sendNote).not.toHaveBeenCalled();
+  });
+  it("fails a rejected note without retrying", async () => {
+    deliverAs("failed");
+    await runJob(noteMessage);
+    expect(jobStatus()).toEqual({
+      ":status": "failed",
+      ":reason": "note_rejected",
+    });
+  });
+  it.each(["unknown", "pending"])(
+    "retries a %s note before the last delivery",
+    async (status) => {
+      deliverAs(status);
+      await expect(runJob(noteMessage, { receiveCount: 4 })).rejects.toThrow(
+        "City note not confirmed",
+      );
+      expect(writesTo(noteMessage.jobSk)).toEqual([]);
+      expect(writesTo(updateSk)).toEqual([]);
+    },
+  );
+  it("leaves an uncertain note unknown for an operator on the last delivery", async () => {
+    const metrics = vi.spyOn(console, "log").mockImplementation(() => {});
+    deliverAs("unknown");
+    await runJob(noteMessage, { receiveCount: 5 });
+    expect(jobStatus()).toEqual({
+      ":status": "failed",
+      ":reason": "note_delivery_unknown",
+    });
+    expect(writesTo(updateSk)).toEqual([]);
+    const failure = metrics.mock.calls
+      .map(([line]) => String(line))
+      .find((line) => line.includes("sf311_action_failure"));
+    expect(failure).toContain('"outcome":"needs_attention"');
+    expect(failure).toContain('"reason":"note_delivery_unknown"');
+    metrics.mockRestore();
+  });
+  it("marks a never-sent note failed on the last delivery", async () => {
+    const metrics = vi.spyOn(console, "log").mockImplementation(() => {});
+    deliverAs("pending");
+    await runJob(noteMessage, { receiveCount: 5 });
+    expect(jobStatus()).toEqual({
+      ":status": "failed",
+      ":reason": "note_not_sent",
+    });
+    expect(writesTo(updateSk)[0]).toMatchObject({
+      UpdateExpression: "SET cityNoteStatus = :failed",
+      ConditionExpression:
+        "cityNoteStatus = :pending AND attribute_not_exists(cityNoteLeaseExpiresAt)",
+    });
+    metrics.mockRestore();
+  });
+  it("abandons a job whose update is gone", async () => {
+    note = undefined;
+    await runJob(noteMessage);
+    expect(sendNote).not.toHaveBeenCalled();
+    expect(jobStatus()).toEqual({ ":status": "abandoned" });
+  });
 });

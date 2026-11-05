@@ -12,13 +12,18 @@ import {
   logCityNoteFailure,
   prepareCityHelpNote,
   deliverCityHelpNote,
+  queueCityHelpNote,
 } from "../task-updates/city-help-note.js";
+import { sf311NoteJob } from "../analysis/guidance/sf311-job.js";
 import { randomUUID } from "node:crypto";
 import { getConfig } from "../config.js";
 import { jsonResponse, readJsonBody } from "../http.js";
 import { deriveActorId, deriveSiteId } from "../lib/principal.js";
 import { headObject, setObjectTags } from "../s3.js";
-import { is311SubmissionEnabled } from "../analysis/guidance/app-actions.js";
+import {
+  is311AsyncFilingEnabled,
+  is311SubmissionEnabled,
+} from "../analysis/guidance/app-actions.js";
 import {
   buildTaskUpdateTransition,
   canUpdateTask,
@@ -140,6 +145,21 @@ export const getTaskUpdates = async (event) => {
   });
 };
 
+/**
+ * Hand a saved update's City note to the background 311 worker when notes are
+ * queued, or send it now. False means the inline send wasn't confirmed.
+ * @param {string} tableName
+ * @param {string} siteId
+ * @param {Record<string, any>} update
+ * @returns {Promise<boolean>}
+ */
+async function sendOrQueueCityHelpNote(tableName, siteId, update) {
+  if (!is311AsyncFilingEnabled(process.env))
+    return deliverCityHelpNote(tableName, siteId, update);
+  await queueCityHelpNote(tableName, siteId, update);
+  return true;
+}
+
 /** POST /v1/tasks/{taskId}/updates
  * @param {any} event
  * @param {boolean} [retry]
@@ -161,7 +181,7 @@ export const createTaskUpdate = async (event, retry = true) => {
     updateId,
   );
   if (priorUpdate) {
-    if (!(await deliverCityHelpNote(dynamoTable, siteId, priorUpdate)))
+    if (!(await sendOrQueueCityHelpNote(dynamoTable, siteId, priorUpdate)))
       return jsonResponse(502, {
         error: "City update not confirmed",
         updateSaved: true,
@@ -289,8 +309,26 @@ export const createTaskUpdate = async (event, retry = true) => {
   delete updated.resolutionUpdateId;
   delete updated.resolutionStartedAt;
   delete updated.resolutionLeaseExpiresAt;
+  // With queued notes on, the job commits with the update and the background
+  // 311 worker sends it; this request makes no HUB call.
+  const queueNote =
+    Boolean(update.cityNotePayload) && is311AsyncFilingEnabled(process.env);
   try {
     await writeTaskTransition({
+      ...(queueNote
+        ? {
+            jobs: [
+              sf311NoteJob({
+                tableName: dynamoTable,
+                siteId,
+                taskId,
+                updateId,
+                occurredAt: now,
+                now,
+              }),
+            ],
+          }
+        : {}),
       tableName: dynamoTable,
       siteId,
       taskId,
@@ -327,7 +365,7 @@ export const createTaskUpdate = async (event, retry = true) => {
         updateId,
       );
       if (legacyRetry) {
-        if (!(await deliverCityHelpNote(dynamoTable, siteId, legacyRetry)))
+        if (!(await sendOrQueueCityHelpNote(dynamoTable, siteId, legacyRetry)))
           return jsonResponse(502, {
             error: "City update not confirmed",
             updateSaved: true,
@@ -345,7 +383,7 @@ export const createTaskUpdate = async (event, retry = true) => {
     }
     throw error;
   }
-  if (!(await deliverCityHelpNote(dynamoTable, siteId, update)))
+  if (!queueNote && !(await deliverCityHelpNote(dynamoTable, siteId, update)))
     return jsonResponse(502, {
       error: "City update not confirmed",
       updateSaved: true,

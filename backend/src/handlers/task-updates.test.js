@@ -1,4 +1,8 @@
-import { GetCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  GetCommand,
+  PutCommand,
+  TransactWriteCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -1158,4 +1162,150 @@ it("does not register proof media when conversion fails", async () => {
       ([command]) => command instanceof TransactWriteCommand,
     ),
   ).toBe(false);
+});
+
+describe("City help notes with GNP_311_ASYNC_FILING", () => {
+  const filedTask = {
+    pk: "SITE#site-1",
+    sk: "TASK#task-1",
+    taskId: "task-1",
+    status: "in_progress",
+    updatedAt: "2026-10-26T19:41:25Z",
+    appActionResults: [
+      {
+        code: "create_311_ticket",
+        status: "submitted",
+        payload: { tickets: [{ srNum: "123" }] },
+      },
+    ],
+  };
+  /** @type {Record<string, any> | undefined} */
+  let saved;
+  /** @type {ReturnType<typeof vi.fn>} */
+  let fetch;
+  beforeEach(() => {
+    process.env.DYNAMO_TABLE = "tasks";
+    process.env.S3_UPLOAD_BUCKET = "uploads";
+    process.env.SQS_QUEUE_URL = "analysis";
+    vi.stubEnv("GNP_311_SUBMISSION_ENABLED", "true");
+    vi.stubEnv("GNP_311_ASYNC_FILING", "true");
+    saved = undefined;
+    fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    send.mockReset().mockImplementation(async (command) => {
+      const sk = command.input.Key?.sk || "";
+      if (command instanceof GetCommand) {
+        if (sk === "TASK#task-1") return { Item: filedTask };
+        if (sk === "#META") return { Item: { name: "Example Site" } };
+        if (sk.includes("#UPDATE_ID#") && saved)
+          return { Item: { updateSk: "TASK#task-1#UPDATE#saved#request-1" } };
+        if (sk === "TASK#task-1#UPDATE#saved#request-1") return { Item: saved };
+      }
+      return {};
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+  const noNote = () =>
+    createTaskUpdate(
+      event({
+        type: "note_photo_update",
+        notes: ["Resolved on site"],
+        photoKeys: [],
+        cityHelpNeeded: false,
+      }),
+    );
+
+  it("commits the note job with the update and makes no HUB call", async () => {
+    const response = await noNote();
+    expect(response.statusCode, response.body).toBe(201);
+    expect(fetch).not.toHaveBeenCalled();
+    const items = send.mock.calls.flatMap(
+      ([command]) => command.input.TransactItems || [],
+    );
+    const update = items.find(
+      (/** @type {any} */ row) => row.Put?.Item.entityType === "task_update",
+    )?.Put?.Item;
+    expect(update).toMatchObject({
+      cityHelpNeeded: false,
+      cityNoteStatus: "pending",
+      cityNotePayload: { SRnum: "123" },
+    });
+    const job = items.find(
+      (/** @type {any} */ row) => row.Put?.Item.entityType === "SF311_OUTBOX",
+    )?.Put;
+    expect(job.Item).toMatchObject({
+      sk: "SF311_JOB#task-1#note-request-1",
+      status: "pending",
+      trigger: "city_note",
+      updateId: "request-1",
+      updateOccurredAt: update.occurredAt,
+    });
+    expect(job.ConditionExpression).toBe("attribute_not_exists(pk)");
+  });
+
+  it("queues no job when City help is still needed", async () => {
+    const response = await createTaskUpdate(
+      event({
+        type: "note_photo_update",
+        notes: ["Still present"],
+        photoKeys: [],
+        cityHelpNeeded: true,
+      }),
+    );
+    expect(response.statusCode, response.body).toBe(201);
+    const items = send.mock.calls.flatMap(
+      ([command]) => command.input.TransactItems || [],
+    );
+    expect(
+      items.some(
+        (/** @type {any} */ row) => row.Put?.Item.entityType === "SF311_OUTBOX",
+      ),
+    ).toBe(false);
+  });
+
+  it("answers a replay from the saved update and makes sure its job exists", async () => {
+    saved = {
+      taskId: "task-1",
+      updateId: "request-1",
+      occurredAt: "saved",
+      type: "note_photo_update",
+      cityHelpNeeded: false,
+      cityNoteStatus: "unknown",
+      cityNotePayload: { SRnum: "123" },
+    };
+    const response = await noNote();
+    expect(response.statusCode, response.body).toBe(200);
+    expect(fetch).not.toHaveBeenCalled();
+    const put = send.mock.calls.find(
+      ([command]) => command instanceof PutCommand,
+    )?.[0];
+    expect(put.input.Item).toMatchObject({
+      sk: "SF311_JOB#task-1#note-request-1",
+      trigger: "city_note",
+      updateOccurredAt: "saved",
+    });
+    expect(
+      send.mock.calls.some(
+        ([command]) => command instanceof TransactWriteCommand,
+      ),
+    ).toBe(false);
+  });
+
+  it("still sends inline when the flag is off", async () => {
+    vi.stubEnv("GNP_311_ASYNC_FILING", "false");
+    const response = await noNote();
+    // No HUB config in this test, so the inline send can't be confirmed.
+    expect(response.statusCode).toBe(502);
+    const items = send.mock.calls.flatMap(
+      ([command]) => command.input.TransactItems || [],
+    );
+    expect(
+      items.some(
+        (/** @type {any} */ row) => row.Put?.Item.entityType === "SF311_OUTBOX",
+      ),
+    ).toBe(false);
+  });
 });
