@@ -209,6 +209,14 @@
     animation: none;
   }
 }
+/* Responsive: full width on phones; a centered 480px sheet on tablet and
+   desktop so the menu doesn't stretch across wide screens. */
+@media (min-width: 768px) {
+  .home-settings-menu {
+    width: min(480px, 100%);
+    margin-inline: auto;
+  }
+}
 
 .home-settings-head {
   display: flex;
