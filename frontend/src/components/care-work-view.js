@@ -20,12 +20,7 @@ import {
   careCompose,
   careDetail,
 } from "./care-work.templates.js";
-import {
-  listCareWork,
-  getCareWork,
-  getCarePhoto,
-  deleteCareWork,
-} from "../services/api.js";
+import { listCareWork, getCareWork, getCarePhoto } from "../services/api.js";
 import {
   enqueueCareSubmission,
   retryCareSubmission,
@@ -184,35 +179,6 @@ export class CareWorkView extends HTMLElement {
         navigate(`/care-work/${button.getAttribute("data-work")}`),
       ),
     );
-    this.querySelectorAll("[data-delete-work]").forEach((button) =>
-      button.addEventListener("click", () =>
-        this._confirmDelete(button.getAttribute("data-delete-work")),
-      ),
-    );
-  }
-  /** Same confirm-then-delete flow as public complaints. */
-  _confirmDelete(workId) {
-    const dialog = this.querySelector("#care-delete");
-    if (!(dialog instanceof HTMLDialogElement)) return;
-    const error = dialog.querySelector("[data-delete-error]");
-    error.hidden = true;
-    dialog.showModal();
-    const button = dialog.querySelector("#care-delete-confirm");
-    button.onclick = async () => {
-      button.disabled = true;
-      error.hidden = true;
-      try {
-        await deleteCareWork(workId);
-        this._remoteWork.delete(workId);
-        dialog.close();
-        await this._loadList();
-      } catch {
-        error.textContent = t("care.delete.error");
-        error.hidden = false;
-      } finally {
-        button.disabled = false;
-      }
-    };
   }
   async _loadList() {
     const version = ++this._listVersion;
@@ -390,7 +356,7 @@ export class CareWorkView extends HTMLElement {
       else replaceRoute("/care-work");
       // Back on the list the new entry is at the top; the toast is the
       // explicit receipt (close-the-loop: the effort got recorded).
-      showToast({ title: t("care.success") });
+      showToast({ title: t("care.success"), message: "" });
     } catch (error) {
       saving.error = t(
         error?.code === "care_conflict"

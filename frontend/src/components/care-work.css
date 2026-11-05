@@ -165,7 +165,8 @@ complaint-view:has(.complaints__list) .complaints {
 .complaints__new wa-icon {
   font-size: 0.9em;
 }
-.care-days {
+.care-days,
+.complaints__list {
   margin-top: 16px;
 }
 .care-list,
@@ -193,62 +194,12 @@ complaint-view:has(.complaints__list) .complaints {
 .care-row strong {
   overflow-wrap: anywhere;
 }
-.care-row__delete {
-  min-width: 44px;
-  min-height: 44px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-}
-.care-row__delete:focus-visible {
-  outline: 2px solid var(--brand-blue);
-  outline-offset: 2px;
-  border-radius: 50%;
-}
-
-/* Delete confirmation — self-contained (mirrors #complaint-delete) so the
-   dialog renders correctly when /care-work is opened directly, without
-   depending on another view's stylesheet being loaded. */
-#care-delete {
-  border: 0;
-  padding: 0;
-  width: min(400px, calc(100vw - 2rem));
-  border-radius: 24px;
-  background: var(--surface);
-}
-#care-delete::backdrop {
-  background: color-mix(in srgb, var(--text) 64%, transparent);
-}
-#care-delete .places-modal__card {
-  margin: 0;
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-}
-#care-delete h2,
-#care-delete p {
-  margin: 0;
-}
-#care-delete .places-modal__actions {
-  display: flex;
-  flex-direction: column;
-  gap: 0.625rem;
-}
-#care-delete .places-modal__actions button {
-  width: 100%;
-}
-#care-delete-confirm {
-  background: var(--wa-color-danger-fill-loud, var(--c-hazard));
-  color: var(--wa-color-danger-on-loud, #fff);
-}
 .care-row__actions {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 .care-options {
   display: grid;
@@ -453,5 +404,25 @@ complaint-view:has(.complaints__list) .complaints {
 @media (prefers-reduced-motion: reduce) {
   .care-row__status wa-spinner::part(spinner) {
     animation: none;
+  }
+}
+
+/* Let the whole sheet scroll when enlarged text or a short viewport makes
+   the fixed header too tall to leave a usable list pane. */
+complaint-view:has(.complaints__sticky[data-static]) {
+  display: block;
+  overflow-y: auto;
+}
+complaint-view:has(.complaints__sticky[data-static]) .complaints__list {
+  flex: none;
+  overflow: visible;
+}
+@media (max-height: 540px) {
+  care-work-view:has(.care-days) {
+    display: block;
+    overflow-y: auto;
+  }
+  care-work-view .care-days {
+    overflow: visible;
   }
 }

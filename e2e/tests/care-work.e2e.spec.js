@@ -233,7 +233,7 @@ test("proactive care lets the user remove an invalid photo after validation fail
   expect(work.photoCount).toBe(0);
 });
 
-test("proactive care groups all pages by Pacific date with capitalized headings and exact counts", async ({
+test("proactive care combines all pages into newest-first rows with an exact count", async ({
   page,
 }) => {
   await page.clock.setFixedTime(new Date("2026-10-16T07:30:00Z"));
@@ -263,17 +263,8 @@ test("proactive care groups all pages by Pacific date with capitalized headings 
   );
   await openLogs(page);
   await expect.poll(() => pages).toBe(1);
-  const groups = page.locator(".care-day");
-  await expect(groups).toHaveCount(2);
-  await expect(groups.nth(0).locator("h2")).toHaveText(
-    `${t("card.history.today")}1`,
-  );
-  await expect(groups.nth(1).locator("h2")).toHaveText(
-    `${t("card.history.yesterday")}2`,
-  );
-  await expect(groups.nth(1).locator("h2 span")).toHaveAttribute(
-    "aria-label",
-    t("care.count", { count: 2 }),
+  await expect(page.locator(".care-past-count")).toHaveText(
+    t("common.entries", { count: 3 }),
   );
   await expect(page.locator("[data-work]")).toHaveCount(3);
   expect(

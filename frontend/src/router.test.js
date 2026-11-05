@@ -364,13 +364,13 @@ describe("routeTransitionDirection", () => {
       expect(routeTransitionDirection(sheet, "/today")).toBe("dismiss");
     }
     expect(routeTransitionDirection("/complaints", "/complaints/new")).toBe(
-      "push",
+      "sheet-push",
     );
     expect(routeTransitionDirection("/complaints/new", "/complaints")).toBe(
-      "pop",
+      "sheet-pop",
     );
     expect(routeTransitionDirection("/care-work", "/care-work/new")).toBe(
-      "push",
+      "sheet-push",
     );
     // The capture flows close with an X: they fade in and out.
     expect(routeTransitionDirection("/today", "/check")).toBe("fade");

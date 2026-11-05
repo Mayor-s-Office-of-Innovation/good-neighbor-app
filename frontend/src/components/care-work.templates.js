@@ -105,55 +105,13 @@ export function careList(items, loading = false, offline = false) {
                               ${e(t("care.editRetry"))}
                             </button>`
                           : ""}
-                        ${item.status
-                          ? ""
-                          : html`<button
-                              type="button"
-                              class="care-row__delete"
-                              data-delete-work="${a(item.workId)}"
-                              aria-label="${a(
-                                t("care.delete.aria", {
-                                  label: careTitle(item),
-                                }),
-                              )}"
-                            >
-                              <wa-icon
-                                name="trash"
-                                aria-hidden="true"
-                              ></wa-icon>
-                            </button>`}
                       </div>
                     </li>`,
                 )
                 .join("")}
             </ul>`
           : `<p data-empty>${e(t("care.empty"))}</p>`}
-    </div>
-    <dialog
-      id="care-delete"
-      class="places-modal"
-      aria-labelledby="care-delete-title"
-    >
-      <form method="dialog" class="places-modal__card">
-        <div>
-          <h2 id="care-delete-title">${e(t("care.delete.title"))}</h2>
-          <p>${e(t("care.delete.text"))}</p>
-        </div>
-        <div
-          class="app-error app-error--panel"
-          data-delete-error
-          role="alert"
-          hidden
-        ></div>
-        <div class="places-modal__actions">
-          <button class="btn-ink" id="care-delete-confirm" type="button">
-            ${e(t("care.delete.confirm"))}</button
-          ><button class="btn-outline" type="submit">
-            ${e(t("common.cancel"))}
-          </button>
-        </div>
-      </form>
-    </dialog>`;
+    </div>`;
 }
 export function careOptions() {
   return html`${careHeader(t("care.choose"))}

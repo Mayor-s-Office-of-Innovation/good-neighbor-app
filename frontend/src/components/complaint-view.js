@@ -102,7 +102,10 @@ class ComplaintView extends HTMLElement {
     const header = this.querySelector(".complaints__sticky");
     if (!header) return;
     const height = header.getBoundingClientRect().height;
-    const viewport = window.visualViewport?.height || window.innerHeight;
+    const viewport = Math.min(
+      window.visualViewport?.height || window.innerHeight,
+      this.clientHeight || window.innerHeight,
+    );
     const safeTop = parseFloat(getComputedStyle(header).insetBlockStart) || 0;
     const fits = height <= Math.max(0, viewport - safeTop) / 2;
     header.toggleAttribute("data-static", !fits);
