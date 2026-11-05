@@ -964,8 +964,24 @@ refresh, and discovery compare it with the canonical Site value (missing means z
 
 `backend/src/analytics/entity-keys.js` defines the reporting allowlist by complete
 partition and sort-key shape. Task/check headers must have bare `TASK#<id>` or
-`CHECK#<id>` keys. Update events, update-ID pointers, task media, check update-media
-pointers and unknown children are excluded. Current ART keys and legacy ART keys
+`CHECK#<id>` keys. Update-ID pointers, task media, check update-media pointers and
+unknown children are excluded. Task update events are their own `task_updates`
+entity, so Insights can read first-response times; `DUP_LINK#` and `DUP_OVERRIDE#`
+rows are `duplicate_links` and `duplicate_overrides`, and `PROGRAM#…/#META` is
+`programs`. Site and compliance manager assignments stay out: they are removed by
+deleting the row, which an incremental export can't see. A `DUP_LINK#` row is deleted
+only in the same transaction that supersedes its task, so a stale link in the lake
+never merges a live Issue. Update notes and City note text are left out of
+`task_updates.raw`. The converter records its format version in
+`readings/_converter/state.json` (`FORMAT_VERSION` in `convert.js`). The first
+conversion after the version changes re-converts every `raw/` export still kept
+(30 days), once, oldest first and at each export's own time; a failed backfill, or
+one that stops with two minutes left, keeps the old version and resumes on the next
+export. Exports are incremental, so an item unchanged in those 30 days keeps only
+what its first conversion wrote. The backfill runs only when
+`ANALYTICS_BACKFILL_ENABLED=true`, which waits on the converter role being allowed
+to list `raw/` and read the state file.
+Current ART keys and legacy ART keys
 with a place segment remain supported. Assessment/condition and device shapes are
 also matched explicitly; identifiers need not be UUIDs.
 

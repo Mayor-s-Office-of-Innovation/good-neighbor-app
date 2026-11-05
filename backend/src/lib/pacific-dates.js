@@ -155,14 +155,24 @@ export function dayKeysBetween(start, endExclusive) {
  * @returns {string} ISO-8601 instant
  */
 export function pacificDayStartIso(dayKey) {
-  const wallMidnight = dayStamp(dayKey);
-  // First guess: Pacific midnight is 07:00 or 08:00 UTC. Measure the real
+  return pacificWallTimeIso(dayKey, 0);
+}
+
+/**
+ * @param {string} dayKey
+ * @param {number} wallMs ms after local midnight
+ * @returns {string} ISO-8601 instant
+ */
+export function pacificWallTimeIso(dayKey, wallMs) {
+  const wall = dayStamp(dayKey) + wallMs;
+  // First guess: Pacific is 7 or 8 hours behind UTC. Measure the real
   // offset at the guess and correct; measure once more in case the guess
-  // straddled a DST change.
-  let instant = wallMidnight + 8 * 3_600_000;
+  // straddled a DST change. A time skipped by spring-forward lands an hour
+  // later, as the clocks do.
+  let instant = wall + 8 * 3_600_000;
   for (let i = 0; i < 2; i += 1) {
     const p = numericParts(WALL_CLOCK_PARTS, new Date(instant));
-    const wall = Date.UTC(
+    const shown = Date.UTC(
       p.year,
       p.month - 1,
       p.day,
@@ -170,7 +180,7 @@ export function pacificDayStartIso(dayKey) {
       p.minute,
       p.second,
     );
-    instant -= wall - wallMidnight;
+    instant -= shown - wall;
   }
   return new Date(instant).toISOString();
 }

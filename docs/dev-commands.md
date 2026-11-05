@@ -456,6 +456,37 @@ CSV, use the explicit reset command. Existing local databases are not sanitized
 by changing this fixture; reset them explicitly to replace previously imported contacts. Leave `LOCAL_SITE_ADMIN_SEED` unset for the
 original device-login fixtures used by the existing local/E2E harness.
 
+### Insights test data (a synthetic year)
+
+Insights pages need a year of records to test against. One command makes a
+seeded year of synthetic staff-app records, loads them into DynamoDB Local,
+exports the table in the PITR export's file format, runs the real analytics
+converter and the Insights projection, and checks the projection's totals
+against what the generator meant to create:
+
+```sh
+npm run insights:data -w backend
+# options: -- --sites 24 --seed 410 --out <empty folder> --keep
+```
+
+It starts its own in-memory DynamoDB Local and a throwaway MinIO on ports 8461
+and 9461 (set `INSIGHTS_DDB_PORT` / `INSIGHTS_S3_PORT` to move them), so the dev
+stack's data is untouched. It needs Java 17+ and the binaries that
+`npm run local:services -w backend` installs. Extracts land in
+`backend/.local/insights-data/projection/` (`site_days`, `issues`,
+`site_contacts`, `sites` as Parquet, plus `manifest.json`); `check.json` lists
+any total that differs, read back from the written Parquet. Each run replaces
+its output folder, so `--out` refuses a folder this command didn't write.
+`--keep` leaves the emulators running.
+
+Sites follow the patterns a compliance manager looks for: steady Checks, missed
+days and gaps, repeated severe Issues, late and overdue responses, Issues open
+for months, missing contacts, mid-year openings and closures, and records with
+no response time. Each task carries a real Guidance rule and its response
+window, including "Call 911" rules with no window. The data spans both DST
+changes. Names are numbered, emails use `example.org` and phones use the
+`415-555-01xx` range kept for fiction.
+
 ### Compliance letter email testing
 
 Saving perimeter-check terms snapshots the selected site manager as the email
