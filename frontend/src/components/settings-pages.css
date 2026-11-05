@@ -23,7 +23,9 @@ attributions-view {
 
 .settings-page__title {
   margin: 0 0 0.75rem;
-  text-align: center;
+  /* Left-aligned on the same edge as the copy and rows (like Get help). */
+  padding-inline: 0.5rem;
+  text-align: start;
   font-size: clamp(1.5rem, 5vw, 1.9rem);
   font-weight: 700;
   line-height: 1.15;
