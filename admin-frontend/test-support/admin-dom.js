@@ -436,7 +436,7 @@ export async function mountPage(tag, path, options) {
     throw new Error(`${call} is not one of this page's calls`);
   });
   options.setup?.(api);
-  /** Seeded from the fake backend's own replies, so lists match what <admin-app> reads at start-up. @param {string} apiPath */
+  /** Seeded from the fake backend's own replies, so lists match what <admin-app> reads at start-up. @param {string} apiPath @param {string} [search] */
   const read = (apiPath, search = "") =>
     api.reply({
       method: "GET",
@@ -524,6 +524,21 @@ export async function leavePage(path) {
   window.history.pushState({}, "", path);
   current.leave();
   current.remove();
+  await settle();
+}
+
+/**
+ * What <admin-app> does when the user goes to `path` and the mounted page shows
+ * it too, such as another Site or tab: detach the page, open it again, reattach.
+ * @param {string} path
+ */
+export async function revisitPage(path) {
+  window.history.pushState({}, "", path);
+  current.remove();
+  if (await current.open(currentRoute())) {
+    document.body.append(current);
+    current.focusOnOpen();
+  }
   await settle();
 }
 
@@ -672,34 +687,6 @@ export async function submit(target) {
     new window.Event("submit", { bubbles: true, cancelable: true }),
   );
   await settle();
-}
-
-/**
- * Run `action` and return the one promise rejection nothing handled, so a
- * test can pin a known bug without failing on it. A second rejection throws,
- * so a new bug in the same action still fails the test.
- * @param {() => Promise<unknown>} action
- * @returns {Promise<any>}
- */
-export async function unhandledRejection(action) {
-  const listeners = process.listeners("unhandledRejection");
-  process.removeAllListeners("unhandledRejection");
-  /** @type {any[]} */
-  const caught = [];
-  process.on("unhandledRejection", (error) => caught.push(error));
-  try {
-    await action();
-    await settle();
-  } finally {
-    process.removeAllListeners("unhandledRejection");
-    for (const listener of listeners)
-      process.on("unhandledRejection", listener);
-  }
-  if (caught.length > 1)
-    throw new Error(
-      `More than one unhandled rejection: ${caught.map((error) => error?.message ?? error).join("; ")}`,
-    );
-  return caught[0];
 }
 
 // Toast objects, not text: two announcements with the same words still count twice.

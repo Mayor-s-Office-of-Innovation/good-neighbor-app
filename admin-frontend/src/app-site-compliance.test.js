@@ -5,16 +5,17 @@ import {
   $$,
   click,
   fill,
+  leavePage,
   missing,
-  pageError,
-  routeTo,
+  pageText,
+  revisitPage,
   settle,
   tick,
   toastCount,
   toastText,
   window,
 } from "../test-support/admin-dom.js";
-import { mountAdmin } from "../test-support/app-mount.js";
+import { openSitePage } from "../test-support/site-pages.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import {
   complianceData,
@@ -22,6 +23,7 @@ import {
   letterEmail,
 } from "../../e2e/admin-tests/site-compliance-helpers.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
+import { complianceDraftAfterNavigation } from "./compliance-profile-draft.js";
 
 // pages/site/compliance.templates.js and save-error-messages.js have no catalog key for this copy, so tests match their English.
 
@@ -59,7 +61,11 @@ describe("Site compliance", () => {
 
   /** @param {any} data @param {(api: any) => void} [setup] @param {any} [role] */
   const openCompliance = (data, setup, role) =>
-    mountAdmin(compliancePath, { data, setup, role });
+    openSitePage(compliancePath, { data, setup, role });
+
+  /** For tests that read the errors the page sends to <admin-app>'s error line. @param {any} data @param {(api: any) => void} [setup] */
+  const openComplianceRecordingErrors = (data, setup) =>
+    openSitePage(compliancePath, { data, setup, recordErrors: true });
 
   /** Advance the fake clock until a toast with `text` has shown. @param {string} text */
   async function untilToast(text, step = 1000) {
@@ -188,6 +194,64 @@ describe("Site compliance", () => {
     );
   });
 
+  test("a requirement saved after the user leaves keeps the address they went to", async () => {
+    const held = gate();
+    const { errors } = await openComplianceRecordingErrors(
+      complianceData(),
+      (api) =>
+        api.on("POST", /^sites\/s1\/terms$/, async () => {
+          await held.promise;
+          return { json: { jobId: "j1" } };
+        }),
+    );
+    await click("[data-require-checks]");
+    await click(save);
+    await leavePage("/sites");
+    held.release();
+    await settle();
+    assert.equal(url(), "/sites");
+    assert.match(toastText(), new RegExp(t("admin.toast.letterQueued")));
+    assert.deepEqual(errors, []);
+  });
+
+  test("leaving while a saved requirement rereads the Site shows no pending letter", async () => {
+    const held = gate();
+    const { api, errors, page } = await openComplianceRecordingErrors(
+      complianceData(),
+      (api) => api.on("POST", /^sites\/s1\/terms$/, { json: { jobId: "j1" } }),
+    );
+    api.on("GET", /^sites\/s1\?view=compliance$/, async () => {
+      await held.promise;
+      return undefined;
+    });
+    await click("[data-require-checks]");
+    await click(save);
+    await leavePage("/sites");
+    held.release();
+    await settle();
+    assert.ok(!page.textContent.includes(t("admin.letters.pending")));
+    assert.deepEqual(errors, []);
+  });
+
+  test("leaving while an ended requirement rereads the Site reports no failure", async () => {
+    const held = gate();
+    const { api, errors } = await openComplianceRecordingErrors(
+      complianceData({ active: true }),
+      (api) => api.on("POST", /^sites\/s1\/terms:close$/, { json: {} }),
+    );
+    api.on("GET", /^sites\/s1\?view=compliance$/, async () => {
+      await held.promise;
+      return undefined;
+    });
+    await click("[data-end-checks]");
+    await choose("confirm");
+    await leavePage("/sites");
+    held.release();
+    await settle();
+    assert.match(toastText(), new RegExp(t("admin.toast.requirementEnded")));
+    assert.deepEqual(errors, []);
+  });
+
   test("ending the requirement asks first and reloads the Site", async () => {
     const data = complianceData({ active: true });
     const { api } = await openCompliance(data, (api) =>
@@ -209,13 +273,15 @@ describe("Site compliance", () => {
   });
 
   test("a failed end keeps the requirement and shows the error", async () => {
-    await openCompliance(complianceData({ active: true }), (api) =>
-      api.fail("POST", /^sites\/s1\/terms:close$/, 500, "close_failed"),
+    const { errors } = await openComplianceRecordingErrors(
+      complianceData({ active: true }),
+      (api) =>
+        api.fail("POST", /^sites\/s1\/terms:close$/, 500, "close_failed"),
     );
     await click("[data-end-checks]");
     await choose("confirm");
     // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-    assert.equal(pageError(), "close_failed");
+    assert.deepEqual(errors, ["close_failed"]);
     assert.ok(!missing("[data-end-checks]"));
   });
 
@@ -290,62 +356,21 @@ describe("Site compliance", () => {
     });
   }
 
-  test("completing the profile returns to the requirement with its draft", async () => {
-    const data = complianceData();
-    data.profile = { ...data.profile, phone: "" };
-    await openCompliance(data, (api) =>
+  test("a period form left for My profile reopens from the page's own session", async () => {
+    const { session } = await openCompliance(complianceData(), (api) =>
       api.fail("POST", /^sites\/s1\/terms$/, 400, "generator_contact_required"),
     );
     await refuseForMissingContact();
     await click(`${saveError} a`);
-    assert.ok(!missing("#my-profile-form"));
-    await fill("#my-profile-form wa-input[name='phone']", "4155550123");
-    await click("#my-profile-form [data-save-button]");
-    await tick(16);
-    assert.match(url(), /section=compliance/);
-    assert.equal($(dialog).open, true);
-    assert.equal($(reason("1")).checked, true);
-    assert.equal($("wa-input[name='terms-expiry']").value, "2026-12-31");
-    assert.equal($("wa-number-input[name='terms-checks-per-day']").value, "4");
-  });
-
-  test("a failed return keeps the draft until the retry succeeds", async () => {
-    const data = complianceData();
-    const { api } = await openCompliance(data, (api) =>
-      api.fail("POST", /^sites\/s1\/terms$/, 400, "generator_contact_required"),
+    // What <admin-app> does to the draft as the user comes back from My profile.
+    session.complianceDraft = complianceDraftAfterNavigation(
+      session.complianceDraft,
+      compliancePath,
     );
-    await refuseForMissingContact();
-    await click(`${saveError} a`);
-    assert.ok(!missing("#profile-title"));
-    api.fail("GET", /^sites\/s1\?view=compliance$/, 503, "site_unavailable");
-    await routeTo(compliancePath);
-    assert.equal(
-      $("#retry-compliance-draft").textContent.trim(),
-      t("admin.compliance.resumeDraft"),
-    );
-    api.on("GET", /^sites\/s1\?view=compliance$/, () => ({
-      json: {
-        items: [meta(data.sites[0]), ...data.siteItems.s1],
-        permissions: { canEdit: true },
-      },
-    }));
-    await click("#retry-compliance-draft");
+    await revisitPage(compliancePath);
     await tick(16);
     assert.equal($(dialog).open, true);
     assert.equal($(reason("1")).checked, true);
-  });
-
-  test("leaving the profile for another page drops the draft", async () => {
-    await openCompliance(complianceData(), (api) =>
-      api.fail("POST", /^sites\/s1\/terms$/, 400, "generator_contact_required"),
-    );
-    await refuseForMissingContact();
-    await click(`${saveError} a`);
-    await routeTo("/sites");
-    await routeTo(compliancePath);
-    await tick(16);
-    assert.ok(!missing("#compliance-title"));
-    assert.equal($(dialog).open, false);
   });
 
   test("saving a requirement polls until the letter is generated and emailed", async () => {
@@ -387,7 +412,9 @@ describe("Site compliance", () => {
     });
     await click("[data-require-checks]");
     await click(save);
-    assert.ok($("admin-app").textContent.includes(t("admin.letters.pending")));
+    assert.ok(
+      $("admin-site-page").textContent.includes(t("admin.letters.pending")),
+    );
     const { body } = api.calls("POST", /^sites\/s1\/terms$/)[0];
     assert.deepEqual(
       [body.reasons, body.siteManagerUserId, body.requiredChecksPerDay],
@@ -600,7 +627,7 @@ describe("Site compliance", () => {
     });
     await click("[data-require-checks]");
     await click(save);
-    await routeTo("/sites");
+    await leavePage("/sites");
     await tick(1000);
     assert.equal(reads, 1);
     // Off the Site only the email check keeps going, now every 5 s.
@@ -624,7 +651,8 @@ describe("Site compliance", () => {
     // which has no full stop. No issue filed yet.
     assert.ok($(letters).textContent.includes("No past letters."));
     await openLetters();
-    assert.ok(!missing("admin-app [data-operation-error]"));
+    // With no <admin-app> to hold an inline notice, the failure shows as a toast.
+    assert.equal(toastCount(t("admin.toast.failed")), 1);
   });
 
   // compliance.templates.js hard-codes these labels; siteAdmin.letters.current and openPdf
@@ -682,11 +710,10 @@ describe("Site compliance", () => {
     );
     await openLetters();
     assert.equal(api.calls("GET", /view=letters/).length, 1);
-    await routeTo("/sites");
+    await leavePage("/sites");
     held.release();
     await settle();
-    assert.ok(missing("admin-app [data-operation-error]"));
-    assert.ok(!missing("#directory-search-input"));
+    assert.equal(toastCount(t("admin.toast.failed")), 0);
   });
 
   test("a letter list returning to an open panel reloads it", async () => {
@@ -695,9 +722,9 @@ describe("Site compliance", () => {
     const { api } = await openCompliance(data);
     await openLetters();
     assert.equal(api.calls("GET", /view=letters/).length, 1);
-    await click('a[href="/sites/s1?section=details"]');
+    await revisitPage("/sites/s1?section=details");
     assert.ok(!missing("#site-details-form"));
-    await click('a[href="/sites/s1?section=compliance"]');
+    await revisitPage(compliancePath);
     assert.equal(api.calls("GET", /view=letters/).length, 2);
     assert.equal($(letters).open, true);
   });
@@ -729,7 +756,7 @@ describe("Site compliance", () => {
     await openCompliance(data);
     assert.equal($(letters).open, false);
     await openLetters();
-    await routeTo("/sites/s3?section=compliance");
+    await revisitPage("/sites/s3?section=compliance");
     assert.equal($(letters).open, false);
   });
 
@@ -749,8 +776,8 @@ describe("Site compliance", () => {
     assert.ok(
       $(letters).textContent.includes(t("admin.letters.deliveryUncertain")),
     );
-    await click('a[href="/sites/s1?section=details"]');
-    await click('a[href="/sites/s1?section=compliance"]');
+    await revisitPage("/sites/s1?section=details");
+    await revisitPage(compliancePath);
     assert.equal(reads, 2);
     assert.ok(
       !$(letters).textContent.includes(t("admin.letters.deliveryUncertain")),
@@ -777,8 +804,8 @@ describe("Site compliance", () => {
     );
     await openLetters();
     assert.equal(api.calls("GET", /view=letters/).length, 1);
-    await routeTo("/sites/s3?section=compliance");
-    await routeTo(compliancePath);
+    await revisitPage("/sites/s3?section=compliance");
+    await revisitPage(compliancePath);
     held.release();
     await settle();
     assert.ok(
@@ -842,19 +869,19 @@ describe("Site compliance", () => {
     const data = complianceData({ active: true });
     data.sites.push({ ...data.sites[0], siteId: "s3", name: "North Site" });
     data.terms.push(...data.terms.map((term) => ({ ...term, siteId: "s3" })));
-    await openCompliance(data, (api) => {
+    const { errors } = await openComplianceRecordingErrors(data, (api) => {
       resendSentLetter(data)(api);
       api.fail("POST", /^sites\/s3\/terms:close$/, 500, "close_failed");
     });
     await openLetters();
     await click("[data-resend-letter]");
-    await routeTo("/sites/s3?section=compliance");
+    await revisitPage("/sites/s3?section=compliance");
     await untilToast(t("admin.letters.sent"), 5000);
     // A failed end redraws the whole page, showing any status message left in it.
     await click("[data-end-checks]");
     await choose("confirm");
     // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-    assert.equal(pageError(), "close_failed");
-    assert.ok(!$("admin-app").textContent.includes(t("admin.letters.sent")));
+    assert.deepEqual(errors, ["close_failed"]);
+    assert.ok(!pageText().includes(t("admin.letters.sent")));
   });
 });

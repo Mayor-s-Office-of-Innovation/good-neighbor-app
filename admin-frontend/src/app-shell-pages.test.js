@@ -22,8 +22,8 @@ import { failTimes } from "../../e2e/admin-tests/directory-helpers.js";
 import { providerData } from "../../e2e/admin-tests/providers-helpers.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 
-// What <admin-app> does around its pages and the Site record it still draws: the leave
-// prompt, and errors and reloads after the user leaves. mountPage() tests each page alone.
+// What <admin-app> does around its pages: the leave prompt, and errors and reloads
+// after the user leaves. mountPage() tests each page alone.
 
 const url = () => window.location.pathname + window.location.search;
 const pastImports = () => $('[aria-labelledby="past-imports-title"]');

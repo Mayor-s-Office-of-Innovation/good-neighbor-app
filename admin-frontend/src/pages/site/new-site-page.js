@@ -5,7 +5,7 @@ import { mixActions } from "../../mix-actions.js";
 import { listenForControls, pageView } from "../page-events.js";
 import { newSiteEvents } from "./new.bindings.js";
 import { newSiteActions } from "./new.actions.js";
-import { bindAddressLookup } from "./record.bindings.js";
+import { bindAddressLookup } from "./address-lookup.js";
 import { newSiteFlowView } from "./new.templates.js";
 
 /**
@@ -90,7 +90,7 @@ export class NewSitePage extends HTMLElement {
       },
     );
     // bindAddressLookup attaches to the new address fields after every render, as on the Site record.
-    bindAddressLookup(/** @type {any} */ (this));
+    bindAddressLookup(this);
     // Hide create links from anyone who can't create records, as <admin-app> does.
     if (this.session.capabilities.createEntities) return;
     this.querySelectorAll(

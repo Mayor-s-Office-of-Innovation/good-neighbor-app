@@ -1,10 +1,8 @@
-// main.js adds these to AdminApp, so they can use this.state and render().
+// Site compliance actions, mixed into the Site page so they share its state.
 import { actionFeedback, notifyAdmin } from "../../action-feedback.js";
 import { adminApi } from "../../services/admin-api.js";
 import { controlValue, selectedComplianceReasons } from "../../form-state.js";
-import { currentRoute } from "../../router.js";
 import { letterEmailProgress } from "../../admin-save-state.js";
-import { bindLetterActions } from "./compliance.bindings.js";
 import { siteLettersView } from "./compliance.templates.js";
 import { t } from "../../../../frontend/src/i18n/i18n.js";
 
@@ -15,7 +13,8 @@ export const siteComplianceActions = {
       if (!this.state.site) return false;
       const reasons = selectedComplianceReasons(form);
       const siteId = this.state.site.siteId;
-      const queued = await adminApi.createSiteTerms(this.state.site.siteId, {
+      const visit = this.visit;
+      const queued = await adminApi.createSiteTerms(siteId, {
         reasons,
         siteManagerUserId: controlValue(form, "terms-site-manager-id"),
         requiredChecksPerDay: Number(
@@ -24,12 +23,14 @@ export const siteComplianceActions = {
         periodEnd: controlValue(form, "terms-expiry"),
       });
       feedback.success("admin.toast.letterQueued", "info");
+      // The letter is queued; the page the user went to keeps its own URL and reads.
+      if (visit !== this.visit) return true;
       window.history.replaceState(
         {},
         "",
         `/sites/${encodeURIComponent(siteId)}?section=compliance`,
       );
-      await this.openSite(siteId, false, true, false);
+      if (!(await this.reloadSite(siteId, visit, false))) return true;
       this.state.expandedLettersSiteId = siteId;
       this.state.siteSaveMessage = t("admin.letters.pending");
       this.render();
@@ -56,22 +57,22 @@ export const siteComplianceActions = {
     }
   },
   async loadSiteLetters(siteId, more = false) {
-    const generation = this.siteLoadGeneration;
-    const path = location.pathname + location.search;
+    const visit = this.visit;
+    // Each openSite() makes a new controller, so a letters read started before a reload is stale.
+    const siteRead = this.siteReadController;
     if (
       this.lettersLoading?.siteId === siteId &&
-      this.lettersLoading.generation === generation &&
-      this.lettersLoading.path === path
+      this.lettersLoading.visit === visit &&
+      this.lettersLoading.siteRead === siteRead
     )
       return;
-    const request = { siteId, generation, path };
+    const request = { siteId, visit, siteRead };
     this.lettersLoading = request;
     const isCurrent = () =>
       this.lettersLoading === request &&
-      this.siteLoadGeneration === generation &&
-      location.pathname + location.search === path &&
-      this.state.site?.siteId === siteId &&
-      currentRoute().name === "site";
+      this.visit === visit &&
+      this.siteReadController === siteRead &&
+      this.state.site?.siteId === siteId;
     try {
       const result = await adminApi.getSiteLetters(
         siteId,
@@ -110,7 +111,6 @@ export const siteComplianceActions = {
     const template = document.createElement("template");
     template.innerHTML = siteLettersView(this.state);
     panel.replaceWith(template.content.firstElementChild);
-    bindLetterActions(this);
     this.applyCapabilities();
     if (focusSelector) {
       const replacement = this.querySelector(
@@ -123,15 +123,16 @@ export const siteComplianceActions = {
     }
   },
   async refreshPendingComplianceLetter(siteId) {
+    const visit = this.visit;
     for (let attempt = 0; attempt < 12; attempt++) {
       await new Promise((resolve) =>
         setTimeout(resolve, Math.min(1000 * (attempt + 1), 5000)),
       );
-      if (this.state.site?.siteId !== siteId || currentRoute().name !== "site")
-        return;
+      if (visit !== this.visit || this.state.site?.siteId !== siteId) return;
       if (document.hidden) continue;
       try {
         const result = await this.readLetterStatus(siteId);
+        if (visit !== this.visit) return;
         const latest = result.items?.find((item) => item.sk === "#META");
         if (!latest || latest.letterState === "draft_pending") continue;
         this.state.site = { ...this.state.site, ...latest };
@@ -218,9 +219,10 @@ export const siteComplianceActions = {
     try {
       if (!this.state.site) return;
       const siteId = this.state.site.siteId;
+      const visit = this.visit;
       await adminApi.endSiteTerms(siteId);
       feedback.success();
-      await this.openSite(siteId, false, true, false);
+      if (!(await this.reloadSite(siteId, visit, false))) return;
       this.state.expandedTermsSiteId = siteId;
       this.state.siteSaveMessage = "";
       this.render();

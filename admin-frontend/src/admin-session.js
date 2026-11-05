@@ -12,6 +12,12 @@ export function createAdminSession() {
   let generation = 0;
 
   return {
+    /**
+     * A Site's unsent compliance period form, kept while the user adds a phone on
+     * My profile, so the Site page can reopen it and <admin-app> can offer to resume it.
+     * @type {ReturnType<typeof import("./compliance-profile-draft.js").captureComplianceDraft> | null}
+     */
+    complianceDraft: null,
     get role() {
       return role;
     },
@@ -42,6 +48,7 @@ export function createAdminSession() {
     },
     clear() {
       generation++;
+      this.complianceDraft = null;
       role = "";
       capabilities = {};
       profile = null;

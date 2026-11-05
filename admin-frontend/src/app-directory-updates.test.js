@@ -3,58 +3,84 @@ import assert from "node:assert/strict";
 import {
   $,
   adminData,
-  brandLink,
   click,
   fill,
   missing,
+  mountPage,
   routeTo,
   text,
+  window,
 } from "../test-support/admin-dom.js";
-import { mountAdmin } from "../test-support/app-mount.js";
+import { openSitePage } from "../test-support/site-pages.js";
+import "./pages/admin-user/admin-users-page.js";
+import "./pages/directory/directory-page.js";
+import "./pages/program/program-page.js";
+import "./pages/provider/provider-page.js";
+import "./pages/site/new-site-page.js";
 
-// The Site directory shows adminCatalog's lists, so a save that skips adminCatalog leaves it stale.
-// directoryReads() proves the directory didn't just read the providers list again.
+// Each page here shares one catalog, as under <admin-app>, so a save that skips the
+// catalog leaves the directory stale. directoryReads() proves it didn't read Sites again.
+
+/** @typedef {Partial<Parameters<typeof mountPage>[2]>} PageOptions */
 
 /** @param {string} siteId */
-const row = (siteId) => text(`admin-app a[href="/sites/${siteId}"]`);
+const row = (siteId) => text(`admin-directory-page a[href="/sites/${siteId}"]`);
 
 /** @param {any} api */
 const directoryReads = (api) => api.calls("GET", /^providers(\?|$)/).length;
 
 /**
- * Loads the directory first, as for a user arriving from it.
- * @param {Parameters<typeof mountAdmin>[1]} [options]
+ * The directory, with its Sites read once; later mounts pass its catalog back in.
+ * @param {string} [path]
+ * @param {PageOptions} [options]
  */
-async function fromDirectory(options) {
-  const mounted = await mountAdmin("/sites", options);
-  await click('admin-app a[href="/sites/s1"]');
-  return { ...mounted, reads: directoryReads(mounted.api) };
+async function openDirectory(path = "/sites", options = {}) {
+  const { api, catalog, session } = await mountPage(
+    "admin-directory-page",
+    path,
+    {
+      follow: ["sites"],
+      calls: [/^GET people$/, /^PUT sites\/[^/]+\/deliberate-311$/],
+      sites: true,
+      ...options,
+    },
+  );
+  return { api, shared: { catalog, session } };
+}
+
+/**
+ * The directory again after a save on another page, sharing that page's catalog.
+ * @param {{ catalog: any, session: any }} shared
+ * @param {string} [path]
+ */
+async function backToDirectory({ catalog, session }, path = "/sites") {
+  const { api } = await openDirectory(path, { catalog, session });
+  assert.equal(directoryReads(api), 0);
 }
 
 test("a Site renamed on its page shows its new name in the directory", async () => {
-  const { api, reads } = await fromDirectory();
+  const { shared } = await openDirectory();
+  await openSitePage("/sites/s1", shared);
   await fill('wa-input[name="site-name"]', "Harbor House");
   await click("[data-save-site-details]");
-  await click(brandLink);
+  await backToDirectory(shared);
   assert.match(row("s1"), /Harbor House/);
-  assert.equal(directoryReads(api), reads);
 });
 
 test("opening a Site renamed elsewhere shows the new name in the directory", async () => {
-  const { api } = await mountAdmin("/sites");
-  const reads = directoryReads(api);
-  api.data.sites[0].name = "Renamed Elsewhere";
-  await click('admin-app a[href="/sites/s1"]');
-  await click(brandLink);
+  const { shared } = await openDirectory();
+  const data = adminData();
+  data.sites[0].name = "Renamed Elsewhere";
+  await openSitePage("/sites/s1", { ...shared, data });
+  await backToDirectory(shared);
   assert.match(row("s1"), /Renamed Elsewhere/);
-  assert.equal(directoryReads(api), reads);
 });
 
 test("a manager first seen on a Site's page shows on its directory row", async () => {
-  const { api } = await mountAdmin("/sites");
-  const reads = directoryReads(api);
+  const { shared } = await openDirectory();
   assert.doesNotMatch(row("s1"), /Blair Sample/);
-  api.data.siteItems.s1.push({
+  const data = adminData();
+  data.siteItems.s1.push({
     sk: "MANAGER_MEMBERSHIP#mm9",
     type: "managerMembership",
     membershipId: "mm9",
@@ -62,46 +88,41 @@ test("a manager first seen on a Site's page shows on its directory row", async (
     name: "Blair Sample",
     status: "active",
   });
-  await click('admin-app a[href="/sites/s1"]');
-  await click(brandLink);
+  await openSitePage("/sites/s1", { ...shared, data });
+  await backToDirectory(shared);
   assert.match(row("s1"), /Blair Sample/);
-  assert.equal(directoryReads(api), reads);
 });
 
 test("a new system of care saved on a Site is offered in the directory filter", async () => {
-  const { api, reads } = await fromDirectory();
-  await click('a[href="/sites/s1?section=oversight"]');
+  const { shared } = await openDirectory();
+  await openSitePage("/sites/s1?section=oversight", shared);
   await fill('wa-select[name="managing-system-of-care"]', "BHS-PBH");
   await click("#site-oversight-form [data-save-button]");
-  await click(brandLink);
+  await backToDirectory(shared);
   assert.ok(!missing('wa-select[name="system"] wa-option[value="BHS-PBH"]'));
-  assert.equal(directoryReads(api), reads);
 });
 
 test("turning off 311 delivery on a Site's page unchecks it in the directory", async () => {
-  const { api } = await mountAdmin("/sites");
-  const reads = directoryReads(api);
+  const { shared } = await openDirectory();
   assert.equal($('[data-site-311="s1"]').checked, true);
-  await routeTo("/sites/s1?section=settings");
+  await openSitePage("/sites/s1?section=settings", shared);
   await fill(
     '#site-deliberate-311-form wa-select[name="deliberate-311-enabled"]',
     "false",
   );
   await click("#site-deliberate-311-form [data-save-button]");
-  await click(brandLink);
+  await backToDirectory(shared);
   assert.equal($('[data-site-311="s1"]').checked, false);
-  assert.equal(directoryReads(api), reads);
 });
 
 test("a 311 batch save keeps the saved choice when the directory redraws", async () => {
-  const { api } = await mountAdmin("/sites");
-  const reads = directoryReads(api);
+  const { api } = await openDirectory();
   await fill('[data-site-311="s1"]', false);
   await click("[data-save-311]");
   await routeTo("/sites?q=Example");
   await routeTo("/sites");
   assert.equal($('[data-site-311="s1"]').checked, false);
-  assert.equal(directoryReads(api), reads);
+  assert.equal(directoryReads(api), 0);
 });
 
 test("a Site moved to another Program shows that Program in the directory", async () => {
@@ -112,7 +133,9 @@ test("a Site moved to another Program shows that Program in the directory", asyn
     providerId: "v1",
     status: "active",
   });
-  const { api, reads } = await fromDirectory({
+  const { shared } = await openDirectory("/sites", { data });
+  await openSitePage("/sites/s1", {
+    ...shared,
     data,
     setup: (api) =>
       api.on("POST", /^sites\/s1\/reassign$/, (request) =>
@@ -136,13 +159,14 @@ test("a Site moved to another Program shows that Program in the directory", asyn
   await fill('wa-select[name="lead-program-id"]', "p3");
   await click("[data-save-lead-program]");
   await click('#lead-program-confirmation-dialog button[value="confirm"]');
-  await click(brandLink);
+  await backToDirectory(shared);
   assert.match(row("s1"), /Other Program/);
-  assert.equal(directoryReads(api), reads);
 });
 
 test("a deactivated Site leaves the directory", async () => {
-  const { api, reads } = await fromDirectory({
+  const { shared } = await openDirectory();
+  await openSitePage("/sites/s1", {
+    ...shared,
     setup: (api) =>
       api.on("DELETE", /^sites\/s1$/, () => {
         Object.assign(api.data.sites[0], { status: "inactive" });
@@ -155,14 +179,25 @@ test("a deactivated Site leaves the directory", async () => {
   );
   await click('#deactivate-site-form button[type="submit"]');
   assert.equal(window.location.pathname, "/sites");
-  assert.ok(missing('admin-app a[href="/sites/s1"]'));
-  assert.equal(directoryReads(api), reads);
+  await backToDirectory(shared);
+  assert.ok(missing('admin-directory-page a[href="/sites/s1"]'));
 });
 
 test("a new Site shows in the directory", async () => {
-  const { api } = await mountAdmin("/sites");
-  const reads = directoryReads(api);
-  await routeTo("/sites/new?providerId=v1&programId=p1");
+  const { shared } = await openDirectory();
+  await mountPage(
+    "admin-new-site-page",
+    "/sites/new?providerId=v1&programId=p1",
+    {
+      ...shared,
+      calls: [
+        /^POST providers\/v1\/sites$/,
+        /^PATCH sites\/[^/]+$/,
+        /^(GET|POST) sites\/[^/]+\/manager-memberships$/,
+        /^POST sites\/[^/]+\/users$/,
+      ],
+    },
+  );
   const form = "#new-site-record-form";
   await fill(`${form} wa-input[name="site-name"]`, "New Example Site");
   await fill(`${form} wa-select[name="site-type"]`, "shelter");
@@ -177,57 +212,70 @@ test("a new Site shows in the directory", async () => {
   ])
     await fill(`${form} wa-input[name="${name}"]`, value);
   await click(`${form} button[type="submit"]`);
-  await click(brandLink);
+  await backToDirectory(shared);
   assert.match(row("v1-new-example-site"), /New Example Site/);
-  assert.equal(directoryReads(api), reads);
 });
 
 test("a renamed provider shows its new name on its Sites' directory rows", async () => {
-  const { api } = await mountAdmin("/sites");
-  const reads = directoryReads(api);
-  await routeTo("/providers/v1");
+  const { shared } = await openDirectory();
+  await mountPage("admin-provider-page", "/providers/v1", {
+    ...shared,
+    calls: [
+      /^GET providers\/[^/]+$/,
+      /^GET providers\/[^/]+\/(manager-memberships|grants)$/,
+      /^GET people$/,
+      /^PATCH providers\/[^/]+$/,
+    ],
+  });
   await fill(
     "#provider-details-form wa-input[name='provider-name']",
     "Renamed Provider",
   );
   await click("#provider-details-form [data-save-button]");
-  await click(brandLink);
+  await backToDirectory(shared);
   assert.match(row("s1"), /Renamed Provider/);
-  assert.equal(directoryReads(api), reads);
 });
 
 test("a renamed Program shows its new name on its Sites' directory rows", async () => {
-  const { api } = await mountAdmin("/sites");
-  const reads = directoryReads(api);
-  await routeTo("/programs/p1");
+  const { shared } = await openDirectory();
+  await mountPage("admin-program-page", "/programs/p1", {
+    ...shared,
+    calls: [
+      /^GET programs\/[^/]+$/,
+      /^GET sites\/[^/?]+\?roster=1$/,
+      /^PATCH programs\/[^/]+$/,
+    ],
+  });
   await fill('#program-details-form wa-input[name="program-name"]', "Renamed");
   await click("#program-details-form [data-save-button]");
-  await click(brandLink);
+  await backToDirectory(shared);
   assert.match(row("s1"), /Renamed/);
-  assert.equal(directoryReads(api), reads);
 });
 
 test("a Program created from a Site's lead Program list is found by search", async () => {
-  const { api, reads } = await fromDirectory();
+  const { shared } = await openDirectory();
+  await openSitePage("/sites/s1", shared);
   await fill('wa-select[name="lead-program-id"]', "__create_program__");
   await fill(
     '#create-site-program-dialog wa-input[name="program-name"]',
     "Harbor Outreach",
   );
   await click('#create-site-program-dialog button[type="submit"]');
-  await routeTo("/sites?q=Harbor");
-  await click('#site-unsaved-dialog button[value="discard"]');
+  await backToDirectory(shared, "/sites?q=Harbor");
   assert.match($("#directory-results").textContent, /Harbor Outreach/);
-  assert.equal(directoryReads(api), reads);
 });
 
 test("a compliance manager's new name shows in the directory search", async () => {
-  const { api } = await mountAdmin("/sites", { role: "compliance-manager" });
-  const reads = directoryReads(api);
-  await routeTo("/profile");
+  const { shared } = await openDirectory("/sites", {
+    role: "compliance-manager",
+  });
+  await mountPage("admin-users-page", "/profile", {
+    ...shared,
+    role: "compliance-manager",
+    calls: [/^(GET|PUT) profile$/, /^GET oversight-options$/],
+  });
   await fill('#my-profile-form wa-input[name="firstName"]', "Robin");
   await click("#my-profile-form [data-save-button]");
-  await routeTo("/sites?q=Robin");
+  await backToDirectory(shared, "/sites?q=Robin");
   assert.match($("#directory-results").textContent, /Example Site/);
-  assert.equal(directoryReads(api), reads);
 });

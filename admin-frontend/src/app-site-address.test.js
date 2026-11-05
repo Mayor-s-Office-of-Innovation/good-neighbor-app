@@ -14,11 +14,11 @@ import {
   missing,
   focused,
 } from "../test-support/admin-dom.js";
-import { mountAdmin } from "../test-support/app-mount.js";
+import { openSitePage } from "../test-support/site-pages.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 
-// pages/site/save-error-messages.js and record.bindings.js have no catalog key for this copy, so tests match their English.
+// pages/site/address-lookup.js and save-error-messages.js have no catalog key for this copy, so tests match their English.
 
 // The address search waits this long after typing before it asks for suggestions.
 const SEARCH_DELAY_MS = 300;
@@ -34,10 +34,11 @@ const suggestion = {
   },
 };
 
-const status = () => $("admin-app [data-address-status]").textContent.trim();
-const results = () => $$("admin-app [data-address-results] button");
+const status = () =>
+  $("admin-site-page [data-address-status]").textContent.trim();
+const results = () => $$("admin-site-page [data-address-results] button");
 const field = (/** @type {string} */ name) =>
-  $(`admin-app wa-input[name="${name}"]`);
+  $(`admin-site-page wa-input[name="${name}"]`);
 
 /** @param {string} query */
 async function search(query) {
@@ -53,7 +54,7 @@ function siteData(site) {
 }
 
 test("a chosen suggestion fills the address and saves its parts", async () => {
-  const { api } = await mountAdmin("/sites/s1", {
+  const { api } = await openSitePage("/sites/s1", {
     setup: (api) =>
       api.on("POST", /^address-suggestions$/, {
         json: {
@@ -98,7 +99,7 @@ test("a chosen suggestion fills the address and saves its parts", async () => {
 });
 
 test("an address the geocoder cannot place stays on the form with why", async () => {
-  const { api } = await mountAdmin("/sites/s1", {
+  const { api } = await openSitePage("/sites/s1", {
     setup: (api) => api.fail("PATCH", /^sites\/s1$/, 422, "address_not_found"),
   });
   await click("[data-edit-address]");
@@ -124,7 +125,7 @@ test("address lookup reports no results, one result and an outage", async () => 
     { json: { suggestions: [suggestion] } },
     { status: 503, json: { error: "address_search_unavailable" } },
   ];
-  await mountAdmin("/sites/s1", {
+  await openSitePage("/sites/s1", {
     setup: (api) =>
       api.on("POST", /^address-suggestions$/, () => answers.shift()),
   });
@@ -153,7 +154,7 @@ test("address lookup reports no results, one result and an outage", async () => 
 test("a newer search cancels the one in flight", async () => {
   const held = gate();
   let calls = 0;
-  await mountAdmin("/sites/s1", {
+  await openSitePage("/sites/s1", {
     setup: (api) =>
       api.on("POST", /^address-suggestions$/, async () => {
         calls += 1;
@@ -183,7 +184,7 @@ test("a newer search cancels the one in flight", async () => {
 
 test("suggestions for an outdated query are dropped", async () => {
   const held = gate();
-  await mountAdmin("/sites/s1", {
+  await openSitePage("/sites/s1", {
     setup: (api) =>
       api.on("POST", /^address-suggestions$/, async () => {
         await held.promise;
@@ -201,8 +202,8 @@ test("suggestions for an outdated query are dropped", async () => {
 });
 
 test("manual entry toggles and Cancel edit restores the saved address", async () => {
-  await mountAdmin("/sites/s1");
-  const fields = () => $("admin-app [data-address-fields]");
+  await openSitePage("/sites/s1");
+  const fields = () => $("admin-site-page [data-address-fields]");
   await click("[data-edit-address]");
   await click("[data-enter-address-manually]");
   assert.equal(
@@ -230,15 +231,15 @@ test("manual entry toggles and Cancel edit restores the saved address", async ()
 });
 
 test("a Site without an address opens straight into the address editor", async () => {
-  await mountAdmin("/sites/s1", {
+  await openSitePage("/sites/s1", {
     data: siteData({ address: "", addressParts: undefined }),
   });
   assert.ok(missing("[data-edit-address]"));
-  assert.equal($("admin-app [data-address-editor]").hidden, false);
+  assert.equal($("admin-site-page [data-address-editor]").hidden, false);
 });
 
 test("a legacy one-line address fills the address fields", async () => {
-  await mountAdmin("/sites/s1", {
+  await openSitePage("/sites/s1", {
     data: siteData({
       address: "400 Legacy Rd, San Francisco, ca 94107",
       addressParts: undefined,
@@ -257,7 +258,7 @@ for (const address of [
   "Broadway, San Francisco, CA 94107",
 ])
   test(`an unparseable legacy address "${address}" leaves the fields empty`, async () => {
-    await mountAdmin("/sites/s1", {
+    await openSitePage("/sites/s1", {
       data: siteData({ address, addressParts: undefined }),
     });
     assert.equal($("[data-address-display]").textContent.trim(), address);
@@ -265,7 +266,7 @@ for (const address of [
   });
 
 test("a suggestion missing address parts fills only what it has", async () => {
-  await mountAdmin("/sites/s1", {
+  await openSitePage("/sites/s1", {
     setup: (api) =>
       api.on("POST", /^address-suggestions$/, {
         json: {
@@ -290,7 +291,7 @@ test("a suggestion missing address parts fills only what it has", async () => {
 });
 
 test("structured address parts show when there is no one-line address", async () => {
-  await mountAdmin("/sites/s1", {
+  await openSitePage("/sites/s1", {
     data: siteData({
       address: "",
       addressParts: {
@@ -309,7 +310,7 @@ test("structured address parts show when there is no one-line address", async ()
 });
 
 test("an invalid ZIP is not sent", async () => {
-  const { api } = await mountAdmin("/sites/s1");
+  const { api } = await openSitePage("/sites/s1");
   await click("[data-edit-address]");
   await click("[data-enter-address-manually]");
   await fill(field("zip"), "123");

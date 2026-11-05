@@ -14,7 +14,7 @@ import {
   syncRevokeButton,
 } from "./provider.bindings.js";
 import { providerActions } from "./provider.actions.js";
-import { listenForControls } from "../page-events.js";
+import { listenForControls, pageState } from "../page-events.js";
 import {
   newProviderView,
   providerManagerDetailView,
@@ -37,12 +37,11 @@ export class AdminProviderPage extends HTMLElement {
     /** @type {AdminSession} */
     this.session = /** @type {any} */ (null);
     // Bumped by open() and leave(), so a read or save from an earlier visit stops there.
-    this.navigationGeneration = 0;
+    this.visit = 0;
     // render() draws this route, not the URL path, so a late redraw shows the right Provider.
     /** @type {Route | null} */
     this.route = null;
-    const page = this;
-    this.state = {
+    this.state = pageState(this, {
       /** @type {any | null} */
       provider: null,
       /** @type {any[]} */
@@ -58,17 +57,7 @@ export class AdminProviderPage extends HTMLElement {
       siteSaveMessage: "",
       /** @type {any} */
       enrollmentCodeView: undefined,
-      // providerView() reads these from state; the page's catalog and session hold them.
-      get capabilities() {
-        return page.session.capabilities;
-      },
-      get programs() {
-        return page.catalog.programs;
-      },
-      get providers() {
-        return page.catalog.providers;
-      },
-    };
+    });
   }
 
   connectedCallback() {
@@ -100,14 +89,14 @@ export class AdminProviderPage extends HTMLElement {
    * @returns {Promise<boolean>}
    */
   async open(route) {
-    const visit = ++this.navigationGeneration;
+    const visit = ++this.visit;
     this.route = route;
     // One-time codes from the last visit must not show on this one.
     clearEnrollmentCodeView(this.state);
     if (route.name === "provider-new") return true;
     // A provider record lists its Programs and offers other providers, so read both first.
     await this.catalog.ensure(START_UP_LISTS);
-    if (visit !== this.navigationGeneration) return false;
+    if (visit !== this.visit) return false;
     return /** @type {ProviderPageElement} */ (this).loadProvider(
       route.id || "",
     );
@@ -115,7 +104,7 @@ export class AdminProviderPage extends HTMLElement {
 
   /** <admin-app> calls this when the user goes to a route this page doesn't show. */
   leave() {
-    this.navigationGeneration++;
+    this.visit++;
     this.route = null;
     // The page stays in memory after the user leaves, so drop the secret now.
     this.clearEnrollmentCodes();
