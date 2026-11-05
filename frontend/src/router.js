@@ -360,14 +360,10 @@ const SHEET_ROUTES = new Set([
    view-transition-name: sheet-content). Navigation WITHIN one of these
    returns "sheet-push"/"sheet-pop" so base.css animates only the content
    layer. The other sheets keep whole-root push/pop. */
-const FRAMED_SHEET_ROUTES = new Set(["/care-work", "/complaints"]);
-
 /** The sheet root a route belongs to, or "" when it is not inside one.
  * @param {string} path */
 function framedSheetOf(path) {
-  for (const sheet of FRAMED_SHEET_ROUTES)
-    if (path === sheet || path.startsWith(`${sheet}/`)) return sheet;
-  return "";
+  return /^\/(care-work|complaints)(?:\/|$)/.exec(path)?.[1] ?? "";
 }
 
 /** @param {string} route */
