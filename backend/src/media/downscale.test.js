@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
 import { downscaleImage, DownscaleError, sniffImageType } from "./downscale.js";
 
@@ -245,5 +245,68 @@ describe("file signature check", () => {
       Buffer.from("ftypisom", "latin1"),
     ]);
     expect(sniffImageType(mp4Header)).toBeUndefined();
+  });
+});
+
+describe("rejection log", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /**
+   * @param {import("vitest").MockInstance} spy
+   * @returns {Record<string, unknown>[]} parsed ImageRejected entries
+   */
+  const loggedEntries = (spy) =>
+    spy.mock.calls
+      .map(([line]) => {
+        try {
+          return JSON.parse(String(line));
+        } catch {
+          return undefined;
+        }
+      })
+      .filter((entry) => entry?.marker === "ImageRejected");
+
+  it("logs the brand when a HEIC-family file has an unaccepted brand", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const bytes = Buffer.concat([
+      Buffer.from([0, 0, 0, 0x18]),
+      Buffer.from("ftypavif", "latin1"),
+      Buffer.alloc(16),
+    ]);
+    await expect(downscaleImage(bytes, "image/heic")).rejects.toThrow(
+      DownscaleError,
+    );
+    expect(loggedEntries(warn)).toEqual([
+      expect.objectContaining({
+        reason: "undecodable_input",
+        stage: "signature",
+        declaredType: "image/heic",
+        signature: "unrecognized",
+        brand: "avif",
+        bytes: 28,
+      }),
+    ]);
+  });
+
+  it("logs a decode-stage rejection once, without a brand", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const buffer = await jpegOf(100, 100);
+    const truncated = buffer.subarray(0, Math.floor(buffer.length * 0.3));
+    await expect(downscaleImage(truncated, "image/jpeg")).rejects.toThrow(
+      DownscaleError,
+    );
+    const entries = loggedEntries(warn);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      stage: "decode",
+      signature: "image/jpeg",
+    });
+    expect(entries[0].brand).toBeUndefined();
+  });
+
+  it("logs nothing for an accepted image", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await downscaleImage(await jpegOf(10, 10), "image/jpeg");
+    expect(loggedEntries(warn)).toEqual([]);
   });
 });

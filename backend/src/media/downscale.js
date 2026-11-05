@@ -126,6 +126,42 @@ function typeMatches(detectedType, contentType) {
 }
 
 /**
+ * The ISO-BMFF major brand (bytes 8–12) when the file has an `ftyp` box, so a
+ * rejected HEIC-family upload shows which brand it carried. Only printable
+ * ASCII is reported; anything else is "invalid".
+ * @param {Buffer} bytes
+ * @returns {string | undefined}
+ */
+function containerBrand(bytes) {
+  if (bytes.subarray(4, 8).toString("latin1") !== "ftyp") return undefined;
+  const brand = bytes.subarray(8, 12).toString("latin1");
+  return /^[\x20-\x7e]{4}$/.test(brand) ? brand : "invalid";
+}
+
+/**
+ * Log one structured `ImageRejected` entry per rejected image, from every
+ * caller (care work, complaints, perimeter checks, thumbnails, duplicates,
+ * 311). CloudWatch metric filters count the marker; see
+ * docs/runbooks/media-safeguards.md. Only format facts are logged — never
+ * image bytes or anything that identifies the uploader.
+ * @param {{ error: DownscaleError, stage: "signature" | "decode", bytes: Buffer, contentType: string, sniffedType: string | undefined }} input
+ */
+function logRejection({ error, stage, bytes, contentType, sniffedType }) {
+  console.warn(
+    JSON.stringify({
+      marker: "ImageRejected",
+      reason: error.code,
+      stage,
+      declaredType: String(contentType).slice(0, 100),
+      signature: sniffedType ?? "unrecognized",
+      brand: containerBrand(bytes),
+      bytes: bytes.length,
+      detail: error.message.slice(0, 200),
+    }),
+  );
+}
+
+/**
  * Fit an image within the analyzer's max working size before encoding.
  * Always emits JPEG (the analyzer's baseline type); small images pass through
  * the resize untouched (`withoutEnlargement`).
@@ -139,15 +175,18 @@ export async function downscaleImage(bytes, contentType) {
   // a permanent "undecodable image" rejection of the upload.
   const sharp = await loadSharp();
   let result;
+  /** @type {"signature" | "decode"} */
+  let stage = "signature";
+  const sniffedType = sniffImageType(bytes);
   try {
     // Check the file signature before sharp parses anything (see sniffImageType).
-    const sniffedType = sniffImageType(bytes);
     if (!sniffedType || !typeMatches(sniffedType, contentType)) {
       throw new DownscaleError(
         `Undecodable image input (${contentType}): file signature ${sniffedType ?? "unrecognized"}`,
         sniffedType ? "image_type_mismatch" : "undecodable_input",
       );
     }
+    stage = "decode";
     const input = sharp(bytes, {
       failOn: "error",
       limitInputPixels: MAX_INPUT_PIXELS,
@@ -183,10 +222,14 @@ export async function downscaleImage(bytes, contentType) {
       .jpeg({ quality: JPEG_QUALITY })
       .toBuffer({ resolveWithObject: true });
   } catch (err) {
-    if (err instanceof DownscaleError) throw err;
-    throw new DownscaleError(
-      `Undecodable image input (${contentType}): ${err instanceof Error ? err.message : String(err)}`,
-    );
+    const error =
+      err instanceof DownscaleError
+        ? err
+        : new DownscaleError(
+            `Undecodable image input (${contentType}): ${err instanceof Error ? err.message : String(err)}`,
+          );
+    logRejection({ error, stage, bytes, contentType, sniffedType });
+    throw error;
   }
   return {
     bytes: result.data,

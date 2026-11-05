@@ -340,6 +340,31 @@ resource "aws_cloudwatch_log_metric_filter" "media_rejected" {
   }
 }
 
+# One ImageRejected entry per image the shared downscale step refuses, from
+# every Lambda that runs it. Unlike MediaRejected (perimeter-check worker only),
+# this also covers care work, complaints, thumbnails, duplicates and 311, and
+# its log entry names the stage, signature and container brand. Dashboard only;
+# no alarm, since single rejections are normally bad camera/upload data.
+resource "aws_cloudwatch_log_metric_filter" "image_rejected" {
+  for_each = {
+    api              = aws_cloudwatch_log_group.api.name
+    worker           = aws_cloudwatch_log_group.worker.name
+    analysis         = aws_cloudwatch_log_group.analysis.name
+    duplicate-worker = aws_cloudwatch_log_group.duplicates["duplicate-worker"].name
+    sf311            = aws_cloudwatch_log_group.sf311.name
+  }
+  name           = "${local.name_prefix}-${each.key}-image-rejected"
+  log_group_name = each.value
+  pattern        = "{ $.marker = \"ImageRejected\" }"
+
+  metric_transformation {
+    name          = "ImageRejected"
+    namespace     = local.security_namespace
+    value         = "1"
+    default_value = "0"
+  }
+}
+
 resource "aws_cloudwatch_metric_alarm" "media_rejected" {
   alarm_name          = "${local.name_prefix}-media-rejected"
   alarm_description   = "Uploaded media repeatedly failed byte, decode, type, dimension, or page-count validation. Follow docs/runbooks/media-safeguards.md."

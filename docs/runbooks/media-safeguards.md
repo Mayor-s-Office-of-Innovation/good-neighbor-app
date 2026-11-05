@@ -55,6 +55,17 @@ structured fields (`siteId`, `checkId`, `artifactId`, and reason); never fetch o
 into tickets or chat. A single rejection is normally bad camera/upload data. A concentrated burst
 from one Site or device may indicate abuse or a broken client release.
 
+`ImageRejected` (dashboard only, no alarm) counts every image the shared downscale step refuses,
+across all upload paths: care work, complaints, perimeter checks, thumbnails, duplicate detection,
+and 311. Each log entry carries `reason`, `stage` (`signature`: the leading bytes are not an
+accepted JPEG/PNG/WebP/HEIC, so sharp never parsed the file; `decode`: sharp rejected it),
+`declaredType`, `signature`, `brand` (the container brand for HEIC-family files), and the byte
+size. A run of `stage: "signature"` entries with `declaredType: "image/heic"` and a `brand` outside
+the accepted list (`heic`, `heix`, `heim`, `heis`, `hevc`, `hevx`, `hevm`, `hevs`, `mif1`, `msf1`)
+points to a real camera format we need to add in `backend/src/media/downscale.js`. Find entries
+with CloudWatch Logs Insights: `filter marker = "ImageRejected" | stats count() by stage, reason,
+declaredType, brand`.
+
 `MediaQuotaExceeded` alarms after five rejected reservations in five minutes. Determine which
 check or device counter is near its conditional limit from the Site's
 `MEDIA_QUOTA#` rows. Check upload transaction conflicts use `MediaReservationConflict` and HTTP 409 rather than
@@ -110,13 +121,11 @@ not yet run. Their underlying work logs retain text and photo-expiry metadata fo
 year. Care-work processing never enqueues analyzer jobs or retags check/task images.
 Complaint evidence remains in its separate one-year bucket.
 
-
 Database PITR does not restore S3 media. Upload/complaint bucket versioning is
 intentionally suspended to avoid retaining sensitive media beyond its approved
 expiry. A recovered database may reference expired or deleted images; keep the
 existing unavailable-media behavior and never extend retention as a recovery
 shortcut. See [recovery.md](recovery.md) for the database restore procedure.
-
 
 ## 311 attachment leases
 
@@ -215,7 +224,6 @@ the Application tag is active and compare attributed cost with Cost Explorer aft
 billing data arrives; zero reported cost alone does not prove the filter works.
 No console configuration changes are required. Existing Site and global quota rows can expire
 normally; the cost warning uses billing data, not those counters.
-
 
 ## Diagnosing photo upload validation failures
 
