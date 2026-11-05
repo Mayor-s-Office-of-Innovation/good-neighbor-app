@@ -12,8 +12,18 @@ feedback-view {
 }
 
 .settings-page {
+  box-sizing: border-box;
   width: min(100%, var(--app-content-max-width));
   margin-inline: auto;
+  /* The page owns its gutters; the shell's padding is zeroed below so the
+     white surface reaches every screen edge. */
+  padding: max(1rem, env(safe-area-inset-top)) 16px 32px;
+}
+
+.app--chromeless .app__main:has(> language-view),
+.app--chromeless .app__main:has(> attributions-view),
+.app--chromeless .app__main:has(> feedback-view) {
+  padding: 0;
 }
 
 .settings-page__top {

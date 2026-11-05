@@ -1166,7 +1166,11 @@ html.wa-dark .reports-legend__dot--responded {
 
 /* Full-bleed screen: the report bodies carry their own gutters. */
 .app--chromeless .app__main:has(> reports-view) {
-  padding-inline: 0;
+  padding: 0;
+}
+
+.home.reports {
+  padding-top: max(1rem, env(safe-area-inset-top));
 }
 
 /* All settings destinations share one surface (like Site information). */

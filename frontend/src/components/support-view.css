@@ -150,5 +150,5 @@ support-view {
 
 /* Full-bleed screen: the panel carries its own gutters. */
 .app--chromeless .app__main:has(> support-view) {
-  padding-inline: 0;
+  padding: 0;
 }
