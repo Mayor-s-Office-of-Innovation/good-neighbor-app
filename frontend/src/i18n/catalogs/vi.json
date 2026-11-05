@@ -1,12 +1,14 @@
 {
   "access.cancel": "Hủy liên kết đăng ký",
   "access.cancelError": "Không thể hủy liên kết. Vui lòng thử lại.",
+  "access.codeGuidance": "Nếu mã hoặc liên kết không hoạt động, bạn có thể hiển thị mã cho thành viên trong nhóm để họ nhập trên màn hình đăng nhập. Mã này chỉ hiển thị cho đến khi bạn đóng cửa sổ này.",
   "access.create": "Tạo liên kết đăng ký",
   "access.createError": "Không thể tạo liên kết. Vui lòng thử lại.",
   "access.device": "Thiết bị của nhóm",
   "access.deviceLabel": "Đặt tên cho thiết bị",
   "access.devicePlaceholder": "ví dụ: \"Điện thoại của Amisha\"",
   "access.devices": "Thiết bị của nhóm",
+  "access.displayCode": "Hiển thị mã",
   "access.duplicateEmail": "Email này đã được gán cho một quản lý tại địa điểm này. Hãy dùng email khác hoặc quản lý phân công hiện có.",
   "access.duration.days.one": "{count} ngày",
   "access.duration.days.other": "{count} ngày",
@@ -40,6 +42,7 @@
   "access.sessions": "Phiên đăng nhập",
   "access.share": "Chia sẻ liên kết đăng ký",
   "access.shareMessage": "Người quản lý cơ sở đã mời bạn sử dụng Good Neighbor. Hãy mở liên kết này trên điện thoại bạn sẽ dùng cho ứng dụng. Liên kết chỉ dùng được một lần và hết hạn sau 8 giờ.",
+  "access.showCode": "Hiện mã",
   "access.site": "địa điểm này",
   "access.siteHeading": "Mời người tham gia {site}",
   "access.title": "Quản lý quyền truy cập",
@@ -1140,6 +1143,7 @@
   "rulebook.agency.311-will-be-routed-4b50": "311 (sẽ được chuyển tiếp)",
   "rulebook.agency.911-will-be-routed-5ef4": "911 (sẽ được chuyển tiếp)",
   "rulebook.agency.department-of-public-works-dpw-19fa": "Sở Công chánh (DPW)",
+  "rulebook.agency.dph-street-team-0a67": "Đội tiếp cận đường phố DPH",
   "rulebook.agency.dph-street-team-via-311-84fb": "Đội Đường phố của DPH qua 311",
   "rulebook.agency.recology-25f9": "Recology",
   "rulebook.agency.sf-aids-foundation-sfaf-4927": "Quỹ AIDS San Francisco (SFAF)",
@@ -1216,6 +1220,7 @@
   "rulebook.guidance.if-it-s-an-object-not-a-person-blocking-the-path-e15d": "Nếu là đồ vật (không phải người) chắn lối đi, hãy dùng ứng dụng để gửi yêu cầu 311.",
   "rulebook.guidance.if-it-s-not-your-client-or-it-doesn-t-feel-safe-6c38": "Nếu không phải khách hàng của bạn, hoặc bạn cảm thấy không an toàn, hãy gọi 911.",
   "rulebook.guidance.if-it-s-not-your-client-or-resident-call-911-do-bf6c": "Nếu họ không phải là khách hàng hoặc cư dân của bạn, hãy gọi 911. Đừng cố tự xử lý tình huống.",
+  "rulebook.guidance.if-it-s-not-your-client-or-resident-call-the-sfp-99ee": "Nếu người đó không phải là khách hàng hoặc cư dân của cơ sở, hãy gọi SFPD. Đừng tự mình xử lý tình huống.",
   "rulebook.guidance.if-it-s-not-your-client-report-it-to-the-city-do-f657": "Nếu không phải khách hàng của bạn, hãy báo cho Thành phố. Đừng tự can thiệp.",
   "rulebook.guidance.if-it-s-your-client-and-it-s-safe-talk-to-them-c-9ff2": "Nếu là khách hàng của bạn và tình hình an toàn, hãy bình tĩnh nói chuyện với họ. Đề nghị kết nối họ với sự giúp đỡ.",
   "rulebook.guidance.if-it-s-your-client-it-s-not-an-emergency-and-it-c6c9": "Nếu là khách hàng của bạn, không phải trường hợp khẩn cấp và tình hình an toàn, hãy nhẹ nhàng nói chuyện với họ và đề nghị kết nối họ với sự giúp đỡ.",
@@ -1723,8 +1728,5 @@
   "webview.banner.dismiss.aria": "Bỏ qua",
   "webview.banner.message": "Bạn đang dùng trình duyệt bên trong một ứng dụng khác. Hãy mở bằng trình duyệt của bạn để máy ảnh hoạt động.",
   "webview.banner.open": "Mở trong trình duyệt",
-  "webview.banner.title": "Máy ảnh có thể không mở được ở đây.",
-  "access.showCode": "Hiện mã",
-  "access.codeGuidance": "Nếu mã hoặc liên kết không hoạt động, bạn có thể hiển thị mã cho thành viên trong nhóm để họ nhập trên màn hình đăng nhập. Mã này chỉ hiển thị cho đến khi bạn đóng cửa sổ này.",
-  "access.displayCode": "Hiển thị mã"
+  "webview.banner.title": "Máy ảnh có thể không mở được ở đây."
 }

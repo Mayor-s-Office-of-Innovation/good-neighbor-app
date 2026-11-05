@@ -407,9 +407,14 @@ export async function writeDocumentedUpdate(tableName, update) {
               Put: {
                 TableName: tableName,
                 Item: update,
-                ConditionExpression: "documentationState = :open",
+                ConditionExpression:
+                  "documentationState = :open" +
+                  (update.cityNotes ? " AND cityNotes = :cityNotes" : ""),
                 ExpressionAttributeValues: {
                   ":open": "open_for_documentation",
+                  ...(update.cityNotes
+                    ? { ":cityNotes": update.cityNotes }
+                    : {}),
                 },
               },
             },

@@ -72,6 +72,7 @@ export function cityHelpTicket(task) {
  * @param {string} siteId
  * @param {string} srNum
  * @param {string} occurredAt
+ * @param {boolean} [resolved]
  * @returns {Promise<Record<string, string>>}
  */
 export async function prepareCityHelpNote(
@@ -79,6 +80,7 @@ export async function prepareCityHelpNote(
   siteId,
   srNum,
   occurredAt,
+  resolved = false,
 ) {
   const { Item: site } = await ddb.send(
     new GetCommand({
@@ -92,6 +94,7 @@ export async function prepareCityHelpNote(
     srNum,
     siteName: String(site.name),
     now: new Date(occurredAt),
+    resolved,
   });
 }
 
@@ -130,6 +133,32 @@ export function cityHelpNoteExists(body, payload) {
  * @returns {Promise<boolean>}
  */
 export async function deliverCityHelpNote(tableName, siteId, update) {
+  if (Array.isArray(update.cityNotes)) {
+    for (let index = 0; index < update.cityNotes.length; index++) {
+      const note = update.cityNotes[index];
+      const delivery = { ...update, ...note };
+      const confirmed = await deliverSingleCityHelpNote(
+        tableName,
+        siteId,
+        delivery,
+        `cityNotes[${index}].`,
+      );
+      note.cityNoteStatus = delivery.cityNoteStatus;
+      if (!delivery.cityNoteLeaseExpiresAt) delete note.cityNoteLeaseExpiresAt;
+      if (!confirmed) return false;
+    }
+    return true;
+  }
+  return deliverSingleCityHelpNote(tableName, siteId, update);
+}
+
+/** @param {string} tableName @param {string} siteId @param {Record<string, any>} update @param {string} [prefix] */
+async function deliverSingleCityHelpNote(
+  tableName,
+  siteId,
+  update,
+  prefix = "",
+) {
   if (
     !update.cityNotePayload ||
     ["sent", "suppressed"].includes(update.cityNoteStatus) ||
@@ -146,28 +175,28 @@ export async function deliverCityHelpNote(tableName, siteId, update) {
   );
   if (!task) return false;
   if (!isSilent311Ticket(task, String(update.cityNotePayload.SRnum || "")))
-    return deliverCityHelpNoteInner(tableName, siteId, update);
+    return deliverCityHelpNoteInner(tableName, siteId, update, prefix);
   try {
     return await withSilent311Guard(String(task.createdAt || ""), () =>
-      deliverCityHelpNoteInner(tableName, siteId, update),
+      deliverCityHelpNoteInner(tableName, siteId, update, prefix),
     );
   } catch (error) {
     if (error instanceof Silent311Suppressed)
-      return suppressCityHelpNote(tableName, siteId, update);
+      return suppressCityHelpNote(tableName, siteId, update, prefix);
     throw error;
   }
 }
 
 /** Suppress only unclaimed work or an expired lease we observed; never steal delivery.
- * @param {string} tableName @param {string} siteId @param {Record<string, any>} update
+ * @param {string} tableName @param {string} siteId @param {Record<string, any>} update @param {string} prefix
  */
-async function suppressCityHelpNote(tableName, siteId, update) {
+async function suppressCityHelpNote(tableName, siteId, update, prefix) {
   const lease = update.cityNoteLeaseExpiresAt;
   const now = new Date().toISOString();
   if (lease && !(Date.parse(lease) <= Date.parse(now))) return false;
   try {
     await ddb.send(
-      new UpdateCommand({
+      cityNoteCommand(prefix, {
         TableName: tableName,
         Key: taskUpdateKey(
           siteId,
@@ -202,8 +231,8 @@ async function suppressCityHelpNote(tableName, siteId, update) {
   }
 }
 
-/** @param {string} tableName @param {string} siteId @param {Record<string, any>} update */
-async function deliverCityHelpNoteInner(tableName, siteId, update) {
+/** @param {string} tableName @param {string} siteId @param {Record<string, any>} update @param {string} prefix */
+async function deliverCityHelpNoteInner(tableName, siteId, update, prefix) {
   if (
     !update.cityNotePayload ||
     ["sent", "suppressed"].includes(update.cityNoteStatus)
@@ -232,7 +261,7 @@ async function deliverCityHelpNoteInner(tableName, siteId, update) {
    */
   const state = async (status) => {
     await ddb.send(
-      new UpdateCommand({
+      cityNoteCommand(prefix, {
         TableName: tableName,
         Key,
         UpdateExpression:
@@ -259,7 +288,7 @@ async function deliverCityHelpNoteInner(tableName, siteId, update) {
     client = createSf311Client({ config });
     stage = "claim";
     await ddb.send(
-      new UpdateCommand({
+      cityNoteCommand(prefix, {
         TableName: tableName,
         Key,
         UpdateExpression:
@@ -301,8 +330,9 @@ async function deliverCityHelpNoteInner(tableName, siteId, update) {
       }
     } else {
       stage = "outbound";
-      const receipt = await client.updateServiceRequest(update.cityNotePayload);
-      if (!receipt.updateId) throw new Error("City response has no update ID");
+      // The client requires explicit HUB return_code 0. UpdateID is optional
+      // and its absence does not make that confirmed acceptance uncertain.
+      await client.updateServiceRequest(update.cityNotePayload);
     }
     stage = "checkpoint";
     await state("sent");
@@ -322,4 +352,18 @@ async function deliverCityHelpNoteInner(tableName, siteId, update) {
     );
     return false;
   }
+}
+
+/** @param {string} prefix @param {import("@aws-sdk/lib-dynamodb").UpdateCommandInput} input */
+function cityNoteCommand(prefix, input) {
+  const qualify = (/** @type {string | undefined} */ expression) =>
+    expression?.replace(
+      /\bcityNote(?:Status|LeaseExpiresAt)\b/g,
+      (field) => `${prefix}${field}`,
+    );
+  return new UpdateCommand({
+    ...input,
+    UpdateExpression: qualify(input.UpdateExpression),
+    ConditionExpression: qualify(input.ConditionExpression),
+  });
 }

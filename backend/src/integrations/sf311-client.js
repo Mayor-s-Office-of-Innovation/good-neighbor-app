@@ -135,10 +135,15 @@ export function buildAttachmentUpdatePayload({ srNum, imageUrl, now }) {
 
 /**
  * Add Notes: HUB API Documentation, appendix 4.4 (type 5, subtype 2).
- * @param {{ srNum: string, siteName: string, now: Date }} input
+ * @param {{ srNum: string, siteName: string, now: Date, resolved?: boolean }} input
  * @returns {Record<string, string>}
  */
-export function buildNoteUpdatePayload({ srNum, siteName, now }) {
+export function buildNoteUpdatePayload({
+  srNum,
+  siteName,
+  now,
+  resolved = false,
+}) {
   return {
     SRnum: srNum,
     UpdateType: "5",
@@ -148,7 +153,9 @@ export function buildNoteUpdatePayload({ srNum, siteName, now }) {
     TextSubType: "",
     EffectiveDate: hubDateTime(now),
     ToAgencyDate: "",
-    Notes: `The provider site "${siteName}" reports that the issue is resolved or City help is no longer needed.`,
+    Notes: resolved
+      ? `The provider site "${siteName}" reports that this issue is resolved and City assistance is no longer needed. This is a site-reported update; resolution has not been independently verified.`
+      : `The provider site "${siteName}" reports that the issue is resolved or City help is no longer needed.`,
   };
 }
 

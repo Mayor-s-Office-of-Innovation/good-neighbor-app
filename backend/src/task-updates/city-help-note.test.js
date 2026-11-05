@@ -62,6 +62,68 @@ beforeEach(() => {
 });
 
 describe("311 City help note", () => {
+  it("prepares the approved resolution wording using authenticated site metadata", async () => {
+    mocks.send.mockResolvedValue({ Item: { name: "Example Site" } });
+    const note = await prepareCityHelpNote(
+      "table",
+      "site1",
+      "123",
+      "2026-10-09T12:00:00Z",
+      true,
+    );
+    expect(note).toMatchObject({
+      UpdateType: "5",
+      NumericSubType: "2",
+      SRnum: "123",
+      Notes:
+        'The provider site "Example Site" reports that this issue is resolved and City assistance is no longer needed. This is a site-reported update; resolution has not been independently verified.',
+    });
+  });
+
+  it("checkpoints each resolution ticket separately and skips sent notes on retry", async () => {
+    const event = {
+      ...update(),
+      cityNotes: [
+        { cityNotePayload: payload, cityNoteStatus: "pending" },
+        {
+          cityNotePayload: { ...payload, SRnum: "456" },
+          cityNoteStatus: "pending",
+        },
+      ],
+    };
+    delete (/** @type {any} */ (event).cityNotePayload);
+    mocks.update
+      .mockResolvedValueOnce({ updateId: "first" })
+      .mockRejectedValueOnce(new Sf311Error("Rejected", { code: "26" }));
+    expect(await deliverCityHelpNote("table", "site1", event)).toBe(false);
+    expect(event.cityNotes.map((note) => note.cityNoteStatus)).toEqual([
+      "sent",
+      "pending",
+    ]);
+    expect(
+      mocks.send.mock.calls.some(([command]) =>
+        command.input.UpdateExpression?.includes("cityNotes[0].cityNoteStatus"),
+      ),
+    ).toBe(true);
+    expect(
+      mocks.send.mock.calls.some(([command]) =>
+        command.input.ConditionExpression?.includes(
+          "cityNotes[1].cityNoteLeaseExpiresAt",
+        ),
+      ),
+    ).toBe(true);
+    mocks.update.mockResolvedValue({ updateId: "second" });
+    expect(await deliverCityHelpNote("table", "site1", event)).toBe(true);
+    expect(mocks.update.mock.calls.map(([note]) => note.SRnum)).toEqual([
+      "123",
+      "456",
+      "456",
+    ]);
+    expect(event.cityNotes.map((note) => note.cityNoteStatus)).toEqual([
+      "sent",
+      "sent",
+    ]);
+  });
   it("uses the documented Add Notes contract and exact provider-site message", () => {
     expect(payload).toEqual({
       SRnum: "123",
@@ -189,11 +251,13 @@ it("keeps an unconfigured attempt pending without claiming or sending", async ()
   expect(mocks.update).not.toHaveBeenCalled();
 });
 
-it("does not mark an empty City response as a confirmed delivery", async () => {
+it("accepts HUB-confirmed delivery without an optional update ID", async () => {
   mocks.update.mockResolvedValue({ updateId: null });
   const event = update();
-  expect(await deliverCityHelpNote("table", "site1", event)).toBe(false);
-  expect(event.cityNoteStatus).toBe("unknown");
+  expect(await deliverCityHelpNote("table", "site1", event)).toBe(true);
+  expect(event.cityNoteStatus).toBe("sent");
+  await deliverCityHelpNote("table", "site1", event);
+  expect(mocks.update).toHaveBeenCalledOnce();
 });
 
 it("logs safe outbound diagnostics without HUB payloads or exception messages", async () => {

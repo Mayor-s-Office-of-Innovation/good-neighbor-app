@@ -50,6 +50,8 @@ export class TaskUpdateDialog extends HTMLElement {
     /** @type {boolean | null | undefined} */
     this._cityHelpNeeded = undefined;
     this._requests = new Map();
+    /** @type {Map<string, ReturnType<Crypto["randomUUID"]>>} */
+    this._resolutionIds = new Map();
     this._cityUpdates = [];
     this._loadGeneration = 0;
     /** @type {Set<AbortController>} */
@@ -116,8 +118,16 @@ export class TaskUpdateDialog extends HTMLElement {
     )
       return;
     this._resolving = true;
-    const completion = createTaskUpdate(task.taskId, { type: "issue_resolved" })
+    const requestId =
+      this._resolutionIds.get(task.taskId) || crypto.randomUUID();
+    this._resolutionIds.set(task.taskId, requestId);
+    const completion = createTaskUpdate(
+      task.taskId,
+      { type: "issue_resolved" },
+      requestId,
+    )
       .then((response) => {
+        this._resolutionIds.delete(task.taskId);
         this._task = {
           ...task,
           ...response.task,

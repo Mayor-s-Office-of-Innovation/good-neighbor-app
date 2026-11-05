@@ -592,9 +592,13 @@ it("resolves immediately without opening documentation", async () => {
   dialog.dispatchEvent ||= vi.fn();
   dialog.markResolved(task);
   dialog.markResolved(task);
-  expect(api.createTaskUpdate).toHaveBeenLastCalledWith("resolve-now", {
-    type: "issue_resolved",
-  });
+  expect(api.createTaskUpdate).toHaveBeenLastCalledWith(
+    "resolve-now",
+    {
+      type: "issue_resolved",
+    },
+    expect.any(String),
+  );
   expect(dialog.openResults).not.toHaveBeenCalled();
   dialog._dismiss = vi.fn();
   expect(dialog._notifyUpdated).not.toHaveBeenCalled();
@@ -604,6 +608,31 @@ it("resolves immediately without opening documentation", async () => {
   });
   await vi.waitFor(() => expect(dialog._dismiss).toHaveBeenCalledOnce());
   expect(dialog._notifyUpdated).toHaveBeenCalledOnce();
+});
+
+it("retries an unconfirmed standalone resolution with its original identity", async () => {
+  const { TaskUpdateDialog } = await import("./task-update-dialog.js");
+  const dialog = new TaskUpdateDialog();
+  dialog.dispatchEvent = vi.fn();
+  dialog._notifyUpdated = vi.fn();
+  dialog._dismiss = vi.fn();
+  api.createTaskUpdate
+    .mockReset()
+    .mockRejectedValueOnce(
+      Object.assign(new Error("City update not confirmed"), { status: 502 }),
+    )
+    .mockResolvedValueOnce({
+      task: { status: "completed" },
+      update: { updateId: "same-resolution" },
+    });
+  const task = { taskId: "standalone-retry", status: "in_progress" };
+  dialog.markResolved(task);
+  await vi.waitFor(() => expect(dialog._resolving).toBe(false));
+  dialog.markResolved(task);
+  await vi.waitFor(() => expect(dialog._dismiss).toHaveBeenCalledOnce());
+  expect(api.createTaskUpdate.mock.calls[1][2]).toBe(
+    api.createTaskUpdate.mock.calls[0][2],
+  );
 });
 
 it("identifies a dismissed resolution prompt so its controller is not reused during background saves", async () => {

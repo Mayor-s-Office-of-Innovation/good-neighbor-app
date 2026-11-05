@@ -1,12 +1,14 @@
 {
   "access.cancel": "取消註冊連結",
   "access.cancelError": "無法取消連結。請重試。",
+  "access.codeGuidance": "如果代碼或連結無法使用，您可以向團隊成員顯示代碼，讓他們在登入畫面輸入。此代碼只會顯示到您關閉此視窗為止。",
   "access.create": "建立註冊連結",
   "access.createError": "無法建立連結。請重試。",
   "access.device": "團隊裝置",
   "access.deviceLabel": "為裝置命名",
   "access.devicePlaceholder": "例如：「Amisha 的手機」",
   "access.devices": "團隊裝置",
+  "access.displayCode": "顯示代碼內容",
   "access.duplicateEmail": "此電子郵件已指派給此地點的管理員。請使用其他電子郵件或管理現有指派。",
   "access.duration.days.one": "{count} 天",
   "access.duration.days.other": "{count} 天",
@@ -40,6 +42,7 @@
   "access.sessions": "工作階段",
   "access.share": "分享註冊連結",
   "access.shareMessage": "您的場所經理邀請您使用 Good Neighbor。請在您將用來使用此應用程式的手機上開啟此連結。此連結僅可使用一次，並於 8 小時後到期。",
+  "access.showCode": "顯示代碼",
   "access.site": "此場所",
   "access.siteHeading": "邀請他人加入{site}",
   "access.title": "管理存取權",
@@ -1140,6 +1143,7 @@
   "rulebook.agency.311-will-be-routed-4b50": "311（將會轉介）",
   "rulebook.agency.911-will-be-routed-5ef4": "911（將會轉介）",
   "rulebook.agency.department-of-public-works-dpw-19fa": "公共工程局（DPW）",
+  "rulebook.agency.dph-street-team-0a67": "DPH 街頭服務團隊",
   "rulebook.agency.dph-street-team-via-311-84fb": "公共衛生局（DPH） 街頭小組（經由 311）",
   "rulebook.agency.recology-25f9": "Recology",
   "rulebook.agency.sf-aids-foundation-sfaf-4927": "舊金山愛滋病基金會（SFAF）",
@@ -1216,6 +1220,7 @@
   "rulebook.guidance.if-it-s-an-object-not-a-person-blocking-the-path-e15d": "如果堵塞通道的是物品（而非人），請使用應用程式提交 311 工單。",
   "rulebook.guidance.if-it-s-not-your-client-or-it-doesn-t-feel-safe-6c38": "如果對方不是您的服務對象，或感覺不安全，請致電 911。",
   "rulebook.guidance.if-it-s-not-your-client-or-resident-call-911-do-bf6c": "如果對方不是您的服務對象或住戶，請致電 911。不要嘗試自行處理。",
+  "rulebook.guidance.if-it-s-not-your-client-or-resident-call-the-sfp-99ee": "如果對方不是您的服務對象或住戶，請致電 SFPD。請勿自行處理。",
   "rulebook.guidance.if-it-s-not-your-client-report-it-to-the-city-do-f657": "如果對方不是您的服務對象，請向市政府通報。請勿介入。",
   "rulebook.guidance.if-it-s-your-client-and-it-s-safe-talk-to-them-c-9ff2": "如果對方是您的服務對象且情況安全，請平靜地與他們交談，並主動為他們聯繫協助。",
   "rulebook.guidance.if-it-s-your-client-it-s-not-an-emergency-and-it-c6c9": "如果對方是您的服務對象、並非緊急情況且情況安全，請溫和地與他們交談，並主動為他們聯繫協助。",
@@ -1723,8 +1728,5 @@
   "webview.banner.dismiss.aria": "關閉",
   "webview.banner.message": "您正在另一個應用程式的內建瀏覽器中。請改用您的瀏覽器開啟，相機才能正常運作。",
   "webview.banner.open": "在瀏覽器中開啟",
-  "webview.banner.title": "相機可能無法在此開啟。",
-  "access.showCode": "顯示代碼",
-  "access.codeGuidance": "如果代碼或連結無法使用，您可以向團隊成員顯示代碼，讓他們在登入畫面輸入。此代碼只會顯示到您關閉此視窗為止。",
-  "access.displayCode": "顯示代碼內容"
+  "webview.banner.title": "相機可能無法在此開啟。"
 }

@@ -2,6 +2,42 @@
 
 *Policy operations log for the action/escalation rulebase.*
 
+## actions-escalations-v11 - 2026-11-05
+
+- Activates all 39 rules from `GNP - rules-corrected-2.csv`, preserved as
+  `backend/src/analysis/guidance/sources/GNP-rules-v11.csv`. Prior catalogs and
+  saved assessments retain their original rules and answers.
+- DISTRESS-3 now consistently uses SFPD non-emergency (415-553-0123) in its
+  routing, action, button, and guidance. FECES-1 explicitly assigns agency 76;
+  TENTS-1 simplifies its agency label; ANIMAL-3 and PARKING-1 update service codes.
+- Preserves the 14 definitions supplied as `GNP - rules.csv` as
+  `GNP-categories-v3.csv`. Definitions distinguish ordinary leaves from litter,
+  pavement repairs from graffiti, and evidenced parking violations from
+  proximity alone. Synchronized the source with analyzer commit `69769f5`
+  ([PR #62](https://github.com/Mayor-s-Office-of-Innovation/street-conditions-analysis/pull/62)),
+  restoring its complete Animals description safeguards and the Blocked doorway
+  or sidewalk severity 0–1 distinction between easy passage and meaningful
+  obstruction. The target analyzer rubric is `good-neighbor-app@3.0.0`.
+  The app retains its `2.0.0` request pin until the target environment serves
+  the explicit `3.0.0` rubric endpoint and successfully analyzes a synthetic
+  request pinned to `3.0.0`. No analyzer request-version change has been made.
+- Bulky classifier fallbacks now use `1.1.4.7.21.0` for empty, unknown, malformed,
+  or failed classifications. Recognized labels retain their explicit mappings.
+- Silent ticket resolution retains UpdateSR type 11, reason 1 (resolved).
+  User deletion of an issue now atomically queues cancellation, using type 11,
+  reason 3 (cancelled), for submitted agency-76 tickets. The existing worker
+  lease and checkpoints also handle deletion during a filing and delivery
+  retries. City-owned tickets are excluded. Submission and silent-workflow
+  controls still apply. Evidence-only deletion retains externally acted-on tasks.
+- Marking a manual City-ticket issue resolved now sends UpdateSR type 5,
+  subtype 2, to each open, real City ticket recorded on the task. The note uses
+  the authenticated site name, says City assistance is no longer needed, and
+  identifies the resolution as site-reported and not independently verified.
+  Delivery state is saved atomically with resolution; success requires City
+  confirmation, and retries reuse the saved payloads and delivery checkpoints.
+  The separate City-help-no-longer-needed choice retains its original note.
+  Neither note closes the City-owned ticket.
+
 ## actions-escalations-v10 - 2026-10-28
 
 - Supersedes v9 for new assessments with all 39 rules from `GNP - rubrics-5.csv`,

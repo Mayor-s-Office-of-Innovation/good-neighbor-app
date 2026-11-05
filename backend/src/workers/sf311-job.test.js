@@ -214,11 +214,94 @@ it("finishes a replayed closure job without creating its ticket again", async ()
   expect(execute).toHaveBeenCalledOnce();
 });
 
+it("cancels a silent ticket when deletion commits during filing", async () => {
+  execute
+    .mockImplementationOnce(async () => {
+      task.status = "superseded";
+      task.supersessionReason = "issue_deleted";
+      return [ticket];
+    })
+    .mockResolvedValueOnce([
+      {
+        code: "close_311_ticket",
+        status: "submitted",
+        payload: {
+          closures: [
+            {
+              serviceCode: "code",
+              srNum: "123",
+              status: "closed",
+              closedReasonCode: "3",
+            },
+          ],
+        },
+      },
+    ]);
+  await runJob(message);
+  expect(execute).toHaveBeenCalledTimes(2);
+  expect(execute.mock.calls[1][0]).toEqual([
+    { code: "close_311_ticket", payload: { closedReasonCode: "3" } },
+  ]);
+  expect(task.status).toBe("superseded");
+  expect(job.status).toBe("complete");
+});
+
 it("does not close tickets filed explicitly for City-owned work", async () => {
   task.status = "completed";
   task.completionMethod = "311_filed";
   await runJob(message);
   expect(execute).toHaveBeenCalledOnce();
+});
+
+it.each(["issue_deleted", "analysis_condition_rejected"])(
+  "cancels silent tickets after %s without creating a new ticket",
+  async (supersessionReason) => {
+    task.status = "superseded";
+    task.supersessionReason = supersessionReason;
+    task.appActionResults = [ticket];
+    execute.mockResolvedValueOnce([
+      {
+        code: "close_311_ticket",
+        status: "submitted",
+        payload: {
+          closures: [
+            {
+              serviceCode: "code",
+              srNum: "123",
+              status: "closed",
+              closedReasonCode: "3",
+            },
+          ],
+        },
+      },
+    ]);
+    await runJob(message);
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute.mock.calls[0][0]).toEqual([
+      { code: "close_311_ticket", payload: { closedReasonCode: "3" } },
+    ]);
+    expect(task.status).toBe("superseded");
+    expect(job.status).toBe("complete");
+    await runJob(message);
+    expect(execute).toHaveBeenCalledOnce();
+  },
+);
+
+it("does not cancel a deleted City-owned ticket", async () => {
+  task.status = "superseded";
+  task.supersessionReason = "issue_deleted";
+  task.appActionResults = [
+    {
+      ...ticket,
+      payload: {
+        tickets: [
+          { serviceCode: "code", srNum: "123", responsibleAgency: "18" },
+        ],
+      },
+    },
+  ];
+  await runJob(message);
+  expect(execute).not.toHaveBeenCalled();
 });
 it("retries failures with the durable ticket checkpoint instead of forgetting the ticket", async () => {
   execute.mockImplementationOnce(async (_actions, options) => {

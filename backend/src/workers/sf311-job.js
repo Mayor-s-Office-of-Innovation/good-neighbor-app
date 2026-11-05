@@ -323,19 +323,32 @@ export async function runJob(message, delivery = {}) {
     if (!task || task.status === "completing")
       throw new Error("SF311 task changed; retry after completion");
     if (
-      task.status === "completed" &&
-      task.completionMethod !== "311_filed" &&
+      ((task.status === "completed" && task.completionMethod !== "311_filed") ||
+        (task.status === "superseded" &&
+          ["issue_deleted", "analysis_condition_rejected"].includes(
+            task.supersessionReason,
+          ))) &&
       eligibleTicketsForClosure(results).size
     ) {
+      const closurePayload =
+        task.status === "superseded" ? { closedReasonCode: "3" } : {};
       const closed = await guard(async () =>
-        executeAppActions([{ code: "close_311_ticket", payload: {} }], {
-          tableName,
-          siteId: message.siteId,
-          taskId: message.taskId,
-          task,
-          priorResults: results,
-          onCheckpoint: checkpoint,
-        }),
+        executeAppActions(
+          [
+            {
+              code: "close_311_ticket",
+              payload: closurePayload,
+            },
+          ],
+          {
+            tableName,
+            siteId: message.siteId,
+            taskId: message.taskId,
+            task,
+            priorResults: results,
+            onCheckpoint: checkpoint,
+          },
+        ),
       );
       await guard(async () => {});
       for (const result of closed) await checkpoint(result);

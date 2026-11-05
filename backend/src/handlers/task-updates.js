@@ -1,3 +1,5 @@
+import { openFiledTicketNumbers } from "../domain/open-filed-tickets.js";
+import { isSilent311Ticket } from "../domain/silent-311.js";
 import { filedTicket, isSimulated311Ticket } from "../domain/deliberate-311.js";
 import {
   storeTaskPhotoDisplay,
@@ -200,6 +202,24 @@ export const createTaskUpdate = async (event, retry = true) => {
     return jsonResponse(409, { error: "Task is not in progress" });
   }
 
+  const resolving = [
+    "issue_resolved",
+    "presence_resolved",
+    "additional_action_resolved",
+  ].includes(input.type);
+  const resolutionTickets = resolving
+    ? [...new Set(openFiledTicketNumbers(task))].filter((number) => {
+        const ticket = filedTicket(task, number);
+        return (
+          ticket &&
+          !isSimulated311Ticket(ticket) &&
+          String(ticket.responsibleAgency || "") !== "76" &&
+          !isSilent311Ticket(task, number)
+        );
+      })
+    : [];
+  if (resolutionTickets.length && !is311SubmissionEnabled(process.env))
+    return jsonResponse(503, { error: "City updates are unavailable" });
   const srNum = cityHelpTicket(task);
   const simulated = srNum && isSimulated311Ticket(filedTicket(task, srNum));
   const informational = ["note_photo_update", "additional_action"].includes(
@@ -273,6 +293,26 @@ export const createTaskUpdate = async (event, retry = true) => {
         logCityNoteFailure("preparation", error, update);
         return jsonResponse(503, { error: "City update cannot be prepared" });
       }
+    }
+  }
+  if (resolutionTickets.length) {
+    try {
+      update.cityNotes = [];
+      for (const number of resolutionTickets) {
+        update.cityNotes.push({
+          cityNotePayload: await prepareCityHelpNote(
+            dynamoTable,
+            siteId,
+            number,
+            now,
+            true,
+          ),
+          cityNoteStatus: "pending",
+        });
+      }
+    } catch (error) {
+      logCityNoteFailure("preparation", error, update);
+      return jsonResponse(503, { error: "City update cannot be prepared" });
     }
   }
   // The compare-and-swap below prevents a late worker or another user from
@@ -407,6 +447,8 @@ export const documentTaskUpdate = async (event) => {
         updateId,
       );
       if (latest?.documentationState === "closed") return replay(latest);
+      if (latest?.cityNotes)
+        return jsonResponse(409, { error: "Task update conflict" });
     }
     throw error;
   }
