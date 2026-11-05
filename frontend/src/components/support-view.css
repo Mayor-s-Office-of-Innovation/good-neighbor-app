@@ -32,8 +32,10 @@ support-view {
 }
 .support__title {
   margin: 0;
-  font-size: var(--wa-font-size-2xl);
-  line-height: var(--wa-line-height-condensed);
+  /* Same title spec as the other settings destinations (Reports et al.). */
+  font-size: clamp(1.5rem, 5vw, 1.9rem);
+  font-weight: 700;
+  line-height: 1.15;
 }
 .support__privacy {
   color: var(--text-secondary);
