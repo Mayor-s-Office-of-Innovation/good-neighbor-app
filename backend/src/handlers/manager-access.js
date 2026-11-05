@@ -1,3 +1,7 @@
+import {
+  generateEnrollmentCode,
+  enrollmentCodeVerifier,
+} from "./enrollment-codes.js";
 import { providerInvitationAuthority } from "../lib/provider-invitation-authority.js";
 import { personRecord, personPut } from "../lib/people.js";
 import { sitePrimaryContactChange } from "../lib/site-primary-contact.js";
@@ -227,6 +231,8 @@ const createStaffGrantAttempt = async (event) => {
   const grantId = randomUUID();
   const token = randomBytes(32).toString("base64url");
   const tokenHash = createHash("sha256").update(token).digest("hex");
+  const code = await generateEnrollmentCode();
+  const codeHash = await enrollmentCodeVerifier(code);
   const expiresAt = new Date(now.getTime() + GRANT_TTL_MS).toISOString();
   const grant = {
     pk: `SITE#${siteId}`,
@@ -246,6 +252,7 @@ const createStaffGrantAttempt = async (event) => {
     ...(providerAuthority?.snapshot || {}),
     label,
     tokenHash,
+    codeHash,
     status: "pending",
     issuedBy: `binding:${issuerBindingId}`,
     issuedByBindingId: issuerBindingId,
@@ -329,6 +336,16 @@ const createStaffGrantAttempt = async (event) => {
                 },
               ]
             : []),
+          put(tableName, {
+            pk: `ENROLLMENT_TOKEN#${codeHash}`,
+            sk: "#META",
+            type: "enrollmentGrantToken",
+            grantPk: grant.pk,
+            grantSk: grant.sk,
+            grantId,
+            siteId,
+            expiresAt,
+          }),
         ],
       }),
     );
@@ -358,6 +375,7 @@ const createStaffGrantAttempt = async (event) => {
       if (
         reasons[3 + assignmentWrites.length]?.Code ===
           "ConditionalCheckFailed" ||
+        reasons.at(-1)?.Code === "ConditionalCheckFailed" ||
         reasons.some((reason) => reason.Code === "TransactionConflict")
       ) {
         return jsonResponse(409, { error: "staff_grant_create_conflict" });
@@ -378,6 +396,7 @@ const createStaffGrantAttempt = async (event) => {
   return jsonResponse(201, {
     grant: publicGrant(grant, nowIso),
     enrollmentUrl: enrollmentUrl.toString(),
+    code,
   });
 };
 

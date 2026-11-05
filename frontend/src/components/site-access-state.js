@@ -21,11 +21,22 @@ export async function refreshGrants(view) {
     if ([...checked].some((id) => !pending.has(id)))
       await view._deviceView.refreshDevices(view);
     syncAccess(view);
-    view._grants = view._grants.filter(
-      (grant) =>
+    view._grants = view._grants.filter((grant) => {
+      const keep =
         (!checked.has(grant.grantId) || pending.has(grant.grantId)) &&
-        Date.parse(grant.expiresAt) > Date.now(),
-    );
+        Date.parse(grant.expiresAt) > Date.now();
+      if (!keep) delete grant.code;
+      return keep;
+    });
+    const codeDialog = view.querySelector(".site-access-code-dialog");
+    if (
+      codeDialog &&
+      !view._grants.some(
+        (grant) =>
+          grant.grantId === codeDialog.getAttribute("data-code-grant-id"),
+      )
+    )
+      codeDialog.close();
     view.querySelectorAll("[data-grant-id]").forEach((card) => {
       const grant = view._grants.find(
         (item) => item.grantId === card.getAttribute("data-grant-id"),
@@ -93,6 +104,11 @@ export function syncAccess(view) {
         true;
   }
   if (view._canManageAccess === false) {
+    for (const grant of view._grants || []) delete grant.code;
+    view.querySelector(".site-access-code-dialog")?.close();
+    view
+      .querySelectorAll("[data-show-code]")
+      .forEach((control) => (control.disabled = true));
     view
       .querySelectorAll(
         "#staff-grant-form button, #staff-grant-form wa-input, #staff-grant-form wa-radio, [data-revoke-team-device], [data-confirm-device-revoke]",

@@ -5,7 +5,7 @@
   "access.createError": "無法建立連結。請重試。",
   "access.device": "團隊裝置",
   "access.deviceLabel": "為裝置命名",
-  "access.devicePlaceholder": "Amisha 的 iPhone",
+  "access.devicePlaceholder": "例如：「Amisha 的手機」",
   "access.devices": "團隊裝置",
   "access.duplicateEmail": "此電子郵件已指派給此地點的管理員。請使用其他電子郵件或管理現有指派。",
   "access.duration.days.one": "{count} 天",
@@ -875,7 +875,7 @@
   "install.banner.aria": "加入主畫面",
   "install.banner.dismiss.aria": "暫時不要",
   "install.banner.install": "安裝",
-  "install.banner.ios": "在 Safari 中，點一下「分享」，然後選擇「加入主畫面」。",
+  "install.banner.ios": "點一下「分享」，然後選擇「加入主畫面」。",
   "install.banner.iosCarryOver": "您的登入狀態會一併保留。",
   "install.banner.message": "輕點一下即可開啟，就像 App 一樣。",
   "install.banner.title": "將 Good Neighbor 加入主畫面",
@@ -1688,5 +1688,8 @@
   "analysis.deleteDialog.groupChanged": "與此問題連結的卡片已變更。請重新開啟此對話方塊以檢視群組。",
   "analysis.deleteDialog.groupTooLarge": "此群組太大，無法一次全部刪除。",
   "analysis.deleteDialog.alreadyDeleted": "此卡片已刪除。請重新整理清單以查看最新資訊。",
-  "analysis.deleteDialog.refresh": "重新整理清單"
+  "analysis.deleteDialog.refresh": "重新整理清單",
+  "access.showCode": "顯示代碼",
+  "access.codeGuidance": "如果代碼或連結無法使用，您可以向團隊成員顯示代碼，讓他們在登入畫面輸入。此代碼只會顯示到您關閉此視窗為止。",
+  "access.displayCode": "顯示代碼內容"
 }

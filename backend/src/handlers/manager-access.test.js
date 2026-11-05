@@ -7,6 +7,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
+vi.mock("./enrollment-codes.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  generateEnrollmentCode: async () => "ABC234",
+}));
 
 const {
   cancelStaffGrant,
@@ -19,6 +23,7 @@ const {
 beforeEach(() => {
   send.mockReset();
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
+  vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "synthetic-test-verifier");
   vi.stubEnv("PROVIDER_APP_URL", "https://field.example.test/");
 });
 
@@ -63,11 +68,13 @@ describe("manager staff enrollment", () => {
     expect(
       Date.parse(body.grant.expiresAt) - Date.parse(body.grant.createdAt),
     ).toBe(8 * 60 * 60 * 1000);
+    expect(body.code).toBe("ABC234");
     expect(body.enrollmentUrl).toContain("#enrollment_grant=");
     const transaction = send.mock.calls[4][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(5);
+    expect(transaction.input.TransactItems).toHaveLength(6);
     const serialized = JSON.stringify(transaction.input);
+    expect(serialized).not.toContain(body.code);
     expect(serialized).not.toContain(
       new URL(body.enrollmentUrl).hash.match(/enrollment_token=([^&]+)/)?.[1],
     );

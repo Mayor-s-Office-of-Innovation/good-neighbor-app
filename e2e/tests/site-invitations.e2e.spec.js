@@ -329,3 +329,154 @@ test("capability polling continues when no invitations remain", async ({
   await expect.poll(() => reads, { timeout: 10000 }).toBeGreaterThan(0);
   await expect(page.locator("#staff-device-label input")).toBeDisabled();
 });
+
+/** @param {import('@playwright/test').Page} page */
+async function codeInvitation(page) {
+  await accessView(page, false);
+  const grant = {
+    grantId: "code-preview",
+    label: "Synthetic code phone",
+    accessLevel: "general",
+    status: "pending",
+    expiresAt: "2099-01-01T00:00:00Z",
+  };
+  await page.route("**/app/v1/manager/staff-grants/current", (route) =>
+    route.fulfill({ json: { canManageAccess: true, grants: [grant] } }),
+  );
+  await page.route("**/app/v1/manager/staff-grants", (route) =>
+    route.fulfill({
+      status: 201,
+      json: {
+        grant,
+        code: "ABC234",
+        enrollmentUrl:
+          "https://example.test/#enrollment_grant=code-preview&enrollment_token=synthetic",
+      },
+    }),
+  );
+  await page.locator("#staff-device-label input").fill(grant.label);
+  await page.locator('#staff-grant-form button[type="submit"]').click();
+  await expect(page.locator("[data-show-code]")).toBeEnabled();
+}
+
+test("empty device names use inline validation and recover when corrected", async ({
+  page,
+}) => {
+  await accessView(page, false);
+  const input = page.locator("#staff-device-label");
+  await page.locator('#staff-grant-form button[type="submit"]').click();
+  await expect(input).toHaveAttribute("aria-invalid", "true");
+  await expect(page.locator("#staff-grant-error")).toHaveText(
+    t("access.labelError"),
+  );
+  await expect(page.locator("#staff-grant-form")).toHaveAttribute(
+    "novalidate",
+    "",
+  );
+  await input.locator("input").fill("  ");
+  await expect(input).toHaveAttribute("aria-invalid", "true");
+  await input.locator("input").fill("Team phone");
+  await expect(input).not.toHaveAttribute("aria-invalid");
+  await expect(page.locator("#staff-grant-error")).toBeEmpty();
+});
+
+test("code display is one-time, including keyboard dismissal", async ({
+  page,
+}) => {
+  await codeInvitation(page);
+  const show = page.locator("[data-show-code]");
+  await show.click();
+  const dialog = page.locator(".site-access-code-dialog");
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(show).toBeEnabled();
+  await show.click();
+  await page.locator("[data-display-code]").click();
+  await expect(page.locator("[data-code-output]")).toHaveText("ABC234");
+  await expect(page.locator("[data-display-code]")).toHaveCount(0);
+  await expect(page.locator("[data-cancel-code]")).toHaveText(
+    t("common.close"),
+  );
+  const audit = await new AxeBuilder({ page })
+    .include(".site-access-code-dialog")
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
+    .analyze();
+  expect(audit.violations).toEqual([]);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(show).toBeDisabled();
+  await expect(page.getByText("ABC234", { exact: true })).toHaveCount(0);
+});
+
+for (const terminalStatus of ["redeemed", "cancelled", "expired"]) {
+  test(`a ${terminalStatus} invitation dismisses its open code modal`, async ({
+    page,
+  }) => {
+    await codeInvitation(page);
+    await page.locator("[data-show-code]").click();
+    await page.locator("[data-display-code]").click();
+    await page.route("**/app/v1/manager/staff-grants/current", (route) =>
+      route.fulfill({
+        json: {
+          canManageAccess: true,
+          grants: [
+            {
+              grantId: "code-preview",
+              status: terminalStatus,
+              expiresAt: "2099-01-01T00:00:00Z",
+            },
+          ],
+        },
+      }),
+    );
+    await page.evaluate(async () => {
+      const view = /** @type {any} */ (
+        document.querySelector("site-access-view")
+      );
+      await view._refreshGrants();
+    });
+    await expect(page.locator(".site-access-code-dialog")).toHaveCount(0);
+    await expect(page.getByText("ABC234", { exact: true })).toHaveCount(0);
+  });
+}
+
+test("losing manager access closes the code modal and clears its secret", async ({
+  page,
+}) => {
+  await codeInvitation(page);
+  await page.locator("[data-show-code]").click();
+  await page.route("**/app/v1/manager/staff-grants/current", (route) =>
+    route.fulfill({
+      json: {
+        canManageAccess: false,
+        grants: [
+          {
+            grantId: "code-preview",
+            label: "Synthetic code phone",
+            status: "pending",
+            expiresAt: "2099-01-01T00:00:00Z",
+          },
+        ],
+      },
+    }),
+  );
+  await page.evaluate(async () => {
+    const view = /** @type {any} */ (
+      document.querySelector("site-access-view")
+    );
+    await view._refreshGrants();
+  });
+  await expect(page.locator(".site-access-code-dialog")).toHaveCount(0);
+  await expect(page.locator("[data-show-code]")).toBeDisabled();
+  expect(
+    await page.evaluate(() => {
+      const view = /** @type {any} */ (
+        document.querySelector("site-access-view")
+      );
+      return view._grants.some((/** @type {{code?:string}} */ grant) =>
+        Boolean(grant.code),
+      );
+    }),
+  ).toBe(false);
+});

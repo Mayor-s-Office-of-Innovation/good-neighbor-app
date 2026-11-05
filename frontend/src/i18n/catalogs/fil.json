@@ -5,7 +5,7 @@
   "access.createError": "Hindi magawa ang link. Subukan muli.",
   "access.device": "Device ng team",
   "access.deviceLabel": "Pangalanan ang device",
-  "access.devicePlaceholder": "iPhone ni Amisha",
+  "access.devicePlaceholder": "hal., \"Telepono ni Amisha\"",
   "access.devices": "Mga device ng team",
   "access.duplicateEmail": "Nakatalaga na ang email na ito sa isang Site Manager sa site na ito. Gumamit ng ibang email o pamahalaan ang kasalukuyang pagtatalaga.",
   "access.duration.days.one": "{count} araw",
@@ -875,7 +875,7 @@
   "install.banner.aria": "Idagdag sa home screen",
   "install.banner.dismiss.aria": "Hindi ngayon",
   "install.banner.install": "I-install",
-  "install.banner.ios": "Sa Safari, i-tap ang Share, pagkatapos ay Add to Home Screen.",
+  "install.banner.ios": "I-tap ang Share, pagkatapos ay Add to Home Screen.",
   "install.banner.iosCarryOver": "Mananatili ang inyong pag-sign in.",
   "install.banner.message": "Buksan ito sa isang tap, parang app.",
   "install.banner.title": "Idagdag ang Good Neighbor sa inyong home screen",
@@ -1688,5 +1688,8 @@
   "analysis.deleteDialog.groupChanged": "Nagbago ang mga card na naka-link sa isyung ito. Buksan muli ang dialog na ito upang suriin ang grupo.",
   "analysis.deleteDialog.groupTooLarge": "Masyadong malaki ang grupong ito para tanggalin nang sabay-sabay.",
   "analysis.deleteDialog.alreadyDeleted": "Natanggal na ang card na ito. I-refresh ang listahan para makita ang pinakabagong impormasyon.",
-  "analysis.deleteDialog.refresh": "I-refresh ang listahan"
+  "analysis.deleteDialog.refresh": "I-refresh ang listahan",
+  "access.showCode": "Ipakita ang code",
+  "access.codeGuidance": "Kung hindi gumagana ang code o link, maaari kayong magpakita ng code sa inyong kasamahan para ilagay niya sa screen ng pag-sign in. Makikita lang ang code hanggang isara ninyo ang view na ito.",
+  "access.displayCode": "Ipakita ang code ngayon"
 }
