@@ -56,12 +56,8 @@ export class SupportView extends HTMLElement {
           aria-relevant="additions"
         ></div>
         <p data-status role="status"></p>
-        <button
-          type="button"
-          class="btn-outline support__small"
-          data-clear
-          hidden
-        >
+        <button type="button" class="support__clear" data-clear hidden>
+          <wa-icon name="rotate-left" aria-hidden="true"></wa-icon>
           ${escapeHtml(t("support.clear"))}
         </button>
         <form class="support__composer">
@@ -298,9 +294,14 @@ export class SupportView extends HTMLElement {
     const log = this.querySelector(".support__conversation");
     const turn = document.createElement("section");
     turn.className = "support__turn";
-    const heading = document.createElement("h3");
-    heading.textContent = question;
+    // The question is a chat bubble on the right; the answer is plain text.
+    const bubbleRow = document.createElement("p");
+    bubbleRow.className = "support__q";
+    const bubble = document.createElement("span");
+    bubble.textContent = question;
+    bubbleRow.append(bubble);
     const answer = document.createElement("p");
+    answer.className = "support__a";
     const valid =
       result?.outcome === "answered" &&
       typeof result.answer === "string" &&
@@ -325,12 +326,7 @@ export class SupportView extends HTMLElement {
     answer.textContent = valid
       ? result.answer
       : t(`support.${fallback === "off_topic" ? "offTopic" : fallback}`);
-    const response = document.createElement("details");
-    response.className = "support__response";
-    response.open = true;
-    const toggle = document.createElement("summary");
-    toggle.append(heading);
-    response.append(toggle, answer);
+    turn.append(bubbleRow, answer);
     if (!valid && ["limited", "unavailable"].includes(fallback)) {
       answer.classList.add("app-error", "app-error--panel");
       answer.setAttribute("role", "alert");
@@ -342,41 +338,58 @@ export class SupportView extends HTMLElement {
         if (this._pending) return;
         void this._submit(question, turn);
       });
-      response.append(retry);
+      turn.append(retry);
     }
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "btn-icon support__delete";
-    remove.dataset.deleteResponse = "";
-    remove.setAttribute("aria-label", t("support.delete"));
-    remove.title = t("support.delete");
-    const removeIcon = document.createElement("wa-icon");
-    removeIcon.setAttribute("name", "xmark");
-    removeIcon.setAttribute("aria-hidden", "true");
-    remove.append(removeIcon);
-    remove.addEventListener("click", () => {
-      turn.remove();
-      this._syncResponses();
-      /** @type {HTMLElement} */ (
-        this.querySelector("[data-question]")
-      ).focus();
-    });
-    turn.append(remove, response);
     if (valid) {
-      const label = document.createElement("p");
-      label.textContent = t("support.sources");
-      response.append(label);
+      // "N sources" toggles the source card; expanded by default so the
+      // receipts are in view when the answer lands.
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "support__sources-toggle";
+      toggle.setAttribute("aria-expanded", "true");
+      const book = document.createElement("wa-icon");
+      book.setAttribute("name", "book-open");
+      book.setAttribute("aria-hidden", "true");
+      const count = document.createElement("span");
+      count.textContent = t("support.sourcesCount", {
+        count: result.sources.length,
+      });
+      const chevron = document.createElement("wa-icon");
+      chevron.className = "support__sources-chevron";
+      chevron.setAttribute("name", "chevron-down");
+      chevron.setAttribute("aria-hidden", "true");
+      toggle.append(book, count, chevron);
+      const card = document.createElement("div");
+      card.className = "support__sources";
       for (const source of result.sources) {
         const details = document.createElement("details");
         details.className = "support__source";
-        details.lang = "en"; // Canonical FAQ is English; generated answers use app locale.
+        details.lang = "en"; // Canonical FAQ is English; answers use app locale.
         const summary = document.createElement("summary");
-        summary.textContent = `${source.id}: ${source.title}`;
+        const copyWrap = document.createElement("span");
+        copyWrap.className = "support__source-copy";
+        const title = document.createElement("strong");
+        title.textContent = source.title;
+        const doc = document.createElement("span");
+        doc.className = "support__source-doc";
+        doc.textContent = t("support.sourceDoc", { id: source.id });
+        copyWrap.append(title, doc);
+        const open = document.createElement("wa-icon");
+        open.className = "support__source-chevron";
+        open.setAttribute("name", "chevron-right");
+        open.setAttribute("aria-hidden", "true");
+        summary.append(copyWrap, open);
         const text = document.createElement("p");
         text.textContent = source.text;
         details.append(summary, text);
-        response.append(details);
+        card.append(details);
       }
+      toggle.addEventListener("click", () => {
+        const expanded = toggle.getAttribute("aria-expanded") === "true";
+        toggle.setAttribute("aria-expanded", String(!expanded));
+        card.hidden = expanded;
+      });
+      turn.append(toggle, card);
     }
     log.append(turn);
     while (log.children.length > 10) log.firstElementChild.remove();

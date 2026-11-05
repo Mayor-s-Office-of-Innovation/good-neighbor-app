@@ -163,14 +163,149 @@ support-view {
 .support form + .support__privacy {
   margin-top: 2rem;
 }
+/* A turn is transparent: blue question bubble right, plain answer left,
+   then the sources toggle and card. */
 .support__turn {
-  position: relative;
-  margin-block: 1rem;
-  padding: 1rem;
-  background: var(--surface-2);
-  border: 1px solid var(--c-line);
-  border-radius: var(--radius);
+  margin-block: 1.5rem;
   overflow-wrap: anywhere;
+}
+.support__q {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 1.25rem;
+}
+.support__q span {
+  max-width: 85%;
+  padding: 0.875rem 1.125rem;
+  border-radius: 20px;
+  background: var(--brand-blue-bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+.support__a {
+  margin: 0;
+  line-height: 1.6;
+}
+.support__sources-toggle {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  margin-top: 0.25rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--brand-blue);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  box-shadow: none;
+}
+.support__sources-toggle:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.support__sources-chevron {
+  font-size: 0.8rem;
+  transition: rotate 150ms ease;
+  rotate: 180deg; /* expanded by default: chevron points up */
+}
+.support__sources-toggle[aria-expanded="false"] .support__sources-chevron {
+  rotate: 0deg;
+}
+.support__sources {
+  margin-top: 0.5rem;
+  border: 1px solid var(--c-line);
+  border-radius: 16px;
+  background: var(--surface);
+}
+.support__source {
+  margin: 0;
+}
+.support__source + .support__source {
+  border-top: 1px solid var(--c-line);
+}
+.support__source summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  cursor: pointer;
+  list-style: none;
+}
+.support__source summary::-webkit-details-marker {
+  display: none;
+}
+/* Web Awesome's layered native styles add their own summary chevron;
+   this card draws its own. */
+.support__source summary::after {
+  display: none;
+}
+.support__source summary:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: -2px;
+  border-radius: 16px;
+}
+.support__source-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+.support__source-copy strong {
+  font-weight: 600;
+  line-height: 1.35;
+}
+.support__source-doc {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+.support__source-chevron {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  transition: rotate 150ms ease;
+}
+.support__source[open] .support__source-chevron {
+  rotate: 90deg;
+}
+.support__source > p {
+  margin: 0;
+  padding: 0 1.25rem 1rem;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+/* Quiet clear action: icon + text, no pill. */
+.support__clear {
+  appearance: none;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-height: 44px;
+  margin-top: 0.25rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  box-shadow: none;
+}
+.support__clear wa-icon {
+  font-size: 0.9rem;
+}
+.support__clear:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.support__clear[hidden] {
+  display: none;
 }
 .support__turn h3 {
   display: inline;
@@ -198,49 +333,14 @@ support-view {
   min-height: 2rem;
   padding: 0;
 }
-.support__delete wa-icon {
-  font-size: 1rem;
-}
 .support__turn p {
   white-space: pre-wrap;
-}
-.support summary {
-  cursor: pointer;
-  padding: 0.75rem 1rem;
-  margin: 0;
-  gap: 1rem;
-  line-height: 1.5;
 }
 /* Native details styles apply negative margins to every nested summary when
    an ancestor is open. Keep each disclosure's spacing local to its own box. */
 .support details,
 .support details[open] {
   padding: 0;
-}
-.support__response {
-  border: 0;
-  background: transparent;
-}
-.support__response > summary {
-  padding-inline: 2.75rem 0;
-}
-.support summary::after {
-  flex-shrink: 0;
-  rotate: 0deg;
-}
-.support details[open] > summary::after {
-  rotate: 90deg;
-}
-.support__source {
-  margin-block: 0.75rem;
-}
-.support__source > p {
-  margin: 0;
-  padding: 0 1rem 1rem;
-}
-.support__turn h3 {
-  margin: 0;
-  min-width: 0;
 }
 .support__handoff {
   margin-block: 1rem;
