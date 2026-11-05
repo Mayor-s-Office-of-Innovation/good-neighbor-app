@@ -8,6 +8,7 @@ import {
   formatPacificDateTime,
 } from "../domain/task-updates.js";
 import { artifactPhoto } from "./artifact-photo.templates.js";
+import "./status-ticker.css";
 
 /** @param {string} type */
 export function taskUpdateTimelineTone(type) {
@@ -63,18 +64,17 @@ function cityNoteState(update) {
   const key = cityNoteLabelKey(update.cityNoteStatus);
   if (!key) return "";
   const failed = update.cityNoteStatus === "failed";
-  return html`<p
-    class="task-update__city-note${failed
-      ? " task-update__city-note--failed"
-      : ""}"
+  // Reuses the status ticker's look so no new CSS lands in the main bundle.
+  return html`<span
+    class="status-ticker status-ticker--${failed ? "danger" : "muted"}"
     data-city-note-status="${escapeAttr(update.cityNoteStatus)}"
   >
     <wa-icon
       name="${failed ? "triangle-exclamation" : "paper-plane"}"
       aria-hidden="true"
-    ></wa-icon
-    >${escapeHtml(t(key))}
-  </p>`;
+    ></wa-icon>
+    <span>${escapeHtml(t(key))}</span>
+  </span>`;
 }
 
 /**
