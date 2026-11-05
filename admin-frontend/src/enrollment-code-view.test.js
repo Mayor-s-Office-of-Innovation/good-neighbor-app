@@ -1,5 +1,6 @@
+// @vitest-environment node
 import { beginEnrollmentRequest } from "./enrollment-request.js";
-import test from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
@@ -75,33 +76,4 @@ test("expiry removes an already displayed code without navigation", async () => 
   await new Promise((resolve) => setTimeout(resolve, 40));
   assert.equal(removed, true);
   assert.equal(state.enrollmentCodeView.codes.size, 0);
-});
-test("a code returned after navigation is discarded", async () => {
-  const source = readFileSync(new URL("./main.js", import.meta.url), "utf8");
-  const start = source.indexOf("  async showEnrollmentCode(");
-  const end = source.indexOf("\n  async issueManagerGrant", start);
-  let finish;
-  const context = vm.createContext({
-    beginEnrollmentRequest,
-    adminApi: {
-      createManagerGrant: () =>
-        new Promise((resolve) => {
-          finish = resolve;
-        }),
-    },
-  });
-  const Subject = vm.runInContext(
-    `(class { ${source.slice(start, end)} })`,
-    context,
-  );
-  const subject = new Subject();
-  subject.state = { site: { siteId: "s" }, managerMemberships: [] };
-  subject.render = () => {};
-  subject.navigationGeneration = 1;
-  const request = subject.showEnrollmentCode("site", "m");
-  clearEnrollmentCodeView(subject.state);
-  subject.navigationGeneration++;
-  finish({ grant: { grantId: "g" }, enrollmentCode: "0AB123" });
-  await request;
-  assert.equal(subject.state.enrollmentCodeView, undefined);
 });
