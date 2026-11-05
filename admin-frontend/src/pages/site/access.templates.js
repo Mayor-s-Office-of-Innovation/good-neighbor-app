@@ -7,7 +7,7 @@ import { shortOpaqueId } from "../shared.templates.js";
 import { managerMembershipList } from "./manager.templates.js";
 
 /**
- * @typedef {import("../../main.js").AdminState} AdminState
+ * @typedef {import("../../admin-types.js").AdminState} AdminState
  */
 
 /** @param {AdminState} state */

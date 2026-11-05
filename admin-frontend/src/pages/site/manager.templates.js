@@ -12,7 +12,7 @@ import { siteLabel } from "../directory/directory.templates.js";
 import { phoneInput, formInput } from "../../form-fields.js";
 
 /**
- * @typedef {import("../../main.js").AdminState} AdminState
+ * @typedef {import("../../admin-types.js").AdminState} AdminState
  */
 
 function managerProgramChangeDialog() {

@@ -26,7 +26,8 @@ import {
 } from "../../e2e/admin-tests/site-access-helpers.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 
-// pages/site/access.templates.js and main.js have no catalog key for this copy, so tests match their English.
+// pages/site/access.templates.js, access.actions.js and manager.actions.js have
+// no catalog key for this copy, so tests match their English.
 
 const ACCESS = "/sites/s1?section=access";
 
@@ -473,8 +474,9 @@ test("each enrollment error shows one generic notice and keeps the access tab us
     const before = notices();
     await click(link);
     assert.equal(notices(), before + 1, code);
-    // Pins a bug: main.js maps these codes to their own message, but
-    // adminErrorMessage ignores it for an HTTP error. No issue filed yet.
+    // Pins a bug: issueManagerGrant in pages/site/manager.actions.js maps these
+    // codes to their own message, but adminErrorMessage ignores it for an HTTP
+    // error. No issue filed yet.
     if (key) assert.ok(!pageText().includes(t(key)), code);
     assert.equal(api.calls("POST", /manager-grants$/).length, index + 1);
     assert.equal($(link).disabled, false);

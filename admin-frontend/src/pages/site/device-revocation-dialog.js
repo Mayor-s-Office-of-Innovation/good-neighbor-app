@@ -1,5 +1,5 @@
-import { t } from "../../frontend/src/i18n/i18n.js";
-import { escapeHtml } from "../../frontend/src/lib/html.js";
+import { t } from "../../../../frontend/src/i18n/i18n.js";
+import { escapeHtml } from "../../../../frontend/src/lib/html.js";
 
 /** Confirm a site binding removal without using the browser confirmation UI. */
 export function confirmDeviceRevocation(label, siteName, { signal } = {}) {

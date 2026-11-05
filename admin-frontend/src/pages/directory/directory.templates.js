@@ -5,13 +5,13 @@ import { t } from "../../../../frontend/src/i18n/i18n.js";
 import {
   defaultProgramManagerFilter,
   matchesProgramManager,
-} from "../../program-manager-filter.js";
+} from "./program-manager-filter.js";
 import { escapeHtml } from "../../dom.js";
-import { batch311Header, batch311Checkbox } from "../../site-311-batch.js";
+import { batch311Header, batch311Checkbox } from "./site-311-batch.js";
 
 /**
- * @typedef {import("../../main.js").AdminState} AdminState
- * @typedef {import("../../main.js").AdminProvider} AdminProvider
+ * @typedef {import("../../admin-types.js").AdminState} AdminState
+ * @typedef {import("../../admin-types.js").AdminProvider} AdminProvider
  */
 
 /**

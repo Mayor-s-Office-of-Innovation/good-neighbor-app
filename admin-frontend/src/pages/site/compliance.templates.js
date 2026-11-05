@@ -4,7 +4,7 @@ import { t } from "../../../../frontend/src/i18n/i18n.js";
 import { escapeHtml, formatTimestamp } from "../../dom.js";
 
 /**
- * @typedef {import("../../main.js").AdminState} AdminState
+ * @typedef {import("../../admin-types.js").AdminState} AdminState
  */
 
 /** @param {AdminState} state */
