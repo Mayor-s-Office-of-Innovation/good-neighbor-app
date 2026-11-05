@@ -98,7 +98,9 @@ export function serviceCodesForClassifierLabels({
   const fallback = defaultClassifierServiceCode(classifierId);
   const serviceCodes = labels.map((label) => {
     const mapped = classifierMap[label.trim()];
-    return mapped && SERVICE_CODE_PATTERN.test(mapped) ? mapped : fallback;
+    return typeof mapped === "string" && SERVICE_CODE_PATTERN.test(mapped)
+      ? mapped
+      : fallback;
   });
   if (!serviceCodes.length) serviceCodes.push(fallback);
   return [...new Set(serviceCodes)];

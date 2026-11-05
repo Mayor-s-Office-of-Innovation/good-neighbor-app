@@ -225,6 +225,8 @@ it("does not let a newer rejection hide an earlier unconfirmed creation", () => 
     },
   ]);
   expect(report.failures).toHaveLength(1);
+  expect(report.code21Failures).toEqual([]);
+  expect(report.excludedCode21Results).toBe(0);
   expect(report.failures[0]).toMatchObject({
     uncertainCreation: true,
     reason: "creation_pending",
@@ -283,4 +285,119 @@ it("does not count a superseded task as a current failure", () => {
   ]);
   expect(report.tasksWithCurrentFailures).toBe(0);
   expect(report.tasksWithHistoricalFailures).toBe(1);
+});
+
+it.each(["21", "hub_21", 21])(
+  "retains safe code-21 details for reason %s",
+  (reason) => {
+    const action = {
+      code: "create_311_ticket",
+      payload: {
+        executionTrigger: "task_created",
+        serviceCodeOrAction: "1.2.3",
+      },
+    };
+    const result = {
+      ...action,
+      status: "partial",
+      reason,
+      recordedAt: "2026-11-01T12:00:00Z",
+      payload: {
+        ...action.payload,
+        narrative: "private synthetic narrative",
+        tickets: [
+          {
+            serviceCode: "1.2.3",
+            srNum: "synthetic-ticket",
+            mediaUrl: "private-media",
+          },
+        ],
+      },
+    };
+    const report = summarize311Recovery([
+      {
+        sk: "TASK#current",
+        taskId: "current",
+        status: "open",
+        appActions: [action],
+        appActionResults: [result],
+      },
+      {
+        sk: "SF311_JOB#current#created",
+        taskId: "current",
+        status: "failed",
+        results: [result],
+      },
+      {
+        sk: "TASK#old",
+        taskId: "old",
+        status: "superseded",
+        appActions: [action],
+        appActionResults: [result],
+      },
+      { sk: "SF311_JOB#missing#created", status: "failed", results: [result] },
+    ]);
+    expect(report.failures).toEqual([]);
+    expect(report.excludedCode21Results).toBe(3);
+    expect(report.tasksWithCurrentFailures).toBe(0);
+    expect(report.tasksWithHistoricalFailures).toBe(0);
+    expect(report.code21Failures).toEqual([
+      expect.objectContaining({
+        taskId: "current",
+        applicability: "current_action",
+        reason: "hub_21",
+        hasRecordedTicket: true,
+        uncertainCreation: false,
+      }),
+      expect.objectContaining({
+        taskId: "old",
+        applicability: "historical_action",
+      }),
+      expect.objectContaining({
+        taskId: "missing",
+        applicability: "missing_task",
+      }),
+    ]);
+    expect(JSON.stringify(report)).not.toMatch(
+      /private synthetic narrative|private-media|synthetic-ticket/,
+    );
+  },
+);
+
+it("removes a code-21 failure after a confirmed submission of the same action", () => {
+  const payload = {
+    executionTrigger: "task_created",
+    serviceCodeOrAction: "1.2.3",
+  };
+  const report = summarize311Recovery([
+    {
+      sk: "SF311_JOB#one#created",
+      results: [
+        {
+          code: "create_311_ticket",
+          payload,
+          status: "failed",
+          reason: "hub_21",
+          recordedAt: "2026-11-01T12:00:00Z",
+        },
+      ],
+    },
+    {
+      sk: "TASK#one",
+      taskId: "one",
+      appActionResults: [
+        {
+          code: "create_311_ticket",
+          payload: {
+            ...payload,
+            tickets: [{ serviceCode: "1.2.3", srNum: "synthetic-ticket" }],
+          },
+          status: "submitted",
+          recordedAt: "2026-11-01T12:01:00Z",
+        },
+      ],
+    },
+  ]);
+  expect(report.code21Failures).toEqual([]);
+  expect(report.excludedCode21Results).toBe(0);
 });

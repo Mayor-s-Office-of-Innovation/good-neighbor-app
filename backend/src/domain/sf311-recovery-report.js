@@ -22,7 +22,7 @@ export function summarize311Recovery(items) {
     ...[...orphanIds].map((taskId) => ({ taskId, status: "missing" })),
   ];
   const failures = [];
-  let excludedCode21Results = 0;
+  const code21Failures = [];
   for (const task of reportTasks) {
     // Checkpoints are written to jobs before the task's final update. Merge
     // those too, preserving confirmed SRs over stale pending snapshots. For an
@@ -81,10 +81,7 @@ export function summarize311Recovery(items) {
         !["failed", "partial"].includes(result.status)
       )
         continue;
-      if (["21", "hub_21"].includes(String(result.reason))) {
-        excludedCode21Results++;
-        continue;
-      }
+      const isCode21 = ["21", "hub_21"].includes(String(result.reason));
       const active =
         task.status !== "superseded" &&
         [
@@ -99,7 +96,9 @@ export function summarize311Recovery(items) {
       const tickets = Array.isArray(result.payload?.tickets)
         ? result.payload.tickets
         : [];
-      failures.push({
+      // Preserve the existing non-code-21 report scope, but retain safe task-level
+      // details separately until the City confirms the meaning and retry policy.
+      const failure = {
         taskId: task.taskId,
         taskStatus: task.status,
         filingType:
@@ -114,9 +113,11 @@ export function summarize311Recovery(items) {
             : active
               ? "current_action"
               : "historical_action",
-        reason: /^[a-z_]{1,100}$/.test(result.reason || "")
-          ? result.reason
-          : "unspecified",
+        reason: isCode21
+          ? "hub_21"
+          : /^[a-z_]{1,100}$/.test(result.reason || "")
+            ? result.reason
+            : "unspecified",
         recordedAt: result.recordedAt,
         hasRecordedTicket: tickets.some(
           (/** @type {Record<string, any>} */ ticket) => Boolean(ticket.srNum),
@@ -125,7 +126,9 @@ export function summarize311Recovery(items) {
           (/** @type {Record<string, any>} */ ticket) =>
             ticket.creationState === "pending" && !ticket.srNum,
         ),
-      });
+      };
+      if (isCode21) code21Failures.push(failure);
+      else failures.push(failure);
     }
   }
   /** @type {Record<string, number>} */
@@ -137,7 +140,9 @@ export function summarize311Recovery(items) {
     tasksRead: tasks.length,
     jobsRead: jobs.length,
     jobStatuses,
-    excludedCode21Results,
+    // Excluded from `failures` and its task counts, not from the report.
+    excludedCode21Results: code21Failures.length,
+    code21Failures,
     tasksWithCurrentFailures: new Set(
       failures
         .filter((f) => f.applicability === "current_action")

@@ -881,12 +881,12 @@ async function execute311Action({
       );
       fallbackReason = !labels.length
         ? "no_labels"
-        : labels.some(
-              (label) =>
-                !/^\d+(?:\.\d+)+$/.test(
-                  map[parsed.classifierId]?.[label.trim()] || "",
-                ),
-            )
+        : labels.some((label) => {
+              const mapped = map[parsed.classifierId]?.[label.trim()];
+              return (
+                typeof mapped !== "string" || !/^\d+(?:\.\d+)+$/.test(mapped)
+              );
+            })
           ? "unmapped_label"
           : "";
       serviceCodes = serviceCodesForClassifierLabels({

@@ -113,3 +113,21 @@ describe("SF311 service-code resolution", () => {
     });
   });
 });
+
+it.each([1.1, ["1.2.3"], null, true, {}, "invalid"])(
+  "defaults malformed JSON mapping %j without losing valid routes",
+  (value) => {
+    const map = parseClassifierServiceCodeMap(
+      JSON.stringify({
+        graffiti: { malformed: value, valid: "1.2.3" },
+      }),
+    );
+    expect(
+      serviceCodesForClassifierLabels({
+        classifierId: "graffiti",
+        labels: ["malformed", "valid", "malformed"],
+        map,
+      }),
+    ).toEqual(["1.5.1.1.18.0", "1.2.3"]);
+  },
+);

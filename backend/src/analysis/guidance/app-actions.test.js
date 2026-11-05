@@ -64,17 +64,15 @@ describe("app action execution", () => {
       const classifyEvidence = vi.fn();
       createAnalyzerClient.mockReturnValue({ classifyEvidence });
       getAnalyzerApiKey.mockResolvedValue("synthetic-key");
-      const city = vi
-        .fn()
-        .mockImplementation(
-          async () =>
-            new Response(
-              JSON.stringify({
-                data: { return_code: "0", SRNum: "furniture-ticket" },
-              }),
-              { status: 200 },
-            ),
-        );
+      const city = vi.fn().mockImplementation(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: { return_code: "0", SRNum: "furniture-ticket" },
+            }),
+            { status: 200 },
+          ),
+      );
       vi.stubGlobal("fetch", city);
       const payload = {
         serviceCodeOrAction: "Run bulky item analysis",
@@ -148,12 +146,19 @@ describe("app action execution", () => {
     },
   );
 
-  it.each(["task_created", "user_confirmed"])(
-    "keeps the default filing selection stable on %s retries",
-    async (trigger) => {
+  it.each([
+    ["task_created", false],
+    ["user_confirmed", false],
+    ["task_created", true],
+    ["user_confirmed", true],
+  ])(
+    "keeps the default filing selection stable on %s retries (numeric mapping: %s)",
+    async (trigger, numericMapping) => {
       const classifyEvidence = vi
         .fn()
-        .mockResolvedValueOnce({ labels: [] })
+        .mockResolvedValueOnce({
+          labels: numericMapping ? ["Graffiti - Offensive - Pole"] : [],
+        })
         .mockResolvedValue({ labels: ["Graffiti - Offensive - Pole"] });
       createAnalyzerClient.mockReturnValue({ classifyEvidence });
       getAnalyzerApiKey.mockResolvedValue("synthetic-key");
@@ -185,6 +190,13 @@ describe("app action execution", () => {
           DYNAMO_TABLE: "table",
           S3_UPLOAD_BUCKET: "bucket",
           SQS_QUEUE_URL: "queue",
+          ...(numericMapping
+            ? {
+                SF311_CLASSIFIER_SERVICE_CODE_MAP: JSON.stringify({
+                  graffiti: { "Graffiti - Offensive - Pole": 1.1 },
+                }),
+              }
+            : {}),
           ANALYZER_BASE_URL: "https://analyzer.example.test",
           SF311_CREATESR_URL: "https://hub.example.test/createsr",
           SF311_BASIC_AUTH_USER: "user",
