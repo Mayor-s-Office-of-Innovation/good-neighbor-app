@@ -1,3 +1,4 @@
+import { retireEnrollmentLookup } from "./enrollment-retention.js";
 import { providerInvitationAuthority } from "../lib/provider-invitation-authority.js";
 import { checkCodeAttemptLimit } from "./code-attempt-limit.js";
 import { enrollmentCodeVerifier } from "./enrollment-codes.js";
@@ -451,6 +452,17 @@ export const redeemEnrollmentGrant = async (event) => {
             actor: `physical-device:${physicalDeviceId}`,
             createdAt: nowIso,
           }),
+          ...[grant.tokenHash, grant.codeHash]
+            .filter((hash) => hash && `ENROLLMENT_TOKEN#${hash}` !== lookup.pk)
+            .map((hash) =>
+              retireEnrollmentLookup(
+                tableName,
+                grant,
+                hash,
+                "redeemed",
+                nowIso,
+              ),
+            ),
         ],
       }),
     );

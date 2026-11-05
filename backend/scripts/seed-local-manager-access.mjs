@@ -29,6 +29,11 @@ const { Items: devices = [] } = await ddb.send(
     ConsistentRead: true,
   }),
 );
+// Repair active membership discovery even when there are no active devices.
+// Device revocation does not revoke the person's Site membership.
+const directoryWrites = await fixtureIdentityWrites(false);
+if (directoryWrites.length)
+  await ddb.send(new TransactWriteCommand({ TransactItems: directoryWrites }));
 let repaired = 0;
 for (const device of devices) {
   if (
@@ -44,7 +49,11 @@ for (const device of devices) {
       ConsistentRead: true,
     }),
   );
-  if (binding) continue;
+  if (
+    binding &&
+    (binding.status !== "active" || binding.membershipId !== membershipId)
+  )
+    continue;
   const physicalDeviceId = device.physicalDeviceId || randomUUID();
   const base = {
     siteId: "city-hall",
@@ -64,38 +73,18 @@ for (const device of devices) {
       new Date(Date.now() + 365 * 86400000).toISOString(),
     inactivityLimitDays: 60,
   };
-  const membership = {
-    pk,
-    sk: `MANAGER_MEMBERSHIP#${membershipId}`,
-    type: "managerMembership",
-    siteId: "city-hall",
-    membershipId,
-    email,
-    emailHash: hash,
-    role: "manager",
-    status: "active",
-    generation: 1,
-    createdAt: now,
-  };
-  const put = (Item, condition = "attribute_not_exists(pk)") => ({
-    Put: { TableName, Item, ConditionExpression: condition },
-  });
-  const { Item: existingMember } = await ddb.send(
-    new GetCommand({
-      TableName,
-      Key: { pk, sk: membership.sk },
-      ConsistentRead: true,
-    }),
-  );
-  if (
-    existingMember &&
-    (existingMember.status !== "active" || existingMember.generation !== 1)
-  )
-    throw new Error("Local fixture membership changed; refusing to restore it");
+  const identityWrites = await fixtureIdentityWrites(true);
+  if (binding) {
+    if (identityWrites.length)
+      await ddb.send(
+        new TransactWriteCommand({ TransactItems: identityWrites }),
+      );
+    continue;
+  }
   await ddb.send(
     new TransactWriteCommand({
       TransactItems: [
-        ...(!existingMember ? [put(membership)] : []),
+        ...identityWrites,
         put({
           pk,
           sk: `DEVICE_BINDING#${bindingId}`,
@@ -146,3 +135,96 @@ for (const device of devices) {
 console.log(
   `Local City Hall manager access ready (${repaired} legacy device(s) repaired).`,
 );
+
+/** @param {boolean} allowCreate */
+async function fixtureIdentityWrites(allowCreate) {
+  const membership = {
+    pk,
+    sk: `MANAGER_MEMBERSHIP#${membershipId}`,
+    type: "managerMembership",
+    siteId: "city-hall",
+    membershipId,
+    email,
+    emailHash: hash,
+    role: "manager",
+    status: "active",
+    generation: 1,
+    createdAt: now,
+  };
+  const { Item: existingMember } = await ddb.send(
+    new GetCommand({
+      TableName,
+      Key: { pk, sk: membership.sk },
+      ConsistentRead: true,
+    }),
+  );
+  if (!existingMember && !allowCreate) return [];
+  if (
+    existingMember &&
+    (existingMember.status !== "active" ||
+      existingMember.generation !== 1 ||
+      existingMember.emailHash !== hash ||
+      existingMember.email !== email ||
+      existingMember.siteId !== "city-hall" ||
+      existingMember.membershipId !== membershipId)
+  )
+    throw new Error("Local fixture membership changed; refusing to restore it");
+  const identityWrites = !existingMember ? [put(membership)] : [];
+  for (const pointer of [
+    {
+      pk,
+      sk: `MANAGER_EMAIL#${hash}`,
+      type: "managerMembershipEmail",
+      membershipId,
+      siteId: "city-hall",
+      createdAt: now,
+    },
+    {
+      pk: `MANAGER_EMAIL#${hash}`,
+      sk: `SITE#city-hall#MEMBERSHIP#${membershipId}`,
+      type: "managerMembershipDirectory",
+      membershipId,
+      siteId: "city-hall",
+      status: "active",
+      createdAt: now,
+    },
+  ]) {
+    const { Item: existing } = await ddb.send(
+      new GetCommand({
+        TableName,
+        Key: { pk: pointer.pk, sk: pointer.sk },
+        ConsistentRead: true,
+      }),
+    );
+    if (
+      existing &&
+      (existing.membershipId !== membershipId ||
+        existing.siteId !== "city-hall" ||
+        (existing.status && existing.status !== "active"))
+    )
+      throw new Error(
+        "Local fixture email assignment conflicts; refusing to overwrite it",
+      );
+    if (!existing) identityWrites.push(put(pointer));
+  }
+  if (existingMember && identityWrites.length)
+    identityWrites.push({
+      ConditionCheck: {
+        TableName,
+        Key: { pk, sk: membership.sk },
+        ConditionExpression:
+          "#status = :active AND generation = :generation AND emailHash = :hash",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: {
+          ":active": "active",
+          ":generation": 1,
+          ":hash": hash,
+        },
+      },
+    });
+  return identityWrites;
+}
+
+function put(Item, condition = "attribute_not_exists(pk)") {
+  return { Put: { TableName, Item, ConditionExpression: condition } };
+}

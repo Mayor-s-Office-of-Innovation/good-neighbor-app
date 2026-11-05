@@ -596,12 +596,23 @@ describe("Manager enrollment redemption", () => {
         accessLevel: "general",
       });
       const transaction = send.mock.calls[6][0];
-      expect(transaction.input.TransactItems).toHaveLength(9);
+      expect(transaction.input.TransactItems).toHaveLength(10);
       expect(
         transaction.input.TransactItems[0].Update.ExpressionAttributeValues[
           ":tokenHash"
         ],
       ).toBe(tokenHash);
+      const retired = transaction.input.TransactItems.at(-1).Update;
+      expect(retired.Key.pk).toBe(
+        `ENROLLMENT_TOKEN#${method === "code" ? tokenHash : codeHash}`,
+      );
+      expect(retired.ExpressionAttributeValues[":status"]).toBe("redeemed");
+      expect(
+        retired.ExpressionAttributeValues[":retention"] -
+          Math.floor(
+            Date.parse(retired.ExpressionAttributeValues[":at"]) / 1000,
+          ),
+      ).toBe(30 * 86400);
       expect(transaction.input.TransactItems[5].Put.Item).toMatchObject({
         accessLevel: "general",
         label: "Night team tablet",

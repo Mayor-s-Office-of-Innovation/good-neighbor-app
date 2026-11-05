@@ -535,4 +535,8 @@ After enrolling a local City Hall manager with `MOICHL`, run
 and physical-device records for active legacy City Hall manager devices. Reopen
 Manage access afterward. The repair requires localhost emulators and a
 `gnp-local-*` table; it preserves session generations and skips existing canonical
-bindings and revoked/suspended devices. It does not reset login-code usage.
+bindings and revoked/suspended devices. It also backfills the Site email assignment
+and global recovery-directory pointer for existing active fixture memberships,
+refusing conflicting identities. Existing active memberships are repaired even
+when every device is revoked; device status and session generations remain
+unchanged. It does not reset login-code usage.

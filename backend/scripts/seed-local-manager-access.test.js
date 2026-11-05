@@ -73,3 +73,106 @@ it("refuses a production-shaped table before making any DynamoDB calls", async (
   );
   expect(send).not.toHaveBeenCalled();
 });
+
+it("backfills email pointers for an already-repaired fixture and is idempotent", async () => {
+  const { emailHash } = await import("../src/handlers/setup-codes.js");
+  const hash = await emailHash("cityhall@example.org");
+  canonical = { status: "active", membershipId: "local-city-hall-manager" };
+  const member = {
+    pk: "SITE#city-hall",
+    sk: "MANAGER_MEMBERSHIP#local-city-hall-manager",
+    membershipId: "local-city-hall-manager",
+    siteId: "city-hall",
+    status: "active",
+    generation: 1,
+    email: "cityhall@example.org",
+    emailHash: hash,
+  };
+  const pointers = new Map();
+  const previous = send.getMockImplementation();
+  send.mockImplementation(async (command) => {
+    const input = command.input;
+    if (input.Key?.sk === member.sk) return { Item: member };
+    if (
+      input.Key &&
+      (input.Key.pk.startsWith("MANAGER_EMAIL#") ||
+        input.Key.sk.startsWith("MANAGER_EMAIL#"))
+    )
+      return { Item: pointers.get(JSON.stringify(input.Key)) };
+    if (input.TransactItems) {
+      for (const write of input.TransactItems)
+        if (write.Put) {
+          const item = write.Put.Item;
+          pointers.set(JSON.stringify({ pk: item.pk, sk: item.sk }), item);
+        }
+      return {};
+    }
+    return previous(command);
+  });
+  await import("./seed-local-manager-access.mjs");
+  expect(pointers.size).toBe(2);
+  expect([...pointers.values()].map((item) => item.type).sort()).toEqual([
+    "managerMembershipDirectory",
+    "managerMembershipEmail",
+  ]);
+  const transactions = () =>
+    send.mock.calls.filter(([command]) => command.input.TransactItems);
+  expect(transactions()).toHaveLength(1);
+  expect(
+    transactions()[0][0].input.TransactItems.some((write) => write.Update),
+  ).toBe(false);
+  vi.resetModules();
+  await import("./seed-local-manager-access.mjs");
+  expect(transactions()).toHaveLength(1);
+});
+
+it("rejects a conflicting site email assignment without writing", async () => {
+  const previous = send.getMockImplementation();
+  send.mockImplementation(async (command) =>
+    command.input.Key?.sk.startsWith("MANAGER_EMAIL#")
+      ? { Item: { membershipId: "someone-else", siteId: "city-hall" } }
+      : previous(command),
+  );
+  await expect(import("./seed-local-manager-access.mjs")).rejects.toThrow(
+    "conflicts",
+  );
+  expect(send.mock.calls.some(([command]) => command.input.TransactItems)).toBe(
+    false,
+  );
+});
+
+it("repairs an active membership's recovery directory even when all devices are revoked", async () => {
+  const { emailHash } = await import("../src/handlers/setup-codes.js");
+  const hash = await emailHash("cityhall@example.org");
+  const previous = send.getMockImplementation();
+  send.mockImplementation(async (command) => {
+    const input = command.input;
+    if (input.Key?.sk === "MANAGER_MEMBERSHIP#local-city-hall-manager")
+      return {
+        Item: {
+          membershipId: "local-city-hall-manager",
+          siteId: "city-hall",
+          email: "cityhall@example.org",
+          emailHash: hash,
+          generation: 1,
+          status: "active",
+        },
+      };
+    if (input.KeyConditionExpression)
+      return { Items: [{ ...device, status: "revoked" }] };
+    return previous(command);
+  });
+  await import("./seed-local-manager-access.mjs");
+  const transactions = send.mock.calls.filter(
+    ([command]) => command.input.TransactItems,
+  );
+  expect(transactions).toHaveLength(1);
+  const writes = transactions[0][0].input.TransactItems;
+  expect(
+    writes
+      .filter((write) => write.Put)
+      .map((write) => write.Put.Item.type)
+      .sort(),
+  ).toEqual(["managerMembershipDirectory", "managerMembershipEmail"]);
+  expect(writes.some((write) => write.Update)).toBe(false);
+});

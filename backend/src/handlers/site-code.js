@@ -1,3 +1,4 @@
+import { enrollmentLookupExpiry } from "./enrollment-retention.js";
 import { checkCodeAttemptLimit } from "./code-attempt-limit.js";
 import { enrollmentCodeVerifier } from "./enrollment-codes.js";
 import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
@@ -47,7 +48,62 @@ export const handler = async (event) => {
         ConsistentRead: true,
       }),
     );
-    if (Item) return jsonResponse(200, { code, enrollment: true });
+    if (Item) {
+      if (!Item.grantPk || !Item.grantSk)
+        return jsonResponse(401, { error: "invalid_enrollment_grant" });
+      const { Item: grant } = await ddb.send(
+        new GetCommand({
+          TableName: getDynamoTableName(),
+          Key: { pk: Item.grantPk, sk: Item.grantSk },
+          ConsistentRead: true,
+        }),
+      );
+      if (
+        !grant ||
+        grant.grantId !== Item.grantId ||
+        (grant.codeHash ||
+          (grant.deliveryMode === "code" && grant.tokenHash)) !== hash
+      )
+        return jsonResponse(401, { error: "invalid_enrollment_grant" });
+      const terminal =
+        grant.status === "redeemed"
+          ? "enrollment_already_used"
+          : grant.status === "cancelled"
+            ? "enrollment_cancelled"
+            : grant.expiresAt <= new Date().toISOString()
+              ? "enrollment_expired"
+              : null;
+      // Lazily give historical ISO lookup rows a bounded TTL too. Identity and
+      // observed expiry are pinned so a concurrent retirement cannot be undone.
+      if (typeof Item.expiresAt !== "number") {
+        const at = grant.redeemedAt || grant.cancelledAt || grant.expiresAt;
+        try {
+          await ddb.send(
+            new UpdateCommand({
+              TableName: getDynamoTableName(),
+              Key: { pk: Item.pk || `ENROLLMENT_TOKEN#${hash}`, sk: "#META" },
+              UpdateExpression: "SET expiresAt = :ttl",
+              ConditionExpression: "grantId = :id AND expiresAt = :observed",
+              ExpressionAttributeValues: {
+                ":id": grant.grantId,
+                ":observed": Item.expiresAt,
+                ":ttl": enrollmentLookupExpiry(at),
+              },
+            }),
+          );
+        } catch (error) {
+          if (
+            !(error instanceof Error) ||
+            error.name !== "ConditionalCheckFailedException"
+          )
+            throw error;
+        }
+      }
+      if (terminal) return jsonResponse(410, { error: terminal });
+      if (grant.status !== "pending")
+        return jsonResponse(401, { error: "invalid_enrollment_grant" });
+      return jsonResponse(200, { code, enrollment: true });
+    }
   }
 
   const valid = await validateSetupCode(code);

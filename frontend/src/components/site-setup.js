@@ -415,8 +415,9 @@ export class SiteSetup extends HTMLElement {
     if (this._cancelled || generation !== this._validationGeneration) return;
     if (!result.ok) {
       this._checking = false;
-      this._error =
-        result.reason === "limited"
+      this._error = ["used", "expired", "cancelled"].includes(result.reason)
+        ? t(`setup.enrollment.${result.reason}`)
+        : result.reason === "limited"
           ? t("setup.enrollment.limited")
           : result.reason === "network"
             ? t("setup.error.network")

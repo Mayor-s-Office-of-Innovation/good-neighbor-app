@@ -161,3 +161,29 @@ test("enrollment button has a generous stable target and visible pressed feedbac
   await page.mouse.move(0, 0);
   await page.mouse.up();
 });
+
+for (const [error, key] of [
+  ["enrollment_already_used", "setup.enrollment.used"],
+  ["enrollment_cancelled", "setup.enrollment.cancelled"],
+  ["enrollment_expired", "setup.enrollment.expired"],
+]) {
+  test(`the login probe explains ${error} without attempting redemption`, async ({
+    page,
+  }) => {
+    let redemptions = 0;
+    await page.route("**/site-code", (route) =>
+      route.fulfill({ status: 410, json: { error } }),
+    );
+    await page.route("**/app/v1/enrollment/redeem", (route) => {
+      redemptions++;
+      return route.fulfill({ status: 500, json: {} });
+    });
+    await page.goto("/#login=1");
+    const input = page.locator("#code-input input").first();
+    await expect(input).toBeVisible();
+    await input.pressSequentially("ABC234");
+    await page.locator("#continue").click();
+    await expect(page.getByRole("alert")).toHaveText(t(key));
+    expect(redemptions).toBe(0);
+  });
+}

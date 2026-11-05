@@ -1,4 +1,8 @@
 import {
+  enrollmentLookupExpiry,
+  retireEnrollmentLookup,
+} from "./enrollment-retention.js";
+import {
   generateEnrollmentCode,
   enrollmentCodeVerifier,
 } from "./enrollment-codes.js";
@@ -280,7 +284,7 @@ const createStaffGrantAttempt = async (event) => {
             grantSk: grant.sk,
             grantId,
             siteId,
-            expiresAt,
+            expiresAt: enrollmentLookupExpiry(expiresAt),
           }),
           providerAuthority
             ? providerAuthority.checks[0]
@@ -344,7 +348,7 @@ const createStaffGrantAttempt = async (event) => {
             grantSk: grant.sk,
             grantId,
             siteId,
-            expiresAt,
+            expiresAt: enrollmentLookupExpiry(expiresAt),
           }),
         ],
       }),
@@ -477,14 +481,11 @@ export const cancelStaffGrant = async (event) => {
               },
             },
           },
-          {
-            Delete: {
-              TableName: tableName,
-              Key: { pk: `ENROLLMENT_TOKEN#${grant.tokenHash}`, sk: "#META" },
-              ConditionExpression: "grantId = :grantId",
-              ExpressionAttributeValues: { ":grantId": grantId },
-            },
-          },
+          ...[grant.tokenHash, grant.codeHash]
+            .filter(Boolean)
+            .map((hash) =>
+              retireEnrollmentLookup(tableName, grant, hash, "cancelled", now),
+            ),
           put(tableName, {
             pk: `SITE#${siteId}`,
             sk: `AUDIT#${now}#${randomUUID()}`,
