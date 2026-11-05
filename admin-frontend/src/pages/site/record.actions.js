@@ -1,5 +1,4 @@
-// main.js adds these to AdminApp, so they can use this.state and render().
-import { adminCatalog } from "../../admin-catalog.js";
+// Site record actions, mixed into the Site page so they share its state.
 import { actionFeedback } from "../../action-feedback.js";
 import { addressPartsFromForm, hasSiteCoordinates } from "./site-address.js";
 import { adminApi } from "../../services/admin-api.js";
@@ -11,7 +10,7 @@ import {
   showFormSaveError,
   syncDirtyForm,
 } from "../../form-state.js";
-import { currentRoute, navigate } from "../../router.js";
+import { navigate } from "../../router.js";
 import { activeSiteSection } from "./site-section.js";
 import { selectedLeadProgram } from "./site-assignment.js";
 import { siteManagerRoster } from "../../site-managers.js";
@@ -19,14 +18,31 @@ import { siteSaveErrorMessage } from "./save-error-messages.js";
 import { t } from "../../../../frontend/src/i18n/i18n.js";
 import { withSaveFeedback } from "../../save-feedback.js";
 
+/**
+ * The tab the URL's `section` asks for.
+ * @param {import("../../admin-session.js").AdminSession} session
+ */
+export function currentSiteSection(session) {
+  return activeSiteSection(
+    new URLSearchParams(window.location.search).get("section"),
+    session.capabilities,
+  );
+}
+
 export const siteRecordActions = {
-  async refreshSiteAccess(siteId, renderNow = true) {
+  /**
+   * Reread the Access tab's lists; false when the user left during `visit`'s save or this read.
+   * @param {string} siteId
+   * @param {number} [visit] the page's visit when the caller's save started
+   */
+  async refreshSiteAccess(siteId, renderNow = true, visit = this.visit) {
+    if (visit !== this.visit) return false;
     const [memberships, grants, devices] = await Promise.all([
       adminApi.listManagerMemberships(siteId),
       adminApi.listManagerGrants(siteId),
       adminApi.listDevices(siteId),
     ]);
-    if (this.state.site?.siteId !== siteId || currentRoute().name !== "site")
+    if (visit !== this.visit || this.state.site?.siteId !== siteId)
       return false;
     this.state.managerMemberships = siteManagerRoster(
       this.state.assignedUsers,
@@ -58,7 +74,7 @@ export const siteRecordActions = {
             deliberate311ProductionEnabled: enabled,
             expectedUpdatedAt: site.updatedAt || "",
           });
-          adminCatalog.addSite({ ...site, ...result.site });
+          this.catalog.addSite({ ...site, ...result.site });
           if (this.state.site?.siteId === site.siteId)
             this.state.site = { ...this.state.site, ...result.site };
           syncDirtyForm(form, true);
@@ -86,6 +102,8 @@ export const siteRecordActions = {
     const feedback = actionFeedback("admin.toast.siteSaved");
     try {
       if (!this.state.site) return;
+      const siteId = this.state.site.siteId;
+      const visit = this.visit;
       const data = new FormData(form);
       const name = formValue(data, "site-name");
       const leadProgramId = formValue(data, "lead-program-id");
@@ -133,27 +151,29 @@ export const siteRecordActions = {
             throw new Error("lead_program_required");
           }
           const reassignment = await adminApi.reassignSite(
-            this.state.site.siteId,
+            siteId,
             leadProviderId,
             leadProgramId,
             { expectedUpdatedAt: form.dataset.reassignmentVersion },
           );
           feedback.changed();
-          this.state.site = { ...this.state.site, ...reassignment.site };
-          adminCatalog.addSite(this.state.site);
+          // A Site page the user has left shows another Site, or none.
+          if (visit === this.visit) {
+            this.state.site = { ...this.state.site, ...reassignment.site };
+            this.catalog.addSite(this.state.site);
+          } else this.catalog.updateSite(siteId, reassignment.site);
         }
         if (section === "lead-program") {
           feedback.success("admin.toast.leadProgramSaved");
           this.state.siteSaveMessage = "";
           return true;
         }
-        const result = await adminApi.updateSite(
-          this.state.site.siteId,
-          values,
-        );
+        const result = await adminApi.updateSite(siteId, values);
         feedback.changed();
-        this.state.site = { ...this.state.site, ...result.site };
-        adminCatalog.updateSite(this.state.site.siteId, this.state.site);
+        if (visit === this.visit) {
+          this.state.site = { ...this.state.site, ...result.site };
+          this.catalog.updateSite(siteId, this.state.site);
+        } else this.catalog.updateSite(siteId, result.site);
         if (values.addressParts && !hasSiteCoordinates(result.site?.location)) {
           this.state.siteSaveError =
             "The address was saved, but geocoding did not return coordinates. Try saving it again.";
@@ -175,7 +195,7 @@ export const siteRecordActions = {
         this.state.siteSaving = false;
         if (this.state.siteSaveError) {
           showFormSaveError(form, this.state.siteSaveError);
-        } else {
+        } else if (visit === this.visit) {
           this.render();
         }
       }
@@ -202,12 +222,18 @@ export const siteRecordActions = {
       this.state.suspensionTarget = null;
       this.state.revocationMessage = "";
       this.render();
+      const visit = this.visit;
       try {
         const result = await adminApi.updateSitePerimeter(
           this.state.site.siteId,
           perimeter,
           String(this.state.site.updatedAt || ""),
         );
+        // The perimeter is saved; a Site page the user has left shows another Site, or none.
+        if (visit !== this.visit) {
+          feedback.success();
+          return true;
+        }
         this.state.site = { ...this.state.site, ...result };
         feedback.success();
         this.state.perimeterMessage = "";
@@ -224,7 +250,7 @@ export const siteRecordActions = {
         this.state.perimeterSaving = false;
         if (this.state.perimeterError) {
           showFormSaveError(form, this.state.perimeterError);
-        } else {
+        } else if (visit === this.visit) {
           this.render();
         }
       }
@@ -234,44 +260,28 @@ export const siteRecordActions = {
     }
   },
   /**
-   * Open a site with its contacts and devices.
+   * Open a site with its contacts and devices; false when the user left first.
    * @param {string} siteId
-   * @returns {Promise<void>}
+   * @returns {Promise<boolean | void>}
    */
   async openSite(siteId, updateUrl = true, refresh = true, renderNow = true) {
     if (updateUrl) return navigate(`/sites/${encodeURIComponent(siteId)}`);
-    const path = location.pathname + location.search;
-    const generation = (this.siteLoadGeneration =
-      (this.siteLoadGeneration || 0) + 1);
-    const section = activeSiteSection(
-      new URLSearchParams(location.search).get("section"),
-      this.state.capabilities,
-    );
+    const visit = this.visit;
+    const section = currentSiteSection(this.session);
     const sameSite = this.state.site?.siteId === siteId;
     this.siteSectionLoads ||= new Map();
     if (!sameSite || refresh) this.siteSectionLoads.clear();
     if (
       !refresh &&
       sameSite &&
-      !adminCatalog.programManagersStale &&
+      !this.catalog.programManagersStale &&
       Date.now() - (this.siteSectionLoads.get(section) || 0) < 30000
     ) {
-      this.render();
-      if (
-        section === "compliance" &&
-        this.state.expandedLettersSiteId === siteId
-      )
-        void this.loadSiteLetters(siteId);
-      queueMicrotask(() => {
-        const heading = this.querySelector("h1");
-        heading?.focus({ preventScroll: true });
-        heading?.ownerDocument.defaultView?.scrollTo({
-          top: 0,
-          left: 0,
-          behavior: "instant",
-        });
-      });
-      return;
+      if (renderNow) {
+        this.render();
+        this.revealSite(section, true);
+      }
+      return true;
     }
     if (!sameSite) {
       this.state.expandedLettersSiteId = null;
@@ -295,7 +305,7 @@ export const siteRecordActions = {
       section === "access" ? adminApi.listManagerGrants(siteId) : null,
       section === "access" ? adminApi.listDevices(siteId) : null,
       section === "compliance" ? adminApi.listSiteTerms(siteId) : null,
-      adminCatalog.programManagersStale
+      this.catalog.programManagersStale
         ? adminApi.listCityProgramManagers()
         : null,
       needsRoster ? adminApi.listPeople() : null,
@@ -305,13 +315,11 @@ export const siteRecordActions = {
       needsRoster && latest?.leadProgramId
         ? await adminApi.getProgram(latest.leadProgramId)
         : null;
-    if (
-      generation !== this.siteLoadGeneration ||
-      location.pathname + location.search !== path
-    )
-      return;
+    // A newer openSite() replaced the controller; its reply is the one to show.
+    if (controller !== this.siteReadController || visit !== this.visit)
+      return false;
     if (programManagers) {
-      adminCatalog.programManagersReloaded(
+      this.catalog.programManagersReloaded(
         programManagers.programManagers || [],
       );
     }
@@ -329,7 +337,7 @@ export const siteRecordActions = {
       : null;
     if (this.state.site) {
       const current = this.state.site;
-      adminCatalog.updateSite(siteId, (summary) => ({
+      this.catalog.updateSite(siteId, (summary) => ({
         ...summary,
         ...current,
         primaryContactUserId: current.primaryContactUserId,
@@ -365,8 +373,6 @@ export const siteRecordActions = {
       ];
     if (terms) this.state.siteTerms = terms.terms || [];
     else if (!sameSite) this.state.siteTerms = [];
-    this.state.provider = null;
-    this.state.siteManager = null;
     if (needsRoster) {
       this.state.managerMemberships = siteManagerRoster(
         this.state.assignedUsers,
@@ -406,7 +412,7 @@ export const siteRecordActions = {
               user.userId === (membership.personId || membership.userId),
           ) || {}),
         }));
-      adminCatalog.updateSite(siteId, {
+      this.catalog.updateSite(siteId, {
         managerMemberships: this.state.managerMemberships,
       });
     }
@@ -423,24 +429,46 @@ export const siteRecordActions = {
     this.siteSectionLoads.set(section, Date.now());
     if (renderNow) {
       this.render();
-      if (
-        section === "compliance" &&
-        this.state.expandedLettersSiteId === siteId
-      )
-        void this.loadSiteLetters(siteId);
+      this.revealSite(section, !refresh);
     }
-    if (renderNow)
-      queueMicrotask(() => {
-        const heading = this.querySelector("h1");
-        heading?.focus({ preventScroll: true });
-        // Navigation starts at the page top, independently of the heading's position.
-        if (!refresh)
-          heading?.ownerDocument.defaultView?.scrollTo({
-            top: 0,
-            left: 0,
-            behavior: "instant",
-          });
-      });
+    return true;
+  },
+  /**
+   * Reread the Site after a save. Skipped once the user has left, since
+   * openSite() would cancel the read for the page they went to.
+   * @param {string} siteId
+   * @param {number} visit the page's visit when the save started
+   */
+  async reloadSite(siteId, visit, renderNow = true) {
+    if (visit !== this.visit) return false;
+    try {
+      return await this.openSite(siteId, false, true, renderNow);
+    } catch (error) {
+      // Leaving aborts the reread; the save itself worked, so that isn't a failure.
+      if (error?.name === "AbortError" || visit !== this.visit) return false;
+      throw error;
+    }
+  },
+  /**
+   * Load the open letters list and move focus to the Site's heading.
+   * @param {string} section
+   * @param {boolean} scrollToTop
+   */
+  revealSite(section, scrollToTop) {
+    const siteId = this.state.site?.siteId;
+    if (section === "compliance" && this.state.expandedLettersSiteId === siteId)
+      void this.loadSiteLetters(siteId);
+    queueMicrotask(() => {
+      const heading = this.querySelector("h1");
+      heading?.focus({ preventScroll: true });
+      // Navigation starts at the page top, independently of the heading's position.
+      if (scrollToTop)
+        heading?.ownerDocument.defaultView?.scrollTo({
+          top: 0,
+          left: 0,
+          behavior: "instant",
+        });
+    });
   },
   /**
    * Deactivate a site and refresh the current provider.
@@ -452,14 +480,15 @@ export const siteRecordActions = {
     try {
       await adminApi.deactivateSite(siteId);
       feedback.success();
-      adminCatalog.removeSite(siteId);
-      adminCatalog.invalidate("managers");
+      this.catalog.removeSite(siteId);
+      this.catalog.invalidate("managers");
       this.state.site = null;
       this.querySelector("[data-dirty-form]")?.setAttribute(
         "data-is-dirty",
         "false",
       );
-      this.lastRenderedPath = "";
+      // An empty path skips <admin-app>'s unsaved-changes check, so leaving a deactivated Site doesn't prompt.
+      this.reportPath("");
       navigate("/sites");
     } catch (error) {
       feedback.failure(error);

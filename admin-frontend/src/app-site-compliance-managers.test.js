@@ -6,10 +6,10 @@ import {
   click,
   fill,
   missing,
+  text,
   toastText,
-  unhandledRejection,
 } from "../test-support/admin-dom.js";
-import { mountAdmin } from "../test-support/app-mount.js";
+import { openSitePage } from "../test-support/site-pages.js";
 import {
   complianceData,
   oversightPath,
@@ -94,7 +94,7 @@ test("an assigned manager with no name or email still lists", async () => {
     managerId: "pm9",
     status: "active",
   });
-  await mountAdmin(oversightPath, { data });
+  await openSitePage(oversightPath, { data });
   assert.deepEqual(
     [
       // CSS class: the identity block has no role, id or data attribute.
@@ -107,7 +107,7 @@ test("an assigned manager with no name or email still lists", async () => {
 });
 
 test("an assigned manager without an account can be invited from the Site", async () => {
-  const { api } = await mountAdmin(oversightPath, {
+  const { api } = await openSitePage(oversightPath, {
     data: managersData(),
     setup: (api) =>
       api.on("POST", /^admin-users$/, {
@@ -136,7 +136,7 @@ test("an assigned manager without an account can be invited from the Site", asyn
 });
 
 test("a failed invite for an assigned manager can be retried", async () => {
-  const { api } = await mountAdmin(oversightPath, {
+  const { api } = await openSitePage(oversightPath, {
     data: managersData(),
     setup: (api) =>
       api.fail("POST", /^admin-users$/, 409, "site_update_conflict"),
@@ -158,7 +158,7 @@ test("a failed invite for an assigned manager can be retried", async () => {
 });
 
 test("the manager search reports how many match", async () => {
-  await mountAdmin(oversightPath, { data: managersData() });
+  await openSitePage(oversightPath, { data: managersData() });
   await click("#add-compliance-manager");
   assert.equal($(picker).open, true);
   for (const [query, shown] of [
@@ -174,7 +174,7 @@ test("the manager search reports how many match", async () => {
 });
 
 test("managers are added up to the limit and removed", async () => {
-  await mountAdmin(oversightPath, { data: managersData() });
+  await openSitePage(oversightPath, { data: managersData() });
   await click("#add-compliance-manager");
   await fill(search, "jordan");
   await click("[data-select-compliance-manager][data-manager-id='pm2']");
@@ -199,7 +199,7 @@ test("managers are added up to the limit and removed", async () => {
 test("a new manager is invited and selected, within the two-manager limit", async () => {
   const data = managersData();
   const statuses = ["active", "invited", "resent", "invited"];
-  const { api } = await mountAdmin(oversightPath, {
+  const { api } = await openSitePage(oversightPath, {
     data,
     setup: (api) =>
       api.on("POST", /^admin-users$/, (/** @type {any} */ request) => {
@@ -231,44 +231,46 @@ test("a new manager is invited and selected, within the two-manager limit", asyn
   assert.equal(managers().length, 2);
   // The Add button is disabled at the limit; a stale open dialog can still submit.
   $(inviteDialog).showModal();
-  const failure = await unhandledRejection(() =>
-    fillInvite("sam.three@example.org"),
-  );
-  // Pins a bug: the catch reads event.currentTarget after an await, so it's null. No issue filed yet.
-  assert.equal(failure?.message, "Expected form event target");
+  await fillInvite("sam.three@example.org");
   assert.ok(
     $(`${inviteDialog} [data-operation-error]`).textContent.includes(
       t("admin.toast.refreshFailed"),
     ),
   );
-  assert.ok(missing(`${inviteDialog} [data-form-save-error]`));
+  // Hard-coded English in oversight.actions.js, with no catalog key.
+  assert.equal(
+    text(`${inviteDialog} [data-form-save-error]`),
+    "A site can have no more than two Program managers.",
+  );
   assert.equal(managers().length, 2);
 });
 
 test("an invited manager missing from the directory reports the sync failure", async () => {
-  await mountAdmin(oversightPath, {
+  await openSitePage(oversightPath, {
     data: managersData(),
     setup: (api) =>
       api.on("POST", /^admin-users$/, {
         json: { invitationStatus: "invited", user: {} },
       }),
   });
-  const failure = await unhandledRejection(() => inviteNew("lost@example.org"));
-  // Pins the same event.currentTarget bug as above. No issue filed yet.
-  assert.equal(failure?.message, "Expected form event target");
+  await inviteNew("lost@example.org");
   assert.ok(
     $(`${inviteDialog} [data-operation-error]`).textContent.includes(
       t("admin.toast.refreshFailed"),
     ),
   );
-  assert.ok(missing(`${inviteDialog} [data-form-save-error]`));
+  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
+  assert.equal(
+    text(`${inviteDialog} [data-form-save-error]`),
+    "program_manager_directory_sync_failed",
+  );
   assert.equal(managers().length, 1);
 });
 
 test("a Compliance manager sees assignments without manage controls", async () => {
   const data = managersData();
   data.programManagers[0].accountStatus = "suspended";
-  await mountAdmin(oversightPath, { data, role: "compliance-manager" });
+  await openSitePage(oversightPath, { data, role: "compliance-manager" });
   assert.ok(
     $(row("pm1")).textContent.includes(t("admin.users.statusSuspended")),
   );
@@ -277,7 +279,7 @@ test("a Compliance manager sees assignments without manage controls", async () =
 });
 
 test("the managers list survives a visit to the App settings tab", async () => {
-  await mountAdmin(oversightPath, {
+  await openSitePage(oversightPath, {
     data: managersData(),
     setup: (api) =>
       // admin.js getSite returns only the Site record for the settings view (admin.test.js:1848).
@@ -302,7 +304,7 @@ test("the managers list survives a visit to the App settings tab", async () => {
 test("a manager whose account is only linked shows no account status", async () => {
   const data = managersData();
   data.programManagers[0].accountStatus = "linked";
-  await mountAdmin(oversightPath, { data });
+  await openSitePage(oversightPath, { data });
   const text = $(row("pm1")).textContent;
   assert.match(text, /Casey Manager/);
   for (const key of [
@@ -324,7 +326,7 @@ test("a Site with no assigned managers says so until one is added", async () => 
   data.programManagers = [
     { userId: "pm9", name: "Unknown Status", email: "", status: "active" },
   ];
-  await mountAdmin(oversightPath, { data });
+  await openSitePage(oversightPath, { data });
   assert.ok(!missing("[data-no-compliance-managers]"));
   await click("#add-compliance-manager");
   await fill(search, "unknown");

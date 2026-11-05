@@ -11,7 +11,10 @@ import {
 import { addExtension, removeExtension } from "../../phone-extension.js";
 import { navigate } from "../../router.js";
 import { saveWithFeedback } from "../../save-feedback.js";
-import { siteManagerActions } from "../site/manager.actions.js";
+import {
+  enrollmentCodeActions,
+  siteManagerAccessActions,
+} from "../site/manager.actions.js";
 import {
   providerManagerPath,
   removeProviderManagerAccess,
@@ -82,14 +85,14 @@ export const providerEvents = {
         .catch((error) => page.reportError(error)),
     // The Site page shares this, since both scopes issue a code the same way.
     "[data-show-enrollment-code]": (page, button) =>
-      void siteManagerActions.showEnrollmentCode.call(
+      void enrollmentCodeActions.showEnrollmentCode.call(
         page,
         button.dataset.enrollmentScope,
         button.getAttribute("data-show-enrollment-code"),
       ),
     "[data-copy-enrollment-url]": (page, button) => {
       if (button instanceof HTMLButtonElement)
-        void siteManagerActions.copyManagerGrant(button);
+        void siteManagerAccessActions.copyManagerGrant(button);
     },
     "[data-cancel-provider-manager-grant]": (page, button) =>
       page

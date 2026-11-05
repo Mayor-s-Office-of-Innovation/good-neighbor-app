@@ -1,0 +1,233 @@
+// The Site page: a Site record and its tabs. It owns the Site and its tab
+// data, so its tests fake only the Site's calls.
+import { START_UP_LISTS } from "../../admin-catalog.js";
+import { mixActions } from "../../mix-actions.js";
+import { escapeHtml, formatTimestamp } from "../../dom.js";
+import {
+  bindEnrollmentCodeExpiry,
+  clearEnrollmentCodeView,
+} from "../../enrollment-code-view.js";
+import { syncEnrollmentRequests } from "../../enrollment-request.js";
+import { discardChangesDialog, entityBreadcrumb } from "../shared.templates.js";
+import { siteSectionNav, siteSectionView } from "./record.templates.js";
+import { bindAddressLookup } from "./address-lookup.js";
+import { bindManagerAssignmentSearch } from "./manager-assignment-search.js";
+import { applySiteCapabilities } from "./site-capabilities.js";
+import { listenForControls, pageState } from "../page-events.js";
+import { mergeEvents, pageMessages } from "./page-support.js";
+import {
+  prepareSiteRecord,
+  prepareTrackedForms,
+  siteRecordEvents,
+} from "./record.bindings.js";
+import {
+  prepareSiteOversight,
+  siteOversightEvents,
+} from "./oversight.bindings.js";
+import {
+  prepareSiteCompliance,
+  siteComplianceEvents,
+} from "./compliance.bindings.js";
+import { prepareSiteAccess, siteAccessEvents } from "./access.bindings.js";
+import { siteManagerAccessEvents } from "./manager.bindings.js";
+import { currentSiteSection, siteRecordActions } from "./record.actions.js";
+import { siteOversightActions } from "./oversight.actions.js";
+import { siteComplianceActions } from "./compliance.actions.js";
+import { siteAccessActions } from "./access.actions.js";
+import {
+  enrollmentCodeActions,
+  siteManagerAccessActions,
+} from "./manager.actions.js";
+
+/**
+ * @typedef {{ name: string, id?: string }} Route
+ * @typedef {import("../../admin-catalog.js").AdminCatalog} AdminCatalog
+ * @typedef {import("../../admin-session.js").AdminSession} AdminSession
+ * @typedef {AdminSitePage & typeof pageMessages & typeof siteRecordActions & typeof siteOversightActions & typeof siteComplianceActions & typeof siteAccessActions & typeof siteManagerAccessActions & typeof enrollmentCodeActions} SitePageElement
+ */
+
+const siteEvents = mergeEvents(
+  siteRecordEvents,
+  siteOversightEvents,
+  siteComplianceEvents,
+  siteAccessEvents,
+  siteManagerAccessEvents,
+);
+
+export class AdminSitePage extends HTMLElement {
+  constructor() {
+    super();
+    this.state = pageState(this, {
+      site: null,
+      assignedUsers: [],
+      assignedComplianceManagers: [],
+      availableSiteUsers: [],
+      siteTerms: [],
+      letterEmailHistory: [],
+      letterEmailUncertain: false,
+      managerMemberships: [],
+      managerGrants: [],
+      devices: [],
+      issuedCode: null,
+      siteSaveMessage: "",
+      siteSaveError: "",
+      siteSaving: false,
+      perimeterSaving: false,
+      perimeterMessage: "",
+      perimeterError: "",
+      revocationMessage: "",
+      physicalDeviceRevocationPreview: null,
+      emergencyRevocationSites: [],
+      emergencyRevocationPreview: null,
+      suspensionTarget: null,
+      managerMembershipRemovalTarget: null,
+    });
+    // Bumped by open() and leave(), so a read or save from an earlier visit stops there.
+    this.visit = 0;
+    // render() draws this route, not the URL, so a late redraw shows the right Site.
+    /** @type {Route | null} */
+    this.route = null;
+    // Set before open() by <admin-app>'s createPage() or a test's mountPage().
+    /** @type {AdminCatalog} */
+    this.catalog = /** @type {any} */ (null);
+    /** @type {AdminSession} */
+    this.session = /** @type {any} */ (null);
+  }
+
+  connectedCallback() {
+    // Captured, so events that don't bubble still reach their control; Site controls nest, so every match runs.
+    this.stopListening = listenForControls(
+      this,
+      siteEvents,
+      Object.keys(siteEvents),
+      true,
+    );
+    window.addEventListener("pagehide", this.clearDisplayedEnrollmentCodes);
+    // <admin-app>'s render() reattaches this page; redrawing it then would reset unsaved form edits.
+    if (this.renderedVisit !== this.visit) this.render();
+  }
+
+  disconnectedCallback() {
+    this.stopListening?.();
+    window.removeEventListener("pagehide", this.clearDisplayedEnrollmentCodes);
+    // <admin-app>'s render() reattaches this page at once; only a real removal stops its work.
+    queueMicrotask(() => {
+      if (this.isConnected) return;
+      this.deviceRevocationController?.abort();
+      this.managerSearchCleanup?.();
+      clearEnrollmentCodeView(this.state);
+    });
+  }
+
+  /** Codes on screen are secrets, so they go when the browser hides the page. */
+  clearDisplayedEnrollmentCodes = () => {
+    clearEnrollmentCodeView(this.state);
+    this.querySelectorAll("[data-enrollment-code]").forEach((node) =>
+      node.remove(),
+    );
+  };
+
+  /** Stop the last visit's reads, device revocation prompt and manager search. */
+  endVisit() {
+    this.visit++;
+    this.siteReadController?.abort();
+    this.deviceRevocationController?.abort();
+    this.managerSearchCleanup?.();
+    clearEnrollmentCodeView(this.state);
+  }
+
+  /** <admin-app> reuses this page on the next Site visit, so leaving drops the open Site. */
+  leave() {
+    this.endVisit();
+    this.state.site = null;
+    this.route = null;
+  }
+
+  /**
+   * Load what the route shows; false when a newer open() or leave() came first.
+   * @param {Route} route
+   * @returns {Promise<boolean>}
+   */
+  async open(route) {
+    this.endVisit();
+    this.route = route;
+    const visit = this.visit;
+    // The Site's breadcrumb, Provider and Program pickers and oversight lists need START_UP_LISTS.
+    await this.catalog.ensure(START_UP_LISTS);
+    if (visit !== this.visit) return false;
+    const page = /** @type {SitePageElement} */ (this);
+    return (await page.openSite(route.id || "", false, false, false)) === true;
+  }
+
+  /** @param {Route} route */
+  shows(route) {
+    return route.name === "site" && this.state.site?.siteId === route.id;
+  }
+
+  focusOnOpen() {
+    /** @type {SitePageElement} */ (this).revealSite(
+      currentSiteSection(this.session),
+      true,
+    );
+  }
+
+  render() {
+    this.renderedVisit = this.visit;
+    this.managerSearchCleanup?.();
+    const site = this.route && this.shows(this.route) ? this.state.site : null;
+    if (!site) {
+      this.innerHTML = "";
+      return;
+    }
+    const activeSiteSection = currentSiteSection(this.session);
+    const siteSubview =
+      new URLSearchParams(window.location.search).get("view") || "";
+    this.innerHTML = `
+      <section class="site-page site-record">
+        ${entityBreadcrumb("site", site, this.state.programs, this.state.providers)}
+        <div class="panel__head">
+          <div class="site-title">
+            <h1 tabindex="-1">${escapeHtml(site.name)}</h1>
+            <p class="muted site-title__updated">
+              Last updated ${escapeHtml(formatTimestamp(site.updatedAt))}
+            </p>
+          </div>
+        </div>
+        ${siteSectionNav(site.siteId, activeSiteSection, this.state.capabilities.createEntities === true)}
+        ${siteSectionView(this.state, activeSiteSection, siteSubview)}
+        ${discardChangesDialog()}
+      </section>
+    `;
+    bindEnrollmentCodeExpiry(this, this.state);
+    bindAddressLookup(this);
+    this.managerSearchCleanup = bindManagerAssignmentSearch(
+      this.querySelector("#manager-membership-form"),
+    );
+    const page = /** @type {SitePageElement} */ (this);
+    prepareSiteRecord(page);
+    prepareSiteOversight(page);
+    prepareTrackedForms(page);
+    prepareSiteCompliance(page);
+    prepareSiteAccess(page);
+    this.applyCapabilities();
+    syncEnrollmentRequests(this);
+    page.reportPath(location.pathname + location.search);
+  }
+
+  applyCapabilities() {
+    applySiteCapabilities(this, this.state);
+  }
+}
+
+mixActions(
+  AdminSitePage,
+  pageMessages,
+  siteRecordActions,
+  siteOversightActions,
+  siteComplianceActions,
+  siteAccessActions,
+  siteManagerAccessActions,
+  enrollmentCodeActions,
+);
+
+customElements.define("admin-site-page", AdminSitePage);
