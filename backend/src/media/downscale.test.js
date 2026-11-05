@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import sharp from "sharp";
-import { downscaleImage, DownscaleError } from "./downscale.js";
+import { downscaleImage, DownscaleError, sniffImageType } from "./downscale.js";
 
 /** Make a real JPEG of the given dimensions so sharp has real pixels to work. */
 const jpegOf = (/** @type {number} */ width, /** @type {number} */ height) =>
@@ -175,4 +175,75 @@ it("distinguishes a readable WebP with the wrong label from corrupt bytes", asyn
   await expect(
     downscaleImage(Buffer.from("invalid"), "image/jpeg"),
   ).rejects.toMatchObject({ code: "undecodable_input" });
+});
+
+describe("file signature check", () => {
+  it("rejects an SVG labeled as JPEG before sharp parses it", async () => {
+    const svg = Buffer.from(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>',
+    );
+    // sharp would happily decode this SVG; the signature check must stop it.
+    await expect(sharp(svg).metadata()).resolves.toMatchObject({
+      format: "svg",
+    });
+    await expect(downscaleImage(svg, "image/jpeg")).rejects.toMatchObject({
+      code: "undecodable_input",
+    });
+  });
+
+  it("rejects other formats sharp can read, like GIF", async () => {
+    const gif = await sharp({
+      create: { width: 2, height: 2, channels: 3, background: "white" },
+    })
+      .gif()
+      .toBuffer();
+    await expect(downscaleImage(gif, "image/png")).rejects.toMatchObject({
+      code: "undecodable_input",
+    });
+  });
+
+  it("reports a mismatch when the signature is an allowed but different type", async () => {
+    const bytes = await jpegOf(10, 10);
+    await expect(downscaleImage(bytes, "image/png")).rejects.toMatchObject({
+      code: "image_type_mismatch",
+    });
+  });
+
+  it("recognizes each allowed type from its leading bytes", async () => {
+    const make = sharp({
+      create: { width: 2, height: 2, channels: 3, background: "white" },
+    });
+    expect(sniffImageType(await make.clone().jpeg().toBuffer())).toBe(
+      "image/jpeg",
+    );
+    expect(sniffImageType(await make.clone().png().toBuffer())).toBe(
+      "image/png",
+    );
+    expect(sniffImageType(await make.clone().webp().toBuffer())).toBe(
+      "image/webp",
+    );
+    const heicHeader = Buffer.concat([
+      Buffer.from([0, 0, 0, 0x18]),
+      Buffer.from("ftypheic", "latin1"),
+    ]);
+    expect(sniffImageType(heicHeader)).toBe("image/heic");
+    const mif1Header = Buffer.concat([
+      Buffer.from([0, 0, 0, 0x18]),
+      Buffer.from("ftypmif1", "latin1"),
+    ]);
+    expect(sniffImageType(mif1Header)).toBe("image/heic");
+  });
+
+  it("recognizes nothing else", () => {
+    expect(sniffImageType(Buffer.alloc(0))).toBeUndefined();
+    expect(
+      sniffImageType(Buffer.from('<?xml version="1.0"?><svg/>')),
+    ).toBeUndefined();
+    expect(sniffImageType(Buffer.from("GIF89a"))).toBeUndefined();
+    const mp4Header = Buffer.concat([
+      Buffer.from([0, 0, 0, 0x18]),
+      Buffer.from("ftypisom", "latin1"),
+    ]);
+    expect(sniffImageType(mp4Header)).toBeUndefined();
+  });
 });

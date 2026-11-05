@@ -73,6 +73,57 @@ const TYPE_BY_FORMAT = {
   webp: "image/webp",
   heif: "image/heic",
 };
+/** ISO-BMFF major brands for HEIC/HEIF still images (phones use these). */
+const HEIF_BRANDS = new Set([
+  "heic",
+  "heix",
+  "heim",
+  "heis",
+  "hevc",
+  "hevx",
+  "hevm",
+  "hevs",
+  "mif1",
+  "msf1",
+]);
+
+/**
+ * Identify an allowed image type from its leading bytes, before any decoder
+ * sees them. sharp picks its decoder from the bytes, not the declared type, so
+ * without this an SVG (or any other libvips format) labeled `image/jpeg` would
+ * be parsed by that format's library. Only the four types we accept get past.
+ * @param {Buffer} bytes
+ * @returns {string | undefined} the matching content type, if any
+ */
+export function sniffImageType(bytes) {
+  const ascii = (/** @type {number} */ start, /** @type {number} */ end) =>
+    bytes.subarray(start, end).toString("latin1");
+  if (
+    bytes.length >= 3 &&
+    bytes[0] === 0xff &&
+    bytes[1] === 0xd8 &&
+    bytes[2] === 0xff
+  )
+    return "image/jpeg";
+  if (ascii(0, 8) === "\x89PNG\r\n\x1a\n") return "image/png";
+  if (ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP") return "image/webp";
+  if (ascii(4, 8) === "ftyp" && HEIF_BRANDS.has(ascii(8, 12)))
+    return "image/heic";
+  return undefined;
+}
+
+/**
+ * Whether a detected type agrees with the uploader's declared type.
+ * @param {string | undefined} detectedType
+ * @param {string} contentType
+ * @returns {boolean}
+ */
+function typeMatches(detectedType, contentType) {
+  return (
+    detectedType === contentType ||
+    (detectedType === "image/heic" && contentType === "image/heif")
+  );
+}
 
 /**
  * Fit an image within the analyzer's max working size before encoding.
@@ -89,6 +140,14 @@ export async function downscaleImage(bytes, contentType) {
   const sharp = await loadSharp();
   let result;
   try {
+    // Check the file signature before sharp parses anything (see sniffImageType).
+    const sniffedType = sniffImageType(bytes);
+    if (!sniffedType || !typeMatches(sniffedType, contentType)) {
+      throw new DownscaleError(
+        `Undecodable image input (${contentType}): file signature ${sniffedType ?? "unrecognized"}`,
+        sniffedType ? "image_type_mismatch" : "undecodable_input",
+      );
+    }
     const input = sharp(bytes, {
       failOn: "error",
       limitInputPixels: MAX_INPUT_PIXELS,
@@ -97,10 +156,7 @@ export async function downscaleImage(bytes, contentType) {
     });
     const metadata = await input.metadata();
     const detectedType = TYPE_BY_FORMAT[metadata.format];
-    const declaredMatches =
-      detectedType === contentType ||
-      (detectedType === "image/heic" && contentType === "image/heif");
-    if (!detectedType || !declaredMatches) {
+    if (!detectedType || !typeMatches(detectedType, contentType)) {
       throw new DownscaleError(
         `Undecodable image input (${contentType}): declared type ${contentType} does not match decoded type ${detectedType ?? "unknown"}`,
         detectedType ? "image_type_mismatch" : "undecodable_input",
