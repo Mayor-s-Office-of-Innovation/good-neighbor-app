@@ -582,6 +582,17 @@ describe("overview", () => {
     ]);
   });
 
+  it("reports the owed-days average the flag compares, beside the whole-days one", () => {
+    // Its terms began Oct 13: 4.0 a day over both days, 2 on the one it owed 3.
+    const r = owing([6, 2], [0, 3]);
+    expect([r.checksPerDay, r.checksPerOwedDay, ...few(r).slice(1)]).toEqual([
+      4,
+      2,
+      3,
+      true,
+    ]);
+  });
+
   it("names no number and flags nothing for a Site that owed no Checks", () => {
     expect([owing([0, 0], [0, 0]), owing([1, 0], [0, 0])].map(few)).toEqual([
       [0, null, false],

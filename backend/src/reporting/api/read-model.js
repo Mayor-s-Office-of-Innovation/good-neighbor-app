@@ -314,6 +314,7 @@ function siteRows(snap, interval, sites) {
       maxSeverity: facts.maxSeverity,
       checksPerDay: facts.checksPerDay,
       checksOwedPerDay: facts.checksOwedPerDay,
+      checksPerOwedDay: facts.checksPerOwedDay,
       longUnresolved: facts.longUnresolved,
       ...indicators,
       concerns: facts.concerns,
@@ -435,16 +436,21 @@ function siteFacts(snap, site, interval) {
   const checksOwedPerDay = owed?.days
     ? oneDecimal(owed.owed / owed.days)
     : null;
+  // Few Checks shows this one, since days the Site owed nothing don't count.
+  const checksPerOwedDay = owed?.days
+    ? oneDecimal(owed.completed / owed.days)
+    : null;
   // Rounded first, so "3.0 a day" is never under its own number of 3.
   const underOwed =
-    owed !== null &&
+    checksPerOwedDay !== null &&
     checksOwedPerDay !== null &&
-    oneDecimal(owed.completed / owed.days) < checksOwedPerDay;
+    checksPerOwedDay < checksOwedPerDay;
   const facts = {
     totals,
     maxSeverity,
     checksPerDay,
     checksOwedPerDay,
+    checksPerOwedDay,
     longUnresolved,
     days,
   };
@@ -642,6 +648,7 @@ export function siteDetail(snap, siteId, { interval, now }) {
     totals: facts.totals,
     checksPerDay: facts.checksPerDay,
     checksOwedPerDay: facts.checksOwedPerDay,
+    checksPerOwedDay: facts.checksPerOwedDay,
     longUnresolved: facts.longUnresolved,
     concerns: facts.concerns,
     comparison: comparison(snap, interval, ids),
@@ -1131,6 +1138,7 @@ export function reportDataset(snap, { siteIds, interval, now }) {
         totals: detail.totals,
         checksPerDay: detail.checksPerDay,
         checksOwedPerDay: detail.checksOwedPerDay,
+        checksPerOwedDay: detail.checksPerOwedDay,
         longUnresolved: detail.longUnresolved,
         concerns: detail.concerns,
         comparison: detail.comparison,

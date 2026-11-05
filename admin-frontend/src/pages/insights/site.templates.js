@@ -83,9 +83,9 @@ function concernParams(reply) {
   const { response, activity } = reply.totals;
   const rules = CONCERN_RULES;
   return {
-    // Only a Site that owed Checks is flagged, so it always has a number.
+    // The flag compares the average over owed days, so the why line shows that one.
     fewChecks: {
-      perDay: oneDecimal(reply.checksPerDay ?? 0),
+      perDay: oneDecimal(reply.checksPerOwedDay ?? 0),
       min: reply.checksOwedPerDay ?? "",
     },
     repeatedSevere: { count: activity.severeIssues, min: rules.severeIssues },

@@ -485,6 +485,24 @@ test("the Checks help names the Site's own number a day", async () => {
   );
 });
 
+test("Few Checks shows the average it was flagged on, not the whole-days one", async () => {
+  await mountAdmin("/insights/sites/s1?period=2026-10", {
+    insights: true,
+    // Terms began mid-month: 3.2 a day over every day, 2.5 over the owed ones.
+    setup: siteReply((json) => {
+      json.checksPerDay = 3.2;
+      json.checksOwedPerDay = 3;
+      json.checksPerOwedDay = 2.5;
+    }),
+  });
+  assert.ok(
+    text('[data-concern="fewChecks"]').includes(
+      t("admin.insights.concernWhy.fewChecks", { perDay: "2.5", min: 3 }),
+    ),
+  );
+  assert.ok(!text('[data-concern="fewChecks"]').includes("3.2"));
+});
+
 test("the Checks help names no number for a Site that owed no Checks", async () => {
   await mountAdmin("/insights/sites/s1?period=2026-10", {
     insights: true,
