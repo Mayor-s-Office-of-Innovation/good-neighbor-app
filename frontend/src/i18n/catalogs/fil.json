@@ -1468,6 +1468,8 @@
   "support.questionTooShort": "Maglagay ng hindi bababa sa 20 character.",
   "support.send": "Magtanong",
   "support.sourceDoc": "Good Neighbor Policy · {id}",
+  "support.sourceFaq": "Good Neighbor FAQ · {id}",
+  "support.sourceGuide": "Gabay sa app · {id}",
   "support.sources": "Mga sanggunian (Ingles)",
   "support.sourcesCount.one": "{count} source (Ingles)",
   "support.sourcesCount.other": "{count} na source (Ingles)",

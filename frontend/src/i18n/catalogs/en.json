@@ -1471,6 +1471,8 @@
   "support.questionTooShort": "Enter at least 20 characters.",
   "support.send": "Ask",
   "support.sourceDoc": "Good Neighbor Policy · {id}",
+  "support.sourceFaq": "Good Neighbor FAQ · {id}",
+  "support.sourceGuide": "App guide · {id}",
   "support.sources": "Sources (English)",
   "support.sourcesCount.one": "{count} source",
   "support.sourcesCount.other": "{count} sources",

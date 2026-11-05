@@ -1468,6 +1468,8 @@
   "support.questionTooShort": "Escribe al menos 20 caracteres.",
   "support.send": "Preguntar",
   "support.sourceDoc": "Política de Buen Vecino · {id}",
+  "support.sourceFaq": "Preguntas frecuentes de Buen Vecino · {id}",
+  "support.sourceGuide": "Guía de la aplicación · {id}",
   "support.sources": "Fuentes (en inglés)",
   "support.sourcesCount.one": "{count} fuente (en inglés)",
   "support.sourcesCount.other": "{count} fuentes (en inglés)",

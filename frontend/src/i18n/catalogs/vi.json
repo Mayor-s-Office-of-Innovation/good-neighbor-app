@@ -1468,6 +1468,8 @@
   "support.questionTooShort": "Nhập ít nhất 20 ký tự.",
   "support.send": "Hỏi",
   "support.sourceDoc": "Chính sách Láng giềng Tốt · {id}",
+  "support.sourceFaq": "Câu hỏi thường gặp về Láng giềng Tốt · {id}",
+  "support.sourceGuide": "Hướng dẫn ứng dụng · {id}",
   "support.sources": "Nguồn (tiếng Anh)",
   "support.sourcesCount.one": "{count} nguồn (tiếng Anh)",
   "support.sourcesCount.other": "{count} nguồn (tiếng Anh)",

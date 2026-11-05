@@ -1468,6 +1468,8 @@
   "support.questionTooShort": "請輸入至少 20 個字元。",
   "support.send": "提問",
   "support.sourceDoc": "《好鄰居政策》· {id}",
+  "support.sourceFaq": "好鄰居常見問題 · {id}",
+  "support.sourceGuide": "應用程式指南 · {id}",
   "support.sources": "資料來源（英文）",
   "support.sourcesCount.one": "{count} 個資料來源（英文）",
   "support.sourcesCount.other": "{count} 個資料來源（英文）",

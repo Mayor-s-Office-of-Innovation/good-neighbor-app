@@ -113,15 +113,6 @@ export class SupportView extends HTMLElement {
       /** @type {import("@awesome.me/webawesome/dist/components/textarea/textarea.js").default} */ (
         this.querySelector("[data-question]")
       );
-    this.querySelector("[data-clear-question]")?.addEventListener(
-      "click",
-      () => {
-        question.value = "";
-        this._questionTouched = false;
-        this._syncQuestion();
-        question.focus();
-      },
-    );
     this.querySelector("form").addEventListener("submit", (event) => {
       event.preventDefault();
       void this._submit();
@@ -172,17 +163,6 @@ export class SupportView extends HTMLElement {
     this._busy(false);
   }
 
-  _syncDraftClear() {
-    const button = /** @type {HTMLButtonElement | null} */ (
-      this.querySelector("[data-clear-question]")
-    );
-    const question =
-      /** @type {import("@awesome.me/webawesome/dist/components/textarea/textarea.js").default | null} */ (
-        this.querySelector("[data-question]")
-      );
-    if (button) button.hidden = !question?.value;
-  }
-
   _syncResponses() {
     const hasTurns = Boolean(this.querySelector(".support__turn"));
     const clear = /** @type {HTMLButtonElement | null} */ (
@@ -212,7 +192,6 @@ export class SupportView extends HTMLElement {
   }
 
   _syncQuestion(busy = Boolean(this._pending)) {
-    this._syncDraftClear();
     const field =
       /** @type {import("@awesome.me/webawesome/dist/components/textarea/textarea.js").default | null} */ (
         this.querySelector("[data-question]")
@@ -372,7 +351,14 @@ export class SupportView extends HTMLElement {
         title.textContent = source.title;
         const doc = document.createElement("span");
         doc.className = "support__source-doc";
-        doc.textContent = t("support.sourceDoc", { id: source.id });
+        doc.textContent = t(
+          source.id.startsWith("FAQ-")
+            ? "support.sourceFaq"
+            : source.id.startsWith("GUIDE-")
+              ? "support.sourceGuide"
+              : "support.sourceDoc",
+          { id: source.id },
+        );
         copyWrap.append(title, doc);
         const open = document.createElement("wa-icon");
         open.className = "support__source-chevron";

@@ -265,3 +265,36 @@ test("starters submit once and return when the conversation is cleared", async (
   await expect(starters).toBeVisible();
   await expect(page.locator("support-view textarea")).toBeFocused();
 });
+
+for (const [id, label] of [
+  ["FAQ-13", "support.sourceFaq"],
+  ["GUIDE-01", "support.sourceGuide"],
+  ["POLICY-04", "support.sourceDoc"],
+]) {
+  test(`labels ${id} with its source document`, async ({ page }) => {
+    await page.route("**/v1/support", (route) =>
+      route.fulfill({
+        json: {
+          outcome: "answered",
+          answer: "Synthetic answer.",
+          sources: [
+            { id, title: "Synthetic source", text: "Synthetic excerpt." },
+          ],
+        },
+      }),
+    );
+    await page.locator("[data-starter]").first().click();
+    await expect(page.locator(".support__source-doc")).toHaveText(
+      t(label, { id }),
+    );
+    await page
+      .locator("support-view textarea")
+      .fill("An unsent question draft");
+    await page.locator("[data-clear]").click();
+    await expect(page.locator(".support__turn")).toHaveCount(0);
+    await expect(page.locator("[data-starters]")).toBeVisible();
+    await expect(page.locator("support-view textarea")).toHaveValue(
+      "An unsent question draft",
+    );
+  });
+}
