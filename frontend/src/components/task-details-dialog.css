@@ -136,16 +136,28 @@
 
 .task-details__custom {
   display: grid;
-  gap: 48px;
+  gap: 20px;
   margin-top: 18px;
 }
 
 .task-details__custom fieldset {
   display: grid;
-  gap: 8px;
   margin: 0;
   padding: 0;
   border: 0;
+}
+
+.task-details__custom legend {
+  margin-block-end: 0.5em;
+  padding: 0;
+}
+
+.task-details__custom [data-custom-invalid]::part(textarea-wrapper) {
+  border-color: var(--c-hazard);
+}
+.task-details__custom [data-custom-invalid]::part(form-control-label),
+.task-details__custom [data-custom-invalid]::part(hint) {
+  color: var(--c-hazard);
 }
 
 .task-details__custom fieldset > div {
@@ -193,6 +205,20 @@
   width: 100%;
   justify-content: center;
   margin-top: 24px;
+}
+.task-details__save-hint {
+  margin: 24px 0 0;
+  color: var(--text-secondary);
+  font-size: var(--wa-font-size-s);
+  line-height: 1.5;
+}
+.task-details__save wa-spinner {
+  font-size: 1em;
+}
+@media (prefers-reduced-motion: reduce) {
+  .task-details__save wa-spinner {
+    display: none;
+  }
 }
 .task-details__discard {
   width: 100%;
