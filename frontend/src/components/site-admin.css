@@ -460,13 +460,17 @@
   align-items: center;
   min-height: 2.75rem;
   width: min(100%, var(--app-content-max-width));
-  /* One rhythm after the back row on every settings destination: 1rem. */
-  margin: 0 auto 1rem;
+  /* One rhythm after the back row on every settings destination: 2rem. */
+  margin: 0 auto 2rem;
   padding-inline: 0.25rem;
 }
 .site-admin-header--close h1 {
-  margin: 0;
-  text-align: center;
+  /* Left-aligned on the shared content edge, like the other destinations. */
+  width: min(100%, var(--app-content-max-width));
+  margin: 0 auto;
+  padding-inline: 0.5rem;
+  box-sizing: border-box;
+  text-align: start;
   font-size: clamp(1.5rem, 5vw, 1.9rem);
   font-weight: 700;
   line-height: 1.15;

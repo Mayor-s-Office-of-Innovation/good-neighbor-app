@@ -19,8 +19,8 @@ support-view {
   justify-content: flex-start;
   align-items: center;
   min-height: 2.75rem;
-  /* One rhythm after the back row on every settings destination: 1rem. */
-  margin-bottom: 1rem;
+  /* One rhythm after the back row on every settings destination: 2rem. */
+  margin-bottom: 2rem;
   padding-inline: 0.25rem;
 }
 /* .support__back inherits .btn-circle-close wholesale — same 44px circle
