@@ -502,6 +502,21 @@ describe("queued-job options", () => {
   });
 });
 
+it.each([undefined, { terminal: false, failOnRejection: true }])(
+  "keeps an uncertain note unknown when the feed check returns a validation code (options: %o)",
+  async (options) => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.latest.mockRejectedValue(new Sf311Error("feed", { code: "26" }));
+    const event = { ...update(), cityNoteStatus: "unknown" };
+    expect(await deliverCityHelpNote("table", "site1", event, options)).toBe(
+      false,
+    );
+    expect(event.cityNoteStatus).toBe("unknown");
+    expect(mocks.update).not.toHaveBeenCalled();
+    log.mockRestore();
+  },
+);
+
 describe("queueCityHelpNote", () => {
   it("writes one job keyed by the update for an outstanding note", async () => {
     await queueCityHelpNote("table", "site1", update());
