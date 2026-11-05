@@ -85,7 +85,6 @@ export function homeShell({
       </section>
       ${showAnalysisDialogs ? analysisDialogs() : ""}
       <location-dialog></location-dialog>
-      ${attributionDialog()} ${languageDialog()}
       ${logoutDialog({
         error: logoutError,
         pending: logoutPending,
