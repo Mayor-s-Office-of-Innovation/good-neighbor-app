@@ -1,6 +1,8 @@
 support-view {
   display: block;
-  min-height: 100%;
+  /* All settings destinations share one surface (like Site information). */
+  min-height: 100dvh;
+  background: var(--surface);
 }
 .support__panel {
   box-sizing: border-box;
@@ -21,13 +23,8 @@ support-view {
   margin-bottom: 1rem;
   padding-inline: 0.25rem;
 }
-.support__back {
-  width: 2.75rem;
-  height: 2.75rem;
-  border-radius: 50%;
-  background: var(--surface-3);
-  color: var(--text);
-}
+/* .support__back inherits .btn-circle-close wholesale — same 44px circle
+   and --surface-2 fill as every other destination's Back. */
 .support__back wa-icon {
   font-size: 1.25rem;
 }

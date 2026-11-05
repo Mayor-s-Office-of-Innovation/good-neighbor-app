@@ -1168,3 +1168,10 @@ html.wa-dark .reports-legend__dot--responded {
 .app--chromeless .app__main:has(> reports-view) {
   padding-inline: 0;
 }
+
+/* All settings destinations share one surface (like Site information). */
+reports-view {
+  display: block;
+  min-height: 100dvh;
+  background: var(--surface);
+}
