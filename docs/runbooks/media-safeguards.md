@@ -50,10 +50,32 @@ ceiling across devices at a Site.
 
 ## Alarms
 
-`MediaRejected` alarms after five worker validation failures in five minutes. Inspect the safe
-structured fields (`siteId`, `checkId`, `artifactId`, and reason); never fetch or copy private media
-into tickets or chat. A single rejection is normally bad camera/upload data. A concentrated burst
-from one Site or device may indicate abuse or a broken client release.
+The `media-rejected` alarm fires after five rejections in five minutes, on any upload path:
+care work, complaints, perimeter checks, thumbnails, duplicate detection, and 311. It adds two
+counts: `ImageRejected` (each time the shared downscale step refuses an image) and `MediaTooLarge`
+(perimeter-check uploads over the byte limit, which are rejected before downscale). It counts
+rejections, not files: a file downscaled more than once, such as a complaint photo tried for both
+its thumbnail and analysis, counts each time. A single rejection is normally bad camera/upload data. A concentrated burst from one Site
+or device may indicate abuse or a broken client release. Never fetch or copy private media into
+tickets or chat.
+
+To find the source, check the two log markers:
+
+- `MediaRejected` (perimeter-check worker only) carries the safe IDs: `siteId`, `checkId`,
+  `artifactId`, and `reason`. Use it when the burst is on perimeter checks.
+- `ImageRejected` (every Lambda that runs downscale) carries `reason`, `stage` (`signature`: the
+  leading bytes are not an accepted JPEG/PNG/WebP, or the file is HEIC/HEIF, so sharp never parsed
+  it; `decode`:
+  sharp rejected it), `declaredType`, `signature`, `brand` (the container brand for HEIC-family
+  files), and the byte size. It has no Site or upload IDs, so narrow it down by the Lambda log group
+  and the time window. Find entries with CloudWatch Logs Insights:
+  `filter marker = "ImageRejected" | stats count() by stage, reason, declaredType, brand`.
+
+HEIC/HEIF photos are always rejected by downscale at the `signature` stage. The libvips bundled
+with sharp has no HEVC decoder, so it cannot decode a real HEIC photo, and the only HEIF it can
+decode is AVIF, which an uploader can disguise as HEIC. A steady stream of `declaredType:
+"image/heic"` rejections therefore means users are uploading HEIC photos on a path that needs them
+converted first, not an attack.
 
 `MediaQuotaExceeded` alarms after five rejected reservations in five minutes. Determine which
 check or device counter is near its conditional limit from the Site's
@@ -110,13 +132,11 @@ not yet run. Their underlying work logs retain text and photo-expiry metadata fo
 year. Care-work processing never enqueues analyzer jobs or retags check/task images.
 Complaint evidence remains in its separate one-year bucket.
 
-
 Database PITR does not restore S3 media. Upload/complaint bucket versioning is
 intentionally suspended to avoid retaining sensitive media beyond its approved
 expiry. A recovered database may reference expired or deleted images; keep the
 existing unavailable-media behavior and never extend retention as a recovery
 shortcut. See [recovery.md](recovery.md) for the database restore procedure.
-
 
 ## 311 attachment leases
 
@@ -215,7 +235,6 @@ the Application tag is active and compare attributed cost with Cost Explorer aft
 billing data arrives; zero reported cost alone does not prove the filter works.
 No console configuration changes are required. Existing Site and global quota rows can expire
 normally; the cost warning uses billing data, not those counters.
-
 
 ## Diagnosing photo upload validation failures
 
