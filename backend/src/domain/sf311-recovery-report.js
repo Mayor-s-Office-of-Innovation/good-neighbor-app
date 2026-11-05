@@ -101,23 +101,9 @@ export function summarize311Recovery(items) {
       const failure = {
         taskId: task.taskId,
         taskStatus: task.status,
-        filingType:
-          result.payload?.executionTrigger === "task_created"
-            ? "silent"
-            : result.payload?.executionTrigger === "user_confirmed"
-              ? "manual"
-              : "unknown",
-        applicability:
-          task.status === "missing"
-            ? "missing_task"
-            : active
-              ? "current_action"
-              : "historical_action",
-        reason: isCode21
-          ? "hub_21"
-          : /^[a-z_]{1,100}$/.test(result.reason || "")
-            ? result.reason
-            : "unspecified",
+        filingType: getFilingType(result.payload?.executionTrigger),
+        applicability: getApplicability(task.status, active),
+        reason: getFailureReason(result.reason, isCode21),
         recordedAt: result.recordedAt,
         hasRecordedTicket: tickets.some(
           (/** @type {Record<string, any>} */ ticket) => Boolean(ticket.srNum),
@@ -155,4 +141,36 @@ export function summarize311Recovery(items) {
     ).size,
     failures,
   };
+}
+
+/**
+ * @param {unknown} executionTrigger
+ * @returns {string}
+ */
+function getFilingType(executionTrigger) {
+  if (executionTrigger === "task_created") return "silent";
+  if (executionTrigger === "user_confirmed") return "manual";
+  return "unknown";
+}
+
+/**
+ * @param {unknown} taskStatus
+ * @param {boolean} active
+ * @returns {string}
+ */
+function getApplicability(taskStatus, active) {
+  if (taskStatus === "missing") return "missing_task";
+  if (active) return "current_action";
+  return "historical_action";
+}
+
+/**
+ * @param {string | undefined} reason
+ * @param {boolean} isCode21
+ * @returns {string | undefined}
+ */
+function getFailureReason(reason, isCode21) {
+  if (isCode21) return "hub_21";
+  if (/^[a-z_]{1,100}$/.test(reason || "")) return reason;
+  return "unspecified";
 }
