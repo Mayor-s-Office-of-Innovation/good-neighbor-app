@@ -86,6 +86,14 @@ const pick = (params, keys) =>
   );
 
 /**
+ * The snapshot's own data start, so the default month moves with launch.
+ * @param {Snapshot} snap
+ * @param {Record<string, unknown>} params
+ */
+const intervalFor = (snap, params) =>
+  parsePeriodParams(params, snap.manifest.evaluatedAt, snap.coverageStart);
+
+/**
  * @param {Snapshot} snap
  * @param {Record<string, unknown>} params
  */
@@ -95,7 +103,7 @@ function exportRequest(snap, params) {
   const kind = /** @type {"issues" | "checks" | "sites"} */ (dataset);
   return {
     dataset: kind,
-    interval: parsePeriodParams(params, snap.manifest.evaluatedAt),
+    interval: intervalFor(snap, params),
     filter: parseSiteFilter(params),
     list: parseListQuery(kind, {
       ...params,
@@ -115,7 +123,7 @@ function reportRequest(snap, params) {
     throw requestError("unknown_site");
   return {
     siteIds,
-    interval: parsePeriodParams(params, snap.manifest.evaluatedAt),
+    interval: intervalFor(snap, params),
   };
 }
 
@@ -275,7 +283,7 @@ export function createReportingHandlers({
    * @param {Record<string, unknown>} params
    */
   const listArgs = (kind, snap, params) => ({
-    interval: parsePeriodParams(params, snap.manifest.evaluatedAt),
+    interval: intervalFor(snap, params),
     filter: parseSiteFilter(params),
     list: parseListQuery(kind, params),
     now: now(),
@@ -295,7 +303,7 @@ export function createReportingHandlers({
         const snap = await snapshots.current();
         return {
           body: siteDetail(snap, pathParam(event, "siteId"), {
-            interval: parsePeriodParams(params, snap.manifest.evaluatedAt),
+            interval: intervalFor(snap, params),
             now: now(),
           }),
         };
@@ -383,7 +391,7 @@ export function createReportingHandlers({
           throw requestError("invalid_breakdown");
         return {
           body: trends(snap, {
-            interval: parsePeriodParams(params, snap.manifest.evaluatedAt),
+            interval: intervalFor(snap, params),
             scope: { siteIds, groups },
             breakdown,
             now: now(),

@@ -1,7 +1,7 @@
 // Every limit lives here, so no endpoint can be asked for more.
 
 import { createHash } from "node:crypto";
-import { pacificDateKey } from "../../lib/pacific-dates.js";
+import { dayKeysBetween, pacificDateKey } from "../../lib/pacific-dates.js";
 import { RESPONSE_STATES } from "../contract.js";
 import { REQUEST_ERROR, resolvePeriod } from "../periods.js";
 
@@ -62,25 +62,47 @@ function wholeNumber(value, code) {
   return Number(text);
 }
 
-// A finished month, so the numbers a page opens on don't change under the reader.
-/** @param {string} evaluatedAt @returns {string} YYYY-MM */
-function lastFullMonth(evaluatedAt) {
-  const [year, month] = pacificDateKey(evaluatedAt).split("-").map(Number);
-  const previous = new Date(Date.UTC(year, month - 2, 1));
-  return previous.toISOString().slice(0, 7);
+// Under 14 days of data, last month mostly shows the weeks before launch.
+const MIN_DEFAULT_DAYS = 14;
+
+/**
+ * A finished month, so the numbers a page opens on don't change under the
+ * reader. Around launch it's the running month, which holds most of the data.
+ * @param {string} evaluatedAt
+ * @param {string | null} coverageStart first day with any record
+ * @returns {string} YYYY-MM
+ */
+function defaultMonth(evaluatedAt, coverageStart) {
+  const thisMonth = `${pacificDateKey(evaluatedAt).slice(0, 7)}-01`;
+  const [year, month] = thisMonth.split("-").map(Number);
+  const lastMonth = new Date(Date.UTC(year, month - 2, 1))
+    .toISOString()
+    .slice(0, 10);
+  const from =
+    coverageStart === null
+      ? thisMonth
+      : coverageStart > lastMonth
+        ? coverageStart
+        : lastMonth;
+  const withData = dayKeysBetween(from, thisMonth).length;
+  return (withData < MIN_DEFAULT_DAYS ? thisMonth : lastMonth).slice(0, 7);
 }
 
 /**
  * @param {Params} params
  * @param {string} evaluatedAt
+ * @param {string | null} coverageStart the snapshot's first day with any record
  * @returns {import("../periods.js").Interval}
  */
-export function parsePeriodParams(params, evaluatedAt) {
+export function parsePeriodParams(params, evaluatedAt, coverageStart) {
   const kind = str(params.period) ?? "month";
   /** @type {import("../periods.js").PeriodSpec} */
   let spec;
   if (kind === "month")
-    spec = { kind, month: str(params.month) ?? lastFullMonth(evaluatedAt) };
+    spec = {
+      kind,
+      month: str(params.month) ?? defaultMonth(evaluatedAt, coverageStart),
+    };
   else if (kind === "quarter")
     spec = {
       kind,

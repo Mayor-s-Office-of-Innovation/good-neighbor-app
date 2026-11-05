@@ -34,10 +34,12 @@ const snap = indexSnapshot({ prefix: "p1", manifest, tables });
 const october = parsePeriodParams(
   { period: "month", month: "2026-10" },
   TEST_EVALUATED_AT,
+  snap.coverageStart,
 );
 const november = parsePeriodParams(
   { period: "month", month: "2026-11" },
   TEST_EVALUATED_AT,
+  snap.coverageStart,
 );
 
 /**
@@ -76,6 +78,7 @@ describe("dataQuality", () => {
     const august = parsePeriodParams(
       { period: "month", month: "2026-08" },
       TEST_EVALUATED_AT,
+      snap.coverageStart,
     );
     expect(dataQuality(snap, august, NOW)).toMatchObject({
       state: "partial",
@@ -365,7 +368,11 @@ describe("overview", () => {
 
   /** @param {string} from @param {string} to exclusive */
   const days = (from, to) =>
-    parsePeriodParams({ period: "custom", from, to }, TEST_EVALUATED_AT);
+    parsePeriodParams(
+      { period: "custom", from, to },
+      TEST_EVALUATED_AT,
+      snap.coverageStart,
+    );
 
   it("needs 2 or more Severe Issues for Repeated Severe Issues", () => {
     // Oct 1–4 holds only t1, Severe; October also holds t3.
@@ -632,6 +639,7 @@ describe("overview", () => {
     const august = parsePeriodParams(
       { period: "month", month: "2026-08" },
       TEST_EVALUATED_AT,
+      snap.coverageStart,
     );
     const lateSite = walked((t) => {
       t.sites[1].createdAt = "2026-11-20T17:00:00.000Z";
@@ -649,6 +657,7 @@ describe("overview", () => {
     const september = parsePeriodParams(
       { period: "month", month: "2026-09" },
       TEST_EVALUATED_AT,
+      snap.coverageStart,
     );
     expect(noChecks(walked(), september)).toEqual(["s1", "s2"]);
   });
@@ -657,6 +666,7 @@ describe("overview", () => {
     const firstDay = parsePeriodParams(
       { period: "custom", from: "2026-09-15", to: "2026-09-16" },
       TEST_EVALUATED_AT,
+      snap.coverageStart,
     );
     expect(noChecks(walked(), firstDay)).toEqual([]);
   });
@@ -1054,6 +1064,7 @@ describe("trends", () => {
     const year = parsePeriodParams(
       { period: "year", year: "2026" },
       TEST_EVALUATED_AT,
+      snap.coverageStart,
     );
     const res = trends(snap, { interval: year, scope: {}, now: NOW });
     expect(res.series.granularity).toBe("month");
@@ -1068,6 +1079,7 @@ describe("trends", () => {
     const custom = parsePeriodParams(
       { period: "custom", from: "2026-01-31", to: "2026-05-11" },
       TEST_EVALUATED_AT,
+      snap.coverageStart,
     );
     const res = trends(snap, { interval: custom, scope: {}, now: NOW });
     expect(res.series.granularity).toBe("week");

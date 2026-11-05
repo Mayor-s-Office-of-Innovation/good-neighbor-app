@@ -13,6 +13,8 @@ import {
 } from "./requests.js";
 
 const EVALUATED = "2026-11-04T19:00:00.000Z";
+// Data from well before any month these tests ask for.
+const LONG_RUNNING = "2025-01-01";
 
 /**
  * @param {() => unknown} fn
@@ -49,13 +51,17 @@ describe("isRequestError", () => {
 describe("parsePeriodParams", () => {
   it("defaults to the last full Pacific month even when UTC has moved on", () => {
     // 05:00 UTC on Nov 1 is still Oct 31 in San Francisco, so September is the last full month.
-    expect(parsePeriodParams({}, "2026-11-01T05:00:00.000Z")).toMatchObject({
+    expect(
+      parsePeriodParams({}, "2026-11-01T05:00:00.000Z", LONG_RUNNING),
+    ).toMatchObject({
       startDay: "2026-09-01",
     });
   });
 
   it("defaults to December in January", () => {
-    expect(parsePeriodParams({}, "2027-01-15T20:00:00.000Z")).toMatchObject({
+    expect(
+      parsePeriodParams({}, "2027-01-15T20:00:00.000Z", LONG_RUNNING),
+    ).toMatchObject({
       startDay: "2026-12-01",
       endDay: "2027-01-01",
     });
@@ -66,6 +72,7 @@ describe("parsePeriodParams", () => {
       parsePeriodParams(
         { period: "quarter", year: "2026", quarter: "3" },
         EVALUATED,
+        LONG_RUNNING,
       ),
     ).toMatchObject({ kind: "quarter", startDay: "2026-07-01" });
   });
@@ -74,7 +81,7 @@ describe("parsePeriodParams", () => {
     [{ period: "quarter", year: "2026" }, "invalid_quarter"],
     [{ period: "quarter", quarter: "3" }, "invalid_year"],
   ])("refuses %j with %s", (params, code) => {
-    expect(() => parsePeriodParams(params, EVALUATED)).toThrow(
+    expect(() => parsePeriodParams(params, EVALUATED, LONG_RUNNING)).toThrow(
       expect.objectContaining({ code, statusCode: 400 }),
     );
   });
@@ -84,20 +91,59 @@ describe("parsePeriodParams", () => {
       parsePeriodParams(
         { period: "custom", from: "2025-01-01", to: "2026-01-01" },
         EVALUATED,
+        LONG_RUNNING,
       ),
     ).toMatchObject({ startDay: "2025-01-01", endDay: "2026-01-01" });
   });
 
   it("defaults to the last full month before the snapshot's, which a link can still override", () => {
-    expect(parsePeriodParams({}, EVALUATED)).toMatchObject({
+    expect(parsePeriodParams({}, EVALUATED, LONG_RUNNING)).toMatchObject({
       kind: "month",
       startDay: "2026-10-01",
       endDay: "2026-11-01",
       incomplete: false,
     });
     expect(
-      parsePeriodParams({ period: "month", month: "2026-11" }, EVALUATED),
+      parsePeriodParams(
+        { period: "month", month: "2026-11" },
+        EVALUATED,
+        LONG_RUNNING,
+      ),
     ).toMatchObject({ startDay: "2026-11-01", incomplete: true });
+  });
+
+  it("opens on the running month when last month has under 14 days of data", () => {
+    // Launch week: data began Oct 26, so October holds only 6 days of it.
+    expect(parsePeriodParams({}, EVALUATED, "2026-10-26")).toMatchObject({
+      kind: "month",
+      startDay: "2026-11-01",
+      endDay: "2026-12-01",
+      incomplete: true,
+    });
+  });
+
+  it("opens on last month once it has 14 days of data", () => {
+    // Data began Oct 18, so October holds Oct 18–31: exactly 14 days.
+    expect(parsePeriodParams({}, EVALUATED, "2026-10-18")).toMatchObject({
+      startDay: "2026-10-01",
+      endDay: "2026-11-01",
+    });
+  });
+
+  it("opens on the running month when there's no data yet", () => {
+    expect(parsePeriodParams({}, EVALUATED, null)).toMatchObject({
+      startDay: "2026-11-01",
+    });
+  });
+
+  it("opens a linked month as asked, even in launch week", () => {
+    expect(
+      parsePeriodParams(
+        { period: "month", month: "2026-10" },
+        EVALUATED,
+        "2026-10-26",
+      ),
+    ).toMatchObject({ startDay: "2026-10-01", endDay: "2026-11-01" });
   });
 
   it("reads a July–June year from its start year", () => {
@@ -105,6 +151,7 @@ describe("parsePeriodParams", () => {
       parsePeriodParams(
         { period: "financialYear", startYear: "2025" },
         EVALUATED,
+        LONG_RUNNING,
       ),
     ).toMatchObject({ startDay: "2025-07-01", endDay: "2026-07-01" });
   });
@@ -114,6 +161,7 @@ describe("parsePeriodParams", () => {
       parsePeriodParams(
         { period: "custom", from: "2026-01-01", to: "2026-03-01" },
         EVALUATED,
+        LONG_RUNNING,
       ),
     ).toMatchObject({ startDay: "2026-01-01", endDay: "2026-03-01" });
   });
@@ -124,6 +172,7 @@ describe("parsePeriodParams", () => {
         parsePeriodParams(
           { period: "custom", from: "2025-01-01", to: "2026-01-02" },
           EVALUATED,
+          LONG_RUNNING,
         ),
       ),
     ).toMatchObject({ code: "period_too_long", statusCode: 400 });
@@ -132,7 +181,11 @@ describe("parsePeriodParams", () => {
   it("refuses a year that isn't a whole number", () => {
     expect(
       errorOf(() =>
-        parsePeriodParams({ period: "year", year: "2026.5" }, EVALUATED),
+        parsePeriodParams(
+          { period: "year", year: "2026.5" },
+          EVALUATED,
+          LONG_RUNNING,
+        ),
       ),
     ).toMatchObject({ code: "invalid_year", statusCode: 400 });
   });

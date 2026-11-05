@@ -57,7 +57,7 @@ function addMonths(day, months) {
   return first.toISOString().slice(0, 10);
 }
 
-/** @param {string} search @returns {Period | null} null for the server's default, the last full month */
+/** @param {string} search @returns {Period | null} null for the server's default month */
 export function readPeriod(search) {
   const params = new URLSearchParams(search);
   const value = params.get("period") || "";
@@ -160,7 +160,7 @@ export function intervalOf(period, now = new Date()) {
 export const samePeriod = (a, b) =>
   periodSearch(a).toString() === periodSearch(b).toString();
 
-/** The server's default, for the controls when neither the URL nor a reply names a period. @param {Date} [now] @returns {Period} */
+/** The server's default outside launch, for the controls when neither the URL nor a reply names a period. @param {Date} [now] @returns {Period} */
 export const lastFullMonth = (now = new Date()) => ({
   kind: "month",
   month: addMonths(`${pacificDateKey(now).slice(0, 7)}-01`, -1).slice(0, 7),
