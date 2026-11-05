@@ -71,6 +71,7 @@ export function logSf311JobError(error, context) {
 
 /** No payloads, URLs, credentials, free-form errors or upstream narratives. */
 const reasons = new Set([
+  "sf311_lease_contended",
   "sf311_timeout",
   "sf311_network_error",
   "sf311_closure_state_unknown",
@@ -148,17 +149,19 @@ export function sf311Failure(error) {
   const status = Number(e.status);
   const reason = safeReason(e.code);
   const category =
-    status === 401 || status === 403
-      ? "authentication"
-      : status === 429
-        ? "throttled"
-        : status >= 500 && status < 600
-          ? "server"
-          : reason === "sf311_timeout"
-            ? "timeout"
-            : reason === "sf311_network_error"
-              ? "network"
-              : "action";
+    reason === "sf311_lease_contended"
+      ? "contention"
+      : status === 401 || status === 403
+        ? "authentication"
+        : status === 429
+          ? "throttled"
+          : status >= 500 && status < 600
+            ? "server"
+            : reason === "sf311_timeout"
+              ? "timeout"
+              : reason === "sf311_network_error"
+                ? "network"
+                : "action";
   return {
     reason,
     category,

@@ -2,6 +2,20 @@ import { DEFAULT_CLASSIFIER_SERVICE_CODE_MAP } from "./sf311-classifier-service-
 
 const SERVICE_CODE_PATTERN = /^\d+(?:\.\d+)+$/;
 
+export const CLASSIFIER_DEFAULT_SERVICE_CODES = Object.freeze({
+  graffiti: "1.5.1.1.18.0",
+  "bulky-items": "1.1.4.7.7.0",
+});
+
+/** @param {string} classifierId @returns {string} */
+export function defaultClassifierServiceCode(classifierId) {
+  const code = /** @type {Record<string, string>} */ (
+    CLASSIFIER_DEFAULT_SERVICE_CODES
+  )[classifierId];
+  if (!code) throw new Error("No default for unknown classifier");
+  return code;
+}
+
 const ANALYSIS_COMMANDS = new Map([
   ["run bulky item analysis", "bulky-items"],
   ["run graffiti analysis", "graffiti"],
@@ -81,15 +95,11 @@ export function serviceCodesForClassifierLabels({
   map = DEFAULT_CLASSIFIER_SERVICE_CODE_MAP,
 }) {
   const classifierMap = map[classifierId] ?? {};
-  const normalizedLabels = labels.map((label) => label.trim());
-  const serviceCodes = labels
-    .map((label) => classifierMap[label.trim()])
-    .filter(Boolean);
-  const missing = normalizedLabels.filter((label) => !classifierMap[label]);
-  if (missing.length > 0) {
-    throw new Error(
-      `No SF311 service-code mapping for ${classifierId}: ${missing.join(", ")}`,
-    );
-  }
+  const fallback = defaultClassifierServiceCode(classifierId);
+  const serviceCodes = labels.map((label) => {
+    const mapped = classifierMap[label.trim()];
+    return mapped && SERVICE_CODE_PATTERN.test(mapped) ? mapped : fallback;
+  });
+  if (!serviceCodes.length) serviceCodes.push(fallback);
   return [...new Set(serviceCodes)];
 }

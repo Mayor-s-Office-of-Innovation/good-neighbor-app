@@ -4,6 +4,7 @@ import {
   reportSf311Results,
   reportSf311Failure,
   logSf311JobError,
+  sf311Failure,
 } from "./sf311-observability.js";
 import { createSf311Client, Sf311Error } from "./sf311-client.js";
 
@@ -18,6 +19,13 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 const events = () => log.mock.calls.map(([line]) => JSON.parse(line));
+
+it("distinguishes a lease conflict from an upstream City failure", () => {
+  expect(sf311Failure({ code: "sf311_lease_contended" })).toEqual({
+    reason: "sf311_lease_contended",
+    category: "contention",
+  });
+});
 
 it("preserves database failure identity and original frames without private error text", () => {
   const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
