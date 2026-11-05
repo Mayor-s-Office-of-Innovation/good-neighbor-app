@@ -1,13 +1,15 @@
-import { getCheck } from "./api.js";
+import { getCheck, getCheckEvidenceBatch } from "./api.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const getMediaUrl = vi.fn();
 vi.mock("./api.js", () => ({
   getCheck: vi.fn(),
+  getCheckEvidenceBatch: vi.fn(),
   getMediaUrl: (...args) => getMediaUrl(...args),
 }));
 
 const {
+  hydrateTaskEvidence,
   hydrateTaskEvidenceFromCheck,
   hydratePendingQuestionEvidence,
   cachedMediaUrls,
@@ -30,6 +32,56 @@ const detail = {
   analyses: [{ artifactId: "p1", georeferencedAddress: "15th St" }],
 };
 
+it("dispatches all backlog batches immediately and shares in-flight checks with questions", async () => {
+  const tasks = Array.from({ length: 41 }, (_, i) => ({
+    checkId: `batch-${i}`,
+    sourceArtifactIds: ["d1"],
+  }));
+  let release = () => {};
+  const gate = new Promise((resolve) => {
+    release = () => resolve(undefined);
+  });
+  vi.mocked(getCheckEvidenceBatch).mockImplementation(async (ids) => {
+    await gate;
+    return {
+      results: ids.map((checkId) => ({ checkId, status: 200, ...detail })),
+    };
+  });
+  vi.mocked(getCheck).mockResolvedValueOnce({ check: {}, ...detail });
+  const pending = hydrateTaskEvidence([...tasks, tasks[0]], { batch: true });
+  const questions = hydratePendingQuestionEvidence([
+    { checkId: "batch-0", evidenceArtifactId: "d1" },
+  ]);
+  expect(getCheckEvidenceBatch).toHaveBeenCalledTimes(8);
+  expect(
+    vi.mocked(getCheckEvidenceBatch).mock.calls.flatMap(([ids]) => ids),
+  ).toEqual(tasks.slice(0, 40).map((t) => t.checkId));
+  expect(getCheck).toHaveBeenCalledWith("batch-40");
+  release();
+  expect(
+    (await pending).every((t) => t.evidence?.text === "Sidewalk clear."),
+  ).toBe(true);
+  expect((await questions)[0].text).toBe("Sidewalk clear.");
+});
+
+it("sends two checks immediately and retries only the unsuccessful check", async () => {
+  const tasks = ["small-a", "small-b"].map((checkId) => ({
+    checkId,
+    sourceArtifactIds: ["d1"],
+  }));
+  vi.mocked(getCheckEvidenceBatch).mockResolvedValueOnce({
+    results: [
+      { checkId: "small-a", status: 500 },
+      { checkId: "small-b", status: 200, ...detail },
+    ],
+  });
+  const initial = await hydrateTaskEvidence(tasks, { batch: true });
+  expect(initial[0]).toBe(tasks[0]);
+  expect(initial[1].evidence.text).toBe("Sidewalk clear.");
+  vi.mocked(getCheck).mockResolvedValueOnce({ check: {}, ...detail });
+  await hydrateTaskEvidence(tasks, { batch: true });
+  expect(getCheck).toHaveBeenLastCalledWith("small-a");
+});
 describe("hydrateTaskEvidenceFromCheck", () => {
   beforeEach(() => {
     getMediaUrl.mockReset();

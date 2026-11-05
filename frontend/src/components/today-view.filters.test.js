@@ -162,6 +162,7 @@ vi.mock("../services/api.js", () => ({
   listProviderSites: catalog.listProviderSites,
   selectDeviceBinding: vi.fn(),
   listChecks: catalog.listChecks,
+  getCheck: vi.fn(async () => ({ artifacts: [], analyses: [] })),
   listTasks: catalog.listTasks,
   listPendingGuidance: catalog.listPendingGuidance,
   getAssessmentGuidance: catalog.getAssessmentGuidance,
@@ -2463,7 +2464,7 @@ it("renders live tasks before historical recovery finishes and publishes each re
     needsAnswer: { key: "provider_generated", options: [] },
   };
   /** @type {(value: any) => void} */
-  let release = () => {};
+  let release;
   catalog.listPendingGuidance
     .mockResolvedValueOnce({
       guidance: [
@@ -2481,7 +2482,7 @@ it("renders live tasks before historical recovery finishes and publishes each re
         }),
     );
   await view.connectedCallback();
-  await vi.waitFor(() => expect(release).toBeDefined());
+  await vi.waitFor(() => expect(release).toBeTypeOf("function"));
   expect(view._homeModel.tasks).toEqual([task]);
   expect(view._homeModel.pendingQuestions).toHaveLength(1);
   expect(view._homeModel.pendingGuidanceLoading).toBe(true);

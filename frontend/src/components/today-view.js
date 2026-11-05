@@ -1854,7 +1854,9 @@ class TodayView extends HTMLElement {
       .filter((task) => needsTaskEvidenceHydration(task));
     if (!visibleTasks.length) return;
 
-    const hydratedTasks = await hydrateTaskEvidence(uniqueTasks(visibleTasks));
+    const hydratedTasks = await hydrateTaskEvidence(uniqueTasks(visibleTasks), {
+      batch: true,
+    });
     if (
       hydrationGeneration !== this._hydrationGeneration ||
       !this.isConnected ||

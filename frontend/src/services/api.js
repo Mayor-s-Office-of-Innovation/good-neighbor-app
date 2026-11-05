@@ -832,6 +832,13 @@ export function getCheck(checkId, options = {}) {
   return request("GET", `/v1/checks/${encodeURIComponent(checkId)}`, options);
 }
 
+/** @param {string[]} checkIds
+ * @returns {Promise<{results: Array<{checkId: string, status: number, artifacts?: any[], analyses?: any[]}>}>}
+ */
+export function getCheckEvidenceBatch(checkIds) {
+  return request("POST", "/v1/checks:evidence", { body: { checkIds } });
+}
+
 // ── Public complaints ──────────────────────────────────────────────────────
 
 export function listComplaints() {

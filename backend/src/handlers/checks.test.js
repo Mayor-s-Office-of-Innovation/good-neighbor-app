@@ -14,6 +14,7 @@ const {
   completeCheck,
   listChecks,
   getCheck,
+  getCheckEvidenceBatch,
   getCaptureGuidance,
   evidenceSummary,
 } = await import("./checks.js");
@@ -962,6 +963,72 @@ describe("getCheck", () => {
     );
 
     expect(res.statusCode).toBe(404);
+  });
+});
+
+describe("getCheckEvidenceBatch", () => {
+  beforeEach(() => {
+    process.env.DYNAMO_TABLE = "gnp-test-app";
+    send.mockReset();
+  });
+
+  /** @param {unknown} checkIds */
+  const read = (checkIds) =>
+    /** @type {any} */ (getCheckEvidenceBatch)(
+      checkEvent({ siteClaim: "site-1", body: { checkIds, siteId: "other" } }),
+    );
+
+  it.each([
+    [[]],
+    [[1]],
+    [[""]],
+    [["x".repeat(1024)]],
+    [Array(6).fill("check")],
+  ])("rejects invalid batches before any query", async (ids) => {
+    expect((await read(ids)).statusCode).toBe(400);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("starts distinct reads together and keeps successful siblings when a query fails", async () => {
+    /** @type {(value: object) => void} */
+    let finish = () => {};
+    const slow = new Promise((resolve) => {
+      finish = resolve;
+    });
+    send
+      .mockReturnValueOnce(slow)
+      .mockResolvedValueOnce({ Items: [] })
+      .mockRejectedValueOnce(new Error("synthetic read failure"));
+    const pending = read(["a", "b", "c", "a"]);
+    expect(send).toHaveBeenCalledTimes(3);
+    for (const [cmd] of send.mock.calls) {
+      expect(cmd.input.ConsistentRead).toBe(true);
+      expect(cmd.input.ProjectionExpression).toContain("analysisGeneration");
+      expect(cmd.input.ExpressionAttributeValues[":pk"]).toBe("SITE#site-1");
+    }
+    finish({
+      Items: [
+        { sk: "CHECK#a" },
+        {
+          sk: "CHECK#a#ART#p",
+          artifactId: "p",
+          placeName: "North",
+          internalField: "omitted",
+        },
+      ],
+    });
+    const response = await pending;
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body).results).toEqual([
+      {
+        checkId: "a",
+        status: 200,
+        artifacts: [{ artifactId: "p", placeName: "North" }],
+        analyses: [],
+      },
+      { checkId: "b", status: 404 },
+      { checkId: "c", status: 500 },
+    ]);
   });
 });
 
