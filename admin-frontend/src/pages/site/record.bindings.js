@@ -15,6 +15,7 @@ import {
 import { addExtension, removeExtension } from "../../phone-extension.js";
 import { saveWithFeedback } from "../../save-feedback.js";
 import { siteManagerContactDetails } from "./manager.templates.js";
+import { siteSaveErrorMessage } from "./save-error-messages.js";
 import { t } from "../../../../frontend/src/i18n/i18n.js";
 
 /**
@@ -154,7 +155,7 @@ export const siteRecordEvents = {
         else dialog.removeAttribute("aria-describedby");
         dialog.showModal();
       } catch (error) {
-        showFormSaveError(form, error.message);
+        showFormSaveError(form, siteSaveErrorMessage(error));
       }
     },
     "#reload-site-perimeter": (page) => {

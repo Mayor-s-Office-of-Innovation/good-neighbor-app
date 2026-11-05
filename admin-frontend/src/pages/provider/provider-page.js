@@ -7,14 +7,21 @@ import {
   clearEnrollmentCodeView,
 } from "../../enrollment-code-view.js";
 import { syncEnrollmentRequests } from "../../enrollment-request.js";
-import { syncDirtyForm, syncProviderDetailsForm } from "../../form-state.js";
+import {
+  hasDirtyForm,
+  syncDirtyForm,
+  syncProviderDetailsForm,
+} from "../../form-state.js";
+import { navigate } from "../../router.js";
 import {
   providerEvents,
   syncAddProgramButton,
   syncRevokeButton,
 } from "./provider.bindings.js";
+import { loadManagersForSearch } from "../site/manager-directory-read.js";
 import { providerActions } from "./provider.actions.js";
 import { listenForControls, pageState } from "../page-events.js";
+import { confirmDiscardChanges } from "../shared.templates.js";
 import {
   newProviderView,
   providerManagerDetailView,
@@ -38,6 +45,8 @@ export class AdminProviderPage extends HTMLElement {
     this.session = /** @type {any} */ (null);
     // Bumped by open() and leave(), so a read or save from an earlier visit stops there.
     this.visit = 0;
+    // The visit render() last drew, so a reattach on the same visit keeps the form.
+    this.renderedVisit = -1;
     // render() draws this route, not the URL path, so a late redraw shows the right Provider.
     /** @type {Route | null} */
     this.route = null;
@@ -67,7 +76,8 @@ export class AdminProviderPage extends HTMLElement {
       "close",
     ]);
     window.addEventListener("pagehide", this.clearEnrollmentCodes);
-    this.render();
+    // A shell redraw, such as sign-in hiding this page, reattaches it; a redraw would reset unsaved edits.
+    if (this.renderedVisit !== this.visit) this.render();
   }
 
   disconnectedCallback() {
@@ -89,6 +99,13 @@ export class AdminProviderPage extends HTMLElement {
    * @returns {Promise<boolean>}
    */
   async open(route) {
+    if (
+      route.name === "provider-manager" &&
+      !this.session.capabilities.manageProviderManagers
+    ) {
+      navigate("/sites", { replace: true });
+      return false;
+    }
     const visit = ++this.visit;
     this.route = route;
     // One-time codes from the last visit must not show on this one.
@@ -102,12 +119,22 @@ export class AdminProviderPage extends HTMLElement {
     );
   }
 
-  /** <admin-app> calls this when the user goes to a route this page doesn't show. */
+  /** Called by <admin-app> on route changes and when it drops pages. */
   leave() {
     this.visit++;
     this.route = null;
     // The page stays in memory after the user leaves, so drop the secret now.
     this.clearEnrollmentCodes();
+  }
+
+  /** <admin-app> asks this before any route change, to warn before edits are lost. */
+  hasUnsavedChanges() {
+    return hasDirtyForm(this);
+  }
+
+  /** Ask in this page's own dialog whether to drop its edits; true when the user discards. */
+  confirmLeave() {
+    return confirmDiscardChanges(this);
   }
 
   /** @param {Route} route */
@@ -121,9 +148,12 @@ export class AdminProviderPage extends HTMLElement {
 
   focusOnOpen() {
     queueMicrotask(() => this.querySelector("h1")?.focus());
+    if (this.route?.name === "provider-new")
+      void loadManagersForSearch(this.catalog);
   }
 
   render() {
+    this.renderedVisit = this.visit;
     const route = this.route;
     if (!route || !this.shows(route)) {
       this.innerHTML = "";
@@ -144,7 +174,7 @@ export class AdminProviderPage extends HTMLElement {
     );
     const programs = this.querySelector("#provider-program-form");
     if (programs instanceof HTMLElement) syncAddProgramButton(programs);
-    // Hidden from anyone who can't create or change records, as <admin-app> does.
+    // Without createEntities the user can't save these changes, so don't offer them.
     if (!this.session.capabilities.createEntities)
       this.querySelectorAll(
         'a[href="/sites/new"], a[href^="/programs/new"], [data-deactivate-provider], #provider-program-form',

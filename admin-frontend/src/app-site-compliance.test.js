@@ -280,7 +280,7 @@ describe("Site compliance", () => {
     );
     await click("[data-end-checks]");
     await choose("confirm");
-    // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
+    // The page reports the raw error; <admin-app>'s error line shows it as a plain message.
     assert.deepEqual(errors, ["close_failed"]);
     assert.ok(!missing("[data-end-checks]"));
   });
@@ -880,7 +880,7 @@ describe("Site compliance", () => {
     // A failed end redraws the whole page, showing any status message left in it.
     await click("[data-end-checks]");
     await choose("confirm");
-    // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
+    // The page reports the raw error; <admin-app>'s error line shows it as a plain message.
     assert.deepEqual(errors, ["close_failed"]);
     assert.ok(!pageText().includes(t("admin.letters.sent")));
   });

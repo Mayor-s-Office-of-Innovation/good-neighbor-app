@@ -196,7 +196,7 @@ test("a failed new option keeps its dialog open with an inline error", async () 
   await click("#new-oversight-option-dialog [data-save-button]");
   assert.equal(
     saveError("#new-oversight-option-dialog"),
-    "oversight_option_exists",
+    t("admin.errors.oversightOptionExists"),
   );
   assert.equal(api.calls("POST", /^oversight-options$/).length, 1);
   assert.equal($("#new-oversight-option-dialog").open, true);

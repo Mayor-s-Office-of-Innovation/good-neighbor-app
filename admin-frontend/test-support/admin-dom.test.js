@@ -2,22 +2,20 @@ import { test } from "vitest";
 import assert from "node:assert/strict";
 import { inspect } from "node:util";
 import {
-  $,
   adminData,
+  attach,
   settle,
+  startMount,
   teardown,
   tick,
   toastCount,
   toastText,
   window,
 } from "./admin-dom.js";
-import { mountAdmin } from "./app-mount.js";
 import { quietInspect } from "./quiet-inspect.js";
-import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { getToasts, showToast } from "../../frontend/src/state/toasts.js";
 
 test("toastText returns when a toast won't close", async () => {
-  await mountAdmin("/sites");
   const stuck = showToast({ title: "Stuck", message: "Never closes" });
   const close = stuck.close;
   stuck.close = () => {};
@@ -27,7 +25,6 @@ test("toastText returns when a toast won't close", async () => {
 });
 
 test("toastText reads at most 20 queued toasts per call", async () => {
-  await mountAdmin("/sites");
   for (let index = 1; index <= 25; index++)
     showToast({ title: `Toast ${index}`, message: "" });
   const shown = toastText().split(" Toast ").length;
@@ -37,7 +34,6 @@ test("toastText reads at most 20 queued toasts per call", async () => {
 });
 
 test("toastCount counts a toast that timed out before it was read", async () => {
-  await mountAdmin("/sites");
   showToast({ title: "Sent", message: "" });
   await tick(4000);
   showToast({ title: "Sent", message: "" });
@@ -46,7 +42,6 @@ test("toastCount counts a toast that timed out before it was read", async () => 
 });
 
 test("toastText includes a toast that timed out before it was read", async () => {
-  await mountAdmin("/sites");
   showToast({ title: "Saved", message: "" });
   await tick(4000);
   assert.equal(toastText(), "Saved");
@@ -60,7 +55,7 @@ test("the fake backend won't remove another Site's manager membership", async ()
     type: "managerMembership",
     status: "active",
   });
-  const { api } = await mountAdmin("/sites", { data });
+  const api = await startMount("/sites", { data });
   const remove = (/** @type {string} */ siteId) =>
     api.reply({
       method: "DELETE",
@@ -78,7 +73,7 @@ test("the fake backend lists only the asked Site's grants and devices", async ()
   const data = adminData();
   data.grants.push({ siteId: "s1", grantId: "g1", status: "pending" });
   data.devices.push({ siteId: "s1", bindingId: "b1", status: "active" });
-  const { api } = await mountAdmin("/sites", { data });
+  const api = await startMount("/sites", { data });
   const list = (/** @type {string} */ path) =>
     api.reply({ method: "GET", path, search: "", body: undefined, headers: {} })
       .json;
@@ -94,7 +89,7 @@ test("the fake backend lists only the asked Site's terms and provider's managers
   data.providerManagers.push({ providerId: "v1", membershipId: "m1" });
   data.providerEnrollments.push({ providerId: "v1", enrollmentId: "e1" });
   data.providerGrants.push({ providerId: "v1", grantId: "g1" });
-  const { api } = await mountAdmin("/sites", { data });
+  const api = await startMount("/sites", { data });
   const list = (/** @type {string} */ path) =>
     api.reply({ method: "GET", path, search: "", body: undefined, headers: {} })
       .json;
@@ -114,42 +109,13 @@ test("the fake backend lists only the asked Site's terms and provider's managers
   );
 });
 
-test("a 204, 205 or 304 reply reaches the page with no body, as in Playwright", async () => {
-  const { api } = await mountAdmin("/sites");
-  for (const status of [204, 205, 304])
-    api.on("GET", new RegExp(`^status-${status}$`), { status });
-  for (const status of [204, 205, 304]) {
-    const response = await fetch(`/admin/v1/status-${status}`);
-    assert.equal(response.status, status);
-    assert.equal(await response.text(), "");
-  }
-});
-
-test("a remount doesn't join the old mount's held read", async () => {
-  const held = gate();
-  await mountAdmin("/sites", {
-    setup: (api) =>
-      api.on("GET", /^session$/, async () => {
-        await held.promise;
-        return undefined;
-      }),
-  });
-  await mountAdmin("/sites");
-  assert.ok(
-    window.document
-      .querySelector("admin-app")
-      ?.textContent?.includes("Example Site"),
-  );
-});
-
 test("quietInspect can run again on a window whose prototypes it already changed", async () => {
-  await mountAdmin("/sites");
   assert.doesNotThrow(() => quietInspect(window));
-  assert.equal(inspect($("admin-app")), "<admin-app>");
+  assert.equal(inspect(window.document.body), "<body>");
 });
 
 test("settle throws when fetches never stop", async () => {
-  await mountAdmin("/sites", {
+  await startMount("/sites", {
     fetch: (url) => (url.endsWith("/spin") ? new Response("{}") : undefined),
   });
   let spinning = true;
@@ -167,15 +133,16 @@ test("settle throws when fetches never stop", async () => {
 });
 
 test("teardown still reports a route gap when settle() stalls", async () => {
-  await mountAdmin("/sites", {
+  await startMount("/sites", {
     fetch: (url) => (url.endsWith("/spin") ? new Response("{}") : undefined),
   });
+  const page = await attach(window.document.createElement("div"));
   await fetch("http://localhost/no-route");
-  // Polls until teardown removes <admin-app>, so settle() never sees a quiet turn.
+  // Polls until teardown removes the mounted element, so settle() never sees a quiet turn.
   const spin = async () => {
     for (;;) {
       await new Promise((resolve) => setImmediate(resolve));
-      if (!window.document.querySelector("admin-app")) return;
+      if (!page.isConnected) return;
       await fetch("http://localhost/spin");
     }
   };
@@ -188,7 +155,6 @@ test("teardown still reports a route gap when settle() stalls", async () => {
 });
 
 test("a form reset restores each option's markup selection", async () => {
-  await mountAdmin("/sites");
   const form = window.document.createElement("form");
   form.innerHTML =
     '<wa-select name="pick"><wa-option value="a" selected></wa-option><wa-option value="b"></wa-option></wa-select>';
@@ -198,4 +164,15 @@ test("a form reset restores each option's markup selection", async () => {
   form.reset();
   assert.equal(select.value, "a");
   form.remove();
+});
+
+test("a 204, 205 or 304 reply reaches the page with no body, as in Playwright", async () => {
+  const api = await startMount("/sites", {});
+  for (const status of [204, 205, 304])
+    api.on("GET", new RegExp(`^status-${status}$`), { status });
+  for (const status of [204, 205, 304]) {
+    const response = await fetch(`/admin/v1/status-${status}`);
+    assert.equal(response.status, status);
+    assert.equal(await response.text(), "");
+  }
 });

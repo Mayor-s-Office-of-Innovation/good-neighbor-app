@@ -1,5 +1,6 @@
 // Site oversight handlers, keyed by the control that starts each one.
 import { asForm } from "../../dom.js";
+import { siteSaveErrorMessage } from "./save-error-messages.js";
 import {
   controlValue,
   setSelectValue,
@@ -41,13 +42,17 @@ export const siteOversightEvents = {
       event.preventDefault();
       page
         .createCityProgramManager(asForm(form))
-        .catch((error) => showFormSaveError(asForm(form), error.message));
+        .catch((error) =>
+          showFormSaveError(asForm(form), siteSaveErrorMessage(error)),
+        );
     },
     "#new-oversight-option-form": (page, form, event) => {
       event.preventDefault();
       page
         .createOversightOption(asForm(form))
-        .catch((error) => showFormSaveError(asForm(form), error.message));
+        .catch((error) =>
+          showFormSaveError(asForm(form), siteSaveErrorMessage(error)),
+        );
     },
   },
   click: {

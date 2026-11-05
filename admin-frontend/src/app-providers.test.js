@@ -7,6 +7,7 @@ import {
   mountPage,
   pageError,
   pageText,
+  revisitPage,
   routeTo,
   settle,
   submit,
@@ -15,11 +16,12 @@ import {
   missing,
 } from "../test-support/admin-dom.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
+import { failTimes } from "../../e2e/admin-tests/directory-helpers.js";
 import { providerData } from "../../e2e/admin-tests/providers-helpers.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
-import { adminCatalog } from "./admin-catalog.js";
 import "./pages/directory/directory-page.js";
 import "./pages/provider/provider-page.js";
+import { appMessageError } from "./admin-error-messages.js";
 
 // pages/provider/provider.templates.js and provider.bindings.js have no
 // catalog key for this copy, so tests match their English.
@@ -97,8 +99,7 @@ test("a failed provider rename shows the error on the page", async () => {
     "Second Provider",
   );
   await click("#provider-details-form [data-save-button]");
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "provider_already_exists");
+  assert.equal(pageError(), t("admin.errors.providerExists"));
 });
 
 test("a provider adopts an available Program and the list reloads", async () => {
@@ -133,7 +134,7 @@ test("adding a Program that still has Sites explains the conflict", async () => 
   });
   await fill(programSelect, "p3");
   await click(addProgram);
-  assert.match(pageError(), /This Program has active Sites/);
+  assert.equal(pageError(), t("admin.errors.programHasSites"));
 });
 
 test("adding a Program reports other failures as they come", async () => {
@@ -143,8 +144,7 @@ test("adding a Program reports other failures as they come", async () => {
   });
   await fill(programSelect, "p3");
   await click(addProgram);
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "program_not_found");
+  assert.equal(pageError(), t("admin.errors.programUnavailable"));
 });
 
 test("an empty Program choice does not call the API", async () => {
@@ -179,11 +179,10 @@ test("deactivating a provider asks first, then reloads the provider list", async
 test("a failed deactivation keeps the provider and shows why", async () => {
   await openProviderPage("/providers/v1", {
     setup: (api) =>
-      api.fail("DELETE", /^providers\/v1$/, 409, "provider_has_sites"),
+      api.fail("DELETE", /^providers\/v1$/, 404, "provider_not_found"),
   });
   await deactivate();
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "provider_has_sites");
+  assert.equal(pageError(), t("admin.errors.providerUnavailable"));
   assert.equal(title(), "Example Provider");
 });
 
@@ -193,16 +192,15 @@ test("a deactivation that fails after the user leaves still shows why", async ()
     setup: (api) =>
       api.on("DELETE", /^providers\/v1$/, {
         delay: held.promise,
-        status: 409,
-        json: { error: "provider_has_sites", message: "provider_has_sites" },
+        status: 404,
+        json: { error: "provider_not_found", message: "provider_not_found" },
       }),
   });
   await deactivate();
   await routeTo("/sites");
   held.release();
   await settle();
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "provider_has_sites");
+  assert.equal(pageError(), t("admin.errors.providerUnavailable"));
 });
 
 /** Provider data with the second provider active, so a test can open it. */
@@ -246,7 +244,7 @@ test("a deactivation that finishes after the user opens another provider leaves 
   await deactivate();
   await routeTo("/providers/v2");
   // An error the next page showed must stay until the user reads it.
-  page.reportError(new Error("Second provider read failed"));
+  page.reportError(appMessageError("Second provider read failed"));
   held.release();
   await settle();
   assert.equal(title(), "Second Provider");
@@ -265,7 +263,7 @@ test("a deactivation whose list reread fails after the user opens another provid
   });
   await deactivate();
   await routeTo("/providers/v2");
-  page.reportError(new Error("Second provider read failed"));
+  page.reportError(appMessageError("Second provider read failed"));
   api.fail("GET", /^providers$/, 503, "providers_unavailable");
   const reads = api.calls("GET", /^providers$/).length;
   held.release();
@@ -280,8 +278,7 @@ test("a provider list that fails to reload after deactivation shows the error", 
   const { api } = await openProviderPage("/providers/v1");
   api.fail("GET", /^providers$/, 503, "providers_unavailable");
   await deactivate();
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "providers_unavailable");
+  assert.equal(pageError(), t("admin.toast.requestFailed"));
 });
 
 test("a compliance manager sees provider details without management tools", async () => {
@@ -329,6 +326,57 @@ test("creating a provider from the new Site flow returns to that flow", async ()
   await fill("#provider-form wa-input[name='provider-name']", "New Provider");
   await click("#provider-form button[type='submit']");
   assert.equal(url(), "/sites/new?providerId=new-provider");
+});
+
+test("a search in the new provider address still reads the manager directory", async () => {
+  // A ?q= in the URL preloads the manager directory, so its reads are this page's calls too.
+  const { api, catalog } = await openProviderPage("/providers/new?q=Alex", {
+    calls: [
+      ...providerCalls,
+      /^GET programs\/[^/]+$/,
+      /^GET sites\/[^/]+\/manager-memberships$/,
+      /^GET sites\/[^/]+\?roster=1$/,
+      // The manager read needs the Site list first.
+      /^GET (providers\?directory=1|programs|oversight-options|program-managers)$/,
+    ],
+  });
+  assert.ok(!missing("#provider-form"));
+  assert.equal(api.calls("GET", /^people$/).length, 1);
+  // Without the Site list first, the search would show Alex with no Sites.
+  assert.deepEqual(
+    catalog.managers.map((/** @type {any} */ manager) =>
+      manager.assignedSites.map((/** @type {any} */ site) => site.siteId),
+    ),
+    [["s1"]],
+  );
+});
+
+test("a failed Site list read leaves the manager search for the next visit", async () => {
+  const { api, catalog, session } = await openProviderPage(
+    "/providers/new?q=Alex",
+    {
+      calls: [
+        ...providerCalls,
+        /^GET programs\/[^/]+$/,
+        /^GET sites\/[^/]+\/manager-memberships$/,
+        /^GET sites\/[^/]+\?roster=1$/,
+        /^GET (providers\?directory=1|programs|oversight-options|program-managers)$/,
+      ],
+      setup: (api) =>
+        api.on("GET", /^providers\?directory=1$/, failTimes(1, 503)),
+    },
+  );
+  // Read without the Sites, the managers would list none and never be read again.
+  assert.equal(api.calls("GET", /^people$/).length, 0);
+  await revisitPage("/providers/new?q=Alex");
+  assert.equal(api.calls("GET", /^people$/).length, 1);
+  // A search by Site name finds Alex only if his Sites came with the read.
+  await mountPage("admin-directory-page", "/sites?q=Example%20Site", {
+    calls: [],
+    catalog,
+    session,
+  });
+  assert.ok(!missing('#directory-results a[href="/managers/u1"]'));
 });
 
 test("a duplicate provider name keeps the draft and explains the conflict", async () => {
@@ -424,17 +472,16 @@ test("a compliance manager can't add or create Programs from a provider", async 
 
 test("a deactivation that works after a failed one clears the error", async () => {
   const { api } = await openProviderPage("/providers/v1");
-  api.fail("DELETE", /^providers\/v1$/, 409, "provider_has_sites");
+  api.fail("DELETE", /^providers\/v1$/, 404, "provider_not_found");
   await deactivate();
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "provider_has_sites");
+  assert.equal(pageError(), t("admin.errors.providerUnavailable"));
   api.on("DELETE", /^providers\/v1$/, { json: {} });
   await deactivate();
   assert.equal(pageError(), "");
   assert.equal(title(), undefined);
 });
 
-test("the mounted provider page saves a rename to its own catalog, not adminCatalog", async () => {
+test("the mounted provider page saves a rename to its own catalog", async () => {
   const { catalog } = await openProviderPage("/providers/v1");
   await fill(
     "#provider-details-form wa-input[name='provider-name']",
@@ -445,7 +492,6 @@ test("the mounted provider page saves a rename to its own catalog, not adminCata
     catalog.providers.find((provider) => provider.providerId === "v1")?.name,
     "Renamed Provider",
   );
-  assert.deepEqual(adminCatalog.providers, []);
 });
 
 test("a redraw after the URL moves on still draws the route open() was given", async () => {
@@ -453,4 +499,14 @@ test("a redraw after the URL moves on still draws the route open() was given", a
   window.history.replaceState({}, "", "/not-a-page");
   page.render();
   assert.ok(!missing("admin-provider-page h1"));
+});
+
+const crumbs = `nav[aria-label="${t("admin.breadcrumb.label")}"]`;
+
+test("a provider page's breadcrumb names the provider as the current page", async () => {
+  await openProviderPage("/providers/v1");
+  assert.equal(
+    $(`${crumbs} [aria-current="page"]`).textContent,
+    t("admin.breadcrumb.provider"),
+  );
 });

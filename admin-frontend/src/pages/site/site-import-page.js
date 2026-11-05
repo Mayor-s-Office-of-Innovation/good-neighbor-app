@@ -62,7 +62,7 @@ export class SiteImportPage extends HTMLElement {
     return /** @type {SiteImportPageElement} */ (this).openSiteImport();
   }
 
-  /** <admin-app> calls this when the user goes to a route this page doesn't show. */
+  /** Called by <admin-app> on route changes and when it drops pages. */
   leave() {
     this.visit++;
     this.route = null;

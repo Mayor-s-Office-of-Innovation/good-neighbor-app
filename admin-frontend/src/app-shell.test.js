@@ -9,15 +9,15 @@ import {
   pageError,
   routeTo,
   settle,
-  waitFor,
   window,
 } from "../test-support/admin-dom.js";
-import { mountAdmin } from "../test-support/app-mount.js";
+import { mountAdmin, waitFor } from "../test-support/app-mount.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { failTimes } from "../../e2e/admin-tests/directory-helpers.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
+import { appMessageError } from "./admin-error-messages.js";
 
-// main.js and pages/directory/directory.templates.js have no catalog key for this copy, so tests match their English.
+// admin-app.js and pages/directory/directory.templates.js have no catalog key for this copy, so tests match their English.
 
 const CONFIG_ERROR = "Admin login is not configured for this environment.";
 const heading = () => $("admin-app h1").textContent.trim();
@@ -50,12 +50,12 @@ const signedOut = (config) => () => {
   };
 };
 
-test("a failed session read offers a reload", async () => {
+test("a failed session read offers a reload, without the server's own text", async () => {
   const loads = stubPageLoads();
   await mountAdmin("/sites", {
     setup: (api) => api.on("GET", /^session$/, failTimes(1)),
   });
-  assert.equal(pageError(), "Synthetic failure");
+  assert.equal(pageError(), t("admin.toast.requestFailed"));
   await click("#retry-page-load");
   assert.equal(loads.reload.mock.calls.length, 1);
 });
@@ -67,7 +67,7 @@ test("an app moved in the page whose session read fails offers a reload", async 
   app.remove();
   document.body.append(app);
   await settle();
-  assert.equal(pageError(), "Synthetic failure");
+  assert.equal(pageError(), t("admin.toast.requestFailed"));
   await click("#retry-page-load");
   assert.equal(loads.reload.mock.calls.length, 1);
 });
@@ -85,11 +85,24 @@ test("an app moved in the page drops unsaved 311 changes", async () => {
   assert.equal(url(), "/providers");
 });
 
+test("a remount doesn't join the old mount's held read", async () => {
+  const held = gate();
+  await mountAdmin("/sites", {
+    setup: (api) =>
+      api.on("GET", /^session$/, async () => {
+        await held.promise;
+        return undefined;
+      }),
+  });
+  await mountAdmin("/sites");
+  assert.ok($("admin-app").textContent.includes("Example Site"));
+});
+
 test("a failed route read retries the route once the role is known", async () => {
   const { api } = await mountAdmin("/sites");
   api.on("GET", /^sites\/s1(\?|$)/, failTimes(1, 503, "Site read failed"));
   await click('a[href="/sites/s1"]');
-  assert.equal(pageError(), "Site read failed");
+  assert.equal(pageError(), t("admin.toast.requestFailed"));
   await click("#retry-page-load");
   assert.equal(heading(), "Example Site");
   assert.ok(missing("#retry-page-load"));
@@ -112,8 +125,12 @@ test("a route read that fails after the user moves on stays silent", async () =>
 
 test("a sign-in callback error is shown on load", async () => {
   await mountAdmin("/sites?error=access_denied");
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "access_denied");
+  assert.equal(pageError(), t("admin.errors.loginFailed"));
+});
+
+test("a sign-in callback's own words never reach the error line", async () => {
+  await mountAdmin("/sites?error=Any+sentence");
+  assert.equal(pageError(), t("admin.toast.requestFailed"));
 });
 
 test("a valid sign-in callback exchanges its code and opens the dashboard", async () => {
@@ -151,8 +168,7 @@ test("signed-out visitors without sign-in config see the config error", async ()
   const { api } = await mountAdmin("/sites", { setup: signedOut({}) });
   assert.ok($("admin-app").textContent.includes(CONFIG_ERROR));
   await click("#sign-in");
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "missing_admin_auth_config");
+  assert.equal(pageError(), t("admin.errors.loginUnavailable"));
   assert.equal($("#sign-in").disabled, false);
   assert.deepEqual(api.requests, []);
 });
@@ -187,8 +203,7 @@ test("a blocked oversight lookup fails the route and offers a retry", async () =
   await mountAdmin("/sites", {
     setup: (api) => api.fail("GET", /^oversight-options$/, 403, "forbidden"),
   });
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "forbidden");
+  assert.equal(pageError(), t("admin.errors.forbidden"));
   assert.ok(!missing("#retry-page-load"));
 });
 
@@ -360,6 +375,33 @@ test("the local role switch asks first about unsaved 311 choices on the Sites li
   assert.equal($("#local-role-switch").value, "supervisor");
 });
 
+test("a shell redraw leaves the page and its typing in place", async () => {
+  const { app } = await mountAdmin("/profile");
+  const field = '#my-profile-form wa-input[name="firstName"]';
+  await fill(field, "Typed");
+  const typedInto = $(field);
+  app.render();
+  await settle();
+  assert.ok($(field) === typedInto, "the page kept its field");
+  assert.equal($(field).value, "Typed");
+});
+
+test("showing or clearing an error leaves the page and its typing in place", async () => {
+  await mountAdmin("/profile");
+  const field = '#my-profile-form wa-input[name="firstName"]';
+  await fill(field, "Typed");
+  const typedInto = $(field);
+  const page = $("admin-users-page");
+  page.reportError(appMessageError("Something went wrong here."));
+  await settle();
+  assert.equal(pageError(), "Something went wrong here.");
+  page.reportError(new Error(""));
+  await settle();
+  assert.equal(pageError(), "");
+  assert.ok($(field) === typedInto, "the page kept its field");
+  assert.equal($(field).value, "Typed");
+});
+
 test("the local role switch keeps unsaved edits when the user cancels", async () => {
   const loads = stubPageLoads();
   await mountAdmin("/profile");
@@ -441,22 +483,6 @@ test("the Site list reloads a directory read that skipped Sites", async () => {
   assert.equal(api.calls("GET", /^providers\?directory=1$/).length, 1);
 });
 
-test("a Compliance manager who may edit a Site keeps its edit controls", async () => {
-  await mountAdmin("/sites/s1", {
-    role: "compliance-manager",
-    setup: (api) =>
-      api.on("GET", /^sites\/s1(\?|$)/, () => ({
-        json: {
-          items: [{ ...api.data.sites[0], sk: "#META" }],
-          permissions: { canEdit: true },
-        },
-      })),
-  });
-  assert.equal(heading(), "Example Site");
-  assert.equal($("#site-details-form wa-input").disabled, false);
-  assert.ok(missing("[data-deactivate-site]"));
-});
-
 // <admin-app> with the Program page: the page answers for its own edits and
 // reads, and the shell routes, shares the catalog and shows the error line.
 
@@ -486,8 +512,7 @@ test("a failed Program read shows in the error line", async () => {
   api.fail("GET", /^programs\/p2$/, 500, "program_read_failed");
   await routeTo("/programs/p2");
   assert.ok(missing("admin-program-page"));
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "program_read_failed");
+  assert.equal(pageError(), t("admin.toast.requestFailed"));
 });
 
 test("a Program page's error after the user leaves it still shows in the error line", async () => {
@@ -512,8 +537,7 @@ test("a Program page's error after the user leaves it still shows in the error l
   held.release();
   await settle();
   assert.ok(!missing("#directory-title"));
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "program_read_failed");
+  assert.equal(pageError(), t("admin.toast.requestFailed"));
 });
 
 test("a Program created on its page shows in directory search without a reload", async () => {
@@ -539,4 +563,43 @@ test("after the session ends, the next route change hides the new Program form",
   } finally {
     config.localDebugAdmin = signedIn;
   }
+});
+
+test("after the session ends, the next route change hides the Provider page", async () => {
+  await mountAdmin("/providers/v1");
+  assert.ok(!missing("#provider-details-form"));
+  const config = /** @type {any} */ (window).GOOD_NEIGHBOR_ADMIN_CONFIG;
+  const signedIn = config.localDebugAdmin;
+  config.localDebugAdmin = false;
+  try {
+    await routeTo("/providers/v1?tab=managers");
+    assert.ok(!missing("#sign-in"));
+    assert.ok(missing("#provider-details-form"));
+  } finally {
+    config.localDebugAdmin = signedIn;
+  }
+});
+
+test("Provider edits hidden by sign-in still warn before the tab closes and come back after", async () => {
+  await mountAdmin("/providers/v1");
+  const name = '#provider-details-form wa-input[name="provider-name"]';
+  await fill(name, "Renamed Provider");
+  const page = $("admin-provider-page");
+  const config = /** @type {any} */ (window).GOOD_NEIGHBOR_ADMIN_CONFIG;
+  const signedIn = config.localDebugAdmin;
+  config.localDebugAdmin = false;
+  try {
+    // What a failed action does; <admin-app> redraws and, signed out, hides the page.
+    page.reportError(appMessageError("Something failed"));
+    await settle();
+    assert.ok(missing(name));
+    const unload = new window.Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(unload);
+    assert.equal(unload.defaultPrevented, true);
+  } finally {
+    config.localDebugAdmin = signedIn;
+  }
+  page.reportError(appMessageError("Something else"));
+  await settle();
+  assert.equal($(name).value, "Renamed Provider");
 });

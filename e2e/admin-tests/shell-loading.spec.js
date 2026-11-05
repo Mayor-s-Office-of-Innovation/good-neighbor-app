@@ -1,5 +1,6 @@
 import { test, expect, mockAdmin, pageError } from "./admin-mock.js";
 import { failTimes } from "./directory-helpers.js";
+import { t } from "../helpers/i18n.js";
 
 test("signing out leaves the debug session through the logout page", async ({
   page,
@@ -57,8 +58,8 @@ test("a failed session read offers a reload that recovers", async ({
   const api = await mockAdmin(page);
   api.on("GET", /^session$/, failTimes(1));
   await page.goto("/sites");
-  // Pins a bug: raw API code shown instead of a message. No issue filed yet.
-  await expect(pageError(page)).toHaveText("Synthetic failure");
+  // A server's own text never reaches the error line, even a sentence.
+  await expect(pageError(page)).toHaveText(t("admin.toast.requestFailed"));
   // No role yet, so retry reloads the page instead of reopening the route.
   await page.locator("#retry-page-load").click();
   await expect(page.locator("#directory-title")).toBeVisible();

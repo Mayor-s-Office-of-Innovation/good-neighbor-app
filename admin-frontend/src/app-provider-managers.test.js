@@ -54,7 +54,14 @@ const openProviderPage = (path, options = {}) =>
  */
 const openManagerDirectory = (path, options = {}) =>
   mountPage("admin-directory-page", path, {
-    calls: [/^GET providers\/[^/]+\/manager-memberships$/],
+    calls: [
+      /^GET providers\/[^/]+\/manager-memberships$/,
+      // A search in the URL reads the manager directory, which makes these calls.
+      /^GET programs\/[^/]+$/,
+      /^GET sites\/[^/]+\/manager-memberships$/,
+      /^GET sites\/[^/]+\?roster=1$/,
+      /^GET people$/,
+    ],
     follow: ["provider-managers"],
     sites: true,
     data: providerData(),
@@ -311,8 +318,7 @@ test("a failed manager removal shows the error", async () => {
       api.fail("DELETE", /manager-memberships\/m1$/, 500, "membership_locked"),
   });
   await click("[data-provider-manager-status='m1']");
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "membership_locked");
+  assert.equal(pageError(), t("admin.toast.requestFailed"));
 });
 
 test("the manager record saves edits and reinstates a former manager", async () => {

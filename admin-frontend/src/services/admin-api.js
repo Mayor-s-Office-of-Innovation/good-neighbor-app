@@ -4,6 +4,7 @@ import { createReadRequests } from "./read-requests.js";
 import { localRoleHeaders } from "../local-role.js";
 import { getFreshAdminToken, startAdminLogin } from "./admin-auth.js";
 import { getAdminConfig } from "../config.js";
+import { appMessageError } from "../admin-error-messages.js";
 
 const reads = createReadRequests();
 let loginRedirect = null;
@@ -63,7 +64,7 @@ function adminFetch(path, init = {}) {
     parseAdminResponse(path, init).catch(async (error) => {
       if (error.name === "TimeoutError") {
         const { t } = await import("../../../frontend/src/i18n/i18n.js");
-        throw new Error(t("admin.errors.requestTimeout"));
+        throw appMessageError(t("admin.errors.requestTimeout"));
       }
       throw error;
     });

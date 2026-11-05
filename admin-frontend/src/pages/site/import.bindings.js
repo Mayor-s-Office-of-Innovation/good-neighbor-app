@@ -1,6 +1,9 @@
 // Site import actions, keyed by event type and control selector.
 // <admin-site-import-page> listens once per event type, so a redraw can't drop or double a handler.
-import { adminErrorMessage } from "../../admin-error-messages.js";
+import {
+  adminErrorMessage,
+  appMessageError,
+} from "../../admin-error-messages.js";
 import { asForm } from "../../dom.js";
 import { t } from "../../../../frontend/src/i18n/i18n.js";
 
@@ -16,7 +19,7 @@ export const siteImportEvents = {
       page.applySiteImport().catch((err) => {
         page.state.importBusy = false;
         page.state.importNotice = null;
-        page.reportError(new Error(adminErrorMessage(err, t)));
+        page.reportError(appMessageError(adminErrorMessage(err, t)));
       });
     },
     "#dismiss-import-notice": (page) => {
@@ -36,7 +39,7 @@ export const siteImportEvents = {
       page.previewSiteImport(asForm(form)).catch((err) => {
         page.state.importBusy = false;
         page.reportError(
-          new Error(
+          appMessageError(
             err.message === "invalid_file_size"
               ? t("admin.import.fileTooLarge")
               : adminErrorMessage(err, t),

@@ -21,11 +21,17 @@ export const directoryActions = {
     if (clear) clear.hidden = !new URLSearchParams(location.search).get("q");
     sync311Batch(this, this.view());
     this.applyCapabilities();
-    this.pathRendered(location.pathname + location.search);
+    this.dispatchEvent(
+      new CustomEvent("page-rendered", {
+        bubbles: true,
+        detail: location.pathname + location.search,
+      }),
+    );
   },
   async loadSearchManagers() {
     if (this.managersLoaded()) return;
     const visit = this.visit;
+    const search = ++this.managerSearches;
     this.state.managerSearchFailed = false;
     let failed = false;
     // Every visit awaits the one GET people read, so a return visit still redraws.
@@ -34,7 +40,9 @@ export const directoryActions = {
     } catch {
       failed = true;
     }
-    // An earlier visit's failed read mustn't show an error on this visit.
+    // A newer search, from a return visit or a reconnect, owns the results.
+    if (search !== this.managerSearches) return;
+    // A failure from a visit the user left mustn't show on the next one.
     if (visit !== this.visit) return;
     this.state.managerSearchFailed = failed;
     const input = this.querySelector("#directory-search-input");

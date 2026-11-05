@@ -14,7 +14,6 @@ import {
 } from "../test-support/admin-dom.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
-import { adminCatalog } from "./admin-catalog.js";
 import "./pages/site/new-site-page.js";
 
 // pages/site/save-error-messages.js has no catalog key for this copy, so tests match its English.
@@ -321,7 +320,7 @@ test("a duplicate Site rejected after leaving is titled as a duplicate", async (
   assert.equal(toastCount(t("admin.errors.siteExistsTitle")), 1);
 });
 
-test("the mounted new Site page adds the Site to its own catalog, not adminCatalog", async () => {
+test("the mounted new Site page adds the Site to its own catalog", async () => {
   const { catalog } = await openNewSitePage(NEW_RECORD, {
     setup: (api) => {
       serveCreatedSite(api, created);
@@ -331,7 +330,6 @@ test("the mounted new Site page adds the Site to its own catalog, not adminCatal
   await fillRecord();
   await click(`${form} button[type="submit"]`);
   assert.ok(catalog.sites.some((site) => site.siteId === "s9"));
-  assert.deepEqual(adminCatalog.sites, []);
 });
 
 test("a redraw after the URL moves on still draws the route open() was given", async () => {

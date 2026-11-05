@@ -40,7 +40,14 @@ async function openDirectory(path = "/sites", options = {}) {
     path,
     {
       follow: ["sites"],
-      calls: [/^GET people$/, /^PUT sites\/[^/]+\/deliberate-311$/],
+      calls: [
+        /^PUT sites\/[^/]+\/deliberate-311$/,
+        // A search in the URL reads the manager directory, which makes these calls.
+        /^GET people$/,
+        /^GET programs\/[^/]+$/,
+        /^GET sites\/[^/]+\/manager-memberships$/,
+        /^GET sites\/[^/]+\?roster=1$/,
+      ],
       sites: true,
       ...options,
     },

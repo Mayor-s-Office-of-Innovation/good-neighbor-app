@@ -7,6 +7,7 @@ import {
   fill,
   missing,
   mountPage,
+  pageText,
   routeTo,
   settle,
   tick,
@@ -14,8 +15,10 @@ import {
   window,
 } from "../test-support/admin-dom.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
+import { failTimes } from "../../e2e/admin-tests/directory-helpers.js";
+import { managerData } from "../../e2e/admin-tests/site-access-helpers.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
-import { adminCatalog, createAdminCatalog } from "./admin-catalog.js";
+import { createAdminCatalog } from "./admin-catalog.js";
 import "./pages/directory/directory-page.js";
 
 // pages/directory/directory.templates.js has no catalog key for this copy, so tests match its English.
@@ -33,8 +36,7 @@ const listText = (titleId) =>
     .textContent;
 
 /**
- * <admin-directory-page> alone, without <admin-app>, following the directory tabs. Site
- * managers still live in <admin-app>, so app-directory-managers.test.js tests them.
+ * Mount <admin-directory-page> alone, without <admin-app>.
  * @param {string} path
  * @param {Partial<Parameters<typeof mountPage>[2]>} [options]
  */
@@ -45,6 +47,11 @@ const openDirectoryPage = (path, options = {}) =>
       /^GET providers\/[^/]+\/manager-memberships$/,
       /^GET sites\/[^/]+$/,
       /^PUT sites\/[^/]+\/deliberate-311$/,
+      // A search in the URL reads the manager directory, which makes these calls.
+      /^GET programs\/[^/]+$/,
+      /^GET sites\/[^/]+\/manager-memberships$/,
+      /^GET sites\/[^/]+\?roster=1$/,
+      /^GET people$/,
     ],
     sites: true,
     ...options,
@@ -55,6 +62,38 @@ async function searchFor(value) {
   await fill("#directory-search-input", value);
   await tick(SEARCH_DELAY_MS);
 }
+
+/** Hold GET people until the returned release runs. @param {any} api */
+function holdPeople(api) {
+  const held = gate();
+  api.on("GET", /^people$/, async () => {
+    await held.promise;
+    return undefined;
+  });
+  return held;
+}
+
+test("search lists matching Sites, Programs, Providers and managers", async () => {
+  await openDirectoryPage("/sites", {
+    setup: (api) => {
+      api.data.programs[0] = {
+        ...api.data.programs[0],
+        providerName: "Example Provider",
+      };
+    },
+  });
+  await searchFor("Example");
+  assert.equal(query().get("q"), "Example");
+  assert.equal($$(`${results} h3`).length, 4);
+  assert.ok(
+    $(results).textContent.includes("Example Program — Example Provider"),
+  );
+  assert.ok(!missing(`${results} a[href="/managers/u1"]`));
+  assert.equal(
+    $(resultStatus).textContent,
+    t("admin.directory.resultCount", { count: 4 }),
+  );
+});
 
 test("search matches Sites by oversight names, and clearing it restores the tabs", async () => {
   await openDirectoryPage("/sites?q=harbor", {
@@ -70,6 +109,88 @@ test("search matches Sites by oversight names, and clearing it restores the tabs
   await click("#clear-directory-search");
   assert.equal(query().has("q"), false);
   assert.ok(!missing(tabs));
+});
+
+test("search reports a manager lookup failure and recovers on the next search", async () => {
+  await openDirectoryPage("/sites?q=Alex", {
+    setup: (api) => api.on("GET", /^people$/, failTimes(1)),
+  });
+  assert.equal($(resultStatus).textContent, t("admin.directory.managerError"));
+  await searchFor("Alexa");
+  await searchFor("Alex");
+  assert.equal(
+    $(resultStatus).textContent,
+    t("admin.directory.resultCount", { count: 1 }),
+  );
+});
+
+test("search shows a loading line until managers arrive", async () => {
+  /** @type {any} */
+  let held;
+  const { api } = await openDirectoryPage("/sites?q=Nothing", {
+    setup: (api) => (held = holdPeople(api)),
+  });
+  assert.equal(
+    $(resultStatus).textContent,
+    t("admin.directory.managerLoading"),
+  );
+  await searchFor("Nothing at all");
+  assert.equal(query().get("q"), "Nothing at all");
+  held.release();
+  await settle();
+  assert.equal(
+    $(resultStatus).textContent,
+    t("admin.directory.resultCount", { count: 0 }),
+  );
+  assert.equal(api.calls("GET", /^people$/).length, 1);
+});
+
+test("returning to a search before managers arrive still shows them", async () => {
+  /** @type {any} */
+  let held;
+  await openDirectoryPage("/sites?q=Alex", {
+    setup: (api) => (held = holdPeople(api)),
+  });
+  await routeTo("/providers");
+  await routeTo("/sites?q=Alex");
+  held.release();
+  await settle();
+  assert.equal(
+    $(resultStatus).textContent,
+    t("admin.directory.resultCount", { count: 1 }),
+  );
+  assert.ok(!missing(`${results} a[href="/managers/u1"]`));
+});
+
+test("a second search reuses the managers the first one loaded", async () => {
+  const { api } = await openDirectoryPage("/sites?q=Alex");
+  assert.ok(!missing(`${results} a[href="/managers/u1"]`));
+  await searchFor("Example");
+  assert.ok(!missing(`${results} a[href="/sites/s1"]`));
+  assert.equal(api.calls("GET", /^people$/).length, 1);
+});
+
+test("a failed manager lookup keeps the Site results", async () => {
+  await openDirectoryPage("/sites?q=Example", {
+    setup: (api) => api.fail("GET", /^people$/),
+  });
+  assert.equal($(resultStatus).textContent, t("admin.directory.managerError"));
+  assert.ok(!missing(`${results} a[href="/sites/s1"]`));
+});
+
+test("a manager lookup that returns after the search is cleared does not redraw results", async () => {
+  /** @type {any} */
+  let held;
+  const { api } = await openDirectoryPage("/sites?q=Alex", {
+    setup: (api) => (held = holdPeople(api)),
+  });
+  await click("#clear-directory-search");
+  const nav = $(tabs);
+  held.release();
+  await settle();
+  assert.equal(api.calls("GET", /^people$/).length, 1);
+  assert.ok($(tabs) === nav);
+  assert.ok(missing("#directory-results-title"));
 });
 
 test("discarding 311 changes puts each Site's checkbox back", async () => {
@@ -263,6 +384,30 @@ test("a manager search read that finishes after the page goes off screen draws n
   assert.deepEqual(drawn, []);
 });
 
+test("a manager search that fails after the user leaves shows no error on the next visit", async () => {
+  /** @type {(error: Error) => void} */
+  let fail = () => {};
+  const { page } = await openDirectoryPage("/sites");
+  // <admin-app> supplies the Site manager read; this one fails when the test says.
+  page.loadManagers = () =>
+    new Promise((_resolve, reject) => {
+      fail = reject;
+    });
+  await searchFor("Alex");
+  window.history.pushState({}, "", "/providers?q=Alex");
+  page.leave();
+  page.remove();
+  const opening = page.open({ name: "providers" });
+  fail(new Error("unavailable"));
+  assert.equal(await opening, true);
+  document.body.append(page);
+  await settle();
+  assert.equal(
+    $(resultStatus).textContent,
+    t("admin.directory.managerLoading"),
+  );
+});
+
 test("Site rows fall back to program and record details", async () => {
   await openDirectoryPage("/sites", {
     setup: (api) => {
@@ -289,6 +434,23 @@ test("Site rows fall back to program and record details", async () => {
     assert.ok(listText("sites-title").includes(shown), shown);
   assert.equal($('a[href="/sites/s7"] strong').textContent, "s7");
 });
+
+for (const [query, field] of [
+  ["Alex Example", "full name"],
+  ["Example Program", "Program"],
+  ["Example Site", "assigned Site"],
+])
+  test(`search finds a manager by ${field}`, async () => {
+    await openDirectoryPage(`/sites?q=${encodeURIComponent(query)}`);
+    assert.ok(!missing(`${results} a[href="/managers/u1"]`));
+  });
+
+for (const tab of ["managers", "providers"])
+  test(`search from the ${tab} tab shows the shared results`, async () => {
+    await openDirectoryPage(`/${tab}?q=Alex`);
+    assert.ok(missing(tabs));
+    assert.ok(!missing(`${results} a[href="/managers/u1"]`));
+  });
 
 /** A Program whose ID needs encoding and whose provider has no name. */
 const safeSleeping = {
@@ -317,7 +479,56 @@ test("a Program search result without a provider name shows just its name", asyn
   );
 });
 
-test("a 311 save on the mounted directory updates its own catalog, not adminCatalog", async () => {
+test("clearing a search on the Managers tab redraws the list once managers load", async () => {
+  /** @type {any} */
+  let held;
+  await openDirectoryPage("/managers?q=Alex", {
+    setup: (api) => (held = holdPeople(api)),
+  });
+  await click("#clear-directory-search");
+  held.release();
+  await settle();
+  assert.ok(
+    !missing('[aria-labelledby="managers-title"] a[href="/managers/u1"]'),
+  );
+});
+
+test("search lists managers by email and Sites by address", async () => {
+  await openDirectoryPage("/sites?q=nameless", {
+    setup: (api) => {
+      api.data.people.push({
+        personId: "u5",
+        firstName: "",
+        lastName: "",
+        email: "nameless@example.org",
+        status: "active",
+      });
+      api.data.programUsers.p1.push({
+        userId: "u5",
+        personId: "u5",
+        email: "nameless@example.org",
+        status: "active",
+        siteManager: true,
+      });
+      api.data.sites.push({
+        siteId: "s8",
+        siteName: "Plain Site",
+        address: "1 Nameless Way",
+        status: "active",
+      });
+    },
+  });
+  assert.ok(
+    $(`${results} a[href="/managers/u5"]`).textContent.includes(
+      "nameless@example.org",
+    ),
+  );
+  assert.ok(
+    $(`${results} a[href="/sites/s8"]`).textContent.includes("Plain Site"),
+  );
+});
+
+test("a 311 save on the mounted directory updates its own catalog", async () => {
   const { catalog } = await openDirectoryPage("/sites");
   await fill('[data-site-311="s1"]', false);
   await click("[data-save-311]");
@@ -326,7 +537,13 @@ test("a 311 save on the mounted directory updates its own catalog, not adminCata
       ?.deliberate311ProductionEnabled,
     false,
   );
-  assert.deepEqual(adminCatalog.sites, []);
+});
+
+test("the mounted Site managers list reads and shows its managers", async () => {
+  await openDirectoryPage("/managers");
+  assert.ok(
+    !missing('[aria-labelledby="managers-title"] a[href="/managers/u1"]'),
+  );
 });
 
 test("a directory mount given a catalog lists that catalog's providers", async () => {
@@ -368,4 +585,146 @@ test("a redraw after the URL moves on still draws the route open() was given", a
   window.history.replaceState({}, "", "/profile");
   page.render();
   assert.ok(!missing("admin-directory-page h1"));
+});
+
+test("the Sites list asks in its own dialog, and Discard drops its 311 edits", async () => {
+  const { page } = await openDirectoryPage("/sites");
+  await fill('[data-site-311="s1"]', false);
+  assert.equal(page.hasUnsavedChanges(), true);
+  // Back or Forward to another Sites search keeps the edits, so it doesn't ask.
+  assert.equal(page.hasUnsavedChanges({ name: "sites" }), false);
+  const leave = page.confirmLeave();
+  assert.equal($("#site-unsaved-dialog").open, true);
+  await click('#site-unsaved-dialog button[value="discard"]');
+  assert.equal(await leave, true);
+  assert.equal(page.hasUnsavedChanges(), false);
+});
+
+test("manager filters narrow the Site manager list", async () => {
+  await openDirectoryPage("/managers", {
+    setup: (api) => {
+      api.data.sites.push(
+        { siteId: "s4", siteName: "Listed Name", status: "active" },
+        { siteId: "s5", status: "active" },
+      );
+      api.data.memberships = [
+        { membershipId: "m1", userId: "u1", status: "active" },
+      ];
+      api.data.programs.push({
+        programId: "p3",
+        name: "Other Program",
+        providerId: "v1",
+        status: "active",
+      });
+      api.data.programUsers.p3 = [
+        {
+          userId: "u7",
+          programId: "p3",
+          firstName: "Jamie",
+          lastName: "Other",
+          email: "jamie@example.org",
+          status: "active",
+          siteManager: true,
+        },
+      ];
+    },
+  });
+  const filter = (/** @type {string} */ name) =>
+    `#manager-directory-filters wa-select[name="${name}"]`;
+  assert.equal(rows("managers-title").length, 2);
+  assert.equal(
+    $('#manager-directory-filters wa-option[value="s4"]').textContent,
+    "Listed Name",
+  );
+  assert.equal(
+    $('#manager-directory-filters wa-option[value="s5"]').textContent,
+    "s5",
+  );
+  await fill(filter("program"), "p1");
+  assert.equal(query().get("program"), "p1");
+  assert.equal(rows("managers-title").length, 1);
+  assert.ok(listText("managers-title").includes("Alex Example"));
+  await fill(filter("site"), "s1");
+  assert.equal(query().get("site"), "s1");
+  await fill(filter("program"), "");
+  assert.equal(query().has("program"), false);
+  assert.equal(rows("managers-title").length, 1);
+  await fill(filter("site"), "");
+  assert.equal(window.location.pathname + window.location.search, "/managers");
+  assert.equal(rows("managers-title").length, 2);
+});
+
+const directoryRows = () =>
+  $$('[aria-labelledby="managers-title"] li').map((row) =>
+    row.textContent.replace(/\s+/g, " ").trim(),
+  );
+
+test("the manager directory lists people and legacy staff and filters them", async () => {
+  const data = managerData();
+  data.people.push({
+    personId: "u5",
+    firstName: "Sam",
+    lastName: "North",
+    email: "sam@example.org",
+    siteManager: true,
+    status: "active",
+  });
+  data.siteItems.s3 = [
+    {
+      sk: "MEMBERSHIP#m5",
+      type: "managerMembership",
+      membershipId: "m5",
+      personId: "u5",
+      name: "Sam North",
+      email: "sam@example.org",
+      status: "active",
+    },
+  ];
+  await openDirectoryPage("/managers", { data });
+  assert.equal(directoryRows().length, 3);
+  assert.match(directoryRows()[0], /Alex Example/);
+  assert.match(directoryRows()[2], /Sam North/);
+  await routeTo("/managers?program=p3");
+  assert.match(pageText(), /No site managers match these filters\./);
+  await routeTo("/managers?site=s1&program=p1");
+  assert.equal(directoryRows().length, 2);
+  assert.match(directoryRows()[0], /Alex Example/);
+  assert.match(directoryRows()[1], /Morgan Person/);
+  await fill('#manager-directory-filters wa-select[name="program"]', "");
+  assert.equal(
+    window.location.pathname + window.location.search,
+    "/managers?site=s1",
+  );
+  await fill('#manager-directory-filters wa-select[name="site"]', "");
+  assert.equal(window.location.pathname + window.location.search, "/managers");
+});
+
+test("legacy staff join the directory through an email-only Site membership", async () => {
+  const data = managerData();
+  data.programUsers.p1.push({
+    userId: "u10",
+    firstName: "Former",
+    lastName: "Staff",
+    email: "former@example.org",
+    status: "inactive",
+    siteManager: true,
+  });
+  // Older memberships carry only an email; they still match Program staff.
+  data.siteItems.s3 = [
+    {
+      sk: "MEMBERSHIP#m50",
+      type: "managerMembership",
+      membershipId: "m50",
+      name: "Jordan Staff",
+      email: "JORDAN@example.org",
+      status: "active",
+    },
+  ];
+  await openDirectoryPage("/managers", { data });
+  // The Site must land on Jordan's own row, not just somewhere in the list.
+  assert.match(
+    directoryRows().find((row) => row.includes("Jordan Staff")) || "",
+    /North Site/,
+  );
+  assert.ok(!directoryRows().some((row) => row.includes("Former Staff")));
 });

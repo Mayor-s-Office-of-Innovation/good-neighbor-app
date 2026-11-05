@@ -6,7 +6,6 @@ import {
   adminData,
   click,
   fill,
-  press,
   settle,
   tick,
   toastText,
@@ -17,6 +16,19 @@ import {
 import { openSitePage } from "../test-support/site-pages.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
+
+/** @param {string | Element} target @param {string} key */
+async function press(target, key) {
+  const element = typeof target === "string" ? $(target) : target;
+  element.dispatchEvent(
+    new window.KeyboardEvent("keydown", {
+      key,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  await settle();
+}
 
 // pages/site/address-lookup.js and save-error-messages.js have no catalog key for this copy, so tests match their English.
 
