@@ -290,7 +290,7 @@ test("capture close is visible in dark mode and enabled finish uses primary colo
   ).toEqual([]);
 });
 
-test("Reports closes at the right edge and resolved green follows the theme", async ({
+test("Reports returns from the left edge and resolved green follows the theme", async ({
   page,
 }) => {
   await page.evaluate(async () => {
@@ -310,11 +310,9 @@ test("Reports closes at the right edge and resolved green follows the theme", as
   for (const width of [320, 868]) {
     await page.setViewportSize({ width, height: 800 });
     const header = await page.locator(".reports__top").boundingBox();
-    const close = await page.locator("#reports-home").boundingBox();
-    if (!header || !close) throw new Error("Missing Reports header");
-    expect(header.x + header.width - close.x - close.width).toBeLessThanOrEqual(
-      5,
-    );
+    const back = await page.locator("#reports-back").boundingBox();
+    if (!header || !back) throw new Error("Missing Reports header");
+    expect(back.x - header.x).toBeLessThanOrEqual(5);
   }
   for (const [theme, color] of [
     ["wa-light", "rgb(2, 94, 0)"],
@@ -330,13 +328,13 @@ test("Reports closes at the right edge and resolved green follows the theme", as
     );
   }
   await page.screenshot({
-    path: "/tmp/ui-reports-close-fixed.png",
+    path: "/tmp/ui-reports-back-fixed.png",
     animations: "disabled",
   });
 });
 
 for (const leave of [false, true]) {
-  test(`Reports waits for access with Close usable (leave=${leave})`, async ({
+  test(`Reports waits for access with Back usable (leave=${leave})`, async ({
     page,
   }) => {
     await page.evaluate(async () => {
@@ -363,10 +361,10 @@ for (const leave of [false, true]) {
     await expect(page.locator(".reports__body")).toHaveAttribute("inert", "");
     await page.locator('[data-report-tab="issues"]').dispatchEvent("click");
     await expect(page.locator("body")).not.toHaveAttribute("data-report-loads");
-    await page.locator("#reports-home").focus();
-    await expect(page.locator("#reports-home")).toBeFocused();
+    await page.locator("#reports-back").focus();
+    await expect(page.locator("#reports-back")).toBeFocused();
     if (leave) {
-      await page.locator("#reports-home").click();
+      await page.locator("#reports-back").click();
       await expect(page).toHaveURL(/\/today$/);
       await page
         .locator("reports-view")
