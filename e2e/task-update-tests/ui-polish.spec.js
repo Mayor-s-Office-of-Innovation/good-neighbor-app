@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { routeHomeLists } from "../helpers/app.js";
 
 test.beforeEach(async ({ page }) => {
   await page.route("**/v1/**", (route) =>
@@ -18,7 +19,7 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test("home controls fit a narrow viewport and language choices fill their dialog", async ({
+test("home controls fit a narrow viewport and language choices fill their routed screen", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 320, height: 800 });
@@ -75,38 +76,55 @@ test("home controls fit a narrow viewport and language choices fill their dialog
     truncates: true,
     aligned: "center",
   });
-  await page.evaluate(() =>
-    /** @type {any} */ (document.querySelector("#language-dialog")).showModal(),
-  );
-  const choices = page.locator(".language-list__option");
+  await routeHomeLists(page);
+  await page.evaluate(async () => {
+    const dbPath = "/src/db.js";
+    const { setSite } = await import(dbPath);
+    await setSite("Synthetic site", {
+      siteId: "layout-test",
+      token: "mock-token",
+    });
+    document.querySelector("main")?.remove();
+    document.body.append(document.createElement("app-root"));
+  });
+  await page.locator("#home-settings").click();
+  await page.locator("#settings-language").click();
+  await expect(page).toHaveURL(/\/language$/);
+  const choices = page.locator("language-view [data-locale]");
   await expect(choices).toHaveCount(5);
+  await expect(page.locator("#language-dialog")).toHaveCount(0);
   for (const width of [320, 868]) {
     await page.setViewportSize({ width, height: 1000 });
-    const modal = await page.locator("#language-dialog").boundingBox();
-    const option = await choices.first().boundingBox();
-    const close = await page.locator(".language-dialog__close").boundingBox();
-    if (!modal || !option || !close)
-      throw new Error("Missing language controls");
-    expect(Math.abs(option.x - modal.x - 24)).toBeLessThan(2);
-    expect(
-      Math.abs(modal.x + modal.width - option.x - option.width - 24),
-    ).toBeLessThan(2);
-    expect(
-      Math.abs(modal.x + modal.width - close.x - close.width - 24),
-    ).toBeLessThan(2);
-    await expect(choices.first()).toHaveCSS("text-align", "center");
+    const layout = await choices.first().evaluate((el) => {
+      const row = el.parentElement;
+      if (!row) throw new Error("Missing language row");
+      const style = window.getComputedStyle(row);
+      const optionStyle = window.getComputedStyle(el);
+      const box = row.getBoundingClientRect();
+      const option = el.getBoundingClientRect();
+      return {
+        left:
+          option.left -
+          box.left -
+          parseFloat(style.paddingLeft) -
+          parseFloat(optionStyle.marginLeft),
+        right:
+          box.right -
+          option.right -
+          parseFloat(style.paddingRight) -
+          parseFloat(optionStyle.marginRight),
+        fits: option.left >= 0 && option.right <= window.innerWidth,
+      };
+    });
+    expect(Math.abs(layout.left)).toBeLessThan(2);
+    expect(Math.abs(layout.right)).toBeLessThan(2);
+    expect(layout.fits).toBe(true);
   }
-  await page.screenshot({
-    path: "/tmp/ui-language-fixed.png",
-    animations: "disabled",
-  });
-  await page.locator(".language-dialog__close").focus();
+  const back = page.locator("language-view [data-menu-back]");
+  await back.focus();
   await page.keyboard.press("Enter");
-  await expect(page.locator("#language-dialog")).not.toBeVisible();
-  await page.screenshot({
-    animations: "disabled",
-    path: "/tmp/ui-home-narrow.png",
-  });
+  await expect(page.locator("language-view")).toHaveCount(0);
+  await expect(page.locator("dialog.home-settings-menu[open]")).toBeVisible();
 });
 
 test("complaint splash has a viewport divider and composer has a back caret", async ({
