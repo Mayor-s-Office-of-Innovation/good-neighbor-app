@@ -1,6 +1,6 @@
 // HTML for the Site record page. siteSectionView picks which tab's template
 // to draw, and the new Site flow reuses siteTypeSelect.
-import { siteProviderPrograms } from "../../site-program.js";
+import { siteProviderPrograms } from "./site-program.js";
 import { t } from "../../../../frontend/src/i18n/i18n.js";
 import { escapeHtml, formatTimestamp } from "../../dom.js";
 import { canEditSite } from "../../site-permissions.js";
@@ -22,8 +22,8 @@ import { siteOversightView } from "./oversight.templates.js";
 import { phoneInput, formInput } from "../../form-fields.js";
 
 /**
- * @typedef {import("../../main.js").AdminState} AdminState
- * @typedef {import("../../main.js").AdminSite} AdminSite
+ * @typedef {import("../../admin-types.js").AdminState} AdminState
+ * @typedef {import("../../admin-types.js").AdminSite} AdminSite
  */
 
 /** @param {string} siteName */
