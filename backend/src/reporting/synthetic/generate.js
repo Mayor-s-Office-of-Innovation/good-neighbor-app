@@ -42,6 +42,7 @@ const MINUTE = 60_000;
  * @property {number} [opensAt] share of the range before the Site opens
  * @property {number} [closesAt] share of the range after which it is archived
  * @property {[number, number]} [gap] [share of the range, days] with no Checks
+ * @property {number} [checksOwed] Checks a day its compliance terms set; none means the app's default
  */
 
 // Most real Sites are quiet, so a large year makes 9 in 10 Sites this one: under every concern limit.
@@ -117,6 +118,7 @@ export const PROFILES = [
     singleReportRate: 0.2,
     publicContact: true,
     siteContact: true,
+    checksOwed: 4,
   },
   {
     key: "overdue",
@@ -143,6 +145,7 @@ export const PROFILES = [
     singleReportRate: 0.05,
     publicContact: true,
     siteContact: true,
+    checksOwed: 2,
   },
   {
     key: "no-public-contact",
@@ -169,6 +172,7 @@ export const PROFILES = [
     singleReportRate: 0.05,
     publicContact: true,
     siteContact: false,
+    checksOwed: 2,
   },
   {
     key: "reports-only",
@@ -550,6 +554,17 @@ export function generateYear(opts = {}) {
         ? {}
         : { perimeter: "Front sidewalk and the alley on the east side" }),
       ...(publicContact ? { publicContact } : {}),
+      // Stored as the app does when terms are set, so these Sites owe their own number.
+      ...(profile.checksOwed
+        ? {
+            compliance: {
+              perimeterChecksRequired: true,
+              periodStart: createdDay,
+              requiredChecksPerDay: profile.checksOwed,
+              underEnhancedMonitoring: false,
+            },
+          }
+        : {}),
       ...(profile.siteContact
         ? {
             primaryContactUserId: userId,

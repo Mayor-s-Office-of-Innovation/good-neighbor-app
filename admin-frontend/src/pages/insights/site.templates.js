@@ -85,7 +85,7 @@ function concernParams(reply) {
   return {
     fewChecks: {
       perDay: oneDecimal(reply.checksPerDay ?? 0),
-      min: rules.checksPerDay,
+      min: reply.checksOwedPerDay ?? rules.defaultChecksPerDay,
     },
     repeatedSevere: { count: activity.severeIssues, min: rules.severeIssues },
     manyIssues: { count: activity.issuesCreated, max: rules.issuesPer30Days },
@@ -198,7 +198,8 @@ function activityView(reply, checksHref) {
           : escapeHtml(counts[key] ?? 0),
         t(`admin.insights.activity.${key}`),
         t(`admin.insights.activityHelp.${key}`, {
-          min: CONCERN_RULES.checksPerDay,
+          // A Site that owed no Checks has no number of its own to name.
+          min: reply.checksOwedPerDay ?? CONCERN_RULES.defaultChecksPerDay,
         }),
         key === "completedPerimeterChecks" &&
           !noData &&

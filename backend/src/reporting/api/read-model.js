@@ -6,6 +6,7 @@ import {
   dayKeysBetween,
   pacificDateKey,
 } from "../../lib/pacific-dates.js";
+import { requiredOn } from "../../domain/check-compliance.js";
 import { SITE_DAY_METRICS, compareTotals, sumSiteDays } from "../activity.js";
 import { API_VERSION, CONTRACT_VERSION, RESPONSE_STATES } from "../contract.js";
 import { comparisonFor, previousOf } from "../periods.js";
@@ -27,9 +28,8 @@ const NAMES = new Intl.Collator("en", { sensitivity: "base", numeric: true });
 const NAME_KEYS = new Set(["name", "siteName", "tieName", "sortValue"]);
 const ACTIVITY = SITE_DAY_METRICS.filter((m) => !RESPONSE_STATES.includes(m));
 
-// Only checksPerDay is agreed; the rest are placeholders to revise (plan §7).
+// Placeholders to revise (plan §7). Few Checks needs none: each Site owes its own number.
 export const CONCERN_RULES = Object.freeze({
-  checksPerDay: 3,
   severeIssues: 2,
   issuesPer30Days: 4,
   unresolvedDays: 14,
@@ -314,6 +314,7 @@ function siteRows(snap, interval, sites) {
       ...facts.totals,
       maxSeverity: facts.maxSeverity,
       checksPerDay: facts.checksPerDay,
+      checksOwedPerDay: facts.checksOwedPerDay,
       longUnresolved: facts.longUnresolved,
       ...indicators,
       concerns: facts.concerns,
@@ -358,6 +359,39 @@ function wholeDays(snap, site, interval, today) {
 }
 
 /**
+ * Days outside the Site's compliance period owe nothing, so they don't pull
+ * its average down.
+ * @param {Snapshot} snap
+ * @param {Record<string, any>} site
+ * @param {{ startDay: string, endDay: string }} range
+ * @returns {{ days: number, owed: number, completed: number }}
+ */
+function owedChecks(snap, site, range) {
+  const requirement = {
+    requiredPerDay: site.checksOwedPerDay,
+    required: true,
+    periodStart: site.checksOwedFrom ?? undefined,
+    periodEnd: site.checksOwedThrough ?? undefined,
+  };
+  const own = snap.daysBySite.get(site.siteId) ?? [];
+  const end = firstOnOrAfter(own, range.endDay);
+  const sum = { days: 0, owed: 0, completed: 0 };
+  for (const day of dayKeysBetween(range.startDay, range.endDay)) {
+    const owed = requiredOn(requirement, day);
+    if (!owed) continue;
+    sum.days += 1;
+    sum.owed += owed;
+  }
+  for (let i = firstOnOrAfter(own, range.startDay); i < end; i++)
+    if (requiredOn(requirement, own[i].day))
+      sum.completed += own[i].completedPerimeterChecks ?? 0;
+  return sum;
+}
+
+/** @param {number} n */
+const oneDecimal = (n) => Math.round(n * 10) / 10;
+
+/**
  * One reading of a Site's period, so its Overview row, Site page and report
  * show the same numbers and flags.
  * @param {Snapshot} snap
@@ -375,9 +409,7 @@ function siteFacts(snap, site, interval) {
     interval.startDay,
     earlierDay(interval.endDay, addDays(today, 1)),
   ).length;
-  const checks = range
-    ? sumDays(snap, range, ids).total.completedPerimeterChecks
-    : 0;
+  const owed = range ? owedChecks(snap, site, range) : null;
   const evaluated = Date.parse(snap.manifest.evaluatedAt);
   /** @type {number | null} */
   let maxSeverity = null;
@@ -396,11 +428,19 @@ function siteFacts(snap, site, interval) {
     )
       longUnresolved += 1;
   }
-  // Rounded before the flag reads it, so "3.0 a day" is never flagged as under 3.
+  // Rounded before the flag reads them, so "3.0 a day" is never flagged as under 3.
   // No perimeter means nothing to walk, so no average.
-  const checksPerDay =
-    site.hasPerimeter && days ? Math.round((checks / days) * 10) / 10 : null;
-  const facts = { totals, maxSeverity, checksPerDay, longUnresolved, days };
+  const avg = site.hasPerimeter && owed?.days ? owed : null;
+  const checksPerDay = avg ? oneDecimal(avg.completed / avg.days) : null;
+  const checksOwedPerDay = avg ? oneDecimal(avg.owed / avg.days) : null;
+  const facts = {
+    totals,
+    maxSeverity,
+    checksPerDay,
+    checksOwedPerDay,
+    longUnresolved,
+    days,
+  };
   const concerns = concernsOf(
     { ...facts, issueDays },
     site.status !== "inactive",
@@ -412,7 +452,7 @@ function siteFacts(snap, site, interval) {
  * Plan §7's flags, in the mock's order. Awaiting isn't one: there's still
  * time to answer. A closed Site can't be flagged for few Checks. Missing
  * contacts are flagged on the Site but never counted (plan §0.2 Q3).
- * @param {{ totals: ReturnType<typeof split>, checksPerDay: number | null, longUnresolved: number, days: number, issueDays: number }} facts
+ * @param {{ totals: ReturnType<typeof split>, checksPerDay: number | null, checksOwedPerDay: number | null, longUnresolved: number, days: number, issueDays: number }} facts
  * @param {boolean} active
  * @returns {string[]}
  */
@@ -420,6 +460,7 @@ function concernsOf(
   {
     totals: { activity, response },
     checksPerDay,
+    checksOwedPerDay,
     longUnresolved,
     days,
     issueDays,
@@ -432,7 +473,8 @@ function concernsOf(
   return [
     active &&
       checksPerDay !== null &&
-      checksPerDay < rules.checksPerDay &&
+      checksOwedPerDay !== null &&
+      checksPerDay < checksOwedPerDay &&
       "fewChecks",
     activity.severeIssues >= rules.severeIssues && "repeatedSevere",
     days > 0 && activity.issuesCreated > manyIssues && "manyIssues",
@@ -597,6 +639,7 @@ export function siteDetail(snap, siteId, { interval, now }) {
     ...contacts(snap, siteId),
     totals: facts.totals,
     checksPerDay: facts.checksPerDay,
+    checksOwedPerDay: facts.checksOwedPerDay,
     longUnresolved: facts.longUnresolved,
     concerns: facts.concerns,
     comparison: comparison(snap, interval, ids),
@@ -1085,6 +1128,7 @@ export function reportDataset(snap, { siteIds, interval, now }) {
         siteContact: detail.siteContact,
         totals: detail.totals,
         checksPerDay: detail.checksPerDay,
+        checksOwedPerDay: detail.checksOwedPerDay,
         longUnresolved: detail.longUnresolved,
         concerns: detail.concerns,
         comparison: detail.comparison,

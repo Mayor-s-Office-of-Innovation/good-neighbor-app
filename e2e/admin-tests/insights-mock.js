@@ -217,8 +217,9 @@ const SITES = [
     activity,
     response,
     maxSeverity: 4,
-    // 62 Checks over October's 31 days.
+    // 62 Checks over October's 31 days, against its own 4 a day.
     checksPerDay: 2,
+    checksOwedPerDay: 4,
     longUnresolved: 1,
     publicContact: contact("available"),
     siteContact: contact("missing"),
@@ -257,6 +258,7 @@ const SITES = [
     maxSeverity: null,
     // Closed, so no Checks isn't a concern.
     checksPerDay: 0,
+    checksOwedPerDay: 3,
     longUnresolved: 0,
     publicContact: contact("available"),
     siteContact: contact("available"),
@@ -284,6 +286,7 @@ const SITES = [
     },
     maxSeverity: 2,
     checksPerDay: 3,
+    checksOwedPerDay: 3,
     longUnresolved: 0,
     publicContact: contact("available"),
     siteContact: contact("available"),
@@ -313,6 +316,7 @@ const SITES = [
     },
     maxSeverity: 5,
     checksPerDay: 0.4,
+    checksOwedPerDay: 3,
     longUnresolved: 0,
     publicContact: contact("missing"),
     siteContact: contact("unknown"),
@@ -354,6 +358,7 @@ const counted = (site, period) =>
         ...ZERO,
         maxSeverity: null,
         checksPerDay: null,
+        checksOwedPerDay: null,
         longUnresolved: 0,
         // No activity data, so only today's contacts can still be unknown.
         concerns: [],
@@ -482,6 +487,7 @@ function siteReply(siteId, params) {
       siteContact: row.siteContact,
       totals: { activity: row.activity, response: row.response },
       checksPerDay: row.checksPerDay,
+      checksOwedPerDay: row.checksOwedPerDay,
       longUnresolved: row.longUnresolved,
       concerns: row.concerns,
       comparison,

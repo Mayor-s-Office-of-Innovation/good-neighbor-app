@@ -21,6 +21,7 @@ import {
   siteDetail,
   trends,
 } from "./read-model.js";
+import { DEFAULT_REQUIRED_CHECKS_PER_DAY } from "../../domain/check-compliance.js";
 import { CONCERN_RULES as ADMIN_CONCERN_RULES } from "../../../../admin-frontend/src/pages/insights/concern-rules.js";
 import { indexSnapshot } from "./snapshot.js";
 import { TEST_EVALUATED_AT, syntheticProjection } from "./test-projection.js";
@@ -338,12 +339,14 @@ describe("overview", () => {
 
   it("keeps each threshold as a named rule, the same one the pages explain", () => {
     expect(CONCERN_RULES).toEqual({
-      checksPerDay: 3,
       severeIssues: 2,
       issuesPer30Days: 4,
       unresolvedDays: 14,
     });
-    expect(ADMIN_CONCERN_RULES).toEqual(CONCERN_RULES);
+    expect(ADMIN_CONCERN_RULES).toEqual({
+      ...CONCERN_RULES,
+      defaultChecksPerDay: DEFAULT_REQUIRED_CHECKS_PER_DAY,
+    });
   });
 
   /**
@@ -509,6 +512,78 @@ describe("overview", () => {
     ).toEqual([
       [3, false],
       [2.5, true],
+    ]);
+  });
+
+  /**
+   * s1's Oct 12–13 row, with these Checks on those days and `owes` set on s1.
+   * @param {[number, number]} checks
+   * @param {Record<string, any>} owes
+   */
+  const owing = ([first, second], owes) =>
+    overview(
+      walked((t) => {
+        t.site_days.push(
+          { siteId: "s1", day: "2026-10-12", completedPerimeterChecks: first },
+          { siteId: "s1", day: "2026-10-13", completedPerimeterChecks: second },
+        );
+        Object.assign(
+          t.sites.find((site) => site.siteId === "s1"),
+          owes,
+        );
+      }),
+      {
+        interval: days("2026-10-12", "2026-10-14"),
+        filter: { siteIds: ["s1"] },
+        list: list("sites"),
+        now: NOW,
+      },
+    ).sites[0];
+
+  it("judges Few Checks against the Site's own number a day, not a flat 3", () => {
+    expect(
+      [
+        owing([3, 2], { checksOwedPerDay: 2 }),
+        owing([3, 3], { checksOwedPerDay: 4 }),
+      ].map((r) => [
+        r.checksPerDay,
+        r.checksOwedPerDay,
+        r.concerns.includes("fewChecks"),
+      ]),
+    ).toEqual([
+      [2.5, 2, false],
+      [3, 4, true],
+    ]);
+  });
+
+  it("averages only over the days the Site owed Checks", () => {
+    // Oct 12 is before its compliance period starts, so its 0 doesn't count.
+    expect(
+      [
+        owing([0, 3], { checksOwedFrom: "2026-10-13" }),
+        owing([3, 0], { checksOwedThrough: "2026-10-12" }),
+        owing([0, 3], {}),
+      ].map((r) => [r.checksPerDay, r.concerns.includes("fewChecks")]),
+    ).toEqual([
+      [3, false],
+      [3, false],
+      [1.5, true],
+    ]);
+  });
+
+  it("gives no average or flag to a Site that owed no Checks", () => {
+    expect(
+      [
+        owing([0, 0], { checksOwedPerDay: 0 }),
+        owing([0, 0], { checksOwedFrom: "2026-10-20" }),
+      ].map((r) => [
+        r.checksPerDay,
+        r.checksOwedPerDay,
+        r.concerns.includes("fewChecks"),
+      ]),
+    ).toEqual([
+      [null, null, false],
+      [null, null, false],
     ]);
   });
 
@@ -771,6 +846,7 @@ describe("siteDetail", () => {
     const pick = (/** @type {Record<string, any>} */ r) => [
       r.concerns,
       r.checksPerDay,
+      r.checksOwedPerDay,
       r.longUnresolved,
     ];
     expect(

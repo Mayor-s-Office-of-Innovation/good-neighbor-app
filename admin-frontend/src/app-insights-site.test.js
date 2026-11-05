@@ -101,7 +101,8 @@ test("a Site with concerns says why, each with its count and where to look", asy
   );
   assert.ok(
     text('[data-concern="fewChecks"]').includes(
-      t("admin.insights.concernWhy.fewChecks", { perDay: "2.0", min: 3 }),
+      // s1 owes 4 a day, so its own number shows, not the citywide 3.
+      t("admin.insights.concernWhy.fewChecks", { perDay: "2.0", min: 4 }),
     ),
   );
   assert.equal(

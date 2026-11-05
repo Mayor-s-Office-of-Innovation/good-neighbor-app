@@ -68,7 +68,7 @@ export function filtersView(state, options) {
         "insights-tip-status",
         t("admin.insights.label.status"),
         t("admin.insights.show.help", {
-          checks: CONCERN_RULES.checksPerDay,
+          checks: CONCERN_RULES.defaultChecksPerDay,
           severe: CONCERN_RULES.severeIssues,
           issues: CONCERN_RULES.issuesPer30Days,
           days: CONCERN_RULES.unresolvedDays,
