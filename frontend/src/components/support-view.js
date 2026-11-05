@@ -33,6 +33,21 @@ export class SupportView extends HTMLElement {
           ${escapeHtml(t("support.title"))}
         </h1>
         <p>${escapeHtml(t("support.intro"))}</p>
+        <div class="support__starters" data-starters>
+          ${[1, 2, 3]
+            .map(
+              (n) =>
+                html`<button
+                  type="button"
+                  class="support__starter"
+                  data-starter
+                >
+                  <span>${escapeHtml(t(`support.starter${n}`))}</span>
+                  <wa-icon name="arrow-up-right" aria-hidden="true"></wa-icon>
+                </button>`,
+            )
+            .join("")}
+        </div>
         <div
           class="support__conversation"
           role="log"
@@ -49,28 +64,37 @@ export class SupportView extends HTMLElement {
         >
           ${escapeHtml(t("support.clear"))}
         </button>
-        <form>
+        <form class="support__composer">
           <wa-textarea
             data-question
             label="${escapeAttr(t("support.question"))}"
-            rows="3"
+            placeholder="${escapeAttr(t("support.placeholder"))}"
+            rows="2"
             maxlength="1000"
             minlength="20"
-            resize="vertical"
+            resize="none"
             required
-            ><span slot="hint" data-question-hint aria-live="polite"
-              >${escapeHtml(t("support.questionHint"))}</span
-            ></wa-textarea
+          ></wa-textarea>
+          <button
+            class="support__send"
+            type="submit"
+            data-send
+            disabled
+            aria-label="${escapeAttr(t("support.send"))}"
           >
-          <button class="btn-link" type="button" data-clear-question hidden>
-            ${escapeHtml(t("support.clearContents"))}
-          </button>
-          <button class="btn-ink" type="submit" data-send disabled>
-            ${escapeHtml(t("support.send"))}
+            <wa-icon name="arrow-up" aria-hidden="true"></wa-icon>
           </button>
         </form>
-        <p class="support__privacy">${escapeHtml(t("support.privacy"))}</p>
-        <p class="support__privacy">${escapeHtml(t("support.accuracy"))}</p>
+        <p
+          class="support__question-hint"
+          data-question-hint
+          aria-live="polite"
+          hidden
+        ></p>
+        <p class="support__privacy">
+          ${escapeHtml(t("support.privacy"))}
+          ${escapeHtml(t("support.accuracy"))}
+        </p>
         <p class="support__handoff">
           ${escapeHtml(t("support.handoff"))}
           <a class="support__email" href="mailto:goodneighbor@sf.gov"
@@ -93,7 +117,7 @@ export class SupportView extends HTMLElement {
       /** @type {import("@awesome.me/webawesome/dist/components/textarea/textarea.js").default} */ (
         this.querySelector("[data-question]")
       );
-    this.querySelector("[data-clear-question]").addEventListener(
+    this.querySelector("[data-clear-question]")?.addEventListener(
       "click",
       () => {
         question.value = "";
@@ -106,6 +130,17 @@ export class SupportView extends HTMLElement {
       event.preventDefault();
       void this._submit();
     });
+    // One tap on a starter fills the question and asks it — no typing, no
+    // length hurdle (every starter clears the 20-character floor).
+    this.querySelectorAll("[data-starter]").forEach((starter) =>
+      starter.addEventListener("click", () => {
+        question.value =
+          starter.querySelector("span")?.textContent?.trim() || "";
+        this._questionTouched = true;
+        this._syncQuestion();
+        void this._submit();
+      }),
+    );
     question.addEventListener("input", () => {
       this._questionTouched = true;
       this._syncQuestion();
@@ -153,10 +188,16 @@ export class SupportView extends HTMLElement {
   }
 
   _syncResponses() {
+    const hasTurns = Boolean(this.querySelector(".support__turn"));
     const clear = /** @type {HTMLButtonElement | null} */ (
       this.querySelector("[data-clear]")
     );
-    if (clear) clear.hidden = !this.querySelector(".support__turn");
+    if (clear) clear.hidden = !hasTurns;
+    // Starters step aside once a conversation exists; Clear brings them back.
+    const starters = /** @type {HTMLElement | null} */ (
+      this.querySelector("[data-starters]")
+    );
+    if (starters) starters.hidden = hasTurns || Boolean(this._pending);
   }
 
   /** @param {boolean} busy */
@@ -165,6 +206,10 @@ export class SupportView extends HTMLElement {
       this.querySelector("[data-send]")
     );
     if (send) send.disabled = busy;
+    this._syncResponses();
+    this.querySelectorAll("[data-starter]").forEach((starter) => {
+      /** @type {HTMLButtonElement} */ (starter).disabled = busy;
+    });
     this._syncQuestion(busy);
     const status = this.querySelector("[data-status]");
     if (status) status.textContent = busy ? t("support.waiting") : "";
@@ -179,13 +224,17 @@ export class SupportView extends HTMLElement {
     if (!field) return;
     const length = field.value.trim().length;
     const invalid = length < 20 || field.value.length > 1000;
-    const error = this._questionTouched && invalid;
-    const hint = this.querySelector("[data-question-hint]");
+    // An empty composer just disables Send quietly; red is only for a
+    // question someone started and left too short.
+    const error = this._questionTouched && invalid && length > 0;
+    const hint = /** @type {HTMLElement | null} */ (
+      this.querySelector("[data-question-hint]")
+    );
     if (hint) {
-      hint.textContent = t(
-        error ? "support.questionTooShort" : "support.questionHint",
-      );
-      hint.classList.toggle("support__question-error", error);
+      // The hint speaks only when something is wrong (copy stays minimal),
+      // as its own line below the composer.
+      hint.textContent = error ? t("support.questionHint") : "";
+      hint.hidden = !error;
     }
     field.setCustomValidity(error ? t("support.questionTooShort") : "");
     const send = /** @type {HTMLButtonElement | null} */ (
@@ -238,6 +287,7 @@ export class SupportView extends HTMLElement {
     if (!retryQuestion && textarea.value.trim() === question) {
       textarea.value = "";
       this._questionTouched = false;
+      this._syncQuestion();
     }
     this._syncQuestion();
     textarea.focus();

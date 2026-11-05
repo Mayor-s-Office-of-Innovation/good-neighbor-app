@@ -6,11 +6,125 @@ support-view {
 }
 .support__panel {
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
   width: min(100%, 44rem);
   margin-inline: auto;
   padding: 1.5rem;
   overflow-wrap: anywhere;
   color: var(--text);
+}
+
+/* Tap-to-ask starter cards: outlined rows with the question and an
+   arrow — one tap fills the composer and asks. */
+.support__starters {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+.support__starters[hidden] {
+  display: none;
+}
+.support__starter {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 3.5rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--c-line);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 1.05rem;
+  line-height: 1.35;
+  text-align: start;
+  box-shadow: none;
+}
+.support__starter:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+.support__starter:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+}
+.support__starter wa-icon {
+  flex: 0 0 auto;
+  color: var(--brand-blue);
+  font-size: 0.9rem;
+}
+
+/* Chat-style composer pinned toward the bottom: an outlined container
+   holding a borderless textarea and a circular send. */
+.support__composer {
+  position: relative;
+  margin-top: auto;
+  padding: 0.75rem 0.75rem 3.5rem;
+  border: 1px solid var(--c-line);
+  border-radius: 24px;
+  background: var(--surface);
+}
+.support__composer wa-textarea::part(base) {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+.support__composer wa-textarea::part(textarea) {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  outline: none;
+}
+/* The focus ring lives on the composer, not the inner textarea. */
+.support__composer wa-textarea {
+  --wa-focus-ring: none;
+}
+.support__composer wa-textarea::part(base):focus-within,
+.support__composer wa-textarea::part(textarea):focus {
+  border: 0;
+  box-shadow: none;
+  outline: none;
+}
+.support__composer:focus-within {
+  border-color: var(--brand-blue);
+}
+.support__composer wa-textarea::part(label) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.support__send {
+  appearance: none;
+  position: absolute;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--brand-blue);
+  color: var(--on-ink);
+  cursor: pointer;
+  box-shadow: none;
+}
+.support__send:disabled {
+  background: var(--surface-2);
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+.support__send:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
 }
 .support__back-row {
   display: flex;
@@ -151,4 +265,15 @@ support-view {
 /* Full-bleed screen: the panel carries its own gutters. */
 .app--chromeless .app__main:has(> support-view) {
   padding: 0;
+}
+
+/* Length error as its own line directly below the composer. */
+.support__question-hint {
+  margin: 0.5rem 0 0;
+  color: var(--c-hazard, #b42318);
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+.support form + .support__question-hint + .support__privacy {
+  margin-top: 2rem;
 }
