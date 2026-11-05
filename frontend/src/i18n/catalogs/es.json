@@ -5,7 +5,7 @@
   "access.createError": "No pudimos crear el enlace. Inténtalo de nuevo.",
   "access.device": "Dispositivo del equipo",
   "access.deviceLabel": "Asigne un nombre al dispositivo",
-  "access.devicePlaceholder": "iPhone de Amisha",
+  "access.devicePlaceholder": "p. ej., \"Teléfono de Amisha\"",
   "access.devices": "Dispositivos del equipo",
   "access.duplicateEmail": "Este correo ya está asignado a un administrador de este sitio. Use otro correo o gestione la asignación existente.",
   "access.duration.days.one": "{count} día",
@@ -875,7 +875,7 @@
   "install.banner.aria": "Añadir a la pantalla de inicio",
   "install.banner.dismiss.aria": "Ahora no",
   "install.banner.install": "Instalar",
-  "install.banner.ios": "En Safari, toque Compartir y luego Añadir a pantalla de inicio.",
+  "install.banner.ios": "Toque Compartir y luego Añadir a pantalla de inicio.",
   "install.banner.iosCarryOver": "Su sesión se mantiene.",
   "install.banner.message": "Ábralo con un toque, como una aplicación.",
   "install.banner.title": "Añada Good Neighbor a su pantalla de inicio",
@@ -1701,5 +1701,8 @@
   "analysis.deleteDialog.groupChanged": "Las tarjetas vinculadas a este problema han cambiado. Vuelva a abrir este diálogo para revisar el grupo.",
   "analysis.deleteDialog.groupTooLarge": "Este grupo es demasiado grande para eliminarlo de una vez.",
   "analysis.deleteDialog.alreadyDeleted": "Esta tarjeta ya se ha eliminado. Actualice la lista para ver la información más reciente.",
-  "analysis.deleteDialog.refresh": "Actualizar lista"
+  "analysis.deleteDialog.refresh": "Actualizar lista",
+  "access.showCode": "Mostrar código",
+  "access.codeGuidance": "Si el código o el enlace no funciona, puede mostrar un código a su compañero de equipo para que lo introduzca en la pantalla de inicio de sesión. Este código solo será visible hasta que cierre esta vista.",
+  "access.displayCode": "Ver código"
 }

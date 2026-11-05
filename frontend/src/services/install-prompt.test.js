@@ -47,25 +47,37 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("isIosSafari", () => {
+describe("isIosBrowser", () => {
   it("accepts iPhone Safari and iPadOS desktop-class Safari", () => {
-    expect(mod.isIosSafari(IOS_SAFARI, { platform: "iPhone" })).toBe(true);
+    expect(mod.isIosBrowser(IOS_SAFARI, { platform: "iPhone" })).toBe(true);
     expect(
-      mod.isIosSafari(IPADOS, { platform: "MacIntel", maxTouchPoints: 5 }),
+      mod.isIosBrowser(IPADOS, { platform: "MacIntel", maxTouchPoints: 5 }),
     ).toBe(true);
   });
 
-  it("rejects a real Mac, third-party iOS browsers and in-app webviews", () => {
+  it("rejects a real Mac, Android and in-app webviews", () => {
     expect(
-      mod.isIosSafari(IPADOS, { platform: "MacIntel", maxTouchPoints: 0 }),
+      mod.isIosBrowser(IPADOS, { platform: "MacIntel", maxTouchPoints: 0 }),
     ).toBe(false);
-    expect(mod.isIosSafari(IOS_CHROME, { platform: "iPhone" })).toBe(false);
-    expect(mod.isIosSafari(IOS_GMAIL, { platform: "iPhone" })).toBe(false);
-    expect(mod.isIosSafari(ANDROID_CHROME, {})).toBe(false);
+    expect(mod.isIosBrowser(IOS_GMAIL, { platform: "iPhone" })).toBe(false);
+    expect(mod.isIosBrowser(ANDROID_CHROME, {})).toBe(false);
   });
 });
 
 describe("installMethod", () => {
+  it.each(["CriOS", "FxiOS", "EdgiOS", "OPT/", "DuckDuckGo", "BraveiOS"])(
+    "uses the iOS handoff/install path for %s",
+    (browser) => {
+      const ua = IOS_CHROME.replace("CriOS", browser);
+      expect(mod.isIosBrowser(ua, { platform: "iPhone" })).toBe(true);
+      expect(mod.installMethod(ua, { platform: "iPhone" })).toBe("ios");
+    },
+  );
+
+  it("does not offer installation from an email webview", () => {
+    expect(mod.installMethod(IOS_GMAIL, { platform: "iPhone" })).toBe(null);
+  });
+
   it("is ios on Safari, prompt on Chromium, null elsewhere", () => {
     expect(mod.installMethod(IOS_SAFARI, { platform: "iPhone" })).toBe("ios");
     expect(mod.installMethod(ANDROID_CHROME, {})).toBe("prompt");

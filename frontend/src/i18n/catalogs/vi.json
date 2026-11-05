@@ -5,7 +5,7 @@
   "access.createError": "Không thể tạo liên kết. Vui lòng thử lại.",
   "access.device": "Thiết bị của nhóm",
   "access.deviceLabel": "Đặt tên cho thiết bị",
-  "access.devicePlaceholder": "iPhone của Amisha",
+  "access.devicePlaceholder": "ví dụ: \"Điện thoại của Amisha\"",
   "access.devices": "Thiết bị của nhóm",
   "access.duplicateEmail": "Email này đã được gán cho một quản lý tại địa điểm này. Hãy dùng email khác hoặc quản lý phân công hiện có.",
   "access.duration.days.one": "{count} ngày",
@@ -875,7 +875,7 @@
   "install.banner.aria": "Thêm vào màn hình chính",
   "install.banner.dismiss.aria": "Để sau",
   "install.banner.install": "Cài đặt",
-  "install.banner.ios": "Trong Safari, chạm Chia sẻ, rồi chọn Thêm vào Màn hình chính.",
+  "install.banner.ios": "Chạm Chia sẻ, rồi chọn Thêm vào Màn hình chính.",
   "install.banner.iosCarryOver": "Phiên đăng nhập của bạn sẽ được giữ lại.",
   "install.banner.message": "Mở bằng một lần chạm, như một ứng dụng.",
   "install.banner.title": "Thêm Good Neighbor vào màn hình chính",
@@ -1701,5 +1701,8 @@
   "analysis.deleteDialog.groupChanged": "Các thẻ liên kết với vấn đề này đã thay đổi. Mở lại hộp thoại này để xem lại nhóm.",
   "analysis.deleteDialog.groupTooLarge": "Nhóm này quá lớn để xóa cùng lúc.",
   "analysis.deleteDialog.alreadyDeleted": "Thẻ này đã được xóa. Làm mới danh sách để xem thông tin mới nhất.",
-  "analysis.deleteDialog.refresh": "Làm mới danh sách"
+  "analysis.deleteDialog.refresh": "Làm mới danh sách",
+  "access.showCode": "Hiện mã",
+  "access.codeGuidance": "Nếu mã hoặc liên kết không hoạt động, bạn có thể hiển thị mã cho thành viên trong nhóm để họ nhập trên màn hình đăng nhập. Mã này chỉ hiển thị cho đến khi bạn đóng cửa sổ này.",
+  "access.displayCode": "Hiển thị mã"
 }

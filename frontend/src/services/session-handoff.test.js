@@ -144,7 +144,7 @@ describe("handoff credentials in the launch URL", () => {
 });
 
 describe("shouldPrepareHandoff", () => {
-  it("is iOS Safari, not standalone, not a webview, and nothing else", () => {
+  it("prepares only in an iOS browser outside standalone mode and webviews", () => {
     expect(
       shouldPrepareHandoff({
         method: "ios",
@@ -336,6 +336,25 @@ describe("ensureHandoffManifest", () => {
       /** @type {any} */ (URL.createObjectURL).mock.calls[0][0].parts[0],
     ).start_url;
 
+  it("prepares the installation cookie in iPhone Chrome using real browser detection", async () => {
+    /** @type {typeof import("./install-prompt.js")} */
+    const { installMethod } = await vi.importActual("./install-prompt.js");
+    vi.stubGlobal("navigator", {
+      userAgent:
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/125.0 Mobile/15E148 Safari/604.1",
+      platform: "iPhone",
+    });
+    mocks.installMethod.mockImplementationOnce(installMethod);
+    expect(
+      await ensureHandoffManifest({
+        site: { siteId: "s1", deviceId: "d1", token: "a" },
+      }),
+    ).toBe(true);
+    expect(mocks.issueSessionHandoff).toHaveBeenCalledOnce();
+    expect(isHandoffPrepared()).toBe(true);
+    expect(link.setAttribute).toHaveBeenCalledOnce();
+  });
+
   it("shares preparation and does not mint again when the shell has an older snapshot", async () => {
     const site = { siteId: "s1", deviceId: "d1", token: "a" };
     const first = ensureHandoffManifest({ site });
@@ -423,7 +442,7 @@ describe("ensureHandoffManifest", () => {
     expect(await pending).toBe(false);
   });
 
-  it("does nothing off iOS Safari, when standalone, or when unbound", async () => {
+  it("does nothing outside an iOS browser, when standalone, or when unbound", async () => {
     mocks.installMethod.mockReturnValue("prompt");
     expect(await ensureHandoffManifest()).toBe(false);
     mocks.installMethod.mockReturnValue("ios");

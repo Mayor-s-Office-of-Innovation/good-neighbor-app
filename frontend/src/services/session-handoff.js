@@ -4,15 +4,15 @@
   iOS Home Screen apps have independent IndexedDB storage. Preparing the
   handoff sets a Secure HttpOnly SameSite=Strict cookie that iOS copies at
   installation time. On a standalone launch without a binding, app-root
-  redeems the cookie for an independent installation; Safari stays signed in.
+  redeems the cookie for an independent installation; the browser stays signed in.
   Preparation completes before showing the enrolled app, since people may
-  use Safari's own installation menu immediately.
+  use the browser's own installation menu immediately.
 
   The cached grant is revalidated server-side to restore its cookie on a
   returning page. A blob manifest with a fragment launch grant remains a
   fallback for older iOS versions. The fragment is stripped before awaiting
   anything; consumed fragment grants are remembered to avoid replaying them.
-  Chromium keeps the static manifest and shares its installed app's storage.
+  Desktop/Android Chromium keeps the static manifest and shares installed storage.
   See docs/adr/0019-home-screen-session-continuity.md.
 
 */
@@ -165,7 +165,7 @@ export function stripHandoffCredentials(
 }
 
 /**
- * Only an iOS Safari page that is not yet standalone and not inside an
+ * Only an iOS browser page that is not yet standalone and not inside an
  * in-app webview prepares a handoff. Pure given its inputs.
  * @param {{ method?: "prompt" | "ios" | null, standalone?: boolean, webview?: boolean }} [opts]
  * @returns {boolean}
@@ -318,7 +318,7 @@ async function prepareManifest(bound, key, version, signal) {
   try {
     {
       // Even a cached grant needs its HttpOnly cookie reinstalled on this
-      // page. Safari copies that cookie at installation time; the manifest
+      // page. iOS copies that cookie at installation time; the manifest
       // fragment remains a fallback for older iOS versions.
       const cached = grant
         ? readHandoffCredentials(

@@ -485,7 +485,7 @@ export class AppRoot extends HTMLElement {
     clearAuthState(); // re-bind heals an AUTH state
     if (!(await this._refreshSiteSettings())) return false;
     // Complete the installation cookie before the enrolled app is shown: the
-    // person may immediately use Safari's own Add to Home Screen menu.
+    // person may immediately use the browser's own Add to Home Screen menu.
     await ensureHandoffManifest({ site: this._site }).catch((err) =>
       console.error("handoff preparation failed", err),
     );
@@ -504,7 +504,7 @@ export class AppRoot extends HTMLElement {
     this._view = this.querySelector("#view");
     this._shell = this.querySelector(".app");
     this._maybeOfferInstall();
-    // iOS Safari only, and only while not yet standalone: keep a handoff grant
+    // iOS browsers only, and only while not yet standalone: keep a handoff grant
     // in the manifest so an Add to Home Screen from any route carries the
     // session over. Off the critical path; the iOS install offer waits for it.
     void ensureHandoffManifest({ site: this._site }).catch((err) =>
@@ -514,7 +514,7 @@ export class AppRoot extends HTMLElement {
 
   /**
    * Add-to-Home-Screen offer: a bound device on the home hub gets one card
-   * (Install on Chromium, Share-sheet steps on iOS Safari). The service
+   * (Install on Chromium, Share-sheet steps on iOS browsers). The service
    * decides eligibility (standalone already, webview, snoozed); the element
    * sits above <main> so route swaps leave it alone and hides itself off
    * /today. Lazy like the webview banner to keep it out of the main bundle.
