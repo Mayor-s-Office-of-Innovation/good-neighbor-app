@@ -5,7 +5,6 @@ import {
   $$,
   byText,
   click,
-  mountAdmin,
   pageError,
   routeTo,
   settle,
@@ -16,6 +15,7 @@ import {
   missing,
   focused,
 } from "../test-support/admin-dom.js";
+import { mountAdmin } from "../test-support/app-mount.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { failTimes } from "../../e2e/admin-tests/directory-helpers.js";
 import {

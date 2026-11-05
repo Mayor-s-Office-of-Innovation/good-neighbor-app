@@ -1,4 +1,5 @@
 // AdminApp.bind() adds these again after each render() replaces the HTML.
+import { adminCatalog } from "../../admin-catalog.js";
 import { adminApi } from "../../services/admin-api.js";
 import { asForm, dataAttr } from "../../dom.js";
 import { canEditSite } from "../../site-permissions.js";
@@ -94,8 +95,7 @@ export function bindSiteAccess(app) {
         status.textContent = t("admin.devices.managerRevoked", {
           count: result.affectedCount,
         });
-        app.state.managerDirectoryLoaded = false;
-        app.managerDirectoryVersion = (app.managerDirectoryVersion || 0) + 1;
+        adminCatalog.invalidate("managers");
         input.value = "";
       } catch {
         status.textContent = t("admin.devices.managerRevokeFailed");

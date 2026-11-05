@@ -6,13 +6,13 @@ import {
   click,
   fill,
   missing,
-  mountAdmin,
   pageError,
   routeTo,
   settle,
   waitFor,
   window,
 } from "../test-support/admin-dom.js";
+import { mountAdmin } from "../test-support/app-mount.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { failTimes } from "../../e2e/admin-tests/directory-helpers.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
@@ -55,6 +55,18 @@ test("a failed session read offers a reload", async () => {
   await mountAdmin("/sites", {
     setup: (api) => api.on("GET", /^session$/, failTimes(1)),
   });
+  assert.equal(pageError(), "Synthetic failure");
+  await click("#retry-page-load");
+  assert.equal(loads.reload.mock.calls.length, 1);
+});
+
+test("an app moved in the page whose session read fails offers a reload", async () => {
+  const loads = stubPageLoads();
+  const { app, api } = await mountAdmin("/sites");
+  api.on("GET", /^session$/, failTimes(1));
+  app.remove();
+  document.body.append(app);
+  await settle();
   assert.equal(pageError(), "Synthetic failure");
   await click("#retry-page-load");
   assert.equal(loads.reload.mock.calls.length, 1);
@@ -420,4 +432,88 @@ test("a Compliance manager who may edit a Site keeps its edit controls", async (
   assert.equal(heading(), "Example Site");
   assert.equal($("#site-details-form wa-input").disabled, false);
   assert.ok(missing("[data-deactivate-site]"));
+});
+
+// <admin-app> with the Program page: the page answers for its own edits and
+// reads, and the shell routes, shares the catalog and shows the error line.
+
+test("leaving a Program with an unsaved name asks first, by link or Back", async () => {
+  await mountAdmin("/programs/p1");
+  await fill('#program-details-form wa-input[name="program-name"]', "Draft");
+  await click("a[href='/sites/s1']");
+  assert.equal($("#site-unsaved-dialog").open, true);
+  assert.equal(url(), "/programs/p1");
+  await click('#site-unsaved-dialog button[value="keep"]');
+  await routeTo("/sites");
+  assert.equal(url(), "/programs/p1");
+  assert.equal($("#site-unsaved-dialog").open, true);
+  await click('#site-unsaved-dialog button[value="discard"]');
+  assert.equal(url(), "/sites");
+});
+
+test("opening a Program or the new Program form focuses its heading", async () => {
+  await mountAdmin("/programs/p1");
+  assert.ok(document.activeElement === $("admin-program-page h1"));
+  await routeTo("/programs/new");
+  assert.ok(document.activeElement === $("#new-program-title"));
+});
+
+test("a failed Program read shows in the error line", async () => {
+  const { api } = await mountAdmin("/programs/p1");
+  api.fail("GET", /^programs\/p2$/, 500, "program_read_failed");
+  await routeTo("/programs/p2");
+  assert.ok(missing("admin-program-page"));
+  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
+  assert.equal(pageError(), "program_read_failed");
+});
+
+test("a Program page's error after the user leaves it still shows in the error line", async () => {
+  const held = gate();
+  await mountAdmin("/programs/p1", {
+    setup: (api) =>
+      api.on("PATCH", /^programs\/p1\/users\/u1$/, () => {
+        api.on("GET", /^programs\/p1$/, {
+          delay: held.promise,
+          status: 503,
+          json: {
+            error: "program_read_failed",
+            message: "program_read_failed",
+          },
+        });
+        return undefined;
+      }),
+  });
+  await click("[data-edit-program-staff='u1']");
+  await click("#edit-program-staff-u1 form button[type='submit']");
+  await routeTo("/sites");
+  held.release();
+  await settle();
+  assert.ok(!missing("#directory-title"));
+  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
+  assert.equal(pageError(), "program_read_failed");
+});
+
+test("a Program created on its page shows in directory search without a reload", async () => {
+  const { api } = await mountAdmin("/sites");
+  await routeTo("/programs/new?providerId=v1");
+  await fill("#program-form wa-input[name='program-name']", "Harbor Outreach");
+  await click("#program-form button[type='submit']");
+  const programReads = api.calls("GET", /^programs$/).length;
+  await routeTo("/sites?q=Harbor");
+  assert.match($("#directory-results").textContent, /Harbor Outreach/);
+  assert.equal(api.calls("GET", /^programs$/).length, programReads);
+});
+
+test("after the session ends, the next route change hides the new Program form", async () => {
+  await mountAdmin("/programs/new");
+  const config = /** @type {any} */ (window).GOOD_NEIGHBOR_ADMIN_CONFIG;
+  const signedIn = config.localDebugAdmin;
+  config.localDebugAdmin = false;
+  try {
+    await routeTo("/programs/new?providerId=v1");
+    assert.ok(!missing("#sign-in"));
+    assert.ok(missing("#program-form"));
+  } finally {
+    config.localDebugAdmin = signedIn;
+  }
 });

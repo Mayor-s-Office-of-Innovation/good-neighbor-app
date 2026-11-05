@@ -5,7 +5,6 @@ import {
   click,
   fill,
   missing,
-  mountAdmin,
   pageError,
   routeTo,
   settle,
@@ -13,6 +12,7 @@ import {
   toastCount,
   window,
 } from "../test-support/admin-dom.js";
+import { mountAdmin } from "../test-support/app-mount.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 

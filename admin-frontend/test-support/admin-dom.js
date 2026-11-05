@@ -1,15 +1,19 @@
-// Mounts <admin-app> against admin-mock.js's fake /admin/v1, so unit tests and
-// the Playwright specs share one set of synthetic records and handlers.
+// Mounts one page, or the whole <admin-app> through app-mount.js, in happy-dom against
+// the Playwright specs' fake /admin/v1 backend, so both suites share its records.
 import { afterAll, afterEach, beforeEach, vi } from "vitest";
 import assert from "node:assert/strict";
 import {
   adminData,
-  mockAdmin,
-  mockFailures,
+  fakeAdminApi,
   releaseGates,
 } from "../../e2e/admin-tests/admin-mock.js";
 import { getToasts, onToastsChange } from "../../frontend/src/state/toasts.js";
 import { quietInspect } from "./quiet-inspect.js";
+
+/**
+ * @typedef {import("../src/admin-catalog.js").AdminCatalog} AdminCatalog
+ * @typedef {import("../src/admin-session.js").AdminSession} AdminSession
+ */
 
 // A local binding, so tests can keep importing window from here.
 const { window } = globalThis;
@@ -181,13 +185,12 @@ window.document.querySelectorAll = function (selector) {
 };
 
 /**
- * One mounted app's routes and what reached the page while it was mounted. A
+ * One mount's fake backend and what reached the page while it was mounted. A
  * request is charged to the mount that was current when it started.
  * @typedef {{
- *   routes: { pattern: RegExp, handler: (route: any) => any }[],
+ *   api: ReturnType<typeof fakeAdminApi>,
  *   otherFetch: ((url: string, init: any) => Response | undefined) | null,
  *   fetch: string[],
- *   mocks: string[][],
  *   errors: string[],
  * }} Mount
  */
@@ -202,102 +205,8 @@ let strayFetches = [];
 // Counts fetch starts and ends, so settle() can tell a held request from progress.
 let activity = 0;
 
-const page = {
-  /** @param {() => void} script */
-  addInitScript: async (script) => script(),
-  // admin-mock's settle(page) needs a browser page.
-  evaluate: async () => {
-    throw new Error(
-      "page.evaluate is unavailable in the unit harness: use admin-dom's settle(), not api.expectNotSent()",
-    );
-  },
-  waitForResponse: async () => {
-    throw new Error(
-      "page.waitForResponse is unavailable in the unit harness: release the gate, then await admin-dom's settle()",
-    );
-  },
-  /** @param {RegExp | string} pattern @param {(route: any) => any} handler */
-  route: async (pattern, handler) => {
-    mount?.routes.push({
-      pattern: typeof pattern === "string" ? globToRegExp(pattern) : pattern,
-      handler,
-    });
-  },
-};
-
-/**
- * Matches URLs as Playwright 1.63's globToRegexPattern does, so a spec's
- * page.route() glob catches the same requests here.
- * @param {string} glob
- */
-export function globToRegExp(glob) {
-  let source = "";
-  let inGroup = false;
-  for (let index = 0; index < glob.length; index++) {
-    const char = glob[index];
-    if (char === "\\" && index + 1 < glob.length) {
-      source += escapeGlobChar(glob[++index]);
-    } else if (char === "*") {
-      const before = glob[index - 1];
-      let stars = 1;
-      while (glob[index + 1] === "*") {
-        stars++;
-        index++;
-      }
-      if (stars === 1) source += "[^/]*";
-      else if (glob[index + 1] !== "/") source += ".*";
-      else {
-        index++;
-        source += before === "/" ? "(?:.+/|)" : ".*/";
-      }
-    } else if (char === "{") {
-      if (inGroup) throw new Error(`Nested { in glob ${glob}`);
-      inGroup = true;
-      source += "(?:";
-    } else if (char === "}") {
-      if (!inGroup) throw new Error(`Unmatched } in glob ${glob}`);
-      inGroup = false;
-      source += ")";
-    } else if (char === "," && inGroup) source += "|";
-    else source += escapeGlobChar(char);
-  }
-  if (inGroup) throw new Error(`Unmatched { in glob ${glob}`);
-  return new RegExp(`^${source}$`);
-}
-
-/**
- * Playwright's precedence: contentType, then a content-type header, then JSON
- * only for a json reply.
- * @param {{ json?: any, body?: string, contentType?: string, headers?: Record<string, string> }} reply
- */
-function fulfillHeaders(reply) {
-  const headers = Object.fromEntries(
-    Object.entries(reply.headers || {}).map(([key, value]) => [
-      key.toLowerCase(),
-      value,
-    ]),
-  );
-  if (reply.contentType) headers["content-type"] = reply.contentType;
-  else if (reply.body === undefined && reply.json !== undefined)
-    headers["content-type"] = "application/json";
-  return headers;
-}
-
-/**
- * Empty for a status-only reply, as Playwright sends it. Response() throws on
- * a body for 204, 205 or 304, which would leave the page's fetch hanging.
- * @param {{ status?: number, json?: any, body?: string }} reply
- */
-function fulfillBody(reply) {
-  if ([204, 205, 304].includes(reply.status ?? 200)) return null;
-  if (reply.body !== undefined) return reply.body;
-  return reply.json !== undefined ? JSON.stringify(reply.json) : "";
-}
-
-/** @param {string} char */
-function escapeGlobChar(char) {
-  return /[$^+.*()|\\?{}[\]]/.test(char) ? `\\${char}` : char;
-}
+const abortError = () =>
+  new DOMException("The operation was aborted.", "AbortError");
 
 // happy-dom catches a listener's throw or rejection and only fires this event,
 // so without it a handler that crashes leaves the test passing.
@@ -309,66 +218,46 @@ window.addEventListener("error", (/** @type {any} */ event) => {
 
 globalThis.fetch = /** @type {any} */ (
   async (/** @type {any} */ input, /** @type {any} */ init = {}) => {
-    const url = String(input?.url ?? input);
+    const url = new URL(String(input?.url ?? input), window.location.href);
     const method = init.method || "GET";
     const owner = mount;
-    /** @returns {Response} */
-    const noRoute = () => {
-      // A request that outlives its test's checks is checked at the next teardown.
-      (owner && mounts.includes(owner) ? owner.fetch : strayFetches).push(
-        `${method} ${url}`,
-      );
-      return new Response("{}", { status: 404 });
-    };
     activity++;
     try {
-      if (init.signal?.aborted)
-        throw new DOMException("The operation was aborted.", "AbortError");
-      const other = owner?.otherFetch?.(url, init);
+      if (init.signal?.aborted) throw abortError();
+      const other = owner?.otherFetch?.(url.href, init);
       if (other) return await other;
-      // Newest first, as Playwright tries routes.
-      const matching = (owner?.routes ?? [])
-        .filter(({ pattern }) => pattern.test(url))
-        .reverse();
-      if (!matching.length) return noRoute();
-      return await new Promise((resolve, reject) => {
-        // A browser rejects a pending request when its signal aborts, not only at the start.
-        init.signal?.addEventListener(
-          "abort",
-          () =>
-            reject(
-              new DOMException("The operation was aborted.", "AbortError"),
-            ),
-          { once: true },
+      if (!owner || !url.pathname.startsWith("/admin/v1/")) {
+        // A request that outlives its test's checks is checked at the next teardown.
+        (owner && mounts.includes(owner) ? owner.fetch : strayFetches).push(
+          `${method} ${url.href}`,
         );
-        const request = {
-          url: () => url,
-          method: () => method,
-          postData: () => init.body ?? null,
-          headers: () => init.headers || {},
-        };
-        /** @param {number} index */
-        const run = (index) => {
-          const route = matching[index];
-          if (!route) return resolve(noRoute());
-          Promise.resolve(
-            route.handler({
-              request: () => request,
-              fulfill: async (
-                /** @type {{ status?: number, json?: any, body?: string, contentType?: string, headers?: Record<string, string> }} */ reply,
-              ) =>
-                resolve(
-                  new Response(fulfillBody(reply), {
-                    status: reply.status || 200,
-                    headers: fulfillHeaders(reply),
-                  }),
-                ),
-              fallback: async () => run(index + 1),
-            }),
-          ).catch(reject);
-        };
-        run(0);
+        return new Response("{}", { status: 404 });
+      }
+      const reply = await new Promise((resolve, reject) => {
+        // A browser rejects a pending request when its signal aborts, not only at the start.
+        init.signal?.addEventListener("abort", () => reject(abortError()), {
+          once: true,
+        });
+        owner.api
+          .handle(method, url, init.body ?? null, init.headers || {})
+          .then(resolve, reject);
       });
+      const json = reply.body === undefined;
+      const status = reply.status || 200;
+      // A browser drops the body of these, so the page reads them as empty.
+      const noBody = [204, 205, 304].includes(status);
+      return new Response(
+        noBody ? null : json ? JSON.stringify(reply.json ?? {}) : reply.body,
+        {
+          status,
+          headers: {
+            ...reply.headers,
+            "content-type": json
+              ? "application/json"
+              : reply.contentType || "text/plain",
+          },
+        },
+      );
     } finally {
       activity++;
     }
@@ -409,6 +298,9 @@ export async function teardown() {
     // error paths, which a browser closing the page never does.
     current?.remove();
     current = null;
+    // Whole-app mounts fill the module-wide adminCatalog and adminSession, which outlive <admin-app>.
+    adminCatalog.clear();
+    adminSession.clear();
     // Toasts close first: clearing a timer from an earlier fake clock removes a live one.
     closeToasts();
     vi.useRealTimers();
@@ -416,10 +308,10 @@ export async function teardown() {
   const failures = [
     ...strays.fetches,
     ...strayFetches,
-    ...checked.flatMap((each) => [...each.fetch, ...each.mocks.flat()]),
+    ...checked.flatMap((each) => [...each.fetch, ...each.api.failures]),
   ];
   // A held handler can throw after this check, so the next teardown sees it.
-  for (const list of checked.flatMap((each) => each.mocks))
+  for (const list of checked.map((each) => each.api.failures))
     list.push = (/** @type {string[]} */ ...items) =>
       strayFetches.push(...items);
   const errors = [
@@ -475,10 +367,15 @@ export async function waitFor(predicate, { timeout = 1000 } = {}) {
   }
 }
 
-await import("../src/main.js");
-// main.js lazy-loads the /system-status page; Vite's first load of that file
-// outlasts settle(), so a test on that page would assert before it draws.
-await import("../src/system-status.js");
+const { adminCatalog, createAdminCatalog } = await import(
+  "../src/admin-catalog.js"
+);
+const { adminSession, createAdminSession } = await import(
+  "../src/admin-session.js"
+);
+const { currentRoute } = await import("../src/router.js");
+// Catches a page pushing to or splicing a shared list instead of calling adminCatalog.
+adminCatalog.freezeLists();
 document.body.append(document.createElement("app-toasts"));
 
 /** @type {any} */
@@ -506,11 +403,101 @@ afterAll(() => {
 });
 
 /**
- * Mount a fresh <admin-app> at `path` against fresh synthetic data.
- * @param {string} path
- * @param {{ role?: "compliance-supervisor" | "compliance-manager", data?: any, setup?: (api: any) => void, fetch?: (url: string, init: any) => Response | undefined }} [options]
+ * Attach `element` as the test's mounted app, then settle. For app-mount.js.
+ * @param {HTMLElement} element
  */
-export async function mountAdmin(path = "/sites", options = {}) {
+export async function attach(element) {
+  current = element;
+  document.body.append(current);
+  await settle();
+  return /** @type {any} */ (current);
+}
+
+/**
+ * Mount one page element without <admin-app>, so the test loads only that page.
+ * Requests outside `calls` fail the test; so do page errors, unless `recordErrors`.
+ * @param {string} tag
+ * @param {string} path
+ * @param {{ calls: RegExp[], recordErrors?: boolean, role?: "compliance-supervisor" | "compliance-manager", data?: any, setup?: (api: any) => void, catalog?: AdminCatalog, session?: AdminSession }} options an earlier mount's `catalog` and `session` share its lists and role
+ */
+export async function mountPage(tag, path, options) {
+  // The test file imports the page's module, so the page alone is loaded.
+  if (!customElements.get(tag)) throw new Error(`<${tag}> is not defined`);
+  const api = await startMount(path, options);
+  // Oldest handler, so the test's own handlers still answer first.
+  api.on("*", /.*/, (/** @type {any} */ request) => {
+    const call = `${request.method} ${request.path}${request.search}`;
+    if (options.calls.some((pattern) => pattern.test(call))) return undefined;
+    throw new Error(`${call} is not one of this page's calls`);
+  });
+  options.setup?.(api);
+  /** Seeded from the fake backend's own replies, so lists match what <admin-app> reads at start-up. @param {string} apiPath */
+  const read = (apiPath) =>
+    api.reply({
+      method: "GET",
+      path: apiPath,
+      search: "",
+      body: undefined,
+      headers: {},
+    }).json;
+  let { catalog, session } = options;
+  if (!session) {
+    const reply = read("session");
+    session = createAdminSession();
+    session.seed({
+      ...reply,
+      profile:
+        reply.role === "compliance-manager" ? read("profile").profile : null,
+    });
+  }
+  if (!catalog) {
+    catalog = createAdminCatalog();
+    catalog.freezeLists();
+    catalog.seed({
+      providers: read("providers").providers,
+      programs: read("programs").programs,
+      oversightOptions: read("oversight-options"),
+      programManagers: read("program-managers").programManagers,
+    });
+  }
+  const owner = mount;
+  /** @type {string[]} */
+  const errors = [];
+  current = document.createElement(tag);
+  current.catalog = catalog;
+  current.session = session;
+  // <admin-app> shows page-error events in its error line; with no app, the test reads or fails on them.
+  current.addEventListener("page-error", (/** @type {any} */ event) =>
+    options.recordErrors
+      ? errors.push(event.detail.message)
+      : owner?.errors.push(`page-error: ${event.detail.message}`),
+  );
+  // Open, attach, then focus, as <admin-app>'s openProgramPage() does, so renders match.
+  if (await current.open(currentRoute())) {
+    document.body.append(current);
+    current.focusOnOpen();
+  }
+  await settle();
+  return { page: /** @type {any} */ (current), api, errors, catalog, session };
+}
+
+/**
+ * What <admin-app> does to the mounted page when the user goes to `path`.
+ * @param {string} path
+ */
+export async function leavePage(path) {
+  window.history.pushState({}, "", path);
+  current.leave();
+  current.remove();
+  await settle();
+}
+
+/**
+ * Reset the window and fake backend for a new mount. For mountPage() and app-mount.js.
+ * @param {string} path
+ * @param {{ role?: "compliance-supervisor" | "compliance-manager", data?: any, fetch?: (url: string, init: any) => Response | undefined }} options
+ */
+export async function startMount(path, options) {
   // A read the old app still holds can be joined by the new app's identical
   // read (admin-api shares simultaneous reads), so release gates before remounting.
   if (current) {
@@ -519,27 +506,23 @@ export async function mountAdmin(path = "/sites", options = {}) {
   }
   current?.remove();
   closeToasts();
-  mount = {
-    routes: [],
-    otherFetch: options.fetch || null,
-    fetch: [],
-    mocks: [],
-    errors: [],
-  };
+  adminCatalog.clear();
+  adminSession.clear();
+  const api = fakeAdminApi(
+    { role: options.role, data: options.data || adminData() },
+    settle,
+  );
+  mount = { api, otherFetch: options.fetch || null, fetch: [], errors: [] };
   mounts.push(mount);
   window.localStorage.clear();
   window.sessionStorage.clear();
   window.history.replaceState({}, "", path);
-  const api = await mockAdmin(/** @type {any} */ (page), {
-    role: options.role,
-    data: options.data || adminData(),
-  });
-  mount.mocks.push(mockFailures(/** @type {any} */ (page)));
-  options.setup?.(api);
-  current = document.createElement("admin-app");
-  document.body.append(current);
-  await settle();
-  return { app: /** @type {any} */ (current), api };
+  // What admin-frontend/config.js sets in a browser.
+  /** @type {any} */ (window).GOOD_NEIGHBOR_ADMIN_CONFIG = {
+    apiBase: window.location.origin,
+    localDebugAdmin: true,
+  };
+  return api;
 }
 
 // CSS class: back links share the brand link's href and data-route.
@@ -692,7 +675,7 @@ const toastLine = (toast) =>
   `${toast.title || ""} ${toast.message || ""}`.trim();
 
 /**
- * Titles and messages of every toast shown since mountAdmin() ran. Toasts show
+ * Titles and messages of every toast shown since the last mount. Toasts show
  * one at a time, so this lets each plain toast time out, as a reader would wait.
  */
 export function toastText() {
@@ -707,7 +690,7 @@ export function toastText() {
 }
 
 /**
- * How many separate toasts containing `fragment` have shown since mountAdmin() ran.
+ * How many separate toasts containing `fragment` have shown since the last mount.
  * @param {string} fragment
  */
 export function toastCount(fragment) {
@@ -740,5 +723,4 @@ export async function routeTo(path) {
   await settle();
 }
 
-// Exported so admin-dom.test.js can script replies the admin mock never sends.
-export { window, adminData, page as fakePage };
+export { window, adminData };

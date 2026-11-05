@@ -764,6 +764,18 @@ function writeReply(data, request, exec) {
     site.updatedAt = now;
     return { json: { site: { ...site } } };
   }
+  // admin-site-config.js putSiteDeliberate311: { site }, 409 when the version moved.
+  if ((m = exec(/^PUT sites\/([^/]+)\/deliberate-311$/, route))) {
+    const site = data.sites.find((item) => item.siteId === m?.[1]);
+    if (!site || site.status === "inactive") return notFound;
+    if (typeof body.deliberate311ProductionEnabled !== "boolean")
+      return { status: 400, json: { error: "boolean_required" } };
+    if (body.expectedUpdatedAt !== (site.updatedAt || ""))
+      return { status: 409, json: { error: "site_changed" } };
+    site.deliberate311ProductionEnabled = body.deliberate311ProductionEnabled;
+    site.updatedAt = now;
+    return { json: { site: { ...site } } };
+  }
   // admin-programs.js createProgram: 201 { program, user? }; the first staff has no personId.
   if (route === "POST programs") {
     const provider = data.providers.find(
@@ -850,6 +862,22 @@ function writeReply(data, request, exec) {
       status: "active",
     });
     return { status: 201, json: { user } };
+  }
+  // admin-programs.js updateProgram: { program }, 409 when the version moved.
+  if ((m = exec(/^PATCH programs\/([^/]+)$/, route))) {
+    const name = String(body.name || "").trim();
+    if (!name) return { status: 400, json: { error: "name_required" } };
+    const program = /** @type {Record<string, any> | undefined} */ (
+      data.programs.find((item) => item.programId === m?.[1])
+    );
+    if (!program || program.status === "inactive") return notFound;
+    if (
+      body.expectedUpdatedAt !== undefined &&
+      body.expectedUpdatedAt !== (program.updatedAt || "")
+    )
+      return { status: 409, json: { error: "program_update_conflict" } };
+    Object.assign(program, { name, updatedAt: now });
+    return { json: { program: { ...program } } };
   }
   // admin-programs.js updateProgramUser: { user }.
   if ((m = exec(/^PATCH programs\/([^/]+)\/users\/([^/]+)$/, route))) {
@@ -1117,18 +1145,67 @@ function writeReply(data, request, exec) {
  * @param {{ role?: "compliance-supervisor" | "compliance-manager", data?: AdminData }} [options]
  */
 export async function mockAdmin(page, options = {}) {
+  const api = fakeAdminApi(options, () => settle(page));
+  mockFailuresByPage.set(page, api.failures);
+  await page.addInitScript(() => {
+    /** @type {any} */ (window).GOOD_NEIGHBOR_ADMIN_CONFIG = {
+      apiBase: window.location.origin,
+      localDebugAdmin: true,
+    };
+  });
+  await page.route(/\/config\.js$/, (route) =>
+    new URL(route.request().url()).pathname === "/config.js"
+      ? route.fulfill({ contentType: "application/javascript", body: "" })
+      : route.fallback(),
+  );
+  await page.route("**/admin/v1/**", async (route) => {
+    const url = new URL(route.request().url());
+    // settle()'s probe request; not logged, so api.calls() counts only the admin pages' requests.
+    if (url.pathname === fencePath) return route.fulfill({ status: 204 });
+    const reply = await api.handle(
+      route.request().method(),
+      url,
+      route.request().postData(),
+      route.request().headers(),
+    );
+    if (reply.body !== undefined)
+      return route
+        .fulfill({
+          status: reply.status || 200,
+          contentType: reply.contentType || "text/plain",
+          headers: reply.headers,
+          body: reply.body,
+        })
+        .catch(() => {});
+    await route
+      .fulfill({
+        status: reply.status || 200,
+        headers: reply.headers,
+        json: reply.json ?? {},
+      })
+      .catch(() => {});
+  });
+  return api;
+}
+
+/**
+ * The fake /admin/v1 backend with no browser, so unit tests call it directly.
+ * @param {{ role?: "compliance-supervisor" | "compliance-manager", data?: AdminData }} options
+ * @param {() => Promise<void>} settleRequests waits until every request the mounted page started has arrived
+ */
+export function fakeAdminApi(options, settleRequests) {
   const role = options.role || "compliance-supervisor";
   const data = options.data || adminData();
   /** @type {AdminRequest[]} */
   const requests = [];
   /** @type {string[]} */
   const failures = [];
-  mockFailuresByPage.set(page, failures);
   /** @type {{ method: string, pattern: RegExp, handler: AdminHandler }[]} */
   const handlers = [];
   const api = {
     data,
     requests,
+    failures,
     /**
      * Answer matching requests first; the newest handler wins. A handler that
      * returns undefined falls through to older handlers and the defaults.
@@ -1165,6 +1242,52 @@ export async function mockAdmin(page, options = {}) {
       return defaultReply(data, role, request);
     },
     /**
+     * Record one /admin/v1 request and answer it, after any scripted delay.
+     * @param {string} method
+     * @param {URL} url
+     * @param {string | null} raw request body
+     * @param {Record<string, string>} headers
+     * @returns {Promise<AdminReply>}
+     */
+    async handle(method, url, raw, headers) {
+      /** @type {AdminRequest} */
+      const request = {
+        method,
+        path: url.pathname.replace(/^\/admin\/v1\//, ""),
+        search: url.search,
+        body: raw ? safeJson(raw) : undefined,
+        headers,
+      };
+      requests.push(request);
+      /** @type {AdminReply | undefined} */
+      let reply;
+      // A snapshot, since a handler may add handlers and unshift would revisit it.
+      for (const { method, pattern, handler } of [...handlers]) {
+        if (method !== "*" && method !== request.method) continue;
+        const match = pattern.exec(request.path + request.search);
+        if (!match) continue;
+        try {
+          reply = await handler(request, match);
+        } catch (error) {
+          // Answered so the page doesn't hang, and recorded so teardown fails the test.
+          failures.push(
+            `${request.method} ${request.path}: handler threw ${String(error)}`,
+          );
+          reply = {
+            status: 500,
+            json: { error: "mock_error", message: String(error) },
+          };
+        }
+        if (reply) break;
+      }
+      reply ||= defaultReply(data, role, request);
+      if (reply === noRoute) failures.push(`${request.method} ${request.path}`);
+      else if (reply === badPath)
+        failures.push(`${request.method} ${request.path}: malformed escape`);
+      if (reply.delay) await reply.delay;
+      return reply;
+    },
+    /**
      * @param {string} method
      * @param {RegExp} pattern
      */
@@ -1181,78 +1304,10 @@ export async function mockAdmin(page, options = {}) {
      * @param {RegExp} pattern
      */
     async expectNotSent(method, pattern) {
-      await settle(page);
+      await settleRequests();
       expect(api.calls(method, pattern)).toEqual([]);
     },
   };
-  await page.addInitScript(() => {
-    /** @type {any} */ (window).GOOD_NEIGHBOR_ADMIN_CONFIG = {
-      apiBase: window.location.origin,
-      localDebugAdmin: true,
-    };
-  });
-  await page.route(/\/config\.js$/, (route) =>
-    new URL(route.request().url()).pathname === "/config.js"
-      ? route.fulfill({ contentType: "application/javascript", body: "" })
-      : route.fallback(),
-  );
-  await page.route("**/admin/v1/**", async (route) => {
-    const url = new URL(route.request().url());
-    // settle()'s probe; kept out of `requests` so call counts hold only the admin page's requests.
-    if (url.pathname === fencePath) return route.fulfill({ status: 204 });
-    const raw = route.request().postData();
-    /** @type {AdminRequest} */
-    const request = {
-      method: route.request().method(),
-      path: url.pathname.replace(/^\/admin\/v1\//, ""),
-      search: url.search,
-      body: raw ? safeJson(raw) : undefined,
-      headers: route.request().headers(),
-    };
-    requests.push(request);
-    /** @type {AdminReply | undefined} */
-    let reply;
-    // A snapshot, since a handler may add handlers and unshift would revisit it.
-    for (const { method, pattern, handler } of [...handlers]) {
-      if (method !== "*" && method !== request.method) continue;
-      const match = pattern.exec(request.path + request.search);
-      if (!match) continue;
-      try {
-        reply = await handler(request, match);
-      } catch (error) {
-        // Answered so the page doesn't hang, and recorded so teardown fails the test.
-        failures.push(
-          `${request.method} ${request.path}: handler threw ${String(error)}`,
-        );
-        reply = {
-          status: 500,
-          json: { error: "mock_error", message: String(error) },
-        };
-      }
-      if (reply) break;
-    }
-    reply ||= defaultReply(data, role, request);
-    if (reply === noRoute) failures.push(`${request.method} ${request.path}`);
-    else if (reply === badPath)
-      failures.push(`${request.method} ${request.path}: malformed escape`);
-    if (reply.delay) await reply.delay;
-    if (reply.body !== undefined)
-      return route
-        .fulfill({
-          status: reply.status || 200,
-          contentType: reply.contentType || "text/plain",
-          headers: reply.headers,
-          body: reply.body,
-        })
-        .catch(() => {});
-    await route
-      .fulfill({
-        status: reply.status || 200,
-        headers: reply.headers,
-        json: reply.json ?? {},
-      })
-      .catch(() => {});
-  });
   return api;
 }
 

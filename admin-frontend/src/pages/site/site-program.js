@@ -1,4 +1,4 @@
-import { upsertRecord } from "../../save-feedback.js";
+import { adminCatalog } from "../../admin-catalog.js";
 
 /** @param {Record<string, any>[]} programs @param {string} providerId */
 export function siteProviderPrograms(programs, providerId) {
@@ -48,7 +48,7 @@ export function bindSiteProgramCreation(
           name: String(name.value || "").trim(),
         });
         feedback.success();
-        state.programs = upsertRecord(state.programs, program, "programId");
+        adminCatalog.addProgram(program);
         if (!select.isConnected) return;
         const option = document.createElement("wa-option");
         option.value = program.programId;

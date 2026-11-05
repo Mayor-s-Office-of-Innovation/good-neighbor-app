@@ -7,12 +7,8 @@
  * @typedef {{ siteId: string, siteName: string, status?: string }} AdminSiteMembership
  * @typedef {{ deviceId: string, label?: string, status?: string }} AdminDevice
  * @typedef {{ code: string, issuedTo: string, expiresAt: string }} AdminIssuedCode
- * @typedef {object} AdminState
+ * @typedef {object} AdminOwnState
  * @property {ReturnType<typeof import("./pages/directory/site-311-batch.js").create311Batch>} [site311Batch]
- * @property {AdminProvider[]} providers
- * @property {AdminSite[]} sites
- * @property {any[]} programs
- * @property {any[]} programManagers
  * @property {any[]} adminUsers
  * @property {string} adminUserStatusFilter
  * @property {string} adminUserMessage
@@ -21,9 +17,6 @@
  * @property {any[]} siteManagers
  * @property {any | null} siteManager
  * @property {boolean} managerSearchFailed
- * @property {boolean} managerDirectoryLoaded
- * @property {{ departments: any[], systemsOfCare: any[] }} oversightOptions
- * @property {any | null} program
  * @property {AdminProvider | null} provider
  * @property {any[]} [providerManagerDirectory]
  * @property {any[]} providerManagers
@@ -52,11 +45,8 @@
  * @property {AdminConfig} authConfig
  * @property {boolean} authBusy
  * @property {ReturnType<typeof import("./compliance-profile-draft.js").captureComplianceDraft> | null} complianceProfileDraft
- * @property {any | null} profile
  * @property {string} profileMessage
- * @property {string} role
  * @property {boolean} [siteCanEdit]
- * @property {Record<string, boolean>} capabilities
  * @property {any | null} importPreview
  * @property {any | null} importResult
  * @property {boolean} importBusy
@@ -75,6 +65,24 @@
  */
 
 /**
+ * Read-only on `state`: only admin-session.js and admin-catalog.js change these.
+ * @typedef {object} AdminSharedState
+ * @property {AdminProvider[]} providers
+ * @property {AdminSite[]} sites
+ * @property {any[]} programs
+ * @property {any[]} programManagers
+ * @property {boolean} managerDirectoryLoaded
+ * @property {{ departments: any[], systemsOfCare: any[] }} oversightOptions
+ * @property {any | null} profile
+ * @property {string} role
+ * @property {Record<string, boolean>} capabilities
+ */
+
+/**
+ * @typedef {AdminOwnState & Readonly<AdminSharedState>} AdminState
+ */
+
+/**
  * Keeps only an object literal's real keys, so an editor flags a misspelled
  * app.method(). No npm script type-checks admin-frontend yet.
  * @template T
@@ -87,7 +95,6 @@
  *   & Closed<typeof import("./pages/site/new.actions.js").newSiteActions>
  *   & Closed<typeof import("./pages/site/import.actions.js").siteImportActions>
  *   & Closed<typeof import("./pages/provider/provider.actions.js").providerActions>
- *   & Closed<typeof import("./pages/program/program.actions.js").programActions>
  *   & Closed<typeof import("./pages/site/oversight.actions.js").siteOversightActions>
  *   & Closed<typeof import("./pages/site/record.actions.js").siteRecordActions>
  *   & Closed<typeof import("./pages/site/compliance.actions.js").siteComplianceActions>
@@ -100,8 +107,6 @@
  * @property {{ schedule: () => void, cancel: () => void }} [directorySearchDebounce]
  * @property {() => void} [managerSearchCleanup]
  * @property {string | null} [letterResendPending]
- * @property {number} [managerDirectoryVersion]
- * @property {boolean} [programManagersStale]
  * @property {string} [pendingSiteDestination]
  * @property {string} [lastRenderedPath]
  * @typedef {HTMLElement & AdminShell & AdminActions} AdminAppElement

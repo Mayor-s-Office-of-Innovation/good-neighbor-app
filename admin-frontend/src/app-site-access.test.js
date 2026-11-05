@@ -7,7 +7,6 @@ import {
   click,
   fill,
   focused,
-  mountAdmin,
   pageError,
   pageText,
   routeTo,
@@ -19,6 +18,7 @@ import {
   window,
   missing,
 } from "../test-support/admin-dom.js";
+import { mountAdmin } from "../test-support/app-mount.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import {
   accessData,

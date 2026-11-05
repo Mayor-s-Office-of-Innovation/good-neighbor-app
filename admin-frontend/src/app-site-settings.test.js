@@ -1,13 +1,7 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
-import {
-  $,
-  click,
-  fill,
-  missing,
-  mountAdmin,
-  window,
-} from "../test-support/admin-dom.js";
+import { $, click, fill, missing, window } from "../test-support/admin-dom.js";
+import { mountAdmin } from "../test-support/app-mount.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 
 // pages/site/record.templates.js has no catalog key for this copy, so tests match its English.

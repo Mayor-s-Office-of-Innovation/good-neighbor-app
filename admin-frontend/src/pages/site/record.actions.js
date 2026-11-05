@@ -1,4 +1,5 @@
 // main.js adds these to AdminApp, so they can use this.state and render().
+import { adminCatalog } from "../../admin-catalog.js";
 import { actionFeedback } from "../../action-feedback.js";
 import { addressPartsFromForm, hasSiteCoordinates } from "./site-address.js";
 import { adminApi } from "../../services/admin-api.js";
@@ -16,7 +17,7 @@ import { selectedLeadProgram } from "./site-assignment.js";
 import { siteManagerRoster } from "../../site-managers.js";
 import { siteSaveErrorMessage } from "./save-error-messages.js";
 import { t } from "../../../../frontend/src/i18n/i18n.js";
-import { upsertRecord, withSaveFeedback } from "../../save-feedback.js";
+import { withSaveFeedback } from "../../save-feedback.js";
 
 export const siteRecordActions = {
   async refreshSiteAccess(siteId, renderNow = true) {
@@ -57,11 +58,7 @@ export const siteRecordActions = {
             deliberate311ProductionEnabled: enabled,
             expectedUpdatedAt: site.updatedAt || "",
           });
-          this.state.sites = upsertRecord(
-            this.state.sites,
-            { ...site, ...result.site },
-            "siteId",
-          );
+          adminCatalog.addSite({ ...site, ...result.site });
           if (this.state.site?.siteId === site.siteId)
             this.state.site = { ...this.state.site, ...result.site };
           syncDirtyForm(form, true);
@@ -143,11 +140,7 @@ export const siteRecordActions = {
           );
           feedback.changed();
           this.state.site = { ...this.state.site, ...reassignment.site };
-          this.state.sites = upsertRecord(
-            this.state.sites,
-            this.state.site,
-            "siteId",
-          );
+          adminCatalog.addSite(this.state.site);
         }
         if (section === "lead-program") {
           feedback.success("admin.toast.leadProgramSaved");
@@ -160,11 +153,7 @@ export const siteRecordActions = {
         );
         feedback.changed();
         this.state.site = { ...this.state.site, ...result.site };
-        this.state.sites = this.state.sites.map((site) =>
-          site.siteId === this.state.site?.siteId
-            ? { ...site, ...this.state.site }
-            : site,
-        );
+        adminCatalog.updateSite(this.state.site.siteId, this.state.site);
         if (values.addressParts && !hasSiteCoordinates(result.site?.location)) {
           this.state.siteSaveError =
             "The address was saved, but geocoding did not return coordinates. Try saving it again.";
@@ -264,7 +253,7 @@ export const siteRecordActions = {
     if (
       !refresh &&
       sameSite &&
-      !this.programManagersStale &&
+      !adminCatalog.programManagersStale &&
       Date.now() - (this.siteSectionLoads.get(section) || 0) < 30000
     ) {
       this.render();
@@ -306,7 +295,9 @@ export const siteRecordActions = {
       section === "access" ? adminApi.listManagerGrants(siteId) : null,
       section === "access" ? adminApi.listDevices(siteId) : null,
       section === "compliance" ? adminApi.listSiteTerms(siteId) : null,
-      this.programManagersStale ? adminApi.listCityProgramManagers() : null,
+      adminCatalog.programManagersStale
+        ? adminApi.listCityProgramManagers()
+        : null,
       needsRoster ? adminApi.listPeople() : null,
     ]);
     const latest = site.items?.find((item) => item.sk === "#META");
@@ -320,8 +311,9 @@ export const siteRecordActions = {
     )
       return;
     if (programManagers) {
-      this.state.programManagers = programManagers.programManagers || [];
-      this.programManagersStale = false;
+      adminCatalog.programManagersReloaded(
+        programManagers.programManagers || [],
+      );
     }
     this.state.siteCanEdit = site.permissions?.canEdit === true;
     if (section === "compliance" || !sameSite) {
@@ -337,16 +329,12 @@ export const siteRecordActions = {
       : null;
     if (this.state.site) {
       const current = this.state.site;
-      this.state.sites = this.state.sites.map((summary) =>
-        summary.siteId === siteId
-          ? {
-              ...summary,
-              ...current,
-              primaryContactUserId: current.primaryContactUserId,
-              primaryContact: current.primaryContact,
-            }
-          : summary,
-      );
+      adminCatalog.updateSite(siteId, (summary) => ({
+        ...summary,
+        ...current,
+        primaryContactUserId: current.primaryContactUserId,
+        primaryContact: current.primaryContact,
+      }));
     }
     if (needsRoster) {
       this.state.assignedUsers = (site.items || []).filter((item) =>
@@ -378,7 +366,6 @@ export const siteRecordActions = {
     if (terms) this.state.siteTerms = terms.terms || [];
     else if (!sameSite) this.state.siteTerms = [];
     this.state.provider = null;
-    this.state.program = null;
     this.state.siteManager = null;
     if (needsRoster) {
       this.state.managerMemberships = siteManagerRoster(
@@ -419,11 +406,9 @@ export const siteRecordActions = {
               user.userId === (membership.personId || membership.userId),
           ) || {}),
         }));
-      this.state.sites = this.state.sites.map((summary) =>
-        summary.siteId === siteId
-          ? { ...summary, managerMemberships: this.state.managerMemberships }
-          : summary,
-      );
+      adminCatalog.updateSite(siteId, {
+        managerMemberships: this.state.managerMemberships,
+      });
     }
     if (grants) this.state.managerGrants = grants.grants || [];
     else if (!sameSite) this.state.managerGrants = [];
@@ -467,11 +452,8 @@ export const siteRecordActions = {
     try {
       await adminApi.deactivateSite(siteId);
       feedback.success();
-      this.state.sites = this.state.sites.filter(
-        (site) => site.siteId !== siteId,
-      );
-      this.state.managerDirectoryLoaded = false;
-      this.managerDirectoryVersion = (this.managerDirectoryVersion || 0) + 1;
+      adminCatalog.removeSite(siteId);
+      adminCatalog.invalidate("managers");
       this.state.site = null;
       this.querySelector("[data-dirty-form]")?.setAttribute(
         "data-is-dirty",

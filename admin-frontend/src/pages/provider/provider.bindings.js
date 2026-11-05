@@ -4,6 +4,7 @@ import { adminApi } from "../../services/admin-api.js";
 import { asForm, dataAttr } from "../../dom.js";
 import { controlValue, syncProviderDetailsForm } from "../../form-state.js";
 import { navigate } from "../../router.js";
+import { saveWithFeedback } from "../../save-feedback.js";
 import {
   providerManagerPath,
   removeProviderManagerAccess,
@@ -31,7 +32,7 @@ export function bindProvider(app) {
       event.preventDefault();
       if (controlValue(form, "confirmation") !== form.dataset.confirmation)
         return;
-      await app.saveWithFeedback(form, async () => {
+      await saveWithFeedback(form, async () => {
         const feedback = actionFeedback("admin.toast.accessRemoved");
         try {
           if (form.dataset.membershipId)
@@ -62,7 +63,7 @@ export function bindProvider(app) {
   app.querySelector("#provider-form")?.addEventListener("submit", (e) => {
     e.preventDefault();
     const form = asForm(e.currentTarget);
-    void app.saveWithFeedback(form, () => app.createProvider(form));
+    void saveWithFeedback(form, () => app.createProvider(form));
   });
   app
     .querySelector("#provider-details-form")
@@ -78,7 +79,7 @@ export function bindProvider(app) {
     ?.addEventListener("submit", (event) => {
       event.preventDefault();
       const form = event.currentTarget;
-      void app.saveWithFeedback(form, async () => {
+      void saveWithFeedback(form, async () => {
         const person = app.state.people.find(
           (p) => p.personId === controlValue(form, "person-id"),
         );
@@ -120,7 +121,7 @@ export function bindProvider(app) {
   app.querySelectorAll("[data-transfer-provider-manager]").forEach((form) =>
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      void app.saveWithFeedback(form, async () => {
+      void saveWithFeedback(form, async () => {
         const member = app.state.providerManagers.find(
           (m) => m.membershipId === form.dataset.transferProviderManager,
         );
@@ -143,7 +144,7 @@ export function bindProvider(app) {
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const submittedForm = asForm(event.currentTarget);
-      await app.saveWithFeedback(submittedForm, () =>
+      await saveWithFeedback(submittedForm, () =>
         app.saveProviderManager(submittedForm),
       );
     });

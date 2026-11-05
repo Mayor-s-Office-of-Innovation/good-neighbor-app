@@ -6,6 +6,7 @@ import {
 } from "../../manager-directory.js";
 import { actionFeedback, notifyAdmin } from "../../action-feedback.js";
 import { adminApi } from "../../services/admin-api.js";
+import { adminCatalog } from "../../admin-catalog.js";
 import { adminErrorMessage } from "../../admin-error-messages.js";
 import {
   attachCreatedEnrollmentUrl,
@@ -19,11 +20,11 @@ import { formValue, showFormSaveError } from "../../form-state.js";
 import { managerSaveErrorMessage } from "./save-error-messages.js";
 import { peopleDirectory } from "./people-directory.js";
 import { t } from "../../../../frontend/src/i18n/i18n.js";
-import { upsertRecord, withSaveFeedback } from "../../save-feedback.js";
+import { saveWithFeedback, upsertRecord } from "../../save-feedback.js";
 
 export const siteManagerActions = {
   async loadSearchManagers() {
-    if (this.state.managerDirectoryLoaded || this.managerSearchPending) return;
+    if (adminCatalog.managersLoaded || this.managerSearchPending) return;
     this.managerSearchPending = true;
     this.state.managerSearchFailed = false;
     try {
@@ -47,7 +48,7 @@ export const siteManagerActions = {
       this.fetchSiteManagers(),
     );
     if (
-      this.state.managerDirectoryLoaded &&
+      adminCatalog.managersLoaded &&
       !force &&
       !this.managerDirectoryLoader.pending
     )
@@ -55,12 +56,11 @@ export const siteManagerActions = {
     return this.managerDirectoryLoader.load(
       force ||
         (this.managerDirectoryLoader.pending &&
-          this.managerFetchVersion !== (this.managerDirectoryVersion || 0)),
+          this.managerFetchVersion !== adminCatalog.managersVersion),
     );
   },
   async fetchSiteManagers() {
-    const version = (this.managerFetchVersion =
-      this.managerDirectoryVersion || 0);
+    const version = (this.managerFetchVersion = adminCatalog.managersVersion);
     const activePrograms = this.state.programs.filter(
       (program) => program.status !== "inactive",
     );
@@ -73,7 +73,7 @@ export const siteManagerActions = {
       adminApi,
       DIRECTORY_REQUEST_CONCURRENCY,
     );
-    if (version !== (this.managerDirectoryVersion || 0)) return;
+    if (version !== adminCatalog.managersVersion) return;
     const memberships = siteMemberships.flatMap(({ site, memberships }) =>
       (memberships || []).map((membership) => ({
         ...membership,
@@ -112,7 +112,7 @@ export const siteManagerActions = {
         ),
       );
     const { people = [] } = await adminApi.listPeople();
-    if (version !== (this.managerDirectoryVersion || 0)) return;
+    if (version !== adminCatalog.managersVersion) return;
     this.state.people = people;
     this.state.siteManagers = peopleDirectory(
       people,
@@ -121,7 +121,7 @@ export const siteManagerActions = {
       this.state.providers,
       legacyManagers,
     );
-    this.state.managerDirectoryLoaded = true;
+    adminCatalog.markManagersLoaded(version);
     this.state.managerSearchFailed = false;
   },
   async openSiteManager(userId) {
@@ -136,7 +136,6 @@ export const siteManagerActions = {
           manager.userId === userId || manager.legacyUserIds?.includes(userId),
       ) || null;
     this.state.provider = null;
-    this.state.program = null;
     this.state.site = null;
     if (!this.state.siteManager) this.state.error = "Site manager not found.";
     else if (this.state.siteManager.userId !== userId)
@@ -216,8 +215,7 @@ export const siteManagerActions = {
           },
         );
         feedback.success();
-        this.state.managerDirectoryLoaded = false;
-        this.managerDirectoryVersion = (this.managerDirectoryVersion || 0) + 1;
+        adminCatalog.invalidate("managers");
       } catch (error) {
         feedback.failure(error);
         showFormSaveError(
@@ -286,8 +284,7 @@ export const siteManagerActions = {
           user.userId,
         );
       feedback.success();
-      this.state.managerDirectoryLoaded = false;
-      this.managerDirectoryVersion = (this.managerDirectoryVersion || 0) + 1;
+      adminCatalog.invalidate("managers");
       form.reset();
       await this.openSite(this.state.site.siteId, false);
     } catch (error) {
@@ -295,15 +292,8 @@ export const siteManagerActions = {
       throw error;
     }
   },
-  /** @param {HTMLFormElement} form */
-  async saveWithFeedback(form, save) {
-    return withSaveFeedback(form, save, {
-      savingLabel: t("siteAdmin.edit.saving"),
-      onError: (error) => showFormSaveError(form, adminErrorMessage(error, t)),
-    });
-  },
   async saveSiteManager(form) {
-    return this.saveWithFeedback(form, () => this.persistSiteManager(form));
+    return saveWithFeedback(form, () => this.persistSiteManager(form));
   },
   async persistSiteManager(form) {
     const feedback = actionFeedback("admin.toast.managerSaved");
@@ -435,9 +425,7 @@ export const siteManagerActions = {
           "userId",
         );
         feedback.success();
-        this.managerDirectoryVersion = (this.managerDirectoryVersion || 0) + 1;
-        this.state.managerDirectoryLoaded = false;
-        this.managerDirectoryVersion = (this.managerDirectoryVersion || 0) + 1;
+        adminCatalog.invalidate("managers");
         if (location.pathname + location.search !== origin) return true;
         this.state.siteManager = savedManager;
         this.state.siteSaveMessage = "";
@@ -533,7 +521,7 @@ export const siteManagerActions = {
       }
       existing.delete(siteId);
     }
-    this.managerDirectoryVersion = (this.managerDirectoryVersion || 0) + 1;
+    adminCatalog.supersedeManagersLoad();
     const assignedSites = [...existing.values()];
     const manager = {
       ...current,
@@ -556,7 +544,7 @@ export const siteManagerActions = {
       manager,
       "userId",
     );
-    this.state.sites = this.state.sites.map((site) => ({
+    adminCatalog.updateSites((site) => ({
       ...site,
       managerMemberships: [
         ...(site.managerMemberships || []).filter(
@@ -599,15 +587,14 @@ export const siteManagerActions = {
       try {
         await adminApi.removeSiteManager(manager.programId, manager.userId);
         feedback.success();
-        this.state.managerDirectoryLoaded = false;
-        this.managerDirectoryVersion = (this.managerDirectoryVersion || 0) + 1;
+        adminCatalog.invalidate("managers");
         this.state.siteManager = null;
         const form = this.querySelector("#site-manager-record-form");
         if (form) form.dataset.isDirty = "false";
         const affected = new Set(
           (manager.assignedSites || []).map((site) => site.siteId),
         );
-        this.state.sites = this.state.sites.map((site) => {
+        adminCatalog.updateSites((site) => {
           if (!affected.has(site.siteId)) return site;
           const { managerMemberships, ...rest } = site;
           return rest;
@@ -659,8 +646,7 @@ export const siteManagerActions = {
             membershipId,
           );
       feedback.success();
-      this.state.managerDirectoryLoaded = false;
-      this.managerDirectoryVersion = (this.managerDirectoryVersion || 0) + 1;
+      adminCatalog.invalidate("managers");
       const siteId = this.state.site.siteId;
       await this.openSite(siteId, false);
       this.state.revocationMessage = `${membership?.name || "Site Manager"} removed; ${result.revokedBindingCount} Manager binding${result.revokedBindingCount === 1 ? "" : "s"} revoked at this Site.`;

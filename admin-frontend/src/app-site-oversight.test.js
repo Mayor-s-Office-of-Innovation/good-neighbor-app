@@ -6,12 +6,13 @@ import {
   adminData,
   click,
   fill,
-  mountAdmin,
   pageText,
   submit,
   unhandledRejection,
   missing,
+  routeTo,
 } from "../test-support/admin-dom.js";
+import { mountAdmin } from "../test-support/app-mount.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 
 // pages/site/record.actions.js and save-error-messages.js have no catalog key for this copy, so tests match their English.
@@ -418,4 +419,37 @@ test("a perimeter never updated shows no update line", async () => {
   });
   assert.ok(!missing("#site-perimeter-form"));
   assert.equal(updateLine(), "");
+});
+
+test("a department added on one Site's oversight form is offered on another Site's", async () => {
+  const data = oversightData();
+  data.sites.push({
+    siteId: "s3",
+    name: "Third Site",
+    providerId: "v1",
+    leadProgramId: "p1",
+    status: "active",
+  });
+  await mountAdmin(OVERSIGHT, {
+    data,
+    setup: (api) =>
+      api.on("POST", /^oversight-options$/, (request) => ({
+        status: 201,
+        json: { option: { ...request.body, departmentId: "d9" } },
+      })),
+  });
+  await fill(
+    'wa-select[name="managing-city-department"]',
+    "__add_department__",
+  );
+  await fill('wa-input[name="option-name"]', "Added Option");
+  await click("#new-oversight-option-dialog [data-save-button]");
+  await routeTo("/sites/s3?section=oversight");
+  await click('#site-unsaved-dialog button[value="discard"]');
+  assert.equal($("h1").textContent.trim(), "Third Site");
+  assert.ok(
+    !missing(
+      'wa-select[name="managing-city-department"] wa-option[value="Added Option"]',
+    ),
+  );
 });

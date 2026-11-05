@@ -1,4 +1,5 @@
 // main.js adds these to AdminApp, so they can use this.state and render().
+import { adminCatalog } from "../../admin-catalog.js";
 import { actionFeedback, notifyAdmin } from "../../action-feedback.js";
 import { adminApi } from "../../services/admin-api.js";
 import { currentRoute } from "../../router.js";
@@ -57,7 +58,6 @@ export const siteImportActions = {
     if (location.pathname + location.search !== path) return;
     this.state.importHistory = history.imports || [];
     this.state.provider = null;
-    this.state.program = null;
     this.state.site = null;
     this.state.siteManager = null;
     this.render();
@@ -169,11 +169,7 @@ export const siteImportActions = {
           } catch {
             notifyAdmin("admin.import.historyRefreshFailed", "info");
           }
-          this.directoryLoaded = false;
-          this.catalogsLoaded = false;
-          this.state.managerDirectoryLoaded = false;
-          this.managerDirectoryVersion =
-            (this.managerDirectoryVersion || 0) + 1;
+          adminCatalog.invalidate();
           if (currentRoute().name === "site-import")
             window.history.replaceState(
               {},

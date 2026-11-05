@@ -17,7 +17,7 @@ export function newProgramView(state) {
   return `<section class="creation-page" aria-labelledby="new-program-title">
     <a href="${inSiteFlow ? `/sites/new${providerId ? `?providerId=${encodeURIComponent(providerId)}` : ""}` : inProviderFlow && providerId ? `/providers/${encodeURIComponent(providerId)}` : "/programs"}" data-route class="site-back-link"><wa-icon name="chevron-left" aria-hidden="true"></wa-icon> ${inSiteFlow ? "Add new site" : inProviderFlow ? "Provider" : escapeHtml(t("admin.breadcrumb.admin"))}</a>
     <div><h1 id="new-program-title" tabindex="-1">${escapeHtml(t("admin.programs.createNew"))}</h1><p class="muted">${escapeHtml(t("admin.programs.createWithoutStaff"))}</p></div>
-    <form id="program-form" class="site-details-form">
+    <form id="program-form" data-new-program-form class="site-details-form">
       ${formInput("program-name", t("admin.programs.name"), "", { required: true, autocomplete: "organization" })}
       <wa-select name="program-provider" label="${escapeHtml(t("admin.relationships.leadProvider"))}" required data-initial-value="${escapeHtml(providerId)}" placeholder="${escapeHtml(t("admin.programs.chooseProvider"))}">
         ${state.providers
@@ -54,7 +54,7 @@ export function programView(program, canAddStaff = false) {
     </div>
     ${
       canAddStaff
-        ? `<form id="program-details-form" class="site-details-form" data-dirty-form>
+        ? `<form id="program-details-form" data-program-details-form class="site-details-form" data-dirty-form>
       ${formInput("program-name", t("admin.programs.name"), program.name, { required: true, autocomplete: "organization" })}
       <button class="btn-primary" type="submit" data-save-button disabled>${escapeHtml(t("common.save"))}</button>
     </form>${discardChangesDialog()}`
@@ -73,7 +73,7 @@ export function programView(program, canAddStaff = false) {
     <section class="subsection" aria-labelledby="program-staff-title">
       <div class="panel__head">
         <h2 id="program-staff-title">${escapeHtml(t("admin.programs.staff"))}</h2>
-        ${canAddStaff ? `<button class="btn-primary" id="add-program-staff" type="button">${escapeHtml(t("admin.programs.addStaffMember"))}</button>` : ""}
+        ${canAddStaff ? `<button class="btn-primary" id="add-program-staff" data-add-program-staff type="button">${escapeHtml(t("admin.programs.addStaffMember"))}</button>` : ""}
       </div>
       ${
         staff.length
@@ -117,7 +117,7 @@ function programStaffEditDialog(user, primary, canEditEmail = false) {
 
 function programStaffDialog() {
   return `<dialog id="add-program-staff-dialog" class="places-modal" aria-labelledby="add-program-staff-title">
-    <form id="program-staff-form" class="places-modal__card site-details-form">
+    <form id="program-staff-form" data-program-staff-form class="places-modal__card site-details-form">
       <h2 id="add-program-staff-title">${escapeHtml(t("admin.programs.addStaffMember"))}</h2>
       ${formInput("staff-first-name", t("admin.programs.firstName"), "", { required: true, autocomplete: "given-name" })}
       ${formInput("staff-last-name", t("admin.programs.lastName"), "", { required: true, autocomplete: "family-name" })}
@@ -125,7 +125,7 @@ function programStaffDialog() {
       ${formInput("staff-email", t("admin.programs.email"), "", { required: true, type: "email", autocomplete: "email" })}
       <div class="places-modal__actions">
         <button class="btn-primary" type="submit">${escapeHtml(t("admin.programs.addStaffMember"))}</button>
-        <button class="btn-outline" id="cancel-program-staff" type="button">${escapeHtml(t("admin.programs.cancel"))}</button>
+        <button class="btn-outline" id="cancel-program-staff" data-cancel-program-staff type="button">${escapeHtml(t("admin.programs.cancel"))}</button>
       </div>
     </form>
   </dialog>`;

@@ -1,9 +1,9 @@
-// main.js adds these to AdminApp, so they can use this.state and render().
+// Program actions, mixed into the Program page element so tests can mount it alone.
 import { DIRECTORY_REQUEST_CONCURRENCY } from "../../manager-directory.js";
 import { actionFeedback } from "../../action-feedback.js";
 import { adminApi } from "../../services/admin-api.js";
 import { adminErrorMessage } from "../../admin-error-messages.js";
-import { currentRoute, navigate } from "../../router.js";
+import { navigate } from "../../router.js";
 import {
   formValue,
   showFormSaveError,
@@ -11,15 +11,12 @@ import {
 } from "../../form-state.js";
 import { loadProgramStaff } from "./program-staff.js";
 import { t } from "../../../../frontend/src/i18n/i18n.js";
-import { upsertRecord } from "../../save-feedback.js";
 
 export const programActions = {
   async refreshProgramStaff(programId) {
+    const visit = this.visit;
     const result = await adminApi.getProgram(programId);
-    if (
-      this.state.program?.programId !== programId ||
-      currentRoute().name !== "program"
-    )
+    if (visit !== this.visit || this.state.program?.programId !== programId)
       return;
     const previous = this.state.program.users || [];
     this.state.program = {
@@ -32,10 +29,13 @@ export const programActions = {
     };
     this.render();
   },
-  async openProgram(programId, updateUrl = true) {
-    if (updateUrl)
-      return navigate(`/programs/${encodeURIComponent(programId)}`);
-    const path = location.pathname + location.search;
+  /**
+   * Read the Program and its staff; false when open() or leave() ran again first.
+   * @param {string} programId
+   * @returns {Promise<boolean>}
+   */
+  async loadProgram(programId) {
+    const visit = this.visit;
     const data = await adminApi.getProgram(programId);
     const program = {
       ...data.program,
@@ -46,16 +46,16 @@ export const programActions = {
         DIRECTORY_REQUEST_CONCURRENCY,
       ),
     };
-    if (location.pathname + location.search !== path) return;
+    if (visit !== this.visit) return false;
     this.state.program = program;
-    this.state.provider = null;
-    this.state.site = null;
-    this.state.siteManager = null;
-    this.render();
+    return true;
+  },
+  /** ?addStaff=1 comes from links that send the user here to add staff. */
+  focusProgram() {
     queueMicrotask(() => {
       if (
         new URLSearchParams(location.search).get("addStaff") === "1" &&
-        this.state.capabilities.createEntities === true
+        this.session.capabilities.createEntities === true
       ) {
         this.querySelector("#add-program-staff-dialog")?.showModal();
         const params = new URLSearchParams(location.search);
@@ -88,11 +88,11 @@ export const programActions = {
           phone: formValue(data, "staff-phone"),
           phoneExtension: formValue(data, "staff-extension"),
           email:
-            this.state.capabilities.createEntities === true
+            this.session.capabilities.createEntities === true
               ? formValue(data, "staff-email")
               : user.email,
           siteManager: user.siteManager === true,
-          ...(this.state.capabilities.createEntities === true
+          ...(this.session.capabilities.createEntities === true
             ? { isPrimaryContact: data.has("staff-primary-contact") }
             : {}),
         });
@@ -105,8 +105,7 @@ export const programActions = {
       }
       feedback.success();
       form.closest("dialog")?.close();
-      this.state.managerDirectoryLoaded = false;
-      this.managerDirectoryVersion = (this.managerDirectoryVersion || 0) + 1;
+      this.catalog.invalidate("managers");
       try {
         await this.refreshProgramStaff(this.state.program.programId);
         this.querySelector(
@@ -114,8 +113,7 @@ export const programActions = {
         )?.focus();
       } catch (error) {
         feedback.failure(error);
-        this.state.error = error.message;
-        this.render();
+        this.reportError(error);
       }
     } catch (error) {
       feedback.failure(error);
@@ -141,8 +139,7 @@ export const programActions = {
           siteManager: false,
         });
         feedback.success();
-        this.state.managerDirectoryLoaded = false;
-        this.managerDirectoryVersion = (this.managerDirectoryVersion || 0) + 1;
+        this.catalog.invalidate("managers");
       } catch (error) {
         feedback.failure(error);
         showFormSaveError(
@@ -164,20 +161,15 @@ export const programActions = {
 
   async updateProgramDetails(form) {
     const program = this.state.program;
-    if (!program || !this.state.capabilities.createEntities) return false;
+    if (!program || !this.session.capabilities.createEntities) return false;
     const feedback = actionFeedback("admin.programs.saved");
     try {
       const result = await adminApi.updateProgram(program.programId, {
         name: formValue(new FormData(form), "program-name"),
         expectedUpdatedAt: program.updatedAt || "",
       });
-      this.state.programs = upsertRecord(
-        this.state.programs,
-        result.program,
-        "programId",
-      );
-      this.state.managerDirectoryLoaded = false;
-      this.managerDirectoryVersion = (this.managerDirectoryVersion || 0) + 1;
+      this.catalog.addProgram(result.program);
+      this.catalog.invalidate("managers");
       if (this.state.program?.programId === program.programId) {
         this.state.program = { ...program, ...result.program };
         syncDirtyForm(form, true);
@@ -194,21 +186,16 @@ export const programActions = {
   async createProgram(form) {
     const feedback = actionFeedback("admin.toast.programCreated");
     try {
-      const origin = location.pathname + location.search;
+      const visit = this.visit;
       const data = new FormData(form);
       const result = await adminApi.createProgram({
         name: String(data.get("program-name") || ""),
         providerId: String(data.get("program-provider") || ""),
       });
       feedback.success();
-      this.state.programs = upsertRecord(
-        this.state.programs,
-        result.program,
-        "programId",
-      );
-      this.state.managerDirectoryLoaded = false;
-      this.managerDirectoryVersion = (this.managerDirectoryVersion || 0) + 1;
-      if (location.pathname + location.search !== origin) return;
+      this.catalog.addProgram(result.program);
+      this.catalog.invalidate("managers");
+      if (visit !== this.visit) return;
       const returnTo = new URLSearchParams(window.location.search).get(
         "returnTo",
       );

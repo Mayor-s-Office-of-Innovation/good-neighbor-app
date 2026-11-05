@@ -2,6 +2,15 @@
 // provider and Program forms turn Save on and off the same way.
 import { t } from "../../frontend/src/i18n/i18n.js";
 
+/** @param {HTMLFormElement} form */
+export function trackDirtyForm(form) {
+  const sync = () => syncDirtyForm(form);
+  syncDirtyForm(form, true);
+  form.addEventListener("input", sync);
+  form.addEventListener("change", sync);
+  form.addEventListener("reset", () => queueMicrotask(sync));
+}
+
 /** Enable a form's Save action only while its current values differ from its initial values. */
 export function syncDirtyForm(form, initialize = false) {
   const snapshot = JSON.stringify(

@@ -1,4 +1,5 @@
 // main.js adds these to AdminApp, so they can use this.state and render().
+import { adminCatalog } from "../../admin-catalog.js";
 import { actionFeedback } from "../../action-feedback.js";
 import { addressPartsFromForm, formatAddressParts } from "./site-address.js";
 import { adminApi } from "../../services/admin-api.js";
@@ -6,12 +7,10 @@ import { controlValue, formValue, syncDirtyForm } from "../../form-state.js";
 import { navigate } from "../../router.js";
 import { siteManagerRoster } from "../../site-managers.js";
 import { siteSaveErrorMessage } from "./save-error-messages.js";
-import { upsertRecord } from "../../save-feedback.js";
 
 export const newSiteActions = {
   async openNewSiteFlow() {
     this.state.provider = null;
-    this.state.program = null;
     this.state.site = null;
     this.state.siteManager = null;
     this.state.newSiteUsers = [];
@@ -101,10 +100,9 @@ export const newSiteActions = {
           managerMemberships: siteManagerRoster([], memberships),
         };
       }
-      this.state.sites = upsertRecord(this.state.sites, savedSite, "siteId");
-      this.managerDirectoryVersion = (this.managerDirectoryVersion || 0) + 1;
+      adminCatalog.addSite(savedSite);
+      adminCatalog.invalidate("managers");
       this.managerDirectoryLoader = null;
-      this.state.managerDirectoryLoaded = false;
       syncDirtyForm(form, true);
       delete form.dataset.saving;
       feedback.success();
