@@ -41,6 +41,7 @@ locals {
       aws_cloudwatch_metric_alarm.sf311_dlq_not_empty.arn,
       aws_cloudwatch_metric_alarm.sf311_queue_backlog.arn,
       aws_cloudwatch_metric_alarm.media_rejected.arn,
+      aws_cloudwatch_metric_alarm.image_rejected.arn,
       aws_cloudwatch_metric_alarm.media_quota_exceeded.arn,
       aws_cloudwatch_metric_alarm.client_error_forward_failed.arn,
       aws_cloudwatch_metric_alarm.client_error_dropped.arn,

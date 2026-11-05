@@ -343,8 +343,7 @@ resource "aws_cloudwatch_log_metric_filter" "media_rejected" {
 # One ImageRejected entry per image the shared downscale step refuses, from
 # every Lambda that runs it. Unlike MediaRejected (perimeter-check worker only),
 # this also covers care work, complaints, thumbnails, duplicates and 311, and
-# its log entry names the stage, signature and container brand. Dashboard only;
-# no alarm, since single rejections are normally bad camera/upload data.
+# its log entry names the stage, signature and container brand.
 resource "aws_cloudwatch_log_metric_filter" "image_rejected" {
   for_each = {
     api              = aws_cloudwatch_log_group.api.name
@@ -363,6 +362,25 @@ resource "aws_cloudwatch_log_metric_filter" "image_rejected" {
     value         = "1"
     default_value = "0"
   }
+}
+
+# Same threshold as media_rejected. A burst of perimeter-check rejections trips
+# both alarms (that path logs both markers); everywhere else only this one.
+resource "aws_cloudwatch_metric_alarm" "image_rejected" {
+  alarm_name          = "${local.name_prefix}-image-rejected"
+  alarm_description   = "Images on any upload path repeatedly failed the file-signature or decode check. Follow docs/runbooks/media-safeguards.md."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  metric_name         = "ImageRejected"
+  namespace           = local.security_namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 5
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+  ok_actions          = [aws_sns_topic.alarms.arn]
+  tags                = var.tags
 }
 
 resource "aws_cloudwatch_metric_alarm" "media_rejected" {

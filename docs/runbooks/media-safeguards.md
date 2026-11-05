@@ -55,7 +55,7 @@ structured fields (`siteId`, `checkId`, `artifactId`, and reason); never fetch o
 into tickets or chat. A single rejection is normally bad camera/upload data. A concentrated burst
 from one Site or device may indicate abuse or a broken client release.
 
-`ImageRejected` (dashboard only, no alarm) counts every image the shared downscale step refuses,
+`ImageRejected` alarms after five rejected images in five minutes. It counts every image the shared downscale step refuses,
 across all upload paths: care work, complaints, perimeter checks, thumbnails, duplicate detection,
 and 311. Each log entry carries `reason`, `stage` (`signature`: the leading bytes are not an
 accepted JPEG/PNG/WebP/HEIC, so sharp never parsed the file; `decode`: sharp rejected it),
@@ -65,6 +65,11 @@ the accepted list (`heic`, `heix`, `heim`, `heis`, `hevc`, `hevx`, `hevm`, `hevs
 points to a real camera format we need to add in `backend/src/media/downscale.js`. Find entries
 with CloudWatch Logs Insights: `filter marker = "ImageRejected" | stats count() by stage, reason,
 declaredType, brand`.
+
+A burst of perimeter-check rejections trips both `MediaRejected` and `ImageRejected`, because that
+path logs both markers; use `MediaRejected` for the Site, check, and artifact IDs. `ImageRejected`
+alone points to care work, complaints, thumbnails, duplicate detection, or 311. It carries no Site or
+upload IDs, so narrow it down by the Lambda log group and the time window.
 
 `MediaQuotaExceeded` alarms after five rejected reservations in five minutes. Determine which
 check or device counter is near its conditional limit from the Site's
