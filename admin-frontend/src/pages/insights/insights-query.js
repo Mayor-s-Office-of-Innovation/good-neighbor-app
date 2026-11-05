@@ -4,6 +4,7 @@ import { pacificDateKey } from "../../../../frontend/src/i18n/dates.js";
 
 /**
  * @typedef {{ kind: "month", month: string }
+ *   | { kind: "quarter", year: number, quarter: number }
  *   | { kind: "year", year: number }
  *   | { kind: "financialYear", startYear: number }
  *   | { kind: "custom", from: string, to: string }} Period
@@ -13,7 +14,7 @@ import { pacificDateKey } from "../../../../frontend/src/i18n/dates.js";
 /** @typedef {ReturnType<typeof readOverview>} OverviewState */
 
 // Matches LIMITS.maxReportSites, so picking stops before the server refuses.
-export const MAX_REPORT_SITES = 250;
+export const MAX_REPORT_SITES = 2000;
 
 // The mock's order; Top concerns stays the default (plan §7).
 export const SHOW = ["all", "top", "unknown"];
@@ -35,6 +36,7 @@ export const SITE_SORTS = [
 // Years 2000–2999, as the server's isYear accepts.
 const DAY = /^2\d{3}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const MONTH = /^2\d{3}-(0[1-9]|1[0-2])$/;
+const QUARTER = /^(2\d{3})-Q([1-4])$/;
 const YEAR = /^2\d{3}$/;
 // Free-text filters are IDs or names; anything longer is a crafted link.
 const MAX_VALUE = 200;
@@ -55,11 +57,18 @@ function addMonths(day, months) {
   return first.toISOString().slice(0, 10);
 }
 
-/** @param {string} search @returns {Period | null} null for the server's current month */
+/** @param {string} search @returns {Period | null} null for the server's default, the last full month */
 export function readPeriod(search) {
   const params = new URLSearchParams(search);
   const value = params.get("period") || "";
   if (MONTH.test(value)) return { kind: "month", month: value };
+  const quarter = QUARTER.exec(value);
+  if (quarter)
+    return {
+      kind: "quarter",
+      year: Number(quarter[1]),
+      quarter: Number(quarter[2]),
+    };
   if (YEAR.test(value)) return { kind: "year", year: Number(value) };
   if (/^fy2\d{3}$/.test(value))
     return { kind: "financialYear", startYear: Number(value.slice(2)) };
@@ -76,6 +85,12 @@ export function readPeriod(search) {
 export function periodApiParams(period) {
   if (!period) return {};
   if (period.kind === "month") return { period: "month", month: period.month };
+  if (period.kind === "quarter")
+    return {
+      period: "quarter",
+      year: `${period.year}`,
+      quarter: `${period.quarter}`,
+    };
   if (period.kind === "year") return { period: "year", year: `${period.year}` };
   if (period.kind === "financialYear")
     return { period: "financialYear", startYear: `${period.startYear}` };
@@ -83,9 +98,23 @@ export function periodApiParams(period) {
   return { period: "custom", from: period.from, to: addDays(period.to, 1) };
 }
 
+/** @param {string} day @returns {Period} the calendar quarter holding it */
+export function quarterOf(day) {
+  return {
+    kind: "quarter",
+    year: Number(day.slice(0, 4)),
+    quarter: Math.floor((Number(day.slice(5, 7)) - 1) / 3) + 1,
+  };
+}
+
+/** @param {number} year @param {number} quarter */
+const quarterStart = (year, quarter) =>
+  `${year}-${String(quarter * 3 - 2).padStart(2, "0")}-01`;
+
 /** So Previous and Next work before the URL names a period. @param {{ kind: string, startDay: string, endDay: string }} interval @returns {Period} */
 export function periodOf(interval) {
   const start = interval.startDay;
+  if (interval.kind === "quarter") return quarterOf(start);
   if (interval.kind === "year")
     return { kind: "year", year: Number(start.slice(0, 4)) };
   if (interval.kind === "financialYear")
@@ -116,6 +145,10 @@ export function intervalOf(period, now = new Date()) {
   };
   if (period.kind === "month")
     return days(`${period.month}-01`, addMonths(`${period.month}-01`, 1));
+  if (period.kind === "quarter") {
+    const start = quarterStart(period.year, period.quarter);
+    return days(start, addMonths(start, 3));
+  }
   if (period.kind === "year")
     return days(`${period.year}-01-01`, `${period.year + 1}-01-01`);
   if (period.kind === "financialYear")
@@ -127,10 +160,10 @@ export function intervalOf(period, now = new Date()) {
 export const samePeriod = (a, b) =>
   periodSearch(a).toString() === periodSearch(b).toString();
 
-/** For the controls when neither the URL nor a reply names a period. @param {Date} [now] @returns {Period} */
-export const currentMonth = (now = new Date()) => ({
+/** The server's default, for the controls when neither the URL nor a reply names a period. @param {Date} [now] @returns {Period} */
+export const lastFullMonth = (now = new Date()) => ({
   kind: "month",
-  month: pacificDateKey(now).slice(0, 7),
+  month: addMonths(`${pacificDateKey(now).slice(0, 7)}-01`, -1).slice(0, 7),
 });
 
 /** @param {Period | null} period */
@@ -138,6 +171,8 @@ export function periodSearch(period) {
   const params = new URLSearchParams();
   if (!period) return params;
   if (period.kind === "month") params.set("period", period.month);
+  else if (period.kind === "quarter")
+    params.set("period", `${period.year}-Q${period.quarter}`);
   else if (period.kind === "year") params.set("period", `${period.year}`);
   else if (period.kind === "financialYear")
     params.set("period", `fy${period.startYear}`);
@@ -156,6 +191,10 @@ export function stepPeriod(period, step) {
       kind: "month",
       month: addMonths(`${period.month}-01`, step).slice(0, 7),
     };
+  if (period.kind === "quarter")
+    return quarterOf(
+      addMonths(quarterStart(period.year, period.quarter), 3 * step),
+    );
   if (period.kind === "year") return { kind: "year", year: period.year + step };
   if (period.kind === "financialYear")
     return { kind: "financialYear", startYear: period.startYear + step };
@@ -191,15 +230,9 @@ export function readOverview(search) {
     providerId: pick(params, "providerId", null),
     department: pick(params, "department", null),
     sort: pick(params, "sort", SITE_SORTS, "name"),
-    cursor: pick(params, "cursor", null),
-    selected: [
-      ...new Set(
-        (params.get("selected") || "")
-          .split(",")
-          .map((id) => id.trim())
-          .filter((id) => id && id.length <= MAX_VALUE),
-      ),
-    ].slice(0, MAX_REPORT_SITES),
+    // Kept out of the URL: every Site's ID would make each Site link too long to load.
+    /** @type {string[]} */
+    selected: [],
   };
 }
 
@@ -209,7 +242,6 @@ const FILTER_KEYS = /** @type {const} */ ([
   "show",
   ...OVERVIEW_FILTERS,
   "sort",
-  "cursor",
 ]);
 
 /** @param {OverviewState} state @param {Period | null} period @returns {string} "" or "?…" */
@@ -217,7 +249,6 @@ export function overviewSearch(state, period) {
   const params = periodSearch(period);
   for (const key of FILTER_KEYS)
     if (state[key] !== DEFAULTS[key]) params.set(key, state[key]);
-  if (state.selected.length) params.set("selected", state.selected.join(","));
   const query = params.toString();
   return query ? `?${query}` : "";
 }
@@ -230,8 +261,8 @@ export function overviewApiParams(state, period) {
   return params;
 }
 
-/** A report never holds a Site the user can't see (plan §3). @param {string[]} selected @param {string[]} pageIds */
-export function keptSelection(selected, pageIds) {
-  const onPage = new Set(pageIds);
-  return selected.filter((id) => onPage.has(id)).slice(0, MAX_REPORT_SITES);
+/** A report never holds a Site the user can't see (plan §3). @param {string[]} selected @param {string[]} listedIds */
+export function keptSelection(selected, listedIds) {
+  const listed = new Set(listedIds);
+  return selected.filter((id) => listed.has(id)).slice(0, MAX_REPORT_SITES);
 }

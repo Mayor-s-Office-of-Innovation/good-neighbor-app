@@ -15,12 +15,13 @@ import {
 } from "../test-support/admin-dom.js";
 import { mountAdmin } from "../test-support/app-mount.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
-import { pacificDateKey } from "../../frontend/src/i18n/dates.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import {
   formatDay,
   formatInstant,
+  perDayText,
 } from "./pages/insights/insights.templates.js";
+import { lastFullMonth } from "./pages/insights/insights-query.js";
 import { LINK_MS } from "./pages/insights/report-job.js";
 
 const url = () => window.location.pathname + window.location.search;
@@ -39,12 +40,10 @@ const cell = (siteId, selector) =>
   text(`[data-site-row="${siteId}"] ${selector}`);
 
 /**
- * An Overview reply with `count` copies of Example Site, for paging and
- * selection.
+ * An Overview reply with `count` copies of Example Site, for selection.
  * @param {number} count
- * @param {Record<string, unknown>} [extra]
  */
-function manySites(count, extra = {}) {
+function manySites(count) {
   /** @param {any} api */
   return (api) =>
     overviewReply((json, request) => {
@@ -56,7 +55,6 @@ function manySites(count, extra = {}) {
         name: `Many Site ${i + 1}`,
       }));
       json.siteCount = count;
-      Object.assign(json, extra);
     })(api);
 }
 
@@ -71,15 +69,17 @@ const overviewReply = (change) => (/** @type {any} */ api) =>
     return reply;
   });
 
-test("Overview opens on Top concerns for the current month", async () => {
+test("Overview opens on Top concerns for the last full month", async () => {
   const { api } = await mountAdmin("/insights", { insights: true });
   assert.deepEqual(lastOverviewCall(api), { show: "top", sort: "name" });
   assert.deepEqual(rows(), ["s1", "s4"]);
+  // A finished month, so the page never opens on part of one.
+  assert.ok(missing("[data-period-incomplete]"));
   assert.equal($('[data-show="top"]').getAttribute("aria-pressed"), "true");
 });
 
-test("Overview says when its data was updated and that the period is still running", async () => {
-  await mountAdmin("/insights", { insights: true });
+test("Overview says when its data was updated and that a running period is still running", async () => {
+  await mountAdmin("/insights?period=2026-11", { insights: true });
   assert.equal(
     text("[data-insights-freshness]"),
     t("admin.insights.dataAsOf", {
@@ -111,10 +111,13 @@ test("each Site row names its response states, highest severity and concerns in 
   );
   assert.equal(
     cell("s4", "[data-concerns]"),
-    [t("admin.insights.concern.late"), t("admin.insights.concern.severe")].join(
-      "",
-    ),
+    [
+      t("admin.insights.concern.fewChecks"),
+      t("admin.insights.concern.late"),
+    ].join(""),
   );
+  // Shows the number Few Checks is judged on, not only the total.
+  assert.equal(cell("s4", "[data-checks-per-day]"), perDayText(0.4));
   // Contacts aren't columns; a missing public contact is a chip under the name.
   assert.ok(missing("[data-site-row] [data-contact]"));
   assert.equal(
@@ -176,18 +179,31 @@ test("a filter narrows the table, goes in the URL and clears the selection", asy
   });
   const before = rows();
   await fill('[data-select-site="s1"]', true);
-  assert.equal(url(), "/insights?period=2026-10&show=all&selected=s1");
+  // Picks stay out of the URL, so a 1,000-Site pick can't overflow a link.
+  assert.equal(url(), "/insights?period=2026-10&show=all");
   await fill('wa-select[data-filter="managerId"]', "pm2");
   assert.equal(url(), "/insights?period=2026-10&show=all&managerId=pm2");
   assert.equal(lastOverviewCall(api).managerId, "pm2");
   assert.notDeepEqual(rows(), before);
   assert.deepEqual(rows(), ["s4"]);
+  // Nothing picked survives, so a report can't carry a hidden Site.
+  assert.equal($("#insights-report").disabled, true);
+});
+
+test("a new sort keeps the picks, since every Site is still listed", async () => {
+  const { api } = await mountAdmin("/insights?period=2026-10&show=all", {
+    insights: true,
+  });
+  await fill('[data-select-site="s1"]', true);
+  await fill('wa-select[data-filter="sort"]', "issuesCreated");
+  assert.equal(lastOverviewCall(api).sort, "issuesCreated");
+  assert.ok($('[data-select-site="s1"]').checked);
 });
 
 test("the controls follow the mock: Search, Period, Site status, then Filter", async () => {
   await mountAdmin("/insights", { insights: true });
   assert.deepEqual(
-    $$(".insights__crow > .insights__clabel").map((l) => l.textContent),
+    $$("[data-control-label]").map((l) => l.textContent),
     ["search", "period", "status", "filter"].map((k) =>
       t(`admin.insights.label.${k}`),
     ),
@@ -302,11 +318,13 @@ test("Back to Overview from a Site restores the view and focuses that Site", asy
   await mountAdmin("/insights?period=2026-10&managerId=pm2", {
     insights: true,
   });
+  await fill('[data-select-site="s4"]', true);
   await click('[data-site-link="s4"]');
   assert.equal(text("h1"), "Pier Example Site");
   await click("#insights-back");
   assert.equal(url(), "/insights?period=2026-10&managerId=pm2");
   assert.ok(focused('[data-site-link="s4"]'));
+  assert.ok($('[data-select-site="s4"]').checked);
 });
 
 test("a failed load shows why, hides old rows and retries", async () => {
@@ -324,78 +342,62 @@ test("a failed load shows why, hides old rows and retries", async () => {
   assert.equal(rows().length, 4);
 });
 
-/**
- * A two-page Overview of 5 copies of Example Site; page two is cursor c2.
- * Pages shorter than the server's 50 keep the test quick.
- * @param {any} api
- */
-function twoPages(api) {
-  api.on("GET", /^reporting\/overview/, (/** @type {any} */ request) => {
-    const reply = api.reply({ ...request, search: "?show=all" });
-    const second = new URLSearchParams(request.search).get("cursor") === "c2";
-    const template = reply.json.sites[0];
-    const start = second ? 2 : 0;
-    reply.json.sites = Array.from({ length: second ? 3 : 2 }, (_, i) => ({
-      ...template,
-      siteId: `m${start + i + 1}`,
-      name: `Many Site ${start + i + 1}`,
-    }));
-    Object.assign(reply.json, {
-      siteCount: 5,
-      offset: start,
-      nextCursor: second ? null : "c2",
-    });
-    return reply;
-  });
-}
-
-test("Next page asks for the next rows and Previous goes back", async () => {
+test("select all keeps the Sites already picked first, then picks the rest of the list", async () => {
   const { api } = await mountAdmin("/insights", {
     insights: true,
-    setup: twoPages,
+    setup: manySites(12),
   });
-  await click('[data-page="next"]');
-  assert.equal(lastOverviewCall(api).cursor, "c2");
-  assert.equal(
-    text("#insights-count"),
-    t("admin.insights.showing", { from: 3, to: 5, count: 5 }),
-  );
-  assert.equal($('[data-page="next"]').disabled, true);
-  assert.ok(focused("#insights-count"));
-  await click('[data-page="prev"]');
-  assert.equal(lastOverviewCall(api).cursor, undefined);
-});
-
-test("a page reopened from its link counts from where it starts", async () => {
-  await mountAdmin("/insights?cursor=c2", { insights: true, setup: twoPages });
-  assert.equal(
-    text("#insights-count"),
-    t("admin.insights.showing", { from: 3, to: 5, count: 5 }),
-  );
-  assert.equal($('[data-page="prev"]').disabled, false);
-});
-
-test("a page from older data starts again at page one and says why", async () => {
-  const { api } = await mountAdmin("/insights?cursor=c2", {
-    insights: true,
-    setup: (a) =>
-      a.on("GET", /^reporting\/overview\?.*cursor=c2/, {
-        status: 409,
-        json: { error: "snapshot_changed" },
-      }),
-  });
-  assert.equal(lastOverviewCall(api).cursor, undefined);
-  assert.equal(url(), "/insights");
-  assert.equal(text("[data-insights-notice]"), t("admin.insights.restarted"));
-});
-
-test("select all keeps the Sites already picked first, then picks the rest of the page", async () => {
-  await mountAdmin("/insights", { insights: true, setup: manySites(12) });
   await fill('[data-select-site="m12"]', true);
   await fill("#insights-select-all", true);
+  await click("#insights-report");
+  await click("#insights-report-confirm");
+  const [sent] = api.calls("POST", /^reports\/insights$/);
+  assert.deepEqual(sent.body.siteIds, [
+    "m12",
+    ...Array.from({ length: 11 }, (_, i) => `m${i + 1}`),
+  ]);
+});
+
+test("every Site is on one page, with no pager", async () => {
+  // One past the old 50-row page.
+  await mountAdmin("/insights", { insights: true, setup: manySites(51) });
+  assert.equal(rows().length, 51);
+  assert.ok(missing("[data-page]"));
   assert.equal(
-    new URLSearchParams(window.location.search).get("selected"),
-    ["m12", ...Array.from({ length: 11 }, (_, i) => `m${i + 1}`)].join(","),
+    text("#insights-count"),
+    t("admin.insights.siteCount", { count: 51 }),
+  );
+});
+
+test("Quarter opens on the calendar quarter the month falls in", async () => {
+  const { api } = await mountAdmin("/insights?period=2026-08", {
+    insights: true,
+  });
+  await click('[data-period-kind="quarter"]');
+  assert.equal(url(), "/insights?period=2026-Q3");
+  assert.deepEqual(
+    [
+      lastOverviewCall(api).period,
+      lastOverviewCall(api).year,
+      lastOverviewCall(api).quarter,
+    ],
+    ["quarter", "2026", "3"],
+  );
+  await click('[data-period-step="1"]');
+  assert.equal(url(), "/insights?period=2026-Q4");
+});
+
+test("a shared link that names a quarter opens that quarter", async () => {
+  const { api } = await mountAdmin("/insights?period=2026-Q2", {
+    insights: true,
+  });
+  assert.deepEqual(
+    [lastOverviewCall(api).period, lastOverviewCall(api).quarter],
+    ["quarter", "2"],
+  );
+  assert.equal(
+    $('[data-period-kind="quarter"]').getAttribute("aria-pressed"),
+    "true",
   );
 });
 
@@ -617,26 +619,6 @@ test("a concern the page has no words for still reads as a concern", async () =>
   );
 });
 
-test("an old link past the last page says so and offers Previous", async () => {
-  const { api } = await mountAdmin(
-    "/insights?period=2026-10&show=all&cursor=c9",
-    {
-      insights: true,
-      setup: overviewReply((json) => {
-        json.sites = [];
-        json.offset = 50;
-        json.nextCursor = null;
-      }),
-    },
-  );
-  assert.equal(
-    text('[data-insights-empty="past-end"]'),
-    t("admin.insights.empty.pastEnd"),
-  );
-  await click('[data-page="prev"]');
-  assert.equal(lastOverviewCall(api).cursor, undefined);
-});
-
 test("manager names that arrive while the user is in the table show once they leave it", async () => {
   const held = gate();
   const { api } = await mountAdmin("/insights?period=2026-10&show=all", {
@@ -684,7 +666,7 @@ test("going back to the month on screen from Custom keeps the picks", async () =
   assert.ok($('[data-select-site="s1"]').checked);
 });
 
-test("after the first load fails, Year still shows this year", async () => {
+test("after the first load fails, Year shows the year of the last full month", async () => {
   const { api } = await mountAdmin("/insights", {
     insights: true,
     setup: (api) =>
@@ -693,7 +675,7 @@ test("after the first load fails, Year still shows this year", async () => {
   await click('[data-period-kind="year"]');
   assert.deepEqual(
     [lastOverviewCall(api).period, lastOverviewCall(api).year],
-    ["year", pacificDateKey(new Date()).slice(0, 4)],
+    ["year", lastFullMonth().month.slice(0, 4)],
   );
 });
 
@@ -766,19 +748,17 @@ test("switching windows while names arrive leaves the table and focus alone", as
   assert.ok(focused('[data-select-site="s1"]'));
 });
 
-test("browser Back from a Site whose period changed returns to the page left", async () => {
-  await mountAdmin("/insights?period=2026-10&show=all", {
-    insights: true,
-    setup: twoPages,
-  });
-  await click('[data-page="next"]');
+test("browser Back from a Site whose period changed returns to the view left, with its picks", async () => {
+  await mountAdmin("/insights?period=2026-10&show=all", { insights: true });
+  await fill('[data-select-site="s1"]', true);
   const left = url();
-  await click('[data-site-link="m3"]');
+  await click('[data-site-link="s4"]');
   await click('[data-period-step="-1"]');
   window.history.back();
   await settle();
   assert.equal(url(), left);
-  assert.ok(focused('[data-site-link="m3"]'));
+  assert.ok(focused('[data-site-link="s4"]'));
+  assert.ok($('[data-select-site="s1"]').checked);
 });
 
 test("a Site opened from elsewhere doesn't pull focus on a later Overview", async () => {
@@ -852,24 +832,6 @@ test("while new Sites load, select all can't pick the old ones", async () => {
   assert.equal($("#insights-select-all").disabled, false);
 });
 
-test("a page link the server can't read starts again at page one and says why", async () => {
-  const { api } = await mountAdmin("/insights?cursor=c2", {
-    insights: true,
-    setup: (a) =>
-      a.on("GET", /^reporting\/overview\?.*cursor=c2/, {
-        status: 400,
-        json: { error: "invalid_cursor" },
-      }),
-  });
-  assert.equal(lastOverviewCall(api).cursor, undefined);
-  assert.equal(url(), "/insights");
-  assert.equal(
-    text("[data-insights-notice]"),
-    t("admin.insights.restartedLink"),
-  );
-  assert.deepEqual(rows(), ["s1", "s4"]);
-});
-
 test("pressing the view already shown keeps the picks and asks for nothing", async () => {
   const { api } = await mountAdmin("/insights?period=2026-10&show=all", {
     insights: true,
@@ -877,7 +839,8 @@ test("pressing the view already shown keeps the picks and asks for nothing", asy
   await fill('[data-select-site="s1"]', true);
   const loads = overviewCalls(api).length;
   await click('[data-show="all"]');
-  assert.equal(url(), "/insights?period=2026-10&show=all&selected=s1");
+  assert.equal(url(), "/insights?period=2026-10&show=all");
+  assert.ok($('[data-select-site="s1"]').checked);
   assert.equal(overviewCalls(api).length, loads);
 });
 

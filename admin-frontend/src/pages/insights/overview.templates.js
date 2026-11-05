@@ -1,6 +1,7 @@
 // Kept apart from the element, so its markup can be tested without a page.
 import { hasKey, t } from "../../../../frontend/src/i18n/i18n.js";
 import { escapeHtml } from "../../dom.js";
+import { CONCERN_RULES } from "./concern-rules.js";
 import {
   MAX_SEARCH,
   OVERVIEW_FILTERS,
@@ -12,6 +13,7 @@ import {
   formatInstant,
   helpTip,
   noDataFor,
+  perDayText,
   periodLabel,
   severityKnown,
   severityWord,
@@ -50,7 +52,7 @@ function select(name, allLabel, options, selected) {
 
 /** @param {string} key admin.insights.label.* @param {string} body */
 const controlRow = (key, body) =>
-  `<div class="insights__crow"><span class="insights__clabel" id="insights-label-${key}">${escapeHtml(t(`admin.insights.label.${key}`))}</span><div class="insights__cbody">${body}</div></div>`;
+  `<div class="insights__crow"><span class="insights__clabel" id="insights-label-${key}" data-control-label="${key}">${escapeHtml(t(`admin.insights.label.${key}`))}</span><div class="insights__cbody">${body}</div></div>`;
 
 /** Drawn once; later changes update it in place, so search keeps focus. @param {OverviewState} state @param {FilterOptions} options */
 export function filtersView(state, options) {
@@ -62,9 +64,16 @@ export function filtersView(state, options) {
       `<div class="insights__seg" role="group" aria-labelledby="insights-label-status">${SHOW.map(
         (value) =>
           `<button type="button" data-show="${value}" aria-pressed="${state.show === value}">${escapeHtml(t(`admin.insights.show.${value}`))}</button>`,
-      ).join(
-        "",
-      )}</div>${helpTip("insights-tip-status", t("admin.insights.label.status"), t("admin.insights.show.help"))}`,
+      ).join("")}</div>${helpTip(
+        "insights-tip-status",
+        t("admin.insights.label.status"),
+        t("admin.insights.show.help", {
+          checks: CONCERN_RULES.checksPerDay,
+          severe: CONCERN_RULES.severeIssues,
+          issues: CONCERN_RULES.issuesPer30Days,
+          days: CONCERN_RULES.unresolvedDays,
+        }),
+      )}`,
     )}
     ${controlRow(
       "filter",
@@ -151,7 +160,15 @@ function siteRow(row, { selected, noData, siteHref, names }) {
         ? `<div data-no-public>${chip(t("admin.insights.noPublicContact"), "flag")}</div>`
         : ""
     }</th>
-    <td role="cell" class="insights__num" ${label("checks")} data-checks>${noData ? UNAVAILABLE : escapeHtml(row.activity.completedPerimeterChecks)}</td>
+    <td role="cell" class="insights__num" ${label("checks")} data-checks>${
+      noData
+        ? UNAVAILABLE
+        : `${escapeHtml(row.activity.completedPerimeterChecks)}${
+            row.checksPerDay === null || row.checksPerDay === undefined
+              ? ""
+              : `<div class="muted" data-checks-per-day>${escapeHtml(perDayText(row.checksPerDay))}</div>`
+          }`
+    }</td>
     <td role="cell" ${label("response")} data-response-cell>${noData ? UNAVAILABLE : responseSummary(row)}</td>
     <td role="cell" ${label("severity")} data-issues>${
       noData
@@ -182,22 +199,13 @@ export function resultBarView(state) {
 
 /** @param {Record<string, any>} reply @returns {string} */
 export function countText(reply) {
-  const rows = reply.sites.length;
-  const count = reply.siteCount;
-  const offset = reply.offset ?? 0;
-  return rows && count > rows
-    ? t("admin.insights.showing", {
-        from: offset + 1,
-        to: offset + rows,
-        count,
-      })
-    : t("admin.insights.siteCount", { count });
+  return t("admin.insights.siteCount", { count: reply.siteCount });
 }
 
-/** The header box ticks when every Site on the page is picked. @param {string[]} pageIds @param {string[]} selected */
-export function selectAllState(pageIds, selected) {
+/** The header box ticks when every listed Site is picked. @param {string[]} listedIds @param {string[]} selected */
+export function selectAllState(listedIds, selected) {
   const picked = new Set(selected);
-  const all = pageIds.length > 0 && pageIds.every((id) => picked.has(id));
+  const all = listedIds.length > 0 && listedIds.every((id) => picked.has(id));
   return { checked: all, indeterminate: !all && selected.length > 0 };
 }
 
@@ -213,20 +221,14 @@ function columnHead(key, num = false) {
   return `<th role="columnheader" scope="col" ${num ? 'class="insights__num"' : ""}>${escapeHtml(t(`admin.insights.col.${key}`))}${tip}</th>`;
 }
 
-/** @param {{ reply: Record<string, any>, state: OverviewState, siteHref: (id: string) => string, names: Record<string, Map<string, string>>, notice: string }} view */
-export function resultsView({ reply, state, siteHref, names, notice }) {
+/** @param {{ reply: Record<string, any>, state: OverviewState, siteHref: (id: string) => string, names: Record<string, Map<string, string>> }} view */
+export function resultsView({ reply, state, siteHref, names }) {
   const rows = /** @type {SiteRow[]} */ (reply.sites);
   const interval = reply.meta.interval;
   const selected = new Set(state.selected);
   const noData = noDataFor(reply.meta);
-  const note = notice
-    ? `<p class="muted" data-insights-notice>${escapeHtml(notice)}</p>`
-    : "";
-  // An old link can land past the last page; Previous gets back.
-  if (!rows.length)
-    return `${note}${emptyView(reply, state)}${pagerView(reply)}`;
-  return `${note}
-  <div class="table-wrap insights__table" data-insights-table>
+  if (!rows.length) return emptyView(reply, state);
+  return `<div class="table-wrap insights__table" data-insights-table>
     <table role="table">
       <caption class="visually-hidden">${escapeHtml(t("admin.insights.tableCaption", { period: periodLabel(interval) }))}</caption>
       <thead role="rowgroup"><tr role="row">
@@ -236,26 +238,13 @@ export function resultsView({ reply, state, siteHref, names, notice }) {
       </tr></thead>
       <tbody role="rowgroup">${rows.map((row) => siteRow(row, { selected, noData, siteHref, names })).join("")}</tbody>
     </table>
-  </div>
-  ${pagerView(reply)}`;
-}
-
-/** @param {Record<string, any>} reply */
-function pagerView(reply) {
-  const offset = reply.offset ?? 0;
-  if (!offset && !reply.nextCursor) return "";
-  return `<nav class="insights__pager" aria-label="${escapeHtml(t("admin.insights.pages"))}">
-    <button type="button" class="btn-secondary" data-page="prev" ${offset ? "" : "disabled"}>${escapeHtml(t("admin.insights.previousPage"))}</button>
-    <button type="button" class="btn-secondary" data-page="next" ${reply.nextCursor ? "" : "disabled"}>${escapeHtml(t("admin.insights.nextPage"))}</button>
-  </nav>`;
+  </div>`;
 }
 
 /** Each empty case offers the one step that shows Sites again. @param {Record<string, any>} reply @param {OverviewState} state */
 function emptyView(reply, state) {
   if (noDataFor(reply.meta))
     return `<p class="empty-state" data-insights-empty="no-data">${escapeHtml(t("admin.insights.empty.noRows"))}</p>`;
-  if (reply.offset > 0)
-    return `<p class="empty-state" data-insights-empty="past-end">${escapeHtml(t("admin.insights.empty.pastEnd"))}</p>`;
   const filtered = [state.q, ...OVERVIEW_FILTERS.map((k) => state[k])].some(
     Boolean,
   );

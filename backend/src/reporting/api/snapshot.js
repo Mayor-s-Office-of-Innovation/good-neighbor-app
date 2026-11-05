@@ -21,7 +21,8 @@ import { requestError } from "./requests.js";
  * @property {Map<string, Record<string, any>>} contactsBySite
  * @property {Map<string, Record<string, any>[]>} issuesById
  * @property {Map<string, Record<string, any>[]>} checksById
- * @property {Record<string, any>[]} daysInOrder site_days sorted by day, for range reads
+ * @property {Map<string, Record<string, any>[]>} daysBySite each Site's site_days by day, for range reads
+ * @property {Map<string, Record<string, any>[]>} issuesBySite
  * @property {string | null} coverageStart earliest day with any record
  * @property {string[]} categories each Issue category in the data, sorted
  */
@@ -70,9 +71,14 @@ export function indexSnapshot({ prefix, manifest, tables }) {
     contactsBySite: new Map(tables.site_contacts.map((c) => [c.siteId, c])),
     issuesById: groupBy(tables.issues, "issueId"),
     checksById: groupBy(tables.checks, "checkId"),
-    daysInOrder: [...tables.site_days].sort((a, b) =>
-      a.day < b.day ? -1 : a.day > b.day ? 1 : 0,
+    // Grouped once, so a report reads each Site's rows, not the whole table per Site.
+    daysBySite: new Map(
+      [...groupBy(tables.site_days, "siteId")].map(([siteId, rows]) => [
+        siteId,
+        rows.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0)),
+      ]),
     ),
+    issuesBySite: groupBy(tables.issues, "siteId"),
     coverageStart,
     categories: [
       ...new Set((tables.issues ?? []).map((i) => i.category).filter(Boolean)),

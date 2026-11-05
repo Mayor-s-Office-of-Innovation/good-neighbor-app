@@ -47,11 +47,36 @@ describe("isRequestError", () => {
 });
 
 describe("parsePeriodParams", () => {
-  it("defaults to the Pacific month even when UTC has moved on", () => {
-    // 05:00 UTC on Nov 1 is still Oct 31 in San Francisco.
+  it("defaults to the last full Pacific month even when UTC has moved on", () => {
+    // 05:00 UTC on Nov 1 is still Oct 31 in San Francisco, so September is the last full month.
     expect(parsePeriodParams({}, "2026-11-01T05:00:00.000Z")).toMatchObject({
-      startDay: "2026-10-01",
+      startDay: "2026-09-01",
     });
+  });
+
+  it("defaults to December in January", () => {
+    expect(parsePeriodParams({}, "2027-01-15T20:00:00.000Z")).toMatchObject({
+      startDay: "2026-12-01",
+      endDay: "2027-01-01",
+    });
+  });
+
+  it("reads a quarter from its year and number", () => {
+    expect(
+      parsePeriodParams(
+        { period: "quarter", year: "2026", quarter: "3" },
+        EVALUATED,
+      ),
+    ).toMatchObject({ kind: "quarter", startDay: "2026-07-01" });
+  });
+
+  it.each([
+    [{ period: "quarter", year: "2026" }, "invalid_quarter"],
+    [{ period: "quarter", quarter: "3" }, "invalid_year"],
+  ])("refuses %j with %s", (params, code) => {
+    expect(() => parsePeriodParams(params, EVALUATED)).toThrow(
+      expect.objectContaining({ code, statusCode: 400 }),
+    );
   });
 
   it("accepts a custom period of exactly 12 months", () => {
@@ -63,13 +88,16 @@ describe("parsePeriodParams", () => {
     ).toMatchObject({ startDay: "2025-01-01", endDay: "2026-01-01" });
   });
 
-  it("defaults to the snapshot's current Pacific month", () => {
+  it("defaults to the last full month before the snapshot's, which a link can still override", () => {
     expect(parsePeriodParams({}, EVALUATED)).toMatchObject({
       kind: "month",
-      startDay: "2026-11-01",
-      endDay: "2026-12-01",
-      incomplete: true,
+      startDay: "2026-10-01",
+      endDay: "2026-11-01",
+      incomplete: false,
     });
+    expect(
+      parsePeriodParams({ period: "month", month: "2026-11" }, EVALUATED),
+    ).toMatchObject({ startDay: "2026-11-01", incomplete: true });
   });
 
   it("reads a July–June year from its start year", () => {

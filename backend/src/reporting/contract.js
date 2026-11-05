@@ -4,7 +4,7 @@
 export const CONTRACT_VERSION = "insights-v2";
 
 /** Bump when an endpoint's reply gains, loses or renames a field. */
-export const API_VERSION = "reporting-v1";
+export const API_VERSION = "reporting-v2";
 
 /** Bump when a counting rule changes, even if no column does. */
 export const RULE_VERSION = "2026-11-06";

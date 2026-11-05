@@ -63,10 +63,11 @@ export function createInsightsSession() {
   const session = {
     reportJobs: createReportJobs({ api: adminApi }),
     /**
-     * For the way back. `alsoPath` is that Overview at the Site's period.
-     * @type {{ path: string, siteId: string, pages: string[], alsoPath: string }}
+     * For the way back. `alsoPath` is that Overview at the Site's period;
+     * `selected` holds its picks, which are too long for the URL.
+     * @type {{ path: string, siteId: string, selected: string[], alsoPath: string }}
      */
-    overview: { path: "", siteId: "", pages: [], alsoPath: "" },
+    overview: { path: "", siteId: "", selected: [], alsoPath: "" },
     /** @returns {Promise<Names>} */
     names() {
       return session.namesRead().then(({ names: found }) => found);

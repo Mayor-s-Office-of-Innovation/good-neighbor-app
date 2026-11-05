@@ -22,9 +22,18 @@ import {
 /** @typedef {import("./requests.js").ListQuery} ListQuery */
 
 const STALE_AFTER_MS = 6 * 3_600_000;
+const DAY_MS = 86_400_000;
 const NAMES = new Intl.Collator("en", { sensitivity: "base", numeric: true });
 const NAME_KEYS = new Set(["name", "siteName", "tieName", "sortValue"]);
 const ACTIVITY = SITE_DAY_METRICS.filter((m) => !RESPONSE_STATES.includes(m));
+
+// Only checksPerDay is agreed; the rest are placeholders to revise (plan §7).
+export const CONCERN_RULES = Object.freeze({
+  checksPerDay: 3,
+  severeIssues: 2,
+  issuesPer30Days: 4,
+  unresolvedDays: 14,
+});
 
 /**
  * @param {Snapshot} snap
@@ -128,19 +137,22 @@ function firstOnOrAfter(rows, day) {
   return lo;
 }
 
-// Reads only the range's rows, since Trends asks for one range per week or month.
+// Reads only these Sites' rows in the range, so a report of many Sites stays linear.
 /**
  * @param {Snapshot} snap
  * @param {{ startDay: string, endDay: string }} range
  * @param {Set<string>} siteIds
  */
 function sumDays(snap, range, siteIds) {
-  const rows = snap.daysInOrder;
-  const slice = rows.slice(
-    firstOnOrAfter(rows, range.startDay),
-    firstOnOrAfter(rows, range.endDay),
-  );
-  return sumSiteDays(/** @type {any[]} */ (slice), range, siteIds);
+  /** @type {Record<string, any>[]} */
+  const rows = [];
+  for (const siteId of siteIds) {
+    const own = snap.daysBySite.get(siteId) ?? [];
+    const end = firstOnOrAfter(own, range.endDay);
+    for (let i = firstOnOrAfter(own, range.startDay); i < end; i++)
+      rows.push(own[i]);
+  }
+  return sumSiteDays(/** @type {any[]} */ (rows), range);
 }
 
 /**
@@ -293,33 +305,19 @@ function siteDims(site) {
  */
 function siteRows(snap, interval, sites) {
   const ids = new Set(sites.map((s) => s.siteId));
-  const today = pacificDateKey(snap.manifest.evaluatedAt);
-  const { total, bySite } = sumDays(snap, interval, ids);
-  /** @type {Map<string, number>} */
-  const maxSeverity = new Map();
-  for (const issue of snap.tables.issues) {
-    if (!ids.has(issue.siteId)) continue;
-    if (
-      issue.createdDay < interval.startDay ||
-      issue.createdDay >= interval.endDay
-    )
-      continue;
-    if (issue.severity > (maxSeverity.get(issue.siteId) ?? 0))
-      maxSeverity.set(issue.siteId, issue.severity);
-  }
+  const { total } = sumDays(snap, interval, ids);
   const rows = sites.map((site) => {
-    const totals = split(bySite.get(site.siteId) ?? {});
+    const facts = siteFacts(snap, site, interval);
     const indicators = contacts(snap, site.siteId);
     return {
       ...siteDims(site),
-      ...totals,
-      maxSeverity: maxSeverity.get(site.siteId) ?? null,
+      ...facts.totals,
+      maxSeverity: facts.maxSeverity,
+      checksPerDay: facts.checksPerDay,
+      longUnresolved: facts.longUnresolved,
       ...indicators,
-      concerns: concernsOf(totals, {
-        active: site.status !== "inactive",
-        expectedChecks: owesChecks(snap, site, interval, today),
-      }),
-      unknownEvidence: unknownsOf(totals, indicators, {
+      concerns: facts.concerns,
+      unknownEvidence: unknownsOf(facts.totals, indicators, {
         active: site.status !== "inactive",
       }),
       manageHref: manageHref(site.siteId),
@@ -340,39 +338,107 @@ const laterDay = (a, b) => (b > a ? b : a);
 const earlierDay = (a, b) => (b < a ? b : a);
 
 /**
- * No perimeter means nothing to walk, and the first day of the records or
- * of the Site is likely partial, so neither can owe Checks.
+ * The period's whole days with records for this Site. Today is still
+ * running, and the first day of the records or of the Site is likely
+ * partial, so none of them count.
  * @param {Snapshot} snap
  * @param {Record<string, any>} site
  * @param {Interval} interval
- * @param {string} today Pacific day key, still running
+ * @param {string} today Pacific day key
+ * @returns {{ startDay: string, endDay: string } | null}
  */
-function owesChecks(snap, site, interval, today) {
-  if (!site.hasPerimeter || snap.coverageStart === null) return false;
+function wholeDays(snap, site, interval, today) {
+  if (snap.coverageStart === null) return null;
   // A createdAt that doesn't parse can't say when the Site began.
   const added = site.createdAt ? pacificDateKey(site.createdAt) : "";
   const begun = laterDay(snap.coverageStart, added);
   const first = laterDay(interval.startDay, addDays(begun, 1));
-  return first < earlierDay(interval.endDay, today);
+  const end = earlierDay(interval.endDay, today);
+  return first < end ? { startDay: first, endDay: end } : null;
 }
 
 /**
- * Plan §7's Top concerns, plus no Checks, as separate reasons. Awaiting isn't
- * one: there's still time to answer. A closed Site can only be flagged by its
- * Issues. Missing contacts are flagged on the Site but never counted (plan §0.2 Q3).
- * @param {ReturnType<typeof split>} totals
- * @param {{ active: boolean, expectedChecks: boolean }} site
+ * One reading of a Site's period, so its Overview row, Site page and report
+ * show the same numbers and flags.
+ * @param {Snapshot} snap
+ * @param {Record<string, any>} site
+ * @param {Interval} interval
+ */
+function siteFacts(snap, site, interval) {
+  const ids = new Set([site.siteId]);
+  const totals = split(sumDays(snap, interval, ids).total);
+  const today = pacificDateKey(snap.manifest.evaluatedAt);
+  const range = wholeDays(snap, site, interval, today);
+  const days = range ? dayKeysBetween(range.startDay, range.endDay).length : 0;
+  // Issues are counted to the update, today included, so their limit spans the same days.
+  const issueDays = dayKeysBetween(
+    interval.startDay,
+    earlierDay(interval.endDay, addDays(today, 1)),
+  ).length;
+  const checks = range
+    ? sumDays(snap, range, ids).total.completedPerimeterChecks
+    : 0;
+  const evaluated = Date.parse(snap.manifest.evaluatedAt);
+  /** @type {number | null} */
+  let maxSeverity = null;
+  let longUnresolved = 0;
+  for (const issue of snap.issuesBySite.get(site.siteId) ?? []) {
+    if (
+      issue.createdDay < interval.startDay ||
+      issue.createdDay >= interval.endDay
+    )
+      continue;
+    if (issue.severity > (maxSeverity ?? 0)) maxSeverity = issue.severity;
+    const openFor = evaluated - Date.parse(issue.createdAt);
+    if (
+      issue.resolvedAt === null &&
+      openFor > CONCERN_RULES.unresolvedDays * DAY_MS
+    )
+      longUnresolved += 1;
+  }
+  // Rounded before the flag reads it, so "3.0 a day" is never flagged as under 3.
+  // No perimeter means nothing to walk, so no average.
+  const checksPerDay =
+    site.hasPerimeter && days ? Math.round((checks / days) * 10) / 10 : null;
+  const facts = { totals, maxSeverity, checksPerDay, longUnresolved, days };
+  const concerns = concernsOf(
+    { ...facts, issueDays },
+    site.status !== "inactive",
+  );
+  return { ...facts, concerns };
+}
+
+/**
+ * Plan §7's flags, in the mock's order. Awaiting isn't one: there's still
+ * time to answer. A closed Site can't be flagged for few Checks. Missing
+ * contacts are flagged on the Site but never counted (plan §0.2 Q3).
+ * @param {{ totals: ReturnType<typeof split>, checksPerDay: number | null, longUnresolved: number, days: number, issueDays: number }} facts
+ * @param {boolean} active
  * @returns {string[]}
  */
-function concernsOf({ activity, response }, { active, expectedChecks }) {
+function concernsOf(
+  {
+    totals: { activity, response },
+    checksPerDay,
+    longUnresolved,
+    days,
+    issueDays,
+  },
+  active,
+) {
+  const rules = CONCERN_RULES;
+  // Short periods keep the 30-day limit, so a quiet week isn't flagged for 2 Issues.
+  const manyIssues = (rules.issuesPer30Days * Math.max(issueDays, 30)) / 30;
   return [
+    active &&
+      checksPerDay !== null &&
+      checksPerDay < rules.checksPerDay &&
+      "fewChecks",
+    activity.severeIssues >= rules.severeIssues && "repeatedSevere",
+    days > 0 && activity.issuesCreated > manyIssues && "manyIssues",
+    longUnresolved > 0 && "longUnresolved",
     response.overdue > 0 && "overdue",
     response.late > 0 && "late",
-    activity.severeIssues > 0 && "severe",
-    active &&
-      expectedChecks &&
-      activity.completedPerimeterChecks === 0 &&
-      "noChecks",
   ].filter((c) => typeof c === "string");
 }
 
@@ -476,26 +542,14 @@ export function overview(snap, { interval, filter, list, now }) {
     filter,
     list.filters,
   );
-  const sorted = sortSiteRows(rows, list.sort);
-  const query = {
-    kind: "overview",
-    period: periodKey(interval),
-    filter,
-    filters: list.filters,
-    sort: list.sort,
-    limit: list.limit,
-  };
-  const { page, nextCursor, offset } = paginate(sorted, list, query, snap);
   return {
     meta: meta(snap, interval, now),
     totals: split(total),
     // Over the same Sites as totals, so its change explains those numbers.
     comparison: comparison(snap, interval, ids),
     siteCount: rows.length,
-    // A page reopened from its link numbers its rows from here.
-    offset,
-    sites: page,
-    nextCursor,
+    // Every Site, so a manager can pick any of them for one report.
+    sites: sortSiteRows(rows, list.sort),
   };
 }
 
@@ -532,23 +586,19 @@ function siteOr404(snap, siteId) {
 export function siteDetail(snap, siteId, { interval, now }) {
   const site = siteOr404(snap, siteId);
   const ids = new Set([siteId]);
-  /** @type {Map<string, Record<string, any>>} */
-  const byDay = new Map();
-  for (const row of snap.tables.site_days)
-    if (row.siteId === siteId) byDay.set(row.day, row);
+  const byDay = new Map(
+    (snap.daysBySite.get(siteId) ?? []).map((row) => [row.day, row]),
+  );
   const zero = Object.fromEntries(SITE_DAY_METRICS.map((m) => [m, 0]));
-  const totals = split(sumDays(snap, interval, ids).total);
-  const today = pacificDateKey(snap.manifest.evaluatedAt);
+  const facts = siteFacts(snap, site, interval);
   return {
     meta: meta(snap, interval, now),
     site: { ...siteDims(site), manageHref: manageHref(siteId) },
     ...contacts(snap, siteId),
-    totals,
-    // The same reasons as its Overview row, so both pages flag it alike.
-    concerns: concernsOf(totals, {
-      active: site.status !== "inactive",
-      expectedChecks: owesChecks(snap, site, interval, today),
-    }),
+    totals: facts.totals,
+    checksPerDay: facts.checksPerDay,
+    longUnresolved: facts.longUnresolved,
+    concerns: facts.concerns,
     comparison: comparison(snap, interval, ids),
     days: coveredDays(snap, interval).map((day) => {
       const row = byDay.get(day) ?? zero;
@@ -750,9 +800,9 @@ export function checkDetail(snap, checkId, { siteId, now = Date.now() }) {
 // directory reads.
 /**
  * @param {Snapshot} snap
- * @param {{ now: number }} req
+ * @param {{ now: number, include?: string }} req `include: "sites"` adds each Site's ID and name
  */
-export function scopeOptions(snap, { now }) {
+export function scopeOptions(snap, { now, include }) {
   /** @type {Record<string, { value: string, sites: number }[]>} */
   const groups = {};
   for (const dim of SITE_DIMENSIONS) {
@@ -770,7 +820,10 @@ export function scopeOptions(snap, { now }) {
     groups,
     // From the data, so the Category filter offers only names Issues carry.
     categories: snap.categories,
-    sites: snap.tables.sites.map(siteDims),
+    // Only for a screen that picks Sites by name; Overview's filters don't need it.
+    ...(include === "sites" && {
+      sites: snap.tables.sites.map((s) => ({ siteId: s.siteId, name: s.name })),
+    }),
   };
 }
 
@@ -1015,15 +1068,28 @@ export function reportDataset(snap, { siteIds, interval, now }) {
     meta: meta(snap, interval, now),
     sites: siteIds.map((siteId) => {
       const detail = siteDetail(snap, siteId, { interval, now });
+      const record = snap.contactsBySite.get(siteId);
       return {
         site: detail.site,
-        publicContact: detail.publicContact,
+        // Today's public contact, as the Site page shows it (plan §8).
+        publicContact: {
+          ...detail.publicContact,
+          email: record?.publicEmail ?? null,
+          phone: record?.publicPhone ?? null,
+          phoneExtension: record?.publicPhoneExtension ?? null,
+        },
+        // As the Overview row flags it; a closed Site needs none.
+        noPublicContact:
+          detail.site.status !== "inactive" &&
+          detail.publicContact.state === "missing",
         siteContact: detail.siteContact,
         totals: detail.totals,
+        checksPerDay: detail.checksPerDay,
+        longUnresolved: detail.longUnresolved,
+        concerns: detail.concerns,
         comparison: detail.comparison,
-        severeIssues: snap.tables.issues.filter(
+        severeIssues: (snap.issuesBySite.get(siteId) ?? []).filter(
           (i) =>
-            i.siteId === siteId &&
             i.severityBand === "severe" &&
             i.createdDay >= interval.startDay &&
             i.createdDay < interval.endDay,

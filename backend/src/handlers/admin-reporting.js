@@ -50,7 +50,15 @@ import {
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,128}$/;
 const EXPORT_DATASETS = ["issues", "checks", "sites"];
 // Params a request may carry; anything else is dropped before it's stored.
-const PERIOD_PARAMS = ["period", "month", "year", "startYear", "from", "to"];
+const PERIOD_PARAMS = [
+  "period",
+  "month",
+  "quarter",
+  "year",
+  "startYear",
+  "from",
+  "to",
+];
 const LIST_PARAMS = [
   "siteIds",
   "q",
@@ -333,8 +341,11 @@ export function createReportingHandlers({
 
     /** @param {Event} event */
     getScopeOptions: (event) =>
-      guarded(event, async () => ({
-        body: scopeOptions(await snapshots.current(), { now: now() }),
+      guarded(event, async ({ params }) => ({
+        body: scopeOptions(await snapshots.current(), {
+          now: now(),
+          include: typeof params.include === "string" ? params.include : "",
+        }),
       })),
 
     /** @param {Event} event */

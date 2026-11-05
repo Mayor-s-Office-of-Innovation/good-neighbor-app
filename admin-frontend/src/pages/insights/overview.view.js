@@ -44,12 +44,6 @@ import {
 /** @typedef {import("./insights-query.js").Period} Period */
 
 const NO_OPTIONS = { managerId: [], providerId: [], department: [] };
-// Asking again with the same cursor fails the same way.
-const RESTART_PAGING = new Set([
-  "snapshot_changed",
-  "invalid_cursor",
-  "cursor_query_mismatch",
-]);
 
 class InsightsOverview extends HTMLElement {
   connectedCallback() {
@@ -65,14 +59,12 @@ class InsightsOverview extends HTMLElement {
     this.statusMarkup = "";
     this.periodKind = this.period?.kind ?? "month";
     this.periodError = "";
-    this.notice = "";
-    // Earlier pages' cursors come back only on Back from a Site, else Previous goes to page one.
+    // Picks come back with the view they were made on; a new period has other rows.
     const back = this.session.overview;
     const here = this.currentPath();
     const same = back.path === here;
     const returning = same || (!!back.alsoPath && back.alsoPath === here);
-    /** @type {string[]} */
-    this.pages = same && this.state.cursor ? [...back.pages] : [];
+    if (same) this.state.selected = [...back.selected];
     // A Site left by another way mustn't pull focus on a later load.
     if (!returning) back.siteId = "";
     this.generation = 0;
@@ -190,21 +182,7 @@ class InsightsOverview extends HTMLElement {
       )
         return;
       this.removeAttribute("aria-busy");
-      const code = /** @type {any} */ (err)?.message;
-      if (RESTART_PAGING.has(code) && this.state.cursor) {
-        // New data or a bad link leaves no place to resume, so paging starts again (plan §6).
-        this.pages = [];
-        this.state.cursor = "";
-        this.notice = t(
-          code === "snapshot_changed"
-            ? "admin.insights.restarted"
-            : "admin.insights.restartedLink",
-        );
-        this.writeUrl();
-        return this.load();
-      }
       this.reply = null;
-      this.notice = "";
       // The old data time and notes describe a period no longer shown.
       this.region("freshness").innerHTML = freshnessView(null);
       this.region("results").innerHTML = failedView(
@@ -220,16 +198,12 @@ class InsightsOverview extends HTMLElement {
     if (mine !== this.generation) return;
     this.removeAttribute("aria-busy");
     this.reply = reply;
-    const kept = keptSelection(this.state.selected, this.pageIds());
-    if (kept.length !== this.state.selected.length) {
-      this.state.selected = kept;
-      this.writeUrl();
-    }
+    this.state.selected = keptSelection(this.state.selected, this.listedIds());
+    this.keepSelection();
     this.region("freshness").innerHTML = freshnessView(reply.meta);
     this.drawPeriod();
     this.drawResults();
     this.drawReport();
-    this.notice = "";
     this.returnFocus();
     this.restoreFocus();
   }
@@ -242,7 +216,6 @@ class InsightsOverview extends HTMLElement {
       state: this.state,
       siteHref: (id) => this.siteHref(id),
       names: this.names,
-      notice: this.notice,
     });
     this.drawBar();
   }
@@ -252,7 +225,7 @@ class InsightsOverview extends HTMLElement {
     if (count) count.textContent = this.reply ? countText(this.reply) : "";
     const all = /** @type {any} */ (this.querySelector("#insights-select-all"));
     if (!all) return;
-    const ids = this.pageIds();
+    const ids = this.listedIds();
     const { checked, indeterminate } = selectAllState(ids, this.state.selected);
     all.disabled = !ids.length || this.loading();
     all.checked = checked;
@@ -265,7 +238,7 @@ class InsightsOverview extends HTMLElement {
   }
 
   /** @returns {string[]} */
-  pageIds() {
+  listedIds() {
     return (this.reply?.sites ?? []).map((/** @type {any} */ s) => s.siteId);
   }
 
@@ -320,19 +293,33 @@ class InsightsOverview extends HTMLElement {
   writeUrl() {
     const path = `${location.pathname}${overviewSearch(this.state, this.period)}`;
     history.replaceState(history.state, "", path);
-    this.session.overview.path = path;
-    this.session.overview.pages = [...this.pages];
+    this.keepSelection();
     // The dashboard keeps its last-drawn path for its guards and tab memory.
     this.dispatchEvent(new CustomEvent("insights-url", { bubbles: true }));
   }
 
+  /** The picks stay off the URL, so the way back and a reattach find them here. */
+  keepSelection() {
+    this.session.overview.path = this.currentPath();
+    this.session.overview.selected = [...this.state.selected];
+  }
+
   /**
-   * A new population: the page, the selection and stale paging all reset.
+   * A new population, so the selection resets.
    * @param {Partial<import("./insights-query.js").OverviewState>} change
    */
   refine(change) {
-    Object.assign(this.state, change, { cursor: "", selected: [] });
-    this.pages = [];
+    Object.assign(this.state, change, { selected: [] });
+    this.reload();
+  }
+
+  /** Every Site is listed, so a new order keeps the picks. @param {string} sort */
+  resort(sort) {
+    this.state.sort = sort;
+    this.reload();
+  }
+
+  reload() {
     this.writeUrl();
     this.syncFilters();
     this.drawReport();
@@ -379,8 +366,9 @@ class InsightsOverview extends HTMLElement {
     const filter = target.dataset?.filter;
     if (filter) {
       const value = String(target.value ?? "");
-      if (value !== /** @type {any} */ (this.state)[filter])
-        this.refine({ [filter]: value });
+      if (value === /** @type {any} */ (this.state)[filter]) return;
+      if (filter === "sort") this.resort(value);
+      else this.refine({ [filter]: value });
       return;
     }
     if (target.id === "insights-select-all")
@@ -392,10 +380,11 @@ class InsightsOverview extends HTMLElement {
   /** Keeps the user's own picks first, in the order they made them. @param {boolean} on */
   selectAll(on) {
     if (this.loading()) return;
-    const ids = this.pageIds();
+    const ids = this.listedIds();
     const mine = this.state.selected;
+    const picked = new Set(mine);
     this.state.selected = on
-      ? [...mine, ...ids.filter((id) => !mine.includes(id))].slice(
+      ? [...mine, ...ids.filter((id) => !picked.has(id))].slice(
           0,
           MAX_REPORT_SITES,
         )
@@ -411,14 +400,9 @@ class InsightsOverview extends HTMLElement {
   }
 
   selectionChanged() {
-    this.state.selected = keptSelection(this.state.selected, this.pageIds());
-    this.writeUrl();
+    this.state.selected = keptSelection(this.state.selected, this.listedIds());
+    this.keepSelection();
     const picked = new Set(this.state.selected);
-    // Back from a Site must bring back the boxes ticked here.
-    for (const link of /** @type {NodeListOf<HTMLAnchorElement>} */ (
-      this.querySelectorAll("[data-site-link]")
-    ))
-      link.setAttribute("href", this.siteHref(link.dataset.siteLink ?? ""));
     // In place, so the box the user is on keeps focus.
     for (const box of /** @type {NodeListOf<any>} */ (
       this.querySelectorAll("[data-select-site]")
@@ -438,7 +422,7 @@ class InsightsOverview extends HTMLElement {
     if (this.region("results").contains(button)) this.refocus = true;
     const show = button.getAttribute("data-show");
     if (show && SHOW.includes(show)) {
-      // Pressing the shown view again mustn't drop the picks and page.
+      // Pressing the shown view again mustn't drop the picks.
       if (show !== this.state.show) this.refine({ show });
       return;
     }
@@ -446,8 +430,6 @@ class InsightsOverview extends HTMLElement {
       periodClicked(this, button, this.region("period"));
       return;
     }
-    const page = button.getAttribute("data-page");
-    if (page) return this.paged(page === "next");
     if (button.id === "insights-retry") return void this.load();
     if (button.id === "insights-clear-filters")
       return this.refine(
@@ -461,7 +443,7 @@ class InsightsOverview extends HTMLElement {
       this.session.overview = {
         path: this.currentPath(),
         siteId: site,
-        pages: [...this.pages],
+        selected: [...this.state.selected],
         alsoPath: "",
       };
   };
@@ -485,22 +467,6 @@ class InsightsOverview extends HTMLElement {
     this.periodError = "";
     this.refine({});
     this.drawPeriod();
-  }
-
-  /** @param {boolean} forward */
-  paged(forward) {
-    if (forward) {
-      if (!this.reply?.nextCursor) return;
-      this.pages.push(this.state.cursor);
-      this.state.cursor = this.reply.nextCursor;
-    } else {
-      this.state.cursor = this.pages.pop() ?? "";
-    }
-    this.state.selected = [];
-    this.refocus = true;
-    this.writeUrl();
-    this.drawReport();
-    void this.load();
   }
 
   /** The control the user pressed was redrawn; the count is next to it. */

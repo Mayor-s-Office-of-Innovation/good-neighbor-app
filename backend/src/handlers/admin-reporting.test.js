@@ -157,7 +157,7 @@ describe("who may read Insights", () => {
 describe("reads", () => {
   it("answers a bad period with 400 and its code", async () => {
     const { h } = setup();
-    const res = await h.getOverview(event({ query: { period: "quarter" } }));
+    const res = await h.getOverview(event({ query: { period: "week" } }));
     expect([res.statusCode, json(res).error]).toEqual([400, "invalid_period"]);
   });
 
@@ -176,7 +176,7 @@ describe("reads", () => {
 
   it("answers 400 without logging, since the caller's request was wrong", async () => {
     const { h } = setup();
-    await h.getOverview(event({ query: { period: "quarter" } }));
+    await h.getOverview(event({ query: { period: "week" } }));
     expect(logServerError).not.toHaveBeenCalled();
   });
 
@@ -460,7 +460,7 @@ describe("export and report jobs", () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it("limits a report to between 1 and 10 Sites", async () => {
+  it("limits a report to between 1 Site and more than the city has", async () => {
     const { h } = setup();
     const none = await h.postReport(
       event({ headers: key, body: { siteIds: [] } }),
@@ -488,6 +488,35 @@ describe("export and report jobs", () => {
       event({ headers: key, body: { siteIds: ["s1", "s9"] } }),
     );
     expect(json(res).error).toBe("unknown_site");
+  });
+
+  it("builds a report for a quarter, as the dialog asked", async () => {
+    const { h, started, jobStore } = setup();
+    await h.postReport(
+      event({
+        headers: key,
+        body: { siteIds: ["s1"], period: "quarter", year: 2026, quarter: 4 },
+      }),
+    );
+    await h.runJob(started[0]);
+    const report = JSON.parse([...jobStore.results.values()][0]);
+    expect(report.meta.interval).toMatchObject({
+      kind: "quarter",
+      startDay: "2026-10-01",
+      endDay: "2027-01-01",
+    });
+  });
+
+  it("lists only Site IDs and names in scope options, and only when asked", async () => {
+    const { h } = setup();
+    const plain = json(await h.getScopeOptions(event()));
+    const named = json(
+      await h.getScopeOptions(event({ query: { include: "sites" } })),
+    );
+    expect([plain.sites, Object.keys(named.sites[0]).sort()]).toEqual([
+      undefined,
+      ["name", "siteId"],
+    ]);
   });
 
   it("builds a report dataset with the same counts as Site detail", async () => {

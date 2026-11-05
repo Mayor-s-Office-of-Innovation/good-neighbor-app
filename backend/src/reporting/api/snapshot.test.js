@@ -61,6 +61,21 @@ describe("indexSnapshot", () => {
     expect(snap.sitesById.get("s1")?.name).toBe("Synthetic Site 1");
   });
 
+  it("groups each Site's days in day order, and its Issues", () => {
+    const { manifest, tables } = syntheticProjection();
+    tables.site_days.reverse();
+    const snap = indexSnapshot({ prefix: "p", manifest, tables });
+    const days = snap.daysBySite.get("s1")?.map((d) => d.day) ?? [];
+    expect(days).toEqual([...days].sort());
+    expect(days).toHaveLength(
+      tables.site_days.filter((d) => d.siteId === "s1").length,
+    );
+    expect(snap.issuesBySite.get("s2")?.map((i) => i.siteId)).toEqual([
+      "s2",
+      "s2",
+    ]);
+  });
+
   it("starts coverage on the earliest day with any record", () => {
     const { manifest, tables } = syntheticProjection();
     const first = tables.site_days.map((d) => d.day).sort()[0];

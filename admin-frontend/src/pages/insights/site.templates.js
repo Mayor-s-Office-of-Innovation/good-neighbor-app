@@ -4,6 +4,7 @@ import { escapeHtml } from "../../dom.js";
 import { rulebookText } from "../../../../frontend/src/i18n/rulebook.js";
 import { phoneWithExtension } from "../shared.templates.js";
 import { activityChart, chartUnit } from "./activity-chart.js";
+import { CONCERN_RULES } from "./concern-rules.js";
 import {
   codeKey,
   contactWord,
@@ -12,6 +13,8 @@ import {
   formatInstant,
   helpTip,
   noDataFor,
+  oneDecimal,
+  perDayText,
 } from "./insights.templates.js";
 import { severityView } from "./overview.templates.js";
 
@@ -71,26 +74,44 @@ export function sitePeriodView({ label, range }) {
   </div>`;
 }
 
+/**
+ * Each flag's why, with the numbers it was judged on.
+ * @param {Reply} reply
+ * @returns {Record<string, Record<string, string | number>>}
+ */
+function concernParams(reply) {
+  const { response, activity } = reply.totals;
+  const rules = CONCERN_RULES;
+  return {
+    fewChecks: {
+      perDay: oneDecimal(reply.checksPerDay ?? 0),
+      min: rules.checksPerDay,
+    },
+    repeatedSevere: { count: activity.severeIssues, min: rules.severeIssues },
+    manyIssues: { count: activity.issuesCreated, max: rules.issuesPer30Days },
+    longUnresolved: {
+      count: reply.longUnresolved ?? 0,
+      days: rules.unresolvedDays,
+    },
+    overdue: { count: response.overdue },
+    late: { count: response.late },
+  };
+}
+
 /** @param {string} code @param {Reply} reply @param {string} issuesHref */
 function concernLine(code, reply, issuesHref) {
   const key = `admin.insights.concern.${code}`;
+  const params = concernParams(reply)[code];
   // A reason added on the server later still shows, as a plain word.
-  if (!hasKey(key))
+  if (!hasKey(key) || !params)
     return `<li>${escapeHtml(t("admin.insights.otherConcern"))}</li>`;
-  const { response, activity } = reply.totals;
-  const count = {
-    overdue: response.overdue,
-    late: response.late,
-    severe: activity.severeIssues,
-    noChecks: 0,
-  }[/** @type {"overdue" | "late" | "severe" | "noChecks"} */ (code)];
   const link =
     code === "overdue" || code === "late"
       ? `<button type="button" class="btn-link" data-jump-tile="${code}">${escapeHtml(t("admin.insights.seeTile", { state: t(`admin.insights.response.${code}`) }))}</button>`
-      : code === "severe"
-        ? `<a href="${escapeHtml(issuesHref)}" data-route>${escapeHtml(t("admin.insights.viewIssues"))}</a>`
-        : `<a href="#insights-activity">${escapeHtml(t("admin.insights.seeActivity"))}</a>`;
-  return `<li data-concern="${code}"><strong>${escapeHtml(t(key))}:</strong> ${escapeHtml(t(`admin.insights.concernWhy.${code}`, { count }))} ${link}</li>`;
+      : code === "fewChecks"
+        ? `<a href="#insights-activity">${escapeHtml(t("admin.insights.seeActivity"))}</a>`
+        : `<a href="${escapeHtml(issuesHref)}" data-route>${escapeHtml(t("admin.insights.viewIssues"))}</a>`;
+  return `<li data-concern="${code}"><strong>${escapeHtml(t(key))}:</strong> ${escapeHtml(t(`admin.insights.concernWhy.${code}`, params))} ${link}</li>`;
 }
 
 /** Only a Site with concerns gets the box. @param {Reply} reply @param {string} issuesHref */
@@ -152,9 +173,9 @@ export function contactsView({ reply, details }) {
   return `${cell("public", reply.publicContact, details?.publicContact)}${cell("site", reply.siteContact, details?.primaryContact)}`;
 }
 
-/** @param {string} key @param {string} value already escaped @param {string} label @param {string} help */
-const tile = (key, value, label, help) =>
-  `<div class="insights__tile" data-activity="${key}"><span class="insights__tile-n" data-activity-count>${value}</span><span class="insights__tile-l">${escapeHtml(label)}</span>${helpTip(`insights-tip-activity-${key}`, label, help)}</div>`;
+/** @param {string} key @param {string} value already escaped @param {string} label @param {string} help @param {string} [note] already escaped */
+const tile = (key, value, label, help, note = "") =>
+  `<div class="insights__tile" data-activity="${key}"><span class="insights__tile-n" data-activity-count>${value}</span><span class="insights__tile-l">${escapeHtml(label)}</span>${note}${helpTip(`insights-tip-activity-${key}`, label, help)}</div>`;
 
 /** @param {Reply} reply @param {string} checksHref */
 function activityView(reply, checksHref) {
@@ -176,7 +197,15 @@ function activityView(reply, checksHref) {
           ? escapeHtml(t("admin.insights.unavailable"))
           : escapeHtml(counts[key] ?? 0),
         t(`admin.insights.activity.${key}`),
-        t(`admin.insights.activityHelp.${key}`),
+        t(`admin.insights.activityHelp.${key}`, {
+          min: CONCERN_RULES.checksPerDay,
+        }),
+        key === "completedPerimeterChecks" &&
+          !noData &&
+          reply.checksPerDay !== null &&
+          reply.checksPerDay !== undefined
+          ? `<span class="insights__tile-l muted" data-checks-per-day>${escapeHtml(perDayText(reply.checksPerDay))}</span>`
+          : "",
       ),
     ).join("")}</div>
     <div class="insights__charts">

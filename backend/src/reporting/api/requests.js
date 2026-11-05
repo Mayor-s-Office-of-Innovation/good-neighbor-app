@@ -10,8 +10,8 @@ export const LIMITS = Object.freeze({
   maxPageSize: 100,
   maxSiteIds: 100,
   maxTrendSites: 50,
-  // A citywide 12-month report takes about 45 ms a Site here; 250 stays well inside jobs.js's 2-minute stall window.
-  maxReportSites: 250,
+  // Above the citywide Site count, so no pick hits it; 1,008 Sites over a year build in 1.6 s.
+  maxReportSites: 2000,
   // A year of citywide Issues is about 222,000 rows (architecture doc, decision 4).
   maxExportRows: 250_000,
   maxSearch: 100,
@@ -62,6 +62,14 @@ function wholeNumber(value, code) {
   return Number(text);
 }
 
+// A finished month, so the numbers a page opens on don't change under the reader.
+/** @param {string} evaluatedAt @returns {string} YYYY-MM */
+function lastFullMonth(evaluatedAt) {
+  const [year, month] = pacificDateKey(evaluatedAt).split("-").map(Number);
+  const previous = new Date(Date.UTC(year, month - 2, 1));
+  return previous.toISOString().slice(0, 7);
+}
+
 /**
  * @param {Params} params
  * @param {string} evaluatedAt
@@ -72,9 +80,12 @@ export function parsePeriodParams(params, evaluatedAt) {
   /** @type {import("../periods.js").PeriodSpec} */
   let spec;
   if (kind === "month")
+    spec = { kind, month: str(params.month) ?? lastFullMonth(evaluatedAt) };
+  else if (kind === "quarter")
     spec = {
       kind,
-      month: str(params.month) ?? pacificDateKey(evaluatedAt).slice(0, 7),
+      year: wholeNumber(params.year, "invalid_year"),
+      quarter: wholeNumber(params.quarter, "invalid_quarter"),
     };
   else if (kind === "year")
     spec = { kind, year: wholeNumber(params.year, "invalid_year") };

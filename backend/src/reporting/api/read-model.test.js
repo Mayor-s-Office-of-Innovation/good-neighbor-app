@@ -6,6 +6,7 @@ import {
   parsePeriodParams,
 } from "./requests.js";
 import {
+  CONCERN_RULES,
   checkDetail,
   dataQuality,
   exportRowCount,
@@ -20,6 +21,7 @@ import {
   siteDetail,
   trends,
 } from "./read-model.js";
+import { CONCERN_RULES as ADMIN_CONCERN_RULES } from "../../../../admin-frontend/src/pages/insights/concern-rules.js";
 import { indexSnapshot } from "./snapshot.js";
 import { TEST_EVALUATED_AT, syntheticProjection } from "./test-projection.js";
 
@@ -32,7 +34,10 @@ const october = parsePeriodParams(
   { period: "month", month: "2026-10" },
   TEST_EVALUATED_AT,
 );
-const november = parsePeriodParams({}, TEST_EVALUATED_AT);
+const november = parsePeriodParams(
+  { period: "month", month: "2026-11" },
+  TEST_EVALUATED_AT,
+);
 
 /**
  * @param {"sites" | "issues" | "checks"} kind
@@ -321,11 +326,107 @@ describe("overview", () => {
     });
 
   it("lists why each Site is a top concern, and what evidence is unknown", () => {
+    // s1: two Severe Issues, two open since early October, one Overdue; s2: one open, late.
     const rows = shown({}, s3Contacted("unknown")).sites;
     expect(rows.map((r) => [r.siteId, r.concerns, r.unknownEvidence])).toEqual([
-      ["s1", ["overdue", "severe"], []],
-      ["s2", ["late"], []],
+      ["s1", ["repeatedSevere", "longUnresolved", "overdue"], []],
+      ["s2", ["longUnresolved", "late"], []],
       ["s3", [], ["publicContact", "siteContact"]],
+    ]);
+    expect(rows.map((r) => r.longUnresolved)).toEqual([2, 1, 0]);
+  });
+
+  it("keeps each threshold as a named rule, the same one the pages explain", () => {
+    expect(CONCERN_RULES).toEqual({
+      checksPerDay: 3,
+      severeIssues: 2,
+      issuesPer30Days: 4,
+      unresolvedDays: 14,
+    });
+    expect(ADMIN_CONCERN_RULES).toEqual(CONCERN_RULES);
+  });
+
+  /**
+   * One Site's flags for a period.
+   * @param {Snapshot} from
+   * @param {typeof october} interval
+   * @param {string} siteId
+   */
+  const flagsOf = (from, interval, siteId) =>
+    overview(from, {
+      interval,
+      filter: {},
+      list: list("sites"),
+      now: NOW,
+    }).sites.find((r) => r.siteId === siteId)?.concerns;
+
+  /** @param {string} from @param {string} to exclusive */
+  const days = (from, to) =>
+    parsePeriodParams({ period: "custom", from, to }, TEST_EVALUATED_AT);
+
+  it("needs 2 or more Severe Issues for Repeated Severe Issues", () => {
+    // Oct 1–4 holds only t1, Severe; October also holds t3.
+    expect([
+      flagsOf(snap, days("2026-10-01", "2026-10-05"), "s1"),
+      flagsOf(snap, october, "s1"),
+    ]).toEqual([
+      ["longUnresolved"],
+      ["repeatedSevere", "longUnresolved", "overdue"],
+    ]);
+  });
+
+  /** s1 with `count` Issues created Oct 1–10, a period under 30 days. @param {number} count */
+  const issuesInTenDays = (count) =>
+    edited((t) => {
+      const row = t.site_days.find(
+        (d) => d.siteId === "s1" && d.day === "2026-10-02",
+      );
+      row.issuesCreated = count - 1;
+    });
+
+  it("flags Many Issues over 4 per 30 days, and still over 4 in a shorter period", () => {
+    const tenDays = days("2026-10-01", "2026-10-11");
+    expect([
+      flagsOf(issuesInTenDays(4), tenDays, "s1")?.includes("manyIssues"),
+      flagsOf(issuesInTenDays(5), tenDays, "s1")?.includes("manyIssues"),
+    ]).toEqual([false, true]);
+  });
+
+  it("scales Many Issues to every day its Issues are counted on, today included", () => {
+    // Sep 21 to Nov 4 is 45 days, so 4 × 45 / 30 = 6 are allowed; 44 whole days would allow only 5.9.
+    const long = days("2026-09-21", "2026-11-05");
+    const busy = (/** @type {number} */ count) =>
+      flagsOf(issuesInTenDays(count), long, "s1")?.includes("manyIssues");
+    // Besides those, s1 has t2 and t3 in October and t4 in November.
+    expect([busy(4), busy(5)]).toEqual([false, true]);
+  });
+
+  /** s1's open t2 created `ms` before the snapshot was evaluated. @param {number} ms */
+  const openFor = (ms) =>
+    edited((t) => {
+      for (const i of t.issues)
+        if (i.issueId === "t1") i.resolvedAt = "2026-10-03T00:00:00.000Z";
+      const t2 = t.issues.find((i) => i.issueId === "t2");
+      t2.createdAt = new Date(Date.parse(TEST_EVALUATED_AT) - ms).toISOString();
+    });
+
+  it("flags an Issue created in the period and still open over 14 days at the data update", () => {
+    const fourteenDays = CONCERN_RULES.unresolvedDays * 86_400_000;
+    expect([
+      flagsOf(openFor(fourteenDays), october, "s1")?.includes("longUnresolved"),
+      flagsOf(openFor(fourteenDays + 1), october, "s1")?.includes(
+        "longUnresolved",
+      ),
+    ]).toEqual([false, true]);
+  });
+
+  it("doesn't count a resolved Issue as long unresolved", () => {
+    const resolved = edited((t) => {
+      for (const i of t.issues) i.resolvedAt ??= "2026-10-30T00:00:00.000Z";
+    });
+    expect(flagsOf(resolved, october, "s1")).toEqual([
+      "repeatedSevere",
+      "overdue",
     ]);
   });
 
@@ -367,12 +468,89 @@ describe("overview", () => {
    */
   const noChecks = (from, interval) =>
     overview(from, { interval, filter: {}, list: list("sites"), now: NOW })
-      .sites.filter((r) => r.concerns.includes("noChecks"))
+      .sites.filter((r) => r.concerns.includes("fewChecks"))
       .map((r) => r.siteId);
 
   it("flags an open Site with a perimeter and no Checks in the period", () => {
     // s2 has no November Checks; s3 has none either, but it's closed.
-    expect(noChecks(walked(), november)).toEqual(["s2"]);
+    const flagged = noChecks(walked(), november);
+    expect(flagged).toContain("s2");
+    expect(flagged).not.toContain("s3");
+  });
+
+  /**
+   * s1 walked, with these completed Checks on Oct 12 and 13.
+   * @param {number} first
+   * @param {number} second
+   */
+  const checksOn = (first, second) =>
+    walked((t) => {
+      t.site_days.push(
+        { siteId: "s1", day: "2026-10-12", completedPerimeterChecks: first },
+        { siteId: "s1", day: "2026-10-13", completedPerimeterChecks: second },
+      );
+    });
+
+  it("flags Few Checks under 3 a day on average, and shows that average", () => {
+    const twoDays = days("2026-10-12", "2026-10-14");
+    /** @param {Snapshot} from */
+    const row = (from) =>
+      overview(from, {
+        interval: twoDays,
+        filter: { siteIds: ["s1"] },
+        list: list("sites"),
+        now: NOW,
+      }).sites[0];
+    expect(
+      [row(checksOn(3, 3)), row(checksOn(3, 2))].map((r) => [
+        r.checksPerDay,
+        r.concerns.includes("fewChecks"),
+      ]),
+    ).toEqual([
+      [3, false],
+      [2.5, true],
+    ]);
+  });
+
+  it("rounds the average before flagging it, so 3.0 a day is never under 3", () => {
+    const busy = walked((t) => {
+      for (let d = 16; d <= 30; d++)
+        t.site_days.push({
+          siteId: "s1",
+          day: `2026-09-${d}`,
+          completedPerimeterChecks: d === 16 ? 45 : 3,
+        });
+    });
+    const res = overview(busy, {
+      interval: days("2026-09-16", "2026-10-16"),
+      filter: { siteIds: ["s1"] },
+      list: list("sites"),
+      now: NOW,
+    }).sites[0];
+    // 45 + 14 × 3 + October's 2 is 89 over 30 days: 2.97, shown as 3.0.
+    expect([res.checksPerDay, res.concerns.includes("fewChecks")]).toEqual([
+      3,
+      false,
+    ]);
+  });
+
+  it("averages over whole days only, leaving out today, which is still running", () => {
+    // s1's one November Check is on Nov 3; Nov 1–3 are whole, Nov 4 is today.
+    const row = overview(walked(), {
+      interval: november,
+      filter: { siteIds: ["s1"] },
+      list: list("sites"),
+      now: NOW,
+    }).sites[0];
+    expect(row.checksPerDay).toBe(0.3);
+  });
+
+  it("gives no average for a Site with no perimeter to walk", () => {
+    expect(shown({}).sites.map((r) => r.checksPerDay)).toEqual([
+      null,
+      null,
+      null,
+    ]);
   });
 
   it("doesn't flag no Checks without a perimeter, before the data, or before the Site existed", () => {
@@ -387,16 +565,17 @@ describe("overview", () => {
       noChecks(snap, november),
       noChecks(walked(), august),
       noChecks(lateSite, november),
-    ]).toEqual([[], [], []]);
+      // s1's one Check in three whole days still flags it.
+    ]).toEqual([[], [], ["s1"]]);
   });
 
   it("flags no Checks in a period the records start partway through", () => {
-    // Records start on 2026-09-15, a part day; s1 has no Checks after it.
+    // Records start on 2026-09-15, a part day; neither Site has a Check after it.
     const september = parsePeriodParams(
       { period: "month", month: "2026-09" },
       TEST_EVALUATED_AT,
     );
-    expect(noChecks(walked(), september)).toEqual(["s1"]);
+    expect(noChecks(walked(), september)).toEqual(["s1", "s2"]);
   });
 
   it("doesn't count the records' first day, which is likely a part day", () => {
@@ -416,14 +595,14 @@ describe("overview", () => {
     expect([
       noChecks(addedOn("2026-11-03"), november),
       noChecks(addedOn("2026-11-02"), november),
-    ]).toEqual([[], ["s2"]]);
+    ]).toEqual([["s1"], ["s1", "s2"]]);
   });
 
   it("doesn't fail an Overview over a Site whose added time doesn't parse", () => {
     const garbled = walked((t) => {
       t.sites[1].createdAt = "not a time";
     });
-    expect(noChecks(garbled, november)).toEqual(["s2"]);
+    expect(noChecks(garbled, november)).toEqual(["s1", "s2"]);
   });
 
   it("keeps every row for All Sites, however the filter is applied", () => {
@@ -436,7 +615,7 @@ describe("overview", () => {
     expect(rows.every((r) => SITE_ROW_FILTERS.show(r, "all"))).toBe(true);
   });
 
-  it("keeps a Site flagged only for no Checks in Top concerns", () => {
+  it("keeps Sites flagged only for few Checks in Top concerns", () => {
     const quiet = walked((t) => {
       for (const c of t.site_contacts) {
         c.publicContact = "available";
@@ -449,8 +628,10 @@ describe("overview", () => {
       list: list("sites", { show: "top" }),
       now: NOW,
     }).sites;
+    // s1's one Check over 3 whole days is 0.3 a day; s2 has none.
     expect(rows.map((r) => [r.siteId, r.concerns])).toEqual([
-      ["s2", ["noChecks"]],
+      ["s1", ["fewChecks"]],
+      ["s2", ["fewChecks"]],
     ]);
   });
 
@@ -469,6 +650,7 @@ describe("overview", () => {
       "s1",
       "s2",
     ]);
+    expect(s3?.concerns).not.toContain("noPublicContact");
   });
 
   it("doesn't list a closed Site's contacts as unknown", () => {
@@ -499,10 +681,19 @@ describe("overview", () => {
     expect(filtered.comparison).not.toEqual(shown({}).comparison);
   });
 
-  it("says where a page from a cursor starts", () => {
-    const first = shown({ limit: "2" });
-    const second = shown({ limit: "2", cursor: first.nextCursor });
-    expect([first.offset, second.offset]).toEqual([0, 2]);
+  it("lists every Site on one page, past the old 100-row cap", () => {
+    const many = edited((t) => {
+      for (let i = 4; i <= 150; i++)
+        t.sites.push({ ...t.sites[0], siteId: `s${i}`, name: `Site ${i}` });
+    });
+    const res = overview(many, {
+      interval: october,
+      filter: {},
+      list: list("sites", { limit: "50" }),
+      now: NOW,
+    });
+    expect([res.sites.length, res.siteCount]).toEqual([150, 150]);
+    expect(Object.keys(res)).not.toContain("nextCursor");
   });
 
   it("shows Sites with unknown evidence when asked", () => {
@@ -554,8 +745,41 @@ describe("siteDetail", () => {
       now: NOW,
     }).sites.find((r) => r.siteId === "s1");
     const res = siteDetail(snap, "s1", { interval: october, now: NOW });
-    expect(res.concerns).toEqual(["overdue", "severe"]);
+    expect(res.concerns).toEqual([
+      "repeatedSevere",
+      "longUnresolved",
+      "overdue",
+    ]);
     expect(res.concerns).toEqual(row?.concerns);
+  });
+
+  it("agrees with its Overview row and the report on every flag and average", () => {
+    const walkedSnap = edited((t) => {
+      for (const site of t.sites) site.hasPerimeter = true;
+    });
+    const rows = overview(walkedSnap, {
+      interval: october,
+      filter: {},
+      list: list("sites"),
+      now: NOW,
+    }).sites;
+    const report = reportDataset(walkedSnap, {
+      siteIds: rows.map((r) => r.siteId),
+      interval: october,
+      now: NOW,
+    }).sites;
+    const pick = (/** @type {Record<string, any>} */ r) => [
+      r.concerns,
+      r.checksPerDay,
+      r.longUnresolved,
+    ];
+    expect(
+      rows.map((r) =>
+        pick(siteDetail(walkedSnap, r.siteId, { interval: october, now: NOW })),
+      ),
+    ).toEqual(rows.map(pick));
+    expect(report.map(pick)).toEqual(rows.map(pick));
+    expect(rows.map((r) => r.checksPerDay)).toEqual([0.1, 0, 0]);
   });
 
   it("answers 404 for a Site the snapshot doesn't have", () => {
@@ -682,12 +906,21 @@ describe("listChecks", () => {
 });
 
 describe("scopeOptions", () => {
-  it("counts Sites in each group value", () => {
+  it("counts Sites in each group value, without a list of Sites", () => {
     const res = scopeOptions(snap, { now: NOW });
     expect(res.groups.department).toEqual([
       { value: "Example Department", sites: 2 },
       { value: "Other Department", sites: 1 },
     ]);
+    expect(Object.keys(res)).not.toContain("sites");
+  });
+
+  it("lists only each Site's ID and name when a screen asks for them", () => {
+    const res = scopeOptions(snap, { now: NOW, include: "sites" });
+    expect(res.sites?.[0]).toEqual({
+      siteId: "s1",
+      name: "Synthetic Site 1",
+    });
     expect(res.sites).toHaveLength(3);
   });
 
@@ -944,6 +1177,29 @@ describe("reportDataset", () => {
       "t3",
     ]);
     expect(res.sites[0].totals.response.overdue).toBe(1);
+  });
+
+  it("gives each Site its current public contact, or the No public contact flag", () => {
+    const res = reportDataset(snap, {
+      siteIds: ["s1", "s2", "s3"],
+      interval: october,
+      now: NOW,
+    });
+    expect(
+      res.sites.map((s) => [
+        s.site.siteId,
+        s.publicContact.state,
+        s.publicContact.email,
+        s.publicContact.phone,
+        s.noPublicContact,
+      ]),
+    ).toEqual([
+      ["s1", "available", "desk@example.org", "415-555-0100", false],
+      ["s2", "missing", null, null, true],
+      // Closed, so its missing contact isn't flagged, as on Overview.
+      ["s3", "missing", null, null, false],
+    ]);
+    expect(JSON.stringify(res)).not.toMatch(/primaryContact|firstName/);
   });
 
   it("leaves out Severe Issues from outside the period", () => {

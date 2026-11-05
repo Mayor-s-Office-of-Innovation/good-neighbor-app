@@ -2,7 +2,7 @@
 // backend/src/handlers/admin-reporting.js; a backend unit test compares the
 // two (reporting/api/insights-mock-shape.test.js), so a changed reply fails
 // there before a spec passes against an outdated fake. Overview follows the
-// request's period, filters and paging; Site replies follow the period, and
+// request's period, filters and sort; Site replies follow the period, and
 // Issue lists only the period and siteIds, so specs can check what the page
 // asked for.
 
@@ -78,9 +78,21 @@ function requestedPeriod(params) {
   /** @type {[string, string]} */
   let days;
   if (kind === "month") {
-    const month = params.get("month") || EVALUATED_DAY.slice(0, 7);
+    // The last full month, as the handler defaults.
+    const month =
+      params.get("month") ??
+      addMonths(`${EVALUATED_DAY.slice(0, 7)}-01`, -1).slice(0, 7);
     if (!/^\d{4}-\d{2}$/.test(month)) return { error: "invalid_month" };
     days = [`${month}-01`, addMonths(`${month}-01`, 1)];
+  } else if (kind === "quarter") {
+    // The handler's own checks, so a spec can't pass on a quarter it refuses.
+    const year = Number(params.get("year"));
+    const quarter = params.get("quarter") ?? "";
+    if (!/^2\d{3}$/.test(params.get("year") ?? ""))
+      return { error: "invalid_year" };
+    if (!/^[1-4]$/.test(quarter)) return { error: "invalid_quarter" };
+    const start = `${year}-${String(Number(quarter) * 3 - 2).padStart(2, "0")}-01`;
+    days = [start, addMonths(start, 3)];
   } else if (kind === "year" || kind === "financialYear") {
     const year = Number(params.get(kind === "year" ? "year" : "startYear"));
     if (!Number.isInteger(year) || year < 2000)
@@ -116,7 +128,7 @@ function requestedPeriod(params) {
 
 /** @param {ReturnType<typeof interval> | null} period */
 const meta = (period) => ({
-  apiVersion: "reporting-v1",
+  apiVersion: "reporting-v2",
   contractVersion: "insights-v2",
   ruleVersion: "2026-11-04",
   snapshotId: "mock-snapshot",
@@ -205,9 +217,19 @@ const SITES = [
     activity,
     response,
     maxSeverity: 4,
+    // 62 Checks over October's 31 days.
+    checksPerDay: 2,
+    longUnresolved: 1,
     publicContact: contact("available"),
     siteContact: contact("missing"),
-    concerns: ["overdue", "late", "severe"],
+    concerns: [
+      "fewChecks",
+      "repeatedSevere",
+      "manyIssues",
+      "longUnresolved",
+      "overdue",
+      "late",
+    ],
     unknownEvidence: [],
   },
   {
@@ -233,6 +255,9 @@ const SITES = [
       notTimed: 0,
     },
     maxSeverity: null,
+    // Closed, so no Checks isn't a concern.
+    checksPerDay: 0,
+    longUnresolved: 0,
     publicContact: contact("available"),
     siteContact: contact("available"),
     concerns: [],
@@ -243,7 +268,7 @@ const SITES = [
     siteId: "s3",
     name: "Harbor Example Site",
     activity: {
-      completedPerimeterChecks: 40,
+      completedPerimeterChecks: 93,
       singleIssueReports: 1,
       unfinishedChecks: 0,
       issuesCreated: 2,
@@ -258,6 +283,8 @@ const SITES = [
       notTimed: 0,
     },
     maxSeverity: 2,
+    checksPerDay: 3,
+    longUnresolved: 0,
     publicContact: contact("available"),
     siteContact: contact("available"),
     concerns: [],
@@ -285,9 +312,11 @@ const SITES = [
       notTimed: 0,
     },
     maxSeverity: 5,
+    checksPerDay: 0.4,
+    longUnresolved: 0,
     publicContact: contact("missing"),
     siteContact: contact("unknown"),
-    concerns: ["late", "severe"],
+    concerns: ["fewChecks", "late"],
     unknownEvidence: ["response", "siteContact"],
   },
 ];
@@ -324,6 +353,8 @@ const counted = (site, period) =>
         ...site,
         ...ZERO,
         maxSeverity: null,
+        checksPerDay: null,
+        longUnresolved: 0,
         // No activity data, so only today's contacts can still be unknown.
         concerns: [],
         unknownEvidence: site.unknownEvidence.filter(
@@ -364,8 +395,7 @@ const SORT_VALUE = {
 };
 
 /**
- * Overview for a request, filtered, sorted and paged as the handler does.
- * The cursor is the next row's index, which only the mock reads.
+ * Overview for a request, filtered and sorted as the handler does, every Site at once.
  * @param {URLSearchParams} params
  */
 function overviewReply(params) {
@@ -410,18 +440,13 @@ function overviewReply(params) {
     const order = typeof x === "string" ? collator.compare(x, y) : x - y;
     return (dir === "asc" ? order : -order) || byName(a, b);
   });
-  const limit = Number(params.get("limit") || 50);
-  const start = Number(params.get("cursor") || 0);
-  const page = rows.slice(start, start + limit);
   return {
     json: {
       meta: meta(period),
       totals: totalsOf(rows),
       comparison,
       siteCount: rows.length,
-      offset: start,
-      sites: page.map((r) => ({ ...r, manageHref: `/sites/${r.siteId}` })),
-      nextCursor: start + limit < rows.length ? String(start + limit) : null,
+      sites: rows.map((r) => ({ ...r, manageHref: `/sites/${r.siteId}` })),
     },
   };
 }
@@ -456,6 +481,8 @@ function siteReply(siteId, params) {
       publicContact: row.publicContact,
       siteContact: row.siteContact,
       totals: { activity: row.activity, response: row.response },
+      checksPerDay: row.checksPerDay,
+      longUnresolved: row.longUnresolved,
       concerns: row.concerns,
       comparison,
       days,
@@ -670,7 +697,6 @@ export const insightsReplies = {
         ]),
       ),
       categories: [issue.category],
-      sites: [dims],
     },
   },
   "POST reporting/trends": {
@@ -764,6 +790,12 @@ export function insightsReply(request) {
   if (found.key === "GET reporting/overview")
     return copy(overviewReply(params));
   if (found.key === "GET reporting/issues") return copy(issuesReply(params));
+  if (found.key === "GET reporting/scope-options") {
+    const reply = copy(insightsReplies[found.key]);
+    if (params.get("include") === "sites")
+      reply.json.sites = SITES.map(({ siteId, name }) => ({ siteId, name }));
+    return reply;
+  }
   if (found.key === "GET reporting/sites/{siteId}")
     return copy(
       siteReply(decoded(request.path.split("/").pop() || ""), params),

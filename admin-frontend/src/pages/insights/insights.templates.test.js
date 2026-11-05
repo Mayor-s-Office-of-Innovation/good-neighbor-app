@@ -9,6 +9,7 @@ import {
   focusSoon,
   freshnessView,
   helpTip,
+  perDayText,
   periodForKind,
   periodView,
   periodLabel,
@@ -104,6 +105,64 @@ test("the period type buttons pick the period that holds the one shown", () => {
     { kind: "financialYear", startYear: 2026 },
   );
   assert.equal(periodForKind("custom", march), null);
+  assert.deepEqual(periodForKind("quarter", march), {
+    kind: "quarter",
+    year: 2026,
+    quarter: 1,
+  });
+});
+
+test("Quarter from a running year opens the quarter holding today", () => {
+  const year = {
+    kind: "year",
+    startDay: "2026-01-01",
+    endDay: "2027-01-01",
+    incomplete: true,
+    observedTo: "2026-11-04T19:00:00.000Z",
+  };
+  assert.deepEqual(periodForKind("quarter", year), {
+    kind: "quarter",
+    year: 2026,
+    quarter: 4,
+  });
+});
+
+test("a quarter reads as the field app's reports name it", () => {
+  assert.equal(
+    periodLabel({ ...october, kind: "quarter", startDay: "2026-07-01" }),
+    translate("reports.period.quarter", { quarter: 3, year: 2026 }),
+  );
+});
+
+test("the period types are Month, Quarter, Year, Financial year and Custom, in the mock's order", () => {
+  const html = periodView({
+    interval: october,
+    kind: "quarter",
+    draft: { from: "", to: "" },
+    error: "",
+  });
+  assert.deepEqual(
+    [...html.matchAll(/data-period-kind="(\w+)" aria-pressed="(\w+)"/g)].map(
+      (m) => [m[1], m[2]],
+    ),
+    [
+      ["month", "false"],
+      ["quarter", "true"],
+      ["year", "false"],
+      ["financialYear", "false"],
+      ["custom", "false"],
+    ],
+  );
+});
+
+test("a daily average shows one decimal place", () => {
+  assert.deepEqual(
+    [perDayText(3), perDayText(2.5)],
+    [
+      translate("admin.insights.perDay", { value: "3.0" }),
+      translate("admin.insights.perDay", { value: "2.5" }),
+    ],
+  );
 });
 
 test("Month from a running year opens this month, in Pacific time", () => {

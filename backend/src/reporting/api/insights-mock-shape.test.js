@@ -185,7 +185,6 @@ describe("the admin E2E Insights mock", () => {
       body("POST reporting/trends").categories.length,
       body("POST reporting/trends").breakdown.length,
       body("GET reporting/checks/{checkId}").issues.length,
-      body("GET reporting/scope-options").sites.length,
     ]).not.toContain(0);
     expect(body("GET reports/{jobId}").job.state).toBe("succeeded");
   });

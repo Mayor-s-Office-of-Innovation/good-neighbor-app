@@ -7,11 +7,12 @@ import {
 import { addDays } from "../../../../frontend/src/domain/reports-periods.js";
 import { escapeHtml } from "../../dom.js";
 import {
-  currentMonth,
   customPeriodError,
   intervalOf,
+  lastFullMonth,
   periodOf,
   periodSearch,
+  quarterOf,
   samePeriod,
   stepPeriod,
 } from "./insights-query.js";
@@ -48,11 +49,18 @@ export function formatInstant(instant) {
 export const codeKey = (prefix, code) =>
   `${prefix}.${code.replace(/_([a-z])/g, (_, c) => c.toUpperCase())}`;
 
-/** @param {Interval} interval e.g. "October 2026" or "FY 2025–26" */
+/** @param {Interval} interval e.g. "October 2026", "Q3 2026" or "FY 2025–26" */
 export function periodLabel(interval) {
   const start = interval.startDay;
   if (interval.kind === "month")
     return formatDateTime(noon(start), { month: "long", year: "numeric" });
+  if (interval.kind === "quarter") {
+    const { year, quarter } = /** @type {{ year: number, quarter: number }} */ (
+      quarterOf(start)
+    );
+    // The field app's reports name quarters this way too.
+    return t("reports.period.quarter", { quarter, year });
+  }
   if (interval.kind === "year") return start.slice(0, 4);
   if (interval.kind === "financialYear")
     return t("admin.insights.period.fy", {
@@ -69,6 +77,13 @@ export function rangeLabel(interval) {
     to: formatDay(addDays(interval.endDay, -1)),
   });
 }
+
+/** One decimal, as the mock shows it; the server rounds to one before it flags. @param {number} perDay */
+export const oneDecimal = (perDay) => perDay.toFixed(1);
+
+/** @param {number} perDay */
+export const perDayText = (perDay) =>
+  t("admin.insights.perDay", { value: oneDecimal(perDay) });
 
 /** No records cover this period, so its zeros aren't real. @param {ReplyMeta} meta */
 export function noDataFor(meta) {
@@ -132,6 +147,7 @@ export function freshnessView(meta) {
 
 const KINDS = /** @type {const} */ ([
   "month",
+  "quarter",
   "year",
   "financialYear",
   "custom",
@@ -181,6 +197,7 @@ export function periodForKind(kind, interval) {
   const year = Number(day.slice(0, 4));
   const month = Number(day.slice(5, 7));
   if (kind === "month") return { kind: "month", month: day.slice(0, 7) };
+  if (kind === "quarter") return quarterOf(day);
   if (kind === "year") return { kind: "year", year };
   if (kind === "financialYear")
     return { kind: "financialYear", startYear: month >= 7 ? year : year - 1 };
@@ -260,7 +277,7 @@ export function redrawKeepingFocus(region, markup, keepTyped = true) {
 export function periodInterval(host) {
   const replied = host.reply?.meta.interval ?? null;
   if (!host.period && replied) return replied;
-  const asked = intervalOf(host.period ?? currentMonth());
+  const asked = intervalOf(host.period ?? lastFullMonth());
   return replied &&
     replied.kind === asked.kind &&
     replied.startDay === asked.startDay &&
@@ -302,7 +319,7 @@ export function periodClicked(host, button, region) {
   if (kind) {
     const next = periodForKind(kind, interval);
     if (next && samePeriod(next, host.period ?? periodOf(interval))) {
-      // Back to the period on screen: no reload, so selection and page stay.
+      // Back to the period on screen: no reload, so the picks stay.
       host.periodKind = next.kind;
       host.periodError = "";
       drawPeriodControl(host, region);

@@ -73,7 +73,6 @@
 .insights__custom,
 .insights__resultbar,
 .insights__actions,
-.insights__pager,
 .insights__psel {
   display: flex;
   flex-wrap: wrap;
@@ -302,6 +301,21 @@
   border: 0;
   border-radius: 0;
   border-bottom: 1px solid var(--line);
+}
+
+/* Every Site is on one page, so the header must stay in view while it scrolls. */
+@media (min-width: 761px) {
+  .insights .insights__table {
+    max-height: calc(100dvh - 96px);
+    overflow: auto;
+  }
+
+  .insights__table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--surface);
+  }
 }
 
 .insights__table thead th {

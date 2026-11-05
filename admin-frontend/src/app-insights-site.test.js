@@ -13,7 +13,10 @@ import {
 import { mountAdmin } from "../test-support/app-mount.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
-import { formatInstant } from "./pages/insights/insights.templates.js";
+import {
+  formatInstant,
+  perDayText,
+} from "./pages/insights/insights.templates.js";
 
 const url = () => window.location.pathname + window.location.search;
 /** @param {string} key */
@@ -87,12 +90,43 @@ test("a Site with concerns says why, each with its count and where to look", asy
   });
   assert.deepEqual(
     $$("[data-concern]").map((li) => li.dataset.concern),
-    ["overdue", "late", "severe"],
+    [
+      "fewChecks",
+      "repeatedSevere",
+      "manyIssues",
+      "longUnresolved",
+      "overdue",
+      "late",
+    ],
   );
   assert.ok(
-    text('[data-concern="severe"]').includes(
-      t("admin.insights.concernWhy.severe", { count: 2 }),
+    text('[data-concern="fewChecks"]').includes(
+      t("admin.insights.concernWhy.fewChecks", { perDay: "2.0", min: 3 }),
     ),
+  );
+  assert.equal(
+    $('[data-concern="fewChecks"] a').getAttribute("href"),
+    "#insights-activity",
+  );
+  assert.ok(
+    text('[data-concern="repeatedSevere"]').includes(
+      t("admin.insights.concernWhy.repeatedSevere", { count: 2, min: 2 }),
+    ),
+  );
+  assert.ok(
+    text('[data-concern="manyIssues"]').includes(
+      t("admin.insights.concernWhy.manyIssues", { count: 9, max: 4 }),
+    ),
+  );
+  assert.ok(
+    text('[data-concern="longUnresolved"]').includes(
+      t("admin.insights.concernWhy.longUnresolved", { count: 1, days: 14 }),
+    ),
+  );
+  // Shows the number Few Checks is judged on, not only the total.
+  assert.equal(
+    text('[data-activity="completedPerimeterChecks"] [data-checks-per-day]'),
+    perDayText(2),
   );
   await click('[data-concern="late"] [data-jump-tile]');
   assert.deepEqual(pressed(), ["late"]);
@@ -462,7 +496,7 @@ test("Overview in the breadcrumb shows the period picked on the Site", async () 
   );
 });
 
-test("a Site opened without a period goes back to Overview for this month", async () => {
+test("a Site opened without a period goes back to Overview for the default period", async () => {
   const back = "/insights?period=2026-08&show=all";
   await mountAdmin(`/insights/sites/s1?return=${encodeURIComponent(back)}`, {
     insights: true,

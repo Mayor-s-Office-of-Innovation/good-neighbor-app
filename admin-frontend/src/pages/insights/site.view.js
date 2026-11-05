@@ -42,10 +42,8 @@ const isOverview = (path) =>
 function withPeriod(path, period) {
   const query = `?${path.split("?")[1] ?? ""}`;
   if (samePeriod(readPeriod(query), period)) return path;
-  // A new period has new pages and rows, so the old page and picks go.
   // Built as Overview builds its own URL, so Overview knows it on return.
-  const state = { ...readOverview(query), cursor: "", selected: [] };
-  return `/insights${overviewSearch(state, period)}`;
+  return `/insights${overviewSearch(readOverview(query), period)}`;
 }
 
 class InsightsSite extends HTMLElement {
@@ -72,14 +70,14 @@ class InsightsSite extends HTMLElement {
     const asked = safeReturnPath(
       new URLSearchParams(location.search).get("return"),
     );
-    // Paging history belongs to one Overview; another one starts without it.
+    // Picks belong to one Overview; another one starts without them.
     if (isOverview(asked))
       this.session.overview = {
         path: asked,
         siteId: this.siteId,
-        pages:
+        selected:
           asked === this.session.overview.path
-            ? this.session.overview.pages
+            ? this.session.overview.selected
             : [],
         alsoPath: "",
       };
