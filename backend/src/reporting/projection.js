@@ -79,6 +79,13 @@ function reportCategory(category) {
 }
 
 /**
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+const filled = (value) =>
+  typeof value === "string" && value.trim() ? value.trim() : null;
+
+/**
  * Contacts are labelled "current", because the app keeps no contact history.
  * @param {Record<string, any>[]} sites
  * @param {string} evaluatedAt
@@ -109,6 +116,10 @@ function buildSiteTables(sites, evaluatedAt) {
         siteId: String(s.siteId),
         publicContact: pub.state,
         publicContactReasons: pub.reasonCodes.join(","),
+        // Reports print the public contact; the Site manager's stays out (plan §8).
+        publicEmail: filled(s.publicContact?.email),
+        publicPhone: filled(s.publicContact?.phone),
+        publicPhoneExtension: filled(s.publicContact?.phoneExtension),
         siteContact: site.state,
         siteContactReasons: site.reasonCodes.join(","),
         basis: "current",
@@ -156,6 +167,9 @@ export const TABLE_SCHEMAS = {
     siteId: V,
     publicContact: V,
     publicContactReasons: V,
+    publicEmail: V,
+    publicPhone: V,
+    publicPhoneExtension: V,
     siteContact: V,
     siteContactReasons: V,
     basis: V,

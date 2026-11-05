@@ -1,7 +1,7 @@
 // Every table, CSV and report carries both versions, so old exports stay explainable.
 
 /** Bump when a projection table gains, loses or renames a column. */
-export const CONTRACT_VERSION = "insights-v1";
+export const CONTRACT_VERSION = "insights-v2";
 
 /** Bump when an endpoint's reply gains, loses or renames a field. */
 export const API_VERSION = "reporting-v1";

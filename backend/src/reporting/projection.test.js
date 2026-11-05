@@ -121,6 +121,43 @@ async function build(evaluatedAt = EVALUATED) {
   return { tables: await readProjection(conn, out), manifest };
 }
 
+describe("site_contacts in the projection", () => {
+  it("carries the public contact for reports, but not the Site manager's", async () => {
+    const { tables } = await buildFromRows(
+      {
+        sites: [
+          {
+            siteId: "s1",
+            publicContact: {
+              email: " desk@example.org ",
+              phone: "415-555-0100",
+              phoneExtension: "12",
+            },
+            primaryContact: {
+              email: "lead@example.org",
+              phone: "415-555-0101",
+            },
+          },
+          { siteId: "s2", publicContact: { email: "", phone: "  " } },
+        ],
+      },
+      EVALUATED,
+    );
+    const siteContacts = tables.site_contacts;
+    expect(
+      siteContacts.map((c) => [
+        c.publicEmail,
+        c.publicPhone,
+        c.publicPhoneExtension,
+      ]),
+    ).toEqual([
+      ["desk@example.org", "415-555-0100", "12"],
+      [null, null, null],
+    ]);
+    expect(JSON.stringify(siteContacts)).not.toContain("lead@example.org");
+  });
+});
+
 describe("buildProjection over a lake written like an export", () => {
   it("counts one Check and one Issue despite update, media and pointer rows", async () => {
     await writeLocalLake(conn, dir, items, {
