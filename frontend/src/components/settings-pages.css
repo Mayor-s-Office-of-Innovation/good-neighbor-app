@@ -83,7 +83,10 @@ feedback-view {
   min-height: 48px;
   border: 0;
   border-radius: var(--radius-sm);
-  padding: 0.75rem 0.5rem;
+  /* Wash extends past the content edges; text stays on the shared edge. */
+  margin-inline: -0.25rem;
+  width: calc(100% + 0.5rem);
+  padding: 0.75rem;
   background: transparent;
   color: var(--text);
   cursor: pointer;

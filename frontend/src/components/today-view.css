@@ -270,8 +270,11 @@
   font-size: 1rem;
   font-weight: 600;
   line-height: 1.2;
-  margin: 0;
-  padding: 0.75rem 0;
+  /* The hover/press wash extends past the icons on both sides; the
+     negative margin + matching padding keep the content aligned. */
+  margin: 0 -0.75rem;
+  width: calc(100% + 1.5rem);
+  padding: 0.75rem;
   text-align: left;
   white-space: normal;
   overflow-wrap: anywhere;
