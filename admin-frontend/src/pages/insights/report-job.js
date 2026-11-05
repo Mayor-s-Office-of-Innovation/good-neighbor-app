@@ -7,7 +7,6 @@
  * @typedef {{
  *   createInsightsReport: (body: Record<string, unknown>, key: string) => Promise<{ job: Job }>,
  *   getReportJob: (id: string) => Promise<{ job: Job }>,
- *   cancelReportJob: (id: string) => Promise<{ job: Job }>,
  * }} ReportApi
  */
 
@@ -160,22 +159,6 @@ export function createReportJobs({
           );
         // Anything else may pass, so the fresh-link button stays to try again.
         set({ ...before, error }, mine);
-      }
-    },
-    async cancel() {
-      const mine = run;
-      const job = current?.job;
-      if (!job || DONE.has(job.state)) return;
-      const siteCount = current?.siteCount ?? 0;
-      try {
-        const answered = (await api.cancelReportJob(job.jobId)).job;
-        // A newer report replaced this one while the cancel was out.
-        if (mine !== run) return;
-        run += 1;
-        // A job that failed first comes back as it was, with its reason.
-        set(ended(answered, siteCount), run);
-      } catch {
-        // It finished first, or the cancel didn't arrive; the running poll shows which.
       }
     },
   };

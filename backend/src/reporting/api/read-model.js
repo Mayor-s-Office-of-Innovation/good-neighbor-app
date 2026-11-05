@@ -315,7 +315,7 @@ function siteRows(snap, interval, sites) {
       ...totals,
       maxSeverity: maxSeverity.get(site.siteId) ?? null,
       ...indicators,
-      concerns: concernsOf(totals, indicators, {
+      concerns: concernsOf(totals, {
         active: site.status !== "inactive",
         expectedChecks: owesChecks(snap, site, interval, today),
       }),
@@ -359,17 +359,12 @@ function owesChecks(snap, site, interval, today) {
 /**
  * Plan §7's Top concerns, plus no Checks, as separate reasons. Awaiting isn't
  * one: there's still time to answer. A closed Site can only be flagged by its
- * Issues.
+ * Issues. Missing contacts are flagged on the Site but never counted (plan §0.2 Q3).
  * @param {ReturnType<typeof split>} totals
- * @param {ReturnType<typeof contacts>} indicators
  * @param {{ active: boolean, expectedChecks: boolean }} site
  * @returns {string[]}
  */
-function concernsOf(
-  { activity, response },
-  indicators,
-  { active, expectedChecks },
-) {
+function concernsOf({ activity, response }, { active, expectedChecks }) {
   return [
     response.overdue > 0 && "overdue",
     response.late > 0 && "late",
@@ -378,8 +373,6 @@ function concernsOf(
       expectedChecks &&
       activity.completedPerimeterChecks === 0 &&
       "noChecks",
-    active && indicators.publicContact.state === "missing" && "publicContact",
-    active && indicators.siteContact.state === "missing" && "siteContact",
   ].filter((c) => typeof c === "string");
 }
 
@@ -544,11 +537,18 @@ export function siteDetail(snap, siteId, { interval, now }) {
   for (const row of snap.tables.site_days)
     if (row.siteId === siteId) byDay.set(row.day, row);
   const zero = Object.fromEntries(SITE_DAY_METRICS.map((m) => [m, 0]));
+  const totals = split(sumDays(snap, interval, ids).total);
+  const today = pacificDateKey(snap.manifest.evaluatedAt);
   return {
     meta: meta(snap, interval, now),
     site: { ...siteDims(site), manageHref: manageHref(siteId) },
     ...contacts(snap, siteId),
-    totals: split(sumDays(snap, interval, ids).total),
+    totals,
+    // The same reasons as its Overview row, so both pages flag it alike.
+    concerns: concernsOf(totals, {
+      active: site.status !== "inactive",
+      expectedChecks: owesChecks(snap, site, interval, today),
+    }),
     comparison: comparison(snap, interval, ids),
     days: coveredDays(snap, interval).map((day) => {
       const row = byDay.get(day) ?? zero;

@@ -1,53 +1,58 @@
 import { test, expect, mockAdmin } from "./admin-mock.js";
 import { t } from "../helpers/i18n.js";
-import { failTimes, setControl } from "./directory-helpers.js";
+import { failTimes } from "./directory-helpers.js";
 
 /** @param {import("@playwright/test").Page} page */
 const siteRows = (page) => page.locator("[data-site-row]");
 
-test("a manager filters Overview, opens a Site, visits Manage and comes back to the same view", async ({
+test("a manager picks a view on Overview, opens a Site, sees its Overdue Issues and comes back to the same view", async ({
   page,
 }) => {
   await mockAdmin(page, { insights: true });
   await page.goto("/insights?period=2026-10");
   await expect(siteRows(page)).toHaveCount(2);
-  await setControl(
-    page.locator('wa-select[data-filter="responseState"]'),
-    "late",
-  );
-  await expect(page).toHaveURL(/responseState=late/);
+  await page.locator('[data-show="all"]').click();
+  await expect(page).toHaveURL(/show=all/);
+  await expect(siteRows(page)).toHaveCount(4);
   await page.locator('[data-site-link="s1"]').click();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
     "Example Site",
   );
-  await page.locator("#insights-manage-site").click();
-  await expect(page.locator("#insights-return")).toBeVisible();
-  await page.locator("#insights-return").click();
-  await expect(page).toHaveURL(/\/insights\/sites\/s1\?period=2026-10$/);
-  await page.locator("#insights-back").click();
-  await expect(page).toHaveURL(
-    /\/insights\?period=2026-10&responseState=late$/,
+  await expect(page.locator("[data-site-concerns]")).toBeVisible();
+  await expect(page.locator('[data-tile="overdue"]')).toHaveAttribute(
+    "aria-pressed",
+    "true",
   );
+  await expect(page.locator('[data-issue-row="t2"]')).toBeVisible();
+  await page.locator("#insights-back").click();
+  await expect(page).toHaveURL(/\/insights\?period=2026-10&show=all$/);
   await expect(page.locator('[data-site-link="s1"]')).toBeFocused();
 });
 
-test("a manager picks Sites and gets a report link without leaving the page", async ({
+test("a manager selects every Site and gets a report link without leaving the page", async ({
   page,
 }) => {
   const api = await mockAdmin(page, { insights: true });
   // The report polls every 2 seconds; a fake clock skips the wait.
   await page.clock.install();
   await page.goto("/insights?period=2026-10&show=all");
-  await page.locator('[data-select-site="s1"]').click();
-  await page.locator('[data-select-site="s4"]').click();
+  await expect(siteRows(page)).toHaveCount(4);
+  await page.locator("#insights-select-all").click();
+  await expect(page.locator("#insights-report")).toHaveText(
+    t("admin.insights.report.buttonCount", { count: 4 }),
+  );
   await page.locator("#insights-report").click();
   await page.locator("#insights-report-confirm").click();
-  await expect(page.locator("#insights-report-cancel")).toBeVisible();
+  await expect(page.locator("#insights-report-status")).toHaveText(
+    t("admin.insights.report.working", { count: 4 }),
+  );
   await page.clock.runFor(2000);
   await expect(page.locator("#insights-report-download")).toBeVisible();
   expect(api.calls("POST", /^reports\/insights$/)[0].body.siteIds).toEqual([
     "s1",
+    "s3",
     "s4",
+    "s2",
   ]);
   await expect(page).toHaveURL(/\/insights\?/);
 });

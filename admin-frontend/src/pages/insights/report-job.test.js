@@ -33,10 +33,6 @@ function fakeApi(states) {
         calls.push({ name: "get", args: [id] });
         return { job: job(states[Math.min(read++, states.length - 1)]) };
       },
-      async cancelReportJob(/** @type {string} */ id) {
-        calls.push({ name: "cancel", args: [id] });
-        return { job: job("cancelled") };
-      },
     },
   };
 }
@@ -93,53 +89,6 @@ test("a failed job keeps the error it reported", async () => {
   const jobs = createReportJobs({ api, wait: noWait });
   await jobs.start(["s1"], {});
   assert.equal(jobs.current?.error, "job_timed_out");
-});
-
-test("cancelling stops the polling and says it was cancelled", async () => {
-  const { api, calls } = fakeApi(["running"]);
-  /** @type {() => void} */
-  let resume = () => {};
-  const jobs = createReportJobs({
-    api,
-    wait: () =>
-      new Promise((resolve) => {
-        resume = () => resolve(undefined);
-      }),
-  });
-  const started = jobs.start(["s1"], {});
-  await new Promise((resolve) => setImmediate(resolve));
-  await jobs.cancel();
-  resume();
-  await started;
-  assert.equal(jobs.current?.phase, "cancelled");
-  assert.deepEqual(
-    calls.map((c) => c.name),
-    ["create", "cancel"],
-  );
-});
-
-test("a job that finished before the cancel keeps polling to its result", async () => {
-  const { api } = fakeApi(["succeeded"]);
-  api.cancelReportJob = async () => {
-    throw new Error("job_finished");
-  };
-  /** @type {() => void} */
-  let resume = () => {};
-  const jobs = createReportJobs({
-    api,
-    wait: () =>
-      new Promise((resolve) => {
-        resume = () => resolve(undefined);
-      }),
-  });
-  const started = jobs.start(["s1"], {});
-  await new Promise((resolve) => setImmediate(resolve));
-  await jobs.cancel();
-  // A late cancel isn't a failure; the job stays as it was until the poll.
-  assert.equal(jobs.current?.phase, "queued");
-  resume();
-  await started;
-  assert.equal(jobs.current?.phase, "succeeded");
 });
 
 test("a poll with no news tells no one, so the status isn't read out again", async () => {
@@ -221,31 +170,6 @@ test("a ready report with no link yet can fetch one", async () => {
   assert.equal(jobs.current?.job?.downloadUrl, null);
   await jobs.refresh();
   assert.equal(jobs.current?.job?.downloadUrl, "https://example.org/r.json");
-});
-
-test("cancelling a job that failed first shows its failure, not a cancel", async () => {
-  const { api } = fakeApi(["running"]);
-  api.cancelReportJob = async () => ({
-    job: job("failed", { error: "job_timed_out" }),
-  });
-  /** @type {() => void} */
-  let resume = () => {};
-  const jobs = createReportJobs({
-    api,
-    wait: () =>
-      new Promise((resolve) => {
-        resume = () => resolve(undefined);
-      }),
-  });
-  const started = jobs.start(["s1"], {});
-  await new Promise((resolve) => setImmediate(resolve));
-  await jobs.cancel();
-  resume();
-  await started;
-  assert.deepEqual(
-    [jobs.current?.phase, jobs.current?.error],
-    ["failed", "job_timed_out"],
-  );
 });
 
 test("a ready report's link runs out before the report, and can be fetched again", async () => {

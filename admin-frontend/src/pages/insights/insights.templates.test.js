@@ -8,7 +8,9 @@ import {
   formatInstant,
   focusSoon,
   freshnessView,
+  helpTip,
   periodForKind,
+  periodView,
   periodLabel,
   severityWord,
 } from "./insights.templates.js";
@@ -119,7 +121,7 @@ test("Month from a running year opens this month, in Pacific time", () => {
   });
 });
 
-test("Fiscal year from a running year opens the one holding today", () => {
+test("Financial year from a running year opens the one holding today", () => {
   const year = {
     kind: "year",
     startDay: "2026-01-01",
@@ -238,4 +240,53 @@ test("a late focus lands once the input is ready, if the user hasn't moved", asy
 
 test("a late focus skips an input a later redraw replaced", async () => {
   assert.deepEqual(await focusLater({ connected: false }), []);
+});
+
+test("data problems share one labelled line, and a running period isn't one", () => {
+  const html = freshnessView(
+    meta(["stale_snapshot", "undated_checks"], {
+      interval: {
+        ...october,
+        incomplete: true,
+        observedTo: "2026-10-20T19:00:00.000Z",
+      },
+    }),
+  );
+  assert.equal(html.match(/data-insights-quality/g)?.length, 1);
+  assert.ok(html.includes(t("admin.insights.quality.label")));
+  assert.ok(html.includes(" · "));
+  assert.ok(!html.includes("Incomplete"));
+});
+
+test("a running period is marked on its control; Next stays off", () => {
+  const html = periodView({
+    interval: {
+      ...october,
+      incomplete: true,
+      observedTo: "2026-10-20T19:00:00.000Z",
+    },
+    kind: "month",
+    draft: { from: "", to: "" },
+    error: "",
+  });
+  assert.ok(
+    html.includes(
+      t("admin.insights.period.incomplete", {
+        time: formatInstant("2026-10-20T19:00:00.000Z"),
+      }),
+    ),
+  );
+  assert.match(html, /data-period-step="1"[^>]*disabled/);
+});
+
+test("a ? names what it explains and holds its text in a popover", () => {
+  const html = helpTip("tip-x", "Contacts", "Today's details.");
+  assert.ok(html.includes('popovertarget="tip-x"'));
+  assert.ok(
+    html.includes(
+      `aria-label="${t("admin.insights.helpFor", { topic: "Contacts" })}"`,
+    ),
+  );
+  assert.ok(html.includes(`id="tip-x" popover`));
+  assert.ok(html.includes(escapeHtml("Today's details.")));
 });

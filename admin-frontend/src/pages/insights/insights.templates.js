@@ -85,6 +85,17 @@ export function contactWord(contact) {
   return t(hasKey(key) ? key : "admin.insights.contact.unknown");
 }
 
+/**
+ * "?" help, opened by click so touch screens can read it too.
+ * @param {string} id unique on the page; also names the anchor
+ * @param {string} topic what it explains, for its button's name
+ * @param {string} text already translated
+ */
+export function helpTip(id, topic, text) {
+  // Anchor positioning keeps the bubble by its "?"; elsewhere it centres.
+  return `<button type="button" class="insights__tip" popovertarget="${id}" aria-label="${escapeHtml(t("admin.insights.helpFor", { topic }))}" style="anchor-name:--${id}">?</button><span id="${id}" popover class="insights__tip-body" data-help="${id}" style="position-anchor:--${id}">${escapeHtml(text)}</span>`;
+}
+
 /** Says how old the data is and why counts may be short, so no one reads a gap as zero. @param {ReplyMeta | null} meta */
 export function freshnessView(meta) {
   if (!meta)
@@ -92,6 +103,7 @@ export function freshnessView(meta) {
   const time = formatInstant(meta.asOf);
   const reasons = new Set(meta.dataQuality?.reasons ?? []);
   const coverageStart = meta.dataQuality?.coverageStart;
+  // A running period is marked on the period control instead.
   const notes = [
     reasons.has("stale_snapshot") && t("admin.insights.quality.stale"),
     reasons.has("before_coverage") &&
@@ -102,10 +114,6 @@ export function freshnessView(meta) {
           : t("admin.insights.quality.beforeCoverage", {
               day: formatDay(coverageStart),
             })),
-    meta.interval?.incomplete &&
-      t("admin.insights.quality.incomplete", {
-        time: formatInstant(meta.interval.observedTo ?? meta.asOf),
-      }),
     (reasons.has("undated_issues") || reasons.has("undated_checks")) &&
       t("admin.insights.quality.undated"),
   ].filter((note) => typeof note === "string");
@@ -115,9 +123,9 @@ export function freshnessView(meta) {
       : t("admin.insights.dataAsOfUnknown"),
   )}</p>${
     notes.length
-      ? `<div class="insights__quality" data-insights-quality role="note" aria-label="${escapeHtml(t("admin.insights.quality.label"))}"><ul>${notes
-          .map((note) => `<li>${escapeHtml(note)}</li>`)
-          .join("")}</ul></div>`
+      ? `<p class="insights__quality" data-insights-quality role="note"><strong>${escapeHtml(t("admin.insights.quality.label"))}</strong> ${notes
+          .map((note) => `<span>${escapeHtml(note)}</span>`)
+          .join(" · ")}</p>`
       : ""
   }`;
 }
@@ -131,9 +139,9 @@ const KINDS = /** @type {const} */ ([
 
 /** Custom waits for "Show period", so half-typed dates don't load. @param {{ interval: Interval, kind: string, draft: { from: string, to: string }, error: string }} view */
 export function periodView({ interval, kind, draft, error }) {
-  const kinds = `<div class="insights__seg" role="group" aria-label="${escapeHtml(t("admin.insights.period.kinds"))}">${KINDS.map(
+  const kinds = `<div class="insights__ptabs" role="group" aria-label="${escapeHtml(t("admin.insights.period.kinds"))}">${KINDS.map(
     (k) =>
-      `<button type="button" class="btn-secondary" data-period-kind="${k}" aria-pressed="${k === kind}">${escapeHtml(t(`admin.insights.period.${k}`))}</button>`,
+      `<button type="button" data-period-kind="${k}" aria-pressed="${k === kind}">${escapeHtml(t(`admin.insights.period.${k}`))}</button>`,
   ).join("")}</div>`;
   const body =
     kind === "custom"
@@ -147,9 +155,15 @@ export function periodView({ interval, kind, draft, error }) {
           <span class="insights__period-label" data-period-label>${escapeHtml(periodLabel(interval))}</span>
           <button type="button" class="btn-icon" data-period-step="1" aria-label="${escapeHtml(t("admin.insights.period.next"))}" ${interval.incomplete ? "disabled" : ""}><wa-icon name="chevron-right" aria-hidden="true"></wa-icon></button>
         </div>`;
+  const pill = interval.incomplete
+    ? `<span class="insights__pill" data-period-incomplete>${escapeHtml(
+        t("admin.insights.period.incomplete", {
+          time: formatInstant(interval.observedTo ?? null),
+        }),
+      )}</span>`
+    : "";
   return `<div class="insights__period" role="group" aria-label="${escapeHtml(t("admin.insights.period.label"))}">
-    ${kinds}${body}
-    <span class="muted" data-period-range>${escapeHtml(rangeLabel(interval))}</span>
+    ${kinds}${body}${pill}
   </div>${error ? `<p class="error" role="alert" data-period-error>${escapeHtml(t(error))}</p>` : ""}`;
 }
 

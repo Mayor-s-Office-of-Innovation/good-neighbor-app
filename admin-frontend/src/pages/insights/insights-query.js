@@ -13,28 +13,16 @@ import { pacificDateKey } from "../../../../frontend/src/i18n/dates.js";
 /** @typedef {ReturnType<typeof readOverview>} OverviewState */
 
 // Matches LIMITS.maxReportSites, so picking stops before the server refuses.
-export const MAX_REPORT_SITES = 10;
+export const MAX_REPORT_SITES = 250;
 
-export const SHOW = ["top", "all", "unknown"];
+// The mock's order; Top concerns stays the default (plan §7).
+export const SHOW = ["all", "top", "unknown"];
 // One list, so Clear filters and the empty-state check reset the same ones.
 export const OVERVIEW_FILTERS = /** @type {const} */ ([
   "managerId",
   "providerId",
   "department",
-  "responseState",
-  "publicContact",
-  "siteContact",
 ]);
-
-export const RESPONSE_FILTERS = [
-  "overdue",
-  "late",
-  "awaiting",
-  "onTime",
-  "unknown",
-  "notTimed",
-];
-export const CONTACT_STATES = ["available", "missing", "unknown"];
 // Matches SORTS.sites, so a shared link never asks for a sort it refuses.
 export const SITE_SORTS = [
   "name",
@@ -202,9 +190,6 @@ export function readOverview(search) {
     managerId: pick(params, "managerId", null),
     providerId: pick(params, "providerId", null),
     department: pick(params, "department", null),
-    responseState: pick(params, "responseState", RESPONSE_FILTERS),
-    publicContact: pick(params, "publicContact", CONTACT_STATES),
-    siteContact: pick(params, "siteContact", CONTACT_STATES),
     sort: pick(params, "sort", SITE_SORTS, "name"),
     cursor: pick(params, "cursor", null),
     selected: [

@@ -622,11 +622,6 @@ export const adminApi = {
     adminFetch(`/admin/v1/reports/${encodeURIComponent(jobId)}`, {
       cache: "no-store",
     }),
-  /** @param {string} jobId */
-  cancelReportJob: (jobId) =>
-    adminFetch(`/admin/v1/reports/${encodeURIComponent(jobId)}`, {
-      method: "DELETE",
-    }),
 };
 
 /** @param {Record<string, string>} params @returns {string} "" or "?…" */

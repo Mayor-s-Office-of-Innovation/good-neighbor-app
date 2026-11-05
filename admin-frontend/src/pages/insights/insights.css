@@ -1,6 +1,12 @@
 /* Insights only: every rule starts at .insights, so Manage looks unchanged. */
 .insights {
+  --insights-warn: #b45f04;
+  --insights-blue: #6eb3ff;
+  --insights-orange: #ef9d00;
+  --insights-red: #f3676c;
   display: grid;
+  /* minmax(0) stops one wide child, like the period range, widening the page. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 
@@ -8,61 +14,105 @@
   margin: 0;
 }
 
-.insights__freshness {
-  margin: 0;
-  font-size: 0.875rem;
-}
-
 .insights [data-region] {
   display: grid;
   gap: 12px;
 }
 
-.insights__quality {
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 8px 12px;
-}
-
-.insights__quality ul {
+.insights__freshness {
   margin: 0;
-  padding-left: 18px;
+  font-size: 0.875rem;
 }
 
+.insights__quality {
+  margin: 0 0 8px;
+  max-width: 920px;
+  border: 1px solid var(--insights-warn);
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 0.875rem;
+}
+
+.insights__quality strong,
+.insights__warn {
+  color: var(--insights-warn);
+}
+
+.insights__warn {
+  font-weight: 500;
+}
+
+.insights__unknown {
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* Controls: one labelled row per kind, as the mock lays them out. */
+.insights__controls {
+  border-top: 1px solid var(--line);
+}
+
+.insights__crow {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  gap: 16px;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.insights__clabel {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.insights__cbody,
 .insights__period,
 .insights__stepper,
 .insights__custom,
-.insights__seg,
-.insights__selects,
 .insights__resultbar,
-.insights__report,
+.insights__actions,
 .insights__pager,
-.insights__links {
+.insights__psel {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 8px 10px;
 }
 
-.insights__resultbar {
-  justify-content: space-between;
+.insights__cbody #insights-search {
+  flex: 1;
+  min-width: 220px;
+  max-width: 440px;
 }
 
-.insights__resultbar p,
-.insights__report p,
-.insights__help {
-  margin: 0;
+.insights__period {
+  gap: 8px 24px;
 }
 
-.insights__help {
-  font-size: 0.875rem;
-  max-width: 70ch;
+.insights__ptabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
-.insights__seg button[aria-pressed="true"] {
-  background: var(--ink);
-  color: var(--on-ink);
-  border-color: var(--ink);
+.insights__ptabs button {
+  min-height: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.insights__ptabs button[aria-pressed="true"] {
+  color: var(--text);
+  font-weight: 600;
+  border-bottom-color: var(--text);
 }
 
 .insights__period-label {
@@ -71,10 +121,96 @@
   font-weight: 600;
 }
 
-.insights__filters,
-.insights__show {
-  display: grid;
-  gap: 8px;
+.insights__pill {
+  border: 1px solid var(--muted);
+  border-radius: 9999px;
+  padding: 2px 10px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+/* Segmented control: one pill holding the three views. */
+.insights__seg {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 9999px;
+  padding: 3px;
+}
+
+.insights__seg button {
+  background: none;
+  border: 0;
+  border-radius: 9999px;
+  padding: 0 16px;
+  min-height: 36px;
+  font: 500 0.875rem/1 var(--font-sans);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.insights__seg button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+
+/* "?" help */
+.insights__tip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  margin-left: 6px;
+  padding: 0;
+  border: 1px solid var(--muted);
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+  font: 500 0.6875rem/1 var(--font-sans);
+  vertical-align: middle;
+  cursor: help;
+}
+
+.insights__tip-body {
+  margin: 0;
+  max-width: 260px;
+  border: 0;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--ink);
+  color: var(--on-ink);
+  font: 400 0.8125rem/1.4 var(--font-sans);
+  text-align: left;
+  white-space: normal;
+  position-area: bottom span-right;
+  position-try-fallbacks: flip-block, flip-inline;
+}
+
+.insights__resultbar {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.insights__resultbar p,
+.insights__hint,
+.insights [data-region="report"] p {
+  margin: 0;
+}
+
+#insights-count {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.insights__sortlabel {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.insights__hint {
+  font-size: 0.875rem;
 }
 
 .insights__num {
@@ -82,10 +218,56 @@
   text-align: right;
 }
 
-.insights__list {
+.insights__stack {
+  display: grid;
+  white-space: nowrap;
+}
+
+.insights__chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 12px;
+  gap: 4px;
+}
+
+.insights__chip {
+  display: inline-block;
+  border: 1px solid var(--muted);
+  border-radius: 9999px;
+  padding: 1px 8px;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.insights__chip--flag {
+  margin-top: 4px;
+  border-style: dashed;
+}
+
+.insights__sev {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.insights__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--line);
+}
+
+[data-severity="severe"] .insights__dot {
+  background: var(--insights-red);
+}
+
+[data-severity="moderate"] .insights__dot {
+  background: var(--insights-orange);
+}
+
+[data-severity="minor"] .insights__dot {
+  background: var(--insights-blue);
 }
 
 .insights__table td,
@@ -94,69 +276,376 @@
   vertical-align: top;
 }
 
-/* Row names (Site names, Issue times) wrapped after one word at desktop widths. */
+.insights__table thead th {
+  vertical-align: bottom;
+}
+
+.insights__table tbody th a {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.insights__table tbody th a:hover {
+  text-decoration: underline;
+}
+
+.insights__table tbody th .muted {
+  font-weight: 400;
+}
+
+/* The mock's table has rules between rows but no outer frame. */
+.insights .insights__table {
+  /* Holds hidden screen-reader text inside the scroll box, not past the page edge. */
+  position: relative;
+  border: 0;
+  border-radius: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.insights__table thead th {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+/* Row names wrapped after one word at desktop widths. */
 .insights__table tbody th {
   min-width: 11rem;
+}
+
+.insights__table tbody tr {
+  cursor: pointer;
+}
+
+.insights__chev {
+  width: 28px;
+  vertical-align: middle;
+}
+
+/* Site insights */
+.insights__psel {
+  gap: 12px;
+}
+
+.insights__ppop {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  max-width: min(560px, 90vw);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
+  position-area: bottom span-right;
+  position-try-fallbacks: flip-block;
+}
+
+.insights__concerns {
+  max-width: 920px;
+  border: 1px solid var(--muted);
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 0.875rem;
+}
+
+.insights__concerns ul {
+  margin: 6px 0 0;
+  padding-left: 20px;
 }
 
 .insights__group {
   display: grid;
   gap: 12px;
+  max-width: 920px;
 }
 
 .insights__group h2 {
-  margin: 8px 0 0;
+  margin: 16px 0 0;
   font-size: 1.125rem;
 }
 
-.insights__tiles,
-.insights__states {
-  display: grid;
-  gap: 12px;
+.insights__group h3 {
+  margin: 16px 0 8px;
+  font-size: 0.875rem;
+}
+
+.insights__group p {
   margin: 0;
 }
 
-.insights__tiles {
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-}
-
-.insights__tiles > div {
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 12px;
-}
-
-.insights__tiles dd {
-  margin: 4px 0 0;
-  font-size: 1.5rem;
-}
-
-.insights__tiles dd.insights__num {
-  text-align: left;
-}
-
-.insights__states > div {
+.insights__contacts {
   display: grid;
-  grid-template-columns: minmax(10rem, 14rem) 1fr;
-  gap: 8px;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px 32px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 16px 4px;
 }
 
-.insights__states dt {
+.insights__contacts .insights__clabel {
   font-weight: 600;
 }
 
-.insights__states dd {
+.insights__tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.insights__tiles--five {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.insights__tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 28px 10px 12px;
+}
+
+.insights__tile:has(> button[data-tile]) {
+  padding: 0;
+}
+
+.insights__tile > button[data-tile] {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 12px;
+  padding: 10px 28px 10px 12px;
+  background: none;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+}
+
+.insights__tile:has(> button[data-tile][aria-pressed="true"]) {
+  border-color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--text);
+}
+
+.insights__tile > .insights__tip {
+  position: absolute;
+  top: 8px;
+  right: 8px;
   margin: 0;
 }
 
-/* Narrow screens show each row as a labelled record, so no column drops. */
+.insights__tile-n {
+  font-size: 1.375rem;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.insights__tile-l {
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.insights__tile--warn .insights__tile-n {
+  color: var(--insights-warn);
+}
+
+/* Each calendar sits under its tile, as the mock lines them up. */
+.insights__charts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0 8px;
+}
+
+.insights__cals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 28px;
+}
+
+.insights__cal {
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 0.75rem;
+}
+
+.insights__cal caption {
+  text-align: left;
+  font-weight: 600;
+  padding: 0 0 4px;
+}
+
+.insights__cal th {
+  width: 34px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.insights__cal td {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 2px solid var(--bg);
+  text-align: center;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.insights__cal td span {
+  position: absolute;
+  top: 1px;
+  left: 3px;
+  font-size: 0.5625rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.insights__cal-0 {
+  background: var(--line);
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.insights__cal-1 {
+  background: color-mix(in srgb, var(--insights-blue) 30%, transparent);
+}
+
+.insights__cal-2 {
+  background: color-mix(in srgb, var(--insights-blue) 60%, transparent);
+}
+
+.insights__cal-3 {
+  background: var(--insights-blue);
+}
+
+[data-chart="issues"] .insights__cal-1 {
+  background: color-mix(in srgb, var(--insights-orange) 30%, transparent);
+}
+
+[data-chart="issues"] .insights__cal-2 {
+  background: color-mix(in srgb, var(--insights-orange) 60%, transparent);
+}
+
+[data-chart="issues"] .insights__cal-3 {
+  background: var(--insights-orange);
+}
+
+.insights__cal-none,
+.insights__bar--none i {
+  background: repeating-linear-gradient(
+    45deg,
+    transparent 0 3px,
+    var(--line) 3px 4px
+  );
+  color: var(--muted);
+}
+
+.insights__bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 120px;
+  border-bottom: 1px solid var(--muted);
+}
+
+.insights__bar {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+}
+
+.insights__bar b {
+  font-size: 0.625rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.insights__bar i {
+  display: block;
+  width: 100%;
+  min-height: 1px;
+  border-radius: 2px 2px 0 0;
+  background: var(--insights-blue);
+}
+
+[data-chart="issues"] .insights__bar i {
+  background: var(--insights-orange);
+}
+
+.insights__bar-x {
+  display: flex;
+  gap: 2px;
+}
+
+.insights__bar-x span {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.625rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.insights__issues {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.insights__issues li {
+  margin: 0;
+}
+
+.insights__issues a {
+  display: grid;
+  grid-template-columns: 110px minmax(120px, 1fr) minmax(120px, 1.3fr) 64px 150px 16px;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.875rem;
+  color: inherit;
+  text-decoration: none;
+}
+
+.insights__issues a:hover strong {
+  text-decoration: underline;
+}
+
+/* Narrow screens show each row as a labelled card, so no column drops (plan §7). */
 @media (max-width: 760px) {
-  .insights__table thead {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
+  .insights__crow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  /* Tighter padding fits the choices on one line at 375px. */
+  .insights__ptabs button {
+    padding: 8px 7px;
+  }
+
+  .insights__seg button {
+    padding: 0 11px;
+  }
+
+  /* On a 320px phone the choices wrap rather than push the page wide. */
+  .insights__seg {
+    flex-wrap: wrap;
+    border-radius: 18px;
+  }
+
+  /* Cards carry their own labels; the header keeps only select all. */
+  .insights__table thead th:not(:first-child) {
+    display: none;
   }
 
   .insights__table tr,
@@ -188,8 +677,31 @@
     color: var(--muted);
   }
 
-  .insights__states > div {
+  .insights__table .insights__chev {
+    display: none;
+  }
+
+  .insights__contacts,
+  .insights__charts {
     grid-template-columns: 1fr;
-    gap: 2px;
+  }
+
+  .insights__tiles--five {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  /* The ? sits beside the short number, so labels can use the full width. */
+  .insights__tile,
+  .insights__tile > button[data-tile] {
+    padding: 10px;
+  }
+
+  /* Phones keep severity, category and status; the dates and ID are on the Issue. */
+  .insights__issues a {
+    grid-template-columns: 84px minmax(0, 1fr) auto 16px;
+  }
+
+  .insights__issues a > :is(span:nth-of-type(2), span:nth-of-type(4)) {
+    display: none;
   }
 }

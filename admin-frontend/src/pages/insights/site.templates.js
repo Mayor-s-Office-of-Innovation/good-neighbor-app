@@ -1,40 +1,49 @@
-// Site insights markup: Activity, Response and contacts, and the Issues created in the period.
+// Site insights markup, in the mock's order: Concerns, Contacts, Activity, Issue Response Time.
 import { hasKey, t } from "../../../../frontend/src/i18n/i18n.js";
 import { escapeHtml } from "../../dom.js";
 import { rulebookText } from "../../../../frontend/src/i18n/rulebook.js";
+import { phoneWithExtension } from "../shared.templates.js";
+import { activityChart, chartUnit } from "./activity-chart.js";
 import {
   codeKey,
   contactWord,
   failedView,
   formatDay,
   formatInstant,
+  helpTip,
   noDataFor,
-  severityWord,
 } from "./insights.templates.js";
+import { severityView } from "./overview.templates.js";
 
 /** @typedef {Record<string, any>} Reply */
+/** @typedef {{ publicContact?: Record<string, string>, primaryContact?: Record<string, string> } | null} ContactDetails the Site's Manage record */
 
 const ACTIVITY = [
   "completedPerimeterChecks",
-  "singleIssueReports",
   "issuesCreated",
-  "unfinishedChecks",
+  "singleIssueReports",
 ];
-const RESPONSE = [
+// The mock's five; no response time is never late, so it has no tile.
+export const RESPONSE_TILES = [
   "overdue",
   "late",
   "awaiting",
   "onTime",
   "unknown",
-  "notTimed",
 ];
+const WARN = new Set(["overdue", "late"]);
 
-/** @param {{ site: Reply | null, siteId: string, names: Map<string, string> }} view */
-export function siteHeadView({ site, siteId, names }) {
+/** Opens on Overdue, else Responded late, so the list shows what needs a look. @param {Reply} reply */
+export function firstTile(reply) {
+  const counts = reply.totals.response;
+  return counts.overdue ? "overdue" : counts.late ? "late" : "";
+}
+
+/** @param {{ site: Reply | null, siteId: string, names: Map<string, string>, back: string }} view */
+export function siteHeadView({ site, siteId, names, back }) {
+  const name = site?.name || (site ? siteId : t("admin.insights.site"));
   const meta = site
     ? [
-        site.department &&
-          t("admin.insights.siteMeta.department", { name: site.department }),
         site.managerId &&
           t("admin.insights.siteMeta.manager", {
             name: names.get(site.managerId) ?? site.managerId,
@@ -42,119 +51,217 @@ export function siteHeadView({ site, siteId, names }) {
         site.status === "inactive" && t("admin.insights.inactive"),
       ].filter((part) => typeof part === "string")
     : [];
-  return `<div class="page-head"><h1 id="insights-title" tabindex="-1">${escapeHtml(site?.name || (site ? siteId : t("admin.insights.site")))}</h1></div>${
+  return `<nav class="entity-breadcrumb" aria-label="${escapeHtml(t("admin.breadcrumb.label"))}"><ol>
+    <li><a id="insights-back" href="${escapeHtml(back)}" data-route>${escapeHtml(t("admin.insights.overview"))}</a></li>
+    <li><span aria-hidden="true">›</span><span aria-current="page">${escapeHtml(name)}</span></li>
+  </ol></nav>
+  <div class="page-head"><h1 id="insights-title" tabindex="-1">${escapeHtml(name)}</h1></div>${
     meta.length
       ? `<p class="muted" data-site-meta>${meta.map((m) => escapeHtml(m)).join(" · ")}</p>`
       : ""
   }`;
 }
 
-/** @param {{ back: string, manage: string, raw: string }} links */
-export function siteLinksView({ back, manage, raw }) {
-  return `<p class="insights__links">
-    <a class="site-back-link" id="insights-back" href="${escapeHtml(back)}" data-route><wa-icon name="chevron-left" aria-hidden="true"></wa-icon> ${escapeHtml(t("admin.insights.backToOverview"))}</a>
-    <a class="btn-secondary" id="insights-manage-site" href="${escapeHtml(manage)}" data-route>${escapeHtml(t("admin.insights.manageSite"))}</a>
-    <a class="btn-link" id="insights-site-raw" href="${escapeHtml(raw)}" data-route>${escapeHtml(t("admin.insights.seeAllIssues"))}</a>
-  </p>`;
+/** The period opens in a popover, so it doesn't push the page down. @param {{ label: string, range: string }} view */
+export function sitePeriodView({ label, range }) {
+  return `<div class="insights__psel">
+    <button type="button" class="btn-secondary" id="insights-period-toggle" popovertarget="insights-period-pop" aria-haspopup="dialog" style="anchor-name:--insights-period-pop"><span data-period-button>${escapeHtml(label)}</span> <wa-icon name="chevron-down" aria-hidden="true"></wa-icon></button>
+    <div id="insights-period-pop" popover class="insights__ppop" role="dialog" aria-label="${escapeHtml(t("admin.insights.period.choose"))}" style="position-anchor:--insights-period-pop"><div data-period-body></div></div>
+    <span class="muted" data-period-range>${escapeHtml(range)}</span>
+  </div>`;
 }
 
-/** @param {Reply} reply */
-function activityView(reply) {
-  const counts = reply.totals.activity;
-  const days = /** @type {Reply[]} */ (reply.days);
-  return `<section class="insights__group" aria-labelledby="insights-activity">
-    <h2 id="insights-activity">${escapeHtml(t("admin.insights.activity"))}</h2>
-    <dl class="insights__tiles">${ACTIVITY.map(
-      (key) =>
-        `<div data-activity="${key}"><dt>${escapeHtml(t(`admin.insights.activity.${key}`))}</dt><dd class="insights__num">${escapeHtml(counts[key] ?? 0)}</dd></div>`,
-    ).join("")}</dl>
-    <p class="muted">${escapeHtml(t("admin.insights.activity.help"))}</p>
-    ${
-      days.length
-        ? `<details class="table-disclosure" data-site-days>
-      <summary>${escapeHtml(t("admin.insights.daily"))}</summary>
-      <div class="table-wrap"><table>
-        <thead><tr><th scope="col">${escapeHtml(t("admin.insights.daily.day"))}</th><th scope="col" class="insights__num">${escapeHtml(t("admin.insights.col.checks"))}</th><th scope="col" class="insights__num">${escapeHtml(t("admin.insights.activity.issuesCreated"))}</th></tr></thead>
-        <tbody>${days
-          .map(
-            (d) =>
-              `<tr><th scope="row">${escapeHtml(formatDay(d.day))}</th><td class="insights__num">${escapeHtml(d.completedPerimeterChecks)}</td><td class="insights__num">${escapeHtml(d.issuesCreated)}</td></tr>`,
-          )
-          .join("")}</tbody>
-      </table></div>
-    </details>`
-        : ""
-    }
-  </section>`;
+/** @param {string} code @param {Reply} reply @param {string} issuesHref */
+function concernLine(code, reply, issuesHref) {
+  const key = `admin.insights.concern.${code}`;
+  // A reason added on the server later still shows, as a plain word.
+  if (!hasKey(key))
+    return `<li>${escapeHtml(t("admin.insights.otherConcern"))}</li>`;
+  const { response, activity } = reply.totals;
+  const count = {
+    overdue: response.overdue,
+    late: response.late,
+    severe: activity.severeIssues,
+    noChecks: 0,
+  }[/** @type {"overdue" | "late" | "severe" | "noChecks"} */ (code)];
+  const link =
+    code === "overdue" || code === "late"
+      ? `<button type="button" class="btn-link" data-jump-tile="${code}">${escapeHtml(t("admin.insights.seeTile", { state: t(`admin.insights.response.${code}`) }))}</button>`
+      : code === "severe"
+        ? `<a href="${escapeHtml(issuesHref)}" data-route>${escapeHtml(t("admin.insights.viewIssues"))}</a>`
+        : `<a href="#insights-activity">${escapeHtml(t("admin.insights.seeActivity"))}</a>`;
+  return `<li data-concern="${code}"><strong>${escapeHtml(t(key))}:</strong> ${escapeHtml(t(`admin.insights.concernWhy.${code}`, { count }))} ${link}</li>`;
 }
 
-/** @param {string} label @param {{ state: string, reasonCodes: string[] }} contact @param {string} kind */
-function contactView(label, contact, kind) {
+/** Only a Site with concerns gets the box. @param {Reply} reply @param {string} issuesHref */
+function concernsView(reply, issuesHref) {
+  const codes = /** @type {string[]} */ (reply.concerns ?? []);
+  if (!codes.length) return "";
+  return `<div class="insights__concerns" role="note" data-site-concerns><strong>${escapeHtml(t("admin.insights.col.concerns"))}</strong><ul>${codes
+    .map((code) => concernLine(code, reply, issuesHref))
+    .join("")}</ul></div>`;
+}
+
+/** @param {{ state: string, reasonCodes: string[] }} contact */
+function contactState(contact) {
   // A reason added on the server later shows the state alone, not a key.
   const reasons = contact.reasonCodes
     .map((code) => codeKey("admin.insights.reason", code))
     .filter((key) => hasKey(key))
     .map((key) => t(key));
-  return `<div data-contact="${kind}"><dt>${escapeHtml(label)}</dt><dd><strong>${escapeHtml(contactWord(contact))}</strong>${
+  return `<div class="${contact.state === "missing" ? "insights__warn" : contact.state === "unknown" ? "insights__unknown" : ""}">${escapeHtml(contactWord(contact))}</div>${
     reasons.length
-      ? `<span class="muted"> ${reasons.map((r) => escapeHtml(r)).join(" ")}</span>`
+      ? `<div class="muted">${reasons.map((r) => escapeHtml(r)).join(" ")}</div>`
       : ""
-  }</dd></div>`;
+  }`;
 }
 
-/** @param {Reply} reply @param {string} contactsHref */
-function responseView(reply, contactsHref) {
-  const counts = reply.totals.response;
-  return `<section class="insights__group" aria-labelledby="insights-response">
-    <h2 id="insights-response">${escapeHtml(t("admin.insights.responseContacts"))}</h2>
-    <dl class="insights__states">${RESPONSE.map(
-      (key) =>
-        `<div data-response="${key}"><dt>${escapeHtml(t(`admin.insights.response.${key}`))}</dt><dd><span class="insights__num" data-response-count>${escapeHtml(counts[key] ?? 0)}</span> <span class="muted">${escapeHtml(t(`admin.insights.responseHelp.${key}`))}</span></dd></div>`,
-    ).join("")}</dl>
-    <p class="muted">${escapeHtml(t("admin.insights.deadlineNote"))}</p>
-    <dl class="insights__states">
-      ${contactView(t("admin.insights.col.publicContact"), reply.publicContact, "public")}
-      ${contactView(t("admin.insights.col.siteContact"), reply.siteContact, "site")}
-    </dl>
-    <p class="muted">${escapeHtml(t("admin.insights.contactBasis"))} <a href="${escapeHtml(contactsHref)}" data-route id="insights-edit-contacts">${escapeHtml(t("admin.insights.editContacts"))}</a></p>
+/** @param {Record<string, string> | undefined} person @param {boolean} named */
+function contactLines(person, named) {
+  if (!person) return "";
+  const name = named
+    ? [person.firstName, person.lastName].filter(Boolean).join(" ")
+    : "";
+  const phone = phoneWithExtension(person);
+  return [
+    name && `<strong>${escapeHtml(name)}</strong>`,
+    person.email &&
+      `<a href="mailto:${escapeHtml(person.email)}">${escapeHtml(person.email)}</a>`,
+    person.phone &&
+      `<a href="tel:${escapeHtml(person.phone)}">${escapeHtml(phone)}</a>`,
+  ]
+    .filter(Boolean)
+    .map((line) => `<div>${line}</div>`)
+    .join("");
+}
+
+/**
+ * The details come from Manage's record, read once; until then, or if that
+ * read fails, each contact shows its state alone.
+ * @param {{ reply: Reply, details: ContactDetails }} view
+ */
+export function contactsView({ reply, details }) {
+  /** @param {string} kind @param {{ state: string, reasonCodes: string[] }} contact @param {Record<string, string> | undefined} person */
+  const cell = (kind, contact, person) => {
+    const lines =
+      contact.state === "available"
+        ? contactLines(person, kind === "site")
+        : "";
+    return `<div data-contact="${kind}"><p class="insights__clabel">${escapeHtml(t(`admin.insights.contacts.${kind}`))}</p>${lines || contactState(contact)}</div>`;
+  };
+  return `${cell("public", reply.publicContact, details?.publicContact)}${cell("site", reply.siteContact, details?.primaryContact)}`;
+}
+
+/** @param {string} key @param {string} value already escaped @param {string} label @param {string} help */
+const tile = (key, value, label, help) =>
+  `<div class="insights__tile" data-activity="${key}"><span class="insights__tile-n" data-activity-count>${value}</span><span class="insights__tile-l">${escapeHtml(label)}</span>${helpTip(`insights-tip-activity-${key}`, label, help)}</div>`;
+
+/** @param {Reply} reply @param {string} checksHref */
+function activityView(reply, checksHref) {
+  const counts = reply.totals.activity;
+  const noData = noDataFor(reply.meta);
+  const interval = reply.meta.interval;
+  const days = /** @type {Reply[]} */ (reply.days);
+  /** @param {string} metric */
+  const points = (metric) =>
+    days.map((d) => ({ day: d.day, value: Number(d[metric] ?? 0) }));
+  const unit = chartUnit(interval);
+  return `<section class="insights__group" aria-labelledby="insights-activity">
+    <h2 id="insights-activity" tabindex="-1">${escapeHtml(t("admin.insights.activity"))}</h2>
+    <div class="insights__tiles">${ACTIVITY.map((key) =>
+      tile(
+        key,
+        // Before the records begin, a zero would claim a quiet period (plan §4).
+        noData
+          ? escapeHtml(t("admin.insights.unavailable"))
+          : escapeHtml(counts[key] ?? 0),
+        t(`admin.insights.activity.${key}`),
+        t(`admin.insights.activityHelp.${key}`),
+      ),
+    ).join("")}</div>
+    <div class="insights__charts">
+      <div><h3>${escapeHtml(t(`admin.insights.chart.checks.${unit}`))}</h3>${activityChart(interval, points("completedPerimeterChecks"), "checks")}</div>
+      <div><h3>${escapeHtml(t(`admin.insights.chart.issues.${unit}`))}</h3>${activityChart(interval, points("issuesCreated"), "issues")}</div>
+    </div>
+    ${
+      days.length
+        ? `<div class="visually-hidden" data-site-days><table>
+        <caption>${escapeHtml(t("admin.insights.daily"))}</caption>
+        <thead><tr><th scope="col">${escapeHtml(t("admin.insights.daily.day"))}</th><th scope="col">${escapeHtml(t("admin.insights.activity.completedPerimeterChecks"))}</th><th scope="col">${escapeHtml(t("admin.insights.activity.issuesCreated"))}</th></tr></thead>
+        <tbody>${days
+          .map(
+            (d) =>
+              `<tr><th scope="row">${escapeHtml(formatDay(d.day))}</th><td>${escapeHtml(d.completedPerimeterChecks)}</td><td>${escapeHtml(d.issuesCreated)}</td></tr>`,
+          )
+          .join("")}</tbody>
+      </table></div>`
+        : ""
+    }
+    <p><a href="${escapeHtml(checksHref)}" data-route id="insights-site-checks">${escapeHtml(t("admin.insights.viewChecks"))}</a></p>
   </section>`;
 }
 
-/** @param {{ reply: Reply, contactsHref: string }} view */
-export function siteBodyView({ reply, contactsHref }) {
-  return `${activityView(reply)}${responseView(reply, contactsHref)}`;
+/** @param {Reply} reply @param {string} tile the one selected, or "" */
+function responseTilesView(reply, tile) {
+  const counts = reply.totals.response;
+  return `<div class="insights__tiles insights__tiles--five">${RESPONSE_TILES.map(
+    (key) =>
+      `<div class="insights__tile${WARN.has(key) && counts[key] ? " insights__tile--warn" : ""}" data-response="${key}"><button type="button" data-tile="${key}" aria-pressed="${key === tile}"><span class="insights__tile-n" data-response-count>${escapeHtml(counts[key] ?? 0)}</span><span class="insights__tile-l">${escapeHtml(t(`admin.insights.response.${key}`))}</span></button>${helpTip(`insights-tip-response-${key}`, t(`admin.insights.response.${key}`), t(`admin.insights.responseHelp.${key}`))}</div>`,
+  ).join("")}</div>`;
 }
 
-/** @param {{ issues: Reply | null, failed: string, issueHref: (issue: Reply) => string }} view */
-export function siteIssuesView({ issues, failed, issueHref }) {
-  const heading = `<h2 id="insights-site-issues" tabindex="-1">${escapeHtml(t("admin.insights.issuesInPeriod"))}</h2>`;
-  if (failed) return `${heading}${failedView(failed, "insights-issues-retry")}`;
-  if (!issues) return heading;
+/** @param {Reply} reply @param {string} tile @param {string} issuesHref */
+function responseView(reply, tile, issuesHref) {
+  const count = reply.totals.activity.issuesCreated;
+  const heading = `<h2 id="insights-response">${escapeHtml(t("admin.insights.responseTime"))}${helpTip("insights-tip-deadline", t("admin.insights.responseTime"), t("admin.insights.deadlineNote"))}</h2>`;
+  // Before the records begin, no Issues isn't a quiet period.
+  const body = noDataFor(reply.meta)
+    ? `<p class="muted" data-site-issues-empty>${escapeHtml(t("admin.insights.empty.noIssueData"))}</p>`
+    : !count
+      ? `<p class="muted" data-site-issues-empty>${escapeHtml(t("admin.insights.noIssuesInPeriod"))}</p>`
+      : `${responseTilesView(reply, tile)}<div data-region="issues"></div>
+      <p><a href="${escapeHtml(issuesHref)}" data-route id="insights-site-raw">${escapeHtml(t("admin.insights.viewAllIssues", { count }))}</a></p>`;
+  return `<section class="insights__group" aria-labelledby="insights-response" id="insights-response-section">${heading}${body}</section>`;
+}
+
+/**
+ * @param {{ reply: Reply, details: ContactDetails, tile: string, hrefs: { contacts: string, issues: string, checks: string } }} view
+ */
+export function siteBodyView({ reply, details, tile, hrefs }) {
+  return `${concernsView(reply, hrefs.issues)}
+  <section class="insights__group" aria-labelledby="insights-contacts">
+    <h2 id="insights-contacts">${escapeHtml(t("admin.insights.contacts"))}${helpTip("insights-tip-contacts", t("admin.insights.contacts"), t("admin.insights.contactBasis"))}</h2>
+    <div class="insights__contacts" data-region="contacts">${contactsView({ reply, details })}</div>
+    <p><a href="${escapeHtml(hrefs.contacts)}" target="_blank" rel="noopener" id="insights-edit-contacts">${escapeHtml(t("admin.insights.editContacts"))} <span aria-hidden="true">↗</span></a></p>
+  </section>
+  ${activityView(reply, hrefs.checks)}
+  ${responseView(reply, tile, hrefs.issues)}`;
+}
+
+/** The Issues behind the selected tile. @param {{ issues: Reply | null, failed: string, tile: string, issueHref: (issue: Reply) => string }} view */
+export function siteIssuesView({ issues, failed, tile, issueHref }) {
+  if (!tile) return "";
+  if (failed) return failedView(failed, "insights-issues-retry");
+  if (!issues) return "";
   const rows = /** @type {Reply[]} */ (issues.issues);
-  // Before the records begin, an empty list isn't a quiet period.
   if (!rows.length)
-    return `${heading}<p class="muted" data-site-issues-empty>${escapeHtml(t(noDataFor(issues.meta) ? "admin.insights.empty.noIssueData" : "admin.insights.noIssuesInPeriod"))}</p>`;
-  const col = (/** @type {string} */ key) =>
-    `<th role="columnheader" scope="col">${escapeHtml(t(`admin.insights.issue.${key}`))}</th>`;
-  return `${heading}
-    <div class="table-wrap insights__table"><table role="table">
-      <thead role="rowgroup"><tr role="row">${["created", "category", "severity", "status", "response", "deadline"].map(col).join("")}</tr></thead>
-      <tbody role="rowgroup">${rows
-        .map(
-          (i) => `<tr role="row" data-issue-row="${escapeHtml(i.issueId)}">
-        <th role="rowheader" scope="row" data-label="${escapeHtml(t("admin.insights.issue.created"))}"><a href="${escapeHtml(issueHref(i))}" data-route>${escapeHtml(formatInstant(i.createdAt))}</a></th>
-        <td role="cell" data-label="${escapeHtml(t("admin.insights.issue.category"))}">${escapeHtml(i.category ? rulebookText(i.category, "rulebook.category") : t("admin.insights.issue.categoryUnknown"))}</td>
-        <td role="cell" data-label="${escapeHtml(t("admin.insights.issue.severity"))}">${escapeHtml(severityWord(i.severity))}</td>
-        <td role="cell" data-label="${escapeHtml(t("admin.insights.issue.status"))}">${escapeHtml(t(`admin.insights.issueStatus.${i.resolvedAt ? "resolved" : "open"}`))}</td>
-        <td role="cell" data-label="${escapeHtml(t("admin.insights.issue.response"))}" data-response="${escapeHtml(i.responseState)}">${escapeHtml(t(`admin.insights.response.${i.responseState}`))}</td>
-        <td role="cell" data-label="${escapeHtml(t("admin.insights.issue.deadline"))}">${escapeHtml(formatInstant(i.deadlineAt))}</td>
-      </tr>`,
-        )
-        .join("")}</tbody>
-    </table></div>
-    ${
-      issues.total > rows.length
-        ? `<p class="muted">${escapeHtml(t("admin.insights.issuesShown", { shown: rows.length, count: issues.total }))}</p>`
-        : ""
-    }`;
+    return `<p class="muted" data-site-issues-empty>${escapeHtml(t("admin.insights.noTileIssues", { state: t(`admin.insights.response.${tile}`) }))}</p>`;
+  return `<ul class="insights__issues" aria-label="${escapeHtml(t(`admin.insights.response.${tile}`))}">${rows
+    .map(
+      (
+        i,
+      ) => `<li data-issue-row="${escapeHtml(i.issueId)}"><a href="${escapeHtml(issueHref(i))}" data-route>
+      ${severityView(i.severity)}
+      <strong>${escapeHtml(i.category ? rulebookText(i.category, "rulebook.category") : t("admin.insights.issue.categoryUnknown"))}</strong>
+      <span class="muted">${escapeHtml(i.deadlineAt ? t("admin.insights.issueWhen", { created: formatInstant(i.createdAt), due: formatInstant(i.deadlineAt) }) : formatInstant(i.createdAt))}</span>
+      <span>${escapeHtml(t(`admin.insights.issueStatus.${i.resolvedAt ? "resolved" : "open"}`))}</span>
+      <span class="muted">${escapeHtml(i.issueId)}</span>
+      <wa-icon name="chevron-right" aria-hidden="true"></wa-icon>
+    </a></li>`,
+    )
+    .join("")}</ul>${
+    issues.total > rows.length
+      ? `<p class="muted">${escapeHtml(t("admin.insights.issuesShown", { shown: rows.length, count: issues.total }))}</p>`
+      : ""
+  }`;
 }

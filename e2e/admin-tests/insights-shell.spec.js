@@ -56,20 +56,6 @@ test("unsaved Site edits ask first, and once saved Insights opens", async ({
   await expect(heading(page)).toHaveText(t("admin.insights.overview"));
 });
 
-test("Manage site leads back to Site insights with its filters", async ({
-  page,
-}) => {
-  await mockAdmin(page, { insights: true });
-  await page.goto("/insights/sites/s1?period=2026-09");
-  await page.locator("#insights-manage-site").click();
-  await expect(heading(page)).toHaveText("Example Site");
-  await page.locator('a[href^="/sites/s1?section=oversight"]').click();
-  await expect(page.locator("#site-oversight-form")).toBeVisible();
-  await page.locator("#insights-return").click();
-  await expect(page).toHaveURL(/\/insights\/sites\/s1\?period=2026-09$/);
-  await expect(page.locator("#insights-manage-site")).toBeFocused();
-});
-
 test("when Insights can't download, Manage keeps working", async ({ page }) => {
   await mockAdmin(page, { insights: true });
   // Matches the built, hashed file and the dev server's source path alike.

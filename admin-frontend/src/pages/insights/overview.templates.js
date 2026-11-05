@@ -2,18 +2,15 @@
 import { hasKey, t } from "../../../../frontend/src/i18n/i18n.js";
 import { escapeHtml } from "../../dom.js";
 import {
-  CONTACT_STATES,
-  MAX_REPORT_SITES,
   MAX_SEARCH,
   OVERVIEW_FILTERS,
-  RESPONSE_FILTERS,
   SHOW,
   SITE_SORTS,
 } from "./insights-query.js";
 import {
   codeKey,
-  contactWord,
   formatInstant,
+  helpTip,
   noDataFor,
   periodLabel,
   severityKnown,
@@ -25,16 +22,6 @@ import {
 /** @typedef {import("./insights-session.js").Option} Option */
 /** @typedef {import("./insights-session.js").FilterOptions} FilterOptions */
 /** @typedef {Record<string, any>} SiteRow */
-
-// Shown in this order, worst first, so Overdue never hides behind On time.
-const RESPONSE_ORDER = [
-  "overdue",
-  "late",
-  "awaiting",
-  "onTime",
-  "unknown",
-  "notTimed",
-];
 
 /**
  * Options load after the page, so they're refilled in place.
@@ -61,113 +48,135 @@ function select(name, allLabel, options, selected) {
   return `<wa-select data-filter="${name}" data-all-label="${escapeHtml(allLabel)}" aria-label="${escapeHtml(allLabel)}" placeholder="${escapeHtml(allLabel)}" value="${escapeHtml(selected)}" size="s" pill>${optionsView(allLabel, options, selected)}</wa-select>`;
 }
 
-/** @param {string} prefix translation key prefix @param {readonly string[]} values @returns {Option[]} */
-const fixedOptions = (prefix, values) =>
-  values.map((value) => ({ value, label: t(`${prefix}.${value}`) }));
+/** @param {string} key admin.insights.label.* @param {string} body */
+const controlRow = (key, body) =>
+  `<div class="insights__crow"><span class="insights__clabel" id="insights-label-${key}">${escapeHtml(t(`admin.insights.label.${key}`))}</span><div class="insights__cbody">${body}</div></div>`;
 
 /** Drawn once; later changes update it in place, so search keeps focus. @param {OverviewState} state @param {FilterOptions} options */
 export function filtersView(state, options) {
-  return `<div class="insights__filters">
-    <wa-input id="insights-search" type="search" value="${escapeHtml(state.q)}" placeholder="${escapeHtml(t("admin.insights.search"))}" aria-label="${escapeHtml(t("admin.insights.search"))}" maxlength="${MAX_SEARCH}" size="s" pill with-clear><wa-icon name="magnifying-glass" slot="start" aria-hidden="true"></wa-icon></wa-input>
-    <div class="insights__show">
-      <div class="insights__seg" role="group" aria-label="${escapeHtml(t("admin.insights.show.label"))}" aria-describedby="insights-show-help">${SHOW.map(
+  return `<div class="insights__controls">
+    ${controlRow("search", `<wa-input id="insights-search" type="search" value="${escapeHtml(state.q)}" placeholder="${escapeHtml(t("admin.insights.search"))}" aria-label="${escapeHtml(t("admin.insights.search"))}" maxlength="${MAX_SEARCH}" size="s" pill with-clear><wa-icon name="magnifying-glass" slot="start" aria-hidden="true"></wa-icon></wa-input>`)}
+    ${controlRow("period", '<div data-region="period"></div>')}
+    ${controlRow(
+      "status",
+      `<div class="insights__seg" role="group" aria-labelledby="insights-label-status">${SHOW.map(
         (value) =>
-          `<button type="button" class="btn-secondary" data-show="${value}" aria-pressed="${state.show === value}">${escapeHtml(t(`admin.insights.show.${value}`))}</button>`,
-      ).join("")}</div>
-      <p class="muted insights__help" id="insights-show-help">${escapeHtml(t("admin.insights.show.help"))}</p>
-    </div>
-    <div class="insights__selects" role="group" aria-label="${escapeHtml(t("admin.insights.filters"))}" aria-describedby="insights-filter-help">
-      ${select("managerId", t("admin.insights.filter.managerId"), options.managerId, state.managerId)}
+          `<button type="button" data-show="${value}" aria-pressed="${state.show === value}">${escapeHtml(t(`admin.insights.show.${value}`))}</button>`,
+      ).join(
+        "",
+      )}</div>${helpTip("insights-tip-status", t("admin.insights.label.status"), t("admin.insights.show.help"))}`,
+    )}
+    ${controlRow(
+      "filter",
+      `${select("managerId", t("admin.insights.filter.managerId"), options.managerId, state.managerId)}
       ${select("providerId", t("admin.insights.filter.providerId"), options.providerId, state.providerId)}
       ${select("department", t("admin.insights.filter.department"), options.department, state.department)}
-      ${select("responseState", t("admin.insights.filter.responseState"), fixedOptions("admin.insights.filter.response", RESPONSE_FILTERS), state.responseState)}
-      ${select("publicContact", t("admin.insights.filter.publicContact"), fixedOptions("admin.insights.filter.publicContact", CONTACT_STATES), state.publicContact)}
-      ${select("siteContact", t("admin.insights.filter.siteContact"), fixedOptions("admin.insights.filter.siteContact", CONTACT_STATES), state.siteContact)}
-    </div>
-    <p class="muted insights__help" id="insights-filter-help">${escapeHtml(t("admin.insights.filter.help"))}</p>
+      ${helpTip("insights-tip-filter", t("admin.insights.label.filter"), t("admin.insights.filter.help"))}`,
+    )}
   </div>`;
 }
 
+// Worst first, so Overdue never hides behind On time; no response time is never a concern, so it isn't shown.
+const RESPONSE_SHOWN = ["overdue", "late", "awaiting", "unknown", "onTime"];
+const WARN = new Set(["overdue", "late"]);
+
+/** @param {string} key */
+const muted = (key) => `<span class="muted">${escapeHtml(t(key))}</span>`;
+// Before the records begin, a zero would claim a quiet period (plan §4).
+const UNAVAILABLE = `<span class="insights__unknown">${escapeHtml(t("admin.insights.unavailable"))}</span>`;
+
 /** @param {SiteRow} row */
 function responseSummary(row) {
-  const parts = RESPONSE_ORDER.filter((k) => row.response[k] > 0).map(
+  const parts = RESPONSE_SHOWN.filter((k) => row.response[k] > 0).map(
     (k) =>
-      `<span data-response="${k}">${escapeHtml(t("admin.insights.responseCount", { count: row.response[k], state: t(`admin.insights.response.${k}`) }))}</span>`,
+      `<span data-response="${k}" class="${WARN.has(k) ? "insights__warn" : k === "unknown" ? "insights__unknown" : ""}">${escapeHtml(t("admin.insights.responseCount", { count: row.response[k], state: t(`admin.insights.response.${k}`) }))}</span>`,
   );
-  return parts.length
-    ? `<span class="insights__list">${parts.join("")}</span>`
-    : `<span class="muted">${escapeHtml(t("admin.insights.noIssues"))}</span>`;
+  if (parts.length)
+    return `<span class="insights__stack">${parts.join("")}</span>`;
+  return muted(
+    row.activity.issuesCreated
+      ? "admin.insights.none"
+      : "admin.insights.noIssues",
+  );
 }
 
 /** @param {string} key @param {string} fallback */
 const wordFor = (key, fallback) => t(hasKey(key) ? key : fallback);
 
+/** @param {string} word @param {string} [kind] */
+const chip = (word, kind = "") =>
+  `<span class="insights__chip${kind ? ` insights__chip--${kind}` : ""}">${escapeHtml(word)}</span>`;
+
 /** @param {SiteRow} row */
 function concernsCell(row) {
   // A reason added on the server later reads as a plain concern, not a key.
-  const words = new Set([
-    ...row.concerns.map((/** @type {string} */ c) =>
+  const words = new Set(
+    row.concerns.map((/** @type {string} */ c) =>
       wordFor(`admin.insights.concern.${c}`, "admin.insights.otherConcern"),
     ),
-    ...row.unknownEvidence.map((/** @type {string} */ u) =>
-      wordFor(
-        `admin.insights.unknownEvidence.${u}`,
-        "admin.insights.otherUnknownEvidence",
-      ),
-    ),
-  ]);
+  );
   return words.size
-    ? `<span class="insights__list">${[...words].map((w) => `<span>${escapeHtml(w)}</span>`).join("")}</span>`
-    : `<span class="muted">${escapeHtml(t("admin.insights.none"))}</span>`;
+    ? `<span class="insights__chips">${[...words].map((w) => chip(w)).join("")}</span>`
+    : muted("admin.insights.none");
 }
 
-/** @param {SiteRow} row @param {{ selected: Set<string>, full: boolean, siteHref: (id: string) => string, names: Record<string, Map<string, string>> }} view */
-function siteRow(row, { selected, full, siteHref, names }) {
-  const picked = selected.has(row.siteId);
+/** @param {number | null} severity */
+export function severityView(severity) {
+  const band = severityKnown(severity)
+    ? Number(severity) >= 4
+      ? "severe"
+      : Number(severity) === 3
+        ? "moderate"
+        : "minor"
+    : "unknown";
+  return `<span class="insights__sev" data-severity="${band}"><span class="insights__dot" aria-hidden="true"></span>${escapeHtml(severityWord(severity))}</span>`;
+}
+
+/** @param {SiteRow} row @param {{ selected: Set<string>, noData: boolean, siteHref: (id: string) => string, names: Record<string, Map<string, string>> }} view */
+function siteRow(row, { selected, noData, siteHref, names }) {
+  // Phones show each row as a labelled card (plan §7), so cells carry their column name.
   const label = (/** @type {string} */ key) =>
     `data-label="${escapeHtml(t(`admin.insights.col.${key}`))}"`;
-  const dims = [
-    row.department,
-    row.managerId && (names.managerId.get(row.managerId) ?? row.managerId),
-  ].filter(Boolean);
+  const manager =
+    row.managerId && (names.managerId.get(row.managerId) ?? row.managerId);
+  // Flagged but not counted as a concern (plan §0.2 Q3); a closed Site needs none.
+  const noPublic =
+    row.status !== "inactive" && row.publicContact?.state === "missing";
   return `<tr role="row" data-site-row="${escapeHtml(row.siteId)}">
-    <td role="cell"><wa-checkbox data-select-site="${escapeHtml(row.siteId)}" aria-label="${escapeHtml(t("admin.insights.selectSite", { name: row.name ?? row.siteId }))}" ${picked ? "checked" : ""} ${!picked && full ? "disabled" : ""}></wa-checkbox></td>
+    <td role="cell"><wa-checkbox data-select-site="${escapeHtml(row.siteId)}" aria-label="${escapeHtml(t("admin.insights.selectSite", { name: row.name ?? row.siteId }))}" ${selected.has(row.siteId) ? "checked" : ""}></wa-checkbox></td>
     <th role="rowheader" scope="row" ${label("site")}><a href="${escapeHtml(siteHref(row.siteId))}" data-route data-site-link="${escapeHtml(row.siteId)}">${escapeHtml(row.name ?? row.siteId)}</a>${
-      dims.length
-        ? `<div class="muted">${dims.map((d) => escapeHtml(d)).join(" · ")}</div>`
+      manager ? `<div class="muted">${escapeHtml(manager)}</div>` : ""
+    }${row.status === "inactive" ? `<div class="muted">${escapeHtml(t("admin.insights.inactive"))}</div>` : ""}${
+      noPublic
+        ? `<div data-no-public>${chip(t("admin.insights.noPublicContact"), "flag")}</div>`
         : ""
-    }${row.status === "inactive" ? `<div class="muted">${escapeHtml(t("admin.insights.inactive"))}</div>` : ""}</th>
-    <td role="cell" class="insights__num" ${label("checks")}>${escapeHtml(row.activity.completedPerimeterChecks)}</td>
-    <td role="cell" ${label("response")}>${responseSummary(row)}</td>
-    <td role="cell" ${label("publicContact")} data-contact="public">${escapeHtml(contactWord(row.publicContact))}</td>
-    <td role="cell" ${label("siteContact")} data-contact="site">${escapeHtml(contactWord(row.siteContact))}</td>
-    <td role="cell" ${label("issues")} data-issues>${
-      row.activity.issuesCreated
-        ? escapeHtml(
-            !severityKnown(row.maxSeverity)
-              ? t("admin.insights.issuesNoSeverity", {
-                  count: row.activity.issuesCreated,
-                })
-              : t("admin.insights.issuesHighest", {
-                  count: row.activity.issuesCreated,
-                  severity: severityWord(row.maxSeverity),
-                }),
-          )
-        : `<span class="muted">${escapeHtml(t("admin.insights.noIssues"))}</span>`
+    }</th>
+    <td role="cell" class="insights__num" ${label("checks")} data-checks>${noData ? UNAVAILABLE : escapeHtml(row.activity.completedPerimeterChecks)}</td>
+    <td role="cell" ${label("response")} data-response-cell>${noData ? UNAVAILABLE : responseSummary(row)}</td>
+    <td role="cell" ${label("severity")} data-issues>${
+      noData
+        ? UNAVAILABLE
+        : row.activity.issuesCreated
+          ? severityView(row.maxSeverity)
+          : muted("admin.insights.none")
     }</td>
     <td role="cell" ${label("concerns")} data-concerns>${concernsCell(row)}</td>
+    <td role="cell" class="insights__chev" aria-hidden="true"><wa-icon name="chevron-right"></wa-icon></td>
   </tr>`;
 }
 
-/** Count, select-all and sort sit outside the table, so a load leaves them in place. @param {OverviewState} state */
+/** Count, sort and the report button sit outside the table, so a load leaves them in place. @param {OverviewState} state */
 export function resultBarView(state) {
   return `<div class="insights__resultbar">
     <p role="status" id="insights-count" tabindex="-1"></p>
-    <wa-checkbox id="insights-select-all" disabled>${escapeHtml(t("admin.insights.selectAll", { max: MAX_REPORT_SITES }))}</wa-checkbox>
-    <wa-select data-filter="sort" aria-label="${escapeHtml(t("admin.insights.sort.label"))}" value="${escapeHtml(state.sort)}" size="s" pill>${SITE_SORTS.map(
-      (s) =>
-        `<wa-option value="${s}">${escapeHtml(t(`admin.insights.sort.${s}`))}</wa-option>`,
-    ).join("")}</wa-select>
+    <div class="insights__actions">
+      <span class="insights__sortlabel" aria-hidden="true">${escapeHtml(t("admin.insights.sort.label"))}</span>
+      <wa-select data-filter="sort" aria-label="${escapeHtml(t("admin.insights.sort.label"))}" value="${escapeHtml(state.sort)}" size="s" pill>${SITE_SORTS.map(
+        (s) =>
+          `<wa-option value="${s}">${escapeHtml(t(`admin.insights.sort.${s}`))}</wa-option>`,
+      ).join("")}</wa-select>
+      <button type="button" class="btn-primary" id="insights-report" disabled></button>
+    </div>
   </div>`;
 }
 
@@ -185,12 +194,23 @@ export function countText(reply) {
     : t("admin.insights.siteCount", { count });
 }
 
-/** Select all keeps the user's own picks, so its state counts them all. @param {string[]} pageIds @param {string[]} selected */
+/** The header box ticks when every Site on the page is picked. @param {string[]} pageIds @param {string[]} selected */
 export function selectAllState(pageIds, selected) {
-  const full =
-    selected.length >= Math.min(MAX_REPORT_SITES, pageIds.length) &&
-    selected.length > 0;
-  return { checked: full, indeterminate: !full && selected.length > 0 };
+  const picked = new Set(selected);
+  const all = pageIds.length > 0 && pageIds.every((id) => picked.has(id));
+  return { checked: all, indeterminate: !all && selected.length > 0 };
+}
+
+/** @param {string} key admin.insights.col.* @param {boolean} [num] */
+function columnHead(key, num = false) {
+  const tip = hasKey(`admin.insights.colHelp.${key}`)
+    ? helpTip(
+        `insights-tip-col-${key}`,
+        t(`admin.insights.col.${key}`),
+        t(`admin.insights.colHelp.${key}`),
+      )
+    : "";
+  return `<th role="columnheader" scope="col" ${num ? 'class="insights__num"' : ""}>${escapeHtml(t(`admin.insights.col.${key}`))}${tip}</th>`;
 }
 
 /** @param {{ reply: Record<string, any>, state: OverviewState, siteHref: (id: string) => string, names: Record<string, Map<string, string>>, notice: string }} view */
@@ -198,7 +218,7 @@ export function resultsView({ reply, state, siteHref, names, notice }) {
   const rows = /** @type {SiteRow[]} */ (reply.sites);
   const interval = reply.meta.interval;
   const selected = new Set(state.selected);
-  const full = selected.size >= MAX_REPORT_SITES;
+  const noData = noDataFor(reply.meta);
   const note = notice
     ? `<p class="muted" data-insights-notice>${escapeHtml(notice)}</p>`
     : "";
@@ -210,23 +230,11 @@ export function resultsView({ reply, state, siteHref, names, notice }) {
     <table role="table">
       <caption class="visually-hidden">${escapeHtml(t("admin.insights.tableCaption", { period: periodLabel(interval) }))}</caption>
       <thead role="rowgroup"><tr role="row">
-        <th role="columnheader" scope="col"><span class="visually-hidden">${escapeHtml(t("admin.insights.col.select"))}</span></th>
-        ${[
-          "site",
-          "checks",
-          "response",
-          "publicContact",
-          "siteContact",
-          "issues",
-          "concerns",
-        ]
-          .map(
-            (key) =>
-              `<th role="columnheader" scope="col" ${key === "checks" ? 'class="insights__num"' : ""}>${escapeHtml(t(`admin.insights.col.${key}`))}</th>`,
-          )
-          .join("")}
+        <th role="columnheader" scope="col"><wa-checkbox id="insights-select-all" aria-label="${escapeHtml(t("admin.insights.selectAll"))}"></wa-checkbox></th>
+        ${columnHead("site")}${columnHead("checks", true)}${columnHead("response")}${columnHead("severity")}${columnHead("concerns")}
+        <th role="columnheader" scope="col"><span class="visually-hidden">${escapeHtml(t("admin.insights.col.open"))}</span></th>
       </tr></thead>
-      <tbody role="rowgroup">${rows.map((row) => siteRow(row, { selected, full, siteHref, names })).join("")}</tbody>
+      <tbody role="rowgroup">${rows.map((row) => siteRow(row, { selected, noData, siteHref, names })).join("")}</tbody>
     </table>
   </div>
   ${pagerView(reply)}`;
@@ -262,12 +270,9 @@ function emptyView(reply, state) {
   return `<div class="empty-state" data-insights-empty="filtered"><p>${escapeHtml(t("admin.insights.empty.filtered"))}</p><button type="button" class="btn-secondary" id="insights-clear-filters">${escapeHtml(t("admin.insights.clearFilters"))}</button>${state.show === "all" ? "" : showAll}</div>`;
 }
 
-/** Updated in place, so focus stays and screen readers hear one live region. */
+/** Below the table, as the mock has it; updated in place, so screen readers hear one live region. */
 export function reportBarView() {
-  return `<div class="insights__report">
-    <button type="button" class="btn-primary" id="insights-report" disabled></button>
-    <p class="muted" id="insights-report-hint"></p>
-  </div>
+  return `<p class="muted insights__hint" id="insights-report-hint"></p>
   <div role="status" id="insights-report-status" tabindex="-1"></div>`;
 }
 
@@ -280,11 +285,8 @@ export function reportBarText({ selected, job }) {
       ? t("admin.insights.report.buttonCount", { count: selected })
       : t("admin.insights.report.button"),
     hint: selected
-      ? t("admin.insights.report.selected", {
-          count: selected,
-          max: MAX_REPORT_SITES,
-        })
-      : t("admin.insights.report.hint", { max: MAX_REPORT_SITES }),
+      ? t("admin.insights.report.selected", { count: selected })
+      : t("admin.insights.report.hint"),
   };
 }
 
@@ -298,7 +300,7 @@ export function jobView(job, linkStale) {
     const delayed = job.error
       ? ` <span class="muted" data-report-delayed>${escapeHtml(t("admin.insights.report.checkDelayed"))}</span>`
       : "";
-    return `<p>${escapeHtml(t("admin.insights.report.working", { count }))} <button type="button" class="btn-link" id="insights-report-cancel">${escapeHtml(t("admin.insights.report.cancel"))}</button>${delayed}</p>`;
+    return `<p>${escapeHtml(t("admin.insights.report.working", { count }))}${delayed}</p>`;
   }
   if (job.phase === "succeeded") {
     const url = job.job?.downloadUrl;
@@ -317,7 +319,8 @@ export function jobView(job, linkStale) {
     const failed = job.error
       ? `<span class="error">${escapeHtml(t("admin.insights.report.refreshFailed"))}</span>`
       : "";
-    return `<p>${[escapeHtml(t("admin.insights.report.ready", { count })), link, failed, kept].filter(Boolean).join(" ")}</p>`;
+    // The link goes last, after when it expires, as the mock has it.
+    return `<p>${[escapeHtml(t("admin.insights.report.ready", { count })), kept, link, failed].filter(Boolean).join(" ")}</p>`;
   }
   if (job.phase === "cancelled")
     return `<p>${escapeHtml(t("admin.insights.report.cancelled"))}</p>`;

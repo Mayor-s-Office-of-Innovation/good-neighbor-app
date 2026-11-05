@@ -152,9 +152,6 @@ test("Overview opens on Top concerns, sorted by Site name", () => {
     managerId: "",
     providerId: "",
     department: "",
-    responseState: "",
-    publicContact: "",
-    siteContact: "",
     sort: "name",
     cursor: "",
     selected: [],
@@ -162,12 +159,11 @@ test("Overview opens on Top concerns, sorted by Site name", () => {
 });
 
 test("Overview ignores filter values it doesn't offer", () => {
-  const state = readOverview(
-    "?show=compliant&responseState=passed&publicContact=yes&sort=score",
-  );
+  const state = readOverview("?show=compliant&responseState=passed&sort=score");
+  // The response and contact filters were cut, so old links drop them.
   assert.deepEqual(
-    [state.show, state.responseState, state.publicContact, state.sort],
-    ["top", "", "", "name"],
+    [state.show, "responseState" in state, state.sort],
+    ["top", false, "name"],
   );
 });
 
@@ -176,19 +172,19 @@ test("Overview's URL leaves out defaults and keeps the period", () => {
     ...readOverview(""),
     q: "harbor",
     show: "all",
-    responseState: "overdue",
+    managerId: "pm1",
     selected: ["s2", "s1"],
   };
   assert.equal(
     overviewSearch(state, { kind: "month", month: "2026-10" }),
-    "?period=2026-10&q=harbor&show=all&responseState=overdue&selected=s2%2Cs1",
+    "?period=2026-10&q=harbor&show=all&managerId=pm1&selected=s2%2Cs1",
   );
   assert.equal(overviewSearch(readOverview(""), null), "");
 });
 
 test("Overview asks the API for the shown filters, never the selection", () => {
   const state = readOverview(
-    "?q=pier&show=unknown&providerId=v1&siteContact=missing&sort=maxSeverity&cursor=50&selected=s1",
+    "?q=pier&show=unknown&providerId=v1&sort=maxSeverity&cursor=50&selected=s1",
   );
   assert.deepEqual(
     overviewApiParams(state, { kind: "month", month: "2026-10" }),
@@ -198,7 +194,6 @@ test("Overview asks the API for the shown filters, never the selection", () => {
       q: "pier",
       show: "unknown",
       providerId: "v1",
-      siteContact: "missing",
       sort: "maxSeverity",
       cursor: "50",
     },
@@ -206,7 +201,10 @@ test("Overview asks the API for the shown filters, never the selection", () => {
 });
 
 test("the selection keeps only Sites on this page, up to the report limit", () => {
-  const page = Array.from({ length: 12 }, (_, i) => `s${i + 1}`);
+  const page = Array.from(
+    { length: MAX_REPORT_SITES + 5 },
+    (_, i) => `s${i + 1}`,
+  );
   assert.deepEqual(keptSelection(["s9", "gone", "s1"], page), ["s9", "s1"]);
   assert.equal(keptSelection(page, page).length, MAX_REPORT_SITES);
 });

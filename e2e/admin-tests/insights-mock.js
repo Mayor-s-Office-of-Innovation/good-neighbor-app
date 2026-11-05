@@ -207,7 +207,7 @@ const SITES = [
     maxSeverity: 4,
     publicContact: contact("available"),
     siteContact: contact("missing"),
-    concerns: ["overdue", "late", "severe", "siteContact"],
+    concerns: ["overdue", "late", "severe"],
     unknownEvidence: [],
   },
   {
@@ -287,7 +287,7 @@ const SITES = [
     maxSeverity: 5,
     publicContact: contact("missing"),
     siteContact: contact("unknown"),
-    concerns: ["late", "severe", "publicContact"],
+    concerns: ["late", "severe"],
     unknownEvidence: ["response", "siteContact"],
   },
 ];
@@ -324,10 +324,8 @@ const counted = (site, period) =>
         ...site,
         ...ZERO,
         maxSeverity: null,
-        // Contacts are today's, so they still count with no activity data.
-        concerns: site.concerns.filter((/** @type {string} */ c) =>
-          c.endsWith("Contact"),
-        ),
+        // No activity data, so only today's contacts can still be unknown.
+        concerns: [],
         unknownEvidence: site.unknownEvidence.filter(
           (/** @type {string} */ u) => u.endsWith("Contact"),
         ),
@@ -458,6 +456,7 @@ function siteReply(siteId, params) {
       publicContact: row.publicContact,
       siteContact: row.siteContact,
       totals: { activity: row.activity, response: row.response },
+      concerns: row.concerns,
       comparison,
       days,
     },
@@ -500,9 +499,23 @@ const check = {
   issues: 1,
 };
 
-/** Issues by Site: s1's one Issue, and one for s4 with no response record. */
+/** Issues by Site: two of s1's, one Overdue, and one for s4 with no response record. */
 const ISSUES = [
   { ...issue, siteName: "Example Site" },
+  {
+    ...issue,
+    issueId: "t2",
+    siteName: "Example Site",
+    category: "Fence damage",
+    severity: 3,
+    severityBand: "moderate",
+    createdAt: "2026-10-20T16:00:00.000Z",
+    createdDay: "2026-10-20",
+    deadlineAt: "2026-10-23T16:00:00.000Z",
+    firstResponseAt: null,
+    responseState: "overdue",
+    latestActivityAt: "2026-10-20T16:00:00.000Z",
+  },
   {
     ...issue,
     issueId: "t9",
@@ -553,9 +566,11 @@ function issuesReply(params) {
   const period = requestedPeriod(params);
   if ("error" in period) return { status: 400, json: { error: period.error } };
   const ids = params.get("siteIds")?.split(",");
+  const state = params.get("responseState");
   const rows = ISSUES.filter(
     (i) =>
       (!ids || ids.includes(i.siteId)) &&
+      (!state || i.responseState === state) &&
       i.createdDay >= period.startDay &&
       i.createdDay < period.endDay,
   );

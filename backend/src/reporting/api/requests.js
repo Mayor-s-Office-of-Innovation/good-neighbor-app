@@ -10,7 +10,8 @@ export const LIMITS = Object.freeze({
   maxPageSize: 100,
   maxSiteIds: 100,
   maxTrendSites: 50,
-  maxReportSites: 10,
+  // A citywide 12-month report takes about 45 ms a Site here; 250 stays well inside jobs.js's 2-minute stall window.
+  maxReportSites: 250,
   // A year of citywide Issues is about 222,000 rows (architecture doc, decision 4).
   maxExportRows: 250_000,
   maxSearch: 100,

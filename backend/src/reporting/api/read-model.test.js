@@ -323,8 +323,8 @@ describe("overview", () => {
   it("lists why each Site is a top concern, and what evidence is unknown", () => {
     const rows = shown({}, s3Contacted("unknown")).sites;
     expect(rows.map((r) => [r.siteId, r.concerns, r.unknownEvidence])).toEqual([
-      ["s1", ["overdue", "severe", "siteContact"], []],
-      ["s2", ["late", "publicContact", "siteContact"], []],
+      ["s1", ["overdue", "severe"], []],
+      ["s2", ["late"], []],
       ["s3", [], ["publicContact", "siteContact"]],
     ]);
   });
@@ -461,10 +461,14 @@ describe("overview", () => {
     expect(noChecks(firstDay, november)).toEqual([]);
   });
 
-  it("doesn't flag a closed Site's missing contacts", () => {
-    const res = shown({ siteContact: "missing" });
-    const s3 = res.sites.find((r) => r.siteId === "s3");
-    expect([s3?.concerns, s3?.unknownEvidence]).toEqual([[], []]);
+  it("never counts a missing contact as a top concern", () => {
+    const missing = s3Contacted("missing");
+    const s3 = shown({}, missing).sites.find((r) => r.siteId === "s3");
+    expect([s3?.publicContact.state, s3?.concerns]).toEqual(["missing", []]);
+    expect(shown({ show: "top" }, missing).sites.map((r) => r.siteId)).toEqual([
+      "s1",
+      "s2",
+    ]);
   });
 
   it("doesn't list a closed Site's contacts as unknown", () => {
@@ -540,6 +544,18 @@ describe("siteDetail", () => {
       "2026-11-04",
     ]);
     expect(res.days[3]).toMatchObject({ unfinishedChecks: 1 });
+  });
+
+  it("flags the Site for the same reasons as its Overview row", () => {
+    const row = overview(snap, {
+      interval: october,
+      filter: {},
+      list: list("sites"),
+      now: NOW,
+    }).sites.find((r) => r.siteId === "s1");
+    const res = siteDetail(snap, "s1", { interval: october, now: NOW });
+    expect(res.concerns).toEqual(["overdue", "severe"]);
+    expect(res.concerns).toEqual(row?.concerns);
   });
 
   it("answers 404 for a Site the snapshot doesn't have", () => {

@@ -273,12 +273,9 @@ test("System Status still opens for a Supervisor with Insights on", async () => 
   assert.equal(current(manageTab), null);
 });
 
-test("Manage site goes to the Site and offers a way back to Insights", async () => {
+test("a Site opened with a return offers a way back to Insights", async () => {
   await mountAdmin("/insights/sites/s1?period=2026-09", { insights: true });
-  $("#insights-manage-site").focus();
-  await click("#insights-manage-site");
-  assert.equal(
-    url(),
+  await routeTo(
     `/sites/s1?return=${encodeURIComponent("/insights/sites/s1?period=2026-09")}`,
   );
   assert.equal(heading(), "Example Site");
@@ -290,7 +287,6 @@ test("Manage site goes to the Site and offers a way back to Insights", async () 
   assert.ok(!missing("#site-oversight-form"));
   await click("#insights-return");
   assert.equal(url(), "/insights/sites/s1?period=2026-09");
-  assert.ok(focused("#insights-manage-site"));
 });
 
 test("Back to Insights stays while the Site's own links drop the return", async () => {
@@ -307,18 +303,6 @@ test("Back to Insights stays while the Site's own links drop the return", async 
   assert.ok(missing("#insights-return"));
   await routeTo("/sites/s1");
   assert.ok(missing("#insights-return"));
-});
-
-test("a focused element whose id isn't a valid selector doesn't break the return", async () => {
-  await mountAdmin("/insights/sites/s1", { insights: true });
-  const link = $("#insights-manage-site");
-  link.id = "1-manage";
-  link.focus();
-  await click(link);
-  await click("#insights-return");
-  assert.equal(pageError(), "");
-  assert.equal(heading(), "Example Site");
-  assert.ok(focused("#insights-title"));
 });
 
 test("a session that ends on an Insights page hides the page", async () => {
@@ -347,22 +331,22 @@ test("clicking on while Insights downloads starts one download", async () => {
 });
 
 test("ids that need encoding reach the Site and the page title intact", async () => {
-  await mountAdmin("/insights/sites/a%20b", { insights: true });
-  assert.match(
-    $("#insights-manage-site").getAttribute("href"),
-    /^\/sites\/a%20b\?return=/,
-  );
+  const { api } = await mountAdmin("/insights/sites/a%20b", { insights: true });
+  assert.equal(api.calls("GET", /^reporting\/sites\/a%20b(\?|$)/).length, 1);
   await routeTo("/insights/raw/issues/i%201");
   assert.equal(heading(), t("admin.insights.issue", { id: "i 1" }));
 });
 
 test("a very long Insights address still leaves a way back, with its period", async () => {
-  const long = `/insights/sites/s1?period=2026-09&q=${"a".repeat(4100)}`;
+  const long = `/insights/sites/s1?period=2026-10&q=${"a".repeat(4100)}`;
   await mountAdmin(long, { insights: true });
-  await click("#insights-manage-site");
+  const issue = new URL(
+    $('[data-issue-row="t2"] a').getAttribute("href"),
+    "https://x",
+  );
   assert.equal(
-    $("#insights-return").getAttribute("href"),
-    "/insights/sites/s1?period=2026-09",
+    issue.searchParams.get("return"),
+    "/insights/sites/s1?period=2026-10",
   );
 });
 

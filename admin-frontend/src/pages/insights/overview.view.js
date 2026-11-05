@@ -78,13 +78,13 @@ class InsightsOverview extends HTMLElement {
     this.generation = 0;
     /** @type {import("./insights-session.js").Names} */
     this.names = { managerId: new Map(), providerId: new Map() };
+    // The mock's order: data time, controls, results, then the report hint.
     this.innerHTML = `
       <div data-region="freshness">${freshnessView(null)}</div>
-      <div data-region="period"></div>
       <div data-region="filters">${filtersView(this.state, NO_OPTIONS)}</div>
-      <div data-region="report">${reportBarView()}</div>
       <div data-region="bar">${resultBarView(this.state)}</div>
-      <div data-region="results"></div>`;
+      <div data-region="results"></div>
+      <div data-region="report">${reportBarView()}</div>`;
     this.search = debounce(() => this.searchChanged(), 300);
     this.addEventListener("click", this.clicked);
     this.addEventListener("input", this.typed);
@@ -173,7 +173,7 @@ class InsightsOverview extends HTMLElement {
     // An old table would claim to match the new filters, so it goes now.
     this.region("results").innerHTML = loadingView();
     this.setAttribute("aria-busy", "true");
-    // Select all and Make report would act on the old reply's Sites.
+    // Select all and Generate report would act on the old reply's Sites.
     this.drawBar();
     this.drawReport();
     /** @type {Record<string, any>} */
@@ -280,13 +280,13 @@ class InsightsOverview extends HTMLElement {
       selected: this.state.selected.length,
       job,
     });
-    const make = /** @type {HTMLButtonElement | null} */ (
+    const generate = /** @type {HTMLButtonElement | null} */ (
       this.querySelector("#insights-report")
     );
-    if (make) {
-      make.textContent = button;
+    if (generate) {
+      generate.textContent = button;
       // The dialog names the period and data time, which need a reply.
-      make.disabled =
+      generate.disabled =
         !this.state.selected.length || busy || !this.reply || this.loading();
     }
     const help = this.querySelector("#insights-report-hint");
@@ -389,7 +389,7 @@ class InsightsOverview extends HTMLElement {
     if (siteId) this.select(siteId, target.checked);
   };
 
-  /** Fills up to the limit in page order, keeping the user's own picks. @param {boolean} on */
+  /** Keeps the user's own picks first, in the order they made them. @param {boolean} on */
   selectAll(on) {
     if (this.loading()) return;
     const ids = this.pageIds();
@@ -414,7 +414,6 @@ class InsightsOverview extends HTMLElement {
     this.state.selected = keptSelection(this.state.selected, this.pageIds());
     this.writeUrl();
     const picked = new Set(this.state.selected);
-    const full = picked.size >= MAX_REPORT_SITES;
     // Back from a Site must bring back the boxes ticked here.
     for (const link of /** @type {NodeListOf<HTMLAnchorElement>} */ (
       this.querySelectorAll("[data-site-link]")
@@ -423,11 +422,8 @@ class InsightsOverview extends HTMLElement {
     // In place, so the box the user is on keeps focus.
     for (const box of /** @type {NodeListOf<any>} */ (
       this.querySelectorAll("[data-select-site]")
-    )) {
-      const on = picked.has(box.dataset.selectSite ?? "");
-      box.checked = on;
-      box.disabled = !on && full;
-    }
+    ))
+      box.checked = picked.has(box.dataset.selectSite ?? "");
     this.drawBar();
     this.drawReport();
   }
@@ -436,7 +432,8 @@ class InsightsOverview extends HTMLElement {
   clicked = (event) => {
     const target = /** @type {Element} */ (event.target);
     const button = target.closest("button, a");
-    if (!button || !this.contains(button)) return;
+    if (!button) return this.rowClicked(target);
+    if (!this.contains(button)) return;
     // A control in the table goes with the redraw; focus then goes to the count.
     if (this.region("results").contains(button)) this.refocus = true;
     const show = button.getAttribute("data-show");
@@ -457,8 +454,6 @@ class InsightsOverview extends HTMLElement {
         Object.fromEntries(["q", ...OVERVIEW_FILTERS].map((key) => [key, ""])),
       );
     if (button.id === "insights-report") return this.openReportDialog();
-    if (button.id === "insights-report-cancel")
-      return void this.session.reportJobs.cancel();
     if (button.id === "insights-report-refresh")
       return void this.session.reportJobs.refresh();
     const site = button.getAttribute("data-site-link");
@@ -470,6 +465,14 @@ class InsightsOverview extends HTMLElement {
         alsoPath: "",
       };
   };
+
+  /** A click anywhere on a row opens its Site; the name stays the real link. @param {Element} target */
+  rowClicked(target) {
+    if (target.closest("wa-checkbox, [popover]")) return;
+    /** @type {HTMLElement | null | undefined} */ (
+      target.closest("[data-site-row]")?.querySelector("[data-site-link]")
+    )?.click();
+  }
 
   currentPath() {
     return `${location.pathname}${location.search}`;
