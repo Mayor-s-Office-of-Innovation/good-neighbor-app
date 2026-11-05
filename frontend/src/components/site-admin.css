@@ -348,6 +348,10 @@
   font-weight: var(--wa-font-weight-semibold);
 }
 
+.site-access-form > .site-admin-form-error:empty {
+  display: none;
+}
+
 .site-admin-edit-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -411,6 +415,22 @@
 
 #staff-device-label {
   --wa-form-control-required-content: "";
+}
+
+#staff-device-label[aria-invalid="true"]::part(input-wrapper) {
+  border-color: var(--c-hazard);
+}
+
+#staff-device-label[aria-invalid="true"] {
+  --wa-color-focus: var(--c-hazard);
+}
+
+#staff-device-label[aria-invalid="true"]::part(form-control-label) {
+  color: var(--c-hazard);
+}
+
+#staff-device-label[aria-invalid="true"]::part(form-control-label)::after {
+  content: " *";
 }
 
 .site-access-form wa-input::part(form-control-label),
@@ -482,4 +502,23 @@
 .site-admin-header--close > span {
   grid-column: 1;
   grid-row: 1;
+}
+
+.site-access-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.site-access-code-dialog .places-modal__card {
+  display: grid;
+  gap: 1rem;
+}
+.site-access-code-value {
+  font-size: clamp(1.5rem, 7vw, 2.5rem);
+  font-weight: 700;
+  letter-spacing: 0.25em;
+  text-align: center;
+  padding-block: 1rem;
+  overflow-wrap: anywhere;
 }

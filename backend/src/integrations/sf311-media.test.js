@@ -186,6 +186,40 @@ describe("311 media lease", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [undefined, undefined, "missing_token"],
+    ["bad", undefined, "invalid_token"],
+    ["a".repeat(64), undefined, "unknown_lease"],
+    ["a".repeat(64), { expiresAt: 0, s3Key: "private-key" }, "expired_lease"],
+    [
+      "a".repeat(64),
+      { expiresAt: "invalid", s3Key: "private-key" },
+      "invalid_lease",
+    ],
+  ])("records safe rejection diagnostics: %s", async (token, item, reason) => {
+    vi.stubEnv("DYNAMO_TABLE", "table");
+    vi.stubEnv("S3_UPLOAD_BUCKET", "uploads");
+    vi.stubEnv("SQS_QUEUE_URL", "queue");
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    send.mockResolvedValue({ Item: item });
+    const response = await get311Media(
+      /** @type {any} */ ({
+        queryStringParameters: { token },
+        requestContext: { requestId: "synthetic-request" },
+      }),
+    );
+    expect(response.statusCode).toBe(404);
+    const entry = JSON.parse(log.mock.calls[0][0]);
+    expect(entry).toMatchObject({
+      marker: "Sf311MediaAccess",
+      Reason: reason,
+      requestId: "synthetic-request",
+    });
+    expect(JSON.stringify(entry)).not.toContain("private-key");
+    if (token) expect(JSON.stringify(entry)).not.toContain(token);
+    expect(presignGet).not.toHaveBeenCalled();
+  });
+
   it("fails before writing a lease when the public base URL is missing", async () => {
     await expect(
       create311MediaLink({

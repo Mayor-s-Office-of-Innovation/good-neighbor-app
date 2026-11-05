@@ -10,7 +10,7 @@ import {
 export { create311Batch } from "./site-311-batch-state.js";
 
 export function batch311Header() {
-  return '<div id="site-311-batch"></div>';
+  return `<p>${escapeHtml(t("admin.batch311.hint"))}</p><div id="site-311-batch"></div>`;
 }
 
 export function batch311Checkbox(state, site) {

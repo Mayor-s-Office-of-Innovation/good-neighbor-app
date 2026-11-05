@@ -321,6 +321,7 @@ class SiteAccessView extends HTMLElement {
         .map((grant) => ({
           ...grant,
           enrollmentUrl: localGrants.get(grant.grantId)?.enrollmentUrl,
+          code: localGrants.get(grant.grantId)?.code,
         }))
         .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
       this._render();
@@ -340,6 +341,9 @@ class SiteAccessView extends HTMLElement {
     this._stopAccessRefresh = null;
     clearInterval(this._countdownTimer);
     this._grants = [];
+    /** @type {HTMLDialogElement | null} */ (
+      this.querySelector(".site-access-code-dialog")
+    )?.close();
     this.querySelector("#staff-grant-result")?.replaceChildren();
   }
 
@@ -359,6 +363,9 @@ class SiteAccessView extends HTMLElement {
   }
 
   _render() {
+    /** @type {HTMLDialogElement | null} */ (
+      this.querySelector(".site-access-code-dialog")
+    )?.close();
     this.innerHTML = html`
       <div class="site-admin-page">
         ${adminHeader(t("access.title"), true)}
@@ -377,6 +384,7 @@ class SiteAccessView extends HTMLElement {
             <form
               class="site-admin-card site-access-form"
               id="staff-grant-form"
+              novalidate
             >
               <wa-input
                 id="staff-device-label"
@@ -569,6 +577,22 @@ class SiteAccessView extends HTMLElement {
           () => void this._accessState.shareGrant(grant),
         );
       card
+        .querySelector("[data-show-code]")
+        ?.addEventListener("click", async (event) => {
+          const trigger = /** @type {HTMLButtonElement} */ (
+            event.currentTarget
+          );
+          const { showEnrollmentCode } = await import("./site-access-code.js");
+          if (
+            this.isConnected &&
+            trigger.isConnected &&
+            this._canManageAccess !== false &&
+            this._grants.includes(grant) &&
+            Date.parse(grant.expiresAt) > Date.now()
+          )
+            showEnrollmentCode(this, grant, trigger);
+        });
+      card
         .querySelector("[data-cancel-staff-grant]")
         ?.addEventListener("click", () => void this._cancelGrant(grant));
     });
@@ -577,6 +601,14 @@ class SiteAccessView extends HTMLElement {
   }
 
   _syncInvitation() {
+    const input = /** @type {any} */ (
+      this.querySelector("#staff-device-label")
+    );
+    if (input?.value?.trim() && input.hasAttribute("aria-invalid")) {
+      input.removeAttribute("aria-invalid");
+      const error = this.querySelector("#staff-grant-error");
+      if (error?.textContent === t("access.labelError")) error.textContent = "";
+    }
     this._accessState.syncAccess(this);
   }
 
@@ -588,6 +620,16 @@ class SiteAccessView extends HTMLElement {
       /** @type {any} */ (form.querySelector("#staff-device-label"))?.value ||
         "",
     ).trim();
+    const error = this.querySelector("#staff-grant-error");
+    if (!label) {
+      const input = /** @type {any} */ (
+        form.querySelector("#staff-device-label")
+      );
+      input?.setAttribute("aria-invalid", "true");
+      input?.focus();
+      if (error) error.textContent = t("access.labelError");
+      return;
+    }
     const invitation = this._invitationControls?.readInvitation(this);
     if (
       (invitation?.accessLevel === "manager" && !this._canInviteManagers) ||
@@ -595,11 +637,6 @@ class SiteAccessView extends HTMLElement {
         !this._invitationControls.validInvitation(invitation))
     ) {
       this._syncInvitation();
-      return;
-    }
-    const error = this.querySelector("#staff-grant-error");
-    if (!label) {
-      if (error) error.textContent = t("access.labelError");
       return;
     }
     const button = form.querySelector("button[type=submit]");
@@ -626,6 +663,7 @@ class SiteAccessView extends HTMLElement {
       this._grants.unshift({
         ...result.grant,
         enrollmentUrl: result.enrollmentUrl,
+        code: result.code,
       });
       this._render();
       this._accessState.scrollToGrant(this);
@@ -838,6 +876,14 @@ function activeGrantView(grant, expanded) {
             ${escapeHtml(t("access.share"))}
           </button>`
         : ""}
+      <button
+        class="btn-outline"
+        type="button"
+        data-show-code
+        ${grant.code ? "" : "disabled"}
+      >
+        ${escapeHtml(t("access.showCode"))}
+      </button>
       <button
         class="btn-outline site-access-cancel"
         type="button"

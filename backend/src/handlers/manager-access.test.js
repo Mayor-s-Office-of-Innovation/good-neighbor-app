@@ -7,6 +7,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../db.js", () => ({ ddb: { send } }));
+vi.mock("./enrollment-codes.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  generateEnrollmentCode: async () => "ABC234",
+}));
 
 const {
   cancelStaffGrant,
@@ -19,6 +23,7 @@ const {
 beforeEach(() => {
   send.mockReset();
   vi.stubEnv("DYNAMO_TABLE", "gnp-test-app");
+  vi.stubEnv("SETUP_CODE_VERIFIER_SECRET", "synthetic-test-verifier");
   vi.stubEnv("PROVIDER_APP_URL", "https://field.example.test/");
 });
 
@@ -63,11 +68,21 @@ describe("manager staff enrollment", () => {
     expect(
       Date.parse(body.grant.expiresAt) - Date.parse(body.grant.createdAt),
     ).toBe(8 * 60 * 60 * 1000);
+    expect(body.code).toBe("ABC234");
     expect(body.enrollmentUrl).toContain("#enrollment_grant=");
     const transaction = send.mock.calls[4][0];
     expect(transaction).toBeInstanceOf(TransactWriteCommand);
-    expect(transaction.input.TransactItems).toHaveLength(5);
+    expect(transaction.input.TransactItems).toHaveLength(6);
+    for (const write of transaction.input.TransactItems.filter(
+      (/** @type {any} */ write) =>
+        write.Put?.Item.pk.startsWith("ENROLLMENT_TOKEN#"),
+    )) {
+      expect(write.Put.Item.expiresAt).toBe(
+        Math.floor(Date.parse(body.grant.expiresAt) / 1000) + 30 * 86400,
+      );
+    }
     const serialized = JSON.stringify(transaction.input);
+    expect(serialized).not.toContain(body.code);
     expect(serialized).not.toContain(
       new URL(body.enrollmentUrl).hash.match(/enrollment_token=([^&]+)/)?.[1],
     );
@@ -98,6 +113,7 @@ describe("manager staff enrollment", () => {
       issuedByBindingId: "manager-1",
       status: "pending",
       tokenHash: "token-hash",
+      codeHash: "code-hash",
       createdAt: "2026-10-03T00:00:00.000Z",
       expiresAt: "2099-01-01T00:00:00.000Z",
     };
@@ -118,11 +134,23 @@ describe("manager staff enrollment", () => {
     const transaction = send.mock.calls.filter(
       ([command]) => command instanceof TransactWriteCommand,
     )[0][0];
-    expect(transaction.input.TransactItems).toHaveLength(3);
-    expect(transaction.input.TransactItems[1].Delete.Key).toEqual({
+    expect(transaction.input.TransactItems).toHaveLength(4);
+    expect(transaction.input.TransactItems[1].Update.Key).toEqual({
       pk: "ENROLLMENT_TOKEN#token-hash",
       sk: "#META",
     });
+    expect(transaction.input.TransactItems[2].Update.Key.pk).toBe(
+      "ENROLLMENT_TOKEN#code-hash",
+    );
+    for (const write of transaction.input.TransactItems.slice(1, 3)) {
+      expect(write.Update.ExpressionAttributeValues[":status"]).toBe(
+        "cancelled",
+      );
+      const values = write.Update.ExpressionAttributeValues;
+      expect(
+        values[":retention"] - Math.floor(Date.parse(values[":at"]) / 1000),
+      ).toBe(30 * 86400);
+    }
   });
 
   it("lists both site roles with their actual access levels", async () => {
