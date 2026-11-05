@@ -257,7 +257,7 @@
   "admin.insights.activity.completedPerimeterChecks": "Completed Checks",
   "admin.insights.activity.issuesCreated": "Issues created",
   "admin.insights.activity.singleIssueReports": "Single-issue reports",
-  "admin.insights.activityHelp.completedPerimeterChecks": "Perimeter Checks completed in the period, and the average a day over whole days with data. Under the {min} a day it owes is a concern.",
+  "admin.insights.activityHelp.completedPerimeterChecks": "Perimeter Checks completed in the period, and the average a day over whole days with data. Averaging under {min} on days it owed Checks is a concern.",
   "admin.insights.activityHelp.completedPerimeterChecksNoneOwed": "Perimeter Checks completed in the period, and the average a day over whole days with data. This Site owed no Checks in the period.",
   "admin.insights.activityHelp.issuesCreated": "Issues created at this Site in the period.",
   "admin.insights.activityHelp.singleIssueReports": "Counted separately from perimeter Checks.",

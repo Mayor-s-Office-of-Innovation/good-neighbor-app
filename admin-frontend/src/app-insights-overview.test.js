@@ -666,7 +666,6 @@ test("going back to the month on screen from Custom keeps the picks", async () =
   assert.ok($('[data-select-site="s1"]').checked);
 });
 
-/** What the period control shows: its label, which buttons work, and whether it says the period is running. */
 const periodControl = () => ({
   label: text("[data-period-label]"),
   disabled: $$("[data-period-step], [data-period-kind]")

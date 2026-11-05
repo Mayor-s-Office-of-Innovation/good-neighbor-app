@@ -138,9 +138,8 @@ function buildSiteTables(sites, evaluatedAt) {
 }
 
 /**
- * One row per Site per day it owed Checks, up to the snapshot's day. Judged by
- * getChecksReport's own rule, so Few Checks agrees with the Check report; a
- * Site with no terms owes nothing.
+ * One row per Site per day it owed Checks, using getChecksReport's rule so
+ * Few Checks agrees with the Check report.
  * @param {Record<string, any>[]} sites
  * @param {Record<string, any>[]} terms every COMPLIANCE_TERMS# version
  * @param {string} evaluatedAt

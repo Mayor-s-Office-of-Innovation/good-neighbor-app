@@ -587,7 +587,7 @@ export function generateYear(opts = {}) {
         : at(createdDay, 0),
     });
     answers.profiles[siteId] = profile.key;
-    // Terms from the day the Site opens; an archived Site's end with it.
+    // Terms from the day the Site opens; an archived Site's terms end with it.
     const owedPerDay = profile.checksOwed ?? 3;
     if (owedPerDay) {
       const termsVersionId = `syn-terms-${pad(s + 1)}`;

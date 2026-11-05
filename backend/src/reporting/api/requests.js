@@ -66,9 +66,8 @@ function wholeNumber(value, code) {
 const MIN_DEFAULT_DAYS = 14;
 
 /**
- * Last month, so the numbers a page opens on don't change under the reader.
- * The running month instead when last month has under 14 days of data and
- * this month has at least as many.
+ * Last month, so the opening numbers don't change under the reader, unless it
+ * has under 14 days of data and this month has at least as many.
  * @param {string} evaluatedAt
  * @param {string[]} dataDays days with a site_days row
  * @returns {string} YYYY-MM

@@ -67,8 +67,7 @@ function addDays(day, days) {
 }
 
 /**
- * The handler's default: this month only when last month has under 14 days
- * of data and this month has as many. The mock has data every day from
+ * Matches the handler's default; the mock has data every day from
  * COVERAGE_START.
  * @returns {string} YYYY-MM
  */

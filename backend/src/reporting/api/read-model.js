@@ -27,7 +27,7 @@ const NAMES = new Intl.Collator("en", { sensitivity: "base", numeric: true });
 const NAME_KEYS = new Set(["name", "siteName", "tieName", "sortValue"]);
 const ACTIVITY = SITE_DAY_METRICS.filter((m) => !RESPONSE_STATES.includes(m));
 
-// Placeholders to revise (plan §7). Few Checks needs none: each Site owes its own number.
+// Placeholder concern limits, to be revised. Few Checks needs none: each Site owes its own number.
 export const CONCERN_RULES = Object.freeze({
   severeIssues: 2,
   issuesPer30Days: 4,
