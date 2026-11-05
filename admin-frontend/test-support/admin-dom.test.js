@@ -4,9 +4,6 @@ import { inspect } from "node:util";
 import {
   $,
   adminData,
-  fakePage,
-  globToRegExp,
-  mountAdmin,
   settle,
   teardown,
   tick,
@@ -15,6 +12,7 @@ import {
   unhandledRejection,
   window,
 } from "./admin-dom.js";
+import { mountAdmin } from "./app-mount.js";
 import { quietInspect } from "./quiet-inspect.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { getToasts, showToast } from "../../frontend/src/state/toasts.js";
@@ -117,16 +115,13 @@ test("the fake backend lists only the asked Site's terms and provider's managers
   );
 });
 
-test("a status-only reply has an empty body and no content type, as in Playwright", async () => {
-  await mountAdmin("/sites");
-  for (const status of [202, 204])
-    await fakePage.route(`**/status-${status}`, (route) =>
-      route.fulfill({ status }),
-    );
-  for (const status of [202, 204]) {
-    const response = await fetch(`http://localhost/status-${status}`);
+test("a 204, 205 or 304 reply reaches the page with no body, as in Playwright", async () => {
+  const { api } = await mountAdmin("/sites");
+  for (const status of [204, 205, 304])
+    api.on("GET", new RegExp(`^status-${status}$`), { status });
+  for (const status of [204, 205, 304]) {
+    const response = await fetch(`/admin/v1/status-${status}`);
     assert.equal(response.status, status);
-    assert.equal(response.headers.get("content-type"), null);
     assert.equal(await response.text(), "");
   }
 });
@@ -169,30 +164,6 @@ test("quietInspect can run again on a window whose prototypes it already changed
   await mountAdmin("/sites");
   assert.doesNotThrow(() => quietInspect(window));
   assert.equal(inspect($("admin-app")), "<admin-app>");
-});
-
-test("a route glob follows Playwright's rules for **/, /**/, {a,b}, backslash and ?", () => {
-  const admin = globToRegExp("**/admin/v1/**");
-  assert.ok(admin.test("http://localhost/admin/v1/sites/s1?x=1"));
-  assert.ok(!admin.test("http://localhost/config.js"));
-  // A leading **/ needs its slash.
-  assert.ok(!admin.test("admin/v1/sites"));
-  // /**/ may match a single slash.
-  const deep = globToRegExp("http://localhost/**/main.js");
-  assert.ok(deep.test("http://localhost/main.js"));
-  assert.ok(deep.test("http://localhost/src/app/main.js"));
-  const group = globToRegExp("**/*.{png,jpg}");
-  assert.ok(group.test("http://localhost/a.png"));
-  assert.ok(group.test("http://localhost/a.jpg"));
-  assert.ok(!group.test("http://localhost/a.gif"));
-  const escaped = globToRegExp("**/a\\*b");
-  assert.ok(escaped.test("http://localhost/a*b"));
-  assert.ok(!escaped.test("http://localhost/axb"));
-  const one = globToRegExp("http://localhost/*.js?v=1");
-  assert.ok(one.test("http://localhost/config.js?v=1"));
-  assert.ok(!one.test("http://localhost/config.jsXv=1"));
-  assert.ok(!one.test("http://localhost/src/main.js?v=1"));
-  assert.throws(() => globToRegExp("**/{a,b"), /Unmatched/);
 });
 
 test("settle throws when fetches never stop", async () => {

@@ -1,3 +1,7 @@
+import { adminErrorMessage } from "./admin-error-messages.js";
+import { showFormSaveError } from "./form-state.js";
+import { t } from "../../frontend/src/i18n/i18n.js";
+
 /** Keep drafts intact, announce progress, and suppress repeat submissions. */
 export async function withSaveFeedback(form, save, { savingLabel, onError }) {
   if (form.dataset.saving === "true") return false;
@@ -40,6 +44,18 @@ export async function withSaveFeedback(form, save, { savingLabel, onError }) {
     }
     form.dispatchEvent(new Event("save-feedback-end"));
   }
+}
+
+/**
+ * withSaveFeedback with the siteAdmin.edit.saving label and the inline error every admin form shows.
+ * @param {HTMLFormElement} form
+ * @param {() => Promise<any>} save
+ */
+export function saveWithFeedback(form, save) {
+  return withSaveFeedback(form, save, {
+    savingLabel: t("siteAdmin.edit.saving"),
+    onError: (error) => showFormSaveError(form, adminErrorMessage(error, t)),
+  });
 }
 
 /** Merge a confirmed response without replacing unrelated cached records. */

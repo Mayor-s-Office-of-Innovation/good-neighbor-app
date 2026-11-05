@@ -3,6 +3,7 @@ import { actionFeedback } from "../../action-feedback.js";
 import { adminApi } from "../../services/admin-api.js";
 import { asForm, dataAttr } from "../../dom.js";
 import { bindSiteProgramCreation } from "./site-program.js";
+import { saveWithFeedback } from "../../save-feedback.js";
 import {
   controlValue,
   markSiteDetailsSectionEdited,
@@ -11,7 +12,6 @@ import {
   syncDirtyForm,
   syncSiteDetailsForm,
 } from "../../form-state.js";
-import { navigate } from "../../router.js";
 import { siteManagerContactDetails } from "./manager.templates.js";
 import { t } from "../../../../frontend/src/i18n/i18n.js";
 
@@ -132,7 +132,7 @@ export function bindSiteRecord(app) {
     app,
     app.state,
     adminApi,
-    (form, save) => app.saveWithFeedback(form, save),
+    saveWithFeedback,
     () => {
       if (siteDetailsForm instanceof HTMLFormElement)
         syncSiteDetailsForm(siteDetailsForm);
@@ -150,17 +150,6 @@ export function bindSiteRecord(app) {
       if (siteDetailsForm instanceof HTMLFormElement)
         syncSiteDetailsForm(siteDetailsForm);
     });
-  const leaveDialog = app.querySelector("#site-unsaved-dialog");
-  leaveDialog?.addEventListener("close", () => {
-    if (leaveDialog.returnValue === "discard") {
-      const destination = app.pendingSiteDestination;
-      if (destination) {
-        app.state.site311Batch?.drafts.clear();
-        app.lastRenderedPath = "";
-        navigate(destination);
-      }
-    }
-  });
   app.querySelector("#site-perimeter-form")?.addEventListener("submit", (e) => {
     e.preventDefault();
     app.updatePerimeter(asForm(e.currentTarget));
