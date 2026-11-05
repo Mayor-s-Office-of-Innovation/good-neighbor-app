@@ -139,6 +139,7 @@ customElements.define("attributions-view", AttributionsView);
 
 class FeedbackView extends HTMLElement {
   _siteId = "";
+  _generation = 0;
   connectedCallback() {
     this.innerHTML = pageShell(
       t("feedback.dialog.title"),
@@ -176,7 +177,13 @@ class FeedbackView extends HTMLElement {
     announceScreenHeading(this, ".settings-page__title");
   }
 
+  disconnectedCallback() {
+    this._generation++;
+  }
+
   async _submit() {
+    const generation = this._generation;
+    const current = () => this.isConnected && this._generation === generation;
     const textarea = /** @type {any} */ (this.querySelector("#feedback-text"));
     const text = textarea?.value ?? "";
     if (typeof text !== "string" || !text.trim()) return;
@@ -186,7 +193,9 @@ class FeedbackView extends HTMLElement {
       // Submission code is only needed after Send; import failures use the
       // same draft-preserving retry path as network failures.
       const { sendFeedback } = await import("../services/feedback.js");
+      if (!current()) return;
       await sendFeedback({ message: text, site: this._siteId || undefined });
+      if (!current()) return;
       showFeedbackSuccessToast();
       // Sent: return to the reopened settings menu, like Back.
       /** @type {HTMLButtonElement | null} */ (
@@ -194,7 +203,7 @@ class FeedbackView extends HTMLElement {
       )?.click();
     } catch {
       // Keep the screen + the draft intact for retry.
-      showFeedbackErrorToast();
+      if (current()) showFeedbackErrorToast();
     } finally {
       if (send) send.disabled = false;
     }

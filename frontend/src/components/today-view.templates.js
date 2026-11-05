@@ -177,30 +177,37 @@ export function settingsMenu({ open, adminAccess = false, disabled = false }) {
         id="home-settings"
         type="button"
         aria-label="${escapeAttr(t("today.settings.aria"))}"
-        aria-haspopup="menu"
+        aria-haspopup="dialog"
         aria-expanded="${open ? "true" : "false"}"
         ${disabled ? "disabled" : ""}
       >
         <span class="home-settings__icon" aria-hidden="true"></span>
       </button>
       ${open
-        ? html`<div class="home-settings-scrim" id="settings-scrim"></div>
+        ? html`<dialog
+            class="home-settings-menu"
+            aria-labelledby="settings-title"
+            aria-describedby="settings-release-version"
+          >
+            <div class="home-settings-head">
+              <h2 id="settings-title">
+                ${escapeHtml(t("today.settings.title"))}
+              </h2>
+              <button
+                id="settings-close"
+                autofocus
+                type="button"
+                aria-label="${escapeAttr(t("common.close"))}"
+              >
+                <wa-icon name="xmark" aria-hidden="true"></wa-icon>
+              </button>
+            </div>
             <div
-              class="home-settings-menu"
+              class="home-settings-actions"
               role="menu"
               aria-label="${escapeAttr(t("today.settings.title"))}"
               aria-describedby="settings-release-version"
             >
-              <div class="home-settings-head">
-                <h2>${escapeHtml(t("today.settings.title"))}</h2>
-                <button
-                  id="settings-close"
-                  type="button"
-                  aria-label="${escapeAttr(t("common.close"))}"
-                >
-                  <wa-icon name="xmark" aria-hidden="true"></wa-icon>
-                </button>
-              </div>
               ${adminAccess
                 ? html`<p class="home-settings-group" role="presentation">
                       ${escapeHtml(t("today.settings.groupActivity"))}
@@ -294,7 +301,8 @@ export function settingsMenu({ open, adminAccess = false, disabled = false }) {
               <p class="home-settings-version" id="settings-release-version">
                 ${escapeHtml(import.meta.env.VITE_RELEASE_VERSION || "dev")}
               </p>
-            </div>`
+            </div>
+          </dialog>`
         : ""}
     </div>
   `;

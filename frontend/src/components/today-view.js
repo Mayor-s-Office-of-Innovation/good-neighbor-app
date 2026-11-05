@@ -55,7 +55,6 @@ import {
   showSiteCatalogErrorToast,
   showSiteSwitchBlockedToast,
   showSiteSwitchErrorToast,
-  showLanguageErrorToast,
 } from "../state/toasts.js";
 import {
   onDeletionsChange,
@@ -173,7 +172,7 @@ import "./site-switcher.js";
 import "./location-dialog.js";
 import { fetchProviderSites } from "../services/provider-sites.js";
 import { switchToBoundSite } from "../services/site-switch.js";
-import { getLocale, setLocale, t } from "../i18n/i18n.js";
+import { t } from "../i18n/i18n.js";
 import { rulebookText } from "../i18n/rulebook.js";
 import {
   finishQuestionAnswerFocus,
@@ -355,10 +354,6 @@ class TodayView extends HTMLElement {
       /* storage unavailable: open as a plain home screen */
     }
     this._settingsDocumentClick = null;
-    this._attributionsDialog = null;
-    this._attributionsDialogOpen = false;
-    this._languageDialog = null;
-    this._languageDialogOpen = false;
     /** @type {any} the persistent <site-switcher>, created on first render */
     this._siteSwitcher = null;
     this._providerSites = [];
@@ -1566,13 +1561,6 @@ class TodayView extends HTMLElement {
     this.innerHTML = markup;
     restoreFinalizationNotices(model.pendingSession, this);
 
-    // Hand the bound site id to the feedback sheet so submissions carry it as
-    // optional context (the server treats it as advisory, pattern-checked).
-    const feedbackDialog = /** @type {any} */ (
-      this.querySelector("feedback-dialog")
-    );
-    if (feedbackDialog) feedbackDialog.siteId = this._siteId;
-
     const grouping = this.querySelector("#history-grouping");
     if (grouping) {
       void import("./history-grouping.js");
@@ -1605,19 +1593,34 @@ class TodayView extends HTMLElement {
         this._siteSwitcher?.setOpen(true);
       },
     );
-    for (const closer of ["#settings-close", "#settings-scrim"]) {
-      this.querySelector(closer)?.addEventListener("click", () => {
-        this._settingsMenuOpen = false;
-        this._renderHome(this._homeModel);
-      });
-    }
+    const settings = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("dialog.home-settings-menu")
+    );
+    this.querySelector("#settings-close")?.addEventListener("click", () =>
+      this._closeSettingsMenu(),
+    );
+    settings?.addEventListener("close", () => {
+      if (this.isConnected) this._closeSettingsMenu();
+    });
+    settings?.addEventListener("click", (event) => {
+      if (event.target !== settings) return;
+      const box = settings.getBoundingClientRect();
+      if (
+        event.clientX < box.left ||
+        event.clientX > box.right ||
+        event.clientY < box.top ||
+        event.clientY > box.bottom
+      )
+        this._closeSettingsMenu();
+    });
+    if (settings && !settings.open) settings.showModal();
     this.querySelector("#settings-logout")?.addEventListener("click", () => {
       // Count first: logging out deletes work that hasn't uploaded yet.
       void countUnsentWork()
         .catch(() => ({}))
         .then((unsent) => {
           this._logoutUnsent = unsent;
-          this._settingsMenuOpen = false;
+          this._removeSettingsMenu();
           this._logoutDialogOpen = true;
           this._renderHome(this._homeModel);
         });
@@ -1662,42 +1665,6 @@ class TodayView extends HTMLElement {
       forceNextRouteTransition("push");
       navigate("/reports");
     });
-    this._languageDialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector(":scope > .home > #language-dialog")
-    );
-    this._languageDialog?.addEventListener("click", (event) => {
-      if (event.target === this._languageDialog) this._languageDialog.close();
-    });
-    this._languageDialog?.addEventListener("close", () => {
-      this._languageDialogOpen = false;
-      const chosen = this._languageDialog?.returnValue || "";
-      if (this._languageDialog) this._languageDialog.returnValue = "";
-      if (chosen && chosen !== getLocale()) {
-        // app-root re-renders the view on "localechange". A failed catalog
-        // load (offline first use of a language) changes nothing; say so.
-        void setLocale(chosen).then((ok) => {
-          if (!ok) showLanguageErrorToast();
-        });
-        return;
-      }
-      /** @type {HTMLElement | null} */ (
-        this.querySelector("#home-settings")
-      )?.focus();
-    });
-    this._attributionsDialog = /** @type {HTMLDialogElement | null} */ (
-      this.querySelector(":scope > .home > #attributions-dialog")
-    );
-    this._attributionsDialog?.addEventListener("click", (event) => {
-      if (event.target === this._attributionsDialog) {
-        this._attributionsDialog.close();
-      }
-    });
-    this._attributionsDialog?.addEventListener("close", () => {
-      this._attributionsDialogOpen = false;
-      /** @type {HTMLElement | null} */ (
-        this.querySelector("#home-settings")
-      )?.focus();
-    });
     this._logoutDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector(":scope > .home > #logout-dialog")
     );
@@ -1708,8 +1675,6 @@ class TodayView extends HTMLElement {
       this._logoutDialogOpen = false;
     });
     this._restoreLogoutDialog();
-    this._restoreAttributionsDialog();
-    this._restoreLanguageDialog();
     this._taskSheets().mount();
     this._mountLocationDialog();
     this.querySelector("#logout-confirm")?.addEventListener("click", () =>
@@ -2152,7 +2117,14 @@ class TodayView extends HTMLElement {
   _closeSettingsMenu() {
     if (!this._settingsMenuOpen) return;
     this._settingsMenuOpen = false;
+    const dialog = /** @type {HTMLDialogElement | null} */ (
+      this.querySelector("dialog.home-settings-menu")
+    );
+    if (dialog?.open) dialog.close();
     if (this._homeModel) this._renderHome(this._homeModel);
+    /** @type {HTMLElement | null} */ (
+      this.querySelector("#home-settings")
+    )?.focus({ preventScroll: true });
   }
 
   _restoreLogoutDialog() {
@@ -2160,22 +2132,6 @@ class TodayView extends HTMLElement {
     openOverlayDialog(
       /** @type {HTMLDialogElement} */ (this._logoutDialog),
       "logout",
-    );
-  }
-
-  _restoreAttributionsDialog() {
-    if (!this._attributionsDialogOpen || this._attributionsDialog?.open) return;
-    openOverlayDialog(
-      /** @type {HTMLDialogElement} */ (this._attributionsDialog),
-      "attributions",
-    );
-  }
-
-  _restoreLanguageDialog() {
-    if (!this._languageDialogOpen || this._languageDialog?.open) return;
-    openOverlayDialog(
-      /** @type {HTMLDialogElement} */ (this._languageDialog),
-      "language",
     );
   }
 

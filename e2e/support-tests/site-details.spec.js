@@ -212,6 +212,10 @@ test("contact drafts survive focus changes and require confirmation before disca
   await expect(phone).toHaveValue("415-555-0111");
   await page.locator("#site-admin-cancel").click();
   await expect(page.locator("#site-admin-discard-dialog")).toBeVisible();
+  await expect(page.locator("#site-admin-discard-dialog")).toHaveCSS(
+    "opacity",
+    "1",
+  );
   const results = await new AxeBuilder({ page })
     .include("#site-admin-discard-dialog")
     .withTags(["wcag2a", "wcag2aa"])
