@@ -50,11 +50,12 @@ ceiling across devices at a Site.
 
 ## Alarms
 
-The `media-rejected` alarm fires after five rejected uploads in five minutes, on any upload path:
+The `media-rejected` alarm fires after five rejections in five minutes, on any upload path:
 care work, complaints, perimeter checks, thumbnails, duplicate detection, and 311. It adds two
-counts so each rejected file counts once: `ImageRejected` (every image the shared downscale step
-refuses) and `MediaTooLarge` (perimeter-check uploads over the byte limit, which are rejected before
-downscale). A single rejection is normally bad camera/upload data. A concentrated burst from one Site
+counts: `ImageRejected` (each time the shared downscale step refuses an image) and `MediaTooLarge`
+(perimeter-check uploads over the byte limit, which are rejected before downscale). It counts
+rejections, not files: a file downscaled more than once, such as by a retried worker or for both a
+thumbnail and analysis, counts each time. A single rejection is normally bad camera/upload data. A concentrated burst from one Site
 or device may indicate abuse or a broken client release. Never fetch or copy private media into
 tickets or chat.
 

@@ -340,10 +340,12 @@ resource "aws_cloudwatch_log_metric_filter" "media_rejected" {
   }
 }
 
-# One ImageRejected entry per image the shared downscale step refuses, from
-# every Lambda that runs it. Unlike MediaRejected (perimeter-check worker only),
-# this also covers care work, complaints, thumbnails, duplicates and 311, and
-# its log entry names the stage, signature and container brand.
+# One ImageRejected entry each time the shared downscale step refuses an image,
+# from every Lambda that runs it: care work, complaints, perimeter checks,
+# thumbnails, duplicates and 311. Each entry names the stage, signature and
+# container brand. The media_rejected alarm below counts this metric. The
+# MediaRejected log marker is separate and only comes from the perimeter-check
+# code (which runs in both the worker and analysis Lambdas).
 resource "aws_cloudwatch_log_metric_filter" "image_rejected" {
   for_each = {
     api              = aws_cloudwatch_log_group.api.name
@@ -384,11 +386,12 @@ resource "aws_cloudwatch_log_metric_filter" "media_too_large" {
   }
 }
 
-# The one rejected-media alarm, for every upload path. Each rejected file counts
-# once: ImageRejected (any downscale rejection, including perimeter checks) plus
-# MediaTooLarge (byte-limit rejections that never reach downscale). The
-# MediaRejected metric is not used here because perimeter-check downscale
-# rejections log both markers.
+# The one rejected-media alarm, for every upload path. It sums ImageRejected
+# (each downscale rejection, including perimeter checks) and MediaTooLarge
+# (byte-limit rejections that never reach downscale). The MediaRejected metric
+# is not used here because perimeter-check downscale rejections log both
+# markers. This counts rejections, not files: a file that is downscaled more
+# than once (a retried worker, or a thumbnail plus analysis) counts each time.
 resource "aws_cloudwatch_metric_alarm" "media_rejected" {
   alarm_name          = "${local.name_prefix}-media-rejected"
   alarm_description   = "Uploaded media on any upload path repeatedly failed byte, signature, decode, type, dimension, or page-count validation. Follow docs/runbooks/media-safeguards.md."
