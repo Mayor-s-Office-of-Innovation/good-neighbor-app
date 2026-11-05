@@ -791,11 +791,13 @@ leases. Existing groups remain effective when new detection is disabled.
 
 These records do not reference a Check, Assessment, Condition, or Task. All keys
 are derived from the authenticated Site, and general and manager devices share
-the same create/read access. There are no mutation routes after submission.
+the same create/read/delete access. Submitted content cannot be edited.
+Site-team deletion follows [care log deletion](care-log-delete-ramifications.md),
+including retryable media cleanup and a minimal one-year anti-replay tombstone.
 
 | Item | PK | SK | Attributes / lifetime |
 |---|---|---|---|
-| Work log | `SITE#<siteId>` | `CARE_WORK#<workId>` | `type: careWork`, `kind`, `note`, `createdAt`, `createdBy`, payload `fingerprint`, `photos` containing IDs, server-owned S3 keys and photo expiry; `expiresAt` is submission + 365 days. |
+| Work log | `SITE#<siteId>` | `CARE_WORK#<workId>` | `type: careWork`, optional deletion `status` (`deleting` or `deleted`), `kind`, `note`, `createdAt`, `createdBy`, payload `fingerprint`, `photos` containing IDs, server-owned S3 keys and photo expiry; `expiresAt` is submission + 365 days. |
 | Upload reservation | `SITE#<siteId>` | `CARE_UPLOAD#<workId>#<photoId>` | `type: careUpload`, creator, declared type/bytes, creation time and one-day TTL. Used only to authorize submission. |
 | Per-log upload budget | `SITE#<siteId>` | `CARE_QUOTA#<workId>` | Live reservation IDs with byte counts and expiry timestamps, optimistic revision, and one-day TTL. Expired slots are reclaimed before asynchronous TTL deletion; device daily media budgets remain charged and are shared with existing uploads. |
 

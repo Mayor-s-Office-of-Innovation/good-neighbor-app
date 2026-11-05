@@ -127,13 +127,14 @@ test("home controls fit a narrow viewport and language choices fill their routed
   await expect(page.locator("dialog.home-settings-menu[open]")).toBeVisible();
 });
 
-test("complaint splash has a viewport divider and composer has a back caret", async ({
+test("complaint sheet has spaced past entries and composer has a back caret", async ({
   page,
 }) => {
   await page.evaluate(async () => {
     const load = (/** @type {string} */ path) => import(path);
     window.history.replaceState({}, "", "/complaints");
     await load("/src/components/complaint-view.js");
+    document.querySelector("main")?.classList.add("app__main");
     /** @type {any} */ (document.querySelector("main")).append(
       document.createElement("complaint-view"),
     );
@@ -143,28 +144,10 @@ test("complaint splash has a viewport divider and composer has a back caret", as
     "name",
     "xmark",
   );
-  const expectFullBleedDivider = async () => {
-    const divider = await page.locator(".splash-rule").boundingBox();
-    const body = await page.locator("body").boundingBox();
-    if (!divider || !body) throw new Error("Missing splash divider or body");
-    // 100vw includes classic scrollbar space; the centered excess is clipped
-    // by body. Check visible coverage, not an x=0 that only overlay bars give.
-    expect(divider.width).toBe(page.viewportSize()?.width);
-    expect(divider.x).toBeLessThanOrEqual(body.x + 1);
-    expect(divider.x + divider.width).toBeGreaterThanOrEqual(
-      body.x + body.width - 1,
-    );
-    expect(
-      Math.abs(divider.x + divider.width / 2 - body.x - body.width / 2),
-    ).toBeLessThan(2);
-  };
-  await expectFullBleedDivider();
-  // Exercise reserved edge space even on macOS with overlay scrollbars.
-  const gutter = await page.addStyleTag({
-    content: "html { padding-inline-end: 15px; }",
-  });
-  await expectFullBleedDivider();
-  await gutter.evaluate((element) => element.parentNode?.removeChild(element));
+  const head = await page.locator(".care-past-head").boundingBox();
+  const list = await page.locator(".complaints__list").boundingBox();
+  if (!head || !list) throw new Error("Missing past-list geometry");
+  expect(list.y - head.y - head.height).toBeCloseTo(16, 0);
   await page.screenshot({
     animations: "disabled",
     path: "/tmp/ui-complaint-splash.png",
@@ -176,6 +159,7 @@ test("complaint splash has a viewport divider and composer has a back caret", as
   await page.evaluate(() => {
     window.history.replaceState({}, "", "/complaints/new");
     /** @type {any} */ (document.querySelector("complaint-view")).remove();
+    document.querySelector("main")?.classList.add("app__main");
     /** @type {any} */ (document.querySelector("main")).append(
       document.createElement("complaint-view"),
     );
@@ -448,9 +432,9 @@ test("complaints keep the title and action visible when a long list scrolls", as
     const load = (/** @type {string} */ path) => import(path);
     window.history.replaceState({}, "", "/complaints");
     await load("/src/components/complaint-view.js");
-    document
-      .querySelector("main")
-      ?.append(document.createElement("complaint-view"));
+    const main = document.querySelector("main");
+    main?.classList.add("app__main");
+    main?.append(document.createElement("complaint-view"));
   });
   await expect(page.locator("#log-complaint")).toBeVisible();
   for (const theme of ["light", "dark"]) {
@@ -462,7 +446,9 @@ test("complaints keep the title and action visible when a long list scrolls", as
       .locator(".complaints__sticky")
       .evaluate((header) => ({
         header: window.getComputedStyle(header).backgroundColor,
-        page: window.getComputedStyle(document.body).backgroundColor,
+        page: window.getComputedStyle(
+          header.closest("complaint-view") || header,
+        ).backgroundColor,
       }));
     expect(colors.header).toBe(colors.page);
   }
@@ -472,7 +458,9 @@ test("complaints keep the title and action visible when a long list scrolls", as
       (_, index) => `<p style="height:60px">Synthetic complaint ${index}</p>`,
     ).join("");
   });
-  await page.evaluate(() => window.scrollTo(0, 700));
+  await page.locator(".complaints__list").evaluate((list) => {
+    list.scrollTop = 700;
+  });
   const title = await page.locator(".care-header h1").boundingBox();
   const button = await page.locator("#log-complaint").boundingBox();
   const viewport = page.viewportSize();
@@ -557,13 +545,12 @@ test("care pending status stays on its row and distinguishes offline waiting", a
     /** @type {any} */ (window).renderCare(false);
   });
   await expect(page.locator(".care-row__status wa-spinner")).toBeVisible();
-  const time = await page.locator(".care-row time").boundingBox();
+  const row = await page.locator(".care-row-item").boundingBox();
   const status = await page.locator(".care-row__status").boundingBox();
-  if (!time || !status) throw new Error("Missing care timestamp or status");
-  expect(status.y).toBeGreaterThanOrEqual(time.y + time.height);
-  expect(Math.abs(status.x + status.width - time.x - time.width)).toBeLessThan(
-    2,
-  );
+  if (!row || !status) throw new Error("Missing care row or status");
+  expect(status.y).toBeGreaterThanOrEqual(row.y);
+  expect(status.y + status.height).toBeLessThanOrEqual(row.y + row.height);
+  expect(status.x + status.width).toBeLessThanOrEqual(row.x + row.width);
   const saving = await page.evaluate(async () => {
     const path = "/src/i18n/i18n.js";
     return (await import(path)).t("care.savingShort");
@@ -595,6 +582,7 @@ test("oversized complaints header scrolls away and becomes sticky again when it 
     await import(path);
     const main = document.querySelector("main");
     if (!main) throw new Error("Missing fixture main");
+    main.classList.add("app__main");
     main.append(document.createElement("complaint-view"));
   });
   await expect(page.locator("#log-complaint")).toBeVisible();
@@ -609,7 +597,9 @@ test("oversized complaints header scrolls away and becomes sticky again when it 
   });
   const header = page.locator(".complaints__sticky");
   await expect(header).toHaveCSS("position", "static");
-  await page.evaluate(() => window.scrollTo(0, 700));
+  await page.locator("complaint-view").evaluate((host) => {
+    host.scrollTop = 700;
+  });
   await expect
     .poll(async () => {
       const box = await header.boundingBox();
@@ -673,7 +663,7 @@ test("going offline preserves the care logs already displayed", async ({
   await expect(page.locator('[data-work="synthetic-saved"]')).toBeVisible();
 });
 
-test("sticky complaints header reserves and paints the safe-area band", async ({
+test("complaints sheet clears the safe area while its list scrolls", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -683,55 +673,26 @@ test("sticky complaints header reserves and paints the safe-area band", async ({
     await import(path);
     const main = document.querySelector("main");
     if (!main) throw new Error("Missing fixture main");
+    main.classList.add("app__main");
+    main.style.insetBlockStart = "100px";
     main.append(document.createElement("complaint-view"));
   });
   await expect(page.locator("#log-complaint")).toBeVisible();
-  await page.evaluate(() => {
-    const header = document.querySelector(".complaints__sticky");
-    const list = document.querySelector(".complaints__list");
-    if (!(header instanceof window.HTMLElement) || !list)
-      throw new Error("Missing complaints layout");
-    // Device emulation doesn't supply a nonzero CSS safe-area inset.
-    header.style.setProperty("--complaints-safe-top", "48px");
+  const header = page.locator(".complaints__sticky");
+  const before = await header.boundingBox();
+  await page.locator(".complaints__list").evaluate((list) => {
     list.innerHTML = Array.from(
       { length: 30 },
-      (_, index) => `<p style="height:60px">Synthetic complaint ${index}</p>`,
+      (_, i) => `<p style="height:60px">Synthetic complaint ${i}</p>`,
     ).join("");
-    window.dispatchEvent(new window.Event("resize"));
-    window.scrollTo(0, 700);
+    list.scrollTop = 700;
   });
-  const header = page.locator(".complaints__sticky");
-  await expect(header).toHaveCSS("position", "sticky");
-  await expect.poll(async () => (await header.boundingBox())?.y).toBe(48);
-  const geometry = await header.evaluate((element) => {
-    const band = window.getComputedStyle(element, "::before");
-    const host = element.closest("complaint-view");
-    if (!host) throw new Error("Missing complaints host");
-    return {
-      height: element.getBoundingClientRect().height,
-      margin: parseFloat(
-        window
-          .getComputedStyle(host)
-          .getPropertyValue("--complaints-header-height"),
-      ),
-      bandHeight: band.height,
-      bandColor: band.backgroundColor,
-      headerColor: window.getComputedStyle(element).backgroundColor,
-    };
-  });
-  expect(geometry.bandHeight).toBe("48px");
-  expect(geometry.bandColor).toBe(geometry.headerColor);
-  expect(geometry.margin).toBeCloseTo(geometry.height + 48 + 16, 1);
-  await page.setViewportSize({
-    width: 390,
-    height: Math.floor(geometry.height * 2 + 48) - 2,
-  });
-  await expect(header).toHaveCSS("position", "static");
-  await expect
-    .poll(() =>
-      header.evaluate(
-        (element) => window.getComputedStyle(element, "::before").display,
-      ),
-    )
-    .toBe("none");
+  expect(
+    await page.locator(".complaints__list").evaluate((list) => list.scrollTop),
+  ).toBeGreaterThan(0);
+  const after = await header.boundingBox();
+  if (!before || !after) throw new Error("Missing header geometry");
+  expect(after.y).toBe(before.y);
+  expect(after.y).toBeGreaterThanOrEqual(100);
+  await expect(page.locator("#log-complaint")).toBeInViewport();
 });

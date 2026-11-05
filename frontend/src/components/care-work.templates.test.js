@@ -61,7 +61,13 @@ describe("proactive care screens", () => {
     expect(markup).toContain(t("care.photo.expired"));
     expect(markup).not.toMatch(/data-(edit|delete|save)/);
     expect(markup).not.toContain("Where");
-    expect(careList([entry])).toContain(t("care.new"));
+    const list = careList([entry]);
+    expect(list).toContain(t("care.new"));
+    expect(list).toContain('data-delete-work="one"');
+    expect(list).toContain('id="care-delete"');
+    expect(careList([{ ...entry, status: "failed" }])).not.toContain(
+      "data-delete-work=",
+    );
   });
   it("shows the thumbnail and opens the original in the lightbox", () => {
     const markup = careDetail({

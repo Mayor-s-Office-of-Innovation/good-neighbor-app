@@ -1951,6 +1951,9 @@ export function listCareWork(nextToken = "") {
 export function getCareWork(workId) {
   return request("GET", `/v1/care-work/${encodeURIComponent(workId)}`);
 }
+export function deleteCareWork(workId) {
+  return request("DELETE", `/v1/care-work/${encodeURIComponent(workId)}`);
+}
 export function createCareWork(body, options = {}) {
   return request("POST", "/v1/care-work", {
     ...options,

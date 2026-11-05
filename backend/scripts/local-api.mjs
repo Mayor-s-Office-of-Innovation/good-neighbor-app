@@ -17,6 +17,7 @@ import { getDuplicateResult } from "../src/handlers/duplicate-results.js";
 import {
   listCareWork,
   createCareWork,
+  deleteCareWork,
   getCareWork,
   presignCarePhoto,
   getCarePhoto,
@@ -353,6 +354,7 @@ const routes = [
   route("GET", "/v1/care-work", listCareWork),
   route("POST", "/v1/care-work", createCareWork),
   route("GET", "/v1/care-work/{workId}", getCareWork),
+  route("DELETE", "/v1/care-work/{workId}", deleteCareWork),
   route("POST", "/v1/care-work/{workId}/photos:presign", presignCarePhoto),
   route("GET", "/v1/care-work/{workId}/photos/{photoId}/media", getCarePhoto),
   route("GET", "/v1/complaints", listComplaints),

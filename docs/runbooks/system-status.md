@@ -48,7 +48,8 @@ unrounded ratios. Display percentages are truncated to one decimal so a displaye
 value cannot cross a threshold that the underlying ratio has not met. A zero
 denominator is gray, not green or red. Analysis pending counts appear separately.
 Complaint artifacts and action-update photos do not become submissions or analysis
-requests in this report. Updates still count as actions.
+requests in this report. Updates still count as actions. Deleting a proactive care log removes its action
+projection; delayed stream events cannot restore it. See [care log deletion](../care-log-delete-ramifications.md).
 
 Hourly sparklines use elapsed hours from Pacific midnight (23 or 25 buckets on
 DST-change days). Missing analysis samples are gaps, not 0% success. Analysis

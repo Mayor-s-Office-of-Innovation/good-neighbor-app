@@ -83,7 +83,7 @@ export function statusRecords(item) {
     add("deletions", item.deletedAt, sk, {
       category: item.category || "unknown",
     });
-  if (sk.startsWith("CARE_WORK#"))
+  if (sk.startsWith("CARE_WORK#") && !item.status)
     add("actions", item.createdAt, item.workId, {
       category: item.kind || "unknown",
     });
@@ -115,6 +115,26 @@ export async function projectStatus(item) {
   for (const record of statusRecords(item)) {
     const mutable = record.pk === "STATUS_SITES" || record.kind === "checks";
     try {
+      if (String(item.sk).startsWith("CARE_WORK#")) {
+        // A delayed/replayed INSERT must not restore the projection after deletion.
+        await ddb.send(
+          new TransactWriteCommand({
+            TransactItems: [
+              {
+                ConditionCheck: {
+                  TableName: getDynamoTableName(),
+                  Key: { pk: item.pk, sk: item.sk },
+                  ConditionExpression:
+                    "attribute_exists(pk) AND attribute_not_exists(#status)",
+                  ExpressionAttributeNames: { "#status": "status" },
+                },
+              },
+              { Put: { TableName: getDynamoTableName(), Item: record } },
+            ],
+          }),
+        );
+        continue;
+      }
       if (["issues", "duplicates"].includes(record.kind)) {
         const identity =
           record.kind === "issues" ? record.issueId : record.taskId;
