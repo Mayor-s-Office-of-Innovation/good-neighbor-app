@@ -24,7 +24,7 @@ async function prepareFeedback(page, message) {
     .getByRole("menuitem", { name: t("today.settings.feedback") })
     .click();
 
-  const dialog = page.locator("#feedback-dialog");
+  const dialog = page.locator("feedback-view");
   await expect(dialog).toBeVisible();
   await dialog.locator("#feedback-text").evaluate((element, value) => {
     /** @type {any} */ (element).value = value;

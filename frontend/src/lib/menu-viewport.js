@@ -3,9 +3,11 @@ import "../styles/overlays.css";
 // CSS owns size constraints and scrolling. This fallback measures trigger
 // collisions and visual-viewport offsets (including zoom/keyboard changes),
 // keeping the existing DOM, focus and dismissal behavior for Safari.
+/* The settings menu is no longer here: it presents as a viewport-anchored
+   bottom sheet (today-view.css), not a trigger-anchored dropdown, so the
+   collision/zoom fitting below would fight its fixed full-width placement. */
 const menus = [
   [".home-action-menu", "#home-action-menu-trigger"],
-  [".home-settings-menu", "#home-settings"],
   [".home-site-switcher__menu", "#site-switcher-trigger"],
 ];
 

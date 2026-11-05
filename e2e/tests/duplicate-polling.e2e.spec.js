@@ -92,7 +92,7 @@ test("Home polls only pending rows, reuses settled results on return and reconne
   await page.locator("#home-settings").click();
   await page.locator("#settings-help").click();
   await expect(page).toHaveURL(/\/help$/);
-  await page.locator("support-view [data-back]").click();
+  await page.locator("support-view [data-menu-back]").click();
   await expect(settled).toBeVisible();
   await page.evaluate(() => window.dispatchEvent(new window.Event("online")));
   await page.clock.fastForward(60_000);

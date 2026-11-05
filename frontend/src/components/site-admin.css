@@ -13,9 +13,13 @@
   line-height: var(--wa-line-height-normal);
 }
 
-/* The page header owns the safe area; avoid the shell adding it twice. */
+/* The page header owns the safe area; avoid the shell adding it twice.
+   Inline padding goes too: the page is a full-bleed surface and carries
+   its own gutters, so the shell's 16px would leave bg slivers at the
+   screen edges. */
 .app--chromeless .app__main:has(.site-admin-page) {
   padding-top: 0;
+  padding-inline: 0;
 }
 
 .site-admin-header {
@@ -45,6 +49,10 @@
   outline: none;
 }
 
+/* The generic reset below would blank the Back circle; keep its fill. */
+.site-admin-header .btn-circle-close {
+  background: var(--surface-2);
+}
 .site-admin-header button,
 .site-admin-section-heading button {
   appearance: none;
@@ -462,15 +470,34 @@
   padding-inline: 1rem;
 }
 
-.site-admin-header--close h1 {
-  grid-column: 2;
-  grid-row: 1;
+/* Top-level screens: Reports-style header — back row, then a large
+   centered title. Overrides the sub-screen grid above. */
+.site-admin-header--close {
+  display: block;
+  position: static;
+  min-height: 0;
+  border-bottom: 0;
+  padding: max(1rem, env(safe-area-inset-top)) 16px 0.25rem;
 }
-.site-admin-header--close > button {
-  grid-column: 3;
-  grid-row: 1;
-  border-radius: 50%;
-  background: var(--surface-2);
+.site-admin-header__top {
+  display: flex;
+  align-items: center;
+  min-height: 2.75rem;
+  width: min(100%, var(--app-content-max-width));
+  /* One rhythm after the back row on every settings destination: 2rem. */
+  margin: 0 auto 2rem;
+  padding-inline: 0.25rem;
+}
+.site-admin-header--close h1 {
+  /* Left-aligned on the shared content edge, like the other destinations. */
+  width: min(100%, var(--app-content-max-width));
+  margin: 0 auto;
+  padding-inline: 0.5rem;
+  box-sizing: border-box;
+  text-align: start;
+  font-size: clamp(1.5rem, 5vw, 1.9rem);
+  font-weight: 700;
+  line-height: 1.15;
 }
 .site-admin-header--close > span {
   grid-column: 1;

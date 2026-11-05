@@ -307,9 +307,9 @@ describe("homeAllDonePanel", () => {
 it("orders manager settings and uses the key icon for access", () => {
   const markup = settingsMenu({ open: true, adminAccess: true });
   const ids = [
+    "reports",
     "access",
     "site-admin",
-    "reports",
     "feedback",
     "language",
     "attributions",

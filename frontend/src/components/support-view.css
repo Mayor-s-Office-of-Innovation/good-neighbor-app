@@ -1,34 +1,153 @@
 support-view {
   display: block;
-  min-height: 100%;
+  /* All settings destinations share one surface (like Site information). */
+  min-height: 100dvh;
+  background: var(--surface);
 }
 .support__panel {
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
   width: min(100%, 44rem);
   margin-inline: auto;
   padding: 1.5rem;
   overflow-wrap: anywhere;
   color: var(--text);
 }
+
+/* Tap-to-ask starter cards: outlined rows with the question and an
+   arrow — one tap fills the composer and asks. */
+.support__starters {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+.support__starters[hidden] {
+  display: none;
+}
+.support__starter {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 3.5rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--c-line);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 1.05rem;
+  line-height: 1.35;
+  text-align: start;
+  box-shadow: none;
+}
+.support__starter:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+.support__starter:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+}
+.support__starter wa-icon {
+  flex: 0 0 auto;
+  color: var(--brand-blue);
+  font-size: 0.9rem;
+}
+
+/* Chat-style composer pinned toward the bottom: an outlined container
+   holding a borderless textarea and a circular send. */
+.support__composer {
+  position: relative;
+  margin-top: auto;
+  padding: 0.75rem 0.75rem 3.5rem;
+  border: 1px solid var(--c-line);
+  border-radius: 24px;
+  background: var(--surface);
+}
+.support__composer wa-textarea::part(base) {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+.support__composer wa-textarea::part(textarea) {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  outline: none;
+}
+/* The focus ring lives on the composer, not the inner textarea. */
+.support__composer wa-textarea {
+  --wa-focus-ring: none;
+}
+.support__composer wa-textarea::part(base):focus-within,
+.support__composer wa-textarea::part(textarea):focus {
+  border: 0;
+  box-shadow: none;
+  outline: none;
+}
+.support__composer:focus-within {
+  border-color: var(--brand-blue);
+}
+.support__composer wa-textarea::part(label) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.support__send {
+  appearance: none;
+  position: absolute;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--brand-blue);
+  color: var(--on-ink);
+  cursor: pointer;
+  box-shadow: none;
+}
+.support__send:disabled {
+  background: var(--surface-2);
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+.support__send:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+}
 .support__back-row {
   display: flex;
-  justify-content: flex-end;
-  margin-bottom: 1.125rem;
+  /* Back (to the settings menu) is the only exit; metrics match the
+     Reports top action row. */
+  justify-content: flex-start;
+  align-items: center;
+  min-height: 2.75rem;
+  /* One rhythm after the back row on every settings destination: 2rem. */
+  margin-bottom: 2rem;
+  padding-inline: 0.25rem;
 }
-.support__back {
-  width: 2.75rem;
-  height: 2.75rem;
-  border-radius: 50%;
-  background: var(--surface-3);
-  color: var(--text);
-}
+/* .support__back inherits .btn-circle-close wholesale — same 44px circle
+   and --surface-2 fill as every other destination's Back. */
 .support__back wa-icon {
   font-size: 1.25rem;
 }
 .support__title {
   margin: 0;
-  font-size: var(--wa-font-size-2xl);
-  line-height: var(--wa-line-height-condensed);
+  /* Same title spec as the other settings destinations (Reports et al.). */
+  font-size: clamp(1.5rem, 5vw, 1.9rem);
+  font-weight: 700;
+  line-height: 1.15;
 }
 .support__privacy {
   color: var(--text-secondary);
@@ -44,14 +163,149 @@ support-view {
 .support form + .support__privacy {
   margin-top: 2rem;
 }
+/* A turn is transparent: blue question bubble right, plain answer left,
+   then the sources toggle and card. */
 .support__turn {
-  position: relative;
-  margin-block: 1rem;
-  padding: 1rem;
-  background: var(--surface-2);
-  border: 1px solid var(--c-line);
-  border-radius: var(--radius);
+  margin-block: 1.5rem;
   overflow-wrap: anywhere;
+}
+.support__q {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 1.25rem;
+}
+.support__q span {
+  max-width: 85%;
+  padding: 0.875rem 1.125rem;
+  border-radius: 20px;
+  background: var(--brand-blue-bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+.support__a {
+  margin: 0;
+  line-height: 1.6;
+}
+.support__sources-toggle {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  margin-top: 0.25rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--brand-blue);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  box-shadow: none;
+}
+.support__sources-toggle:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.support__sources-chevron {
+  font-size: 0.8rem;
+  transition: rotate 150ms ease;
+  rotate: 180deg; /* expanded by default: chevron points up */
+}
+.support__sources-toggle[aria-expanded="false"] .support__sources-chevron {
+  rotate: 0deg;
+}
+.support__sources {
+  margin-top: 0.5rem;
+  border: 1px solid var(--c-line);
+  border-radius: 16px;
+  background: var(--surface);
+}
+.support__source {
+  margin: 0;
+}
+.support__source + .support__source {
+  border-top: 1px solid var(--c-line);
+}
+.support__source summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  cursor: pointer;
+  list-style: none;
+}
+.support__source summary::-webkit-details-marker {
+  display: none;
+}
+/* Web Awesome's layered native styles add their own summary chevron;
+   this card draws its own. */
+.support__source summary::after {
+  display: none;
+}
+.support__source summary:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: -2px;
+  border-radius: 16px;
+}
+.support__source-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+.support__source-copy strong {
+  font-weight: 600;
+  line-height: 1.35;
+}
+.support__source-doc {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+.support__source-chevron {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  transition: rotate 150ms ease;
+}
+.support__source[open] .support__source-chevron {
+  rotate: 90deg;
+}
+.support__source > p {
+  margin: 0;
+  padding: 0 1.25rem 1rem;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+/* Quiet clear action: icon + text, no pill. */
+.support__clear {
+  appearance: none;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-height: 44px;
+  margin-top: 0.25rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  box-shadow: none;
+}
+.support__clear wa-icon {
+  font-size: 0.9rem;
+}
+.support__clear:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.support__clear[hidden] {
+  display: none;
 }
 .support__turn h3 {
   display: inline;
@@ -79,49 +333,14 @@ support-view {
   min-height: 2rem;
   padding: 0;
 }
-.support__delete wa-icon {
-  font-size: 1rem;
-}
 .support__turn p {
   white-space: pre-wrap;
-}
-.support summary {
-  cursor: pointer;
-  padding: 0.75rem 1rem;
-  margin: 0;
-  gap: 1rem;
-  line-height: 1.5;
 }
 /* Native details styles apply negative margins to every nested summary when
    an ancestor is open. Keep each disclosure's spacing local to its own box. */
 .support details,
 .support details[open] {
   padding: 0;
-}
-.support__response {
-  border: 0;
-  background: transparent;
-}
-.support__response > summary {
-  padding-inline: 2.75rem 0;
-}
-.support summary::after {
-  flex-shrink: 0;
-  rotate: 0deg;
-}
-.support details[open] > summary::after {
-  rotate: 90deg;
-}
-.support__source {
-  margin-block: 0.75rem;
-}
-.support__source > p {
-  margin: 0;
-  padding: 0 1rem 1rem;
-}
-.support__turn h3 {
-  margin: 0;
-  min-width: 0;
 }
 .support__handoff {
   margin-block: 1rem;
@@ -141,4 +360,25 @@ support-view {
 }
 .support [data-clear-question][hidden] {
   display: none;
+}
+
+/* Full-bleed screen: the panel carries its own gutters. */
+.app--chromeless .app__main:has(> support-view) {
+  padding: 0;
+}
+
+/* Length error as its own line directly below the composer. */
+.support__question-hint {
+  margin: 0.5rem 0 0;
+  color: var(--c-hazard, #b42318);
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+.support form + .support__question-hint + .support__privacy {
+  margin-top: 2rem;
+}
+
+/* Override the native details layer's open-summary negative margins. */
+.support .support__source > summary {
+  margin: 0;
 }

@@ -9,7 +9,11 @@ import "@awesome.me/webawesome/dist/components/input/input.js";
 import { getSite, hasAdminAccess } from "../db.js";
 import { t } from "../i18n/i18n.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
-import { backOrNavigate, navigate } from "../router.js";
+import {
+  backOrNavigate,
+  navigate,
+  forceNextRouteTransition,
+} from "../router.js";
 import { getSiteAdmin } from "../services/api.js";
 import {
   cancelStaffEnrollmentGrant,
@@ -91,6 +95,15 @@ class SiteAdminView extends HTMLElement {
     this.querySelector("[data-admin-back]")?.addEventListener("click", () =>
       backOrNavigate("/today"),
     );
+    this.querySelector("[data-menu-back]")?.addEventListener("click", () => {
+      forceNextRouteTransition("pop");
+      try {
+        sessionStorage.setItem("gnp-reopen-settings", "1");
+      } catch {
+        /* storage unavailable: land on a plain home screen */
+      }
+      backOrNavigate("/today");
+    });
   }
 
   disconnectedCallback() {
@@ -338,6 +351,15 @@ class SiteAccessView extends HTMLElement {
     this.querySelector("[data-admin-back]")?.addEventListener("click", () =>
       backOrNavigate("/today"),
     );
+    this.querySelector("[data-menu-back]")?.addEventListener("click", () => {
+      forceNextRouteTransition("pop");
+      try {
+        sessionStorage.setItem("gnp-reopen-settings", "1");
+      } catch {
+        /* storage unavailable: land on a plain home screen */
+      }
+      backOrNavigate("/today");
+    });
   }
 
   _render() {
@@ -346,7 +368,7 @@ class SiteAccessView extends HTMLElement {
     )?.close();
     this.innerHTML = html`
       <div class="site-admin-page">
-        ${adminHeader(t("access.title"))}
+        ${adminHeader(t("access.title"), true)}
         <div class="site-admin-content">
           <section
             class="site-admin-section"

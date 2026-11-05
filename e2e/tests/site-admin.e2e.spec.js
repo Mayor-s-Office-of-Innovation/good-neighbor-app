@@ -18,9 +18,9 @@ test.describe("site admin access", () => {
     await page.locator("#home-settings").click();
     const menu = page.getByRole("menu", { name: t("today.settings.aria") });
     await expect(menu.getByRole("menuitem")).toHaveText([
+      t("today.settings.reports"),
       t("access.title"),
       t("today.settings.siteAdmin"),
-      t("today.settings.reports"),
       t("support.title"),
       t("today.settings.feedback"),
       t("today.settings.language"),
@@ -31,7 +31,7 @@ test.describe("site admin access", () => {
     await menu
       .getByRole("menuitem", { name: t("today.settings.attributions") })
       .click();
-    const attributions = page.locator("#attributions-dialog");
+    const attributions = page.locator("attributions-view");
     await expect(attributions).toBeVisible();
     await expect(
       attributions.getByRole("link", {
@@ -41,28 +41,26 @@ test.describe("site admin access", () => {
     await expect(
       attributions.getByRole("link", { name: t("today.attributions.census") }),
     ).toBeVisible();
-    await attributions.getByRole("button", { name: t("common.close") }).click();
+    await attributions.locator("[data-menu-back]").click();
 
-    await page.locator("#home-settings").click();
+    await expect(menu).toBeVisible();
     await page
       .getByRole("menuitem", { name: t("today.settings.feedback") })
       .click();
-    const feedback = page.locator("#feedback-dialog");
+    const feedback = page.locator("feedback-view");
     await expect(feedback).toBeVisible();
-    await feedback.getByRole("button", { name: t("common.cancel") }).click();
+    await feedback.locator("[data-menu-back]").click();
 
-    // Closing these settings sheets removes the menu without a home render.
-    // Reopening must not mistake cached markup for a menu still in the DOM.
-    await page.locator("#home-settings").click();
+    // Returning from each settings screen restores the menu.
     await expect(menu).toBeVisible();
     await menu
       .getByRole("menuitem", { name: t("today.settings.language") })
       .click();
-    const language = page.locator("#language-dialog");
+    const language = page.locator("language-view");
     await expect(language).toBeVisible();
-    await language.getByRole("button", { name: t("common.close") }).click();
+    await language.locator("[data-menu-back]").click();
 
-    await page.locator("#home-settings").click();
+    await expect(menu).toBeVisible();
     await page
       .getByRole("menuitem", { name: t("today.settings.siteAdmin") })
       .click();
@@ -135,7 +133,7 @@ test.describe("site admin access", () => {
       .click();
     await expect(page).toHaveURL(/\/site-admin$/);
 
-    await page.locator("[data-admin-back]").click();
+    await page.locator("[data-menu-back]").click();
     await expect(page).toHaveURL(/\/today(?:\?filter=todo)?$/);
   });
 });
