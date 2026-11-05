@@ -13,6 +13,7 @@ import {
   syncDirtyForm,
 } from "../../form-state.js";
 import { siteSaveErrorMessage } from "./save-error-messages.js";
+import { appMessageError } from "../../admin-error-messages.js";
 
 export const siteOversightActions = {
   /** @param {HTMLFormElement} form */
@@ -72,7 +73,9 @@ export const siteOversightActions = {
     )
       return;
     if (list.querySelectorAll("li[data-manager-id]").length >= 2) {
-      throw new Error("A site can have no more than two Program managers.");
+      throw appMessageError(
+        "A site can have no more than two Program managers.",
+      );
     }
     list.insertAdjacentHTML(
       "beforeend",

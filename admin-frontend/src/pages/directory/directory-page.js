@@ -1,12 +1,15 @@
-// <admin-directory-page>: the Sites, Site managers, Provider managers, Providers and
-// Programs lists and their search. It owns the Provider manager list and unsaved 311 edits.
+// <admin-directory-page>: the five directory lists, their search, and the Sites list's unsaved 311 edits.
 import { START_UP_LISTS } from "../../admin-catalog.js";
 import { adminApi } from "../../services/admin-api.js";
 import { mixActions } from "../../mix-actions.js";
 import { loadProviderManagerDirectory } from "../../provider-manager-directory.js";
 import { navigate } from "../../router.js";
-import { discardChangesDialog } from "../shared.templates.js";
+import {
+  confirmDiscardChanges,
+  discardChangesDialog,
+} from "../shared.templates.js";
 import { listenForControls, pageView } from "../page-events.js";
+import { loadManagers } from "../site/manager-directory-read.js";
 import { directoryEvents } from "./directory.bindings.js";
 import { directoryActions } from "./directory.actions.js";
 import { directoryView } from "./directory.templates.js";
@@ -47,16 +50,10 @@ export class DirectoryPage extends HTMLElement {
     /** @type {Route | null} */
     this.route = null;
     this.composing = false;
+    // Counts manager searches, so only the newest one sets the error and redraws.
+    this.managerSearches = 0;
     /** @type {{ schedule: () => void, cancel: () => void } | null} */
     this.directorySearchDebounce = null;
-    // Set by <admin-app>, which still holds the Site manager list and its read.
-    // Without <admin-app>, the page shows no Site managers.
-    /** @type {() => any[]} */
-    this.managers = () => [];
-    /** @type {() => Promise<void>} */
-    this.loadManagers = async () => {};
-    /** Set by <admin-app>, whose unsaved-changes prompt needs the URL on screen. @type {(path: string) => void} */
-    this.pathRendered = () => {};
   }
 
   connectedCallback() {
@@ -103,10 +100,31 @@ export class DirectoryPage extends HTMLElement {
     return !left();
   }
 
-  /** <admin-app> calls this when the user goes to a route this page doesn't show. */
+  /** Called by <admin-app> on route changes and when it drops pages. */
   leave() {
     this.visit++;
     this.route = null;
+  }
+
+  /**
+   * <admin-app> asks this before any route change, so unsaved 311 edits aren't lost.
+   * @param {Route} [next] where Back or Forward is going; another Sites search keeps the edits
+   */
+  hasUnsavedChanges(next) {
+    if (next?.name === "sites" && this.route?.name === "sites") return false;
+    return this.isSaving() || this.state.site311Batch.drafts.size > 0;
+  }
+
+  /** A 311 save can't be cancelled, so leaving waits until it ends. */
+  isSaving() {
+    return Boolean(this.state.site311Batch.saving);
+  }
+
+  /** Ask in the Sites list's dialog whether to drop its 311 edits; true when the user discards. */
+  async confirmLeave() {
+    if (this.isSaving() || !(await confirmDiscardChanges(this))) return false;
+    this.state.site311Batch.drafts.clear();
+    return true;
   }
 
   /** @param {Route} route */
@@ -121,14 +139,19 @@ export class DirectoryPage extends HTMLElement {
       void (/** @type {DirectoryPageElement} */ (this).loadSearchManagers());
   }
 
+  /** The manager directory read, shared with the pages that preload it. */
+  loadManagers() {
+    return loadManagers(this.catalog);
+  }
+
   /** @returns {boolean} */
   managersLoaded() {
     return this.catalog.managersLoaded;
   }
 
-  /** directoryView() also lists the Site managers <admin-app> still holds. */
+  /** directoryView() reads one state object, so pageView() adds the catalog's Site managers to it. */
   view() {
-    return pageView(this, { siteManagers: () => this.managers() });
+    return pageView(this, { siteManagers: () => this.catalog.managers });
   }
 
   render() {
@@ -145,7 +168,7 @@ export class DirectoryPage extends HTMLElement {
     this.applyCapabilities();
   }
 
-  /** Hide create links from anyone who can't create records, as <admin-app> does. */
+  /** Without createEntities the user can't save a new record, so don't offer one. */
   applyCapabilities() {
     if (this.session.capabilities.createEntities) return;
     this.querySelectorAll(

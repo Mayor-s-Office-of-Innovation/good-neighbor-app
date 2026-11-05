@@ -1,5 +1,5 @@
-// Site manager actions. siteManagerActions stays on <admin-app> for the directory page;
-// the manager page and the Site Access tab each mix in their own set.
+// The manager directory read, plus the manager page's and Site Access tab's actions,
+// since all three change the same Site manager records.
 import {
   DIRECTORY_REQUEST_CONCURRENCY,
   createDirectoryLoader,
@@ -7,15 +7,15 @@ import {
 } from "../../manager-directory.js";
 import { actionFeedback, notifyAdmin } from "../../action-feedback.js";
 import { adminApi } from "../../services/admin-api.js";
-import { adminErrorMessage } from "../../admin-error-messages.js";
 import {
-  attachCreatedEnrollmentUrl,
-  copyEnrollmentUrl,
-} from "../../enrollment-links.js";
+  adminErrorMessage,
+  appMessageError,
+} from "../../admin-error-messages.js";
+import { attachCreatedEnrollmentUrl } from "../../enrollment-links.js";
 import { beginEnrollmentRequest } from "../../enrollment-request.js";
 import { createAndAssignManager } from "./pending-manager.js";
-import { currentRoute, navigate } from "../../router.js";
-import { dataAttr } from "../../dom.js";
+import { navigate } from "../../router.js";
+import { copyEnrollmentLink } from "../enrollment-code.actions.js";
 import { formValue, showFormSaveError } from "../../form-state.js";
 import { managerSaveErrorMessage } from "./save-error-messages.js";
 import { peopleDirectory } from "./people-directory.js";
@@ -23,26 +23,6 @@ import { t } from "../../../../frontend/src/i18n/i18n.js";
 import { saveWithFeedback, upsertRecord } from "../../save-feedback.js";
 
 export const siteManagerActions = {
-  async loadSearchManagers() {
-    if (this.catalog.managersLoaded || this.managerSearchPending) return;
-    this.managerSearchPending = true;
-    this.state.managerSearchFailed = false;
-    try {
-      await this.loadSiteManagers();
-    } catch {
-      this.state.managerSearchFailed = true;
-    } finally {
-      this.managerSearchPending = false;
-    }
-    const input = this.querySelector("#directory-search-input");
-    if (
-      !input ||
-      (!new URLSearchParams(location.search).get("q")?.trim() &&
-        currentRoute().name !== "managers")
-    )
-      return;
-    this.renderDirectoryResults();
-  },
   async loadSiteManagers(force = false) {
     this.managerDirectoryLoader ||= createDirectoryLoader(() =>
       this.fetchSiteManagers(),
@@ -125,100 +105,6 @@ export const siteManagerActions = {
     );
     this.catalog.markManagersLoaded(version);
     this.state.managerSearchFailed = false;
-  },
-};
-
-/** Shows a one-time setup code on screen. The Site page mixes it in; the Provider page's binding calls it. */
-export const enrollmentCodeActions = {
-  /** @param {string} membershipId */
-  async showEnrollmentCode(scope, membershipId) {
-    const id =
-      scope === "site"
-        ? this.state.site?.siteId
-        : this.state.provider?.providerId;
-    if (!id) return;
-    const release = beginEnrollmentRequest(this, scope, id);
-    if (!release) return;
-    const view = (this.state.enrollmentCodeView ||= { codes: new Map() });
-    const visit = this.visit;
-    const current = () =>
-      this.state.enrollmentCodeView === view && this.visit === visit;
-    this.render();
-    try {
-      if (scope === "site") {
-        const member = this.state.managerMemberships.find(
-          (m) => m.membershipId === membershipId,
-        );
-        if (member?.legacyAssignment) {
-          const linked = await adminApi.createManagerMembership(
-            id,
-            member.name,
-            member.email,
-            this.state.site.leadProgramId,
-            member.userId,
-          );
-          if (!current()) return;
-          membershipId = linked.membership.membershipId;
-          this.state.managerMemberships = this.state.managerMemberships.map(
-            (m) => (m === member ? linked.membership : m),
-          );
-        }
-      }
-      const result =
-        scope === "site"
-          ? await adminApi.createManagerGrant(id, membershipId, "screen")
-          : await adminApi.createProviderManagerGrant(
-              id,
-              membershipId,
-              "screen",
-            );
-      if (!current()) return;
-      view.codes.set(result.grant.grantId, {
-        scope,
-        id,
-        grant: result.grant,
-        code: result.enrollmentCode,
-      });
-      const field =
-        scope === "site" ? "managerGrants" : "providerManagerGrants";
-      this.state[field] = upsertRecord(
-        this.state[field].map((grant) =>
-          scope === "site" &&
-          grant.membershipId === membershipId &&
-          grant.status === "pending" &&
-          grant.issuedBy !== "manager-email-recovery" &&
-          Date.parse(grant.expiresAt) > Date.now()
-            ? { ...grant, status: "replaced" }
-            : grant,
-        ),
-        result.grant,
-        "grantId",
-      );
-      // Site issuance replaces older pending grants for this membership.
-      for (const [grantId, entry] of view.codes) {
-        if (
-          entry.scope === scope &&
-          entry.id === id &&
-          entry.grant.membershipId === membershipId &&
-          grantId !== result.grant.grantId
-        )
-          view.codes.delete(grantId);
-      }
-      this.render();
-      this.querySelector(
-        `[data-enrollment-code="${CSS.escape(result.grant.grantId)}"]`,
-      )?.focus();
-    } catch (error) {
-      if (current())
-        notifyAdmin(
-          error.message === "provider_manager_grant_already_active"
-            ? "admin.enrollment.alreadyActive"
-            : "admin.enrollment.screenFailed",
-          "error",
-        );
-    } finally {
-      release();
-    }
   },
 };
 
@@ -566,12 +452,12 @@ export const siteManagerRecordActions = {
       } catch (error) {
         feedback.failure(error);
         this.reportError(
-          new Error(
+          appMessageError(
             error instanceof Error &&
-            [
-              "site_primary_contact_in_use",
-              "program_primary_contact_in_use",
-            ].includes(error.message)
+              [
+                "site_primary_contact_in_use",
+                "program_primary_contact_in_use",
+              ].includes(error.message)
               ? t("admin.programs.reassignPrimaryBeforeRemoval")
               : error instanceof Error &&
                   error.message === "manager_removal_conflict"
@@ -715,7 +601,8 @@ export const siteManagerAccessActions = {
       const user = this.state.availableSiteUsers.find(
         (item) => item.userId === formValue(data, "manager-user-id"),
       );
-      if (!user?.email) throw new Error(t("admin.relationships.chooseManager"));
+      if (!user?.email)
+        throw appMessageError(t("admin.relationships.chooseManager"));
       if (user.personId) await adminApi.assignPersonToSite(siteId, user);
       else
         await adminApi.createManagerMembership(
@@ -826,42 +713,30 @@ export const siteManagerAccessActions = {
       );
       this.render();
     } catch (error) {
+      let translated = false;
       if (error.message === "provider_manager_grant_already_active") {
         error.message = t("admin.enrollment.alreadyActive");
+        translated = true;
       } else if (
         ["provider_manager_grant_conflict", "manager_grant_conflict"].includes(
           error.message,
         )
       ) {
         error.message = t("admin.enrollment.conflict");
+        translated = true;
       }
-      feedback.failure(error);
+      // Only these two translated messages; other server text stays out of the toast.
+      feedback.failure(error, {
+        message: translated ? error.message : undefined,
+      });
+      // The toast already told the user; manager.bindings.js ignores this rejection.
       throw error;
     } finally {
       release();
     }
   },
 
-  /** @param {HTMLButtonElement} button */
-  async copyManagerGrant(button) {
-    const enrollmentUrl = dataAttr(button, "data-copy-enrollment-url");
-    const status = button.parentElement?.querySelector("[data-copy-status]");
-    const icon = button.querySelector("wa-icon");
-    button.disabled = true;
-    try {
-      await copyEnrollmentUrl(enrollmentUrl);
-      button.setAttribute("aria-label", "Enrollment link copied");
-      icon?.setAttribute("name", "check");
-      if (status) status.textContent = "Enrollment link copied.";
-    } catch {
-      notifyAdmin("admin.toast.copyFailed", "error");
-      button.setAttribute("aria-label", "Copy enrollment link failed");
-      if (status)
-        status.textContent = "The enrollment link could not be copied.";
-    } finally {
-      button.disabled = false;
-    }
-  },
+  copyManagerGrant: copyEnrollmentLink,
   /** @param {string} grantId */
   async cancelManagerGrant(grantId) {
     const feedback = actionFeedback("admin.toast.linkCancelled");

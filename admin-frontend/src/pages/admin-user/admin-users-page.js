@@ -3,11 +3,12 @@
 import { START_UP_LISTS } from "../../admin-catalog.js";
 import { adminApi } from "../../services/admin-api.js";
 import { mixActions } from "../../mix-actions.js";
-import { syncDirtyForm } from "../../form-state.js";
+import { hasDirtyForm, syncDirtyForm } from "../../form-state.js";
 import { navigate } from "../../router.js";
 import { t } from "../../../../frontend/src/i18n/i18n.js";
 import { bindAdminInvitationLookup } from "./admin-invitation-lookup.js";
 import { listenForControls, pageView } from "../page-events.js";
+import { confirmDiscardChanges } from "../shared.templates.js";
 import { adminUserEvents } from "./admin-user.bindings.js";
 import { adminUserActions } from "./admin-user.actions.js";
 import {
@@ -49,8 +50,7 @@ export class AdminUsersPage extends HTMLElement {
     // Kept while <admin-app> lives, so going back from the invite form skips a reread.
     this.adminUsersLoaded = false;
     this.useCachedAdminUsers = false;
-    /** Set by <admin-app>: an unsaved Site compliance draft makes My profile's phone required. @type {() => any} */
-    this.complianceDraft = () => null;
+    this.leftRouteName = "";
     /** @type {(() => Promise<void>) | null} */
     this.ensureInvitationLookup = null;
     /** Set by <admin-app> to reload its current route; without it, the page reloads itself. @type {(() => Promise<void>) | null} */
@@ -73,7 +73,9 @@ export class AdminUsersPage extends HTMLElement {
    */
   async open(route) {
     const visit = ++this.visit;
-    const from = this.route?.name;
+    // leave() clears the route first, so it keeps the name for this check.
+    const from = this.route?.name ?? this.leftRouteName;
+    this.leftRouteName = "";
     this.route = route;
     const left = () => visit !== this.visit;
     if (route.name === "profile") {
@@ -116,12 +118,36 @@ export class AdminUsersPage extends HTMLElement {
     return true;
   }
 
-  /** <admin-app> calls this when the user goes to a route other than the list or the invite form. */
-  leave() {
+  /** The session holds the compliance draft, since it outlives the Site page during a profile edit. */
+  complianceDraft() {
+    return this.session.complianceDraft;
+  }
+
+  /**
+   * Called by <admin-app> on route changes and when it drops pages.
+   * @param {Route} [next]
+   */
+  leave(next) {
     this.visit++;
+    this.leftRouteName = this.route?.name || "";
     this.route = null;
     // Only going back from the invite form to the list reuses the loaded users.
-    this.useCachedAdminUsers = false;
+    if (next?.name !== "administrators") this.useCachedAdminUsers = false;
+  }
+
+  /** <admin-app> asks this before any route change; an invite still sending counts too. */
+  hasUnsavedChanges() {
+    return this.isSaving() || hasDirtyForm(this);
+  }
+
+  /** An invite already sending can't be cancelled, so leaving waits until it ends. */
+  isSaving() {
+    return Boolean(this.querySelector("#admin-user-form[data-saving='true']"));
+  }
+
+  /** Ask in this page's own dialog whether to drop its edits; true when the user discards. */
+  async confirmLeave() {
+    return !this.isSaving() && (await confirmDiscardChanges(this));
   }
 
   /** @param {Route} route */
@@ -130,6 +156,9 @@ export class AdminUsersPage extends HTMLElement {
   }
 
   focusOnOpen() {
+    // Clears the error line, so the invite form never opens under an old error.
+    if (this.route?.name === "administrator-new")
+      this.reportError(new Error(""));
     const heading = {
       administrators: "#administrators-title",
       "administrator-new": "#new-admin-user-title",

@@ -1363,7 +1363,7 @@ export async function settle(page) {
 }
 
 /**
- * The page-level error main.js renders from `state.error`.
+ * The page-level error line <admin-app> renders from `state.error`.
  * @param {import("@playwright/test").Page} page
  */
 export function pageError(page) {

@@ -2,7 +2,7 @@
 // manager page's record form, and the manager forms on a Site's Access tab.
 import { adminApi } from "../../services/admin-api.js";
 import { asForm, dataAttr } from "../../dom.js";
-import { formValue, syncDirtyForm } from "../../form-state.js";
+import { controlValue, syncDirtyForm } from "../../form-state.js";
 import { addExtension, removeExtension } from "../../phone-extension.js";
 import { t } from "../../../../frontend/src/i18n/i18n.js";
 
@@ -26,7 +26,8 @@ export const siteManagerEvents = {
   submit: {
     "#site-manager-record-form": (page, form, event) => {
       event.preventDefault();
-      const programId = formValue(new FormData(form), "manager-program-id");
+      // A disabled Program select is left out of FormData, so read the select.
+      const programId = controlValue(form, "manager-program-id");
       if (
         page.state.siteManager &&
         page.state.siteManager.programId !== programId

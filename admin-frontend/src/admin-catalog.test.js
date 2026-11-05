@@ -1,12 +1,10 @@
 // @vitest-environment node
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test, vi } from "vitest";
-import {
-  START_UP_LISTS,
-  adminCatalog,
-  createAdminCatalog,
-} from "./admin-catalog.js";
+import { START_UP_LISTS, createAdminCatalog } from "./admin-catalog.js";
 import { adminApi } from "./services/admin-api.js";
+
+const adminCatalog = createAdminCatalog();
 
 /** A read the test releases, as a slow network would answer. */
 function held() {

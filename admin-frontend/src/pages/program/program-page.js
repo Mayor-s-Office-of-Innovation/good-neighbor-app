@@ -2,9 +2,11 @@
 // state and reads, so its tests fake only the Program calls.
 import { START_UP_LISTS } from "../../admin-catalog.js";
 import { mixActions } from "../../mix-actions.js";
-import { trackDirtyForm } from "../../form-state.js";
+import { hasDirtyForm, trackDirtyForm } from "../../form-state.js";
 import { visibleRecords } from "../../record-navigation.js";
 import { listenForControls } from "../page-events.js";
+import { confirmDiscardChanges } from "../shared.templates.js";
+import { loadManagersForSearch } from "../site/manager-directory-read.js";
 import { programEvents } from "./program.bindings.js";
 import { programActions } from "./program.actions.js";
 import { newProgramView, programView } from "./program.templates.js";
@@ -31,10 +33,6 @@ export class AdminProgramPage extends HTMLElement {
     this.catalog = /** @type {any} */ (null);
     /** @type {AdminSession} */
     this.session = /** @type {any} */ (null);
-    /** @type {Promise<boolean> | null} */
-    this.leavePrompt = null;
-    /** @type {((discard: boolean) => void) | null} */
-    this.answerLeave = null;
   }
 
   connectedCallback() {
@@ -61,41 +59,20 @@ export class AdminProgramPage extends HTMLElement {
     return /** @type {ProgramPageElement} */ (this).loadProgram(route.id || "");
   }
 
-  /** <admin-app> calls this when the user goes to a route this page doesn't show. */
+  /** Called by <admin-app> on route changes and when it drops pages. */
   leave() {
     this.visit++;
     this.route = null;
   }
 
-  /** <admin-app> asks this before any route change, to warn before an edit is lost. */
-  hasUnsavedChanges() {
-    return Boolean(
-      this.querySelector("[data-dirty-form][data-is-dirty='true']"),
-    );
+  /** Ask in this page's own dialog whether to drop its edits; true when the user discards. */
+  confirmLeave() {
+    return confirmDiscardChanges(this);
   }
 
-  /**
-   * Ask the user to keep or discard their edits; true when they discard.
-   * @returns {Promise<boolean>}
-   */
-  confirmLeave() {
-    if (this.leavePrompt) return this.leavePrompt;
-    const dialog = this.querySelector("#site-unsaved-dialog");
-    if (!(dialog instanceof HTMLDialogElement)) return Promise.resolve(true);
-    this.leavePrompt = new Promise((resolve) => {
-      this.answerLeave = (discard) => {
-        this.leavePrompt = this.answerLeave = null;
-        resolve(discard);
-      };
-      dialog.addEventListener(
-        "close",
-        () => this.answerLeave?.(dialog.returnValue === "discard"),
-        { once: true },
-      );
-      dialog.returnValue = "";
-      dialog.showModal();
-    });
-    return this.leavePrompt;
+  /** <admin-app> asks this before any route change, to warn before edits are lost. */
+  hasUnsavedChanges() {
+    return hasDirtyForm(this);
   }
 
   /** @param {Route} route */
@@ -109,12 +86,13 @@ export class AdminProgramPage extends HTMLElement {
   focusOnOpen() {
     if (this.route?.name === "program")
       /** @type {ProgramPageElement} */ (this).focusProgram();
-    else queueMicrotask(() => this.querySelector("h1")?.focus());
+    else {
+      queueMicrotask(() => this.querySelector("h1")?.focus());
+      void loadManagersForSearch(this.catalog);
+    }
   }
 
   render() {
-    // A redraw removes an open leave dialog without a close event, so answer Keep.
-    this.answerLeave?.(false);
     const route = this.route;
     if (!route || !this.shows(route)) {
       this.innerHTML = "";

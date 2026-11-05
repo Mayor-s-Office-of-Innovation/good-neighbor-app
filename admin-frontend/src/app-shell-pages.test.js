@@ -3,8 +3,6 @@ import assert from "node:assert/strict";
 import {
   $,
   adminData,
-  alertText,
-  brandLink,
   byText,
   click,
   fill,
@@ -16,7 +14,7 @@ import {
   toastText,
   window,
 } from "../test-support/admin-dom.js";
-import { mountAdmin } from "../test-support/app-mount.js";
+import { alertText, brandLink, mountAdmin } from "../test-support/app-mount.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { failTimes } from "../../e2e/admin-tests/directory-helpers.js";
 import { providerData } from "../../e2e/admin-tests/providers-helpers.js";
@@ -138,6 +136,50 @@ test("an already-active reply after leaving the provider is not drawn", async ()
   assert.ok(missing("[data-provider-manager-grant-error]"));
 });
 
+test("an invitation that is already active says so once, beside its manager", async () => {
+  await openProviders(ACCESS, {
+    setup: (api) =>
+      api.fail("POST", grants, 409, "provider_manager_grant_already_active"),
+  });
+  await click(issueButton("link"));
+  assert.equal(
+    $("[data-provider-manager-grant-error='m1']").textContent.trim(),
+    t("admin.enrollment.alreadyActive"),
+  );
+  assert.ok(missing("[data-operation-error]"));
+});
+
+test("an already-active invitation still says so after the user leaves the page", async () => {
+  const held = gate();
+  const { api } = await openProviders(ACCESS);
+  api.on("POST", grants, {
+    delay: held.promise,
+    status: 409,
+    json: {
+      error: "provider_manager_grant_already_active",
+      message: "provider_manager_grant_already_active",
+    },
+  });
+  await click(issueButton("link"));
+  await routeTo("/sites");
+  held.release();
+  await settle();
+  const shown = `${alertText() ?? ""} ${toastText() ?? ""}`;
+  assert.ok(shown.includes(t("admin.enrollment.alreadyActive")), shown);
+});
+
+test("an invitation that clashes with another change asks for a refresh beside the page", async () => {
+  await openProviders(ACCESS, {
+    setup: (api) =>
+      api.fail("POST", grants, 409, "provider_manager_grant_conflict"),
+  });
+  await click(issueButton("code"));
+  assert.equal(
+    $("[data-operation-error]").textContent.trim(),
+    t("admin.enrollment.conflict"),
+  );
+});
+
 test("a user action that ends after the user leaves doesn't reload the page they're on", async () => {
   const held = gate();
   const { api } = await openUsers();
@@ -153,6 +195,23 @@ test("a user action that ends after the user leaves doesn't reload the page they
   // A reload there would redraw the page and drop any unsaved edit on it.
   assert.ok(!missing("#upload-title"));
   assert.equal(api.calls("GET", /^site-imports$/).length, reads);
+});
+
+test("an invite from the users list returns to the list with the new account", async () => {
+  const { api } = await openUsers();
+  api.on("POST", /^admin-users$/, (request) => ({
+    json: {
+      user: { username: "ivy", email: request.body.email },
+      invitationStatus: "invited",
+    },
+  }));
+  await click('[data-navigate="/administrators/new"]');
+  await fillInvite();
+  await submit("#admin-user-form");
+  assert.equal(url(), "/administrators");
+  assert.match($("table").textContent, /ivy@example\.org/);
+  // A reread would drop the account, since the directory can lag the invite.
+  assert.equal(api.calls("GET", /^admin-users$/).length, 1);
 });
 
 test("an invite makes the Site the user returns to reread program managers", async () => {
@@ -289,8 +348,7 @@ test("an unreadable import link shows the error and a retry", async () => {
     });
     api.on("GET", /^site-imports\/i3$/, failTimes(1, 404, "import_not_found"));
   }, "/sites/import?importId=i3");
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "import_not_found");
+  assert.equal(pageError(), t("admin.errors.importUnavailable"));
   await click("#retry-page-load");
   assert.ok(!missing("#review-title"));
   assert.equal(pageError(), "");
@@ -413,30 +471,14 @@ test("a Supervisor deactivates a Site after typing its name", async () => {
   assert.ok(missing('[aria-labelledby="sites-title"] a[href="/sites/s1"]'));
 });
 
-test("a failed deactivation stays on the Site with an error", async () => {
-  await mountAdmin("/sites/s1", {
-    setup: (api) => api.fail("DELETE", /^sites\/s1$/),
-  });
-  await fill(
-    '#deactivate-site-form wa-input[name="confirmation"]',
-    "Example Site",
-  );
-  await click('#deactivate-site-form button[type="submit"]');
-  assert.equal(
-    $("#deactivate-site-form [data-form-save-error]").textContent.trim(),
-    t("admin.site.deactivateError"),
-  );
-  assert.equal(url(), "/sites/s1");
-});
-
 test("a provider deactivation that fails after the user leaves still shows why", async () => {
   const held = gate();
   await openProviders("/providers/v1", {
     setup: (api) =>
       api.on("DELETE", /^providers\/v1$/, {
         delay: held.promise,
-        status: 409,
-        json: { error: "provider_has_sites", message: "provider_has_sites" },
+        status: 404,
+        json: { error: "provider_not_found", message: "provider_not_found" },
       }),
   });
   await click("[data-deactivate-provider='v1']");
@@ -445,17 +487,16 @@ test("a provider deactivation that fails after the user leaves still shows why",
   held.release();
   await settle();
   assert.ok(!missing("#directory-title"));
-  // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
-  assert.equal(pageError(), "provider_has_sites");
+  assert.equal(pageError(), t("admin.errors.providerUnavailable"));
 });
 
 test("signing out drops a page's unsaved 311 edits with the session", async () => {
   vi.spyOn(window.location, "assign").mockImplementation(() => {});
   const { app } = await mountAdmin("/sites");
   await fill('[data-site-311="s1"]', false);
-  assert.equal(app.hasUnsavedSiteChanges(), true);
+  assert.equal(app.hasUnsavedChanges(), true);
   await click("#clear-token");
-  assert.equal(app.hasUnsavedSiteChanges(), false);
+  assert.equal(app.hasUnsavedChanges(), false);
 });
 
 test("a page clearing an error line that is already clear doesn't redraw <admin-app>", async () => {

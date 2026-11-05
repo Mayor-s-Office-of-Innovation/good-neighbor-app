@@ -2,6 +2,7 @@ import { test } from "vitest";
 import assert from "node:assert/strict";
 import {
   $,
+  $$,
   click,
   fill,
   leavePage,
@@ -120,9 +121,9 @@ test("a failed assignment removal keeps the new assignment for a safe retry", as
 });
 
 test("an assignment removal fails the save unless the membership is already gone", async () => {
-  for (const [status, code] of [
-    [404, "site_not_found"],
-    [403, "manager_membership_not_found"],
+  for (const [status, code, message] of [
+    [404, "site_not_found", "admin.errors.siteUnavailable"],
+    [403, "manager_membership_not_found", "admin.errors.managerUnavailable"],
   ]) {
     await openManager("/managers/u3", {
       setup: (api) =>
@@ -135,11 +136,7 @@ test("an assignment removal fails the save unless the membership is already gone
     });
     await click(siteBox("s1"));
     await click(saveButton());
-    assert.equal(
-      saveError(),
-      t("admin.toast.requestFailed"),
-      `${status} ${code}`,
-    );
+    assert.equal(saveError(), t(message), `${status} ${code}`);
     assert.equal(siteBox("s1").checked, false);
   }
 });
@@ -542,10 +539,7 @@ test("a compliance manager edits a manager only when they oversee every assigned
   assert.equal($("#site-manager-record-form").dataset.readOnly, "false");
   await fill(field("manager-phone"), "4155550199");
   await click(saveButton());
-  // Pins a bug: the disabled Program select leaves FormData, so an unchanged
-  // Program reads as a move and asks for confirmation. No issue filed yet.
-  assert.equal($("#manager-program-change-dialog").open, true);
-  await click('#manager-program-change-dialog button[value="confirm"]');
+  assert.equal($("#manager-program-change-dialog").open, false);
   assert.equal(api.calls("PATCH", /^people\/u3$/).length, 1);
   const body = api.calls("PATCH", /^people\/u3$/)[0].body;
   assert.equal(body.email, "morgan@example.org");
@@ -607,9 +601,7 @@ test("a compliance manager saves a legacy manager without changing assignments",
   });
   await fill(field("manager-first-name"), "Alexa");
   await click(saveButton());
-  // Pins the same unchanged-Program confirmation bug as above.
-  assert.equal($("#manager-program-change-dialog").open, true);
-  await click('#manager-program-change-dialog button[value="confirm"]');
+  assert.equal($("#manager-program-change-dialog").open, false);
   assert.equal(title(), "Alexa Example");
   assert.deepEqual(api.calls("POST", /manager-memberships/), []);
   assert.equal(
@@ -623,4 +615,18 @@ test("a redraw after the URL moves on still draws the route open() was given", a
   window.history.replaceState({}, "", "/profile");
   page.render();
   assert.ok(!missing("admin-site-manager-page h1"));
+});
+
+const crumbs = `nav[aria-label="${t("admin.breadcrumb.label")}"]`;
+
+test("a manager's breadcrumb leads back through the manager directory and their Program", async () => {
+  await openManagerPage("/managers/u1");
+  assert.deepEqual(
+    $$(`${crumbs} a`).map((link) => link.getAttribute("href")),
+    ["/managers", "/providers/v1", "/programs/p1"],
+  );
+  assert.equal(
+    $(`${crumbs} [aria-current="page"]`).textContent,
+    t("admin.breadcrumb.manager"),
+  );
 });

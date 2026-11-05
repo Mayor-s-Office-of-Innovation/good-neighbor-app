@@ -18,6 +18,45 @@ export function discardChangesDialog() {
   </dialog>`;
 }
 
+/**
+ * Open the discard-changes dialog inside `page`. True when the user picks Discard;
+ * false when they keep editing, or when the page drew no dialog to ask with.
+ * @param {ParentNode} page
+ * @returns {Promise<boolean>}
+ */
+export function confirmDiscardChanges(page) {
+  const dialog = page.querySelector("#site-unsaved-dialog");
+  if (!(dialog instanceof HTMLDialogElement)) return Promise.resolve(false);
+  const asked = openPrompts.get(dialog);
+  if (asked) return asked;
+  const prompt = new Promise((resolve) => {
+    // A redraw removes the dialog without a close event, so treat that as Keep editing.
+    const removed = new MutationObserver(() => {
+      if (!page.contains(dialog)) answer(false);
+    });
+    /** @param {boolean} discard */
+    const answer = (discard) => {
+      removed.disconnect();
+      openPrompts.delete(dialog);
+      resolve(discard);
+    };
+    removed.observe(page, { childList: true, subtree: true });
+    dialog.addEventListener(
+      "close",
+      () => answer(dialog.returnValue === "discard"),
+      { once: true },
+    );
+    dialog.returnValue = "";
+    dialog.showModal();
+  });
+  openPrompts.set(dialog, prompt);
+  return prompt;
+}
+
+// The open dialog's answer, so a second leave while it shows waits for the same choice.
+/** @type {WeakMap<HTMLDialogElement, Promise<boolean>>} */
+const openPrompts = new WeakMap();
+
 /** @param {unknown} value */
 export function shortOpaqueId(value) {
   const id = String(value || "");
