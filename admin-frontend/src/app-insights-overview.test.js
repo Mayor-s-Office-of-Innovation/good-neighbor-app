@@ -19,9 +19,9 @@ import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import {
   formatDay,
   formatInstant,
+  periodLabel,
   perDayText,
 } from "./pages/insights/insights.templates.js";
-import { lastFullMonth } from "./pages/insights/insights-query.js";
 import { LINK_MS } from "./pages/insights/report-job.js";
 
 const url = () => window.location.pathname + window.location.search;
@@ -666,17 +666,63 @@ test("going back to the month on screen from Custom keeps the picks", async () =
   assert.ok($('[data-select-site="s1"]').checked);
 });
 
-test("after the first load fails, Year shows the year of the last full month", async () => {
+/** What the period control shows: its label, which buttons work, and whether it says the period is running. */
+const periodControl = () => ({
+  label: text("[data-period-label]"),
+  disabled: $$("[data-period-step], [data-period-kind]")
+    .filter((b) => b.disabled)
+    .map((b) => b.dataset.periodStep ?? b.dataset.periodKind),
+  incomplete: !missing("[data-period-incomplete]"),
+});
+
+test("with no period in the link, the period control names no month until the server picks one", async () => {
+  const held = gate();
+  await mountAdmin("/insights", {
+    insights: true,
+    setup: (api) =>
+      api.on("GET", /^reporting\/overview/, async (/** @type {any} */ r) => {
+        const reply = api.reply(r);
+        await held.promise;
+        return reply;
+      }),
+  });
+  assert.deepEqual(periodControl(), {
+    label: t("common.loading"),
+    disabled: ["month", "quarter", "year", "financialYear", "-1", "1"],
+    incomplete: false,
+  });
+  held.release();
+  await settle();
+  // The mock's default, as the server's: October has 31 days of data.
+  assert.deepEqual(periodControl(), {
+    label: periodLabel({
+      kind: "month",
+      startDay: "2026-10-01",
+      endDay: "2026-11-01",
+      incomplete: false,
+    }),
+    disabled: [],
+    incomplete: false,
+  });
+});
+
+test("after the first load fails with no period, the period control stays unpicked, but Custom works", async () => {
   const { api } = await mountAdmin("/insights", {
     insights: true,
     setup: (api) =>
       api.fail("GET", /^reporting\/overview/, 503, "snapshot_unavailable"),
   });
+  assert.deepEqual(periodControl(), {
+    label: t("common.loading"),
+    disabled: ["month", "quarter", "year", "financialYear", "-1", "1"],
+    incomplete: false,
+  });
+  const loads = overviewCalls(api).length;
   await click('[data-period-kind="year"]');
-  assert.deepEqual(
-    [lastOverviewCall(api).period, lastOverviewCall(api).year],
-    ["year", lastFullMonth().month.slice(0, 4)],
-  );
+  await click('[data-period-step="-1"]');
+  assert.equal(overviewCalls(api).length, loads);
+  await click('[data-period-kind="custom"]');
+  assert.ok(!missing("#insights-period-from"));
 });
 
 test("when a fresh download link can't be fetched, the page says so", async () => {

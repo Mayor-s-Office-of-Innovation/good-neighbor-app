@@ -16,6 +16,8 @@ import { t } from "../../frontend/src/i18n/i18n.js";
 import {
   formatInstant,
   perDayText,
+  periodLabel,
+  rangeLabel,
 } from "./pages/insights/insights.templates.js";
 
 const url = () => window.location.pathname + window.location.search;
@@ -524,6 +526,40 @@ test("Overview in the breadcrumb shows the period picked on the Site", async () 
     $("#insights-back").getAttribute("href"),
     "/insights?period=2026-09&show=all",
   );
+});
+
+test("a Site opened without a period names no month until the server picks one", async () => {
+  const held = gate();
+  await mountAdmin("/insights/sites/s1", {
+    insights: true,
+    setup: (api) =>
+      api.on("GET", /^reporting\/sites\/s1/, async (/** @type {any} */ r) => {
+        const reply = api.reply(r);
+        await held.promise;
+        return reply;
+      }),
+  });
+  const shown = () => [
+    text("[data-period-button]"),
+    text("[data-period-range]"),
+    $$("[data-period-step]").every((b) => b.disabled),
+    missing("[data-period-incomplete]"),
+  ];
+  assert.deepEqual(shown(), [t("common.loading"), "", true, true]);
+  held.release();
+  await settle();
+  const october = {
+    kind: "month",
+    startDay: "2026-10-01",
+    endDay: "2026-11-01",
+    incomplete: false,
+  };
+  assert.deepEqual(shown(), [
+    periodLabel(october),
+    rangeLabel(october),
+    false,
+    true,
+  ]);
 });
 
 test("a Site opened without a period goes back to Overview for the default period", async () => {

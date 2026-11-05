@@ -5,7 +5,6 @@ import {
   customPeriodError,
   intervalOf,
   keptSelection,
-  lastFullMonth,
   overviewApiParams,
   overviewSearch,
   periodApiParams,
@@ -24,19 +23,9 @@ const october = {
   incomplete: false,
 };
 
-test("a page with no period asks for the server's default, the last full month", () => {
+test("a page with no period asks for the server's default month", () => {
   assert.equal(readPeriod(""), null);
   assert.deepEqual(periodApiParams(null), {});
-  // The controls need a month to name before the reply arrives.
-  assert.deepEqual(
-    [
-      lastFullMonth(new Date("2026-11-04T19:00:00.000Z")),
-      // Still Oct 31 in San Francisco, so September is the last full month.
-      lastFullMonth(new Date("2026-11-01T05:00:00.000Z")),
-      lastFullMonth(new Date("2027-01-15T20:00:00.000Z")),
-    ].map((p) => /** @type {any} */ (p).month),
-    ["2026-10", "2026-09", "2026-12"],
-  );
 });
 
 test("each period in the URL becomes the API's period", () => {

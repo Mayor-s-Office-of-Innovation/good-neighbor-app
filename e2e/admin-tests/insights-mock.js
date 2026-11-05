@@ -67,6 +67,27 @@ function addDays(day, days) {
 }
 
 /**
+ * The handler's default: this month only when last month has under 14 days
+ * of data and this month has as many. The mock has data every day from
+ * COVERAGE_START.
+ * @returns {string} YYYY-MM
+ */
+function defaultMonth() {
+  const thisMonth = `${EVALUATED_DAY.slice(0, 7)}-01`;
+  const lastMonth = addMonths(thisMonth, -1);
+  /** @param {string} from @param {string} to exclusive */
+  const dataDays = (from, to) => {
+    const start = from > COVERAGE_START ? from : COVERAGE_START;
+    let n = 0;
+    for (let day = start; day < to; day = addDays(day, 1)) n += 1;
+    return n;
+  };
+  const last = dataDays(lastMonth, thisMonth);
+  const running = dataDays(thisMonth, addDays(EVALUATED_DAY, 1));
+  return (last < 14 && running >= last ? thisMonth : lastMonth).slice(0, 7);
+}
+
+/**
  * The period a request names, as the handler resolves it, or an error code.
  * Instants use 07:00Z, Pacific midnight in summer time, all year; pages
  * read only the day keys.
@@ -78,10 +99,7 @@ function requestedPeriod(params) {
   /** @type {[string, string]} */
   let days;
   if (kind === "month") {
-    // The last full month, as the handler defaults.
-    const month =
-      params.get("month") ??
-      addMonths(`${EVALUATED_DAY.slice(0, 7)}-01`, -1).slice(0, 7);
+    const month = params.get("month") ?? defaultMonth();
     if (!/^\d{4}-\d{2}$/.test(month)) return { error: "invalid_month" };
     days = [`${month}-01`, addMonths(`${month}-01`, 1)];
   } else if (kind === "quarter") {

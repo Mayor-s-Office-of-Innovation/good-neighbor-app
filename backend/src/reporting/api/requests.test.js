@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { addDays, dayKeysBetween } from "../../lib/pacific-dates.js";
 import {
   LIMITS,
   decodeCursor,
@@ -13,8 +14,14 @@ import {
 } from "./requests.js";
 
 const EVALUATED = "2026-11-04T19:00:00.000Z";
-// Data from well before any month these tests ask for.
-const LONG_RUNNING = "2025-01-01";
+/**
+ * Every day from `from` through `through`, as a snapshot's dataDays.
+ * @param {string} from
+ * @param {string} through
+ */
+const daysOfData = (from, through) => dayKeysBetween(from, addDays(through, 1));
+// Data every day, from well before any month these tests ask for.
+const LONG_RUNNING = daysOfData("2025-01-01", "2027-01-15");
 
 /**
  * @param {() => unknown} fn
@@ -112,9 +119,30 @@ describe("parsePeriodParams", () => {
     ).toMatchObject({ startDay: "2026-11-01", incomplete: true });
   });
 
-  it("opens on the running month when last month has under 14 days of data", () => {
-    // Launch week: data began Oct 26, so October holds only 6 days of it.
-    expect(parsePeriodParams({}, EVALUATED, "2026-10-26")).toMatchObject({
+  it("stays on last month while this month has fewer days of data", () => {
+    // Nov 2, launch week: October holds Oct 26–31, six days; November two.
+    expect(
+      parsePeriodParams(
+        {},
+        "2026-11-02T19:00:00.000Z",
+        daysOfData("2026-10-26", "2026-11-02"),
+      ),
+    ).toMatchObject({ startDay: "2026-10-01", endDay: "2026-11-01" });
+    // Nov 4: still four days against October's six.
+    expect(
+      parsePeriodParams({}, EVALUATED, daysOfData("2026-10-26", "2026-11-04")),
+    ).toMatchObject({ startDay: "2026-10-01" });
+  });
+
+  it("opens on the running month once it has as many days of data as a short last month", () => {
+    // Nov 6: six days in each.
+    expect(
+      parsePeriodParams(
+        {},
+        "2026-11-06T19:00:00.000Z",
+        daysOfData("2026-10-26", "2026-11-06"),
+      ),
+    ).toMatchObject({
       kind: "month",
       startDay: "2026-11-01",
       endDay: "2026-12-01",
@@ -122,16 +150,31 @@ describe("parsePeriodParams", () => {
     });
   });
 
+  it("counts only days that have data, not the days since the data began", () => {
+    // Data began Oct 1 but only Oct 1 and Oct 30–31 have any: 3 days.
+    expect(
+      parsePeriodParams({}, EVALUATED, [
+        "2026-10-01",
+        "2026-10-30",
+        "2026-10-31",
+        ...daysOfData("2026-11-01", "2026-11-04"),
+      ]),
+    ).toMatchObject({ startDay: "2026-11-01" });
+  });
+
   it("opens on last month once it has 14 days of data", () => {
-    // Data began Oct 18, so October holds Oct 18–31: exactly 14 days.
-    expect(parsePeriodParams({}, EVALUATED, "2026-10-18")).toMatchObject({
-      startDay: "2026-10-01",
-      endDay: "2026-11-01",
-    });
+    // October holds Oct 18–31: exactly 14 days, though November has 30.
+    expect(
+      parsePeriodParams(
+        {},
+        "2026-11-30T19:00:00.000Z",
+        daysOfData("2026-10-18", "2026-11-30"),
+      ),
+    ).toMatchObject({ startDay: "2026-10-01", endDay: "2026-11-01" });
   });
 
   it("opens on the running month when there's no data yet", () => {
-    expect(parsePeriodParams({}, EVALUATED, null)).toMatchObject({
+    expect(parsePeriodParams({}, EVALUATED, [])).toMatchObject({
       startDay: "2026-11-01",
     });
   });
@@ -139,11 +182,11 @@ describe("parsePeriodParams", () => {
   it("opens a linked month as asked, even in launch week", () => {
     expect(
       parsePeriodParams(
-        { period: "month", month: "2026-10" },
+        { period: "month", month: "2026-11" },
         EVALUATED,
-        "2026-10-26",
+        daysOfData("2026-10-26", "2026-11-04"),
       ),
-    ).toMatchObject({ startDay: "2026-10-01", endDay: "2026-11-01" });
+    ).toMatchObject({ startDay: "2026-11-01", endDay: "2026-12-01" });
   });
 
   it("reads a July–June year from its start year", () => {

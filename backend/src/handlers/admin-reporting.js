@@ -86,12 +86,13 @@ const pick = (params, keys) =>
   );
 
 /**
- * The snapshot's own data start, so the default month moves with launch.
+ * Days with data pick the default month: this month when last month has
+ * under 14 days of data and this month has as many.
  * @param {Snapshot} snap
  * @param {Record<string, unknown>} params
  */
 const intervalFor = (snap, params) =>
-  parsePeriodParams(params, snap.manifest.evaluatedAt, snap.coverageStart);
+  parsePeriodParams(params, snap.manifest.evaluatedAt, snap.dataDays);
 
 /**
  * @param {Snapshot} snap

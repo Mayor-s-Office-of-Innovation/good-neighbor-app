@@ -160,12 +160,6 @@ export function intervalOf(period, now = new Date()) {
 export const samePeriod = (a, b) =>
   periodSearch(a).toString() === periodSearch(b).toString();
 
-/** The server's default outside launch, for the controls when neither the URL nor a reply names a period. @param {Date} [now] @returns {Period} */
-export const lastFullMonth = (now = new Date()) => ({
-  kind: "month",
-  month: addMonths(`${pacificDateKey(now).slice(0, 7)}-01`, -1).slice(0, 7),
-});
-
 /** @param {Period | null} period */
 export function periodSearch(period) {
   const params = new URLSearchParams();

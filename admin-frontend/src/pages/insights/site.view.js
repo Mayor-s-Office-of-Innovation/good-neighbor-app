@@ -20,7 +20,7 @@ import {
   loadingView,
   periodClicked,
   periodInterval,
-  periodLabel,
+  periodName,
   rangeLabel,
 } from "./insights.templates.js";
 import {
@@ -87,7 +87,7 @@ class InsightsSite extends HTMLElement {
     this.innerHTML = `
       <div data-region="head">${this.headView()}</div>
       <div data-region="freshness">${freshnessView(null)}</div>
-      <div data-region="period">${sitePeriodView({ label: periodLabel(interval), range: rangeLabel(interval) })}</div>
+      <div data-region="period">${sitePeriodView({ label: periodName(interval), range: interval ? rangeLabel(interval) : "" })}</div>
       <div data-region="body"></div>`;
     this.addEventListener("click", this.clicked);
     this.drawPeriod();
@@ -314,9 +314,9 @@ class InsightsSite extends HTMLElement {
   drawPeriod() {
     const interval = periodInterval(this);
     const label = this.querySelector("[data-period-button]");
-    if (label) label.textContent = periodLabel(interval);
+    if (label) label.textContent = periodName(interval);
     const range = this.querySelector("[data-period-range]");
-    if (range) range.textContent = rangeLabel(interval);
+    if (range) range.textContent = interval ? rangeLabel(interval) : "";
     drawPeriodControl(this, this.periodBody());
   }
 

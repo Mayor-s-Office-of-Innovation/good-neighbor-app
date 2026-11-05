@@ -1,7 +1,7 @@
 // Every limit lives here, so no endpoint can be asked for more.
 
 import { createHash } from "node:crypto";
-import { dayKeysBetween, pacificDateKey } from "../../lib/pacific-dates.js";
+import { pacificDateKey } from "../../lib/pacific-dates.js";
 import { RESPONSE_STATES } from "../contract.js";
 import { REQUEST_ERROR, resolvePeriod } from "../periods.js";
 
@@ -62,46 +62,45 @@ function wholeNumber(value, code) {
   return Number(text);
 }
 
-// Under 14 days of data, last month mostly shows the weeks before launch.
+// A month with 14 days of data is worth opening on, even if this month has more.
 const MIN_DEFAULT_DAYS = 14;
 
 /**
- * A finished month, so the numbers a page opens on don't change under the
- * reader. Around launch it's the running month, which holds most of the data.
+ * Last month, so the numbers a page opens on don't change under the reader.
+ * The running month instead when last month has under 14 days of data and
+ * this month has at least as many.
  * @param {string} evaluatedAt
- * @param {string | null} coverageStart first day with any record
+ * @param {string[]} dataDays days with a site_days row
  * @returns {string} YYYY-MM
  */
-function defaultMonth(evaluatedAt, coverageStart) {
-  const thisMonth = `${pacificDateKey(evaluatedAt).slice(0, 7)}-01`;
+function defaultMonth(evaluatedAt, dataDays) {
+  const thisMonth = pacificDateKey(evaluatedAt).slice(0, 7);
   const [year, month] = thisMonth.split("-").map(Number);
   const lastMonth = new Date(Date.UTC(year, month - 2, 1))
     .toISOString()
-    .slice(0, 10);
-  const from =
-    coverageStart === null
-      ? thisMonth
-      : coverageStart > lastMonth
-        ? coverageStart
-        : lastMonth;
-  const withData = dayKeysBetween(from, thisMonth).length;
-  return (withData < MIN_DEFAULT_DAYS ? thisMonth : lastMonth).slice(0, 7);
+    .slice(0, 7);
+  /** @param {string} m YYYY-MM */
+  const daysIn = (m) => dataDays.filter((day) => day.startsWith(m)).length;
+  const last = daysIn(lastMonth);
+  return last < MIN_DEFAULT_DAYS && daysIn(thisMonth) >= last
+    ? thisMonth
+    : lastMonth;
 }
 
 /**
  * @param {Params} params
  * @param {string} evaluatedAt
- * @param {string | null} coverageStart the snapshot's first day with any record
+ * @param {string[]} dataDays the snapshot's days with a site_days row
  * @returns {import("../periods.js").Interval}
  */
-export function parsePeriodParams(params, evaluatedAt, coverageStart) {
+export function parsePeriodParams(params, evaluatedAt, dataDays) {
   const kind = str(params.period) ?? "month";
   /** @type {import("../periods.js").PeriodSpec} */
   let spec;
   if (kind === "month")
     spec = {
       kind,
-      month: str(params.month) ?? defaultMonth(evaluatedAt, coverageStart),
+      month: str(params.month) ?? defaultMonth(evaluatedAt, dataDays),
     };
   else if (kind === "quarter")
     spec = {

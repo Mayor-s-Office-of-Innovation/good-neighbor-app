@@ -9,7 +9,6 @@ import { escapeHtml } from "../../dom.js";
 import {
   customPeriodError,
   intervalOf,
-  lastFullMonth,
   periodOf,
   periodSearch,
   quarterOf,
@@ -153,11 +152,19 @@ const KINDS = /** @type {const} */ ([
   "custom",
 ]);
 
-/** Custom waits for "Show period", so half-typed dates don't load. @param {{ interval: Interval, kind: string, draft: { from: string, to: string }, error: string }} view */
+/** @param {Interval | null} interval */
+export const periodName = (interval) =>
+  interval ? periodLabel(interval) : t("common.loading");
+
+/**
+ * Custom waits for "Show period", so half-typed dates don't load. With no
+ * interval yet, only Custom works: the server hasn't said which month it chose.
+ * @param {{ interval: Interval | null, kind: string, draft: { from: string, to: string }, error: string }} view
+ */
 export function periodView({ interval, kind, draft, error }) {
   const kinds = `<div class="insights__ptabs" role="group" aria-label="${escapeHtml(t("admin.insights.period.kinds"))}">${KINDS.map(
     (k) =>
-      `<button type="button" data-period-kind="${k}" aria-pressed="${k === kind}">${escapeHtml(t(`admin.insights.period.${k}`))}</button>`,
+      `<button type="button" data-period-kind="${k}" aria-pressed="${k === kind}" ${!interval && k !== "custom" ? "disabled" : ""}>${escapeHtml(t(`admin.insights.period.${k}`))}</button>`,
   ).join("")}</div>`;
   const body =
     kind === "custom"
@@ -167,11 +174,11 @@ export function periodView({ interval, kind, draft, error }) {
           <button type="button" class="btn-secondary" id="insights-period-apply">${escapeHtml(t("admin.insights.period.apply"))}</button>
         </div>`
       : `<div class="insights__stepper">
-          <button type="button" class="btn-icon" data-period-step="-1" aria-label="${escapeHtml(t("admin.insights.period.previous"))}"><wa-icon name="chevron-left" aria-hidden="true"></wa-icon></button>
-          <span class="insights__period-label" data-period-label>${escapeHtml(periodLabel(interval))}</span>
-          <button type="button" class="btn-icon" data-period-step="1" aria-label="${escapeHtml(t("admin.insights.period.next"))}" ${interval.incomplete ? "disabled" : ""}><wa-icon name="chevron-right" aria-hidden="true"></wa-icon></button>
+          <button type="button" class="btn-icon" data-period-step="-1" aria-label="${escapeHtml(t("admin.insights.period.previous"))}" ${interval ? "" : "disabled"}><wa-icon name="chevron-left" aria-hidden="true"></wa-icon></button>
+          <span class="insights__period-label" data-period-label>${escapeHtml(periodName(interval))}</span>
+          <button type="button" class="btn-icon" data-period-step="1" aria-label="${escapeHtml(t("admin.insights.period.next"))}" ${!interval || interval.incomplete ? "disabled" : ""}><wa-icon name="chevron-right" aria-hidden="true"></wa-icon></button>
         </div>`;
-  const pill = interval.incomplete
+  const pill = interval?.incomplete
     ? `<span class="insights__pill" data-period-incomplete>${escapeHtml(
         t("admin.insights.period.incomplete", {
           time: formatInstant(interval.observedTo ?? null),
@@ -272,12 +279,12 @@ export function redrawKeepingFocus(region, markup, keepTyped = true) {
  * The reply's interval if it answers the period asked for, else the
  * period's own days, so the controls still work after a failed load.
  * @param {PeriodHost} host
- * @returns {Interval}
+ * @returns {Interval | null} null until the server names its default period
  */
 export function periodInterval(host) {
   const replied = host.reply?.meta.interval ?? null;
-  if (!host.period && replied) return replied;
-  const asked = intervalOf(host.period ?? lastFullMonth());
+  if (!host.period) return replied;
+  const asked = intervalOf(host.period);
   return replied &&
     replied.kind === asked.kind &&
     replied.startDay === asked.startDay &&
@@ -295,9 +302,11 @@ export function drawPeriodControl(host, region) {
   const draft =
     host.period?.kind === "custom"
       ? { from: host.period.from, to: host.period.to }
-      : /** @type {{ from: string, to: string }} */ (
-          periodOf({ ...interval, kind: "custom" })
-        );
+      : interval
+        ? /** @type {{ from: string, to: string }} */ (
+            periodOf({ ...interval, kind: "custom" })
+          )
+        : { from: "", to: "" };
   redrawKeepingFocus(
     region,
     () =>
@@ -316,9 +325,15 @@ export function periodClicked(host, button, region) {
   const interval = periodInterval(host);
   const kind = button.getAttribute("data-period-kind");
   const step = button.getAttribute("data-period-step");
+  // Disabled until there's an interval, except Custom; a click can still race a redraw.
+  if (!interval && (step || (kind && kind !== "custom"))) return true;
   if (kind) {
-    const next = periodForKind(kind, interval);
-    if (next && samePeriod(next, host.period ?? periodOf(interval))) {
+    const next = interval ? periodForKind(kind, interval) : null;
+    if (
+      next &&
+      interval &&
+      samePeriod(next, host.period ?? periodOf(interval))
+    ) {
       // Back to the period on screen: no reload, so the picks stay.
       host.periodKind = next.kind;
       host.periodError = "";
@@ -332,7 +347,7 @@ export function periodClicked(host, button, region) {
     }
     return true;
   }
-  if (step) {
+  if (step && interval) {
     host.periodPicked(
       stepPeriod(host.period ?? periodOf(interval), step === "1" ? 1 : -1),
     );
