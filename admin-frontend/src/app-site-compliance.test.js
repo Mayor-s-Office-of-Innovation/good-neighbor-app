@@ -23,7 +23,7 @@ import {
 } from "../../e2e/admin-tests/site-compliance-helpers.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 
-// main.js has no catalog key for this copy, so tests match its English.
+// pages/site/compliance.templates.js and save-error-messages.js have no catalog key for this copy, so tests match their English.
 
 describe("Site compliance", () => {
   // A fixed date, so fixture dates such as the 2026-12-31 terms expiry stay in the future.
@@ -620,14 +620,14 @@ describe("Site compliance", () => {
     assert.ok(
       $(letters).textContent.includes("The letter is being generated."),
     );
-    // Pins a bug: main.js hard-codes this instead of siteAdmin.letters.noPast,
+    // Pins a bug: compliance.templates.js hard-codes this instead of siteAdmin.letters.noPast,
     // which has no full stop. No issue filed yet.
     assert.ok($(letters).textContent.includes("No past letters."));
     await openLetters();
     assert.ok(!missing("admin-app [data-operation-error]"));
   });
 
-  // main.js hard-codes these labels; siteAdmin.letters.current and openPdf
+  // compliance.templates.js hard-codes these labels; siteAdmin.letters.current and openPdf
   // have the same English, so this can't tell the two apart.
   for (const [current, shown] of [
     [{ status: "queued" }, "Current letter: queued"],

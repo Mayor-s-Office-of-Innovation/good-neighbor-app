@@ -18,7 +18,7 @@ import {
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 
-// main.js has no catalog key for this copy, so tests match its English.
+// pages/site/save-error-messages.js and main.js have no catalog key for this copy, so tests match their English.
 
 // The address search waits this long after typing before it asks for suggestions.
 const SEARCH_DELAY_MS = 300;

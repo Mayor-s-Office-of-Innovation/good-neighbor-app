@@ -17,7 +17,7 @@ import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { failTimes } from "../../e2e/admin-tests/directory-helpers.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 
-// main.js has no catalog key for this copy, so tests match its English.
+// main.js and pages/directory/directory.templates.js have no catalog key for this copy, so tests match their English.
 
 const CONFIG_ERROR = "Admin login is not configured for this environment.";
 const heading = () => $("admin-app h1").textContent.trim();

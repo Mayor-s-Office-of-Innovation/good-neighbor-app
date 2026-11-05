@@ -10,7 +10,7 @@ import {
 } from "../test-support/admin-dom.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 
-// main.js has no catalog key for this copy, so tests match its English.
+// pages/site/record.templates.js has no catalog key for this copy, so tests match its English.
 
 const SETTINGS = "/sites/s1?section=settings";
 const form = "#site-deliberate-311-form";

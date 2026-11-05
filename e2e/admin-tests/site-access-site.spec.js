@@ -5,7 +5,7 @@ import { t } from "../helpers/i18n.js";
 
 /** @param {import("@playwright/test").Page} page */
 const accessSection = (page) =>
-  // main.js hard-codes this aria-label, with no catalog key to look up.
+  // pages/site/access.templates.js hard-codes this aria-label, with no catalog key.
   page.getByRole("region", { name: "App access" });
 
 /** @param {import("@playwright/test").Page} page */
