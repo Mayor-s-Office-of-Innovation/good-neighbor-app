@@ -968,7 +968,9 @@ partition and sort-key shape. Task/check headers must have bare `TASK#<id>` or
 unknown children are excluded. Task update events are their own `task_updates`
 entity, so Insights can read first-response times; `DUP_LINK#` and `DUP_OVERRIDE#`
 rows are `duplicate_links` and `duplicate_overrides`, and `PROGRAM#…/#META` is
-`programs`. Site and compliance manager assignments stay out: they are removed by
+`programs`. `COMPLIANCE_TERMS#` versions are `compliance_terms`, so Insights owes
+Checks by the same terms as the Check report; their raw JSON keeps only the
+terms fields, not the letter's email or names. Site and compliance manager assignments stay out: they are removed by
 deleting the row, which an incremental export can't see. A `DUP_LINK#` row is deleted
 only in the same transaction that supersedes its task, so a stale link in the lake
 never merges a live Issue. `task_updates.raw` and `programs.raw` keep only

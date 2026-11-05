@@ -83,9 +83,10 @@ function concernParams(reply) {
   const { response, activity } = reply.totals;
   const rules = CONCERN_RULES;
   return {
+    // Only a Site that owed Checks is flagged, so it always has a number.
     fewChecks: {
       perDay: oneDecimal(reply.checksPerDay ?? 0),
-      min: reply.checksOwedPerDay ?? rules.defaultChecksPerDay,
+      min: reply.checksOwedPerDay ?? "",
     },
     repeatedSevere: { count: activity.severeIssues, min: rules.severeIssues },
     manyIssues: { count: activity.issuesCreated, max: rules.issuesPer30Days },
@@ -177,6 +178,16 @@ export function contactsView({ reply, details }) {
 const tile = (key, value, label, help, note = "") =>
   `<div class="insights__tile" data-activity="${key}"><span class="insights__tile-n" data-activity-count>${value}</span><span class="insights__tile-l">${escapeHtml(label)}</span>${note}${helpTip(`insights-tip-activity-${key}`, label, help)}</div>`;
 
+/**
+ * A Site that owed no Checks has no number of its own to name.
+ * @param {string} key
+ * @param {number | null | undefined} owedPerDay
+ */
+const activityHelp = (key, owedPerDay) =>
+  key === "completedPerimeterChecks" && owedPerDay == null
+    ? t("admin.insights.activityHelp.completedPerimeterChecksNoneOwed")
+    : t(`admin.insights.activityHelp.${key}`, { min: owedPerDay ?? "" });
+
 /** @param {Reply} reply @param {string} checksHref */
 function activityView(reply, checksHref) {
   const counts = reply.totals.activity;
@@ -197,10 +208,7 @@ function activityView(reply, checksHref) {
           ? escapeHtml(t("admin.insights.unavailable"))
           : escapeHtml(counts[key] ?? 0),
         t(`admin.insights.activity.${key}`),
-        t(`admin.insights.activityHelp.${key}`, {
-          // A Site that owed no Checks has no number of its own to name.
-          min: reply.checksOwedPerDay ?? CONCERN_RULES.defaultChecksPerDay,
-        }),
+        activityHelp(key, reply.checksOwedPerDay),
         key === "completedPerimeterChecks" &&
           !noData &&
           reply.checksPerDay !== null &&

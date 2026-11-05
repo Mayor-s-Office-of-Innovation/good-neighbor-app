@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
 import { classifyItem } from "../../analytics/entity-keys.js";
-import { pacificDateKey, pacificDayStartIso } from "../../lib/pacific-dates.js";
+import {
+  addDays,
+  pacificDateKey,
+  pacificDayStartIso,
+} from "../../lib/pacific-dates.js";
 import { createLocalViews, writeLocalLake } from "../local-lake.js";
 import { buildProjection } from "../projection.js";
 import { readProjection } from "../test-build.js";
@@ -68,6 +72,57 @@ describe("generateYear", () => {
     expect(
       items.filter((i) => i.flowType === "single-problem").length,
     ).toBeGreaterThan(0);
+  });
+
+  it("gives Sites compliance terms the converter keeps, at each profile's own number", () => {
+    const terms = items.filter((i) => i.sk.startsWith("COMPLIANCE_TERMS#"));
+    expect(terms.every((i) => classifyItem(i) === "compliance_terms")).toBe(
+      true,
+    );
+    const site = (/** @type {string} */ key) =>
+      `syn-site-${String(PROFILES.findIndex((p) => p.key === key) + 1).padStart(2, "0")}`;
+    /** @param {string} key */
+    const termsOf = (key) =>
+      terms
+        .filter((i) => i.siteId === site(key))
+        .map((i) => [
+          i.requiredChecksPerDay,
+          i.status,
+          i.expiresOnExclusive ?? null,
+        ]);
+    expect(
+      ["steady", "severe-repeat", "long-unresolved", "legacy-untimed"].map(
+        termsOf,
+      ),
+    ).toEqual([
+      [[3, "active", null]],
+      [[4, "active", null]],
+      [[2, "active", null]],
+      // One Site with no terms, so the pages show a Site that owes nothing.
+      [],
+    ]);
+    // A closed Site's terms end the day after it was archived.
+    const [closed] = terms.filter((i) => i.siteId === site("closed-site"));
+    const archived = items.find(
+      (i) => i.siteId === site("closed-site") && i.sk === "#META",
+    );
+    expect(closed).toMatchObject({ status: "expired" });
+    expect(closed.expiresOnExclusive).toBe(
+      addDays(pacificDateKey(String(archived?.updatedAt)), 1),
+    );
+    // Terms live on their own items, never on the Site record.
+    expect(items.some((i) => i.sk === "#META" && "compliance" in i)).toBe(
+      false,
+    );
+    // Each terms Site owes Checks every day it's open; legacy-untimed owes none.
+    expect(
+      Object.keys(answers.owedBySiteMonth).some((k) =>
+        k.startsWith(site("legacy-untimed")),
+      ),
+    ).toBe(false);
+    expect(answers.owedBySiteMonth[`${site("severe-repeat")}|2026-10`]).toBe(
+      4 * 31,
+    );
   });
 
   it("uses only example.org emails and phone numbers kept for fiction", () => {
@@ -286,9 +341,33 @@ describe("projection over generated records", () => {
           { siteId: "extra", publicContact: "available", siteContact: "x" },
         ],
       },
-      { bySiteMonth: {}, contacts: {}, profiles: {} },
+      {
+        bySiteMonth: {},
+        owedBySiteMonth: {},
+        contacts: {},
+        profiles: {},
+      },
     );
     expect(result.mismatches).toHaveLength(2);
+  });
+
+  it("flags a month whose owed Checks differ from the answers", () => {
+    const result = compareWithAnswers(
+      {
+        site_days: [],
+        site_contacts: [],
+        checks_owed: [{ siteId: "s1", day: "2026-10-01", checksOwed: 3 }],
+      },
+      {
+        bySiteMonth: {},
+        owedBySiteMonth: { "s1|2026-10": 6 },
+        contacts: {},
+        profiles: {},
+      },
+    );
+    expect(result.mismatches).toEqual([
+      "s1|2026-10 checksOwed: expected 6, got 3",
+    ]);
   });
 
   it("would catch a counting rule that also counted update rows", async () => {

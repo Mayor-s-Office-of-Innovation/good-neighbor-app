@@ -475,15 +475,17 @@ and 9461 (set `INSIGHTS_DDB_PORT` / `INSIGHTS_S3_PORT` to move them), so the dev
 stack's data is untouched. It needs Java 17+ and the binaries that
 `npm run local:services -w backend` installs. Extracts land in
 `backend/.local/insights-data/projection/` (`site_days`, `issues`,
-`site_contacts`, `sites`, `checks` as Parquet, plus `manifest.json`); `check.json` lists
-any total that differs, read back from the written Parquet. Each run replaces
+`site_contacts`, `sites`, `checks`, `checks_owed` as Parquet, plus
+`manifest.json`); `check.json` lists any total that differs, read back from the written Parquet. Each run replaces
 its output folder, so `--out` refuses a folder this command didn't write.
 `--keep` leaves the emulators running.
 
 Sites follow the patterns a compliance manager looks for: steady Checks, missed
 days and gaps, repeated severe Issues, late and overdue responses, Issues open
 for months, missing contacts, mid-year openings and closures, and records with
-no response time. Each task carries a real Guidance rule and its response
+no response time. Each Site but one has compliance terms, some with their own
+number of Checks a day, and the run checks the Checks each Site owed every
+month. Each task carries a real Guidance rule and its response
 window, including "Call 911" rules with no window. The data spans both DST
 changes. Names are numbered, emails use `example.org` and phones use the
 `415-555-01xx` range kept for fiction.

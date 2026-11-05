@@ -42,7 +42,7 @@ const MINUTE = 60_000;
  * @property {number} [opensAt] share of the range before the Site opens
  * @property {number} [closesAt] share of the range after which it is archived
  * @property {[number, number]} [gap] [share of the range, days] with no Checks
- * @property {number} [checksOwed] Checks a day its compliance terms set; none means the app's default
+ * @property {number} [checksOwed] Checks a day its COMPLIANCE_TERMS# item sets, which getChecksReport reads; 3 if unset, 0 for no terms
  */
 
 // Most real Sites are quiet, so a large year makes 9 in 10 Sites this one: under every concern limit.
@@ -230,7 +230,7 @@ export const PROFILES = [
   },
   {
     key: "legacy-untimed",
-    looksLike: "Answered, but older records lack the time",
+    looksLike: "Answered, but older records lack the time; no compliance terms",
     checksPerDay: [2, 3],
     skipRate: 0.1,
     issueRate: 0.3,
@@ -240,6 +240,7 @@ export const PROFILES = [
     singleReportRate: 0.05,
     publicContact: true,
     siteContact: true,
+    checksOwed: 0,
   },
 ];
 
@@ -366,6 +367,7 @@ const pad = (n) => String(n).padStart(2, "0");
 /**
  * @typedef {object} Answers
  * @property {Record<string, Record<string, number>>} bySiteMonth key `${siteId}|YYYY-MM`
+ * @property {Record<string, number>} owedBySiteMonth key `${siteId}|YYYY-MM`: Checks its terms owed
  * @property {Record<string, { publicContact: string, siteContact: string }>} contacts
  * @property {Record<string, string>} profiles siteId → profile key
  */
@@ -398,7 +400,12 @@ export function generateYear(opts = {}) {
   /** @type {Record<string, any>[]} */
   const items = [];
   /** @type {Answers} */
-  const answers = { bySiteMonth: {}, contacts: {}, profiles: {} };
+  const answers = {
+    bySiteMonth: {},
+    owedBySiteMonth: {},
+    contacts: {},
+    profiles: {},
+  };
   const tally = (
     /** @type {string} */ siteId,
     /** @type {string} */ day,
@@ -554,17 +561,6 @@ export function generateYear(opts = {}) {
         ? {}
         : { perimeter: "Front sidewalk and the alley on the east side" }),
       ...(publicContact ? { publicContact } : {}),
-      // Stored as the app does when terms are set, so these Sites owe their own number.
-      ...(profile.checksOwed
-        ? {
-            compliance: {
-              perimeterChecksRequired: true,
-              periodStart: createdDay,
-              requiredChecksPerDay: profile.checksOwed,
-              underEnhancedMonitoring: false,
-            },
-          }
-        : {}),
       ...(profile.siteContact
         ? {
             primaryContactUserId: userId,
@@ -591,6 +587,33 @@ export function generateYear(opts = {}) {
         : at(createdDay, 0),
     });
     answers.profiles[siteId] = profile.key;
+    // Terms from the day the Site opens; an archived Site's end with it.
+    const owedPerDay = profile.checksOwed ?? 3;
+    if (owedPerDay) {
+      const termsVersionId = `syn-terms-${pad(s + 1)}`;
+      const ends = archived ? addDays(days[last], 1) : null;
+      items.push({
+        pk,
+        sk: `COMPLIANCE_TERMS#${createdDay}#${termsVersionId}`,
+        type: "complianceTerms",
+        entityType: "COMPLIANCE_TERMS",
+        siteId,
+        termsVersionId,
+        reasons: ["1"],
+        underEnhancedMonitoring: false,
+        requiredChecksPerDay: owedPerDay,
+        effectiveStart: createdDay,
+        ...(ends ? { expiresOnExclusive: ends } : {}),
+        status: ends ? "expired" : "active",
+        createdAt: at(createdDay, 0),
+        createdBy: "syn-admin",
+      });
+      for (const day of days.slice(first, archived ? last + 1 : undefined)) {
+        const k = `${siteId}|${day.slice(0, 7)}`;
+        answers.owedBySiteMonth[k] =
+          (answers.owedBySiteMonth[k] ?? 0) + owedPerDay;
+      }
+    }
     answers.contacts[siteId] = {
       publicContact:
         !profile.publicContact || lacks

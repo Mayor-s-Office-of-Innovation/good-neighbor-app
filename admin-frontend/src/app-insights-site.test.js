@@ -471,6 +471,35 @@ test("a concern the page has no words for still shows as a concern", async () =>
   );
 });
 
+const checksHelp = () =>
+  text('[data-help="insights-tip-activity-completedPerimeterChecks"]');
+
+test("the Checks help names the Site's own number a day", async () => {
+  await mountAdmin("/insights/sites/s1?period=2026-10", { insights: true });
+  // s1 owes 4 a day.
+  assert.equal(
+    checksHelp(),
+    t("admin.insights.activityHelp.completedPerimeterChecks", { min: 4 }),
+  );
+});
+
+test("the Checks help names no number for a Site that owed no Checks", async () => {
+  await mountAdmin("/insights/sites/s1?period=2026-10", {
+    insights: true,
+    setup: siteReply((json) => {
+      json.checksOwedPerDay = null;
+      json.concerns = json.concerns.filter(
+        (/** @type {string} */ c) => c !== "fewChecks",
+      );
+    }),
+  });
+  assert.equal(
+    checksHelp(),
+    t("admin.insights.activityHelp.completedPerimeterChecksNoneOwed"),
+  );
+  assert.ok(!checksHelp().includes("null"));
+});
+
 test("after Site insights fails to load, its period controls still work", async () => {
   const { api } = await mountAdmin("/insights/sites/s1?period=2026-10", {
     insights: true,

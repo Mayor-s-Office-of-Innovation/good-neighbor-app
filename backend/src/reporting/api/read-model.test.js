@@ -21,7 +21,6 @@ import {
   siteDetail,
   trends,
 } from "./read-model.js";
-import { DEFAULT_REQUIRED_CHECKS_PER_DAY } from "../../domain/check-compliance.js";
 import { CONCERN_RULES as ADMIN_CONCERN_RULES } from "../../../../admin-frontend/src/pages/insights/concern-rules.js";
 import { indexSnapshot } from "./snapshot.js";
 import { TEST_EVALUATED_AT, syntheticProjection } from "./test-projection.js";
@@ -346,10 +345,7 @@ describe("overview", () => {
       issuesPer30Days: 4,
       unresolvedDays: 14,
     });
-    expect(ADMIN_CONCERN_RULES).toEqual({
-      ...CONCERN_RULES,
-      defaultChecksPerDay: DEFAULT_REQUIRED_CHECKS_PER_DAY,
-    });
+    expect(ADMIN_CONCERN_RULES).toEqual(CONCERN_RULES);
   });
 
   /**
@@ -523,9 +519,9 @@ describe("overview", () => {
   });
 
   /**
-   * s1's Oct 12–13 row, with these Checks on those days and `owes` set on s1.
+   * s1's Oct 12–13 row, with these Checks and these owed on those days.
    * @param {[number, number]} checks
-   * @param {Record<string, any>} owes
+   * @param {[number, number]} owes 0 for a day it owed nothing
    */
   const owing = ([first, second], owes) =>
     overview(
@@ -534,10 +530,14 @@ describe("overview", () => {
           { siteId: "s1", day: "2026-10-12", completedPerimeterChecks: first },
           { siteId: "s1", day: "2026-10-13", completedPerimeterChecks: second },
         );
-        Object.assign(
-          t.sites.find((site) => site.siteId === "s1"),
-          owes,
+        const range = ["2026-10-12", "2026-10-13"];
+        t.checks_owed = t.checks_owed.filter(
+          (r) => r.siteId !== "s1" || !range.includes(r.day),
         );
+        range.forEach((day, i) => {
+          if (owes[i])
+            t.checks_owed.push({ siteId: "s1", day, checksOwed: owes[i] });
+        });
       }),
       {
         interval: days("2026-10-12", "2026-10-14"),
@@ -547,50 +547,45 @@ describe("overview", () => {
       },
     ).sites[0];
 
+  /** @param {Record<string, any>} r */
+  const few = (r) => [
+    r.checksPerDay,
+    r.checksOwedPerDay,
+    r.concerns.includes("fewChecks"),
+  ];
+
   it("judges Few Checks against the Site's own number a day, not a flat 3", () => {
-    expect(
-      [
-        owing([3, 2], { checksOwedPerDay: 2 }),
-        owing([3, 3], { checksOwedPerDay: 4 }),
-      ].map((r) => [
-        r.checksPerDay,
-        r.checksOwedPerDay,
-        r.concerns.includes("fewChecks"),
-      ]),
-    ).toEqual([
+    expect([owing([3, 2], [2, 2]), owing([3, 3], [4, 4])].map(few)).toEqual([
       [2.5, 2, false],
       [3, 4, true],
     ]);
   });
 
-  it("averages only over the days the Site owed Checks", () => {
-    // Oct 12 is before its compliance period starts, so its 0 doesn't count.
-    expect(
-      [
-        owing([0, 3], { checksOwedFrom: "2026-10-13" }),
-        owing([3, 0], { checksOwedThrough: "2026-10-12" }),
-        owing([0, 3], {}),
-      ].map((r) => [r.checksPerDay, r.concerns.includes("fewChecks")]),
-    ).toEqual([
-      [3, false],
-      [3, false],
-      [1.5, true],
+  it("judges each day by what the Site owed that day", () => {
+    // Its terms rose from 2 to 4 on Oct 13, so it owed 3 a day on average.
+    expect([owing([2, 4], [2, 4]), owing([3, 2], [2, 4])].map(few)).toEqual([
+      [3, 3, false],
+      [2.5, 3, true],
     ]);
   });
 
-  it("gives no average or flag to a Site that owed no Checks", () => {
+  it("flags on the days the Site owed Checks, but shows the average over every whole day", () => {
+    // It owed nothing on Oct 12, so that day's 0 doesn't count toward the flag.
     expect(
-      [
-        owing([0, 0], { checksOwedPerDay: 0 }),
-        owing([0, 0], { checksOwedFrom: "2026-10-20" }),
-      ].map((r) => [
-        r.checksPerDay,
-        r.checksOwedPerDay,
-        r.concerns.includes("fewChecks"),
-      ]),
+      [owing([0, 3], [0, 3]), owing([3, 0], [3, 0]), owing([0, 3], [3, 3])].map(
+        few,
+      ),
     ).toEqual([
-      [null, null, false],
-      [null, null, false],
+      [1.5, 3, false],
+      [1.5, 3, false],
+      [1.5, 3, true],
+    ]);
+  });
+
+  it("names no number and flags nothing for a Site that owed no Checks", () => {
+    expect([owing([0, 0], [0, 0]), owing([1, 0], [0, 0])].map(few)).toEqual([
+      [0, null, false],
+      [0.5, null, false],
     ]);
   });
 

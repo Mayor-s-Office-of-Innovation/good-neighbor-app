@@ -1,6 +1,10 @@
 // Canonical effective-dated requirements. Site #META snapshots are write-side
 // conveniences, never evidence that a compliance period exists.
 import { getDynamoTableName } from "../config.js";
+import {
+  requirementFromCompliance,
+  requiredOnResolver,
+} from "../domain/check-compliance.js";
 import { queryAllItems } from "./query-all-items.js";
 import { addDays, pacificToday } from "./pacific-dates.js";
 
@@ -141,5 +145,30 @@ export function projectSiteCompliance(site, periods, today = pacificToday()) {
           ? "draft_pending"
           : "none"
       : "archived",
+  };
+}
+
+/**
+ * The Check report's rule for what a Site owed each day. Shared with Insights,
+ * so its Few Checks flag agrees with the Check report.
+ * @param {Record<string, any>} site the Site's #META item
+ * @param {Record<string, any>[]} periods every COMPLIANCE_TERMS# version
+ * @param {string} today Pacific day key
+ */
+export function checksOwedResolver(site, periods, today) {
+  const canonical = projectSiteCompliance(site, periods, today);
+  const requirement = requirementFromCompliance(canonical.compliance);
+  if (!requirement.required) requirement.requiredPerDay = 0;
+  // The headline describes today's canonical period; each historical day is
+  // judged independently, even after the current requirement has ended.
+  requirement.assumed = false;
+  return {
+    requirement,
+    owedOn: requiredOnResolver(
+      requirement,
+      /** @type {import("../domain/check-compliance.js").ComplianceTermsVersion[]} */ (
+        periods
+      ),
+    ),
   };
 }

@@ -305,4 +305,5 @@ export const TABLE_ORDER = {
   site_contacts: "siteId",
   sites: "siteId",
   checks: "siteId, activityAt, checkId",
+  checks_owed: "siteId, day",
 };

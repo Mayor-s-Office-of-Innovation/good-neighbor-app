@@ -24,8 +24,8 @@ import { getDynamoTableName } from "../config.js";
 import { jsonResponse } from "../http.js";
 import { deriveAccessLevel, deriveSiteId } from "../lib/principal.js";
 import {
+  checksOwedResolver,
   readCompliancePeriods,
-  projectSiteCompliance,
 } from "../lib/site-compliance.js";
 import {
   addDays,
@@ -37,11 +37,7 @@ import {
   periodContaining,
   previousPeriod,
 } from "../lib/pacific-dates.js";
-import {
-  requirementFromCompliance,
-  requiredOnResolver,
-  summarizeCheckDays,
-} from "../domain/check-compliance.js";
+import { summarizeCheckDays } from "../domain/check-compliance.js";
 import { issueTypeKey } from "../domain/issue-type.js";
 import {
   GSI1_NAME,
@@ -238,13 +234,11 @@ export const getChecksReport = async (event) => {
     queryTimeline({ tableName, partition, period: previous }),
     readComplianceTerms(tableName, siteId),
   ]);
-  const canonical = projectSiteCompliance(site, terms, today);
-  const requirement = requirementFromCompliance(canonical.compliance);
-  if (!requirement.required) requirement.requiredPerDay = 0;
-  // The headline describes today's canonical period; each historical day is
-  // judged independently, even after the current requirement has ended.
-  requirement.assumed = false;
-  const resolveRequired = requiredOnResolver(requirement, terms);
+  const { requirement, owedOn: resolveRequired } = checksOwedResolver(
+    site,
+    terms,
+    today,
+  );
 
   const current = summarizeCheckDays({
     checks: currentChecks,

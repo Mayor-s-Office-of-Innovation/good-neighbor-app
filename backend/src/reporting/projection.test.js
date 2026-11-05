@@ -10,9 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
 import { sqlString, toRow, writeEntityParquet } from "../analytics/convert.js";
-import { DEFAULT_REQUIRED_CHECKS_PER_DAY } from "../domain/check-compliance.js";
 import { createLocalViews, writeLocalLake } from "./local-lake.js";
-import { buildProjection } from "./projection.js";
+import { buildChecksOwed, buildProjection } from "./projection.js";
 import { buildFromRows, readProjection } from "./test-build.js";
 
 const EVALUATED = "2026-10-20T00:00:00.000Z";
@@ -157,37 +156,81 @@ describe("Site tables in the projection", () => {
     ]);
     expect(JSON.stringify(siteContacts)).not.toContain("lead@example.org");
   });
+});
 
-  it("carries what each Site owes in Checks a day, by the app's own rule", async () => {
-    const { tables } = await buildFromRows(
-      {
-        sites: [
+/**
+ * One COMPLIANCE_TERMS# version, stored as the app stores it.
+ * @param {string} siteId
+ * @param {string} effectiveStart
+ * @param {Record<string, any>} [extra]
+ */
+const terms = (siteId, effectiveStart, extra = {}) => ({
+  pk: `SITE#${siteId}`,
+  sk: `COMPLIANCE_TERMS#${effectiveStart}#v-${effectiveStart}`,
+  siteId,
+  termsVersionId: `v-${effectiveStart}`,
+  effectiveStart,
+  requiredChecksPerDay: 3,
+  status: "active",
+  createdAt: `${effectiveStart}T16:00:00.000Z`,
+  ...extra,
+});
+
+describe("buildChecksOwed", () => {
+  /** @param {ReturnType<typeof buildChecksOwed>} rows */
+  const owedByDay = (rows) =>
+    Object.fromEntries(rows.map((r) => [`${r.siteId} ${r.day}`, r.checksOwed]));
+
+  it("owes each day what the terms in force that day set, as the Check report does", () => {
+    const rows = buildChecksOwed(
+      [{ siteId: "s1" }, { siteId: "s2" }],
+      [
+        terms("s1", "2026-10-14", { requiredChecksPerDay: 2 }),
+        // A raise from Oct 16 that ends after Oct 17.
+        terms("s1", "2026-10-16", {
+          requiredChecksPerDay: 5,
+          expiresOnExclusive: "2026-10-18",
+        }),
+        // Never applied, so it doesn't change Oct 15.
+        terms("s1", "2026-10-15", { status: "cancelled" }),
+      ],
+      EVALUATED,
+    );
+    // Evaluated on Oct 19 Pacific; nothing from Oct 18, when the raise ended.
+    expect(owedByDay(rows)).toEqual({
+      "s1 2026-10-14": 2,
+      "s1 2026-10-15": 2,
+      "s1 2026-10-16": 5,
+      "s1 2026-10-17": 5,
+    });
+  });
+
+  it("owes nothing for a Site with no terms, even with #META.compliance set", () => {
+    expect(
+      buildChecksOwed(
+        [
           {
             siteId: "s1",
             compliance: {
               perimeterChecksRequired: true,
               requiredChecksPerDay: 5,
               periodStart: "2026-10-01",
-              periodEnd: "2026-12-31",
             },
           },
-          { siteId: "s2" },
-          { siteId: "s3", compliance: { perimeterChecksRequired: false } },
         ],
-      },
+        [],
+        EVALUATED,
+      ),
+    ).toEqual([]);
+  });
+
+  it("stops at the snapshot's day and skips terms that start after it", () => {
+    const rows = buildChecksOwed(
+      [{ siteId: "s1" }, { siteId: "s2" }],
+      [terms("s1", "2026-10-18"), terms("s2", "2026-10-25")],
       EVALUATED,
     );
-    expect(
-      tables.sites.map((s) => [
-        s.checksOwedPerDay,
-        s.checksOwedFrom,
-        s.checksOwedThrough,
-      ]),
-    ).toEqual([
-      [5, "2026-10-01", "2026-12-31"],
-      [DEFAULT_REQUIRED_CHECKS_PER_DAY, null, null],
-      [0, null, null],
-    ]);
+    expect(owedByDay(rows)).toEqual({ "s1 2026-10-18": 3, "s1 2026-10-19": 3 });
   });
 });
 
@@ -240,6 +283,30 @@ describe("buildProjection over a lake written like an export", () => {
     expect(
       tables.checks.map((c) => [c.checkId, c.state, c.day, c.issues]),
     ).toEqual([["c1", "completed", "2026-10-01", 1]]);
+  });
+
+  it("owes Checks by each Site's terms from the lake, without the letter's email", async () => {
+    await writeLocalLake(
+      conn,
+      dir,
+      [
+        ...items,
+        terms("s1", "2026-10-18", {
+          requiredChecksPerDay: 4,
+          email: { to: ["manager@example.org"] },
+          letterInputs: { siteManagerName: "Synthetic Manager" },
+        }),
+      ],
+      { exportedAt: "2026-10-19T18:00:00.000Z", exportId: "e1" },
+    );
+    await createLocalViews(conn, dir);
+    const { tables } = await build();
+    expect(JSON.stringify(tables)).not.toContain("manager@example.org");
+    expect(JSON.stringify(tables)).not.toContain("Synthetic Manager");
+    expect(tables.checks_owed).toEqual([
+      { siteId: "s1", day: "2026-10-18", checksOwed: 4 },
+      { siteId: "s1", day: "2026-10-19", checksOwed: 4 },
+    ]);
   });
 
   it("times each Issue by the window its rule stored on the task", async () => {
@@ -551,6 +618,7 @@ describe("buildProjection over a lake written like an export", () => {
     await build();
     expect(readdirSync(out).sort()).toEqual([
       "checks.parquet",
+      "checks_owed.parquet",
       "issues.parquet",
       "manifest.json",
       "site_contacts.parquet",
@@ -636,6 +704,7 @@ describe("buildProjection over a lake written like an export", () => {
       "site_contacts.parquet",
       "sites.parquet",
       "checks.parquet",
+      "checks_owed.parquet",
       "manifest.json",
     ]);
     const reader = await conn.runAndReadAll(

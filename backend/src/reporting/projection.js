@@ -7,8 +7,13 @@ import { join } from "node:path";
 import { activeCatalog } from "../analysis/guidance/catalog-registry.js";
 import { resolveCategory } from "../analysis/guidance/category-resolver.js";
 import { sqlString } from "../analytics/convert.js";
-import { requirementFromCompliance } from "../domain/check-compliance.js";
-import { PACIFIC_TIME_ZONE } from "../lib/pacific-dates.js";
+import {
+  PACIFIC_TIME_ZONE,
+  addDays,
+  dayKeysBetween,
+  pacificDateKey,
+} from "../lib/pacific-dates.js";
+import { checksOwedResolver } from "../lib/site-compliance.js";
 import { SITE_DAY_METRICS } from "./activity.js";
 import {
   CONTRACT_VERSION,
@@ -43,13 +48,15 @@ const LAKE_INPUT_SQL = {
     startedAt, completedAt, synthesizedAt FROM checks`,
 };
 const SITES_SQL = `SELECT siteId, raw FROM sites`;
+const TERMS_SQL = `SELECT siteId, raw FROM compliance_terms`;
 const AS_OF_SQL = `SELECT max(exportedAt) AS asOf FROM (
     SELECT exportedAt FROM checks UNION ALL SELECT exportedAt FROM tasks
     UNION ALL SELECT exportedAt FROM conditions
     UNION ALL SELECT exportedAt FROM task_updates
     UNION ALL SELECT exportedAt FROM duplicate_links
     UNION ALL SELECT exportedAt FROM duplicate_overrides
-    UNION ALL SELECT exportedAt FROM sites)`;
+    UNION ALL SELECT exportedAt FROM sites
+    UNION ALL SELECT exportedAt FROM compliance_terms)`;
 
 /**
  * @param {any} conn
@@ -94,29 +101,22 @@ const filled = (value) =>
  */
 function buildSiteTables(sites, evaluatedAt) {
   return {
-    sites: sites.map((s) => {
-      // The rule the app's Check reports use, so Few Checks agrees with them.
-      const owed = requirementFromCompliance(s.compliance);
-      return {
-        siteId: String(s.siteId),
-        name: s.name ?? null,
-        status: s.status ?? null,
-        siteType: s.siteType ?? null,
-        providerId: s.providerId ?? null,
-        programId: s.leadProgramId ?? null,
-        department: s.oversight?.managingCityDepartment || null,
-        managerId: s.oversight?.cityProgramManagerId || null,
-        hasLocation:
-          Number.isFinite(s.location?.latitude) &&
-          Number.isFinite(s.location?.longitude),
-        hasPerimeter:
-          typeof s.perimeter === "string" && s.perimeter.trim() !== "",
-        createdAt: s.createdAt ?? null,
-        checksOwedPerDay: owed.required ? owed.requiredPerDay : 0,
-        checksOwedFrom: owed.periodStart ?? null,
-        checksOwedThrough: owed.periodEnd ?? null,
-      };
-    }),
+    sites: sites.map((s) => ({
+      siteId: String(s.siteId),
+      name: s.name ?? null,
+      status: s.status ?? null,
+      siteType: s.siteType ?? null,
+      providerId: s.providerId ?? null,
+      programId: s.leadProgramId ?? null,
+      department: s.oversight?.managingCityDepartment || null,
+      managerId: s.oversight?.cityProgramManagerId || null,
+      hasLocation:
+        Number.isFinite(s.location?.latitude) &&
+        Number.isFinite(s.location?.longitude),
+      hasPerimeter:
+        typeof s.perimeter === "string" && s.perimeter.trim() !== "",
+      createdAt: s.createdAt ?? null,
+    })),
     siteContacts: sites.map((s) => {
       const pub = publicContactState(s);
       const site = siteContactState(s);
@@ -135,6 +135,44 @@ function buildSiteTables(sites, evaluatedAt) {
       };
     }),
   };
+}
+
+/**
+ * One row per Site per day it owed Checks, up to the snapshot's day. Judged by
+ * getChecksReport's own rule, so Few Checks agrees with the Check report; a
+ * Site with no terms owes nothing.
+ * @param {Record<string, any>[]} sites
+ * @param {Record<string, any>[]} terms every COMPLIANCE_TERMS# version
+ * @param {string} evaluatedAt
+ * @returns {{ siteId: string, day: string, checksOwed: number }[]}
+ */
+export function buildChecksOwed(sites, terms, evaluatedAt) {
+  const today = pacificDateKey(evaluatedAt);
+  /** @type {Map<string, Record<string, any>[]>} */
+  const bySite = new Map();
+  for (const term of terms) {
+    const list = bySite.get(String(term.siteId)) ?? [];
+    list.push(term);
+    bySite.set(String(term.siteId), list);
+  }
+  const rows = [];
+  for (const site of [...sites].sort((a, b) =>
+    String(a.siteId).localeCompare(String(b.siteId)),
+  )) {
+    const siteId = String(site.siteId);
+    const own = bySite.get(siteId) ?? [];
+    const first = own
+      .map((term) => term.effectiveStart)
+      .filter((day) => typeof day === "string" && day <= today)
+      .sort()[0];
+    if (!first) continue;
+    const { owedOn } = checksOwedResolver(site, own, today);
+    for (const day of dayKeysBetween(first, addDays(today, 1))) {
+      const checksOwed = owedOn(day);
+      if (checksOwed > 0) rows.push({ siteId, day, checksOwed });
+    }
+  }
+  return rows;
 }
 
 const V = "VARCHAR";
@@ -195,10 +233,6 @@ export const TABLE_SCHEMAS = {
     hasLocation: B,
     hasPerimeter: B,
     createdAt: V,
-    checksOwedPerDay: I,
-    // Day keys, as #META.compliance stores them; the last one is inclusive.
-    checksOwedFrom: V,
-    checksOwedThrough: V,
   },
   checks: {
     checkId: V,
@@ -210,6 +244,11 @@ export const TABLE_SCHEMAS = {
     activityAt: V,
     day: "DATE",
     issues: I,
+  },
+  checks_owed: {
+    siteId: V,
+    day: "DATE",
+    checksOwed: I,
   },
 };
 for (const schema of Object.values(TABLE_SCHEMAS))
@@ -281,6 +320,7 @@ const SQL_TABLES = {
   site_contacts: "p_site_contacts",
   sites: "p_sites",
   checks: "p_checks",
+  checks_owed: "p_checks_owed",
 };
 
 /**
@@ -302,7 +342,7 @@ async function loadRows(conn, name, schema, list) {
  * Rows handed in instead of the lake, shaped like its reads (INPUT_SCHEMAS).
  * @typedef {{ tasks?: Record<string, any>[], conditions?: Record<string, any>[], updates?: Record<string, any>[],
  *   links?: Record<string, any>[], overrides?: Record<string, any>[], checks?: Record<string, any>[],
- *   sites?: Record<string, any>[], asOf?: string | null }} ProjectionInputs
+ *   sites?: Record<string, any>[], terms?: Record<string, any>[], asOf?: string | null }} ProjectionInputs
  */
 
 /**
@@ -338,6 +378,7 @@ const TEMP_TABLES = [
   "rule_hours",
   "p_sites",
   "p_site_contacts",
+  "p_checks_owed",
   ...Array.from(RULES_SQL.matchAll(/TEMP TABLE (\w+)/g), (m) => m[1]),
 ];
 const TEMP_MACROS = Array.from(
@@ -354,6 +395,8 @@ const TEMP_MACROS = Array.from(
 async function project(conn, dir, { evaluatedAt, snapshotId, inputs }) {
   /** @type {Record<string, any>[]} */
   let siteRecords;
+  /** @type {Record<string, any>[]} */
+  let termRecords;
   /** @type {string | null} */
   let asOf;
   if (inputs) {
@@ -365,6 +408,7 @@ async function project(conn, dir, { evaluatedAt, snapshotId, inputs }) {
         /** @type {any} */ (inputs)[name.slice(3)] ?? [],
       );
     siteRecords = inputs.sites ?? [];
+    termRecords = inputs.terms ?? [];
     asOf = inputs.asOf ?? null;
   } else {
     for (const [name, sql] of Object.entries(LAKE_INPUT_SQL))
@@ -373,6 +417,10 @@ async function project(conn, dir, { evaluatedAt, snapshotId, inputs }) {
     siteRecords = (await rows(conn, SITES_SQL)).map((s) => ({
       ...JSON.parse(String(s.raw)),
       siteId: s.siteId,
+    }));
+    termRecords = (await rows(conn, TERMS_SQL)).map((t) => ({
+      ...JSON.parse(String(t.raw)),
+      siteId: t.siteId,
     }));
     asOf = isoOrNull((await rows(conn, AS_OF_SQL))[0]?.asOf);
   }
@@ -409,6 +457,12 @@ async function project(conn, dir, { evaluatedAt, snapshotId, inputs }) {
     "p_site_contacts",
     TABLE_SCHEMAS.site_contacts,
     siteContacts,
+  );
+  await loadRows(
+    conn,
+    "p_checks_owed",
+    TABLE_SCHEMAS.checks_owed,
+    buildChecksOwed(siteRecords, termRecords, evaluatedAt),
   );
   await conn.run(snapshotMacrosSql(evaluatedAt));
   await conn.run(RULES_SQL);

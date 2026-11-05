@@ -22,9 +22,11 @@ import { requestError } from "./requests.js";
  * @property {Map<string, Record<string, any>[]>} issuesById
  * @property {Map<string, Record<string, any>[]>} checksById
  * @property {Map<string, Record<string, any>[]>} daysBySite each Site's site_days by day, for range reads
+ * @property {Map<string, Record<string, any>[]>} owedBySite each Site's checks_owed by day
  * @property {Map<string, Record<string, any>[]>} issuesBySite
  * @property {string | null} coverageStart earliest day with any record
  * @property {string[]} categories each Issue category in the data, sorted
+ * @property {string[]} dataDays every day with a site_days row, ascending
  */
 
 /**
@@ -54,6 +56,9 @@ function groupBy(rows, field) {
  * @returns {Snapshot}
  */
 export function indexSnapshot({ prefix, manifest, tables }) {
+  /** @param {Record<string, any>[]} rows */
+  const byDay = (rows) =>
+    rows.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
   let coverageStart = null;
   for (const name of ["site_days", "checks"])
     for (const row of tables[name] ?? [])
@@ -75,7 +80,13 @@ export function indexSnapshot({ prefix, manifest, tables }) {
     daysBySite: new Map(
       [...groupBy(tables.site_days, "siteId")].map(([siteId, rows]) => [
         siteId,
-        rows.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0)),
+        byDay(rows),
+      ]),
+    ),
+    owedBySite: new Map(
+      [...groupBy(tables.checks_owed ?? [], "siteId")].map(([siteId, rows]) => [
+        siteId,
+        byDay(rows),
       ]),
     ),
     issuesBySite: groupBy(tables.issues, "siteId"),
@@ -83,6 +94,7 @@ export function indexSnapshot({ prefix, manifest, tables }) {
     categories: [
       ...new Set((tables.issues ?? []).map((i) => i.category).filter(Boolean)),
     ].sort((a, b) => a.localeCompare(b)),
+    dataDays: [...new Set(tables.site_days.map((row) => row.day))].sort(),
   };
 }
 

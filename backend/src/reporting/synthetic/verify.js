@@ -3,19 +3,18 @@
 import { SITE_DAY_METRICS as METRICS } from "../activity.js";
 
 /**
- * @param {{ site_days: Record<string, any>[], site_contacts: Record<string, any>[] }} tables
+ * @param {{ site_days: Record<string, any>[], site_contacts: Record<string, any>[], checks_owed?: Record<string, any>[] }} tables
  * @param {import("./generate.js").Answers} answers
  * @returns {{ checked: number, mismatches: string[], totals: Record<string, number> }}
  */
 export function compareWithAnswers(tables, answers) {
+  /** @param {Record<string, any>} row */
+  const monthKey = (row) =>
+    `${row.siteId}|${(row.day instanceof Date ? row.day.toISOString() : String(row.day)).slice(0, 7)}`;
   /** @type {Record<string, Record<string, number>>} */
   const projected = {};
   for (const row of tables.site_days) {
-    const day =
-      row.day instanceof Date
-        ? row.day.toISOString().slice(0, 10)
-        : String(row.day);
-    const k = `${row.siteId}|${day.slice(0, 7)}`;
+    const k = monthKey(row);
     projected[k] ??= Object.fromEntries(METRICS.map((m) => [m, 0]));
     for (const m of METRICS) projected[k][m] += Number(row[m] ?? 0);
   }
@@ -34,6 +33,18 @@ export function compareWithAnswers(tables, answers) {
       if (want !== got)
         mismatches.push(`${k} ${m}: expected ${want}, got ${got}`);
     }
+  }
+  /** @type {Record<string, number>} */
+  const owed = {};
+  for (const row of tables.checks_owed ?? [])
+    owed[monthKey(row)] = (owed[monthKey(row)] ?? 0) + Number(row.checksOwed);
+  const wantOwed = answers.owedBySiteMonth ?? {};
+  for (const k of new Set([...Object.keys(owed), ...Object.keys(wantOwed)])) {
+    checked += 1;
+    if ((owed[k] ?? 0) !== (wantOwed[k] ?? 0))
+      mismatches.push(
+        `${k} checksOwed: expected ${wantOwed[k] ?? 0}, got ${owed[k] ?? 0}`,
+      );
   }
   const contacts = new Map(tables.site_contacts.map((c) => [c.siteId, c]));
   const seen = new Set();

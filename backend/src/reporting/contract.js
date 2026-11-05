@@ -4,10 +4,10 @@
 export const CONTRACT_VERSION = "insights-v3";
 
 /** Bump when an endpoint's reply gains, loses or renames a field. */
-export const API_VERSION = "reporting-v2";
+export const API_VERSION = "reporting-v3";
 
 /** Bump when a counting rule changes, even if no column does. */
-export const RULE_VERSION = "2026-11-06";
+export const RULE_VERSION = "2026-11-06b";
 
 export const RESPONSE_STATES = Object.freeze([
   "awaiting",

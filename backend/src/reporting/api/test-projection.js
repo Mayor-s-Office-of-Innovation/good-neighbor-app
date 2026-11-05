@@ -145,6 +145,14 @@ function syntheticInputs() {
     overrides: [],
     checks,
     sites,
+    // Every Site owes 3 a day all year, so tests change only what they test.
+    terms: sites.map((s) => ({
+      siteId: s.siteId,
+      termsVersionId: `v-${s.siteId}`,
+      effectiveStart: "2026-01-01",
+      requiredChecksPerDay: 3,
+      status: "active",
+    })),
     asOf: TEST_AS_OF,
   };
 }
