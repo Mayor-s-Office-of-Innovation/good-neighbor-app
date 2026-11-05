@@ -7,7 +7,6 @@ import { t } from "../helpers/i18n.js";
  * @param {import('@playwright/test').Page} page
  */
 async function fixture(page) {
-  await bindSite(page);
   const createdAt = new Date().toISOString();
   const tasks = ["settled", "waiting"].map((taskId) => ({
     taskId,
@@ -54,7 +53,8 @@ async function fixture(page) {
     route.fulfill({ json: { task: tasks[0] } }),
   );
   await page.clock.install();
-  await page.reload();
+  // Binding opens Home. Record that single load with the fixture already in place.
+  await bindSite(page);
   await expect(
     page.locator('.analysis-card[data-task-id="waiting"]'),
   ).toContainText(t("card.ticker.checking"));
@@ -77,9 +77,8 @@ test("Home polls only pending rows, reuses settled results on return and reconne
   await expect(settled).toContainText(t("card.ticker.needsAction"));
   await page.clock.fastForward(3000);
   await expect.poll(() => state.batches.length).toBeGreaterThanOrEqual(2);
-  expect(state.batches.slice(1).every((ids) => ids.join() === "waiting")).toBe(
-    true,
-  );
+  expect([...state.batches[0]].sort()).toEqual(["settled", "waiting"]);
+  for (const ids of state.batches.slice(1)) expect(ids).toEqual(["waiting"]);
   state.pending = false;
   await page.clock.fastForward(6000);
   await expect(
