@@ -28,14 +28,6 @@ export class SupportView extends HTMLElement {
           >
             <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
           </button>
-          <button
-            type="button"
-            class="btn-circle-close support__back"
-            data-back
-            aria-label="${escapeAttr(t("common.close"))}"
-          >
-            <wa-icon name="xmark" aria-hidden="true"></wa-icon>
-          </button>
         </div>
         <h1 class="support__title" id="support-title" tabindex="-1">
           ${escapeHtml(t("support.title"))}
@@ -87,9 +79,6 @@ export class SupportView extends HTMLElement {
         </p>
       </div>
     </section>`;
-    this.querySelector("[data-back]").addEventListener("click", () =>
-      backOrNavigate("/today"),
-    );
     this.querySelector("[data-menu-back]")?.addEventListener("click", () => {
       forceNextRouteTransition("pop");
       try {

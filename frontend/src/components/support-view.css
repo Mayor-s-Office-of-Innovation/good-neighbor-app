@@ -1,8 +1,6 @@
 support-view {
   display: block;
-  /* The sheet presentation (base.css) sizes the host; a 100% min-height
-     would stretch it past the 90% sheet. */
-  min-height: 0;
+  min-height: 100%;
 }
 .support__panel {
   box-sizing: border-box;
@@ -14,9 +12,13 @@ support-view {
 }
 .support__back-row {
   display: flex;
-  /* Back to the settings menu left, X to Home right. */
-  justify-content: space-between;
-  margin-bottom: 1.125rem;
+  /* Back (to the settings menu) is the only exit; metrics match the
+     Reports top action row. */
+  justify-content: flex-start;
+  align-items: center;
+  min-height: 2.75rem;
+  margin-bottom: 0.75rem;
+  padding-inline: 0.25rem;
 }
 .support__back {
   width: 2.75rem;
@@ -144,4 +146,9 @@ support-view {
 }
 .support [data-clear-question][hidden] {
   display: none;
+}
+
+/* Full-bleed screen: the panel carries its own gutters. */
+.app--chromeless .app__main:has(> support-view) {
+  padding-inline: 0;
 }

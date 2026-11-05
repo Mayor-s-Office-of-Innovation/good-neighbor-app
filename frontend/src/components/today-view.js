@@ -1631,24 +1631,19 @@ class TodayView extends HTMLElement {
       this._removeSettingsMenu();
       feedbackDialog?.open();
     });
+    // Language and About & attributions are pushed screens now, not dialogs.
     this.querySelector("#settings-attributions")?.addEventListener(
       "click",
       () => {
-        this._removeSettingsMenu();
-        this._attributionsDialogOpen = true;
-        openOverlayDialog(
-          /** @type {HTMLDialogElement} */ (this._attributionsDialog),
-          "attributions",
-        );
+        this._settingsMenuOpen = false;
+        forceNextRouteTransition("push");
+        navigate("/attributions");
       },
     );
     this.querySelector("#settings-language")?.addEventListener("click", () => {
-      this._removeSettingsMenu();
-      this._languageDialogOpen = true;
-      openOverlayDialog(
-        /** @type {HTMLDialogElement} */ (this._languageDialog),
-        "language",
-      );
+      this._settingsMenuOpen = false;
+      forceNextRouteTransition("push");
+      navigate("/language");
     });
     // Destinations slide in from the right over the open menu sheet.
     this.querySelector("#settings-access")?.addEventListener("click", () => {

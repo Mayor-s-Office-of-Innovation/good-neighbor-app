@@ -370,9 +370,6 @@ class ReportsView extends ReportsScreen {
   }
 
   _wire() {
-    this.querySelector("#reports-home")?.addEventListener("click", () =>
-      navigate("/today"),
-    );
     this.querySelector("#reports-back")?.addEventListener("click", () => {
       forceNextRouteTransition("pop");
       try {

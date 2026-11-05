@@ -361,7 +361,7 @@ class SiteAccessView extends HTMLElement {
   _render() {
     this.innerHTML = html`
       <div class="site-admin-page">
-        ${adminHeader(t("access.title"))}
+        ${adminHeader(t("access.title"), true)}
         <div class="site-admin-content">
           <section
             class="site-admin-section"

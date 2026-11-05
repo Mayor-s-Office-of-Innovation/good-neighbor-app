@@ -1,0 +1,133 @@
+/*
+  settings-pages — the small settings destinations (Language, About &
+  attributions) as pushed screens instead of pop-up dialogs, per the
+  settings-menu redesign: they slide in from the right over the open menu
+  and their Back arrow returns to it. Header metrics mirror the Reports
+  screen (top action row, centered title).
+*/
+import "./settings-pages.css";
+import { announceScreenHeading } from "../screen-focus.js";
+import { backOrNavigate, forceNextRouteTransition } from "../router.js";
+import { getLocale, setLocale, t, LOCALES } from "../i18n/i18n.js";
+import { showLanguageErrorToast } from "../state/toasts.js";
+import { escapeAttr, escapeHtml, html } from "../lib/html.js";
+
+/** @param {string} title @param {string} body */
+function pageShell(title, body) {
+  return html`<div class="settings-page">
+    <div class="settings-page__top">
+      <button
+        type="button"
+        class="btn-circle-close"
+        data-menu-back
+        aria-label="${escapeAttr(t("common.back"))}"
+      >
+        <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
+      </button>
+    </div>
+    <h1 class="settings-page__title" tabindex="-1">${escapeHtml(title)}</h1>
+    ${body}
+  </div>`;
+}
+
+/** @param {HTMLElement} root */
+function bindMenuBack(root) {
+  root.querySelector("[data-menu-back]")?.addEventListener("click", () => {
+    forceNextRouteTransition("pop");
+    try {
+      sessionStorage.setItem("gnp-reopen-settings", "1");
+    } catch {
+      /* storage unavailable: land on a plain home screen */
+    }
+    backOrNavigate("/today");
+  });
+}
+
+class LanguageView extends HTMLElement {
+  connectedCallback() {
+    const current = getLocale();
+    this.innerHTML = pageShell(
+      t("today.language.title"),
+      html`<p class="settings-page__copy">
+          ${escapeHtml(t("today.language.text"))}
+        </p>
+        <ul class="settings-page__list" data-testid="language-options">
+          ${LOCALES.map(
+            (locale) =>
+              html`<li>
+                <button
+                  class="settings-page__option"
+                  type="button"
+                  lang="${escapeAttr(locale.tag)}"
+                  data-locale="${escapeAttr(locale.id)}"
+                  ${locale.id === current ? 'aria-current="true"' : ""}
+                >
+                  <span>${escapeHtml(locale.label)}</span>
+                  ${locale.id === current
+                    ? '<wa-icon name="check" aria-hidden="true"></wa-icon>'
+                    : ""}
+                </button>
+              </li>`,
+          ).join("")}
+        </ul>`,
+    );
+    bindMenuBack(this);
+    this.querySelectorAll("[data-locale]").forEach((button) =>
+      button.addEventListener("click", () => {
+        const chosen = button.getAttribute("data-locale") || "";
+        if (!chosen || chosen === getLocale()) return;
+        // app-root re-renders this view on "localechange"; a failed catalog
+        // load (offline first use of a language) changes nothing — say so.
+        void setLocale(chosen).then((ok) => {
+          if (!ok) showLanguageErrorToast();
+        });
+      }),
+    );
+    announceScreenHeading(this, ".settings-page__title");
+  }
+}
+customElements.define("language-view", LanguageView);
+
+class AttributionsView extends HTMLElement {
+  connectedCallback() {
+    const links = [
+      [
+        "https://docs.aws.amazon.com/location/latest/developerguide/data-attribution.html",
+        t("today.attributions.aws"),
+      ],
+      [
+        "https://geocoding.geo.census.gov/geocoder/",
+        t("today.attributions.census"),
+      ],
+    ];
+    this.innerHTML = pageShell(
+      t("today.attributions.title"),
+      html`<p class="settings-page__copy">
+          ${escapeHtml(t("today.attributions.text"))}
+        </p>
+        <ul class="settings-page__list">
+          ${links
+            .map(
+              ([href, label]) =>
+                html`<li>
+                  <a
+                    class="settings-page__option"
+                    href="${escapeAttr(href)}"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label="${escapeAttr(
+                      t("common.opensNewTab", { label }),
+                    )}"
+                  >
+                    <span>${escapeHtml(label)}</span>
+                  </a>
+                </li>`,
+            )
+            .join("")}
+        </ul>`,
+    );
+    bindMenuBack(this);
+    announceScreenHeading(this, ".settings-page__title");
+  }
+}
+customElements.define("attributions-view", AttributionsView);

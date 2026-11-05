@@ -73,14 +73,6 @@ export function reportsShell({ heading, body, tab }) {
         >
           <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
         </button>
-        <button
-          class="btn-circle-close"
-          id="reports-home"
-          type="button"
-          aria-label="${escapeAttr(t("common.close"))}"
-        >
-          <wa-icon name="xmark" aria-hidden="true"></wa-icon>
-        </button>
       </div>
       <div class="screen screen--today-hero reports__head">
         <site-switcher></site-switcher>

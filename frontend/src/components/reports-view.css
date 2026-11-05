@@ -504,8 +504,8 @@
 }
 
 .reports__top {
-  /* Back to the settings menu left, X to Home right. */
-  justify-content: space-between;
+  /* Back (to the settings menu) is the only exit. */
+  justify-content: flex-start;
   margin-bottom: 0;
 }
 
@@ -1161,4 +1161,9 @@ html.wa-dark .reports-legend__dot--responded {
 .reports-counts .reports-legend__dot--current {
   background: var(--wa-color-brand-40, #0053c0);
   border-color: var(--wa-color-brand-40, #0053c0);
+}
+
+/* Full-bleed screen: the report bodies carry their own gutters. */
+.app--chromeless .app__main:has(> reports-view) {
+  padding-inline: 0;
 }

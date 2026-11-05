@@ -1,0 +1,88 @@
+/* Language and About & attributions as pushed screens. The header mirrors
+   the Reports screen: a 44px circle Back on a 2.75rem action row, then a
+   large centered title. Self-contained metrics so deep links render right
+   without today-view's stylesheet. */
+language-view,
+attributions-view {
+  display: block;
+  min-height: 100%;
+}
+
+.settings-page {
+  width: min(100%, var(--app-content-max-width));
+  margin-inline: auto;
+}
+
+.settings-page__top {
+  display: flex;
+  align-items: center;
+  min-height: 2.75rem;
+  margin: 0 0 0.75rem;
+  padding-inline: 0.25rem;
+}
+
+.settings-page__title {
+  margin: 0 0 0.75rem;
+  text-align: center;
+  font-size: clamp(1.5rem, 5vw, 1.9rem);
+  font-weight: 700;
+  line-height: 1.15;
+}
+/* The heading takes programmatic focus on mount; no ring, like the other
+   screen titles. */
+.settings-page__title:focus {
+  outline: none;
+}
+
+.settings-page__copy {
+  margin: 0 0 1.25rem;
+  text-align: center;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.settings-page__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.settings-page__option {
+  appearance: none;
+  -webkit-appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  min-height: 48px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 0.5rem;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: left;
+  text-decoration: none;
+  box-shadow: none;
+}
+
+.settings-page__option:hover {
+  background: var(--surface-3);
+}
+
+.settings-page__option:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+}
+
+.settings-page__option wa-icon {
+  flex: 0 0 auto;
+  color: var(--brand-blue);
+}

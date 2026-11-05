@@ -85,6 +85,8 @@ const ROUTE_VIEW = [
   ["/manage-access", "site-access-view"],
   ["/site-admin/access", "site-access-view"],
   ["/site-admin", "site-admin-view"],
+  ["/language", "language-view"],
+  ["/attributions", "attributions-view"],
   ["/problem/describe", "describe-instead"],
   ["/problem", "problem-report"],
   ["/check/describe", "describe-instead"],
@@ -619,6 +621,11 @@ export class AppRoot extends HTMLElement {
     const tag = match ? match[1] : "today-view";
     const lazy = [
       [route === "/help", "support-view", () => import("./support-view.js")],
+      [
+        tag === "language-view" || tag === "attributions-view",
+        tag,
+        () => import("./settings-pages.js"),
+      ],
       [
         tag === "describe-instead",
         "describe-instead",
