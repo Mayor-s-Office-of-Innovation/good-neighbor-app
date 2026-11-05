@@ -42,6 +42,7 @@ import {
   listChecks,
   getCaptureGuidance,
   getCheck,
+  getCheckEvidenceBatch,
 } from "../src/handlers/checks.js";
 import {
   presignUpload,
@@ -350,6 +351,7 @@ const routes = [
     "/v1/checks/{checkId}/artifacts/{artifactId}/duplicates",
     getDuplicateResult,
   ),
+  route("POST", "/v1/checks:evidence", getCheckEvidenceBatch),
   route("GET", "/v1/checks/{checkId}", getCheck),
   route("GET", "/v1/care-work", listCareWork),
   route("POST", "/v1/care-work", createCareWork),

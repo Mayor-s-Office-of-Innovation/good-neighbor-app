@@ -12,6 +12,7 @@ import {
 import { ddb } from "../db.js";
 import { getConfig } from "../config.js";
 import { jsonResponse, parseLimit, readJsonBody } from "../http.js";
+import { logServerError } from "../lib/log-server-error.js";
 import { deriveSiteId } from "../lib/principal.js";
 import { synthesizeCheck } from "../analysis/synthesize-check.js";
 import { emitMetrics } from "../lib/metrics.js";
@@ -25,12 +26,21 @@ import {
   sitePk,
 } from "./keys.js";
 
+// Keep full check headers and analysis payloads out of the batch read. sk and
+// analysisGeneration are needed to select current rows, including legacy data.
+const CARD_EVIDENCE_PROJECTION = {
+  ProjectionExpression:
+    "sk, artifactId, analysisGeneration, #text, placeName, georeferencedAddress, s3Key, contentType",
+  ExpressionAttributeNames: { "#text": "text" },
+};
+
 /**
  * Read every page for one check's header + children from the base table.
  * @param {string} dynamoTable
  * @param {string} siteId
  * @param {string} checkId
  * @param {boolean} [consistentRead]
+ * @param {typeof CARD_EVIDENCE_PROJECTION} [projection]
  * @returns {Promise<any[]>}
  */
 async function queryAllCheckItems(
@@ -38,6 +48,7 @@ async function queryAllCheckItems(
   siteId,
   checkId,
   consistentRead = false,
+  projection,
 ) {
   /** @type {Record<string, unknown> | undefined} */
   let startKey;
@@ -48,6 +59,7 @@ async function queryAllCheckItems(
     const result = await ddb.send(
       new QueryCommand({
         TableName: dynamoTable,
+        ...projection,
         ...(consistentRead ? { ConsistentRead: true } : {}),
         KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
         ExpressionAttributeValues: {
@@ -491,22 +503,111 @@ export const getCheck = async (event) => {
   const checkId = event.pathParameters?.checkId;
   if (!checkId) return jsonResponse(400, { error: "Missing checkId" });
 
-  const items = await queryAllCheckItems(dynamoTable, siteId, checkId, true);
-  const headerSk = checkHeaderKey(siteId, checkId).sk;
-  const header = items.find((it) => it.sk === headerSk);
-  if (!header) return jsonResponse(404, { error: "Check not found" });
+  const detail = await loadCheckDetail(dynamoTable, siteId, checkId);
+  return detail
+    ? jsonResponse(200, detail)
+    : jsonResponse(404, { error: "Check not found" });
+};
 
+/** @param {string} dynamoTable @param {string} siteId @param {string} checkId
+ * @param {typeof CARD_EVIDENCE_PROJECTION} [projection]
+ */
+async function loadCheckDetail(dynamoTable, siteId, checkId, projection) {
+  const items = await queryAllCheckItems(
+    dynamoTable,
+    siteId,
+    checkId,
+    true,
+    projection,
+  );
+  const headerSk = checkHeaderKey(siteId, checkId).sk;
+  const check = items.find((it) => it.sk === headerSk);
+  if (!check) return null;
   const artifactPrefix = checkArtifactPrefix(checkId);
-  const analysisPrefix = checkAnalysisPrefix(checkId);
-  return jsonResponse(200, {
-    check: header,
-    artifacts: items.filter((it) => it.sk.startsWith(artifactPrefix)),
-    analyses: currentAnalyses(
-      items,
-      analysisPrefix,
-      items.filter((it) => it.sk.startsWith(checkArtifactPrefix(checkId))),
-    ),
-  });
+  const artifacts = items.filter((it) => it.sk.startsWith(artifactPrefix));
+  return {
+    check,
+    artifacts,
+    analyses: currentAnalyses(items, checkAnalysisPrefix(checkId), artifacts),
+  };
+}
+
+/** Card evidence for up to five checks in the authenticated site.
+ * @type {import("aws-lambda").APIGatewayProxyHandlerV2WithJWTAuthorizer}
+ */
+export const getCheckEvidenceBatch = async (event) => {
+  const siteId = deriveSiteId(event);
+  const { dynamoTable } = getConfig();
+  let body;
+  try {
+    body = readJsonBody(event);
+  } catch {
+    return jsonResponse(400, { error: "Invalid JSON body" });
+  }
+  const ids =
+    body && typeof body === "object" && "checkIds" in body && body.checkIds;
+  if (
+    !Array.isArray(ids) ||
+    ids.length < 1 ||
+    ids.length > 5 ||
+    !ids.every(
+      (id) =>
+        typeof id === "string" &&
+        id.trim() &&
+        Buffer.byteLength(checkHeaderKey(siteId, id).sk) <= 1024,
+    )
+  ) {
+    return jsonResponse(400, { error: "Expected one to five check IDs" });
+  }
+  const results = await Promise.all(
+    [...new Set(ids)].map(async (checkId) => {
+      try {
+        const detail = await loadCheckDetail(
+          dynamoTable,
+          siteId,
+          checkId,
+          CARD_EVIDENCE_PROJECTION,
+        );
+        if (!detail) return { checkId, status: 404 };
+        return {
+          checkId,
+          status: 200,
+          artifacts: detail.artifacts.map(
+            ({
+              artifactId,
+              text,
+              placeName,
+              georeferencedAddress,
+              s3Key,
+              contentType,
+            }) => ({
+              artifactId,
+              text,
+              placeName,
+              georeferencedAddress,
+              s3Key,
+              contentType,
+            }),
+          ),
+          analyses: detail.analyses.map(
+            ({ artifactId, georeferencedAddress }) => ({
+              artifactId,
+              georeferencedAddress,
+            }),
+          ),
+        };
+      } catch (error) {
+        logServerError("api POST /v1/checks:evidence", error, {
+          reqId: event.requestContext.requestId,
+        });
+        return { checkId, status: 500 };
+      }
+    }),
+  );
+  return jsonResponse(
+    results.every((result) => result.status === 500) ? 500 : 200,
+    { results },
+  );
 };
 
 /** Exclude a previous generation while its replacement is pending.

@@ -6,26 +6,18 @@
   by checkId:artifactId only until their renewal deadline. Failures use a short
   backoff; failed hydration remains eligible for later retry.
 */
-import { getCheck, getMediaUrl } from "./api.js";
+import { getCheck, getCheckEvidenceBatch, getMediaUrl } from "./api.js";
 import { taskArtifactIds } from "../domain/home-tasks.js";
 
 const CHECK_ARTIFACTS_CACHE = new Map();
 const MEDIA_URL_CACHE = new Map();
 const MEDIA_FAILURES = new Map();
 
-export async function hydrateTaskEvidence(tasks) {
-  const checkIds = [
-    ...new Set(tasks.map((task) => task?.checkId).filter(Boolean)),
-  ];
-  if (!checkIds.length) return tasks;
-
-  const artifactsByCheck = new Map();
-  await Promise.all(
-    checkIds.map(async (checkId) => {
-      artifactsByCheck.set(checkId, await cachedCheckArtifacts(checkId));
-    }),
+export async function hydrateTaskEvidence(tasks, { batch = false } = {}) {
+  const artifactsByCheck = await loadArtifactsForChecks(
+    tasks.map((task) => task?.checkId),
+    batch,
   );
-
   return Promise.all(
     tasks.map((task) =>
       hydrateTaskFromArtifacts(task, artifactsByCheck.get(task?.checkId) || []),
@@ -115,20 +107,43 @@ function artifactsWithAddresses(result) {
   }));
 }
 
-async function cachedCheckArtifacts(checkId) {
-  if (!CHECK_ARTIFACTS_CACHE.has(checkId)) {
-    CHECK_ARTIFACTS_CACHE.set(
-      checkId,
-      getCheck(checkId)
-        .then(artifactsWithAddresses)
-        .catch((err) => {
-          console.warn("Could not hydrate task evidence", { checkId, err });
-          CHECK_ARTIFACTS_CACHE.delete(checkId);
+/** Start every batch immediately. Cache promises per check so overlapping task
+ * and question loads share in-flight reads as well as successful results.
+ * @param {string[]} ids @param {boolean} batch
+ */
+async function loadArtifactsForChecks(ids, batch) {
+  const checkIds = [...new Set(ids.filter(Boolean))];
+  const missing = checkIds.filter((id) => !CHECK_ARTIFACTS_CACHE.has(id));
+  const size = batch ? 5 : 1;
+  for (let offset = 0; offset < missing.length; offset += size) {
+    const group = missing.slice(offset, offset + size);
+    const response = group.length > 1 ? getCheckEvidenceBatch(group) : null;
+    for (const id of group) {
+      const detail = response
+        ? response.then(({ results }) => {
+            const row = results.find((result) => result.checkId === id);
+            if (row?.status !== 200)
+              throw new Error("Check evidence unavailable");
+            return row;
+          })
+        : getCheck(id);
+      CHECK_ARTIFACTS_CACHE.set(
+        id,
+        detail.then(artifactsWithAddresses).catch((err) => {
+          console.warn("Could not hydrate task evidence", { checkId: id, err });
+          CHECK_ARTIFACTS_CACHE.delete(id);
           return [];
         }),
-    );
+      );
+    }
   }
-  return CHECK_ARTIFACTS_CACHE.get(checkId);
+  const artifacts = new Map();
+  await Promise.all(
+    checkIds.map(async (id) => {
+      artifacts.set(id, await CHECK_ARTIFACTS_CACHE.get(id));
+    }),
+  );
+  return artifacts;
 }
 
 /**
@@ -344,13 +359,9 @@ export function mergeHydratedTasks(tasks, hydratedTasks) {
  * @param {any[]} items
  */
 export async function hydratePendingQuestionEvidence(items) {
-  const checks = new Map();
-  await Promise.all(
-    [...new Set(items.map((item) => item.checkId).filter(Boolean))].map(
-      async (id) => {
-        checks.set(id, await cachedCheckArtifacts(id));
-      },
-    ),
+  const checks = await loadArtifactsForChecks(
+    items.map((item) => item.checkId),
+    true,
   );
   return items.map((item) => {
     const artifact = (checks.get(item.checkId) || []).find(
