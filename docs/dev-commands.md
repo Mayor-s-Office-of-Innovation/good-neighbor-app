@@ -475,7 +475,7 @@ and 9461 (set `INSIGHTS_DDB_PORT` / `INSIGHTS_S3_PORT` to move them), so the dev
 stack's data is untouched. It needs Java 17+ and the binaries that
 `npm run local:services -w backend` installs. Extracts land in
 `backend/.local/insights-data/projection/` (`site_days`, `issues`,
-`site_contacts`, `sites` as Parquet, plus `manifest.json`); `check.json` lists
+`site_contacts`, `sites`, `checks` as Parquet, plus `manifest.json`); `check.json` lists
 any total that differs, read back from the written Parquet. Each run replaces
 its output folder, so `--out` refuses a folder this command didn't write.
 `--keep` leaves the emulators running.
@@ -487,6 +487,32 @@ no response time. Each task carries a real Guidance rule and its response
 window, including "Call 911" rules with no window. The data spans both DST
 changes. Names are numbered, emails use `example.org` and phones use the
 `415-555-01xx` range kept for fiction.
+
+The local API serves the Insights reporting endpoints (`/admin/v1/reporting/*`
+and `/admin/v1/reports/*`) from that folder; set `INSIGHTS_PROJECTION_DIR` to
+read another. Export and report files go to the local MinIO bucket
+`gnp-local-insights-jobs` (or `INSIGHTS_JOBS_BUCKET`), and jobs run in the same
+process. To time every endpoint against the year and check that Overview, the
+Issues list and a CSV export agree:
+
+```sh
+npm run insights:load -w backend
+# options: -- --copies 21 (about 500 Sites) --rounds 20 --parallel 10
+```
+
+To compare read designs for Insights (A: the whole projection in memory, as
+the analytics Lambda reads it today; B: DuckDB querying the Parquet files per
+request; C: an Arrow file of Site-day totals, as the browser would read it),
+with each answer checked across designs, and the cold time, warm time and
+peak memory of each in its own 2 GB Node process:
+
+```sh
+npm run insights:bench -w backend
+# options: -- --sites 500,1000 --years 1,2 --runs 30 --designs A,B,C --threads 1
+```
+
+Sizes are copies of the `insights:data` Sites and year, built once into
+`backend/.local/insights-bench/`. The script's header explains each column.
 
 ### Compliance letter email testing
 

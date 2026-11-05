@@ -36,9 +36,10 @@ export async function readProjection(conn, dir) {
 /**
  * @param {import("./projection.js").ProjectionInputs} inputs
  * @param {string} evaluatedAt
+ * @param {string} [snapshotId]
  * @returns {Promise<{ tables: Record<string, Record<string, any>[]>, manifest: Record<string, any> }>}
  */
-export async function buildFromRows(inputs, evaluatedAt) {
+export async function buildFromRows(inputs, evaluatedAt, snapshotId = "test") {
   const instance = await DuckDBInstance.create(":memory:");
   const conn = await instance.connect();
   const dir = await mkdtemp(join(tmpdir(), "insights-rules-"));
@@ -47,7 +48,7 @@ export async function buildFromRows(inputs, evaluatedAt) {
     const out = join(dir, "projection");
     await buildProjection(conn, out, {
       evaluatedAt,
-      snapshotId: "test",
+      snapshotId,
       inputs,
     });
     return {

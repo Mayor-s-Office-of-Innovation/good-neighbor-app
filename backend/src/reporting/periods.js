@@ -133,7 +133,7 @@ export function resolvePeriod(spec, evaluatedAt) {
  * @param {string} evaluatedAt
  * @returns {Interval}
  */
-function previousOf(current, evaluatedAt) {
+export function previousOf(current, evaluatedAt) {
   if (current.kind === "month")
     return interval(
       "month",
