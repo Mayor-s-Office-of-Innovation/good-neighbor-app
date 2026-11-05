@@ -391,7 +391,8 @@ resource "aws_cloudwatch_log_metric_filter" "media_too_large" {
 # (byte-limit rejections that never reach downscale). The MediaRejected metric
 # is not used here because perimeter-check downscale rejections log both
 # markers. This counts rejections, not files: a file that is downscaled more
-# than once (a retried worker, or a thumbnail plus analysis) counts each time.
+# than once (for example a complaint photo, tried for its thumbnail and again
+# for analysis) counts each time.
 resource "aws_cloudwatch_metric_alarm" "media_rejected" {
   alarm_name          = "${local.name_prefix}-media-rejected"
   alarm_description   = "Uploaded media on any upload path repeatedly failed byte, signature, decode, type, dimension, or page-count validation. Follow docs/runbooks/media-safeguards.md."

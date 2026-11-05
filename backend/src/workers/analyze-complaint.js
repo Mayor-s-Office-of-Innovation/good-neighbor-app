@@ -3,7 +3,7 @@ import { GetCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../db.js";
 import { getComplaintBucket, getConfig } from "../config.js";
 import { getObjectBytes, presignGet } from "../s3.js";
-import { downscaleImage } from "../media/downscale.js";
+import { downscaleImage, DownscaleError } from "../media/downscale.js";
 import {
   AnalyzerError,
   createAnalyzerClient,
@@ -148,8 +148,12 @@ export async function handler(event) {
     const receiveCount = Number(
       event.Records[0].attributes?.ApproximateReceiveCount || 1,
     );
+    // A photo that fails the downscale check (bad bytes, wrong type, too big)
+    // fails the same way on every delivery, so stop now instead of retrying:
+    // each retry would log another ImageRejected and inflate the alarm.
     const permanent =
-      error instanceof AnalyzerError && error.retryable === false;
+      (error instanceof AnalyzerError && error.retryable === false) ||
+      error instanceof DownscaleError;
     if (permanent || receiveCount >= 5) {
       try {
         await ddb.send(
