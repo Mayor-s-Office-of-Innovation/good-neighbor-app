@@ -49,6 +49,10 @@
   outline: none;
 }
 
+/* The generic reset below would blank the Back circle; keep its fill. */
+.site-admin-header .btn-circle-close {
+  background: var(--surface-2);
+}
 .site-admin-header button,
 .site-admin-section-heading button {
   appearance: none;
