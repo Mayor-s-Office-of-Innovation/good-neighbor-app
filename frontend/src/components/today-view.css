@@ -261,8 +261,8 @@ dialog.home-settings-menu:not([open]) {
   text-transform: uppercase;
 }
 
-.home-settings-menu button,
-.home-settings-menu a {
+.home-settings-menu > div button,
+.home-settings-menu > div a {
   appearance: none;
   -webkit-appearance: none;
   display: flex;
@@ -291,15 +291,15 @@ dialog.home-settings-menu:not([open]) {
   box-shadow: none;
   text-shadow: none;
 }
-.home-settings-menu button > span {
+.home-settings-menu > div button > span {
   flex: 1;
 }
 .home-settings-chevron {
   color: var(--text-secondary);
 }
 
-.home-settings-menu button:hover,
-.home-settings-menu a:hover {
+.home-settings-menu > div button:hover,
+.home-settings-menu > div a:hover {
   background: var(--surface-3);
 }
 
@@ -322,7 +322,7 @@ dialog.home-settings-menu:not([open]) {
   overflow-wrap: anywhere;
 }
 
-.home-settings-menu wa-icon {
+.home-settings-menu > div wa-icon {
   flex: 0 0 var(--wa-font-size-m, 1rem);
   width: var(--wa-font-size-m, 1rem);
   font-size: var(--wa-font-size-m, 1rem);
@@ -335,8 +335,8 @@ dialog.home-settings-menu:not([open]) {
   font-size: var(--wa-font-size-s, 0.875rem);
 }
 
-.home-settings-menu button:focus-visible,
-.home-settings-menu a:focus-visible,
+.home-settings-menu > div button:focus-visible,
+.home-settings-menu > div a:focus-visible,
 .logout-dialog__cancel:focus-visible {
   outline: 2px solid var(--brand-blue);
   outline-offset: 2px;

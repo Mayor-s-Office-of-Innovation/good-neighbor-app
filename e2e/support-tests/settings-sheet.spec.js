@@ -70,15 +70,18 @@ test("Settings contains keyboard focus, its footer, and accessible menu content"
     });
     expect(contained).toBe(true);
     const widths = await sheet.evaluate((el) => {
-      const style = getComputedStyle(el);
+      const style = window.getComputedStyle(el);
       const available =
         el.clientWidth -
         parseFloat(style.paddingLeft) -
         parseFloat(style.paddingRight);
-      return [".home-settings-head", ".home-settings-actions"].map((selector) =>
-        Math.abs(
-          el.querySelector(selector).getBoundingClientRect().width - available,
-        ),
+      return [".home-settings-head", ".home-settings-actions"].map(
+        (selector) => {
+          const child = el.querySelector(selector);
+          if (!child)
+            throw new Error(`Missing Settings container: ${selector}`);
+          return Math.abs(child.getBoundingClientRect().width - available);
+        },
       );
     });
     for (const difference of widths) expect(difference).toBeLessThan(1);
@@ -157,3 +160,12 @@ for (const cancel of ["button", "Escape"]) {
     await expect(page.locator("#settings-close")).toBeFocused();
   });
 }
+
+test("offline banner does not block Settings Log out", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator("support-view [data-menu-back]").click();
+  await page.context().setOffline(true);
+  await expect(page.locator(".app-connection-banner")).toBeVisible();
+  await page.locator("#settings-logout").click({ timeout: 5000 });
+  await expect(page.locator("#logout-dialog[open]")).toBeVisible();
+});
