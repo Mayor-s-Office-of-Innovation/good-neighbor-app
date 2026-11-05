@@ -184,65 +184,115 @@ export function settingsMenu({ open, adminAccess = false, disabled = false }) {
         <span class="home-settings__icon" aria-hidden="true"></span>
       </button>
       ${open
-        ? html`<div class="home-settings-menu">
+        ? html`<div class="home-settings-scrim" id="settings-scrim"></div>
             <div
-              class="home-settings-actions"
+              class="home-settings-menu"
               role="menu"
-              aria-label="${escapeAttr(t("today.settings.aria"))}"
+              aria-label="${escapeAttr(t("today.settings.title"))}"
               aria-describedby="settings-release-version"
             >
+              <div class="home-settings-head">
+                <h2>${escapeHtml(t("today.settings.title"))}</h2>
+                <button
+                  id="settings-close"
+                  type="button"
+                  aria-label="${escapeAttr(t("common.close"))}"
+                >
+                  <wa-icon name="xmark" aria-hidden="true"></wa-icon>
+                </button>
+              </div>
               ${adminAccess
-                ? html`<button
-                      id="settings-access"
-                      type="button"
-                      role="menuitem"
-                    >
+                ? html`<p class="home-settings-group" role="presentation">
+                      ${escapeHtml(t("today.settings.groupActivity"))}
+                    </p>
+                    <button id="settings-reports" type="button" role="menuitem">
+                      <wa-icon name="list-check" aria-hidden="true"></wa-icon>
+                      <span>${escapeHtml(t("today.settings.reports"))}</span>
+                      <wa-icon
+                        class="home-settings-chevron"
+                        name="chevron-right"
+                        aria-hidden="true"
+                      ></wa-icon>
+                    </button>
+                    <hr class="home-settings-divider" />
+                    <p class="home-settings-group" role="presentation">
+                      ${escapeHtml(t("today.settings.groupManagement"))}
+                    </p>
+                    <button id="settings-access" type="button" role="menuitem">
                       <wa-icon name="key" aria-hidden="true"></wa-icon>
-                      ${escapeHtml(t("access.title"))}</button
-                    ><button
+                      <span>${escapeHtml(t("access.title"))}</span>
+                      <wa-icon
+                        class="home-settings-chevron"
+                        name="chevron-right"
+                        aria-hidden="true"
+                      ></wa-icon>
+                    </button>
+                    <button
                       id="settings-site-admin"
                       type="button"
                       role="menuitem"
                     >
                       <wa-icon name="location-dot" aria-hidden="true"></wa-icon>
-                      ${escapeHtml(t("today.settings.siteAdmin"))}
+                      <span>${escapeHtml(t("today.settings.siteAdmin"))}</span>
+                      <wa-icon
+                        class="home-settings-chevron"
+                        name="chevron-right"
+                        aria-hidden="true"
+                      ></wa-icon>
                     </button>
-                    <button id="settings-reports" type="button" role="menuitem">
-                      <wa-icon name="list-check" aria-hidden="true"></wa-icon>
-                      ${escapeHtml(t("today.settings.reports"))}
-                    </button>`
+                    <hr class="home-settings-divider" />`
                 : ""}
+              <p class="home-settings-group" role="presentation">
+                ${escapeHtml(t("today.settings.groupHelp"))}
+              </p>
               <button id="settings-help" type="button" role="menuitem">
                 <wa-icon name="circle-question" aria-hidden="true"></wa-icon>
-                ${escapeHtml(t("support.title"))}
+                <span>${escapeHtml(t("support.title"))}</span>
+                <wa-icon
+                  class="home-settings-chevron"
+                  name="chevron-right"
+                  aria-hidden="true"
+                ></wa-icon>
               </button>
               <button id="settings-feedback" type="button" role="menuitem">
                 <wa-icon name="comment" aria-hidden="true"></wa-icon>
-                ${escapeHtml(t("today.settings.feedback"))}
+                <span>${escapeHtml(t("today.settings.feedback"))}</span>
+                <wa-icon
+                  class="home-settings-chevron"
+                  name="chevron-right"
+                  aria-hidden="true"
+                ></wa-icon>
               </button>
               <button id="settings-language" type="button" role="menuitem">
                 <wa-icon name="language" aria-hidden="true"></wa-icon>
-                ${escapeHtml(t("today.settings.language"))}
+                <span>${escapeHtml(t("today.settings.language"))}</span>
+                <wa-icon
+                  class="home-settings-chevron"
+                  name="chevron-right"
+                  aria-hidden="true"
+                ></wa-icon>
               </button>
               <button id="settings-attributions" type="button" role="menuitem">
                 <wa-icon name="file-lines" aria-hidden="true"></wa-icon>
-                ${escapeHtml(t("today.settings.attributions"))}
+                <span>${escapeHtml(t("today.settings.attributions"))}</span>
+                <wa-icon
+                  class="home-settings-chevron"
+                  name="chevron-right"
+                  aria-hidden="true"
+                ></wa-icon>
               </button>
+              <hr class="home-settings-divider" />
               <button id="settings-logout" type="button" role="menuitem">
                 <wa-icon
                   name="arrow-right-from-bracket"
                   aria-hidden="true"
                 ></wa-icon>
-                ${escapeHtml(t("today.settings.logout"))}
+                <span>${escapeHtml(t("today.settings.logout"))}</span>
               </button>
-            </div>
-            <div class="home-settings-footer">
-              <hr class="home-settings-divider" />
               <p class="home-settings-version" id="settings-release-version">
                 ${escapeHtml(import.meta.env.VITE_RELEASE_VERSION || "dev")}
               </p>
-            </div>
-          </div>`
+            </div>`
         : ""}
     </div>
   `;

@@ -1,7 +1,7 @@
 import "./support-view.css";
 import { html, escapeHtml, escapeAttr } from "../lib/html.js";
 import { t, getLocale } from "../i18n/i18n.js";
-import { backOrNavigate } from "../router.js";
+import { backOrNavigate, forceNextRouteTransition } from "../router.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import { askSupport } from "../services/api.js";
 
@@ -20,6 +20,14 @@ export class SupportView extends HTMLElement {
     >
       <div class="support__panel">
         <div class="support__back-row">
+          <button
+            type="button"
+            class="btn-circle-close support__back"
+            data-menu-back
+            aria-label="${escapeAttr(t("common.back"))}"
+          >
+            <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
+          </button>
           <button
             type="button"
             class="btn-circle-close support__back"
@@ -82,6 +90,15 @@ export class SupportView extends HTMLElement {
     this.querySelector("[data-back]").addEventListener("click", () =>
       backOrNavigate("/today"),
     );
+    this.querySelector("[data-menu-back]")?.addEventListener("click", () => {
+      forceNextRouteTransition("pop");
+      try {
+        sessionStorage.setItem("gnp-reopen-settings", "1");
+      } catch {
+        /* storage unavailable: land on a plain home screen */
+      }
+      backOrNavigate("/today");
+    });
     announceScreenHeading(this, "#support-title");
     const question =
       /** @type {import("@awesome.me/webawesome/dist/components/textarea/textarea.js").default} */ (

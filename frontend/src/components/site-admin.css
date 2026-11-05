@@ -452,6 +452,11 @@
   border-radius: 50%;
   background: var(--surface-2);
 }
+/* Back to the settings menu sits opposite the X. */
+.site-admin-header--close [data-menu-back] {
+  grid-column: 1;
+  grid-row: 1;
+}
 .site-admin-header--close > span {
   grid-column: 1;
   grid-row: 1;

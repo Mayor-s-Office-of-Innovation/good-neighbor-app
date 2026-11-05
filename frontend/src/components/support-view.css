@@ -1,6 +1,8 @@
 support-view {
   display: block;
-  min-height: 100%;
+  /* The sheet presentation (base.css) sizes the host; a 100% min-height
+     would stretch it past the 90% sheet. */
+  min-height: 0;
 }
 .support__panel {
   box-sizing: border-box;
@@ -12,7 +14,8 @@ support-view {
 }
 .support__back-row {
   display: flex;
-  justify-content: flex-end;
+  /* Back to the settings menu left, X to Home right. */
+  justify-content: space-between;
   margin-bottom: 1.125rem;
 }
 .support__back {

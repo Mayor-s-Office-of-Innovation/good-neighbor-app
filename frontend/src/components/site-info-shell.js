@@ -3,9 +3,21 @@ import { t } from "../i18n/i18n.js";
 import { escapeAttr, escapeHtml, html } from "../lib/html.js";
 /** @param {string} title @param {boolean} [close] */
 export function adminHeader(title, close = false) {
+  /* Top-level screens (close mode) carry both exits per the settings-menu
+     spec: Back (left) returns to the menu, X (right) returns to Home. */
   return html`<header
     class="site-admin-header ${close ? "site-admin-header--close" : ""}"
   >
+    ${close
+      ? html`<button
+          class="btn-circle-close"
+          data-menu-back
+          type="button"
+          aria-label="${escapeAttr(t("common.back"))}"
+        >
+          <wa-icon name="chevron-left" aria-hidden="true"></wa-icon>
+        </button>`
+      : ""}
     <button
       class="${close ? "btn-circle-close" : "btn-icon"}"
       data-admin-back
@@ -18,7 +30,7 @@ export function adminHeader(title, close = false) {
       ></wa-icon>
     </button>
     <h1 tabindex="-1">${escapeHtml(title)}</h1>
-    <span aria-hidden="true"></span>
+    ${close ? "" : html`<span aria-hidden="true"></span>`}
   </header>`;
 }
 

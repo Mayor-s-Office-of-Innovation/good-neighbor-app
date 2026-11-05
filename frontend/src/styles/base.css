@@ -1029,3 +1029,22 @@ html[data-keyboard-open] body {
   min-height: 100%;
   padding-bottom: max(0px, calc(100vh - var(--editable-viewport-height)));
 }
+
+/* ---- Settings destinations as bottom sheets ----
+   Reports, Site information, Manage access and Get help present as 90%
+   bottom sheets with the same 26px corners as the settings menu; they push
+   in from the right and their Back arrow pops back out to the menu.
+   Global (not per-view css) so the look holds on deep links too. */
+site-admin-view,
+reports-view,
+support-view {
+  display: block;
+  position: fixed;
+  inset: max(env(safe-area-inset-top), 10dvh) 0 0;
+  z-index: 10;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--surface);
+  border-radius: 26px 26px 0 0;
+  box-shadow: var(--shadow-lift);
+}

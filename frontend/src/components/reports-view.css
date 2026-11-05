@@ -504,7 +504,8 @@
 }
 
 .reports__top {
-  justify-content: flex-end;
+  /* Back to the settings menu left, X to Home right. */
+  justify-content: space-between;
   margin-bottom: 0;
 }
 

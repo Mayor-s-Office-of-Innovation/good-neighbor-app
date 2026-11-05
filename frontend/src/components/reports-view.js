@@ -17,7 +17,13 @@ import "@awesome.me/webawesome/dist/components/select/select.js";
 import "@awesome.me/webawesome/dist/components/option/option.js";
 import { getSite, hasAdminAccess, listBoundSites } from "../db.js";
 import { t } from "../i18n/i18n.js";
-import { currentRoute, navigate, replaceRoute } from "../router.js";
+import {
+  currentRoute,
+  navigate,
+  replaceRoute,
+  backOrNavigate,
+  forceNextRouteTransition,
+} from "../router.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import {
   get311RequestDetails,
@@ -367,6 +373,15 @@ class ReportsView extends ReportsScreen {
     this.querySelector("#reports-home")?.addEventListener("click", () =>
       navigate("/today"),
     );
+    this.querySelector("#reports-back")?.addEventListener("click", () => {
+      forceNextRouteTransition("pop");
+      try {
+        sessionStorage.setItem("gnp-reopen-settings", "1");
+      } catch {
+        /* storage unavailable: land on a plain home screen */
+      }
+      backOrNavigate("/today");
+    });
     if (!this._accessReady) {
       for (const section of this.querySelectorAll(
         ".reports__head, .reports__body",

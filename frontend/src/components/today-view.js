@@ -67,7 +67,7 @@ import {
   prepareCardDeletion,
   isDeletingAnalysisCard,
 } from "./analysis-card-deletion.js";
-import { navigate } from "../router.js";
+import { navigate, forceNextRouteTransition } from "../router.js";
 import { awaitOverlayUnwind, openOverlayDialog } from "../dialog-history.js";
 import { announceScreenHeading } from "../screen-focus.js";
 import {
@@ -344,6 +344,16 @@ class TodayView extends HTMLElement {
     this._hydrationGeneration = 0;
     this._answeringConditionIds = new Set();
     this._settingsMenuOpen = false;
+    // A destination's Back button returns to the menu, not a bare home
+    // screen: it leaves this one-shot flag before navigating back.
+    try {
+      if (sessionStorage.getItem("gnp-reopen-settings")) {
+        sessionStorage.removeItem("gnp-reopen-settings");
+        this._settingsMenuOpen = true;
+      }
+    } catch {
+      /* storage unavailable: open as a plain home screen */
+    }
     this._settingsDocumentClick = null;
     this._attributionsDialog = null;
     this._attributionsDialogOpen = false;
@@ -1595,6 +1605,12 @@ class TodayView extends HTMLElement {
         this._siteSwitcher?.setOpen(true);
       },
     );
+    for (const closer of ["#settings-close", "#settings-scrim"]) {
+      this.querySelector(closer)?.addEventListener("click", () => {
+        this._settingsMenuOpen = false;
+        this._renderHome(this._homeModel);
+      });
+    }
     this.querySelector("#settings-logout")?.addEventListener("click", () => {
       // Count first: logging out deletes work that hasn't uploaded yet.
       void countUnsentWork()
@@ -1608,6 +1624,7 @@ class TodayView extends HTMLElement {
     });
     this.querySelector("#settings-help")?.addEventListener("click", () => {
       this._settingsMenuOpen = false;
+      forceNextRouteTransition("push");
       navigate("/help");
     });
     this.querySelector("#settings-feedback")?.addEventListener("click", () => {
@@ -1633,15 +1650,22 @@ class TodayView extends HTMLElement {
         "language",
       );
     });
-    this.querySelector("#settings-access")?.addEventListener("click", () =>
-      navigate("/manage-access"),
+    // Destinations slide in from the right over the open menu sheet.
+    this.querySelector("#settings-access")?.addEventListener("click", () => {
+      forceNextRouteTransition("push");
+      navigate("/manage-access");
+    });
+    this.querySelector("#settings-site-admin")?.addEventListener(
+      "click",
+      () => {
+        forceNextRouteTransition("push");
+        navigate("/site-admin");
+      },
     );
-    this.querySelector("#settings-site-admin")?.addEventListener("click", () =>
-      navigate("/site-admin"),
-    );
-    this.querySelector("#settings-reports")?.addEventListener("click", () =>
-      navigate("/reports"),
-    );
+    this.querySelector("#settings-reports")?.addEventListener("click", () => {
+      forceNextRouteTransition("push");
+      navigate("/reports");
+    });
     this._languageDialog = /** @type {HTMLDialogElement | null} */ (
       this.querySelector(":scope > .home > #language-dialog")
     );
