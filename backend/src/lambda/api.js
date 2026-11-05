@@ -23,6 +23,7 @@ import { getDuplicateResult } from "../handlers/duplicate-results.js";
 import {
   listCareWork,
   createCareWork,
+  deleteCareWork,
   getCareWork,
   presignCarePhoto,
   getCarePhoto,
@@ -278,6 +279,7 @@ const routes = /** @type {Record<string, (...args: any[]) => any>} */ ({
   "GET /v1/care-work": listCareWork,
   "POST /v1/care-work": createCareWork,
   "GET /v1/care-work/{workId}": getCareWork,
+  "DELETE /v1/care-work/{workId}": deleteCareWork,
   "POST /v1/care-work/{workId}/photos:presign": presignCarePhoto,
   "GET /v1/care-work/{workId}/photos/{photoId}/media": getCarePhoto,
   "GET /v1/complaints": listComplaints,

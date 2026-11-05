@@ -285,9 +285,9 @@ test("proactive care retries a failed list request and shows an actionable empty
   );
   await page.locator("#home-action-menu-trigger").click();
   await page.locator("#view-care-work").click();
-  await expect(page.locator("care-work-view [role=alert]")).toContainText(
-    t("care.loadError"),
-  );
+  await expect(
+    page.locator("care-work-view [role=alert]:visible"),
+  ).toContainText(t("care.loadError"));
   fail = false;
   await page.locator("[data-retry]").click();
   await expect(page.locator("[data-empty]")).toHaveText(t("care.empty"));
@@ -321,9 +321,9 @@ test("proactive care preserves read-only notes when photos expire and recovers a
   });
   await openLogs(page);
   await page.locator('[data-work="expired-photo-log"]').click();
-  await expect(page.locator("care-work-view [role=alert]")).toContainText(
-    t("care.loadError"),
-  );
+  await expect(
+    page.locator("care-work-view [role=alert]:visible"),
+  ).toContainText(t("care.loadError"));
   fail = false;
   await page.locator("[data-retry]").click();
   await expect(page.locator("care-work-view h1")).toHaveText(
@@ -569,4 +569,97 @@ test("failed care screen download provides reload recovery", async ({
   await page.unroute("**/components/care-work-view.js*");
   await page.locator("[data-route-reload]").click();
   await expect(page.locator("care-work-view h1")).toHaveText(t("care.title"));
+});
+
+test("care deletion confirms, recovers from failure, removes media and cannot be replayed", async ({
+  page,
+}) => {
+  await openLogs(page);
+  await choose(page, "power_washed");
+  await page.locator("#care-photo-input").setInputFiles(PHOTO_CLEAR);
+  const work = await save(page);
+  const media = await page.evaluate(
+    async ({ workId, photoId }) => {
+      const path = "/src/services/api.js";
+      return (await import(path)).getCarePhoto(workId, photoId);
+    },
+    { workId: work.workId, photoId: work.photos[0].photoId },
+  );
+  expect((await page.request.get(media.downloadUrl)).ok()).toBe(true);
+  if (media.thumbnailUrl)
+    expect((await page.request.get(media.thumbnailUrl)).ok()).toBe(true);
+  const remove = page.locator(`[data-delete-work="${work.workId}"]`);
+  await remove.focus();
+  await page.keyboard.press("Enter");
+  const dialog = page.locator("#care-delete");
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
+  await expect(remove).toBeFocused();
+  await remove.click();
+  const deleteUrl = `**/v1/care-work/${work.workId}`;
+  await page.route(deleteUrl, (route) =>
+    route.request().method() === "DELETE"
+      ? route.fulfill({ status: 503, json: { error: "unavailable" } })
+      : route.continue(),
+  );
+  await page.locator("#care-delete-confirm").click();
+  await expect(dialog.locator("[role=alert]")).toHaveText(
+    t("care.delete.error"),
+  );
+  await expect(remove).toBeVisible();
+  await page.unroute(deleteUrl);
+  const response = page.waitForResponse(
+    (response) =>
+      response.request().method() === "DELETE" &&
+      response.url().endsWith(work.workId),
+  );
+  await page.locator("#care-delete-confirm").click();
+  expect((await response).ok()).toBe(true);
+  await expect(page.locator(`[data-work="${work.workId}"]`)).toHaveCount(0);
+  await expect(page.locator("care-work-view h1")).toBeFocused();
+  expect((await page.request.get(media.downloadUrl)).status()).toBe(404);
+  if (media.thumbnailUrl)
+    expect((await page.request.get(media.thumbnailUrl)).status()).toBe(404);
+  const denied = await page.evaluate(async (work) => {
+    const path = "/src/services/api.js";
+    const api = await import(path);
+    const status = async (/** @type {() => Promise<unknown>} */ run) => {
+      try {
+        await run();
+        return 200;
+      } catch (error) {
+        return /** @type {{ status: number }} */ (error).status;
+      }
+    };
+    return {
+      detail: await status(() => api.getCareWork(work.workId)),
+      media: await status(() =>
+        api.getCarePhoto(work.workId, work.photos[0].photoId),
+      ),
+      replay: await status(() =>
+        api.createCareWork({
+          workId: work.workId,
+          kind: work.kind,
+          note: work.note,
+          photoIds: work.photos.map(
+            (/** @type {{ photoId: string }} */ p) => p.photoId,
+          ),
+        }),
+      ),
+      retry: await api.deleteCareWork(work.workId),
+    };
+  }, work);
+  expect(denied).toEqual({
+    detail: 404,
+    media: 404,
+    replay: 410,
+    retry: { status: "deleted" },
+  });
+  await page.reload();
+  await expect(page.locator(".care-days")).toHaveAttribute(
+    "aria-busy",
+    "false",
+  );
+  await expect(page.locator(`[data-work="${work.workId}"]`)).toHaveCount(0);
 });

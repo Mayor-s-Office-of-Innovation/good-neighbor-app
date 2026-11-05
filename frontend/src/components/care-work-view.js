@@ -20,7 +20,12 @@ import {
   careCompose,
   careDetail,
 } from "./care-work.templates.js";
-import { listCareWork, getCareWork, getCarePhoto } from "../services/api.js";
+import {
+  listCareWork,
+  getCareWork,
+  getCarePhoto,
+  deleteCareWork,
+} from "../services/api.js";
 import {
   enqueueCareSubmission,
   retryCareSubmission,
@@ -179,22 +184,102 @@ export class CareWorkView extends HTMLElement {
         navigate(`/care-work/${button.getAttribute("data-work")}`),
       ),
     );
+    this.querySelectorAll("[data-delete-work]").forEach((button) =>
+      button.addEventListener("click", () =>
+        this._confirmDelete(button.getAttribute("data-delete-work")),
+      ),
+    );
+  }
+  _deletedWork = new Set();
+  _deletingWork = false;
+  _confirmDelete(workId) {
+    const dialog = this.querySelector("#care-delete");
+    if (!(dialog instanceof HTMLDialogElement)) return;
+    const error = dialog.querySelector("[data-delete-error]");
+    const button = dialog.querySelector("#care-delete-confirm");
+    if (
+      !(error instanceof HTMLElement) ||
+      !(button instanceof HTMLButtonElement)
+    )
+      return;
+    const siteId = this._siteId;
+    error.hidden = true;
+    dialog.oncancel = (event) => {
+      if (this._deletingWork) event.preventDefault();
+    };
+    dialog.showModal();
+    button.onclick = async () => {
+      if (this._deletingWork) return;
+      this._deletingWork = true;
+      ++this._listVersion;
+      button.disabled = true;
+      const cancel = dialog.querySelector('button[type="submit"]');
+      if (cancel instanceof HTMLButtonElement) cancel.disabled = true;
+      error.hidden = true;
+      try {
+        await deleteCareWork(workId);
+        this._deletedWork.add(workId);
+        this._remoteWork.delete(workId);
+        // Remove any saved local receipt as well as the server snapshot.
+        await deleteCareSubmission(siteId, workId).catch(() => {});
+        dialog.close();
+        this._deletingWork = false;
+        if (this.isConnected && this._siteId === siteId) {
+          await this._loadList();
+          this.querySelector("h1")?.focus();
+        }
+      } catch {
+        error.textContent = t("care.delete.error");
+        error.hidden = false;
+      } finally {
+        this._deletingWork = false;
+        button.disabled = false;
+        if (cancel instanceof HTMLButtonElement) cancel.disabled = false;
+      }
+    };
   }
   async _loadList() {
+    if (this._deletingWork) return;
     const version = ++this._listVersion;
     if (this._remoteSiteId !== this._siteId) {
       this._remoteWork.clear();
+      this._deletedWork.clear();
       this._remoteSiteId = this._siteId;
     }
     const items = new Map(this._remoteWork);
     const remoteIds = new Set(this._remoteWork.keys());
     let failed = false;
     let storageFailed = false;
+    let remoteLoaded = false;
     const render = async () => {
       items.clear();
-      for (const [id, work] of this._remoteWork) items.set(id, work);
+      for (const [id, work] of this._remoteWork)
+        if (!this._deletedWork.has(id)) items.set(id, work);
       try {
         for (const record of await listCareSubmissions(this._siteId)) {
+          if (
+            record.status === "saved" &&
+            remoteLoaded &&
+            !remoteIds.has(record.workId) &&
+            !this._deletedWork.has(record.workId)
+          ) {
+            try {
+              // A missing index row may only be index lag. Confirm against the
+              // strongly consistent detail read before discarding a receipt.
+              await getCareWork(record.workId);
+            } catch (error) {
+              if (!this.isConnected || version !== this._listVersion) return;
+              if (error?.status === 404) this._deletedWork.add(record.workId);
+            }
+          }
+          if (this._deletedWork.has(record.workId)) {
+            try {
+              await deleteCareSubmission(this._siteId, record.workId);
+            } catch {
+              storageFailed = true;
+            }
+            continue;
+          }
           if (record.status === "saved" && remoteIds.has(record.workId)) {
             try {
               await deleteCareSubmission(this._siteId, record.workId);
@@ -243,10 +328,12 @@ export class CareWorkView extends HTMLElement {
         const page = await listCareWork(nextToken);
         if (!this.isConnected || version !== this._listVersion) return;
         page.work.forEach((item) => {
-          nextItems.set(item.workId, item);
+          if (!this._deletedWork.has(item.workId))
+            nextItems.set(item.workId, item);
         });
         nextToken = page.nextToken || "";
       } while (nextToken);
+      remoteLoaded = true;
       this._remoteWork = nextItems;
       remoteIds.clear();
       for (const id of nextItems.keys()) remoteIds.add(id);

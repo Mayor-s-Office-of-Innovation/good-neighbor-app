@@ -54,6 +54,7 @@ locals {
     "GET /v1/care-work",
     "POST /v1/care-work",
     "GET /v1/care-work/{workId}",
+    "DELETE /v1/care-work/{workId}",
     "POST /v1/care-work/{workId}/photos:presign",
     "GET /v1/care-work/{workId}/photos/{photoId}/media",
     "GET /v1/complaints",

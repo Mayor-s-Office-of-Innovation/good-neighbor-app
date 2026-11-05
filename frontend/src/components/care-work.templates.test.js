@@ -63,7 +63,11 @@ describe("proactive care screens", () => {
     expect(markup).not.toContain("Where");
     const list = careList([entry]);
     expect(list).toContain(t("care.new"));
-    expect(list).not.toMatch(/data-delete-work|care-delete/);
+    expect(list).toContain('data-delete-work="one"');
+    expect(list).toContain('id="care-delete"');
+    expect(careList([{ ...entry, status: "failed" }])).not.toContain(
+      "data-delete-work=",
+    );
   });
   it("shows the thumbnail and opens the original in the lightbox", () => {
     const markup = careDetail({
