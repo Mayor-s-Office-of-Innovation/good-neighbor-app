@@ -24,6 +24,7 @@ import {
   Sf311Error,
 } from "../../integrations/sf311-client.js";
 import {
+  defaultClassifierServiceCode,
   parseClassifierServiceCodeMap,
   parseServiceCodeOrAction,
   serviceCodesForClassifierLabels,
@@ -753,6 +754,15 @@ async function execute311Action({
   if ([...priorTickets.values()].some(isSimulated311Ticket))
     throw new Error("sf311_delivery_mode_conflict_requires_reconciliation");
 
+  // A default must never bypass an earlier unconfirmed City creation merely
+  // because reclassification would choose a different service code.
+  if (
+    matchingPriorResults
+      .flatMap(ticketsFromActionResult)
+      .some((ticket) => ticket.creationState === "pending" && !ticket.srNum)
+  )
+    throw new Error("sf311_creation_uncertain_requires_reconciliation");
+
   const config = getConfig(/** @type {NodeJS.ProcessEnv} */ (env));
   const serviceCodeOrAction =
     /** @type {{ serviceCodeOrAction?: string | null }} */ (
@@ -770,35 +780,141 @@ async function execute311Action({
   }
 
   let serviceCodes = [];
+  const recordedTickets = matchingPriorResults.flatMap(ticketsFromActionResult);
+  const savedPlan = matchingPriorResults.find((result) =>
+    Object.hasOwn(result.payload || {}, "resolvedServiceCodes"),
+  )?.payload?.resolvedServiceCodes;
+  // Freeze the complete classifier selection for this filing, before its first
+  // City call. Old checkpoints can recover known accepted AND rejected targets.
+  // An old fanout checkpoint alone cannot prove which unattempted targets remain.
+  if (
+    parsed.kind === "classifier" &&
+    savedPlan !== undefined &&
+    (!Array.isArray(savedPlan) ||
+      !savedPlan.length ||
+      savedPlan.some(
+        (code) => typeof code !== "string" || !/^\d+(?:\.\d+)+$/.test(code),
+      ))
+  )
+    throw new Error("sf311_creation_uncertain_requires_reconciliation");
   if (parsed.kind === "service_code") {
     serviceCodes = [parsed.serviceCode];
+  } else if (Array.isArray(savedPlan)) {
+    serviceCodes = [
+      ...new Set([
+        ...savedPlan,
+        ...recordedTickets
+          .map((ticket) => String(ticket.serviceCode || ""))
+          .filter(Boolean),
+      ]),
+    ];
+  } else if (recordedTickets.length) {
+    if (
+      matchingPriorResults.some(
+        (result) => result.reason === "fanout_incomplete",
+      ) ||
+      (priorTickets.size && recordedTickets.some((ticket) => !ticket.srNum))
+    )
+      throw new Error("sf311_creation_uncertain_requires_reconciliation");
+    serviceCodes = [
+      ...new Set(
+        recordedTickets
+          .map((ticket) => String(ticket.serviceCode || ""))
+          .filter(Boolean),
+      ),
+    ];
   } else {
-    const analyzerApiKey = await getAnalyzerApiKey(config);
-    const analyzer = createAnalyzerClient({
-      baseUrl: config.analyzerBaseUrl ?? "",
-      apiKey: analyzerApiKey,
-    });
-    const evidence = await loadClassifierEvidence({
-      tableName,
-      siteId,
-      task,
-      config,
-    });
-    const result = /** @type {{ labels?: unknown }} */ (
-      await analyzer.classifyEvidence({
+    let evidenceType = "unavailable";
+    let textFallback = false;
+    let labelCount = 0;
+    let fallbackReason = "";
+    try {
+      const analyzerApiKey = await getAnalyzerApiKey(config);
+      const analyzer = createAnalyzerClient({
+        baseUrl: config.analyzerBaseUrl ?? "",
+        apiKey: analyzerApiKey,
+      });
+      const evidence = await loadClassifierEvidence({
+        tableName,
+        siteId,
+        task,
+        config,
+      });
+      let result = /** @type {{ labels?: unknown } | null | undefined} */ (
+        await analyzer.classifyEvidence({
+          classifierId: parsed.classifierId,
+          evidence,
+          requestId: String(task.taskId ?? ""),
+          appId: "good-neighbor-app",
+        })
+      );
+      /** @param {{labels?: unknown} | null | undefined} value */
+      const readLabels = (value) =>
+        Array.isArray(value?.labels)
+          ? value.labels.filter(
+              (label) => typeof label === "string" && label.trim(),
+            )
+          : [];
+      let labels = readLabels(result);
+
+      evidenceType = evidence.type;
+      const description =
+        typeof task.description === "string" ? task.description.trim() : "";
+      // A photo can be inconclusive even when the saved description identifies
+      // the surface/item. Try that independent evidence once, before any City call.
+      if (!labels.length && evidence.type === "image" && description) {
+        textFallback = true;
+        result = /** @type {{labels?: unknown} | null | undefined} */ (
+          await analyzer.classifyEvidence({
+            classifierId: parsed.classifierId,
+            evidence: classifierTextEvidence(description),
+            requestId: String(task.taskId ?? ""),
+            appId: "good-neighbor-app",
+          })
+        );
+        labels = readLabels(result);
+      }
+
+      labelCount = labels.length;
+      const map = parseClassifierServiceCodeMap(
+        config.sf311ClassifierServiceCodeMap,
+      );
+      fallbackReason = !labels.length
+        ? "no_labels"
+        : labels.some((label) => {
+              const mapped = map[parsed.classifierId]?.[label.trim()];
+              return (
+                typeof mapped !== "string" || !/^\d+(?:\.\d+)+$/.test(mapped)
+              );
+            })
+          ? "unmapped_label"
+          : "";
+      serviceCodes = serviceCodesForClassifierLabels({
         classifierId: parsed.classifierId,
-        evidence,
-        requestId: String(task.taskId ?? ""),
-        appId: "good-neighbor-app",
-      })
-    );
-    const labels = Array.isArray(result.labels)
-      ? result.labels.filter((label) => typeof label === "string")
-      : [];
-    serviceCodes = serviceCodesForClassifierLabels({
-      classifierId: parsed.classifierId,
-      labels,
-      map: parseClassifierServiceCodeMap(config.sf311ClassifierServiceCodeMap),
+        labels,
+        map,
+      });
+    } catch {
+      // Classification is advisory. Never let missing evidence, an analyzer
+      // outage or malformed output prevent an otherwise valid filing.
+      serviceCodes = [defaultClassifierServiceCode(parsed.classifierId)];
+      fallbackReason = "classification_error";
+    }
+    emitMetrics({
+      marker: "Sf311Classification",
+      dimensions: {
+        Classifier: parsed.classifierId,
+        Outcome: fallbackReason ? "default_service_code" : "classified",
+      },
+      props: {
+        taskId: task.taskId,
+        siteId,
+        evidenceType,
+        textFallback,
+        labelCount,
+        ...(fallbackReason ? { fallbackReason } : {}),
+      },
+      metrics: [{ name: "Sf311Classification", value: 1 }],
     });
   }
   if (serviceCodes.length === 0) {
@@ -813,6 +929,12 @@ async function execute311Action({
       recordedAt: now,
     };
   }
+
+  if (parsed.kind === "classifier")
+    action = {
+      ...action,
+      payload: { ...action.payload, resolvedServiceCodes: serviceCodes },
+    };
 
   const artifacts = await sourceArtifactsForTask({ tableName, siteId, task });
   const location = await resolveLocation({

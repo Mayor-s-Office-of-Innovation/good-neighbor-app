@@ -58,6 +58,475 @@ const SUBMITTED_311_RESULT = {
 describe("app action execution", () => {
   const now = new Date("2026-08-18T12:00:00.000Z");
 
+  it.each([true, false])(
+    "resumes an unattempted planned service without guessing a legacy plan (saved plan: %s)",
+    async (planned) => {
+      const classifyEvidence = vi.fn();
+      createAnalyzerClient.mockReturnValue({ classifyEvidence });
+      getAnalyzerApiKey.mockResolvedValue("synthetic-key");
+      const city = vi.fn().mockImplementation(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: { return_code: "0", SRNum: "furniture-ticket" },
+            }),
+            { status: 200 },
+          ),
+      );
+      vi.stubGlobal("fetch", city);
+      const payload = {
+        serviceCodeOrAction: "Run bulky item analysis",
+        executionTrigger: "task_created",
+        responsibleAgencyCode: "76",
+      };
+      try {
+        const [result] = await executeAppActions(
+          [{ code: "create_311_ticket", payload }],
+          {
+            env: {
+              GNP_311_SUBMISSION_ENABLED: "true",
+              DYNAMO_TABLE: "table",
+              S3_UPLOAD_BUCKET: "bucket",
+              SQS_QUEUE_URL: "queue",
+              SF311_CREATESR_URL: "https://hub.example.test/createsr",
+              SF311_BASIC_AUTH_USER: "user",
+              SF311_BASIC_AUTH_PASS: "pass",
+            },
+            now,
+            tableName: "table",
+            siteId: "site",
+            trigger: "task_created",
+            task: {
+              taskId: "task",
+              location: { latitude: 37.7, longitude: -122.4 },
+            },
+            priorResults: [
+              {
+                code: "create_311_ticket",
+                status: "partial",
+                reason: "fanout_incomplete",
+                recordedAt: now.toISOString(),
+                payload: {
+                  ...payload,
+                  ...(planned
+                    ? { resolvedServiceCodes: ["1.1.4.7.10.0", "1.1.4.7.7.0"] }
+                    : {}),
+                  tickets: [
+                    {
+                      serviceCode: "1.1.4.7.10.0",
+                      srNum: "mattress-ticket",
+                      attachments: [],
+                    },
+                  ],
+                },
+              },
+            ],
+            onCheckpoint: async () => {},
+          },
+        );
+        expect(classifyEvidence).not.toHaveBeenCalled();
+        if (planned) {
+          expect(result.status).toBe("submitted");
+          expect(city).toHaveBeenCalledOnce();
+          expect(JSON.parse(city.mock.calls[0][1].body).NatureofRequest).toBe(
+            "1.1.4.7.7.0",
+          );
+          expect(result.payload?.tickets).toHaveLength(2);
+        } else {
+          expect(result.reason).toBe(
+            "sf311_creation_uncertain_requires_reconciliation",
+          );
+          expect(city).not.toHaveBeenCalled();
+        }
+      } finally {
+        vi.unstubAllGlobals();
+        createAnalyzerClient.mockReset();
+        getAnalyzerApiKey.mockReset();
+      }
+    },
+  );
+
+  it.each([
+    ["task_created", false],
+    ["user_confirmed", false],
+    ["task_created", true],
+    ["user_confirmed", true],
+  ])(
+    "keeps the default filing selection stable on %s retries (numeric mapping: %s)",
+    async (trigger, numericMapping) => {
+      const classifyEvidence = vi
+        .fn()
+        .mockResolvedValueOnce({
+          labels: numericMapping ? ["Graffiti - Offensive - Pole"] : [],
+        })
+        .mockResolvedValue({ labels: ["Graffiti - Offensive - Pole"] });
+      createAnalyzerClient.mockReturnValue({ classifyEvidence });
+      getAnalyzerApiKey.mockResolvedValue("synthetic-key");
+      const city = vi.fn().mockImplementation(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: { return_code: "0", SRNum: "existing-ticket" },
+            }),
+            { status: 200 },
+          ),
+      );
+      vi.stubGlobal("fetch", city);
+      const action = {
+        code: "create_311_ticket",
+        payload: {
+          serviceCodeOrAction: "Run graffiti analysis",
+          executionTrigger: trigger,
+          responsibleAgencyCode: "76",
+        },
+      };
+      const options = {
+        now,
+        siteId: "site",
+        tableName: "table",
+        trigger: /** @type {"task_created" | "user_confirmed"} */ (trigger),
+        env: {
+          GNP_311_SUBMISSION_ENABLED: "true",
+          DYNAMO_TABLE: "table",
+          S3_UPLOAD_BUCKET: "bucket",
+          SQS_QUEUE_URL: "queue",
+          ...(numericMapping
+            ? {
+                SF311_CLASSIFIER_SERVICE_CODE_MAP: JSON.stringify({
+                  graffiti: { "Graffiti - Offensive - Pole": 1.1 },
+                }),
+              }
+            : {}),
+          ANALYZER_BASE_URL: "https://analyzer.example.test",
+          SF311_CREATESR_URL: "https://hub.example.test/createsr",
+          SF311_BASIC_AUTH_USER: "user",
+          SF311_BASIC_AUTH_PASS: "pass",
+        },
+        task: {
+          taskId: "task",
+          description: "Synthetic graffiti",
+          location: { latitude: 37.7, longitude: -122.4 },
+        },
+        onCheckpoint: async (
+          /** @type {import("./app-actions.js").AppActionResult} */ checkpoint,
+        ) => {
+          expect(checkpoint.payload?.resolvedServiceCodes).toEqual([
+            "1.5.1.1.18.0",
+          ]);
+        },
+      };
+      try {
+        const [first] = await executeAppActions([action], options);
+        expect(first.status).toBe("submitted");
+        const [retry] = await executeAppActions([action], {
+          ...options,
+          priorResults: [
+            {
+              ...first,
+              status: "failed",
+              reason: "attachment_submission_failed",
+            },
+          ],
+        });
+        expect(retry).toMatchObject({
+          status: "submitted",
+          payload: {
+            tickets: [
+              { serviceCode: "1.5.1.1.18.0", srNum: "existing-ticket" },
+            ],
+          },
+        });
+        expect(city).toHaveBeenCalledOnce();
+        expect(classifyEvidence).toHaveBeenCalledOnce();
+      } finally {
+        vi.unstubAllGlobals();
+        createAnalyzerClient.mockReset();
+        getAnalyzerApiKey.mockReset();
+      }
+    },
+  );
+
+  it.each(["task_created", "user_confirmed"])(
+    "retains the full two-service plan after a partial %s filing",
+    async (trigger) => {
+      const classifyEvidence = vi
+        .fn()
+        .mockResolvedValueOnce({ labels: ["Mattress", "Furniture"] })
+        .mockResolvedValue({ labels: [] });
+      createAnalyzerClient.mockReturnValue({ classifyEvidence });
+      getAnalyzerApiKey.mockResolvedValue("synthetic-key");
+      let calls = 0;
+      const city = vi.fn().mockImplementation(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data:
+                ++calls === 2
+                  ? { return_code: "24" }
+                  : {
+                      return_code: "0",
+                      SRNum:
+                        calls === 1 ? "mattress-ticket" : "furniture-ticket",
+                    },
+            }),
+            { status: 200 },
+          ),
+      );
+      vi.stubGlobal("fetch", city);
+      const plan = ["1.1.4.7.10.0", "1.1.4.7.7.0"];
+      const action = {
+        code: "create_311_ticket",
+        payload: {
+          serviceCodeOrAction: "Run bulky item analysis",
+          executionTrigger: trigger,
+          responsibleAgencyCode: "76",
+        },
+      };
+      const options = {
+        now,
+        siteId: "site",
+        tableName: "table",
+        trigger: /** @type {"task_created" | "user_confirmed"} */ (trigger),
+        env: {
+          GNP_311_SUBMISSION_ENABLED: "true",
+          DYNAMO_TABLE: "table",
+          S3_UPLOAD_BUCKET: "bucket",
+          SQS_QUEUE_URL: "queue",
+          ANALYZER_BASE_URL: "https://analyzer.example.test",
+          SF311_CREATESR_URL: "https://hub.example.test/createsr",
+          SF311_BASIC_AUTH_USER: "user",
+          SF311_BASIC_AUTH_PASS: "pass",
+        },
+        task: {
+          taskId: "task",
+          description: "Synthetic bulky items",
+          location: { latitude: 37.7, longitude: -122.4 },
+        },
+        onCheckpoint: async (
+          /** @type {import("./app-actions.js").AppActionResult} */ checkpoint,
+        ) => {
+          expect(checkpoint.payload?.resolvedServiceCodes).toEqual(plan);
+        },
+      };
+      try {
+        const [first] = await executeAppActions([action], options);
+        expect(first.status).toBe("failed");
+        expect(first.payload?.tickets).toHaveLength(2);
+        const [retry] = await executeAppActions([action], {
+          ...options,
+          priorResults: [first],
+        });
+        expect(retry.status).toBe("submitted");
+        expect(retry.payload?.tickets).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              serviceCode: plan[0],
+              srNum: "mattress-ticket",
+            }),
+            expect.objectContaining({
+              serviceCode: plan[1],
+              srNum: "furniture-ticket",
+            }),
+          ]),
+        );
+        expect(city).toHaveBeenCalledTimes(3);
+        expect(classifyEvidence).toHaveBeenCalledOnce();
+        expect(JSON.parse(city.mock.calls[2][1].body).NatureofRequest).toBe(
+          plan[1],
+        );
+      } finally {
+        vi.unstubAllGlobals();
+        createAnalyzerClient.mockReset();
+        getAnalyzerApiKey.mockReset();
+      }
+    },
+  );
+
+  it.each(["accepted", "pending"])(
+    "does not create a default ticket over a prior %s specific filing",
+    async (state) => {
+      getAnalyzerApiKey.mockResolvedValue("synthetic-key");
+      createAnalyzerClient.mockReturnValue({
+        classifyEvidence: vi
+          .fn()
+          .mockRejectedValue(new Error("classifier unavailable")),
+      });
+      const payload = {
+        serviceCodeOrAction: "Run graffiti analysis",
+        responsibleAgencyCode: "76",
+        executionTrigger: "task_created",
+      };
+      const city = vi.fn();
+      vi.stubGlobal("fetch", city);
+      try {
+        const result = await executeAppActions(
+          [{ code: "create_311_ticket", payload }],
+          {
+            env: {
+              GNP_311_SUBMISSION_ENABLED: "true",
+              DYNAMO_TABLE: "table",
+              S3_UPLOAD_BUCKET: "bucket",
+              SQS_QUEUE_URL: "queue",
+              ANALYZER_BASE_URL: "https://analyzer.example.test",
+              SF311_CREATESR_URL: "https://hub.example.test/createsr",
+            },
+            now,
+            siteId: "site",
+            tableName: "table",
+            trigger: "task_created",
+            task: {
+              taskId: "task",
+              description: "Synthetic graffiti",
+              location: { latitude: 37.7, longitude: -122.4 },
+            },
+            priorResults: [
+              {
+                code: "create_311_ticket",
+                status: "partial",
+                recordedAt: now.toISOString(),
+                payload: {
+                  ...payload,
+                  tickets: [
+                    {
+                      serviceCode: "1.5.2.1.3.0",
+                      ...(state === "accepted"
+                        ? { srNum: "synthetic-sr", attachments: [] }
+                        : { creationState: "pending" }),
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        );
+        expect(city).not.toHaveBeenCalled();
+        if (state === "accepted")
+          expect(result[0]).toMatchObject({
+            status: "submitted",
+            payload: {
+              tickets: [{ serviceCode: "1.5.2.1.3.0", srNum: "synthetic-sr" }],
+            },
+          });
+        else
+          expect(result[0]).toMatchObject({
+            status: "failed",
+            reason: "sf311_creation_uncertain_requires_reconciliation",
+          });
+      } finally {
+        vi.unstubAllGlobals();
+        getAnalyzerApiKey.mockReset();
+        createAnalyzerClient.mockReset();
+      }
+    },
+  );
+
+  it.each([
+    ["Run graffiti analysis", "1.5.1.1.18.0"],
+    ["Run bulky item analysis", "1.1.4.7.7.0"],
+  ])(
+    "files %s with its default when classification cannot route",
+    async (command, fallback) => {
+      const env = {
+        GNP_311_SUBMISSION_ENABLED: "true",
+        DYNAMO_TABLE: "table",
+        S3_UPLOAD_BUCKET: "bucket",
+        SQS_QUEUE_URL: "queue",
+        ANALYZER_BASE_URL: "https://analyzer.example.test",
+        SF311_CREATESR_URL: "https://hub.example.test/createsr",
+        SF311_BASIC_AUTH_USER: "user",
+        SF311_BASIC_AUTH_PASS: "pass",
+      };
+      for (const mode of [
+        "empty",
+        "malformed",
+        "unknown",
+        "error",
+        "no_evidence",
+      ]) {
+        const classifyEvidence = vi.fn();
+        if (mode === "error")
+          classifyEvidence.mockRejectedValue(
+            new Error("private analyzer error"),
+          );
+        else
+          classifyEvidence.mockResolvedValue(
+            mode === "malformed"
+              ? null
+              : { labels: mode === "unknown" ? ["unknown"] : [] },
+          );
+        createAnalyzerClient.mockReturnValue({ classifyEvidence });
+        getAnalyzerApiKey.mockResolvedValue("synthetic-key");
+        const city = vi.fn().mockImplementation(
+          async () =>
+            new Response(
+              JSON.stringify({
+                data: { return_code: "0", SRNum: "synthetic-sr" },
+              }),
+              { status: 200 },
+            ),
+        );
+        vi.stubGlobal("fetch", city);
+        try {
+          for (const trigger of ["task_created", "user_confirmed"]) {
+            /** @type {import("./app-actions.js").AppActionResult[]} */
+            const checkpoints = [];
+            const result = await executeAppActions(
+              [
+                {
+                  code: "create_311_ticket",
+                  payload: {
+                    serviceCodeOrAction: command,
+                    responsibleAgencyCode: "76",
+                    executionTrigger: trigger,
+                  },
+                },
+              ],
+              {
+                env,
+                now,
+                tableName: "table",
+                siteId: "site",
+                trigger: /** @type {"task_created" | "user_confirmed"} */ (
+                  trigger
+                ),
+                task: {
+                  taskId: "task",
+                  ...(mode === "no_evidence"
+                    ? {}
+                    : { description: "Synthetic issue description" }),
+                  location: { latitude: 37.7, longitude: -122.4 },
+                },
+                onCheckpoint: async (result) => {
+                  checkpoints.push(result);
+                },
+              },
+            );
+            expect(result[0].status, mode).toBe("submitted");
+            const payload = JSON.parse(
+              city.mock.calls[city.mock.calls.length - 1][1].body,
+            );
+            expect(payload.NatureofRequest, mode).toBe(fallback);
+            expect(checkpoints[0]).toMatchObject({
+              reason: "creation_pending",
+              payload: { tickets: [{ serviceCode: fallback }] },
+            });
+            expect(checkpoints[1]).toMatchObject({
+              payload: { tickets: [{ srNum: "synthetic-sr" }] },
+            });
+          }
+          expect(city).toHaveBeenCalledTimes(2);
+          expect(classifyEvidence).toHaveBeenCalledTimes(
+            mode === "no_evidence" ? 0 : 2,
+          );
+        } finally {
+          vi.unstubAllGlobals();
+          createAnalyzerClient.mockReset();
+          getAnalyzerApiKey.mockReset();
+        }
+      }
+    },
+  );
+
   it("checkpoints automatic creation before and after City acceptance and refuses uncertain retries", async () => {
     const env = {
       GNP_311_SUBMISSION_ENABLED: "true",
@@ -862,9 +1331,117 @@ describe("app action execution", () => {
     }
   });
 
+  it.each([false, true])(
+    "tries saved text once after inconclusive image classification (mapped: %s)",
+    async (mapped) => {
+      const description = "Synthetic graffiti on a building";
+      send.mockReset().mockResolvedValue({ Items: [] });
+      send.mockResolvedValueOnce({
+        Items: [
+          {
+            artifactId: "image",
+            s3Key: "checks/site/check/image",
+            contentType: "image/jpeg",
+          },
+        ],
+      });
+      getObjectBytes.mockResolvedValueOnce({
+        bytes: Buffer.from("image"),
+        contentType: "image/jpeg",
+      });
+      downscaleImage.mockResolvedValueOnce({
+        bytes: Buffer.from("image"),
+        contentType: "image/jpeg",
+      });
+      getAnalyzerApiKey.mockResolvedValueOnce("synthetic-key");
+      const classifyEvidence = vi
+        .fn()
+        .mockResolvedValueOnce({ labels: [] })
+        .mockResolvedValueOnce({
+          labels: mapped ? ["Graffiti - Offensive - Building_Other"] : [],
+        });
+      createAnalyzerClient.mockReturnValueOnce({ classifyEvidence });
+      const city = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            data: { return_code: "0", SRNum: "synthetic-sr" },
+          }),
+          { status: 200 },
+        ),
+      );
+      vi.stubGlobal("fetch", city);
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const results = await executeAppActions(
+          [
+            {
+              code: "create_311_ticket",
+              payload: {
+                serviceCodeOrAction: "Run graffiti analysis",
+                responsibleAgencyCode: "76",
+              },
+            },
+          ],
+          {
+            now,
+            siteId: "site",
+            tableName: "table",
+            task: {
+              taskId: "task",
+              checkId: "check",
+              sourceArtifactIds: ["image"],
+              description,
+              location: { latitude: 37.7, longitude: -122.4 },
+            },
+            env: {
+              GNP_311_SUBMISSION_ENABLED: "true",
+              DYNAMO_TABLE: "table",
+              S3_UPLOAD_BUCKET: "bucket",
+              SQS_QUEUE_URL: "queue",
+              ANALYZER_BASE_URL: "https://analyzer.example.test",
+              ANALYZER_API_KEY: "synthetic-key",
+              SF311_CREATESR_URL: "https://hub.example.test/createsr",
+              SF311_BASIC_AUTH_USER: "user",
+              SF311_BASIC_AUTH_PASS: "pass",
+            },
+          },
+        );
+        expect(classifyEvidence).toHaveBeenCalledTimes(2);
+        expect(classifyEvidence.mock.calls[1][0].evidence).toEqual({
+          type: "text",
+          text: description,
+        });
+        expect(results[0].status).toBe("submitted");
+        expect(city).toHaveBeenCalledOnce();
+        expect(JSON.parse(city.mock.calls[0][1].body).NatureofRequest).toBe(
+          mapped ? "1.5.2.1.3.0" : "1.5.1.1.18.0",
+        );
+        const event = log.mock.calls
+          .map(([line]) => JSON.parse(line))
+          .find((line) => line.marker === "Sf311Classification");
+        expect(event).toMatchObject({
+          textFallback: true,
+          Outcome: mapped ? "classified" : "default_service_code",
+        });
+        expect(JSON.stringify(event)).not.toContain(description);
+        expect(JSON.stringify(event)).not.toContain(
+          Buffer.from("image").toString("base64"),
+        );
+      } finally {
+        vi.unstubAllGlobals();
+        log.mockRestore();
+        send.mockReset();
+        createAnalyzerClient.mockReset();
+        getObjectBytes.mockReset();
+        getAnalyzerApiKey.mockReset();
+      }
+    },
+  );
+
   it.each(["Run graffiti analysis", "Run bulky item analysis"])(
-    "includes saved description with the image for %s even when routing fails",
+    "includes saved description with the image for %s before using its default",
     async (command) => {
+      send.mockResolvedValue({ Items: [] });
       send.mockResolvedValueOnce({
         Items: [
           {
@@ -925,8 +1502,15 @@ describe("app action execution", () => {
           {
             code: "create_311_ticket",
             status: "failed",
-            reason: "insufficient_classifier_information",
-            payload: { serviceCodeOrAction: command },
+            reason: "missing_location",
+            payload: {
+              serviceCodeOrAction: command,
+              resolvedServiceCodes: [
+                command === "Run graffiti analysis"
+                  ? "1.5.1.1.18.0"
+                  : "1.1.4.7.7.0",
+              ],
+            },
             recordedAt: "2026-08-18T12:00:00.000Z",
           },
         ]);
@@ -956,6 +1540,7 @@ describe("app action execution", () => {
   );
 
   it("uses the saved description when an older task has no source artifact identifiers", async () => {
+    send.mockResolvedValue({ Items: [] });
     getAnalyzerApiKey.mockResolvedValueOnce("analyzer-key");
     const classifyEvidence = vi.fn().mockResolvedValueOnce({ labels: [] });
     createAnalyzerClient.mockReturnValueOnce({ classifyEvidence });
@@ -1002,7 +1587,7 @@ describe("app action execution", () => {
       });
       expect(results[0]).toMatchObject({
         status: "failed",
-        reason: "insufficient_classifier_information",
+        reason: "missing_location",
       });
     } finally {
       createAnalyzerClient.mockReset();

@@ -412,7 +412,10 @@ it("waits for a competing worker lease before retrying", async () => {
       });
     return original?.(command);
   });
-  await expect(deliver()).rejects.toThrow("leased");
+  await expect(deliver()).rejects.toMatchObject({
+    message: "leased",
+    code: "sf311_lease_contended",
+  });
   expect(
     sendSqs.mock.calls[0][0].input.VisibilityTimeout,
   ).toBeGreaterThanOrEqual(300);

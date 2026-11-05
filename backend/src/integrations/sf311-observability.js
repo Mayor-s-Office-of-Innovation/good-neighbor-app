@@ -71,6 +71,7 @@ export function logSf311JobError(error, context) {
 
 /** No payloads, URLs, credentials, free-form errors or upstream narratives. */
 const reasons = new Set([
+  "sf311_lease_contended",
   "sf311_timeout",
   "sf311_network_error",
   "sf311_closure_state_unknown",
@@ -140,6 +141,21 @@ function records(value) {
 }
 
 /**
+ * @param {string} reason
+ * @param {number} status
+ * @returns {string}
+ */
+function categorize(reason, status) {
+  if (reason === "sf311_lease_contended") return "contention";
+  if (status === 401 || status === 403) return "authentication";
+  if (status === 429) return "throttled";
+  if (status >= 500 && status < 600) return "server";
+  if (reason === "sf311_timeout") return "timeout";
+  if (reason === "sf311_network_error") return "network";
+  return "action";
+}
+
+/**
  * @param {unknown} error
  * @returns {{reason: string, category: string, httpStatus?: number}}
  */
@@ -147,18 +163,7 @@ export function sf311Failure(error) {
   const e = /** @type {{code?: unknown, status?: unknown}} */ (error ?? {});
   const status = Number(e.status);
   const reason = safeReason(e.code);
-  const category =
-    status === 401 || status === 403
-      ? "authentication"
-      : status === 429
-        ? "throttled"
-        : status >= 500 && status < 600
-          ? "server"
-          : reason === "sf311_timeout"
-            ? "timeout"
-            : reason === "sf311_network_error"
-              ? "network"
-              : "action";
+  const category = categorize(reason, status);
   return {
     reason,
     category,

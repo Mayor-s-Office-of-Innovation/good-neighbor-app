@@ -66,13 +66,39 @@ describe("SF311 service-code resolution", () => {
     ).toHaveLength(42);
   });
 
-  it("rejects unmapped classifier labels", () => {
-    expect(() =>
+  it("uses the graffiti default for unmapped classifier labels", () => {
+    expect(
       serviceCodesForClassifierLabels({
         classifierId: "graffiti",
         labels: ["Unknown graffiti label"],
       }),
-    ).toThrow("No SF311 service-code mapping");
+    ).toEqual(["1.5.1.1.18.0"]);
+  });
+
+  it.each([
+    ["graffiti", "1.5.1.1.18.0"],
+    ["bulky-items", "1.1.4.7.7.0"],
+  ])("defaults empty and unknown %s results to %s", (classifierId, code) => {
+    for (const labels of [[], [""], ["unrecognized"]]) {
+      expect(serviceCodesForClassifierLabels({ classifierId, labels })).toEqual(
+        [code],
+      );
+    }
+  });
+
+  it("retains recognized labels when another label needs the default", () => {
+    expect(
+      serviceCodesForClassifierLabels({
+        classifierId: "bulky-items",
+        labels: ["Mattress", "unknown", "Furniture", "unknown"],
+      }),
+    ).toEqual(["1.1.4.7.10.0", "1.1.4.7.7.0"]);
+  });
+
+  it("does not guess a default for an unknown classifier", () => {
+    expect(() =>
+      serviceCodesForClassifierLabels({ classifierId: "unknown", labels: [] }),
+    ).toThrow("No default for unknown classifier");
   });
 
   it("merges a JSON classifier mapping from config over built-in data", () => {
@@ -87,3 +113,21 @@ describe("SF311 service-code resolution", () => {
     });
   });
 });
+
+it.each([1.1, ["1.2.3"], null, true, {}, "invalid"])(
+  "defaults malformed JSON mapping %j without losing valid routes",
+  (value) => {
+    const map = parseClassifierServiceCodeMap(
+      JSON.stringify({
+        graffiti: { malformed: value, valid: "1.2.3" },
+      }),
+    );
+    expect(
+      serviceCodesForClassifierLabels({
+        classifierId: "graffiti",
+        labels: ["malformed", "valid", "malformed"],
+        map,
+      }),
+    ).toEqual(["1.5.1.1.18.0", "1.2.3"]);
+  },
+);
