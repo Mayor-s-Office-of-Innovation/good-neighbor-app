@@ -17,7 +17,8 @@ attributions-view {
   display: flex;
   align-items: center;
   min-height: 2.75rem;
-  margin: 0 0 0.75rem;
+  /* One rhythm after the back row on every settings destination: 1rem. */
+  margin: 0 0 1rem;
   padding-inline: 0.25rem;
 }
 

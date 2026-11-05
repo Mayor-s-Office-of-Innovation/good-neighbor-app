@@ -504,9 +504,10 @@
 }
 
 .reports__top {
-  /* Back (to the settings menu) is the only exit. */
+  /* Back (to the settings menu) is the only exit. One rhythm after the
+     back row on every settings destination: 1rem. */
   justify-content: flex-start;
-  margin-bottom: 0;
+  margin-bottom: 1rem;
 }
 
 /* The design draws no rule under the tab row. */
