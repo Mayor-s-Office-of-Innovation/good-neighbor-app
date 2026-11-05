@@ -234,8 +234,9 @@ export async function releaseTaskResolution(input) {
 }
 
 /**
- * Atomically append an update and replace its task snapshot.
- * @param {{ tableName: string, siteId: string, taskId: string, occurredAt: string, update: Record<string, any>, task: Record<string, any>, expectedStatus: string, expectedUpdatedAt?: string, expectedAppActionResults?: unknown, expectedLease?: { attribute: string, value: string } }} input
+ * Atomically append an update and replace its task snapshot. `jobs` are
+ * background job rows committed in the same transaction.
+ * @param {{ tableName: string, siteId: string, taskId: string, occurredAt: string, update: Record<string, any>, task: Record<string, any>, expectedStatus: string, expectedUpdatedAt?: string, expectedAppActionResults?: unknown, expectedLease?: { attribute: string, value: string }, jobs?: NonNullable<import("@aws-sdk/lib-dynamodb").TransactWriteCommandInput["TransactItems"]> }} input
  */
 export async function writeTaskTransition(input) {
   const statusOnly =
@@ -263,6 +264,7 @@ export async function writeTaskTransition(input) {
               `resolved-${input.update.updateId}`,
             )
           : []),
+        ...(input.jobs || []),
         {
           Put: {
             TableName: input.tableName,

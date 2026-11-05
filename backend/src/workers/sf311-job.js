@@ -26,6 +26,7 @@ import {
   taskWorklistDateGsi,
 } from "../handlers/keys.js";
 import { logServerError } from "../lib/log-server-error.js";
+import { deliverCityHelpNote } from "../task-updates/city-help-note.js";
 import {
   reportSf311Failure,
   reportSf311Results,
@@ -230,6 +231,19 @@ export async function runJob(message, delivery = {}) {
     results = next;
   };
   try {
+    // Notes run under the same per-task lock as filings and closures, but
+    // don't depend on the task's status.
+    if (job.trigger === "city_note") {
+      await sendQueuedCityNote({
+        tableName,
+        message,
+        jobKey,
+        job,
+        read,
+        attempt: delivery.receiveCount ?? 1,
+      });
+      return;
+    }
     let task = await read(key);
     if (task && job.trigger !== "user_confirmed" && isSilent311Task(task))
       await withSilent311Guard(String(task.createdAt || ""), async () => {});
@@ -477,6 +491,105 @@ export async function runJob(message, delivery = {}) {
         });
     }
   }
+}
+
+/**
+ * A "City help is no longer needed" note queued by the task-updates handler.
+ * Delivery itself (claim, send, reconcile, never blindly resend) lives in
+ * `task-updates/city-help-note.js`; this reads the note's `cityNoteStatus`
+ * afterwards to decide what happens to the job:
+ * - `sent` or `suppressed` (or nothing to send): `complete`;
+ * - `failed` (HUB rejected it): job `failed`, no retry;
+ * - `pending` or `unknown`: throw so SQS redelivers with backoff. On the last
+ *   delivery the job is `failed` and an alert fires. A `pending` note (never
+ *   sent) becomes `failed`; an `unknown` one (may have arrived) stays as is
+ *   for an operator to check.
+ * @param {object} ctx
+ * @param {string} ctx.tableName
+ * @param {{siteId: string, taskId: string, jobSk: string}} ctx.message
+ * @param {{pk: string, sk: string}} ctx.jobKey
+ * @param {Record<string, any>} ctx.job
+ * @param {(key: {pk: string, sk: string}) => Promise<Record<string, any> | undefined>} ctx.read
+ * @param {number} ctx.attempt
+ * @returns {Promise<void>}
+ */
+async function sendQueuedCityNote(ctx) {
+  const { tableName, message, jobKey, job } = ctx;
+  const { siteId, taskId } = message;
+  /**
+   * @param {string} status
+   * @param {string} [reason]
+   * @returns {Promise<unknown>}
+   */
+  const finishJob = (status, reason) =>
+    ddb.send(
+      new UpdateCommand({
+        TableName: tableName,
+        Key: jobKey,
+        UpdateExpression: reason
+          ? "SET #status = :status, failureReason = :reason"
+          : "SET #status = :status",
+        ExpressionAttributeNames: { "#status": "status" },
+        ExpressionAttributeValues: {
+          ":status": status,
+          ...(reason ? { ":reason": reason } : {}),
+        },
+      }),
+    );
+  const updateKey =
+    job.updateId && job.updateOccurredAt
+      ? taskUpdateKey(
+          siteId,
+          taskId,
+          String(job.updateOccurredAt),
+          String(job.updateId),
+        )
+      : undefined;
+  const update = updateKey ? await ctx.read(updateKey) : undefined;
+  if (!updateKey || !update) return void (await finishJob("abandoned"));
+
+  const delivered = await deliverCityHelpNote(tableName, siteId, update, {
+    terminal: false,
+    failOnRejection: true,
+  });
+  if (delivered) return void (await finishJob("complete"));
+  if (update.cityNoteStatus === "failed")
+    return void (await finishJob("failed", "note_rejected"));
+  if (ctx.attempt < MAX_FILING_ATTEMPTS)
+    throw Object.assign(
+      new Error("City note not confirmed; retry from its delivery record"),
+      { sf311Reported: true },
+    );
+
+  const neverSent = update.cityNoteStatus === "pending";
+  const reason = neverSent ? "note_not_sent" : "note_delivery_unknown";
+  reportSf311Failure("note", neverSent ? "sf311_error" : reason, {
+    terminal: true,
+    attempt: ctx.attempt,
+    jobId: message.jobSk,
+    taskId,
+    siteId,
+  });
+  // Only a note no attempt ever sent is safe to call failed.
+  if (neverSent)
+    await ddb
+      .send(
+        new UpdateCommand({
+          TableName: tableName,
+          Key: updateKey,
+          UpdateExpression: "SET cityNoteStatus = :failed",
+          ConditionExpression:
+            "cityNoteStatus = :pending AND attribute_not_exists(cityNoteLeaseExpiresAt)",
+          ExpressionAttributeValues: {
+            ":failed": "failed",
+            ":pending": "pending",
+          },
+        }),
+      )
+      .catch((error) => {
+        if (error?.name !== "ConditionalCheckFailedException") throw error;
+      });
+  await finishJob("failed", reason);
 }
 
 /**
