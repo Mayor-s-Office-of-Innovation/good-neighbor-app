@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { activeCatalog } from "../analysis/guidance/catalog-registry.js";
 import { resolveCategory } from "../analysis/guidance/category-resolver.js";
 import { sqlString } from "../analytics/convert.js";
+import { requirementFromCompliance } from "../domain/check-compliance.js";
 import { PACIFIC_TIME_ZONE } from "../lib/pacific-dates.js";
 import { SITE_DAY_METRICS } from "./activity.js";
 import {
@@ -93,22 +94,29 @@ const filled = (value) =>
  */
 function buildSiteTables(sites, evaluatedAt) {
   return {
-    sites: sites.map((s) => ({
-      siteId: String(s.siteId),
-      name: s.name ?? null,
-      status: s.status ?? null,
-      siteType: s.siteType ?? null,
-      providerId: s.providerId ?? null,
-      programId: s.leadProgramId ?? null,
-      department: s.oversight?.managingCityDepartment || null,
-      managerId: s.oversight?.cityProgramManagerId || null,
-      hasLocation:
-        Number.isFinite(s.location?.latitude) &&
-        Number.isFinite(s.location?.longitude),
-      hasPerimeter:
-        typeof s.perimeter === "string" && s.perimeter.trim() !== "",
-      createdAt: s.createdAt ?? null,
-    })),
+    sites: sites.map((s) => {
+      // The rule the app's Check reports use, so Few Checks agrees with them.
+      const owed = requirementFromCompliance(s.compliance);
+      return {
+        siteId: String(s.siteId),
+        name: s.name ?? null,
+        status: s.status ?? null,
+        siteType: s.siteType ?? null,
+        providerId: s.providerId ?? null,
+        programId: s.leadProgramId ?? null,
+        department: s.oversight?.managingCityDepartment || null,
+        managerId: s.oversight?.cityProgramManagerId || null,
+        hasLocation:
+          Number.isFinite(s.location?.latitude) &&
+          Number.isFinite(s.location?.longitude),
+        hasPerimeter:
+          typeof s.perimeter === "string" && s.perimeter.trim() !== "",
+        createdAt: s.createdAt ?? null,
+        checksOwedPerDay: owed.required ? owed.requiredPerDay : 0,
+        checksOwedFrom: owed.periodStart ?? null,
+        checksOwedThrough: owed.periodEnd ?? null,
+      };
+    }),
     siteContacts: sites.map((s) => {
       const pub = publicContactState(s);
       const site = siteContactState(s);
@@ -187,6 +195,10 @@ export const TABLE_SCHEMAS = {
     hasLocation: B,
     hasPerimeter: B,
     createdAt: V,
+    checksOwedPerDay: I,
+    // Day keys, as #META.compliance stores them; the last one is inclusive.
+    checksOwedFrom: V,
+    checksOwedThrough: V,
   },
   checks: {
     checkId: V,

@@ -129,7 +129,7 @@ function requestedPeriod(params) {
 /** @param {ReturnType<typeof interval> | null} period */
 const meta = (period) => ({
   apiVersion: "reporting-v2",
-  contractVersion: "insights-v2",
+  contractVersion: "insights-v3",
   ruleVersion: "2026-11-04",
   snapshotId: "mock-snapshot",
   asOf: "2026-11-04T18:00:00.000Z",

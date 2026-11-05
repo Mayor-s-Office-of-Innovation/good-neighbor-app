@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
 import { sqlString, toRow, writeEntityParquet } from "../analytics/convert.js";
+import { DEFAULT_REQUIRED_CHECKS_PER_DAY } from "../domain/check-compliance.js";
 import { createLocalViews, writeLocalLake } from "./local-lake.js";
 import { buildProjection } from "./projection.js";
 import { buildFromRows, readProjection } from "./test-build.js";
@@ -121,7 +122,7 @@ async function build(evaluatedAt = EVALUATED) {
   return { tables: await readProjection(conn, out), manifest };
 }
 
-describe("site_contacts in the projection", () => {
+describe("Site tables in the projection", () => {
   it("carries the public contact for reports, but not the Site manager's", async () => {
     const { tables } = await buildFromRows(
       {
@@ -155,6 +156,38 @@ describe("site_contacts in the projection", () => {
       [null, null, null],
     ]);
     expect(JSON.stringify(siteContacts)).not.toContain("lead@example.org");
+  });
+
+  it("carries what each Site owes in Checks a day, by the app's own rule", async () => {
+    const { tables } = await buildFromRows(
+      {
+        sites: [
+          {
+            siteId: "s1",
+            compliance: {
+              perimeterChecksRequired: true,
+              requiredChecksPerDay: 5,
+              periodStart: "2026-10-01",
+              periodEnd: "2026-12-31",
+            },
+          },
+          { siteId: "s2" },
+          { siteId: "s3", compliance: { perimeterChecksRequired: false } },
+        ],
+      },
+      EVALUATED,
+    );
+    expect(
+      tables.sites.map((s) => [
+        s.checksOwedPerDay,
+        s.checksOwedFrom,
+        s.checksOwedThrough,
+      ]),
+    ).toEqual([
+      [5, "2026-10-01", "2026-12-31"],
+      [DEFAULT_REQUIRED_CHECKS_PER_DAY, null, null],
+      [0, null, null],
+    ]);
   });
 });
 
