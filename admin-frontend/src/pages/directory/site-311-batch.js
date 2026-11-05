@@ -1,5 +1,4 @@
 import { t } from "../../../../frontend/src/i18n/i18n.js";
-import { adminCatalog } from "../../admin-catalog.js";
 import { escapeHtml } from "../../dom.js";
 
 import {
@@ -23,10 +22,14 @@ export function batch311Checkbox(state, site) {
   return `<wa-checkbox data-site-311="${escapeHtml(site.siteId)}" ${enabled ? "checked" : ""} ${batch?.saving ? "disabled" : ""} aria-label="${escapeHtml(t("admin.batch311.siteLabel", { name: site.name || site.siteId }))}">${escapeHtml(t("admin.batch311.label"))}</wa-checkbox>`;
 }
 
-export function bind311Batch(root, state, api) {
+/**
+ * @param {ParentNode} root
+ * @param {any} state
+ */
+export function sync311Batch(root, state) {
   const header = root.querySelector("#site-311-batch");
   if (!header || state.capabilities.createEntities !== true) return;
-  const batch = (state.site311Batch ||= create311Batch());
+  const batch = state.site311Batch;
   const sync = () => {
     if (!header.isConnected) return;
     const drafts = [...batch.drafts.values()];
@@ -57,39 +60,51 @@ export function bind311Batch(root, state, api) {
     });
   };
   batch.refresh = sync;
-  header.addEventListener("click", async (event) => {
-    const target = event.target.closest("button");
-    if (!target || batch.saving) return;
-    if (target.hasAttribute("data-discard-311")) {
-      batch.drafts.clear();
-      batch.saved = 0;
-      sync();
-      root.querySelector("[data-site-311]")?.focus();
-    } else if (target.hasAttribute("data-review-311")) {
-      review311Draft(batch, target.getAttribute("data-review-311"));
-      sync();
-      header.querySelector("[data-save-311]")?.focus();
-    } else if (target.hasAttribute("data-save-311")) {
-      await save311Batch(
-        batch,
-        api,
-        (site) => adminCatalog.updateSite(site.siteId, site),
-        () => batch.refresh?.(),
-      );
-      header
-        .querySelector("[data-save-311]:not([disabled]), [data-review-311]")
-        ?.focus();
-      if (!batch.drafts.size) root.querySelector("[data-site-311]")?.focus();
-    }
-  });
-  root.querySelectorAll("[data-site-311]").forEach((checkbox) => {
-    checkbox.addEventListener("change", () => {
-      const site = state.sites.find(
-        (s) => s.siteId === checkbox.getAttribute("data-site-311"),
-      );
-      if (site) stage311(batch, site, checkbox.checked);
-      sync();
-    });
-  });
   sync();
+}
+
+/**
+ * @param {ParentNode} root
+ * @param {any} state
+ * @param {any} api
+ * @param {import("../../admin-catalog.js").AdminCatalog} catalog
+ * @param {Element} target
+ */
+export async function click311Batch(root, state, api, catalog, target) {
+  const batch = state.site311Batch;
+  const header = root.querySelector("#site-311-batch");
+  if (!header || batch.saving) return;
+  if (target.hasAttribute("data-discard-311")) {
+    batch.drafts.clear();
+    batch.saved = 0;
+    batch.refresh?.();
+    root.querySelector("[data-site-311]")?.focus();
+  } else if (target.hasAttribute("data-review-311")) {
+    review311Draft(batch, target.getAttribute("data-review-311"));
+    batch.refresh?.();
+    header.querySelector("[data-save-311]")?.focus();
+  } else if (target.hasAttribute("data-save-311")) {
+    await save311Batch(
+      batch,
+      api,
+      (site) => catalog.updateSite(site.siteId, site),
+      () => batch.refresh?.(),
+    );
+    header
+      .querySelector("[data-save-311]:not([disabled]), [data-review-311]")
+      ?.focus();
+    if (!batch.drafts.size) root.querySelector("[data-site-311]")?.focus();
+  }
+}
+
+/**
+ * @param {any} state
+ * @param {Element & { checked: boolean }} checkbox
+ */
+export function change311Batch(state, checkbox) {
+  const site = state.sites.find(
+    (s) => s.siteId === checkbox.getAttribute("data-site-311"),
+  );
+  if (site) stage311(state.site311Batch, site, checkbox.checked);
+  state.site311Batch.refresh?.();
 }

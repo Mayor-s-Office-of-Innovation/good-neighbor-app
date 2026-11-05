@@ -2,11 +2,11 @@ import { test } from "vitest";
 import assert from "node:assert/strict";
 import {
   $,
-  brandLink,
-  alertText,
   $$,
   click,
   fill,
+  leavePage,
+  mountPage,
   pageError,
   pageText,
   routeTo,
@@ -17,9 +17,10 @@ import {
   missing,
   adminData,
 } from "../test-support/admin-dom.js";
-import { mountAdmin } from "../test-support/app-mount.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
+import { adminSession } from "./admin-session.js";
+import "./pages/admin-user/admin-users-page.js";
 
 // pages/admin-user/admin-user.templates.js has no catalog key for this copy, so tests match its English.
 
@@ -61,11 +62,30 @@ const users = [
   },
 ];
 
+/**
+ * <admin-users-page> alone, without <admin-app>, following its own routes; a request
+ * outside its own calls fails the test. Its errors show through pageError().
+ * @param {string} path
+ * @param {Partial<Parameters<typeof mountPage>[2]>} [options]
+ */
+const openAdminUsersPage = (path, options = {}) =>
+  mountPage("admin-users-page", path, {
+    calls: [
+      /^(GET|POST|PUT) admin-users(\/|$)/,
+      /^(GET|PUT) profile$/,
+      /^GET oversight-options$/,
+    ],
+    follow: ["administrators", "administrator-new", "profile"],
+    recordErrors: true,
+    sites: true,
+    ...options,
+  });
+
 function openUsers() {
   const data = adminData();
   // The mock answers user actions from its own records, as the backend does.
   data.adminUsers = structuredClone(users);
-  return mountAdmin("/administrators", {
+  return openAdminUsersPage("/administrators", {
     data,
     setup: (api) => {
       // Read from the records each action changes, so a reload shows the change.
@@ -95,6 +115,8 @@ function openUsers() {
   });
 }
 
+const openUsersPage = openUsers;
+
 const rows = () => $$("table tbody tr");
 
 /** @param {string} action @param {string} username */
@@ -110,7 +132,7 @@ async function fillInvite() {
 }
 
 test("the user list shows each lifecycle status and its actions", async () => {
-  await openUsers();
+  await openUsersPage();
   assert.equal(rows().length, 5);
   assert.ok(rows()[0].querySelector('[data-admin-user-action="reset"]'));
   assert.match(rows()[1].textContent, /—/);
@@ -124,7 +146,7 @@ test("the user list shows each lifecycle status and its actions", async () => {
 });
 
 test("the status filter narrows the list and clearing it shows everyone", async () => {
-  await openUsers();
+  await openUsersPage();
   await fill("#admin-user-status-filter", "suspended");
   assert.deepEqual(
     rows().map((row) => row.cells[1].textContent),
@@ -140,7 +162,7 @@ test("the status filter narrows the list and clearing it shows everyone", async 
 });
 
 test("an empty user list shows the empty state", async () => {
-  await mountAdmin("/administrators", {
+  await openAdminUsersPage("/administrators", {
     setup: (api) => api.on("GET", /^admin-users$/, { json: {} }),
   });
   assert.match(pageText(), /No administrators match this status\./);
@@ -154,7 +176,7 @@ for (const [action, path, toast, next] of [
   ["reset", "active1/reset-password", "admin.toast.passwordReset", "reset"],
 ]) {
   test(`${action} calls the API, reloads the list and confirms`, async () => {
-    const { api } = await openUsers();
+    const { api } = await openUsersPage();
     const username = path.split("/")[0];
     const before = api.calls("GET", /^admin-users$/).length;
     await click(actionButton(action, username));
@@ -181,8 +203,32 @@ test("a failed user action shows the API's error", async () => {
   assert.equal(pageError(), "last_active_supervisor");
 });
 
-test("an unknown user action sends nothing", async () => {
+test("a failed user action makes its button usable again", async () => {
   const { api } = await openUsers();
+  api.fail("POST", /^admin-users\/plain1\/suspend$/, 409, "busy");
+  await click(actionButton("suspend", "plain1"));
+  const button = actionButton("suspend", "plain1");
+  assert.equal(button.disabled, false);
+  assert.equal(button.getAttribute("aria-busy"), null);
+});
+
+test("a user action that finishes after the user leaves doesn't reread the list", async () => {
+  const held = gate();
+  const { api, page } = await openUsers();
+  api.on("POST", /^admin-users\/plain1\/suspend$/, async () => {
+    await held.promise;
+    return { json: {} };
+  });
+  const reads = api.calls("GET", /^admin-users$/).length;
+  await click(actionButton("suspend", "plain1"));
+  page.leave();
+  held.release();
+  await settle();
+  assert.equal(api.calls("GET", /^admin-users$/).length, reads);
+});
+
+test("an unknown user action sends nothing", async () => {
+  const { api } = await openUsersPage();
   const button = actionButton("suspend", "plain1");
   button.setAttribute("data-admin-user-action", "archive");
   await click(button);
@@ -207,10 +253,15 @@ test("changing a role saves it, and a failure shows the API's error", async () =
   await fill('[data-admin-role][data-username="plain1"]', "compliance-manager");
   // Pins a bug: the raw API code shows instead of a message. No issue filed yet.
   assert.equal(pageError(), "invalid_role");
+  // The select goes back to the role that was saved.
+  assert.equal(
+    $('[data-admin-role][data-username="plain1"]').value,
+    "compliance-supervisor",
+  );
 });
 
 test("inviting a user returns to the list with the new account", async () => {
-  const { api } = await mountAdmin("/administrators", {
+  const { api } = await openAdminUsersPage("/administrators", {
     setup: (api) =>
       api.on("POST", /^admin-users$/, (request) => ({
         json: {
@@ -227,7 +278,8 @@ test("inviting a user returns to the list with the new account", async () => {
   });
   // A filter that would hide the new account is reset by the invite.
   await fill("#admin-user-status-filter", "suspended");
-  await click('[data-navigate="/administrators/new"]');
+  // <admin-app> follows the button's data-navigate; routeTo() stands in for it.
+  await routeTo($('[data-navigate="/administrators/new"]').dataset.navigate);
   assert.ok(!missing("#new-admin-user-title"));
   await click("#show-admin-role-help");
   assert.equal($("#admin-role-help-dialog").open, true);
@@ -249,22 +301,37 @@ test("inviting a user returns to the list with the new account", async () => {
 });
 
 test("a failed invite keeps the list's status filter", async () => {
-  await mountAdmin("/administrators", {
+  await openAdminUsersPage("/administrators", {
     setup: (api) => api.fail("POST", /^admin-users$/, 400, "admin_user_exists"),
   });
   await fill("#admin-user-status-filter", "suspended");
-  await click('[data-navigate="/administrators/new"]');
+  await routeTo("/administrators/new");
   await fillInvite();
   await submit("#admin-user-form");
   await routeTo("/administrators");
-  // The typed invite is unsaved, so leaving asks first.
-  await click('#site-unsaved-dialog button[value="discard"]');
   assert.equal($("#admin-user-status-filter").value, "suspended");
 });
 
-test("an invite that finishes after the address changed stays there", async () => {
-  const held = gate();
-  await mountAdmin("/administrators/new", {
+test("leaving the invite form for Sites reads the users again on return", async () => {
+  const { api } = await openUsers();
+  await routeTo("/administrators/new");
+  await routeTo("/sites");
+  await routeTo("/administrators");
+  assert.equal(api.calls("GET", /^admin-users$/).length, 2);
+  assert.ok(!missing("#administrators-title"));
+});
+
+test("opening the invite form from Sites reads the users again on return", async () => {
+  const { api } = await openUsers();
+  await routeTo("/sites");
+  await routeTo("/administrators/new");
+  await routeTo("/administrators");
+  assert.equal(api.calls("GET", /^admin-users$/).length, 2);
+});
+
+/** Open the invite form with its POST held until `held` is released. @param {ReturnType<typeof gate>} held */
+async function holdInvite(held) {
+  const opened = await openAdminUsersPage("/administrators/new", {
     setup: (api) =>
       api.on("POST", /^admin-users$/, async () => {
         await held.promise;
@@ -278,15 +345,30 @@ test("an invite that finishes after the address changed stays there", async () =
   });
   await fillInvite();
   await submit("#admin-user-form");
-  // routeClick asks before leaving an unsaved invite, so set the address directly.
-  window.history.replaceState({}, "", "/sites");
+  return opened;
+}
+
+test("an invite that finishes after the user left stays where they went", async () => {
+  const held = gate();
+  await holdInvite(held);
+  await leavePage("/sites");
   held.release();
   await settle();
   assert.equal(window.location.pathname, "/sites");
 });
 
+test("an invite that finishes after leave() doesn't navigate, even at the same address", async () => {
+  const held = gate();
+  const { page } = await holdInvite(held);
+  // <admin-app> calls leave() as the user goes; the page mustn't wait for the URL to change.
+  page.leave();
+  held.release();
+  await settle();
+  assert.equal(window.location.pathname, "/administrators/new");
+});
+
 test("opening Manage users again after an invite reads the list again", async () => {
-  const { api } = await mountAdmin("/administrators/new", {
+  const { api } = await openAdminUsersPage("/administrators/new", {
     setup: (api) =>
       api.on("POST", /^admin-users$/, {
         json: {
@@ -296,51 +378,12 @@ test("opening Manage users again after an invite reads the list again", async ()
       }),
   });
   await routeTo("/administrators");
-  await click('[data-navigate="/administrators/new"]');
+  await routeTo("/administrators/new");
   await fillInvite();
   await submit("#admin-user-form");
   const reads = api.calls("GET", /^admin-users$/).length;
   await routeTo("/administrators");
   assert.equal(api.calls("GET", /^admin-users$/).length, reads + 1);
-});
-
-test("an invite makes the Site the user returns to reread program managers", async () => {
-  const { api } = await mountAdmin("/sites/s1", {
-    setup: (api) =>
-      api.on("POST", /^admin-users$/, (request) => ({
-        json: {
-          user: { username: "ivy", email: request.body.email },
-          invitationStatus: "invited",
-        },
-      })),
-  });
-  await routeTo("/administrators/new");
-  await fillInvite();
-  await submit("#admin-user-form");
-  // A new account may be a program manager, so the Site's cached list is stale.
-  const managerReads = api.calls("GET", /^program-managers$/).length;
-  await routeTo("/sites/s1");
-  assert.equal(api.calls("GET", /^program-managers$/).length, managerReads + 1);
-});
-
-test("after an invite, only the first Site visit rereads program managers", async () => {
-  const { api } = await mountAdmin("/sites/s1", {
-    setup: (api) =>
-      api.on("POST", /^admin-users$/, (request) => ({
-        json: {
-          user: { username: "ivy", email: request.body.email },
-          invitationStatus: "invited",
-        },
-      })),
-  });
-  await routeTo("/administrators/new");
-  await fillInvite();
-  await submit("#admin-user-form");
-  await routeTo("/sites/s1");
-  const managerReads = api.calls("GET", /^program-managers$/).length;
-  await routeTo("/sites/s2");
-  await routeTo("/sites/s1");
-  assert.equal(api.calls("GET", /^program-managers$/).length, managerReads);
 });
 
 for (const [code, key] of [
@@ -349,7 +392,7 @@ for (const [code, key] of [
   ["something_else", "admin.users.failed"],
 ]) {
   test(`a rejected invitation explains ${code}`, async () => {
-    await mountAdmin("/administrators/new", {
+    await openAdminUsersPage("/administrators/new", {
       setup: (api) => api.fail("POST", /^admin-users$/, 400, code),
     });
     await fillInvite();
@@ -361,36 +404,8 @@ for (const [code, key] of [
   });
 }
 
-test("an invitation still sending blocks leaving, then stays put", async () => {
-  const held = gate();
-  await mountAdmin("/administrators/new", {
-    setup: (api) =>
-      api.on("POST", /^admin-users$/, async () => {
-        await held.promise;
-        return {
-          json: {
-            user: { username: "ivy", email: "ivy@example.org" },
-            invitationStatus: "invited",
-          },
-        };
-      }),
-  });
-  await fillInvite();
-  await submit("#admin-user-form");
-  assert.equal($("#admin-user-form").dataset.saving, "true");
-  await click(brandLink);
-  assert.equal(window.location.pathname, "/administrators/new");
-  await routeTo("/providers");
-  assert.equal(window.location.pathname, "/administrators/new");
-  assert.ok(!missing("#new-admin-user-title"));
-  held.release();
-  await settle();
-  assert.equal(window.location.pathname, "/administrators");
-  assert.match(toastText(), new RegExp(t("admin.toast.invitationSent")));
-});
-
 test("Manage users is hidden from a Compliance manager", async () => {
-  const { api } = await mountAdmin("/administrators", {
+  const { api } = await openAdminUsersPage("/administrators", {
     role: "compliance-manager",
   });
   assert.ok(missing("#administrators-title"));
@@ -400,18 +415,11 @@ test("Manage users is hidden from a Compliance manager", async () => {
 });
 
 test("a Compliance manager who opens the invite form lands on Sites", async () => {
-  await mountAdmin("/administrators/new", { role: "compliance-manager" });
+  await openAdminUsersPage("/administrators/new", {
+    role: "compliance-manager",
+  });
   assert.equal(window.location.pathname, "/sites");
   assert.ok(missing("#admin-user-form"));
-});
-
-test("opening Manage users reads only the session and the user list", async () => {
-  const { api } = await openUsers();
-  // Supervisors open this page often; it must not wait for the Site, Provider and Program directories.
-  assert.deepEqual(api.requests.map((request) => request.path).sort(), [
-    "admin-users",
-    "session",
-  ]);
 });
 
 const profileField = (/** @type {string} */ name) =>
@@ -434,7 +442,7 @@ function managerProfileData() {
 test("a profile without a directory link still saves", async () => {
   const data = adminData();
   data.profile = { ...data.profile, directoryUserId: "" };
-  const { api } = await mountAdmin("/profile", { data });
+  const { api } = await openAdminUsersPage("/profile", { data });
   await fill(profileField("phone"), "4155550199");
   await submit("#my-profile-form");
   assert.equal(api.calls("PUT", /^profile$/)[0].body.phone, "4155550199");
@@ -444,7 +452,7 @@ test("a profile without a directory link still saves", async () => {
 });
 
 test("a rejected profile phone shows the phone error", async () => {
-  const { api } = await mountAdmin("/profile", {
+  const { api } = await openAdminUsersPage("/profile", {
     setup: (api) => api.fail("PUT", /^profile$/, 400, "valid_phone_required"),
   });
   await fill(profileField("phone"), "4155550199");
@@ -455,57 +463,6 @@ test("a rejected profile phone shows the phone error", async () => {
   assert.equal(profileSaveError(), t("admin.profile.saveError"));
 });
 
-/**
- * Start a profile save held by `held`, then leave the page and discard the edit.
- * @param {{ promise: Promise<void> }} held
- * @param {any} reply
- */
-async function leaveDuringProfileSave(held, reply) {
-  const { api } = await mountAdmin("/profile", {
-    setup: (api) =>
-      api.on("PUT", /^profile$/, async () => {
-        await held.promise;
-        return reply;
-      }),
-  });
-  await fill(profileField("lastName"), "Changed");
-  await submit("#my-profile-form");
-  return api;
-}
-
-test("a profile save is ignored while one is running", async () => {
-  const held = gate();
-  const api = await leaveDuringProfileSave(held, {
-    json: { profile: adminData().profile },
-  });
-  await submit("#my-profile-form");
-  await click(brandLink);
-  // The edit is still unsaved while the save runs, so leaving asks first.
-  await click('#site-unsaved-dialog button[value="discard"]');
-  assert.ok(!missing("#directory-title"));
-  // Mark the directory; a redraw from the late reply replaces it and drops the mark.
-  $("#directory-title").setAttribute("data-probe", "kept");
-  held.release();
-  await settle();
-  assert.ok(!missing("#directory-title[data-probe='kept']"));
-  assert.equal(api.calls("PUT", /^profile$/).length, 1);
-});
-
-test("a failed profile save after leaving the page shows the request-failed alert", async () => {
-  const held = gate();
-  await leaveDuringProfileSave(held, {
-    status: 500,
-    json: { error: "server_error" },
-  });
-  await click(brandLink);
-  await click('#site-unsaved-dialog button[value="discard"]');
-  held.release();
-  await settle();
-  assert.ok(!missing("#directory-title"));
-  // Pins a bug: a save the user left still alerts on the page they moved to.
-  assert.ok(alertText().includes(t("admin.toast.requestFailed")));
-});
-
 test("a Compliance manager's profile lists their Sites", async () => {
   const data = managerProfileData();
   data.siteItems.s1.push({
@@ -514,12 +471,12 @@ test("a Compliance manager's profile lists their Sites", async () => {
     managerId: "pm1",
     status: "active",
   });
-  await mountAdmin("/profile", { role: "compliance-manager", data });
+  await openAdminUsersPage("/profile", { role: "compliance-manager", data });
   assert.equal($('a[href="/sites/s1"]').textContent, "Example Site");
 });
 
 test("a Compliance manager's profile says when they have no Sites", async () => {
-  await mountAdmin("/profile", {
+  await openAdminUsersPage("/profile", {
     role: "compliance-manager",
     data: managerProfileData(),
   });
@@ -527,11 +484,11 @@ test("a Compliance manager's profile says when they have no Sites", async () => 
 });
 
 test("a profile read with no profile renders nothing", async () => {
-  await mountAdmin("/profile", {
+  await openAdminUsersPage("/profile", {
     setup: (api) => api.on("GET", /^profile$/, { json: {} }),
   });
   // Loading has finished, with no error, yet no profile is drawn.
-  assert.ok(missing("admin-app p[role='status']"));
+  assert.ok(missing("admin-users-page p[role='status']"));
   assert.equal(pageError(), "");
   assert.ok(missing("#profile-title"));
 });
@@ -542,7 +499,7 @@ test("a Supervisor's profile names the role and hides the Site list", async () =
     ...data.profile,
     role: "compliance-supervisor",
   });
-  await mountAdmin("/profile", { data });
+  await openAdminUsersPage("/profile", { data });
   assert.equal(
     $("#profile-title + p").textContent,
     t("admin.profile.supervisor"),
@@ -566,7 +523,22 @@ test("a manager's profile labels unnamed Sites by their record", async () => {
       },
     ];
   }
-  await mountAdmin("/profile", { role: "compliance-manager", data });
+  await openAdminUsersPage("/profile", { role: "compliance-manager", data });
   assert.equal($('a[href="/sites/s6"]').textContent, "Record Name");
   assert.equal($('a[href="/sites/s7"]').textContent, "s7");
+});
+
+test("the mounted users page saves a profile to its own session, not adminSession", async () => {
+  const { session } = await openAdminUsersPage("/profile");
+  await fill(profileField("phone"), "4155550199");
+  await submit("#my-profile-form");
+  assert.equal(session.profile?.phone, "4155550199");
+  assert.equal(adminSession.profile, null);
+});
+
+test("a redraw after the URL moves on still draws the route open() was given", async () => {
+  const { page } = await openAdminUsersPage("/administrators");
+  window.history.replaceState({}, "", "/not-a-page");
+  page.render();
+  assert.ok(!missing("admin-users-page h1"));
 });

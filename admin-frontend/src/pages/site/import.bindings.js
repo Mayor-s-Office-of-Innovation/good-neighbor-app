@@ -1,58 +1,57 @@
-// AdminApp.bind() adds these again after each render() replaces the HTML.
+// Site import actions, keyed by event type and control selector.
+// <admin-site-import-page> listens once per event type, so a redraw can't drop or double a handler.
 import { adminErrorMessage } from "../../admin-error-messages.js";
 import { asForm } from "../../dom.js";
 import { t } from "../../../../frontend/src/i18n/i18n.js";
 
 /**
- * @typedef {import("../../admin-types.js").AdminAppElement} AdminAppElement
+ * @typedef {import("./site-import-page.js").SiteImportPageElement} SiteImportPageElement
+ * @typedef {(page: SiteImportPageElement, control: HTMLElement, event: Event) => void} SiteImportAction
  */
 
-/** @param {AdminAppElement} app */
-export function bindSiteImport(app) {
-  app.querySelector("#site-import-form")?.addEventListener("submit", (e) => {
-    e.preventDefault();
-    app.previewSiteImport(asForm(e.currentTarget)).catch((err) => {
-      app.state.importBusy = false;
-      app.state.error =
-        err.message === "invalid_file_size"
-          ? t("admin.import.fileTooLarge")
-          : adminErrorMessage(err, t);
-      app.render();
-    });
-  });
-  app
-    .querySelector('input[name="site-import-file"]')
-    ?.addEventListener("change", (event) => {
-      const input = /** @type {HTMLInputElement} */ (event.currentTarget);
-      const fileName = app.querySelector("#site-import-file-name");
-      if (!fileName) return;
-      fileName.textContent = input.files?.[0]?.name || "";
-      fileName.toggleAttribute("hidden", !input.files?.length);
-    });
-  app.querySelector("#apply-site-import")?.addEventListener("click", () => {
-    app.applySiteImport().catch((err) => {
-      app.state.importBusy = false;
-      app.state.importNotice = null;
-      app.state.error = adminErrorMessage(err, t);
-      app.render();
-    });
-  });
-  app.querySelector("#dismiss-import-notice")?.addEventListener("click", () => {
-    app.state.importNotice = null;
-    app.render();
-  });
-  app.querySelector("#cancel-site-import")?.addEventListener("click", () => {
-    app.cancelSiteImport();
-  });
-  app.querySelector("#show-import-help")?.addEventListener("click", () => {
-    app.querySelector("#site-import-help-dialog")?.showModal();
-  });
-  app
-    .querySelector("#download-import-conflicts")
-    ?.addEventListener("click", () => {
-      app.downloadImportConflicts().catch((err) => {
-        app.state.error = err.message;
-        app.render();
+/** @type {Record<string, Record<string, SiteImportAction>>} */
+export const siteImportEvents = {
+  click: {
+    "#apply-site-import": (page) => {
+      page.applySiteImport().catch((err) => {
+        page.state.importBusy = false;
+        page.state.importNotice = null;
+        page.reportError(new Error(adminErrorMessage(err, t)));
       });
-    });
-}
+    },
+    "#dismiss-import-notice": (page) => {
+      page.state.importNotice = null;
+      page.render();
+    },
+    "#cancel-site-import": (page) => page.cancelSiteImport(),
+    "#show-import-help": (page) =>
+      page.querySelector("#site-import-help-dialog")?.showModal(),
+    "#download-import-conflicts": (page) => {
+      page.downloadImportConflicts().catch((err) => page.reportError(err));
+    },
+  },
+  submit: {
+    "#site-import-form": (page, form, event) => {
+      event.preventDefault();
+      page.previewSiteImport(asForm(form)).catch((err) => {
+        page.state.importBusy = false;
+        page.reportError(
+          new Error(
+            err.message === "invalid_file_size"
+              ? t("admin.import.fileTooLarge")
+              : adminErrorMessage(err, t),
+          ),
+        );
+      });
+    },
+  },
+  change: {
+    'input[name="site-import-file"]': (page, input) => {
+      const files = /** @type {HTMLInputElement} */ (input).files;
+      const fileName = page.querySelector("#site-import-file-name");
+      if (!fileName) return;
+      fileName.textContent = files?.[0]?.name || "";
+      fileName.toggleAttribute("hidden", !files?.length);
+    },
+  },
+};

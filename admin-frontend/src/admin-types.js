@@ -9,25 +9,17 @@
  * @typedef {{ code: string, issuedTo: string, expiresAt: string }} AdminIssuedCode
  * @typedef {object} AdminOwnState
  * @property {ReturnType<typeof import("./pages/directory/site-311-batch.js").create311Batch>} [site311Batch]
- * @property {any[]} adminUsers
- * @property {string} adminUserStatusFilter
- * @property {string} adminUserMessage
- * @property {string} adminUserDirectoryMode
  * @property {any[]} [people]
  * @property {any[]} siteManagers
  * @property {any | null} siteManager
- * @property {boolean} managerSearchFailed
+ * @property {boolean} [managerSearchFailed]
  * @property {AdminProvider | null} provider
- * @property {any[]} [providerManagerDirectory]
- * @property {any[]} providerManagers
  * @property {Record<string, string>} [providerManagerGrantErrors]
  * @property {any[]} providerManagerGrants
- * @property {any[]} providerManagerEnrollments
  * @property {AdminSite | null} site
  * @property {any[]} assignedUsers
  * @property {any[]} assignedComplianceManagers
  * @property {any[]} availableSiteUsers
- * @property {any[]} newSiteUsers
  * @property {boolean} letterEmailUncertain
  * @property {string | null} [expandedLettersSiteId]
  * @property {string | null} [expandedTermsSiteId]
@@ -45,14 +37,7 @@
  * @property {AdminConfig} authConfig
  * @property {boolean} authBusy
  * @property {ReturnType<typeof import("./compliance-profile-draft.js").captureComplianceDraft> | null} complianceProfileDraft
- * @property {string} profileMessage
  * @property {boolean} [siteCanEdit]
- * @property {any | null} importPreview
- * @property {any | null} importResult
- * @property {boolean} importBusy
- * @property {string} importApplyKey
- * @property {any[]} importHistory
- * @property {{ title: string, message: string } | null} importNotice
  * @property {boolean} perimeterSaving
  * @property {string} perimeterMessage
  * @property {string} perimeterError

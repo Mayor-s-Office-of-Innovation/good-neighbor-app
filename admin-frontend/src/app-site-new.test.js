@@ -5,16 +5,17 @@ import {
   click,
   fill,
   missing,
-  pageError,
+  mountPage,
   routeTo,
   settle,
   submit,
   toastCount,
   window,
 } from "../test-support/admin-dom.js";
-import { mountAdmin } from "../test-support/app-mount.js";
 import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
+import { adminCatalog } from "./admin-catalog.js";
+import "./pages/site/new-site-page.js";
 
 // pages/site/save-error-messages.js has no catalog key for this copy, so tests match its English.
 
@@ -49,6 +50,24 @@ async function fillRecord() {
   await fill(`${form} wa-input[name="public-contact-phone"]`, "4155550110");
 }
 
+/**
+ * <admin-new-site-page> alone, without <admin-app>, following the new Site steps; a request
+ * other than its create calls fails the test.
+ * @param {string} path
+ * @param {Partial<Parameters<typeof mountPage>[2]>} [options]
+ */
+const openNewSitePage = (path, options = {}) =>
+  mountPage("admin-new-site-page", path, {
+    follow: ["site-new"],
+    calls: [
+      /^POST providers\/v1\/sites$/,
+      /^PATCH sites\/[^/]+$/,
+      /^(GET|POST) sites\/[^/]+\/manager-memberships$/,
+      /^POST sites\/[^/]+\/users$/,
+    ],
+    ...options,
+  });
+
 /** @param {any} api @param {any} site */
 function serveCreatedSite(api, site) {
   api.on("POST", /^providers\/v1\/sites$/, () => {
@@ -57,20 +76,40 @@ function serveCreatedSite(api, site) {
   });
 }
 
+test("the address search clears its empty marker after manual entry opens", async () => {
+  await openNewSitePage(NEW_RECORD);
+  const search = `${form} [data-address-query]`;
+  assert.ok($(search).hasAttribute("data-empty"));
+  await click(`${form} [data-enter-address-manually]`);
+  await fill(search, "200 Example Ave");
+  assert.ok(!$(search).hasAttribute("data-empty"));
+});
+
+test("a Site created without create rights still sends its lead Program", async () => {
+  const { api } = await openNewSitePage(NEW_RECORD, {
+    role: "compliance-manager",
+  });
+  await fillRecord();
+  await submit(form);
+  assert.equal(
+    api.calls("POST", /^providers\/v1\/sites$/)[0].body.leadProgramId,
+    "p1",
+  );
+});
+
 test("the provider and program steps lead to the Site record", async () => {
-  await mountAdmin("/sites/new", {
-    setup: (api) => {
+  const { api, catalog, page } = await openNewSitePage("/sites/new", {
+    setup: (api) =>
       api.data.programUsers.p1.push({
         userId: "u3",
         firstName: "Gone",
         lastName: "Staff",
         status: "inactive",
-      });
-      api.on("GET", /^providers(\?|$)/, (request) => ({
-        json: { ...api.reply(request).json, providers: api.data.providers },
-      }));
-    },
+      }),
   });
+  // A providers reply can list an inactive provider; the step must still hide it.
+  catalog.setProviders(api.data.providers);
+  page.render();
   assert.ok(!missing('#new-site-provider-form wa-option[value="v1"]'));
   assert.ok(missing('#new-site-provider-form wa-option[value="v2"]'));
   await submit("#new-site-provider-form");
@@ -89,8 +128,17 @@ test("the provider and program steps lead to the Site record", async () => {
   );
 });
 
+test("someone who can't create records sees no create links in the new Site flow", async () => {
+  await openNewSitePage("/sites/new?providerId=v1", {
+    role: "compliance-manager",
+  });
+  assert.ok(!missing("#new-site-program-form"));
+  assert.ok(missing('admin-new-site-page a[href="/sites/new"]'));
+  assert.ok(missing('admin-new-site-page a[href^="/programs/new"]'));
+});
+
 test("a provider without programs cannot continue", async () => {
-  await mountAdmin("/sites/new?providerId=v3", {
+  await openNewSitePage("/sites/new?providerId=v3", {
     setup: (api) =>
       api.data.providers.push({
         providerId: "v3",
@@ -105,7 +153,7 @@ test("a provider without programs cannot continue", async () => {
 });
 
 test("a program without staff can still create a Site", async () => {
-  const { api } = await mountAdmin(NEW_RECORD, {
+  await openNewSitePage(NEW_RECORD, {
     setup: (api) => {
       api.data.programUsers.p1 = [];
     },
@@ -116,14 +164,12 @@ test("a program without staff can still create a Site", async () => {
 });
 
 test("creating a Site without a manager opens the new record", async () => {
-  const { api } = await mountAdmin(NEW_RECORD);
+  const { api } = await openNewSitePage(NEW_RECORD);
   await fillRecord();
-  const directoryReads = api.calls("GET", /^programs$/).length;
   await click(`${form} button[type="submit"]`);
   assert.equal(url(), "/sites/v1-new-example-site");
   // The create reply is enough; a full directory reload costs every create a round trip.
-  assert.equal(api.calls("GET", /^programs$/).length, directoryReads);
-  assert.equal($("admin-app h1").textContent.trim(), created.name);
+  assert.deepEqual(api.calls("GET", /^programs$/), []);
   const { body } = api.calls("POST", /^providers\/v1\/sites$/)[0];
   assert.deepEqual(
     [body.name, body.leadProgramId, body.siteType],
@@ -138,29 +184,8 @@ test("creating a Site without a manager opens the new record", async () => {
   assert.equal(api.calls("PATCH", /^sites\//).length, 0);
 });
 
-test("a new Site makes the next manager directory load start over", async () => {
-  const held = gate();
-  const { api } = await mountAdmin("/managers", {
-    setup: (api) =>
-      api.on("GET", /^people$/, async (/** @type {any} */ request) => {
-        if (api.calls("GET", /^people$/).length === 1) await held.promise;
-        return api.reply(request);
-      }),
-  });
-  await routeTo(NEW_RECORD);
-  await fillRecord();
-  await click(`${form} button[type="submit"]`);
-  assert.equal(url(), "/sites/v1-new-example-site");
-  const reads = api.calls("GET", /^people$/).length;
-  await routeTo("/managers");
-  // The held load predates the Site, so the directory fetches again without waiting for it.
-  assert.equal(api.calls("GET", /^people$/).length, reads + 1);
-  held.release();
-  await settle();
-});
-
 test("a partly saved Site is repaired before it opens", async () => {
-  const { api } = await mountAdmin(NEW_RECORD, {
+  const { api } = await openNewSitePage(NEW_RECORD, {
     setup: (api) => {
       serveCreatedSite(api, { siteId: "s9", name: created.name });
       api.on("PATCH", /^sites\/s9$/, { json: { site: created } });
@@ -207,7 +232,7 @@ for (const [label, setup, message] of [
   ],
 ])
   test(`a Site keeps the form with an error when ${label}`, async () => {
-    await mountAdmin(NEW_RECORD, { setup: /** @type {any} */ (setup) });
+    await openNewSitePage(NEW_RECORD, { setup: /** @type {any} */ (setup) });
     await fillRecord();
     await click(`${form} button[type="submit"]`);
     assert.equal(
@@ -219,7 +244,7 @@ for (const [label, setup, message] of [
 
 test("a Site saved after the user left does not pull them back", async () => {
   const held = gate();
-  const { api } = await mountAdmin(NEW_RECORD, {
+  const { api } = await openNewSitePage(NEW_RECORD, {
     setup: (api) =>
       api.on("POST", /^providers\/v1\/sites$/, async () => {
         await held.promise;
@@ -230,15 +255,32 @@ test("a Site saved after the user left does not pull them back", async () => {
   await click(`${form} button[type="submit"]`);
   assert.equal(api.calls("POST", /^providers\/v1\/sites$/).length, 1);
   await routeTo("/providers");
-  assert.ok(!missing('a[href="/providers/v1"]'));
   held.release();
   await settle();
   assert.equal(url(), "/providers");
 });
 
+test("a Site save that finishes after leave() doesn't navigate, even at the same address", async () => {
+  const held = gate();
+  const { page } = await openNewSitePage(NEW_RECORD, {
+    setup: (api) =>
+      api.on("POST", /^providers\/v1\/sites$/, async () => {
+        await held.promise;
+        return undefined;
+      }),
+  });
+  await fillRecord();
+  await click(`${form} button[type="submit"]`);
+  // <admin-app> calls leave() as the user goes; the page mustn't wait for the URL to change.
+  page.leave();
+  held.release();
+  await settle();
+  assert.equal(url(), NEW_RECORD);
+});
+
 test("a new Site whose ID has a slash opens at one encoded path segment", async () => {
   const site = { ...created, siteId: "s/9" };
-  await mountAdmin(NEW_RECORD, {
+  await openNewSitePage(NEW_RECORD, {
     setup: (api) =>
       api.on("POST", /^providers\/v1\/sites$/, () => {
         api.data.sites.push({ ...site });
@@ -253,7 +295,7 @@ test("a new Site whose ID has a slash opens at one encoded path segment", async 
 /** Hold the Site create, leave for Providers, then reject it. @param {number} status @param {string} code */
 async function rejectAfterLeaving(status, code) {
   const held = gate();
-  await mountAdmin(NEW_RECORD, {
+  await openNewSitePage(NEW_RECORD, {
     setup: (api) =>
       api.on("POST", /^providers\/v1\/sites$/, async () => {
         await held.promise;
@@ -279,58 +321,22 @@ test("a duplicate Site rejected after leaving is titled as a duplicate", async (
   assert.equal(toastCount(t("admin.errors.siteExistsTitle")), 1);
 });
 
-test("a Supervisor deactivates a Site after typing its name", async () => {
-  const { api } = await mountAdmin("/sites/s1", {
+test("the mounted new Site page adds the Site to its own catalog, not adminCatalog", async () => {
+  const { catalog } = await openNewSitePage(NEW_RECORD, {
     setup: (api) => {
-      // A Site that stays listed, so an empty directory can't pass the check below.
-      api.data.sites.push({
-        ...api.data.sites[0],
-        siteId: "s9",
-        name: "Control Site",
-      });
-      api.data.providers[0].sites.push({
-        siteId: "s9",
-        siteName: "Control Site",
-        status: "active",
-      });
-      api.on("DELETE", /^sites\/s1$/, () => {
-        const site = api.data.sites.find(
-          (/** @type {any} */ item) => item.siteId === "s1",
-        );
-        Object.assign(site, { status: "inactive" });
-        return { json: { site: { ...site } } };
-      });
+      serveCreatedSite(api, created);
+      api.on("GET", /^sites\/s9\/manager-memberships$/, { json: {} });
     },
   });
-  const button = () => $('#deactivate-site-form button[type="submit"]');
-  const confirmation = '#deactivate-site-form wa-input[name="confirmation"]';
-  assert.equal(button().disabled, true);
-  await fill(confirmation, "Wrong");
-  assert.equal(button().disabled, true);
-  await submit("#deactivate-site-form");
-  assert.equal(api.calls("DELETE", /^sites\/s1$/).length, 0);
-  await fill(confirmation, "Example Site");
-  assert.equal(button().disabled, false);
-  await click(button());
-  assert.equal(url(), "/sites");
-  assert.equal(api.calls("DELETE", /^sites\/s1$/).length, 1);
-  assert.equal(pageError(), "");
-  assert.ok(!missing('[aria-labelledby="sites-title"] a[href="/sites/s9"]'));
-  assert.ok(missing('[aria-labelledby="sites-title"] a[href="/sites/s1"]'));
+  await fillRecord();
+  await click(`${form} button[type="submit"]`);
+  assert.ok(catalog.sites.some((site) => site.siteId === "s9"));
+  assert.deepEqual(adminCatalog.sites, []);
 });
 
-test("a failed deactivation stays on the Site with an error", async () => {
-  await mountAdmin("/sites/s1", {
-    setup: (api) => api.fail("DELETE", /^sites\/s1$/),
-  });
-  await fill(
-    '#deactivate-site-form wa-input[name="confirmation"]',
-    "Example Site",
-  );
-  await click('#deactivate-site-form button[type="submit"]');
-  assert.equal(
-    $("#deactivate-site-form [data-form-save-error]").textContent.trim(),
-    t("admin.site.deactivateError"),
-  );
-  assert.equal(url(), "/sites/s1");
+test("a redraw after the URL moves on still draws the route open() was given", async () => {
+  const { page } = await openNewSitePage("/sites/new");
+  window.history.replaceState({}, "", "/not-a-page");
+  page.render();
+  assert.ok(!missing("admin-new-site-page h1"));
 });

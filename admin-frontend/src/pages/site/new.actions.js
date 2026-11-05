@@ -1,5 +1,4 @@
-// main.js adds these to AdminApp, so they can use this.state and render().
-import { adminCatalog } from "../../admin-catalog.js";
+// New Site flow actions, mixed into <admin-new-site-page> so tests can mount it alone.
 import { actionFeedback } from "../../action-feedback.js";
 import { addressPartsFromForm, formatAddressParts } from "./site-address.js";
 import { adminApi } from "../../services/admin-api.js";
@@ -9,18 +8,9 @@ import { siteManagerRoster } from "../../site-managers.js";
 import { siteSaveErrorMessage } from "./save-error-messages.js";
 
 export const newSiteActions = {
-  async openNewSiteFlow() {
-    this.state.provider = null;
-    this.state.site = null;
-    this.state.siteManager = null;
-    this.state.newSiteUsers = [];
-
-    this.render();
-    queueMicrotask(() => this.querySelector("h1")?.focus());
-  },
   async createSiteFromFlow(form) {
     const feedback = actionFeedback("admin.toast.siteCreated");
-    const origin = location.pathname + location.search;
+    const visit = this.visit;
     try {
       const data = new FormData(form);
       const providerId = formValue(data, "provider-id");
@@ -100,15 +90,13 @@ export const newSiteActions = {
           managerMemberships: siteManagerRoster([], memberships),
         };
       }
-      adminCatalog.addSite(savedSite);
-      adminCatalog.invalidate("managers");
-      this.managerDirectoryLoader = null;
+      this.catalog.addSite(savedSite);
+      this.catalog.invalidate("managers");
+      this.dropManagerLoad();
       syncDirtyForm(form, true);
       delete form.dataset.saving;
       feedback.success();
-      if (location.pathname + location.search !== origin) return;
-      this.state.site = null;
-      this.state.error = "";
+      if (visit !== this.visit) return;
       navigate(`/sites/${encodeURIComponent(siteId)}`);
     } catch (error) {
       feedback.failure(error, {

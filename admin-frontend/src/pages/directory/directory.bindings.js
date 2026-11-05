@@ -1,94 +1,61 @@
-// AdminApp.bind() adds these again after each render() replaces the HTML.
+// Directory actions, keyed by event type and control selector.
+// <admin-directory-page> listens once per event type, so a redraw can't drop or double a handler.
 import { adminApi } from "../../services/admin-api.js";
 import { asForm } from "../../dom.js";
-import { bind311Batch } from "./site-311-batch.js";
-import { debounce } from "../../debounce.js";
-import { navigate } from "../../router.js";
+import { change311Batch, click311Batch } from "./site-311-batch.js";
 
 /**
- * @typedef {import("../../admin-types.js").AdminAppElement} AdminAppElement
+ * @typedef {import("./directory-page.js").DirectoryPageElement} DirectoryPageElement
+ * @typedef {(page: DirectoryPageElement, control: HTMLElement, event: Event) => void} DirectoryAction
  */
 
-/** @param {AdminAppElement} app */
-export function bindDirectorySearch(app) {
-  const searchInput = app.querySelector("#directory-search-input");
-  if (searchInput) {
-    let composing = false;
-    const search = async () => {
-      app.directorySearchDebounce?.cancel();
-      if (composing || !searchInput.isConnected) return;
-      const value = String(searchInput.value || "");
-      const params = new URLSearchParams(location.search);
-      if ((params.get("q") || "") === value.trim()) return;
-      if (value.trim()) params.set("q", value.trim());
-      else params.delete("q");
-      const query = params.toString();
-      history.replaceState(
-        {},
-        "",
-        `${location.pathname}${query ? `?${query}` : ""}`,
-      );
-      // Filtering uses the already-loaded directory. Avoid a route change,
-      // which would move focus to the heading or reload manager data.
-      app.state.managerSearchFailed = false;
-      app.renderDirectoryResults();
-      if (value.trim()) void app.loadSearchManagers();
-    };
-    app.directorySearchDebounce = debounce(search, 300);
-    searchInput.addEventListener("input", () => {
-      if (!composing) app.directorySearchDebounce.schedule();
-    });
-    searchInput.addEventListener("compositionstart", () => {
-      composing = true;
-      app.directorySearchDebounce.cancel();
-    });
-    searchInput.addEventListener("compositionend", () => {
-      composing = false;
-      app.directorySearchDebounce.schedule();
-    });
-    app
-      .querySelector("#directory-search")
-      ?.addEventListener("submit", (event) => {
-        event.preventDefault();
-        search();
-      });
-    app
-      .querySelector("#clear-directory-search")
-      ?.addEventListener("click", () => {
-        searchInput.value = "";
-        searchInput.focus();
-        search();
-      });
-  }
-}
+/** @param {DirectoryPageElement} page @param {HTMLElement} button */
+const click311 = (page, button) =>
+  void click311Batch(page, page.view(), adminApi, page.catalog, button);
 
-/** @param {AdminAppElement} app */
-export function bindDirectoryFilters(app) {
-  bind311Batch(app, app.state, adminApi);
-  app
-    .querySelector("#site-directory-filters")
-    ?.addEventListener("change", (event) => {
-      const params = new URLSearchParams(window.location.search);
-      const data = new FormData(asForm(event.currentTarget));
-      for (const key of ["manager", "department", "system"]) {
-        const value = String(data.get(key) || "");
-        if (value || key === "manager") params.set(key, value);
-        else params.delete(key);
-      }
-      const query = params.toString();
-      navigate(`/sites${query ? `?${query}` : ""}`);
-    });
-  app
-    .querySelector("#manager-directory-filters")
-    ?.addEventListener("change", (event) => {
-      const params = new URLSearchParams(window.location.search);
-      const data = new FormData(asForm(event.currentTarget));
-      for (const key of ["program", "site"]) {
-        const value = String(data.get(key) || "");
-        if (value) params.set(key, value);
-        else params.delete(key);
-      }
-      const query = params.toString();
-      navigate(`/managers${query ? `?${query}` : ""}`);
-    });
-}
+/** @type {Record<string, Record<string, DirectoryAction>>} */
+export const directoryEvents = {
+  click: {
+    "#clear-directory-search": (page) => {
+      const input = /** @type {any} */ (
+        page.querySelector("#directory-search-input")
+      );
+      input.value = "";
+      input.focus();
+      void page.searchDirectory();
+    },
+    "[data-save-311]": click311,
+    "[data-discard-311]": click311,
+    "[data-review-311]": click311,
+  },
+  submit: {
+    "#directory-search": (page, form, event) => {
+      event.preventDefault();
+      void page.searchDirectory();
+    },
+  },
+  input: {
+    "#directory-search-input": (page) => {
+      if (!page.composing) page.scheduleSearch();
+    },
+  },
+  compositionstart: {
+    "#directory-search-input": (page) => {
+      page.composing = true;
+      page.directorySearchDebounce?.cancel();
+    },
+  },
+  compositionend: {
+    "#directory-search-input": (page) => {
+      page.composing = false;
+      page.scheduleSearch();
+    },
+  },
+  change: {
+    "#site-directory-filters": (page, form) => page.filterSites(asForm(form)),
+    "#manager-directory-filters": (page, form) =>
+      page.filterManagers(asForm(form)),
+    "[data-site-311]": (page, checkbox) =>
+      change311Batch(page.view(), /** @type {any} */ (checkbox)),
+  },
+};
