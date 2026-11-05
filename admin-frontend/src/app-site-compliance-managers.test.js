@@ -16,7 +16,7 @@ import {
 } from "../../e2e/admin-tests/site-compliance-helpers.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 
-// main.js has no catalog key for this copy, so tests match its English.
+// pages/site/oversight.templates.js and main.js have no catalog key for this copy, so tests match their English.
 
 const list = "[data-compliance-manager-list]";
 const picker = "#choose-compliance-manager-dialog";

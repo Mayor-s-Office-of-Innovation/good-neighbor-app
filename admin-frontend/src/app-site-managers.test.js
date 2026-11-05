@@ -18,7 +18,7 @@ import { gate } from "../../e2e/admin-tests/admin-mock.js";
 import { managerData } from "../../e2e/admin-tests/site-access-helpers.js";
 import { t } from "../../frontend/src/i18n/i18n.js";
 
-// main.js has no catalog key for this copy, so tests match its English.
+// pages/site/save-error-messages.js and main.js have no catalog key for this copy, so tests match their English.
 
 const field = (/** @type {string} */ name) =>
   $(`#site-manager-record-form wa-input[name="${name}"]`);
