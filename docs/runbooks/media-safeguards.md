@@ -50,26 +50,28 @@ ceiling across devices at a Site.
 
 ## Alarms
 
-`MediaRejected` alarms after five worker validation failures in five minutes. Inspect the safe
-structured fields (`siteId`, `checkId`, `artifactId`, and reason); never fetch or copy private media
-into tickets or chat. A single rejection is normally bad camera/upload data. A concentrated burst
-from one Site or device may indicate abuse or a broken client release.
+The `media-rejected` alarm fires after five rejected uploads in five minutes, on any upload path:
+care work, complaints, perimeter checks, thumbnails, duplicate detection, and 311. It adds two
+counts so each rejected file counts once: `ImageRejected` (every image the shared downscale step
+refuses) and `MediaTooLarge` (perimeter-check uploads over the byte limit, which are rejected before
+downscale). A single rejection is normally bad camera/upload data. A concentrated burst from one Site
+or device may indicate abuse or a broken client release. Never fetch or copy private media into
+tickets or chat.
 
-`ImageRejected` alarms after five rejected images in five minutes. It counts every image the shared downscale step refuses,
-across all upload paths: care work, complaints, perimeter checks, thumbnails, duplicate detection,
-and 311. Each log entry carries `reason`, `stage` (`signature`: the leading bytes are not an
-accepted JPEG/PNG/WebP/HEIC, so sharp never parsed the file; `decode`: sharp rejected it),
-`declaredType`, `signature`, `brand` (the container brand for HEIC-family files), and the byte
-size. A run of `stage: "signature"` entries with `declaredType: "image/heic"` and a `brand` outside
-the accepted list (`heic`, `heix`, `heim`, `heis`, `hevc`, `hevx`, `hevm`, `hevs`, `mif1`, `msf1`)
-points to a real camera format we need to add in `backend/src/media/downscale.js`. Find entries
-with CloudWatch Logs Insights: `filter marker = "ImageRejected" | stats count() by stage, reason,
-declaredType, brand`.
+To find the source, check the two log markers:
 
-A burst of perimeter-check rejections trips both `MediaRejected` and `ImageRejected`, because that
-path logs both markers; use `MediaRejected` for the Site, check, and artifact IDs. `ImageRejected`
-alone points to care work, complaints, thumbnails, duplicate detection, or 311. It carries no Site or
-upload IDs, so narrow it down by the Lambda log group and the time window.
+- `MediaRejected` (perimeter-check worker only) carries the safe IDs: `siteId`, `checkId`,
+  `artifactId`, and `reason`. Use it when the burst is on perimeter checks.
+- `ImageRejected` (every Lambda that runs downscale) carries `reason`, `stage` (`signature`: the
+  leading bytes are not an accepted JPEG/PNG/WebP/HEIC, so sharp never parsed the file; `decode`:
+  sharp rejected it), `declaredType`, `signature`, `brand` (the container brand for HEIC-family
+  files), and the byte size. It has no Site or upload IDs, so narrow it down by the Lambda log group
+  and the time window. Find entries with CloudWatch Logs Insights:
+  `filter marker = "ImageRejected" | stats count() by stage, reason, declaredType, brand`.
+
+A run of `stage: "signature"` entries with `declaredType: "image/heic"` and a `brand` outside the
+accepted list (`heic`, `heix`, `heim`, `heis`, `hevc`, `hevx`, `hevm`, `hevs`, `mif1`, `msf1`)
+points to a real camera format we need to add in `backend/src/media/downscale.js`.
 
 `MediaQuotaExceeded` alarms after five rejected reservations in five minutes. Determine which
 check or device counter is near its conditional limit from the Site's

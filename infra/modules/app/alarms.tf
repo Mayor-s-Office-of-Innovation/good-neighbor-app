@@ -364,40 +364,69 @@ resource "aws_cloudwatch_log_metric_filter" "image_rejected" {
   }
 }
 
-# Same threshold as media_rejected. A burst of perimeter-check rejections trips
-# both alarms (that path logs both markers); everywhere else only this one.
-resource "aws_cloudwatch_metric_alarm" "image_rejected" {
-  alarm_name          = "${local.name_prefix}-image-rejected"
-  alarm_description   = "Images on any upload path repeatedly failed the file-signature or decode check. Follow docs/runbooks/media-safeguards.md."
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  datapoints_to_alarm = 1
-  metric_name         = "ImageRejected"
-  namespace           = local.security_namespace
-  period              = 300
-  statistic           = "Sum"
-  threshold           = 5
-  treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.alarms.arn]
-  ok_actions          = [aws_sns_topic.alarms.arn]
-  tags                = var.tags
+# Perimeter-check uploads over the byte limit are rejected before downscale, so
+# they log MediaRejected but never ImageRejected. Counted on their own so the
+# alarm below covers them without counting downscale rejections twice.
+resource "aws_cloudwatch_log_metric_filter" "media_too_large" {
+  for_each = {
+    worker   = aws_cloudwatch_log_group.worker.name
+    analysis = aws_cloudwatch_log_group.analysis.name
+  }
+  name           = "${local.name_prefix}-${each.key}-media-too-large"
+  log_group_name = each.value
+  pattern        = "{ $.marker = \"MediaRejected\" && $.reason = \"input_too_large\" }"
+
+  metric_transformation {
+    name          = "MediaTooLarge"
+    namespace     = local.security_namespace
+    value         = "1"
+    default_value = "0"
+  }
 }
 
+# The one rejected-media alarm, for every upload path. Each rejected file counts
+# once: ImageRejected (any downscale rejection, including perimeter checks) plus
+# MediaTooLarge (byte-limit rejections that never reach downscale). The
+# MediaRejected metric is not used here because perimeter-check downscale
+# rejections log both markers.
 resource "aws_cloudwatch_metric_alarm" "media_rejected" {
   alarm_name          = "${local.name_prefix}-media-rejected"
-  alarm_description   = "Uploaded media repeatedly failed byte, decode, type, dimension, or page-count validation. Follow docs/runbooks/media-safeguards.md."
+  alarm_description   = "Uploaded media on any upload path repeatedly failed byte, signature, decode, type, dimension, or page-count validation. Follow docs/runbooks/media-safeguards.md."
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
   datapoints_to_alarm = 1
-  metric_name         = "MediaRejected"
-  namespace           = local.security_namespace
-  period              = 300
-  statistic           = "Sum"
   threshold           = 5
   treat_missing_data  = "notBreaching"
   alarm_actions       = [aws_sns_topic.alarms.arn]
   ok_actions          = [aws_sns_topic.alarms.arn]
   tags                = var.tags
+
+  metric_query {
+    id          = "rejected"
+    expression  = "FILL(images, 0) + FILL(too_large, 0)"
+    label       = "Rejected media (all upload paths)"
+    return_data = true
+  }
+
+  metric_query {
+    id = "images"
+    metric {
+      metric_name = "ImageRejected"
+      namespace   = local.security_namespace
+      period      = 300
+      stat        = "Sum"
+    }
+  }
+
+  metric_query {
+    id = "too_large"
+    metric {
+      metric_name = "MediaTooLarge"
+      namespace   = local.security_namespace
+      period      = 300
+      stat        = "Sum"
+    }
+  }
 }
 
 resource "aws_cloudwatch_log_metric_filter" "media_quota_exceeded" {
