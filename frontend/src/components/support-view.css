@@ -377,3 +377,8 @@ support-view {
 .support form + .support__question-hint + .support__privacy {
   margin-top: 2rem;
 }
+
+/* Override the native details layer's open-summary negative margins. */
+.support .support__source > summary {
+  margin: 0;
+}
